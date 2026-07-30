@@ -40,5 +40,7 @@
     (.on client "ready" (fn [] (on-ready client)))
     (.on client "auth_failure" on-auth-failure)
     (.on client "disconnected" on-disconnected)
-    (.on client "message" on-message)
+    ;; message_create cobre também mensagens enviadas pelo próprio número
+    ;; conectado (fromMe), diferente de "message" (só mensagens recebidas).
+    (.on client "message_create" on-message)
     (.initialize client)))
