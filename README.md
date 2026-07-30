@@ -83,6 +83,68 @@ aparelho pelo celular).
 - **Previsão do tempo**: [wttr.in](https://wttr.in)
 - **Horóscopo**: [horoscope-app-api](https://horoscope-app-api.vercel.app)
 
+## Deploy grátis na Oracle Cloud Free Tier
+
+A Oracle Cloud oferece uma VM ARM64 (Ampere A1) gratuita para sempre, com
+recursos suficientes para rodar o bot 24/7. Puppeteer não tem Chromium
+pré-compilado para ARM64, então usamos o `Dockerfile` deste projeto, que
+instala o Chromium do sistema via `apt`.
+
+### 1. Criar a instância
+
+1. Crie uma conta na [Oracle Cloud](https://www.oracle.com/cloud/free/) (cartão
+   é pedido só para verificação, o Always Free não cobra nada).
+2. Crie uma instância **Ampere (ARM), VM.Standard.A1.Flex** (ex.: 1 OCPU / 6GB
+   RAM, dentro da cota grátis), imagem **Ubuntu** ou **Oracle Linux**.
+3. Na criação, abra a porta de saída (padrão) e garanta acesso SSH (porta 22)
+   no *Security List* da VCN.
+
+### 2. Instalar Docker na VM
+
+```bash
+ssh ubuntu@<ip-da-vm>
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER
+# saia e conecte de novo pra aplicar o grupo docker
+```
+
+### 3. Enviar o projeto e configurar
+
+```bash
+git clone <url-do-seu-repo> zapbot
+cd zapbot
+cp .env.example .env
+nano .env   # ajuste PREFIX, ADMIN_NUMBERS etc. (PUPPETEER_EXECUTABLE_PATH já
+            # vem certo pela imagem Docker, não precisa mexer)
+```
+
+### 4. Build e primeira execução (escanear o QR code)
+
+```bash
+docker build -t zapbot .
+docker run -it --name zapbot \
+  --env-file .env \
+  -v "$(pwd)/.wwebjs_auth:/app/.wwebjs_auth" \
+  zapbot
+```
+
+Escaneie o QR code que aparece no terminal. Depois de conectado, pressione
+`Ctrl+C` para parar (a sessão já ficou salva em `.wwebjs_auth/` no host).
+
+### 5. Rodar em segundo plano, permanente
+
+```bash
+docker rm zapbot   # remove o container do passo anterior (a sessão continua salva no volume)
+docker run -d --name zapbot \
+  --restart unless-stopped \
+  --env-file .env \
+  -v "$(pwd)/.wwebjs_auth:/app/.wwebjs_auth" \
+  zapbot
+```
+
+`--restart unless-stopped` garante que o bot volte a rodar sozinho se a VM
+reiniciar. Para ver os logs: `docker logs -f zapbot`.
+
 ## Estrutura do projeto
 
 ```

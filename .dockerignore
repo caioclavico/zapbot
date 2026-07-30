@@ -1,0 +1,9 @@
+node_modules
+target
+.shadow-cljs
+.wwebjs_auth
+.wwebjs_cache
+.git
+.env
+*.log
+npm-debug.log*

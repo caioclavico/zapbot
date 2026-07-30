@@ -29,11 +29,13 @@
       (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" err)))))
 
 (defn main [& _args]
-  (let [client (Client. #js {:authStrategy (LocalAuth.)
-                              ;; --disable-quic evita ERR_CONNECTION_CLOSED comum em redes
-                              ;; WSL2/containers onde o QUIC (HTTP/3, via UDP) não funciona.
-                              :puppeteer    #js {:args #js ["--no-sandbox" "--disable-setuid-sandbox"
-                                                             "--disable-quic" "--disable-features=Quic"]}})]
+  (let [puppeteer-opts (cond-> {:args #js ["--no-sandbox" "--disable-setuid-sandbox"
+                                            ;; --disable-quic evita ERR_CONNECTION_CLOSED comum em redes
+                                            ;; WSL2/containers onde o QUIC (HTTP/3, via UDP) não funciona.
+                                            "--disable-quic" "--disable-features=Quic"]}
+                                config/puppeteer-executable-path (assoc :executablePath config/puppeteer-executable-path))
+        client (Client. #js {:authStrategy (LocalAuth.)
+                              :puppeteer    (clj->js puppeteer-opts)})]
     (.on client "qr" on-qr)
     (.on client "ready" (fn [] (on-ready client)))
     (.on client "auth_failure" on-auth-failure)

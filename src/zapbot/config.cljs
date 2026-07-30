@@ -25,3 +25,5 @@
 (def default-city (env "WEATHER_DEFAULT_CITY" "Sao Paulo"))
 (def news-feed-url (env "NEWS_FEED_URL" "https://g1.globo.com/rss/g1/"))
 (def default-currencies (env-list "CURRENCY_DEFAULT" ["USD-BRL" "EUR-BRL" "BTC-BRL"]))
+;; usado em ARM64/Docker, onde o Puppeteer não baixa um Chromium próprio
+(def puppeteer-executable-path (env "PUPPETEER_EXECUTABLE_PATH"))
