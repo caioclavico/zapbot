@@ -27,3 +27,7 @@
 (def default-currencies (env-list "CURRENCY_DEFAULT" ["USD-BRL" "EUR-BRL" "BTC-BRL"]))
 ;; usado em ARM64/Docker, onde o Puppeteer não baixa um Chromium próprio
 (def puppeteer-executable-path (env "PUPPETEER_EXECUTABLE_PATH"))
+;; chave gratuita em https://www.themoviedb.org/settings/api (usada pelo !filme)
+(def tmdb-api-key (env "TMDB_API_KEY"))
+;; chave gratuita em https://aistudio.google.com/apikey (usada pelo !resuma)
+(def gemini-api-key (env "GEMINI_API_KEY"))

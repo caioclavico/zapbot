@@ -9,6 +9,9 @@
             [zapbot.cotacao :as cotacao]
             [zapbot.previsao :as previsao]
             [zapbot.horoscopo :as horoscopo]
+            [zapbot.filme :as filme]
+            [zapbot.traduza :as traduza]
+            [zapbot.resumo :as resumo]
             [zapbot.moderacao :as moderacao]))
 
 (def ^:private comandos
@@ -16,9 +19,12 @@
    {:emoji "🧠" :uso "curiosidade"        :desc "Conta uma curiosidade aleatória"}
    {:emoji "📰" :uso "noticias"           :desc "Mostra as últimas notícias"}
    {:emoji "💱" :uso "cotacao [PAR ...]"  :desc "Cotação de moedas (padrão: USD-BRL, EUR-BRL, BTC-BRL)"}
-   {:emoji "🌦️" :uso "previsao [cidade]"  :desc "Previsão do tempo"}
+   {:emoji "🌦️" :uso "previsao [cidade]"  :desc "Previsão do tempo (também funciona como !tempo, !clima)"}
    {:emoji "🔮" :uso "horoscopo [signo]"  :desc "Horóscopo do dia (ex.: aries, touro, gemeos, cancer... sem signo, sorteia um)"}
-   {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
+   {:emoji "🎬" :uso "filme [nome]"        :desc "Sinopse e nota de um filme, em inglês/título original (sem nome, sugere um aleatório)"}
+   {:emoji "🌐" :uso "traduza <frase>"    :desc "Traduz uma frase para português"}
+   {:emoji "�" :uso "resuma"             :desc "Resume as últimas mensagens do chat"}
+   {:emoji "�🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "❓" :uso "ajuda"              :desc "Mostra esta mensagem"}])
 
 (defn- formatar-comando [{:keys [emoji uso desc]}]
@@ -54,12 +60,19 @@
           "cotacao"   (if (seq args)
                         (cotacao/buscar-cotacoes (map str/upper-case args))
                         (cotacao/buscar-cotacoes))
-          "previsao"  (if (seq args)
-                        (previsao/buscar-previsao (str/join " " args))
-                        (previsao/buscar-previsao))
+          ("previsao" "tempo" "clima") (if (seq args)
+                                          (previsao/buscar-previsao (str/join " " args))
+                                          (previsao/buscar-previsao))
           "horoscopo" (horoscopo/buscar-horoscopo (if (seq args)
                                                     (str/join " " args)
                                                     (horoscopo/signo-aleatorio)))
+          "filme"     (if (seq args)
+                        (filme/buscar-filme (str/join " " args))
+                        (filme/buscar-filme))
+          "traduza"   (traduza/traduzir-frase (str/join " " args))
+          "resuma"    (resumo/resumir-chat message)
           "ban"       (moderacao/banir message)
           "ajuda"     (p/resolved texto-ajuda)
-          (p/resolved (str "❓ Comando desconhecido. Digite " config/prefix "ajuda para ver os comandos.")))))))
+          (p/resolved (str "❌ Por que invocou um comando que nem o próprio tio "
+                            config/bot-name " reconhece? Digite " config/prefix
+                            "ajuda e ilumine-se.")))))))

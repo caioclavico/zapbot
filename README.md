@@ -12,8 +12,11 @@ biblioteca [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js)
 | `!curiosidade`              | Conta uma curiosidade aleatória                                |
 | `!noticias`                 | Mostra as últimas manchetes (feed RSS configurável)             |
 | `!cotacao [PAR ...]`        | Cotação de moedas, ex.: `!cotacao USD-BRL EUR-BRL BTC-BRL`      |
-| `!previsao [cidade]`        | Previsão do tempo para os próximos dias                        |
+| `!previsao [cidade]`        | Previsão do tempo para os próximos dias (também: `!tempo`, `!clima`)   |
 | `!horoscopo <signo>`        | Horóscopo do dia (em português: aries, touro, gemeos, ...); sem signo, sorteia um |
+| `!filme [nome]`             | Sinopse e nota IMDb de um filme (use o título original/inglês); sem nome, sugere um aleatório |
+| `!traduza <frase>`          | Traduz uma frase qualquer para português                        |
+| `!resuma`                   | Resume as últimas mensagens do chat (últimas 300 desde que o bot foi ligado, exceto comandos) |
 | `!ban`                      | Remove do grupo quem for citado/marcado (apenas admins)         |
 | `!ajuda`                    | Lista os comandos disponíveis                                  |
 
@@ -76,12 +79,15 @@ aparelho pelo celular).
 - Para escolher quem remover: marque a pessoa (`!ban @5511999999999`) ou
   responda (reply) a uma mensagem dela com `!ban`.
 
-## APIs usadas (gratuitas, sem necessidade de chave)
+## APIs usadas
 
-- **Notícias**: RSS (via `rss-parser`)
-- **Cotações**: [AwesomeAPI](https://docs.awesomeapi.com.br/api-de-moedas)
-- **Previsão do tempo**: [wttr.in](https://wttr.in)
-- **Horóscopo**: [horoscope-app-api](https://horoscope-app-api.vercel.app)
+- **Notícias**: RSS (via `rss-parser`) - grátis, sem chave
+- **Cotações**: [AwesomeAPI](https://docs.awesomeapi.com.br/api-de-moedas) - grátis, sem chave
+- **Previsão do tempo**: [wttr.in](https://wttr.in) - grátis, sem chave
+- **Horóscopo**: [freehoroscopeapi.com](https://freehoroscopeapi.com) - grátis, sem chave
+  (texto traduzido para PT via endpoint não-oficial do Google Translate)
+- **Filmes**: [TMDB (The Movie Database)](https://www.themoviedb.org) - grátis, requer chave (ver `.env.example`)
+- **Resumo de conversas**: [Gemini API (Google AI Studio)](https://aistudio.google.com/apikey) - grátis, requer chave (ver `.env.example`)
 
 ## Deploy grátis na Oracle Cloud Free Tier
 
@@ -157,6 +163,9 @@ src/zapbot/
 ├── cotacao.cljs       ; !cotacao
 ├── previsao.cljs      ; !previsao
 ├── horoscopo.cljs     ; !horoscopo
+├── filme.cljs         ; !filme
+├── traduza.cljs       ; !traduza
+├── resumo.cljs        ; !resuma
 └── moderacao.cljs     ; !ban
 ```
 

@@ -4,6 +4,7 @@
             ["whatsapp-web.js" :as wwjs]
             ["qrcode-terminal" :as qrcode]
             [zapbot.config :as config]
+            [zapbot.historico :as historico]
             [zapbot.router :as router]))
 
 (def ^:private Client (.-Client wwjs))
@@ -24,6 +25,7 @@
   (js/console.warn "⚠️ Desconectado:" reason))
 
 (defn- on-message [message]
+  (historico/registrar! message)
   (-> (router/processar message)
       (p/then (fn [resposta] (when resposta (.reply message resposta))))
       (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" err)))))
