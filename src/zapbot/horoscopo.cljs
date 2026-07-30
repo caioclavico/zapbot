@@ -28,6 +28,9 @@
       (.normalize "NFD")
       (str/replace #"[\u0300-\u036f]" "")))
 
+(defn signo-aleatorio []
+  (rand-nth (keys signos)))
+
 (defn- normalizar [s]
   (-> s remover-acentos str/lower-case str/trim))
 

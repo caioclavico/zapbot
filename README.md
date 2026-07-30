@@ -13,7 +13,7 @@ biblioteca [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js)
 | `!noticias`                 | Mostra as últimas manchetes (feed RSS configurável)             |
 | `!cotacao [PAR ...]`        | Cotação de moedas, ex.: `!cotacao USD-BRL EUR-BRL BTC-BRL`      |
 | `!previsao [cidade]`        | Previsão do tempo para os próximos dias                        |
-| `!horoscopo <signo>`        | Horóscopo do dia (em português: aries, touro, gemeos, ...)     |
+| `!horoscopo <signo>`        | Horóscopo do dia (em português: aries, touro, gemeos, ...); sem signo, sorteia um |
 | `!ban`                      | Remove do grupo quem for citado/marcado (apenas admins)         |
 | `!ajuda`                    | Lista os comandos disponíveis                                  |
 

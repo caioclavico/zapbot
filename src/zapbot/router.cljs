@@ -17,7 +17,7 @@
    {:emoji "📰" :uso "noticias"           :desc "Mostra as últimas notícias"}
    {:emoji "💱" :uso "cotacao [PAR ...]"  :desc "Cotação de moedas (padrão: USD-BRL, EUR-BRL, BTC-BRL)"}
    {:emoji "🌦️" :uso "previsao [cidade]"  :desc "Previsão do tempo"}
-   {:emoji "🔮" :uso "horoscopo <signo>"  :desc "Horóscopo do dia (ex.: aries, touro, gemeos, cancer...)"}
+   {:emoji "🔮" :uso "horoscopo [signo]"  :desc "Horóscopo do dia (ex.: aries, touro, gemeos, cancer... sem signo, sorteia um)"}
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "❓" :uso "ajuda"              :desc "Mostra esta mensagem"}])
 
@@ -57,9 +57,9 @@
           "previsao"  (if (seq args)
                         (previsao/buscar-previsao (str/join " " args))
                         (previsao/buscar-previsao))
-          "horoscopo" (if (seq args)
-                        (horoscopo/buscar-horoscopo (str/join " " args))
-                        (p/resolved (str "❓ Use: " config/prefix "horoscopo <signo>")))
+          "horoscopo" (horoscopo/buscar-horoscopo (if (seq args)
+                                                    (str/join " " args)
+                                                    (horoscopo/signo-aleatorio)))
           "ban"       (moderacao/banir message)
           "ajuda"     (p/resolved texto-ajuda)
           (p/resolved (str "❓ Comando desconhecido. Digite " config/prefix "ajuda para ver os comandos.")))))))
