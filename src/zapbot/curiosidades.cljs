@@ -1,5 +1,6 @@
 (ns zapbot.curiosidades
-  "Comando !curiosidade - fatos curiosos em português.")
+  "Comando !curiosidade - fatos curiosos em português."
+  (:require [zapbot.config :as config]))
 
 (def ^:private curiosidades
   ["O mel nunca estraga: arqueólogos encontraram potes de mel com mais de 3000 anos em tumbas egípcias ainda comestíveis."
@@ -26,4 +27,4 @@
 (defn curiosidade-aleatoria
   "Retorna uma curiosidade aleatória, com o cabeçalho de destaque."
   []
-  (str "🧠 *Você sabia?*\n\n" (rand-nth curiosidades)))
+  (str "🧠 *Curiosidade do tio " config/bot-name ":*\n\n" (rand-nth curiosidades)))

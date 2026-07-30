@@ -19,7 +19,7 @@
          vec)
     default))
 
-(def bot-name (env "BOT_NAME" "Odissel"))
+(def bot-name (env "BOT_NAME" "Odisseu"))
 (def prefix (env "PREFIX" "!"))
 (def admin-numbers (set (env-list "ADMIN_NUMBERS" [])))
 (def default-city (env "WEATHER_DEFAULT_CITY" "Sao Paulo"))

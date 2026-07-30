@@ -23,7 +23,7 @@
            (let [data (js->clj data :keywordize-keys true)]
              (if (empty? data)
                "Não encontrei cotações para os pares informados. Use o formato ex.: USD-BRL."
-               (str "💱 *Cotação de agora:*\n\n" (str/join "\n" (map formatar-item data))))))
+               (str "💱 *Cotação do tio " config/bot-name ":*\n\n" (str/join "\n" (map formatar-item data))))))
          (p/catch (fn [err]
                     (js/console.error "Erro ao buscar cotações:" err)
                     "❌ Não consegui buscar as cotações agora. Tente novamente mais tarde."))))))

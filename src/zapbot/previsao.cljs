@@ -18,7 +18,7 @@
                  atual      (first (:current_condition data))
                  desc-atual (get-in atual [:weatherDesc 0 :value] "")
                  dias       (take 3 (:weather data))]
-             (str "🌦️ *Previsão do tempo (" cidade "):*\n\n"
+             (str "🌦️ *Previsão do tio " config/bot-name " (" cidade "):*\n\n"
                   "Agora: " (:temp_C atual) "°C, " desc-atual "\n\n"
                   (str/join "\n" (map formatar-dia dias)))))
          (p/catch (fn [err]

@@ -2,6 +2,7 @@
   "Comando !horoscopo - horóscopo diário via freehoroscopeapi.com."
   (:require [promesa.core :as p]
             [clojure.string :as str]
+            [zapbot.config :as config]
             [zapbot.traducao :as traducao]))
 
 (def ^:private signos
@@ -47,7 +48,7 @@
                     data      (js->clj data :keywordize-keys true)
                     descricao (get-in data [:data :horoscope] (get-in data [:data :horoscope_data]))
                     traduzido (traducao/traduzir descricao)]
-              (str "🔮 *Horóscopo do dia (" (get nomes-pt signo-en) "):*\n\n" traduzido))
+              (str "🔮 *Horóscopo do tio " config/bot-name " (" (get nomes-pt signo-en) "):*\n\n" traduzido))
             (p/catch (fn [err]
                        (js/console.error "Erro ao buscar horóscopo:" err)
                        "❌ Não consegui buscar o horóscopo agora. Tente novamente mais tarde.")))))))

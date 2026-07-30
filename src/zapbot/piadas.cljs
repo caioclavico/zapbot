@@ -1,5 +1,6 @@
 (ns zapbot.piadas
-  "Comando !piada - piadas curtas em português.")
+  "Comando !piada - piadas curtas em português."
+  (:require [zapbot.config :as config]))
 
 (def ^:private piadas
   ["Por que o livro de matemática se sentiu triste? Porque tinha muitos problemas."
@@ -33,4 +34,4 @@
 (defn piada-aleatoria
   "Retorna uma piada aleatória da lista, com o cabeçalho de destaque."
   []
-  (str "🤡 *Piada da vez:*\n\n" (rand-nth piadas)))
+  (str "🤡 *Piada do tio " config/bot-name ":*\n\n" (rand-nth piadas)))

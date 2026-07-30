@@ -14,7 +14,7 @@
    (-> (p/let [feed  (.parseURL parser url)
                itens (take limite (.-items feed))]
          (if (seq itens)
-           (str "📰 *Notícias de agora:*\n\n"
+           (str "📰 *Notícias do tio " config/bot-name ":*\n\n"
                 (str/join "\n\n"
                           (map-indexed
                            (fn [i item]
