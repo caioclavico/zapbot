@@ -17,6 +17,7 @@ biblioteca [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js)
 | `!filme [nome]`             | Sinopse e nota IMDb de um filme (use o título original/inglês); sem nome, sugere um aleatório |
 | `!traduza <frase>`          | Traduz uma frase qualquer para português                        |
 | `!resuma`                   | Resume as últimas mensagens do chat (últimas 300 desde que o bot foi ligado, exceto comandos) |
+| `!pergunta <texto>`         | Faz uma pergunta livre para o bot responder com IA (Gemini)     |
 | `!ban`                      | Remove do grupo quem for citado/marcado (apenas admins)         |
 | `!ajuda`                    | Lista os comandos disponíveis                                  |
 
@@ -87,7 +88,7 @@ aparelho pelo celular).
 - **Horóscopo**: [freehoroscopeapi.com](https://freehoroscopeapi.com) - grátis, sem chave
   (texto traduzido para PT via endpoint não-oficial do Google Translate)
 - **Filmes**: [TMDB (The Movie Database)](https://www.themoviedb.org) - grátis, requer chave (ver `.env.example`)
-- **Resumo de conversas**: [Gemini API (Google AI Studio)](https://aistudio.google.com/apikey) - grátis, requer chave (ver `.env.example`)
+- **Resumo de conversas e perguntas livres**: [Gemini API (Google AI Studio)](https://aistudio.google.com/apikey) - grátis, requer chave (ver `.env.example`)
 
 ## Deploy grátis na Oracle Cloud Free Tier
 
@@ -166,6 +167,8 @@ src/zapbot/
 ├── filme.cljs         ; !filme
 ├── traduza.cljs       ; !traduza
 ├── resumo.cljs        ; !resuma
+├── gemini.cljs        ; wrapper da API Gemini (usado por !resuma e !pergunta)
+├── pergunta.cljs      ; !pergunta
 └── moderacao.cljs     ; !ban
 ```
 

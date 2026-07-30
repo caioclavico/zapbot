@@ -12,6 +12,7 @@
             [zapbot.filme :as filme]
             [zapbot.traduza :as traduza]
             [zapbot.resumo :as resumo]
+            [zapbot.pergunta :as pergunta]
             [zapbot.moderacao :as moderacao]))
 
 (def ^:private comandos
@@ -23,8 +24,9 @@
    {:emoji "🔮" :uso "horoscopo [signo]"  :desc "Horóscopo do dia (ex.: aries, touro, gemeos, cancer... sem signo, sorteia um)"}
    {:emoji "🎬" :uso "filme [nome]"        :desc "Sinopse e nota de um filme, em inglês/título original (sem nome, sugere um aleatório)"}
    {:emoji "🌐" :uso "traduza <frase>"    :desc "Traduz uma frase para português"}
-   {:emoji "�" :uso "resuma"             :desc "Resume as últimas mensagens do chat"}
-   {:emoji "�🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
+   {:emoji "📝" :uso "resuma"             :desc "Resume as últimas mensagens do chat"}
+   {:emoji "🤔" :uso "pergunta <texto>"   :desc "Faz uma pergunta livre para o tio Odisseu responder com IA"}
+   {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "❓" :uso "ajuda"              :desc "Mostra esta mensagem"}])
 
 (defn- formatar-comando [{:keys [emoji uso desc]}]
@@ -71,6 +73,7 @@
                         (filme/buscar-filme))
           "traduza"   (traduza/traduzir-frase (str/join " " args))
           "resuma"    (resumo/resumir-chat message)
+          "pergunta"  (pergunta/perguntar (str/join " " args))
           "ban"       (moderacao/banir message)
           "ajuda"     (p/resolved texto-ajuda)
           (p/resolved (str "❌ Por que invocou um comando que nem o próprio tio "

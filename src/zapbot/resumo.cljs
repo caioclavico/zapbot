@@ -3,7 +3,8 @@
   (:require [promesa.core :as p]
             [clojure.string :as str]
             [zapbot.config :as config]
-            [zapbot.historico :as historico]))
+            [zapbot.historico :as historico]
+            [zapbot.gemini :as gemini]))
 
 (defn- comando? [texto]
   (str/starts-with? (str/trim (or texto "")) config/prefix))
@@ -15,22 +16,16 @@
        (str/join "\n")))
 
 (defn- gerar-resumo [transcricao]
-  (let [url  "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
-        texto (str "Resuma em português, de forma objetiva e em poucos parágrafos, "
-                   "a conversa de WhatsApp abaixo:\n\n" transcricao)
-        corpo #js {:contents #js [#js {:parts #js [#js {:text texto}]}]}]
-    (-> (p/let [res  (js/fetch url #js {:method  "POST"
-                                         :headers #js {"Content-Type"  "application/json"
-                                                        "x-goog-api-key" config/gemini-api-key}
-                                         :body    (js/JSON.stringify corpo)})
-                data (.json res)
-                data (js->clj data :keywordize-keys true)]
-          (if-let [resumo (get-in data [:candidates 0 :content :parts 0 :text])]
-            (str "📝 *Resumão do tio " config/bot-name "*\n\n" resumo)
-            "❌ Não consegui gerar o resumo agora."))
-        (p/catch (fn [err]
-                   (js/console.error "Erro ao gerar resumo:" err)
-                   "❌ Não consegui gerar o resumo agora. Tente novamente mais tarde.")))))
+  (-> (gemini/gerar-texto
+       (str "Resuma em português, de forma objetiva e em poucos parágrafos, "
+            "a conversa de WhatsApp abaixo:\n\n" transcricao))
+      (p/then (fn [resumo]
+                (if resumo
+                  (str "📝 *Resumão do tio " config/bot-name "*\n\n" resumo)
+                  "❌ Não consegui gerar o resumo agora.")))
+      (p/catch (fn [err]
+                 (js/console.error "Erro ao gerar resumo:" err)
+                 "❌ Não consegui gerar o resumo agora. Tente novamente mais tarde."))))
 
 (defn resumir-chat [message]
   (if (str/blank? config/gemini-api-key)
