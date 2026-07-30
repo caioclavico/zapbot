@@ -14,7 +14,7 @@
    (-> (p/let [feed  (.parseURL parser url)
                itens (take limite (.-items feed))]
          (if (seq itens)
-           (str "📰 *Últimas notícias*\n\n"
+           (str "📰 *Notícias de agora:*\n\n"
                 (str/join "\n\n"
                           (map-indexed
                            (fn [i item]

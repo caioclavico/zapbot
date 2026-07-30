@@ -9,6 +9,7 @@ biblioteca [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js)
 | Comando                    | Descrição                                                     |
 |-----------------------------|----------------------------------------------------------------|
 | `!piada`                    | Conta uma piada aleatória                                      |
+| `!curiosidade`              | Conta uma curiosidade aleatória                                |
 | `!noticias`                 | Mostra as últimas manchetes (feed RSS configurável)             |
 | `!cotacao [PAR ...]`        | Cotação de moedas, ex.: `!cotacao USD-BRL EUR-BRL BTC-BRL`      |
 | `!previsao [cidade]`        | Previsão do tempo para os próximos dias                        |
@@ -37,13 +38,7 @@ cp .env.example .env
 
 ## Executando
 
-Modo desenvolvimento (compila e recompila automaticamente a cada mudança):
-
-```bash
-npm run dev
-```
-
-Build de produção + execução:
+**Para rodar o bot de verdade (conectar ao WhatsApp), use sempre:**
 
 ```bash
 npm run build
@@ -53,6 +48,14 @@ npm start
 Na primeira execução, um **QR code** aparecerá no terminal. Escaneie-o pelo
 WhatsApp do celular em *Aparelhos conectados > Conectar aparelho*. A sessão
 fica salva em `.wwebjs_auth/`, então não será necessário escanear novamente
+
+> ⚠️ `npm run dev` (`shadow-cljs watch app`) **apenas compila e fica observando
+> mudanças no código** — ele não inicia o bot sozinho. É normal ver só avisos
+> do compilador (`WARNING ... :infer-warning`, `:fn-deprecated`) e nada mais
+> acontecer; isso não é um erro. Use `npm run dev` apenas se estiver
+> editando o código-fonte e quiser recompilar automaticamente; para
+> efetivamente ligar o bot, rode `node target/main.js` (ou `npm start`) em um
+> outro terminal.
 nas próximas vezes (a menos que você apague essa pasta ou desconecte o
 aparelho pelo celular).
 

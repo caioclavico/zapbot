@@ -31,6 +31,6 @@
    "Por que a Terra terminou o namoro com o Sol? Porque ele precisava de espaço."])
 
 (defn piada-aleatoria
-  "Retorna uma piada aleatória da lista."
+  "Retorna uma piada aleatória da lista, com o cabeçalho de destaque."
   []
-  (rand-nth piadas))
+  (str "🤡 *Piada da vez:*\n\n" (rand-nth piadas)))

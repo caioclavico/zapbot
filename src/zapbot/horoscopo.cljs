@@ -1,7 +1,8 @@
 (ns zapbot.horoscopo
-  "Comando !horoscopo - horóscopo diário via horoscope-app-api.vercel.app."
+  "Comando !horoscopo - horóscopo diário via freehoroscopeapi.com."
   (:require [promesa.core :as p]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [zapbot.traducao :as traducao]))
 
 (def ^:private signos
   {"aries" "aries"
@@ -36,13 +37,14 @@
     (if-not signo-en
       (p/resolved
        (str "❓ Signo não reconhecido. Use um destes: " (str/join ", " (vals nomes-pt))))
-      (let [url (str "https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign="
+      (let [url (str "https://freehoroscopeapi.com/api/v1/get-horoscope/daily?sign="
                       signo-en "&day=today")]
-        (-> (p/let [res  (js/fetch url)
-                    data (.json res)]
-              (let [data      (js->clj data :keywordize-keys true)
-                    descricao (get-in data [:data :horoscope_data])]
-                (str "🔮 *Horóscopo de " (get nomes-pt signo-en) " (hoje)*\n\n" descricao)))
+        (-> (p/let [res       (js/fetch url)
+                    data      (.json res)
+                    data      (js->clj data :keywordize-keys true)
+                    descricao (get-in data [:data :horoscope] (get-in data [:data :horoscope_data]))
+                    traduzido (traducao/traduzir descricao)]
+              (str "🔮 *Horóscopo do dia (" (get nomes-pt signo-en) "):*\n\n" traduzido))
             (p/catch (fn [err]
                        (js/console.error "Erro ao buscar horóscopo:" err)
                        "❌ Não consegui buscar o horóscopo agora. Tente novamente mais tarde.")))))))
