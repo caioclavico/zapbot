@@ -18,6 +18,11 @@ biblioteca [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js)
 | `!traduza <frase>`          | Traduz uma frase qualquer para português                        |
 | `!resuma`                   | Resume as últimas mensagens do chat (últimas 300 desde que o bot foi ligado, exceto comandos) |
 | `!pergunta <texto>`         | Faz uma pergunta livre para o bot responder com IA (Gemini)     |
+| `!bola8 [pergunta]`         | Bola 8 mágica: manda uma imagem e uma resposta aleatória        |
+| `!sorteio`                  | Sorteia uma pessoa conhecida do chat/grupo (marca com @)        |
+| `!velha [1-9\|sair]`        | Jogo da velha entre duas pessoas do chat                        |
+| `!adedonha [parar]`         | Sorteia letra e categorias pro grupo jogar STOP (também: `!stop`) |
+| `!musica [genero]`          | Indica uma música com link do Spotify; sem gênero, sorteia um       |
 | `!ban`                      | Remove do grupo quem for citado/marcado (apenas admins)         |
 | `!ajuda`                    | Lista os comandos disponíveis                                  |
 
@@ -80,6 +85,31 @@ aparelho pelo celular).
 - Para escolher quem remover: marque a pessoa (`!ban @5511999999999`) ou
   responda (reply) a uma mensagem dela com `!ban`.
 
+## Como o `!sorteio` funciona
+
+- Sorteia entre as pessoas que já mandaram alguma mensagem no chat desde que
+  o bot foi ligado (não busca a lista completa de participantes do grupo,
+  pelo mesmo motivo do `!resuma` - ver `historico.cljs`).
+
+## Como o `!velha` funciona
+
+- `!velha` sem argumento: abre uma partida (você joga de ❌) ou, se já houver
+  uma partida esperando adversário, você entra de ⭕ e o jogo começa.
+- `!velha <1-9>`: joga na casa correspondente (1 = canto superior esquerdo,
+  9 = canto inferior direito), só quando for a sua vez.
+- `!velha sair`: cancela a partida em andamento naquele chat.
+- O estado da partida fica em memória por chat e não sobrevive a um reinício
+  do bot.
+
+## Como o `!adedonha` funciona
+
+- `!adedonha` sorteia uma letra e mostra 8 categorias (Nome, Sobrenome, Cor,
+  Animal, Objeto, Fruta, País, Profissão); a galera manda as respostas no
+  grupo mesmo (o bot não valida nem pontua automaticamente).
+- Depois de 60 segundos o bot avisa que o tempo acabou.
+- `!adedonha parar` (ou `!stop`) encerra a rodada antes da hora.
+- Só uma rodada por vez em cada chat; o estado também fica só em memória.
+
 ## APIs usadas
 
 - **Notícias**: RSS (via `rss-parser`) - grátis, sem chave
@@ -89,6 +119,7 @@ aparelho pelo celular).
   (texto traduzido para PT via endpoint não-oficial do Google Translate)
 - **Filmes**: [TMDB (The Movie Database)](https://www.themoviedb.org) - grátis, requer chave (ver `.env.example`)
 - **Resumo de conversas e perguntas livres**: [Gemini API (Google AI Studio)](https://aistudio.google.com/apikey) - grátis, requer chave (ver `.env.example`)
+- **Músicas**: [Spotify Web API](https://developer.spotify.com/dashboard) (Client Credentials) - grátis, requer credenciais (ver `.env.example`)
 
 ## Deploy grátis na Oracle Cloud Free Tier
 
@@ -169,6 +200,13 @@ src/zapbot/
 ├── resumo.cljs        ; !resuma
 ├── gemini.cljs        ; wrapper da API Gemini (usado por !resuma e !pergunta)
 ├── pergunta.cljs      ; !pergunta
+├── bola8.cljs        ; !bola8
+├── historico.cljs     ; mensagens/participantes conhecidos (usado por !resuma e !sorteio)
+├── sorteio.cljs       ; !sorteio
+├── velha.cljs         ; !velha
+├── adedonha.cljs      ; !adedonha
+├── spotify.cljs       ; wrapper da API do Spotify (usado por !musica)
+├── musica.cljs        ; !musica
 └── moderacao.cljs     ; !ban
 ```
 
