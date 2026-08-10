@@ -46,6 +46,23 @@ jobs:
       group: deploy-oracle
       cancel-in-progress: false
     steps:
+      - name: Verificar secrets obrigatórios
+        env:
+          SSH_HOST: ${{ secrets.ORACLE_HOST }}
+          SSH_USER: ${{ secrets.ORACLE_USER }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          APP_DIR: ${{ secrets.ORACLE_APP_DIR }}
+        run: |
+          faltando=()
+          [ -z "$SSH_HOST" ] && faltando+=("ORACLE_HOST")
+          [ -z "$SSH_USER" ] && faltando+=("ORACLE_USER")
+          [ -z "$SSH_KEY" ] && faltando+=("ORACLE_SSH_KEY")
+          [ -z "$APP_DIR" ] && faltando+=("ORACLE_APP_DIR")
+          if [ ${#faltando[@]} -gt 0 ]; then
+            echo "::error::Secret(s) não configurado(s) no repositório: ${faltando[*]}. Adicione em Settings > Secrets and variables > Actions (ver README, seção 'CI/CD automático')."
+            exit 1
+          fi
+
       - name: Configurar chave SSH
         env:
           SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
