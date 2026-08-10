@@ -87,8 +87,14 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" bash -s -- "$APP_DIR" <<'REMOTE_SCRIPT'
           set -euo pipefail
+          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:$PATH"
           APP_DIR="$1"
           cd "$APP_DIR"
+
+          if ! command -v docker > /dev/null; then
+            echo "docker não encontrado no PATH da VM - verifique se está instalado (README, 'Instalar Docker na VM')." >&2
+            exit 1
+          fi
 
           git fetch origin
           git reset --hard origin/master
