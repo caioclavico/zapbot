@@ -11,8 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    NODE_ENV=production
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
@@ -21,6 +20,10 @@ RUN npm install
 
 COPY . .
 RUN npm run build
+
+# NODE_ENV=production só depois do build: setado antes, o npm install pula
+# devDependencies (shadow-cljs) e o build falha com "shadow-cljs: not found"
+ENV NODE_ENV=production
 
 # tini evita processos zumbis do Chromium ao encerrar o container
 ENTRYPOINT ["/usr/bin/tini", "--"]
