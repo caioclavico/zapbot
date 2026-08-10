@@ -1,0 +1,91 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (shadow-cljs release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Instalar Java (necessário para o shadow-cljs)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Build de produção
+        run: npm run build
+
+  deploy:
+    name: Deploy na Oracle Cloud
+    needs: build
+    # só faz deploy em push direto na master (PRs só rodam o build acima)
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-oracle
+      cancel-in-progress: false
+    steps:
+      - name: Configurar chave SSH
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          SSH_HOST: ${{ secrets.ORACLE_HOST }}
+          SSH_PORT: ${{ secrets.ORACLE_SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Atualizar, buildar e reiniciar o container na VM
+        env:
+          SSH_HOST: ${{ secrets.ORACLE_HOST }}
+          SSH_PORT: ${{ secrets.ORACLE_SSH_PORT }}
+          SSH_USER: ${{ secrets.ORACLE_USER }}
+          APP_DIR: ${{ secrets.ORACLE_APP_DIR }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" bash -s -- "$APP_DIR" <<'REMOTE_SCRIPT'
+          set -euo pipefail
+          APP_DIR="$1"
+          cd "$APP_DIR"
+
+          git fetch origin
+          git reset --hard origin/master
+
+          docker build -t zapbot .
+
+          docker stop zapbot 2>/dev/null || true
+          docker rm zapbot 2>/dev/null || true
+
+          docker run -d --name zapbot \
+            --restart unless-stopped \
+            --env-file .env \
+            -v "$APP_DIR/.wwebjs_auth:/app/.wwebjs_auth" \
+            zapbot
+
+          docker image prune -f
+          REMOTE_SCRIPT
+
+      - name: Remover chave SSH
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

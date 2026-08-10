@@ -16,6 +16,7 @@
             [zapbot.bola8 :as bola8]
             [zapbot.sorteio :as sorteio]
             [zapbot.velha :as velha]
+            [zapbot.naval :as naval]
             [zapbot.adedonha :as adedonha]
             [zapbot.musica :as musica]
             [zapbot.moderacao :as moderacao]))
@@ -34,7 +35,8 @@
    {:emoji "🎱" :uso "bola8 [pergunta]"    :desc "Bola 8 mágica: manda uma imagem e uma resposta aleatória"}
    {:emoji "🎲" :uso "sorteio"            :desc "Sorteia uma pessoa conhecida do chat/grupo"}
    {:emoji "⭕" :uso "velha [1-9|sair]"  :desc "Jogo da velha entre duas pessoas: abra/entre numa partida, jogue numa casa (1-9) ou saia"}
-   {:emoji "🔤" :uso "adedonha [parar]" :desc "Sorteia uma letra e categorias pro grupo jogar STOP/adedonha (também funciona como !stop)"}
+   {:emoji "�" :uso "naval [coordenada|sair]" :desc "Batalha naval entre duas pessoas: abra/entre numa partida e atire numa coordenada (ex.: C4) ou saia"}
+   {:emoji "�🔤" :uso "adedonha [parar]" :desc "Sorteia uma letra e categorias pro grupo jogar STOP/adedonha (também funciona como !stop)"}
    {:emoji "🎵" :uso "musica [genero]"   :desc "Indica uma música com link do Spotify (sem gênero, sorteia um)"}
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "❓" :uso "ajuda"              :desc "Mostra esta mensagem"}])
@@ -83,10 +85,11 @@
                         (filme/buscar-filme message))
           "traduza"   (traduza/traduzir-frase (str/join " " args))
           "resuma"    (resumo/resumir-chat message)
-          "pergunta"  (pergunta/perguntar (str/join " " args))
+          "pergunta"  (pergunta/perguntar message (str/join " " args))
           "bola8"     (bola8/jogar message (str/join " " args))
           "sorteio"   (sorteio/sortear message)
           "velha"     (velha/jogar message (str/join " " args))
+          "naval"     (naval/jogar message (str/join " " args))
           ("adedonha" "stop") (adedonha/jogar message (str/join " " args))
           "musica"    (if (seq args)
                         (musica/buscar-musica (str/join " " args))

@@ -183,6 +183,31 @@ docker run -d --name zapbot \
 `--restart unless-stopped` garante que o bot volte a rodar sozinho se a VM
 reiniciar. Para ver os logs: `docker logs -f zapbot`.
 
+### 6. CI/CD automático (GitHub Actions)
+
+Depois do setup manual acima (passos 1-5, incluindo o QR code inicial), os
+próximos deploys são automáticos: o workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
+builda o projeto a cada push/PR e, a cada push direto na `master` (com o
+build passando), conecta na VM via SSH e roda `git pull` + `docker build` +
+recria o container - preservando `.env` e a sessão em `.wwebjs_auth/`
+(nenhum dos dois é tocado pelo pipeline).
+
+Configure estes *secrets* no repositório GitHub (`Settings > Secrets and
+variables > Actions`):
+
+| Secret              | Valor                                                              |
+|----------------------|---------------------------------------------------------------------|
+| `ORACLE_HOST`        | IP público da VM                                                    |
+| `ORACLE_USER`        | usuário SSH (ex.: `ubuntu`)                                          |
+| `ORACLE_APP_DIR`     | caminho absoluto do repo na VM (ex.: `/home/ubuntu/zapbot`)          |
+| `ORACLE_SSH_KEY`     | chave privada SSH (par autorizado em `~/.ssh/authorized_keys` na VM) |
+| `ORACLE_SSH_PORT`    | porta SSH, opcional (padrão `22`)                                    |
+
+> 🔒 Gere um par de chaves **dedicado só para o deploy** (não reaproveite sua
+> chave pessoal), ex.: `ssh-keygen -t ed25519 -f deploy_key -C "gh-actions"`,
+> adicione `deploy_key.pub` ao `authorized_keys` da VM e cole o conteúdo de
+> `deploy_key` (privada) no secret `ORACLE_SSH_KEY`.
+
 ## Estrutura do projeto
 
 ```
