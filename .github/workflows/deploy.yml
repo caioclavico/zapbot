@@ -72,6 +72,10 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key -P "" > /dev/null; then
+            echo "::error::O secret ORACLE_SSH_KEY não contém uma chave privada SSH válida (erro ao decodificar). Normalmente é conteúdo incompleto/quebras de linha perdidas por causa de copiar e colar manualmente. Recadastre com: gh secret set ORACLE_SSH_KEY < caminho/da/chave (sem colar manualmente)."
+            exit 1
+          fi
           ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Atualizar, buildar e reiniciar o container na VM
