@@ -20,7 +20,8 @@
             [zapbot.adedonha :as adedonha]
             [zapbot.musica :as musica]
             [zapbot.moderacao :as moderacao]
-            [zapbot.status :as status]))
+            [zapbot.status :as status]
+            [zapbot.quiz :as quiz]))
 
 (def ^:private comandos
   [{:emoji "🤡" :uso "piada"              :desc "Conta uma piada aleatória"}
@@ -41,6 +42,7 @@
    {:emoji "🎵" :uso "musica [genero]"   :desc "Indica uma música com link do Spotify (sem gênero, sorteia um)"}
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra o consumo de CPU, memória, disco e uptime da VM"}
+   {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
    {:emoji "❓" :uso "ajuda"              :desc "Mostra esta mensagem"}])
 
 (defn- formatar-comando [{:keys [emoji uso desc]}]
@@ -98,6 +100,7 @@
                         (musica/buscar-musica))
           "ban"       (moderacao/banir message)
           "status"    (status/status-vm)
+          "quiz"      (quiz/jogar message (str/join " " args))
           "ajuda"     (p/resolved texto-ajuda)
           (p/resolved (str "❌ Por que invocou um comando que nem o próprio tio "
                             config/bot-name " reconhece? Digite " config/prefix
