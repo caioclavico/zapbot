@@ -28,4 +28,8 @@ ENV NODE_ENV=production
 
 # tini evita processos zumbis do Chromium ao encerrar o container
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["npm", "start"]
+# limpa o lock do Chromium (SingletonLock) antes de iniciar: como o volume
+# .wwebjs_auth persiste entre deploys mas o hostname do container muda a
+# cada `docker run`, o Chromium acha que o lock é de "outra máquina" e se
+# recusa a destravar sozinho, travando o start em todo redeploy
+CMD ["sh", "-c", "find /app/.wwebjs_auth -iname 'Singleton*' -delete 2>/dev/null; exec npm start"]
