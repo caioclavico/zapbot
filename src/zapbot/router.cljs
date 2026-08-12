@@ -46,6 +46,7 @@
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
    {:emoji "🔇" :uso "bloquear [comando|tudo|listar]" :desc "(admin) Bloqueia um comando ou o bot inteiro nesse chat"}
    {:emoji "🔊" :uso "desbloquear [comando|tudo]" :desc "(admin) Libera um comando ou o bot inteiro nesse chat"}
+   {:emoji "🪪" :uso "meuid"              :desc "Mostra seu ID do WhatsApp, pra colocar em ADMIN_NUMBERS no .env"}
    {:emoji "❓" :uso "ajuda"              :desc "Mostra esta mensagem"}])
 
 (defn- formatar-comando [{:keys [emoji uso desc]}]
@@ -97,6 +98,9 @@
     "ban"       (moderacao/banir message)
     "status"    (status/status-vm)
     "quiz"      (quiz/jogar message (str/join " " args))
+    "meuid"     (p/resolved (str "🪪 Seu ID: " (or (.-author message) (.-from message))
+                              "\n\nAdicione esse valor em ADMIN_NUMBERS no .env (separado por vírgula, "
+                              "se já tiver outros) pra virar admin do bot."))
     "ajuda"     (p/resolved texto-ajuda)
     (p/resolved (str "❌ Por que invocou um comando que nem o próprio tio "
                       config/bot-name " reconhece? Digite " config/prefix
