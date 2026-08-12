@@ -21,7 +21,8 @@
             [zapbot.musica :as musica]
             [zapbot.moderacao :as moderacao]
             [zapbot.status :as status]
-            [zapbot.quiz :as quiz]))
+            [zapbot.quiz :as quiz]
+            [zapbot.bloqueio :as bloqueio]))
 
 (def ^:private comandos
   [{:emoji "🤡" :uso "piada"              :desc "Conta uma piada aleatória"}
@@ -43,6 +44,8 @@
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra o consumo de CPU, memória, disco e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
+   {:emoji "🔇" :uso "bloquear [comando|tudo|listar]" :desc "(admin) Bloqueia um comando ou o bot inteiro nesse chat"}
+   {:emoji "🔊" :uso "desbloquear [comando|tudo]" :desc "(admin) Libera um comando ou o bot inteiro nesse chat"}
    {:emoji "❓" :uso "ajuda"              :desc "Mostra esta mensagem"}])
 
 (defn- formatar-comando [{:keys [emoji uso desc]}]
@@ -63,45 +66,62 @@
 (defn- tokenizar [texto]
   (-> texto str/trim (subs (count config/prefix)) (str/split #"\s+")))
 
+(defn- despachar [message cmd args]
+  (case cmd
+    "piada"     (p/resolved (piadas/piada-aleatoria))
+    "curiosidade" (p/resolved (curiosidades/curiosidade-aleatoria))
+    "noticias"  (noticias/buscar-noticias)
+    "cotacao"   (if (seq args)
+                  (cotacao/buscar-cotacoes (map str/upper-case args))
+                  (cotacao/buscar-cotacoes))
+    ("previsao" "tempo" "clima") (if (seq args)
+                                    (previsao/buscar-previsao (str/join " " args))
+                                    (previsao/buscar-previsao))
+    "horoscopo" (horoscopo/buscar-horoscopo (if (seq args)
+                                              (str/join " " args)
+                                              (horoscopo/signo-aleatorio)))
+    "filme"     (if (seq args)
+                  (filme/buscar-filme message (str/join " " args))
+                  (filme/buscar-filme message))
+    "traduza"   (traduza/traduzir-frase (str/join " " args))
+    "resuma"    (resumo/resumir-chat message)
+    "pergunta"  (pergunta/perguntar message (str/join " " args))
+    "bola8"     (bola8/jogar message (str/join " " args))
+    "sorteio"   (sorteio/sortear message)
+    "velha"     (velha/jogar message (str/join " " args))
+    "naval"     (naval/jogar message (str/join " " args))
+    ("adedonha" "stop") (adedonha/jogar message (str/join " " args))
+    "musica"    (if (seq args)
+                  (musica/buscar-musica (str/join " " args))
+                  (musica/buscar-musica))
+    "ban"       (moderacao/banir message)
+    "status"    (status/status-vm)
+    "quiz"      (quiz/jogar message (str/join " " args))
+    "ajuda"     (p/resolved texto-ajuda)
+    (p/resolved (str "❌ Por que invocou um comando que nem o próprio tio "
+                      config/bot-name " reconhece? Digite " config/prefix
+                      "ajuda e ilumine-se."))))
+
 (defn processar
   "Recebe a mensagem do whatsapp-web.js e retorna uma promise com a resposta
-  (string) a ser enviada, ou nil caso a mensagem não seja um comando."
+  (string) a ser enviada, ou nil caso a mensagem não seja um comando ou o
+  bot/comando esteja bloqueado nesse chat (ver zapbot.bloqueio)."
   [message]
   (let [texto (or (.-body message) "")]
     (when (comando? texto)
       (let [[cmd & args] (tokenizar texto)
-            cmd          (-> cmd remover-acentos str/lower-case)]
-        (case cmd
-          "piada"     (p/resolved (piadas/piada-aleatoria))
-          "curiosidade" (p/resolved (curiosidades/curiosidade-aleatoria))
-          "noticias"  (noticias/buscar-noticias)
-          "cotacao"   (if (seq args)
-                        (cotacao/buscar-cotacoes (map str/upper-case args))
-                        (cotacao/buscar-cotacoes))
-          ("previsao" "tempo" "clima") (if (seq args)
-                                          (previsao/buscar-previsao (str/join " " args))
-                                          (previsao/buscar-previsao))
-          "horoscopo" (horoscopo/buscar-horoscopo (if (seq args)
-                                                    (str/join " " args)
-                                                    (horoscopo/signo-aleatorio)))
-          "filme"     (if (seq args)
-                        (filme/buscar-filme message (str/join " " args))
-                        (filme/buscar-filme message))
-          "traduza"   (traduza/traduzir-frase (str/join " " args))
-          "resuma"    (resumo/resumir-chat message)
-          "pergunta"  (pergunta/perguntar message (str/join " " args))
-          "bola8"     (bola8/jogar message (str/join " " args))
-          "sorteio"   (sorteio/sortear message)
-          "velha"     (velha/jogar message (str/join " " args))
-          "naval"     (naval/jogar message (str/join " " args))
-          ("adedonha" "stop") (adedonha/jogar message (str/join " " args))
-          "musica"    (if (seq args)
-                        (musica/buscar-musica (str/join " " args))
-                        (musica/buscar-musica))
-          "ban"       (moderacao/banir message)
-          "status"    (status/status-vm)
-          "quiz"      (quiz/jogar message (str/join " " args))
-          "ajuda"     (p/resolved texto-ajuda)
-          (p/resolved (str "❌ Por que invocou um comando que nem o próprio tio "
-                            config/bot-name " reconhece? Digite " config/prefix
-                            "ajuda e ilumine-se.")))))))
+            cmd          (-> cmd remover-acentos str/lower-case)
+            cid          (bloqueio/chat-id message)]
+        (cond
+          (contains? #{"bloquear" "desbloquear"} cmd)
+          (bloqueio/processar-comando message cmd (str/join " " args))
+
+          (bloqueio/bot-bloqueado? cid)
+          nil
+
+          (bloqueio/comando-bloqueado? cid cmd)
+          (p/resolved (str "🔇 " config/prefix cmd " está bloqueado nesse chat. Peça a um "
+                            "admin para liberar com " config/prefix "desbloquear " cmd "."))
+
+          :else
+          (despachar message cmd args))))))
