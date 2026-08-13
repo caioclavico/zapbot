@@ -51,20 +51,25 @@
     (str "[" (apply str (repeat cheios "█")) (apply str (repeat (- 10 cheios) "░")) "] "
          (max 0 atual) "/" maximo)))
 
-(defn- mensagem-estado [{:keys [pokemons nomes vez hp]}]
-  (str "🐾 " (get nomes :x) " - *" (get-in pokemons [:x :nome]) "*\n"
+(defn- mensagem-estado [{:keys [pokemons nomes vez hp defendendo]}]
+  (str "🐾 " (get nomes :x) " - *" (get-in pokemons [:x :nome]) "*" (when (:x defendendo) " 🛡️") "\n"
        (barra-hp (get hp :x) (get-in pokemons [:x :hp])) "\n\n"
-       "🐾 " (get nomes :o) " - *" (get-in pokemons [:o :nome]) "*\n"
+       "🐾 " (get nomes :o) " - *" (get-in pokemons [:o :nome]) "*" (when (:o defendendo) " 🛡️") "\n"
        (barra-hp (get hp :o) (get-in pokemons [:o :hp])) "\n\n"
-       "Vez de " (get nomes vez) " - ataque com " config/prefix "pokemon atacar"))
+       "Vez de " (get nomes vez) " - ataque com " config/prefix "pokemon atacar ou defenda com "
+       config/prefix "pokemon defender"))
 
 (defn- outro [marca] (if (= marca :x) :o :x))
+
+(defn- chance-esquiva [pokemon]
+  (min 50 (quot (:veloc pokemon) 2)))
 
 (defn- criar-jogo [id nome pokemon]
   {:pokemons {:x pokemon}
    :jogadores {:x id}
    :nomes {:x nome}
    :hp {:x (:hp pokemon)}
+   :defendendo {:x false}
    :vez :x})
 
 (defn- legenda-pokemon [jogador-nome pokemon]
@@ -103,7 +108,8 @@
                                  (assoc-in [:jogadores :o] pid)
                                  (assoc-in [:nomes :o] nome)
                                  (assoc-in [:pokemons :o] pokemon)
-                                 (assoc-in [:hp :o] (:hp pokemon)))]
+                                 (assoc-in [:hp :o] (:hp pokemon))
+                                 (assoc-in [:defendendo :o] false))]
               (swap! jogos assoc cid jogo-novo)
               (enviar-imagem message (:imagem pokemon)
                               (str (cabecalho) (legenda-pokemon nome pokemon)
@@ -134,6 +140,31 @@
 (defn- calcular-dano [atacante defensor]
   (max 1 (+ (- (:ataque atacante) (quot (:defesa defensor) 2)) (rand-int 11))))
 
+(defn- defender-turno [message]
+  (let [cid  (chat-id message)
+        pid  (jogador-id message)
+        jogo (get @jogos cid)]
+    (p/resolved
+     (cond
+       (nil? jogo)
+       (str (cabecalho) "❓ Não tem batalha rolando. Digite " config/prefix "pokemon pra abrir uma.")
+
+       (not (contains? (:jogadores jogo) :o))
+       (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pokemon pra entrar.")
+
+       (not= pid (get-in jogo [:jogadores (:vez jogo)]))
+       (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo))
+
+       :else
+       (let [marca     (:vez jogo)
+             alvo      (outro marca)
+             pokemon   (get-in jogo [:pokemons marca])
+             jogo-novo (-> jogo (assoc-in [:defendendo marca] true) (assoc :vez alvo))]
+         (swap! jogos assoc cid jogo-novo)
+         (str (cabecalho) "🛡️ *" (:nome pokemon) "* entrou em posição defensiva ("
+              (chance-esquiva pokemon) "% de chance de esquivar do próximo ataque, dano reduzido "
+              "pela metade se não esquivar)!\n\n" (mensagem-estado jogo-novo)))))))
+
 (defn- atacar [message]
   (let [cid  (chat-id message)
         pid  (jogador-id message)
@@ -154,27 +185,47 @@
              alvo-marca     (outro atacante-marca)
              atacante       (get-in jogo [:pokemons atacante-marca])
              defensor       (get-in jogo [:pokemons alvo-marca])
-             dano           (calcular-dano atacante defensor)
+             defendendo?    (get-in jogo [:defendendo alvo-marca])
+             esquivou?      (and defendendo? (< (rand-int 100) (chance-esquiva defensor)))
+             dano-base      (calcular-dano atacante defensor)
+             dano           (cond esquivou? 0
+                                   defendendo? (max 1 (quot dano-base 2))
+                                   :else dano-base)
              hp-novo        (max 0 (- (get-in jogo [:hp alvo-marca]) dano))
-             jogo           (assoc-in jogo [:hp alvo-marca] hp-novo)]
+             jogo           (-> jogo
+                                 (assoc-in [:hp alvo-marca] hp-novo)
+                                 (assoc-in [:defendendo alvo-marca] false))
+             msg-ataque     (cond
+                              esquivou?
+                              (str "💨 *" (:nome defensor) "* esquivou completamente do ataque de *"
+                                   (:nome atacante) "*! Nenhum dano.")
+
+                              defendendo?
+                              (str "🛡️ *" (:nome atacante) "* atacou! *" (:nome defensor)
+                                   "* estava se defendendo e sofreu só " dano " de dano.")
+
+                              :else
+                              (str "💥 *" (:nome atacante) "* causou " dano " de dano em *"
+                                   (:nome defensor) "*!"))]
          (if (zero? hp-novo)
            (do (swap! jogos dissoc cid)
-               (str (cabecalho) "💥 *" (:nome atacante) "* causou " dano " de dano em *"
-                    (:nome defensor) "*!\n\n🏆 " (get-in jogo [:nomes atacante-marca])
+               (str (cabecalho) msg-ataque "\n\n🏆 " (get-in jogo [:nomes atacante-marca])
                     " venceu a batalha!"))
            (let [jogo-novo (assoc jogo :vez alvo-marca)]
              (swap! jogos assoc cid jogo-novo)
-             (str (cabecalho) "💥 *" (:nome atacante) "* causou " dano " de dano em *"
-                  (:nome defensor) "*!\n\n" (mensagem-estado jogo-novo)))))))))
+             (str (cabecalho) msg-ataque "\n\n" (mensagem-estado jogo-novo)))))))))
 
 (defn jogar
   "!pokemon sem argumento abre/entra numa batalha; !pokemon atacar ataca;
-  !pokemon sair cancela a batalha em andamento."
+  !pokemon defender entra em posição defensiva/evasiva; !pokemon sair
+  cancela a batalha em andamento."
   [message args]
   (let [args (str/trim (str/lower-case (or args "")))]
     (cond
       (str/blank? args) (iniciar-ou-entrar message)
       (= args "sair") (sair message)
       (contains? #{"atacar" "ataque" "atirar"} args) (atacar message)
+      (contains? #{"defender" "defesa" "esquivar" "evasiva"} args) (defender-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon (abrir/entrar), "
-                              config/prefix "pokemon atacar ou " config/prefix "pokemon sair.")))))
+                              config/prefix "pokemon atacar, " config/prefix "pokemon defender ou "
+                              config/prefix "pokemon sair.")))))
