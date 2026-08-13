@@ -159,10 +159,12 @@ nano .env   # ajuste PREFIX, ADMIN_NUMBERS etc. (PUPPETEER_EXECUTABLE_PATH já
 ### 4. Build e primeira execução (escanear o QR code)
 
 ```bash
+mkdir -p data
 docker build -t zapbot .
 docker run -it --name zapbot \
   --env-file .env \
   -v "$(pwd)/.wwebjs_auth:/app/.wwebjs_auth" \
+  -v "$(pwd)/data:/app/data" \
   zapbot
 ```
 
@@ -177,6 +179,7 @@ docker run -d --name zapbot \
   --restart unless-stopped \
   --env-file .env \
   -v "$(pwd)/.wwebjs_auth:/app/.wwebjs_auth" \
+  -v "$(pwd)/data:/app/data" \
   zapbot
 ```
 
@@ -215,7 +218,9 @@ src/zapbot/
 ├── core.cljs        ; conexão com o WhatsApp e ligação dos eventos
 ├── router.cljs       ; interpreta o texto das mensagens e escolhe o comando
 ├── config.cljs       ; leitura do .env
+├── armazenamento.cljs ; persistência simples em JSON (data/estado.json)
 ├── piadas.cljs        ; !piada
+├── curiosidades.cljs  ; !curiosidade
 ├── noticias.cljs      ; !noticias
 ├── cotacao.cljs       ; !cotacao
 ├── previsao.cljs      ; !previsao
@@ -223,15 +228,20 @@ src/zapbot/
 ├── filme.cljs         ; !filme
 ├── traduza.cljs       ; !traduza
 ├── resumo.cljs        ; !resuma
-├── gemini.cljs        ; wrapper da API Gemini (usado por !resuma e !pergunta)
+├── gemini.cljs        ; wrapper da API Gemini (usado por !resuma, !pergunta e !quiz)
 ├── pergunta.cljs      ; !pergunta
 ├── bola8.cljs        ; !bola8
 ├── historico.cljs     ; mensagens/participantes conhecidos (usado por !resuma e !sorteio)
 ├── sorteio.cljs       ; !sorteio
 ├── velha.cljs         ; !velha
+├── naval.cljs         ; !naval
+├── pokemon.cljs       ; !pokemon
+├── quiz.cljs          ; !quiz
 ├── adedonha.cljs      ; !adedonha
 ├── spotify.cljs       ; wrapper da API do Spotify (usado por !musica)
 ├── musica.cljs        ; !musica
+├── status.cljs        ; !status
+├── bloqueio.cljs      ; !bloquear / !desbloquear
 └── moderacao.cljs     ; !ban
 ```
 

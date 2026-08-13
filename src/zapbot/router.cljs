@@ -23,7 +23,8 @@
             [zapbot.status :as status]
             [zapbot.quiz :as quiz]
             [zapbot.bloqueio :as bloqueio]
-            [zapbot.pokemon :as pokemon]))
+            [zapbot.pokemon :as pokemon]
+            [zapbot.rank :as rank]))
 
 (def ^:private comandos
   [{:emoji "🤡" :uso "piada"              :desc "Conta uma piada aleatória"}
@@ -41,11 +42,12 @@
    {:emoji "⭕" :uso "velha [1-9|sair]"  :desc "Jogo da velha entre duas pessoas: abra/entre numa partida, jogue numa casa (1-9) ou saia"}
    {:emoji "�" :uso "naval [coordenada|sair]" :desc "Batalha naval entre duas pessoas: abra/entre numa partida e atire numa coordenada (ex.: C4) ou saia"}
    {:emoji "�🔤" :uso "adedonha [parar]" :desc "Sorteia uma letra e categorias pro grupo jogar STOP/adedonha (também funciona como !stop)"}
-   {:emoji "🎵" :uso "musica [genero]"   :desc "Indica uma música com link do Spotify (sem gênero, sorteia um)"}
+   {:emoji "🎵" :uso "musica [genero|generos]"   :desc "Indica uma música com link do Spotify (sem gênero, sorteia um; 'generos' lista sugestões)"}
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra o consumo de CPU, memória, disco e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
    {:emoji "⚡" :uso "pokemon [atacar|defender|sair]" :desc "Batalha Pokémon entre duas pessoas, com Pokémon sorteados via PokeAPI: abra/entre, ataque, defenda/esquive ou saia"}
+   {:emoji "🏆" :uso "rank"                :desc "Mostra o rank de pontos desse chat (vitórias em !velha, !naval, !pokemon e !quiz)"}
    {:emoji "🔇" :uso "bloquear [comando|tudo|listar]" :desc "(admin) Bloqueia um comando ou o bot inteiro nesse chat"}
    {:emoji "🔊" :uso "desbloquear [comando|tudo]" :desc "(admin) Libera um comando ou o bot inteiro nesse chat"}
    {:emoji "🪪" :uso "meuid"              :desc "Mostra seu ID do WhatsApp, pra colocar em ADMIN_NUMBERS no .env"}
@@ -71,7 +73,7 @@
 
 (defn- despachar [message cmd args]
   (case cmd
-    "piada"     (p/resolved (piadas/piada-aleatoria))
+    "piada"     (piadas/piada-aleatoria)
     "curiosidade" (p/resolved (curiosidades/curiosidade-aleatoria))
     "noticias"  (noticias/buscar-noticias)
     "cotacao"   (if (seq args)
@@ -101,6 +103,7 @@
     "status"    (status/status-vm)
     "quiz"      (quiz/jogar message (str/join " " args))
     "pokemon"   (pokemon/jogar message (str/join " " args))
+    "rank"      (p/resolved (rank/formatar-rank (bloqueio/chat-id message)))
     "meuid"     (p/resolved (str "🪪 Seu ID: " (or (.-author message) (.-from message))
                               "\n\nAdicione esse valor em ADMIN_NUMBERS no .env (separado por vírgula, "
                               "se já tiver outros) pra virar admin do bot."))

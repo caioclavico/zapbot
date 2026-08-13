@@ -2,15 +2,33 @@
   "Comandos !bloquear/!desbloquear - admins do grupo (ou números em
   ADMIN_NUMBERS) podem desligar o bot inteiro num chat, ou bloquear
   comandos específicos (ex.: !naval), sem precisar mexer no .env.
-  Estado em memória por chat (não sobrevive a reinício do bot)."
+  Estado persistido via zapbot.armazenamento (sobrevive a reinicios/deploys)."
   (:require [promesa.core :as p]
             [clojure.string :as str]
-            [zapbot.config :as config]))
+            [zapbot.config :as config]
+            [zapbot.armazenamento :as armazenamento]))
 
 ;; nunca podem ser bloqueados, pra nunca travar o chat sem saída
 (def ^:private protegidos #{"bloquear" "desbloquear"})
 
-(defonce ^:private estado (atom {}))
+(defn- carregar-estado []
+  (into {}
+        (map (fn [[cid info]]
+               [cid {:bot? (boolean (get info "bot?"))
+                     :comandos (set (get info "comandos"))}]))
+        (armazenamento/obter "bloqueio")))
+
+(defn- estado->persistivel [estado]
+  (into {}
+        (map (fn [[cid info]]
+               [cid {"bot?" (boolean (:bot? info))
+                     "comandos" (vec (:comandos info))}]))
+        estado))
+
+(defonce ^:private estado (atom (carregar-estado)))
+
+(defn- persistir! []
+  (armazenamento/salvar! "bloqueio" (estado->persistivel @estado)))
 
 (defn chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -52,15 +70,19 @@
 (defn- bloquear! [cid alvo]
   (if (= alvo "tudo")
     (do (swap! estado assoc-in [cid :bot?] true)
+        (persistir!)
         (str "🔇 Bot bloqueado nesse chat. Use " config/prefix "desbloquear para reativar."))
     (do (swap! estado update-in [cid :comandos] (fnil conj #{}) alvo)
+        (persistir!)
         (str "🔇 " config/prefix alvo " bloqueado nesse chat."))))
 
 (defn- desbloquear! [cid alvo]
   (if (= alvo "tudo")
     (do (swap! estado assoc-in [cid :bot?] false)
+        (persistir!)
         "🔊 Bot reativado nesse chat.")
     (do (swap! estado update-in [cid :comandos] (fnil disj #{}) alvo)
+        (persistir!)
         (str "🔊 " config/prefix alvo " liberado nesse chat."))))
 
 (defn processar-comando

@@ -5,7 +5,8 @@
   (:require [promesa.core :as p]
             [clojure.string :as str]
             ["whatsapp-web.js" :as wwjs]
-            [zapbot.config :as config]))
+            [zapbot.config :as config]
+            [zapbot.rank :as rank]))
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 
@@ -209,6 +210,8 @@
                                    (:nome defensor) "*!"))]
          (if (zero? hp-novo)
            (do (swap! jogos dissoc cid)
+               (rank/pontuar! cid (get-in jogo [:jogadores atacante-marca])
+                              (get-in jogo [:nomes atacante-marca]) "pokemon")
                (str (cabecalho) msg-ataque "\n\n🏆 " (get-in jogo [:nomes atacante-marca])
                     " venceu a batalha!"))
            (let [jogo-novo (assoc jogo :vez alvo-marca)]

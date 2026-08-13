@@ -1,10 +1,13 @@
 (ns zapbot.quiz
   "Comando !quiz - perguntas de múltipla escolha no chat.
-  Estado guardado em memória por chat (não sobrevive a reinício do bot)."
+  O histórico anti-repetição é persistido via zapbot.armazenamento (sobrevive
+  a reinícios/deploys); a pergunta pendente de cada chat fica só em memória."
   (:require [promesa.core :as p]
             [clojure.string :as str]
             [zapbot.config :as config]
-            [zapbot.gemini :as gemini]))
+            [zapbot.gemini :as gemini]
+            [zapbot.armazenamento :as armazenamento]
+            [zapbot.rank :as rank]))
 
 (def ^:private perguntas
   [{:pergunta "Qual é o maior planeta do sistema solar?"
@@ -83,14 +86,17 @@
 (defonce ^:private quizzes (atom {}))
 
 ;; últimas perguntas por chat, só pra pedir à IA (e evitar no banco estático)
-;; que não repita - não sobrevive a reinício do bot, igual ao resto do estado
-(defonce ^:private historico-perguntas (atom {}))
+;; que não repita - persistido, sobrevive a reinício/deploy do bot
+(defonce ^:private historico-perguntas (atom (or (armazenamento/obter "quiz-historico") {})))
 (def ^:private historico-max 12)
 
 (def ^:private letras ["a" "b" "c" "d"])
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
+
+(defn- jogador-id [message]
+  (or (.-author message) (.-from message)))
 
 (defn- nome-de [message]
   (-> (.getContact message)
@@ -115,7 +121,8 @@
 
 (defn- registrar-historico! [cid pergunta-texto]
   (swap! historico-perguntas update cid
-         (fn [hist] (vec (take-last historico-max (conj (vec hist) pergunta-texto))))))
+         (fn [hist] (vec (take-last historico-max (conj (vec hist) pergunta-texto)))))
+  (armazenamento/salvar! "quiz-historico" @historico-perguntas))
 
 (defn- pergunta-estatica-nao-repetida [cid]
   (let [ja-usadas (set (get @historico-perguntas cid))
@@ -196,6 +203,7 @@
       (= resposta (:correta quiz))
       (p/let [nome (nome-de message)]
         (swap! quizzes dissoc cid)
+        (rank/pontuar! cid (jogador-id message) nome "quiz")
         (str (cabecalho) "✅ *Certíssimo, " nome "!* A resposta era *"
              (str/upper-case (nth letras (:correta quiz))) ") " (nth (:opcoes quiz) (:correta quiz)) "*\n\n"
              "Quer outra? Manda " config/prefix "quiz de novo."))

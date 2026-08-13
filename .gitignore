@@ -3,6 +3,7 @@ target/
 .shadow-cljs/
 .wwebjs_auth/
 .wwebjs_cache/
+data/
 .env
 *.log
 .nrepl-port

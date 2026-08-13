@@ -7,7 +7,8 @@
   Estado guardado em memória por chat (não sobrevive a reinício do bot)."
   (:require [promesa.core :as p]
             [clojure.string :as str]
-            [zapbot.config :as config]))
+            [zapbot.config :as config]
+            [zapbot.rank :as rank]))
 
 (defonce ^:private jogos (atom {}))
 
@@ -195,6 +196,7 @@
 
            (and (= resultado :afundou) (every? :afundado? (:navios tabuleiro)))
            (do (swap! jogos dissoc cid)
+               (rank/pontuar! cid (get-in jogo [:jogadores atacante]) (get-in jogo [:nomes atacante]) "naval")
                (str (cabecalho) (desenhar-tabuleiro tabuleiro) "\n\n🏆 "
                     (get-in jogo [:nomes atacante]) " afundou a frota inteira e venceu!"))
 

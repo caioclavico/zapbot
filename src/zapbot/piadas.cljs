@@ -1,6 +1,10 @@
 (ns zapbot.piadas
-  "Comando !piada - piadas curtas em português."
-  (:require [zapbot.config :as config]))
+  "Comando !piada - piadas curtas em português. Gera uma piada nova via IA
+  (Gemini) quando configurado; senão (ou se a IA falhar), usa o banco estático."
+  (:require [promesa.core :as p]
+            [clojure.string :as str]
+            [zapbot.config :as config]
+            [zapbot.gemini :as gemini]))
 
 (def ^:private piadas
   ["Por que o livro de matemática se sentiu triste? Porque tinha muitos problemas."
@@ -31,7 +35,26 @@
    "O que o girassol disse pro sol? Nossa, você brilha muito, mas eu que dou as caras."
    "Por que a Terra terminou o namoro com o Sol? Porque ele precisava de espaço."])
 
+(defn- gerar-piada-ia []
+  (if (str/blank? config/gemini-api-key)
+    (p/resolved nil)
+    (-> (gemini/gerar-texto
+         (str "Conte uma piada curta e engaçada em português do Brasil, original "
+              "(evite piadas muito famosas/clichês), em 1 a 3 frases. Pode ser "
+              "trocadilho, piada de matemático, ciência, tecnologia ou humor bem "
+              "brasileiro. Responda só com o texto da piada, sem introdução, sem "
+              "aspas ao redor, sem explicar a piada depois."))
+        (p/then (fn [texto] (when-not (str/blank? texto) (str/trim texto))))
+        (p/catch (fn [err]
+                   (js/console.error "Erro ao gerar piada via IA:" err)
+                   nil)))))
+
 (defn piada-aleatoria
-  "Retorna uma piada aleatória da lista, com o cabeçalho de destaque."
+  "Retorna uma promise com uma piada: tenta gerar uma piada nova via IA e,
+  se não houver GEMINI_API_KEY configurada ou a IA falhar, cai no banco
+  estático de piadas prontas."
   []
-  (str "🤡 *Piada do tio " config/bot-name ":*\n\n" (rand-nth piadas)))
+  (p/let [piada-ia (gerar-piada-ia)]
+    (str "🤡 *Piada do tio " config/bot-name ":*\n\n" (or piada-ia (rand-nth piadas))
+         (when-not piada-ia
+           (str "\n\n_(banco local - configure GEMINI_API_KEY pra piadas sempre novas via IA)_")))))

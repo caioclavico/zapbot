@@ -3,7 +3,8 @@
   Estado guardado em memória por chat (não sobrevive a reinício do bot)."
   (:require [promesa.core :as p]
             [clojure.string :as str]
-            [zapbot.config :as config]))
+            [zapbot.config :as config]
+            [zapbot.rank :as rank]))
 
 (defonce ^:private jogos (atom {}))
 
@@ -122,6 +123,7 @@
          (cond
            venceu
            (do (swap! jogos dissoc cid)
+               (rank/pontuar! cid (get-in jogo [:jogadores venceu]) (get-in jogo [:nomes venceu]) "velha")
                (str (cabecalho) (desenhar tabuleiro) "\n\n🏆 "
                     (get-in jogo [:nomes venceu]) " (" (if (= venceu :x) "❌" "⭕") ") venceu!"))
 
