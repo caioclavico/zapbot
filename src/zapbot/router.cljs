@@ -48,8 +48,8 @@
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
    {:emoji "⚡" :uso "pokemon [atacar|defender|sair]" :desc "Batalha Pokémon entre duas pessoas, com Pokémon sorteados via PokeAPI: abra/entre, ataque, defenda/esquive ou saia"}
    {:emoji "🏆" :uso "rank"                :desc "Mostra o rank de pontos desse chat (vitórias em !velha, !naval, !pokemon e !quiz)"}
-   {:emoji "🔇" :uso "bloquear [comando|tudo|listar]" :desc "(admin) Bloqueia um comando ou o bot inteiro nesse chat"}
-   {:emoji "🔊" :uso "desbloquear [comando|tudo]" :desc "(admin) Libera um comando ou o bot inteiro nesse chat"}
+   {:emoji "🔇" :uso "bloquear [comando|jogos|tudo|listar]" :desc "(admin) Bloqueia um comando, todos os jogos ou o bot inteiro nesse chat"}
+   {:emoji "🔊" :uso "desbloquear [comando|jogos|tudo]" :desc "(admin) Libera um comando, todos os jogos ou o bot inteiro nesse chat"}
    {:emoji "🪪" :uso "meuid"              :desc "Mostra seu ID do WhatsApp, pra colocar em ADMIN_NUMBERS no .env"}
    {:emoji "❓" :uso "ajuda"              :desc "Mostra esta mensagem"}])
 

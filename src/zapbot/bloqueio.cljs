@@ -1,15 +1,20 @@
 (ns zapbot.bloqueio
   "Comandos !bloquear/!desbloquear - admins do grupo (ou números em
-  ADMIN_NUMBERS) podem desligar o bot inteiro num chat, ou bloquear
-  comandos específicos (ex.: !naval), sem precisar mexer no .env.
+  ADMIN_NUMBERS) podem desligar o bot inteiro num chat, bloquear
+  comandos específicos (ex.: !naval), ou todos os jogos de uma vez
+  (!bloquear jogos), sem precisar mexer no .env.
   Estado persistido via zapbot.armazenamento (sobrevive a reinicios/deploys)."
   (:require [promesa.core :as p]
             [clojure.string :as str]
+            [clojure.set :as set]
             [zapbot.config :as config]
             [zapbot.armazenamento :as armazenamento]))
 
 ;; nunca podem ser bloqueados, pra nunca travar o chat sem saída
 (def ^:private protegidos #{"bloquear" "desbloquear"})
+
+;; !bloquear jogos / !desbloquear jogos afeta todos de uma vez (inclui apelidos, ex.: stop)
+(def ^:private jogos-comandos #{"bola8" "sorteio" "velha" "naval" "adedonha" "stop" "quiz" "pokemon"})
 
 (defn- carregar-estado []
   (into {}
@@ -68,26 +73,43 @@
                                     "nenhum"))))
 
 (defn- bloquear! [cid alvo]
-  (if (= alvo "tudo")
+  (cond
+    (= alvo "tudo")
     (do (swap! estado assoc-in [cid :bot?] true)
         (persistir!)
         (str "🔇 Bot bloqueado nesse chat. Use " config/prefix "desbloquear para reativar."))
+
+    (= alvo "jogos")
+    (do (swap! estado update-in [cid :comandos] (fnil into #{}) jogos-comandos)
+        (persistir!)
+        "🔇 Todos os jogos foram bloqueados nesse chat.")
+
+    :else
     (do (swap! estado update-in [cid :comandos] (fnil conj #{}) alvo)
         (persistir!)
         (str "🔇 " config/prefix alvo " bloqueado nesse chat."))))
 
 (defn- desbloquear! [cid alvo]
-  (if (= alvo "tudo")
+  (cond
+    (= alvo "tudo")
     (do (swap! estado assoc-in [cid :bot?] false)
         (persistir!)
         "🔊 Bot reativado nesse chat.")
+
+    (= alvo "jogos")
+    (do (swap! estado update-in [cid :comandos] (fnil set/difference #{}) jogos-comandos)
+        (persistir!)
+        "🔊 Todos os jogos foram liberados nesse chat.")
+
+    :else
     (do (swap! estado update-in [cid :comandos] (fnil disj #{}) alvo)
         (persistir!)
         (str "🔊 " config/prefix alvo " liberado nesse chat."))))
 
 (defn processar-comando
   "cmd é \"bloquear\" ou \"desbloquear\"; args é o resto do texto (vazio ou
-  \"tudo\" = bot inteiro, \"listar\" = mostra o status, ou o nome de um comando)."
+  \"tudo\" = bot inteiro, \"jogos\" = todos os jogos de uma vez, \"listar\" =
+  mostra o status, ou o nome de um comando)."
   [message cmd args]
   (p/let [ok? (autorizado? message)]
     (let [cid (chat-id message)
