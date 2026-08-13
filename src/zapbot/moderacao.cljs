@@ -33,8 +33,7 @@
    (p/let [chat (.getChat message)]
      (if-not (.-isGroup chat)
        "⚠️ Esse comando só funciona em grupos."
-       (p/let [autor    (.getContact message)
-               autor-id (.. autor -id -_serialized)]
+       (let [autor-id (or (.-author message) (.-from message))]
          (cond
            (not (or (autorizado-por-config? autor-id) (admin? chat autor-id)))
            "🚫 Você precisa ser administrador do grupo para usar esse comando."

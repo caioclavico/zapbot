@@ -26,15 +26,14 @@
              (or (.-isAdmin p) (.-isSuperAdmin p)))))
 
 (defn- autorizado? [message]
-  (-> (p/let [autor    (.getContact message)
-              autor-id (.. autor -id -_serialized)]
-        (if (autorizado-por-config? autor-id)
-          true
-          (p/let [chat (.getChat message)]
+  (let [autor-id (or (.-author message) (.-from message))]
+    (if (autorizado-por-config? autor-id)
+      (p/resolved true)
+      (-> (p/let [chat (.getChat message)]
             (if (.-isGroup chat)
               (admin-do-grupo? chat autor-id)
-              false))))
-      (p/catch (fn [_] false))))
+              false))
+          (p/catch (fn [_] false))))))
 
 (defn bot-bloqueado? [cid]
   (boolean (get-in @estado [cid :bot?])))
