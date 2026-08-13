@@ -22,7 +22,8 @@
             [zapbot.moderacao :as moderacao]
             [zapbot.status :as status]
             [zapbot.quiz :as quiz]
-            [zapbot.bloqueio :as bloqueio]))
+            [zapbot.bloqueio :as bloqueio]
+            [zapbot.pokemon :as pokemon]))
 
 (def ^:private comandos
   [{:emoji "🤡" :uso "piada"              :desc "Conta uma piada aleatória"}
@@ -44,6 +45,7 @@
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra o consumo de CPU, memória, disco e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
+   {:emoji "⚡" :uso "pokemon [atacar|sair]" :desc "Batalha Pokémon entre duas pessoas, com Pokémon sorteados via PokeAPI: abra/entre, ataque ou saia"}
    {:emoji "🔇" :uso "bloquear [comando|tudo|listar]" :desc "(admin) Bloqueia um comando ou o bot inteiro nesse chat"}
    {:emoji "🔊" :uso "desbloquear [comando|tudo]" :desc "(admin) Libera um comando ou o bot inteiro nesse chat"}
    {:emoji "🪪" :uso "meuid"              :desc "Mostra seu ID do WhatsApp, pra colocar em ADMIN_NUMBERS no .env"}
@@ -98,6 +100,7 @@
     "ban"       (moderacao/banir message)
     "status"    (status/status-vm)
     "quiz"      (quiz/jogar message (str/join " " args))
+    "pokemon"   (pokemon/jogar message (str/join " " args))
     "meuid"     (p/resolved (str "🪪 Seu ID: " (or (.-author message) (.-from message))
                               "\n\nAdicione esse valor em ADMIN_NUMBERS no .env (separado por vírgula, "
                               "se já tiver outros) pra virar admin do bot."))
