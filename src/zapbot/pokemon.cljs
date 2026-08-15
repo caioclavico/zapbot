@@ -165,23 +165,51 @@
 (defn- menu-golpes [pokemon tipos-defesa habilidade-defensor]
   (str/join "\n" (map-indexed #(linha-golpe %1 %2 tipos-defesa habilidade-defensor) (:golpes pokemon))))
 
-;; ao sortear o 2º jogador, evita confrontos já decididos de cara pelo tipo:
-;; sorteia de novo (até um limite) se o confronto sair muito desequilibrado -
-;; imunidade total num dos lados, ou vantagem+desvantagem dobradas
-(def ^:private tentativas-balanceamento 5)
+;; ao sortear o 2º jogador, evita confrontos já decididos de cara: sorteia
+;; de novo (até um limite) se o tipo sair muito desequilibrado (imunidade
+;; total, ou vantagem+desvantagem de 4x) OU se o total de stats (já suavizado)
+;; de um lado for muito maior que o do outro (ex.: comum vs. lendário). As
+;; tentativas são baratas (só busca o pokemon, os golpes só são buscados no
+;; final, uma única vez - ver com-golpes), então pode tentar bastante.
+(def ^:private tentativas-balanceamento 15)
+(def ^:private limite-razao-poder 1.35)
+
+(defn- poder-total [pokemon]
+  (+ (:hp pokemon) (:ataque pokemon) (:defesa pokemon)
+     (:atq-esp pokemon) (:def-esp pokemon) (:veloc pokemon)))
+
+(defn- razao-poder [candidato oponente]
+  (let [p1 (poder-total candidato)
+        p2 (poder-total oponente)]
+    (/ (max p1 p2) (min p1 p2))))
 
 (defn- confronto-desequilibrado? [candidato oponente]
   (let [a-favor (melhor-multiplicador (:tipos candidato) (:tipos oponente) (:habilidade oponente))
         contra  (melhor-multiplicador (:tipos oponente) (:tipos candidato) (:habilidade candidato))]
-    (or (zero? a-favor) (zero? contra) (>= a-favor 4) (>= contra 4))))
+    (or (zero? a-favor) (zero? contra) (>= a-favor 4) (>= contra 4)
+        (> (razao-poder candidato oponente) limite-razao-poder))))
 
+;; Contra um oponente muito forte (ex.: um lendário), pode ser raro sortear
+;; algo comparável dentro do limite de tentativas - em vez de aceitar
+;; cegamente o último sorteio (tão aleatório quanto qualquer outro), guarda
+;; o melhor (menor razao-poder) visto até agora e usa ele se estourar o limite.
 (defn- sortear-pokemon-balanceado
-  ([oponente] (sortear-pokemon-balanceado oponente tentativas-balanceamento))
-  ([oponente tentativas-restantes]
+  ([oponente] (sortear-pokemon-balanceado oponente tentativas-balanceamento nil))
+  ([oponente tentativas-restantes melhor-ate-agora]
    (p/let [candidato (sortear-pokemon)]
-     (if (and (pos? tentativas-restantes) (confronto-desequilibrado? candidato oponente))
-       (sortear-pokemon-balanceado oponente (dec tentativas-restantes))
-       (com-golpes candidato)))))
+     (cond
+       (not (confronto-desequilibrado? candidato oponente))
+       (com-golpes candidato)
+
+       (zero? tentativas-restantes)
+       (com-golpes (or melhor-ate-agora candidato))
+
+       :else
+       (let [melhor (if (or (nil? melhor-ate-agora)
+                             (< (razao-poder candidato oponente) (razao-poder melhor-ate-agora oponente)))
+                       candidato
+                       melhor-ate-agora)]
+         (sortear-pokemon-balanceado oponente (dec tentativas-restantes) melhor))))))
 
 ;; chance de acerto crítico (dano x1.5), independente do golpe escolhido
 (def ^:private chance-critico 10)
