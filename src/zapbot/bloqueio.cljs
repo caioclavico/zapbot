@@ -8,7 +8,8 @@
             [clojure.string :as str]
             [clojure.set :as set]
             [zapbot.config :as config]
-            [zapbot.armazenamento :as armazenamento]))
+            [zapbot.armazenamento :as armazenamento]
+            [zapbot.admins :as admins]))
 
 ;; nunca podem ser bloqueados, pra nunca travar o chat sem saída
 (def ^:private protegidos #{"bloquear" "desbloquear"})
@@ -91,7 +92,8 @@
         (p/catch (fn [_] [autor-id])))))
 
 (defn- autorizado? [message]
-  (let [autor-id (or (.-author message) (.-from message))]
+  (let [autor-id (or (.-author message) (.-from message))
+        cid      (chat-id message)]
     (cond
       (autorizado-por-config? autor-id)
       (p/resolved true)
@@ -105,11 +107,14 @@
 
       :else
       (-> (p/let [chat (pegar-chat message)
-                  ids  (ids-da-pessoa message)]
-            (admin-do-grupo? chat ids))
+                  ids  (ids-da-pessoa message)
+                  ok?  (admin-do-grupo? chat ids)]
+            (when ok? (run! #(admins/lembrar-admin! cid %) ids))
+            ok?)
           (p/catch (fn [err]
-                     (js/console.error "bloqueio: erro ao verificar admin do grupo:" err)
-                     false))))))
+                     (js/console.error "bloqueio: erro ao verificar admin do grupo (usando cadastro conhecido como último recurso):" err)
+                     (p/let [ids (ids-da-pessoa message)]
+                       (admins/admin-conhecido? cid ids))))))))
 
 (defn bot-bloqueado? [cid]
   (boolean (get-in @estado [cid :bot?])))

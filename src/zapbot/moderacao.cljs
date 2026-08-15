@@ -3,7 +3,11 @@
   chamou o comando sejam administradores, ou que o número esteja em ADMIN_NUMBERS)."
   (:require [promesa.core :as p]
             [clojure.string :as str]
-            [zapbot.config :as config]))
+            [zapbot.config :as config]
+            [zapbot.admins :as admins]))
+
+(defn- chat-id [message]
+  (if (.-fromMe message) (.-to message) (.-from message)))
 
 (defn- autorizado-por-config? [serialized-id]
   (contains? config/admin-numbers serialized-id))
@@ -69,28 +73,32 @@
     (if alvo alvo (alvo-citado message))))
 
 (defn banir [message]
-  (p/catch
-   (p/let [chat (pegar-chat message)]
-     ;; não depende de chat.isGroup pra decidir isso (já vimos vir incorreto
-     ;; quando o modelo interno do WhatsApp Web não tem os metadados do
-     ;; grupo carregados ainda) - .-author só existe em mensagem de grupo
-     (if-not (.-author message)
-       "⚠️ Esse comando só funciona em grupos."
-       (p/let [autor-id (or (.-author message) (.-from message))
-               ids      (ids-da-pessoa message)]
-         (cond
-           (not (or (autorizado-por-config? autor-id) (admin? chat ids)))
-           "🚫 Você precisa ser administrador do grupo para usar esse comando."
+  (-> (p/let [chat (pegar-chat message)]
+        ;; não depende de chat.isGroup pra decidir isso (já vimos vir incorreto
+        ;; quando o modelo interno do WhatsApp Web não tem os metadados do
+        ;; grupo carregados ainda) - .-author só existe em mensagem de grupo
+        (if-not (.-author message)
+          "⚠️ Esse comando só funciona em grupos."
+          (p/let [autor-id (or (.-author message) (.-from message))
+                  ids      (ids-da-pessoa message)
+                  chamador-admin? (or (autorizado-por-config? autor-id) (admin? chat ids))]
+            (when chamador-admin? (run! #(admins/lembrar-admin! (chat-id message) %) ids))
+            (cond
+              (not chamador-admin?)
+              "🚫 Você precisa ser administrador do grupo para usar esse comando."
 
-           (not (admin? chat [(.. (.-client message) -info -wid -_serialized)]))
-           "🚫 Preciso ser administrador do grupo para poder remover alguém."
+              (not (admin? chat [(.. (.-client message) -info -wid -_serialized)]))
+              "🚫 Preciso ser administrador do grupo para poder remover alguém."
 
-           :else
-           (p/let [alvo (resolver-alvo message)]
-             (if-not alvo
-               "❓ Marque a pessoa (@numero) ou responda a mensagem dela junto com !ban."
-               (p/let [_ (.removeParticipants chat #js [alvo])]
-                 "✅ Pessoa removida do grupo.")))))))
-   (fn [err]
-     (js/console.error "Erro ao banir:" err)
-     "❌ Não consegui remover a pessoa. Verifique se sou administrador do grupo.")))
+              :else
+              (p/let [alvo (resolver-alvo message)]
+                (if-not alvo
+                  "❓ Marque a pessoa (@numero) ou responda a mensagem dela junto com !ban."
+                  (p/let [_ (.removeParticipants chat #js [alvo])]
+                    "✅ Pessoa removida do grupo.")))))))
+      (p/catch (fn [err]
+                 (js/console.error "Erro ao banir:" err)
+                 (p/let [ids (ids-da-pessoa message)]
+                   (if (admins/admin-conhecido? (chat-id message) ids)
+                     "⚠️ Você é um admin conhecido, mas não consegui acessar os dados do grupo agora pra remover a pessoa. Tente de novo em instantes."
+                     "❌ Não consegui remover a pessoa. Verifique se sou administrador do grupo."))))))

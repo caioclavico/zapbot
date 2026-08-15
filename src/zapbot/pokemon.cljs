@@ -269,8 +269,15 @@
 (defn- chance-esquiva [pokemon]
   (min 50 (quot (:veloc pokemon) 2)))
 
+;; a fórmula oficial de dano (a base do "42/50" abaixo) pressupõe um HP de
+;; Pokémon nível 100 de verdade, que escala muito com o nível; aqui o HP é
+;; só o stat base suavizado direto (sem nível), bem menor - por isso usa um
+;; fator bem menor, calibrado pra um golpe típico bater uns 10-20% do HP em
+;; vez de quase o HP inteiro de uma vez só.
+(def ^:private fator-dano 0.22)
+
 (defn- calcular-dano [poder-golpe poder-ataque poder-defesa]
-  (max 1 (+ (js/Math.round (/ (* 42 poder-golpe (/ poder-ataque poder-defesa)) 50)) (rand-int 11))))
+  (max 1 (+ (js/Math.round (* fator-dano poder-golpe (/ poder-ataque poder-defesa))) (rand-int 11))))
 
 (defn- paralisou-turno? [status]
   (and (= status :paralisado) (< (rand-int 100) chance-paralisia-trava)))

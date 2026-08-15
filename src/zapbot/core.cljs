@@ -5,6 +5,7 @@
             ["qrcode-terminal" :as qrcode]
             [zapbot.config :as config]
             [zapbot.historico :as historico]
+            [zapbot.admins :as admins]
             [zapbot.router :as router]))
 
 (def ^:private Client (.-Client wwjs))
@@ -30,6 +31,13 @@
       (p/then (fn [resposta] (when resposta (.reply message resposta))))
       (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" err)))))
 
+;; alimenta o cadastro de admins conhecidos (zapbot.admins) direto do evento
+;; do WhatsApp - não depende do getChatModel instável usado na checagem ao
+;; vivo (ver zapbot.bloqueio), então funciona mesmo em grupos onde aquele
+;; falha persistentemente.
+(defn- on-group-admin-changed [notification]
+  (admins/processar-evento-promocao! notification))
+
 (defn main [& _args]
   (let [puppeteer-opts (cond-> {:args #js ["--no-sandbox" "--disable-setuid-sandbox"
                                             ;; --disable-quic evita ERR_CONNECTION_CLOSED comum em redes
@@ -45,4 +53,5 @@
     ;; message_create cobre também mensagens enviadas pelo próprio número
     ;; conectado (fromMe), diferente de "message" (só mensagens recebidas).
     (.on client "message_create" on-message)
+    (.on client "group_admin_changed" on-group-admin-changed)
     (.initialize client)))
