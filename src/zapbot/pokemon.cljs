@@ -1,9 +1,11 @@
 (ns zapbot.pokemon
   "Comando !pokemon - batalha entre duas pessoas do chat, cada uma com um
-  Pokémon sorteado (nome, imagem e stats via PokeAPI - grátis, sem chave).
-  Ataques consideram vantagem de tipo, chance de crítico/especial, status
-  (paralisia/queimadura/veneno) e um punhado de habilidades icônicas.
-  Estado guardado em memória por chat (não sobrevive a reinício do bot)."
+  Pokémon sorteado (nome, imagem, golpes reais e stats via PokeAPI - grátis,
+  sem chave). Cada jogador escolhe qual dos 4 golpes do seu Pokémon usar a
+  cada turno; ataques consideram o tipo/poder/classe do golpe escolhido,
+  chance de crítico, status (paralisia/queimadura/veneno) e um punhado de
+  habilidades icônicas. Estado guardado em memória por chat (não sobrevive
+  a reinício do bot)."
   (:require [promesa.core :as p]
             [clojure.string :as str]
             ["whatsapp-web.js" :as wwjs]
@@ -42,26 +44,60 @@
 (defn- suavizar-stat [valor]
   (js/Math.round (+ media-stat-referencia (* fator-compressao-stat (- valor media-stat-referencia)))))
 
+(def ^:private golpe-padrao
+  {:nome-exibicao "Investida" :tipo "normal" :poder 40 :classe :fisico})
+
+(defn- buscar-golpe [nome]
+  (-> (p/let [res  (js/fetch (str "https://pokeapi.co/api/v2/move/" nome))
+              data (when (.-ok res) (.json res))]
+        (when data
+          (let [d      (js->clj data :keywordize-keys true)
+                classe (get-in d [:damage_class :name])]
+            (when (and (:power d) (contains? #{"physical" "special"} classe))
+              {:nome-exibicao (->> (str/split (:name d) #"-") (map str/capitalize) (str/join " "))
+               :tipo   (get-in d [:type :name])
+               :poder  (:power d)
+               :classe (if (= "physical" classe) :fisico :especial)}))))
+      (p/catch (fn [_] nil))))
+
+;; sorteia até 12 golpes do moveset real do Pokémon (via /move/<nome>, em
+;; paralelo) e fica só com os 4 primeiros que causam dano de verdade (ignora
+;; golpes de status, tipo Rugido, sem poder de ataque); se por azar/falha de
+;; rede nenhum vier, cai num golpe genérico só pra a batalha não travar
+(defn- escolher-golpes [moves-brutos]
+  (let [candidatos (->> moves-brutos (map #(get-in % [:move :name])) shuffle (take 12))]
+    (p/let [resultados (p/all (map buscar-golpe candidatos))]
+      (let [validos (->> resultados (remove nil?) (take 4) vec)]
+        (if (seq validos) validos [golpe-padrao])))))
+
+(defn- com-golpes [pokemon]
+  (p/let [golpes (escolher-golpes (:moves-brutos pokemon))]
+    (-> pokemon (dissoc :moves-brutos) (assoc :golpes golpes))))
+
 (defn- sortear-pokemon []
   (let [id (inc (rand-int total-pokemons))]
-    (-> (js/fetch (str "https://pokeapi.co/api/v2/pokemon/" id))
-        (p/then (fn [res] (.json res)))
-        (p/then (fn [data]
-                  (let [dados (js->clj data :keywordize-keys true)]
-                    {:nome       (str/capitalize (:name dados))
-                     :imagem     (or (get-in dados [:sprites :other :official-artwork :front_default])
-                                      (get-in dados [:sprites :front_default]))
-                     :tipos      (mapv #(get-in % [:type :name]) (:types dados))
-                     ;; prefere a habilidade "normal" (não-oculta); só cai pra
-                     ;; oculta se por algum motivo não houver nenhuma outra
-                     :habilidade (or (some #(when-not (:is_hidden %) (get-in % [:ability :name])) (:abilities dados))
-                                     (get-in (first (:abilities dados)) [:ability :name]))
-                     :hp         (suavizar-stat (stat-base dados "hp"))
-                     :ataque     (suavizar-stat (stat-base dados "attack"))
-                     :defesa     (suavizar-stat (stat-base dados "defense"))
-                     :atq-esp    (suavizar-stat (stat-base dados "special-attack"))
-                     :def-esp    (suavizar-stat (stat-base dados "special-defense"))
-                     :veloc      (suavizar-stat (stat-base dados "speed"))}))))))
+    (p/let [res  (js/fetch (str "https://pokeapi.co/api/v2/pokemon/" id))
+            data (.json res)]
+      (let [dados (js->clj data :keywordize-keys true)]
+        {:nome         (str/capitalize (:name dados))
+         :imagem       (or (get-in dados [:sprites :other :official-artwork :front_default])
+                            (get-in dados [:sprites :front_default]))
+         :tipos        (mapv #(get-in % [:type :name]) (:types dados))
+         ;; prefere a habilidade "normal" (não-oculta); só cai pra
+         ;; oculta se por algum motivo não houver nenhuma outra
+         :habilidade   (or (some #(when-not (:is_hidden %) (get-in % [:ability :name])) (:abilities dados))
+                            (get-in (first (:abilities dados)) [:ability :name]))
+         :moves-brutos (:moves dados)
+         :hp           (suavizar-stat (stat-base dados "hp"))
+         :ataque       (suavizar-stat (stat-base dados "attack"))
+         :defesa       (suavizar-stat (stat-base dados "defense"))
+         :atq-esp      (suavizar-stat (stat-base dados "special-attack"))
+         :def-esp      (suavizar-stat (stat-base dados "special-defense"))
+         :veloc        (suavizar-stat (stat-base dados "speed"))}))))
+
+(defn- sortear-pokemon-com-golpes []
+  (p/let [pokemon (sortear-pokemon)]
+    (com-golpes pokemon)))
 
 (defn- cabecalho []
   (str "⚡ *Batalha Pokémon do tio " config/bot-name "*\n\n"))
@@ -111,11 +147,23 @@
     (reduce * (map #(get-in tabela-tipos [tipo-ataque %] 1) tipos-defesa))))
 
 (defn- melhor-multiplicador
-  "Efetividade do ataque: usa o melhor dos tipos de quem ataca (o jogo não
-  tem seleção de golpe) contra todos os tipos de quem defende. Considera
-  Levitate (imunidade a golpes de Terra) como exceção à tabela normal."
+  "Efetividade de um confronto (não de um golpe específico): usa o melhor
+  dos tipos de quem ataca contra todos os tipos de quem defende - usado só
+  pra avaliar o sorteio (ver confronto-desequilibrado?), já que na batalha
+  em si cada golpe tem seu próprio tipo (ver multiplicador-vs-tipos)."
   [tipos-ataque tipos-defesa habilidade-defensor]
   (apply max (map #(multiplicador-vs-tipos % tipos-defesa habilidade-defensor) tipos-ataque)))
+
+(defn- emoji-golpe [golpe] (if (= :fisico (:classe golpe)) "💥" "🔮"))
+
+(defn- linha-golpe [idx golpe tipos-defesa habilidade-defensor]
+  (let [mult (multiplicador-vs-tipos (:tipo golpe) tipos-defesa habilidade-defensor)]
+    (str (inc idx) ". " (emoji-golpe golpe) " *" (:nome-exibicao golpe) "* ("
+         (get tipos-pt (:tipo golpe) (str/capitalize (:tipo golpe))) ", poder " (:poder golpe) ")"
+         (cond (zero? mult) " 🚫" (> mult 1) " 🔥" (< mult 1) " 😕" :else ""))))
+
+(defn- menu-golpes [pokemon tipos-defesa habilidade-defensor]
+  (str/join "\n" (map-indexed #(linha-golpe %1 %2 tipos-defesa habilidade-defensor) (:golpes pokemon))))
 
 ;; ao sortear o 2º jogador, evita confrontos já decididos de cara pelo tipo:
 ;; sorteia de novo (até um limite) se o confronto sair muito desequilibrado -
@@ -133,14 +181,11 @@
    (p/let [candidato (sortear-pokemon)]
      (if (and (pos? tentativas-restantes) (confronto-desequilibrado? candidato oponente))
        (sortear-pokemon-balanceado oponente (dec tentativas-restantes))
-       candidato))))
+       (com-golpes candidato)))))
 
-;; chance de qualquer ataque sair como especial (usa atq./def. especial em
-;; vez de ataque/defesa físicos) - decidida pelo jogo, não por quem ataca
-(def ^:private chance-especial 30)
-;; chance de acerto crítico (dano x1.5), independente de tipo/especial
+;; chance de acerto crítico (dano x1.5), independente do golpe escolhido
 (def ^:private chance-critico 10)
-;; chance de um ataque de tipo elegível (fogo/elétrico/venenoso) contagiar
+;; chance de um golpe de tipo elegível (fogo/elétrico/venenoso) contagiar
 ;; status no defensor, se ele ainda não tiver nenhum
 (def ^:private chance-contagio 20)
 ;; chance de a paralisia travar o turno de quem ia atacar
@@ -153,9 +198,6 @@
 
 (def ^:private habilidades-impulso-hp-baixo
   {"blaze" "fire" "torrent" "water" "overgrow" "grass"})
-
-(defn- descricao-ataque [especial?]
-  (if especial? "🔮 *ataque especial*" "💥 *ataque*"))
 
 (defn- texto-efetividade [multiplicador]
   (cond
@@ -172,44 +214,35 @@
     ""))
 
 (defn- impulso-habilidade
-  "Blaze/Torrent/Overgrow: +50% de dano quando o próprio tipo bate com a
-  habilidade e o HP atual já está a 1/3 ou menos do máximo."
-  [atacante hp-atual]
+  "Blaze/Torrent/Overgrow: +50% de dano quando o tipo do GOLPE escolhido bate
+  com a habilidade e o HP atual já está a 1/3 ou menos do máximo."
+  [atacante hp-atual tipo-golpe]
   (let [tipo-alvo (get habilidades-impulso-hp-baixo (:habilidade atacante))]
-    (if (and tipo-alvo
-             (contains? (set (:tipos atacante)) tipo-alvo)
-             (<= hp-atual (quot (:hp atacante) 3)))
+    (if (and tipo-alvo (= tipo-alvo tipo-golpe) (<= hp-atual (quot (:hp atacante) 3)))
       1.5
       1)))
 
 (defn- emoji-status [status]
   (case status :queimado " 🔥" :envenenado " ☠️" :paralisado " ⚡" ""))
 
-(defn- dica-tipo [{:keys [pokemons vez]}]
+(defn- mensagem-estado [{:keys [pokemons nomes vez hp defendendo status]}]
   (let [meu        (get pokemons vez)
-        adversario (get pokemons (outro vez))
-        mult       (melhor-multiplicador (:tipos meu) (:tipos adversario) (:habilidade adversario))]
-    (cond
-      (> mult 1) "\n💡 Seu tipo leva vantagem nesse confronto!"
-      (< mult 1) "\n💡 Seu tipo leva desvantagem nesse confronto..."
-      :else "")))
-
-(defn- mensagem-estado [{:keys [pokemons nomes vez hp defendendo status] :as jogo}]
-  (str "🐾 " (get nomes :x) " - *" (get-in pokemons [:x :nome]) "*" (when (:x defendendo) " 🛡️")
-       (emoji-status (:x status)) "\n"
-       (barra-hp (get hp :x) (get-in pokemons [:x :hp])) "\n\n"
-       "🐾 " (get nomes :o) " - *" (get-in pokemons [:o :nome]) "*" (when (:o defendendo) " 🛡️")
-       (emoji-status (:o status)) "\n"
-       (barra-hp (get hp :o) (get-in pokemons [:o :hp])) "\n\n"
-       "Vez de " (get nomes vez) " - ataque com " config/prefix "pokemon atacar ou defenda com "
-       config/prefix "pokemon defender"
-       (dica-tipo jogo)))
+        adversario (get pokemons (outro vez))]
+    (str "🐾 " (get nomes :x) " - *" (get-in pokemons [:x :nome]) "*" (when (:x defendendo) " 🛡️")
+         (emoji-status (:x status)) "\n"
+         (barra-hp (get hp :x) (get-in pokemons [:x :hp])) "\n\n"
+         "🐾 " (get nomes :o) " - *" (get-in pokemons [:o :nome]) "*" (when (:o defendendo) " 🛡️")
+         (emoji-status (:o status)) "\n"
+         (barra-hp (get hp :o) (get-in pokemons [:o :hp])) "\n\n"
+         "Vez de " (get nomes vez) " - escolha um golpe:\n"
+         (menu-golpes meu (:tipos adversario) (:habilidade adversario))
+         "\n\nUse " config/prefix "pokemon atacar <número>, ou defenda com " config/prefix "pokemon defender")))
 
 (defn- chance-esquiva [pokemon]
   (min 50 (quot (:veloc pokemon) 2)))
 
-(defn- calcular-dano [poder-ataque poder-defesa]
-  (max 1 (+ (- poder-ataque (quot poder-defesa 2)) (rand-int 11))))
+(defn- calcular-dano [poder-golpe poder-ataque poder-defesa]
+  (max 1 (+ (js/Math.round (/ (* 42 poder-golpe (/ poder-ataque poder-defesa)) 50)) (rand-int 11))))
 
 (defn- paralisou-turno? [status]
   (and (= status :paralisado) (< (rand-int 100) chance-paralisia-trava)))
@@ -220,9 +253,9 @@
     :envenenado (max 1 (quot hp-maximo 8))
     0))
 
-(defn- tentar-contagiar [tipos-ataque status-atual-defensor]
+(defn- tentar-contagiar [tipo-golpe status-atual-defensor]
   (when (and (nil? status-atual-defensor) (< (rand-int 100) chance-contagio))
-    (some tipo->status tipos-ataque)))
+    (get tipo->status tipo-golpe)))
 
 (defn- msg-status-aplicado [status nome]
   (case status
@@ -273,37 +306,38 @@
   (rank/pontuar! cid (get-in jogo [:jogadores vencedor-marca]) (get-in jogo [:nomes vencedor-marca]) "pokemon")
   (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "!"))
 
-(defn- resolver-ataque [atacante defensor defendendo? hp-atacante-atual]
+(defn- resolver-ataque [golpe atacante defensor defendendo? hp-atacante-atual]
   (let [esquivou?     (and defendendo? (< (rand-int 100) (chance-esquiva defensor)))
-        especial?     (< (rand-int 100) chance-especial)
-        poder-ataque  (if especial? (:atq-esp atacante) (:ataque atacante))
-        poder-defesa  (if especial? (:def-esp defensor) (:defesa defensor))
-        multiplicador (melhor-multiplicador (:tipos atacante) (:tipos defensor) (:habilidade defensor))
+        fisico?       (= :fisico (:classe golpe))
+        poder-ataque  (if fisico? (:ataque atacante) (:atq-esp atacante))
+        poder-defesa  (if fisico? (:defesa defensor) (:def-esp defensor))
+        multiplicador (multiplicador-vs-tipos (:tipo golpe) (:tipos defensor) (:habilidade defensor))
         critico?      (< (rand-int 100) chance-critico)
-        impulso       (impulso-habilidade atacante hp-atacante-atual)
+        impulso       (impulso-habilidade atacante hp-atacante-atual (:tipo golpe))
         fator         (* multiplicador impulso (if critico? 1.5 1))
-        dano-com-tudo (* fator (calcular-dano poder-ataque poder-defesa))
+        dano-com-tudo (* fator (calcular-dano (:poder golpe) poder-ataque poder-defesa))
         dano          (cond esquivou?             0
                              (zero? dano-com-tudo) 0
                              defendendo?           (max 1 (js/Math.round (/ dano-com-tudo 2)))
                              :else                 (max 1 (js/Math.round dano-com-tudo)))
+        nome-golpe    (str (emoji-golpe golpe) " *" (:nome-exibicao golpe) "*")
         sufixo        (str (texto-efetividade multiplicador) (texto-critico critico?)
                             (texto-impulso impulso (:habilidade atacante)))
         mensagem      (cond
                         esquivou?
-                        (str "💨 *" (:nome defensor) "* esquivou completamente do " (descricao-ataque especial?)
+                        (str "💨 *" (:nome defensor) "* esquivou completamente de " nome-golpe
                              " de *" (:nome atacante) "*! Nenhum dano.")
 
                         (zero? dano)
-                        (str (descricao-ataque especial?) " de *" (:nome atacante) "* não teve efeito em *"
+                        (str nome-golpe " de *" (:nome atacante) "* não teve efeito em *"
                              (:nome defensor) "*! 🚫")
 
                         defendendo?
-                        (str (descricao-ataque especial?) " de *" (:nome atacante) "*! *" (:nome defensor)
+                        (str nome-golpe " de *" (:nome atacante) "*! *" (:nome defensor)
                              "* estava se defendendo e sofreu só " dano " de dano." sufixo)
 
                         :else
-                        (str (descricao-ataque especial?) " de *" (:nome atacante) "* causou " dano
+                        (str nome-golpe " de *" (:nome atacante) "* causou " dano
                              " de dano em *" (:nome defensor) "*!" sufixo))]
     {:dano dano :mensagem mensagem}))
 
@@ -320,7 +354,8 @@
   (str jogador-nome " entrou com *" (:nome pokemon) "* (" (formatar-tipos (:tipos pokemon)) ")!\n"
        "❤️ HP: " (:hp pokemon) " | ⚔️ Ataque: " (:ataque pokemon) " | 🛡️ Defesa: " (:defesa pokemon) "\n"
        "🔮 Atq. Especial: " (:atq-esp pokemon) " | 🌀 Def. Especial: " (:def-esp pokemon)
-       " | 💨 Velocidade: " (:veloc pokemon)))
+       " | 💨 Velocidade: " (:veloc pokemon) "\n"
+       "🎯 Golpes: " (str/join ", " (map :nome-exibicao (:golpes pokemon)))))
 
 (defn- enviar-imagem [message url legenda]
   (if url
@@ -368,7 +403,7 @@
 
       :else
       (-> (p/let [nome    (nome-de message)
-                  pokemon (sortear-pokemon)]
+                  pokemon (sortear-pokemon-com-golpes)]
             (let [jogo-novo (criar-jogo pid nome pokemon)]
               (swap! jogos assoc cid jogo-novo)
               (enviar-imagem message (:imagem pokemon)
@@ -424,7 +459,12 @@
               (chance-esquiva pokemon) "% de chance de esquivar do próximo ataque, dano reduzido "
               "pela metade se não esquivar)!\n\n" (mensagem-estado jogo-novo)))))))
 
-(defn- atacar [message]
+(defn- parse-indice-golpe [texto total]
+  (let [n (js/parseInt texto 10)]
+    (when (and (not (js/isNaN n)) (<= 1 n total))
+      (dec n))))
+
+(defn- atacar [message indice-texto]
   (let [cid  (chat-id message)
         pid  (jogador-id message)
         jogo (get @jogos cid)]
@@ -444,8 +484,14 @@
              alvo-marca      (outro atacante-marca)
              atacante        (get-in jogo [:pokemons atacante-marca])
              defensor        (get-in jogo [:pokemons alvo-marca])
-             status-atacante (get-in jogo [:status atacante-marca])]
-         (if (paralisou-turno? status-atacante)
+             status-atacante (get-in jogo [:status atacante-marca])
+             indice          (parse-indice-golpe indice-texto (count (:golpes atacante)))]
+         (cond
+           (nil? indice)
+           (str (cabecalho) "❓ Escolha um golpe válido: " config/prefix "pokemon atacar <1-"
+                (count (:golpes atacante)) ">\n\n" (mensagem-estado jogo))
+
+           (paralisou-turno? status-atacante)
            (let [[jogo dot]  (aplicar-dot jogo atacante-marca)
                  hp-atacante (get-in jogo [:hp atacante-marca])
                  msg         (str "⚡ *" (:nome atacante) "* está paralisado e não conseguiu atacar!"
@@ -456,14 +502,16 @@
                  (swap! jogos assoc cid jogo-novo)
                  (str (cabecalho) msg "\n\n" (mensagem-estado jogo-novo)))))
 
-           (let [defendendo?           (get-in jogo [:defendendo alvo-marca])
-                 {:keys [dano mensagem]} (resolver-ataque atacante defensor defendendo?
+           :else
+           (let [golpe                   (nth (:golpes atacante) indice)
+                 defendendo?             (get-in jogo [:defendendo alvo-marca])
+                 {:keys [dano mensagem]} (resolver-ataque golpe atacante defensor defendendo?
                                                            (get-in jogo [:hp atacante-marca]))
                  jogo (update-in jogo [:hp alvo-marca] #(max 0 (- % dano)))]
              (if (zero? (get-in jogo [:hp alvo-marca]))
                (str (cabecalho) mensagem (anunciar-vitoria cid jogo atacante-marca " a batalha"))
                (let [status-defensor-atual (get-in jogo [:status alvo-marca])
-                     novo-status           (when (pos? dano) (tentar-contagiar (:tipos atacante) status-defensor-atual))
+                     novo-status           (when (pos? dano) (tentar-contagiar (:tipo golpe) status-defensor-atual))
                      jogo                  (cond-> jogo novo-status (assoc-in [:status alvo-marca] novo-status))
                      [jogo dot]            (aplicar-dot jogo atacante-marca)
                      msg-extra             (str (when novo-status (msg-status-aplicado novo-status (:nome defensor)))
@@ -478,18 +526,21 @@
                      (str (cabecalho) mensagem msg-extra "\n\n" (mensagem-estado jogo-novo)))))))))))))
 
 (defn jogar
-  "!pokemon sem argumento abre/entra numa batalha; !pokemon atacar ataca;
-  !pokemon defender entra em posição defensiva/evasiva; !pokemon sair
-  cancela (se só um jogador entrou ainda) ou desiste - contando a vitória
-  pro adversário - se a batalha já tiver os 2 jogadores."
+  "!pokemon sem argumento abre/entra numa batalha; !pokemon atacar <1-4>
+  usa o golpe correspondente (ver o menu de golpes em cada mensagem de
+  estado); !pokemon defender entra em posição defensiva/evasiva; !pokemon
+  sair cancela (se só um jogador entrou ainda) ou desiste - contando a
+  vitória pro adversário - se a batalha já tiver os 2 jogadores."
   [message args]
-  (let [args (str/trim (str/lower-case (or args "")))]
+  (let [args         (str/trim (str/lower-case (or args "")))
+        [cmd & resto] (str/split args #"\s+")]
     (cond
       (str/blank? args) (iniciar-ou-entrar message)
-      (= args "sair") (sair message)
-      (contains? #{"atacar" "ataque" "atirar"} args) (atacar message)
-      (contains? #{"defender" "defesa" "esquivar" "evasiva"} args) (defender-turno message)
+      (= cmd "sair") (sair message)
+      (contains? #{"atacar" "ataque" "atirar" "usar"} cmd) (atacar message (first resto))
+      (contains? #{"defender" "defesa" "esquivar" "evasiva"} cmd) (defender-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon (abrir/entrar), "
-                              config/prefix "pokemon atacar, " config/prefix "pokemon defender ou "
+                              config/prefix "pokemon atacar <1-4>, " config/prefix "pokemon defender ou "
                               config/prefix "pokemon sair.")))))
+
 

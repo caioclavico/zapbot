@@ -47,7 +47,7 @@
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra o consumo de CPU, memória, disco e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
-   {:emoji "⚡" :uso "pokemon [atacar|defender|sair]" :desc "Batalha Pokémon entre duas pessoas, com Pokémon sorteados via PokeAPI: abra/entre, ataque, defenda/esquive ou saia"}
+   {:emoji "⚡" :uso "pokemon [atacar <1-4>|defender|sair]" :desc "Batalha Pokémon entre duas pessoas, com Pokémon e golpes reais sorteados via PokeAPI: abra/entre, escolha um golpe pra atacar, defenda/esquive ou saia"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
    {:emoji "🏆" :uso "rank"                :desc "Mostra o rank de pontos desse chat (vitórias em !velha, !naval, !pokemon e !quiz)"}
    {:emoji "🔇" :uso "bloquear [comando|jogos|tudo|listar]" :desc "(admin) Bloqueia um comando, todos os jogos ou o bot inteiro nesse chat"}
