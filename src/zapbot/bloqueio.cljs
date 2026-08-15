@@ -44,17 +44,34 @@
 (defn- participante [chat serialized-id]
   (first (filter #(= (.. % -id -_serialized) serialized-id) (.-participants chat))))
 
-(defn- admin-do-grupo? [chat serialized-id]
-  (boolean (when-let [p (participante chat serialized-id)]
-             (or (.-isAdmin p) (.-isSuperAdmin p)))))
+;; WhatsApp às vezes reporta IDs diferentes pra mesma pessoa dependendo do
+;; caminho de resolução (rollout do formato @lid vs @c.us - já vimos isso
+;; quebrar a comparação com ADMIN_NUMBERS, ver nota de 2026-08-12); aqui o
+;; mesmo pode acontecer entre o id da mensagem e o id salvo na lista de
+;; participantes do grupo, então tenta todos os ids conhecidos da pessoa
+;; antes de desistir.
+(defn- admin-do-grupo? [chat ids]
+  (if-let [p (some #(participante chat %) ids)]
+    (boolean (or (.-isAdmin p) (.-isSuperAdmin p)))
+    (do (js/console.warn "bloqueio: nenhum participante do grupo bateu com os ids" (pr-str ids)
+                          "- participantes no chat:" (count (.-participants chat)))
+        false)))
+
+(defn- ids-da-pessoa [message]
+  (let [autor-id (or (.-author message) (.-from message))]
+    (-> (p/let [contato (.getContact message)]
+          (let [contato-id (.. contato -id -_serialized)]
+            (distinct [autor-id contato-id])))
+        (p/catch (fn [_] [autor-id])))))
 
 (defn- autorizado? [message]
   (let [autor-id (or (.-author message) (.-from message))]
     (if (autorizado-por-config? autor-id)
       (p/resolved true)
-      (-> (p/let [chat (.getChat message)]
+      (-> (p/let [chat (.getChat message)
+                  ids  (ids-da-pessoa message)]
             (if (.-isGroup chat)
-              (admin-do-grupo? chat autor-id)
+              (admin-do-grupo? chat ids)
               false))
           (p/catch (fn [_] false))))))
 
