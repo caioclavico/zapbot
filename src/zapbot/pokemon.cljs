@@ -361,11 +361,25 @@
                      (str (cabecalho) "❌ Não consegui buscar um Pokémon agora (PokeAPI fora do ar?). Tente de novo.")))))))
 
 (defn- sair [message]
-  (let [cid (chat-id message)]
-    (if (get @jogos cid)
+  (let [cid  (chat-id message)
+        pid  (jogador-id message)
+        jogo (get @jogos cid)]
+    (cond
+      (nil? jogo)
+      (p/resolved (str (cabecalho) "❓ Não tem nenhuma batalha rolando nesse chat."))
+
+      ;; ainda não tem os 2 jogadores - cancela sem custo, não há adversário a beneficiar
+      (not (contains? (:jogadores jogo) :o))
       (do (swap! jogos dissoc cid)
           (p/resolved (str (cabecalho) "🚪 Batalha cancelada.")))
-      (p/resolved (str (cabecalho) "❓ Não tem nenhuma batalha rolando nesse chat.")))))
+
+      :else
+      (let [marca-saiu (some #(when (= pid (get-in jogo [:jogadores %])) %) [:x :o])]
+        (p/resolved
+         (if (nil? marca-saiu)
+           (str (cabecalho) "❓ Você não faz parte dessa batalha (só quem está jogando pode sair dela).")
+           (str (cabecalho) "🚪 *" (get-in jogo [:nomes marca-saiu]) "* fugiu da batalha!"
+                (anunciar-vitoria cid jogo (outro marca-saiu) " por desistência"))))))))
 
 (defn- defender-turno [message]
   (let [cid  (chat-id message)
@@ -448,7 +462,8 @@
 (defn jogar
   "!pokemon sem argumento abre/entra numa batalha; !pokemon atacar ataca;
   !pokemon defender entra em posição defensiva/evasiva; !pokemon sair
-  cancela a batalha em andamento."
+  cancela (se só um jogador entrou ainda) ou desiste - contando a vitória
+  pro adversário - se a batalha já tiver os 2 jogadores."
   [message args]
   (let [args (str/trim (str/lower-case (or args "")))]
     (cond
