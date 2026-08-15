@@ -8,6 +8,24 @@
 (defn- autorizado-por-config? [serialized-id]
   (contains? config/admin-numbers serialized-id))
 
+(defn- esperar [ms]
+  (p/create (fn [resolve _] (js/setTimeout resolve ms))))
+
+;; message.getChat() (e chat.participants) usa um serializador interno do
+;; WhatsApp Web conhecido por falhar esporadicamente com um erro genérico
+;; "r: r" (já documentado em zapbot.historico) - confirmado em produção
+;; (docker logs) que é exatamente isso que está impedindo admins reais de
+;; serem reconhecidos. Tenta de novo algumas vezes antes de desistir.
+(defn- pegar-chat
+  ([message] (pegar-chat message 3))
+  ([message tentativas-restantes]
+   (-> (.getChat message)
+       (p/catch (fn [err]
+                  (if (pos? tentativas-restantes)
+                    (-> (esperar 400)
+                        (p/then #(pegar-chat message (dec tentativas-restantes))))
+                    (p/rejected err)))))))
+
 (defn- so-usuario [serialized-id]
   (first (str/split (or serialized-id "") #"@")))
 
@@ -52,7 +70,7 @@
 
 (defn banir [message]
   (p/catch
-   (p/let [chat (.getChat message)]
+   (p/let [chat (pegar-chat message)]
      ;; não depende de chat.isGroup pra decidir isso (já vimos vir incorreto
      ;; quando o modelo interno do WhatsApp Web não tem os metadados do
      ;; grupo carregados ainda) - .-author só existe em mensagem de grupo
