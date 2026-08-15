@@ -117,6 +117,24 @@
   [tipos-ataque tipos-defesa habilidade-defensor]
   (apply max (map #(multiplicador-vs-tipos % tipos-defesa habilidade-defensor) tipos-ataque)))
 
+;; ao sortear o 2º jogador, evita confrontos já decididos de cara pelo tipo:
+;; sorteia de novo (até um limite) se o confronto sair muito desequilibrado -
+;; imunidade total num dos lados, ou vantagem+desvantagem dobradas
+(def ^:private tentativas-balanceamento 5)
+
+(defn- confronto-desequilibrado? [candidato oponente]
+  (let [a-favor (melhor-multiplicador (:tipos candidato) (:tipos oponente) (:habilidade oponente))
+        contra  (melhor-multiplicador (:tipos oponente) (:tipos candidato) (:habilidade candidato))]
+    (or (zero? a-favor) (zero? contra) (>= a-favor 4) (>= contra 4))))
+
+(defn- sortear-pokemon-balanceado
+  ([oponente] (sortear-pokemon-balanceado oponente tentativas-balanceamento))
+  ([oponente tentativas-restantes]
+   (p/let [candidato (sortear-pokemon)]
+     (if (and (pos? tentativas-restantes) (confronto-desequilibrado? candidato oponente))
+       (sortear-pokemon-balanceado oponente (dec tentativas-restantes))
+       candidato))))
+
 ;; chance de qualquer ataque sair como especial (usa atq./def. especial em
 ;; vez de ataque/defesa físicos) - decidida pelo jogo, não por quem ataca
 (def ^:private chance-especial 30)
@@ -330,7 +348,7 @@
 
       jogo-atual
       (-> (p/let [nome    (nome-de message)
-                  pokemon (sortear-pokemon)]
+                  pokemon (sortear-pokemon-balanceado (get-in jogo-atual [:pokemons :x]))]
             (let [jogo-pre (-> jogo-atual
                                 (assoc-in [:jogadores :o] pid)
                                 (assoc-in [:nomes :o] nome)
