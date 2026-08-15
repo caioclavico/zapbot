@@ -2,13 +2,21 @@
   "Comando !ban - remove um participante do grupo (requer que o bot e quem
   chamou o comando sejam administradores, ou que o número esteja em ADMIN_NUMBERS)."
   (:require [promesa.core :as p]
+            [clojure.string :as str]
             [zapbot.config :as config]))
 
 (defn- autorizado-por-config? [serialized-id]
   (contains? config/admin-numbers serialized-id))
 
+(defn- so-usuario [serialized-id]
+  (first (str/split (or serialized-id "") #"@")))
+
 (defn- participante [chat serialized-id]
-  (first (filter #(= (.. % -id -_serialized) serialized-id) (.-participants chat))))
+  (or (first (filter #(= (.. % -id -_serialized) serialized-id) (.-participants chat)))
+      ;; fallback: às vezes só um dos dois lados normaliza pro formato
+      ;; "user@lid" vs "user@c.us" (rollout do LID) - compara só a parte
+      ;; antes do "@" (o número/id em si) como último recurso
+      (first (filter #(= (.-user (.-id %)) (so-usuario serialized-id)) (.-participants chat)))))
 
 ;; WhatsApp às vezes reporta IDs diferentes pra mesma pessoa dependendo do
 ;; caminho de resolução (rollout do formato @lid vs @c.us); tenta todos os
@@ -17,7 +25,8 @@
   (if-let [p (some #(participante chat %) ids)]
     (boolean (or (.-isAdmin p) (.-isSuperAdmin p)))
     (do (js/console.warn "moderacao: nenhum participante do grupo bateu com os ids" (pr-str ids)
-                          "- participantes no chat:" (count (.-participants chat)))
+                          "- participantes no chat:" (count (.-participants chat))
+                          "- chat.isGroup:" (.-isGroup chat))
         false)))
 
 (defn- ids-da-pessoa [message]
@@ -44,7 +53,10 @@
 (defn banir [message]
   (p/catch
    (p/let [chat (.getChat message)]
-     (if-not (.-isGroup chat)
+     ;; não depende de chat.isGroup pra decidir isso (já vimos vir incorreto
+     ;; quando o modelo interno do WhatsApp Web não tem os metadados do
+     ;; grupo carregados ainda) - .-author só existe em mensagem de grupo
+     (if-not (.-author message)
        "⚠️ Esse comando só funciona em grupos."
        (p/let [autor-id (or (.-author message) (.-from message))
                ids      (ids-da-pessoa message)]

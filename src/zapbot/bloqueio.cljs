@@ -41,8 +41,15 @@
 (defn- autorizado-por-config? [serialized-id]
   (contains? config/admin-numbers serialized-id))
 
+(defn- so-usuario [serialized-id]
+  (first (str/split (or serialized-id "") #"@")))
+
 (defn- participante [chat serialized-id]
-  (first (filter #(= (.. % -id -_serialized) serialized-id) (.-participants chat))))
+  (or (first (filter #(= (.. % -id -_serialized) serialized-id) (.-participants chat)))
+      ;; fallback: às vezes só um dos dois lados normaliza pro formato
+      ;; "user@lid" vs "user@c.us" (rollout do LID) - compara só a parte
+      ;; antes do "@" (o número/id em si) como último recurso
+      (first (filter #(= (.-user (.-id %)) (so-usuario serialized-id)) (.-participants chat)))))
 
 ;; WhatsApp às vezes reporta IDs diferentes pra mesma pessoa dependendo do
 ;; caminho de resolução (rollout do formato @lid vs @c.us - já vimos isso
@@ -54,7 +61,8 @@
   (if-let [p (some #(participante chat %) ids)]
     (boolean (or (.-isAdmin p) (.-isSuperAdmin p)))
     (do (js/console.warn "bloqueio: nenhum participante do grupo bateu com os ids" (pr-str ids)
-                          "- participantes no chat:" (count (.-participants chat)))
+                          "- participantes no chat:" (count (.-participants chat))
+                          "- chat.isGroup:" (.-isGroup chat))
         false)))
 
 (defn- ids-da-pessoa [message]
@@ -66,14 +74,24 @@
 
 (defn- autorizado? [message]
   (let [autor-id (or (.-author message) (.-from message))]
-    (if (autorizado-por-config? autor-id)
+    (cond
+      (autorizado-por-config? autor-id)
       (p/resolved true)
+
+      ;; sem .-author = mensagem direta (fora de grupo) - não tem "admin do
+      ;; grupo" aqui; não depende de chat.isGroup, que já vimos vir
+      ;; incorreto quando o modelo interno do WhatsApp Web não tem os
+      ;; metadados do grupo carregados ainda
+      (nil? (.-author message))
+      (p/resolved false)
+
+      :else
       (-> (p/let [chat (.getChat message)
                   ids  (ids-da-pessoa message)]
-            (if (.-isGroup chat)
-              (admin-do-grupo? chat ids)
-              false))
-          (p/catch (fn [_] false))))))
+            (admin-do-grupo? chat ids))
+          (p/catch (fn [err]
+                     (js/console.error "bloqueio: erro ao verificar admin do grupo:" err)
+                     false))))))
 
 (defn bot-bloqueado? [cid]
   (boolean (get-in @estado [cid :bot?])))
