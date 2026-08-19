@@ -101,7 +101,7 @@
                   (filme/buscar-oscar message))
     "genero"    (filme/buscar-por-genero message (str/join " " args))
     "traduza"   (traduza/traduzir-frase (str/join " " args))
-    ("resuma" "resumo" "resumir") (resumo/resumir-chat message)
+    ("resuma" "resumo" "resumir" "resume") (resumo/resumir-chat message)
     "pergunta"  (pergunta/perguntar message (str/join " " args))
     "bola8"     (bola8/jogar message (str/join " " args))
     "sorteio"   (sorteio/sortear message)
