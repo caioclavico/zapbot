@@ -10,7 +10,8 @@
             [clojure.string :as str]
             ["whatsapp-web.js" :as wwjs]
             [zapbot.config :as config]
-            [zapbot.rank :as rank]))
+            [zapbot.rank :as rank]
+            [zapbot.loja :as loja]))
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 
@@ -267,7 +268,9 @@
          (barra-hp (get hp :o) (get-in pokemons [:o :hp])) "\n\n"
          "Vez de " (get nomes vez) " (@" (so-numero (get jogadores vez)) ") - escolha um golpe:\n"
          (menu-golpes meu (:tipos adversario) (:habilidade adversario))
-         "\n\nUse " config/prefix "pokemon atacar <número>, ou defenda com " config/prefix "pokemon defender")))
+         "\n\nUse " config/prefix "pokemon atacar <número>, defenda com " config/prefix
+         "pokemon defender, ou cure um status com " config/prefix "pokemon curar (compre curas na "
+         config/prefix "loja)")))
 
 ;; comandos normais do router resolvem uma string simples (ver zapbot.core);
 ;; aqui a gente precisa marcar quem tem que jogar, então resolve um mapa
@@ -311,6 +314,9 @@
 
 (defn- emoji-dot [status] (case status :queimado "🔥" :envenenado "☠️" "❓"))
 
+(defn- nome-status [status]
+  (case status :queimado "queimadura" :envenenado "veneno" :paralisado "paralisia" "status"))
+
 (defn- aplicar-dot
   "Aplica dano de queimadura/veneno (se houver) em `marca`. Retorna
   [jogo-atualizado dano-sofrido]."
@@ -349,7 +355,9 @@
 (defn- anunciar-vitoria [cid jogo vencedor-marca motivo-extra]
   (swap! jogos dissoc cid)
   (rank/pontuar! cid (get-in jogo [:jogadores vencedor-marca]) (get-in jogo [:nomes vencedor-marca]) "pokemon")
-  (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "!"))
+  (let [ganho (loja/creditar! cid (get-in jogo [:jogadores vencedor-marca]))]
+    (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "! (+" ganho " 💰 moedas, confira com "
+         config/prefix "loja)")))
 
 (defn- resolver-ataque [golpe atacante defensor defendendo? hp-atacante-atual]
   (let [esquivou?     (and defendendo? (< (rand-int 100) (chance-esquiva defensor)))
@@ -508,7 +516,41 @@
            (str (cabecalho) "🛡️ *" (:nome pokemon) "* entrou em posição defensiva ("
                 (chance-esquiva pokemon) "% de chance de esquivar do próximo ataque, dano reduzido "
                 "pela metade se não esquivar)!\n\n" (mensagem-estado jogo-novo))))))))
+(defn- curar-turno [message]
+  (let [cid  (chat-id message)
+        pid  (jogador-id message)
+        jogo (get @jogos cid)]
+    (p/resolved
+     (cond
+       (nil? jogo)
+       (str (cabecalho) "❓ Não tem batalha rolando. Digite " config/prefix "pokemon pra abrir uma.")
 
+       (not (contains? (:jogadores jogo) :o))
+       (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pokemon pra entrar.")
+
+       (not= pid (get-in jogo [:jogadores (:vez jogo)]))
+       (com-mencao jogo (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo)))
+
+       :else
+       (let [marca        (:vez jogo)
+             status-atual (get-in jogo [:status marca])
+             pokemon      (get-in jogo [:pokemons marca])]
+         (cond
+           (nil? status-atual)
+           (com-mencao jogo (str (cabecalho) "❓ *" (:nome pokemon) "* não tem nenhum status pra curar agora.\n\n"
+                                  (mensagem-estado jogo)))
+
+           (not (loja/usar-cura! cid pid status-atual))
+           (com-mencao jogo (str (cabecalho) "❌ Você não tem uma cura de " (nome-status status-atual)
+                                  " no inventário (compre na " config/prefix "loja).\n\n" (mensagem-estado jogo)))
+
+           :else
+           (let [alvo      (outro marca)
+                 jogo-novo (-> jogo (assoc-in [:status marca] nil) (assoc :vez alvo))]
+             (swap! jogos assoc cid jogo-novo)
+             (com-mencao jogo-novo
+               (str (cabecalho) "💊 *" (:nome pokemon) "* usou uma cura e se livrou de "
+                    (nome-status status-atual) "!\n\n" (mensagem-estado jogo-novo))))))))))
 (defn- parse-indice-golpe [texto total]
   (let [n (js/parseInt texto 10)]
     (when (and (not (js/isNaN n)) (<= 1 n total))
@@ -579,6 +621,7 @@
   "!pokemon sem argumento abre/entra numa batalha; !pokemon atacar <1-4>
   usa o golpe correspondente (ver o menu de golpes em cada mensagem de
   estado); !pokemon defender entra em posição defensiva/evasiva; !pokemon
+  curar usa uma cura do inventário (ver !loja) pro status atual; !pokemon
   sair cancela (se só um jogador entrou ainda) ou desiste - contando a
   vitória pro adversário - se a batalha já tiver os 2 jogadores."
   [message args]
@@ -589,8 +632,9 @@
       (= cmd "sair") (sair message)
       (contains? #{"atacar" "ataque" "atirar" "usar"} cmd) (atacar message (first resto))
       (contains? #{"defender" "defesa" "esquivar" "evasiva"} cmd) (defender-turno message)
+      (contains? #{"curar" "cura"} cmd) (curar-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon (abrir/entrar), "
-                              config/prefix "pokemon atacar <1-4>, " config/prefix "pokemon defender ou "
-                              config/prefix "pokemon sair.")))))
+                              config/prefix "pokemon atacar <1-4>, " config/prefix "pokemon defender, "
+                              config/prefix "pokemon curar ou " config/prefix "pokemon sair.")))))
 
 
