@@ -446,13 +446,16 @@
                                 (assoc-in [:pokemons :o] pokemon)
                                 (assoc-in [:hp :o] (:hp pokemon))
                                 (assoc-in [:defendendo :o] false)
-                                (assoc-in [:status :o] nil))
+                                (assoc-in [:status :o] nil)
+                                ;; sorteia quem ataca primeiro em vez de sempre favorecer quem abriu a batalha
+                                (assoc :vez (rand-nth [:x :o])))
                   [jogo-novo msg-intimidacao] (aplicar-intimidacao jogo-pre)]
               (swap! jogos assoc cid jogo-novo)
               (enviar-imagem message (:imagem pokemon)
                               (str (cabecalho) (legenda-pokemon nome (get-in jogo-novo [:pokemons :o]))
                                    (when msg-intimidacao (str "\n\n" msg-intimidacao))
-                                   "\n\n⚔️ Batalha começando!\n\n" (mensagem-estado jogo-novo))
+                                   "\n\n⚔️ Batalha começando! 🎲 " (get-in jogo-novo [:nomes (:vez jogo-novo)])
+                                   " tira a sorte e ataca primeiro!\n\n" (mensagem-estado jogo-novo))
                               [(get-in jogo-novo [:jogadores (:vez jogo-novo)])])))
           (p/catch (fn [err]
                      (js/console.error "Erro ao sortear pokemon:" err)
