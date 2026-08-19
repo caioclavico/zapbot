@@ -10,6 +10,7 @@
             [zapbot.previsao :as previsao]
             [zapbot.horoscopo :as horoscopo]
             [zapbot.filme :as filme]
+            [zapbot.dicionario :as dicionario]
             [zapbot.traduza :as traduza]
             [zapbot.resumo :as resumo]
             [zapbot.pergunta :as pergunta]
@@ -38,8 +39,7 @@
    {:emoji "🎬" :uso "filme [nome]"        :desc "Sinopse e nota de um filme, em inglês/título original (sem nome, sugere um aleatório)"}
    {:emoji "🎥" :uso "filmes <nome>"       :desc "Lista até 10 filmes encontrados com esse nome (sem sinopse/capa)"}
    {:emoji "🏅" :uso "oscar [ano]"         :desc "Filme vencedor do Oscar de Melhor Filme daquele ano + concorrentes (sem ano, sorteia um vencedor)"}
-   {:emoji "🎭" :uso "genero [nome|listar]" :desc "Indica um filme popular de um gênero (ex.: acao, terror, comedia; 'listar' mostra as opções)"}
-   {:emoji "�🌐" :uso "traduza <frase>"    :desc "Traduz uma frase para português"}
+   {:emoji "🎭" :uso "genero [nome|listar]" :desc "Indica um filme popular de um gênero (ex.: acao, terror, comedia; 'listar' mostra as opções)"}   {:emoji "📚" :uso "defina <palavra>"    :desc "Mostra o significado de uma palavra (também funciona como !definir)"}   {:emoji "�🌐" :uso "traduza <frase>"    :desc "Traduz uma frase para português"}
    {:emoji "📝" :uso "resuma"             :desc "Resume as últimas mensagens do chat (também funciona como !resumo, !resumir)"}
    {:emoji "🤔" :uso "pergunta <texto>"   :desc "Faz uma pergunta livre para o tio Odisseu responder com IA"}
    {:emoji "🎱" :uso "bola8 [pergunta]"    :desc "Bola 8 mágica: manda uma imagem e uma resposta aleatória"}
@@ -100,6 +100,7 @@
                   (filme/buscar-oscar message (str/join " " args))
                   (filme/buscar-oscar message))
     "genero"    (filme/buscar-por-genero message (str/join " " args))
+    ("defina" "definir") (dicionario/buscar-definicao (str/join " " args))
     "traduza"   (traduza/traduzir-frase (str/join " " args))
     ("resuma" "resumo" "resumir" "resume") (resumo/resumir-chat message)
     "pergunta"  (pergunta/perguntar message (str/join " " args))
