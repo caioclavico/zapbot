@@ -35,8 +35,11 @@
    {:emoji "🌦️" :uso "previsao [cidade]"  :desc "Previsão do tempo (também funciona como !tempo, !clima)"}
    {:emoji "🔮" :uso "horoscopo [signo]"  :desc "Horóscopo do dia (ex.: aries, touro, gemeos, cancer... sem signo, sorteia um)"}
    {:emoji "🎬" :uso "filme [nome]"        :desc "Sinopse e nota de um filme, em inglês/título original (sem nome, sugere um aleatório)"}
-   {:emoji "🌐" :uso "traduza <frase>"    :desc "Traduz uma frase para português"}
-   {:emoji "📝" :uso "resuma"             :desc "Resume as últimas mensagens do chat"}
+   {:emoji "🎥" :uso "filmes <nome>"       :desc "Lista até 10 filmes encontrados com esse nome (sem sinopse/capa)"}
+   {:emoji "🏅" :uso "oscar [ano]"         :desc "Filme vencedor do Oscar de Melhor Filme daquele ano + concorrentes (sem ano, sorteia um vencedor)"}
+   {:emoji "🎭" :uso "genero [nome|listar]" :desc "Indica um filme popular de um gênero (ex.: acao, terror, comedia; 'listar' mostra as opções)"}
+   {:emoji "�🌐" :uso "traduza <frase>"    :desc "Traduz uma frase para português"}
+   {:emoji "📝" :uso "resuma"             :desc "Resume as últimas mensagens do chat (também funciona como !resumo, !resumir)"}
    {:emoji "🤔" :uso "pergunta <texto>"   :desc "Faz uma pergunta livre para o tio Odisseu responder com IA"}
    {:emoji "🎱" :uso "bola8 [pergunta]"    :desc "Bola 8 mágica: manda uma imagem e uma resposta aleatória"}
    {:emoji "🎲" :uso "sorteio"            :desc "Sorteia uma pessoa conhecida do chat/grupo"}
@@ -90,8 +93,13 @@
     "filme"     (if (seq args)
                   (filme/buscar-filme message (str/join " " args))
                   (filme/buscar-filme message))
+    "filmes"    (filme/buscar-filmes (str/join " " args))
+    "oscar"     (if (seq args)
+                  (filme/buscar-oscar message (str/join " " args))
+                  (filme/buscar-oscar message))
+    "genero"    (filme/buscar-por-genero message (str/join " " args))
     "traduza"   (traduza/traduzir-frase (str/join " " args))
-    "resuma"    (resumo/resumir-chat message)
+    ("resuma" "resumo" "resumir") (resumo/resumir-chat message)
     "pergunta"  (pergunta/perguntar message (str/join " " args))
     "bola8"     (bola8/jogar message (str/join " " args))
     "sorteio"   (sorteio/sortear message)

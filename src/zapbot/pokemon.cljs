@@ -25,6 +25,9 @@
 (defn- jogador-id [message]
   (or (.-author message) (.-from message)))
 
+(defn- so-numero [id]
+  (first (str/split id #"@")))
+
 (defn- nome-de [message]
   (-> (.getContact message)
       (p/then (fn [c] (or (.-pushname c) (.-name c) (.-number c) "Alguém")))
@@ -253,7 +256,7 @@
 (defn- emoji-status [status]
   (case status :queimado " 🔥" :envenenado " ☠️" :paralisado " ⚡" ""))
 
-(defn- mensagem-estado [{:keys [pokemons nomes vez hp defendendo status]}]
+(defn- mensagem-estado [{:keys [pokemons nomes vez hp defendendo status jogadores]}]
   (let [meu        (get pokemons vez)
         adversario (get pokemons (outro vez))]
     (str "🐾 " (get nomes :x) " - *" (get-in pokemons [:x :nome]) "*" (when (:x defendendo) " 🛡️")
@@ -262,9 +265,16 @@
          "🐾 " (get nomes :o) " - *" (get-in pokemons [:o :nome]) "*" (when (:o defendendo) " 🛡️")
          (emoji-status (:o status)) "\n"
          (barra-hp (get hp :o) (get-in pokemons [:o :hp])) "\n\n"
-         "Vez de " (get nomes vez) " - escolha um golpe:\n"
+         "Vez de " (get nomes vez) " (@" (so-numero (get jogadores vez)) ") - escolha um golpe:\n"
          (menu-golpes meu (:tipos adversario) (:habilidade adversario))
          "\n\nUse " config/prefix "pokemon atacar <número>, ou defenda com " config/prefix "pokemon defender")))
+
+;; comandos normais do router resolvem uma string simples (ver zapbot.core);
+;; aqui a gente precisa marcar quem tem que jogar, então resolve um mapa
+;; {:texto :mentions} pra zapbot.core saber que precisa passar :mentions
+;; pro .reply do whatsapp-web.js (só o texto "@numero" não vira menção de verdade).
+(defn- com-mencao [jogo texto]
+  {:texto texto :mentions [(get-in jogo [:jogadores (:vez jogo)])]})
 
 (defn- chance-esquiva [pokemon]
   (min 50 (quot (:veloc pokemon) 2)))
@@ -392,15 +402,17 @@
        " | 💨 Velocidade: " (:veloc pokemon) "\n"
        "🎯 Golpes: " (str/join ", " (map :nome-exibicao (:golpes pokemon)))))
 
-(defn- enviar-imagem [message url legenda]
-  (if url
-    (-> (p/let [media (.fromUrl MessageMedia url)
-                _     (.reply message media nil #js {:caption legenda})]
-          nil)
-        (p/catch (fn [err]
-                   (js/console.error "Erro ao enviar imagem do pokemon:" err)
-                   legenda)))
-    (p/resolved legenda)))
+(defn- enviar-imagem
+  ([message url legenda] (enviar-imagem message url legenda []))
+  ([message url legenda mentions]
+   (if url
+     (-> (p/let [media (.fromUrl MessageMedia url)
+                 _     (.reply message media nil #js {:caption legenda :mentions (clj->js mentions)})]
+           nil)
+         (p/catch (fn [err]
+                    (js/console.error "Erro ao enviar imagem do pokemon:" err)
+                    legenda)))
+     (p/resolved legenda))))
 
 (defn- iniciar-ou-entrar [message]
   (let [cid        (chat-id message)
@@ -408,9 +420,10 @@
         jogo-atual (get @jogos cid)]
     (cond
       (and jogo-atual (contains? (:jogadores jogo-atual) :o))
-      (p/resolved (str (cabecalho) "⏳ Já tem uma batalha rolando nesse chat entre "
-                        (get-in jogo-atual [:nomes :x]) " e " (get-in jogo-atual [:nomes :o]) ".\n\n"
-                        (mensagem-estado jogo-atual)))
+      (p/resolved (com-mencao jogo-atual
+                    (str (cabecalho) "⏳ Já tem uma batalha rolando nesse chat entre "
+                         (get-in jogo-atual [:nomes :x]) " e " (get-in jogo-atual [:nomes :o]) ".\n\n"
+                         (mensagem-estado jogo-atual))))
 
       (and jogo-atual (= pid (get-in jogo-atual [:jogadores :x])))
       (p/resolved (str (cabecalho) "⏳ Você já abriu essa batalha, espere um adversário entrar de "
@@ -431,7 +444,8 @@
               (enviar-imagem message (:imagem pokemon)
                               (str (cabecalho) (legenda-pokemon nome (get-in jogo-novo [:pokemons :o]))
                                    (when msg-intimidacao (str "\n\n" msg-intimidacao))
-                                   "\n\n⚔️ Batalha começando!\n\n" (mensagem-estado jogo-novo)))))
+                                   "\n\n⚔️ Batalha começando!\n\n" (mensagem-estado jogo-novo))
+                              [(get-in jogo-novo [:jogadores (:vez jogo-novo)])])))
           (p/catch (fn [err]
                      (js/console.error "Erro ao sortear pokemon:" err)
                      (str (cabecalho) "❌ Não consegui buscar um Pokémon agora (PokeAPI fora do ar?). Tente de novo."))))
@@ -482,7 +496,7 @@
        (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pokemon pra entrar.")
 
        (not= pid (get-in jogo [:jogadores (:vez jogo)]))
-       (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo))
+       (com-mencao jogo (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo)))
 
        :else
        (let [marca     (:vez jogo)
@@ -490,9 +504,10 @@
              pokemon   (get-in jogo [:pokemons marca])
              jogo-novo (-> jogo (assoc-in [:defendendo marca] true) (assoc :vez alvo))]
          (swap! jogos assoc cid jogo-novo)
-         (str (cabecalho) "🛡️ *" (:nome pokemon) "* entrou em posição defensiva ("
-              (chance-esquiva pokemon) "% de chance de esquivar do próximo ataque, dano reduzido "
-              "pela metade se não esquivar)!\n\n" (mensagem-estado jogo-novo)))))))
+         (com-mencao jogo-novo
+           (str (cabecalho) "🛡️ *" (:nome pokemon) "* entrou em posição defensiva ("
+                (chance-esquiva pokemon) "% de chance de esquivar do próximo ataque, dano reduzido "
+                "pela metade se não esquivar)!\n\n" (mensagem-estado jogo-novo))))))))
 
 (defn- parse-indice-golpe [texto total]
   (let [n (js/parseInt texto 10)]
@@ -512,7 +527,7 @@
        (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pokemon pra entrar.")
 
        (not= pid (get-in jogo [:jogadores (:vez jogo)]))
-       (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo))
+       (com-mencao jogo (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo)))
 
        :else
        (let [atacante-marca  (:vez jogo)
@@ -523,8 +538,8 @@
              indice          (parse-indice-golpe indice-texto (count (:golpes atacante)))]
          (cond
            (nil? indice)
-           (str (cabecalho) "❓ Escolha um golpe válido: " config/prefix "pokemon atacar <1-"
-                (count (:golpes atacante)) ">\n\n" (mensagem-estado jogo))
+           (com-mencao jogo (str (cabecalho) "❓ Escolha um golpe válido: " config/prefix "pokemon atacar <1-"
+                                  (count (:golpes atacante)) ">\n\n" (mensagem-estado jogo)))
 
            (paralisou-turno? status-atacante)
            (let [[jogo dot]  (aplicar-dot jogo atacante-marca)
@@ -535,7 +550,7 @@
                (str (cabecalho) msg (anunciar-vitoria cid jogo alvo-marca " a batalha"))
                (let [jogo-novo (assoc jogo :vez alvo-marca)]
                  (swap! jogos assoc cid jogo-novo)
-                 (str (cabecalho) msg "\n\n" (mensagem-estado jogo-novo)))))
+                 (com-mencao jogo-novo (str (cabecalho) msg "\n\n" (mensagem-estado jogo-novo))))))
 
            :else
            (let [golpe                   (nth (:golpes atacante) indice)
@@ -558,7 +573,7 @@
                         (anunciar-vitoria cid jogo alvo-marca (str " - " (:nome atacante) " caiu por causa do próprio status")))
                    (let [jogo-novo (-> jogo (assoc-in [:defendendo alvo-marca] false) (assoc :vez alvo-marca))]
                      (swap! jogos assoc cid jogo-novo)
-                     (str (cabecalho) mensagem msg-extra "\n\n" (mensagem-estado jogo-novo)))))))))))))
+                     (com-mencao jogo-novo (str (cabecalho) mensagem msg-extra "\n\n" (mensagem-estado jogo-novo))))))))))))))
 
 (defn jogar
   "!pokemon sem argumento abre/entra numa batalha; !pokemon atacar <1-4>

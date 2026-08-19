@@ -28,7 +28,14 @@
 (defn- on-message [message]
   (historico/registrar! message)
   (-> (router/processar message)
-      (p/then (fn [resposta] (when resposta (.reply message resposta))))
+      (p/then (fn [resposta]
+                (cond
+                  (nil? resposta) nil
+                  ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
+                  ;; de quem for a vez) resolvem {:texto :mentions} em vez de
+                  ;; uma string simples - todo o resto continua string normal
+                  (string? resposta) (.reply message resposta)
+                  :else (.reply message (:texto resposta) nil #js {:mentions (clj->js (:mentions resposta))}))))
       (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" err)))))
 
 ;; alimenta o cadastro de admins conhecidos (zapbot.admins) direto do evento
