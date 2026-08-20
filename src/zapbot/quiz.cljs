@@ -88,6 +88,7 @@
 ;; últimas perguntas por chat, só pra pedir à IA (e evitar no banco estático)
 ;; que não repita - persistido, sobrevive a reinício/deploy do bot
 (defonce ^:private historico-perguntas (atom (or (armazenamento/obter "quiz-historico") {})))
+(armazenamento/registrar! "quiz-historico" historico-perguntas)
 (def ^:private historico-max 12)
 
 (def ^:private letras ["a" "b" "c" "d"])

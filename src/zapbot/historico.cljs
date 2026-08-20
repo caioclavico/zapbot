@@ -16,6 +16,7 @@
 
 (defonce ^:private historicos (atom {}))
 (defonce ^:private participantes (atom (or (armazenamento/obter "participantes") {})))
+(armazenamento/registrar! "participantes" participantes)
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))

@@ -4,6 +4,7 @@
             ["whatsapp-web.js" :as wwjs]
             ["qrcode-terminal" :as qrcode]
             [zapbot.config :as config]
+            [zapbot.armazenamento :as armazenamento]
             [zapbot.historico :as historico]
             [zapbot.admins :as admins]
             [zapbot.router :as router]))
@@ -61,4 +62,7 @@
     ;; conectado (fromMe), diferente de "message" (só mensagens recebidas).
     (.on client "message_create" on-message)
     (.on client "group_admin_changed" on-group-admin-changed)
-    (.initialize client)))
+    ;; espera o Cassandra carregar (rank/loja/admins/etc.) antes de conectar
+    ;; no WhatsApp - iniciar! nunca rejeita (loga e segue sem persistência
+    ;; nessa execução se não conseguir conectar), então isso nunca trava o boot.
+    (p/then (armazenamento/iniciar!) (fn [_] (.initialize client)))))

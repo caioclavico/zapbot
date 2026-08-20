@@ -17,12 +17,12 @@
 ;; !bloquear jogos / !desbloquear jogos afeta todos de uma vez (inclui apelidos, ex.: stop)
 (def ^:private jogos-comandos #{"bola8" "sorteio" "velha" "naval" "adedonha" "stop" "quiz" "pokemon"})
 
-(defn- carregar-estado []
+(defn- transformar-estado [dados]
   (into {}
         (map (fn [[cid info]]
                [cid {:bot? (boolean (get info "bot?"))
                      :comandos (set (get info "comandos"))}]))
-        (armazenamento/obter "bloqueio")))
+        dados))
 
 (defn- estado->persistivel [estado]
   (into {}
@@ -31,7 +31,8 @@
                      "comandos" (vec (:comandos info))}]))
         estado))
 
-(defonce ^:private estado (atom (carregar-estado)))
+(defonce ^:private estado (atom (transformar-estado (armazenamento/obter "bloqueio"))))
+(armazenamento/registrar! "bloqueio" estado transformar-estado)
 
 (defn- persistir! []
   (armazenamento/salvar! "bloqueio" (estado->persistivel @estado)))

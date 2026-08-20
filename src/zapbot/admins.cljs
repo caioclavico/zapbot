@@ -8,12 +8,13 @@
   alimentado tanto pelos eventos quanto por checagens ao vivo bem-sucedidas."
   (:require [zapbot.armazenamento :as armazenamento]))
 
-(defn- carregar []
+(defn- transformar [dados]
   (into {}
         (map (fn [[cid ids]] [cid (set ids)]))
-        (armazenamento/obter "admins-conhecidos")))
+        dados))
 
-(defonce ^:private admins (atom (carregar)))
+(defonce ^:private admins (atom (transformar (armazenamento/obter "admins-conhecidos"))))
+(armazenamento/registrar! "admins-conhecidos" admins transformar)
 
 (defn- persistir! []
   (armazenamento/salvar! "admins-conhecidos"

@@ -95,23 +95,24 @@ jobs:
             echo "docker não encontrado no PATH da VM - verifique se está instalado (README, 'Instalar Docker na VM')." >&2
             exit 1
           fi
+          if ! docker compose version > /dev/null 2>&1; then
+            echo "plugin 'docker compose' não encontrado na VM (vem junto com o Docker instalado via get.docker.com; se instalou de outra forma, veja https://docs.docker.com/compose/install/)." >&2
+            exit 1
+          fi
 
           git fetch origin
           git reset --hard origin/master
 
           mkdir -p data
 
-          docker build -t zapbot .
+          # migração única do modelo antigo (docker run --name zapbot) pro
+          # docker compose: se sobrar um container com esse nome que não foi
+          # criado pelo compose, `docker compose up` recusa por conflito de
+          # nome - remove antes (não-op inofensivo em deploys seguintes,
+          # já que a partir daqui quem recria o container é sempre o compose)
+          docker rm -f zapbot 2>/dev/null || true
 
-          docker stop zapbot 2>/dev/null || true
-          docker rm zapbot 2>/dev/null || true
-
-          docker run -d --name zapbot \
-            --restart unless-stopped \
-            --env-file .env \
-            -v "$APP_DIR/.wwebjs_auth:/app/.wwebjs_auth" \
-            -v "$APP_DIR/data:/app/data" \
-            zapbot
+          docker compose up -d --build
 
           docker image prune -f
           REMOTE_SCRIPT

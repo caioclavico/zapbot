@@ -34,3 +34,7 @@
 ;; credenciais gratuitas em https://developer.spotify.com/dashboard (usadas pelo !musica)
 (def spotify-client-id (env "SPOTIFY_CLIENT_ID"))
 (def spotify-client-secret (env "SPOTIFY_CLIENT_SECRET"))
+;; usado por zapbot.armazenamento (persistência de rank/loja/admins/etc.)
+(def cassandra-contact-points (env-list "CASSANDRA_CONTACT_POINTS" ["127.0.0.1"]))
+(def cassandra-datacenter (env "CASSANDRA_DATACENTER" "datacenter1"))
+(def cassandra-keyspace (env "CASSANDRA_KEYSPACE" "zapbot"))

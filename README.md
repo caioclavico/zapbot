@@ -36,6 +36,11 @@ O prefixo (`!`) e os padrões de cada comando podem ser alterados no arquivo `.e
 
 - [Node.js](https://nodejs.org/) 18 ou superior (necessário para `fetch` nativo)
 - npm
+- [Docker](https://www.docker.com/) + plugin `docker compose` (pra rodar o
+  Cassandra usado na persistência - ver "Persistência (Cassandra)" abaixo).
+  Sem Docker, dá pra apontar `CASSANDRA_CONTACT_POINTS` no `.env` pra um
+  Cassandra já rodando em outro lugar (local nativo, VM própria, serviço
+  gerenciado).
 
 ## Instalação
 
@@ -77,6 +82,31 @@ aparelho pelo celular).
 | `WEATHER_DEFAULT_CITY`   | `Sao Paulo`                         | Cidade padrão para `!previsao`                          |
 | `NEWS_FEED_URL`          | feed do G1                           | Feed RSS usado por `!noticias`                          |
 | `CURRENCY_DEFAULT`       | `USD-BRL,EUR-BRL,BTC-BRL`           | Pares padrão para `!cotacao`                            |
+| `CASSANDRA_CONTACT_POINTS` | `cassandra`                       | Host(s) do Cassandra (separados por vírgula); `cassandra` já funciona direto com o `docker-compose.yml` deste projeto |
+| `CASSANDRA_DATACENTER`   | `datacenter1`                        | Data center do cluster (o padrão do próprio Cassandra pra um nó único) |
+| `CASSANDRA_KEYSPACE`     | `zapbot`                             | Keyspace usado pra persistência (criado automaticamente se não existir) |
+
+## Persistência (Cassandra)
+
+Rank, loja (moedas/curas do `!pokemon`), admins conhecidos, participantes do
+chat e histórico anti-repetição do `!quiz` são persistidos no Cassandra (ver
+`zapbot.armazenamento`), numa única tabela `<keyspace>.estado (chave text
+PRIMARY KEY, valor text)` - `valor` guarda um JSON por chave, um por
+namespace (`rank`, `loja`, `admins-conhecidos`, `participantes`,
+`quiz-historico`, `bloqueio`).
+
+Pra rodar localmente com Docker Compose (recomendado - já vem configurado):
+
+```bash
+docker compose up -d cassandra   # só o banco, pra rodar o bot fora do container em dev
+# ou
+docker compose up -d --build     # bot + Cassandra juntos
+```
+
+Se o Cassandra ainda não tiver terminado de subir quando o bot tentar
+conectar, `zapbot.armazenamento/iniciar!` tenta de novo algumas vezes antes
+de desistir (e, se mesmo assim não conseguir, o bot sobe do mesmo jeito, só
+que sem persistência nessa execução - nada trava por causa disso).
 
 ## Como o `!ban` funciona
 
@@ -160,40 +190,33 @@ nano .env   # ajuste PREFIX, ADMIN_NUMBERS etc. (PUPPETEER_EXECUTABLE_PATH já
 
 ```bash
 mkdir -p data
-docker build -t zapbot .
-docker run -it --name zapbot \
-  --env-file .env \
-  -v "$(pwd)/.wwebjs_auth:/app/.wwebjs_auth" \
-  -v "$(pwd)/data:/app/data" \
-  zapbot
+docker compose up --build
 ```
 
-Escaneie o QR code que aparece no terminal. Depois de conectado, pressione
-`Ctrl+C` para parar (a sessão já ficou salva em `.wwebjs_auth/` no host).
+Escaneie o QR code que aparece no terminal (do serviço `bot` - o Cassandra
+sobe primeiro e o bot espera ele ficar saudável antes de conectar). Depois de
+conectado, pressione `Ctrl+C` para parar (a sessão já ficou salva em
+`.wwebjs_auth/` no host).
 
 ### 5. Rodar em segundo plano, permanente
 
 ```bash
-docker rm zapbot   # remove o container do passo anterior (a sessão continua salva no volume)
-docker run -d --name zapbot \
-  --restart unless-stopped \
-  --env-file .env \
-  -v "$(pwd)/.wwebjs_auth:/app/.wwebjs_auth" \
-  -v "$(pwd)/data:/app/data" \
-  zapbot
+docker compose up -d --build
 ```
 
-`--restart unless-stopped` garante que o bot volte a rodar sozinho se a VM
-reiniciar. Para ver os logs: `docker logs -f zapbot`.
+O `restart: unless-stopped` de cada serviço (ver `docker-compose.yml`) garante
+que tudo volte a rodar sozinho se a VM reiniciar. Para ver os logs do bot:
+`docker compose logs -f bot` (ou `docker logs -f zapbot`).
 
 ### 6. CI/CD automático (GitHub Actions)
 
 Depois do setup manual acima (passos 1-5, incluindo o QR code inicial), os
 próximos deploys são automáticos: o workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
 builda o projeto a cada push/PR e, a cada push direto na `master` (com o
-build passando), conecta na VM via SSH e roda `git pull` + `docker build` +
-recria o container - preservando `.env` e a sessão em `.wwebjs_auth/`
-(nenhum dos dois é tocado pelo pipeline).
+build passando), conecta na VM via SSH e roda `git pull` + `docker compose up
+-d --build` - preservando `.env` e a sessão em `.wwebjs_auth/` (nenhum dos
+dois é tocado pelo pipeline), além dos dados do Cassandra (volume nomeado
+`cassandra-data`, também não tocado).
 
 Configure estes *secrets* no repositório GitHub (`Settings > Secrets and
 variables > Actions`):
@@ -218,7 +241,7 @@ src/zapbot/
 ├── core.cljs        ; conexão com o WhatsApp e ligação dos eventos
 ├── router.cljs       ; interpreta o texto das mensagens e escolhe o comando
 ├── config.cljs       ; leitura do .env
-├── armazenamento.cljs ; persistência simples em JSON (data/estado.json)
+├── armazenamento.cljs ; persistência em Cassandra (rank/loja/admins/participantes/quiz-historico)
 ├── piadas.cljs        ; !piada
 ├── curiosidades.cljs  ; !curiosidade
 ├── noticias.cljs      ; !noticias

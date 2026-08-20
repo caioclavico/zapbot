@@ -9,6 +9,7 @@
             [zapbot.armazenamento :as armazenamento]))
 
 (defonce ^:private contas (atom (or (armazenamento/obter "loja") {})))
+(armazenamento/registrar! "loja" contas)
 
 (defn- persistir! []
   (armazenamento/salvar! "loja" @contas))

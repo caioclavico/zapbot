@@ -7,6 +7,7 @@
             [zapbot.armazenamento :as armazenamento]))
 
 (defonce ^:private placares (atom (or (armazenamento/obter "rank") {})))
+(armazenamento/registrar! "rank" placares)
 
 (defn- persistir! []
   (armazenamento/salvar! "rank" @placares))
