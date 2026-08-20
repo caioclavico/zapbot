@@ -7,4 +7,8 @@
         ;; :simple avoids Closure Closure's property renaming, which would
         ;; otherwise break dot-interop with npm objects (rss-parser items,
         ;; whatsapp-web.js Chat/Contact/Message, etc.)
-        :compiler-options {:optimizations :simple}}}}
+        :compiler-options {:optimizations :simple}}
+  :migrar-estado {:target :node-script
+                   :main zapbot.migrar-estado/-main
+                   :output-to "target/migrar-estado.js"
+                   :compiler-options {:optimizations :simple}}}}
