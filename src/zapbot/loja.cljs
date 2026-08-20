@@ -1,9 +1,9 @@
 (ns zapbot.loja
   "Comando !loja - moedas ganhas vencendo batalhas de !pokemon, gastas em
-  curas pros status (queimadura/veneno/paralisia). Estado (moedas +
-  inventário) por chat+jogador, mesma convenção de zapbot.rank; persistido
-  via zapbot.armazenamento (chaves sempre string, nunca keyword - ver
-  convenção documentada lá)."
+  curas pros status (queimadura/veneno/paralisia) ou em poção de vida
+  (recupera HP). Estado (moedas + inventário) por chat+jogador, mesma
+  convenção de zapbot.rank; persistido via zapbot.armazenamento (chaves
+  sempre string, nunca keyword - ver convenção documentada lá)."
   (:require [clojure.string :as str]
             [zapbot.config :as config]
             [zapbot.armazenamento :as armazenamento]))
@@ -20,7 +20,8 @@
 (def ^:private itens
   {"queimadura" {:nome "Cura de Queimadura" :emoji "🔥" :status :queimado   :preco 15}
    "veneno"     {:nome "Antídoto"           :emoji "☠️" :status :envenenado :preco 15}
-   "paralisia"  {:nome "Cura de Paralisia"  :emoji "⚡" :status :paralisado :preco 15}})
+   "paralisia"  {:nome "Cura de Paralisia"  :emoji "⚡" :status :paralisado :preco 15}
+   "pocao"      {:nome "Poção de Vida"      :emoji "🧪" :cura-hp 0.4        :preco 20}})
 
 (defn- conta [cid pid]
   (get-in @contas [cid pid] {"moedas" 0 "inventario" {}}))
@@ -53,6 +54,16 @@
       false)
     false))
 
+(defn usar-pocao!
+  "Se pid tiver, nesse chat, uma poção de vida em estoque, consome 1 unidade
+  e retorna a fração de HP máximo que ela cura (ex.: 0.4 = 40%); senão não
+  mexe em nada e retorna nil."
+  [cid pid]
+  (when (pos? (get-in (conta cid pid) ["inventario" "pocao"] 0))
+    (swap! contas update-in [cid pid "inventario" "pocao"] dec)
+    (persistir!)
+    (:cura-hp (get itens "pocao"))))
+
 (defn- formatar-item [chave {:keys [nome emoji preco]}]
   (str emoji " *" nome "* (`" chave "`) - " preco " moedas"))
 
@@ -75,8 +86,8 @@
          "*Itens à venda:*\n"
          (str/join "\n" (map (fn [[chave info]] (formatar-item chave info)) itens))
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar queimadura).\n"
-         "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, e cure status com "
-         config/prefix "pokemon curar!")))
+         "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, cure status com " config/prefix
+         "pokemon curar, e recupere HP com " config/prefix "pokemon pocao!")))
 
 (defn comprar
   "!loja comprar <item> - compra 1 unidade do item pro inventário de quem

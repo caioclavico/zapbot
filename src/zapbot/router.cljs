@@ -51,9 +51,9 @@
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra o consumo de CPU, memória, disco e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
-   {:emoji "⚡" :uso "pokemon [atacar <1-4>|defender|curar|sair]" :desc "Batalha Pokémon entre duas pessoas, com Pokémon e golpes reais sorteados via PokeAPI: abra/entre, escolha um golpe pra atacar, defenda/esquive, cure um status (ver !loja) ou saia"}
+   {:emoji "⚡" :uso "pokemon [atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalha Pokémon entre duas pessoas, com Pokémon e golpes reais sorteados via PokeAPI: abra/entre, escolha um golpe pra atacar, defenda/esquive, cure um status ou recupere HP (ver !loja) ou saia"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
-   {:emoji "🏪" :uso "loja [comprar <item>]" :desc "Loja de curas pra status do !pokemon (queimadura/veneno/paralisia); ganhe moedas vencendo batalhas"}
+   {:emoji "🏪" :uso "loja [comprar <item>]" :desc "Loja de curas pra status e poção de vida do !pokemon (queimadura/veneno/paralisia/pocao); ganhe moedas vencendo batalhas"}
    {:emoji "🏆" :uso "rank"                :desc "Mostra o rank de pontos desse chat (vitórias em !velha, !naval, !pokemon e !quiz)"}
    {:emoji "🔇" :uso "bloquear [comando|jogos|tudo|listar]" :desc "(admin) Bloqueia um comando, todos os jogos ou o bot inteiro nesse chat"}
    {:emoji "🔊" :uso "desbloquear [comando|jogos|tudo]" :desc "(admin) Libera um comando, todos os jogos ou o bot inteiro nesse chat"}

@@ -64,6 +64,17 @@
    :nomes {:x nome}
    :vez :x})
 
+(defn- tentar-registrar!
+  "Tenta gravar jogo-novo em `jogos` pro chat `cid`, mas só se `valido?`
+  (recebendo o estado atual desse chat, possivelmente nil) aprovar - evita
+  que duas mensagens concorrentes (ex.: duas pessoas tentando abrir/entrar
+  quase ao mesmo tempo) se baseiem no mesmo estado antigo lido antes do
+  getContact (assíncrono) da jogada. Retorna true se gravou, false se
+  `valido?` recusou (nesse caso jogo-novo é descartado)."
+  [cid jogo-novo valido?]
+  (swap! jogos (fn [estado] (if (valido? (get estado cid)) (assoc estado cid jogo-novo) estado)))
+  (= jogo-novo (get @jogos cid)))
+
 (defn- iniciar-ou-entrar [message]
   (let [cid        (chat-id message)
         pid        (jogador-id message)
@@ -81,15 +92,19 @@
       jogo-atual
       (p/let [nome (nome-de message)]
         (let [jogo-novo (-> jogo-atual (assoc-in [:jogadores :o] pid) (assoc-in [:nomes :o] nome))]
-          (swap! jogos assoc cid jogo-novo)
-          (str (cabecalho) "⭕ " nome " entrou! Partida começando.\n\n" (mensagem-estado jogo-novo))))
+          (if (tentar-registrar! cid jogo-novo (fn [atual] (and atual (not (contains? (:jogadores atual) :o)))))
+            (str (cabecalho) "⭕ " nome " entrou! Partida começando.\n\n" (mensagem-estado jogo-novo))
+            (str (cabecalho) "⏳ Alguém mais rápido já entrou nessa partida um instante antes de você. Digite "
+                 config/prefix "velha pra ver o que rolou ou abrir uma nova."))))
 
       :else
       (p/let [nome (nome-de message)]
         (let [jogo-novo (criar-jogo pid nome)]
-          (swap! jogos assoc cid jogo-novo)
-          (str (cabecalho) "❌ " nome " abriu uma partida! Quem quiser jogar de ⭕, "
-               "mande " config/prefix "velha pra entrar.\n\n" (desenhar (:tabuleiro jogo-novo))))))))
+          (if (tentar-registrar! cid jogo-novo nil?)
+            (str (cabecalho) "❌ " nome " abriu uma partida! Quem quiser jogar de ⭕, "
+                 "mande " config/prefix "velha pra entrar.\n\n" (desenhar (:tabuleiro jogo-novo)))
+            (str (cabecalho) "⏳ Alguém abriu uma partida nesse chat um instante antes de você. Digite "
+                 config/prefix "velha pra entrar nela.")))))))
 
 (defn- sair [message]
   (let [cid (chat-id message)]

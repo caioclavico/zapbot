@@ -269,8 +269,8 @@
          "Vez de " (get nomes vez) " (@" (so-numero (get jogadores vez)) ") - escolha um golpe:\n"
          (menu-golpes meu (:tipos adversario) (:habilidade adversario))
          "\n\nUse " config/prefix "pokemon atacar <número>, defenda com " config/prefix
-         "pokemon defender, ou cure um status com " config/prefix "pokemon curar (compre curas na "
-         config/prefix "loja)")))
+         "pokemon defender, cure um status com " config/prefix "pokemon curar, ou recupere HP com "
+         config/prefix "pokemon pocao (compre curas/poções na " config/prefix "loja)")))
 
 ;; comandos normais do router resolvem uma string simples (ver zapbot.core);
 ;; aqui a gente precisa marcar quem tem que jogar, então resolve um mapa
@@ -422,6 +422,17 @@
                     legenda)))
      (p/resolved legenda))))
 
+(defn- tentar-registrar!
+  "Tenta gravar jogo-novo em `jogos` pro chat `cid`, mas só se `valido?`
+  (recebendo o estado atual desse chat, possivelmente nil) aprovar - evita
+  que duas mensagens concorrentes (ex.: duas pessoas tentando abrir/entrar
+  quase ao mesmo tempo) se baseiem no mesmo estado antigo lido antes da
+  parte lenta (rede: PokeAPI/getContact) da jogada. Retorna true se gravou,
+  false se `valido?` recusou (nesse caso jogo-novo é descartado)."
+  [cid jogo-novo valido?]
+  (swap! jogos (fn [estado] (if (valido? (get estado cid)) (assoc estado cid jogo-novo) estado)))
+  (= jogo-novo (get @jogos cid)))
+
 (defn- iniciar-ou-entrar [message]
   (let [cid        (chat-id message)
         pid        (jogador-id message)
@@ -450,13 +461,15 @@
                                 ;; sorteia quem ataca primeiro em vez de sempre favorecer quem abriu a batalha
                                 (assoc :vez (rand-nth [:x :o])))
                   [jogo-novo msg-intimidacao] (aplicar-intimidacao jogo-pre)]
-              (swap! jogos assoc cid jogo-novo)
-              (enviar-imagem message (:imagem pokemon)
-                              (str (cabecalho) (legenda-pokemon nome (get-in jogo-novo [:pokemons :o]))
-                                   (when msg-intimidacao (str "\n\n" msg-intimidacao))
-                                   "\n\n⚔️ Batalha começando! 🎲 " (get-in jogo-novo [:nomes (:vez jogo-novo)])
-                                   " tira a sorte e ataca primeiro!\n\n" (mensagem-estado jogo-novo))
-                              [(get-in jogo-novo [:jogadores (:vez jogo-novo)])])))
+              (if (tentar-registrar! cid jogo-novo (fn [atual] (and atual (not (contains? (:jogadores atual) :o)))))
+                (enviar-imagem message (:imagem pokemon)
+                                (str (cabecalho) (legenda-pokemon nome (get-in jogo-novo [:pokemons :o]))
+                                     (when msg-intimidacao (str "\n\n" msg-intimidacao))
+                                     "\n\n⚔️ Batalha começando! 🎲 " (get-in jogo-novo [:nomes (:vez jogo-novo)])
+                                     " tira a sorte e ataca primeiro!\n\n" (mensagem-estado jogo-novo))
+                                [(get-in jogo-novo [:jogadores (:vez jogo-novo)])])
+                (str (cabecalho) "⏳ Alguém mais rápido já entrou nessa batalha um instante antes de você. Digite "
+                     config/prefix "pokemon pra ver o que rolou ou abrir uma nova."))))
           (p/catch (fn [err]
                      (js/console.error "Erro ao sortear pokemon:" err)
                      (str (cabecalho) "❌ Não consegui buscar um Pokémon agora (PokeAPI fora do ar?). Tente de novo."))))
@@ -465,10 +478,12 @@
       (-> (p/let [nome    (nome-de message)
                   pokemon (sortear-pokemon-com-golpes)]
             (let [jogo-novo (criar-jogo pid nome pokemon)]
-              (swap! jogos assoc cid jogo-novo)
-              (enviar-imagem message (:imagem pokemon)
-                              (str (cabecalho) (legenda-pokemon nome pokemon) "\n\n"
-                                   "Quem quiser topar a batalha, mande " config/prefix "pokemon pra entrar."))))
+              (if (tentar-registrar! cid jogo-novo nil?)
+                (enviar-imagem message (:imagem pokemon)
+                                (str (cabecalho) (legenda-pokemon nome pokemon) "\n\n"
+                                     "Quem quiser topar a batalha, mande " config/prefix "pokemon pra entrar."))
+                (str (cabecalho) "⏳ Alguém abriu uma batalha nesse chat um instante antes de você. Digite "
+                     config/prefix "pokemon pra entrar nela."))))
           (p/catch (fn [err]
                      (js/console.error "Erro ao sortear pokemon:" err)
                      (str (cabecalho) "❌ Não consegui buscar um Pokémon agora (PokeAPI fora do ar?). Tente de novo.")))))))
@@ -554,6 +569,45 @@
              (com-mencao jogo-novo
                (str (cabecalho) "💊 *" (:nome pokemon) "* usou uma cura e se livrou de "
                     (nome-status status-atual) "!\n\n" (mensagem-estado jogo-novo))))))))))
+
+(defn- pocao-turno [message]
+  (let [cid  (chat-id message)
+        pid  (jogador-id message)
+        jogo (get @jogos cid)]
+    (p/resolved
+     (cond
+       (nil? jogo)
+       (str (cabecalho) "❓ Não tem batalha rolando. Digite " config/prefix "pokemon pra abrir uma.")
+
+       (not (contains? (:jogadores jogo) :o))
+       (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pokemon pra entrar.")
+
+       (not= pid (get-in jogo [:jogadores (:vez jogo)]))
+       (com-mencao jogo (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo)))
+
+       :else
+       (let [marca    (:vez jogo)
+             pokemon  (get-in jogo [:pokemons marca])
+             hp-max   (:hp pokemon)
+             hp-atual (get-in jogo [:hp marca])]
+         (cond
+           (>= hp-atual hp-max)
+           (com-mencao jogo (str (cabecalho) "❓ *" (:nome pokemon) "* já está com HP cheio.\n\n"
+                                  (mensagem-estado jogo)))
+
+           :else
+           (if-let [fracao (loja/usar-pocao! cid pid)]
+             (let [cura      (js/Math.round (* fracao hp-max))
+                   hp-novo   (min hp-max (+ hp-atual cura))
+                   alvo      (outro marca)
+                   jogo-novo (-> jogo (assoc-in [:hp marca] hp-novo) (assoc :vez alvo))]
+               (swap! jogos assoc cid jogo-novo)
+               (com-mencao jogo-novo
+                 (str (cabecalho) "🧪 *" (:nome pokemon) "* usou uma Poção de Vida e recuperou "
+                      (- hp-novo hp-atual) " de HP!\n\n" (mensagem-estado jogo-novo))))
+             (com-mencao jogo (str (cabecalho) "❌ Você não tem uma Poção de Vida no inventário (compre na "
+                                    config/prefix "loja).\n\n" (mensagem-estado jogo))))))))))
+
 (defn- parse-indice-golpe [texto total]
   (let [n (js/parseInt texto 10)]
     (when (and (not (js/isNaN n)) (<= 1 n total))
@@ -625,6 +679,7 @@
   usa o golpe correspondente (ver o menu de golpes em cada mensagem de
   estado); !pokemon defender entra em posição defensiva/evasiva; !pokemon
   curar usa uma cura do inventário (ver !loja) pro status atual; !pokemon
+  pocao usa uma Poção de Vida do inventário pra recuperar HP; !pokemon
   sair cancela (se só um jogador entrou ainda) ou desiste - contando a
   vitória pro adversário - se a batalha já tiver os 2 jogadores."
   [message args]
@@ -636,8 +691,10 @@
       (contains? #{"atacar" "ataque" "atirar" "usar"} cmd) (atacar message (first resto))
       (contains? #{"defender" "defesa" "esquivar" "evasiva"} cmd) (defender-turno message)
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
+      (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon (abrir/entrar), "
                               config/prefix "pokemon atacar <1-4>, " config/prefix "pokemon defender, "
-                              config/prefix "pokemon curar ou " config/prefix "pokemon sair.")))))
+                              config/prefix "pokemon curar, " config/prefix "pokemon pocao ou "
+                              config/prefix "pokemon sair.")))))
 
 
