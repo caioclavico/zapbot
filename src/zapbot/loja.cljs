@@ -14,14 +14,19 @@
 (defn- persistir! []
   (armazenamento/salvar! "loja" @contas))
 
+(defn- remover-acentos [s]
+  (-> s (.normalize "NFD") (str/replace #"[\u0300-\u036f]" "")))
+
 (def ^:private moedas-por-vitoria 10)
 
-;; catálogo estático (nunca persistido, então pode usar keyword à vontade)
+;; catálogo estático (nunca persistido, então pode usar keyword à vontade) -
+;; chaves nomeadas pelo ITEM que você compra (não pelo status que ele cura),
+;; então "loja comprar atadura"/"antidoto" fazem sentido de verdade
 (def ^:private itens
-  {"queimadura" {:nome "Cura de Queimadura" :emoji "🔥" :status :queimado   :preco 15}
-   "veneno"     {:nome "Antídoto"           :emoji "☠️" :status :envenenado :preco 15}
-   "paralisia"  {:nome "Cura de Paralisia"  :emoji "⚡" :status :paralisado :preco 15}
-   "pocao"      {:nome "Poção de Vida"      :emoji "🧪" :cura-hp 0.4        :preco 20}})
+  {"atadura"    {:nome "Atadura"           :emoji "🔥" :status :queimado   :preco 15}
+   "antidoto"   {:nome "Antídoto"          :emoji "☠️" :status :envenenado :preco 15}
+   "paralisia"  {:nome "Cura de Paralisia" :emoji "⚡" :status :paralisado :preco 15}
+   "pocao"      {:nome "Poção de Vida"     :emoji "🧪" :cura-hp 0.4        :preco 20}})
 
 (defn- conta [cid pid]
   (get-in @contas [cid pid] {"moedas" 0 "inventario" {}}))
@@ -85,7 +90,7 @@
          "🎒 Seu inventário: " (formatar-inventario (get c "inventario")) "\n\n"
          "*Itens à venda:*\n"
          (str/join "\n" (map (fn [[chave info]] (formatar-item chave info)) itens))
-         "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar queimadura).\n"
+         "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, cure status com " config/prefix
          "pokemon curar, e recupere HP com " config/prefix "pokemon pocao!")))
 
@@ -95,7 +100,7 @@
   [message nome-item]
   (let [cid   (if (.-fromMe message) (.-to message) (.-from message))
         pid   (or (.-author message) (.-from message))
-        chave (str/lower-case (str/trim (or nome-item "")))]
+        chave (-> (or nome-item "") str/trim str/lower-case remover-acentos)]
     (if-let [item (get itens chave)]
       (let [saldo (moedas cid pid)]
         (if (>= saldo (:preco item))
