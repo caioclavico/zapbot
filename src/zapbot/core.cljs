@@ -6,6 +6,7 @@
             [zapbot.config :as config]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.historico :as historico]
+            [zapbot.adedonha :as adedonha]
             [zapbot.admins :as admins]
             [zapbot.router :as router]))
 
@@ -28,6 +29,7 @@
 
 (defn- on-message [message]
   (historico/registrar! message)
+  (adedonha/capturar-resposta! message)
   (-> (router/processar message)
       (p/then (fn [resposta]
                 (cond

@@ -31,6 +31,10 @@
 (def tmdb-api-key (env "TMDB_API_KEY"))
 ;; chave gratuita em https://aistudio.google.com/apikey (usada pelo !resuma)
 (def gemini-api-key (env "GEMINI_API_KEY"))
+;; evite "-latest": esse alias troca de modelo sem aviso (já trocou pra um
+;; modelo "thinking" bem mais pesado/lotado do que o bot precisa) - fixe um
+;; modelo leve e estável, ajustável sem precisar mexer no código
+(def gemini-model (env "GEMINI_MODEL" "gemini-3.5-flash-lite"))
 ;; credenciais gratuitas em https://developer.spotify.com/dashboard (usadas pelo !musica)
 (def spotify-client-id (env "SPOTIFY_CLIENT_ID"))
 (def spotify-client-secret (env "SPOTIFY_CLIENT_SECRET"))

@@ -6,7 +6,8 @@
   (:require [promesa.core :as p]
             [zapbot.config :as config]))
 
-(def ^:private url "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent")
+(defn- url []
+  (str "https://generativelanguage.googleapis.com/v1beta/models/" config/gemini-model ":generateContent"))
 
 ;; 429 (cota do free tier) e 503 (modelo sobrecarregado) costumam ser
 ;; transitórios - ver https://ai.google.dev/gemini-api/docs/rate-limits.
@@ -17,10 +18,10 @@
 
 (defn- chamar-uma-vez [prompt]
   (let [corpo #js {:contents #js [#js {:parts #js [#js {:text prompt}]}]}]
-    (p/let [res  (js/fetch url #js {:method  "POST"
-                                     :headers #js {"Content-Type"   "application/json"
-                                                    "x-goog-api-key" config/gemini-api-key}
-                                     :body    (js/JSON.stringify corpo)})
+    (p/let [res  (js/fetch (url) #js {:method  "POST"
+                                       :headers #js {"Content-Type"   "application/json"
+                                                      "x-goog-api-key" config/gemini-api-key}
+                                       :body    (js/JSON.stringify corpo)})
             data (.json res)
             data (js->clj data :keywordize-keys true)]
       {:ok? (.-ok res) :status (.-status res) :data data})))

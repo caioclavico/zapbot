@@ -46,7 +46,7 @@
    {:emoji "🎲" :uso "sorteio"            :desc "Sorteia uma pessoa conhecida do chat/grupo"}
    {:emoji "⭕" :uso "velha [1-9|sair]"  :desc "Jogo da velha entre duas pessoas: abra/entre numa partida, jogue numa casa (1-9) ou saia"}
    {:emoji "�" :uso "naval [coordenada|sair]" :desc "Batalha naval entre duas pessoas: abra/entre numa partida e atire numa coordenada (ex.: C4) ou saia"}
-   {:emoji "�🔤" :uso "adedonha [parar]" :desc "Sorteia uma letra e categorias pro grupo jogar STOP/adedonha (também funciona como !stop)"}
+   {:emoji "�🔤" :uso "adedonha [parar]" :desc "Sorteia uma letra e categorias pro grupo jogar STOP/adedonha - manda todas as respostas numa mensagem só (uma por linha, na ordem) que o bot pontua sozinho (também funciona como !stop)"}
    {:emoji "🎵" :uso "musica [genero|generos]"   :desc "Indica uma música com link do Spotify (sem gênero, sorteia um; 'generos' lista sugestões)"}
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra o consumo de CPU, memória, disco e uptime da VM"}
