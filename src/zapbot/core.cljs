@@ -48,6 +48,23 @@
 (defn- on-group-admin-changed [notification]
   (admins/processar-evento-promocao! notification))
 
+(def ^:private timeout-aviso-inicializacao-ms (* 60 1000))
+
+;; sem isso, uma trava no Puppeteer/Chromium (RAM/CPU insuficiente, processo
+;; zumbi antigo segurando o profile, etc.) fica em silêncio total no log -
+;; "qr"/"ready" cancelam o aviso assim que um dos dois acontecer de verdade.
+(defn- avisar-se-travar! [client]
+  (let [id (js/setTimeout
+            (fn []
+              (js/console.warn
+               (str "⚠️ Já se passaram " (/ timeout-aviso-inicializacao-ms 1000)
+                    "s sem QR code nem conexão - o Chromium pode estar travado "
+                    "(RAM/CPU insuficiente, processo zumbi antigo, SingletonLock, etc). "
+                    "Verifique com 'docker stats' e 'docker exec zapbot ps aux'.")))
+            timeout-aviso-inicializacao-ms)]
+    (.once client "qr" (fn [_] (js/clearTimeout id)))
+    (.once client "ready" (fn [] (js/clearTimeout id)))))
+
 (defn main [& _args]
   (let [puppeteer-opts (cond-> {:args #js ["--no-sandbox" "--disable-setuid-sandbox"
                                             ;; --disable-quic evita ERR_CONNECTION_CLOSED comum em redes
@@ -67,4 +84,8 @@
     ;; espera o Cassandra carregar (rank/loja/admins/etc.) antes de conectar
     ;; no WhatsApp - iniciar! nunca rejeita (loga e segue sem persistência
     ;; nessa execução se não conseguir conectar), então isso nunca trava o boot.
-    (p/then (armazenamento/iniciar!) (fn [_] (.initialize client)))))
+    (p/then (armazenamento/iniciar!)
+            (fn [_]
+              (avisar-se-travar! client)
+              (-> (.initialize client)
+                  (p/catch (fn [err] (js/console.error "❌ Erro ao inicializar o cliente do WhatsApp:" err))))))))

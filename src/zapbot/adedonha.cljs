@@ -13,14 +13,14 @@
             [zapbot.rank :as rank]
             [zapbot.gemini :as gemini]))
 
-;; sem K, W, Y - raras demais em português pro jogo ficar divertido
+;; sem K, W, Y, Z - raras demais em português pro jogo ficar divertido
 (def ^:private letras
-  ["A" "B" "C" "D" "E" "F" "G" "H" "I" "J" "L" "M" "N" "O" "P" "Q" "R" "S" "T" "U" "V" "X" "Z"])
+  ["A" "B" "C" "D" "E" "F" "G" "H" "I" "J" "L" "M" "N" "O" "P" "Q" "R" "S" "T" "U" "V" "X"])
 
 (def ^:private categorias
   ["Nome" "Cor" "Animal" "Objeto" "Fruta" "País" "Profissão"])
 
-(def ^:private duracao-ms (* 60 1000))
+(def ^:private duracao-ms (* 90 1000))
 
 ;; cid -> {:letra "A" :respostas {pid {:nome "..." :texto "..."}}} - texto é
 ;; a última mensagem (crua) de cada participante antes do fim da rodada.
@@ -257,7 +257,7 @@
      (str "🔤 *Adedonha do tio " config/bot-name "*\n\n"
           "Letra: *" letra "*\n\n"
           (str/join "\n" (map-indexed (fn [i cat] (str (inc i) ". " cat)) categorias))
-          "\n\n⏳ Vocês têm 60 segundos! Mandem *uma mensagem só* com todas as respostas, "
+          "\n\n⏳ Vocês têm 1 minuto e meio! Mandem *uma mensagem só* com todas as respostas, "
           "uma por linha e na mesma ordem da lista acima (linha em branco = sem resposta "
           "pra aquela categoria).\n"
           "Pontuação: 10 pts resposta válida e única, 5 pts válida repetida, 0 em branco/errada.\n"
