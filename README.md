@@ -234,6 +234,28 @@ variables > Actions`):
 > adicione `deploy_key.pub` ao `authorized_keys` da VM e cole o conteúdo de
 > `deploy_key` (privada) no secret `ORACLE_SSH_KEY`.
 
+### 7. Versionamento
+
+Cada release que vai pra VM ganha uma tag anotada `vMAJOR.MINOR.PATCH`, além
+do commit normal - assim dá pra saber exatamente qual versão está rodando
+(`git describe --tags` na VM) e voltar pra uma anterior se precisar
+(`git checkout vX.Y.Z && docker compose up -d --build`). Pushar só a tag
+(sem mudar `master`) não dispara o deploy - o workflow só reage a push/PR na
+branch `master`.
+
+Ao preparar um release:
+
+```bash
+# 1. bump no campo "version" do package.json, depois:
+git add package.json
+git commit -m "chore: bump version to X.Y.Z"
+git push origin master        # dispara o deploy de verdade
+
+# 2. marca esse commit como a versão:
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
+```
+
 ## Estrutura do projeto
 
 ```
