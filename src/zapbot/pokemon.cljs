@@ -248,35 +248,38 @@
 
 ;; Caçada (!pokemon cacar): sorteia um selvagem com poder-total (acima)
 ;; próximo de um alvo calculado a partir do nível do jogador (derivado das
-;; vitórias em !pokemon, ver zapbot.treinador) - mesmo padrão de reroll-até-
-;; aproximar do balanceamento de PvP acima, só que mirando um alvo fixo em
-;; vez de "perto do oponente".
+;; vitórias em !pokemon, ver zapbot.treinador). Diferente do balanceamento
+;; de PvP (que só evita confrontos injustos), aqui um "estouro pra cima" é
+;; um problema de verdade (treinador iniciante levando um lendário) - por
+;; isso NUNCA aceita algo acima do teto (alvo + tolerância), nem como
+;; último recurso: se as tentativas acabarem sem achar nada dentro da
+;; janela, fica com o MAIS FRACO já visto (nunca o "mais próximo", que
+;; podia ser um lendário se a amostra toda tiver saído forte por azar).
 (def ^:private poder-alvo-nivel-1 320)
 (def ^:private incremento-poder-por-nivel 25)
 (def ^:private tolerancia-poder-caca 60)
-(def ^:private tentativas-caca 15)
+(def ^:private tentativas-caca 25)
 
 (defn- poder-alvo-caca [nivel]
   (+ poder-alvo-nivel-1 (* incremento-poder-por-nivel (dec nivel))))
 
 (defn- sortear-selvagem
   ([alvo] (sortear-selvagem alvo tentativas-caca nil))
-  ([alvo tentativas-restantes melhor-ate-agora]
+  ([alvo tentativas-restantes mais-fraco-ate-agora]
    (p/let [candidato (sortear-pokemon)]
-     (let [diferenca (js/Math.abs (- (poder-total candidato) alvo))]
-       (cond
-         (<= diferenca tolerancia-poder-caca)
-         candidato
+     (cond
+       (<= (poder-total candidato) (+ alvo tolerancia-poder-caca))
+       candidato
 
-         (zero? tentativas-restantes)
-         (or melhor-ate-agora candidato)
+       (zero? tentativas-restantes)
+       (or mais-fraco-ate-agora candidato)
 
-         :else
-         (let [melhor (if (or (nil? melhor-ate-agora)
-                               (< diferenca (js/Math.abs (- (poder-total melhor-ate-agora) alvo))))
-                         candidato
-                         melhor-ate-agora)]
-           (sortear-selvagem alvo (dec tentativas-restantes) melhor)))))))
+       :else
+       (let [mais-fraco (if (or (nil? mais-fraco-ate-agora)
+                                 (< (poder-total candidato) (poder-total mais-fraco-ate-agora)))
+                           candidato
+                           mais-fraco-ate-agora)]
+         (sortear-selvagem alvo (dec tentativas-restantes) mais-fraco))))))
 
 ;; chance de captura: quanto mais forte (poder-total) o selvagem, mais
 ;; difícil - referência em 450 (poder "neutro", ver suavizar-stat) pra 70%,
@@ -800,7 +803,9 @@
     (p/resolved
      (if (empty? eq)
        (str (cabecalho) "❓ Você ainda não tem nenhum pokémon. Use " config/prefix "pokemon inicial pra escolher o seu.")
-       (str (cabecalho) "🎒 *Seu time:*\n\n"
+       (str (cabecalho) "🧑‍🎓 *Nível de treinador:* " (treinador/nivel-jogador cid pid)
+            " (sobe vencendo batalhas de " config/prefix "pokemon, calibra a força dos selvagens na caçada)\n\n"
+            "🎒 *Seu time:*\n\n"
             (str/join "\n" (map-indexed
                              (fn [i registro]
                                (let [[p hp-atual status] (treinador/registro->pokemon registro)]
@@ -876,14 +881,14 @@
                 (if capturou?
                   (let [idx (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil)]
                     (enviar-imagem message (:imagem selvagem)
-                                    (str (cabecalho) "🎯 Um *" (:nome selvagem) "* selvagem apareceu! ("
-                                         chance "% de chance de captura)\n\n✅ Capturado! Adicionado ao seu time (nº "
-                                         (inc idx) "). Use " config/prefix "pokemon escolher " (inc idx)
-                                         " pra deixar ele ativo.")))
+                                    (str (cabecalho) "🎯 (nível de treinador " nivel ") Um *" (:nome selvagem)
+                                         "* selvagem apareceu! (" chance "% de chance de captura)\n\n✅ Capturado! "
+                                         "Adicionado ao seu time (nº " (inc idx) "). Use " config/prefix
+                                         "pokemon escolher " (inc idx) " pra deixar ele ativo.")))
                   (enviar-imagem message (:imagem selvagem)
-                                  (str (cabecalho) "🎯 Um *" (:nome selvagem) "* selvagem apareceu! ("
-                                       chance "% de chance de captura)\n\n💨 Escapou! Tente de novo em "
-                                       treinador/cooldown-cacada-minutos " minutos.")))))
+                                  (str (cabecalho) "🎯 (nível de treinador " nivel ") Um *" (:nome selvagem)
+                                       "* selvagem apareceu! (" chance "% de chance de captura)\n\n💨 Escapou! Tente "
+                                       "de novo em " treinador/cooldown-cacada-minutos " minutos.")))))
             (p/catch (fn [err]
                        (js/console.error "Erro ao caçar pokemon:" err)
                        (str (cabecalho) "❌ Não consegui buscar um pokémon selvagem agora. Tente de novo."))))))))
