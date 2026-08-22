@@ -29,6 +29,12 @@
        (sort-by #(get % "pontos") >)
        (take quantidade)))
 
+(defn vitorias-jogo
+  "Quantas vitórias pid já tem no jogo indicado (string, ex. \"pokemon\"),
+  nesse chat - 0 se nunca pontuou."
+  [cid pid jogo]
+  (get-in @placares [cid pid "jogos" jogo] 0))
+
 (def ^:private medalha ["🥇" "🥈" "🥉"])
 
 (defn- formatar-jogador [posicao info]
