@@ -8,8 +8,30 @@
             [zapbot.config :as config]
             [zapbot.armazenamento :as armazenamento]))
 
-(defonce ^:private contas (atom (or (armazenamento/obter "loja") {})))
-(armazenamento/registrar! "loja" contas)
+;; "queimadura"/"veneno" eram as chaves de compra antigas (renomeadas pra
+;; "atadura"/"antidoto" - ver comentário no catálogo `itens` abaixo); sem
+;; isso, inventários já persistidos com as chaves antigas ficam sem emoji/
+;; nome no !loja (a chave não existe mais no catálogo novo).
+(def ^:private renomeacoes-antigas {"queimadura" "atadura" "veneno" "antidoto"})
+
+(defn- migrar-inventario [inventario]
+  (reduce-kv (fn [acc chave qtd]
+               (update acc (get renomeacoes-antigas chave chave) (fnil + 0) qtd))
+             {}
+             (or inventario {})))
+
+(defn- migrar-chaves-antigas [dados]
+  (reduce-kv (fn [acc cid contas-chat]
+               (assoc acc cid
+                      (reduce-kv (fn [acc2 pid conta]
+                                   (assoc acc2 pid (update conta "inventario" migrar-inventario)))
+                                 {}
+                                 contas-chat)))
+             {}
+             (or dados {})))
+
+(defonce ^:private contas (atom (migrar-chaves-antigas (armazenamento/obter "loja"))))
+(armazenamento/registrar! "loja" contas migrar-chaves-antigas)
 
 (defn- persistir! []
   (armazenamento/salvar! "loja" @contas))
