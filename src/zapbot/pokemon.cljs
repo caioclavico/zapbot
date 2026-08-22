@@ -27,6 +27,20 @@
 (defn- jogador-id [message]
   (or (.-author message) (.-from message)))
 
+(defn- alvo-mencionado [message]
+  (p/let [mencionados (.getMentions message)]
+    (when (seq mencionados) (.. (first mencionados) -id -_serialized))))
+
+(defn- alvo-citado [message]
+  (if (.-hasQuotedMsg message)
+    (p/let [quoted (.getQuotedMessage message)]
+      (or (.-author quoted) (.-from quoted)))
+    (p/resolved nil)))
+
+(defn- resolver-alvo-doacao [message]
+  (p/let [alvo (alvo-mencionado message)]
+    (if alvo alvo (alvo-citado message))))
+
 (defn- so-numero [id]
   (first (str/split id #"@")))
 
@@ -109,6 +123,66 @@
   (p/let [res  (js/fetch (str "https://pokeapi.co/api/v2/pokemon/" nome))
           data (.json res)]
     (pokemon-de-dados (js->clj data :keywordize-keys true))))
+
+;; evolução (só por NÍVEL - esse jogo não tem conceito de item/troca/
+;; amizade, então evoluções desses tipos são ignoradas de propósito).
+(defn- buscar-cadeia-evolucao [slug]
+  (-> (p/let [res-especie   (js/fetch (str "https://pokeapi.co/api/v2/pokemon-species/" slug))
+              dados-especie (.json res-especie)
+              url-cadeia    (:url (get (js->clj dados-especie :keywordize-keys true) :evolution_chain))
+              res-cadeia    (js/fetch url-cadeia)
+              dados-cadeia  (.json res-cadeia)]
+        (js->clj dados-cadeia :keywordize-keys true))
+      (p/catch (fn [_] nil))))
+
+(defn- proxima-evolucao
+  "Acha, na árvore da cadeia de evolução, o próximo estágio a partir do
+  slug atual que evolui por NÍVEL. Retorna {:slug :nivel-min} ou nil (não
+  achou o slug atual na cadeia, ou a próxima evolução não é por nível)."
+  [cadeia slug-atual]
+  (letfn [(achar-no [no]
+            (if (= (get-in no [:species :name]) slug-atual)
+              no
+              (some achar-no (:evolves_to no))))
+          (por-nivel [no]
+            (some (fn [prox]
+                    (some (fn [detalhe]
+                            (when-let [nivel (:min_level detalhe)]
+                              {:slug (get-in prox [:species :name]) :nivel-min nivel}))
+                          (:evolution_details prox)))
+                  (:evolves_to no)))]
+    (when-let [no-atual (achar-no (:chain cadeia))]
+      (por-nivel no-atual))))
+
+(defn- tentar-evoluir!
+  "Se o pokémon ATIVO do jogador já estiver no nível de evoluir (por
+  nível - ver proxima-evolucao), busca a espécie evoluída e recalcula seus
+  stats no MESMO nível atual (mesma fórmula de crescimento do
+  zapbot.treinador). Retorna uma promise com {:nome-antigo :nome-novo
+  :imagem :tipos :habilidade :hp :ataque :defesa :atq-esp :def-esp :veloc}
+  ou nil (não evoluiu - já é a forma final, ou não atingiu o nível ainda)."
+  [cid pid]
+  (-> (p/let [ativo (treinador/pokemon-ativo cid pid)]
+        (when ativo
+          (let [[pokemon _ _] ativo
+                slug-atual    (str/lower-case (:nome pokemon))
+                nivel         (or (:nivel pokemon) 1)]
+            (p/let [cadeia (buscar-cadeia-evolucao slug-atual)]
+              (when-let [{:keys [slug nivel-min]} (and cadeia (proxima-evolucao cadeia slug-atual))]
+                (when (>= nivel nivel-min)
+                  (p/let [res      (js/fetch (str "https://pokeapi.co/api/v2/pokemon/" slug))
+                          data     (.json res)
+                          evoluido (pokemon-de-dados (js->clj data :keywordize-keys true))
+                          fator    (js/Math.pow treinador/fator-crescimento-por-nivel (dec nivel))]
+                    {:nome-antigo (:nome pokemon) :nome-novo (:nome evoluido)
+                     :imagem      (:imagem evoluido) :tipos (:tipos evoluido) :habilidade (:habilidade evoluido)
+                     :hp          (js/Math.round (* (:hp evoluido) fator))
+                     :ataque      (js/Math.round (* (:ataque evoluido) fator))
+                     :defesa      (js/Math.round (* (:defesa evoluido) fator))
+                     :atq-esp     (js/Math.round (* (:atq-esp evoluido) fator))
+                     :def-esp     (js/Math.round (* (:def-esp evoluido) fator))
+                     :veloc       (js/Math.round (* (:veloc evoluido) fator))})))))))
+      (p/catch (fn [err] (js/console.error "Erro ao checar evolução:" err) nil))))
 
 (defn- cabecalho []
   (str "⚡ *Batalha Pokémon do tio " config/bot-name "*\n\n"))
@@ -262,14 +336,16 @@
 (defn- emoji-status [status]
   (case status :queimado " 🔥" :envenenado " ☠️" :paralisado " ⚡" ""))
 
+(defn- nivel-pokemon [pokemon] (or (:nivel pokemon) 1))
+
 (defn- mensagem-estado [{:keys [pokemons nomes vez hp defendendo status jogadores]}]
   (let [meu        (get pokemons vez)
         adversario (get pokemons (outro vez))]
-    (str "🐾 " (get nomes :x) " - *" (get-in pokemons [:x :nome]) "*" (when (:x defendendo) " 🛡️")
-         (emoji-status (:x status)) "\n"
+    (str "🐾 " (get nomes :x) " - *" (get-in pokemons [:x :nome]) "* Nv." (nivel-pokemon (:x pokemons))
+         (when (:x defendendo) " 🛡️") (emoji-status (:x status)) "\n"
          (barra-hp (get hp :x) (get-in pokemons [:x :hp])) "\n\n"
-         "🐾 " (get nomes :o) " - *" (get-in pokemons [:o :nome]) "*" (when (:o defendendo) " 🛡️")
-         (emoji-status (:o status)) "\n"
+         "🐾 " (get nomes :o) " - *" (get-in pokemons [:o :nome]) "* Nv." (nivel-pokemon (:o pokemons))
+         (when (:o defendendo) " 🛡️") (emoji-status (:o status)) "\n"
          (barra-hp (get hp :o) (get-in pokemons [:o :hp])) "\n\n"
          "Vez de " (get nomes vez) " (@" (so-numero (get jogadores vez)) ") - escolha um golpe:\n"
          (menu-golpes meu (:tipos adversario) (:habilidade adversario))
@@ -365,13 +441,27 @@
     (when-let [pid (get-in jogo [:jogadores marca])]
       (treinador/atualizar-ativo! cid pid (get-in jogo [:hp marca]) (get-in jogo [:status marca])))))
 
-(defn- anunciar-vitoria [cid jogo vencedor-marca motivo-extra]
+(defn- verificar-evolucao! [message cid pid]
+  (-> (tentar-evoluir! cid pid)
+      (p/then (fn [dados]
+                (when dados
+                  (treinador/evoluir-ativo! cid pid dados)
+                  (enviar-imagem message (:imagem dados)
+                                  (str (cabecalho) "✨ *" (:nome-antigo dados) "* evoluiu para *"
+                                       (:nome-novo dados) "*!")))))
+      (p/catch (fn [err] (js/console.error "Erro ao processar evolução:" err)))))
+
+(defn- anunciar-vitoria [message cid jogo vencedor-marca motivo-extra]
   (sincronizar-equipe! cid jogo)
   (swap! jogos dissoc cid)
   (rank/pontuar! cid (get-in jogo [:jogadores vencedor-marca]) (get-in jogo [:nomes vencedor-marca]) "pokemon")
-  (let [ganho (loja/creditar! cid (get-in jogo [:jogadores vencedor-marca]))]
+  (let [ganho        (loja/creditar! cid (get-in jogo [:jogadores vencedor-marca]))
+        vencedor-pid (get-in jogo [:jogadores vencedor-marca])
+        subida       (treinador/subir-nivel! cid vencedor-pid)]
+    (when subida (verificar-evolucao! message cid vencedor-pid))
     (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "! (+" ganho " 💰 moedas, confira com "
-         config/prefix "loja)")))
+         config/prefix "loja)"
+         (when subida (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!")))))
 
 (defn- resolver-ataque [golpe atacante defensor defendendo? hp-atacante-atual]
   (let [esquivou?     (and defendendo? (< (rand-int 100) (chance-esquiva defensor)))
@@ -418,7 +508,8 @@
    :vez :x})
 
 (defn- legenda-pokemon [jogador-nome pokemon]
-  (str jogador-nome " entrou com *" (:nome pokemon) "* (" (formatar-tipos (:tipos pokemon)) ")!\n"
+  (str jogador-nome " entrou com *" (:nome pokemon) "* Nv." (nivel-pokemon pokemon)
+       " (" (formatar-tipos (:tipos pokemon)) ")!\n"
        "❤️ HP: " (:hp pokemon) " | ⚔️ Ataque: " (:ataque pokemon) " | 🛡️ Defesa: " (:defesa pokemon) "\n"
        "🔮 Atq. Especial: " (:atq-esp pokemon) " | 🌀 Def. Especial: " (:def-esp pokemon)
        " | 💨 Velocidade: " (:veloc pokemon) "\n"
@@ -529,7 +620,7 @@
          (if (nil? marca-saiu)
            (str (cabecalho) "❓ Você não faz parte dessa batalha (só quem está jogando pode sair dela).")
            (str (cabecalho) "🚪 *" (get-in jogo [:nomes marca-saiu]) "* fugiu da batalha!"
-                (anunciar-vitoria cid jogo (outro marca-saiu) " por desistência"))))))))
+                (anunciar-vitoria message cid jogo (outro marca-saiu) " por desistência"))))))))
 
 (defn- defender-turno [message]
   (let [cid  (chat-id message)
@@ -714,7 +805,7 @@
                              (fn [i registro]
                                (let [[p hp-atual status] (treinador/registro->pokemon registro)]
                                  (str (inc i) ". " (if (= i (treinador/indice-ativo cid pid)) "👉 " "") "*" (:nome p)
-                                      "* " (barra-hp hp-atual (:hp p)) (emoji-status status))))
+                                      "* Nv." (nivel-pokemon p) " " (barra-hp hp-atual (:hp p)) (emoji-status status))))
                              eq))
             "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉).")))))
 
@@ -732,6 +823,37 @@
            (do (treinador/definir-ativo! cid pid indice)
                (let [[p _ _] (treinador/registro->pokemon (nth (treinador/equipe cid pid) indice))]
                  (str (cabecalho) "✅ *" (:nome p) "* agora é seu pokémon ativo!")))))))))
+
+(defn- doar [message indice-texto]
+  (let [cid   (chat-id message)
+        pid   (jogador-id message)
+        total (count (treinador/equipe cid pid))]
+    (if (zero? total)
+      (p/resolved (str (cabecalho) "❓ Você ainda não tem nenhum pokémon. Use " config/prefix "pokemon inicial."))
+      (let [indice (parse-indice-golpe indice-texto total)]
+        (if (nil? indice)
+          (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon doar <número> marcando (@pessoa) ou "
+                            "respondendo a mensagem de quem vai receber. Veja os números com " config/prefix
+                            "pokemon time."))
+          (-> (p/let [alvo (resolver-alvo-doacao message)]
+                (cond
+                  (nil? alvo)
+                  (str (cabecalho) "❓ Marque (@pessoa) ou responda a mensagem de quem vai receber, junto com "
+                       config/prefix "pokemon doar " (inc indice) ".")
+
+                  (= alvo pid)
+                  (str (cabecalho) "❓ Você não pode doar um pokémon pra si mesmo.")
+
+                  :else
+                  (let [registro      (nth (treinador/equipe cid pid) indice)
+                        [pokemon _ _] (treinador/registro->pokemon registro)]
+                    (treinador/remover-pokemon! cid pid indice)
+                    (treinador/receber-doacao! cid alvo registro)
+                    (str (cabecalho) "🎁 Você doou *" (:nome pokemon) "* Nv." (nivel-pokemon pokemon)
+                         " com sucesso!"))))
+              (p/catch (fn [err]
+                         (js/console.error "Erro ao doar pokemon:" err)
+                         (str (cabecalho) "❌ Deu algo errado ao tentar doar. Tente de novo.")))))))))
 
 (defn- cacar [message]
   (let [cid (chat-id message)
@@ -799,7 +921,7 @@
                  msg         (str "⚡ *" (:nome atacante) "* está paralisado e não conseguiu atacar!"
                                    (when (pos? dot) (str " Ainda assim sofreu " dot " de dano pelo status.")))]
              (if (zero? hp-atacante)
-               (str (cabecalho) msg (anunciar-vitoria cid jogo alvo-marca " a batalha"))
+               (str (cabecalho) msg (anunciar-vitoria message cid jogo alvo-marca " a batalha"))
                (let [jogo-novo (assoc jogo :vez alvo-marca)]
                  (swap! jogos assoc cid jogo-novo)
                  (sincronizar-equipe! cid jogo-novo)
@@ -812,7 +934,7 @@
                                                            (get-in jogo [:hp atacante-marca]))
                  jogo (update-in jogo [:hp alvo-marca] #(max 0 (- % dano)))]
              (if (zero? (get-in jogo [:hp alvo-marca]))
-               (str (cabecalho) mensagem (anunciar-vitoria cid jogo atacante-marca " a batalha"))
+               (str (cabecalho) mensagem (anunciar-vitoria message cid jogo atacante-marca " a batalha"))
                (let [status-defensor-atual (get-in jogo [:status alvo-marca])
                      novo-status           (when (pos? dano) (tentar-contagiar (:tipo golpe) status-defensor-atual))
                      jogo                  (cond-> jogo novo-status (assoc-in [:status alvo-marca] novo-status))
@@ -823,7 +945,7 @@
                                                         "* sofreu mais " dot " de dano pelo status.")))]
                  (if (zero? (get-in jogo [:hp atacante-marca]))
                    (str (cabecalho) mensagem msg-extra
-                        (anunciar-vitoria cid jogo alvo-marca (str " - " (:nome atacante) " caiu por causa do próprio status")))
+                        (anunciar-vitoria message cid jogo alvo-marca (str " - " (:nome atacante) " caiu por causa do próprio status")))
                    (let [jogo-novo (-> jogo (assoc-in [:defendendo alvo-marca] false) (assoc :vez alvo-marca))]
                      (swap! jogos assoc cid jogo-novo)
                      (sincronizar-equipe! cid jogo-novo)
@@ -834,15 +956,17 @@
   batalhar/caçar); !pokemon cacar tenta encontrar e capturar um pokémon
   selvagem (nível calibrado pelas suas vitórias em !pokemon); !pokemon time
   mostra seu time capturado; !pokemon escolher <número> troca qual está
-  ativo pra batalhar; !pokemon sem argumento abre/entra numa batalha (usa
-  seu pokémon ativo); !pokemon atacar <1-4> usa o golpe correspondente (ver
-  o menu de golpes em cada mensagem de estado); !pokemon defender entra em
-  posição defensiva/evasiva; !pokemon curar usa uma cura do inventário (ver
-  !loja) pro status atual (dentro ou fora de uma batalha); !pokemon pocao
-  usa uma Poção de Vida do inventário pra recuperar HP (dentro ou fora de
-  uma batalha); !pokemon sair cancela (se só um jogador entrou ainda) ou
-  desiste - contando a vitória pro adversário - se a batalha já tiver os 2
-  jogadores."
+  ativo pra batalhar; !pokemon doar <número> (marcando ou respondendo a
+  pessoa) doa um pokémon da sua equipe pra outro jogador; !pokemon sem
+  argumento abre/entra numa batalha (usa seu pokémon ativo, que sobe de
+  nível - e pode evoluir - a cada vitória); !pokemon atacar <1-4> usa o
+  golpe correspondente (ver o menu de golpes em cada mensagem de estado);
+  !pokemon defender entra em posição defensiva/evasiva; !pokemon curar usa
+  uma cura do inventário (ver !loja) pro status atual (dentro ou fora de
+  uma batalha); !pokemon pocao usa uma Poção de Vida do inventário pra
+  recuperar HP (dentro ou fora de uma batalha); !pokemon sair cancela (se
+  só um jogador entrou ainda) ou desiste - contando a vitória pro
+  adversário - se a batalha já tiver os 2 jogadores."
   [message args]
   (let [args         (str/trim (str/lower-case (or args "")))
         [cmd & resto] (str/split args #"\s+")]
@@ -853,14 +977,16 @@
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
       (contains? #{"time" "equipe"} cmd) (ver-time message)
       (= cmd "escolher") (escolher-ativo message (first resto))
+      (= cmd "doar") (doar message (first resto))
       (contains? #{"atacar" "ataque" "atirar" "usar"} cmd) (atacar message (first resto))
       (contains? #{"defender" "defesa" "esquivar" "evasiva"} cmd) (defender-turno message)
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
       (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon inicial, " config/prefix "pokemon cacar, "
                               config/prefix "pokemon time, " config/prefix "pokemon escolher <número>, "
-                              config/prefix "pokemon (abrir/entrar), " config/prefix "pokemon atacar <1-4>, "
-                              config/prefix "pokemon defender, " config/prefix "pokemon curar, "
-                              config/prefix "pokemon pocao ou " config/prefix "pokemon sair.")))))
+                              config/prefix "pokemon doar <número>, " config/prefix "pokemon (abrir/entrar), "
+                              config/prefix "pokemon atacar <1-4>, " config/prefix "pokemon defender, "
+                              config/prefix "pokemon curar, " config/prefix "pokemon pocao ou " config/prefix
+                              "pokemon sair.")))))
 
 
