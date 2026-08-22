@@ -259,9 +259,17 @@
 (def ^:private incremento-poder-por-nivel 25)
 (def ^:private tolerancia-poder-caca 60)
 (def ^:private tentativas-caca 25)
+;; nenhum pokémon real passa de ~588 de poder-total (amostra ao vivo da
+;; PokeAPI, ver /memories/repo/zapbot.md) - sem esse teto, o alvo de
+;; caçada passaria disso por volta do nível 14+ e NENHUM pokémon real
+;; caberia mais na janela de tolerância, fazendo a caçada de um treinador
+;; muito experiente cair SEMPRE no fallback "mais fraco visto" (o
+;; oposto do que deveria acontecer). Só limita a dificuldade da caçada -
+;; o nível exibido em !pokemon time/cacar continua o real, sem teto.
+(def ^:private nivel-maximo-caca 11)
 
 (defn- poder-alvo-caca [nivel]
-  (+ poder-alvo-nivel-1 (* incremento-poder-por-nivel (dec nivel))))
+  (+ poder-alvo-nivel-1 (* incremento-poder-por-nivel (dec (min nivel nivel-maximo-caca)))))
 
 (defn- sortear-selvagem
   ([alvo] (sortear-selvagem alvo tentativas-caca nil))
@@ -458,6 +466,7 @@
   (sincronizar-equipe! cid jogo)
   (swap! jogos dissoc cid)
   (rank/pontuar! cid (get-in jogo [:jogadores vencedor-marca]) (get-in jogo [:nomes vencedor-marca]) "pokemon")
+  (treinador/registrar-vitoria-treinador! cid (get-in jogo [:jogadores vencedor-marca]))
   (let [ganho        (loja/creditar! cid (get-in jogo [:jogadores vencedor-marca]))
         vencedor-pid (get-in jogo [:jogadores vencedor-marca])
         subida       (treinador/subir-nivel! cid vencedor-pid)]

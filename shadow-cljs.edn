@@ -11,4 +11,8 @@
   :migrar-estado {:target :node-script
                    :main zapbot.migrar-estado/-main
                    :output-to "target/migrar-estado.js"
-                   :compiler-options {:optimizations :simple}}}}
+                   :compiler-options {:optimizations :simple}}
+  :resetar-pokemon {:target :node-script
+                     :main zapbot.resetar-pokemon/-main
+                     :output-to "target/resetar-pokemon.js"
+                     :compiler-options {:optimizations :simple}}}}
