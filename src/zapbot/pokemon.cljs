@@ -805,7 +805,7 @@
                              (fn [i registro]
                                (let [[p hp-atual status] (treinador/registro->pokemon registro)]
                                  (str (inc i) ". " (if (= i (treinador/indice-ativo cid pid)) "👉 " "") "*" (:nome p)
-                                      "* Nv." (nivel-pokemon p) " " (barra-hp hp-atual (:hp p)) (emoji-status status))))
+                                      "* Nv." (nivel-pokemon p) "\n   " (barra-hp hp-atual (:hp p)) (emoji-status status))))
                              eq))
             "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉).")))))
 
