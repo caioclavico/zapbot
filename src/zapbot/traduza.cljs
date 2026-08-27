@@ -8,5 +8,7 @@
 (defn traduzir-frase [frase]
   (if (str/blank? frase)
     (p/resolved (str "❓ Use: " config/prefix "traduza <frase>"))
-    (p/let [traduzido (traducao/traduzir frase "auto" "pt")]
-      (str "🌐 *Tradução:*\n\n" traduzido))))
+    (p/let [traduzido (traducao/traduzir-com-status frase "auto" "pt")]
+      (if traduzido
+        (str "🌐 *Tradução:*\n\n" traduzido)
+        "❌ Não consegui acessar o serviço de tradução agora. Tente novamente em alguns minutos."))))
