@@ -17,7 +17,8 @@
 (defn- persistir! []
   (armazenamento/salvar! "treinador" @contas))
 
-(def ^:private conta-vazia {"equipe" [] "ativo" 0 "ultima-cacada" 0 "vitorias-treinador" 0})
+(def ^:private conta-vazia {"equipe" [] "ativo" 0 "ultima-cacada" 0 "vitorias-treinador" 0
+                            "enfermaria" []})
 
 (defn- conta [cid pid]
   (get-in @contas [cid pid] conta-vazia))
@@ -114,6 +115,73 @@
         (persistir!)
         true)
       false)))
+
+;; A enfermaria guarda o registro completo fora da equipe enquanto o Pokémon
+;; está sendo tratado. Assim ele não pode ser escolhido nem usado em batalha
+;; antes de a Enfermeira Joy terminar o atendimento, inclusive após reiniciar
+;; o bot (o horário de retorno também é persistido).
+(def tempo-tratamento-minutos 30)
+(def ^:private tempo-tratamento-ms (* tempo-tratamento-minutos 60 1000))
+
+(defn recolher-curados!
+  "Move para a equipe os Pokémon cujo tratamento já terminou, restaurando HP
+  e removendo qualquer status. Retorna os registros que voltaram agora."
+  [cid pid]
+  (let [agora      (js/Date.now)
+        conta-atual (conta cid pid)
+        enfermaria (get conta-atual "enfermaria" [])
+        prontos    (filter #(<= (get % "pronto-em" 0) agora) enfermaria)]
+    (when (seq prontos)
+      (let [em-tratamento (vec (remove #(<= (get % "pronto-em" 0) agora) enfermaria))
+            curados       (mapv #(-> (get % "pokemon")
+                                     (assoc "hp-atual" (get-in % ["pokemon" "hp"]))
+                                     (assoc "status" nil)) prontos)
+            equipe-atual  (vec (get conta-atual "equipe" []))]
+        (swap! contas update-in [cid pid]
+               (fn [c]
+                 (let [c (or c conta-vazia)
+                       equipe-nova (into (vec (get c "equipe" [])) curados)]
+                   (assoc c "enfermaria" em-tratamento
+                            "equipe" equipe-nova
+                            ;; se a equipe estava vazia, o primeiro que voltou
+                            ;; deve poder ser usado imediatamente.
+                            "ativo" (if (empty? equipe-atual) 0 (get c "ativo" 0))))))
+        (persistir!)
+        curados))))
+
+(defn enviar-ferido-para-enfermaria!
+  "Envia o Pokémon da equipe no índice 0-based informado, desde que esteja
+  ferido. Retorna seu registro; retorna nil se o índice não existe ou se ele
+  já está saudável."
+  [cid pid idx]
+  (let [conta-atual (conta cid pid)
+        equipe-atual (vec (get conta-atual "equipe" []))
+        registro (get equipe-atual idx)]
+    (when (and registro
+               (or (< (get registro "hp-atual" 0) (get registro "hp" 0))
+                   (some? (get registro "status"))))
+      (let [agora (js/Date.now)
+            equipe-nova (vec (concat (subvec equipe-atual 0 idx)
+                                     (subvec equipe-atual (inc idx))))
+            entrada {"pokemon" registro "pronto-em" (+ agora tempo-tratamento-ms)}]
+        (swap! contas update-in [cid pid]
+               (fn [c]
+                 (let [c (or c conta-vazia)]
+                   (assoc c "equipe" equipe-nova
+                            "enfermaria" (conj (vec (get c "enfermaria" [])) entrada)
+                            "ativo" (if (empty? equipe-nova) 0
+                                        (let [ativo (get c "ativo" 0)]
+                                          (cond
+                                            (< idx ativo) (dec ativo)
+                                            (= idx ativo) 0
+                                            :else (min ativo (dec (count equipe-nova))))))))))
+        (persistir!)
+        registro))))
+
+(defn em-tratamento [cid pid]
+  "Registros da enfermaria ainda não concluídos, com o horário de retorno."
+  [cid pid]
+  (get (conta cid pid) "enfermaria" []))
 
 (defn atualizar-ativo!
   "Atualiza hp-atual/status do pokémon ATUALMENTE ativo do jogador - chamar

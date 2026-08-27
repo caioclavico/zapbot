@@ -7,3 +7,5 @@ data/
 .env
 *.log
 .nrepl-port
+.clj-kondo/
+.lsp/

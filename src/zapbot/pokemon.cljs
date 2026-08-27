@@ -713,6 +713,45 @@
                  (- hp-novo hp-atual) " de HP! (" hp-novo "/" hp-max ")"))
           (str (cabecalho) "❌ Você não tem uma Poção de Vida no inventário (compre na " config/prefix "loja)."))))
     (str (cabecalho) "❓ Escolha seu pokémon inicial primeiro: " config/prefix "pokemon inicial.")))
+
+(defn- enfermeira-joy [message indice-texto]
+  (let [cid  (chat-id message)
+        pid  (jogador-id message)
+        jogo (get @jogos cid)
+        eq   (treinador/equipe cid pid)]
+    (p/resolved
+     (cond
+       (jogador-na-batalha? jogo pid)
+       (str (cabecalho) "⚔️ Você não pode enviar Pokémon para a Enfermeira Joy durante uma batalha. "
+            "Termine ou saia da batalha primeiro.")
+
+       (not (treinador/tem-pokemon? cid pid))
+       (if (seq (treinador/em-tratamento cid pid))
+         (str (cabecalho) "🏥 Seus Pokémon já estão com a Enfermeira Joy. Use " config/prefix
+              "pokemon time para conferir quanto falta.")
+         (str (cabecalho) "❓ Você ainda não tem nenhum Pokémon. Use " config/prefix "pokemon inicial."))
+
+       :else
+       (let [indice (parse-indice-golpe indice-texto (count eq))]
+         (if (nil? indice)
+           (let [feridos (keep-indexed
+                          (fn [idx registro]
+                            (let [[pokemon hp-atual status] (treinador/registro->pokemon registro)]
+                              (when (or (< hp-atual (:hp pokemon)) status)
+                                (str (inc idx) ". *" (:nome pokemon) "* — "
+                                     (barra-hp hp-atual (:hp pokemon)) (emoji-status status)))))
+                          eq)]
+             (if (seq feridos)
+               (str (cabecalho) "🏥 *Escolha quem a Enfermeira Joy deve atender:*\n\n"
+                    (str/join "\n" feridos) "\n\nUse " config/prefix "pokemon joy <número>.")
+               (str (cabecalho) "✨ Seu time já está saudável; a Enfermeira Joy não precisa atender ninguém agora.")))
+           (if-let [enviado (treinador/enviar-ferido-para-enfermaria! cid pid indice)]
+           (str (cabecalho) "🏥 A Enfermeira Joy recebeu "
+                "*" (get enviado "nome") "*. Ele voltará totalmente curado em "
+                treinador/tempo-tratamento-minutos " minutos.\n\n"
+                "Enquanto isso, ele não pode ser usado em batalha. Use " config/prefix
+                "pokemon time para acompanhar o retorno.")
+             (str (cabecalho) "❓ Esse Pokémon já está saudável e não precisa da Enfermeira Joy."))))))))
 (defn- curar-turno [message]
   (let [cid  (chat-id message)
         pid  (jogador-id message)
@@ -826,20 +865,32 @@
 (defn- ver-time [message]
   (let [cid (chat-id message)
         pid (jogador-id message)
-        eq  (treinador/equipe cid pid)]
+        eq  (treinador/equipe cid pid)
+        em-tratamento (treinador/em-tratamento cid pid)]
     (p/resolved
-     (if (empty? eq)
+     (if (and (empty? eq) (empty? em-tratamento))
        (str (cabecalho) "❓ Você ainda não tem nenhum pokémon. Use " config/prefix "pokemon inicial pra escolher o seu.")
        (str (cabecalho) "🧑‍🎓 *Nível de treinador:* " (treinador/nivel-jogador cid pid)
             " (sobe vencendo batalhas de " config/prefix "pokemon, calibra a força dos selvagens na caçada)\n\n"
             "🎒 *Seu time:*\n\n"
-            (str/join "\n" (map-indexed
-                             (fn [i registro]
-                               (let [[p hp-atual status] (treinador/registro->pokemon registro)]
-                                 (str (inc i) ". " (if (= i (treinador/indice-ativo cid pid)) "👉 " "") "*" (:nome p)
-                                      "* Nv." (nivel-pokemon p) "\n   " (barra-hp hp-atual (:hp p)) (emoji-status status))))
-                             eq))
-            "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉).")))))
+            (if (seq eq)
+              (str/join "\n" (map-indexed
+                               (fn [i registro]
+                                 (let [[p hp-atual status] (treinador/registro->pokemon registro)]
+                                   (str (inc i) ". " (if (= i (treinador/indice-ativo cid pid)) "👉 " "") "*" (:nome p)
+                                        "* Nv." (nivel-pokemon p) "\n   " (barra-hp hp-atual (:hp p)) (emoji-status status))))
+                               eq))
+              "Nenhum disponível enquanto a Enfermeira Joy atende seu time.")
+            (when-let [em-tratamento (seq em-tratamento)]
+              (str "\n\n🏥 *Com a Enfermeira Joy:*\n"
+                   (str/join "\n"
+                             (map (fn [entrada]
+                                    (let [faltam (max 0 (- (get entrada "pronto-em" 0) (js/Date.now)))
+                                          minutos (max 1 (js/Math.ceil (/ faltam 60000)))]
+                                      (str "• *" (get-in entrada ["pokemon" "nome"]) "*: volta em cerca de " minutos " min")))
+                                  em-tratamento))))
+            "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉), ou " config/prefix
+            "pokemon joy para enviar os feridos à Enfermeira Joy.")))))
 
 (defn- escolher-ativo [message indice-texto]
   (let [cid   (chat-id message)
@@ -996,11 +1047,16 @@
   !pokemon defender entra em posição defensiva/evasiva; !pokemon curar usa
   uma cura do inventário (ver !loja) pro status atual (dentro ou fora de
   uma batalha); !pokemon pocao usa uma Poção de Vida do inventário pra
-  recuperar HP (dentro ou fora de uma batalha); !pokemon sair cancela (se
+  recuperar HP (dentro ou fora de uma batalha); !pokemon joy <número> envia o
+  Pokémon escolhido para a Enfermeira Joy, que o devolve curado após 30
+  minutos; !pokemon sair cancela (se
   só um jogador entrou ainda) ou desiste - contando a vitória pro
   adversário - se a batalha já tiver os 2 jogadores."
   [message args]
-  (let [args         (str/trim (str/lower-case (or args "")))
+  (let [cid          (chat-id message)
+        pid          (jogador-id message)
+        _            (treinador/recolher-curados! cid pid)
+        args         (str/trim (str/lower-case (or args "")))
         [cmd & resto] (str/split args #"\s+")]
     (cond
       (str/blank? args) (iniciar-ou-entrar message)
@@ -1010,6 +1066,7 @@
       (contains? #{"time" "equipe"} cmd) (ver-time message)
       (= cmd "escolher") (escolher-ativo message (first resto))
       (= cmd "doar") (doar message (first resto))
+      (contains? #{"joy" "enfermeira" "enfermaria" "hospital"} cmd) (enfermeira-joy message (first resto))
       (contains? #{"atacar" "ataque" "atirar" "usar"} cmd) (atacar message (first resto))
       (contains? #{"defender" "defesa" "esquivar" "evasiva"} cmd) (defender-turno message)
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
@@ -1017,8 +1074,7 @@
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon inicial, " config/prefix "pokemon cacar, "
                               config/prefix "pokemon time, " config/prefix "pokemon escolher <número>, "
                               config/prefix "pokemon doar <número>, " config/prefix "pokemon (abrir/entrar), "
+                              config/prefix "pokemon joy <número>, "
                               config/prefix "pokemon atacar <1-4>, " config/prefix "pokemon defender, "
                               config/prefix "pokemon curar, " config/prefix "pokemon pocao ou " config/prefix
                               "pokemon sair.")))))
-
-
