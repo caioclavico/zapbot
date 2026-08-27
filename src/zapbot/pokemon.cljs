@@ -27,9 +27,27 @@
 (defn- jogador-id [message]
   (or (.-author message) (.-from message)))
 
+(defn- serializar-id
+  "Normaliza um item de mentionedIds pro formato string usado em toda parte
+  (jogador-id/pid) - em builds recentes do whatsapp-web.js (rollout do @lid)
+  cada item pode vir como objeto {server, user, _serialized} em vez de
+  string; sem isso o objeto bruto vira a chave gravada em treinador/*, que
+  nunca bate com o pid (string) de ninguém - o pokémon some sem erro."
+  [valor]
+  (cond
+    (nil? valor) nil
+    (string? valor) valor
+    :else (.-_serialized valor)))
+
 (defn- alvo-mencionado [message]
-  (p/let [mencionados (.getMentions message)]
-    (when (seq mencionados) (.. (first mencionados) -id -_serialized))))
+  ;; usa mentionedIds (id bruto do mentionedJidList da mensagem) em vez de
+  ;; .getMentions() - esse último hidrata via getContactById, que pode
+  ;; devolver o id num formato diferente (@lid vs @c.us, rollout do linked-id
+  ;; do WhatsApp) do que .author/.from reportam nas mensagens da própria
+  ;; pessoa mencionada, fazendo !pokemon doar gravar numa conta fantasma que
+  ;; jogador-id nunca encontra (ver histórico de bug).
+  (let [mencionados (.-mentionedIds message)]
+    (when (seq mencionados) (serializar-id (first mencionados)))))
 
 (defn- alvo-citado [message]
   (if (.-hasQuotedMsg message)

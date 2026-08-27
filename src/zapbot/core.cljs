@@ -27,19 +27,30 @@
 (defn- on-disconnected [reason]
   (js/console.warn "⚠️ Desconectado:" reason))
 
+(defn- chat-id [message]
+  (if (.-fromMe message) (.-to message) (.-from message)))
+
+;; em desenvolvimento (APP_ENV=development), só processa mensagens do chat de
+;; teste (DEV_GROUP_ID) - evita responder duplicado nos grupos reais enquanto
+;; uma instância local roda ao lado da de produção
+(defn- permitido-pelo-ambiente? [message]
+  (or (not= config/app-env "development")
+      (= (chat-id message) config/dev-group-id)))
+
 (defn- on-message [message]
-  (historico/registrar! message)
-  (adedonha/capturar-resposta! message)
-  (-> (router/processar message)
-      (p/then (fn [resposta]
-                (cond
-                  (nil? resposta) nil
-                  ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
-                  ;; de quem for a vez) resolvem {:texto :mentions} em vez de
-                  ;; uma string simples - todo o resto continua string normal
-                  (string? resposta) (.reply message resposta)
-                  :else (.reply message (:texto resposta) nil #js {:mentions (clj->js (:mentions resposta))}))))
-      (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" err)))))
+  (when (permitido-pelo-ambiente? message)
+    (historico/registrar! message)
+    (adedonha/capturar-resposta! message)
+    (-> (router/processar message)
+        (p/then (fn [resposta]
+                  (cond
+                    (nil? resposta) nil
+                    ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
+                    ;; de quem for a vez) resolvem {:texto :mentions} em vez de
+                    ;; uma string simples - todo o resto continua string normal
+                    (string? resposta) (.reply message resposta)
+                    :else (.reply message (:texto resposta) nil #js {:mentions (clj->js (:mentions resposta))}))))
+        (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" err))))))
 
 ;; alimenta o cadastro de admins conhecidos (zapbot.admins) direto do evento
 ;; do WhatsApp - não depende do getChatModel instável usado na checagem ao

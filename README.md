@@ -85,6 +85,8 @@ aparelho pelo celular).
 | `CASSANDRA_CONTACT_POINTS` | `cassandra`                       | Host(s) do Cassandra (separados por vírgula); `cassandra` já funciona direto com o `docker-compose.yml` deste projeto |
 | `CASSANDRA_DATACENTER`   | `datacenter1`                        | Data center do cluster (o padrão do próprio Cassandra pra um nó único) |
 | `CASSANDRA_KEYSPACE`     | `zapbot`                             | Keyspace usado pra persistência (criado automaticamente se não existir) |
+| `APP_ENV`                | `production`                        | Com `development`, o bot só responde no chat `DEV_GROUP_ID` (evita respostas duplicadas nos grupos reais rodando uma instância local de teste junto com a de produção) |
+| `DEV_GROUP_ID`           | (vazio)                             | Chat de teste usado quando `APP_ENV=development` |
 
 ## Persistência (Cassandra)
 

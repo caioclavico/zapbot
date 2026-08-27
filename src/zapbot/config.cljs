@@ -42,3 +42,8 @@
 (def cassandra-contact-points (env-list "CASSANDRA_CONTACT_POINTS" ["127.0.0.1"]))
 (def cassandra-datacenter (env "CASSANDRA_DATACENTER" "datacenter1"))
 (def cassandra-keyspace (env "CASSANDRA_KEYSPACE" "zapbot"))
+;; APP_ENV=development restringe o bot a responder só no chat DEV_GROUP_ID -
+;; evita respostas duplicadas nos grupos reais quando uma instância local de
+;; teste roda ao lado da de produção
+(def app-env (env "APP_ENV" "production"))
+(def dev-group-id (env "DEV_GROUP_ID"))
