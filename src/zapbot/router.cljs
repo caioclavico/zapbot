@@ -13,6 +13,8 @@
             [zapbot.dicionario :as dicionario]
             [zapbot.traduza :as traduza]
             [zapbot.resumo :as resumo]
+            [zapbot.lembretes :as lembretes]
+            [zapbot.enquetes :as enquetes]
             [zapbot.pergunta :as pergunta]
             [zapbot.bola8 :as bola8]
             [zapbot.sorteio :as sorteio]
@@ -40,7 +42,9 @@
    {:emoji "🎥" :uso "filmes <nome>"       :desc "Lista até 10 filmes encontrados com esse nome (sem sinopse/capa)"}
    {:emoji "🏅" :uso "oscar [ano]"         :desc "Filme vencedor do Oscar de Melhor Filme daquele ano + concorrentes (sem ano, sorteia um vencedor)"}
    {:emoji "🎭" :uso "genero [nome|listar]" :desc "Indica um filme popular de um gênero (ex.: acao, terror, comedia; 'listar' mostra as opções)"}   {:emoji "📚" :uso "defina <palavra>"    :desc "Mostra o significado de uma palavra (também funciona como !definir)"}   {:emoji "�🌐" :uso "traduza <frase>"    :desc "Traduz uma frase para português"}
-   {:emoji "📝" :uso "resuma"             :desc "Resume as últimas mensagens do chat (também funciona como !resumo, !resumir)"}
+   {:emoji "📝" :uso "resuma [30m|8h|hoje|ontem]" :desc "Resume as mensagens do período (sem período, resume todo o histórico disponível)"}
+   {:emoji "⏰" :uso "lembrete <tempo> <texto>" :desc "Cria um lembrete, ex.: !lembrete 30m reunião; use !lembretes para listar"}
+   {:emoji "📊" :uso "enquete <pergunta> | <opção 1> | <opção 2>" :desc "Cria uma enquete; vote com !votar <número> e encerre com !enquete fechar"}
    {:emoji "🤔" :uso "pergunta <texto>"   :desc "Faz uma pergunta livre para o tio Odisseu responder com IA"}
    {:emoji "🎱" :uso "bola8 [pergunta]"    :desc "Bola 8 mágica: manda uma imagem e uma resposta aleatória"}
    {:emoji "🎲" :uso "sorteio"            :desc "Sorteia uma pessoa conhecida do chat/grupo"}
@@ -102,7 +106,15 @@
     "genero"    (filme/buscar-por-genero message (str/join " " args))
     ("defina" "definir") (dicionario/buscar-definicao (str/join " " args))
     "traduza"   (traduza/traduzir-frase (str/join " " args))
-    ("resuma" "resumo" "resumir" "resume") (resumo/resumir-chat message)
+    ("resuma" "resumo" "resumir" "resume") (resumo/resumir-chat message (str/join " " args))
+    "lembrete" (p/resolved (lembretes/criar! message (str/join " " args)))
+    "lembretes" (p/resolved (lembretes/listar message))
+    "cancelarlembrete" (p/resolved (lembretes/cancelar! message (str/join " " args)))
+    "enquete" (if (= "fechar" (str/lower-case (str/trim (str/join " " args))))
+                (p/resolved (enquetes/fechar! message))
+                (if (empty? args) (p/resolved (enquetes/ver message))
+                    (p/resolved (enquetes/criar! message (str/join " " args)))))
+    "votar" (p/resolved (enquetes/votar! message (str/join " " args)))
     "pergunta"  (pergunta/perguntar message (str/join " " args))
     "bola8"     (bola8/jogar message (str/join " " args))
     "sorteio"   (sorteio/sortear message)

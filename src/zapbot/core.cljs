@@ -7,6 +7,7 @@
             [zapbot.armazenamento :as armazenamento]
             [zapbot.historico :as historico]
             [zapbot.adedonha :as adedonha]
+            [zapbot.lembretes :as lembretes]
             [zapbot.admins :as admins]
             [zapbot.router :as router]))
 
@@ -19,7 +20,8 @@
 
 (defn- on-ready [client]
   (js/console.log (str "✅ " config/bot-name " conectado e pronto para uso!"))
-  (js/console.log (str "📞 Número conectado: +" (.. client -info -wid -user))))
+  (js/console.log (str "📞 Número conectado: +" (.. client -info -wid -user)))
+  (lembretes/iniciar! client))
 
 (defn- on-auth-failure [msg]
   (js/console.error "❌ Falha na autenticação:" msg))

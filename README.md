@@ -16,7 +16,9 @@ biblioteca [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js)
 | `!horoscopo <signo>`        | Horóscopo do dia (em português: aries, touro, gemeos, ...); sem signo, sorteia um |
 | `!filme [nome]`             | Sinopse e nota IMDb de um filme (use o título original/inglês); sem nome, sugere um aleatório |
 | `!traduza <frase>`          | Traduz uma frase qualquer para português                        |
-| `!resuma`                   | Resume as últimas mensagens do chat (últimas 300 desde que o bot foi ligado, exceto comandos) |
+| `!resuma [30m\|8h\|hoje\|ontem]` | Resume as mensagens do período (sem período: últimas 300 desde que o bot foi ligado, exceto comandos) |
+| `!lembrete <tempo> <texto>` | Agenda um lembrete, ex.: `!lembrete 30m reunião`; use `!lembretes` para listar e `!cancelarlembrete <ID>` para cancelar |
+| `!enquete Pergunta \| Opção 1 \| Opção 2` | Cria uma enquete; vote com `!votar <número>` e encerre com `!enquete fechar` |
 | `!pergunta <texto>`         | Faz uma pergunta livre para o bot responder com IA (Gemini)     |
 | `!bola8 [pergunta]`         | Bola 8 mágica: manda uma imagem e uma resposta aleatória        |
 | `!sorteio`                  | Sorteia uma pessoa conhecida do chat/grupo (marca com @)        |
@@ -91,11 +93,12 @@ aparelho pelo celular).
 ## Persistência (Cassandra)
 
 Rank, loja (moedas/curas do `!pokemon`), admins conhecidos, participantes do
-chat e histórico anti-repetição do `!quiz` são persistidos no Cassandra (ver
+chat, histórico anti-repetição do `!quiz`, lembretes e enquetes são persistidos no Cassandra (ver
 `zapbot.armazenamento`), numa única tabela `<keyspace>.estado (chave text
 PRIMARY KEY, valor text)` - `valor` guarda um JSON por chave, um por
 namespace (`rank`, `loja`, `admins-conhecidos`, `participantes`,
-`quiz-historico`, `bloqueio`).
+`quiz-historico`, `bloqueio`, `lembretes`, `enquetes`). O conteúdo usado por
+`!resuma` continua apenas em memória.
 
 Pra rodar localmente com Docker Compose (recomendado - já vem configurado):
 

@@ -39,7 +39,9 @@
     (-> (rotulo-autor message)
         (p/then (fn [autor]
                   (let [id   (chat-id message)
-                        item {:autor autor :corpo (.-body message)}]
+                        ;; O horário permite que !resuma filtre o trecho pedido,
+                        ;; sem transformar o histórico em armazenamento persistente.
+                        item {:autor autor :corpo (.-body message) :em (.now js/Date)}]
                     (swap! historicos update id
                            (fn [msgs] (vec (take-last limite-por-chat (conj (or msgs []) item)))))
                     (when-not (.-fromMe message)
