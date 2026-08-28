@@ -12,7 +12,7 @@
             [clojure.string :as str]
             [zapbot.armazenamento :as armazenamento]))
 
-(def ^:private limite-por-chat 300)
+(def ^:private limite-por-chat 1000)
 
 (defonce ^:private historicos (atom {}))
 (defonce ^:private participantes (atom (or (armazenamento/obter "participantes") {})))

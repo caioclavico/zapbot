@@ -16,7 +16,7 @@ biblioteca [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js)
 | `!horoscopo <signo>`        | Horóscopo do dia (em português: aries, touro, gemeos, ...); sem signo, sorteia um |
 | `!filme [nome]`             | Sinopse e nota IMDb de um filme (use o título original/inglês); sem nome, sugere um aleatório |
 | `!traduza <frase>`          | Traduz uma frase qualquer para português                        |
-| `!resuma [30m\|8h\|hoje\|ontem]` | Resume as mensagens do período (sem período: últimas 300 desde que o bot foi ligado, exceto comandos) |
+| `!resuma [30m\|8h\|hoje\|ontem]` | Resume as mensagens do período (sem período: últimas 1.000 desde que o bot foi ligado, exceto comandos) |
 | `!lembrete <tempo> <texto>` | Agenda um lembrete, ex.: `!lembrete 30m reunião`; use `!lembretes` para listar e `!cancelarlembrete <ID>` para cancelar |
 | `!enquete Pergunta \| Opção 1 \| Opção 2` | Cria uma enquete; vote com `!votar <número>` e encerre com `!enquete fechar` |
 | `!pergunta <texto>`         | Faz uma pergunta livre para o bot responder com IA (Gemini)     |
