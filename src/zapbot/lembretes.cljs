@@ -2,8 +2,7 @@
   "Lembretes agendados, persistidos por chat no Cassandra."
   (:require [clojure.string :as str]
             [promesa.core :as p]
-            [zapbot.armazenamento :as armazenamento]
-            [zapbot.config :as config]))
+            [zapbot.armazenamento :as armazenamento]))
 
 (defn- normalizar-lembretes [dados]
   (into {}
@@ -11,6 +10,7 @@
                [id {:id (or (:id item) (get item "id"))
                     :chat (or (:chat item) (get item "chat"))
                     :texto (or (:texto item) (get item "texto"))
+                    :criador (or (:criador item) (get item "criador"))
                     :em (or (:em item) (get item "em"))}]))
         (or dados {})))
 
@@ -20,7 +20,26 @@
 (armazenamento/registrar! "lembretes" lembretes normalizar-lembretes)
 
 (defn- chat-id [message] (if (.-fromMe message) (.-to message) (.-from message)))
+(defn- criador-id [message]
+  ;; Mensagens enviadas pelo próprio bot não têm um autor humano confiável
+  ;; (em grupo, `from` é o id do grupo), então não tentamos marcá-las.
+  (when-not (.-fromMe message)
+    (or (.-author message) (.-from message))))
 (defn- salvar! [] (armazenamento/salvar! "lembretes" @lembretes))
+
+(defn- codigo-id []
+  (let [tempo (str/upper-case (.toString (.now js/Date) 36))
+        tempo (subs tempo (max 0 (- (count tempo) 4)))
+        aleatorio (str/upper-case (.toString (js/Math.floor (* (js/Math.random) 46656)) 36))
+        aleatorio (subs (str "000" aleatorio) (- (count (str "000" aleatorio)) 3))]
+    (str "L-" tempo "-" aleatorio)))
+
+(defn- novo-id []
+  (loop [id (codigo-id)]
+    (if (contains? @lembretes id) (recur (codigo-id)) id)))
+
+(defn- nome-para-mencao [id]
+  (first (str/split (or id "") #"@")))
 
 (defn- duracao-ms [texto]
   (when-let [[_ n u] (re-matches #"(\d+)\s*(m|min|mins|minuto|minutos|h|hora|horas|d|dia|dias)"
@@ -41,8 +60,8 @@
       (nil? ms) "❓ Use: !lembrete <tempo> <mensagem>. Ex.: !lembrete 30m reunião; !lembrete 2h estudar."
       (str/blank? texto) "❓ Escreva o que devo lembrar. Ex.: !lembrete 30m reunião."
       :else
-      (let [id (str (.now js/Date) "-" (.toString (js/Math.random) 36))
-            item {:id id :chat (chat-id message) :texto texto :em (+ (.now js/Date) ms)}]
+      (let [id (novo-id)
+            item {:id id :chat (chat-id message) :texto texto :criador (criador-id message) :em (+ (.now js/Date) ms)}]
         (swap! lembretes assoc id item)
         (salvar!)
         (str "⏰ Lembrete criado para daqui a *" duracao "*: " texto "\nID: " id)))))
@@ -55,7 +74,10 @@
            (str/join "\n" (map #(str "• " (:texto %) " — " (.toLocaleString (js/Date. (:em %))) "\n  ID: " (:id %)) itens))))))
 
 (defn cancelar! [message id]
-  (let [item (get @lembretes (str/trim id))]
+  (let [id (str/lower-case (str/trim id))
+        item (some (fn [[codigo lembrete]]
+                     (when (= id (str/lower-case codigo)) lembrete))
+                   @lembretes)]
     (if (and item (= (:chat item) (chat-id message)))
       (do (swap! lembretes dissoc (:id item)) (salvar!) (str "✅ Lembrete cancelado: " (:texto item)))
       "❓ Não encontrei esse lembrete neste chat. Use !lembretes para ver os IDs.")))
@@ -64,9 +86,15 @@
   (doseq [[id item] @lembretes
           :when (and (<= (:em item) (.now js/Date)) (not (contains? @enviando id)))]
     (swap! enviando conj id)
-    (-> (.sendMessage client (:chat item) (str "⏰ *Lembrete*\n" (:texto item)))
+    (let [criador (:criador item)
+          texto (str "⏰ *Lembrete do tio Odisseu*\n"
+                     (if criador (str "@" (nome-para-mencao criador) ", ") "")
+                     (:texto item))]
+      (-> (if criador
+            (.sendMessage client (:chat item) texto #js {:mentions (clj->js [criador])})
+            (.sendMessage client (:chat item) texto))
         (p/then (fn [_] (swap! lembretes dissoc id) (salvar!) (swap! enviando disj id)))
-        (p/catch (fn [err] (js/console.error "Erro ao enviar lembrete:" err) (swap! enviando disj id))))))
+        (p/catch (fn [err] (js/console.error "Erro ao enviar lembrete:" err) (swap! enviando disj id)))))))
 
 (defn iniciar! [client]
   "Inicia uma única checagem periódica após o WhatsApp estar conectado."
