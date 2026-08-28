@@ -21,10 +21,10 @@
 
 (defn- chat-id [message] (if (.-fromMe message) (.-to message) (.-from message)))
 (defn- criador-id [message]
-  ;; Mensagens enviadas pelo próprio bot não têm um autor humano confiável
-  ;; (em grupo, `from` é o id do grupo), então não tentamos marcá-las.
-  (when-not (.-fromMe message)
-    (or (.-author message) (.-from message))))
+  ;; Em grupos, até mensagem do próprio número pode ter `author` válido.
+  ;; Só evitamos o fallback para `from` nesse caso, pois ele é o id do grupo.
+  (or (.-author message)
+      (when-not (.-fromMe message) (.-from message))))
 (defn- salvar! [] (armazenamento/salvar! "lembretes" @lembretes))
 
 (defn- codigo-id []
@@ -91,7 +91,9 @@
                      (if criador (str "@" (nome-para-mencao criador) ", ") "")
                      (:texto item))]
       (-> (if criador
-            (.sendMessage client (:chat item) texto #js {:mentions (clj->js [criador])})
+            ;; Mesmo formato usado por !sorteio, que o whatsapp-web.js
+            ;; converte em uma menção real (não apenas texto com @).
+            (.sendMessage client (:chat item) texto #js {:mentions #js [criador]})
             (.sendMessage client (:chat item) texto))
         (p/then (fn [_] (swap! lembretes dissoc id) (salvar!) (swap! enviando disj id)))
         (p/catch (fn [err] (js/console.error "Erro ao enviar lembrete:" err) (swap! enviando disj id)))))))
