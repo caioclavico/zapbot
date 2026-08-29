@@ -47,6 +47,16 @@
         (p/then (fn [resposta]
                   (cond
                     (nil? resposta) nil
+                    (:medias resposta) (let [medias (:medias resposta)
+                                              total  (count medias)]
+                                          (p/all
+                                           (map-indexed
+                                            (fn [idx media]
+                                              (.reply message media nil
+                                                      #js {:caption (if (= idx (dec total))
+                                                                       (:texto resposta)
+                                                                       (str "🎒 Seu time — página " (inc idx) "/" total))}))
+                                            medias)))
                     (:media resposta) (.reply message (:media resposta) nil #js {:caption (:texto resposta)})
                     ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
                     ;; de quem for a vez) resolvem {:texto :mentions} em vez de

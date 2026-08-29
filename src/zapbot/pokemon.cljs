@@ -948,7 +948,7 @@
             "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉), ou " config/prefix
             "pokemon joy para enviar os feridos à Enfermeira Joy.")))))
 
-(def ^:private maximo-pokemons-cartao 12)
+(def ^:private pokemons-por-cartao 12)
 
 (def ^:private cores-tipo
   {"fire" "#ef5350" "water" "#42a5f5" "grass" "#66bb6a" "electric" "#fbc02d"
@@ -1019,12 +1019,12 @@
               (.toBuffer)))
         (p/catch (fn [_] nil)))))
 
-(defn- criar-cartao-time [eq indice-ativo nivel]
+(defn- criar-cartao-time [eq indice-ativo nivel inicio]
   (let [entradas (->> eq
-                      (take maximo-pokemons-cartao)
                       (map-indexed (fn [idx registro]
                                      (let [[pokemon hp-atual status] (treinador/registro->pokemon registro)]
-                                       {:pokemon pokemon :hp-atual hp-atual :status status :ativo? (= idx indice-ativo)})))
+                                       {:pokemon pokemon :hp-atual hp-atual :status status
+                                        :ativo? (= (+ inicio idx) indice-ativo)})))
                       vec)]
     (p/let [sprites (p/all (map #(baixar-sprite-time (get-in % [:pokemon :imagem])) entradas))
             svg     (svg-cartao-time entradas nivel)
@@ -1044,9 +1044,16 @@
         pid   (jogador-id message)
         eq    (treinador/equipe cid pid)]
     (if (seq eq)
-      (-> (p/let [texto (ver-time message)
-                  media (criar-cartao-time eq (treinador/indice-ativo cid pid) (treinador/nivel-jogador cid pid))]
-            {:media media :texto texto})
+      (-> (p/let [texto  (ver-time message)
+                  paginas (vec (partition-all pokemons-por-cartao eq))
+                  medias  (p/all (map-indexed
+                                  (fn [pagina-index pokemon-da-pagina]
+                                    (criar-cartao-time pokemon-da-pagina
+                                                       (treinador/indice-ativo cid pid)
+                                                       (treinador/nivel-jogador cid pid)
+                                                       (* pagina-index pokemons-por-cartao)))
+                                  paginas))]
+            {:medias medias :texto texto})
           (p/catch (fn [err]
                      (js/console.error "Erro ao gerar cartão do time:" err)
                      (ver-time message))))
