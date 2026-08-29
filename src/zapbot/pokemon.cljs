@@ -973,7 +973,7 @@
         altura  (+ 120 (* 205 (js/Math.ceil (/ (count entradas) 2))) 20)
         cards   (apply str
                        (map-indexed
-                        (fn [idx {:keys [pokemon hp-atual status ativo?]}]
+                        (fn [idx {:keys [pokemon hp-atual status ativo? numero]}]
                           (let [coluna     (mod idx 2)
                                 linha      (quot idx 2)
                                 x          (+ 20 (* coluna 480))
@@ -989,6 +989,9 @@
                                  "<rect x='" x "' y='" y "' width='12' height='185' rx='6' fill='" cor "'/>"
                                  (when ativo? (str "<text x='" (+ x 28) "' y='" (+ y 28)
                                                    "' font-size='16' font-family='Arial,sans-serif' font-weight='bold' fill='#facc15'>ATIVO</text>"))
+                                 "<text x='" (+ x 430) "' y='" (+ y 38)
+                                 "' font-size='24' font-family='Arial,sans-serif' font-weight='bold' fill='#94a3b8' text-anchor='end'>#"
+                                 numero "</text>"
                                  "<text x='" (+ x 165) "' y='" (+ y 58)
                                  "' font-size='27' font-family='Arial,sans-serif' font-weight='bold' fill='#f8fafc'>"
                                  (escapar-xml (encurtar (:nome pokemon) 20)) "</text>"
@@ -1024,7 +1027,8 @@
                       (map-indexed (fn [idx registro]
                                      (let [[pokemon hp-atual status] (treinador/registro->pokemon registro)]
                                        {:pokemon pokemon :hp-atual hp-atual :status status
-                                        :ativo? (= (+ inicio idx) indice-ativo)})))
+                                        :ativo? (= (+ inicio idx) indice-ativo)
+                                        :numero  (inc (+ inicio idx))})))
                       vec)]
     (p/let [sprites (p/all (map #(baixar-sprite-time (get-in % [:pokemon :imagem])) entradas))
             svg     (svg-cartao-time entradas nivel)

@@ -53,9 +53,7 @@
                                            (map-indexed
                                             (fn [idx media]
                                               (.reply message media nil
-                                                      #js {:caption (if (= idx (dec total))
-                                                                       (:texto resposta)
-                                                                       (str "🎒 Seu time — página " (inc idx) "/" total))}))
+                                                      #js {:caption (str "🎒 Página " (inc idx) "/" total)}))
                                             medias)))
                     (:media resposta) (.reply message (:media resposta) nil #js {:caption (:texto resposta)})
                     ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
