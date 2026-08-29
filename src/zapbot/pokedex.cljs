@@ -51,13 +51,36 @@
   (p/let [res (js/fetch url)]
     (when (.-ok res) (.json res))))
 
+(defn- nome-formatado [slug]
+  (->> (str/split slug #"-") (map str/capitalize) (str/join " ")))
+
+(defn- proximas-evolucoes-por-nivel
+  "Retorna as evoluções diretas que acontecem por nível, no formato
+  [{:nome :nivel}]. Cadeias de item, troca, amizade etc. ficam de fora."
+  [cadeia slug-atual]
+  (letfn [(achar-no [no]
+            (if (= slug-atual (get-in no [:species :name]))
+              no
+              (some achar-no (:evolves_to no))))]
+    (when-let [atual (achar-no (get cadeia :chain))]
+      (->> (:evolves_to atual)
+           (keep (fn [proximo]
+                   (when-let [nivel (some #(when (= "level-up" (get-in % [:trigger :name]))
+                                             (:min_level %))
+                                          (:evolution_details proximo))]
+                     {:nome (nome-formatado (get-in proximo [:species :name])) :nivel nivel})))
+           vec))))
+
 (defn- buscar-dados [entrada]
   (let [slug (normalizar entrada)]
     (p/let [dados-js   (buscar-json (str "https://pokeapi.co/api/v2/pokemon/" slug))
-            especie-js (when dados-js (buscar-json (str "https://pokeapi.co/api/v2/pokemon-species/" slug)))]
+            especie-js (when dados-js (buscar-json (str "https://pokeapi.co/api/v2/pokemon-species/" slug)))
+            cadeia-js  (when especie-js
+                         (buscar-json (get-in (js->clj especie-js :keywordize-keys true) [:evolution_chain :url])))]
       (when dados-js
         (let [dados   (js->clj dados-js :keywordize-keys true)
-              especie (some-> especie-js (js->clj :keywordize-keys true))]
+              especie (some-> especie-js (js->clj :keywordize-keys true))
+              cadeia  (some-> cadeia-js (js->clj :keywordize-keys true))]
           {:numero         (:id dados)
            :nome           (->> (str/split (:name dados) #"-") (map str/capitalize) (str/join " "))
            :imagem         (or (get-in dados [:sprites :other :official-artwork :front_default])
@@ -72,6 +95,7 @@
            :atq-esp        (stat-base dados "special-attack")
            :def-esp        (stat-base dados "special-defense")
            :veloc          (stat-base dados "speed")
+           :evolucoes      (proximas-evolucoes-por-nivel cadeia (:name dados))
            :descricao-en   (descricao-em-ingles especie)})))))
 
 (defn- cabecalho []
@@ -86,6 +110,9 @@
        "❤️ HP: " (:hp pokemon) " | ⚔️ Ataque: " (:ataque pokemon) " | 🛡️ Defesa: " (:defesa pokemon) "\n"
        "🔮 Atq. Especial: " (:atq-esp pokemon) " | 🌀 Def. Especial: " (:def-esp pokemon)
        " | 💨 Velocidade: " (:veloc pokemon)
+       "\n🔺 Evolução: " (if (seq (:evolucoes pokemon))
+                            (str/join " | " (map #(str (:nome %) " — nível " (:nivel %)) (:evolucoes pokemon)))
+                            "não possui evolução por nível")
        (when-not (str/blank? descricao-pt) (str "\n\n📜 _" descricao-pt "_"))))
 
 (defn- enviar-cartao [message pokemon legenda]
