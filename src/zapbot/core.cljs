@@ -54,9 +54,13 @@
         (p/then (fn [resposta]
                   (cond
                     (nil? resposta) nil
-                    (:privado resposta) (.sendMessage (.-client message)
-                                                       (destinatario-privado message)
-                                                       (:privado resposta))
+                    (:privado resposta) (let [privado (:privado resposta)
+                                               client  (.-client message)
+                                               destino (destinatario-privado message)]
+                                           (if (string? privado)
+                                             (.sendMessage client destino privado)
+                                             (.sendMessage client destino (:media privado) nil
+                                                           #js {:caption (:texto privado)})))
                     ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
                     ;; de quem for a vez) resolvem {:texto :mentions} em vez de
                     ;; uma string simples - todo o resto continua string normal.

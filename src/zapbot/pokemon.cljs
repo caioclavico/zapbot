@@ -948,6 +948,110 @@
             "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉), ou " config/prefix
             "pokemon joy para enviar os feridos à Enfermeira Joy.")))))
 
+(def ^:private maximo-pokemons-cartao 12)
+
+(def ^:private cores-tipo
+  {"fire" "#ef5350" "water" "#42a5f5" "grass" "#66bb6a" "electric" "#fbc02d"
+   "psychic" "#ec407a" "ice" "#4dd0e1" "dragon" "#7e57c2" "dark" "#5c6b73"
+   "fairy" "#f48fb1" "fighting" "#e53935" "poison" "#ab47bc" "ground" "#a1887f"
+   "rock" "#bcae66" "bug" "#9ccc65" "ghost" "#7e57c2" "steel" "#90a4ae"
+   "flying" "#7986cb" "normal" "#b0bec5"})
+
+(defn- escapar-xml [texto]
+  (-> (str texto)
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")
+      (str/replace "\"" "&quot;")))
+
+(defn- encurtar [texto limite]
+  (let [texto (str texto)]
+    (if (> (count texto) limite) (str (subs texto 0 (dec limite)) "…") texto)))
+
+(defn- svg-cartao-time [entradas nivel]
+  (let [largura 1000
+        altura  (+ 120 (* 205 (js/Math.ceil (/ (count entradas) 2))) 20)
+        cards   (apply str
+                       (map-indexed
+                        (fn [idx {:keys [pokemon hp-atual status ativo?]}]
+                          (let [coluna     (mod idx 2)
+                                linha      (quot idx 2)
+                                x          (+ 20 (* coluna 480))
+                                y          (+ 120 (* linha 205))
+                                cor        (get cores-tipo (first (:tipos pokemon)) "#78909c")
+                                hp-max     (:hp pokemon)
+                                hp-seguro  (max 0 hp-atual)
+                                hp-largura (js/Math.round (* 270 (min 1 (/ hp-seguro hp-max))))
+                                status-txt (if status (str " • " (nome-status status)) "")]
+                            (str "<g>"
+                                 "<rect x='" x "' y='" y "' width='460' height='185' rx='18' fill='#172033' stroke='"
+                                 (if ativo? "#facc15" "#2d3b55") "' stroke-width='" (if ativo? 5 2) "'/>"
+                                 "<rect x='" x "' y='" y "' width='12' height='185' rx='6' fill='" cor "'/>"
+                                 (when ativo? (str "<text x='" (+ x 28) "' y='" (+ y 28)
+                                                   "' font-size='16' font-family='Arial,sans-serif' font-weight='bold' fill='#facc15'>ATIVO</text>"))
+                                 "<text x='" (+ x 165) "' y='" (+ y 58)
+                                 "' font-size='27' font-family='Arial,sans-serif' font-weight='bold' fill='#f8fafc'>"
+                                 (escapar-xml (encurtar (:nome pokemon) 20)) "</text>"
+                                 "<text x='" (+ x 165) "' y='" (+ y 88)
+                                 "' font-size='18' font-family='Arial,sans-serif' fill='#cbd5e1'>Nv. " (nivel-pokemon pokemon)
+                                 " • " (escapar-xml (formatar-tipos (:tipos pokemon))) "</text>"
+                                 "<text x='" (+ x 165) "' y='" (+ y 118)
+                                 "' font-size='17' font-family='Arial,sans-serif' fill='#e2e8f0'>HP " hp-seguro "/" hp-max
+                                 (escapar-xml status-txt) "</text>"
+                                 "<rect x='" (+ x 165) "' y='" (+ y 133) "' width='270' height='18' rx='9' fill='#334155'/>"
+                                 "<rect x='" (+ x 165) "' y='" (+ y 133) "' width='" hp-largura "' height='18' rx='9' fill='"
+                                 (if (> (/ hp-seguro hp-max) 0.3) "#4ade80" "#f87171") "'/></g>")))
+                        entradas))]
+    (str "<svg xmlns='http://www.w3.org/2000/svg' width='" largura "' height='" altura "'>"
+         "<rect width='100%' height='100%' fill='#0f172a'/><rect width='100%' height='100' fill='#1e293b'/>"
+         "<text x='35' y='45' font-size='32' font-family='Arial,sans-serif' font-weight='bold' fill='#f8fafc'>Seu time Pokémon</text>"
+         "<text x='35' y='76' font-size='18' font-family='Arial,sans-serif' fill='#cbd5e1'>Nível de treinador: " nivel
+         " • " (count entradas) " Pokémon</text>" cards "</svg>")))
+
+(defn- baixar-sprite-time [url]
+  (when url
+    (-> (p/let [res (js/fetch url)
+                _   (when-not (.-ok res) (throw (js/Error. "Sprite indisponível")))
+                arr (.arrayBuffer res)]
+          (-> (sharp (js/Buffer.from arr))
+              (.resize 145 145 #js {:fit "contain" :background #js {:r 0 :g 0 :b 0 :alpha 0}})
+              (.png)
+              (.toBuffer)))
+        (p/catch (fn [_] nil)))))
+
+(defn- criar-cartao-time [eq indice-ativo nivel]
+  (let [entradas (->> eq
+                      (take maximo-pokemons-cartao)
+                      (map-indexed (fn [idx registro]
+                                     (let [[pokemon hp-atual status] (treinador/registro->pokemon registro)]
+                                       {:pokemon pokemon :hp-atual hp-atual :status status :ativo? (= idx indice-ativo)})))
+                      vec)]
+    (p/let [sprites (p/all (map #(baixar-sprite-time (get-in % [:pokemon :imagem])) entradas))
+            svg     (svg-cartao-time entradas nivel)
+            base    (js/Buffer.from svg)
+            imagens (->> sprites
+                         (map-indexed (fn [idx sprite]
+                                        (when sprite
+                                          #js {:input sprite :left (+ 28 (* (mod idx 2) 480))
+                                               :top (+ 140 (* (quot idx 2) 205))})))
+                         (remove nil?)
+                         clj->js)
+            buffer  (-> (sharp base) (.composite imagens) (.png) (.toBuffer))]
+      (MessageMedia. "image/png" (.toString buffer "base64") "meu-time-pokemon.png"))))
+
+(defn- resposta-time-privada [message]
+  (let [cid   (chat-id message)
+        pid   (jogador-id message)
+        eq    (treinador/equipe cid pid)
+        texto (ver-time message)]
+    (if (seq eq)
+      (-> (p/let [media (criar-cartao-time eq (treinador/indice-ativo cid pid) (treinador/nivel-jogador cid pid))]
+            {:privado {:media media :texto texto}})
+          (p/catch (fn [err]
+                     (js/console.error "Erro ao gerar cartão do time:" err)
+                     (p/then texto #(hash-map :privado %)))))
+      (p/then texto #(hash-map :privado %)))))
+
 (defn- escolher-ativo [message indice-texto]
   (let [cid   (chat-id message)
         pid   (jogador-id message)
@@ -1120,7 +1224,7 @@
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
       ;; A composição da equipe é informação do jogador: em grupo, o núcleo
       ;; envia este resultado diretamente para quem executou o comando.
-      (contains? #{"time" "equipe"} cmd) (p/then (ver-time message) #(hash-map :privado %))
+      (contains? #{"time" "equipe"} cmd) (resposta-time-privada message)
       (= cmd "escolher") (escolher-ativo message (first resto))
       (= cmd "doar") (doar message (first resto))
       (contains? #{"joy" "enfermeira" "enfermaria" "hospital"} cmd) (enfermeira-joy message (first resto))
