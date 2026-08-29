@@ -5,12 +5,32 @@
             [clojure.string :as str]
             ["whatsapp-web.js" :as wwjs]
             [zapbot.config :as config]
+            [zapbot.armazenamento :as armazenamento]
             [zapbot.traducao :as traducao]))
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 
 ;; total de espécies conhecidas pela PokeAPI (até a geração 9)
 (def ^:private total-pokemons 1025)
+
+(declare normalizar)
+
+(defn- normalizar-cache [dados]
+  (into {}
+        (map (fn [[chave pokemon]]
+               [chave (js->clj (clj->js pokemon) :keywordize-keys true)]))
+        (or dados {})))
+
+;; Resultado final da Pokédex (inclusive textos já traduzidos), persistido no
+;; Cassandra. Assim uma segunda consulta não repete PokeAPI nem Google
+;; Translate; o cache em memória é o mesmo atom durante esta execução.
+(defonce ^:private cache (atom (normalizar-cache (armazenamento/obter "pokedex-cache"))))
+(armazenamento/registrar! "pokedex-cache" cache normalizar-cache)
+
+(defn- salvar-no-cache! [chave pokemon]
+  (swap! cache assoc chave pokemon (normalizar (:nome pokemon)) pokemon)
+  (armazenamento/salvar! "pokedex-cache" @cache)
+  pokemon)
 
 (def ^:private tipos-pt
   {"normal" "Normal" "fire" "Fogo" "water" "Água" "electric" "Elétrico"
@@ -129,17 +149,23 @@
   "Busca um Pokémon por nome ou número (ou sorteia um, sem argumento) e
   responde com uma carta de características traduzida pro português."
   [message entrada]
-  (let [entrada (if (str/blank? entrada) (str (inc (rand-int total-pokemons))) entrada)]
-    (-> (p/let [pokemon (buscar-dados entrada)]
-          ;; nil aqui é "não encontrado" - diferente do nil que enviar-cartao
-          ;; resolve quando já respondeu direto com a imagem (ver zapbot.core/on-message)
-          (if (nil? pokemon)
-            (str (cabecalho) "❓ Não encontrei nenhum Pokémon com \"" entrada
-                 "\". Tente pelo nome (ex.: pikachu) ou número da Pokédex (ex.: 25).")
-            (p/let [descricao-pt   (when (:descricao-en pokemon)
-                                      (traducao/traduzir (:descricao-en pokemon) "en" "pt"))
-                    habilidades-pt (traducao/traduzir (:habilidades-en pokemon) "en" "pt")]
-              (enviar-cartao message pokemon (montar-legenda pokemon descricao-pt habilidades-pt)))))
-        (p/catch (fn [err]
-                   (js/console.error "Erro ao buscar pokedex:" err)
-                   (str (cabecalho) "❌ Não consegui buscar esse Pokémon agora (PokeAPI fora do ar?). Tente de novo."))))))
+  (let [entrada (if (str/blank? entrada) (str (inc (rand-int total-pokemons))) entrada)
+        chave   (normalizar entrada)]
+    (if-let [pokemon (get @cache chave)]
+      (enviar-cartao message pokemon (montar-legenda pokemon (:descricao-pt pokemon) (:habilidades-pt pokemon)))
+      (-> (p/let [pokemon (buscar-dados entrada)]
+            ;; nil aqui é "não encontrado" - diferente do nil que enviar-cartao
+            ;; resolve quando já respondeu direto com a imagem (ver zapbot.core/on-message)
+            (if (nil? pokemon)
+              (str (cabecalho) "❓ Não encontrei nenhum Pokémon com \"" entrada
+                   "\". Tente pelo nome (ex.: pikachu) ou número da Pokédex (ex.: 25).")
+              (p/let [descricao-pt   (when (:descricao-en pokemon)
+                                        (traducao/traduzir (:descricao-en pokemon) "en" "pt"))
+                      habilidades-pt (traducao/traduzir (:habilidades-en pokemon) "en" "pt")
+                      pokemon        (salvar-no-cache! chave
+                                                        (assoc pokemon :descricao-pt descricao-pt
+                                                                       :habilidades-pt habilidades-pt))]
+                (enviar-cartao message pokemon (montar-legenda pokemon descricao-pt habilidades-pt)))))
+          (p/catch (fn [err]
+                     (js/console.error "Erro ao buscar pokedex:" err)
+                     (str (cabecalho) "❌ Não consegui buscar esse Pokémon agora (PokeAPI fora do ar?). Tente de novo.")))))))
