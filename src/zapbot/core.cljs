@@ -49,12 +49,17 @@
                     (nil? resposta) nil
                     (:medias resposta) (let [medias (:medias resposta)
                                               total  (count medias)]
-                                          (p/all
-                                           (map-indexed
-                                            (fn [idx media]
-                                              (.reply message media nil
-                                                      #js {:caption (str "🎒 Página " (inc idx) "/" total)}))
-                                            medias)))
+                                          ;; Cada imagem pode demorar um tempo diferente para subir ao
+                                          ;; WhatsApp. Encadeamos os envios para as páginas não chegarem
+                                          ;; embaralhadas no grupo.
+                                          (reduce
+                                           (fn [envio [idx media]]
+                                             (p/then envio
+                                                     (fn [_]
+                                                       (.reply message media nil
+                                                               #js {:caption (str "🎒 Página " (inc idx) "/" total)}))))
+                                           (p/resolved nil)
+                                           (map-indexed vector medias)))
                     (:media resposta) (.reply message (:media resposta) nil #js {:caption (:texto resposta)})
                     ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
                     ;; de quem for a vez) resolvem {:texto :mentions} em vez de
