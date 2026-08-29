@@ -1118,7 +1118,9 @@
       (= cmd "sair") (sair message)
       (contains? #{"inicial" "iniciais"} cmd) (escolher-inicial message (first resto))
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
-      (contains? #{"time" "equipe"} cmd) (ver-time message)
+      ;; A composição da equipe é informação do jogador: em grupo, o núcleo
+      ;; envia este resultado diretamente para quem executou o comando.
+      (contains? #{"time" "equipe"} cmd) (p/then (ver-time message) #(hash-map :privado %))
       (= cmd "escolher") (escolher-ativo message (first resto))
       (= cmd "doar") (doar message (first resto))
       (contains? #{"joy" "enfermeira" "enfermaria" "hospital"} cmd) (enfermeira-joy message (first resto))

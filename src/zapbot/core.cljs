@@ -32,6 +32,13 @@
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
 
+(defn- destinatario-privado [message]
+  ;; Em grupos, `author` identifica quem executou o comando; numa conversa
+  ;; direta, `from` é o próprio contato. Para comandos enviados pelo número
+  ;; conectado, `to` identifica esse número.
+  (or (.-author message)
+      (if (.-fromMe message) (.-to message) (.-from message))))
+
 ;; em desenvolvimento (APP_ENV=development), só processa mensagens do chat de
 ;; teste (DEV_GROUP_ID) - evita responder duplicado nos grupos reais enquanto
 ;; uma instância local roda ao lado da de produção
@@ -47,9 +54,13 @@
         (p/then (fn [resposta]
                   (cond
                     (nil? resposta) nil
+                    (:privado resposta) (.sendMessage (.-client message)
+                                                       (destinatario-privado message)
+                                                       (:privado resposta))
                     ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
                     ;; de quem for a vez) resolvem {:texto :mentions} em vez de
-                    ;; uma string simples - todo o resto continua string normal
+                    ;; uma string simples - todo o resto continua string normal.
+                    ;; `:privado` é enviado sem publicar a resposta no grupo.
                     (string? resposta) (.reply message resposta)
                     :else (.reply message (:texto resposta) nil #js {:mentions (clj->js (:mentions resposta))}))))
         (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" err))))))
