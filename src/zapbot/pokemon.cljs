@@ -98,19 +98,38 @@
                :classe (if (= "physical" classe) :fisico :especial)}))))
       (p/catch (fn [_] nil))))
 
-;; sorteia até 12 golpes do moveset real do Pokémon (via /move/<nome>, em
-;; paralelo) e fica só com os 4 primeiros que causam dano de verdade (ignora
-;; golpes de status, tipo Rugido, sem poder de ataque); se por azar/falha de
-;; rede nenhum vier, cai num golpe genérico só pra a batalha não travar
-(defn- escolher-golpes [moves-brutos]
-  (let [candidatos (->> moves-brutos (map #(get-in % [:move :name])) shuffle (take 12))]
-    (p/let [resultados (p/all (map buscar-golpe candidatos))]
-      (let [validos (->> resultados (remove nil?) (take 4) vec)]
-        (if (seq validos) validos [golpe-padrao])))))
+;; Escolhe principalmente golpes do(s) tipo(s) do próprio Pokémon (STAB), em
+;; vez de sortear sem critério entre todos os TMs/tutores que ele já pôde usar
+;; em alguma geração. Golpes Normais só completam vagas; outros tipos entram
+;; apenas se não houver opção suficiente para a batalha continuar jogável.
+(defn- nivel-de-aprendizado [movimento]
+  (->> (:version_group_details movimento)
+       (keep #(when (= "level-up" (get-in % [:move_learn_method :name]))
+                (:level_learned_at %)))
+       sort
+       first))
 
-(defn- com-golpes [pokemon]
-  (p/let [golpes (escolher-golpes (:moves-brutos pokemon))]
-    (-> pokemon (dissoc :moves-brutos) (assoc :golpes golpes))))
+(defn- escolher-golpes [moves-brutos tipos nivel]
+  (let [aprendidos  (filter #(let [nivel-min (nivel-de-aprendizado %)]
+                               (and (some? nivel-min) (<= nivel-min nivel)))
+                             moves-brutos)
+        candidatos  (->> aprendidos (map #(get-in % [:move :name])) shuffle (take 32))]
+    (p/let [resultados (p/all (map buscar-golpe candidatos))]
+      (let [validos       (remove nil? resultados)
+            tipos-proprios (set tipos)
+            do-proprio    (filter #(contains? tipos-proprios (:tipo %)) validos)
+            normal        (filter #(= "normal" (:tipo %)) validos)
+            cobertura     (remove #(or (contains? tipos-proprios (:tipo %)) (= "normal" (:tipo %))) validos)
+            escolhidos    (->> (concat do-proprio normal cobertura)
+                               (take 4)
+                               vec)]
+        (if (seq escolhidos) escolhidos [golpe-padrao])))))
+
+(defn- com-golpes
+  ([pokemon] (com-golpes pokemon (or (:nivel pokemon) 1)))
+  ([pokemon nivel]
+   (p/let [golpes (escolher-golpes (:moves-brutos pokemon) (:tipos pokemon) nivel)]
+    (-> pokemon (dissoc :moves-brutos) (assoc :golpes golpes)))))
 
 (defn- pokemon-de-dados [dados]
   {:nome         (str/capitalize (:name dados))
@@ -481,6 +500,15 @@
                                        (:nome-novo dados) "*!")))))
       (p/catch (fn [err] (js/console.error "Erro ao processar evolução:" err)))))
 
+(defn- atualizar-golpes-por-nivel! [cid pid]
+  (when-let [[pokemon _ _] (treinador/pokemon-ativo cid pid)]
+    (-> (p/let [dados  (buscar-pokemon-por-nome (str/lower-case (:nome pokemon)))
+                dados  (com-golpes dados (nivel-pokemon pokemon))]
+          (treinador/atualizar-golpes-ativo! cid pid (:golpes dados)))
+        (p/catch (fn [err]
+                   (js/console.error "Erro ao atualizar golpes por nível:" err)
+                   nil)))))
+
 (defn- anunciar-vitoria [message cid jogo vencedor-marca motivo-extra]
   (sincronizar-equipe! cid jogo)
   (swap! jogos dissoc cid)
@@ -489,7 +517,11 @@
   (let [ganho        (loja/creditar! cid (get-in jogo [:jogadores vencedor-marca]))
         vencedor-pid (get-in jogo [:jogadores vencedor-marca])
         subida       (treinador/subir-nivel! cid vencedor-pid)]
-    (when subida (verificar-evolucao! message cid vencedor-pid))
+    ;; Primeiro evolui (se necessário) e só então atualiza os golpes da forma
+    ;; atual, para que uma evolução no mesmo nível não restaure golpes antigos.
+    (when subida
+      (-> (verificar-evolucao! message cid vencedor-pid)
+          (p/then (fn [_] (atualizar-golpes-por-nivel! cid vencedor-pid)))))
     (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "! (+" ganho " 💰 moedas, confira com "
          config/prefix "loja)"
          (when subida (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!")))))
@@ -622,7 +654,7 @@
   (swap! jogos (fn [estado] (if (valido? (get estado cid)) (assoc estado cid jogo-novo) estado)))
   (= jogo-novo (get @jogos cid)))
 
-(defn- iniciar-ou-entrar [message]
+(defn- iniciar-ou-entrar-atualizado [message]
   (let [cid        (chat-id message)
         pid        (jogador-id message)
         jogo-atual (get @jogos cid)]
@@ -686,6 +718,17 @@
               (p/catch (fn [err]
                          (js/console.error "Erro ao abrir batalha:" err)
                          (str (cabecalho) "❌ Deu algo errado ao abrir a batalha. Tente de novo.")))))))))
+
+(defn- iniciar-ou-entrar [message]
+  (let [cid (chat-id message)
+        pid (jogador-id message)]
+    ;; Times antigos não têm a versão dos golpes. Atualiza o pokémon ativo
+    ;; uma vez, antes da primeira batalha após esta mudança, sem forçar uma
+    ;; migração de todos os jogadores de uma só vez.
+    (if (and (treinador/tem-pokemon? cid pid) (not (treinador/golpes-atuais? cid pid)))
+      (-> (or (atualizar-golpes-por-nivel! cid pid) (p/resolved nil))
+          (p/then (fn [_] (iniciar-ou-entrar-atualizado message))))
+      (iniciar-ou-entrar-atualizado message))))
 
 (defn- sair [message]
   (let [cid  (chat-id message)

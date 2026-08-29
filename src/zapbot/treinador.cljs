@@ -30,6 +30,8 @@
   {:nome-exibicao (get g "nome-exibicao") :tipo (get g "tipo") :poder (get g "poder")
    :classe (keyword (get g "classe"))})
 
+(def ^:private versao-golpes 2)
+
 (defn pokemon->registro
   "Converte um pokémon (mapa interno do zapbot.pokemon, chaves keyword) +
   hp-atual/status pro formato persistido (chaves string) guardado na equipe."
@@ -38,6 +40,7 @@
    "habilidade" (:habilidade pokemon) "hp" (:hp pokemon) "ataque" (:ataque pokemon)
    "defesa" (:defesa pokemon) "atq-esp" (:atq-esp pokemon) "def-esp" (:def-esp pokemon)
    "veloc" (:veloc pokemon) "golpes" (mapv golpe->registro (:golpes pokemon))
+   "versao-golpes" versao-golpes
    "hp-atual" hp-atual "status" (when status (name status)) "nivel" (or (:nivel pokemon) 1)})
 
 (defn registro->pokemon
@@ -78,6 +81,21 @@
   (if (contains? (vec (equipe cid pid)) idx)
     (do (swap! contas assoc-in [cid pid "ativo"] idx) (persistir!) true)
     false))
+
+(defn atualizar-golpes-ativo!
+  "Substitui os golpes do pokémon ativo, preservando todos os demais dados."
+  [cid pid golpes]
+  (let [idx (indice-ativo cid pid)]
+    (when (get (equipe cid pid) idx)
+      (swap! contas update-in [cid pid "equipe" idx]
+             #(assoc % "golpes" (mapv golpe->registro golpes) "versao-golpes" versao-golpes))
+      (persistir!)
+      true)))
+
+(defn golpes-atuais?
+  "Indica se o pokémon ativo já recebeu a regra atual de golpes por nível."
+  [cid pid]
+  (= versao-golpes (get-in @contas [cid pid "equipe" (indice-ativo cid pid) "versao-golpes"])))
 
 (defn adicionar-pokemon!
   "Acrescenta um pokémon (mapa interno do zapbot.pokemon + hp-atual/status)
