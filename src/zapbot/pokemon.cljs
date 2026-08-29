@@ -1039,18 +1039,18 @@
             buffer  (-> (sharp base) (.composite imagens) (.png) (.toBuffer))]
       (MessageMedia. "image/png" (.toString buffer "base64") "meu-time-pokemon.png"))))
 
-(defn- resposta-time-privada [message]
+(defn- resposta-time-visual [message]
   (let [cid   (chat-id message)
         pid   (jogador-id message)
-        eq    (treinador/equipe cid pid)
-        texto (ver-time message)]
+        eq    (treinador/equipe cid pid)]
     (if (seq eq)
-      (-> (p/let [media (criar-cartao-time eq (treinador/indice-ativo cid pid) (treinador/nivel-jogador cid pid))]
-            {:privado {:media media :texto texto}})
+      (-> (p/let [texto (ver-time message)
+                  media (criar-cartao-time eq (treinador/indice-ativo cid pid) (treinador/nivel-jogador cid pid))]
+            {:media media :texto texto})
           (p/catch (fn [err]
                      (js/console.error "Erro ao gerar cartão do time:" err)
-                     (p/then texto #(hash-map :privado %)))))
-      (p/then texto #(hash-map :privado %)))))
+                     (ver-time message))))
+      (ver-time message))))
 
 (defn- escolher-ativo [message indice-texto]
   (let [cid   (chat-id message)
@@ -1222,7 +1222,7 @@
       (= cmd "sair") (sair message)
       (contains? #{"inicial" "iniciais"} cmd) (escolher-inicial message (first resto))
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
-      (contains? #{"time" "equipe"} cmd) (ver-time message)
+      (contains? #{"time" "equipe"} cmd) (resposta-time-visual message)
       (= cmd "escolher") (escolher-ativo message (first resto))
       (= cmd "doar") (doar message (first resto))
       (contains? #{"joy" "enfermeira" "enfermaria" "hospital"} cmd) (enfermeira-joy message (first resto))

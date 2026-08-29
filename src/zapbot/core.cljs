@@ -47,6 +47,7 @@
         (p/then (fn [resposta]
                   (cond
                     (nil? resposta) nil
+                    (:media resposta) (.reply message (:media resposta) nil #js {:caption (:texto resposta)})
                     ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
                     ;; de quem for a vez) resolvem {:texto :mentions} em vez de
                     ;; uma string simples - todo o resto continua string normal
