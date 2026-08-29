@@ -9,6 +9,7 @@
   (:require [promesa.core :as p]
             [clojure.string :as str]
             ["whatsapp-web.js" :as wwjs]
+            ["sharp" :as sharp]
             [zapbot.config :as config]
             [zapbot.rank :as rank]
             [zapbot.loja :as loja]
@@ -557,6 +558,59 @@
                     legenda)))
      (p/resolved legenda))))
 
+;; monta a imagem "pokémon-x vs pokémon-o" mostrada quando a batalha começa
+(def ^:private tamanho-sprite 260)
+(def ^:private tamanho-x 100)
+
+(defn- svg-x []
+  (str "<svg xmlns='http://www.w3.org/2000/svg' width='" tamanho-x "' height='" tamanho-x "'>"
+       "<text x='50%' y='54%' font-size='90' font-family='sans-serif' font-weight='bold' "
+       "fill='#e63946' text-anchor='middle' dominant-baseline='middle'>X</text></svg>"))
+
+(defn- baixar-buffer [url]
+  (p/let [res (js/fetch url)
+          arr (.arrayBuffer res)]
+    (js/Buffer.from arr)))
+
+(defn- sprite-redimensionado [url]
+  (p/let [buffer (baixar-buffer url)]
+    (-> (sharp buffer)
+        (.resize tamanho-sprite tamanho-sprite #js {:fit "contain"
+                                                      :background #js {:r 255 :g 255 :b 255 :alpha 0}})
+        (.png)
+        (.toBuffer))))
+
+(defn- criar-imagem-vs [url-x url-o]
+  (p/let [[sprite-x sprite-o] (p/all [(sprite-redimensionado url-x) (sprite-redimensionado url-o)])
+          largura (+ (* 2 tamanho-sprite) tamanho-x)]
+    (-> (sharp #js {:create #js {:width largura :height tamanho-sprite :channels 4
+                                  :background #js {:r 255 :g 255 :b 255 :alpha 0}}})
+        (.composite #js [#js {:input sprite-x :left 0 :top 0}
+                          #js {:input (js/Buffer.from (svg-x)) :left tamanho-sprite
+                               :top (quot (- tamanho-sprite tamanho-x) 2)}
+                          #js {:input sprite-o :left (+ tamanho-sprite tamanho-x) :top 0}])
+        (.png)
+        (.toBuffer))))
+
+(defn- legenda-vs [nome-x pokemon-x nome-o pokemon-o]
+  (str (cabecalho) "⚔️ *" nome-x "* vs *" nome-o "*!\n\n"
+       (legenda-pokemon nome-x pokemon-x) "\n\n"
+       (legenda-pokemon nome-o pokemon-o)))
+
+(defn- enviar-imagem-vs [message buffer legenda]
+  (p/let [media (MessageMedia. "image/png" (.toString buffer "base64") "batalha.png")
+          _     (.reply message media nil #js {:caption legenda})]
+    nil))
+
+;; monta e envia a imagem vs; se algo falhar (rede/sharp), cai pra um texto
+;; simples com a mesma legenda em vez de deixar a batalha travada sem anúncio
+(defn- enviar-anuncio-batalha [message url-x url-o legenda]
+  (-> (p/let [buffer (criar-imagem-vs url-x url-o)]
+        (enviar-imagem-vs message buffer legenda))
+      (p/catch (fn [err]
+                 (js/console.error "Erro ao montar imagem da batalha:" err)
+                 (.reply message legenda)))))
+
 (defn- tentar-registrar!
   "Tenta gravar jogo-novo em `jogos` pro chat `cid`, mas só se `valido?`
   (recebendo o estado atual desse chat, possivelmente nil) aprovar - evita
@@ -606,12 +660,15 @@
                                     (assoc :vez (rand-nth [:x :o])))
                       [jogo-novo msg-intimidacao] (aplicar-intimidacao jogo-pre)]
                   (if (tentar-registrar! cid jogo-novo (fn [atual] (and atual (not (contains? (:jogadores atual) :o)))))
-                    (enviar-imagem message (:imagem pokemon)
-                                    (str (cabecalho) (legenda-pokemon nome (get-in jogo-novo [:pokemons :o]))
-                                         (when msg-intimidacao (str "\n\n" msg-intimidacao))
-                                         "\n\n⚔️ Batalha começando! 🎲 " (get-in jogo-novo [:nomes (:vez jogo-novo)])
-                                         " tira a sorte e ataca primeiro!\n\n" (mensagem-estado jogo-novo))
-                                    [(get-in jogo-novo [:jogadores (:vez jogo-novo)])])
+                    (p/let [_ (enviar-anuncio-batalha message
+                                (get-in jogo-novo [:pokemons :x :imagem])
+                                (get-in jogo-novo [:pokemons :o :imagem])
+                                (legenda-vs (get-in jogo-novo [:nomes :x]) (get-in jogo-novo [:pokemons :x])
+                                            nome (get-in jogo-novo [:pokemons :o])))]
+                      (com-mencao jogo-novo
+                        (str (when msg-intimidacao (str msg-intimidacao "\n\n"))
+                             "⚔️ Batalha começando! 🎲 " (get-in jogo-novo [:nomes (:vez jogo-novo)])
+                             " tira a sorte e ataca primeiro!\n\n" (mensagem-estado jogo-novo))))
                     (str (cabecalho) "⏳ Alguém mais rápido já entrou nessa batalha um instante antes de você. Digite "
                          config/prefix "pokemon pra ver o que rolou ou abrir uma nova."))))
               (p/catch (fn [err]
@@ -622,9 +679,8 @@
           (-> (p/let [nome (nome-de message)]
                 (let [jogo-novo (criar-jogo pid nome pokemon hp-atual status)]
                   (if (tentar-registrar! cid jogo-novo nil?)
-                    (enviar-imagem message (:imagem pokemon)
-                                    (str (cabecalho) (legenda-pokemon nome pokemon) "\n\n"
-                                         "Quem quiser topar a batalha, mande " config/prefix "pokemon pra entrar."))
+                    (str (cabecalho) "⏳ *" nome "* está esperando um adversário para a batalha!\n\n"
+                         "Quem quiser topar, mande " config/prefix "pokemon pra entrar.")
                     (str (cabecalho) "⏳ Alguém abriu uma batalha nesse chat um instante antes de você. Digite "
                          config/prefix "pokemon pra entrar nela."))))
               (p/catch (fn [err]
@@ -904,8 +960,7 @@
            (str (cabecalho) "❓ Escolha um número válido: " config/prefix "pokemon escolher <1-" total
                 "> (veja com " config/prefix "pokemon time).")
            (do (treinador/definir-ativo! cid pid indice)
-               (let [[p _ _] (treinador/registro->pokemon (nth (treinador/equipe cid pid) indice))]
-                 (str (cabecalho) "✅ *" (:nome p) "* agora é seu pokémon ativo!")))))))))
+               (str (cabecalho) "✅ Pokémon ativo trocado!"))))))))
 
 (defn- doar [message indice-texto]
   (let [cid   (chat-id message)
