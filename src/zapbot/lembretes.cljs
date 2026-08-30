@@ -42,22 +42,23 @@
   (first (str/split (or id "") #"@")))
 
 (defn- duracao-ms [texto]
-  (when-let [[_ n u] (re-matches #"(\d+)\s*(m|min|mins|minuto|minutos|h|hora|horas|d|dia|dias)"
+  (when-let [[_ n u] (re-matches #"(\d+)\s*(s|seg|segs|segundo|segundos|m|min|mins|minuto|minutos|h|hora|horas|d|dia|dias)"
                                   (str/lower-case (str/trim (or texto ""))))]
     (let [unidade (str/lower-case u)
           fator (cond
+                  (contains? #{"s" "seg" "segs" "segundo" "segundos"} unidade) 1000
                   (contains? #{"m" "min" "mins" "minuto" "minutos"} unidade) (* 60 1000)
                   (contains? #{"h" "hora" "horas"} unidade) (* 60 60 1000)
                   :else (* 24 60 60 1000))
           ms (* (js/parseInt n 10) fator)]
-      (when (<= ms (* 365 24 60 60 1000)) ms))))
+      (when (and (pos? ms) (<= ms (* 365 24 60 60 1000))) ms))))
 
 (defn criar! [message args]
   (let [[duracao & partes] (str/split (str/trim args) #"\s+")
         texto (str/trim (str/join " " partes))
         ms (duracao-ms duracao)]
     (cond
-      (nil? ms) "❓ Use: !lembrete <tempo> <mensagem>. Ex.: !lembrete 30m reunião; !lembrete 2h estudar."
+      (nil? ms) "❓ Use: !lembrete <tempo> <mensagem>. Ex.: !lembrete 10s caçar; !lembrete 30m reunião; !lembrete 2h estudar."
       (str/blank? texto) "❓ Escreva o que devo lembrar. Ex.: !lembrete 30m reunião."
       :else
       (let [id (novo-id)
@@ -102,4 +103,4 @@
   "Inicia uma única checagem periódica após o WhatsApp estar conectado."
   (when-not @verificador
     (verificar! client)
-    (reset! verificador (js/setInterval #(verificar! client) 15000))))
+    (reset! verificador (js/setInterval #(verificar! client) 1000))))

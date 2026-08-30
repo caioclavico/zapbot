@@ -43,7 +43,7 @@
    {:emoji "🏅" :uso "oscar [ano]"         :desc "Filme vencedor do Oscar de Melhor Filme daquele ano + concorrentes (sem ano, sorteia um vencedor)"}
    {:emoji "🎭" :uso "genero [nome|listar]" :desc "Indica um filme popular de um gênero (ex.: acao, terror, comedia; 'listar' mostra as opções)"}   {:emoji "📚" :uso "defina <palavra>"    :desc "Mostra o significado de uma palavra (também funciona como !definir)"}   {:emoji "�🌐" :uso "traduza <frase>"    :desc "Traduz uma frase para português"}
    {:emoji "📝" :uso "resuma [30m|8h|hoje|ontem]" :desc "Resume as mensagens do período (sem período, resume todo o histórico disponível)"}
-   {:emoji "⏰" :uso "lembrete <tempo> <texto>" :desc "Cria um lembrete, ex.: !lembrete 30m reunião; use !lembretes para listar"}
+   {:emoji "⏰" :uso "lembrete <tempo> <texto>" :desc "Cria um lembrete, ex.: !lembrete 10s caçar ou !lembrete 30m reunião; use !lembretes para listar"}
    {:emoji "📊" :uso "enquete <pergunta> | <opção 1> | <opção 2>" :desc "Cria uma enquete; vote com !votar <número> e encerre com !enquete fechar"}
    {:emoji "🤔" :uso "pergunta <texto>"   :desc "Faz uma pergunta livre para o tio Odisseu responder com IA"}
    {:emoji "🎱" :uso "bola8 [pergunta]"    :desc "Bola 8 mágica: manda uma imagem e uma resposta aleatória"}
