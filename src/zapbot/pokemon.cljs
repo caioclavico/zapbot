@@ -85,17 +85,36 @@
 (def ^:private golpe-padrao
   {:nome-exibicao "Investida" :tipo "normal" :poder 40 :classe :fisico})
 
+(def ^:private nome-stat->atributo
+  {"attack" :ataque "defense" :defesa "special-attack" :atq-esp
+   "special-defense" :def-esp "speed" :veloc})
+
+(defn- alvo-proprio? [alvo]
+  (contains? #{"user" "users-field" "user-or-ally"} alvo))
+
 (defn- buscar-golpe [nome]
   (-> (p/let [res  (js/fetch (str "https://pokeapi.co/api/v2/move/" nome))
               data (when (.-ok res) (.json res))]
         (when data
-          (let [d      (js->clj data :keywordize-keys true)
-                classe (get-in d [:damage_class :name])]
-            (when (and (:power d) (contains? #{"physical" "special"} classe))
-              {:nome-exibicao (->> (str/split (:name d) #"-") (map str/capitalize) (str/join " "))
-               :tipo   (get-in d [:type :name])
-               :poder  (:power d)
-               :classe (if (= "physical" classe) :fisico :especial)}))))
+          (let [d          (js->clj data :keywordize-keys true)
+                classe     (get-in d [:damage_class :name])
+                alteracoes (->> (:stat_changes d)
+                                 (keep (fn [a]
+                                         (when-let [atributo (get nome-stat->atributo (get-in a [:stat :name]))]
+                                           {:atributo atributo :estagios (:change a)})))
+                                 vec)
+                base       {:nome-exibicao (->> (str/split (:name d) #"-")
+                                                 (map str/capitalize) (str/join " "))
+                            :tipo (get-in d [:type :name])}]
+            (cond
+              (and (:power d) (contains? #{"physical" "special"} classe))
+              (assoc base :poder (:power d) :classe (if (= "physical" classe) :fisico :especial))
+
+              (and (= "status" classe) (seq alteracoes))
+              (assoc base :poder 0 :classe :status :alteracoes alteracoes
+                     :alvo (if (alvo-proprio? (get-in d [:target :name])) :proprio :adversario))
+
+              :else nil))))
       (p/catch (fn [_] nil))))
 
 ;; Escolhe principalmente golpes do(s) tipo(s) do próprio Pokémon (STAB), em
@@ -120,9 +139,11 @@
             do-proprio    (filter #(contains? tipos-proprios (:tipo %)) validos)
             normal        (filter #(= "normal" (:tipo %)) validos)
             cobertura     (remove #(or (contains? tipos-proprios (:tipo %)) (= "normal" (:tipo %))) validos)
-            escolhidos    (->> (concat do-proprio normal cobertura)
-                               (take 4)
-                               vec)]
+            ordenados     (vec (concat do-proprio normal cobertura))
+            ofensivos     (filter #(not= :status (:classe %)) ordenados)
+            status        (filter #(= :status (:classe %)) ordenados)
+            base          (vec (concat (take 3 ofensivos) (take 1 status)))
+            escolhidos    (->> ordenados (remove (set base)) (concat base) (take 4) vec)]
         (if (seq escolhidos) escolhidos [golpe-padrao])))))
 
 (defn- com-golpes
@@ -269,13 +290,29 @@
     0
     (reduce * (map #(get-in tabela-tipos [tipo-ataque %] 1) tipos-defesa))))
 
-(defn- emoji-golpe [golpe] (if (= :fisico (:classe golpe)) "💥" "🔮"))
+(defn- emoji-golpe [golpe]
+  (case (:classe golpe) :fisico "💥" :especial "🔮" :status "📊" "❓"))
+
+(def ^:private atributo->nome
+  {:ataque "Ataque" :defesa "Defesa" :atq-esp "Ataque Especial"
+   :def-esp "Defesa Especial" :veloc "Velocidade"})
+
+(defn- resumo-alteracoes [golpe]
+  (->> (:alteracoes golpe)
+       (map (fn [{:keys [atributo estagios]}]
+              (str (get atributo->nome atributo (name atributo)) " "
+                   (if (pos? estagios) "+" "") estagios)))
+       (str/join ", ")))
 
 (defn- linha-golpe [idx golpe tipos-defesa habilidade-defensor]
-  (let [mult (multiplicador-vs-tipos (:tipo golpe) tipos-defesa habilidade-defensor)]
+  (let [status? (= :status (:classe golpe))
+        mult    (if status? 1 (multiplicador-vs-tipos (:tipo golpe) tipos-defesa habilidade-defensor))]
     (str (inc idx) ". " (emoji-golpe golpe) " *" (:nome-exibicao golpe) "* ("
-         (get tipos-pt (:tipo golpe) (str/capitalize (:tipo golpe))) ", poder " (:poder golpe) ")"
-         (cond (zero? mult) " 🚫" (> mult 1) " 🔥" (< mult 1) " 😕" :else ""))))
+         (get tipos-pt (:tipo golpe) (str/capitalize (:tipo golpe))) ", "
+         (if status?
+           (str (if (= :proprio (:alvo golpe)) "em si: " "no rival: ") (resumo-alteracoes golpe))
+           (str "poder " (:poder golpe)))
+         ")" (cond (zero? mult) " 🚫" (> mult 1) " 🔥" (< mult 1) " 😕" :else ""))))
 
 (defn- menu-golpes [pokemon tipos-defesa habilidade-defensor]
   (str/join "\n" (map-indexed #(linha-golpe %1 %2 tipos-defesa habilidade-defensor) (:golpes pokemon))))
@@ -409,8 +446,40 @@
 (defn- com-mencao [jogo texto]
   {:texto texto :mentions [(get-in jogo [:jogadores (:vez jogo)])]})
 
-(defn- chance-esquiva [pokemon]
-  (min 50 (quot (:veloc pokemon) 2)))
+(defn- multiplicador-estagio [estagio]
+  (if (neg? estagio) (/ 2 (- 2 estagio)) (/ (+ 2 estagio) 2)))
+
+(defn- stat-efetivo [jogo marca atributo]
+  (* (get-in jogo [:pokemons marca atributo])
+     (multiplicador-estagio (get-in jogo [:estagios marca atributo] 0))))
+
+(defn- velocidade-efetiva [jogo marca]
+  (* (stat-efetivo jogo marca :veloc)
+     (if (= :paralisado (get-in jogo [:status marca])) 0.5 1)))
+
+(defn- chance-esquiva [jogo marca]
+  (min 50 (quot (velocidade-efetiva jogo marca) 2)))
+
+(defn- aplicar-alteracoes [jogo marca alteracoes]
+  (reduce (fn [j {:keys [atributo estagios]}]
+            (update-in j [:estagios marca atributo]
+                       (fn [atual] (-> (+ (or atual 0) estagios) (max -6) (min 6)))))
+          jogo alteracoes))
+
+(defn- mensagem-alteracoes [jogo-antes jogo-depois marca golpe]
+  (let [nome (get-in jogo-depois [:pokemons marca :nome])]
+    (str (emoji-golpe golpe) " *" (:nome-exibicao golpe) "*! "
+         (->> (:alteracoes golpe)
+              (map (fn [{:keys [atributo]}]
+                     (let [antes (get-in jogo-antes [:estagios marca atributo] 0)
+                           depois (get-in jogo-depois [:estagios marca atributo] 0)
+                           diferenca (- depois antes)]
+                       (if (zero? diferenca)
+                         (str (get atributo->nome atributo) " de *" nome "* já está no limite")
+                         (str (get atributo->nome atributo) " de *" nome "* "
+                              (if (pos? diferenca) "subiu " "caiu ") (js/Math.abs diferenca)
+                              (if (= 1 (js/Math.abs diferenca)) " estágio" " estágios"))))))
+              (str/join "; ")) ".")))
 
 ;; a fórmula oficial de dano (a base do "42/50" abaixo) pressupõe um HP de
 ;; Pokémon nível 100 de verdade, que escala muito com o nível; aqui o HP é
@@ -526,22 +595,34 @@
          config/prefix "loja)"
          (when subida (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!")))))
 
-(defn- encerrar-por-desistencia!
+(defn- tentar-encerrar-por-desistencia!
   "Encerra uma batalha abandonada sem premiar nenhum dos jogadores.
 
   Desistência não é uma vitória válida: premiar o adversário aqui permite
   que duas contas alternem `pokemon sair` para fabricar rank, moedas e nível
   sem jogar. HP e status ainda são sincronizados para que sair também não
-  sirva como forma de desfazer o dano recebido."
+  sirva como forma de desfazer o dano recebido. Retorna false se outra
+  mensagem concorrente já tiver encerrado a mesma batalha."
   [cid jogo]
-  (sincronizar-equipe! cid jogo)
-  (swap! jogos dissoc cid))
+  (let [encerrou? (volatile! false)]
+    (swap! jogos
+           (fn [estado]
+             (if (= jogo (get estado cid))
+               (do (vreset! encerrou? true) (dissoc estado cid))
+               estado)))
+    (when @encerrou?
+      (sincronizar-equipe! cid jogo))
+    @encerrou?))
 
-(defn- resolver-ataque [golpe atacante defensor defendendo? hp-atacante-atual]
-  (let [esquivou?     (and defendendo? (< (rand-int 100) (chance-esquiva defensor)))
-        fisico?       (= :fisico (:classe golpe))
-        poder-ataque  (if fisico? (:ataque atacante) (:atq-esp atacante))
-        poder-defesa  (if fisico? (:defesa defensor) (:def-esp defensor))
+(defn- resolver-ataque [jogo golpe atacante-marca defensor-marca defendendo? hp-atacante-atual]
+  (let [atacante       (get-in jogo [:pokemons atacante-marca])
+        defensor       (get-in jogo [:pokemons defensor-marca])
+        fisico?        (= :fisico (:classe golpe))
+        atributo-atq   (if fisico? :ataque :atq-esp)
+        atributo-def   (if fisico? :defesa :def-esp)
+        poder-ataque   (stat-efetivo jogo atacante-marca atributo-atq)
+        poder-defesa   (stat-efetivo jogo defensor-marca atributo-def)
+        esquivou?     (and defendendo? (< (rand-int 100) (chance-esquiva jogo defensor-marca)))
         multiplicador (multiplicador-vs-tipos (:tipo golpe) (:tipos defensor) (:habilidade defensor))
         critico?      (< (rand-int 100) chance-critico)
         impulso       (impulso-habilidade atacante hp-atacante-atual (:tipo golpe))
@@ -579,6 +660,7 @@
    :hp {:x hp-atual}
    :defendendo {:x false}
    :status {:x status}
+   :estagios {:x {} :o {}}
    :vez :x})
 
 (defn- legenda-pokemon [jogador-nome pokemon]
@@ -699,8 +781,12 @@
                                     (assoc-in [:hp :o] hp-atual)
                                     (assoc-in [:defendendo :o] false)
                                     (assoc-in [:status :o] status)
-                                    ;; sorteia quem ataca primeiro em vez de sempre favorecer quem abriu a batalha
-                                    (assoc :vez (rand-nth [:x :o])))
+                                    (assoc :estagios {:x {} :o {}}))
+                      velocidade-x (velocidade-efetiva jogo-pre :x)
+                      velocidade-o (velocidade-efetiva jogo-pre :o)
+                      jogo-pre     (assoc jogo-pre :vez (cond (> velocidade-x velocidade-o) :x
+                                                              (> velocidade-o velocidade-x) :o
+                                                              :else (rand-nth [:x :o])))
                       [jogo-novo msg-intimidacao] (aplicar-intimidacao jogo-pre)]
                   (if (tentar-registrar! cid jogo-novo (fn [atual] (and atual (not (contains? (:jogadores atual) :o)))))
                     (p/let [_ (enviar-anuncio-batalha message
@@ -710,8 +796,8 @@
                                             nome (get-in jogo-novo [:pokemons :o])))]
                       (com-mencao jogo-novo
                         (str (when msg-intimidacao (str msg-intimidacao "\n\n"))
-                             "⚔️ Batalha começando! 🎲 " (get-in jogo-novo [:nomes (:vez jogo-novo)])
-                             " tira a sorte e ataca primeiro!\n\n" (mensagem-estado jogo-novo))))
+                             "⚔️ Batalha começando! 💨 " (get-in jogo-novo [:nomes (:vez jogo-novo)])
+                             " vai atacar primeiro!\n\n" (mensagem-estado jogo-novo))))
                     (str (cabecalho) "⏳ Alguém mais rápido já entrou nessa batalha um instante antes de você. Digite "
                          config/prefix "pokemon pra ver o que rolou ou abrir uma nova."))))
               (p/catch (fn [err]
@@ -759,10 +845,14 @@
         (p/resolved
          (if (nil? marca-saiu)
            (str (cabecalho) "❓ Você não faz parte dessa batalha (só quem está jogando pode sair dela).")
-           (do
-             (encerrar-por-desistencia! cid jogo)
-             (str (cabecalho) "🚪 *" (get-in jogo [:nomes marca-saiu]) "* fugiu da batalha."
-                  "\n\n⚖️ Desistências não concedem XP, moedas nem pontos no rank."))))))))
+           (if (tentar-encerrar-por-desistencia! cid jogo)
+             (let [perdeu-ponto? (rank/penalizar! cid pid)]
+               (str (cabecalho) "🚪 *" (get-in jogo [:nomes marca-saiu]) "* fugiu da batalha."
+                    "\n\n⚖️ Desistências não concedem XP nem moedas. "
+                    (if perdeu-ponto?
+                      "Você perdeu 1 ponto no rank."
+                      "Seu rank já estava em zero, então nenhum ponto foi descontado.")))
+             (str (cabecalho) "⏳ Essa batalha já foi encerrada."))))))))
 
 (defn- defender-turno [message]
   (let [cid  (chat-id message)
@@ -788,7 +878,7 @@
          (sincronizar-equipe! cid jogo-novo)
          (com-mencao jogo-novo
            (str (cabecalho) "🛡️ *" (:nome pokemon) "* entrou em posição defensiva ("
-                (chance-esquiva pokemon) "% de chance de esquivar do próximo ataque, dano reduzido "
+                (chance-esquiva jogo marca) "% de chance de esquivar do próximo ataque, dano reduzido "
                 "pela metade se não esquivar)!\n\n" (mensagem-estado jogo-novo))))))))
 
 (defn- jogador-na-batalha? [jogo pid]
@@ -1236,10 +1326,28 @@
                  (sincronizar-equipe! cid jogo-novo)
                  (com-mencao jogo-novo (str (cabecalho) msg "\n\n" (mensagem-estado jogo-novo))))))
 
+           (= :status (:classe (nth (:golpes atacante) indice)))
+           (let [golpe       (nth (:golpes atacante) indice)
+                 efeito-marca (if (= :proprio (:alvo golpe)) atacante-marca alvo-marca)
+                 jogo-efeito (aplicar-alteracoes jogo efeito-marca (:alteracoes golpe))
+                 msg         (mensagem-alteracoes jogo jogo-efeito efeito-marca golpe)
+                 [jogo dot]  (aplicar-dot jogo-efeito atacante-marca)
+                 msg         (str msg (when (pos? dot)
+                                        (str "\n" (emoji-dot status-atacante) " *" (:nome atacante)
+                                             "* sofreu " dot " de dano pelo status.")))]
+             (if (zero? (get-in jogo [:hp atacante-marca]))
+               (str (cabecalho) msg
+                    (anunciar-vitoria message cid jogo alvo-marca
+                                      (str " - " (:nome atacante) " caiu por causa do próprio status")))
+               (let [jogo-novo (assoc jogo :vez alvo-marca)]
+                 (swap! jogos assoc cid jogo-novo)
+                 (sincronizar-equipe! cid jogo-novo)
+                 (com-mencao jogo-novo (str (cabecalho) msg "\n\n" (mensagem-estado jogo-novo))))))
+
            :else
            (let [golpe                   (nth (:golpes atacante) indice)
                  defendendo?             (get-in jogo [:defendendo alvo-marca])
-                 {:keys [dano mensagem]} (resolver-ataque golpe atacante defensor defendendo?
+                 {:keys [dano mensagem]} (resolver-ataque jogo golpe atacante-marca alvo-marca defendendo?
                                                            (get-in jogo [:hp atacante-marca]))
                  jogo (update-in jogo [:hp alvo-marca] #(max 0 (- % dano)))]
              (if (zero? (get-in jogo [:hp alvo-marca]))

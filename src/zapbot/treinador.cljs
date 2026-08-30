@@ -24,13 +24,21 @@
   (get-in @contas [cid pid] conta-vazia))
 
 (defn- golpe->registro [g]
-  {"nome-exibicao" (:nome-exibicao g) "tipo" (:tipo g) "poder" (:poder g) "classe" (name (:classe g))})
+  {"nome-exibicao" (:nome-exibicao g) "tipo" (:tipo g) "poder" (:poder g) "classe" (name (:classe g))
+   "alvo" (when (:alvo g) (name (:alvo g)))
+   "alteracoes" (mapv (fn [{:keys [atributo estagios]}]
+                          {"atributo" (name atributo) "estagios" estagios})
+                        (:alteracoes g))})
 
 (defn- golpe<-registro [g]
   {:nome-exibicao (get g "nome-exibicao") :tipo (get g "tipo") :poder (get g "poder")
-   :classe (keyword (get g "classe"))})
+   :classe (keyword (get g "classe"))
+   :alvo (when (get g "alvo") (keyword (get g "alvo")))
+   :alteracoes (mapv (fn [a] {:atributo (keyword (get a "atributo"))
+                              :estagios (get a "estagios")})
+                     (get g "alteracoes" []))})
 
-(def ^:private versao-golpes 2)
+(def ^:private versao-golpes 3)
 
 (defn pokemon->registro
   "Converte um pokémon (mapa interno do zapbot.pokemon, chaves keyword) +

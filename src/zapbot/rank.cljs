@@ -24,6 +24,23 @@
                (update-in ["jogos" jogo] (fnil inc 0)))))
   (persistir!))
 
+(defn penalizar!
+  "Remove 1 ponto de pid por desistência, sem permitir pontuação negativa.
+  Retorna true quando um ponto foi removido e false quando o jogador já
+  estava em zero ou ainda não fazia parte do rank."
+  [cid pid]
+  (let [penalizado? (volatile! false)]
+    (swap! placares
+           (fn [estado]
+             (if (pos? (get-in estado [cid pid "pontos"] 0))
+               (do
+                 (vreset! penalizado? true)
+                 (update-in estado [cid pid "pontos"] dec))
+               estado)))
+    (when @penalizado?
+      (persistir!))
+    @penalizado?))
+
 (defn- top [cid quantidade]
   (->> (vals (get @placares cid {}))
        (sort-by #(get % "pontos") >)
