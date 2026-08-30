@@ -247,6 +247,7 @@
 (def ^:private xp-por-nivel 9)
 (def xp-por-vitoria 3)
 (def xp-por-derrota 1)
+(def ^:private vitorias-treinador-por-nivel 3)
 
 (defn ganhar-xp!
   "Concede XP ao pokémon ATIVO do jogador; só sobe de nível de verdade
@@ -320,10 +321,12 @@
   "Nível do treinador (usado pra exibir em !pokemon time/cacar e calibrar a
   força do pokémon selvagem sorteado na caçada) - contador próprio
   (\"vitorias-treinador\"), independente do placar geral do !rank: nível 1
-  sem nenhuma vitória, +1 nível a cada `vitorias-por-nivel` vitórias de
+  sem nenhuma vitória, +1 nível a cada `vitorias-treinador-por-nivel`
+  vitórias de
   batalha em !pokemon (1 vitória = 1 nível subia rápido demais)."
   [cid pid]
-  (inc (quot (get (conta cid pid) "vitorias-treinador" 0) vitorias-por-nivel)))
+  (inc (quot (get (conta cid pid) "vitorias-treinador" 0)
+             vitorias-treinador-por-nivel)))
 
 (defn registrar-vitoria-treinador!
   "Chamar quando o jogador vence uma batalha de !pokemon - soma 1 na
