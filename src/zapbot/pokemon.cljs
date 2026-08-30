@@ -107,6 +107,9 @@
                                                  (map str/capitalize) (str/join " "))
                             :tipo (get-in d [:type :name])}]
             (cond
+              (= "transform" (:name d))
+              (assoc base :poder 0 :classe :transform)
+
               (and (:power d) (contains? #{"physical" "special"} classe))
               (assoc base :poder (:power d) :classe (if (= "physical" classe) :fisico :especial))
 
@@ -128,21 +131,28 @@
        sort
        first))
 
+(defn- ordenar-por-poder [golpes]
+  (sort-by #(or (:poder %) 0) > golpes))
+
 (defn- escolher-golpes [moves-brutos tipos nivel]
   (let [aprendidos  (filter #(let [nivel-min (nivel-de-aprendizado %)]
                                (and (some? nivel-min) (<= nivel-min nivel)))
                              moves-brutos)
-        candidatos  (->> aprendidos (map #(get-in % [:move :name])) shuffle (take 32))]
+        candidatos  (->> aprendidos (map #(get-in % [:move :name])) distinct)]
     (p/let [resultados (p/all (map buscar-golpe candidatos))]
       (let [validos       (remove nil? resultados)
             tipos-proprios (set tipos)
-            do-proprio    (filter #(contains? tipos-proprios (:tipo %)) validos)
-            normal        (filter #(= "normal" (:tipo %)) validos)
-            cobertura     (remove #(or (contains? tipos-proprios (:tipo %)) (= "normal" (:tipo %))) validos)
+            do-proprio    (ordenar-por-poder (filter #(contains? tipos-proprios (:tipo %)) validos))
+            normal        (ordenar-por-poder (filter #(= "normal" (:tipo %)) validos))
+            cobertura     (ordenar-por-poder
+                           (remove #(or (contains? tipos-proprios (:tipo %)) (= "normal" (:tipo %))) validos))
             ordenados     (vec (concat do-proprio normal cobertura))
-            ofensivos     (filter #(not= :status (:classe %)) ordenados)
+            ofensivos     (filter #(contains? #{:fisico :especial} (:classe %)) ordenados)
             status        (filter #(= :status (:classe %)) ordenados)
-            base          (vec (concat (take 3 ofensivos) (take 1 status)))
+            transform     (filter #(= :transform (:classe %)) ordenados)
+            base          (vec (concat (take 1 transform)
+                                       (take (if (seq transform) 2 3) ofensivos)
+                                       (take 1 status)))
             escolhidos    (->> ordenados (remove (set base)) (concat base) (take 4) vec)]
         (if (seq escolhidos) escolhidos [golpe-padrao])))))
 
@@ -291,7 +301,7 @@
     (reduce * (map #(get-in tabela-tipos [tipo-ataque %] 1) tipos-defesa))))
 
 (defn- emoji-golpe [golpe]
-  (case (:classe golpe) :fisico "💥" :especial "🔮" :status "📊" "❓"))
+  (case (:classe golpe) :fisico "💥" :especial "🔮" :status "📊" :transform "🧬" "❓"))
 
 (def ^:private atributo->nome
   {:ataque "Ataque" :defesa "Defesa" :atq-esp "Ataque Especial"
@@ -306,11 +316,13 @@
 
 (defn- linha-golpe [idx golpe tipos-defesa habilidade-defensor]
   (let [status? (= :status (:classe golpe))
-        mult    (if status? 1 (multiplicador-vs-tipos (:tipo golpe) tipos-defesa habilidade-defensor))]
+        especial? (contains? #{:status :transform} (:classe golpe))
+        mult    (if especial? 1 (multiplicador-vs-tipos (:tipo golpe) tipos-defesa habilidade-defensor))]
     (str (inc idx) ". " (emoji-golpe golpe) " *" (:nome-exibicao golpe) "* ("
          (get tipos-pt (:tipo golpe) (str/capitalize (:tipo golpe))) ", "
-         (if status?
-           (str (if (= :proprio (:alvo golpe)) "em si: " "no rival: ") (resumo-alteracoes golpe))
+         (case (:classe golpe)
+           :transform "copia os golpes do rival"
+           :status (str (if (= :proprio (:alvo golpe)) "em si: " "no rival: ") (resumo-alteracoes golpe))
            (str "poder " (:poder golpe)))
          ")" (cond (zero? mult) " 🚫" (> mult 1) " 🔥" (< mult 1) " 😕" :else ""))))
 
@@ -1321,6 +1333,25 @@
                                    (when (pos? dot) (str " Ainda assim sofreu " dot " de dano pelo status.")))]
              (if (zero? hp-atacante)
                (str (cabecalho) msg (anunciar-vitoria message cid jogo alvo-marca " a batalha"))
+               (let [jogo-novo (assoc jogo :vez alvo-marca)]
+                 (swap! jogos assoc cid jogo-novo)
+                 (sincronizar-equipe! cid jogo-novo)
+                 (com-mencao jogo-novo (str (cabecalho) msg "\n\n" (mensagem-estado jogo-novo))))))
+
+           (= :transform (:classe (nth (:golpes atacante) indice)))
+           (let [golpes-copiados (:golpes defensor)
+                 jogo-transformado (assoc-in jogo [:pokemons atacante-marca :golpes] golpes-copiados)
+                 [jogo dot]       (aplicar-dot jogo-transformado atacante-marca)
+                 nomes-golpes     (str/join ", " (map :nome-exibicao golpes-copiados))
+                 msg              (str "🧬 *" (:nome atacante) "* usou *Transform* e copiou os golpes de *"
+                                       (:nome defensor) "*: " nomes-golpes "!"
+                                       (when (pos? dot)
+                                         (str "\n" (emoji-dot status-atacante) " *" (:nome atacante)
+                                              "* sofreu " dot " de dano pelo status.")))]
+             (if (zero? (get-in jogo [:hp atacante-marca]))
+               (str (cabecalho) msg
+                    (anunciar-vitoria message cid jogo alvo-marca
+                                      (str " - " (:nome atacante) " caiu por causa do próprio status")))
                (let [jogo-novo (assoc jogo :vez alvo-marca)]
                  (swap! jogos assoc cid jogo-novo)
                  (sincronizar-equipe! cid jogo-novo)

@@ -38,7 +38,7 @@
                               :estagios (get a "estagios")})
                      (get g "alteracoes" []))})
 
-(def ^:private versao-golpes 3)
+(def ^:private versao-golpes 4)
 
 (defn pokemon->registro
   "Converte um pokémon (mapa interno do zapbot.pokemon, chaves keyword) +
