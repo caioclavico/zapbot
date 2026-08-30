@@ -396,7 +396,7 @@
 (def ^:private chance-critico 10)
 ;; chance de um golpe de tipo elegível (fogo/elétrico/venenoso) contagiar
 ;; status no defensor, se ele ainda não tiver nenhum
-(def ^:private chance-contagio 20)
+(def ^:private chance-contagio 35)
 ;; chance de a paralisia travar o turno de quem ia atacar
 (def ^:private chance-paralisia-trava 25)
 ;; ~ -1 estágio de ataque, aplicado uma vez por quem tem Intimidate ao entrar
@@ -1224,10 +1224,19 @@
 (defn- escolher-ativo [message indice-texto]
   (let [cid   (chat-id message)
         pid   (jogador-id message)
+        jogo  (get @jogos cid)
+        em-batalha? (some #(= pid %) (vals (:jogadores jogo)))
         total (count (treinador/equipe cid pid))]
     (p/resolved
-     (if (zero? total)
+     (cond
+       (zero? total)
        (str (cabecalho) "❓ Você ainda não tem nenhum pokémon. Use " config/prefix "pokemon inicial.")
+
+       em-batalha?
+       (str (cabecalho) "🚫 Você não pode trocar o Pokémon ativo durante uma batalha. "
+            "Termine ou saia da batalha antes de escolher outro.")
+
+       :else
        (let [indice (parse-indice-golpe indice-texto total)]
          (if (nil? indice)
            (str (cabecalho) "❓ Escolha um número válido: " config/prefix "pokemon escolher <1-" total
