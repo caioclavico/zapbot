@@ -526,6 +526,17 @@
          config/prefix "loja)"
          (when subida (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!")))))
 
+(defn- encerrar-por-desistencia!
+  "Encerra uma batalha abandonada sem premiar nenhum dos jogadores.
+
+  Desistência não é uma vitória válida: premiar o adversário aqui permite
+  que duas contas alternem `pokemon sair` para fabricar rank, moedas e nível
+  sem jogar. HP e status ainda são sincronizados para que sair também não
+  sirva como forma de desfazer o dano recebido."
+  [cid jogo]
+  (sincronizar-equipe! cid jogo)
+  (swap! jogos dissoc cid))
+
 (defn- resolver-ataque [golpe atacante defensor defendendo? hp-atacante-atual]
   (let [esquivou?     (and defendendo? (< (rand-int 100) (chance-esquiva defensor)))
         fisico?       (= :fisico (:classe golpe))
@@ -748,8 +759,10 @@
         (p/resolved
          (if (nil? marca-saiu)
            (str (cabecalho) "❓ Você não faz parte dessa batalha (só quem está jogando pode sair dela).")
-           (str (cabecalho) "🚪 *" (get-in jogo [:nomes marca-saiu]) "* fugiu da batalha!"
-                (anunciar-vitoria message cid jogo (outro marca-saiu) " por desistência"))))))))
+           (do
+             (encerrar-por-desistencia! cid jogo)
+             (str (cabecalho) "🚪 *" (get-in jogo [:nomes marca-saiu]) "* fugiu da batalha."
+                  "\n\n⚖️ Desistências não concedem XP, moedas nem pontos no rank."))))))))
 
 (defn- defender-turno [message]
   (let [cid  (chat-id message)
