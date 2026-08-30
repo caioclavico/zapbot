@@ -235,34 +235,40 @@
          (fn [c] (assoc (or c conta-vazia) "ultima-cacada" (js/Date.now))))
   (persistir!))
 
-;; crescimento por batalha vencida ("igual no jogo original", simplificado
+;; crescimento por XP de batalha ("igual no jogo original", simplificado
 ;; pra não precisar de uma curva de EXP real por grupo de crescimento):
-;; sobe 1 nível (a cada `vitorias-por-nivel` vitórias acumuladas, não a
-;; cada vitória - 1 vitória = 1 nível subia rápido demais) e todos os
+;; sobe 1 nível a cada 9 XP (vitória dá 3 e derrota dá 1, portanto o ritmo
+;; anterior de 3 vitórias por nível é preservado) e todos os
 ;; stats crescem um fator fixo por nível, até um teto de 100 (mesmo limite
 ;; dos jogos originais). Público porque zapbot.pokemon precisa do MESMO
 ;; fator pra calcular stats pós-evolução.
 (def ^:private nivel-maximo 100)
 (def fator-crescimento-por-nivel 1.03)
-(def ^:private vitorias-por-nivel 3)
+(def ^:private xp-por-nivel 9)
+(def xp-por-vitoria 3)
+(def xp-por-derrota 1)
 
-(defn subir-nivel!
-  "Registra 1 vitória do pokémon ATIVO do jogador; só sobe de nível de
-  verdade (nível/stats, respeitando o teto) a cada `vitorias-por-nivel`
-  vitórias acumuladas desde o último nível - o HP atual ganha o mesmo
+(defn ganhar-xp!
+  "Concede XP ao pokémon ATIVO do jogador; só sobe de nível de verdade
+  (nível/stats, respeitando o teto) a cada `xp-por-nivel` pontos acumulados.
+  O HP atual ganha o mesmo
   incremento absoluto que o HP máximo quando sobe (não é um heal completo,
-  só preserva o quanto já estava faltando). Retorna {:nome :nivel} só
+  só preserva o quanto já estava faltando); um pokémon desmaiado continua
+  com 0 HP. Retorna {:nome :nivel} só
   quando REALMENTE sobe de nível, nil caso contrário (sem pokémon ativo,
-  já no nível máximo, ou ainda faltam vitórias pro próximo nível - chamar
-  depois de vitória em batalha)."
-  [cid pid]
+  já no nível máximo, ou ainda falta XP). Registros antigos de progresso
+  por vitória são convertidos sem perder o avanço já conquistado."
+  [cid pid quantidade]
   (let [idx (indice-ativo cid pid)]
     (when-let [registro (get (equipe cid pid) idx)]
       (let [nivel-atual (get registro "nivel" 1)]
         (when (< nivel-atual nivel-maximo)
-          (let [vitorias-novas (inc (get registro "vitorias-desde-nivel" 0))]
-            (if (< vitorias-novas vitorias-por-nivel)
-              (do (swap! contas assoc-in [cid pid "equipe" idx "vitorias-desde-nivel"] vitorias-novas)
+          (let [xp-anterior (get registro "xp-desde-nivel"
+                                 (* xp-por-vitoria (get registro "vitorias-desde-nivel" 0)))
+                xp-novo     (+ xp-anterior quantidade)]
+            (if (< xp-novo xp-por-nivel)
+              (do (swap! contas update-in [cid pid "equipe" idx]
+                         #(-> % (assoc "xp-desde-nivel" xp-novo) (dissoc "vitorias-desde-nivel")))
                   (persistir!)
                   nil)
               (let [crescer       #(js/Math.round (* % fator-crescimento-por-nivel))
@@ -271,9 +277,10 @@
                     incremento-hp (- hp-max-novo hp-max-antigo)
                     registro-novo (-> registro
                                       (assoc "nivel" (inc nivel-atual))
-                                      (assoc "vitorias-desde-nivel" 0)
+                                      (assoc "xp-desde-nivel" (- xp-novo xp-por-nivel))
+                                      (dissoc "vitorias-desde-nivel")
                                       (assoc "hp" hp-max-novo)
-                                      (update "hp-atual" + incremento-hp)
+                                      (update "hp-atual" #(if (pos? %) (+ % incremento-hp) 0))
                                       (update "ataque" crescer)
                                       (update "defesa" crescer)
                                       (update "atq-esp" crescer)
@@ -282,6 +289,11 @@
                 (swap! contas assoc-in [cid pid "equipe" idx] registro-novo)
                 (persistir!)
                 {:nome (get registro "nome") :nivel (inc nivel-atual)}))))))))
+
+(defn subir-nivel!
+  "Concede ao pokémon ativo o XP de uma vitória."
+  [cid pid]
+  (ganhar-xp! cid pid xp-por-vitoria))
 
 (defn evoluir-ativo!
   "Substitui os campos derivados de espécie (nome/imagem/tipos/habilidade/

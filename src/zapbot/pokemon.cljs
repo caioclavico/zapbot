@@ -595,17 +595,26 @@
   (swap! jogos dissoc cid)
   (rank/pontuar! cid (get-in jogo [:jogadores vencedor-marca]) (get-in jogo [:nomes vencedor-marca]) "pokemon")
   (treinador/registrar-vitoria-treinador! cid (get-in jogo [:jogadores vencedor-marca]))
-  (let [ganho        (loja/creditar! cid (get-in jogo [:jogadores vencedor-marca]))
-        vencedor-pid (get-in jogo [:jogadores vencedor-marca])
-        subida       (treinador/subir-nivel! cid vencedor-pid)]
+  (let [perdedor-marca  (outro vencedor-marca)
+        perdedor-pid    (get-in jogo [:jogadores perdedor-marca])
+        ganho           (loja/creditar! cid (get-in jogo [:jogadores vencedor-marca]))
+        vencedor-pid    (get-in jogo [:jogadores vencedor-marca])
+        subida          (treinador/subir-nivel! cid vencedor-pid)
+        subida-perdedor (treinador/ganhar-xp! cid perdedor-pid treinador/xp-por-derrota)]
     ;; Primeiro evolui (se necessário) e só então atualiza os golpes da forma
     ;; atual, para que uma evolução no mesmo nível não restaure golpes antigos.
     (when subida
       (-> (verificar-evolucao! message cid vencedor-pid)
           (p/then (fn [_] (atualizar-golpes-por-nivel! cid vencedor-pid)))))
+    (when subida-perdedor
+      (-> (verificar-evolucao! message cid perdedor-pid)
+          (p/then (fn [_] (atualizar-golpes-por-nivel! cid perdedor-pid)))))
     (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "! (+" ganho " 💰 moedas, confira com "
          config/prefix "loja)"
-         (when subida (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!")))))
+         "\n✨ XP: vencedor +" treinador/xp-por-vitoria ", perdedor +" treinador/xp-por-derrota "."
+         (when subida (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!"))
+         (when subida-perdedor (str "\n🌟 *" (:nome subida-perdedor) "* subiu para o nível "
+                                    (:nivel subida-perdedor) " mesmo com a derrota!")))))
 
 (defn- tentar-encerrar-por-desistencia!
   "Encerra uma batalha abandonada sem premiar nenhum dos jogadores.
