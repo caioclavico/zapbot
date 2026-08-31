@@ -6,6 +6,21 @@
             ["os" :as os]
             ["fs" :as fs]))
 
+(def ^:private versao-app
+  (try
+    (.-version (js/require "../package.json"))
+    (catch :default _ "desconhecida")))
+
+(def ^:private changelog-ultima-versao
+  ["Golpes com precisão, status, cura, dreno, recuo e múltiplos acertos"
+   "Itens equipáveis e novas curas na loja Pokémon"
+   "Raridades que influenciam a chance de captura"
+   "Barra de XP, raridade e item exibidos no time Pokémon"
+   "XP também concedido ao Pokémon derrotado"])
+
+(defn- formatar-changelog []
+  (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))
+
 (defn- fmt-num [n] (.toFixed n 2))
 (defn- fmt-pct [n] (str (.toFixed n 1) "%"))
 (defn- fmt-gb [bytes] (str (.toFixed (/ bytes 1024 1024 1024) 2) " GB"))
@@ -56,7 +71,7 @@
     (catch :default _ "indisponível")))
 
 (defn status-vm
-  "Retorna uma promise com o texto de status de CPU/memória/disco/uptime."
+  "Retorna uma promise com versão, changelog e status da VM/bot."
   []
   (-> (p/let [uso-cpu (medir-uso-cpu)]
         (let [mem-total (.totalmem os)
@@ -65,6 +80,8 @@
               cpus      (.cpus os)
               load      (.loadavg os)]
           (str "📊 *Status da VM (tio " config/bot-name "):*\n\n"
+               "🏷️ *Versão do app:* " versao-app "\n"
+               "📋 *Novidades desta versão:*\n" (formatar-changelog) "\n\n"
                "🧠 *CPU:* " (count cpus) " núcleos, uso agora ~" (fmt-pct uso-cpu) "\n"
                "   load avg (1/5/15 min): " (fmt-num (aget load 0)) " / "
                (fmt-num (aget load 1)) " / " (fmt-num (aget load 2)) "\n"

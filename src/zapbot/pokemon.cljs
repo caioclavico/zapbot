@@ -22,6 +22,9 @@
 
 (defonce ^:private jogos (atom {}))
 
+;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
+(declare enviar-imagem parse-indice-golpe)
+
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
 
@@ -92,6 +95,10 @@
 (defn- alvo-proprio? [alvo]
   (contains? #{"user" "users-field" "user-or-ally"} alvo))
 
+(def ^:private nome-ailment->status
+  {"burn" :queimado "poison" :envenenado "paralysis" :paralisado
+   "sleep" :adormecido "freeze" :congelado "confusion" :confuso})
+
 (defn- buscar-golpe [nome]
   (-> (p/let [res  (js/fetch (str "https://pokeapi.co/api/v2/move/" nome))
               data (when (.-ok res) (.json res))]
@@ -103,19 +110,28 @@
                                          (when-let [atributo (get nome-stat->atributo (get-in a [:stat :name]))]
                                            {:atributo atributo :estagios (:change a)})))
                                  vec)
+                meta       (:meta d)
+                status     (get nome-ailment->status (get-in meta [:ailment :name]))
                 base       {:nome-exibicao (->> (str/split (:name d) #"-")
                                                  (map str/capitalize) (str/join " "))
-                            :tipo (get-in d [:type :name])}]
+                            :tipo (get-in d [:type :name])
+                            :alvo (if (alvo-proprio? (get-in d [:target :name])) :proprio :adversario)
+                            :precisao (:accuracy d)
+                            :status-causado status
+                            :chance-status (or (:ailment_chance meta) (:effect_chance d))
+                            :cura (:healing meta) :dreno (max 0 (or (:drain meta) 0))
+                            :recuo (js/Math.abs (min 0 (or (:drain meta) 0)))
+                            :min-acertos (get-in meta [:min_hits]) :max-acertos (get-in meta [:max_hits])}]
             (cond
               (= "transform" (:name d))
               (assoc base :poder 0 :classe :transform)
 
               (and (:power d) (contains? #{"physical" "special"} classe))
-              (assoc base :poder (:power d) :classe (if (= "physical" classe) :fisico :especial))
+              (assoc base :poder (:power d) :classe (if (= "physical" classe) :fisico :especial)
+                     :alteracoes alteracoes)
 
-              (and (= "status" classe) (seq alteracoes))
-              (assoc base :poder 0 :classe :status :alteracoes alteracoes
-                     :alvo (if (alvo-proprio? (get-in d [:target :name])) :proprio :adversario))
+              (and (= "status" classe) (or (seq alteracoes) status (pos? (or (:healing meta) 0))))
+              (assoc base :poder 0 :classe :status :alteracoes alteracoes)
 
               :else nil))))
       (p/catch (fn [_] nil))))
@@ -333,6 +349,28 @@
   (+ (:hp pokemon) (:ataque pokemon) (:defesa pokemon)
      (:atq-esp pokemon) (:def-esp pokemon) (:veloc pokemon)))
 
+(def ^:private raridades
+  {"comum"     {:nome "Comum"     :emoji "⚪" :captura 1.15}
+   "incomum"   {:nome "Incomum"   :emoji "🟢" :captura 1.0}
+   "raro"      {:nome "Raro"      :emoji "🔵" :captura 0.8}
+   "epico"     {:nome "Épico"     :emoji "🟣" :captura 0.6}
+   "lendario"  {:nome "Lendário"  :emoji "🟡" :captura 0.4}})
+
+(defn- classificar-raridade [pokemon]
+  (let [poder (poder-total pokemon)]
+    (cond (<= poder 390) "comum"
+          (<= poder 450) "incomum"
+          (<= poder 510) "raro"
+          (<= poder 555) "epico"
+          :else "lendario")))
+
+(defn- com-raridade [pokemon]
+  (assoc pokemon :raridade (classificar-raridade pokemon)))
+
+(defn- texto-raridade [pokemon]
+  (let [{:keys [nome emoji]} (get raridades (or (:raridade pokemon) "comum"))]
+    (str emoji " " nome)))
+
 ;; Caçada (!pokemon cacar): sorteia um selvagem com poder-total (acima)
 ;; próximo de um alvo calculado a partir do nível do jogador (derivado das
 ;; vitórias em !pokemon, ver zapbot.treinador). Diferente do balanceamento
@@ -388,6 +426,7 @@
 
 (defn- chance-captura [pokemon]
   (-> (- chance-captura-base (* chance-captura-por-poder (- (poder-total pokemon) poder-referencia-captura)))
+      (* (get-in raridades [(or (:raridade pokemon) "comum") :captura] 1))
       js/Math.round
       (max chance-captura-minima)
       (min chance-captura-maxima)))
@@ -432,9 +471,18 @@
       1)))
 
 (defn- emoji-status [status]
-  (case status :queimado " 🔥" :envenenado " ☠️" :paralisado " ⚡" ""))
+  (case status :queimado " 🔥" :envenenado " ☠️" :paralisado " ⚡"
+        :adormecido " 💤" :congelado " 🧊" :confuso " 💫" ""))
 
 (defn- nivel-pokemon [pokemon] (or (:nivel pokemon) 1))
+
+(defn- texto-item [pokemon]
+  (when-let [item (:item pokemon)]
+    (let [{:keys [nome emoji]} (loja/dados-item item)] (str emoji " " nome))))
+
+(defn- texto-xp [registro]
+  (let [{:keys [atual necessario]} (treinador/progresso-xp registro)]
+    (str "XP " atual "/" necessario)))
 
 (defn- mensagem-estado [{:keys [pokemons nomes vez hp defendendo status jogadores]}]
   (let [meu        (get pokemons vez)
@@ -506,6 +554,24 @@
 (defn- paralisou-turno? [status]
   (and (= status :paralisado) (< (rand-int 100) chance-paralisia-trava)))
 
+(defn- impedimento-status
+  "Retorna o efeito que impede/altera a ação neste turno. Sono e gelo têm
+  chance de acabar sozinhos; confusão pode causar dano próprio."
+  [status]
+  (case status
+    :paralisado (when (paralisou-turno? status) {:impedido? true :texto "está paralisado"})
+    :adormecido (if (< (rand-int 100) 35)
+                  {:curou? true :texto "acordou"}
+                  {:impedido? true :texto "está dormindo"})
+    :congelado (if (< (rand-int 100) 25)
+                 {:curou? true :texto "descongelou"}
+                 {:impedido? true :texto "está congelado"})
+    :confuso (cond
+               (< (rand-int 100) 25) {:curou? true :texto "saiu da confusão"}
+               (< (rand-int 100) 33) {:impedido? true :auto-dano? true :texto "se feriu na confusão"}
+               :else nil)
+    nil))
+
 (defn- dano-por-status [status hp-maximo]
   (case status
     :queimado   (max 1 (quot hp-maximo 16))
@@ -516,17 +582,26 @@
   (when (and (nil? status-atual-defensor) (< (rand-int 100) chance-contagio))
     (get tipo->status tipo-golpe)))
 
+(defn- tentar-status-do-golpe [golpe status-atual]
+  (let [status (:status-causado golpe)
+        chance (or (:chance-status golpe) (when status 100) 0)]
+    (when (and status (nil? status-atual) (< (rand-int 100) chance)) status)))
+
 (defn- msg-status-aplicado [status nome]
   (case status
     :queimado   (str "\n🔥 *" nome "* se queimou!")
     :envenenado (str "\n☠️ *" nome "* foi envenenado!")
     :paralisado (str "\n⚡ *" nome "* ficou paralisado!")
+    :adormecido (str "\n💤 *" nome "* adormeceu!")
+    :congelado  (str "\n🧊 *" nome "* foi congelado!")
+    :confuso    (str "\n💫 *" nome "* ficou confuso!")
     ""))
 
 (defn- emoji-dot [status] (case status :queimado "🔥" :envenenado "☠️" "❓"))
 
 (defn- nome-status [status]
-  (case status :queimado "queimadura" :envenenado "veneno" :paralisado "paralisia" "status"))
+  (case status :queimado "queimadura" :envenenado "veneno" :paralisado "paralisia"
+        :adormecido "sono" :congelado "congelamento" :confuso "confusão" "status"))
 
 (defn- aplicar-dot
   "Aplica dano de queimadura/veneno (se houver) em `marca`. Retorna
@@ -538,6 +613,16 @@
     (if (pos? dot)
       [(update-in jogo [:hp marca] #(max 0 (- % dot))) dot]
       [jogo 0])))
+
+(defn- aplicar-restos
+  "Restos recupera 1/16 do HP máximo ao fim do turno."
+  [jogo marca]
+  (let [pokemon (get-in jogo [:pokemons marca])
+        atual   (get-in jogo [:hp marca])
+        cura    (if (and (= "restos" (:item pokemon)) (pos? atual) (< atual (:hp pokemon)))
+                  (max 1 (quot (:hp pokemon) 16)) 0)
+        novo    (min (:hp pokemon) (+ atual cura))]
+    [(assoc-in jogo [:hp marca] novo) (- novo atual)]))
 
 (defn- aplicar-intimidacao
   "Se um dos dois tiver Intimidate, reduz o ataque do outro ao entrar em
@@ -639,17 +724,24 @@
   (let [atacante       (get-in jogo [:pokemons atacante-marca])
         defensor       (get-in jogo [:pokemons defensor-marca])
         fisico?        (= :fisico (:classe golpe))
+        item-atacante  (:item atacante)
         atributo-atq   (if fisico? :ataque :atq-esp)
         atributo-def   (if fisico? :defesa :def-esp)
         poder-ataque   (stat-efetivo jogo atacante-marca atributo-atq)
         poder-defesa   (stat-efetivo jogo defensor-marca atributo-def)
-        esquivou?     (and defendendo? (< (rand-int 100) (chance-esquiva jogo defensor-marca)))
+        errou?        (and (:precisao golpe) (>= (rand-int 100) (:precisao golpe)))
+        esquivou?     (and (not errou?) defendendo? (< (rand-int 100) (chance-esquiva jogo defensor-marca)))
         multiplicador (multiplicador-vs-tipos (:tipo golpe) (:tipos defensor) (:habilidade defensor))
         critico?      (< (rand-int 100) chance-critico)
         impulso       (impulso-habilidade atacante hp-atacante-atual (:tipo golpe))
-        fator         (* multiplicador impulso (if critico? 1.5 1))
-        dano-com-tudo (* fator (calcular-dano (:poder golpe) poder-ataque poder-defesa))
-        dano          (cond esquivou?             0
+        impulso-item  (if (or (and fisico? (= item-atacante "banda"))
+                              (and (not fisico?) (= item-atacante "oculos"))) 1.15 1)
+        acertos       (if (:max-acertos golpe)
+                        (+ (:min-acertos golpe) (rand-int (inc (- (:max-acertos golpe) (:min-acertos golpe))))) 1)
+        fator         (* multiplicador impulso impulso-item (if critico? 1.5 1))
+        dano-com-tudo (* acertos fator (calcular-dano (:poder golpe) poder-ataque poder-defesa))
+        dano          (cond errou?                0
+                             esquivou?             0
                              (zero? dano-com-tudo) 0
                              defendendo?           (max 1 (js/Math.round (/ dano-com-tudo 2)))
                              :else                 (max 1 (js/Math.round dano-com-tudo)))
@@ -657,6 +749,9 @@
         sufixo        (str (texto-efetividade multiplicador) (texto-critico critico?)
                             (texto-impulso impulso (:habilidade atacante)))
         mensagem      (cond
+                        errou?
+                        (str nome-golpe " de *" (:nome atacante) "* errou o alvo!")
+
                         esquivou?
                         (str "💨 *" (:nome defensor) "* esquivou completamente de " nome-golpe
                              " de *" (:nome atacante) "*! Nenhum dano.")
@@ -671,8 +766,9 @@
 
                         :else
                         (str nome-golpe " de *" (:nome atacante) "* causou " dano
-                             " de dano em *" (:nome defensor) "*!" sufixo))]
-    {:dano dano :mensagem mensagem}))
+                             " de dano em *" (:nome defensor) "*!" sufixo
+                             (when (> acertos 1) (str "\n🎯 Acertou " acertos " vezes!"))))]
+    {:dano dano :mensagem mensagem :acertou? (and (not errou?) (not esquivou?) (pos? dano))}))
 
 (defn- criar-jogo [id nome pokemon hp-atual status]
   {:pokemons {:x pokemon}
@@ -1101,7 +1197,10 @@
                                (fn [i registro]
                                  (let [[p hp-atual status] (treinador/registro->pokemon registro)]
                                    (str (inc i) ". " (if (= i (treinador/indice-ativo cid pid)) "👉 " "") "*" (:nome p)
-                                        "* Nv." (nivel-pokemon p) "\n   " (barra-hp hp-atual (:hp p)) (emoji-status status))))
+                                        "* Nv." (nivel-pokemon p) " • " (texto-raridade p)
+                                        (when-let [item (texto-item p)] (str " • " item))
+                                        "\n   " (barra-hp hp-atual (:hp p)) (emoji-status status)
+                                        "\n   ✨ " (texto-xp registro))))
                                eq))
               "Nenhum disponível enquanto a Enfermeira Joy atende seu time.")
             (when-let [em-tratamento (seq em-tratamento)]
@@ -1140,7 +1239,7 @@
         altura  (+ 120 (* 205 (js/Math.ceil (/ (count entradas) 2))) 20)
         cards   (apply str
                        (map-indexed
-                        (fn [idx {:keys [pokemon hp-atual status ativo? numero]}]
+                        (fn [idx {:keys [pokemon hp-atual status ativo? numero xp]}]
                           (let [coluna     (mod idx 2)
                                 linha      (quot idx 2)
                                 x          (+ 20 (* coluna 480))
@@ -1170,7 +1269,12 @@
                                  (escapar-xml status-txt) "</text>"
                                  "<rect x='" (+ x 165) "' y='" (+ y 133) "' width='270' height='18' rx='9' fill='#334155'/>"
                                  "<rect x='" (+ x 165) "' y='" (+ y 133) "' width='" hp-largura "' height='18' rx='9' fill='"
-                                 (if (> (/ hp-seguro hp-max) 0.3) "#4ade80" "#f87171") "'/></g>")))
+                                 (if (> (/ hp-seguro hp-max) 0.3) "#4ade80" "#f87171") "'/>"
+                                 "<text x='" (+ x 165) "' y='" (+ y 174)
+                                 "' font-size='15' font-family='Arial,sans-serif' fill='#cbd5e1'>✨ XP "
+                                 (:atual xp) "/" (:necessario xp) " • " (escapar-xml (texto-raridade pokemon))
+                                 (when-let [item (texto-item pokemon)] (str " • " (escapar-xml item)))
+                                 "</text></g>")))
                         entradas))]
     (str "<svg xmlns='http://www.w3.org/2000/svg' width='" largura "' height='" altura "'>"
          "<rect width='100%' height='100%' fill='#0f172a'/><rect width='100%' height='100' fill='#1e293b'/>"
@@ -1194,6 +1298,7 @@
                       (map-indexed (fn [idx registro]
                                      (let [[pokemon hp-atual status] (treinador/registro->pokemon registro)]
                                        {:pokemon pokemon :hp-atual hp-atual :status status
+                                        :xp (treinador/progresso-xp registro)
                                         :ativo? (= (+ inicio idx) indice-ativo)
                                         :numero  (inc (+ inicio idx))})))
                       vec)]
@@ -1253,6 +1358,32 @@
            (do (treinador/definir-ativo! cid pid indice)
                (str (cabecalho) "✅ Pokémon ativo trocado!"))))))))
 
+(defn- equipar-item [message indice-texto item-texto]
+  (let [cid    (chat-id message)
+        pid    (jogador-id message)
+        total  (count (treinador/equipe cid pid))
+        indice (parse-indice-golpe indice-texto total)
+        item   (-> (or item-texto "") str/trim str/lower-case
+                   (.normalize "NFD") (str/replace #"[\u0300-\u036f]" ""))]
+    (p/resolved
+     (cond
+       (nil? indice)
+       (str (cabecalho) "❓ Use " config/prefix "pokemon equipar <número do Pokémon> <item>.")
+
+       (not (loja/item-equipavel? item))
+       (str (cabecalho) "❓ Item equipável desconhecido. Confira os itens disponíveis em " config/prefix "loja.")
+
+       (not (loja/consumir-item! cid pid item))
+       (str (cabecalho) "🎒 Você não possui esse item. Compre-o primeiro em " config/prefix "loja.")
+
+       :else
+       (let [anterior (treinador/equipar-item! cid pid indice item)
+             pokemon  (get-in (treinador/equipe cid pid) [indice "nome"])
+             dados    (loja/dados-item item)]
+         (when anterior (loja/devolver-item! cid pid anterior))
+         (str (cabecalho) (:emoji dados) " *" (:nome dados) "* equipado em *" pokemon "*!"
+              (when anterior " O item anterior voltou para o inventário.")))))))
+
 (defn- doar [message indice-texto]
   (let [cid   (chat-id message)
         pid   (jogador-id message)
@@ -1298,6 +1429,7 @@
       :else
       (let [nivel (treinador/nivel-jogador cid pid)]
         (-> (p/let [selvagem (sortear-selvagem (poder-alvo-caca nivel))
+                    selvagem (com-raridade selvagem)
                     selvagem (com-golpes selvagem)]
               (treinador/registrar-cacada! cid pid)
               (let [chance    (chance-captura selvagem)
@@ -1306,12 +1438,14 @@
                   (let [idx (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil)]
                     (enviar-imagem message (:imagem selvagem)
                                     (str (cabecalho) "🎯 (nível de treinador " nivel ") Um *" (:nome selvagem)
-                                         "* selvagem apareceu! (" chance "% de chance de captura)\n\n✅ Capturado! "
+                                         "* selvagem apareceu!\n" (texto-raridade selvagem)
+                                         " • " chance "% de chance de captura\n\n✅ Capturado! "
                                          "Adicionado ao seu time (nº " (inc idx) "). Use " config/prefix
                                          "pokemon escolher " (inc idx) " pra deixar ele ativo.")))
                   (enviar-imagem message (:imagem selvagem)
                                   (str (cabecalho) "🎯 (nível de treinador " nivel ") Um *" (:nome selvagem)
-                                       "* selvagem apareceu! (" chance "% de chance de captura)\n\n💨 Escapou! Tente "
+                                       "* selvagem apareceu!\n" (texto-raridade selvagem)
+                                       " • " chance "% de chance de captura\n\n💨 Escapou! Tente "
                                        "de novo em " treinador/cooldown-cacada-minutos " minutos.")))))
             (p/catch (fn [err]
                        (js/console.error "Erro ao caçar pokemon:" err)
@@ -1338,16 +1472,24 @@
              atacante        (get-in jogo [:pokemons atacante-marca])
              defensor        (get-in jogo [:pokemons alvo-marca])
              status-atacante (get-in jogo [:status atacante-marca])
+             impedimento     (impedimento-status status-atacante)
              indice          (parse-indice-golpe indice-texto (count (:golpes atacante)))]
          (cond
            (nil? indice)
            (com-mencao jogo (str (cabecalho) "❓ Escolha um golpe válido: " config/prefix "pokemon atacar <1-"
                                   (count (:golpes atacante)) ">\n\n" (mensagem-estado jogo)))
 
-           (paralisou-turno? status-atacante)
-           (let [[jogo dot]  (aplicar-dot jogo atacante-marca)
+           (:impedido? impedimento)
+           (let [auto-dano   (if (:auto-dano? impedimento)
+                               (max 1 (quot (:hp atacante) 8)) 0)
+                 jogo        (update-in jogo [:hp atacante-marca] #(max 0 (- % auto-dano)))
+                 [jogo cura-restos] (aplicar-restos jogo atacante-marca)
+                 [jogo dot]  (aplicar-dot jogo atacante-marca)
                  hp-atacante (get-in jogo [:hp atacante-marca])
-                 msg         (str "⚡ *" (:nome atacante) "* está paralisado e não conseguiu atacar!"
+                 msg         (str (emoji-status status-atacante) " *" (:nome atacante) "* "
+                                  (:texto impedimento) " e não conseguiu atacar!"
+                                  (when (pos? auto-dano) (str " Sofreu " auto-dano " de dano."))
+                                  (when (pos? cura-restos) (str " 🍱 Restos recuperou " cura-restos " HP."))
                                    (when (pos? dot) (str " Ainda assim sofreu " dot " de dano pelo status.")))]
              (if (zero? hp-atacante)
                (str (cabecalho) msg (anunciar-vitoria message cid jogo alvo-marca " a batalha"))
@@ -1356,13 +1498,22 @@
                  (sincronizar-equipe! cid jogo-novo)
                  (com-mencao jogo-novo (str (cabecalho) msg "\n\n" (mensagem-estado jogo-novo))))))
 
+           (:curou? impedimento)
+           (let [jogo-novo (assoc-in jogo [:status atacante-marca] nil)]
+             (swap! jogos assoc cid jogo-novo)
+             ;; O status terminou e o Pokémon ainda realiza o golpe neste mesmo
+             ;; comando; refaz a resolução já sem o impedimento.
+             (atacar message indice-texto))
+
            (= :transform (:classe (nth (:golpes atacante) indice)))
            (let [golpes-copiados (:golpes defensor)
                  jogo-transformado (assoc-in jogo [:pokemons atacante-marca :golpes] golpes-copiados)
-                 [jogo dot]       (aplicar-dot jogo-transformado atacante-marca)
+                 [jogo cura-restos] (aplicar-restos jogo-transformado atacante-marca)
+                 [jogo dot]       (aplicar-dot jogo atacante-marca)
                  nomes-golpes     (str/join ", " (map :nome-exibicao golpes-copiados))
                  msg              (str "🧬 *" (:nome atacante) "* usou *Transform* e copiou os golpes de *"
                                        (:nome defensor) "*: " nomes-golpes "!"
+                                       (when (pos? cura-restos) (str "\n🍱 Restos recuperou " cura-restos " HP!"))
                                        (when (pos? dot)
                                          (str "\n" (emoji-dot status-atacante) " *" (:nome atacante)
                                               "* sofreu " dot " de dano pelo status.")))]
@@ -1376,14 +1527,33 @@
                  (com-mencao jogo-novo (str (cabecalho) msg "\n\n" (mensagem-estado jogo-novo))))))
 
            (= :status (:classe (nth (:golpes atacante) indice)))
-           (let [golpe       (nth (:golpes atacante) indice)
+           (let [golpe        (nth (:golpes atacante) indice)
+                 acertou?     (or (nil? (:precisao golpe)) (< (rand-int 100) (:precisao golpe)))
                  efeito-marca (if (= :proprio (:alvo golpe)) atacante-marca alvo-marca)
-                 jogo-efeito (aplicar-alteracoes jogo efeito-marca (:alteracoes golpe))
-                 msg         (mensagem-alteracoes jogo jogo-efeito efeito-marca golpe)
-                 [jogo dot]  (aplicar-dot jogo-efeito atacante-marca)
+                 jogo-efeito  (if acertou? (aplicar-alteracoes jogo efeito-marca (:alteracoes golpe)) jogo)
+                 status-novo  (when acertou? (tentar-status-do-golpe golpe (get-in jogo [:status efeito-marca])))
+                 jogo-efeito  (cond-> jogo-efeito status-novo (assoc-in [:status efeito-marca] status-novo))
+                 cura         (if (and acertou? (pos? (or (:cura golpe) 0)))
+                                (js/Math.round (* (get-in jogo [:pokemons atacante-marca :hp]) (/ (:cura golpe) 100))) 0)
+                 hp-antes     (get-in jogo-efeito [:hp atacante-marca])
+                 jogo-efeito  (if (pos? cura) (update-in jogo-efeito [:hp atacante-marca]
+                                                        #(min (get-in jogo [:pokemons atacante-marca :hp]) (+ % cura)))
+                                jogo-efeito)
+                 curado       (- (get-in jogo-efeito [:hp atacante-marca]) hp-antes)
+                 msg          (if-not acertou?
+                                (str (emoji-golpe golpe) " *" (:nome-exibicao golpe) "* errou o alvo!")
+                                (str (emoji-golpe golpe) " *" (:nome-exibicao golpe) "*!"
+                                     (when (seq (:alteracoes golpe))
+                                       (str " " (mensagem-alteracoes jogo jogo-efeito efeito-marca golpe)))
+                                     (when status-novo (msg-status-aplicado status-novo
+                                                                            (get-in jogo [:pokemons efeito-marca :nome])))
+                                     (when (pos? curado) (str "\n💚 *" (:nome atacante) "* recuperou " curado " HP!"))))
+                 [jogo cura-restos] (aplicar-restos jogo-efeito atacante-marca)
+                 [jogo dot]  (aplicar-dot jogo atacante-marca)
                  msg         (str msg (when (pos? dot)
                                         (str "\n" (emoji-dot status-atacante) " *" (:nome atacante)
-                                             "* sofreu " dot " de dano pelo status.")))]
+                                             "* sofreu " dot " de dano pelo status."))
+                                  (when (pos? cura-restos) (str "\n🍱 Restos recuperou " cura-restos " HP!")))]
              (if (zero? (get-in jogo [:hp atacante-marca]))
                (str (cabecalho) msg
                     (anunciar-vitoria message cid jogo alvo-marca
@@ -1396,16 +1566,49 @@
            :else
            (let [golpe                   (nth (:golpes atacante) indice)
                  defendendo?             (get-in jogo [:defendendo alvo-marca])
-                 {:keys [dano mensagem]} (resolver-ataque jogo golpe atacante-marca alvo-marca defendendo?
+                 {:keys [dano mensagem acertou?]} (resolver-ataque jogo golpe atacante-marca alvo-marca defendendo?
                                                            (get-in jogo [:hp atacante-marca]))
-                 jogo (update-in jogo [:hp alvo-marca] #(max 0 (- % dano)))]
+                 hp-alvo-antes            (get-in jogo [:hp alvo-marca])
+                 faixa-foco?              (and acertou? (= "faixa-foco" (:item defensor))
+                                                       (= hp-alvo-antes (:hp defensor))
+                                                       (>= dano hp-alvo-antes)
+                                                       (not (get-in jogo [:itens-usados alvo-marca :faixa-foco])))
+                 jogo                     (-> jogo
+                                              (assoc-in [:hp alvo-marca]
+                                                        (if faixa-foco? 1 (max 0 (- hp-alvo-antes dano))))
+                                              (cond-> faixa-foco? (assoc-in [:itens-usados alvo-marca :faixa-foco] true)))
+                 dano-real                (- hp-alvo-antes (get-in jogo [:hp alvo-marca]))
+                 dreno                    (if acertou? (js/Math.round (* dano-real (/ (or (:dreno golpe) 0) 100))) 0)
+                 recuo                    (if acertou? (js/Math.round (* dano-real (/ (or (:recuo golpe) 0) 100))) 0)
+                 hp-atacante-antes        (get-in jogo [:hp atacante-marca])
+                 jogo                     (-> jogo
+                                              (update-in [:hp atacante-marca]
+                                                         #(-> (+ % dreno (- recuo))
+                                                              (max 0)
+                                                              (min (get-in jogo [:pokemons atacante-marca :hp]))))
+                                              (cond-> (and acertou? (seq (:alteracoes golpe)))
+                                                (aplicar-alteracoes (if (= :proprio (:alvo golpe)) atacante-marca alvo-marca)
+                                                                    (:alteracoes golpe))))
+                 status-defensor-atual    (get-in jogo [:status alvo-marca])
+                 novo-status              (when acertou?
+                                            (or (tentar-status-do-golpe golpe status-defensor-atual)
+                                                (when-not (:status-causado golpe)
+                                                  (tentar-contagiar (:tipo golpe) status-defensor-atual))))
+                 jogo                     (cond-> jogo novo-status (assoc-in [:status alvo-marca] novo-status))
+                 msg-efeitos              (str (when faixa-foco? "\n🥋 A Faixa de Foco o manteve com 1 HP!")
+                                               (when (pos? dreno) (str "\n💚 Drenou " dreno " HP!"))
+                                               (when (pos? recuo) (str "\n💥 Sofreu " recuo " de dano de recuo!"))
+                                               (when novo-status (msg-status-aplicado novo-status (:nome defensor))))]
              (if (zero? (get-in jogo [:hp alvo-marca]))
-               (str (cabecalho) mensagem (anunciar-vitoria message cid jogo atacante-marca " a batalha"))
-               (let [status-defensor-atual (get-in jogo [:status alvo-marca])
-                     novo-status           (when (pos? dano) (tentar-contagiar (:tipo golpe) status-defensor-atual))
-                     jogo                  (cond-> jogo novo-status (assoc-in [:status alvo-marca] novo-status))
+               (str (cabecalho) mensagem msg-efeitos (anunciar-vitoria message cid jogo atacante-marca " a batalha"))
+               (if (zero? (get-in jogo [:hp atacante-marca]))
+                 (str (cabecalho) mensagem msg-efeitos
+                      (anunciar-vitoria message cid jogo alvo-marca (str " - " (:nome atacante) " caiu com o recuo")))
+                 (let [[jogo cura-restos]  (aplicar-restos jogo atacante-marca)
                      [jogo dot]            (aplicar-dot jogo atacante-marca)
-                     msg-extra             (str (when novo-status (msg-status-aplicado novo-status (:nome defensor)))
+                     msg-extra             (str msg-efeitos
+                                                 (when (pos? cura-restos)
+                                                   (str "\n🍱 Restos recuperou " cura-restos " HP!"))
                                                  (when (pos? dot)
                                                    (str "\n" (emoji-dot status-atacante) " *" (:nome atacante)
                                                         "* sofreu mais " dot " de dano pelo status.")))]
@@ -1415,17 +1618,18 @@
                    (let [jogo-novo (-> jogo (assoc-in [:defendendo alvo-marca] false) (assoc :vez alvo-marca))]
                      (swap! jogos assoc cid jogo-novo)
                      (sincronizar-equipe! cid jogo-novo)
-                     (com-mencao jogo-novo (str (cabecalho) mensagem msg-extra "\n\n" (mensagem-estado jogo-novo))))))))))))))
+                     (com-mencao jogo-novo (str (cabecalho) mensagem msg-extra "\n\n" (mensagem-estado jogo-novo)))))))))))))))
 
 (defn jogar
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
   batalhar/caçar); !pokemon cacar tenta encontrar e capturar um pokémon
   selvagem (nível calibrado pelas suas vitórias em !pokemon); !pokemon time
   mostra seu time capturado; !pokemon escolher <número> troca qual está
-  ativo pra batalhar; !pokemon doar <número> (marcando ou respondendo a
+  ativo pra batalhar; !pokemon equipar <número> <item> equipa um item
+  comprado na !loja; !pokemon doar <número> (marcando ou respondendo a
   pessoa) doa um pokémon da sua equipe pra outro jogador; !pokemon sem
-  argumento abre/entra numa batalha (usa seu pokémon ativo, que sobe de
-  nível - e pode evoluir - a cada vitória); !pokemon atacar <1-4> usa o
+  argumento abre/entra numa batalha (usa seu pokémon ativo, que ganha XP
+  e pode subir de nível/evoluir); !pokemon atacar <1-4> usa o
   golpe correspondente (ver o menu de golpes em cada mensagem de estado);
   !pokemon defender entra em posição defensiva/evasiva; !pokemon curar usa
   uma cura do inventário (ver !loja) pro status atual (dentro ou fora de
@@ -1448,6 +1652,7 @@
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
       (contains? #{"time" "equipe"} cmd) (resposta-time-visual message)
       (= cmd "escolher") (escolher-ativo message (first resto))
+      (contains? #{"equipar" "item"} cmd) (equipar-item message (first resto) (second resto))
       (= cmd "doar") (doar message (first resto))
       (contains? #{"joy" "enfermeira" "enfermaria" "hospital"} cmd) (enfermeira-joy message (first resto))
       (contains? #{"atacar" "ataque" "atirar" "usar"} cmd) (atacar message (first resto))
@@ -1456,6 +1661,7 @@
       (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon inicial, " config/prefix "pokemon cacar, "
                               config/prefix "pokemon time, " config/prefix "pokemon escolher <número>, "
+                              config/prefix "pokemon equipar <número> <item>, "
                               config/prefix "pokemon doar <número>, " config/prefix "pokemon (abrir/entrar), "
                               config/prefix "pokemon joy <número>, "
                               config/prefix "pokemon atacar <1-4>, " config/prefix "pokemon defender, "

@@ -26,6 +26,9 @@
 (defn- golpe->registro [g]
   {"nome-exibicao" (:nome-exibicao g) "tipo" (:tipo g) "poder" (:poder g) "classe" (name (:classe g))
    "alvo" (when (:alvo g) (name (:alvo g)))
+   "precisao" (:precisao g) "status-causado" (some-> (:status-causado g) name)
+   "chance-status" (:chance-status g) "cura" (:cura g) "dreno" (:dreno g)
+   "recuo" (:recuo g) "min-acertos" (:min-acertos g) "max-acertos" (:max-acertos g)
    "alteracoes" (mapv (fn [{:keys [atributo estagios]}]
                           {"atributo" (name atributo) "estagios" estagios})
                         (:alteracoes g))})
@@ -34,11 +37,14 @@
   {:nome-exibicao (get g "nome-exibicao") :tipo (get g "tipo") :poder (get g "poder")
    :classe (keyword (get g "classe"))
    :alvo (when (get g "alvo") (keyword (get g "alvo")))
+   :precisao (get g "precisao") :status-causado (some-> (get g "status-causado") keyword)
+   :chance-status (get g "chance-status") :cura (get g "cura") :dreno (get g "dreno")
+   :recuo (get g "recuo") :min-acertos (get g "min-acertos") :max-acertos (get g "max-acertos")
    :alteracoes (mapv (fn [a] {:atributo (keyword (get a "atributo"))
                               :estagios (get a "estagios")})
                      (get g "alteracoes" []))})
 
-(def ^:private versao-golpes 4)
+(def ^:private versao-golpes 5)
 
 (defn pokemon->registro
   "Converte um pokémon (mapa interno do zapbot.pokemon, chaves keyword) +
@@ -49,7 +55,8 @@
    "defesa" (:defesa pokemon) "atq-esp" (:atq-esp pokemon) "def-esp" (:def-esp pokemon)
    "veloc" (:veloc pokemon) "golpes" (mapv golpe->registro (:golpes pokemon))
    "versao-golpes" versao-golpes
-   "hp-atual" hp-atual "status" (when status (name status)) "nivel" (or (:nivel pokemon) 1)})
+   "hp-atual" hp-atual "status" (when status (name status)) "nivel" (or (:nivel pokemon) 1)
+   "raridade" (or (:raridade pokemon) "comum") "item" (:item pokemon)})
 
 (defn registro->pokemon
   "Converte um registro da equipe (chaves string) de volta pro formato
@@ -59,7 +66,8 @@
     :habilidade (get registro "habilidade") :hp (get registro "hp") :ataque (get registro "ataque")
     :defesa (get registro "defesa") :atq-esp (get registro "atq-esp") :def-esp (get registro "def-esp")
     :veloc (get registro "veloc") :golpes (mapv golpe<-registro (get registro "golpes"))
-    :nivel (get registro "nivel" 1)}
+    :nivel (get registro "nivel" 1) :raridade (get registro "raridade" "comum")
+    :item (get registro "item")}
    (get registro "hp-atual")
    (when (get registro "status") (keyword (get registro "status")))])
 
@@ -89,6 +97,17 @@
   (if (contains? (vec (equipe cid pid)) idx)
     (do (swap! contas assoc-in [cid pid "ativo"] idx) (persistir!) true)
     false))
+
+(defn equipar-item!
+  "Equipa item no Pokémon do índice informado e retorna o item anterior.
+  Retorna ::inexistente se não houver Pokémon nesse índice."
+  [cid pid idx item]
+  (if-let [registro (get (equipe cid pid) idx)]
+    (let [anterior (get registro "item")]
+      (swap! contas assoc-in [cid pid "equipe" idx "item"] item)
+      (persistir!)
+      anterior)
+    ::inexistente))
 
 (defn atualizar-golpes-ativo!
   "Substitui os golpes do pokémon ativo, preservando todos os demais dados."
@@ -295,6 +314,13 @@
   "Concede ao pokémon ativo o XP de uma vitória."
   [cid pid]
   (ganhar-xp! cid pid xp-por-vitoria))
+
+(defn progresso-xp
+  "Retorna o XP atual e o necessário para o próximo nível do registro."
+  [registro]
+  {:atual (get registro "xp-desde-nivel"
+               (* xp-por-vitoria (get registro "vitorias-desde-nivel" 0)))
+   :necessario xp-por-nivel})
 
 (defn evoluir-ativo!
   "Substitui os campos derivados de espécie (nome/imagem/tipos/habilidade/

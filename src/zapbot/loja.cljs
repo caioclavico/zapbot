@@ -48,7 +48,37 @@
   {"atadura"    {:nome "Atadura"           :emoji "🔥" :status :queimado   :preco 15}
    "antidoto"   {:nome "Antídoto"          :emoji "☠️" :status :envenenado :preco 15}
    "paralisia"  {:nome "Cura de Paralisia" :emoji "⚡" :status :paralisado :preco 15}
-   "pocao"      {:nome "Poção de Vida"     :emoji "🧪" :cura-hp 0.4        :preco 20}})
+   "despertar"  {:nome "Despertar"          :emoji "💤" :status :adormecido :preco 15}
+   "degelo"     {:nome "Antigelo"           :emoji "🧊" :status :congelado  :preco 15}
+   "persim"     {:nome "Baya Caquic"        :emoji "💫" :status :confuso    :preco 15}
+   "pocao"      {:nome "Poção de Vida"     :emoji "🧪" :cura-hp 0.4        :preco 20}
+   "restos"     {:nome "Restos"            :emoji "🍱" :equipavel true :efeito :regeneracao :preco 45}
+   "banda"      {:nome "Banda Musculosa"   :emoji "💪" :equipavel true :efeito :fisico :preco 40}
+   "oculos"     {:nome "Óculos Sábios"     :emoji "👓" :equipavel true :efeito :especial :preco 40}
+   "faixa-foco" {:nome "Faixa de Foco"     :emoji "🥋" :equipavel true :efeito :sobreviver :preco 55}})
+
+(declare conta)
+
+(defn dados-item [chave] (get itens chave))
+(defn item-equipavel? [chave] (true? (get-in itens [chave :equipavel])))
+
+(defn consumir-item!
+  "Remove uma unidade de um item equipável do inventário."
+  [cid pid chave]
+  (when (and (item-equipavel? chave) (pos? (get-in (conta cid pid) ["inventario" chave] 0)))
+    (swap! contas update-in [cid pid "inventario" chave] dec)
+    (persistir!)
+    true))
+
+(defn devolver-item!
+  "Devolve um item equipável ao inventário (ao trocar/desequipar)."
+  [cid pid chave]
+  (when (item-equipavel? chave)
+    (swap! contas update-in [cid pid]
+           (fn [c] (update-in (or c {"moedas" 0 "inventario" {}})
+                              ["inventario" chave] (fnil inc 0))))
+    (persistir!)
+    true))
 
 (defn- conta [cid pid]
   (get-in @contas [cid pid] {"moedas" 0 "inventario" {}}))
@@ -114,7 +144,8 @@
          (str/join "\n" (map (fn [[chave info]] (formatar-item chave info)) itens))
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, cure status com " config/prefix
-         "pokemon curar, e recupere HP com " config/prefix "pokemon pocao!")))
+         "pokemon curar, recupere HP com " config/prefix "pokemon pocao e equipe itens com "
+         config/prefix "pokemon equipar <nº> <item>!")))
 
 (defn comprar
   "!loja comprar <item> - compra 1 unidade do item pro inventário de quem
