@@ -12,14 +12,10 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["Regras de turnos e consumíveis do PvP passam a valer também nas caçadas"
-   "Poções e curas ficam sincronizadas com o HP e status da batalha selvagem"
-   "Ataque, defesa e uso de consumível passam a gastar uma ação no PvE"
-   "Poções consecutivas sem resposta do selvagem não são mais permitidas"
-   "Selvagens contra-atacam após poções e curas, seguindo as regras do PvP"
-   "Troca, equipamento, doação e Joy ficam bloqueados durante o combate"
-   "Golpes como Supersonic exibem e aplicam corretamente status, chance e precisão"
-   "Enfermeira Joy aceita vários Pokémon separados por vírgula"])
+  ["Caçadas PvE permitem trocar de Pokémon somente na primeira ação da batalha"
+   "A troca consome o turno e permite o contra-ataque do Pokémon selvagem"
+   "HP e status do Pokémon substituído são preservados"
+   "Pokémon desmaiados não podem entrar durante a troca"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

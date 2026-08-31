@@ -1547,25 +1547,58 @@
         pid   (jogador-id message)
         jogo  (get @jogos cid)
         caca  (get @cacadas-selvagens cid)
-        em-batalha? (or (some #(= pid %) (vals (:jogadores jogo)))
-                        (= pid (:pid caca)))
         total (count (treinador/equipe cid pid))]
-    (p/resolved
-     (cond
-       (zero? total)
-       (str (cabecalho) "❓ Você ainda não tem nenhum pokémon. Use " config/prefix "pokemon inicial.")
+    (cond
+      (zero? total)
+      (p/resolved (str (cabecalho) "❓ Você ainda não tem nenhum pokémon. Use " config/prefix "pokemon inicial."))
 
-       em-batalha?
-       (str (cabecalho) "🚫 Você não pode trocar o Pokémon ativo durante uma batalha. "
-            "Termine ou saia da batalha/caçada antes de escolher outro.")
+      (some #(= pid %) (vals (:jogadores jogo)))
+      (p/resolved (str (cabecalho) "🚫 Você não pode trocar o Pokémon ativo durante uma batalha PvP. "
+                       "Termine ou saia da batalha antes de escolher outro."))
 
-       :else
-       (let [indice (parse-indice-golpe indice-texto total)]
-         (if (nil? indice)
-           (str (cabecalho) "❓ Escolha um número válido: " config/prefix "pokemon escolher <1-" total
-                "> (veja com " config/prefix "pokemon time).")
-           (do (treinador/definir-ativo! cid pid indice)
-               (str (cabecalho) "✅ Pokémon ativo trocado!"))))))))
+      (and caca (not= pid (:pid caca)))
+      (p/resolved (str (cabecalho) "🚫 Essa caçada pertence a outro treinador."))
+
+      :else
+      (let [indice (parse-indice-golpe indice-texto total)]
+        (cond
+          (nil? indice)
+          (p/resolved (str (cabecalho) "❓ Escolha um número válido: " config/prefix "pokemon trocar <1-" total
+                           "> (veja com " config/prefix "pokemon time)."))
+
+          (and caca (:acao-realizada? caca))
+          (p/resolved (str (cabecalho) "🚫 A troca só pode ser feita como primeira ação da caçada.\n\n"
+                           (estado-cacada caca)))
+
+          (= indice (treinador/indice-ativo cid pid))
+          (p/resolved (str (cabecalho) "❓ Esse Pokémon já está batalhando. Escolha outro."))
+
+          :else
+          (let [[novo-pokemon novo-hp novo-status]
+                (treinador/registro->pokemon (get (treinador/equipe cid pid) indice))]
+            (if (zero? novo-hp)
+              (p/resolved (str (cabecalho) "😵 *" (:nome novo-pokemon)
+                               "* está desmaiado e não pode entrar na batalha."))
+              (if caca
+                (let [pokemon-anterior (get-in caca [:pokemons :x])
+                      hp-anterior      (get-in caca [:hp :x])
+                      status-anterior  (get-in caca [:status :x])]
+                  (treinador/atualizar-ativo! cid pid hp-anterior status-anterior)
+                  (treinador/definir-ativo! cid pid indice)
+                  (let [caca-nova (-> caca
+                                      (assoc-in [:pokemons :x] novo-pokemon)
+                                      (assoc-in [:hp :x] novo-hp)
+                                      (assoc-in [:status :x] novo-status)
+                                      (assoc-in [:estagios :x] {})
+                                      (assoc-in [:defendendo :x] false)
+                                      (assoc :acao-realizada? true
+                                             :item-usado-turno? false))]
+                    (p/resolved
+                     (turno-selvagem cid pid caca-nova false
+                                      (str "🔄 *" (:nome pokemon-anterior) "* voltou! *"
+                                           (:nome novo-pokemon) "* entrou na batalha.")))))
+                (do (treinador/definir-ativo! cid pid indice)
+                    (p/resolved (str (cabecalho) "✅ Pokémon ativo trocado!")))))))))))
 
 (defn- equipar-item [message indice-texto item-texto]
   (let [cid    (chat-id message)
@@ -1649,7 +1682,9 @@
          "Escolha: " config/prefix "pokemon atacar <1-" (count (:golpes meu)) ">\n"
          (menu-golpes meu (:tipos selvagem) (:habilidade selvagem))
          "\n\nVocê também pode usar " config/prefix "pokemon defender, " config/prefix
-         "pokemon curar, " config/prefix "pokemon pocao ou " config/prefix "pokemon sair.")))
+         "pokemon curar, " config/prefix "pokemon pocao, "
+         (when-not (:acao-realizada? caca) (str config/prefix "pokemon trocar <número>, "))
+         "ou " config/prefix "pokemon sair.")))
 
 (defn- encerrar-cacada! [cid pid caca capturou?]
   (let [selvagem      (get-in caca [:pokemons :o])
@@ -1702,6 +1737,7 @@
             {:keys [dano mensagem]} (resolver-ataque caca ofensivo :o :x defendendo? (get-in caca [:hp :o]))
             caca-nova      (-> caca
                                (update-in [:hp :x] #(max 0 (- % dano)))
+                               (assoc :acao-realizada? true)
                                (assoc :item-usado-turno? false)
                                (assoc-in [:defendendo :x] false))]
         (treinador/atualizar-ativo! cid pid (get-in caca-nova [:hp :x]) (get-in caca-nova [:status :x]))
@@ -1782,7 +1818,7 @@
                           :hp {:x hp-atual :o (:hp selvagem)}
                           :status {:x status :o nil} :estagios {:x {} :o {}}
                           :pid pid :message message :bioma bioma
-                          :item-usado-turno? false}]
+                          :item-usado-turno? false :acao-realizada? false}]
                 (swap! cacadas-selvagens assoc cid caca)
                 (enviar-imagem message (:imagem selvagem)
                                (str (cabecalho) (:emoji bioma) " Você entrou em *" (:nome bioma) "*!\n"
@@ -1971,7 +2007,8 @@
   batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
   selvagem do bioma/horário atual; !pokemon pokedex mostra a coleção; !pokemon time
   mostra seu time capturado; !pokemon escolher <número> troca qual está
-  ativo pra batalhar; !pokemon equipar <número> <item> equipa um item
+  ativo pra batalhar (durante uma caçada PvE, permite uma única troca e
+  consome a ação do turno); !pokemon equipar <número> <item> equipa um item
   comprado na !loja; !pokemon doar <número> (marcando ou respondendo a
   pessoa) doa um pokémon da sua equipe pra outro jogador; !pokemon sem
   argumento abre/entra numa batalha (usa seu pokémon ativo, que ganha XP
