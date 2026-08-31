@@ -12,13 +12,15 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["Caçadas agora começam uma batalha PvE antes da tentativa de captura"
-   "Pokémon selvagens podem atacar, derrotar o jogador ou fugir durante o combate"
-   "XP e moedas de captura variam conforme raridade e sequência"
-   "Sequências aumentam progressivamente a chance e as recompensas de captura"
-   "Biomas e espécies encontradas mudam conforme o horário local"
-   "Nova Pokédex pessoal com coleção, duplicatas, raridades e progresso total"
-   "Seleção de golpes impede opções repetidas e atualiza times antigos"])
+  ["Comando !pokemon trocar passa a funcionar como alias de escolher"
+   "Trocas sem número exibem somente a orientação correta"
+   "Troca de Pokémon fica bloqueada durante batalhas e caçadas"
+   "Poções atualizam imediatamente o HP usado na batalha selvagem"
+   "Curas de status ficam sincronizadas entre a caçada e o time"
+   "Ataque, defesa e uso de consumível passam a gastar uma ação no PvE"
+   "Poções consecutivas sem resposta do selvagem não são mais permitidas"
+   "Selvagens contra-atacam após poções e curas, seguindo as regras do PvP"
+   "Troca, equipamento, doação e Joy ficam bloqueados durante o combate"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

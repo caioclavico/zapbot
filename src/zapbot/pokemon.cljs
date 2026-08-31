@@ -24,7 +24,7 @@
 (defonce ^:private cacadas-selvagens (atom {}))
 
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
-(declare enviar-imagem parse-indice-golpe)
+(declare enviar-imagem parse-indice-golpe estado-cacada turno-selvagem)
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -1053,9 +1053,20 @@
 (defn- defender-turno [message]
   (let [cid  (chat-id message)
         pid  (jogador-id message)
-        jogo (get @jogos cid)]
+        jogo (get @jogos cid)
+        caca (get @cacadas-selvagens cid)]
     (p/resolved
      (cond
+       (and caca (= pid (:pid caca)))
+       (let [pokemon (get-in caca [:pokemons :x])
+             chance  (chance-esquiva caca :x)]
+         (turno-selvagem cid pid (assoc-in caca [:defendendo :x] true) true
+                          (str "🛡️ *" (:nome pokemon) "* se defendeu (" chance
+                               "% de chance de esquiva; metade do dano se for atingido)!")))
+
+       caca
+       (str (cabecalho) "🚫 Essa caçada pertence a outro treinador.")
+
        (nil? jogo)
        (str (cabecalho) "❓ Não tem batalha rolando. Digite " config/prefix "pokemon pra abrir uma.")
 
@@ -1112,6 +1123,57 @@
           (str (cabecalho) "❌ Você não tem uma Poção de Vida no inventário (compre na " config/prefix "loja)."))))
     (str (cabecalho) "❓ Escolha seu pokémon inicial primeiro: " config/prefix "pokemon inicial.")))
 
+(defn- curar-na-cacada [cid pid caca]
+  (let [pokemon (get-in caca [:pokemons :x])
+        status  (get-in caca [:status :x])]
+    (cond
+      (:item-usado-turno? caca)
+      (str (cabecalho) "🚫 Você já usou um item neste turno. Ataque antes de usar outro.\n\n"
+           (estado-cacada caca))
+
+      (nil? status)
+      (str (cabecalho) "❓ *" (:nome pokemon) "* não tem nenhum status para curar.\n\n"
+           (estado-cacada caca))
+
+      (not (loja/usar-cura! cid pid status))
+      (str (cabecalho) "❌ Você não tem uma cura de " (nome-status status) " no inventário.\n\n"
+           (estado-cacada caca))
+
+      :else
+      (let [caca-nova (-> caca
+                          (assoc-in [:status :x] nil)
+                          (assoc :item-usado-turno? true))]
+        (turno-selvagem cid pid caca-nova false
+                         (str "💊 *" (:nome pokemon) "* se livrou de " (nome-status status) "!"))))))
+
+(defn- pocao-na-cacada [cid pid caca]
+  (let [pokemon  (get-in caca [:pokemons :x])
+        hp-max   (:hp pokemon)
+        hp-atual (get-in caca [:hp :x])]
+    (cond
+      (:item-usado-turno? caca)
+      (str (cabecalho) "🚫 Você já usou um item neste turno. Ataque antes de usar outro.\n\n"
+           (estado-cacada caca))
+
+      (>= hp-atual hp-max)
+      (str (cabecalho) "❓ *" (:nome pokemon) "* já está com HP cheio.\n\n" (estado-cacada caca))
+
+      :else
+      (if-let [fracao (loja/usar-pocao! cid pid)]
+        (let [cura      (js/Math.round (* fracao hp-max))
+              hp-novo   (min hp-max (+ hp-atual cura))
+              caca-nova (-> caca
+                            (assoc-in [:hp :x] hp-novo)
+                            (assoc :item-usado-turno? true))]
+          ;; Atualiza as duas fontes imediatamente: o estado vivo da batalha
+          ;; selvagem e o registro persistido do Pokémon ativo.
+          (treinador/atualizar-ativo! cid pid hp-novo (get-in caca-nova [:status :x]))
+          (turno-selvagem cid pid caca-nova false
+                           (str "🧪 *" (:nome pokemon) "* recuperou " (- hp-novo hp-atual)
+                                " de HP! (" hp-novo "/" hp-max ")")))
+        (str (cabecalho) "❌ Você não tem uma Poção de Vida no inventário.\n\n"
+             (estado-cacada caca))))))
+
 (defn- enfermeira-joy [message indice-texto]
   (let [cid  (chat-id message)
         pid  (jogador-id message)
@@ -1119,7 +1181,8 @@
         eq   (treinador/equipe cid pid)]
     (p/resolved
      (cond
-       (jogador-na-batalha? jogo pid)
+       (or (jogador-na-batalha? jogo pid)
+           (= pid (:pid (get @cacadas-selvagens cid))))
        (str (cabecalho) "⚔️ Você não pode enviar Pokémon para a Enfermeira Joy durante uma batalha. "
             "Termine ou saia da batalha primeiro.")
 
@@ -1153,8 +1216,11 @@
 (defn- curar-turno [message]
   (let [cid  (chat-id message)
         pid  (jogador-id message)
-        jogo (get @jogos cid)]
-    (if-not (jogador-na-batalha? jogo pid)
+        jogo (get @jogos cid)
+        caca (get @cacadas-selvagens cid)]
+    (if (and caca (= pid (:pid caca)))
+      (p/resolved (curar-na-cacada cid pid caca))
+      (if-not (jogador-na-batalha? jogo pid)
       (p/resolved (curar-fora-de-batalha cid pid))
       (p/resolved
        (cond
@@ -1184,13 +1250,16 @@
                (sincronizar-equipe! cid jogo-novo)
                (com-mencao jogo-novo
                  (str (cabecalho) "💊 *" (:nome pokemon) "* usou uma cura e se livrou de "
-                      (nome-status status-atual) "!\n\n" (mensagem-estado jogo-novo)))))))))))
+                      (nome-status status-atual) "!\n\n" (mensagem-estado jogo-novo))))))))))))
 
 (defn- pocao-turno [message]
   (let [cid  (chat-id message)
         pid  (jogador-id message)
-        jogo (get @jogos cid)]
-    (if-not (jogador-na-batalha? jogo pid)
+        jogo (get @jogos cid)
+        caca (get @cacadas-selvagens cid)]
+    (if (and caca (= pid (:pid caca)))
+      (p/resolved (pocao-na-cacada cid pid caca))
+      (if-not (jogador-na-batalha? jogo pid)
       (p/resolved (pocao-fora-de-batalha cid pid))
       (p/resolved
        (cond
@@ -1222,7 +1291,7 @@
                    (str (cabecalho) "🧪 *" (:nome pokemon) "* usou uma Poção de Vida e recuperou "
                         (- hp-novo hp-atual) " de HP!\n\n" (mensagem-estado jogo-novo))))
                (com-mencao jogo (str (cabecalho) "❌ Você não tem uma Poção de Vida no inventário (compre na "
-                                      config/prefix "loja).\n\n" (mensagem-estado jogo))))))))))) 
+                                      config/prefix "loja).\n\n" (mensagem-estado jogo))))))))))))
 
 (defn- parse-indice-golpe [texto total]
   (let [n (js/parseInt texto 10)]
@@ -1446,7 +1515,9 @@
   (let [cid   (chat-id message)
         pid   (jogador-id message)
         jogo  (get @jogos cid)
-        em-batalha? (some #(= pid %) (vals (:jogadores jogo)))
+        caca  (get @cacadas-selvagens cid)
+        em-batalha? (or (some #(= pid %) (vals (:jogadores jogo)))
+                        (= pid (:pid caca)))
         total (count (treinador/equipe cid pid))]
     (p/resolved
      (cond
@@ -1455,7 +1526,7 @@
 
        em-batalha?
        (str (cabecalho) "🚫 Você não pode trocar o Pokémon ativo durante uma batalha. "
-            "Termine ou saia da batalha antes de escolher outro.")
+            "Termine ou saia da batalha/caçada antes de escolher outro.")
 
        :else
        (let [indice (parse-indice-golpe indice-texto total)]
@@ -1468,12 +1539,17 @@
 (defn- equipar-item [message indice-texto item-texto]
   (let [cid    (chat-id message)
         pid    (jogador-id message)
+        em-combate? (or (jogador-na-batalha? (get @jogos cid) pid)
+                        (= pid (:pid (get @cacadas-selvagens cid))))
         total  (count (treinador/equipe cid pid))
         indice (parse-indice-golpe indice-texto total)
         item   (-> (or item-texto "") str/trim str/lower-case
                    (.normalize "NFD") (str/replace #"[\u0300-\u036f]" ""))]
     (p/resolved
      (cond
+       em-combate?
+       (str (cabecalho) "🚫 Você não pode trocar itens equipados durante uma batalha ou caçada.")
+
        (nil? indice)
        (str (cabecalho) "❓ Use " config/prefix "pokemon equipar <número do Pokémon> <item>.")
 
@@ -1494,8 +1570,12 @@
 (defn- doar [message indice-texto]
   (let [cid   (chat-id message)
         pid   (jogador-id message)
+        em-combate? (or (jogador-na-batalha? (get @jogos cid) pid)
+                        (= pid (:pid (get @cacadas-selvagens cid))))
         total (count (treinador/equipe cid pid))]
-    (if (zero? total)
+    (if em-combate?
+      (p/resolved (str (cabecalho) "🚫 Você não pode doar Pokémon durante uma batalha ou caçada."))
+      (if (zero? total)
       (p/resolved (str (cabecalho) "❓ Você ainda não tem nenhum pokémon. Use " config/prefix "pokemon inicial."))
       (let [indice (parse-indice-golpe indice-texto total)]
         (if (nil? indice)
@@ -1520,7 +1600,7 @@
                          " com sucesso!"))))
               (p/catch (fn [err]
                          (js/console.error "Erro ao doar pokemon:" err)
-                         (str (cabecalho) "❌ Deu algo errado ao tentar doar. Tente de novo.")))))))))
+                         (str (cabecalho) "❌ Deu algo errado ao tentar doar. Tente de novo."))))))))))
 
 (def ^:private xp-base-raridade
   {"comum" 2 "incomum" 3 "raro" 4 "epico" 5 "lendario" 6 "mitico" 7})
@@ -1536,7 +1616,9 @@
          "👾 *" (:nome selvagem) "* — " (texto-raridade selvagem) "\n"
          (barra-hp (get-in caca [:hp :o]) (:hp selvagem)) "\n\n"
          "Escolha: " config/prefix "pokemon atacar <1-" (count (:golpes meu)) ">\n"
-         (menu-golpes meu (:tipos selvagem) (:habilidade selvagem)))))
+         (menu-golpes meu (:tipos selvagem) (:habilidade selvagem))
+         "\n\nVocê também pode usar " config/prefix "pokemon defender, " config/prefix
+         "pokemon curar, " config/prefix "pokemon pocao ou " config/prefix "pokemon sair.")))
 
 (defn- encerrar-cacada! [cid pid caca capturou?]
   (let [selvagem      (get-in caca [:pokemons :o])
@@ -1573,6 +1655,32 @@
       (str "\n\n💨 A Pokébola falhou e *" (:nome selvagem) "* escapou! (" chance "% de chance)"
            "\n💔 A sequência de capturas foi encerrada.\n✨ +1 XP pela batalha."))))
 
+(defn- turno-selvagem
+  "Executa a resposta do selvagem depois de qualquer ação válida do jogador.
+  Assim como no PvP, atacar, defender ou usar um item consome a vez."
+  [cid pid caca defendendo? mensagem-jogador]
+  (let [selvagem (get-in caca [:pokemons :o])]
+    (if (< (rand-int 100) (get fuga-raridade (:raridade selvagem) 8))
+      (let [recompensa (encerrar-cacada! cid pid caca false)]
+        (treinador/atualizar-ativo! cid pid (get-in caca [:hp :x]) (get-in caca [:status :x]))
+        (str (cabecalho) mensagem-jogador "\n\n💨 *" (:nome selvagem)
+             "* fugiu durante a batalha! A sequência foi encerrada.\n✨ +" (:xp recompensa) " XP."))
+      (let [golpe-selvagem (rand-nth (:golpes selvagem))
+            ofensivo       (if (contains? #{:fisico :especial} (:classe golpe-selvagem))
+                             golpe-selvagem golpe-padrao)
+            {:keys [dano mensagem]} (resolver-ataque caca ofensivo :o :x defendendo? (get-in caca [:hp :o]))
+            caca-nova      (-> caca
+                               (update-in [:hp :x] #(max 0 (- % dano)))
+                               (assoc :item-usado-turno? false)
+                               (assoc-in [:defendendo :x] false))]
+        (treinador/atualizar-ativo! cid pid (get-in caca-nova [:hp :x]) (get-in caca-nova [:status :x]))
+        (if (zero? (get-in caca-nova [:hp :x]))
+          (let [recompensa (encerrar-cacada! cid pid caca-nova false)]
+            (str (cabecalho) mensagem-jogador "\n\n" mensagem "\n\n😵 Seu Pokémon desmaiou. *"
+                 (:nome selvagem) "* escapou e sua sequência acabou.\n✨ +" (:xp recompensa) " XP."))
+          (do (swap! cacadas-selvagens assoc cid caca-nova)
+              (str (cabecalho) mensagem-jogador "\n\n" mensagem "\n\n" (estado-cacada caca-nova))))))))
+
 (defn- atacar-selvagem [message indice-texto caca]
   (let [cid      (chat-id message)
         pid      (jogador-id message)
@@ -1596,25 +1704,8 @@
                (str (cabecalho) mensagem "\n🏁 O selvagem foi derrotado!"
                     (tentar-captura-pos-batalha cid pid caca)))
 
-           (< (rand-int 100) (get fuga-raridade (:raridade selvagem) 8))
-           (let [recompensa (encerrar-cacada! cid pid caca false)]
-             (treinador/atualizar-ativo! cid pid (get-in caca [:hp :x]) (get-in caca [:status :x]))
-             (str (cabecalho) mensagem "\n\n💨 *" (:nome selvagem)
-                  "* fugiu durante a batalha! A sequência foi encerrada.\n✨ +" (:xp recompensa) " XP."))
-
            :else
-           (let [golpe-selvagem (rand-nth (:golpes selvagem))
-                 ofensivo       (if (contains? #{:fisico :especial} (:classe golpe-selvagem))
-                                  golpe-selvagem golpe-padrao)
-                 {:keys [dano mensagem]} (resolver-ataque caca ofensivo :o :x false (get-in caca [:hp :o]))
-                 caca-nova      (update-in caca [:hp :x] #(max 0 (- % dano)))]
-             (treinador/atualizar-ativo! cid pid (get-in caca-nova [:hp :x]) (get-in caca-nova [:status :x]))
-             (if (zero? (get-in caca-nova [:hp :x]))
-               (let [recompensa (encerrar-cacada! cid pid caca-nova false)]
-                 (str (cabecalho) mensagem "\n\n😵 Seu Pokémon desmaiou. *" (:nome selvagem)
-                      "* escapou e sua sequência acabou.\n✨ +" (:xp recompensa) " XP."))
-               (do (swap! cacadas-selvagens assoc cid caca-nova)
-                   (str (cabecalho) mensagem "\n\n" (estado-cacada caca-nova)))))))))))
+           (turno-selvagem cid pid caca false mensagem)))))))
 
 (defn- cacar [message]
   (let [cid (chat-id message)
@@ -1644,7 +1735,8 @@
               (let [caca {:pokemons {:x pokemon :o selvagem}
                           :hp {:x hp-atual :o (:hp selvagem)}
                           :status {:x status :o nil} :estagios {:x {} :o {}}
-                          :pid pid :message message :bioma bioma}]
+                          :pid pid :message message :bioma bioma
+                          :item-usado-turno? false}]
                 (swap! cacadas-selvagens assoc cid caca)
                 (enviar-imagem message (:imagem selvagem)
                                (str (cabecalho) (:emoji bioma) " Você entrou em *" (:nome bioma) "*!\n"
@@ -1860,7 +1952,7 @@
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
       (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd) (ver-pokedex-pessoal message)
       (contains? #{"time" "equipe"} cmd) (resposta-time-visual message)
-      (= cmd "escolher") (escolher-ativo message (first resto))
+      (contains? #{"escolher" "trocar" "troca"} cmd) (escolher-ativo message (first resto))
       (contains? #{"equipar" "item"} cmd) (equipar-item message (first resto) (second resto))
       (= cmd "doar") (doar message (first resto))
       (contains? #{"joy" "enfermeira" "enfermaria" "hospital"} cmd) (enfermeira-joy message (first resto))
