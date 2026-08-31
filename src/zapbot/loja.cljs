@@ -107,6 +107,15 @@
   (persistir!)
   moedas-por-vitoria)
 
+(defn creditar-quantia!
+  "Credita uma recompensa variável e retorna a quantidade adicionada."
+  [cid pid quantidade]
+  (swap! contas update-in [cid pid]
+         (fn [c] (-> (or c {"moedas" 0 "inventario" {}})
+                     (update "moedas" + quantidade))))
+  (persistir!)
+  quantidade)
+
 (defn- item-por-status [status]
   (some (fn [[chave info]] (when (= (:status info) status) chave)) itens))
 

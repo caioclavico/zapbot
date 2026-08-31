@@ -21,6 +21,7 @@
 (def ^:private total-pokemons 1025)
 
 (defonce ^:private jogos (atom {}))
+(defonce ^:private cacadas-selvagens (atom {}))
 
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
 (declare enviar-imagem parse-indice-golpe)
@@ -150,13 +151,22 @@
 (defn- ordenar-por-poder [golpes]
   (sort-by #(or (:poder %) 0) > golpes))
 
+(defn- remover-golpes-repetidos [golpes]
+  (second
+   (reduce (fn [[vistos resultado] golpe]
+             (let [chave (str/lower-case (:nome-exibicao golpe))]
+               (if (contains? vistos chave)
+                 [vistos resultado]
+                 [(conj vistos chave) (conj resultado golpe)])))
+           [#{} []] golpes)))
+
 (defn- escolher-golpes [moves-brutos tipos nivel]
   (let [aprendidos  (filter #(let [nivel-min (nivel-de-aprendizado %)]
                                (and (some? nivel-min) (<= nivel-min nivel)))
                              moves-brutos)
         candidatos  (->> aprendidos (map #(get-in % [:move :name])) distinct)]
     (p/let [resultados (p/all (map buscar-golpe candidatos))]
-      (let [validos       (remove nil? resultados)
+      (let [validos       (remover-golpes-repetidos (remove nil? resultados))
             tipos-proprios (set tipos)
             do-proprio    (ordenar-por-poder (filter #(contains? tipos-proprios (:tipo %)) validos))
             normal        (ordenar-por-poder (filter #(= "normal" (:tipo %)) validos))
@@ -169,7 +179,8 @@
             base          (vec (concat (take 1 transform)
                                        (take (if (seq transform) 2 3) ofensivos)
                                        (take 1 status)))
-            escolhidos    (->> ordenados (remove (set base)) (concat base) (take 4) vec)]
+            escolhidos    (->> ordenados (remove (set base)) (concat base)
+                               remover-golpes-repetidos (take 4) vec)]
         (if (seq escolhidos) escolhidos [golpe-padrao])))))
 
 (defn- com-golpes
@@ -436,23 +447,39 @@
 (defn- poder-alvo-caca [nivel]
   (+ poder-alvo-nivel-1 (* incremento-poder-por-nivel (dec (min nivel nivel-maximo-caca)))))
 
+(def ^:private biomas-por-periodo
+  [{:inicio 5  :fim 11 :nome "Floresta da Manhã" :emoji "🌳" :tipos #{"grass" "bug" "flying" "normal"}}
+   {:inicio 11 :fim 18 :nome "Campos do Sol"     :emoji "☀️" :tipos #{"fire" "ground" "fighting" "rock"}}
+   {:inicio 18 :fim 23 :nome "Lago do Crepúsculo" :emoji "🌊" :tipos #{"water" "electric" "ice" "fairy"}}
+   {:inicio 0  :fim 24 :nome "Caverna Noturna"  :emoji "🌙" :tipos #{"ghost" "dark" "poison" "psychic"}}])
+
+(defn- bioma-atual []
+  (let [hora (.getHours (js/Date.))]
+    (or (some #(when (and (>= hora (:inicio %)) (< hora (:fim %))) %) (butlast biomas-por-periodo))
+        (last biomas-por-periodo))))
+
+(defn- pertence-ao-bioma? [pokemon tipos]
+  (some tipos (:tipos pokemon)))
+
 (defn- sortear-selvagem
-  ([alvo] (sortear-selvagem alvo tentativas-caca nil))
-  ([alvo tentativas-restantes mais-fraco-ate-agora]
+  ([alvo tipos] (sortear-selvagem alvo tipos tentativas-caca nil))
+  ([alvo tipos tentativas-restantes melhor-ate-agora]
    (p/let [candidato (sortear-pokemon)]
      (cond
-       (<= (poder-total candidato) (+ alvo tolerancia-poder-caca))
+       (and (pertence-ao-bioma? candidato tipos)
+            (<= (poder-total candidato) (+ alvo tolerancia-poder-caca)))
        candidato
 
        (zero? tentativas-restantes)
-       (or mais-fraco-ate-agora candidato)
+       (or melhor-ate-agora candidato)
 
        :else
-       (let [mais-fraco (if (or (nil? mais-fraco-ate-agora)
-                                 (< (poder-total candidato) (poder-total mais-fraco-ate-agora)))
-                           candidato
-                           mais-fraco-ate-agora)]
-         (sortear-selvagem alvo (dec tentativas-restantes) mais-fraco))))))
+       (let [melhor (if (and (pertence-ao-bioma? candidato tipos)
+                             (or (nil? melhor-ate-agora)
+                                 (< (poder-total candidato) (poder-total melhor-ate-agora))))
+                      candidato
+                      melhor-ate-agora)]
+         (sortear-selvagem alvo tipos (dec tentativas-restantes) melhor))))))
 
 ;; chance de captura: quanto mais forte (poder-total) o selvagem, mais
 ;; difícil - referência em 450 (poder "neutro", ver suavizar-stat) pra 70%,
@@ -909,6 +936,9 @@
         pid        (jogador-id message)
         jogo-atual (get @jogos cid)]
     (cond
+      (get @cacadas-selvagens cid)
+      (p/resolved (str (cabecalho) "🌿 Já existe uma caçada selvagem em andamento neste chat."))
+
       (and jogo-atual (contains? (:jogadores jogo-atual) :o))
       (p/resolved (com-mencao jogo-atual
                     (str (cabecalho) "⏳ Já tem uma batalha rolando nesse chat entre "
@@ -987,8 +1017,17 @@
 (defn- sair [message]
   (let [cid  (chat-id message)
         pid  (jogador-id message)
-        jogo (get @jogos cid)]
+        jogo (get @jogos cid)
+        caca (get @cacadas-selvagens cid)]
     (cond
+      (and caca (= pid (:pid caca)))
+      (do (swap! cacadas-selvagens dissoc cid)
+          (treinador/quebrar-sequencia-capturas! cid pid)
+          (p/resolved (str (cabecalho) "🚪 Você abandonou a caçada. O selvagem fugiu e a sequência foi encerrada.")))
+
+      caca
+      (p/resolved (str (cabecalho) "🚫 Essa caçada pertence a outro treinador."))
+
       (nil? jogo)
       (p/resolved (str (cabecalho) "❓ Não tem nenhuma batalha rolando nesse chat."))
 
@@ -1254,6 +1293,34 @@
             "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉), ou " config/prefix
             "pokemon joy para enviar os feridos à Enfermeira Joy.")))))
 
+(defn- ver-pokedex-pessoal [message]
+  (let [cid       (chat-id message)
+        pid       (jogador-id message)
+        dex       (treinador/sincronizar-pokedex-equipe! cid pid)
+        entradas  (->> (vals dex) (sort-by #(get % "nome")) vec)
+        unicos    (count entradas)
+        capturas  (reduce + 0 (map #(get % "capturas" 0) entradas))
+        sequencia (treinador/sequencia-capturas cid pid)
+        por-raridade (frequencies (map #(get % "raridade" "comum") entradas))]
+    (p/resolved
+     (str (cabecalho) "📚 *Sua Pokédex*\n\n"
+          "Espécies registradas: " unicos "/" total-pokemons " ("
+          (.toFixed (* 100 (/ unicos total-pokemons)) 1) "%)\n"
+          "Total de capturas: " capturas "\n🔥 Sequência atual: " sequencia "\n"
+          "Raridades: "
+          (str/join " • " (keep (fn [r]
+                                  (when-let [qtd (get por-raridade r)]
+                                    (str (:emoji (get raridades r)) " " qtd)))
+                                ["comum" "incomum" "raro" "epico" "lendario" "mitico"]))
+          (if (seq entradas)
+            (str "\n\n*Registrados:*\n"
+                 (str/join "\n" (map (fn [e]
+                                        (str (:emoji (get raridades (get e "raridade" "comum"))) " *"
+                                             (get e "nome") "* — " (get e "capturas") "x"))
+                                      (take 60 entradas)))
+                 (when (> unicos 60) (str "\n… e mais " (- unicos 60) " espécies.")))
+            (str "\n\nNenhuma espécie registrada. Use " config/prefix "pokemon cacar."))))))
+
 (def ^:private pokemons-por-cartao 12)
 
 (def ^:private cores-tipo
@@ -1455,6 +1522,100 @@
                          (js/console.error "Erro ao doar pokemon:" err)
                          (str (cabecalho) "❌ Deu algo errado ao tentar doar. Tente de novo.")))))))))
 
+(def ^:private xp-base-raridade
+  {"comum" 2 "incomum" 3 "raro" 4 "epico" 5 "lendario" 6 "mitico" 7})
+
+(def ^:private fuga-raridade
+  {"comum" 5 "incomum" 7 "raro" 9 "epico" 11 "lendario" 14 "mitico" 16})
+
+(defn- estado-cacada [caca]
+  (let [meu (:x (:pokemons caca))
+        selvagem (:o (:pokemons caca))]
+    (str (:emoji (:bioma caca)) " *" (:nome (:bioma caca)) "*\n\n"
+         "🐾 *" (:nome meu) "* — " (barra-hp (get-in caca [:hp :x]) (:hp meu)) "\n"
+         "👾 *" (:nome selvagem) "* — " (texto-raridade selvagem) "\n"
+         (barra-hp (get-in caca [:hp :o]) (:hp selvagem)) "\n\n"
+         "Escolha: " config/prefix "pokemon atacar <1-" (count (:golpes meu)) ">\n"
+         (menu-golpes meu (:tipos selvagem) (:habilidade selvagem)))))
+
+(defn- encerrar-cacada! [cid pid caca capturou?]
+  (let [selvagem      (get-in caca [:pokemons :o])
+        raridade      (or (:raridade selvagem) "comum")
+        sequencia-ant  (treinador/sequencia-capturas cid pid)
+        sequencia      (if capturou?
+                         (treinador/registrar-captura! cid pid selvagem)
+                         (do (treinador/quebrar-sequencia-capturas! cid pid) 0))
+        bonus-seq      (if capturou? (quot sequencia 3) 0)
+        xp             (if capturou? (+ (get xp-base-raridade raridade 2) bonus-seq) 1)
+        moedas         (if capturou? (+ 2 (min 10 sequencia)) 0)
+        subida         (treinador/ganhar-xp! cid pid xp)]
+    (swap! cacadas-selvagens dissoc cid)
+    (when (pos? moedas) (loja/creditar-quantia! cid pid moedas))
+    (when subida
+      (-> (verificar-evolucao! (:message caca) cid pid)
+          (p/then (fn [_] (atualizar-golpes-por-nivel! cid pid)))))
+    {:xp xp :moedas moedas :subida subida :sequencia sequencia :sequencia-anterior sequencia-ant}))
+
+(defn- tentar-captura-pos-batalha [cid pid caca]
+  (let [selvagem     (get-in caca [:pokemons :o])
+        sequencia    (treinador/sequencia-capturas cid pid)
+        chance       (min 95 (+ (chance-captura selvagem) 25 (min 20 (* 2 sequencia))))
+        capturou?    (< (rand-int 100) chance)
+        recompensa  (encerrar-cacada! cid pid caca capturou?)]
+    (if capturou?
+      (let [idx (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil)]
+        (str "\n\n✅ Pokébola lançada: captura concluída! (" chance "% de chance)"
+             "\n📚 Registrado na sua Pokédex e adicionado ao time como nº " (inc idx) "."
+             "\n🔥 Sequência de capturas: " (:sequencia recompensa)
+             "\n✨ +" (:xp recompensa) " XP • +" (:moedas recompensa) " moedas"
+             (when-let [s (:subida recompensa)]
+               (str "\n🌟 *" (:nome s) "* subiu para o nível " (:nivel s) "!"))))
+      (str "\n\n💨 A Pokébola falhou e *" (:nome selvagem) "* escapou! (" chance "% de chance)"
+           "\n💔 A sequência de capturas foi encerrada.\n✨ +1 XP pela batalha."))))
+
+(defn- atacar-selvagem [message indice-texto caca]
+  (let [cid      (chat-id message)
+        pid      (jogador-id message)
+        meu      (get-in caca [:pokemons :x])
+        selvagem (get-in caca [:pokemons :o])
+        indice   (parse-indice-golpe indice-texto (count (:golpes meu)))]
+    (p/resolved
+     (if (nil? indice)
+       (str (cabecalho) "❓ Escolha um golpe válido.\n\n" (estado-cacada caca))
+       (let [golpe (nth (:golpes meu) indice)
+             {:keys [dano mensagem]} (if (contains? #{:fisico :especial} (:classe golpe))
+                                        (resolver-ataque caca golpe :x :o false (get-in caca [:hp :x]))
+                                        {:dano 0 :mensagem (str "✨ *" (:nome-exibicao golpe)
+                                                                 "* preparou " (:nome meu) " para o combate!")})
+             caca (if (= :status (:classe golpe))
+                    (aplicar-alteracoes caca (if (= :proprio (:alvo golpe)) :x :o) (:alteracoes golpe))
+                    (update-in caca [:hp :o] #(max 0 (- % dano))))]
+         (cond
+           (zero? (get-in caca [:hp :o]))
+           (do (treinador/atualizar-ativo! cid pid (get-in caca [:hp :x]) (get-in caca [:status :x]))
+               (str (cabecalho) mensagem "\n🏁 O selvagem foi derrotado!"
+                    (tentar-captura-pos-batalha cid pid caca)))
+
+           (< (rand-int 100) (get fuga-raridade (:raridade selvagem) 8))
+           (let [recompensa (encerrar-cacada! cid pid caca false)]
+             (treinador/atualizar-ativo! cid pid (get-in caca [:hp :x]) (get-in caca [:status :x]))
+             (str (cabecalho) mensagem "\n\n💨 *" (:nome selvagem)
+                  "* fugiu durante a batalha! A sequência foi encerrada.\n✨ +" (:xp recompensa) " XP."))
+
+           :else
+           (let [golpe-selvagem (rand-nth (:golpes selvagem))
+                 ofensivo       (if (contains? #{:fisico :especial} (:classe golpe-selvagem))
+                                  golpe-selvagem golpe-padrao)
+                 {:keys [dano mensagem]} (resolver-ataque caca ofensivo :o :x false (get-in caca [:hp :o]))
+                 caca-nova      (update-in caca [:hp :x] #(max 0 (- % dano)))]
+             (treinador/atualizar-ativo! cid pid (get-in caca-nova [:hp :x]) (get-in caca-nova [:status :x]))
+             (if (zero? (get-in caca-nova [:hp :x]))
+               (let [recompensa (encerrar-cacada! cid pid caca-nova false)]
+                 (str (cabecalho) mensagem "\n\n😵 Seu Pokémon desmaiou. *" (:nome selvagem)
+                      "* escapou e sua sequência acabou.\n✨ +" (:xp recompensa) " XP."))
+               (do (swap! cacadas-selvagens assoc cid caca-nova)
+                   (str (cabecalho) mensagem "\n\n" (estado-cacada caca-nova)))))))))))
+
 (defn- cacar [message]
   (let [cid (chat-id message)
         pid (jogador-id message)]
@@ -1466,38 +1627,44 @@
       (p/resolved (str (cabecalho) "⏳ Calma aí! Você pode caçar de novo em "
                         (treinador/segundos-restantes-cooldown cid pid) "s."))
 
+      (or (get @jogos cid) (get @cacadas-selvagens cid))
+      (p/resolved (str (cabecalho) "⚔️ Já existe uma batalha em andamento neste chat."))
+
       :else
-      (let [nivel (treinador/nivel-jogador cid pid)]
-        (-> (p/let [selvagem (sortear-selvagem (poder-alvo-caca nivel))
+      (let [nivel (treinador/nivel-jogador cid pid)
+            bioma (bioma-atual)
+            [pokemon hp-atual status] (treinador/pokemon-ativo cid pid)]
+        (if (zero? hp-atual)
+          (p/resolved (str (cabecalho) "😵 Seu Pokémon ativo está desmaiado. Cure-o antes de caçar."))
+          (-> (p/let [selvagem (sortear-selvagem (poder-alvo-caca nivel) (:tipos bioma))
                     selvagem (buscar-info-especie selvagem)
                     selvagem (com-raridade selvagem)
                     selvagem (com-golpes selvagem)]
               (treinador/registrar-cacada! cid pid)
-              (let [chance    (chance-captura selvagem)
-                    capturou? (< (rand-int 100) chance)]
-                (if capturou?
-                  (let [idx (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil)]
-                    (enviar-imagem message (:imagem selvagem)
-                                    (str (cabecalho) "🎯 (nível de treinador " nivel ") Um *" (:nome selvagem)
-                                         "* selvagem apareceu!\n" (texto-raridade selvagem)
-                                         " • " chance "% de chance de captura\n\n✅ Capturado! "
-                                         "Adicionado ao seu time (nº " (inc idx) "). Use " config/prefix
-                                         "pokemon escolher " (inc idx) " pra deixar ele ativo.")))
-                  (enviar-imagem message (:imagem selvagem)
-                                  (str (cabecalho) "🎯 (nível de treinador " nivel ") Um *" (:nome selvagem)
-                                       "* selvagem apareceu!\n" (texto-raridade selvagem)
-                                       " • " chance "% de chance de captura\n\n💨 Escapou! Tente "
-                                       "de novo em " treinador/cooldown-cacada-minutos " minutos.")))))
+              (let [caca {:pokemons {:x pokemon :o selvagem}
+                          :hp {:x hp-atual :o (:hp selvagem)}
+                          :status {:x status :o nil} :estagios {:x {} :o {}}
+                          :pid pid :message message :bioma bioma}]
+                (swap! cacadas-selvagens assoc cid caca)
+                (enviar-imagem message (:imagem selvagem)
+                               (str (cabecalho) (:emoji bioma) " Você entrou em *" (:nome bioma) "*!\n"
+                                    "Um " (texto-raridade selvagem) " *" (:nome selvagem)
+                                    "* apareceu. Derrote-o antes de tentar capturar!\n\n"
+                                    (estado-cacada caca)))))
             (p/catch (fn [err]
                        (js/console.error "Erro ao caçar pokemon:" err)
-                       (str (cabecalho) "❌ Não consegui buscar um pokémon selvagem agora. Tente de novo."))))))))
+                       (str (cabecalho) "❌ Não consegui buscar um pokémon selvagem agora. Tente de novo.")))))))))
 
 (defn- atacar [message indice-texto]
   (let [cid  (chat-id message)
         pid  (jogador-id message)
         jogo (get @jogos cid)]
-    (p/resolved
-     (cond
+    (if-let [caca (get @cacadas-selvagens cid)]
+      (if (= pid (:pid caca))
+        (atacar-selvagem message indice-texto caca)
+        (p/resolved (str (cabecalho) "🚫 Essa caçada pertence a outro treinador.")))
+      (p/resolved
+       (cond
        (nil? jogo)
        (str (cabecalho) "❓ Não tem batalha rolando. Digite " config/prefix "pokemon pra abrir uma.")
 
@@ -1659,12 +1826,12 @@
                    (let [jogo-novo (-> jogo (assoc-in [:defendendo alvo-marca] false) (assoc :vez alvo-marca))]
                      (swap! jogos assoc cid jogo-novo)
                      (sincronizar-equipe! cid jogo-novo)
-                     (com-mencao jogo-novo (str (cabecalho) mensagem msg-extra "\n\n" (mensagem-estado jogo-novo)))))))))))))))
+                     (com-mencao jogo-novo (str (cabecalho) mensagem msg-extra "\n\n" (mensagem-estado jogo-novo))))))))))))))))
 
 (defn jogar
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
-  batalhar/caçar); !pokemon cacar tenta encontrar e capturar um pokémon
-  selvagem (nível calibrado pelas suas vitórias em !pokemon); !pokemon time
+  batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
+  selvagem do bioma/horário atual; !pokemon pokedex mostra a coleção; !pokemon time
   mostra seu time capturado; !pokemon escolher <número> troca qual está
   ativo pra batalhar; !pokemon equipar <número> <item> equipa um item
   comprado na !loja; !pokemon doar <número> (marcando ou respondendo a
@@ -1691,6 +1858,7 @@
       (= cmd "sair") (sair message)
       (contains? #{"inicial" "iniciais"} cmd) (escolher-inicial message (first resto))
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
+      (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd) (ver-pokedex-pessoal message)
       (contains? #{"time" "equipe"} cmd) (resposta-time-visual message)
       (= cmd "escolher") (escolher-ativo message (first resto))
       (contains? #{"equipar" "item"} cmd) (equipar-item message (first resto) (second resto))
@@ -1701,7 +1869,7 @@
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
       (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon inicial, " config/prefix "pokemon cacar, "
-                              config/prefix "pokemon time, " config/prefix "pokemon escolher <número>, "
+                              config/prefix "pokemon pokedex, " config/prefix "pokemon time, " config/prefix "pokemon escolher <número>, "
                               config/prefix "pokemon equipar <número> <item>, "
                               config/prefix "pokemon doar <número>, " config/prefix "pokemon (abrir/entrar), "
                               config/prefix "pokemon joy <número>, "

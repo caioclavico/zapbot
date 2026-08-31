@@ -12,11 +12,13 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["Novo comando !loja detalhes <item> com efeito, preço, tipo e modo de uso"
-   "Raridade agora usa dados oficiais de espécie e taxa de captura da PokeAPI"
-   "Pokémon míticos, lendários e Paradox recebem classificação própria"
-   "Times antigos têm a raridade recalculada automaticamente"
-   "Roaring Moon e outros Pokémon Paradox passam a aparecer como lendários"])
+  ["Caçadas agora começam uma batalha PvE antes da tentativa de captura"
+   "Pokémon selvagens podem atacar, derrotar o jogador ou fugir durante o combate"
+   "XP e moedas de captura variam conforme raridade e sequência"
+   "Sequências aumentam progressivamente a chance e as recompensas de captura"
+   "Biomas e espécies encontradas mudam conforme o horário local"
+   "Nova Pokédex pessoal com coleção, duplicatas, raridades e progresso total"
+   "Seleção de golpes impede opções repetidas e atualiza times antigos"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

@@ -9,7 +9,8 @@
   string, nunca keyword - por isso os pokémons da equipe são guardados num
   formato próprio (ver pokemon->registro/registro->pokemon), diferente do
   mapa interno (chaves keyword) que o zapbot.pokemon usa durante a batalha."
-  (:require [zapbot.armazenamento :as armazenamento]))
+  (:require [clojure.string :as str]
+            [zapbot.armazenamento :as armazenamento]))
 
 (defonce ^:private contas (atom (or (armazenamento/obter "treinador") {})))
 (armazenamento/registrar! "treinador" contas)
@@ -18,7 +19,7 @@
   (armazenamento/salvar! "treinador" @contas))
 
 (def ^:private conta-vazia {"equipe" [] "ativo" 0 "ultima-cacada" 0 "vitorias-treinador" 0
-                            "enfermaria" []})
+                            "enfermaria" [] "sequencia-capturas" 0 "pokedex" {}})
 
 (defn- conta [cid pid]
   (get-in @contas [cid pid] conta-vazia))
@@ -44,7 +45,7 @@
                               :estagios (get a "estagios")})
                      (get g "alteracoes" []))})
 
-(def ^:private versao-golpes 5)
+(def ^:private versao-golpes 6)
 (def ^:private versao-raridade 2)
 
 (defn- raridade-por-registro
@@ -281,10 +282,58 @@
          (fn [c] (assoc (or c conta-vazia) "ultima-cacada" (js/Date.now))))
   (persistir!))
 
+(defn sequencia-capturas [cid pid]
+  (get (conta cid pid) "sequencia-capturas" 0))
+
+(defn registrar-captura!
+  "Registra a espécie na Pokédex pessoal, incrementa a sequência e retorna
+  a nova sequência de capturas."
+  [cid pid pokemon]
+  (let [chave (-> (:nome pokemon) str/lower-case (str/replace #"\s+" "-"))]
+    (swap! contas update-in [cid pid]
+           (fn [c]
+             (-> (or c conta-vazia)
+                 (update "sequencia-capturas" (fnil inc 0))
+                 (update-in ["pokedex" chave]
+                            (fn [entrada]
+                              {"nome" (:nome pokemon)
+                               "raridade" (or (:raridade pokemon) "comum")
+                               "capturas" (inc (get entrada "capturas" 0))})))))
+    (persistir!)
+    (sequencia-capturas cid pid)))
+
+(defn quebrar-sequencia-capturas! [cid pid]
+  (swap! contas assoc-in [cid pid "sequencia-capturas"] 0)
+  (persistir!))
+
+(defn pokedex-pessoal [cid pid]
+  (get (conta cid pid) "pokedex" {}))
+
+(defn sincronizar-pokedex-equipe!
+  "Inclui na Pokédex espécies de times criados antes desse recurso, sem
+  alterar a sequência nem duplicar contagens já existentes."
+  [cid pid]
+  (let [antes (pokedex-pessoal cid pid)
+        depois (reduce (fn [dex registro]
+                         (let [chave (-> (get registro "nome") str/lower-case (str/replace #"\s+" "-"))]
+                           (if (contains? dex chave)
+                             dex
+                             (assoc dex chave {"nome" (get registro "nome")
+                                               "raridade" (if (= versao-raridade (get registro "versao-raridade"))
+                                                            (get registro "raridade" "comum")
+                                                            (raridade-por-registro registro))
+                                               "capturas" 1}))))
+                       antes (equipe cid pid))]
+    (when (not= antes depois)
+      (swap! contas assoc-in [cid pid "pokedex"] depois)
+      (persistir!))
+    depois))
+
 ;; crescimento por XP de batalha ("igual no jogo original", simplificado
 ;; pra não precisar de uma curva de EXP real por grupo de crescimento):
-;; sobe 1 nível a cada 9 XP (vitória dá 3 e derrota dá 1, portanto o ritmo
-;; anterior de 3 vitórias por nível é preservado) e todos os
+;; sobe 1 nível a cada 9 XP (vitória dá 3, capturas variam por raridade e
+;; sequência, e derrota dá 1; o ritmo anterior do PvP é preservado)
+;; e todos os
 ;; stats crescem um fator fixo por nível, até um teto de 100 (mesmo limite
 ;; dos jogos originais). Público porque zapbot.pokemon precisa do MESMO
 ;; fator pra calcular stats pós-evolução.
