@@ -45,7 +45,7 @@
                               :estagios (get a "estagios")})
                      (get g "alteracoes" []))})
 
-(def ^:private versao-golpes 6)
+(def ^:private versao-golpes 7)
 (def ^:private versao-raridade 2)
 
 (defn- raridade-por-registro

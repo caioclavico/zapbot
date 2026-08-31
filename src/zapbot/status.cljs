@@ -12,15 +12,14 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["Comando !pokemon trocar passa a funcionar como alias de escolher"
-   "Trocas sem número exibem somente a orientação correta"
-   "Troca de Pokémon fica bloqueada durante batalhas e caçadas"
-   "Poções atualizam imediatamente o HP usado na batalha selvagem"
-   "Curas de status ficam sincronizadas entre a caçada e o time"
+  ["Regras de turnos e consumíveis do PvP passam a valer também nas caçadas"
+   "Poções e curas ficam sincronizadas com o HP e status da batalha selvagem"
    "Ataque, defesa e uso de consumível passam a gastar uma ação no PvE"
    "Poções consecutivas sem resposta do selvagem não são mais permitidas"
    "Selvagens contra-atacam após poções e curas, seguindo as regras do PvP"
-   "Troca, equipamento, doação e Joy ficam bloqueados durante o combate"])
+   "Troca, equipamento, doação e Joy ficam bloqueados durante o combate"
+   "Golpes como Supersonic exibem e aplicam corretamente status, chance e precisão"
+   "Enfermeira Joy aceita vários Pokémon separados por vírgula"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))
