@@ -180,6 +180,7 @@
 
 (defn- pokemon-de-dados [dados]
   {:nome         (str/capitalize (:name dados))
+   :slug-especie (get-in dados [:species :name])
    :imagem       (or (get-in dados [:sprites :other :official-artwork :front_default])
                       (get-in dados [:sprites :front_default]))
    :tipos        (mapv #(get-in % [:type :name]) (:types dados))
@@ -194,6 +195,25 @@
    :atq-esp      (suavizar-stat (stat-base dados "special-attack"))
    :def-esp      (suavizar-stat (stat-base dados "special-defense"))
    :veloc        (suavizar-stat (stat-base dados "speed"))})
+
+(defn- buscar-info-especie [pokemon]
+  (-> (p/let [slug (or (:slug-especie pokemon) (str/lower-case (:nome pokemon)))
+              res  (js/fetch (str "https://pokeapi.co/api/v2/pokemon-species/" slug))
+              data (when (.-ok res) (.json res))]
+        (if-not data
+          pokemon
+          (let [especie  (js->clj data :keywordize-keys true)
+                paradox? (some #(and (= "en" (get-in % [:language :name]))
+                                     (str/includes? (str/lower-case (:genus %)) "paradox"))
+                               (:genera especie))]
+            (assoc pokemon
+                   :lendario-api? (:is_legendary especie)
+                   :mitico-api? (:is_mythical especie)
+                   :paradox-api? (boolean paradox?)
+                   :taxa-captura (:capture_rate especie)))))
+      ;; Se a consulta de espécie falhar, a caçada continua usando o fallback
+      ;; por atributos em vez de ficar indisponível.
+      (p/catch (fn [_] pokemon))))
 
 (defn- sortear-pokemon []
   (let [id (inc (rand-int total-pokemons))]
@@ -354,15 +374,35 @@
    "incomum"   {:nome "Incomum"   :emoji "🟢" :captura 1.0}
    "raro"      {:nome "Raro"      :emoji "🔵" :captura 0.8}
    "epico"     {:nome "Épico"     :emoji "🟣" :captura 0.6}
-   "lendario"  {:nome "Lendário"  :emoji "🟡" :captura 0.4}})
+   "lendario"  {:nome "Lendário"  :emoji "🟡" :captura 0.4}
+   "mitico"    {:nome "Mítico"    :emoji "🔴" :captura 0.3}})
+
+(def ^:private peso-raridade
+  {"comum" 0 "incomum" 1 "raro" 2 "epico" 3 "lendario" 4 "mitico" 5})
+
+(defn- maior-raridade [a b]
+  (if (> (get peso-raridade b 0) (get peso-raridade a 0)) b a))
 
 (defn- classificar-raridade [pokemon]
-  (let [poder (poder-total pokemon)]
-    (cond (<= poder 390) "comum"
-          (<= poder 450) "incomum"
-          (<= poder 510) "raro"
-          (<= poder 555) "epico"
-          :else "lendario")))
+  ;; Os stats usados na batalha foram comprimidos em torno de 75. Reverte a
+  ;; compressão para classificar pela força original da espécie; assim
+  ;; pseudo-lendários e Paradox como Roaring Moon (total 590) ficam lendários.
+  (cond
+    (:mitico-api? pokemon) "mitico"
+    (or (:lendario-api? pokemon) (:paradox-api? pokemon)) "lendario"
+    :else
+    (let [poder-original (- (* 2 (poder-total pokemon)) 450)
+          por-poder      (cond (<= poder-original 400) "comum"
+                               (<= poder-original 480) "incomum"
+                               (<= poder-original 540) "raro"
+                               :else "epico")
+          taxa           (:taxa-captura pokemon)
+          por-captura    (cond (nil? taxa) "comum"
+                               (<= taxa 10) "epico"
+                               (<= taxa 45) "raro"
+                               (<= taxa 120) "incomum"
+                               :else "comum")]
+      (maior-raridade por-poder por-captura))))
 
 (defn- com-raridade [pokemon]
   (assoc pokemon :raridade (classificar-raridade pokemon)))
@@ -1429,6 +1469,7 @@
       :else
       (let [nivel (treinador/nivel-jogador cid pid)]
         (-> (p/let [selvagem (sortear-selvagem (poder-alvo-caca nivel))
+                    selvagem (buscar-info-especie selvagem)
                     selvagem (com-raridade selvagem)
                     selvagem (com-golpes selvagem)]
               (treinador/registrar-cacada! cid pid)

@@ -12,11 +12,11 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["Golpes com precisão, status, cura, dreno, recuo e múltiplos acertos"
-   "Itens equipáveis e novas curas na loja Pokémon"
-   "Raridades que influenciam a chance de captura"
-   "Barra de XP, raridade e item exibidos no time Pokémon"
-   "XP também concedido ao Pokémon derrotado"])
+  ["Novo comando !loja detalhes <item> com efeito, preço, tipo e modo de uso"
+   "Raridade agora usa dados oficiais de espécie e taxa de captura da PokeAPI"
+   "Pokémon míticos, lendários e Paradox recebem classificação própria"
+   "Times antigos têm a raridade recalculada automaticamente"
+   "Roaring Moon e outros Pokémon Paradox passam a aparecer como lendários"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

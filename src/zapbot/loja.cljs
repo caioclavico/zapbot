@@ -45,17 +45,28 @@
 ;; chaves nomeadas pelo ITEM que você compra (não pelo status que ele cura),
 ;; então "loja comprar atadura"/"antidoto" fazem sentido de verdade
 (def ^:private itens
-  {"atadura"    {:nome "Atadura"           :emoji "🔥" :status :queimado   :preco 15}
-   "antidoto"   {:nome "Antídoto"          :emoji "☠️" :status :envenenado :preco 15}
-   "paralisia"  {:nome "Cura de Paralisia" :emoji "⚡" :status :paralisado :preco 15}
-   "despertar"  {:nome "Despertar"          :emoji "💤" :status :adormecido :preco 15}
-   "degelo"     {:nome "Antigelo"           :emoji "🧊" :status :congelado  :preco 15}
-   "persim"     {:nome "Baya Caquic"        :emoji "💫" :status :confuso    :preco 15}
-   "pocao"      {:nome "Poção de Vida"     :emoji "🧪" :cura-hp 0.4        :preco 20}
-   "restos"     {:nome "Restos"            :emoji "🍱" :equipavel true :efeito :regeneracao :preco 45}
-   "banda"      {:nome "Banda Musculosa"   :emoji "💪" :equipavel true :efeito :fisico :preco 40}
-   "oculos"     {:nome "Óculos Sábios"     :emoji "👓" :equipavel true :efeito :especial :preco 40}
-   "faixa-foco" {:nome "Faixa de Foco"     :emoji "🥋" :equipavel true :efeito :sobreviver :preco 55}})
+  {"atadura"    {:nome "Atadura" :emoji "🔥" :status :queimado :preco 15
+                   :descricao "Remove a queimadura do Pokémon. É consumida ao usar !pokemon curar."}
+   "antidoto"   {:nome "Antídoto" :emoji "☠️" :status :envenenado :preco 15
+                   :descricao "Remove o envenenamento do Pokémon. É consumido ao usar !pokemon curar."}
+   "paralisia"  {:nome "Cura de Paralisia" :emoji "⚡" :status :paralisado :preco 15
+                   :descricao "Remove a paralisia do Pokémon. É consumida ao usar !pokemon curar."}
+   "despertar"  {:nome "Despertar" :emoji "💤" :status :adormecido :preco 15
+                   :descricao "Acorda um Pokémon adormecido. É consumido ao usar !pokemon curar."}
+   "degelo"     {:nome "Antigelo" :emoji "🧊" :status :congelado :preco 15
+                   :descricao "Descongela o Pokémon. É consumido ao usar !pokemon curar."}
+   "persim"     {:nome "Baya Caquic" :emoji "💫" :status :confuso :preco 15
+                   :descricao "Remove a confusão do Pokémon. É consumida ao usar !pokemon curar."}
+   "pocao"      {:nome "Poção de Vida" :emoji "🧪" :cura-hp 0.4 :preco 20
+                   :descricao "Recupera 40% do HP máximo. É consumida ao usar !pokemon pocao."}
+   "restos"     {:nome "Restos" :emoji "🍱" :equipavel true :efeito :regeneracao :preco 45
+                   :descricao "Recupera 1/16 do HP máximo ao final de cada turno em que o Pokémon agir."}
+   "banda"      {:nome "Banda Musculosa" :emoji "💪" :equipavel true :efeito :fisico :preco 40
+                   :descricao "Aumenta em 15% o dano causado por golpes físicos."}
+   "oculos"     {:nome "Óculos Sábios" :emoji "👓" :equipavel true :efeito :especial :preco 40
+                   :descricao "Aumenta em 15% o dano causado por golpes especiais."}
+   "faixa-foco" {:nome "Faixa de Foco" :emoji "🥋" :equipavel true :efeito :sobreviver :preco 55
+                   :descricao "Se estiver com HP cheio, sobrevive uma vez por batalha a um golpe fatal, ficando com 1 HP."}})
 
 (declare conta)
 
@@ -130,6 +141,21 @@
       (str/join ", " (map (fn [[chave qtd]] (str (get-in itens [chave :emoji]) " " qtd "x " (get-in itens [chave :nome]))) posse))
       "nenhuma ainda")))
 
+(defn detalhes
+  "!loja detalhes <item> - explica o efeito e como usar um item."
+  [nome-item]
+  (let [chave (-> (or nome-item "") str/trim str/lower-case remover-acentos)]
+    (if-let [{:keys [nome emoji preco descricao equipavel]} (get itens chave)]
+      (str "🔎 *Detalhes do item*\n\n"
+           emoji " *" nome "* (`" chave "`)\n"
+           "💰 Preço: " preco " moedas\n"
+           "🏷️ Tipo: " (if equipavel "Equipável" "Consumível") "\n"
+           "✨ Efeito: " descricao
+           (when equipavel
+             (str "\n\nEquipe com " config/prefix "pokemon equipar <número> " chave ".")))
+      (str "❓ Item \"" nome-item "\" não encontrado. Use " config/prefix
+           "loja para ver os nomes e " config/prefix "loja detalhes <item> para consultar um efeito."))))
+
 (defn ver-loja
   "!loja - mostra o catálogo, o saldo de moedas e o inventário de curas de
   quem chamou, nesse chat."
@@ -143,6 +169,7 @@
          "*Itens à venda:*\n"
          (str/join "\n" (map (fn [[chave info]] (formatar-item chave info)) itens))
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
+         "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"
          "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, cure status com " config/prefix
          "pokemon curar, recupere HP com " config/prefix "pokemon pocao e equipe itens com "
          config/prefix "pokemon equipar <nº> <item>!")))

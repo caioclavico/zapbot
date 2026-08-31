@@ -45,6 +45,21 @@
                      (get g "alteracoes" []))})
 
 (def ^:private versao-golpes 5)
+(def ^:private versao-raridade 2)
+
+(defn- raridade-por-registro
+  "Classifica registros antigos usando a soma dos stats balanceados. A
+  transformação inversa recupera aproximadamente o total original:
+  balanceado = (original + 75) / 2 para cada um dos seis atributos."
+  [registro]
+  (let [total-balanceado (reduce + (map #(get registro % 75)
+                                         ["hp" "ataque" "defesa" "atq-esp" "def-esp" "veloc"]))
+        total-original   (- (* 2 total-balanceado) 450)]
+    (cond (<= total-original 400) "comum"
+          (<= total-original 480) "incomum"
+          (<= total-original 540) "raro"
+          (< total-original 570) "epico"
+          :else "lendario")))
 
 (defn pokemon->registro
   "Converte um pokémon (mapa interno do zapbot.pokemon, chaves keyword) +
@@ -56,7 +71,12 @@
    "veloc" (:veloc pokemon) "golpes" (mapv golpe->registro (:golpes pokemon))
    "versao-golpes" versao-golpes
    "hp-atual" hp-atual "status" (when status (name status)) "nivel" (or (:nivel pokemon) 1)
-   "raridade" (or (:raridade pokemon) "comum") "item" (:item pokemon)})
+   "raridade" (or (:raridade pokemon) "comum") "versao-raridade" versao-raridade
+   "lendario-api" (boolean (:lendario-api? pokemon))
+   "mitico-api" (boolean (:mitico-api? pokemon))
+   "paradox-api" (boolean (:paradox-api? pokemon))
+   "taxa-captura" (:taxa-captura pokemon)
+   "item" (:item pokemon)})
 
 (defn registro->pokemon
   "Converte um registro da equipe (chaves string) de volta pro formato
@@ -66,7 +86,14 @@
     :habilidade (get registro "habilidade") :hp (get registro "hp") :ataque (get registro "ataque")
     :defesa (get registro "defesa") :atq-esp (get registro "atq-esp") :def-esp (get registro "def-esp")
     :veloc (get registro "veloc") :golpes (mapv golpe<-registro (get registro "golpes"))
-    :nivel (get registro "nivel" 1) :raridade (get registro "raridade" "comum")
+    :nivel (get registro "nivel" 1)
+    :raridade (if (= versao-raridade (get registro "versao-raridade"))
+                (get registro "raridade" "comum")
+                (raridade-por-registro registro))
+    :lendario-api? (get registro "lendario-api" false)
+    :mitico-api? (get registro "mitico-api" false)
+    :paradox-api? (get registro "paradox-api" false)
+    :taxa-captura (get registro "taxa-captura")
     :item (get registro "item")}
    (get registro "hp-atual")
    (when (get registro "status") (keyword (get registro "status")))])
