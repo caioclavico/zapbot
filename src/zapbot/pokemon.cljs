@@ -518,6 +518,13 @@
       (max chance-captura-minima)
       (min chance-captura-maxima)))
 
+;; Um selvagem debilitado é mais fácil de capturar, como nos jogos oficiais.
+;; O multiplicador incide só sobre a taxa da espécie (chance-captura), não
+;; sobre o bônus fixo nem sobre o de sequência.
+(def ^:private bonus-captura-status
+  {:adormecido 2 :congelado 2
+   :paralisado 1.5 :envenenado 1.5 :queimado 1.5 :confuso 1.5})
+
 ;; chance de acerto crítico (dano x1.5), independente do golpe escolhido
 (def ^:private chance-critico 10)
 ;; chance de um golpe de tipo elegível (fogo/elétrico/venenoso) contagiar
@@ -710,6 +717,19 @@
                   (max 1 (quot (:hp pokemon) 16)) 0)
         novo    (min (:hp pokemon) (+ atual cura))]
     [(assoc-in jogo [:hp marca] novo) (- novo atual)]))
+
+(defn- aplicar-fim-de-turno
+  "Restos + dano de queimadura/veneno no fim do turno de `marca`.
+  Retorna [estado texto-extra]."
+  [estado marca]
+  (let [status        (get-in estado [:status marca])
+        nome          (get-in estado [:pokemons marca :nome])
+        [estado cura] (aplicar-restos estado marca)
+        [estado dot]  (aplicar-dot estado marca)]
+    [estado (str (when (pos? cura) (str "\n🍱 Restos recuperou " cura " HP!"))
+                 (when (pos? dot)
+                   (str "\n" (emoji-dot status) " *" nome "* sofreu " dot
+                        " de dano pelo status.")))]))
 
 (defn- aplicar-intimidacao
   "Se um dos dois tiver Intimidate, reduz o ataque do outro ao entrar em
@@ -1676,8 +1696,10 @@
   (let [meu (:x (:pokemons caca))
         selvagem (:o (:pokemons caca))]
     (str (:emoji (:bioma caca)) " *" (:nome (:bioma caca)) "*\n\n"
-         "🐾 *" (:nome meu) "* — " (barra-hp (get-in caca [:hp :x]) (:hp meu)) "\n"
-         "👾 *" (:nome selvagem) "* — " (texto-raridade selvagem) "\n"
+         "🐾 *" (:nome meu) "*" (emoji-status (get-in caca [:status :x])) " — "
+         (barra-hp (get-in caca [:hp :x]) (:hp meu)) "\n"
+         "👾 *" (:nome selvagem) "*" (emoji-status (get-in caca [:status :o])) " — "
+         (texto-raridade selvagem) "\n"
          (barra-hp (get-in caca [:hp :o]) (:hp selvagem)) "\n\n"
          "Escolha: " config/prefix "pokemon atacar <1-" (count (:golpes meu)) ">\n"
          (menu-golpes meu (:tipos selvagem) (:habilidade selvagem))
@@ -1707,18 +1729,28 @@
 (defn- tentar-captura-pos-batalha [cid pid caca]
   (let [selvagem     (get-in caca [:pokemons :o])
         sequencia    (treinador/sequencia-capturas cid pid)
-        chance       (min 95 (+ (chance-captura selvagem) 25 (min 20 (* 2 sequencia))))
+        status       (get-in caca [:status :o])
+        bonus        (get bonus-captura-status status 1)
+        chance       (min 95 (+ (js/Math.round (* bonus (chance-captura selvagem)))
+                                25 (min 20 (* 2 sequencia))))
+        texto-bonus  (when (> bonus 1)
+                       (str "\n" (str/triml (emoji-status status)) " "
+                            (str/capitalize (nome-status status))
+                            " deixou a captura " (str/replace (str bonus) "." ",")
+                            "× mais fácil!"))
         capturou?    (< (rand-int 100) chance)
         recompensa  (encerrar-cacada! cid pid caca capturou?)]
     (if capturou?
       (let [idx (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil)]
         (str "\n\n✅ Pokébola lançada: captura concluída! (" chance "% de chance)"
+             texto-bonus
              "\n📚 Registrado na sua Pokédex e adicionado ao time como nº " (inc idx) "."
              "\n🔥 Sequência de capturas: " (:sequencia recompensa)
              "\n✨ +" (:xp recompensa) " XP • +" (:moedas recompensa) " moedas"
              (when-let [s (:subida recompensa)]
                (str "\n🌟 *" (:nome s) "* subiu para o nível " (:nivel s) "!"))))
       (str "\n\n💨 A Pokébola falhou e *" (:nome selvagem) "* escapou! (" chance "% de chance)"
+           texto-bonus
            "\n💔 A sequência de capturas foi encerrada.\n✨ +1 XP pela batalha."))))
 
 (defn- turno-selvagem
@@ -1731,22 +1763,61 @@
         (treinador/atualizar-ativo! cid pid (get-in caca [:hp :x]) (get-in caca [:status :x]))
         (str (cabecalho) mensagem-jogador "\n\n💨 *" (:nome selvagem)
              "* fugiu durante a batalha! A sequência foi encerrada.\n✨ +" (:xp recompensa) " XP."))
-      (let [golpe-selvagem (rand-nth (:golpes selvagem))
-            ofensivo       (if (contains? #{:fisico :especial} (:classe golpe-selvagem))
-                             golpe-selvagem golpe-padrao)
-            {:keys [dano mensagem]} (resolver-ataque caca ofensivo :o :x defendendo? (get-in caca [:hp :o]))
-            caca-nova      (-> caca
-                               (update-in [:hp :x] #(max 0 (- % dano)))
-                               (assoc :acao-realizada? true)
-                               (assoc :item-usado-turno? false)
-                               (assoc-in [:defendendo :x] false))]
-        (treinador/atualizar-ativo! cid pid (get-in caca-nova [:hp :x]) (get-in caca-nova [:status :x]))
-        (if (zero? (get-in caca-nova [:hp :x]))
-          (let [recompensa (encerrar-cacada! cid pid caca-nova false)]
-            (str (cabecalho) mensagem-jogador "\n\n" mensagem "\n\n😵 Seu Pokémon desmaiou. *"
-                 (:nome selvagem) "* escapou e sua sequência acabou.\n✨ +" (:xp recompensa) " XP."))
-          (do (swap! cacadas-selvagens assoc cid caca-nova)
-              (str (cabecalho) mensagem-jogador "\n\n" mensagem "\n\n" (estado-cacada caca-nova))))))))
+      (let [status-selvagem (get-in caca [:status :o])
+            impedimento     (impedimento-status status-selvagem)
+            ;; sono, gelo e confusão podem acabar sozinhos: o status sai e o
+            ;; selvagem ainda age neste mesmo turno.
+            caca            (cond-> caca (:curou? impedimento) (assoc-in [:status :o] nil))
+            aviso           (if (:curou? impedimento)
+                              (str "\n" (emoji-status status-selvagem) " *" (:nome selvagem) "* "
+                                   (:texto impedimento) "!")
+                              "")]
+        (if (:impedido? impedimento)
+          ;; Perdeu a vez: nenhum ataque, mas a confusão fere e queimadura/veneno
+          ;; continuam corroendo o selvagem.
+          (let [auto-dano    (if (:auto-dano? impedimento) (max 1 (quot (:hp selvagem) 8)) 0)
+                caca         (update-in caca [:hp :o] #(max 0 (- % auto-dano)))
+                [caca extra] (aplicar-fim-de-turno caca :o)
+                caca         (-> caca
+                                 (assoc :acao-realizada? true)
+                                 (assoc :item-usado-turno? false)
+                                 (assoc-in [:defendendo :x] false))
+                msg          (str (cabecalho) mensagem-jogador "\n\n"
+                                  (emoji-status status-selvagem) " *" (:nome selvagem) "* "
+                                  (:texto impedimento) " e não conseguiu atacar!"
+                                  (when (pos? auto-dano) (str " Sofreu " auto-dano " de dano."))
+                                  extra)]
+            (treinador/atualizar-ativo! cid pid (get-in caca [:hp :x]) (get-in caca [:status :x]))
+            (if (zero? (get-in caca [:hp :o]))
+              (str msg "\n🏁 O selvagem foi derrotado pelo próprio status!"
+                   (tentar-captura-pos-batalha cid pid caca))
+              (do (swap! cacadas-selvagens assoc cid caca)
+                  (str msg "\n\n" (estado-cacada caca)))))
+          (let [golpe-selvagem (rand-nth (:golpes selvagem))
+                ofensivo       (if (contains? #{:fisico :especial} (:classe golpe-selvagem))
+                                 golpe-selvagem golpe-padrao)
+                {:keys [dano mensagem]} (resolver-ataque caca ofensivo :o :x defendendo? (get-in caca [:hp :o]))
+                caca-nova      (-> caca
+                                   (update-in [:hp :x] #(max 0 (- % dano)))
+                                   (assoc :acao-realizada? true)
+                                   (assoc :item-usado-turno? false)
+                                   (assoc-in [:defendendo :x] false))]
+            (if (zero? (get-in caca-nova [:hp :x]))
+              (let [recompensa (encerrar-cacada! cid pid caca-nova false)]
+                (treinador/atualizar-ativo! cid pid 0 (get-in caca-nova [:status :x]))
+                (str (cabecalho) mensagem-jogador aviso "\n\n" mensagem
+                     "\n\n😵 Seu Pokémon desmaiou. *"
+                     (:nome selvagem) "* escapou e sua sequência acabou.\n✨ +" (:xp recompensa) " XP."))
+              ;; Fim do turno do selvagem: Restos e dano de status agem sobre ele.
+              (let [[caca-nova extra] (aplicar-fim-de-turno caca-nova :o)]
+                (treinador/atualizar-ativo! cid pid (get-in caca-nova [:hp :x]) (get-in caca-nova [:status :x]))
+                (if (zero? (get-in caca-nova [:hp :o]))
+                  (str (cabecalho) mensagem-jogador aviso "\n\n" mensagem extra
+                       "\n🏁 O selvagem foi derrotado pelo próprio status!"
+                       (tentar-captura-pos-batalha cid pid caca-nova))
+                  (do (swap! cacadas-selvagens assoc cid caca-nova)
+                      (str (cabecalho) mensagem-jogador aviso "\n\n" mensagem extra "\n\n"
+                           (estado-cacada caca-nova))))))))))))
 
 (defn- atacar-selvagem [message indice-texto caca]
   (let [cid      (chat-id message)
@@ -1757,37 +1828,121 @@
     (p/resolved
      (if (nil? indice)
        (str (cabecalho) "❓ Escolha um golpe válido.\n\n" (estado-cacada caca))
-       (let [golpe (nth (:golpes meu) indice)
-             ofensivo? (contains? #{:fisico :especial} (:classe golpe))
-             status? (= :status (:classe golpe))
-             acertou-status? (and status?
-                                  (or (nil? (:precisao golpe)) (< (rand-int 100) (:precisao golpe))))
-             efeito-marca (if (= :proprio (:alvo golpe)) :x :o)
-             status-novo (when acertou-status?
-                           (tentar-status-do-golpe golpe (get-in caca [:status efeito-marca])))
-             {:keys [dano mensagem]} (if ofensivo?
-                                        (resolver-ataque caca golpe :x :o false (get-in caca [:hp :x]))
-                                        {:dano 0
-                                         :mensagem (if acertou-status?
-                                                     (str "📊 *" (:nome-exibicao golpe) "*! "
-                                                          (if status-novo
-                                                            (str "*" (get-in caca [:pokemons efeito-marca :nome])
-                                                                 "* recebeu " (get status->nome-golpe status-novo) ".")
-                                                            (resumo-efeitos-golpe golpe)))
-                                                     (str "📊 *" (:nome-exibicao golpe) "* errou o alvo!"))})
-             caca (cond
-                    ofensivo? (update-in caca [:hp :o] #(max 0 (- % dano)))
-                    acertou-status? (cond-> (aplicar-alteracoes caca efeito-marca (:alteracoes golpe))
-                                      status-novo (assoc-in [:status efeito-marca] status-novo))
-                    :else caca)]
-         (cond
-           (zero? (get-in caca [:hp :o]))
-           (do (treinador/atualizar-ativo! cid pid (get-in caca [:hp :x]) (get-in caca [:status :x]))
-               (str (cabecalho) mensagem "\n🏁 O selvagem foi derrotado!"
-                    (tentar-captura-pos-batalha cid pid caca)))
+       (let [status-meu  (get-in caca [:status :x])
+             impedimento (impedimento-status status-meu)
+             ;; sono, gelo e confusão podem acabar sozinhos: o status sai e o
+             ;; golpe ainda sai neste mesmo comando.
+             caca        (cond-> caca (:curou? impedimento) (assoc-in [:status :x] nil))
+             aviso       (if (:curou? impedimento)
+                           (str (emoji-status status-meu) " *" (:nome meu) "* "
+                                (:texto impedimento) "!\n\n")
+                           "")]
+         (if (:impedido? impedimento)
+           ;; Perdeu a vez: nenhum golpe, mas a confusão fere e queimadura/veneno
+           ;; continuam corroendo.
+           (let [auto-dano    (if (:auto-dano? impedimento) (max 1 (quot (:hp meu) 8)) 0)
+                 caca         (update-in caca [:hp :x] #(max 0 (- % auto-dano)))
+                 [caca extra] (aplicar-fim-de-turno caca :x)
+                 msg          (str (emoji-status status-meu) " *" (:nome meu) "* "
+                                   (:texto impedimento) " e não conseguiu atacar!"
+                                   (when (pos? auto-dano) (str " Sofreu " auto-dano " de dano."))
+                                   extra)]
+             (if (zero? (get-in caca [:hp :x]))
+               (let [recompensa (encerrar-cacada! cid pid caca false)]
+                 (treinador/atualizar-ativo! cid pid 0 (get-in caca [:status :x]))
+                 (str (cabecalho) msg "\n\n😵 Seu Pokémon caiu por causa do próprio status. *"
+                      (:nome selvagem) "* escapou e sua sequência acabou.\n✨ +"
+                      (:xp recompensa) " XP."))
+               (turno-selvagem cid pid caca false msg)))
+           (let [golpe (nth (:golpes meu) indice)
+                 ofensivo? (contains? #{:fisico :especial} (:classe golpe))
+                 status? (= :status (:classe golpe))
+                 acertou-status? (and status?
+                                      (or (nil? (:precisao golpe)) (< (rand-int 100) (:precisao golpe))))
+                 efeito-marca (if (= :proprio (:alvo golpe)) :x :o)
+                 status-novo (when acertou-status?
+                               (tentar-status-do-golpe golpe (get-in caca [:status efeito-marca])))
+                 {:keys [dano mensagem acertou?]}
+                 (if ofensivo?
+                   (resolver-ataque caca golpe :x :o false (get-in caca [:hp :x]))
+                   {:dano 0
+                    :mensagem (if acertou-status?
+                                (str "📊 *" (:nome-exibicao golpe) "*! "
+                                     (if status-novo
+                                       (str "*" (get-in caca [:pokemons efeito-marca :nome])
+                                            "* recebeu " (get status->nome-golpe status-novo) ".")
+                                       (resumo-efeitos-golpe golpe)))
+                                (str "📊 *" (:nome-exibicao golpe) "* errou o alvo!"))})
+                 hp-alvo-antes (get-in caca [:hp :o])
+                 ;; Faixa de Foco segura o selvagem com 1 HP uma única vez.
+                 faixa-foco?   (and ofensivo? acertou?
+                                    (= "faixa-foco" (:item selvagem))
+                                    (= hp-alvo-antes (:hp selvagem))
+                                    (>= dano hp-alvo-antes)
+                                    (not (get-in caca [:itens-usados :o :faixa-foco])))
+                 caca (cond
+                        ofensivo?
+                        (-> caca
+                            (assoc-in [:hp :o] (if faixa-foco? 1 (max 0 (- hp-alvo-antes dano))))
+                            (cond-> faixa-foco? (assoc-in [:itens-usados :o :faixa-foco] true))
+                            (cond-> (and acertou? (seq (:alteracoes golpe)))
+                              (aplicar-alteracoes efeito-marca (:alteracoes golpe))))
 
-           :else
-           (turno-selvagem cid pid caca false mensagem)))))))
+                        acertou-status?
+                        (cond-> (aplicar-alteracoes caca efeito-marca (:alteracoes golpe))
+                          status-novo (assoc-in [:status efeito-marca] status-novo))
+
+                        :else caca)
+                 ;; golpes de cura (Recover, Soft-Boiled...) recuperam % do HP máximo
+                 cura       (if (and acertou-status? (pos? (or (:cura golpe) 0)))
+                              (js/Math.round (* (:hp meu) (/ (:cura golpe) 100))) 0)
+                 hp-x-antes (get-in caca [:hp :x])
+                 caca       (cond-> caca (pos? cura)
+                              (update-in [:hp :x] #(min (:hp meu) (+ % cura))))
+                 curado     (- (get-in caca [:hp :x]) hp-x-antes)
+                 dano-real (- hp-alvo-antes (get-in caca [:hp :o]))
+                 dreno     (if (and ofensivo? acertou?)
+                             (js/Math.round (* dano-real (/ (or (:dreno golpe) 0) 100))) 0)
+                 recuo     (if (and ofensivo? acertou?)
+                             (js/Math.round (* dano-real (/ (or (:recuo golpe) 0) 100))) 0)
+                 caca      (update-in caca [:hp :x]
+                                      #(-> (+ % dreno (- recuo)) (max 0) (min (:hp meu))))
+                 ;; golpe ofensivo pode aplicar o status próprio dele ou contagiar pelo tipo
+                 novo-status (when (and ofensivo? acertou?)
+                               (or (tentar-status-do-golpe golpe (get-in caca [:status :o]))
+                                   (when-not (:status-causado golpe)
+                                     (tentar-contagiar (:tipo golpe) (get-in caca [:status :o])))))
+                 caca        (cond-> caca novo-status (assoc-in [:status :o] novo-status))
+                 msg-efeitos (str (when (pos? curado)
+                                    (str "\n💚 *" (:nome meu) "* recuperou " curado " HP!"))
+                                  (when faixa-foco? "\n🥋 A Faixa de Foco o manteve com 1 HP!")
+                                  (when (pos? dreno) (str "\n💚 Drenou " dreno " HP!"))
+                                  (when (pos? recuo) (str "\n💥 Sofreu " recuo " de dano de recuo!"))
+                                  (when novo-status (msg-status-aplicado novo-status (:nome selvagem))))]
+             (cond
+               (zero? (get-in caca [:hp :o]))
+               (do (treinador/atualizar-ativo! cid pid (get-in caca [:hp :x]) (get-in caca [:status :x]))
+                   (str (cabecalho) aviso mensagem msg-efeitos "\n🏁 O selvagem foi derrotado!"
+                        (tentar-captura-pos-batalha cid pid caca)))
+
+               (zero? (get-in caca [:hp :x]))
+               (let [recompensa (encerrar-cacada! cid pid caca false)]
+                 (treinador/atualizar-ativo! cid pid 0 (get-in caca [:status :x]))
+                 (str (cabecalho) aviso mensagem msg-efeitos
+                      "\n\n😵 Seu Pokémon caiu com o recuo. *" (:nome selvagem)
+                      "* escapou e sua sequência acabou.\n✨ +" (:xp recompensa) " XP."))
+
+               :else
+               ;; Fim do turno do jogador: Restos e dano de status agem sobre ele.
+               (let [[caca extra] (aplicar-fim-de-turno caca :x)]
+                 (if (zero? (get-in caca [:hp :x]))
+                   (let [recompensa (encerrar-cacada! cid pid caca false)]
+                     (treinador/atualizar-ativo! cid pid 0 (get-in caca [:status :x]))
+                     (str (cabecalho) aviso mensagem msg-efeitos extra
+                          "\n\n😵 Seu Pokémon caiu por causa do próprio status. *" (:nome selvagem)
+                          "* escapou e sua sequência acabou.\n✨ +" (:xp recompensa) " XP."))
+                   (turno-selvagem cid pid caca false
+                                   (str aviso mensagem msg-efeitos extra))))))))))))
 
 (defn- cacar [message]
   (let [cid (chat-id message)
@@ -1817,6 +1972,7 @@
               (let [caca {:pokemons {:x pokemon :o selvagem}
                           :hp {:x hp-atual :o (:hp selvagem)}
                           :status {:x status :o nil} :estagios {:x {} :o {}}
+                          :defendendo {:x false :o false} :itens-usados {:x {} :o {}}
                           :pid pid :message message :bioma bioma
                           :item-usado-turno? false :acao-realizada? false}]
                 (swap! cacadas-selvagens assoc cid caca)
