@@ -26,6 +26,17 @@
 ;; Remoções de golpe aguardando a janela de arrependimento, por [chat jogador].
 (defonce ^:private remocoes-pendentes (atom {}))
 
+;; Tempo máximo que quem está na vez tem pra agir. Estourou, o bot trata a
+;; pessoa como quem mandou `!pokemon sair` - sem isso uma batalha esquecida
+;; trava o `!pokemon` do chat inteiro pra sempre. Na caçada quem demora é o
+;; próprio dono da caçada, então o limite é curto; no PvP quem espera é outra
+;; pessoa (que pode estar no trabalho, dormindo, etc.), daí ser bem mais folgado.
+(def ^:private minutos-limite-caca 5)
+(def ^:private minutos-limite-pvp 30)
+
+;; Relógio da vez em andamento, por chat: {chat {:token :timer}}.
+(defonce ^:private limites-turno (atom {}))
+
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
 (declare enviar-imagem parse-indice-golpe estado-cacada turno-selvagem)
 
@@ -935,8 +946,11 @@
                              (when (> acertos 1) (str "\n🎯 Acertou " acertos " vezes!"))))]
     {:dano dano :mensagem mensagem :acertou? (and (not errou?) (not esquivou?) (pos? dano))}))
 
-(defn- criar-jogo [id nome pokemon hp-atual status]
-  {:pokemons {:x pokemon}
+(defn- criar-jogo [message id nome pokemon hp-atual status]
+  ;; `:message` fica guardada só pra o limite de tempo ter onde avisar a fuga
+  ;; quando ninguém jogar (nenhuma jogada chega pra responder nessa hora).
+  {:message message
+   :pokemons {:x pokemon}
    :jogadores {:x id}
    :nomes {:x nome}
    :hp {:x hp-atual}
@@ -1066,6 +1080,7 @@
                                     (assoc-in [:hp :o] hp-atual)
                                     (assoc-in [:defendendo :o] false)
                                     (assoc-in [:status :o] status)
+                                    (assoc :message message)
                                     (assoc :estagios {:x {} :o {}}))
                       velocidade-x (velocidade-efetiva jogo-pre :x)
                       velocidade-o (velocidade-efetiva jogo-pre :o)
@@ -1091,7 +1106,7 @@
 
           :else
           (-> (p/let [nome (nome-de message)]
-                (let [jogo-novo (criar-jogo pid nome pokemon hp-atual status)]
+                (let [jogo-novo (criar-jogo message pid nome pokemon hp-atual status)]
                   (if (tentar-registrar! cid jogo-novo nil?)
                     (str (cabecalho) "⏳ *" nome "* está esperando um adversário para a batalha!\n\n"
                          "Quem quiser topar, mande " config/prefix "pokemon pra entrar.")
@@ -1791,7 +1806,6 @@
              (str (cabecalho) "⚠️ Removendo " (emoji-golpe golpe) " *" (:nome-exibicao golpe) "* de *"
                   (:nome pokemon) "* em " segundos-para-remover-golpe " segundos.\n"
                   "🎯 Vão sobrar " (dec (count golpes)) ": " restantes ".\n\n"
-                  "Esse golpe não volta nem quando ele subir de nível.\n"
                   "Mudou de ideia? Mande " config/prefix "pokemon cancelar nesse tempo."))))))))
 
 (defn- cancelar-remocao [message]
@@ -2403,6 +2417,92 @@
                      (sincronizar-equipe! cid jogo-novo)
                      (com-mencao jogo-novo (str (cabecalho) mensagem msg-extra "\n\n" (mensagem-estado jogo-novo))))))))))))))))
 
+(defn- cancelar-limite-turno! [cid]
+  (when-let [{:keys [timer]} (get @limites-turno cid)]
+    (js/clearTimeout timer)
+    (swap! limites-turno dissoc cid)))
+
+(defn- agendar-limite-turno!
+  "(Re)arma o relógio da vez desse chat. `estado` é o valor exato que estava
+  guardado quando a contagem começou: se na hora de disparar ele não for mais
+  o atual, a batalha andou por outro caminho e o relógio se anula sozinho em
+  vez de encerrar uma partida viva."
+  [cid alvo estado minutos ao-estourar]
+  (cancelar-limite-turno! cid)
+  (let [token (str (js/Date.now) "-" (rand-int 100000))
+        timer (js/setTimeout
+               (fn []
+                 (when (= token (:token (get @limites-turno cid)))
+                   (swap! limites-turno dissoc cid))
+                 (when (identical? estado (get @alvo cid))
+                   (ao-estourar cid estado)))
+               (* 60 1000 minutos))]
+    (swap! limites-turno assoc cid {:token token :timer timer})))
+
+(defn- vigiar-limite-turno!
+  "Amarra o relógio ao atom de estado: qualquer mudança no jogo de um chat
+  vale como \"alguém agiu\" e reinicia a contagem, e sumir do atom (batalha
+  encerrada) desliga o relógio. Vigiar o estado aqui, em vez de agendar em
+  cada ação, garante que nenhum caminho de jogada esqueça de reiniciar (ou
+  desligar) a contagem."
+  [chave alvo minutos ao-estourar]
+  (add-watch alvo chave
+             (fn [_ _ antes depois]
+               (doseq [cid (distinct (concat (keys antes) (keys depois)))
+                       :let [anterior (get antes cid)
+                             atual    (get depois cid)]
+                       :when (not (identical? anterior atual))]
+                 (if (nil? atual)
+                   (cancelar-limite-turno! cid)
+                   (agendar-limite-turno! cid alvo atual minutos ao-estourar))))))
+
+(defn- expirar-cacada!
+  "Ninguém agiu a tempo na caçada: vale exatamente como ter mandado
+  `!pokemon sair` no meio dela - o selvagem some, a sequência de capturas
+  quebra e não sai XP nem moeda."
+  [cid caca]
+  (let [pid      (:pid caca)
+        selvagem (get-in caca [:pokemons :o])]
+    (swap! cacadas-selvagens dissoc cid)
+    (treinador/quebrar-sequencia-capturas! cid pid)
+    (-> (.reply (:message caca)
+                (str (cabecalho) "⏰ @" (so-numero pid) " passou " minutos-limite-caca
+                     " minutos sem jogar e fugiu da batalha.\n\n💨 *" (:nome selvagem)
+                     "* cansou de esperar e sumiu no mato. A sequência de capturas foi encerrada.")
+                nil #js {:mentions #js [pid]})
+        (p/catch (fn [err] (js/console.error "Erro ao avisar fuga por tempo na caçada:" err))))))
+
+(defn- expirar-batalha!
+  "Ninguém jogou dentro do limite no PvP: quem estava na vez perde as mesmas
+  coisas de quem manda `!pokemon sair` (rank -1, sem XP nem moedas pra
+  ninguém - desistência não vira vitória do adversário). Batalha que nem
+  chegou a ter adversário é só cancelada: não há a quem penalizar."
+  [cid jogo]
+  (let [message (:message jogo)
+        marca   (:vez jogo)
+        pid     (get-in jogo [:jogadores marca])]
+    (-> (if-not (contains? (:jogadores jogo) :o)
+          (do (swap! jogos dissoc cid)
+              (.reply message
+                      (str (cabecalho) "⏰ Ninguém entrou nessa batalha em " minutos-limite-pvp
+                           " minutos, então ela foi cancelada. Abra outra com " config/prefix
+                           "pokemon quando quiser.")))
+          (if (tentar-encerrar-por-desistencia! cid jogo)
+            (let [perdeu-ponto? (rank/penalizar! cid pid)]
+              (.reply message
+                      (str (cabecalho) "⏰ *" (get-in jogo [:nomes marca]) "* (@" (so-numero pid)
+                           ") passou " minutos-limite-pvp " minutos sem jogar e fugiu da batalha."
+                           "\n\n⚖️ Fuga não concede XP nem moedas a ninguém. "
+                           (if perdeu-ponto?
+                             "Quem fugiu perdeu 1 ponto no rank."
+                             "O rank de quem fugiu já estava em zero, então nenhum ponto foi descontado."))
+                      nil #js {:mentions #js [pid]}))
+            (p/resolved nil)))
+        (p/catch (fn [err] (js/console.error "Erro ao avisar fuga por tempo na batalha:" err))))))
+
+(vigiar-limite-turno! ::limite-cacada cacadas-selvagens minutos-limite-caca expirar-cacada!)
+(vigiar-limite-turno! ::limite-batalha jogos minutos-limite-pvp expirar-batalha!)
+
 (defn jogar
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
   batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
@@ -2427,8 +2527,11 @@
   recuperar HP (dentro ou fora de uma batalha); !pokemon joy <números> envia
   um ou vários Pokémon separados por vírgula para a Enfermeira Joy, que os devolve curados após 30
   minutos; !pokemon sair cancela (se
-  só um jogador entrou ainda) ou desiste - contando a vitória pro
-  adversário - se a batalha já tiver os 2 jogadores."
+  só um jogador entrou ainda) ou desiste - perdendo 1 ponto no rank, sem XP
+  nem moedas pra ninguém - se a batalha já tiver os 2 jogadores. Cada vez tem
+  tempo máximo: 5 minutos na caçada e 30 no PvP (30 também pra alguém entrar
+  numa batalha aberta); quem estourar o limite é tratado como quem mandou
+  !pokemon sair."
   [message args]
   (let [cid          (chat-id message)
         pid          (jogador-id message)
