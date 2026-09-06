@@ -152,6 +152,55 @@
   [cid pid]
   (= versao-golpes (get-in @contas [cid pid "equipe" (indice-ativo cid pid) "versao-golpes"])))
 
+(def maximo-golpes
+  "Quantos golpes um pokémon pode ter ao mesmo tempo."
+  4)
+
+(defn aprender-golpe-ativo!
+  "Acrescenta um golpe ao pokémon ativo, se ainda houver vaga (ver
+  maximo-golpes). Não mexe na lista de removidos: um golpe que o dono
+  mandou remover não volta por aqui - quem escolhe o candidato já o exclui.
+  Retorna true se aprendeu, nil se não havia vaga ou pokémon ativo."
+  [cid pid golpe]
+  (let [idx      (indice-ativo cid pid)
+        registro (get (equipe cid pid) idx)]
+    (when (and registro (< (count (get registro "golpes")) maximo-golpes))
+      (swap! contas update-in [cid pid "equipe" idx]
+             #(update % "golpes" (fn [gs] (conj (vec gs) (golpe->registro golpe)))))
+      (persistir!)
+      true)))
+
+(defn golpes-removidos
+  "Nomes dos golpes que o dono mandou remover desse pokémon. Guardados por
+  NOME (e não por posição) porque a lista de golpes é regerada inteira a
+  cada subida de nível - ver zapbot.pokemon/atualizar-golpes-por-nivel!."
+  [registro]
+  (set (get registro "golpes-removidos" [])))
+
+(defn golpes-removidos-ativo
+  "golpes-removidos do pokémon ativo do jogador."
+  [cid pid]
+  (golpes-removidos (get (equipe cid pid) (indice-ativo cid pid))))
+
+(defn remover-golpe-ativo!
+  "Tira o golpe nessa posição (0-based) do pokémon ativo e guarda o nome dele
+  na lista de removidos, pra que a regeneração por nível não o traga de
+  volta. Retorna o nome do golpe removido, ou nil se a posição não existir."
+  [cid pid indice]
+  (let [idx      (indice-ativo cid pid)
+        registro (get (equipe cid pid) idx)
+        golpe    (get (vec (get registro "golpes")) indice)]
+    (when golpe
+      (let [nome (get golpe "nome-exibicao")]
+        (swap! contas update-in [cid pid "equipe" idx]
+               (fn [r]
+                 (-> r
+                     (update "golpes" #(let [v (vec %)]
+                                         (vec (concat (subvec v 0 indice) (subvec v (inc indice))))))
+                     (update "golpes-removidos" #(vec (distinct (conj (vec %) nome)))))))
+        (persistir!)
+        nome))))
+
 (defn adicionar-pokemon!
   "Acrescenta um pokémon (mapa interno do zapbot.pokemon + hp-atual/status)
   na equipe do jogador nesse chat; se for o primeiro, já fica ativo (índice

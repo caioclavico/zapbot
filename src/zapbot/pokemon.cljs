@@ -13,6 +13,7 @@
             [zapbot.config :as config]
             [zapbot.rank :as rank]
             [zapbot.loja :as loja]
+            [zapbot.pokedex :as pokedex]
             [zapbot.treinador :as treinador]))
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))
@@ -22,6 +23,8 @@
 
 (defonce ^:private jogos (atom {}))
 (defonce ^:private cacadas-selvagens (atom {}))
+;; Remoções de golpe aguardando a janela de arrependimento, por [chat jogador].
+(defonce ^:private remocoes-pendentes (atom {}))
 
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
 (declare enviar-imagem parse-indice-golpe estado-cacada turno-selvagem)
@@ -163,7 +166,14 @@
                  [(conj vistos chave) (conj resultado golpe)])))
            [#{} []] golpes)))
 
-(defn- escolher-golpes [moves-brutos tipos nivel]
+(defn- golpes-ordenados
+  "Todos os golpes válidos que a espécie aprende por nível até `nivel`, sem
+  repetição e já na ordem de preferência: os do tipo do próprio pokémon
+  (STAB) primeiro, depois os Normais, depois os de cobertura - cada grupo do
+  mais forte pro mais fraco. Base tanto do conjunto inicial de 4 golpes
+  (escolher-golpes) quanto do golpe novo aprendido a cada alguns níveis
+  (aprender-golpe-por-nivel!)."
+  [moves-brutos tipos nivel]
   (let [aprendidos  (filter #(let [nivel-min (nivel-de-aprendizado %)]
                                (and (some? nivel-min) (<= nivel-min nivel)))
                              moves-brutos)
@@ -174,17 +184,20 @@
             do-proprio    (ordenar-por-poder (filter #(contains? tipos-proprios (:tipo %)) validos))
             normal        (ordenar-por-poder (filter #(= "normal" (:tipo %)) validos))
             cobertura     (ordenar-por-poder
-                           (remove #(or (contains? tipos-proprios (:tipo %)) (= "normal" (:tipo %))) validos))
-            ordenados     (vec (concat do-proprio normal cobertura))
-            ofensivos     (filter #(contains? #{:fisico :especial} (:classe %)) ordenados)
-            status        (filter #(= :status (:classe %)) ordenados)
-            transform     (filter #(= :transform (:classe %)) ordenados)
-            base          (vec (concat (take 1 transform)
-                                       (take (if (seq transform) 2 3) ofensivos)
-                                       (take 1 status)))
-            escolhidos    (->> ordenados (remove (set base)) (concat base)
-                               remover-golpes-repetidos (take 4) vec)]
-        (if (seq escolhidos) escolhidos [golpe-padrao])))))
+                           (remove #(or (contains? tipos-proprios (:tipo %)) (= "normal" (:tipo %))) validos))]
+        (vec (concat do-proprio normal cobertura))))))
+
+(defn- escolher-golpes [moves-brutos tipos nivel]
+  (p/let [ordenados (golpes-ordenados moves-brutos tipos nivel)]
+    (let [ofensivos  (filter #(contains? #{:fisico :especial} (:classe %)) ordenados)
+          status     (filter #(= :status (:classe %)) ordenados)
+          transform  (filter #(= :transform (:classe %)) ordenados)
+          base       (vec (concat (take 1 transform)
+                                  (take (if (seq transform) 2 3) ofensivos)
+                                  (take 1 status)))
+          escolhidos (->> ordenados (remove (set base)) (concat base)
+                          remover-golpes-repetidos (take treinador/maximo-golpes) vec)]
+      (if (seq escolhidos) escolhidos [golpe-padrao]))))
 
 (defn- com-golpes
   ([pokemon] (com-golpes pokemon (or (:nivel pokemon) 1)))
@@ -773,14 +786,59 @@
                                        (:nome-novo dados) "*!")))))
       (p/catch (fn [err] (js/console.error "Erro ao processar evolução:" err)))))
 
-(defn- atualizar-golpes-por-nivel! [cid pid]
+(defn- sem-golpes-removidos
+  "Tira da lista regerada os golpes que o dono mandou remover (!pokemon
+  removergolpe). Se sobrar nada - por exemplo, um pokémon de poucos golpes
+  cujo dono removeu todos - devolve a lista original: melhor um golpe
+  indesejado do que um pokémon que não consegue atacar."
+  [golpes removidos]
+  (let [restantes (vec (remove #(contains? removidos (:nome-exibicao %)) golpes))]
+    (if (seq restantes) restantes (vec golpes))))
+
+(defn- atualizar-golpes-por-nivel!
+  "Regera o conjunto inteiro de golpes do pokémon ativo. Hoje serve SÓ à
+  migração de times antigos (ver golpes-atuais?/versao-golpes) - a subida de
+  nível não mexe mais em todos os golpes, só aprende um novo quando há vaga
+  (ver aprender-golpe-por-nivel!)."
+  [cid pid]
   (when-let [[pokemon _ _] (treinador/pokemon-ativo cid pid)]
     (-> (p/let [dados  (buscar-pokemon-por-nome (str/lower-case (:nome pokemon)))
                 dados  (com-golpes dados (nivel-pokemon pokemon))]
-          (treinador/atualizar-golpes-ativo! cid pid (:golpes dados)))
+          (treinador/atualizar-golpes-ativo!
+           cid pid (sem-golpes-removidos (:golpes dados)
+                                         (treinador/golpes-removidos-ativo cid pid))))
         (p/catch (fn [err]
                    (js/console.error "Erro ao atualizar golpes por nível:" err)
                    nil)))))
+
+(def ^:private niveis-por-golpe
+  "De quantos em quantos níveis o pokémon ganha a chance de aprender um golpe
+  novo (só aprende se tiver vaga - ver aprender-golpe-por-nivel!)."
+  5)
+
+(defn- aprender-golpe-por-nivel!
+  "Chamada a cada subida de nível, tanto em batalha quanto em caçada. A cada
+  `niveis-por-golpe` níveis o pokémon ativo aprende UM golpe novo, mas só se
+  tiver vaga: com os 4 golpes cheios não aprende nada. É por isso que
+  !pokemon removergolpe existe - abrir vaga pro próximo aprendizado.
+  Nunca reaprende um golpe que o dono mandou remover."
+  [message cid pid nivel]
+  (when (zero? (mod nivel niveis-por-golpe))
+    (when-let [[pokemon _ _] (treinador/pokemon-ativo cid pid)]
+      (when (< (count (:golpes pokemon)) treinador/maximo-golpes)
+        (-> (p/let [dados     (buscar-pokemon-por-nome (str/lower-case (:nome pokemon)))
+                    ordenados (golpes-ordenados (:moves-brutos dados) (:tipos pokemon) nivel)]
+              (let [conhecidos (set (map :nome-exibicao (:golpes pokemon)))
+                    removidos  (treinador/golpes-removidos-ativo cid pid)
+                    novo       (first (remove #(or (contains? conhecidos (:nome-exibicao %))
+                                                   (contains? removidos (:nome-exibicao %)))
+                                              ordenados))]
+                (when (and novo (treinador/aprender-golpe-ativo! cid pid novo))
+                  (.reply message (str (cabecalho) "📘 *" (:nome pokemon) "* chegou ao nível " nivel
+                                       " e aprendeu " (emoji-golpe novo) " *" (:nome-exibicao novo) "*!")))))
+            (p/catch (fn [err]
+                       (js/console.error "Erro ao aprender golpe por nível:" err)
+                       nil)))))))
 
 (defn- anunciar-vitoria [message cid jogo vencedor-marca motivo-extra]
   (sincronizar-equipe! cid jogo)
@@ -797,10 +855,10 @@
     ;; atual, para que uma evolução no mesmo nível não restaure golpes antigos.
     (when subida
       (-> (verificar-evolucao! message cid vencedor-pid)
-          (p/then (fn [_] (atualizar-golpes-por-nivel! cid vencedor-pid)))))
+          (p/then (fn [_] (aprender-golpe-por-nivel! message cid vencedor-pid (:nivel subida))))))
     (when subida-perdedor
       (-> (verificar-evolucao! message cid perdedor-pid)
-          (p/then (fn [_] (atualizar-golpes-por-nivel! cid perdedor-pid)))))
+          (p/then (fn [_] (aprender-golpe-por-nivel! message cid perdedor-pid (:nivel subida-perdedor))))))
     (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "! (+" ganho " 💰 moedas, confira com "
          config/prefix "loja)"
          "\n✨ XP: vencedor +" treinador/xp-por-vitoria ", perdedor +" treinador/xp-por-derrota "."
@@ -1562,6 +1620,193 @@
                      (ver-time message))))
       (ver-time message))))
 
+(def ^:private limite-legenda 1000)
+(def ^:private minimo-descricao 60)
+(def ^:private limite-habilidades 70)
+
+(defn- bloco-especie
+  "Linhas da ficha que dependem da PokeAPI. Devolve \"\" quando a espécie não
+  veio (fora do ar ou 404) - a ficha do time continua sem ela."
+  [especie]
+  (if (nil? especie)
+    ""
+    (str "\n"
+         "📏 Altura: " (.toFixed (:altura especie) 1) " m | ⚖️ Peso: " (.toFixed (:peso especie) 1) " kg\n"
+         (when-not (str/blank? (:habilidades-pt especie))
+           (str "✨ Habilidades: " (encurtar (:habilidades-pt especie) limite-habilidades) "\n"))
+         "🔺 Evolução: "
+         (if (seq (:evolucoes especie))
+           (str/join " | " (map #(str (:nome %) " — nível " (:nivel %)) (:evolucoes especie)))
+           "não possui evolução por nível"))))
+
+(defn- legenda-ficha-time
+  "Ficha de um pokémon do time: stats de batalha, golpes, XP/nível + os dados
+  de espécie da Pokédex (sem tabela de stats base - esses o jogador vê no
+  !pokedex, e não batem com os de batalha por causa de suavizar-stat)."
+  [registro pokemon hp-atual status indice ativo? especie]
+  (let [base   (str (cabecalho)
+                    (if ativo? "👉 " "") (inc indice) ". *" (:nome pokemon) "* Nv."
+                    (nivel-pokemon pokemon) (emoji-status status) "\n"
+                    (when especie (str "#" (.padStart (str (:numero especie)) 3 "0") " · "))
+                    "🏷️ " (formatar-tipos (:tipos pokemon)) " · " (texto-raridade pokemon) "\n"
+                    "❤️ " (barra-hp hp-atual (:hp pokemon)) "\n"
+                    "✨ " (texto-xp registro)
+                    (when-let [item (texto-item pokemon)] (str " · " item)) "\n\n"
+                    "⚔️ Ataque: " (:ataque pokemon) " | 🛡️ Defesa: " (:defesa pokemon) "\n"
+                    "🔮 Atq. Especial: " (:atq-esp pokemon) " | 🌀 Def. Especial: " (:def-esp pokemon)
+                    " | 💨 Velocidade: " (:veloc pokemon) "\n\n"
+                    "🎯 *Golpes:*\n"
+                    (if (seq (:golpes pokemon))
+                      (menu-golpes pokemon [] nil)
+                      "Nenhum golpe registrado.")
+                    "\n"
+                    (bloco-especie especie))
+        rodape (if ativo?
+                 "\n\n👉 Esse é o seu Pokémon ativo."
+                 (str "\n\nUse " config/prefix "pokemon escolher " (inc indice) " pra deixar ele ativo."))
+        ;; 7 = a moldura "\n\n📜 _" mais o "_" final
+        sobra  (- limite-legenda (count base) (count rodape) 7)]
+    (str base
+         (when (and especie
+                    (not (str/blank? (:descricao-pt especie)))
+                    (>= sobra minimo-descricao))
+           (str "\n\n📜 _" (encurtar (:descricao-pt especie) sobra) "_"))
+         rodape)))
+
+(defn- ver-pokemon-do-time
+  "!pokemon pokedex <n> - ficha do enésimo pokémon DO TIME (mesma numeração de
+  !pokemon time / escolher / equipar / doar)."
+  [message indice-texto]
+  (let [cid           (chat-id message)
+        pid           (jogador-id message)
+        eq            (vec (treinador/equipe cid pid))
+        total         (count eq)
+        em-tratamento (treinador/em-tratamento cid pid)
+        indice        (parse-indice-golpe indice-texto total)]
+    (cond
+      (zero? total)
+      (p/resolved (str (cabecalho) "❓ Você ainda não tem nenhum pokémon na equipe. Use "
+                       config/prefix "pokemon inicial pra escolher o seu."
+                       (when (seq em-tratamento)
+                         (str "\n\n🏥 " (count em-tratamento)
+                              " está(ão) com a Enfermeira Joy - veja em " config/prefix "pokemon time."))))
+
+      (nil? indice)
+      (p/resolved (str (cabecalho) "❓ Escolha um número válido: " config/prefix "pokemon pokedex <1-"
+                       total "> (veja a numeração com " config/prefix "pokemon time)."
+                       (when (seq em-tratamento)
+                         (str "\n🏥 " (count em-tratamento)
+                              " pokémon com a Enfermeira Joy não entram nessa numeração."))
+                       "\n\nSem número, " config/prefix "pokemon pokedex mostra o resumo da sua coleção."))
+
+      :else
+      (let [registro                  (nth eq indice)
+            [pokemon hp-atual status] (treinador/registro->pokemon registro)
+            ativo?                    (= indice (treinador/indice-ativo cid pid))
+            responder                 (fn [especie]
+                                        (enviar-imagem message
+                                                       (or (:imagem pokemon) (:imagem especie))
+                                                       (legenda-ficha-time registro pokemon hp-atual
+                                                                           status indice ativo? especie)))]
+        (-> (p/let [especie (when-not (str/blank? (:nome pokemon))
+                              (pokedex/dados-especie (:nome pokemon)))]
+              (responder especie))
+            (p/catch (fn [err]
+                       ;; dados do time são locais: a ficha sai mesmo com a
+                       ;; PokeAPI/tradução fora do ar, só sem o bloco de espécie
+                       (js/console.error "Erro ao buscar espécie pra ficha do time:" err)
+                       (responder nil))))))))
+
+(def ^:private segundos-para-remover-golpe 30)
+
+(defn- aplicar-remocao-golpe!
+  "Dispara quando a janela de arrependimento fecha. Só remove se a remoção
+  marcada ainda for esta (token), se o jogador não trocou de pokémon ativo
+  nesse meio-tempo e se o golpe continua na mesma posição - senão desiste
+  em silêncio, que é melhor do que apagar o golpe errado."
+  [message cid pid token]
+  (let [pendente (get @remocoes-pendentes [cid pid])]
+    (when (= token (:token pendente))
+      (swap! remocoes-pendentes dissoc [cid pid])
+      (let [[pokemon _ _] (treinador/pokemon-ativo cid pid)
+            golpe-atual   (get (vec (:golpes pokemon)) (:indice-golpe pendente))]
+        (if (and (= (treinador/indice-ativo cid pid) (:indice-pokemon pendente))
+                 (= (:nome-exibicao golpe-atual) (:nome-golpe pendente)))
+          (do (treinador/remover-golpe-ativo! cid pid (:indice-golpe pendente))
+              (let [[pokemon _ _] (treinador/pokemon-ativo cid pid)]
+                (.reply message (str (cabecalho) "🗑️ *" (:nome-golpe pendente) "* foi removido de *"
+                                     (:nome-pokemon pendente) "*.\n\n🎯 *Golpes que sobraram:*\n"
+                                     (menu-golpes pokemon [] nil)))))
+          (.reply message (str (cabecalho) "🤔 A remoção de *" (:nome-golpe pendente) "* foi cancelada: *"
+                               (:nome-pokemon pendente) "* mudou de golpes ou não é mais o seu ativo.")))))))
+
+(defn- remover-golpe
+  "!pokemon removergolpe <n> - marca a remoção do golpe n do pokémon ativo e
+  só aplica depois da janela de arrependimento, pra ninguém perder um golpe
+  por causa de um número digitado errado."
+  [message indice-texto]
+  (let [cid (chat-id message)
+        pid (jogador-id message)]
+    (cond
+      (not (treinador/tem-pokemon? cid pid))
+      (p/resolved (str (cabecalho) "❓ Escolha seu pokémon inicial primeiro: " config/prefix "pokemon inicial."))
+
+      (or (and (get @jogos cid) (some #{pid} (vals (:jogadores (get @jogos cid)))))
+          (= pid (:pid (get @cacadas-selvagens cid))))
+      (p/resolved (str (cabecalho) "⚔️ Não dá pra mexer nos golpes no meio de uma batalha. "
+                       "Termine ela (ou " config/prefix "pokemon sair) e tente de novo."))
+
+      (get @remocoes-pendentes [cid pid])
+      (p/resolved (str (cabecalho) "⏳ Você já marcou a remoção de *"
+                       (:nome-golpe (get @remocoes-pendentes [cid pid]))
+                       "*. Espere ela acontecer ou mande " config/prefix "pokemon cancelar."))
+
+      :else
+      (let [[pokemon _ _] (treinador/pokemon-ativo cid pid)
+            golpes        (vec (:golpes pokemon))
+            indice        (parse-indice-golpe indice-texto (count golpes))]
+        (p/resolved
+         (cond
+           (< (count golpes) 2)
+           (str (cabecalho) "🚫 *" (:nome pokemon) "* só tem "
+                (if (zero? (count golpes)) "nenhum golpe" "um golpe")
+                " - remover deixaria ele sem como atacar.")
+
+           (nil? indice)
+           (str (cabecalho) "❓ Escolha um golpe válido: " config/prefix "pokemon removergolpe <1-"
+                (count golpes) ">\n\n🎯 *Golpes de " (:nome pokemon) ":*\n"
+                (menu-golpes pokemon [] nil))
+
+           :else
+           (let [golpe    (get golpes indice)
+                 token    (str (js/Date.now) "-" (rand-int 100000))
+                 restantes (->> golpes (keep-indexed (fn [i g] (when-not (= i indice) (:nome-exibicao g))))
+                                (str/join ", "))
+                 timer    (js/setTimeout #(aplicar-remocao-golpe! message cid pid token)
+                                         (* 1000 segundos-para-remover-golpe))]
+             (swap! remocoes-pendentes assoc [cid pid]
+                    {:token token :timer timer :indice-golpe indice
+                     :indice-pokemon (treinador/indice-ativo cid pid)
+                     :nome-golpe (:nome-exibicao golpe) :nome-pokemon (:nome pokemon)})
+             (str (cabecalho) "⚠️ Removendo " (emoji-golpe golpe) " *" (:nome-exibicao golpe) "* de *"
+                  (:nome pokemon) "* em " segundos-para-remover-golpe " segundos.\n"
+                  "🎯 Vão sobrar " (dec (count golpes)) ": " restantes ".\n\n"
+                  "Esse golpe não volta nem quando ele subir de nível.\n"
+                  "Mudou de ideia? Mande " config/prefix "pokemon cancelar nesse tempo."))))))))
+
+(defn- cancelar-remocao [message]
+  (let [cid      (chat-id message)
+        pid      (jogador-id message)
+        pendente (get @remocoes-pendentes [cid pid])]
+    (p/resolved
+     (if pendente
+       (do (js/clearTimeout (:timer pendente))
+           (swap! remocoes-pendentes dissoc [cid pid])
+           (str (cabecalho) "✅ Beleza, *" (:nome-golpe pendente) "* continua com *"
+                (:nome-pokemon pendente) "*."))
+       (str (cabecalho) "❓ Você não tem nenhuma remoção de golpe marcada. Use " config/prefix
+            "pokemon removergolpe <número> pra marcar uma.")))))
+
 (defn- escolher-ativo [message indice-texto]
   (let [cid   (chat-id message)
         pid   (jogador-id message)
@@ -1723,7 +1968,7 @@
     (when (pos? moedas) (loja/creditar-quantia! cid pid moedas))
     (when subida
       (-> (verificar-evolucao! (:message caca) cid pid)
-          (p/then (fn [_] (atualizar-golpes-por-nivel! cid pid)))))
+          (p/then (fn [_] (aprender-golpe-por-nivel! (:message caca) cid pid (:nivel subida))))))
     {:xp xp :moedas moedas :subida subida :sequencia sequencia :sequencia-anterior sequencia-ant}))
 
 (defn- tentar-captura-pos-batalha [cid pid caca]
@@ -2161,11 +2406,17 @@
 (defn jogar
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
   batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
-  selvagem do bioma/horário atual; !pokemon pokedex mostra a coleção; !pokemon time
+  selvagem do bioma/horário atual; !pokemon pokedex mostra o resumo da sua
+  coleção e !pokemon pokedex <número> abre a ficha completa do pokémon nessa
+  posição do seu time (stats de batalha, golpes, XP/nível mais número, tipo,
+  altura, peso, habilidades, evolução e descrição da espécie); !pokemon time
   mostra seu time capturado; !pokemon escolher <número> troca qual está
   ativo pra batalhar (durante uma caçada PvE, permite uma única troca e
   consome a ação do turno); !pokemon equipar <número> <item> equipa um item
-  comprado na !loja; !pokemon doar <número> (marcando ou respondendo a
+  comprado na !loja; !pokemon removergolpe <número> remove de vez um golpe do
+  pokémon ativo, depois de uma janela de 30s pra cancelar com !pokemon
+  cancelar - como um golpe novo só é aprendido a cada 5 níveis e só se houver
+  vaga, remover é o jeito de abrir espaço pro próximo; !pokemon doar <número> (marcando ou respondendo a
   pessoa) doa um pokémon da sua equipe pra outro jogador; !pokemon sem
   argumento abre/entra numa batalha (usa seu pokémon ativo, que ganha XP
   e pode subir de nível/evoluir); !pokemon atacar <1-4> usa o
@@ -2189,8 +2440,14 @@
       (= cmd "sair") (sair message)
       (contains? #{"inicial" "iniciais"} cmd) (escolher-inicial message (first resto))
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
-      (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd) (ver-pokedex-pessoal message)
+      (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd)
+      (if (str/blank? (first resto))
+        (ver-pokedex-pessoal message)
+        (ver-pokemon-do-time message (first resto)))
       (contains? #{"time" "equipe"} cmd) (resposta-time-visual message)
+      (contains? #{"removergolpe" "removergolpes" "esquecer" "esquecergolpe"} cmd)
+      (remover-golpe message (first resto))
+      (contains? #{"cancelar" "cancela"} cmd) (cancelar-remocao message)
       (contains? #{"escolher" "trocar" "troca"} cmd) (escolher-ativo message (first resto))
       (contains? #{"equipar" "item"} cmd) (equipar-item message (first resto) (second resto))
       (= cmd "doar") (doar message (first resto))
@@ -2201,8 +2458,9 @@
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
       (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon inicial, " config/prefix "pokemon cacar, "
-                              config/prefix "pokemon pokedex, " config/prefix "pokemon time, " config/prefix "pokemon escolher <número>, "
+                              config/prefix "pokemon pokedex [número], " config/prefix "pokemon time, " config/prefix "pokemon escolher <número>, "
                               config/prefix "pokemon equipar <número> <item>, "
+                              config/prefix "pokemon removergolpe <número>, "
                               config/prefix "pokemon doar <número>, " config/prefix "pokemon (abrir/entrar), "
                               config/prefix "pokemon joy <número>, "
                               config/prefix "pokemon atacar <1-4>, " config/prefix "pokemon defender, "
