@@ -10,6 +10,11 @@ services:
       - HEAP_NEWSIZE=200M
     volumes:
       - cassandra-data:/var/lib/cassandra
+    ports:
+      # expõe pro host pra permitir rodar o bot localmente (fora do container
+      # "bot", que continua falando com "cassandra" via rede interna do
+      # Docker) apontando pra 127.0.0.1 em CASSANDRA_CONTACT_POINTS
+      - "127.0.0.1:9042:9042"
     healthcheck:
       test: ["CMD-SHELL", "cqlsh -e 'describe cluster' || exit 1"]
       interval: 15s
