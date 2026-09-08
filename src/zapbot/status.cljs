@@ -12,10 +12,12 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  [(str "Novo comando " config/prefix "pokemon treinador mostra o perfil do treinador")
-   "Confira o nível, XP do treinador e Pokémon ativo"
-   "Veja a sequência atual e o recorde de capturas, preservado ao encerrar a sequência"
-   "Insígnias por marcos de vitórias e capturas seguidas, com requisitos para desbloquear"])
+  [(str "Escalação por vírgulas, como na Joy: " config/prefix "pokemon liga time 1,3,5")
+   "Ligas Pokémon por nível: Iniciante, Bronze, Prata, Ouro e Diamante"
+   (str "Escolha sua liga e salve um time de três com " config/prefix "pokemon liga")
+   "PvP 3 × 3: próximo Pokémon entra após um nocaute; adversários da mesma liga e com níveis próximos"
+   "Pokémon que ultrapassa a faixa sai da escalação e precisa ser substituído"])
+
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

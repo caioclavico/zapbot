@@ -307,3 +307,32 @@ src/zapbot/
 Use `!pokemon treinador` para ver o nível e XP do treinador, Pokémon ativo, sequência atual, recorde de capturas e insígnias conquistadas ou bloqueadas. O treinador recebe 1 XP por vitória e sobe de nível a cada 3 XP; esse XP é separado do XP do Pokémon. As insígnias reconhecem 1, 10, 50 e 100 vitórias, além de sequências de 3, 5, 10 e 20 capturas.
 
 O recorde é preservado quando uma sequência termina. Para contas antigas, parte da sequência atual salva: sequências anteriores à implementação não podem ser recuperadas.
+
+
+### Ligas Pokémon (0.7.0)
+
+O PvP usa times de três Pokémon da coleção, sem ajustar seus níveis reais:
+Iniciante (1–10), Bronze (11–25), Prata (26–40), Ouro (41–60) e Diamante (61–100).
+
+- `!pokemon liga`: consulta as faixas, a liga selecionada e sua escalação.
+- `!pokemon liga iniciante`: seleciona a liga; a escolha fica salva por jogador e chat.
+- `!pokemon liga time 1,3,5`: salva os três números da coleção (`!pokemon time`) na ordem de entrada.
+- `!pokemon`: abre ou entra numa batalha usando o time salvo da liga selecionada.
+
+É necessário ter três Pokémon diferentes da faixa e nenhum desmaiado. Após cada
+nocaute, o próximo da escalação entra automaticamente e recebe a vez. A vitória,
+rank e moedas só são concedidos quando os três adversários caem. Como no PvP
+anterior, o Pokémon ativo ao término recebe XP (3 para o vencedor, 1 para o perdedor).
+Ao subir além da faixa, ele sai automaticamente da escalação, mas continua na
+coleção; a liga e as outras vagas permanecem salvas. Use o comando de escalação
+para preencher as vagas antes da próxima batalha. Doação e enfermaria também
+desocupam a vaga, preservando a identidade dos outros integrantes.
+
+A batalha aberta aceita somente adversários da mesma liga. Comparando os dois
+times ordenados por nível, cada par deve ter diferença de no máximo cinco níveis.
+Sem adversário compatível, a batalha continua aguardando até o limite habitual de
+30 minutos. A escalação fica bloqueada enquanto o jogador participa da batalha.
+As caçadas continuam disponíveis para capturar Pokémon e formar novos times.
+
+Validação das regras de liga (usa o JAR já instalado pelo npm, sem conectar ao bot):
+`java -cp node_modules/shadow-cljs-jar/bin/shadow-cljs.jar clojure.main test/ligas_test.clj`.

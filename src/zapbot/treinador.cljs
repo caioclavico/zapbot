@@ -105,6 +105,59 @@
   [cid pid]
   (get (conta cid pid) "equipe"))
 
+(def ligas
+  [{:id "iniciante" :nome "🌱 Iniciante" :min 1 :max 10}
+   {:id "bronze" :nome "🪨 Bronze" :min 11 :max 25}
+   {:id "prata" :nome "🥈 Prata" :min 26 :max 40}
+   {:id "ouro" :nome "🥇 Ouro" :min 41 :max 60}
+   {:id "diamante" :nome "💎 Diamante" :min 61 :max 100}])
+
+(defn obter-liga [id] (some #(when (= id (:id %)) %) ligas))
+(defn elegivel? [liga registro]
+  (and liga registro (<= (:min liga) (get registro "nivel" 1) (:max liga))))
+(defn liga-selecionada [cid pid] (get (conta cid pid) "liga"))
+(defn time-liga [cid pid id]
+  (get-in (conta cid pid) ["times-liga" id] [nil nil nil]))
+
+(defn- limpar-times [c]
+  (update c "times-liga"
+          (fn [times]
+            (into {} (map (fn [[id slots]]
+                            [id (mapv #(when (and (some? %)
+                                                 (elegivel? (obter-liga id) (get (get c "equipe") %))) %) slots)])
+                          times)))))
+
+(defn- ajustar-times-remocao [c idx]
+  (update c "times-liga"
+          (fn [times]
+            (into {} (map (fn [[id slots]]
+                            [id (mapv #(cond (nil? %) nil (= % idx) nil (> % idx) (dec %) :else %) slots)])
+                          times)))))
+
+(defn selecionar-liga! [cid pid id]
+  (when (obter-liga id)
+    (swap! contas update-in [cid pid] #(assoc (or % conta-vazia) "liga" id))
+    (persistir!) true))
+
+(defn escalar! [cid pid id indices]
+  (when (and (obter-liga id) (= 3 (count indices)) (= 3 (count (set indices)))
+             (every? #(and (integer? %) (elegivel? (obter-liga id) (get (equipe cid pid) %))) indices))
+    (swap! contas assoc-in [cid pid "times-liga" id] (vec indices))
+    (persistir!) true))
+
+(defn time-pronto? [cid pid id]
+  (let [slots (time-liga cid pid id)]
+    (and (= 3 (count slots)) (= 3 (count (set slots)))
+         (every? #(and (some? %) (elegivel? (obter-liga id) (get (equipe cid pid) %))
+                       (pos? (get (get (equipe cid pid) %) "hp-atual" 0))) slots))))
+
+(defn niveis-time [cid pid id]
+  (sort (map #(get (get (equipe cid pid) %) "nivel" 1) (time-liga cid pid id))))
+
+(defn times-compativeis? [a b]
+  (and (= 3 (count a) (count b))
+       (every? true? (map #(<= (js/Math.abs (- %1 %2)) 5) (sort a) (sort b)))))
+
 (defn tem-pokemon? [cid pid]
   (pos? (count (equipe cid pid))))
 
@@ -233,7 +286,7 @@
                           (< idx ativo-atual)    (dec ativo-atual)
                           (= idx ativo-atual)    0
                           :else                  (min ativo-atual (dec (count eq-nova))))]
-        (swap! contas update-in [cid pid] #(assoc % "equipe" eq-nova "ativo" ativo-novo))
+        (swap! contas update-in [cid pid] #(ajustar-times-remocao (assoc % "equipe" eq-nova "ativo" ativo-novo) idx))
         (persistir!)
         true)
       false)))
@@ -288,7 +341,7 @@
             entrada {"pokemon" registro "pronto-em" (+ agora tempo-tratamento-ms)}]
         (swap! contas update-in [cid pid]
                (fn [c]
-                 (let [c (or c conta-vazia)]
+                 (let [c (ajustar-times-remocao (or c conta-vazia) idx)]
                    (assoc c "equipe" equipe-nova
                             "enfermaria" (conj (vec (get c "enfermaria" [])) entrada)
                             "ativo" (if (empty? equipe-nova) 0
@@ -432,6 +485,9 @@
                     hp-max-antigo (get registro "hp")
                     hp-max-novo   (crescer hp-max-antigo)
                     incremento-hp (- hp-max-novo hp-max-antigo)
+                    ligas-removidas (vec (for [[id slots] (get (conta cid pid) "times-liga")
+                                              :when (and (some #{idx} slots)
+                                                         (not (elegivel? (obter-liga id) (assoc registro "nivel" (inc nivel-atual)))))] id))
                     registro-novo (-> registro
                                       (assoc "nivel" (inc nivel-atual))
                                       (assoc "xp-desde-nivel" (- xp-novo xp-por-nivel))
@@ -443,9 +499,10 @@
                                       (update "atq-esp" crescer)
                                       (update "def-esp" crescer)
                                       (update "veloc" crescer))]
-                (swap! contas assoc-in [cid pid "equipe" idx] registro-novo)
+                (swap! contas update-in [cid pid]
+                       #(limpar-times (assoc-in % ["equipe" idx] registro-novo)))
                 (persistir!)
-                {:nome (get registro "nome") :nivel (inc nivel-atual)}))))))))
+                {:nome (get registro "nome") :nivel (inc nivel-atual) :ligas-removidas ligas-removidas}))))))))
 
 (defn subir-nivel!
   "Concede ao pokémon ativo o XP de uma vitória."
