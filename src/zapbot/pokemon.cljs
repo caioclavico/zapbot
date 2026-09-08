@@ -1534,6 +1534,22 @@
   (let [texto (str texto)]
     (if (> (count texto) limite) (str (subs texto 0 (dec limite)) "…") texto)))
 
+;; O CSV usa ponto e vírgula porque é o separador que o Excel em pt-BR
+;; entende sem pedir importação manual.
+(def ^:private separador-csv ";")
+
+(defn- escapar-csv
+  "Envolve o campo em aspas quando ele tem separador, aspas ou quebra de
+  linha - aspas internas viram duas, como manda o RFC 4180."
+  [valor]
+  (let [texto (str (or valor ""))]
+    (if (re-find #"[;\"\n\r]" texto)
+      (str "\"" (str/replace texto "\"" "\"\"") "\"")
+      texto)))
+
+(defn- linha-csv [campos]
+  (str/join separador-csv (map escapar-csv campos)))
+
 (defn- svg-cartao-time [entradas nivel]
   (let [largura 1000
         altura  (+ 120 (* 205 (js/Math.ceil (/ (count entradas) 2))) 20)
@@ -1634,6 +1650,65 @@
                      (js/console.error "Erro ao gerar cartão do time:" err)
                      (ver-time message))))
       (ver-time message))))
+
+(def ^:private colunas-csv-time
+  ["Nº" "Situação" "Nome" "Nível" "Raridade" "Tipos" "HP atual" "HP máximo"
+   "Status" "Item" "XP atual" "XP necessário"])
+
+(defn- linha-csv-pokemon
+  "Uma linha do CSV a partir de um registro da equipe/enfermaria. `numero` vem
+  vazio para quem está com a Enfermeira Joy (não ocupa posição no time)."
+  [registro numero situacao]
+  (let [[p hp-atual status] (treinador/registro->pokemon registro)
+        {:keys [atual necessario]} (treinador/progresso-xp registro)]
+    (linha-csv [numero situacao (:nome p) (nivel-pokemon p) (texto-raridade p)
+                (formatar-tipos (:tipos p)) hp-atual (:hp p)
+                (if status (nome-status status) "")
+                (or (texto-item p) "")
+                atual necessario])))
+
+(defn- csv-time
+  "Conteúdo do CSV com a equipe seguida de quem está na enfermaria. Vai com BOM
+  UTF-8 na frente pro Excel não estragar acentos e emojis."
+  [cid pid]
+  (let [ativo   (treinador/indice-ativo cid pid)
+        equipe  (map-indexed (fn [i registro]
+                               (linha-csv-pokemon registro (inc i)
+                                                  (if (= i ativo) "Ativo" "No time")))
+                             (treinador/equipe cid pid))
+        joy     (map (fn [entrada]
+                       (let [faltam  (max 0 (- (get entrada "pronto-em" 0) (js/Date.now)))
+                             minutos (max 1 (js/Math.ceil (/ faltam 60000)))]
+                         (linha-csv-pokemon (get entrada "pokemon") ""
+                                            (str "Enfermaria (volta em ~" minutos " min)"))))
+                     (treinador/em-tratamento cid pid))]
+    (str "\uFEFF" (str/join "\n" (cons (linha-csv colunas-csv-time)
+                                       (concat equipe joy)))
+         "\n")))
+
+(defn- resposta-time-csv
+  "!pokemon time csv: mesma listagem do time, mas como arquivo pra abrir na
+  planilha - o texto vai numa mensagem separada porque legenda de documento
+  não é confiável no WhatsApp."
+  [message]
+  (let [cid (chat-id message)
+        pid (jogador-id message)
+        eq  (treinador/equipe cid pid)
+        joy (treinador/em-tratamento cid pid)]
+    (if (and (empty? eq) (empty? joy))
+      (ver-time message)
+      (-> (p/let [conteudo (csv-time cid pid)
+                  media    (MessageMedia. "text/csv"
+                                          (.toString (js/Buffer.from conteudo "utf8") "base64")
+                                          "meu-time-pokemon.csv")]
+            {:documento media
+             :texto (str (cabecalho) "🧑‍🎓 *Nível de treinador:* " (treinador/nivel-jogador cid pid)
+                         "\n\n🎒 *Seu time:* " (+ (count eq) (count joy)) " pokémon na planilha em anexo"
+                         (when (seq joy) (str ", sendo " (count joy) " com a Enfermeira Joy"))
+                         ".\n\nUse " config/prefix "pokemon time (sem csv) pra ver os cartões com as fotos.")})
+          (p/catch (fn [err]
+                     (js/console.error "Erro ao gerar CSV do time:" err)
+                     (ver-time message)))))))
 
 (def ^:private limite-legenda 1000)
 (def ^:private minimo-descricao 60)
@@ -2510,7 +2585,9 @@
   coleção e !pokemon pokedex <número> abre a ficha completa do pokémon nessa
   posição do seu time (stats de batalha, golpes, XP/nível mais número, tipo,
   altura, peso, habilidades, evolução e descrição da espécie); !pokemon time
-  mostra seu time capturado; !pokemon escolher <número> troca qual está
+  mostra seu time capturado em cartões com as fotos, e !pokemon time csv
+  manda a mesma lista como planilha .csv em anexo (sem as fotos, e incluindo
+  quem está com a Enfermeira Joy); !pokemon escolher <número> troca qual está
   ativo pra batalhar (durante uma caçada PvE, permite uma única troca e
   consome a ação do turno); !pokemon equipar <número> <item> equipa um item
   comprado na !loja; !pokemon removergolpe <número> remove de vez um golpe do
@@ -2547,7 +2624,10 @@
       (if (str/blank? (first resto))
         (ver-pokedex-pessoal message)
         (ver-pokemon-do-time message (first resto)))
-      (contains? #{"time" "equipe"} cmd) (resposta-time-visual message)
+      (contains? #{"time" "equipe"} cmd)
+      (if (contains? #{"csv" "planilha"} (first resto))
+        (resposta-time-csv message)
+        (resposta-time-visual message))
       (contains? #{"removergolpe" "removergolpes" "esquecer" "esquecergolpe"} cmd)
       (remover-golpe message (first resto))
       (contains? #{"cancelar" "cancela"} cmd) (cancelar-remocao message)
@@ -2561,7 +2641,7 @@
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
       (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon inicial, " config/prefix "pokemon cacar, "
-                              config/prefix "pokemon pokedex [número], " config/prefix "pokemon time, " config/prefix "pokemon escolher <número>, "
+                              config/prefix "pokemon pokedex [número], " config/prefix "pokemon time [csv], " config/prefix "pokemon escolher <número>, "
                               config/prefix "pokemon equipar <número> <item>, "
                               config/prefix "pokemon removergolpe <número>, "
                               config/prefix "pokemon doar <número>, " config/prefix "pokemon (abrir/entrar), "
