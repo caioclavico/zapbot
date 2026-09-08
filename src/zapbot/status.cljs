@@ -12,10 +12,10 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["Caçadas PvE permitem trocar de Pokémon somente na primeira ação da batalha"
-   "A troca consome o turno e permite o contra-ataque do Pokémon selvagem"
-   "HP e status do Pokémon substituído são preservados"
-   "Pokémon desmaiados não podem entrar durante a troca"])
+  [(str "Novo comando " config/prefix "pokemon treinador mostra o perfil do treinador")
+   "Confira o nível, XP do treinador e Pokémon ativo"
+   "Veja a sequência atual e o recorde de capturas, preservado ao encerrar a sequência"
+   "Insígnias por marcos de vitórias e capturas seguidas, com requisitos para desbloquear"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))
