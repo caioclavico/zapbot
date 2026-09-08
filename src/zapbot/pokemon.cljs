@@ -1486,6 +1486,27 @@
             "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉), ou " config/prefix
             "pokemon joy para enviar os feridos à Enfermeira Joy.")))))
 
+(defn- ver-treinador [message]
+  (let [cid (chat-id message)
+        pid (jogador-id message)
+        {:keys [nivel xp xp-atual xp-necessario sequencia recorde insignias]}
+        (treinador/perfil-treinador cid pid)
+        [ativo] (treinador/pokemon-ativo cid pid)]
+    (p/let [nome (nome-de message)]
+      (str "🧢 *Treinador: " nome "*\n\n"
+           "⭐ Nível do treinador: " nivel
+           "\n✨ XP total do treinador: " xp
+           "\nPróximo nível: " xp-atual "/" xp-necessario " XP (1 XP por vitória)"
+           "\n🔥 Sequência atual: " sequencia " capturas"
+           "\n🏆 Maior sequência de capturas: " recorde
+           "\n\n⚡ Pokémon ativo: "
+           (if ativo (str "*" (:nome ativo) "* — nível " (or (:nivel ativo) 1))
+               "Nenhum")
+           "\n\n🎖️ *Insígnias: " (count (filter :conquistada? insignias)) "/" (count insignias) "*\n"
+           (str/join "\n" (map (fn [{:keys [nome requisito conquistada?]}]
+                                 (str (if conquistada? "🏅" "🔒") " " nome " — " requisito))
+                               insignias))))))
+
 (defn- ver-pokedex-pessoal [message]
   (let [cid       (chat-id message)
         pid       (jogador-id message)
@@ -2581,7 +2602,8 @@
 (defn jogar
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
   batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
-  selvagem do bioma/horário atual; !pokemon pokedex mostra o resumo da sua
+  selvagem do bioma/horário atual; !pokemon treinador mostra insígnias,
+  recorde de capturas, XP e Pokémon ativo; !pokemon pokedex mostra o resumo da sua
   coleção e !pokemon pokedex <número> abre a ficha completa do pokémon nessa
   posição do seu time (stats de batalha, golpes, XP/nível mais número, tipo,
   altura, peso, habilidades, evolução e descrição da espécie); !pokemon time
@@ -2618,6 +2640,7 @@
     (cond
       (str/blank? args) (iniciar-ou-entrar message)
       (= cmd "sair") (sair message)
+      (= cmd "treinador") (ver-treinador message)
       (contains? #{"inicial" "iniciais"} cmd) (escolher-inicial message (first resto))
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
       (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd)
@@ -2641,7 +2664,7 @@
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
       (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon inicial, " config/prefix "pokemon cacar, "
-                              config/prefix "pokemon pokedex [número], " config/prefix "pokemon time [csv], " config/prefix "pokemon escolher <número>, "
+                              config/prefix "pokemon treinador, " config/prefix "pokemon pokedex [número], " config/prefix "pokemon time [csv], " config/prefix "pokemon escolher <número>, "
                               config/prefix "pokemon equipar <número> <item>, "
                               config/prefix "pokemon removergolpe <número>, "
                               config/prefix "pokemon doar <número>, " config/prefix "pokemon (abrir/entrar), "
