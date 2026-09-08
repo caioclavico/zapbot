@@ -301,9 +301,3 @@ src/zapbot/
    resposta (string) ou uma promise que resolva para uma string.
 2. Registre o comando em `zapbot.router/processar` (dentro do `case`).
 3. Atualize `zapbot.router/texto-ajuda` com a descrição do novo comando.
-
-### Perfil do treinador Pokémon
-
-Use `!pokemon treinador` para ver o nível e XP do treinador, Pokémon ativo, sequência atual, recorde de capturas e insígnias conquistadas ou bloqueadas. O treinador recebe 1 XP por vitória e sobe de nível a cada 3 XP; esse XP é separado do XP do Pokémon. As insígnias reconhecem 1, 10, 50 e 100 vitórias, além de sequências de 3, 5, 10 e 20 capturas.
-
-O recorde é preservado quando uma sequência termina. Para contas antigas, parte da sequência atual salva: sequências anteriores à implementação não podem ser recuperadas.

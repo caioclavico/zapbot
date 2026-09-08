@@ -60,13 +60,6 @@
                                                                #js {:caption (str "🎒 Página " (inc idx) "/" total)}))))
                                            (p/resolved nil)
                                            (map-indexed vector medias)))
-                    ;; documento (ex.: !pokemon time csv): manda o texto primeiro e o
-                    ;; arquivo em seguida - legenda em documento não aparece de forma
-                    ;; confiável no WhatsApp
-                    (:documento resposta) (-> (.reply message (:texto resposta))
-                                              (p/then (fn [_]
-                                                        (.reply message (:documento resposta) nil
-                                                                #js {:sendMediaAsDocument true}))))
                     (:media resposta) (.reply message (:media resposta) nil #js {:caption (:texto resposta)})
                     ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
                     ;; de quem for a vez) resolvem {:texto :mentions} em vez de

@@ -334,10 +334,6 @@
 (defn sequencia-capturas [cid pid]
   (get (conta cid pid) "sequencia-capturas" 0))
 
-(defn maior-sequencia-capturas [cid pid]
-  (max (sequencia-capturas cid pid)
-       (get (conta cid pid) "maior-sequencia-capturas" 0)))
-
 (defn registrar-captura!
   "Registra a espécie na Pokédex pessoal, incrementa a sequência e retorna
   a nova sequência de capturas."
@@ -347,9 +343,6 @@
            (fn [c]
              (-> (or c conta-vazia)
                  (update "sequencia-capturas" (fnil inc 0))
-                 (#(assoc % "maior-sequencia-capturas"
-                          (max (get % "maior-sequencia-capturas" 0)
-                               (get % "sequencia-capturas" 0))))
                  (update-in ["pokedex" chave]
                             (fn [entrada]
                               {"nome" (:nome pokemon)
@@ -359,12 +352,7 @@
     (sequencia-capturas cid pid)))
 
 (defn quebrar-sequencia-capturas! [cid pid]
-  (swap! contas update-in [cid pid]
-         (fn [c]
-           (assoc (or c conta-vazia)
-                  "maior-sequencia-capturas" (max (get c "maior-sequencia-capturas" 0)
-                                                  (get c "sequencia-capturas" 0))
-                  "sequencia-capturas" 0)))
+  (swap! contas assoc-in [cid pid "sequencia-capturas"] 0)
   (persistir!))
 
 (defn pokedex-pessoal [cid pid]
@@ -498,24 +486,3 @@
   (swap! contas update-in [cid pid]
          (fn [c] (update (or c conta-vazia) "vitorias-treinador" (fnil inc 0))))
   (persistir!))
-
-(defn perfil-treinador
-  "XP acompanha a progressão existente: 1 por vitória, 3 por nível.
-  Insígnias são conquistas permanentes por vitórias e recordes de captura."
-  [cid pid]
-  (let [xp (get (conta cid pid) "vitorias-treinador" 0)
-        recorde (maior-sequencia-capturas cid pid)]
-    {:nivel (nivel-jogador cid pid)
-     :xp xp :xp-atual (mod xp vitorias-treinador-por-nivel)
-     :xp-necessario vitorias-treinador-por-nivel
-     :sequencia (sequencia-capturas cid pid) :recorde recorde
-     :insignias (vec (for [[nome requisito valor minimo]
-                          [["Primeira vitória" "1 vitória" xp 1]
-                           ["Batalhador" "10 vitórias" xp 10]
-                           ["Veterano" "50 vitórias" xp 50]
-                           ["Campeão" "100 vitórias" xp 100]
-                           ["Capturador" "3 capturas seguidas" recorde 3]
-                           ["Caçador" "5 capturas seguidas" recorde 5]
-                           ["Especialista" "10 capturas seguidas" recorde 10]
-                           ["Mestre da captura" "20 capturas seguidas" recorde 20]]]
-                       {:nome nome :requisito requisito :conquistada? (>= valor minimo)}))}))
