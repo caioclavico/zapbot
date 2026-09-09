@@ -10,6 +10,7 @@
   formato próprio (ver pokemon->registro/registro->pokemon), diferente do
   mapa interno (chaves keyword) que o zapbot.pokemon usa durante a batalha."
   (:require [clojure.string :as str]
+            [zapbot.golpes :as golpes]
             [zapbot.armazenamento :as armazenamento]))
 
 (defonce ^:private contas (atom (or (armazenamento/obter "treinador") {})))
@@ -25,7 +26,7 @@
   (get-in @contas [cid pid] conta-vazia))
 
 (defn- golpe->registro [g]
-  {"nome-exibicao" (:nome-exibicao g) "tipo" (:tipo g) "poder" (:poder g) "classe" (name (:classe g))
+  {"slug" (golpes/chave g) "nome-exibicao" (:nome-exibicao (golpes/traduzir g)) "tipo" (:tipo g) "poder" (:poder g) "classe" (name (:classe g))
    "alvo" (when (:alvo g) (name (:alvo g)))
    "precisao" (:precisao g) "status-causado" (some-> (:status-causado g) name)
    "chance-status" (:chance-status g) "cura" (:cura g) "dreno" (:dreno g)
@@ -35,7 +36,7 @@
                         (:alteracoes g))})
 
 (defn- golpe<-registro [g]
-  {:nome-exibicao (get g "nome-exibicao") :tipo (get g "tipo") :poder (get g "poder")
+  {:slug (get g "slug") :nome-exibicao (get g "nome-exibicao") :tipo (get g "tipo") :poder (get g "poder")
    :classe (keyword (get g "classe"))
    :alvo (when (get g "alvo") (keyword (get g "alvo")))
    :precisao (get g "precisao") :status-causado (some-> (get g "status-causado") keyword)
@@ -78,14 +79,12 @@
   Se faltar, concede um ataque básico mesmo antes do nível normal de aprendizado.
   Preserva os golpes existentes; com quatro, substitui somente o último."
   [golpes tipos]
-  (let [golpes (vec golpes)]
-    (if (some #(and (contains? (set tipos) (:tipo %))
-                    (contains? #{:fisico :especial} (:classe %))
-                    (pos? (or (:poder %) 0))) golpes)
+  (let [golpes (golpes/unicos golpes)]
+    (if (some #(golpes/ataque-do-tipo? % tipos) golpes)
       golpes
       (if-let [[nome poder classe] (get ataques-iniciais (first tipos))]
         (conj (vec (take 3 golpes))
-              {:nome-exibicao nome :tipo (first tipos) :poder poder :classe classe})
+              (golpes/traduzir {:nome-exibicao nome :tipo (first tipos) :poder poder :classe classe}))
         golpes))))
 
 (defn pokemon->registro
@@ -95,8 +94,8 @@
   {"nome" (:nome pokemon) "imagem" (:imagem pokemon) "tipos" (vec (:tipos pokemon))
    "habilidade" (:habilidade pokemon) "hp" (:hp pokemon) "ataque" (:ataque pokemon)
    "defesa" (:defesa pokemon) "atq-esp" (:atq-esp pokemon) "def-esp" (:def-esp pokemon)
-   "veloc" (:veloc pokemon) "golpes" (mapv golpe->registro (:golpes pokemon))
-   "versao-golpes" versao-golpes "ataque-tipo-inicial" true
+   "veloc" (:veloc pokemon) "golpes" (mapv golpe->registro (garantir-ataque-do-tipo (:golpes pokemon) (:tipos pokemon)))
+   "versao-golpes" versao-golpes "ataque-tipo-inicial" true "versao-traducao-golpes" 1
    "hp-atual" hp-atual "status" (when status (name status)) "nivel" (or (:nivel pokemon) 1)
    "raridade" (or (:raridade pokemon) "comum") "versao-raridade" versao-raridade
    "lendario-api" (boolean (:lendario-api? pokemon))
@@ -185,17 +184,15 @@
        (every? true? (map #(<= (js/Math.abs (- %1 %2)) 5) (sort a) (sort b)))))
 
 (defn corrigir-ataques-iniciais! [cid pid]
-  (let [eq (equipe cid pid)]
-    (when (some #(not (get % "ataque-tipo-inicial")) eq)
-      (swap! contas update-in [cid pid "equipe"]
-             (fn [registros]
-               (mapv (fn [r]
-                       (if (get r "ataque-tipo-inicial") r
-                         (assoc r "ataque-tipo-inicial" true
-                                "golpes" (mapv golpe->registro
-                                               (garantir-ataque-do-tipo
-                                                (mapv golpe<-registro (get r "golpes"))
-                                                (get r "tipos")))))) registros)))
+  (let [corrigir (fn [r]
+                   (let [gs (mapv golpe<-registro (get r "golpes"))]
+                     (assoc r "ataque-tipo-inicial" true "versao-traducao-golpes" 1
+                            "golpes" (mapv golpe->registro (garantir-ataque-do-tipo gs (get r "tipos")))
+                            "golpes-removidos" (mapv golpes/identificador (get r "golpes-removidos" [])))))
+        eq (equipe cid pid)
+        nova (mapv corrigir eq)]
+    (when (not= eq nova)
+      (swap! contas assoc-in [cid pid "equipe"] nova)
       (persistir!))))
 
 (defn tem-pokemon? [cid pid]
@@ -238,7 +235,7 @@
   (let [idx (indice-ativo cid pid)]
     (when (get (equipe cid pid) idx)
       (swap! contas update-in [cid pid "equipe" idx]
-             #(assoc % "golpes" (mapv golpe->registro golpes) "versao-golpes" versao-golpes))
+             #(assoc % "golpes" (mapv golpe->registro (garantir-ataque-do-tipo golpes (get % "tipos"))) "versao-golpes" versao-golpes))
       (persistir!)
       true)))
 
@@ -258,7 +255,9 @@
   Retorna true se aprendeu, nil se não havia vaga ou pokémon no índice informado."
   [cid pid idx golpe]
   (let [registro (get (equipe cid pid) idx)]
-    (when (and registro (< (count (get registro "golpes")) maximo-golpes))
+    (when (and registro (< (count (get registro "golpes")) maximo-golpes)
+               (not-any? #(= (golpes/chave golpe) (golpes/chave (golpe<-registro %)))
+                          (get registro "golpes")))
       (swap! contas update-in [cid pid "equipe" idx]
              #(update % "golpes" (fn [gs] (conj (vec gs) (golpe->registro golpe)))))
       (persistir!)
@@ -273,7 +272,7 @@
   NOME (e não por posição) porque a lista de golpes é regerada inteira a
   cada subida de nível - ver zapbot.pokemon/atualizar-golpes-por-nivel!."
   [registro]
-  (set (get registro "golpes-removidos" [])))
+  (set (map golpes/identificador (get registro "golpes-removidos" []))))
 
 (defn golpes-removidos-ativo
   "golpes-removidos do pokémon ativo do jogador."
@@ -288,14 +287,16 @@
   (let [idx      (indice-ativo cid pid)
         registro (get (equipe cid pid) idx)
         golpe    (get (vec (get registro "golpes")) indice)]
-    (when golpe
+    (when (and golpe
+               (some #(golpes/ataque-do-tipo? (golpe<-registro %) (get registro "tipos"))
+                     (keep-indexed (fn [i g] (when (not= i indice) g)) (get registro "golpes"))))
       (let [nome (get golpe "nome-exibicao")]
         (swap! contas update-in [cid pid "equipe" idx]
                (fn [r]
                  (-> r
                      (update "golpes" #(let [v (vec %)]
                                          (vec (concat (subvec v 0 indice) (subvec v (inc indice))))))
-                     (update "golpes-removidos" #(vec (distinct (conj (vec %) nome)))))))
+                     (update "golpes-removidos" #(vec (distinct (conj (vec %) (golpes/chave (golpe<-registro golpe)))))))))
         (persistir!)
         nome))))
 
@@ -589,6 +590,9 @@
                     (assoc "nome" nome-novo "imagem" imagem "tipos" (vec tipos) "habilidade" habilidade
                            "hp" hp "ataque" ataque "defesa" defesa "atq-esp" atq-esp "def-esp" def-esp
                            "veloc" veloc)
+                    (update "golpes" (fn [gs]
+                                        (mapv golpe->registro
+                                              (garantir-ataque-do-tipo (mapv golpe<-registro gs) tipos))))
                     (update "hp-atual" (fn [hp-atual] (if (pos? hp-atual) (+ hp-atual incremento-hp) 0)))))
         (persistir!)
         true)

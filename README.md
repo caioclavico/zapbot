@@ -384,4 +384,22 @@ Pokémon novos começam com pelo menos um ataque ofensivo de um de seus tipos.
 Quando ainda não aprenderiam um por nível, recebem um ataque básico do tipo
 principal (por exemplo, Jato de Água para Squirtle). Coleções antigas recebem
 a correção no próximo comando Pokémon fora de batalha; com quatro golpes, apenas
-o último é substituído. Essa correção ocorre uma vez e não desfaz remoções futuras.
+o último é substituído. A correção também elimina duplicatas e mantém o ataque obrigatório; remover o último ataque do próprio tipo é bloqueado.
+
+
+### Golpes em português e sem duplicatas (0.7.3)
+
+O bot identifica os golpes pelo slug da PokeAPI, preservado junto com o nome
+traduzido. Assim, `Water Gun` e `Jato de Água` representam o mesmo golpe.
+O catálogo local cobre os 937 golpes consultados em 09/09/2026. Usa os nomes em
+português disponíveis no conjunto público [pogo-data-api](https://github.com/WatWowMap/pogo-data-api/tree/master/data/v1/translations),
+complementados por traduções locais do bot; nem todos os nomes são oficiais.
+Os identificadores vêm do [catálogo PokeAPI](https://github.com/PokeAPI/pokeapi/tree/master/data/v2/csv).
+Golpes futuros ainda desconhecidos mantêm seu nome original até atualizar o catálogo.
+
+A correção da coleção é aplicada ao próximo comando Pokémon fora de batalha:
+traduz os nomes, elimina repetições sem preencher automaticamente as vagas extras
+e garante ao menos um ataque ofensivo de um dos tipos. Pokémon na Joy passam pela
+mesma correção ao retornar. O histórico de golpes esquecidos também é normalizado,
+para impedir que a troca de idioma permita reaprendê-los. A garantia do ataque do
+próprio tipo, introduzida durante o desenvolvimento, faz parte da versão 0.7.3.

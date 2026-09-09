@@ -12,16 +12,12 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["Pokémon começam com pelo menos um ataque ofensivo do próprio tipo; coleção antiga corrigida automaticamente"
-   "Treinador com progressão de nível: 5, 7, 9, 11... XP por nível, preservando o XP acumulado"
-   "Insígnias concedem 3, 6, 12 ou 24 XP ao treinador conforme a dificuldade, uma vez por conquista"
-   "Perfil mostra recompensas de insígnias; conquistas antigas também contam"
-   "Capturas seguidas: 1ª +0, 2ª +1 e 3ª em diante +2 XP de bônus sobre a raridade"
-   "Resultado da captura detalha o XP da raridade e o bônus da sequência"
-   "XP da liga por Pokémon: 0/1/2/3 nocautes rendem 1/3/5/7 XP ao final da partida"
-   "Todos que entraram em campo recebem XP; reservas que não lutaram ficam sem recompensa"
-   "Resumo final mostra os nocautes, XP e subidas de nível de cada participante"
-   "Evolução, aprendizado e saída da liga aplicados a cada Pokémon recompensado"])
+  ["Golpes em português, com catálogo local de 937 traduções"
+   "Golpes repetidos corrigidos por identificador, inclusive nomes antigos em inglês"
+   "Todo Pokémon mantém pelo menos um ataque ofensivo de um de seus tipos"
+   "Coleções antigas corrigidas automaticamente fora de batalha, preservando os demais golpes"
+   "Remoção do último ataque do próprio tipo bloqueada"])
+
 
 
 

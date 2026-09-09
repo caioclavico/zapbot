@@ -8,6 +8,7 @@
   a reinício do bot)."
   (:require [promesa.core :as p]
             [clojure.string :as str]
+            [zapbot.golpes :as golpes]
             ["whatsapp-web.js" :as wwjs]
             ["sharp" :as sharp]
             [zapbot.config :as config]
@@ -101,7 +102,7 @@
   (js/Math.round (+ media-stat-referencia (* fator-compressao-stat (- valor media-stat-referencia)))))
 
 (def ^:private golpe-padrao
-  {:nome-exibicao "Investida" :tipo "normal" :poder 40 :classe :fisico})
+  {:slug "tackle" :nome-exibicao "Investida" :tipo "normal" :poder 40 :classe :fisico})
 
 (def ^:private nome-stat->atributo
   {"attack" :ataque "defense" :defesa "special-attack" :atq-esp
@@ -130,8 +131,10 @@
                 chance-status-bruta (or (:ailment_chance meta) (:effect_chance d))
                 chance-status (if (and status (= "status" classe) (zero? (or chance-status-bruta 0)))
                                 100 chance-status-bruta)
-                base       {:nome-exibicao (->> (str/split (:name d) #"-")
-                                                 (map str/capitalize) (str/join " "))
+                base       {:slug (:name d)
+                            :nome-exibicao (or (some #(when (= "pt-br" (get-in % [:language :name])) (:name %)) (:names d))
+                                               (get golpes/nomes-pt (:name d))
+                                               (->> (str/split (:name d) #"-") (map str/capitalize) (str/join " ")))
                             :tipo (get-in d [:type :name])
                             :alvo (if (alvo-proprio? (get-in d [:target :name])) :proprio :adversario)
                             :precisao (:accuracy d)
@@ -168,14 +171,8 @@
 (defn- ordenar-por-poder [golpes]
   (sort-by #(or (:poder %) 0) > golpes))
 
-(defn- remover-golpes-repetidos [golpes]
-  (second
-   (reduce (fn [[vistos resultado] golpe]
-             (let [chave (str/lower-case (:nome-exibicao golpe))]
-               (if (contains? vistos chave)
-                 [vistos resultado]
-                 [(conj vistos chave) (conj resultado golpe)])))
-           [#{} []] golpes)))
+(defn- remover-golpes-repetidos [gs]
+  (golpes/unicos gs))
 
 (defn- golpes-ordenados
   "Todos os golpes válidos que a espécie aprende por nível até `nivel`, sem
@@ -806,7 +803,7 @@
   cujo dono removeu todos - devolve a lista original: melhor um golpe
   indesejado do que um pokémon que não consegue atacar."
   [golpes removidos]
-  (let [restantes (vec (remove #(contains? removidos (:nome-exibicao %)) golpes))]
+  (let [restantes (vec (remove #(contains? removidos (golpes/chave %)) golpes))]
     (if (seq restantes) restantes (vec golpes))))
 
 (defn- atualizar-golpes-por-nivel!
@@ -843,10 +840,10 @@
       (when (< (count (:golpes pokemon)) treinador/maximo-golpes)
         (-> (p/let [dados     (buscar-pokemon-por-nome (str/lower-case (:nome pokemon)))
                     ordenados (golpes-ordenados (:moves-brutos dados) (:tipos pokemon) nivel)]
-              (let [conhecidos (set (map :nome-exibicao (:golpes pokemon)))
+              (let [conhecidos (set (map golpes/chave (:golpes pokemon)))
                     removidos  (treinador/golpes-removidos (get (treinador/equipe cid pid) idx))
-                    novo       (first (remove #(or (contains? conhecidos (:nome-exibicao %))
-                                                   (contains? removidos (:nome-exibicao %)))
+                    novo       (first (remove #(or (contains? conhecidos (golpes/chave %))
+                                                   (contains? removidos (golpes/chave %)))
                                               ordenados))]
                 (when (and novo (treinador/aprender-golpe-no-indice! cid pid idx novo))
                   (.reply message (str (cabecalho) "📘 *" (:nome pokemon) "* chegou ao nível " nivel
@@ -2032,6 +2029,11 @@
                 (count golpes) ">\n\n🎯 *Golpes de " (:nome pokemon) ":*\n"
                 (menu-golpes pokemon [] nil))
 
+           (not-any? #(golpes/ataque-do-tipo? % (:tipos pokemon))
+                     (keep-indexed (fn [i g] (when (not= i indice) g)) golpes))
+           (str (cabecalho) "🚫 Esse é o último ataque ofensivo do próprio tipo. "
+                "Mantenha pelo menos um ataque de um dos tipos do Pokémon.")
+
            :else
            (let [golpe    (get golpes indice)
                  token    (str (js/Date.now) "-" (rand-int 100000))
@@ -2545,12 +2547,12 @@
              (atacar message indice-texto))
 
            (= :transform (:classe (nth (:golpes atacante) indice)))
-           (let [golpes-copiados (:golpes defensor)
+           (let [golpes-copiados (treinador/garantir-ataque-do-tipo (:golpes defensor) (:tipos atacante))
                  jogo-transformado (assoc-in jogo [:pokemons atacante-marca :golpes] golpes-copiados)
                  [jogo cura-restos] (aplicar-restos jogo-transformado atacante-marca)
                  [jogo dot]       (aplicar-dot jogo atacante-marca)
                  nomes-golpes     (str/join ", " (map :nome-exibicao golpes-copiados))
-                 msg              (str "🧬 *" (:nome atacante) "* usou *Transform* e copiou os golpes de *"
+                 msg              (str "🧬 *" (:nome atacante) "* usou *Transformação* e copiou os golpes de *"
                                        (:nome defensor) "*: " nomes-golpes "!"
                                        (when (pos? cura-restos) (str "\n🍱 Restos recuperou " cura-restos " HP!"))
                                        (when (pos? dot)
@@ -2782,7 +2784,8 @@
   (let [cid          (chat-id message)
         pid          (jogador-id message)
         _            (treinador/recolher-curados! cid pid)
-        _            (when (and (not (get @jogos cid)) (not (get @cacadas-selvagens cid)))
+        _            (when (and (not (some #{pid} (vals (:jogadores (get @jogos cid)))))
+                              (not= pid (:pid (get @cacadas-selvagens cid))))
                        (treinador/corrigir-ataques-iniciais! cid pid))
         args         (str/trim (str/lower-case (or args "")))
         [cmd & resto] (str/split args #"\s+")]
