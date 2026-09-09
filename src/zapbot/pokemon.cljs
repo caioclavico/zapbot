@@ -46,7 +46,7 @@
 (defonce ^:private limites-turno (atom {}))
 
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
-(declare enviar-imagem parse-indice-golpe estado-cacada turno-selvagem)
+(declare enviar-imagem enviar-aviso-temporizado parse-indice-golpe estado-cacada turno-selvagem)
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -871,15 +871,19 @@
                                                 (contains? oferecidos (golpes/chave %))) ordenados))
                        resultado (when novo (treinador/oferecer-golpe! cid pid idx novo))]
                    (when resultado
-                     (.reply message
-                             (str (cabecalho) "📘 *" (:nome pokemon) "* (nº " (inc idx) ") chegou ao nível " nivel
-                                  (if (= resultado :aprendido) " e aprendeu " " e pode aprender ")
-                                  (emoji-golpe novo) " *" (:nome-exibicao novo) "*!"
-                                  (when (= resultado :pendente)
-                                    (str "\nSelecione esse Pokémon com " config/prefix "pokemon escolher " (inc idx)
-                                         " e veja a oferta com " config/prefix "pokemon aprender."
-                                         "\nA oferta fica salva até você substituir um golpe ou recusar."))))))))
-             (p/catch (fn [err] (js/console.error "Erro ao oferecer golpe por nível:" err) nil))))))))
+                     (enviar-aviso-temporizado
+                      cid message
+                      (str (cabecalho) "📘 *" (:nome pokemon) "* (nº " (inc idx) ") chegou ao nível " nivel
+                           (if (= resultado :aprendido) " e aprendeu " " e pode aprender ")
+                           (emoji-golpe novo) " *" (:nome-exibicao novo) "*!"
+                           (when (= resultado :pendente)
+                             (str "\nSelecione esse Pokémon com " config/prefix "pokemon escolher " (inc idx)
+                                  " e veja a oferta com " config/prefix "pokemon aprender."
+                                  "\nA oferta fica salva até você substituir um golpe ou recusar.")))
+                       [])))))
+              (p/catch (fn [err]
+                         (js/console.error "Erro ao oferecer golpe por nível:" err)
+                         nil))))))))
 
 (defn- aviso-saida-liga [subida]
   (when (seq (:ligas-removidas subida))
@@ -2866,7 +2870,10 @@
 
 (defn- enviar-aviso-temporizado [cid message texto mentions]
   (if-let [client @cliente-whatsapp]
-    (.sendMessage client cid texto #js {:mentions (clj->js mentions)})
+    (-> (.sendMessage client cid texto #js {:mentions (clj->js mentions)})
+        (p/catch (fn [err]
+                   (js/console.error "Erro ao enviar aviso assíncrono pelo cliente:" err)
+                   (.reply message texto nil #js {:mentions (clj->js mentions)}))))
     (.reply message texto nil #js {:mentions (clj->js mentions)})))
 
 (defn- vigiar-limite-turno!
