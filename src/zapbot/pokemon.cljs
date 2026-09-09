@@ -208,7 +208,8 @@
                                   (take 1 status)))
           escolhidos (->> ordenados (remove (set base)) (concat base)
                           remover-golpes-repetidos (take treinador/maximo-golpes) vec)]
-      (if (seq escolhidos) escolhidos [golpe-padrao]))))
+      (treinador/garantir-ataque-do-tipo
+       (if (seq escolhidos) escolhidos [golpe-padrao]) tipos))))
 
 (defn- com-golpes
   ([pokemon] (com-golpes pokemon (or (:nivel pokemon) 1)))
@@ -2781,6 +2782,8 @@
   (let [cid          (chat-id message)
         pid          (jogador-id message)
         _            (treinador/recolher-curados! cid pid)
+        _            (when (and (not (get @jogos cid)) (not (get @cacadas-selvagens cid)))
+                       (treinador/corrigir-ataques-iniciais! cid pid))
         args         (str/trim (str/lower-case (or args "")))
         [cmd & resto] (str/split args #"\s+")]
     (cond

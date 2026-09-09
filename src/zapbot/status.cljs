@@ -12,7 +12,8 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["Treinador com progressão de nível: 5, 7, 9, 11... XP por nível, preservando o XP acumulado"
+  ["Pokémon começam com pelo menos um ataque ofensivo do próprio tipo; coleção antiga corrigida automaticamente"
+   "Treinador com progressão de nível: 5, 7, 9, 11... XP por nível, preservando o XP acumulado"
    "Insígnias concedem 3, 6, 12 ou 24 XP ao treinador conforme a dificuldade, uma vez por conquista"
    "Perfil mostra recompensas de insígnias; conquistas antigas também contam"
    "Capturas seguidas: 1ª +0, 2ª +1 e 3ª em diante +2 XP de bônus sobre a raridade"

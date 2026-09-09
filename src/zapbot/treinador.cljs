@@ -62,6 +62,32 @@
           (< total-original 570) "epico"
           :else "lendario")))
 
+(def ^:private ataques-iniciais
+  {"normal" ["Investida" 40 :fisico] "fire" ["Brasa" 40 :especial]
+   "water" ["Jato de Água" 40 :especial] "electric" ["Choque do Trovão" 40 :especial]
+   "grass" ["Chicote de Cipó" 45 :fisico] "ice" ["Neve em Pó" 40 :especial]
+   "fighting" ["Soco Rápido" 40 :fisico] "poison" ["Ferrão Venenoso" 15 :fisico]
+   "ground" ["Tapa de Lama" 20 :especial] "flying" ["Bicada" 35 :fisico]
+   "psychic" ["Confusão" 50 :especial] "bug" ["Picada" 60 :fisico]
+   "rock" ["Arremesso de Pedra" 50 :fisico] "ghost" ["Lambida" 30 :fisico]
+   "dragon" ["Tornado" 40 :especial] "dark" ["Mordida" 60 :fisico]
+   "steel" ["Garra de Metal" 50 :fisico] "fairy" ["Vento de Fada" 40 :especial]})
+
+(defn garantir-ataque-do-tipo
+  "Regra dos iniciais: pelo menos um ataque ofensivo de um dos tipos.
+  Se faltar, concede um ataque básico mesmo antes do nível normal de aprendizado.
+  Preserva os golpes existentes; com quatro, substitui somente o último."
+  [golpes tipos]
+  (let [golpes (vec golpes)]
+    (if (some #(and (contains? (set tipos) (:tipo %))
+                    (contains? #{:fisico :especial} (:classe %))
+                    (pos? (or (:poder %) 0))) golpes)
+      golpes
+      (if-let [[nome poder classe] (get ataques-iniciais (first tipos))]
+        (conj (vec (take 3 golpes))
+              {:nome-exibicao nome :tipo (first tipos) :poder poder :classe classe})
+        golpes))))
+
 (defn pokemon->registro
   "Converte um pokémon (mapa interno do zapbot.pokemon, chaves keyword) +
   hp-atual/status pro formato persistido (chaves string) guardado na equipe."
@@ -70,7 +96,7 @@
    "habilidade" (:habilidade pokemon) "hp" (:hp pokemon) "ataque" (:ataque pokemon)
    "defesa" (:defesa pokemon) "atq-esp" (:atq-esp pokemon) "def-esp" (:def-esp pokemon)
    "veloc" (:veloc pokemon) "golpes" (mapv golpe->registro (:golpes pokemon))
-   "versao-golpes" versao-golpes
+   "versao-golpes" versao-golpes "ataque-tipo-inicial" true
    "hp-atual" hp-atual "status" (when status (name status)) "nivel" (or (:nivel pokemon) 1)
    "raridade" (or (:raridade pokemon) "comum") "versao-raridade" versao-raridade
    "lendario-api" (boolean (:lendario-api? pokemon))
@@ -157,6 +183,20 @@
 (defn times-compativeis? [a b]
   (and (= 3 (count a) (count b))
        (every? true? (map #(<= (js/Math.abs (- %1 %2)) 5) (sort a) (sort b)))))
+
+(defn corrigir-ataques-iniciais! [cid pid]
+  (let [eq (equipe cid pid)]
+    (when (some #(not (get % "ataque-tipo-inicial")) eq)
+      (swap! contas update-in [cid pid "equipe"]
+             (fn [registros]
+               (mapv (fn [r]
+                       (if (get r "ataque-tipo-inicial") r
+                         (assoc r "ataque-tipo-inicial" true
+                                "golpes" (mapv golpe->registro
+                                               (garantir-ataque-do-tipo
+                                                (mapv golpe<-registro (get r "golpes"))
+                                                (get r "tipos")))))) registros)))
+      (persistir!))))
 
 (defn tem-pokemon? [cid pid]
   (pos? (count (equipe cid pid))))

@@ -379,3 +379,9 @@ aos Pokémon. O novo nível do treinador também é usado na calibragem das caç
 O XP total existente é preservado ao aplicar a curva de níveis da versão 0.7.2.
 O nível exibido é recalculado pela nova curva e pode diminuir, sem perda de XP
 ou insígnias. O custo dos níveis dos Pokémon continua sendo 9 XP.
+
+Pokémon novos começam com pelo menos um ataque ofensivo de um de seus tipos.
+Quando ainda não aprenderiam um por nível, recebem um ataque básico do tipo
+principal (por exemplo, Jato de Água para Squirtle). Coleções antigas recebem
+a correção no próximo comando Pokémon fora de batalha; com quatro golpes, apenas
+o último é substituído. Essa correção ocorre uma vez e não desfaz remoções futuras.
