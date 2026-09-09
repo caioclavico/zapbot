@@ -12,13 +12,11 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  [(str "Filtro por tipo na Pokédex pessoal: " config/prefix "pokemon pokedex fogo")
-   "Pokédex pessoal mostra os números da coleção antes dos nomes para abrir as fichas"
-   "A cada 5 níveis, Pokémon aprendem com vaga ou recebem uma oferta de substituição"
-   (str "Escolha um golpe para substituir ou recuse com " config/prefix "pokemon aprender")
-   "Ofertas ficam salvas no Pokémon, sem apagar golpes nem expirar enquanto você decide"
-   (str "Golpes esquecidos ou recusados podem ser reaprendidos por 50 moedas: " config/prefix "pokemon reaprender")
-   "Trocas preservam pelo menos um ataque do próprio tipo e não permitem golpes duplicados"])
+  [(str "Filtros por tipo, nome ou nível no time: " config/prefix "pokemon time fogo")
+   "A visualização do time envia no máximo duas páginas para não lotar o chat de imagens"
+   (str "Os mesmos filtros agora funcionam na Pokédex pessoal: " config/prefix "pokemon pokedex nivel 25")
+   "A confirmação de troca informa o nome do novo Pokémon ativo"
+   "Avisos de inatividade de caçadas e batalhas voltaram a ser enviados no prazo"])
 
 
 
@@ -54,17 +52,17 @@
   uso 'agora' (a diferença entre as duas amostras)."
   []
   (p/create
-    (fn [resolve _reject]
-      (let [antes (cpu-totais)]
-        (js/setTimeout
-          (fn []
-            (let [depois      (cpu-totais)
-                  delta-total (- (:total depois) (:total antes))
-                  delta-idle  (- (:idle depois) (:idle antes))]
-              (resolve (if (pos? delta-total)
-                         (* 100 (- 1 (/ delta-idle delta-total)))
-                         0))))
-          300)))))
+   (fn [resolve _reject]
+     (let [antes (cpu-totais)]
+       (js/setTimeout
+        (fn []
+          (let [depois      (cpu-totais)
+                delta-total (- (:total depois) (:total antes))
+                delta-idle  (- (:idle depois) (:idle antes))]
+            (resolve (if (pos? delta-total)
+                       (* 100 (- 1 (/ delta-idle delta-total)))
+                       0))))
+        300)))))
 
 (defn- disco []
   (try
