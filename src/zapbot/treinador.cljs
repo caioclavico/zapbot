@@ -164,12 +164,14 @@
 (defn indice-ativo [cid pid]
   (get (conta cid pid) "ativo" 0))
 
-(defn pokemon-ativo
-  "[pokemon hp-atual status] do pokémon ativo do jogador, ou nil se ele
-  ainda não tiver nenhum na equipe."
-  [cid pid]
-  (when-let [registro (get (equipe cid pid) (indice-ativo cid pid))]
+(defn pokemon-no-indice [cid pid idx]
+  (when-let [registro (get (equipe cid pid) idx)]
     (registro->pokemon registro)))
+
+(defn pokemon-ativo
+  "[pokemon hp-atual status] do pokémon ativo do jogador, ou nil."
+  [cid pid]
+  (pokemon-no-indice cid pid (indice-ativo cid pid)))
 
 (defn definir-ativo!
   "Define o índice (0-based) ativo, se existir na equipe. Retorna true se
@@ -209,19 +211,22 @@
   "Quantos golpes um pokémon pode ter ao mesmo tempo."
   4)
 
-(defn aprender-golpe-ativo!
-  "Acrescenta um golpe ao pokémon ativo, se ainda houver vaga (ver
+(defn aprender-golpe-no-indice!
+  "Acrescenta um golpe ao pokémon no índice informado, se ainda houver vaga (ver
   maximo-golpes). Não mexe na lista de removidos: um golpe que o dono
   mandou remover não volta por aqui - quem escolhe o candidato já o exclui.
-  Retorna true se aprendeu, nil se não havia vaga ou pokémon ativo."
-  [cid pid golpe]
-  (let [idx      (indice-ativo cid pid)
-        registro (get (equipe cid pid) idx)]
+  Retorna true se aprendeu, nil se não havia vaga ou pokémon no índice informado."
+  [cid pid idx golpe]
+  (let [registro (get (equipe cid pid) idx)]
     (when (and registro (< (count (get registro "golpes")) maximo-golpes))
       (swap! contas update-in [cid pid "equipe" idx]
              #(update % "golpes" (fn [gs] (conj (vec gs) (golpe->registro golpe)))))
       (persistir!)
       true)))
+
+(defn aprender-golpe-ativo!
+  [cid pid golpe]
+  (aprender-golpe-no-indice! cid pid (indice-ativo cid pid) golpe))
 
 (defn golpes-removidos
   "Nomes dos golpes que o dono mandou remover desse pokémon. Guardados por
@@ -456,20 +461,29 @@
 (def ^:private xp-por-nivel 9)
 (def xp-por-vitoria 3)
 (def xp-por-derrota 1)
-(def ^:private vitorias-treinador-por-nivel 3)
 
-(defn ganhar-xp!
-  "Concede XP ao pokémon ATIVO do jogador; só sobe de nível de verdade
+(defn xp-por-nocautes
+  "XP de cada Pokémon que entrou na partida: 1, 3, 5 ou 7, até três nocautes."
+  [nocautes]
+  (+ 1 (* 2 (min 3 (max 0 nocautes)))))
+
+(defn bonus-xp-sequencia-capturas
+  "Bônus adicional à raridade: primeira captura +0, segunda +1, terceira em diante +2."
+  [sequencia]
+  (min 2 (max 0 (dec sequencia))))
+
+(defn ganhar-xp-no-indice!
+  "Concede XP ao pokémon no índice informado do jogador; só sobe de nível de verdade
   (nível/stats, respeitando o teto) a cada `xp-por-nivel` pontos acumulados.
   O HP atual ganha o mesmo
   incremento absoluto que o HP máximo quando sobe (não é um heal completo,
   só preserva o quanto já estava faltando); um pokémon desmaiado continua
   com 0 HP. Retorna {:nome :nivel} só
-  quando REALMENTE sobe de nível, nil caso contrário (sem pokémon ativo,
+  quando REALMENTE sobe de nível, nil caso contrário (sem pokémon no índice informado,
   já no nível máximo, ou ainda falta XP). Registros antigos de progresso
   por vitória são convertidos sem perder o avanço já conquistado."
-  [cid pid quantidade]
-  (let [idx (indice-ativo cid pid)]
+  [cid pid idx quantidade]
+  (do
     (when-let [registro (get (equipe cid pid) idx)]
       (let [nivel-atual (get registro "nivel" 1)]
         (when (< nivel-atual nivel-maximo)
@@ -504,6 +518,10 @@
                 (persistir!)
                 {:nome (get registro "nome") :nivel (inc nivel-atual) :ligas-removidas ligas-removidas}))))))))
 
+(defn ganhar-xp!
+  [cid pid quantidade]
+  (ganhar-xp-no-indice! cid pid (indice-ativo cid pid) quantidade))
+
 (defn subir-nivel!
   "Concede ao pokémon ativo o XP de uma vitória."
   [cid pid]
@@ -516,14 +534,14 @@
                (* xp-por-vitoria (get registro "vitorias-desde-nivel" 0)))
    :necessario xp-por-nivel})
 
-(defn evoluir-ativo!
+(defn evoluir-no-indice!
   "Substitui os campos derivados de espécie (nome/imagem/tipos/habilidade/
-  stats) do pokémon ATIVO do jogador - usado quando ele evolui. Golpes,
+  stats) do pokémon no índice informado do jogador - usado quando ele evolui. Golpes,
   status e nível não mudam; hp-atual ganha o mesmo incremento absoluto que
   o HP máximo (mesma regra do subir-nivel!). Retorna true se aplicou,
-  false se não tinha pokémon ativo."
-  [cid pid {:keys [nome-novo imagem tipos habilidade hp ataque defesa atq-esp def-esp veloc]}]
-  (let [idx (indice-ativo cid pid)]
+  false se não tinha pokémon no índice informado."
+  [cid pid idx {:keys [nome-novo imagem tipos habilidade hp ataque defesa atq-esp def-esp veloc]}]
+  (do
     (if-let [registro (get (equipe cid pid) idx)]
       (let [incremento-hp (- hp (get registro "hp"))]
         (swap! contas update-in [cid pid "equipe" idx]
@@ -531,48 +549,70 @@
                     (assoc "nome" nome-novo "imagem" imagem "tipos" (vec tipos) "habilidade" habilidade
                            "hp" hp "ataque" ataque "defesa" defesa "atq-esp" atq-esp "def-esp" def-esp
                            "veloc" veloc)
-                    (update "hp-atual" + incremento-hp)))
+                    (update "hp-atual" (fn [hp-atual] (if (pos? hp-atual) (+ hp-atual incremento-hp) 0)))))
         (persistir!)
         true)
       false)))
 
 
+(defn evoluir-ativo!
+  [cid pid dados]
+  (evoluir-no-indice! cid pid (indice-ativo cid pid) dados))
+
+(def ^:private catalogo-insignias
+  [{:nome "Primeira vitória" :requisito "1 vitória" :metrica :vitorias :minimo 1 :xp-recompensa 3}
+   {:nome "Batalhador" :requisito "10 vitórias" :metrica :vitorias :minimo 10 :xp-recompensa 6}
+   {:nome "Veterano" :requisito "50 vitórias" :metrica :vitorias :minimo 50 :xp-recompensa 12}
+   {:nome "Campeão" :requisito "100 vitórias" :metrica :vitorias :minimo 100 :xp-recompensa 24}
+   {:nome "Capturador" :requisito "3 capturas seguidas" :metrica :capturas :minimo 3 :xp-recompensa 3}
+   {:nome "Caçador" :requisito "5 capturas seguidas" :metrica :capturas :minimo 5 :xp-recompensa 6}
+   {:nome "Especialista" :requisito "10 capturas seguidas" :metrica :capturas :minimo 10 :xp-recompensa 12}
+   {:nome "Mestre da captura" :requisito "20 capturas seguidas" :metrica :capturas :minimo 20 :xp-recompensa 24}])
+
+(defn insignias-treinador [cid pid]
+  (let [metricas {:vitorias (get (conta cid pid) "vitorias-treinador" 0)
+                  :capturas (maior-sequencia-capturas cid pid)}]
+    (mapv #(assoc % :conquistada? (>= (get metricas (:metrica %)) (:minimo %)))
+          catalogo-insignias)))
+
+(defn xp-insignias [cid pid]
+  ;; Cada conquista permanente contribui uma única vez para o total. Derivar
+  ;; dos marcos persistidos também reconhece contas antigas, sem duplicar XP
+  ;; ao consultar o perfil, reiniciar o bot ou repetir uma sequência.
+  (reduce + 0 (map :xp-recompensa (filter :conquistada? (insignias-treinador cid pid)))))
+
+(defn xp-treinador [cid pid]
+  (+ (get (conta cid pid) "vitorias-treinador" 0) (xp-insignias cid pid)))
+
+(defn progresso-treinador
+  "Distribui o XP total entre níveis com custos de 5, 7, 9, 11... XP."
+  [xp]
+  (loop [nivel 1 restante (max 0 xp) necessario 5]
+    (if (< restante necessario)
+      {:nivel nivel :xp-atual restante :xp-necessario necessario}
+      (recur (inc nivel) (- restante necessario) (+ necessario 2)))))
+
 (defn nivel-jogador
-  "Nível do treinador (usado pra exibir em !pokemon time/cacar e calibrar a
-  força do pokémon selvagem sorteado na caçada) - contador próprio
-  (\"vitorias-treinador\"), independente do placar geral do !rank: nível 1
-  sem nenhuma vitória, +1 nível a cada `vitorias-treinador-por-nivel`
-  vitórias de
-  batalha em !pokemon (1 vitória = 1 nível subia rápido demais)."
+  "Nível calculado pelo XP de vitórias e insígnias. Também calibra as caçadas."
   [cid pid]
-  (inc (quot (get (conta cid pid) "vitorias-treinador" 0)
-             vitorias-treinador-por-nivel)))
+  (:nivel (progresso-treinador (xp-treinador cid pid))))
 
 (defn registrar-vitoria-treinador!
-  "Chamar quando o jogador vence uma batalha de !pokemon - soma 1 na
-  contagem que define o nível do treinador (ver nivel-jogador)."
+  "Registra uma vitória real. O XP das insígnias não altera esse contador."
   [cid pid]
   (swap! contas update-in [cid pid]
          (fn [c] (update (or c conta-vazia) "vitorias-treinador" (fnil inc 0))))
   (persistir!))
 
 (defn perfil-treinador
-  "XP acompanha a progressão existente: 1 por vitória, 3 por nível.
-  Insígnias são conquistas permanentes por vitórias e recordes de captura."
+  "Inclui o XP por vitórias e por insígnias permanentes, sem repetir recompensas."
   [cid pid]
-  (let [xp (get (conta cid pid) "vitorias-treinador" 0)
+  (let [xp (xp-treinador cid pid)
+        {:keys [nivel xp-atual xp-necessario]} (progresso-treinador xp)
         recorde (maior-sequencia-capturas cid pid)]
-    {:nivel (nivel-jogador cid pid)
-     :xp xp :xp-atual (mod xp vitorias-treinador-por-nivel)
-     :xp-necessario vitorias-treinador-por-nivel
+    {:nivel nivel
+     :xp xp :xp-insignias (xp-insignias cid pid)
+     :xp-atual xp-atual
+     :xp-necessario xp-necessario
      :sequencia (sequencia-capturas cid pid) :recorde recorde
-     :insignias (vec (for [[nome requisito valor minimo]
-                          [["Primeira vitória" "1 vitória" xp 1]
-                           ["Batalhador" "10 vitórias" xp 10]
-                           ["Veterano" "50 vitórias" xp 50]
-                           ["Campeão" "100 vitórias" xp 100]
-                           ["Capturador" "3 capturas seguidas" recorde 3]
-                           ["Caçador" "5 capturas seguidas" recorde 5]
-                           ["Especialista" "10 capturas seguidas" recorde 10]
-                           ["Mestre da captura" "20 capturas seguidas" recorde 20]]]
-                       {:nome nome :requisito requisito :conquistada? (>= valor minimo)}))}))
+     :insignias (insignias-treinador cid pid)}))

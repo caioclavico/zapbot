@@ -304,7 +304,7 @@ src/zapbot/
 
 ### Perfil do treinador Pokémon
 
-Use `!pokemon treinador` para ver o nível e XP do treinador, Pokémon ativo, sequência atual, recorde de capturas e insígnias conquistadas ou bloqueadas. O treinador recebe 1 XP por vitória e sobe de nível a cada 3 XP; esse XP é separado do XP do Pokémon. As insígnias reconhecem 1, 10, 50 e 100 vitórias, além de sequências de 3, 5, 10 e 20 capturas.
+Use `!pokemon treinador` para ver o nível e XP do treinador, Pokémon ativo, sequência atual, recorde de capturas e insígnias conquistadas ou bloqueadas. O treinador recebe 1 XP por vitória mais XP por insígnias conquistadas e precisa de 5 XP para chegar ao nível 2, mais 7 para o nível 3, mais 9 para o nível 4 e assim por diante (+2 XP no custo de cada próximo nível); esse XP é separado do XP do Pokémon. As insígnias reconhecem 1, 10, 50 e 100 vitórias, além de sequências de 3, 5, 10 e 20 capturas.
 
 O recorde é preservado quando uma sequência termina. Para contas antigas, parte da sequência atual salva: sequências anteriores à implementação não podem ser recuperadas.
 
@@ -321,8 +321,18 @@ Iniciante (1–10), Bronze (11–25), Prata (26–40), Ouro (41–60) e Diamante
 
 É necessário ter três Pokémon diferentes da faixa e nenhum desmaiado. Após cada
 nocaute, o próximo da escalação entra automaticamente e recebe a vez. A vitória,
-rank e moedas só são concedidos quando os três adversários caem. Como no PvP
-anterior, o Pokémon ativo ao término recebe XP (3 para o vencedor, 1 para o perdedor).
+rank e moedas só são concedidos quando os três adversários caem.
+
+Desde a versão 0.7.2, o XP é calculado por Pokémon, pelo número de adversários que
+ele derrotou na mesma partida: **0 nocautes = 1 XP, 1 = 3 XP, 2 = 5 XP e 3 = 7 XP**.
+Todos que entraram em campo recebem, inclusive os derrotados; reservas que não
+lutaram não recebem XP. Os nocautes são registrados antes de cada substituição,
+e as recompensas são pagas apenas ao terminar a partida. Quedas por status ou
+recuo contam para o Pokémon adversário que estava em campo; no nocaute simultâneo,
+ambos recebem um nocaute. Empate, desistência e tempo esgotado continuam sem XP.
+A contagem começa do zero a cada partida, sem sequência entre partidas.
+O resumo final mostra os nocautes e XP de cada participante. Cada 9 XP dão um nível.
+
 Ao subir além da faixa, ele sai automaticamente da escalação, mas continua na
 coleção; a liga e as outras vagas permanecem salvas. Use o comando de escalação
 para preencher as vagas antes da próxima batalha. Doação e enfermaria também
@@ -334,5 +344,38 @@ Sem adversário compatível, a batalha continua aguardando até o limite habitua
 30 minutos. A escalação fica bloqueada enquanto o jogador participa da batalha.
 As caçadas continuam disponíveis para capturar Pokémon e formar novos times.
 
-Validação das regras de liga (usa o JAR já instalado pelo npm, sem conectar ao bot):
-`java -cp node_modules/shadow-cljs-jar/bin/shadow-cljs.jar clojure.main test/ligas_test.clj`.
+
+
+### XP por sequência de capturas (0.7.2)
+
+O Pokémon usado na caçada recebe o XP da raridade mais um bônus pela sequência:
+primeira captura **+0 XP**, segunda **+1 XP**, terceira e seguintes **+2 XP**.
+O resultado mostra o total e a divisão entre raridade e sequência. Uma captura
+comum rende 2, 3 e 4 XP, respectivamente; uma mítica rende 7, 8 e 9 XP.
+O bônus pertence à sequência do treinador naquele chat, mesmo trocando o Pokémon.
+Falha de captura, fuga ou desistência reiniciam a sequência; a próxima captura
+bem-sucedida volta ao bônus zero. O recorde de capturas permanece salvo.
+
+
+### XP do treinador por insígnias (0.7.2)
+
+Cada insígnia contribui uma única vez para o XP total do treinador:
+
+| Vitórias | Capturas seguidas | XP por insígnia |
+|---|---|---:|
+| Primeira vitória (1) | Capturador (3) | 3 |
+| Batalhador (10) | Caçador (5) | 6 |
+| Veterano (50) | Especialista (10) | 12 |
+| Campeão (100) | Mestre da captura (20) | 24 |
+
+As duas insígnias de cada linha são independentes e cada uma concede o valor
+indicado. O perfil `!pokemon treinador` mostra os valores, as conquistas e o total
+de XP por insígnias. As conquistas antigas também contam automaticamente.
+Repetir uma sequência, consultar o perfil ou reiniciar o bot não duplica o bônus.
+Quebrar a sequência não retira XP, pois vale o recorde permanente de capturas.
+O bônus não conta como vitória para desbloquear outras insígnias e não concede XP
+aos Pokémon. O novo nível do treinador também é usado na calibragem das caçadas.
+
+O XP total existente é preservado ao aplicar a curva de níveis da versão 0.7.2.
+O nível exibido é recalculado pela nova curva e pode diminuir, sem perda de XP
+ou insígnias. O custo dos níveis dos Pokémon continua sendo 9 XP.

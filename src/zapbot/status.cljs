@@ -12,11 +12,16 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  [(str "Escalação por vírgulas, como na Joy: " config/prefix "pokemon liga time 1,3,5")
-   "Ligas Pokémon por nível: Iniciante, Bronze, Prata, Ouro e Diamante"
-   (str "Escolha sua liga e salve um time de três com " config/prefix "pokemon liga")
-   "PvP 3 × 3: próximo Pokémon entra após um nocaute; adversários da mesma liga e com níveis próximos"
-   "Pokémon que ultrapassa a faixa sai da escalação e precisa ser substituído"])
+  ["Treinador com progressão de nível: 5, 7, 9, 11... XP por nível, preservando o XP acumulado"
+   "Insígnias concedem 3, 6, 12 ou 24 XP ao treinador conforme a dificuldade, uma vez por conquista"
+   "Perfil mostra recompensas de insígnias; conquistas antigas também contam"
+   "Capturas seguidas: 1ª +0, 2ª +1 e 3ª em diante +2 XP de bônus sobre a raridade"
+   "Resultado da captura detalha o XP da raridade e o bônus da sequência"
+   "XP da liga por Pokémon: 0/1/2/3 nocautes rendem 1/3/5/7 XP ao final da partida"
+   "Todos que entraram em campo recebem XP; reservas que não lutaram ficam sem recompensa"
+   "Resumo final mostra os nocautes, XP e subidas de nível de cada participante"
+   "Evolução, aprendizado e saída da liga aplicados a cada Pokémon recompensado"])
+
 
 
 (defn- formatar-changelog []

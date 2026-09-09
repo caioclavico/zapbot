@@ -304,8 +304,9 @@
   zapbot.treinador). Retorna uma promise com {:nome-antigo :nome-novo
   :imagem :tipos :habilidade :hp :ataque :defesa :atq-esp :def-esp :veloc}
   ou nil (não evoluiu - já é a forma final, ou não atingiu o nível ainda)."
-  [cid pid]
-  (-> (p/let [ativo (treinador/pokemon-ativo cid pid)]
+  ([cid pid] (tentar-evoluir! cid pid (treinador/indice-ativo cid pid)))
+  ([cid pid idx]
+  (-> (p/let [ativo (treinador/pokemon-no-indice cid pid idx)]
         (when ativo
           (let [[pokemon _ _] ativo
                 slug-atual    (str/lower-case (:nome pokemon))
@@ -325,7 +326,7 @@
                      :atq-esp     (js/Math.round (* (:atq-esp evoluido) fator))
                      :def-esp     (js/Math.round (* (:def-esp evoluido) fator))
                      :veloc       (js/Math.round (* (:veloc evoluido) fator))})))))))
-      (p/catch (fn [err] (js/console.error "Erro ao checar evolução:" err) nil))))
+      (p/catch (fn [err] (js/console.error "Erro ao checar evolução:" err) nil)))))
 
 (defn- cabecalho []
   (str "⚡ *Batalha Pokémon do tio " config/bot-name "*\n\n"))
@@ -787,15 +788,16 @@
     (when-let [pid (get-in jogo [:jogadores marca])]
       (treinador/atualizar-ativo! cid pid (get-in jogo [:hp marca]) (get-in jogo [:status marca])))))
 
-(defn- verificar-evolucao! [message cid pid]
-  (-> (tentar-evoluir! cid pid)
+(defn- verificar-evolucao! ([message cid pid] (verificar-evolucao! message cid pid (treinador/indice-ativo cid pid)))
+  ([message cid pid idx]
+  (-> (tentar-evoluir! cid pid idx)
       (p/then (fn [dados]
                 (when dados
-                  (treinador/evoluir-ativo! cid pid dados)
+                  (treinador/evoluir-no-indice! cid pid idx dados)
                   (enviar-imagem message (:imagem dados)
                                   (str (cabecalho) "✨ *" (:nome-antigo dados) "* evoluiu para *"
                                        (:nome-novo dados) "*!")))))
-      (p/catch (fn [err] (js/console.error "Erro ao processar evolução:" err)))))
+      (p/catch (fn [err] (js/console.error "Erro ao processar evolução:" err))))))
 
 (defn- sem-golpes-removidos
   "Tira da lista regerada os golpes que o dono mandou remover (!pokemon
@@ -833,61 +835,84 @@
   tiver vaga: com os 4 golpes cheios não aprende nada. É por isso que
   !pokemon removergolpe existe - abrir vaga pro próximo aprendizado.
   Nunca reaprende um golpe que o dono mandou remover."
-  [message cid pid nivel]
+  ([message cid pid nivel] (aprender-golpe-por-nivel! message cid pid nivel (treinador/indice-ativo cid pid)))
+  ([message cid pid nivel idx]
   (when (zero? (mod nivel niveis-por-golpe))
-    (when-let [[pokemon _ _] (treinador/pokemon-ativo cid pid)]
+    (when-let [[pokemon _ _] (treinador/pokemon-no-indice cid pid idx)]
       (when (< (count (:golpes pokemon)) treinador/maximo-golpes)
         (-> (p/let [dados     (buscar-pokemon-por-nome (str/lower-case (:nome pokemon)))
                     ordenados (golpes-ordenados (:moves-brutos dados) (:tipos pokemon) nivel)]
               (let [conhecidos (set (map :nome-exibicao (:golpes pokemon)))
-                    removidos  (treinador/golpes-removidos-ativo cid pid)
+                    removidos  (treinador/golpes-removidos (get (treinador/equipe cid pid) idx))
                     novo       (first (remove #(or (contains? conhecidos (:nome-exibicao %))
                                                    (contains? removidos (:nome-exibicao %)))
                                               ordenados))]
-                (when (and novo (treinador/aprender-golpe-ativo! cid pid novo))
+                (when (and novo (treinador/aprender-golpe-no-indice! cid pid idx novo))
                   (.reply message (str (cabecalho) "📘 *" (:nome pokemon) "* chegou ao nível " nivel
                                        " e aprendeu " (emoji-golpe novo) " *" (:nome-exibicao novo) "*!")))))
             (p/catch (fn [err]
                        (js/console.error "Erro ao aprender golpe por nível:" err)
-                       nil)))))))
+                       nil))))))))
 
 (defn- aviso-saida-liga [subida]
   (when (seq (:ligas-removidas subida))
     (str "\n⬆️ " (:nome subida) " ultrapassou o limite da liga e saiu da escalação. "
          "Preencha a vaga com " config/prefix "pokemon liga time <n1,n2,n3>.")))
 
+(defn- registrar-nocautes
+  "Conta o adversário que caiu para o Pokémon que o enfrentava, antes de
+  substituir os ativos. Inclui quedas por status/recuo e nocaute simultâneo."
+  [jogo]
+  (reduce (fn [estado caido]
+            (let [marca (outro caido)
+                  idx (get-in jogo [:indices-ativos marca])]
+              (if (and (zero? (get-in jogo [:hp caido])) (some? idx))
+                (update-in estado [:participacao marca idx] (fnil inc 0))
+                estado)))
+          jogo [:x :o]))
+
+(defn- recompensas-partida! [cid jogo]
+  (vec (for [marca [:x :o]
+             [idx nocautes] (sort-by key (get-in jogo [:participacao marca]))
+             :let [pid (get-in jogo [:jogadores marca])
+                   nome (get-in (treinador/equipe cid pid) [idx "nome"])
+                   xp (treinador/xp-por-nocautes nocautes)
+                   subida (treinador/ganhar-xp-no-indice! cid pid idx xp)]]
+         {:pid pid :idx idx :nome nome :nocautes nocautes :xp xp :subida subida})))
+
 (defn- finalizar-vitoria [message cid jogo vencedor-marca motivo-extra]
   (sincronizar-equipe! cid jogo)
-  (swap! jogos dissoc cid)
-  (rank/pontuar! cid (get-in jogo [:jogadores vencedor-marca]) (get-in jogo [:nomes vencedor-marca]) "pokemon")
-  (treinador/registrar-vitoria-treinador! cid (get-in jogo [:jogadores vencedor-marca]))
-  (let [perdedor-marca  (outro vencedor-marca)
-        perdedor-pid    (get-in jogo [:jogadores perdedor-marca])
-        ganho           (loja/creditar! cid (get-in jogo [:jogadores vencedor-marca]))
-        vencedor-pid    (get-in jogo [:jogadores vencedor-marca])
-        subida          (treinador/subir-nivel! cid vencedor-pid)
-        subida-perdedor (treinador/ganhar-xp! cid perdedor-pid treinador/xp-por-derrota)]
-    ;; Primeiro evolui (se necessário) e só então atualiza os golpes da forma
-    ;; atual, para que uma evolução no mesmo nível não restaure golpes antigos.
-    (when subida
-      (-> (verificar-evolucao! message cid vencedor-pid)
-          (p/then (fn [_] (aprender-golpe-por-nivel! message cid vencedor-pid (:nivel subida))))))
-    (when subida-perdedor
-      (-> (verificar-evolucao! message cid perdedor-pid)
-          (p/then (fn [_] (aprender-golpe-por-nivel! message cid perdedor-pid (:nivel subida-perdedor))))))
-    (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "! (+" ganho " 💰 moedas, confira com "
-         config/prefix "loja)"
-         "\n✨ XP: vencedor +" treinador/xp-por-vitoria ", perdedor +" treinador/xp-por-derrota "."
-         (when subida (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!"))
-         (when subida-perdedor (str "\n🌟 *" (:nome subida-perdedor) "* subiu para o nível "
-                                    (:nivel subida-perdedor) " mesmo com a derrota!"))
-         (aviso-saida-liga subida) (aviso-saida-liga subida-perdedor))))
+  ;; Mantém a coleção bloqueada até concluir evoluções/aprendizados de todos:
+  ;; doações ou Joy não podem deslocar índices enquanto a PokeAPI responde.
+  (let [finalizando (assoc jogo :finalizando? true)
+        _ (swap! jogos assoc cid finalizando)
+        vencedor-pid (get-in jogo [:jogadores vencedor-marca])
+        _ (rank/pontuar! cid vencedor-pid (get-in jogo [:nomes vencedor-marca]) "pokemon")
+        _ (treinador/registrar-vitoria-treinador! cid vencedor-pid)
+        ganho (loja/creditar! cid vencedor-pid)
+        recompensas (recompensas-partida! cid jogo)]
+    (-> (p/all (for [{:keys [pid idx subida]} recompensas :when subida]
+                 (-> (verificar-evolucao! message cid pid idx)
+                     (p/then (fn [_] (aprender-golpe-por-nivel! message cid pid (:nivel subida) idx))))))
+        (p/finally (fn []
+                     (swap! jogos (fn [estado]
+                                    (if (= finalizando (get estado cid)) (dissoc estado cid) estado))))))
+    (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "! (+" ganho
+         " 💰 moedas, confira com " config/prefix "loja)"
+         "\n✨ *XP por Pokémon que participou:*"
+         (apply str
+                (for [{:keys [pid nome nocautes xp subida]} recompensas]
+                  (str "\n• " (get-in jogo [:nomes (if (= pid vencedor-pid) vencedor-marca (outro vencedor-marca))])
+                       " — " nome ": " nocautes " nocaute(s), +" xp " XP"
+                       (when subida (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!"))
+                       (aviso-saida-liga subida)))))))
 
 (defn- anunciar-vitoria [message cid jogo _vencedor-marca motivo-extra]
   (sincronizar-equipe! cid jogo)
   ;; Recuo pode derrubar os dois lados na mesma ação. Resolve todas as
   ;; substituições antes de decidir o vencedor, sem deixar um desmaiado ativo.
-  (let [[novo avisos]
+  (let [jogo (registrar-nocautes jogo)
+        [novo avisos]
         (reduce
          (fn [[estado avisos] marca]
            (let [reservas (get-in estado [:reservas marca])]
@@ -897,6 +922,10 @@
                      [pokemon hp status] (treinador/pokemon-ativo cid pid)]
                  [(-> estado
                       (assoc-in [:reservas marca] (vec (rest reservas)))
+                      (assoc-in [:indices-ativos marca] (first reservas))
+                      (cond-> (or (pos? (get-in jogo [:hp (outro marca)]))
+                                  (seq (get-in jogo [:reservas (outro marca)])))
+                        (assoc-in [:participacao marca (first reservas)] 0))
                       (assoc-in [:pokemons marca] pokemon)
                       (assoc-in [:hp marca] hp)
                       (assoc-in [:status marca] status)
@@ -1174,6 +1203,8 @@
           (-> (p/let [nome (nome-de message)]
                 (let [jogo-pre (-> jogo-atual
                                     (assoc-in [:jogadores :o] pid)
+                                    (assoc-in [:indices-ativos :o] (treinador/indice-ativo cid pid))
+                                    (assoc-in [:participacao :o] {(treinador/indice-ativo cid pid) 0})
                                     (assoc-in [:reservas :o] (vec (rest (treinador/time-liga cid pid liga))))
                                     (assoc-in [:nomes :o] nome)
                                     (assoc-in [:pokemons :o] pokemon)
@@ -1207,6 +1238,8 @@
           :else
           (-> (p/let [nome (nome-de message)]
                 (let [jogo-novo (assoc (criar-jogo message pid nome pokemon hp-atual status)
+                                       :indices-ativos {:x (treinador/indice-ativo cid pid)}
+                                       :participacao {:x {(treinador/indice-ativo cid pid) 0}}
                                        :liga liga :niveis-time (treinador/niveis-time cid pid liga)
                                        :reservas {:x (vec (rest (treinador/time-liga cid pid liga)))})]
                   (if (tentar-registrar! cid jogo-novo #(and (nil? %) (configuracao-valida?)))
@@ -1596,22 +1629,25 @@
 (defn- ver-treinador [message]
   (let [cid (chat-id message)
         pid (jogador-id message)
-        {:keys [nivel xp xp-atual xp-necessario sequencia recorde insignias]}
+        {:keys [nivel xp xp-insignias xp-atual xp-necessario sequencia recorde insignias]}
         (treinador/perfil-treinador cid pid)
         [ativo] (treinador/pokemon-ativo cid pid)]
     (p/let [nome (nome-de message)]
       (str "🧢 *Treinador: " nome "*\n\n"
            "⭐ Nível do treinador: " nivel
            "\n✨ XP total do treinador: " xp
-           "\nPróximo nível: " xp-atual "/" xp-necessario " XP (1 XP por vitória)"
+           "\n🎖️ XP recebido por insígnias: " xp-insignias
+           "\nPróximo nível: " xp-atual "/" xp-necessario " XP (vitórias + insígnias)"
            "\n🔥 Sequência atual: " sequencia " capturas"
            "\n🏆 Maior sequência de capturas: " recorde
            "\n\n⚡ Pokémon ativo: "
            (if ativo (str "*" (:nome ativo) "* — nível " (or (:nivel ativo) 1))
                "Nenhum")
            "\n\n🎖️ *Insígnias: " (count (filter :conquistada? insignias)) "/" (count insignias) "*\n"
-           (str/join "\n" (map (fn [{:keys [nome requisito conquistada?]}]
-                                 (str (if conquistada? "🏅" "🔒") " " nome " — " requisito))
+           (str/join "\n" (map (fn [{:keys [nome requisito conquistada? xp-recompensa]}]
+                                 (str (if conquistada? "🏅" "🔒") " " nome " — " requisito
+                                      " • +" xp-recompensa " XP do treinador"
+                                      (when conquistada? " (recebido)")))
                                insignias))))))
 
 (defn- ver-pokedex-pessoal [message]
@@ -2177,7 +2213,7 @@
         sequencia      (if capturou?
                          (treinador/registrar-captura! cid pid selvagem)
                          (do (treinador/quebrar-sequencia-capturas! cid pid) 0))
-        bonus-seq      (if capturou? (quot sequencia 3) 0)
+        bonus-seq      (if capturou? (treinador/bonus-xp-sequencia-capturas sequencia) 0)
         xp             (if capturou? (+ (get xp-base-raridade raridade 2) bonus-seq) 1)
         moedas         (if capturou? (+ 2 (min 10 sequencia)) 0)
         subida         (treinador/ganhar-xp! cid pid xp)]
@@ -2186,7 +2222,7 @@
     (when subida
       (-> (verificar-evolucao! (:message caca) cid pid)
           (p/then (fn [_] (aprender-golpe-por-nivel! (:message caca) cid pid (:nivel subida))))))
-    {:xp xp :moedas moedas :subida subida :sequencia sequencia :sequencia-anterior sequencia-ant}))
+    {:xp xp :bonus-xp bonus-seq :moedas moedas :subida subida :sequencia sequencia :sequencia-anterior sequencia-ant}))
 
 (defn- tentar-captura-pos-batalha [cid pid caca]
   (let [selvagem     (get-in caca [:pokemons :o])
@@ -2208,7 +2244,9 @@
              texto-bonus
              "\n📚 Registrado na sua Pokédex e adicionado ao time como nº " (inc idx) "."
              "\n🔥 Sequência de capturas: " (:sequencia recompensa)
-             "\n✨ +" (:xp recompensa) " XP • +" (:moedas recompensa) " moedas"
+             "\n✨ +" (:xp recompensa) " XP (raridade +"
+             (- (:xp recompensa) (:bonus-xp recompensa)) " • sequência +" (:bonus-xp recompensa)
+             ") • +" (:moedas recompensa) " moedas"
              (when-let [s (:subida recompensa)]
                (str "\n🌟 *" (:nome s) "* subiu para o nível " (:nivel s) "!" (aviso-saida-liga s)))))
       (str "\n\n💨 A Pokébola falhou e *" (:nome selvagem) "* escapou! (" chance "% de chance)"
@@ -2725,7 +2763,7 @@
   vaga, remover é o jeito de abrir espaço pro próximo; !pokemon doar <número> (marcando ou respondendo a
   pessoa) doa um pokémon da sua equipe pra outro jogador; !pokemon sem
   argumento abre/entra numa batalha de liga 3 × 3 (escalação salva via
-  !pokemon liga time <n1,n2,n3>; o último ativo ganha XP
+  !pokemon liga time <n1,n2,n3>; cada Pokémon que entrou ganha XP por nocautes
   e pode subir de nível/evoluir); !pokemon atacar <1-4> usa o
   golpe correspondente (ver o menu de golpes em cada mensagem de estado);
   !pokemon defender entra em posição defensiva/evasiva; !pokemon curar usa
@@ -2746,6 +2784,8 @@
         args         (str/trim (str/lower-case (or args "")))
         [cmd & resto] (str/split args #"\s+")]
     (cond
+      (:finalizando? (get @jogos cid))
+      (p/resolved "⏳ Finalizando o XP, as evoluções e os golpes da partida. Aguarde um instante.")
       (str/blank? args) (iniciar-ou-entrar message)
       (= cmd "sair") (sair message)
       (contains? #{"liga" "ligas"} cmd) (configurar-liga message resto)
