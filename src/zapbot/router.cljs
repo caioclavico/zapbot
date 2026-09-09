@@ -55,7 +55,7 @@
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra versão, últimas mudanças, consumo de recursos e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
-   {:emoji "⚡" :uso "pokemon [liga [nome|time <n1,n2,n3>]|inicial|cacar|treinador|pokedex [n|tipo]|time [csv]|trocar <n>|equipar|aprender [n|recusar]|reaprender [n] [troca]|removergolpe <n>|doar|joy <n,n,...>|atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalhe e capture por bioma, troque uma vez no PvE, complete sua Pokédex (com <n>, a ficha completa do enésimo do seu time), equipe itens e evolua com XP"}
+  {:emoji "⚡" :uso "pokemon [liga [nome|time <n1,n2,n3>]|inicial|cacar|treinador|pokedex [n|filtros]|time [filtros|csv]|trocar <n>|equipar|aprender [n|recusar]|reaprender [n] [troca]|removergolpe <n>|doar|joy <n,n,...>|atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalhe e capture por bioma, filtre time/Pokédex combinando tipo, nome e nível, equipe itens e evolua com XP"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
    {:emoji "🏪" :uso "loja [comprar|detalhes <item>]" :desc "Compra curas e itens equipáveis do Pokémon ou explica detalhadamente o efeito de cada item"}
    {:emoji "🏆" :uso "rank"                :desc "Mostra o rank de pontos desse chat (vitórias em !velha, !naval, !pokemon e !quiz)"}
@@ -91,8 +91,8 @@
                   (cotacao/buscar-cotacoes (map str/upper-case args))
                   (cotacao/buscar-cotacoes))
     ("previsao" "tempo" "clima") (if (seq args)
-                                    (previsao/buscar-previsao (str/join " " args))
-                                    (previsao/buscar-previsao))
+                                   (previsao/buscar-previsao (str/join " " args))
+                                   (previsao/buscar-previsao))
     "horoscopo" (horoscopo/buscar-horoscopo (if (seq args)
                                               (str/join " " args)
                                               (horoscopo/signo-aleatorio)))
@@ -136,12 +136,12 @@
                   (p/resolved (loja/ver-loja message)))
     "rank"      (p/resolved (rank/formatar-rank (bloqueio/chat-id message)))
     "meuid"     (p/resolved (str "🪪 Seu ID: " (or (.-author message) (.-from message))
-                              "\n\nAdicione esse valor em ADMIN_NUMBERS no .env (separado por vírgula, "
-                              "se já tiver outros) pra virar admin do bot."))
+                                 "\n\nAdicione esse valor em ADMIN_NUMBERS no .env (separado por vírgula, "
+                                 "se já tiver outros) pra virar admin do bot."))
     "ajuda"     (p/resolved texto-ajuda)
     (p/resolved (str "❌ Por que invocou um comando que nem o próprio tio "
-                      config/bot-name " reconhece? Digite " config/prefix
-                      "ajuda e ilumine-se."))))
+                     config/bot-name " reconhece? Digite " config/prefix
+                     "ajuda e ilumine-se."))))
 
 (defn processar
   "Recebe a mensagem do whatsapp-web.js e retorna uma promise com a resposta
@@ -162,7 +162,7 @@
 
           (bloqueio/comando-bloqueado? cid cmd)
           (p/resolved (str "🔇 " config/prefix cmd " está bloqueado nesse chat. Peça a um "
-                            "admin para liberar com " config/prefix "desbloquear " cmd "."))
+                           "admin para liberar com " config/prefix "desbloquear " cmd "."))
 
           :else
           (despachar message cmd args))))))

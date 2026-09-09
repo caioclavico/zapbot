@@ -9,6 +9,7 @@
             [zapbot.adedonha :as adedonha]
             [zapbot.lembretes :as lembretes]
             [zapbot.admins :as admins]
+            [zapbot.pokemon :as pokemon]
             [zapbot.router :as router]))
 
 (def ^:private Client (.-Client wwjs))
@@ -21,6 +22,7 @@
 (defn- on-ready [client]
   (js/console.log (str "✅ " config/bot-name " conectado e pronto para uso!"))
   (js/console.log (str "📞 Número conectado: +" (.. client -info -wid -user)))
+  (pokemon/iniciar! client)
   (lembretes/iniciar! client))
 
 (defn- on-auth-failure [msg]
@@ -48,18 +50,23 @@
                   (cond
                     (nil? resposta) nil
                     (:medias resposta) (let [medias (:medias resposta)
-                                              total  (count medias)]
-                                          ;; Cada imagem pode demorar um tempo diferente para subir ao
-                                          ;; WhatsApp. Encadeamos os envios para as páginas não chegarem
-                                          ;; embaralhadas no grupo.
-                                          (reduce
-                                           (fn [envio [idx media]]
-                                             (p/then envio
-                                                     (fn [_]
-                                                       (.reply message media nil
-                                                               #js {:caption (str "🎒 Página " (inc idx) "/" total)}))))
-                                           (p/resolved nil)
-                                           (map-indexed vector medias)))
+                                             total  (count medias)
+                                             legenda-ultima (:legenda-ultima resposta)]
+                                         ;; Cada imagem pode demorar um tempo diferente para subir ao
+                                         ;; WhatsApp. Encadeamos os envios para as páginas não chegarem
+                                         ;; embaralhadas no grupo.
+                                         (reduce
+                                          (fn [envio [idx media]]
+                                            (p/then envio
+                                                    (fn [_]
+                                                      (.reply message media nil
+                                                              #js {:caption
+                                                                   (str "🎒 Página " (inc idx) "/" total
+                                                                        (when (and legenda-ultima
+                                                                                   (= idx (dec total)))
+                                                                          (str "\n\n" legenda-ultima)))}))))
+                                          (p/resolved nil)
+                                          (map-indexed vector medias)))
                     ;; documento (ex.: !pokemon time csv): manda o texto primeiro e o
                     ;; arquivo em seguida - legenda em documento não aparece de forma
                     ;; confiável no WhatsApp
@@ -101,12 +108,12 @@
 
 (defn main [& _args]
   (let [puppeteer-opts (cond-> {:args #js ["--no-sandbox" "--disable-setuid-sandbox"
-                                            ;; --disable-quic evita ERR_CONNECTION_CLOSED comum em redes
-                                            ;; WSL2/containers onde o QUIC (HTTP/3, via UDP) não funciona.
-                                            "--disable-quic" "--disable-features=Quic"]}
-                                config/puppeteer-executable-path (assoc :executablePath config/puppeteer-executable-path))
+                                           ;; --disable-quic evita ERR_CONNECTION_CLOSED comum em redes
+                                           ;; WSL2/containers onde o QUIC (HTTP/3, via UDP) não funciona.
+                                           "--disable-quic" "--disable-features=Quic"]}
+                         config/puppeteer-executable-path (assoc :executablePath config/puppeteer-executable-path))
         client (Client. #js {:authStrategy (LocalAuth.)
-                              :puppeteer    (clj->js puppeteer-opts)})]
+                             :puppeteer    (clj->js puppeteer-opts)})]
     (.on client "qr" on-qr)
     (.on client "ready" (fn [] (on-ready client)))
     (.on client "auth_failure" on-auth-failure)

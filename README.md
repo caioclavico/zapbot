@@ -308,6 +308,18 @@ Use `!pokemon treinador` para ver o nível e XP do treinador, Pokémon ativo, se
 
 O recorde é preservado quando uma sequência termina. Para contas antigas, parte da sequência atual salva: sequências anteriores à implementação não podem ser recuperadas.
 
+O time pode ser filtrado por tipo, nome parcial ou nível, sem alterar a numeração
+usada pelos outros comandos: `!pokemon time fogo`, `!pokemon time char` e
+`!pokemon time nivel 25` (também aceita apenas `!pokemon time 25`). A visualização
+envia no máximo duas páginas, com 12 Pokémon cada, e orienta o uso dos filtros na
+última imagem. Os filtros podem ser combinados com lógica cumulativa, por exemplo
+`!pokemon time char fogo nivel 25`: o resultado precisa corresponder ao nome,
+tipo e nível informados. Os mesmos
+filtros funcionam na Pokédex pessoal com `!pokemon pokedex fogo`,
+`!pokemon pokedex char`, `!pokemon pokedex nivel 25` ou combinados como
+`!pokemon pokedex char fogo nivel 25`; um número sozinho continua abrindo a ficha
+do Pokémon naquela posição.
+
 
 ### Ligas Pokémon (0.7.0)
 
