@@ -523,7 +523,7 @@
                                (get % "sequencia-capturas" 0))))
                  (update-in ["pokedex" chave]
                             (fn [entrada]
-                              {"nome" (:nome pokemon)
+                              {"nome" (:nome pokemon) "tipos" (vec (:tipos pokemon))
                                "raridade" (or (:raridade pokemon) "comum")
                                "capturas" (inc (get entrada "capturas" 0))})))))
     (persistir!)
@@ -541,6 +541,11 @@
 (defn pokedex-pessoal [cid pid]
   (get (conta cid pid) "pokedex" {}))
 
+(defn atualizar-tipos-pokedex! [cid pid chave tipos]
+  (when (and (seq tipos) (get-in @contas [cid pid "pokedex" chave]))
+    (swap! contas assoc-in [cid pid "pokedex" chave "tipos"] (vec tipos))
+    (persistir!)))
+
 (defn sincronizar-pokedex-equipe!
   "Inclui na Pokédex espécies de times criados antes desse recurso, sem
   alterar a sequência nem duplicar contagens já existentes."
@@ -549,8 +554,9 @@
         depois (reduce (fn [dex registro]
                          (let [chave (-> (get registro "nome") str/lower-case (str/replace #"\s+" "-"))]
                            (if (contains? dex chave)
-                             dex
+                             (assoc-in dex [chave "tipos"] (vec (get registro "tipos")))
                              (assoc dex chave {"nome" (get registro "nome")
+                                               "tipos" (vec (get registro "tipos"))
                                                "raridade" (if (= versao-raridade (get registro "versao-raridade"))
                                                             (get registro "raridade" "comum")
                                                             (raridade-por-registro registro))

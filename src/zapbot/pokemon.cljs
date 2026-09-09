@@ -1648,20 +1648,30 @@
                                       (when conquistada? " (recebido)")))
                                insignias))))))
 
-(defn- ver-pokedex-pessoal [message]
+(defn- renderizar-pokedex-pessoal [message tipo]
   (let [cid       (chat-id message)
         pid       (jogador-id message)
         dex       (treinador/sincronizar-pokedex-equipe! cid pid)
-        entradas  (->> (vals dex) (sort-by #(get % "nome")) vec)
+        numeros-por-nome
+        (reduce-kv (fn [acc idx registro]
+                     (update acc (str/lower-case (get registro "nome"))
+                             (fnil conj []) (inc idx)))
+                   {} (vec (treinador/equipe cid pid)))
+        entradas  (->> (vals dex)
+                       (filter #(or (nil? tipo) (some #{tipo} (get % "tipos")))))
+        entradas  (->> entradas (sort-by #(get % "nome")) vec)
         unicos    (count entradas)
         capturas  (reduce + 0 (map #(get % "capturas" 0) entradas))
         sequencia (treinador/sequencia-capturas cid pid)
         por-raridade (frequencies (map #(get % "raridade" "comum") entradas))]
     (p/resolved
      (str (cabecalho) "📚 *Sua Pokédex*\n\n"
-          "Espécies registradas: " unicos "/" total-pokemons " ("
-          (.toFixed (* 100 (/ unicos total-pokemons)) 1) "%)\n"
-          "Total de capturas: " capturas "\n🔥 Sequência atual: " sequencia "\n"
+          "Espécies registradas: " (count dex) "/" total-pokemons " ("
+          (.toFixed (* 100 (/ (count dex) total-pokemons)) 1) "%)\n"
+          (when tipo (str "🔎 Tipo: " (get tipos-pt tipo) " — " unicos " espécie(s)\n"))
+          (if tipo "Capturas neste filtro: " "Total de capturas: ") capturas "\n🔥 Sequência atual: " sequencia "\n"
+          (when (and tipo (some #(empty? (get % "tipos")) (vals dex)))
+            "⚠️ Alguns registros antigos estão sem tipo disponível. Tente novamente para completar o filtro.\n")
           "Raridades: "
           (str/join " • " (keep (fn [r]
                                   (when-let [qtd (get por-raridade r)]
@@ -1670,11 +1680,51 @@
           (if (seq entradas)
             (str "\n\n*Registrados:*\n"
                  (str/join "\n" (map (fn [e]
-                                        (str (:emoji (get raridades (get e "raridade" "comum"))) " *"
-                                             (get e "nome") "* — " (get e "capturas") "x"))
+                                        (let [numeros (get numeros-por-nome (str/lower-case (get e "nome")))]
+                                          (str (when (seq numeros)
+                                                 (str (str/join ", " (map #(str "#" %) numeros)) " "))
+                                               (:emoji (get raridades (get e "raridade" "comum"))) " *"
+                                               (get e "nome") "* — " (get e "capturas") "x"
+                                               (when-not (seq numeros) " (fora da coleção disponível)"))))
                                       (take 60 entradas)))
+                 (str "\n\nOs números são os mesmos de " config/prefix "pokemon time."
+                      " Abra a ficha com " config/prefix "pokemon pokedex <número>."
+                      "\nPokémon na Joy ficam sem número até retornarem.")
                  (when (> unicos 60) (str "\n… e mais " (- unicos 60) " espécies.")))
-            (str "\n\nNenhuma espécie registrada. Use " config/prefix "pokemon cacar."))))))
+            (if tipo
+              (str "\n\nNenhum Pokémon registrado do tipo " (get tipos-pt tipo) ".")
+              (str "\n\nNenhuma espécie registrada. Use " config/prefix "pokemon cacar.")))))))
+
+(defn- tipo-do-filtro [texto]
+  (let [normalizar #(-> % str/lower-case (.normalize "NFD") (str/replace #"[\u0300-\u036f]" "") str/trim)
+        nomes (into {} (map (fn [[id nome]] [(normalizar nome) id]) tipos-pt))]
+    (get (merge nomes (zipmap (keys tipos-pt) (keys tipos-pt))
+                {"grama" "grass" "luta" "fighting" "veneno" "poison"
+                 "pedra" "rock" "metal" "steel" "eletrico" "electric"})
+         (normalizar texto))))
+
+(defn- ver-pokedex-pessoal [message filtro]
+  (let [tipo (when-not (str/blank? filtro) (tipo-do-filtro filtro))
+        cid (chat-id message) pid (jogador-id message)]
+    (cond
+      (str/blank? filtro) (renderizar-pokedex-pessoal message nil)
+      (nil? tipo)
+      (p/resolved (str "❓ Tipo inválido. Use " config/prefix "pokemon pokedex fogo, por exemplo.\nTipos: "
+                       (str/join ", " (sort (vals tipos-pt))) "."))
+      :else
+      (let [dex (treinador/sincronizar-pokedex-equipe! cid pid)
+            faltantes (filter (fn [[_ e]] (empty? (get e "tipos"))) dex)]
+        ;; Completa registros antigos em lotes pequenos e persiste os tipos,
+        ;; evitando novas consultas nas próximas filtragens.
+        (-> (reduce (fn [anterior lote]
+                      (p/then anterior
+                              (fn [_]
+                                (p/all (map (fn [[chave e]]
+                                              (-> (buscar-pokemon-por-nome (str/lower-case (get e "nome")))
+                                                  (p/then #(treinador/atualizar-tipos-pokedex! cid pid chave (:tipos %)))
+                                                  (p/catch (fn [_] nil)))) lote)))))
+                    (p/resolved nil) (partition-all 10 faltantes))
+            (p/then (fn [_] (renderizar-pokedex-pessoal message tipo))))))))
 
 (def ^:private pokemons-por-cartao 12)
 
@@ -2893,9 +2943,9 @@
       (contains? #{"inicial" "iniciais"} cmd) (escolher-inicial message (first resto))
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
       (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd)
-      (if (str/blank? (first resto))
-        (ver-pokedex-pessoal message)
-        (ver-pokemon-do-time message (first resto)))
+      (if (and (= 1 (count resto)) (re-matches #"[0-9]+" (first resto)))
+        (ver-pokemon-do-time message (first resto))
+        (ver-pokedex-pessoal message (str/join " " resto)))
       (contains? #{"time" "equipe"} cmd)
       (if (contains? #{"csv" "planilha"} (first resto))
         (resposta-time-csv message)

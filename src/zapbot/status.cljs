@@ -12,7 +12,9 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["A cada 5 níveis, Pokémon aprendem com vaga ou recebem uma oferta de substituição"
+  [(str "Filtro por tipo na Pokédex pessoal: " config/prefix "pokemon pokedex fogo")
+   "Pokédex pessoal mostra os números da coleção antes dos nomes para abrir as fichas"
+   "A cada 5 níveis, Pokémon aprendem com vaga ou recebem uma oferta de substituição"
    (str "Escolha um golpe para substituir ou recuse com " config/prefix "pokemon aprender")
    "Ofertas ficam salvas no Pokémon, sem apagar golpes nem expirar enquanto você decide"
    (str "Golpes esquecidos ou recusados podem ser reaprendidos por 50 moedas: " config/prefix "pokemon reaprender")

@@ -432,3 +432,11 @@ Ofertas e histórico acompanham o Pokémon na coleção, em doações e na enfer
 Não é mais necessário apagar um golpe antes de subir de nível. Ofertas começam
 nas próximas subidas para níveis múltiplos de cinco; níveis anteriores não geram
 ofertas retroativas.
+
+A Pokédex pessoal também aceita filtro por tipo: `!pokemon pokedex fogo`,
+`!pokemon pokedex água`, `!pokemon pokedex eletrico` ou `!pokemon pokedex grass`.
+Aceita nomes em português com ou sem acento e os identificadores em inglês.
+Pokémon de dois tipos aparecem em ambos os filtros. Os números da coleção são
+preservados; `!pokemon pokedex 2` continua abrindo a ficha do Pokémon nº 2.
+Sem argumento, mostra todos os registros. Registros antigos sem tipos são
+completados pela PokeAPI e salvos na primeira filtragem.
