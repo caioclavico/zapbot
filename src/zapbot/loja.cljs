@@ -36,6 +36,13 @@
 (defn- persistir! []
   (armazenamento/salvar! "loja" @contas))
 
+(def preco-reaprender 50)
+
+(defn pagar-reaprendizado! [cid pid]
+  (when (>= (get-in @contas [cid pid "moedas"] 0) preco-reaprender)
+    (swap! contas update-in [cid pid "moedas"] - preco-reaprender)
+    (persistir!) true))
+
 (defn- remover-acentos [s]
   (-> s (.normalize "NFD") (str/replace #"[\u0300-\u036f]" "")))
 
@@ -177,6 +184,7 @@
          "🎒 Seu inventário: " (formatar-inventario (get c "inventario")) "\n\n"
          "*Itens à venda:*\n"
          (str/join "\n" (map (fn [[chave info]] (formatar-item chave info)) itens))
+         "\n📚 Reaprender golpe — " preco-reaprender " moedas. Use " config/prefix "pokemon reaprender."
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"
          "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, cure status com " config/prefix

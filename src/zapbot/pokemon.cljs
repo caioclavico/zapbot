@@ -823,34 +823,34 @@
                    nil)))))
 
 (def ^:private niveis-por-golpe
-  "De quantos em quantos níveis o pokémon ganha a chance de aprender um golpe
-  novo (só aprende se tiver vaga - ver aprender-golpe-por-nivel!)."
+  "Intervalo de níveis entre ofertas de golpes novos."
   5)
 
 (defn- aprender-golpe-por-nivel!
-  "Chamada a cada subida de nível, tanto em batalha quanto em caçada. A cada
-  `niveis-por-golpe` níveis o pokémon ativo aprende UM golpe novo, mas só se
-  tiver vaga: com os 4 golpes cheios não aprende nada. É por isso que
-  !pokemon removergolpe existe - abrir vaga pro próximo aprendizado.
-  Nunca reaprende um golpe que o dono mandou remover."
+  "A cada cinco níveis aprende com vaga ou salva uma oferta de substituição."
   ([message cid pid nivel] (aprender-golpe-por-nivel! message cid pid nivel (treinador/indice-ativo cid pid)))
   ([message cid pid nivel idx]
-  (when (zero? (mod nivel niveis-por-golpe))
-    (when-let [[pokemon _ _] (treinador/pokemon-no-indice cid pid idx)]
-      (when (< (count (:golpes pokemon)) treinador/maximo-golpes)
-        (-> (p/let [dados     (buscar-pokemon-por-nome (str/lower-case (:nome pokemon)))
-                    ordenados (golpes-ordenados (:moves-brutos dados) (:tipos pokemon) nivel)]
-              (let [conhecidos (set (map golpes/chave (:golpes pokemon)))
-                    removidos  (treinador/golpes-removidos (get (treinador/equipe cid pid) idx))
-                    novo       (first (remove #(or (contains? conhecidos (golpes/chave %))
-                                                   (contains? removidos (golpes/chave %)))
-                                              ordenados))]
-                (when (and novo (treinador/aprender-golpe-no-indice! cid pid idx novo))
-                  (.reply message (str (cabecalho) "📘 *" (:nome pokemon) "* chegou ao nível " nivel
-                                       " e aprendeu " (emoji-golpe novo) " *" (:nome-exibicao novo) "*!")))))
-            (p/catch (fn [err]
-                       (js/console.error "Erro ao aprender golpe por nível:" err)
-                       nil))))))))
+   (when (zero? (mod nivel niveis-por-golpe))
+     (let [registro (get (treinador/equipe cid pid) idx)]
+       (when-let [[pokemon _ _] (treinador/pokemon-no-indice cid pid idx)]
+         (-> (p/let [dados (buscar-pokemon-por-nome (str/lower-case (:nome pokemon)))
+                     ordenados (golpes-ordenados (:moves-brutos dados) (:tipos pokemon) nivel)]
+               (when (= registro (get (treinador/equipe cid pid) idx))
+                 (let [conhecidos (set (map golpes/chave (:golpes pokemon)))
+                       oferecidos (treinador/golpes-ja-oferecidos cid pid idx)
+                       novo (first (remove #(or (contains? conhecidos (golpes/chave %))
+                                                (contains? oferecidos (golpes/chave %))) ordenados))
+                       resultado (when novo (treinador/oferecer-golpe! cid pid idx novo))]
+                   (when resultado
+                     (.reply message
+                             (str (cabecalho) "📘 *" (:nome pokemon) "* (nº " (inc idx) ") chegou ao nível " nivel
+                                  (if (= resultado :aprendido) " e aprendeu " " e pode aprender ")
+                                  (emoji-golpe novo) " *" (:nome-exibicao novo) "*!"
+                                  (when (= resultado :pendente)
+                                    (str "\nSelecione esse Pokémon com " config/prefix "pokemon escolher " (inc idx)
+                                         " e veja a oferta com " config/prefix "pokemon aprender."
+                                         "\nA oferta fica salva até você substituir um golpe ou recusar."))))))))
+             (p/catch (fn [err] (js/console.error "Erro ao oferecer golpe por nível:" err) nil))))))))
 
 (defn- aviso-saida-liga [subida]
   (when (seq (:ligas-removidas subida))
@@ -2747,6 +2747,98 @@
 (vigiar-limite-turno! ::limite-cacada cacadas-selvagens minutos-limite-caca expirar-cacada!)
 (vigiar-limite-turno! ::limite-batalha jogos minutos-limite-pvp expirar-batalha!)
 
+(defn- aprendizado-bloqueado? [cid pid]
+  (or (some #{pid} (vals (:jogadores (get @jogos cid))))
+      (= pid (:pid (get @cacadas-selvagens cid)))
+      (get @remocoes-pendentes [cid pid])))
+
+(defn- aprender-oferta [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        idx (treinador/indice-ativo cid pid)
+        [pokemon] (treinador/pokemon-ativo cid pid)
+        ofertas (treinador/ofertas-golpes cid pid idx)
+        oferta (first ofertas)
+        acao (first args)]
+    (p/resolved
+     (cond
+       (aprendizado-bloqueado? cid pid)
+       "🚫 Termine a batalha e aguarde ou cancele a remoção pendente antes de aprender golpes."
+       (nil? pokemon) "❓ Escolha seu Pokémon inicial primeiro."
+       (nil? oferta)
+       (str "📘 " (:nome pokemon) " não tem ofertas pendentes. A cada 5 níveis pode surgir um golpe novo."
+            (let [outros (keep-indexed (fn [i r] (when (seq (get r "ofertas-golpes")) (inc i)))
+                                      (treinador/equipe cid pid))]
+              (when (seq outros) (str "\nPokémon com ofertas: " (str/join ", " outros)
+                                     ". Selecione com " config/prefix "pokemon escolher <número>."))))
+       (and (= 1 (count args)) (= acao "recusar"))
+       (do (treinador/recusar-oferta! cid pid idx)
+           (str "📘 Oferta recusada. Seus golpes continuam iguais. Você pode reaprender por "
+                loja/preco-reaprender " moedas com " config/prefix "pokemon reaprender."
+                (when (> (count ofertas) 1) (str "\nHá mais ofertas: " config/prefix "pokemon aprender."))))
+       (empty? args)
+       (str "📘 *" (:nome pokemon) "* pode aprender " (emoji-golpe oferta) " *" (:nome-exibicao oferta) "*!"
+            "\n\n" (menu-golpes pokemon [] nil)
+            "\n\nUse " config/prefix "pokemon aprender <número do golpe a substituir>"
+            (when (< (count (:golpes pokemon)) treinador/maximo-golpes)
+              (str " ou " config/prefix "pokemon aprender aceitar para ocupar uma vaga"))
+            ".\nPara recusar: " config/prefix "pokemon aprender recusar."
+            "\nSem resposta, seus golpes e a oferta ficam salvos."
+            (when (> (count ofertas) 1) (str "\nOfertas na fila: " (count ofertas) ".")))
+       :else
+       (let [slot (when (re-matches #"[1-4]" (or acao "")) (dec (js/parseInt acao 10)))
+             aceitar? (= acao "aceitar")]
+         (if (and (= 1 (count args)) (or aceitar? (some? slot))
+                  (treinador/aplicar-aprendizado! cid pid idx oferta slot true))
+           (str "✅ " (:nome pokemon) " aprendeu *" (:nome-exibicao oferta) "*!"
+                (when (some? slot) " O golpe substituído fica disponível para reaprender.")
+                (when (> (count ofertas) 1) (str "\nPróxima oferta: " config/prefix "pokemon aprender.")))
+           "❓ Escolha um golpe válido para substituir, mantendo pelo menos um ataque do próprio tipo. Use aceitar somente com vaga livre."))))))
+
+(defn- reaprender-golpe [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        idx (treinador/indice-ativo cid pid)
+        registro (get (treinador/equipe cid pid) idx)
+        opcoes (treinador/opcoes-reaprender cid pid idx)
+        [numero destino] args
+        escolha (when (re-matches #"[1-9][0-9]*" (or numero "")) (dec (js/parseInt numero 10)))
+        id (when (some? escolha) (get opcoes escolha))
+        slot (when (re-matches #"[1-4]" (or destino "")) (dec (js/parseInt destino 10)))]
+    (cond
+      (aprendizado-bloqueado? cid pid)
+      (p/resolved "🚫 Termine a batalha e aguarde ou cancele a remoção pendente antes de reaprender.")
+      (nil? registro) (p/resolved "❓ Escolha seu Pokémon inicial primeiro.")
+      (empty? args)
+      (p/resolved
+       (str "📚 *Reaprender — " (get registro "nome") "*\n💰 " loja/preco-reaprender " moedas por golpe.\n\n"
+            (if (empty? opcoes) "Nenhum golpe esquecido ou recusado disponível."
+              (str (str/join "\n" (map-indexed #(str (inc %1) ". " (get golpes/nomes-pt %2 %2)) opcoes))
+                   "\n\nUse " config/prefix "pokemon reaprender <número da lista> [golpe a substituir]."
+                   "\nCom quatro golpes, informe também o número do golpe atual a substituir."))))
+      (or (nil? id) (> (count args) 2) (and destino (nil? slot)))
+      (p/resolved (str "❓ Consulte " config/prefix "pokemon reaprender e use números válidos."))
+      :else
+      (-> (p/let [golpe (or (treinador/golpe-memorizado cid pid idx id) (buscar-golpe id))]
+            ;; A consulta de golpes antigos pode ser lenta. Revalida tudo antes
+            ;; da cobrança; da cobrança à troca não há espera assíncrona.
+            (cond
+              (or (aprendizado-bloqueado? cid pid)
+                  (not= idx (treinador/indice-ativo cid pid))
+                  (not= registro (get (treinador/equipe cid pid) idx)))
+              "⏳ Seu Pokémon ou a partida mudou. Tente novamente; nenhuma moeda foi cobrada."
+              (nil? golpe) "❌ Não consegui recuperar esse golpe agora. Nenhuma moeda foi cobrada."
+              (nil? (treinador/preparar-aprendizado registro golpe slot))
+              "❓ Informe um golpe válido para substituir e preserve ao menos um ataque do próprio tipo. Nenhuma moeda foi cobrada."
+              (not (loja/pagar-reaprendizado! cid pid))
+              (str "❌ Você precisa de " loja/preco-reaprender " moedas para reaprender.")
+              (treinador/aplicar-aprendizado! cid pid idx golpe slot false)
+              (str "✅ " (get registro "nome") " reaprendeu *" (:nome-exibicao golpe) "*! −" loja/preco-reaprender " moedas.")
+              :else
+              (do (loja/creditar-quantia! cid pid loja/preco-reaprender)
+                  "❌ A troca não foi concluída. As moedas foram devolvidas.")))
+          (p/catch (fn [err]
+                     (js/console.error "Erro ao reaprender golpe:" err)
+                     "❌ Não consegui reaprender esse golpe agora."))))))
+
 (defn jogar
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
   batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
@@ -2762,8 +2854,8 @@
   consome a ação do turno); !pokemon equipar <número> <item> equipa um item
   comprado na !loja; !pokemon removergolpe <número> remove de vez um golpe do
   pokémon ativo, depois de uma janela de 30s pra cancelar com !pokemon
-  cancelar - como um golpe novo só é aprendido a cada 5 níveis e só se houver
-  vaga, remover é o jeito de abrir espaço pro próximo; !pokemon doar <número> (marcando ou respondendo a
+  cancelar; !pokemon aprender mostra a oferta salva, aceita uma substituição ou
+  recusa; !pokemon reaprender recupera golpes esquecidos por 50 moedas; !pokemon doar <número> (marcando ou respondendo a
   pessoa) doa um pokémon da sua equipe pra outro jogador; !pokemon sem
   argumento abre/entra numa batalha de liga 3 × 3 (escalação salva via
   !pokemon liga time <n1,n2,n3>; cada Pokémon que entrou ganha XP por nocautes
@@ -2796,6 +2888,8 @@
       (= cmd "sair") (sair message)
       (contains? #{"liga" "ligas"} cmd) (configurar-liga message resto)
       (= cmd "treinador") (ver-treinador message)
+      (= cmd "aprender") (aprender-oferta message resto)
+      (= cmd "reaprender") (reaprender-golpe message resto)
       (contains? #{"inicial" "iniciais"} cmd) (escolher-inicial message (first resto))
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
       (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd)
@@ -2821,6 +2915,8 @@
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon liga [nome|time <n1,n2,n3>], " config/prefix "pokemon inicial, " config/prefix "pokemon cacar, "
                               config/prefix "pokemon treinador, " config/prefix "pokemon pokedex [número], " config/prefix "pokemon time [csv], " config/prefix "pokemon escolher <número>, "
                               config/prefix "pokemon equipar <número> <item>, "
+                              config/prefix "pokemon aprender [número|aceitar|recusar], "
+                              config/prefix "pokemon reaprender [número] [substituir], "
                               config/prefix "pokemon removergolpe <número>, "
                               config/prefix "pokemon doar <número>, " config/prefix "pokemon (abrir/entrar), "
                               config/prefix "pokemon joy <número>, "

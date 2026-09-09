@@ -263,6 +263,77 @@
       (persistir!)
       true)))
 
+(defn ofertas-golpes [cid pid idx]
+  (mapv golpe<-registro (get-in (equipe cid pid) [idx "ofertas-golpes"] [])))
+
+(defn golpes-ja-oferecidos [cid pid idx]
+  (let [r (get (equipe cid pid) idx)]
+    (set (concat (get r "golpes-oferecidos" [])
+                 (map golpes/identificador (get r "golpes-removidos" []))))))
+
+(defn oferecer-golpe! [cid pid idx golpe]
+  (let [r (get (equipe cid pid) idx)
+        id (golpes/chave golpe)]
+    (when (and r (not (contains? (golpes-ja-oferecidos cid pid idx) id))
+               (not-any? #(= id (golpes/chave (golpe<-registro %))) (get r "golpes")))
+      (let [automatico? (< (count (get r "golpes")) maximo-golpes)
+            salvo (golpe->registro golpe)]
+        (swap! contas update-in [cid pid "equipe" idx]
+               (fn [r]
+                 (-> r
+                     (update "golpes-oferecidos" (fnil conj []) id)
+                     (assoc-in ["historico-golpes" id] salvo)
+                     (update (if automatico? "golpes" "ofertas-golpes")
+                             (fn [gs] (conj (vec gs) salvo))))))
+        (persistir!)
+        (if automatico? :aprendido :pendente)))))
+
+(defn recusar-oferta! [cid pid idx]
+  (when (seq (ofertas-golpes cid pid idx))
+    (swap! contas update-in [cid pid "equipe" idx "ofertas-golpes"] #(vec (rest %)))
+    (persistir!) true))
+
+(defn opcoes-reaprender [cid pid idx]
+  (let [r (get (equipe cid pid) idx)
+        conhecidos (set (map #(golpes/chave (golpe<-registro %)) (get r "golpes")))
+        pendentes (set (map golpes/chave (ofertas-golpes cid pid idx)))]
+    (->> (concat (keys (get r "historico-golpes"))
+                 (map golpes/identificador (get r "golpes-removidos" [])))
+         distinct (remove #(or (contains? conhecidos %) (contains? pendentes %))) sort vec)))
+
+(defn golpe-memorizado [cid pid idx id]
+  (some-> (get-in (equipe cid pid) [idx "historico-golpes" id]) golpe<-registro))
+
+(defn preparar-aprendizado
+  "Valida a troca sem escrever ou cobrar moedas. Índice de golpe é 0-based;
+  nil ocupa uma vaga livre. Nunca elimina o último ataque do próprio tipo."
+  [registro golpe slot]
+  (let [atuais (mapv golpe<-registro (get registro "golpes"))
+        id (golpes/chave golpe)
+        novo (cond
+               (and (nil? slot) (< (count atuais) maximo-golpes)) (conj atuais golpe)
+               (and (integer? slot) (<= 0 slot) (< slot (count atuais))) (assoc atuais slot golpe))]
+    (when (and registro novo
+               (not-any? #(= id (golpes/chave %)) atuais)
+               (some #(golpes/ataque-do-tipo? % (get registro "tipos")) novo))
+      (let [antigo (when (some? slot) (get atuais slot))]
+        (cond-> (-> registro
+                    (assoc "golpes" (mapv golpe->registro novo))
+                    (assoc-in ["historico-golpes" id] (golpe->registro golpe))
+                    (update "golpes-removidos"
+                            #(vec (remove #{id} (map golpes/identificador %)))))
+          antigo (assoc-in ["historico-golpes" (golpes/chave antigo)] (golpe->registro antigo))
+          antigo (update "golpes-removidos" #(vec (distinct (conj % (golpes/chave antigo))))))))))
+
+(defn aplicar-aprendizado! [cid pid idx golpe slot oferta?]
+  (let [r (get (equipe cid pid) idx)
+        novo (preparar-aprendizado r golpe slot)]
+    (when (and novo (or (not oferta?)
+                       (= (golpes/chave golpe) (some-> (first (ofertas-golpes cid pid idx)) golpes/chave))))
+      (swap! contas assoc-in [cid pid "equipe" idx]
+             (if oferta? (update novo "ofertas-golpes" #(vec (rest %))) novo))
+      (persistir!) true)))
+
 (defn aprender-golpe-ativo!
   [cid pid golpe]
   (aprender-golpe-no-indice! cid pid (indice-ativo cid pid) golpe))
@@ -294,6 +365,7 @@
         (swap! contas update-in [cid pid "equipe" idx]
                (fn [r]
                  (-> r
+                     (assoc-in ["historico-golpes" (golpes/chave (golpe<-registro golpe))] golpe)
                      (update "golpes" #(let [v (vec %)]
                                          (vec (concat (subvec v 0 indice) (subvec v (inc indice))))))
                      (update "golpes-removidos" #(vec (distinct (conj (vec %) (golpes/chave (golpe<-registro golpe)))))))))

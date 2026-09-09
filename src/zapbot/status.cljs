@@ -12,11 +12,12 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["Golpes em português, com catálogo local de 937 traduções"
-   "Golpes repetidos corrigidos por identificador, inclusive nomes antigos em inglês"
-   "Todo Pokémon mantém pelo menos um ataque ofensivo de um de seus tipos"
-   "Coleções antigas corrigidas automaticamente fora de batalha, preservando os demais golpes"
-   "Remoção do último ataque do próprio tipo bloqueada"])
+  ["A cada 5 níveis, Pokémon aprendem com vaga ou recebem uma oferta de substituição"
+   (str "Escolha um golpe para substituir ou recuse com " config/prefix "pokemon aprender")
+   "Ofertas ficam salvas no Pokémon, sem apagar golpes nem expirar enquanto você decide"
+   (str "Golpes esquecidos ou recusados podem ser reaprendidos por 50 moedas: " config/prefix "pokemon reaprender")
+   "Trocas preservam pelo menos um ataque do próprio tipo e não permitem golpes duplicados"])
+
 
 
 

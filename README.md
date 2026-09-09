@@ -403,3 +403,32 @@ e garante ao menos um ataque ofensivo de um dos tipos. Pokémon na Joy passam pe
 mesma correção ao retornar. O histórico de golpes esquecidos também é normalizado,
 para impedir que a troca de idioma permita reaprendê-los. A garantia do ataque do
 próprio tipo, introduzida durante o desenvolvimento, faz parte da versão 0.7.3.
+
+
+### Aprendizado e reaprendizado (0.8.0)
+
+A cada cinco níveis, o Pokémon recebe um golpe disponível para sua espécie e
+nível que ainda não conhece e que ainda não foi oferecido. Havendo vaga entre os
+quatro golpes, aprende automaticamente. Com quatro golpes, a oferta fica salva
+no próprio Pokémon, sem expirar. Novas ofertas entram numa fila, preservando as
+anteriores. Consultar a oferta não altera os golpes.
+
+- `!pokemon escolher 2`: seleciona o Pokémon nº 2 da coleção.
+- `!pokemon aprender`: mostra a primeira oferta pendente e os golpes atuais.
+- `!pokemon aprender 3`: substitui o terceiro golpe pela oferta.
+- `!pokemon aprender aceitar`: aceita a oferta se houver vaga livre.
+- `!pokemon aprender recusar`: descarta a oferta, preservando os golpes atuais.
+- `!pokemon reaprender`: lista golpes esquecidos ou recusados, por 50 moedas cada.
+- `!pokemon reaprender 1 3`: recupera o primeiro golpe dessa lista no lugar do
+  terceiro golpe atual. Com vaga livre, basta `!pokemon reaprender 1`.
+
+O serviço aparece na `!loja`; a compra e a escolha do golpe são feitas juntas
+pelo comando `!pokemon reaprender`. As moedas só são cobradas após validar saldo,
+disponibilidade e substituição. Golpes repetidos e a remoção do último ataque do
+próprio tipo são bloqueados. Nenhuma troca é permitida durante a batalha ou uma
+remoção pendente. Golpes removidos em versões antigas também podem ser
+reaprendidos, com consulta à PokeAPI quando o histórico completo não está salvo.
+Ofertas e histórico acompanham o Pokémon na coleção, em doações e na enfermaria.
+Não é mais necessário apagar um golpe antes de subir de nível. Ofertas começam
+nas próximas subidas para níveis múltiplos de cinco; níveis anteriores não geram
+ofertas retroativas.
