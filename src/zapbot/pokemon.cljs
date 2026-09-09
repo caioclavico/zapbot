@@ -449,6 +449,17 @@
    "lendario"  {:nome "Lendário"  :emoji "🟡" :captura 0.4}
    "mitico"    {:nome "Mítico"    :emoji "🔴" :captura 0.3}})
 
+(def ^:private aliases-raridade
+  {"comum" "comum" "comuns" "comum"
+   "incomum" "incomum" "incomuns" "incomum"
+   "raro" "raro" "raros" "raro"
+   "epico" "epico" "epicos" "epico"
+   "lendario" "lendario" "lendarios" "lendario"
+   "mitico" "mitico" "miticos" "mitico"})
+
+(defn- raridade-do-filtro [texto]
+  (get aliases-raridade (normalizar-texto texto)))
+
 (def ^:private peso-raridade
   {"comum" 0 "incomum" 1 "raro" 2 "epico" 3 "lendario" 4 "mitico" 5})
 
@@ -1612,7 +1623,7 @@
 (defn- interpretar-filtros [texto]
   (let [tokens (str/split (normalizar-texto texto) #"\s+")]
     (loop [restantes tokens
-           filtro {:tipos [] :nome-tokens []}]
+           filtro {:tipos [] :raridades [] :nome-tokens []}]
       (if-let [token (first restantes)]
         (let [proximo (second restantes)
               nivel-no-token (second (re-matches #"(?:nivel|nv)\.?([0-9]+)" token))]
@@ -1630,25 +1641,38 @@
             (tipo-do-filtro token)
             (recur (next restantes) (update filtro :tipos conj (tipo-do-filtro token)))
 
+            (and (contains? #{"raridade" "rar"} token)
+                 (raridade-do-filtro proximo))
+            (recur (nnext restantes) (update filtro :raridades conj (raridade-do-filtro proximo)))
+
+            (raridade-do-filtro token)
+            (recur (next restantes) (update filtro :raridades conj (raridade-do-filtro token)))
+
             :else
             (recur (next restantes) (update filtro :nome-tokens conj token))))
         (let [filtro (-> filtro
                          (update :tipos #(vec (distinct %)))
+                         (update :raridades #(vec (distinct %)))
                          (assoc :nome (str/join " " (:nome-tokens filtro)))
                          (dissoc :nome-tokens))]
-          (when (or (seq (:tipos filtro)) (:nivel filtro) (seq (:nome filtro)))
+          (when (or (seq (:tipos filtro)) (seq (:raridades filtro))
+                    (:nivel filtro) (seq (:nome filtro)))
             filtro))))))
 
-(defn- descricao-filtros [{:keys [tipos nivel nome]}]
+(defn- descricao-filtros [{:keys [tipos nivel nome] raridades-filtradas :raridades}]
   (str/join " + "
             (concat
              (when (seq tipos)
                [(str "tipo " (str/join "/" (map tipos-pt tipos)))])
+             (when (seq raridades-filtradas)
+               [(str "raridade "
+                     (str/join "/" (map #(get-in raridades [% :nome]) raridades-filtradas)))])
              (when (seq nome) [(str "nome contendo “" nome "”")])
              (when nivel [(str "nível " nivel)]))))
 
-(defn- corresponde-aos-filtros? [pokemon {:keys [tipos nivel nome]}]
+(defn- corresponde-aos-filtros? [pokemon {:keys [tipos raridades nivel nome]}]
   (and (or (empty? tipos) (every? (set (:tipos pokemon)) tipos))
+       (or (empty? raridades) (contains? (set raridades) (or (:raridade pokemon) "comum")))
        (or (nil? nivel) (= nivel (nivel-pokemon pokemon)))
        (or (str/blank? nome) (str/includes? (normalizar-texto (:nome pokemon)) nome))))
 
@@ -1698,13 +1722,15 @@
                                   em-tratamento))))
             "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉), ou " config/prefix
             "pokemon joy para enviar os feridos à Enfermeira Joy."
-            "\nCombine filtros com " config/prefix "pokemon time [tipo] [nome] [nivel N].")))))
+            "\nVeja a ficha do ativo com " config/prefix "pokemon time ativo."
+            "\nCombine filtros com " config/prefix "pokemon time [tipo] [raridade] [nome] [nivel N].")))))
 
 (defn- ver-treinador [message]
   (let [cid (chat-id message)
         pid (jogador-id message)
         {:keys [nivel xp xp-insignias xp-atual xp-necessario sequencia recorde insignias]}
         (treinador/perfil-treinador cid pid)
+        numero-ativo (inc (treinador/indice-ativo cid pid))
         [ativo] (treinador/pokemon-ativo cid pid)]
     (p/let [nome (nome-de message)]
       (str "🧢 *Treinador: " nome "*\n\n"
@@ -1715,7 +1741,7 @@
            "\n🔥 Sequência atual: " sequencia " capturas"
            "\n🏆 Maior sequência de capturas: " recorde
            "\n\n⚡ Pokémon ativo: "
-           (if ativo (str "*" (:nome ativo) "* — nível " (or (:nivel ativo) 1))
+           (if ativo (str "#" numero-ativo " *" (:nome ativo) "* — nível " (or (:nivel ativo) 1))
                "Nenhum")
            "\n\n🎖️ *Insígnias: " (count (filter :conquistada? insignias)) "/" (count insignias) "*\n"
            (str/join "\n" (map (fn [{:keys [nome requisito conquistada? xp-recompensa]}]
@@ -1727,6 +1753,8 @@
 (defn- renderizar-pokedex-pessoal [message filtro]
   (let [cid       (chat-id message)
         pid       (jogador-id message)
+        numero-ativo (inc (treinador/indice-ativo cid pid))
+        [pokemon-ativo] (treinador/pokemon-ativo cid pid)
         dex       (treinador/sincronizar-pokedex-equipe! cid pid)
         colecao-por-nome
         (reduce-kv (fn [acc idx registro]
@@ -1741,7 +1769,10 @@
                                      (nil? filtro) true
                                      :else
                                      (and (or (empty? (:tipos filtro))
-                                          (every? (set (get entrada "tipos")) (:tipos filtro)))
+                                              (every? (set (get entrada "tipos")) (:tipos filtro)))
+                                        (or (empty? (:raridades filtro))
+                                            (contains? (set (:raridades filtro))
+                                                       (get entrada "raridade" "comum")))
                                         (or (str/blank? (:nome filtro))
                                           (str/includes? nome (:nome filtro)))
                                         (or (nil? (:nivel filtro))
@@ -1758,6 +1789,8 @@
           (.toFixed (* 100 (/ (count dex) total-pokemons)) 1) "%)\n"
           (when filtro (str "🔎 Filtros: " (descricao-filtros filtro) " — " unicos " espécie(s)\n"))
           (if filtro "Capturas neste filtro: " "Total de capturas: ") capturas "\n🔥 Sequência atual: " sequencia "\n"
+          (when pokemon-ativo
+            (str "👉 Pokémon ativo: #" numero-ativo " *" (:nome pokemon-ativo) "*\n"))
           (when (and (seq (:tipos filtro)) (some #(empty? (get % "tipos")) (vals dex)))
             "⚠️ Alguns registros antigos estão sem tipo disponível. Tente novamente para completar o filtro.\n")
           "Raridades: "
@@ -1946,7 +1979,7 @@
              :legenda-ultima
              (str (when (pos? ocultos)
                     (str "⚠️ Mostrando os primeiros " limite " de " (count filtrado) " Pokémon.\n"))
-                  "🔎 Use " config/prefix "pokemon time [tipo] [nome] [nivel N] para encontrar o que procura; os filtros podem ser combinados.")})
+                  "🔎 Use " config/prefix "pokemon time [tipo] [raridade] [nome] [nivel N] para encontrar o que procura; os filtros podem ser combinados.")})
           (p/catch (fn [err]
                      (js/console.error "Erro ao gerar cartão do time:" err)
                      (ver-time message filtro))))
@@ -2107,6 +2140,14 @@
                        ;; PokeAPI/tradução fora do ar, só sem o bloco de espécie
                        (js/console.error "Erro ao buscar espécie pra ficha do time:" err)
                        (responder nil))))))))
+
+(defn- ver-pokemon-ativo-do-time [message]
+  (let [cid (chat-id message)
+        pid (jogador-id message)]
+    (if (treinador/tem-pokemon? cid pid)
+      (ver-pokemon-do-time message (str (inc (treinador/indice-ativo cid pid))))
+      (p/resolved (str (cabecalho) "❓ Você ainda não tem um Pokémon ativo. Use "
+                       config/prefix "pokemon inicial pra escolher o seu.")))))
 
 (def ^:private segundos-para-remover-golpe 30)
 
@@ -2995,8 +3036,9 @@
   coleção e !pokemon pokedex <número> abre a ficha completa do pokémon nessa
   posição do seu time (stats de batalha, golpes, XP/nível mais número, tipo,
   altura, peso, habilidades, evolução e descrição da espécie); !pokemon time
-  mostra seu time capturado em cartões com as fotos e aceita filtro por tipo,
-  nome parcial ou nível; !pokemon time csv
+  mostra seu time capturado em cartões com as fotos e aceita filtros combinados
+  por tipo, raridade, nome parcial ou nível; !pokemon time ativo abre a ficha
+  completa do Pokémon ativo; !pokemon time csv
   manda a mesma lista como planilha .csv em anexo (sem as fotos, e incluindo
   quem está com a Enfermeira Joy); !pokemon escolher <número> troca qual está
   ativo pra batalhar (durante uma caçada PvE, permite uma única troca e
@@ -3046,9 +3088,10 @@
         (ver-pokemon-do-time message (first resto))
         (ver-pokedex-pessoal message (str/join " " resto)))
       (contains? #{"time" "equipe"} cmd)
-      (if (contains? #{"csv" "planilha"} (first resto))
-        (resposta-time-csv message)
-        (resposta-time-visual message (str/join " " resto)))
+      (cond
+        (contains? #{"csv" "planilha"} (first resto)) (resposta-time-csv message)
+        (= "ativo" (first resto)) (ver-pokemon-ativo-do-time message)
+        :else (resposta-time-visual message (str/join " " resto)))
       (contains? #{"removergolpe" "removergolpes" "esquecer" "esquecergolpe"} cmd)
       (remover-golpe message (first resto))
       (contains? #{"cancelar" "cancela"} cmd) (cancelar-remocao message)
@@ -3062,7 +3105,7 @@
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
       (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon liga [nome|time <n1,n2,n3>], " config/prefix "pokemon inicial, " config/prefix "pokemon cacar, "
-                             config/prefix "pokemon treinador, " config/prefix "pokemon pokedex [número|filtros], " config/prefix "pokemon time [filtros|csv], " config/prefix "pokemon escolher <número>, "
+                             config/prefix "pokemon treinador, " config/prefix "pokemon pokedex [número|filtros], " config/prefix "pokemon time [ativo|filtros|csv], " config/prefix "pokemon escolher <número>, "
                              config/prefix "pokemon equipar <número> <item>, "
                              config/prefix "pokemon aprender [número|aceitar|recusar], "
                              config/prefix "pokemon reaprender [número] [substituir], "

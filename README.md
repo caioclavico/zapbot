@@ -304,21 +304,26 @@ src/zapbot/
 
 ### Perfil do treinador Pokémon
 
-Use `!pokemon treinador` para ver o nível e XP do treinador, Pokémon ativo, sequência atual, recorde de capturas e insígnias conquistadas ou bloqueadas. O treinador recebe 1 XP por vitória mais XP por insígnias conquistadas e precisa de 5 XP para chegar ao nível 2, mais 7 para o nível 3, mais 9 para o nível 4 e assim por diante (+2 XP no custo de cada próximo nível); esse XP é separado do XP do Pokémon. As insígnias reconhecem 1, 10, 50 e 100 vitórias, além de sequências de 3, 5, 10 e 20 capturas.
+Use `!pokemon treinador` para ver o nível e XP do treinador, Pokémon ativo com seu número no time, sequência atual, recorde de capturas e insígnias conquistadas ou bloqueadas. O treinador recebe 1 XP por vitória mais XP por insígnias conquistadas e precisa de 5 XP para chegar ao nível 2, mais 7 para o nível 3, mais 9 para o nível 4 e assim por diante (+2 XP no custo de cada próximo nível); esse XP é separado do XP do Pokémon. As insígnias reconhecem 1, 10, 50 e 100 vitórias, além de sequências de 3, 5, 10 e 20 capturas.
 
 O recorde é preservado quando uma sequência termina. Para contas antigas, parte da sequência atual salva: sequências anteriores à implementação não podem ser recuperadas.
 
-O time pode ser filtrado por tipo, nome parcial ou nível, sem alterar a numeração
-usada pelos outros comandos: `!pokemon time fogo`, `!pokemon time char` e
-`!pokemon time nivel 25` (também aceita apenas `!pokemon time 25`). A visualização
+O time pode ser filtrado por tipo, raridade, nome parcial ou nível, sem alterar a
+numeração usada pelos outros comandos: `!pokemon time fogo`, `!pokemon time lendario`,
+`!pokemon time char` e `!pokemon time nivel 25` (também aceita apenas
+`!pokemon time 25`). As raridades aceitas são comum, incomum, raro, épico,
+lendário e mítico, com ou sem acento e também no plural. A visualização
 envia no máximo duas páginas, com 12 Pokémon cada, e orienta o uso dos filtros na
 última imagem. Os filtros podem ser combinados com lógica cumulativa, por exemplo
-`!pokemon time char fogo nivel 25`: o resultado precisa corresponder ao nome,
-tipo e nível informados. Os mesmos
+`!pokemon time char fogo lendario nivel 25`: o resultado precisa corresponder ao
+nome, tipo, raridade e nível informados. Mais de uma raridade funciona como
+alternativa, por exemplo `!pokemon time lendario mitico`. Os mesmos
 filtros funcionam na Pokédex pessoal com `!pokemon pokedex fogo`,
-`!pokemon pokedex char`, `!pokemon pokedex nivel 25` ou combinados como
-`!pokemon pokedex char fogo nivel 25`; um número sozinho continua abrindo a ficha
-do Pokémon naquela posição.
+`!pokemon pokedex raro`, `!pokemon pokedex char`, `!pokemon pokedex nivel 25` ou
+combinados como `!pokemon pokedex char fogo lendario nivel 25`; um número sozinho continua abrindo a ficha
+do Pokémon naquela posição. O resumo da Pokédex e o perfil do treinador identificam
+o Pokémon ativo pelo respectivo número no time. Use `!pokemon time ativo` para abrir
+a ficha completa do ativo, com HP, atributos, golpes, XP, tipos e item equipado.
 
 
 ### Ligas Pokémon (0.7.0)
@@ -445,9 +450,9 @@ Não é mais necessário apagar um golpe antes de subir de nível. Ofertas come�
 nas próximas subidas para níveis múltiplos de cinco; níveis anteriores não geram
 ofertas retroativas.
 
-A Pokédex pessoal também aceita filtro por tipo: `!pokemon pokedex fogo`,
-`!pokemon pokedex água`, `!pokemon pokedex eletrico` ou `!pokemon pokedex grass`.
-Aceita nomes em português com ou sem acento e os identificadores em inglês.
+A Pokédex pessoal também aceita filtros por tipo e raridade: `!pokemon pokedex fogo`,
+`!pokemon pokedex água`, `!pokemon pokedex lendario` ou `!pokemon pokedex miticos`.
+Aceita nomes em português com ou sem acento e identificadores de tipo em inglês.
 Pokémon de dois tipos aparecem em ambos os filtros. Os números da coleção são
 preservados; `!pokemon pokedex 2` continua abrindo a ficha do Pokémon nº 2.
 Sem argumento, mostra todos os registros. Registros antigos sem tipos são

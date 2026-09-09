@@ -55,7 +55,7 @@
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra versão, últimas mudanças, consumo de recursos e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
-  {:emoji "⚡" :uso "pokemon [liga [nome|time <n1,n2,n3>]|inicial|cacar|treinador|pokedex [n|filtros]|time [filtros|csv]|trocar <n>|equipar|aprender [n|recusar]|reaprender [n] [troca]|removergolpe <n>|doar|joy <n,n,...>|atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalhe e capture por bioma, filtre time/Pokédex combinando tipo, nome e nível, equipe itens e evolua com XP"}
+  {:emoji "⚡" :uso "pokemon [liga [nome|time <n1,n2,n3>]|inicial|cacar|treinador|pokedex [n|filtros]|time [ativo|filtros|csv]|trocar <n>|equipar|aprender [n|recusar]|reaprender [n] [troca]|removergolpe <n>|doar|joy <n,n,...>|atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalhe e capture por bioma, veja o ativo, filtre time/Pokédex combinando tipo, raridade, nome e nível, equipe itens e evolua com XP"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
    {:emoji "🏪" :uso "loja [comprar|detalhes <item>]" :desc "Compra curas e itens equipáveis do Pokémon ou explica detalhadamente o efeito de cada item"}
    {:emoji "🏆" :uso "rank"                :desc "Mostra o rank de pontos desse chat (vitórias em !velha, !naval, !pokemon e !quiz)"}
