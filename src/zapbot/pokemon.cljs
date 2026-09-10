@@ -859,18 +859,21 @@
   "A cada cinco níveis aprende com vaga ou salva uma oferta de substituição."
   ([message cid pid nivel] (aprender-golpe-por-nivel! message cid pid nivel (treinador/indice-ativo cid pid)))
   ([message cid pid nivel idx]
-   (when (zero? (mod nivel niveis-por-golpe))
+   (when (and (pos? nivel) (zero? (mod nivel niveis-por-golpe))
+              (> nivel (get-in (treinador/equipe cid pid) [idx "nivel-oferta-verificado"] 0)))
      (let [registro (get (treinador/equipe cid pid) idx)]
        (when-let [[pokemon _ _] (treinador/pokemon-no-indice cid pid idx)]
          (-> (p/let [dados (buscar-pokemon-por-nome (str/lower-case (:nome pokemon)))
                      ordenados (golpes-ordenados (:moves-brutos dados) (:tipos pokemon) nivel)]
+               (when (empty? ordenados) (throw (ex-info "Consulta sem golpes válidos" {})))
                (when (= registro (get (treinador/equipe cid pid) idx))
                  (let [conhecidos (set (map golpes/chave (:golpes pokemon)))
                        oferecidos (treinador/golpes-ja-oferecidos cid pid idx)
                        novo (first (remove #(or (contains? conhecidos (golpes/chave %))
                                                 (contains? oferecidos (golpes/chave %))) ordenados))
                        resultado (when novo (treinador/oferecer-golpe! cid pid idx novo))]
-                   (when resultado
+                   (treinador/registrar-verificacao-golpe! cid pid idx nivel)
+                   (if resultado
                      (enviar-aviso-temporizado
                       cid message
                       (str (cabecalho) "📘 *" (:nome pokemon) "* (nº " (inc idx) ") chegou ao nível " nivel
@@ -880,10 +883,16 @@
                              (str "\nSelecione esse Pokémon com " config/prefix "pokemon escolher " (inc idx)
                                   " e veja a oferta com " config/prefix "pokemon aprender."
                                   "\nA oferta fica salva até você substituir um golpe ou recusar.")))
-                       [])))))
+                       [])
+                     (enviar-aviso-temporizado cid message
+                       (str "📘 " (:nome pokemon) " chegou ao nível " nivel
+                            ", mas não há golpe novo disponível para a espécie nesse nível."
+                            " Os golpes disponíveis já são conhecidos ou foram oferecidos."
+                            " Próxima oportunidade no nível " (+ nivel 5) ".") [])))))
               (p/catch (fn [err]
                          (js/console.error "Erro ao oferecer golpe por nível:" err)
-                         nil))))))))
+                         (enviar-aviso-temporizado cid message
+                           (str "📘 Não consegui consultar os golpes agora. Selecione o Pokémon e use " config/prefix "pokemon aprender para tentar novamente.") [])))))))))
 
 (defn- aviso-saida-liga [subida]
   (when (seq (:ligas-removidas subida))
@@ -1149,21 +1158,22 @@
   (let [cid (chat-id message) pid (jogador-id message)
         id (treinador/liga-selecionada cid pid)
         [cmd & partes] args
+        consulta-time? (and (= cmd "time") (empty? partes))
         texto-numeros (str/join " " partes)
         numeros (mapv str/trim (str/split texto-numeros #","))
         ocupado? (or (some #{pid} (vals (:jogadores (get @jogos cid))))
                      (= pid (:pid (get @cacadas-selvagens cid))))]
     (p/resolved
      (cond
-       (and (seq args) ocupado?) "🚫 Termine ou saia da batalha antes de alterar a liga ou a escalação."
-       (= cmd "time")
+       (and (seq args) (not consulta-time?) ocupado?) "🚫 Termine ou saia da batalha antes de alterar a liga ou a escalação."
+       (and (= cmd "time") (not consulta-time?))
        (if (and id (re-matches #"[1-9][0-9]*\s*,\s*[1-9][0-9]*\s*,\s*[1-9][0-9]*" texto-numeros)
                 (every? #(re-matches #"[1-9][0-9]*" %) numeros)
                 (treinador/escalar! cid pid id (mapv #(dec (js/parseInt % 10)) numeros)))
          "✅ Time salvo! A ordem escolhida define quem começa e quem entra após cada nocaute."
          (str "❓ Selecione uma liga e escale três Pokémon diferentes dentro da faixa: " config/prefix
               "pokemon liga time <n1,n2,n3>. Veja os números com " config/prefix "pokemon time."))
-       (seq args)
+       (and (seq args) (not consulta-time?))
        (if (treinador/selecionar-liga! cid pid cmd)
          (str "✅ Liga " (:nome (treinador/obter-liga cmd)) " selecionada. Escale com "
               config/prefix "pokemon liga time <n1,n2,n3>.")
@@ -1179,7 +1189,7 @@
                    (str/join "\n" (map-indexed
                                    (fn [slot idx]
                                      (if-let [r (when (some? idx) (get (treinador/equipe cid pid) idx))]
-                                       (str (inc slot) ". #" (inc idx) " " (get r "nome") " • Nv. " (get r "nivel" 1))
+                                       (str (inc slot) ". #" (inc idx) " " (get r "nome") " • Nv. " (get r "nivel" 1) " • HP " (get r "hp-atual") "/" (get r "hp"))
                                        (str (inc slot) ". Vazio — escolha um substituto")))
                                    (treinador/time-liga cid pid id)))))
             "\n\nTrês Pokémon saudáveis são necessários. Pareamento: mesma liga e diferença máxima de 5 níveis por posição dos times ordenados por nível.")))))
@@ -1632,6 +1642,12 @@
         (let [proximo (second restantes)
               nivel-no-token (second (re-matches #"(?:nivel|nv)\.?([0-9]+)" token))]
           (cond
+            (and (= token "liga") (treinador/obter-liga proximo))
+            (recur (nnext restantes) (assoc filtro :liga (treinador/obter-liga proximo)))
+
+            (treinador/obter-liga token)
+            (recur (next restantes) (assoc filtro :liga (treinador/obter-liga token)))
+
             (and (re-matches #"(?:nivel|nv)\.?" token)
                  (re-matches #"[0-9]+" (or proximo "")))
             (recur (nnext restantes) (assoc filtro :nivel (js/parseInt proximo 10)))
@@ -1660,12 +1676,13 @@
                          (assoc :nome (str/join " " (:nome-tokens filtro)))
                          (dissoc :nome-tokens))]
           (when (or (seq (:tipos filtro)) (seq (:raridades filtro))
-                    (:nivel filtro) (seq (:nome filtro)))
+                    (:nivel filtro) (:liga filtro) (seq (:nome filtro)))
             filtro))))))
 
-(defn- descricao-filtros [{:keys [tipos nivel nome] raridades-filtradas :raridades}]
+(defn- descricao-filtros [{:keys [tipos nivel nome liga] raridades-filtradas :raridades}]
   (str/join " + "
             (concat
+             (when liga [(str "liga " (:nome liga) " (" (:min liga) "–" (:max liga) ") — nível decrescente")])
              (when (seq tipos)
                [(str "tipo " (str/join "/" (map tipos-pt tipos)))])
              (when (seq raridades-filtradas)
@@ -1674,8 +1691,9 @@
              (when (seq nome) [(str "nome contendo “" nome "”")])
              (when nivel [(str "nível " nivel)]))))
 
-(defn- corresponde-aos-filtros? [pokemon {:keys [tipos raridades nivel nome]}]
-  (and (or (empty? tipos) (every? (set (:tipos pokemon)) tipos))
+(defn- corresponde-aos-filtros? [pokemon {:keys [tipos raridades nivel nome liga]}]
+  (and (or (nil? liga) (<= (:min liga) (nivel-pokemon pokemon) (:max liga)))
+       (or (empty? tipos) (every? (set (:tipos pokemon)) tipos))
        (or (empty? raridades) (contains? (set raridades) (or (:raridade pokemon) "comum")))
        (or (nil? nivel) (= nivel (nivel-pokemon pokemon)))
        (or (str/blank? nome) (str/includes? (normalizar-texto (:nome pokemon)) nome))))
@@ -1687,6 +1705,13 @@
          (filter (fn [{:keys [registro]}]
                    (let [[pokemon] (treinador/registro->pokemon registro)]
                      (or (nil? filtros) (corresponde-aos-filtros? pokemon filtros)))))
+         (#(if (:liga filtros)
+             (sort-by (fn [{:keys [indice registro]}]
+                        [(- (get registro "nivel" 1))
+                         (- (reduce + 0 (map (fn [stat] (get registro stat 0))
+                                             ["hp" "ataque" "defesa" "atq-esp" "def-esp" "veloc"])))
+                         indice]) %)
+             %))
          vec)))
 
 (defn- ver-time [message filtro]
@@ -1727,7 +1752,7 @@
             "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉), ou " config/prefix
             "pokemon joy para enviar os feridos à Enfermeira Joy."
             "\nVeja a ficha do ativo com " config/prefix "pokemon time ativo."
-            "\nCombine filtros com " config/prefix "pokemon time [tipo] [raridade] [nome] [nivel N].")))))
+            "\nCombine filtros com " config/prefix "pokemon time [liga] [tipo] [raridade] [nome] [nivel N].")))))
 
 (defn- ver-treinador [message]
   (let [cid (chat-id message)
@@ -1983,7 +2008,7 @@
              :legenda-ultima
              (str (when (pos? ocultos)
                     (str "⚠️ Mostrando os primeiros " limite " de " (count filtrado) " Pokémon.\n"))
-                  "🔎 Use " config/prefix "pokemon time [tipo] [raridade] [nome] [nivel N] para encontrar o que procura; os filtros podem ser combinados.")})
+                  "🔎 Use " config/prefix "pokemon time [liga] [tipo] [raridade] [nome] [nivel N] para encontrar o que procura; os filtros podem ser combinados.")})
           (p/catch (fn [err]
                      (js/console.error "Erro ao gerar cartão do time:" err)
                      (ver-time message filtro))))
@@ -2948,7 +2973,7 @@
       (= pid (:pid (get @cacadas-selvagens cid)))
       (get @remocoes-pendentes [cid pid])))
 
-(defn- aprender-oferta [message args]
+(defn- mostrar-oferta [message args]
   (let [cid (chat-id message) pid (jogador-id message)
         idx (treinador/indice-ativo cid pid)
         [pokemon] (treinador/pokemon-ativo cid pid)
@@ -2989,6 +3014,19 @@
                 (when (some? slot) " O golpe substituído fica disponível para reaprender.")
                 (when (> (count ofertas) 1) (str "\nPróxima oferta: " config/prefix "pokemon aprender.")))
            "❓ Escolha um golpe válido para substituir, mantendo pelo menos um ataque do próprio tipo. Use aceitar somente com vaga livre."))))))
+
+(defn- aprender-oferta [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        idx (treinador/indice-ativo cid pid)
+        r (get (treinador/equipe cid pid) idx)
+        marco (* 5 (quot (get r "nivel" 1) 5))]
+    (if (and (empty? args) r (not (aprendizado-bloqueado? cid pid))
+             (empty? (treinador/ofertas-golpes cid pid idx))
+             (> marco (get r "nivel-oferta-verificado" 0)))
+      (-> (or (aprender-golpe-por-nivel! message cid pid marco idx) (p/resolved nil))
+          (p/then (fn [_] (when (seq (treinador/ofertas-golpes cid pid idx))
+                           (mostrar-oferta message args)))))
+      (mostrar-oferta message args))))
 
 (defn- reaprender-golpe [message args]
   (let [cid (chat-id message) pid (jogador-id message)
@@ -3096,6 +3134,7 @@
         (ver-pokedex-pessoal message (str/join " " resto)))
       (contains? #{"time" "equipe"} cmd)
       (cond
+        (and (= ["liga"] (vec resto))) (configurar-liga message ["time"])
         (contains? #{"csv" "planilha"} (first resto)) (resposta-time-csv message)
         (= "ativo" (first resto)) (ver-pokemon-ativo-do-time message)
         :else (resposta-time-visual message (str/join " " resto)))

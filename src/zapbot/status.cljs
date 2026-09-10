@@ -12,14 +12,11 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  [(str "Filtros por raridade no time e na Pokédex pessoal, como " config/prefix "pokemon time lendario")
-   (str "A ficha completa do Pokémon ativo está disponível em " config/prefix "pokemon time ativo")
-   "A Pokédex pessoal e o perfil do treinador agora mostram o número do Pokémon ativo"
-   (str "Filtros combináveis por tipo, raridade, nome e nível: " config/prefix "pokemon time fogo raro nivel 25")
-   "A visualização do time envia no máximo duas páginas para não lotar o chat de imagens"
-   (str "Os mesmos filtros combináveis funcionam na Pokédex pessoal: " config/prefix "pokemon pokedex char fogo raro nivel 25")
-   "A confirmação de troca informa o nome do novo Pokémon ativo"
-   "Avisos de inatividade de caçadas e batalhas voltaram a ser enviados no prazo"])
+  [(str "Filtro da coleção por liga, do maior nível ao menor: " config/prefix "pokemon time bronze")
+   (str "Aprendizado informa quando não há golpe novo; consultas interrompidas podem ser repetidas com " config/prefix "pokemon aprender")
+   "Cada marco de cinco níveis é verificado uma vez, sem ofertas extras por repetição do comando"
+   (str "Consulte a escalação salva da liga e o HP com " config/prefix "pokemon liga time")])
+
 
 
 

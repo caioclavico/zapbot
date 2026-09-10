@@ -457,3 +457,23 @@ Pokémon de dois tipos aparecem em ambos os filtros. Os números da coleção s�
 preservados; `!pokemon pokedex 2` continua abrindo a ficha do Pokémon nº 2.
 Sem argumento, mostra todos os registros. Registros antigos sem tipos são
 completados pela PokeAPI e salvos na primeira filtragem.
+
+
+### Aprendizado e consulta da liga (0.8.3)
+
+`!pokemon aprender` verifica o marco mais recente de cinco níveis quando ele
+ainda não foi concluído. Se a espécie não tiver golpe novo nesse nível, o bot
+avisa. A consulta concluída não concede ofertas extras ao repetir o comando.
+`!pokemon liga time` consulta a escalação salva com números, níveis, HP e vagas,
+inclusive durante batalhas. Para alterar, use `!pokemon liga time 1,3,5`.
+
+
+`!pokemon time liga` é um atalho de `!pokemon liga time`: mostra a escalação
+salva da liga selecionada, cujo nome aparece na resposta.
+Para listar todos os Pokémon da coleção na faixa de uma liga, use
+`!pokemon time bronze` ou `!pokemon time liga bronze`. Aceita iniciante, bronze,
+prata, ouro e diamante e combina com os filtros existentes, por exemplo
+`!pokemon time bronze fogo`. Ordena por nível decrescente; em empate, pela soma
+dos atributos máximos, e depois pelo número original da coleção. Esses números
+são preservados tanto no texto quanto nos cartões. O filtro não muda a liga
+selecionada nem a escalação salva e pode incluir Pokémon desmaiados.

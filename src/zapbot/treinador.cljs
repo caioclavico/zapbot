@@ -263,6 +263,12 @@
       (persistir!)
       true)))
 
+(defn registrar-verificacao-golpe! [cid pid idx nivel]
+  (when (get (equipe cid pid) idx)
+    (swap! contas update-in [cid pid "equipe" idx "nivel-oferta-verificado"]
+           #(max (or % 0) nivel))
+    (persistir!)))
+
 (defn ofertas-golpes [cid pid idx]
   (mapv golpe<-registro (get-in (equipe cid pid) [idx "ofertas-golpes"] [])))
 
