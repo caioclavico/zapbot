@@ -930,6 +930,8 @@
         _ (rank/pontuar! cid vencedor-pid (get-in jogo [:nomes vencedor-marca]) "pokemon")
         _ (treinador/registrar-vitoria-treinador! cid vencedor-pid)
         ganho (loja/creditar! cid vencedor-pid)
+        premio-bolas (loja/premiar-bolas! cid vencedor-pid 2)
+        aviso-missao (loja/registrar-missao! cid vencedor-pid "vitorias" (treinador/nivel-jogador cid vencedor-pid))
         recompensas (recompensas-partida! cid jogo)]
     (-> (p/all (for [{:keys [pid idx subida]} recompensas :when subida]
                  (-> (verificar-evolucao! message cid pid idx)
@@ -939,6 +941,7 @@
                                     (if (= finalizando (get estado cid)) (dissoc estado cid) estado))))))
     (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "! (+" ganho
          " 💰 moedas, confira com " config/prefix "loja)"
+         "\n" premio-bolas aviso-missao
          "\n✨ *XP por Pokémon que participou:*"
          (apply str
                 (for [{:keys [pid nome nocautes xp subida]} recompensas]
@@ -1757,7 +1760,7 @@
 (defn- ver-treinador [message]
   (let [cid (chat-id message)
         pid (jogador-id message)
-        {:keys [nivel xp xp-insignias xp-atual xp-necessario sequencia recorde insignias]}
+        {:keys [nivel xp xp-insignias xp-missoes xp-atual xp-necessario sequencia recorde insignias]}
         (treinador/perfil-treinador cid pid)
         numero-ativo (inc (treinador/indice-ativo cid pid))
         [ativo] (treinador/pokemon-ativo cid pid)]
@@ -1766,7 +1769,8 @@
            "⭐ Nível do treinador: " nivel
            "\n✨ XP total do treinador: " xp
            "\n🎖️ XP recebido por insígnias: " xp-insignias
-           "\nPróximo nível: " xp-atual "/" xp-necessario " XP (vitórias + insígnias)"
+           "\n📋 XP recebido por missões: " xp-missoes
+           "\nPróximo nível: " xp-atual "/" xp-necessario " XP (vitórias + insígnias + missões)"
            "\n🔥 Sequência atual: " sequencia " capturas"
            "\n🏆 Maior sequência de capturas: " recorde
            "\n\n⚡ Pokémon ativo: "
@@ -2391,6 +2395,7 @@
                           [pokemon _ _] (treinador/registro->pokemon registro)]
                       (treinador/remover-pokemon! cid pid indice)
                       (treinador/receber-doacao! cid alvo registro)
+                      (treinador/registrar-doacao! cid pid)
                       (str (cabecalho) "🎁 Você doou *" (:nome pokemon) "* Nv." (nivel-pokemon pokemon)
                            " com sucesso!"))))
                 (p/catch (fn [err]
@@ -2437,34 +2442,63 @@
           (p/then (fn [_] (aprender-golpe-por-nivel! (:message caca) cid pid (:nivel subida))))))
     {:xp xp :bonus-xp bonus-seq :moedas moedas :subida subida :sequencia sequencia :sequencia-anterior sequencia-ant}))
 
-(defn- tentar-captura-pos-batalha [cid pid caca]
-  (let [selvagem     (get-in caca [:pokemons :o])
-        sequencia    (treinador/sequencia-capturas cid pid)
-        status       (get-in caca [:status :o])
-        bonus        (get bonus-captura-status status 1)
-        chance       (min 95 (+ (js/Math.round (* bonus (chance-captura selvagem)))
-                                25 (min 20 (* 2 sequencia))))
-        texto-bonus  (when (> bonus 1)
-                       (str "\n" (str/triml (emoji-status status)) " "
-                            (str/capitalize (nome-status status))
-                            " deixou a captura " (str/replace (str bonus) "." ",")
-                            "× mais fácil!"))
-        capturou?    (< (rand-int 100) chance)
-        recompensa  (encerrar-cacada! cid pid caca capturou?)]
-    (if capturou?
-      (let [idx (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil)]
-        (str "\n\n✅ Pokébola lançada: captura concluída! (" chance "% de chance)"
-             texto-bonus
-             "\n📚 Registrado na sua Pokédex e adicionado ao time como nº " (inc idx) "."
-             "\n🔥 Sequência de capturas: " (:sequencia recompensa)
-             "\n✨ +" (:xp recompensa) " XP (raridade +"
-             (- (:xp recompensa) (:bonus-xp recompensa)) " • sequência +" (:bonus-xp recompensa)
-             ") • +" (:moedas recompensa) " moedas"
-             (when-let [s (:subida recompensa)]
-               (str "\n🌟 *" (:nome s) "* subiu para o nível " (:nivel s) "!" (aviso-saida-liga s)))))
-      (str "\n\n💨 A Pokébola falhou e *" (:nome selvagem) "* escapou! (" chance "% de chance)"
-           texto-bonus
-           "\n💔 A sequência de capturas foi encerrada.\n✨ +1 XP pela batalha."))))
+(defn- chance-com-bola [chance-base bola]
+  (min 95 (js/Math.round (* chance-base (:multiplicador-captura (loja/dados-item bola))))))
+
+(defn- menu-captura [cid pid caca]
+  (str "\n\n🎯 *Escolha a bola para capturar " (get-in caca [:pokemons :o :nome]) "!*\n"
+       (str/join "\n"
+                 (for [bola loja/bolas :let [item (loja/dados-item bola)]]
+                   (str (:emoji item) " " (:nome item) " — "
+                        (loja/quantidade-item cid pid bola) " disponível(is) — "
+                        (chance-com-bola (:chance-base-captura caca) bola) "% de chance")))
+       "\n\nUse " config/prefix "pokemon capturar <pokebola|grande-bola|ultra-bola>."
+       "\nUma tentativa por encontro; a bola é consumida mesmo se falhar. Você tem 5 minutos."
+       "\nSem bolas? Use " config/prefix "mochila kit, " config/prefix "mochila resgatar ou " config/prefix "loja comprar <bola>."
+       "\nPara desistir: " config/prefix "pokemon sair."))
+
+(defn- preparar-captura-pos-batalha [cid pid caca]
+  (let [selvagem (get-in caca [:pokemons :o])
+        bonus (get bonus-captura-status (get-in caca [:status :o]) 1)
+        chance (min 95 (+ (js/Math.round (* bonus (chance-captura selvagem)))
+                         25 (min 20 (* 2 (treinador/sequencia-capturas cid pid)))))
+        pronta (assoc caca :aguardando-captura? true :chance-base-captura chance)]
+    (swap! cacadas-selvagens assoc cid pronta)
+    (str "\n" (loja/premiar-bolas! cid pid 1)
+         (loja/registrar-missao! cid pid "selvagens" (treinador/nivel-jogador cid pid)) (menu-captura cid pid pronta))))
+
+(defn- capturar-selvagem [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        caca (get @cacadas-selvagens cid)
+        bola (loja/normalizar-item (str/join " " args))]
+    (p/resolved
+     (cond
+       (nil? caca) "❓ Não há caçada em andamento."
+       (not= pid (:pid caca)) "🚫 Essa caçada pertence a outro treinador."
+       (not (:aguardando-captura? caca)) "⚔️ Derrote o Pokémon selvagem antes de capturar."
+       (empty? args) (menu-captura cid pid caca)
+       (not (some #{bola} loja/bolas)) (str "❓ Bola desconhecida." (menu-captura cid pid caca))
+       (not (loja/consumir-bola! cid pid bola))
+       (str "🎒 Você não tem essa bola. Escolha outra ou compre na loja." (menu-captura cid pid caca))
+       :else
+       (let [selvagem (get-in caca [:pokemons :o])
+             chance (chance-com-bola (:chance-base-captura caca) bola)
+             capturou? (< (rand-int 100) chance)
+             recompensa (encerrar-cacada! cid pid caca capturou?)
+             nome-bola (:nome (loja/dados-item bola))]
+         (if capturou?
+           (let [idx (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil)
+                 aviso-missao (loja/registrar-missao! cid pid "capturas" (treinador/nivel-jogador cid pid))]
+             (str "✅ " nome-bola " lançada: captura concluída! (" chance "% de chance)" aviso-missao
+                  "\n📚 Registrado na Pokédex e adicionado ao time como nº " (inc idx) "."
+                  "\n🔥 Sequência de capturas: " (:sequencia recompensa)
+                  "\n✨ +" (:xp recompensa) " XP (raridade +"
+                  (- (:xp recompensa) (:bonus-xp recompensa)) " • sequência +" (:bonus-xp recompensa)
+                  ") • +" (:moedas recompensa) " moedas"
+                  (when-let [subida (:subida recompensa)]
+                    (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!" (aviso-saida-liga subida)))))
+           (str "💨 A " nome-bola " falhou e *" (:nome selvagem) "* escapou! (" chance "% de chance)"
+                "\n💔 A sequência de capturas foi encerrada.\n✨ +1 XP pela batalha.")))))))
 
 (defn- turno-selvagem
   "Executa a resposta do selvagem depois de qualquer ação válida do jogador.
@@ -2503,7 +2537,7 @@
             (treinador/atualizar-ativo! cid pid (get-in caca [:hp :x]) (get-in caca [:status :x]))
             (if (zero? (get-in caca [:hp :o]))
               (str msg "\n🏁 O selvagem foi derrotado pelo próprio status!"
-                   (tentar-captura-pos-batalha cid pid caca))
+                   (preparar-captura-pos-batalha cid pid caca))
               (do (swap! cacadas-selvagens assoc cid caca)
                   (str msg "\n\n" (estado-cacada caca)))))
           (let [golpe-selvagem (rand-nth (:golpes selvagem))
@@ -2527,7 +2561,7 @@
                 (if (zero? (get-in caca-nova [:hp :o]))
                   (str (cabecalho) mensagem-jogador aviso "\n\n" mensagem extra
                        "\n🏁 O selvagem foi derrotado pelo próprio status!"
-                       (tentar-captura-pos-batalha cid pid caca-nova))
+                       (preparar-captura-pos-batalha cid pid caca-nova))
                   (do (swap! cacadas-selvagens assoc cid caca-nova)
                       (str (cabecalho) mensagem-jogador aviso "\n\n" mensagem extra "\n\n"
                            (estado-cacada caca-nova))))))))))))
@@ -2636,7 +2670,7 @@
                (zero? (get-in caca [:hp :o]))
                (do (treinador/atualizar-ativo! cid pid (get-in caca [:hp :x]) (get-in caca [:status :x]))
                    (str (cabecalho) aviso mensagem msg-efeitos "\n🏁 O selvagem foi derrotado!"
-                        (tentar-captura-pos-batalha cid pid caca)))
+                        (preparar-captura-pos-batalha cid pid caca)))
 
                (zero? (get-in caca [:hp :x]))
                (let [recompensa (encerrar-cacada! cid pid caca false)]
@@ -3073,6 +3107,72 @@
                      (js/console.error "Erro ao reaprender golpe:" err)
                      "❌ Não consegui reaprender esse golpe agora."))))))
 
+(defn- sortear-ataque-mt [registro slot candidatos]
+  (if-let [id (first candidatos)]
+    (p/let [golpe (buscar-golpe id)]
+      (if (and golpe (contains? #{:fisico :especial} (:classe golpe))
+               (pos? (or (:poder golpe) 0))
+               (treinador/preparar-aprendizado registro golpe slot))
+        golpe
+        (sortear-ataque-mt registro slot (rest candidatos))))
+    (p/resolved nil)))
+
+(defn- usar-mt [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        idx (treinador/indice-ativo cid pid)
+        registro (get (treinador/equipe cid pid) idx)
+        destino (first args)
+        slot (when (re-matches #"[1-4]" (or destino "")) (dec (js/parseInt destino 10)))]
+    (cond
+      (aprendizado-bloqueado? cid pid)
+      (p/resolved "🚫 Termine a batalha e aguarde ou cancele a remoção pendente antes de usar o MT.")
+      (nil? registro) (p/resolved "❓ Escolha seu Pokémon inicial primeiro.")
+      (or (> (count args) 1) (and destino (nil? slot))
+          (and slot (>= slot (count (get registro "golpes"))))
+          (and (nil? slot) (>= (count (get registro "golpes")) 4)))
+      (p/resolved (str "💿 Use " config/prefix "pokemon mt para preencher uma vaga livre ou "
+                       config/prefix "pokemon mt <1-4> para substituir um ataque existente."))
+      (not (loja/tem-mt? cid pid))
+      (p/resolved (str "💿 Compre um MT de Ataque por 200 moedas: " config/prefix "loja comprar mt."))
+      :else
+      (-> (p/let [dados (buscar-pokemon-por-nome (str/lower-case (get registro "nome")))
+                  conhecidos (set (map golpes/chave (:golpes (first (treinador/registro->pokemon registro)))))
+                  candidatos (shuffle (vec (remove conhecidos (distinct (map #(get-in % [:move :name]) (:moves-brutos dados))))))
+                  golpe (sortear-ataque-mt registro slot candidatos)]
+            (cond
+              (or (aprendizado-bloqueado? cid pid)
+                  (not= idx (treinador/indice-ativo cid pid))
+                  (not= registro (get (treinador/equipe cid pid) idx)))
+              "⏳ Seu Pokémon ou a partida mudou. Tente novamente; o MT não foi consumido."
+              (nil? golpe) "❌ Nenhum novo ataque compatível disponível para essa mudança. O MT não foi consumido."
+              (not (loja/tem-mt? cid pid)) "❌ Você não tem mais MT de Ataque."
+              (treinador/aplicar-aprendizado! cid pid idx golpe slot false)
+              (do (loja/consumir-mt! cid pid)
+                  (str "💿 " (get registro "nome") " aprendeu *" (:nome-exibicao golpe) "*! 1 MT consumido."))
+              :else "❌ Não foi possível mudar o ataque. O MT não foi consumido."))
+          (p/catch (fn [err]
+                     (js/console.error "Erro ao usar MT:" err)
+                     "❌ Não consegui consultar os ataques agora. Tente novamente."))))))
+
+(defn- reviver-pokemon [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        idx (if (empty? args) (treinador/indice-ativo cid pid)
+                (parse-indice-golpe (first args) (count (treinador/equipe cid pid))))]
+    (p/resolved
+     (cond
+       (aprendizado-bloqueado? cid pid)
+       "🚫 Termine a batalha ou caçada e aguarde ou cancele a remoção pendente antes de reviver."
+       (or (> (count args) 1) (nil? idx))
+       (str "❓ Use " config/prefix "pokemon reviver [número do Pokémon]. Sem número, usa o ativo.")
+       :else
+       (let [resultado (treinador/reviver! cid pid idx)]
+         (case resultado
+           :invalido "❓ Pokémon não encontrado no seu time."
+           :nao-desmaiado "💚 Esse Pokémon não está desmaiado. Nenhum item foi consumido."
+           :sem-item (str "💎 Você não tem Reviver. Ganhe esse item nas missões: " config/prefix "missoes.")
+           (str "💎 *" (get-in (treinador/equipe cid pid) [idx "nome"])
+                "* reviveu com " resultado " HP e sem status! 1 Reviver consumido.")))))))
+
 (defn jogar
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
   batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
@@ -3120,12 +3220,23 @@
     (cond
       (:finalizando? (get @jogos cid))
       (p/resolved "⏳ Finalizando o XP, as evoluções e os golpes da partida. Aguarde um instante.")
+      (and (= pid (:pid (get @cacadas-selvagens cid)))
+           (:aguardando-captura? (get @cacadas-selvagens cid))
+           (or (str/blank? args)
+               (contains? #{"atacar" "ataque" "atirar" "usar" "defender" "defesa" "esquivar" "evasiva"
+                            "curar" "cura" "pocao" "poção" "vida" "escolher" "trocar" "troca"} cmd)))
+      (p/resolved (menu-captura cid pid (get @cacadas-selvagens cid)))
       (str/blank? args) (iniciar-ou-entrar message)
       (= cmd "sair") (sair message)
       (contains? #{"liga" "ligas"} cmd) (configurar-liga message resto)
       (= cmd "treinador") (ver-treinador message)
       (= cmd "aprender") (aprender-oferta message resto)
       (= cmd "reaprender") (reaprender-golpe message resto)
+      (= cmd "mt") (usar-mt message resto)
+      (= cmd "reviver") (reviver-pokemon message resto)
+      (= cmd "mochila") (p/resolved (loja/mochila message (first resto)))
+      (contains? #{"missoes" "missões"} cmd) (p/resolved (loja/ver-missoes message (first resto) (treinador/nivel-jogador cid pid)))
+      (= cmd "capturar") (capturar-selvagem message resto)
       (contains? #{"inicial" "iniciais"} cmd) (escolher-inicial message (first resto))
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
       (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd)
@@ -3155,6 +3266,8 @@
                              config/prefix "pokemon equipar <número> <item>, "
                              config/prefix "pokemon aprender [número|aceitar|recusar], "
                              config/prefix "pokemon reaprender [número] [substituir], "
+                             config/prefix "pokemon mt [1-4], " config/prefix "pokemon reviver [número], "
+                             config/prefix "pokemon missoes [resgatar], " config/prefix "pokemon mochila, " config/prefix "pokemon capturar <bola>, "
                              config/prefix "pokemon removergolpe <número>, "
                              config/prefix "pokemon doar <número>, " config/prefix "pokemon (abrir/entrar), "
                              config/prefix "pokemon joy <número>, "

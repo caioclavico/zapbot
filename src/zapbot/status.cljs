@@ -12,15 +12,14 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  [(str "Filtro da coleção por liga, do maior nível ao menor: " config/prefix "pokemon time bronze")
-   (str "Aprendizado informa quando não há golpe novo; consultas interrompidas podem ser repetidas com " config/prefix "pokemon aprender")
-   "Cada marco de cinco níveis é verificado uma vez, sem ofertas extras por repetição do comando"
-   (str "Consulte a escalação salva da liga e o HP com " config/prefix "pokemon liga time")])
-
-
-
-
-
+  [(str "Mochila com 50 vagas, expansões de +25 por 200 moedas e recompensas pendentes: " config/prefix "mochila")
+   "Pokébola, Grande Bola e Ultra Bola por 5, 12 e 25 moedas; escolha após derrotar o selvagem, com a chance de captura visível"
+   "Kit inicial com 10 Pokébolas; vitórias PvP dão 2 e selvagens derrotados dão 1"
+   (str "Missões diárias crescem a cada 5 níveis e renovam à meia-noite de São Paulo: " config/prefix "missoes resgatar")
+   "Missões dão XP de treinador e Pokébolas; cada uma tem 25% de chance de Grande Bola, 10% de Ultra e 20% independentes de Reviver"
+   (str "Reviver exclusivo das missões recupera 100% do HP e remove status, fora de combate: " config/prefix "pokemon reviver [número]")
+   (str "MT de Ataque por 200 moedas adiciona ou substitui um ataque compatível do ativo: " config/prefix "pokemon mt [1-4]")
+   "Insígnias por doar 1, 10, 50 e 100 Pokémon, com recompensas de XP de treinador"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

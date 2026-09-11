@@ -55,9 +55,11 @@
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra versão, últimas mudanças, consumo de recursos e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
-  {:emoji "⚡" :uso "pokemon [liga [nome|time <n1,n2,n3>]|inicial|cacar|treinador|pokedex [n|filtros]|time [ativo|filtros|csv]|trocar <n>|equipar|aprender [n|recusar]|reaprender [n] [troca]|removergolpe <n>|doar|joy <n,n,...>|atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalhe e capture por bioma, veja o ativo, filtre time/Pokédex combinando tipo, raridade, nome e nível, equipe itens e evolua com XP"}
+  {:emoji "⚡" :uso "pokemon [liga [nome|time <n1,n2,n3>]|inicial|cacar|treinador|pokedex [n|filtros]|time [ativo|filtros|csv]|trocar <n>|equipar|aprender [n|recusar]|reaprender [n] [troca]|mt [1-4]|reviver [n]|mochila|missoes [resgatar]|capturar <bola>|removergolpe <n>|doar|joy <n,n,...>|atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalhe e capture por bioma, veja o ativo, filtre time/Pokédex combinando tipo, raridade, nome e nível, equipe itens e evolua com XP"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
-   {:emoji "🏪" :uso "loja [comprar|detalhes <item>]" :desc "Compra curas e itens equipáveis do Pokémon ou explica detalhadamente o efeito de cada item"}
+   {:emoji "📋" :uso "missoes [resgatar]" :desc "Missões diárias com XP de treinador, Pokébolas e chance de Grande ou Ultra Bola"}
+   {:emoji "🎒" :uso "mochila [kit|resgatar]" :desc "Veja itens e bolas, resgate o kit inicial ou recompensas de vitórias"}
+   {:emoji "🏪" :uso "loja [comprar|detalhes <item>]" :desc "Compre bolas, curas, MT, itens equipáveis e expansões de mochila; consulte preços e efeitos"}
    {:emoji "🏆" :uso "rank"                :desc "Mostra o rank de pontos desse chat (vitórias em !velha, !naval, !pokemon e !quiz)"}
    {:emoji "🔇" :uso "bloquear [comando|jogos|tudo|listar]" :desc "(admin) Bloqueia um comando, todos os jogos ou o bot inteiro nesse chat"}
    {:emoji "🔊" :uso "desbloquear [comando|jogos|tudo]" :desc "(admin) Libera um comando, todos os jogos ou o bot inteiro nesse chat"}
@@ -129,6 +131,8 @@
     "quiz"      (quiz/jogar message (str/join " " args))
     "pokemon"   (pokemon/jogar message (str/join " " args))
     ("pokedex" "dex") (pokedex/buscar message (str/join " " args))
+    ("missoes" "missões") (pokemon/jogar message (str "missoes " (str/join " " args)))
+    "mochila"   (p/resolved (loja/mochila message (first args)))
     "loja"      (case (some-> (first args) str/lower-case (str/replace #":" ""))
                   "comprar"  (p/resolved (loja/comprar message (str/join " " (rest args))))
                   "detalhes" (p/resolved (loja/detalhes (str/join " " (rest args))))

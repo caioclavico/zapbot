@@ -304,7 +304,7 @@ src/zapbot/
 
 ### Perfil do treinador Pokémon
 
-Use `!pokemon treinador` para ver o nível e XP do treinador, Pokémon ativo com seu número no time, sequência atual, recorde de capturas e insígnias conquistadas ou bloqueadas. O treinador recebe 1 XP por vitória mais XP por insígnias conquistadas e precisa de 5 XP para chegar ao nível 2, mais 7 para o nível 3, mais 9 para o nível 4 e assim por diante (+2 XP no custo de cada próximo nível); esse XP é separado do XP do Pokémon. As insígnias reconhecem 1, 10, 50 e 100 vitórias, além de sequências de 3, 5, 10 e 20 capturas.
+Use `!pokemon treinador` para ver o nível e XP do treinador, Pokémon ativo com seu número no time, sequência atual, recorde de capturas e insígnias conquistadas ou bloqueadas. O treinador recebe 1 XP por vitória mais XP por insígnias conquistadas e missões diárias resgatadas e precisa de 5 XP para chegar ao nível 2, mais 7 para o nível 3, mais 9 para o nível 4 e assim por diante (+2 XP no custo de cada próximo nível); esse XP é separado do XP do Pokémon. As insígnias reconhecem 1, 10, 50 e 100 vitórias, além de sequências de 3, 5, 10 e 20 capturas.
 
 O recorde é preservado quando uma sequência termina. Para contas antigas, parte da sequência atual salva: sequências anteriores à implementação não podem ser recuperadas.
 
@@ -477,3 +477,106 @@ prata, ouro e diamante e combina com os filtros existentes, por exemplo
 dos atributos máximos, e depois pelo número original da coleção. Esses números
 são preservados tanto no texto quanto nos cartões. O filtro não muda a liga
 selecionada nem a escalação salva e pode incluir Pokémon desmaiados.
+
+### Novidades da versão 0.9.0
+
+- Mochila inicial com 50 vagas e expansões de +25 por 200 moedas; recompensas sem espaço ficam pendentes.
+- Captura após a derrota com escolha entre Pokébola, Grande Bola e Ultra Bola, mostrando as chances antes de lançar.
+- Kit inicial de bolas e recompensas por vitórias PvP e selvagens derrotados.
+- Missões diárias com dificuldade e recompensas proporcionais ao nível, renovadas à meia-noite de São Paulo.
+- XP de treinador, Pokébolas garantidas e chances de Grande Bola (25%), Ultra Bola (10%) e Reviver (20% independente) por missão.
+- Reviver exclusivo das missões, com recuperação de 100% do HP e remoção de status fora de combate.
+- MT de Ataque por 200 moedas e insígnias por 1, 10, 50 e 100 doações.
+
+### MT de Ataque e doações
+
+- `!loja comprar mt`: compra um MT de Ataque por **200 moedas**.
+- `!pokemon mt`: consome um MT para adicionar um ataque aleatório compatível ao Pokémon ativo, se houver menos de quatro golpes.
+- `!pokemon mt 2`: substitui o segundo golpe por outro ataque compatível e diferente dos conhecidos. Preserva ao menos um ataque do próprio tipo.
+- O MT só é consumido quando o aprendizado dá certo; seu uso fica bloqueado durante combate ou remoção pendente.
+- A primeira doação concluída com `!pokemon doar` conquista a insígnia **Doador de Pokémon**, com 3 XP de treinador. Doações anteriores à atualização não entram na contagem.
+- Ao completar 10, 50 e 100 doações, conquista **Doador Generoso** (6 XP), **Benfeitor Pokémon** (12 XP) e **Mestre das Doações** (24 XP), respectivamente. As recompensas são cumulativas e concedidas uma única vez por insígnia; a contagem já salva vale para esses marcos. Consulte as conquistas com `!pokemon treinador`.
+
+### Mochila e bolas de captura
+
+Use `!mochila` (ou `!pokemon mochila`) para ver o inventário e a capacidade.
+A mochila começa com **50 unidades**: cada bola, cura, MT ou item guardado ocupa
+uma vaga; itens equipados não ocupam espaço. `!loja comprar mochila` custa
+**200 moedas** e adiciona **25 vagas permanentes**, podendo ser comprado várias
+vezes. Inventários antigos são preservados e recebem capacidade suficiente para
+os itens já guardados. Compras sem espaço não gastam moedas.
+
+| Bola | Comando de compra | Preço | Chance |
+| --- | --- | --- | --- |
+| Pokébola normal | `!loja comprar pokebola` | 5 moedas | Chance base |
+| Grande Bola | `!loja comprar grande-bola` | 12 moedas | Base × 1,5 |
+| Ultra Bola | `!loja comprar ultra-bola` | 25 moedas | Base × 2 |
+
+Após derrotar o selvagem, o bot mostra a quantidade e a **porcentagem de captura
+para cada bola**, já considerando espécie, raridade, status e sequência. Escolha
+com `!pokemon capturar pokebola`, `!pokemon capturar grande-bola` ou
+`!pokemon capturar ultra-bola`. Todas as chances têm teto de **95%**. Há uma
+única tentativa: a bola é consumida ao lançar, inclusive em caso de falha, e o
+selvagem foge se escapar. Durante a escolha, não é possível continuar atacando.
+É permitido comprar ou resgatar bolas antes de lançar. A escolha expira em
+5 minutos; `!pokemon sair` permite desistir. Consultar o menu não renova o prazo.
+
+Para ganhar bolas sem comprar:
+
+- `!mochila kit`: **10 Pokébolas**, uma única vez por treinador no chat.
+- Vitória PvP concluída: **2 Pokébolas** para o vencedor (desistências não premiam).
+- Selvagem derrotado: **1 Pokébola**, antes da escolha, mesmo se a captura falhar.
+- Recompensas sem espaço ficam pendentes; libere vagas e use `!mochila resgatar`.
+  O kit inicial exige 10 vagas livres e continua disponível se não houver espaço.
+
+A mochila, a expansão, o kit e as recompensas pendentes são persistidos por chat
+e treinador. Assim como as batalhas, a captura em andamento não sobrevive a um
+reinício do bot.
+
+### Missões diárias
+
+Use `!missoes` ou `!pokemon missoes` para acompanhar o progresso. As missões
+renovam à **meia-noite no horário de São Paulo** (`America/Sao_Paulo`, configurável
+por `MISSOES_TIMEZONE`). O progresso conta a partir desta atualização, por chat
+e treinador; não é necessário abrir o menu antes de jogar.
+
+| Missão | Objetivo do dia | XP de treinador | Pokébolas simples |
+| --- | --- | ---: | ---: |
+| Explorador (níveis 1–5) | Derrotar 3 selvagens | 2 | 3 |
+| Colecionador (níveis 1–5) | Capturar 2 Pokémon selvagens | 3 | 4 |
+| Desafiante (níveis 1–5) | Vencer 1 batalha PvP | 3 | 3 |
+
+`!missoes resgatar` entrega todas as missões concluídas ainda não resgatadas.
+Cada missão inclui **um sorteio**: **25%** de chance de receber **1 Grande Bola**,
+**10%** de receber **1 Ultra Bola** e **65%** de não receber bola bônus. Esse bônus
+é adicional às Pokébolas simples garantidas; Grande e Ultra não saem juntas no
+mesmo sorteio. Nos níveis 1–5, completar as três dá **8 XP de treinador e 10 Pokébolas simples**,
+além de até três bolas bônus. O XP não altera o nível do Pokémon nem o contador
+de vitórias e permanece no perfil após a virada do dia.
+
+O resgate é único por missão e dia e salva XP, bolas e conclusão juntos. Mochila
+cheia não perde prêmios: os três tipos de bola ficam pendentes e podem ser
+retirados com `!mochila resgatar`, conforme houver espaço. As recompensas já
+resgatadas e pendentes sobrevivem à renovação e ao reinício. Missões não
+resgatadas expiram na virada do dia. Desistências não contam como vitória;
+falhas de captura não contam como captura. O aviso de missão concluída aparece
+no resultado da ação que completou o objetivo.
+
+A dificuldade acompanha o nível do treinador: a cada **5 níveis**, acrescenta-se
+um multiplicador às metas, ao XP e às Pokébolas simples. Nos níveis **1–5** vale
+×1; **6–10**, ×2; **11–15**, ×3; e assim por diante. Por exemplo, nos níveis 6–10
+as metas são 6 selvagens, 4 capturas e 2 vitórias, com total de 16 XP e 20
+Pokébolas simples. As chances de Grande/Ultra continuam em 25%/10%, com um sorteio
+por missão. A faixa é fixada ao consultar as missões ou realizar a primeira ação
+válida do dia; subir de nível depois disso só muda as metas no dia seguinte.
+
+### Reviver — exclusivo das missões
+
+Cada missão resgatada tem **20% de chance independente** de dar **1 Reviver**,
+além dos outros prêmios. A chance não muda com o nível do treinador. O item não
+pode ser comprado. Se não houver espaço, fica pendente para `!mochila resgatar`.
+
+Use `!pokemon reviver` para o ativo ou `!pokemon reviver 2` para o segundo Pokémon
+do time. Só funciona fora de batalhas e caçadas, em Pokémon desmaiados: recupera
+**100% do HP máximo** e remove o status. Uma tentativa
+inválida não consome o item. Pokémon na enfermaria devem aguardar o atendimento.

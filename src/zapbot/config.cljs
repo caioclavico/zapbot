@@ -47,3 +47,6 @@
 ;; teste roda ao lado da de produção
 (def app-env (env "APP_ENV" "production"))
 (def dev-group-id (env "DEV_GROUP_ID"))
+
+;; Renovação das missões por data local, independente do fuso do servidor.
+(def missoes-timezone (env "MISSOES_TIMEZONE" "America/Sao_Paulo"))

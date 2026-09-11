@@ -11,6 +11,7 @@
   mapa interno (chaves keyword) que o zapbot.pokemon usa durante a batalha."
   (:require [clojure.string :as str]
             [zapbot.golpes :as golpes]
+            [zapbot.loja :as loja]
             [zapbot.armazenamento :as armazenamento]))
 
 (defonce ^:private contas (atom (or (armazenamento/obter "treinador") {})))
@@ -493,6 +494,18 @@
              #(assoc % "hp-atual" hp-atual "status" (when status (name status))))
       (persistir!))))
 
+(defn reviver! [cid pid idx]
+  (let [registro (get (equipe cid pid) idx)]
+    (cond
+      (nil? registro) :invalido
+      (not (zero? (get registro "hp-atual" (get registro "hp")))) :nao-desmaiado
+      (not (loja/consumir-reviver! cid pid)) :sem-item
+      :else
+      (let [hp (get registro "hp")]
+        (swap! contas update-in [cid pid "equipe" idx] #(assoc % "hp-atual" hp "status" nil))
+        (persistir!)
+        hp))))
+
 (def cooldown-cacada-minutos 30)
 (def ^:private cooldown-cacada-ms (* cooldown-cacada-minutos 60 1000))
 
@@ -687,8 +700,16 @@
   [cid pid dados]
   (evoluir-no-indice! cid pid (indice-ativo cid pid) dados))
 
+(defn registrar-doacao! [cid pid]
+  (swap! contas update-in [cid pid "doacoes-pokemon"] (fnil inc 0))
+  (persistir!))
+
 (def ^:private catalogo-insignias
-  [{:nome "Primeira vitória" :requisito "1 vitória" :metrica :vitorias :minimo 1 :xp-recompensa 3}
+  [{:nome "Doador de Pokémon" :requisito "Doar 1 Pokémon" :metrica :doacoes :minimo 1 :xp-recompensa 3}
+   {:nome "Doador Generoso" :requisito "Doar 10 Pokémon" :metrica :doacoes :minimo 10 :xp-recompensa 6}
+   {:nome "Benfeitor Pokémon" :requisito "Doar 50 Pokémon" :metrica :doacoes :minimo 50 :xp-recompensa 12}
+   {:nome "Mestre das Doações" :requisito "Doar 100 Pokémon" :metrica :doacoes :minimo 100 :xp-recompensa 24}
+   {:nome "Primeira vitória" :requisito "1 vitória" :metrica :vitorias :minimo 1 :xp-recompensa 3}
    {:nome "Batalhador" :requisito "10 vitórias" :metrica :vitorias :minimo 10 :xp-recompensa 6}
    {:nome "Veterano" :requisito "50 vitórias" :metrica :vitorias :minimo 50 :xp-recompensa 12}
    {:nome "Campeão" :requisito "100 vitórias" :metrica :vitorias :minimo 100 :xp-recompensa 24}
@@ -698,7 +719,8 @@
    {:nome "Mestre da captura" :requisito "20 capturas seguidas" :metrica :capturas :minimo 20 :xp-recompensa 24}])
 
 (defn insignias-treinador [cid pid]
-  (let [metricas {:vitorias (get (conta cid pid) "vitorias-treinador" 0)
+  (let [metricas {:doacoes (get (conta cid pid) "doacoes-pokemon" 0)
+                  :vitorias (get (conta cid pid) "vitorias-treinador" 0)
                   :capturas (maior-sequencia-capturas cid pid)}]
     (mapv #(assoc % :conquistada? (>= (get metricas (:metrica %)) (:minimo %)))
           catalogo-insignias)))
@@ -710,7 +732,7 @@
   (reduce + 0 (map :xp-recompensa (filter :conquistada? (insignias-treinador cid pid)))))
 
 (defn xp-treinador [cid pid]
-  (+ (get (conta cid pid) "vitorias-treinador" 0) (xp-insignias cid pid)))
+  (+ (get (conta cid pid) "vitorias-treinador" 0) (xp-insignias cid pid) (loja/xp-missoes cid pid)))
 
 (defn progresso-treinador
   "Distribui o XP total entre níveis com custos de 5, 7, 9, 11... XP."
@@ -721,7 +743,7 @@
       (recur (inc nivel) (- restante necessario) (+ necessario 2)))))
 
 (defn nivel-jogador
-  "Nível calculado pelo XP de vitórias e insígnias. Também calibra as caçadas."
+  "Nível calculado pelo XP de vitórias, insígnias e missões. Também calibra as caçadas."
   [cid pid]
   (:nivel (progresso-treinador (xp-treinador cid pid))))
 
@@ -733,13 +755,13 @@
   (persistir!))
 
 (defn perfil-treinador
-  "Inclui o XP por vitórias e por insígnias permanentes, sem repetir recompensas."
+  "Inclui XP por vitórias, insígnias e missões resgatadas, sem repetir recompensas."
   [cid pid]
   (let [xp (xp-treinador cid pid)
         {:keys [nivel xp-atual xp-necessario]} (progresso-treinador xp)
         recorde (maior-sequencia-capturas cid pid)]
     {:nivel nivel
-     :xp xp :xp-insignias (xp-insignias cid pid)
+     :xp xp :xp-insignias (xp-insignias cid pid) :xp-missoes (loja/xp-missoes cid pid)
      :xp-atual xp-atual
      :xp-necessario xp-necessario
      :sequencia (sequencia-capturas cid pid) :recorde recorde
