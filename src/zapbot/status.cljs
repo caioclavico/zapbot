@@ -12,15 +12,8 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  [(str "Filtro da coleção por liga, do maior nível ao menor: " config/prefix "pokemon time bronze")
-   (str "Aprendizado informa quando não há golpe novo; consultas interrompidas podem ser repetidas com " config/prefix "pokemon aprender")
-   "Cada marco de cinco níveis é verificado uma vez, sem ofertas extras por repetição do comando"
-   (str "Consulte a escalação salva da liga e o HP com " config/prefix "pokemon liga time")])
-
-
-
-
-
+  [(str "Listagem do time em texto puro, sem as fotos e sem cortar em 24: " config/prefix "pokemon time txt")
+   (str "O modo texto aceita os mesmos filtros dos cartões, por exemplo " config/prefix "pokemon time txt fogo lendario")])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

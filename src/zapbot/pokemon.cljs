@@ -1871,6 +1871,10 @@
 (def ^:private pokemons-por-cartao 12)
 (def ^:private maximo-paginas-time 2)
 
+(def ^:private marcadores-texto
+  "Palavras que pedem a listagem do time em texto puro, sem os cartões."
+  #{"txt" "texto"})
+
 (def ^:private cores-tipo
   {"fire" "#ef5350" "water" "#42a5f5" "grass" "#66bb6a" "electric" "#fbc02d"
    "psychic" "#ec407a" "ice" "#4dd0e1" "dragon" "#7e57c2" "dark" "#5c6b73"
@@ -2008,7 +2012,8 @@
              :legenda-ultima
              (str (when (pos? ocultos)
                     (str "⚠️ Mostrando os primeiros " limite " de " (count filtrado) " Pokémon.\n"))
-                  "🔎 Use " config/prefix "pokemon time [liga] [tipo] [raridade] [nome] [nivel N] para encontrar o que procura; os filtros podem ser combinados.")})
+                  "🔎 Use " config/prefix "pokemon time [liga] [tipo] [raridade] [nome] [nivel N] para encontrar o que procura; os filtros podem ser combinados."
+                  "\n📝 Prefere a lista completa sem as fotos? " config/prefix "pokemon time txt (aceita os mesmos filtros).")})
           (p/catch (fn [err]
                      (js/console.error "Erro ao gerar cartão do time:" err)
                      (ver-time message filtro))))
@@ -3082,7 +3087,9 @@
   posição do seu time (stats de batalha, golpes, XP/nível mais número, tipo,
   altura, peso, habilidades, evolução e descrição da espécie); !pokemon time
   mostra seu time capturado em cartões com as fotos e aceita filtros combinados
-  por tipo, raridade, nome parcial ou nível; !pokemon time ativo abre a ficha
+  por tipo, raridade, nome parcial ou nível; !pokemon time txt manda a mesma
+  lista em texto puro, sem as fotos, sem o limite de 24 e aceitando os mesmos
+  filtros; !pokemon time ativo abre a ficha
   completa do Pokémon ativo; !pokemon time csv
   manda a mesma lista como planilha .csv em anexo (sem as fotos, e incluindo
   quem está com a Enfermeira Joy); !pokemon escolher <número> troca qual está
@@ -3133,11 +3140,16 @@
         (ver-pokemon-do-time message (first resto))
         (ver-pokedex-pessoal message (str/join " " resto)))
       (contains? #{"time" "equipe"} cmd)
-      (cond
-        (and (= ["liga"] (vec resto))) (configurar-liga message ["time"])
-        (contains? #{"csv" "planilha"} (first resto)) (resposta-time-csv message)
-        (= "ativo" (first resto)) (ver-pokemon-ativo-do-time message)
-        :else (resposta-time-visual message (str/join " " resto)))
+      ;; O marcador de texto puro pode vir em qualquer posição, pra combinar com
+      ;; os filtros (ex.: !pokemon time txt fogo ou !pokemon time bronze txt).
+      (let [modo-texto? (boolean (some marcadores-texto resto))
+            resto       (remove marcadores-texto resto)]
+        (cond
+          (= ["liga"] (vec resto)) (configurar-liga message ["time"])
+          (contains? #{"csv" "planilha"} (first resto)) (resposta-time-csv message)
+          (= "ativo" (first resto)) (ver-pokemon-ativo-do-time message)
+          modo-texto? (ver-time message (str/join " " resto))
+          :else (resposta-time-visual message (str/join " " resto))))
       (contains? #{"removergolpe" "removergolpes" "esquecer" "esquecergolpe"} cmd)
       (remover-golpe message (first resto))
       (contains? #{"cancelar" "cancela"} cmd) (cancelar-remocao message)
@@ -3151,7 +3163,7 @@
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
       (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
       :else (p/resolved (str (cabecalho) "❓ Use " config/prefix "pokemon liga [nome|time <n1,n2,n3>], " config/prefix "pokemon inicial, " config/prefix "pokemon cacar, "
-                             config/prefix "pokemon treinador, " config/prefix "pokemon pokedex [número|filtros], " config/prefix "pokemon time [ativo|filtros|csv], " config/prefix "pokemon escolher <número>, "
+                             config/prefix "pokemon treinador, " config/prefix "pokemon pokedex [número|filtros], " config/prefix "pokemon time [ativo|filtros|csv|txt], " config/prefix "pokemon escolher <número>, "
                              config/prefix "pokemon equipar <número> <item>, "
                              config/prefix "pokemon aprender [número|aceitar|recusar], "
                              config/prefix "pokemon reaprender [número] [substituir], "
