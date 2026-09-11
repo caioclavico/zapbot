@@ -19,7 +19,9 @@
    "Missões dão XP de treinador e Pokébolas; cada uma tem 25% de chance de Grande Bola, 10% de Ultra e 20% independentes de Reviver"
    (str "Reviver exclusivo das missões recupera 100% do HP e remove status, fora de combate: " config/prefix "pokemon reviver [número]")
    (str "MT de Ataque por 200 moedas adiciona ou substitui um ataque compatível do ativo: " config/prefix "pokemon mt [1-4]")
-   "Insígnias por doar 1, 10, 50 e 100 Pokémon, com recompensas de XP de treinador"])
+   "Insígnias por doar 1, 10, 50 e 100 Pokémon, com recompensas de XP de treinador"
+   (str "Listagem do time em texto puro, sem as fotos e sem cortar em 24: " config/prefix "pokemon time txt")
+   (str "O modo texto aceita os mesmos filtros dos cartões, por exemplo " config/prefix "pokemon time txt fogo lendario")])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

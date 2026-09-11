@@ -317,7 +317,8 @@ envia no máximo duas páginas, com 12 Pokémon cada, e orienta o uso dos filtro
 última imagem. Os filtros podem ser combinados com lógica cumulativa, por exemplo
 `!pokemon time char fogo lendario nivel 25`: o resultado precisa corresponder ao
 nome, tipo, raridade e nível informados. Mais de uma raridade funciona como
-alternativa, por exemplo `!pokemon time lendario mitico`. Os mesmos
+alternativa, por exemplo `!pokemon time lendario mitico`. Todos eles valem
+também no modo texto, `!pokemon time txt` (veja abaixo). Os mesmos
 filtros funcionam na Pokédex pessoal com `!pokemon pokedex fogo`,
 `!pokemon pokedex raro`, `!pokemon pokedex char`, `!pokemon pokedex nivel 25` ou
 combinados como `!pokemon pokedex char fogo lendario nivel 25`; um número sozinho continua abrindo a ficha
@@ -580,3 +581,16 @@ Use `!pokemon reviver` para o ativo ou `!pokemon reviver 2` para o segundo Poké
 do time. Só funciona fora de batalhas e caçadas, em Pokémon desmaiados: recupera
 **100% do HP máximo** e remove o status. Uma tentativa
 inválida não consome o item. Pokémon na enfermaria devem aguardar o atendimento.
+
+### Time em texto puro
+
+`!pokemon time txt` responde com a listagem do time em uma única mensagem de
+texto, sem gerar os cartões com as fotos. Diferente da versão visual, não corta
+em 24 Pokémon, mostra a barra de HP, o XP de cada um e o bloco da Enfermeira
+Joy, e pode ser pesquisada dentro da conversa no WhatsApp.
+
+O marcador `txt` (ou `texto`) pode vir em qualquer posição e combina com todos os
+filtros existentes: `!pokemon time txt fogo lendario`, `!pokemon time bronze txt`
+ou `!pokemon time txt char nivel 25`. Os modos `!pokemon time ativo`,
+`!pokemon time csv` e `!pokemon time liga` seguem inalterados, assim como o
+`!pokemon time` sem argumento, que continua enviando os cartões.
