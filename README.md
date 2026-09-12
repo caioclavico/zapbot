@@ -479,11 +479,12 @@ dos atributos máximos, e depois pelo número original da coleção. Esses núme
 são preservados tanto no texto quanto nos cartões. O filtro não muda a liga
 selecionada nem a escalação salva e pode incluir Pokémon desmaiados.
 
-### Novidades da versão 0.9.0
+### Novidades da versão 0.9.1
 
 - Mochila inicial com 50 vagas e expansões de +25 por 200 moedas; recompensas sem espaço ficam pendentes.
-- Captura após a derrota com escolha entre Pokébola, Grande Bola e Ultra Bola, mostrando as chances antes de lançar.
-- Kit inicial de bolas e recompensas por vitórias PvP e selvagens derrotados.
+- Captura após a derrota com escolha entre Pokébola, Grande Bola e Ultra Bola, cada uma com teto de chance diferente.
+- Bolas obtidas apenas pelo kit inicial, missões, bônus diário manual e nocautes PvP; estoques antigos são preservados.
+- Bônus diário com três bolas aleatórias e recompensa de uma bola por nocaute conforme a liga PvP.
 - Missões diárias com dificuldade e recompensas proporcionais ao nível, renovadas à meia-noite de São Paulo.
 - XP de treinador, Pokébolas garantidas e chances de Grande Bola (25%), Ultra Bola (10%) e Reviver (20% independente) por missão.
 - Reviver exclusivo das missões, com recuperação de 100% do HP e remoção de status fora de combate.
@@ -507,28 +508,36 @@ uma vaga; itens equipados não ocupam espaço. `!loja comprar mochila` custa
 vezes. Inventários antigos são preservados e recebem capacidade suficiente para
 os itens já guardados. Compras sem espaço não gastam moedas.
 
-| Bola | Comando de compra | Preço | Chance |
-| --- | --- | --- | --- |
-| Pokébola normal | `!loja comprar pokebola` | 5 moedas | Chance base |
-| Grande Bola | `!loja comprar grande-bola` | 12 moedas | Base × 1,5 |
-| Ultra Bola | `!loja comprar ultra-bola` | 25 moedas | Base × 2 |
+| Bola | Multiplicador | Teto de chance | Fontes principais |
+| --- | ---: | ---: | --- |
+| Pokébola normal | Base × 1 | 75% | Kit, missões, diário e PvP Iniciante/Bronze |
+| Grande Bola | Base × 1,5 | 88% | Missões, diário e PvP Prata/Ouro |
+| Ultra Bola | Base × 2 | 95% | Missões, diário e PvP Diamante |
 
 Após derrotar o selvagem, o bot mostra a quantidade e a **porcentagem de captura
 para cada bola**, já considerando espécie, raridade, status e sequência. Escolha
 com `!pokemon capturar pokebola`, `!pokemon capturar grande-bola` ou
-`!pokemon capturar ultra-bola`. Todas as chances têm teto de **95%**. Há uma
+`!pokemon capturar ultra-bola`. Os tetos são **75%**, **88%** e **95%**, respectivamente,
+para que Grande Bola e Ultra Bola continuem diferentes mesmo com uma chance-base alta. Há uma
 única tentativa: a bola é consumida ao lançar, inclusive em caso de falha, e o
 selvagem foge se escapar. Durante a escolha, não é possível continuar atacando.
-É permitido comprar ou resgatar bolas antes de lançar. A escolha expira em
+É permitido resgatar bolas antes de lançar. A escolha expira em
 5 minutos; `!pokemon sair` permite desistir. Consultar o menu não renova o prazo.
 
-Para ganhar bolas sem comprar:
+As bolas não são vendidas na loja. Para obtê-las:
 
 - `!mochila kit`: **10 Pokébolas**, uma única vez por treinador no chat.
-- Vitória PvP concluída: **2 Pokébolas** para o vencedor (desistências não premiam).
-- Selvagem derrotado: **1 Pokébola**, antes da escolha, mesmo se a captura falhar.
+- `!mochila diario`: **3 bolas aleatórias** por dia; cada sorteio tem 60% de
+  Pokébola, 30% de Grande Bola e 10% de Ultra Bola. É preciso resgatar manualmente.
+- PvP concluído: cada jogador recebe **1 bola por nocaute**. Iniciante e Bronze
+  dão Pokébola; Prata e Ouro dão Grande Bola; Diamante dá Ultra Bola.
+- Missões diárias continuam concedendo Pokébolas e sorteios de Grande/Ultra Bola.
 - Recompensas sem espaço ficam pendentes; libere vagas e use `!mochila resgatar`.
   O kit inicial exige 10 vagas livres e continua disponível se não houver espaço.
+
+Desistência, inatividade e batalhas sem adversário não concedem bolas. O bônus
+diário renova à meia-noite no fuso configurado para as missões e não acumula
+entre dias.
 
 A mochila, a expansão, o kit e as recompensas pendentes são persistidos por chat
 e treinador. Assim como as batalhas, a captura em andamento não sobrevive a um

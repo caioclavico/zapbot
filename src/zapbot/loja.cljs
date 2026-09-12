@@ -59,12 +59,12 @@
 (def ^:private itens
   {"reviver" {:nome "Reviver" :emoji "💎" :exclusivo-missoes true
                :descricao "Exclusivo das missões: revive um Pokémon desmaiado com 100% do HP e remove seu status. Use !pokemon reviver [número], fora de batalhas e caçadas."}
-   "pokebola" {:nome "Pokébola" :emoji "🔴" :preco 5 :multiplicador-captura 1
-                 :descricao "Bola normal para capturar após derrotar o selvagem. Use !pokemon capturar pokebola."}
-   "grande-bola" {:nome "Grande Bola" :emoji "🔵" :preco 12 :multiplicador-captura 1.5
-                    :descricao "Multiplica a chance de captura por 1,5, até 95%. Use !pokemon capturar grande-bola."}
-   "ultra-bola" {:nome "Ultra Bola" :emoji "🟡" :preco 25 :multiplicador-captura 2
-                  :descricao "Multiplica a chance de captura por 2, até 95%. Use !pokemon capturar ultra-bola."}
+   "pokebola" {:nome "Pokébola" :emoji "🔴" :multiplicador-captura 1 :limite-captura 75
+                 :descricao "Bola normal, com até 75% de chance. Obtida em missões, bônus diário, kit inicial e nocautes PvP."}
+   "grande-bola" {:nome "Grande Bola" :emoji "🔵" :multiplicador-captura 1.5 :limite-captura 88
+                    :descricao "Multiplica a chance por 1,5, até 88%. Obtida em missões, bônus diário e nocautes PvP de ligas intermediárias."}
+   "ultra-bola" {:nome "Ultra Bola" :emoji "🟡" :multiplicador-captura 2 :limite-captura 95
+                  :descricao "Multiplica a chance por 2, até 95%. Obtida em missões, bônus diário e nocautes PvP da Liga Diamante."}
    "mochila" {:nome "Expansão de Mochila" :emoji "🎒" :preco 200 :expansao 25
                 :descricao "Aumenta permanentemente a capacidade em 25 unidades. Pode comprar várias vezes; não ocupa espaço."}
    "mt" {:nome "MT de Ataque" :emoji "💿" :preco 200
@@ -175,12 +175,34 @@
   (str/join ", " (for [bola ordem-recompensas :let [qtd (get recompensas bola 0)] :when (pos? qtd)]
                        (str qtd "× " (:nome (dados-item bola))))))
 
-(defn premiar-bolas! [cid pid quantidade]
-  (swap! contas update-in [cid pid] guardar-recompensas {"pokebola" quantidade})
+(defn premiar-bolas! [cid pid bola quantidade]
+  (swap! contas update-in [cid pid] guardar-recompensas {bola quantidade})
   (persistir!)
-  (str "🎁 +" quantidade " Pokébola(s) por vitória."
+  (str "🎁 +" quantidade " " (:nome (dados-item bola)) " por nocaute(s) no PvP."
        (when (some pos? (vals (recompensas-pendentes (conta cid pid))))
          (str " Há recompensas pendentes: libere espaço e use " config/prefix "mochila resgatar."))))
+
+(defn- sortear-bola-diaria []
+  (let [sorteio (rand-int 100)]
+    (cond (< sorteio 10) "ultra-bola"
+          (< sorteio 40) "grande-bola"
+          :else "pokebola")))
+
+(defn- resgatar-bonus-diario! [cid pid]
+  (let [dia (missoes/dia-atual)
+        c (conta cid pid)]
+    (if (= dia (get c "ultimo-bonus-diario"))
+      (str "🎁 O bônus diário de hoje já foi resgatado. Volte após a meia-noite ("
+           config/missoes-timezone ").")
+      (let [recompensas (frequencies (repeatedly 3 sortear-bola-diaria))
+            novo (-> c
+                     (assoc "ultimo-bonus-diario" dia)
+                     (guardar-recompensas recompensas))]
+        (swap! contas assoc-in [cid pid] novo)
+        (persistir!)
+        (str "🎁 *Bônus diário resgatado:* " (texto-recompensas recompensas) "!"
+             (when (some pos? (vals (recompensas-pendentes novo)))
+               (str " Itens sem espaço ficaram pendentes: " config/prefix "mochila resgatar.")))))))
 
 (defn resgatar-bolas! [cid pid kit?]
   (let [c (conta cid pid)
@@ -338,17 +360,18 @@
         pid (or (.-author message) (.-from message))]
     (case (normalizar-item acao)
       "kit" (resgatar-bolas! cid pid true)
+      "diario" (resgatar-bonus-diario! cid pid)
       "resgatar" (resgatar-bolas! cid pid false)
       (str "🎒 *Mochila* — " (ocupacao cid pid) "/" (capacidade cid pid) " unidades\n"
            (formatar-inventario (get (conta cid pid) "inventario"))
            "\n\nCada unidade ocupa uma vaga. Itens equipados não ocupam espaço."
            "\nExpansão: +25 vagas por 200 moedas — " config/prefix "loja comprar mochila."
            "\nKit inicial: 10 Pokébolas — " config/prefix "mochila kit."
-           "\nGanhe 2 Pokébolas por vitória PvP e 1 por selvagem derrotado."
+           "\nBônus diário: 3 bolas aleatórias — " config/prefix "mochila diario."
+           "\nNo PvP, cada nocaute rende uma bola definida pela liga."
            "\nRecompensas pendentes: " (let [texto (texto-recompensas (recompensas-pendentes (conta cid pid)))] (if (str/blank? texto) "nenhuma" texto))
            " — " config/prefix "mochila resgatar."
-           "\nGanhe XP e bolas nas missões: " config/prefix "missoes."
-           "\nCompre bolas com " config/prefix "loja comprar pokebola, grande-bola ou ultra-bola."))))
+           "\nGanhe XP e bolas nas missões: " config/prefix "missoes."))))
 
 (defn detalhes
   "!loja detalhes <item> - explica o efeito e como usar um item."
@@ -357,7 +380,10 @@
     (if-let [{:keys [nome emoji preco descricao equipavel expansao]} (get itens chave)]
       (str "🔎 *Detalhes do item*\n\n"
            emoji " *" nome "* (`" chave "`)\n"
-           (if preco (str "💰 Preço: " preco " moedas\n") "🎁 Exclusivo das missões; não está à venda.\n")
+           (cond
+             preco (str "💰 Preço: " preco " moedas\n")
+             (some #{chave} bolas) "🎁 Não está à venda; obtida por recompensas.\n"
+             :else "🎁 Exclusivo das missões; não está à venda.\n")
            "🏷️ Tipo: " (cond expansao "Melhoria permanente" equipavel "Equipável" :else "Consumível") "\n"
            "✨ Efeito: " descricao
            (when equipavel
@@ -376,7 +402,8 @@
          "💰 Suas moedas: " (get c "moedas") "\n"
          "🎒 Mochila: " (ocupacao cid pid) "/" (capacidade cid pid) " — " (formatar-inventario (get c "inventario")) "\n\n"
          "Veja seus itens e kits grátis com " config/prefix "mochila.\n\n*Catálogo de itens:*\n"
-         (str/join "\n" (map (fn [[chave info]] (formatar-item chave info)) itens))
+         (str/join "\n" (map (fn [[chave info]] (formatar-item chave info))
+                              (remove (fn [[chave _]] (some #{chave} bolas)) itens)))
          "\n📚 Reaprender golpe — " preco-reaprender " moedas. Use " config/prefix "pokemon reaprender."
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"
@@ -394,6 +421,9 @@
     (if-let [item (get itens chave)]
       (let [saldo (moedas cid pid)]
         (cond
+          (some #{chave} bolas)
+          (str "🎁 Pokébolas não são vendidas. Ganhe em " config/prefix "missoes, "
+               config/prefix "mochila diario ou por nocautes no PvP.")
           (:exclusivo-missoes item)
           (str "💎 Esse item só pode ser ganho nas missões. Veja " config/prefix "missoes.")
           (and (not (:expansao item)) (not (cabe? cid pid 1)))

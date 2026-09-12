@@ -12,9 +12,11 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  [(str "Mochila com 50 vagas, expansões de +25 por 200 moedas e recompensas pendentes: " config/prefix "mochila")
-   "Pokébola, Grande Bola e Ultra Bola por 5, 12 e 25 moedas; escolha após derrotar o selvagem, com a chance de captura visível"
-   "Kit inicial com 10 Pokébolas; vitórias PvP dão 2 e selvagens derrotados dão 1"
+  [(str "Bônus diário manual com três bolas aleatórias: " config/prefix "mochila diario")
+   "Pokébolas saíram da loja e agora vêm do kit inicial, missões, bônus diário e nocautes PvP"
+  "Os dois jogadores recebem uma bola por cada nocaute que fizerem no PvP, conforme a liga"
+   "Tetos de captura distintos: Pokébola 75%, Grande Bola 88% e Ultra Bola 95%"
+   (str "Mochila com 50 vagas, expansões de +25 por 200 moedas e recompensas pendentes: " config/prefix "mochila")
    (str "Missões diárias crescem a cada 5 níveis e renovam à meia-noite de São Paulo: " config/prefix "missoes resgatar")
    "Missões dão XP de treinador e Pokébolas; cada uma tem 25% de chance de Grande Bola, 10% de Ultra e 20% independentes de Reviver"
    (str "Reviver exclusivo das missões recupera 100% do HP e remove status, fora de combate: " config/prefix "pokemon reviver [número]")

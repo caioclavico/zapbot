@@ -920,6 +920,23 @@
                    subida (treinador/ganhar-xp-no-indice! cid pid idx xp)]]
          {:pid pid :idx idx :nome nome :nocautes nocautes :xp xp :subida subida})))
 
+(def ^:private bola-por-liga
+  {"iniciante" "pokebola"
+   "bronze" "pokebola"
+   "prata" "grande-bola"
+   "ouro" "grande-bola"
+   "diamante" "ultra-bola"})
+
+(defn- premiar-nocautes-pvp! [cid jogo]
+  (let [bola (get bola-por-liga (:liga jogo) "pokebola")]
+    (->> (:jogadores jogo)
+         (keep (fn [[marca pid]]
+                 (let [nocautes (reduce + 0 (vals (get-in jogo [:participacao marca])))]
+                   (when (pos? nocautes)
+                     (str (get-in jogo [:nomes marca]) ": "
+                          (loja/premiar-bolas! cid pid bola nocautes))))))
+         (str/join "\n"))))
+
 (defn- finalizar-vitoria [message cid jogo vencedor-marca motivo-extra]
   (sincronizar-equipe! cid jogo)
   ;; Mantém a coleção bloqueada até concluir evoluções/aprendizados de todos:
@@ -930,9 +947,9 @@
         _ (rank/pontuar! cid vencedor-pid (get-in jogo [:nomes vencedor-marca]) "pokemon")
         _ (treinador/registrar-vitoria-treinador! cid vencedor-pid)
         ganho (loja/creditar! cid vencedor-pid)
-        premio-bolas (loja/premiar-bolas! cid vencedor-pid 2)
         aviso-missao (loja/registrar-missao! cid vencedor-pid "vitorias" (treinador/nivel-jogador cid vencedor-pid))
-        recompensas (recompensas-partida! cid jogo)]
+        recompensas (recompensas-partida! cid jogo)
+        premio-bolas (premiar-nocautes-pvp! cid jogo)]
     (-> (p/all (for [{:keys [pid idx subida]} recompensas :when subida]
                  (-> (verificar-evolucao! message cid pid idx)
                      (p/then (fn [_] (aprender-golpe-por-nivel! message cid pid (:nivel subida) idx))))))
@@ -941,7 +958,7 @@
                                     (if (= finalizando (get estado cid)) (dissoc estado cid) estado))))))
     (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "! (+" ganho
          " 💰 moedas, confira com " config/prefix "loja)"
-         "\n" premio-bolas aviso-missao
+         (when-not (str/blank? premio-bolas) (str "\n" premio-bolas)) aviso-missao
          "\n✨ *XP por Pokémon que participou:*"
          (apply str
                 (for [{:keys [pid nome nocautes xp subida]} recompensas]
@@ -983,8 +1000,10 @@
         caidos (filter #(zero? (get-in novo [:hp %])) [:x :o])]
     (cond
       (= 2 (count caidos))
-      (do (swap! jogos dissoc cid)
-          "\n\n🤝 Os dois times caíram juntos: empate, sem pontos, XP ou moedas.")
+      (let [premio-bolas (premiar-nocautes-pvp! cid novo)]
+        (swap! jogos dissoc cid)
+        (str "\n\n🤝 Os dois times caíram juntos: empate, sem pontos, XP ou moedas."
+             (when-not (str/blank? premio-bolas) (str "\n" premio-bolas))))
       (seq caidos)
       (finalizar-vitoria message cid novo (outro (first caidos)) motivo-extra)
       :else
@@ -2448,7 +2467,8 @@
     {:xp xp :bonus-xp bonus-seq :moedas moedas :subida subida :sequencia sequencia :sequencia-anterior sequencia-ant}))
 
 (defn- chance-com-bola [chance-base bola]
-  (min 95 (js/Math.round (* chance-base (:multiplicador-captura (loja/dados-item bola))))))
+  (let [{:keys [multiplicador-captura limite-captura]} (loja/dados-item bola)]
+    (min limite-captura (js/Math.round (* chance-base multiplicador-captura)))))
 
 (defn- menu-captura [cid pid caca]
   (str "\n\n🎯 *Escolha a bola para capturar " (get-in caca [:pokemons :o :nome]) "!*\n"
@@ -2459,7 +2479,8 @@
                         (chance-com-bola (:chance-base-captura caca) bola) "% de chance")))
        "\n\nUse " config/prefix "pokemon capturar <pokebola|grande-bola|ultra-bola>."
        "\nUma tentativa por encontro; a bola é consumida mesmo se falhar. Você tem 5 minutos."
-       "\nSem bolas? Use " config/prefix "mochila kit, " config/prefix "mochila resgatar ou " config/prefix "loja comprar <bola>."
+      "\nSem bolas? Use " config/prefix "mochila kit, " config/prefix "mochila diario, "
+      config/prefix "mochila resgatar ou cumpra missões e consiga nocautes no PvP."
        "\nPara desistir: " config/prefix "pokemon sair."))
 
 (defn- preparar-captura-pos-batalha [cid pid caca]
@@ -2469,8 +2490,8 @@
                          25 (min 20 (* 2 (treinador/sequencia-capturas cid pid)))))
         pronta (assoc caca :aguardando-captura? true :chance-base-captura chance)]
     (swap! cacadas-selvagens assoc cid pronta)
-    (str "\n" (loja/premiar-bolas! cid pid 1)
-         (loja/registrar-missao! cid pid "selvagens" (treinador/nivel-jogador cid pid)) (menu-captura cid pid pronta))))
+        (str (loja/registrar-missao! cid pid "selvagens" (treinador/nivel-jogador cid pid))
+          (menu-captura cid pid pronta))))
 
 (defn- capturar-selvagem [message args]
   (let [cid (chat-id message) pid (jogador-id message)
@@ -3279,7 +3300,7 @@
                              config/prefix "pokemon aprender [número|aceitar|recusar], "
                              config/prefix "pokemon reaprender [número] [substituir], "
                              config/prefix "pokemon mt [1-4], " config/prefix "pokemon reviver [número], "
-                             config/prefix "pokemon missoes [resgatar], " config/prefix "pokemon mochila, " config/prefix "pokemon capturar <bola>, "
+                             config/prefix "pokemon missoes [resgatar], " config/prefix "pokemon mochila [kit|diario|resgatar], " config/prefix "pokemon capturar <bola>, "
                              config/prefix "pokemon removergolpe <número>, "
                              config/prefix "pokemon doar <número>, " config/prefix "pokemon (abrir/entrar), "
                              config/prefix "pokemon joy <número>, "
