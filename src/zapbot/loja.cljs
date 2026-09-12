@@ -58,39 +58,39 @@
 ;; então "loja comprar atadura"/"antidoto" fazem sentido de verdade
 (def ^:private itens
   {"reviver" {:nome "Reviver" :emoji "💎" :exclusivo-missoes true
-               :descricao "Exclusivo das missões: revive um Pokémon desmaiado com 100% do HP e remove seu status. Use !pokemon reviver [número], fora de batalhas e caçadas."}
+              :descricao "Exclusivo das missões: revive um Pokémon desmaiado com 100% do HP e remove seu status. Use !pokemon reviver [número], fora de batalhas e caçadas."}
    "pokebola" {:nome "Pokébola" :emoji "🔴" :multiplicador-captura 1 :limite-captura 75
-                 :descricao "Bola normal, com até 75% de chance. Obtida em missões, bônus diário, kit inicial e nocautes PvP."}
+               :descricao "Bola normal, com até 75% de chance. Obtida em missões, bônus diário, kit inicial e nocautes PvP."}
    "grande-bola" {:nome "Grande Bola" :emoji "🔵" :multiplicador-captura 1.5 :limite-captura 88
-                    :descricao "Multiplica a chance por 1,5, até 88%. Obtida em missões, bônus diário e nocautes PvP de ligas intermediárias."}
+                  :descricao "Multiplica a chance por 1,5, até 88%. Obtida em missões, bônus diário e nocautes PvP de ligas intermediárias."}
    "ultra-bola" {:nome "Ultra Bola" :emoji "🟡" :multiplicador-captura 2 :limite-captura 95
-                  :descricao "Multiplica a chance por 2, até 95%. Obtida em missões, bônus diário e nocautes PvP da Liga Diamante."}
+                 :descricao "Multiplica a chance por 2, até 95%. Obtida em missões, bônus diário e nocautes PvP da Liga Diamante."}
    "mochila" {:nome "Expansão de Mochila" :emoji "🎒" :preco 200 :expansao 25
-                :descricao "Aumenta permanentemente a capacidade em 25 unidades. Pode comprar várias vezes; não ocupa espaço."}
+              :descricao "Aumenta permanentemente a capacidade em 25 unidades. Pode comprar várias vezes; não ocupa espaço."}
    "mt" {:nome "MT de Ataque" :emoji "💿" :preco 200
-          :descricao "Sorteia um novo ataque compatível com o Pokémon ativo. Use !pokemon mt para preencher uma vaga ou !pokemon mt <1-4> para substituir um ataque. Consumido apenas ao aprender."}
+         :descricao "Sorteia um novo ataque compatível com o Pokémon ativo. Use !pokemon mt para preencher uma vaga ou !pokemon mt <1-4> para substituir um ataque. Consumido apenas ao aprender."}
    "atadura"    {:nome "Atadura" :emoji "🔥" :status :queimado :preco 15
-                   :descricao "Remove a queimadura do Pokémon. É consumida ao usar !pokemon curar."}
+                 :descricao "Remove a queimadura do Pokémon. É consumida ao usar !pokemon curar."}
    "antidoto"   {:nome "Antídoto" :emoji "☠️" :status :envenenado :preco 15
-                   :descricao "Remove o envenenamento do Pokémon. É consumido ao usar !pokemon curar."}
+                 :descricao "Remove o envenenamento do Pokémon. É consumido ao usar !pokemon curar."}
    "paralisia"  {:nome "Cura de Paralisia" :emoji "⚡" :status :paralisado :preco 15
-                   :descricao "Remove a paralisia do Pokémon. É consumida ao usar !pokemon curar."}
+                 :descricao "Remove a paralisia do Pokémon. É consumida ao usar !pokemon curar."}
    "despertar"  {:nome "Despertar" :emoji "💤" :status :adormecido :preco 15
-                   :descricao "Acorda um Pokémon adormecido. É consumido ao usar !pokemon curar."}
+                 :descricao "Acorda um Pokémon adormecido. É consumido ao usar !pokemon curar."}
    "degelo"     {:nome "Antigelo" :emoji "🧊" :status :congelado :preco 15
-                   :descricao "Descongela o Pokémon. É consumido ao usar !pokemon curar."}
+                 :descricao "Descongela o Pokémon. É consumido ao usar !pokemon curar."}
    "persim"     {:nome "Baya Caquic" :emoji "💫" :status :confuso :preco 15
-                   :descricao "Remove a confusão do Pokémon. É consumida ao usar !pokemon curar."}
+                 :descricao "Remove a confusão do Pokémon. É consumida ao usar !pokemon curar."}
    "pocao"      {:nome "Poção de Vida" :emoji "🧪" :cura-hp 0.4 :preco 20
-                   :descricao "Recupera 40% do HP máximo. É consumida ao usar !pokemon pocao."}
+                 :descricao "Recupera 40% do HP máximo. É consumida ao usar !pokemon pocao."}
    "restos"     {:nome "Restos" :emoji "🍱" :equipavel true :efeito :regeneracao :preco 45
-                   :descricao "Recupera 1/16 do HP máximo ao final de cada turno em que o Pokémon agir."}
+                 :descricao "Recupera 1/16 do HP máximo ao final de cada turno em que o Pokémon agir."}
    "banda"      {:nome "Banda Musculosa" :emoji "💪" :equipavel true :efeito :fisico :preco 40
-                   :descricao "Aumenta em 15% o dano causado por golpes físicos."}
+                 :descricao "Aumenta em 15% o dano causado por golpes físicos."}
    "oculos"     {:nome "Óculos Sábios" :emoji "👓" :equipavel true :efeito :especial :preco 40
-                   :descricao "Aumenta em 15% o dano causado por golpes especiais."}
+                 :descricao "Aumenta em 15% o dano causado por golpes especiais."}
    "faixa-foco" {:nome "Faixa de Foco" :emoji "🥋" :equipavel true :efeito :sobreviver :preco 55
-                   :descricao "Se estiver com HP cheio, sobrevive uma vez por batalha a um golpe fatal, ficando com 1 HP."}})
+                 :descricao "Se estiver com HP cheio, sobrevive uma vez por batalha a um golpe fatal, ficando com 1 HP."}})
 
 (declare conta)
 
@@ -173,7 +173,7 @@
 
 (defn- texto-recompensas [recompensas]
   (str/join ", " (for [bola ordem-recompensas :let [qtd (get recompensas bola 0)] :when (pos? qtd)]
-                       (str qtd "× " (:nome (dados-item bola))))))
+                   (str qtd "× " (:nome (dados-item bola))))))
 
 (defn premiar-bolas! [cid pid bola quantidade]
   (swap! contas update-in [cid pid] guardar-recompensas {bola quantidade})
@@ -213,7 +213,7 @@
       "🎒 Sem recompensas disponíveis para resgatar ou espaço insuficiente. Libere vagas ou compre uma expansão."
       :else
       (let [novo (guardar-recompensas (if kit? (assoc c "kit-inicial-resgatado" true)
-                                   (dissoc c "bolas-pendentes" "recompensas-pendentes")) recompensas)
+                                          (dissoc c "bolas-pendentes" "recompensas-pendentes")) recompensas)
             recebidas (into {} (for [bola ordem-recompensas]
                                  [bola (- (get-in novo ["inventario" bola] 0)
                                           (get-in c ["inventario" bola] 0))]))]
@@ -403,7 +403,7 @@
          "🎒 Mochila: " (ocupacao cid pid) "/" (capacidade cid pid) " — " (formatar-inventario (get c "inventario")) "\n\n"
          "Veja seus itens e kits grátis com " config/prefix "mochila.\n\n*Catálogo de itens:*\n"
          (str/join "\n" (map (fn [[chave info]] (formatar-item chave info))
-                              (remove (fn [[chave _]] (some #{chave} bolas)) itens)))
+                             (remove (fn [[chave _]] (some #{chave} bolas)) itens)))
          "\n📚 Reaprender golpe — " preco-reaprender " moedas. Use " config/prefix "pokemon reaprender."
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"
@@ -431,7 +431,7 @@
           (>= saldo (:preco item))
           (do (swap! contas update-in [cid pid]
                      (fn [c] (cond-> (update (or c {"moedas" 0 "inventario" {}})
-                                           "moedas" - (:preco item))
+                                             "moedas" - (:preco item))
                                (:expansao item) (update "capacidade-mochila" (fnil + 50) (:expansao item))
                                (not (:expansao item)) (update-in ["inventario" chave] (fnil inc 0)))))
               (persistir!)

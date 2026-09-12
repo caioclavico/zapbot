@@ -12,9 +12,11 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  [(str "Bônus diário manual com três bolas aleatórias: " config/prefix "mochila diario")
+  ["Ligas sem restrição de diferença de nível entre os times da mesma liga"
+   "Até três tentativas de captura por encontro, com possibilidade de fuga após cada falha"
+   (str "Bônus diário manual com três bolas aleatórias: " config/prefix "mochila diario")
    "Pokébolas saíram da loja e agora vêm do kit inicial, missões, bônus diário e nocautes PvP"
-  "Os dois jogadores recebem uma bola por cada nocaute que fizerem no PvP, conforme a liga"
+   "Os dois jogadores recebem uma bola por cada nocaute que fizerem no PvP, conforme a liga"
    "Tetos de captura distintos: Pokébola 75%, Grande Bola 88% e Ultra Bola 95%"
    (str "Mochila com 50 vagas, expansões de +25 por 200 moedas e recompensas pendentes: " config/prefix "mochila")
    (str "Missões diárias crescem a cada 5 níveis e renovam à meia-noite de São Paulo: " config/prefix "missoes resgatar")

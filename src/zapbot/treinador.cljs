@@ -177,13 +177,6 @@
          (every? #(and (some? %) (elegivel? (obter-liga id) (get (equipe cid pid) %))
                        (pos? (get (get (equipe cid pid) %) "hp-atual" 0))) slots))))
 
-(defn niveis-time [cid pid id]
-  (sort (map #(get (get (equipe cid pid) %) "nivel" 1) (time-liga cid pid id))))
-
-(defn times-compativeis? [a b]
-  (and (= 3 (count a) (count b))
-       (every? true? (map #(<= (js/Math.abs (- %1 %2)) 5) (sort a) (sort b)))))
-
 (defn corrigir-ataques-iniciais! [cid pid]
   (let [corrigir (fn [r]
                    (let [gs (mapv golpe<-registro (get r "golpes"))]

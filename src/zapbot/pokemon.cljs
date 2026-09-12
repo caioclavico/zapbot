@@ -883,16 +883,16 @@
                              (str "\nSelecione esse Pokémon com " config/prefix "pokemon escolher " (inc idx)
                                   " e veja a oferta com " config/prefix "pokemon aprender."
                                   "\nA oferta fica salva até você substituir um golpe ou recusar.")))
-                       [])
+                      [])
                      (enviar-aviso-temporizado cid message
-                       (str "📘 " (:nome pokemon) " chegou ao nível " nivel
-                            ", mas não há golpe novo disponível para a espécie nesse nível."
-                            " Os golpes disponíveis já são conhecidos ou foram oferecidos."
-                            " Próxima oportunidade no nível " (+ nivel 5) ".") [])))))
-              (p/catch (fn [err]
-                         (js/console.error "Erro ao oferecer golpe por nível:" err)
-                         (enviar-aviso-temporizado cid message
-                           (str "📘 Não consegui consultar os golpes agora. Selecione o Pokémon e use " config/prefix "pokemon aprender para tentar novamente.") [])))))))))
+                                               (str "📘 " (:nome pokemon) " chegou ao nível " nivel
+                                                    ", mas não há golpe novo disponível para a espécie nesse nível."
+                                                    " Os golpes disponíveis já são conhecidos ou foram oferecidos."
+                                                    " Próxima oportunidade no nível " (+ nivel 5) ".") [])))))
+             (p/catch (fn [err]
+                        (js/console.error "Erro ao oferecer golpe por nível:" err)
+                        (enviar-aviso-temporizado cid message
+                                                  (str "📘 Não consegui consultar os golpes agora. Selecione o Pokémon e use " config/prefix "pokemon aprender para tentar novamente.") [])))))))))
 
 (defn- aviso-saida-liga [subida]
   (when (seq (:ligas-removidas subida))
@@ -1214,7 +1214,7 @@
                                        (str (inc slot) ". #" (inc idx) " " (get r "nome") " • Nv. " (get r "nivel" 1) " • HP " (get r "hp-atual") "/" (get r "hp"))
                                        (str (inc slot) ". Vazio — escolha um substituto")))
                                    (treinador/time-liga cid pid id)))))
-            "\n\nTrês Pokémon saudáveis são necessários. Pareamento: mesma liga e diferença máxima de 5 níveis por posição dos times ordenados por nível.")))))
+            "\n\nTrês Pokémon saudáveis são necessários. Pareamento: mesma liga, sem restrição de diferença de nível entre os times.")))))
 
 (defn- iniciar-ou-entrar-atualizado [message]
   (let [cid        (chat-id message)
@@ -1249,11 +1249,8 @@
       (p/resolved (str "❓ Escolha uma liga e complete o time com três Pokémon da faixa, sem desmaios. Use "
                        config/prefix "pokemon liga e " config/prefix "pokemon liga time <n1,n2,n3>."))
 
-      (and jogo-atual
-           (or (not= liga (:liga jogo-atual))
-               (not (treinador/times-compativeis? (:niveis-time jogo-atual)
-                                                  (treinador/niveis-time cid pid liga)))))
-      (p/resolved "⏳ Seu time não é compatível com esta batalha: é necessário estar na mesma liga e ter níveis próximos (diferença máxima de 5 por posição ordenada). A batalha continua aguardando adversário.")
+      (and jogo-atual (not= liga (:liga jogo-atual)))
+      (p/resolved "⏳ Seu time não é compatível com esta batalha: é necessário estar na mesma liga. A batalha continua aguardando adversário.")
 
       :else
       (let [[pokemon hp-atual status] (treinador/pokemon-ativo cid pid)]
@@ -1303,12 +1300,12 @@
                 (let [jogo-novo (assoc (criar-jogo message pid nome pokemon hp-atual status)
                                        :indices-ativos {:x (treinador/indice-ativo cid pid)}
                                        :participacao {:x {(treinador/indice-ativo cid pid) 0}}
-                                       :liga liga :niveis-time (treinador/niveis-time cid pid liga)
+                                       :liga liga
                                        :reservas {:x (vec (rest (treinador/time-liga cid pid liga)))})]
                   (if (tentar-registrar! cid jogo-novo #(and (nil? %) (configuracao-valida?)))
                     (str (cabecalho) "⏳ *" nome "* está esperando um adversário para a batalha!\n\n"
                          "Liga " (:nome (treinador/obter-liga liga)) " • 3 × 3.\n"
-                         "Quem tiver um time de níveis próximos nesta liga pode mandar " config/prefix "pokemon pra entrar.")
+                         "Quem tiver um time pronto nesta liga pode mandar " config/prefix "pokemon pra entrar.")
                     (str (cabecalho) "⏳ A batalha ou sua escalação mudou enquanto preparávamos a partida. Digite "
                          config/prefix "pokemon pra entrar nela."))))
               (p/catch (fn [err]
@@ -1822,14 +1819,14 @@
                                      :else
                                      (and (or (empty? (:tipos filtro))
                                               (every? (set (get entrada "tipos")) (:tipos filtro)))
-                                        (or (empty? (:raridades filtro))
-                                            (contains? (set (:raridades filtro))
-                                                       (get entrada "raridade" "comum")))
-                                        (or (str/blank? (:nome filtro))
-                                          (str/includes? nome (:nome filtro)))
-                                        (or (nil? (:nivel filtro))
-                                          (some #(= (:nivel filtro) (:nivel %))
-                                            (get colecao-por-nome nome)))))))))
+                                          (or (empty? (:raridades filtro))
+                                              (contains? (set (:raridades filtro))
+                                                         (get entrada "raridade" "comum")))
+                                          (or (str/blank? (:nome filtro))
+                                              (str/includes? nome (:nome filtro)))
+                                          (or (nil? (:nivel filtro))
+                                              (some #(= (:nivel filtro) (:nivel %))
+                                                    (get colecao-por-nome nome)))))))))
         entradas  (->> entradas (sort-by #(get % "nome")) vec)
         unicos    (count entradas)
         capturas  (reduce + 0 (map #(get % "capturas" 0) entradas))
@@ -2478,20 +2475,22 @@
                         (loja/quantidade-item cid pid bola) " disponível(is) — "
                         (chance-com-bola (:chance-base-captura caca) bola) "% de chance")))
        "\n\nUse " config/prefix "pokemon capturar <pokebola|grande-bola|ultra-bola>."
-       "\nUma tentativa por encontro; a bola é consumida mesmo se falhar. Você tem 5 minutos."
-      "\nSem bolas? Use " config/prefix "mochila kit, " config/prefix "mochila diario, "
-      config/prefix "mochila resgatar ou cumpra missões e consiga nocautes no PvP."
+       "\nTentativas restantes: " (- 3 (get caca :tentativas-captura 0)) " de 3."
+       "\nA bola é consumida a cada lançamento. O Pokémon pode fugir após uma falha e foge após a terceira."
+       "\nVocê tem 5 minutos."
+       "\nSem bolas? Use " config/prefix "mochila kit, " config/prefix "mochila diario, "
+       config/prefix "mochila resgatar ou cumpra missões e consiga nocautes no PvP."
        "\nPara desistir: " config/prefix "pokemon sair."))
 
 (defn- preparar-captura-pos-batalha [cid pid caca]
   (let [selvagem (get-in caca [:pokemons :o])
         bonus (get bonus-captura-status (get-in caca [:status :o]) 1)
         chance (min 95 (+ (js/Math.round (* bonus (chance-captura selvagem)))
-                         25 (min 20 (* 2 (treinador/sequencia-capturas cid pid)))))
-        pronta (assoc caca :aguardando-captura? true :chance-base-captura chance)]
+                          25 (min 20 (* 2 (treinador/sequencia-capturas cid pid)))))
+        pronta (assoc caca :aguardando-captura? true :chance-base-captura chance :tentativas-captura 0)]
     (swap! cacadas-selvagens assoc cid pronta)
-        (str (loja/registrar-missao! cid pid "selvagens" (treinador/nivel-jogador cid pid))
-          (menu-captura cid pid pronta))))
+    (str (loja/registrar-missao! cid pid "selvagens" (treinador/nivel-jogador cid pid))
+         (menu-captura cid pid pronta))))
 
 (defn- capturar-selvagem [message args]
   (let [cid (chat-id message) pid (jogador-id message)
@@ -2510,7 +2509,12 @@
        (let [selvagem (get-in caca [:pokemons :o])
              chance (chance-com-bola (:chance-base-captura caca) bola)
              capturou? (< (rand-int 100) chance)
-             recompensa (encerrar-cacada! cid pid caca capturou?)
+             tentativas (inc (get caca :tentativas-captura 0))
+             fugiu? (and (not capturou?)
+                         (or (>= tentativas 3)
+                             (< (rand-int 100) (get fuga-raridade (:raridade selvagem) 8))))
+             recompensa (when (or capturou? fugiu?)
+                          (encerrar-cacada! cid pid caca capturou?))
              nome-bola (:nome (loja/dados-item bola))]
          (if capturou?
            (let [idx (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil)
@@ -2523,8 +2527,14 @@
                   ") • +" (:moedas recompensa) " moedas"
                   (when-let [subida (:subida recompensa)]
                     (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!" (aviso-saida-liga subida)))))
-           (str "💨 A " nome-bola " falhou e *" (:nome selvagem) "* escapou! (" chance "% de chance)"
-                "\n💔 A sequência de capturas foi encerrada.\n✨ +1 XP pela batalha.")))))))
+           (if fugiu?
+             (str "💨 A " nome-bola " falhou e *" (:nome selvagem) "* fugiu! (" chance "% de chance)"
+                  (when (>= tentativas 3) "\nAs três tentativas de captura acabaram.")
+                  "\n💔 A sequência de capturas foi encerrada.\n✨ +1 XP pela batalha.")
+             (let [nova-caca (assoc caca :tentativas-captura tentativas)]
+               (swap! cacadas-selvagens assoc cid nova-caca)
+               (str "💥 A " nome-bola " falhou, mas *" (:nome selvagem) "* continua aqui! (" chance "% de chance)"
+                    (menu-captura cid pid nova-caca))))))))))
 
 (defn- turno-selvagem
   "Executa a resposta do selvagem depois de qualquer ação válida do jogador.
@@ -3085,7 +3095,7 @@
              (> marco (get r "nivel-oferta-verificado" 0)))
       (-> (or (aprender-golpe-por-nivel! message cid pid marco idx) (p/resolved nil))
           (p/then (fn [_] (when (seq (treinador/ofertas-golpes cid pid idx))
-                           (mostrar-oferta message args)))))
+                            (mostrar-oferta message args)))))
       (mostrar-oferta message args))))
 
 (defn- reaprender-golpe [message args]
