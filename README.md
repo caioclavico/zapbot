@@ -603,3 +603,51 @@ filtros existentes: `!pokemon time txt fogo lendario`, `!pokemon time bronze txt
 ou `!pokemon time txt char nivel 25`. Os modos `!pokemon time ativo`,
 `!pokemon time csv` e `!pokemon time liga` seguem inalterados, assim como o
 `!pokemon time` sem argumento, que continua enviando os cartões.
+
+### Ginásios, evolução, trocas e eventos (0.10.0)
+
+- `!pokemon ginasio`: lista cinco ginásios em sequência — Pedra, Água,
+  Elétrico, Planta e Fogo — com líderes de níveis 10, 20, 30, 40 e 50.
+  `!pokemon ginasio agua` mostra o time do líder e sua pedra.
+- `!pokemon ginasio time 1,3,5` escala três Pokémon saudáveis.
+  `!pokemon ginasio desafiar pedra` inicia a batalha 3 × 3, usando os
+  comandos habituais de ataque, defesa, cura e poção. O líder joga
+  automaticamente e o próximo Pokémon entra após um nocaute. A escalação
+  é persistida; doações e envio para a enfermaria deixam vagas que precisam
+  ser preenchidas novamente.
+- A primeira vitória dá uma insígnia persistente, 100 moedas, 6 XP por
+  Pokémon participante e uma pedra. A revanche fica disponível no dia
+  seguinte, à meia-noite de São Paulo: 25 moedas, 2 XP por participante e
+  25% de chance da mesma pedra. Cada vitória premiada também dá 1 XP de
+  treinador. Ginásios não dão pontos no ranking PvP nem Pokébolas por
+  nocaute. Derrotas e desistências preservam insígnias e não premiam o líder.
+- `!pokemon evoluir 3 pedra-agua` usa uma pedra compatível. Estão
+  disponíveis `pedra-agua`, `pedra-trovao`, `pedra-fogo`,
+  `pedra-folha` e `pedra-lua`. A forma evoluída é consultada na
+  [PokéAPI](https://pokeapi.co/docs/v2); a lista de compatibilidade desta
+  versão fica em `src/zapbot/aventuras.cljs`. Evoluções regionais ou com
+  outras condições não são inferidas. Nível, XP e item equipado são
+  preservados, e os atributos são recalculados no mesmo nível.
+  Pedras recebidas com mochila cheia ficam pendentes para `!mochila resgatar`.
+- `!pokemon negociar 1 2 @pessoa` oferece seu Pokémon nº 1 pelo nº 2 da
+  outra pessoa. Também pode responder a uma mensagem dela. O destinatário
+  usa `!pokemon negociar aceitar <id>` e o autor conclui com
+  `!pokemon negociar confirmar <id>`. Ambos podem usar
+  `!pokemon negociar cancelar <id>`. Propostas expiram em cinco minutos
+  ou ao reiniciar o bot. Mudanças nos Pokémon invalidam a proposta; os
+  dois participantes precisam estar fora de combate. Os registros completos,
+  incluindo itens equipados, são trocados juntos. A troca não desencadeia
+  evolução automática. `!pokemon trocar` continua selecionando o ativo.
+- `!pokemon eventos` mostra o surto atual. A cada seis horas, alternam-se
+  quatro eventos globais. Cada caçada tem 50% de chance de escolher uma das
+  quatro espécies do evento; os outros encontros seguem o bioma.
+  O evento aparece na mensagem do encontro. Permanecem as três tentativas
+  de captura, o consumo de bolas, a chance de fuga e o cooldown.
+
+Execute `npm test` para validar progressão, trocas, recompensas e integração
+dos ginásios; `npm run build` gera o bot.
+
+O inicial só pode ser escolhido uma vez por treinador em cada chat.
+Mandar o único Pokémon para a Enfermeira Joy, doá-lo ou ficar com a equipe
+vazia não libera outro inicial. Contas antigas são reconhecidas pelo
+histórico; dois pedidos simultâneos também não entregam dois iniciais.

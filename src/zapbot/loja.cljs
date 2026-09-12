@@ -4,7 +4,8 @@
   (recupera HP). Estado (moedas + inventário) por chat+jogador, mesma
   convenção de zapbot.rank; persistido via zapbot.armazenamento (chaves
   sempre string, nunca keyword - ver convenção documentada lá)."
-  (:require [clojure.string :as str]
+  (:require [zapbot.aventuras :as aventuras]
+            [clojure.string :as str]
             [zapbot.config :as config]
             [zapbot.missoes :as missoes]
             [zapbot.armazenamento :as armazenamento]))
@@ -56,7 +57,7 @@
 ;; catálogo estático (nunca persistido, então pode usar keyword à vontade) -
 ;; chaves nomeadas pelo ITEM que você compra (não pelo status que ele cura),
 ;; então "loja comprar atadura"/"antidoto" fazem sentido de verdade
-(def ^:private itens
+(def ^:private itens-base
   {"reviver" {:nome "Reviver" :emoji "💎" :exclusivo-missoes true
               :descricao "Exclusivo das missões: revive um Pokémon desmaiado com 100% do HP e remove seu status. Use !pokemon reviver [número], fora de batalhas e caçadas."}
    "pokebola" {:nome "Pokébola" :emoji "🔴" :multiplicador-captura 1 :limite-captura 75
@@ -92,6 +93,13 @@
    "faixa-foco" {:nome "Faixa de Foco" :emoji "🥋" :equipavel true :efeito :sobreviver :preco 55
                  :descricao "Se estiver com HP cheio, sobrevive uma vez por batalha a um golpe fatal, ficando com 1 HP."}})
 
+(def ^:private itens
+  (merge itens-base
+         (into {} (map (fn [[id pedra]]
+                         [id (assoc pedra :evolucao true
+                                    :descricao "Primeira vitória no ginásio correspondente ou revanche diária. Use !pokemon evoluir <número> <pedra>.")])
+                       aventuras/pedras))))
+
 (declare conta)
 
 (defn dados-item [chave] (get itens chave))
@@ -119,7 +127,7 @@
   (get-in @contas [cid pid] {"moedas" 0 "inventario" {}}))
 
 (def bolas ["pokebola" "grande-bola" "ultra-bola"])
-(def ^:private ordem-recompensas (conj bolas "reviver"))
+(def ^:private ordem-recompensas (into (conj bolas "reviver") (sort (keys aventuras/pedras))))
 
 (defn normalizar-item [nome]
   (let [chave (-> (or nome "") str/trim str/lower-case remover-acentos
@@ -181,6 +189,19 @@
   (str "🎁 +" quantidade " " (:nome (dados-item bola)) " por nocaute(s) no PvP."
        (when (some pos? (vals (recompensas-pendentes (conta cid pid))))
          (str " Há recompensas pendentes: libere espaço e use " config/prefix "mochila resgatar."))))
+
+(defn premiar-item-evolucao! [cid pid item]
+  (swap! contas update-in [cid pid] guardar-recompensas {item 1})
+  (persistir!)
+  (str "🎁 +1 " (:nome (dados-item item))
+       (when (some pos? (vals (recompensas-pendentes (conta cid pid))))
+         ". Mochila cheia: use !mochila resgatar após liberar espaço.")))
+
+(defn consumir-pedra! [cid pid item]
+  (when (and (contains? aventuras/pedras item) (pos? (quantidade-item cid pid item)))
+    (swap! contas update-in [cid pid "inventario" item] dec)
+    (persistir!)
+    true))
 
 (defn- sortear-bola-diaria []
   (let [sorteio (rand-int 100)]
@@ -346,8 +367,8 @@
     (persistir!)
     (:cura-hp (get itens "pocao"))))
 
-(defn- formatar-item [chave {:keys [nome emoji preco]}]
-  (str emoji " *" nome "* (`" chave "`) - " (if preco (str preco " moedas") "exclusivo das missões")))
+(defn- formatar-item [chave {:keys [nome emoji preco evolucao]}]
+  (str emoji " *" nome "* (`" chave "`) - " (cond preco (str preco " moedas") evolucao "recompensa de ginásio" :else "exclusivo das missões")))
 
 (defn- formatar-inventario [inventario]
   (let [posse (filter (fn [[_ qtd]] (pos? qtd)) inventario)]
@@ -424,6 +445,8 @@
           (some #{chave} bolas)
           (str "🎁 Pokébolas não são vendidas. Ganhe em " config/prefix "missoes, "
                config/prefix "mochila diario ou por nocautes no PvP.")
+          (:evolucao item)
+          "🏛️ Ganhe pedras na primeira vitória de cada ginásio e em revanches diárias: !pokemon ginasio."
           (:exclusivo-missoes item)
           (str "💎 Esse item só pode ser ganho nas missões. Veja " config/prefix "missoes.")
           (and (not (:expansao item)) (not (cabe? cid pid 1)))

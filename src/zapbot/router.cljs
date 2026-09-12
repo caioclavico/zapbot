@@ -57,6 +57,10 @@
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
   {:emoji "⚡" :uso "pokemon [liga [nome|time <n1,n2,n3>]|inicial|cacar|treinador|pokedex [n|filtros]|time [ativo|filtros|csv]|trocar <n>|equipar|aprender [n|recusar]|reaprender [n] [troca]|mt [1-4]|reviver [n]|mochila|missoes [resgatar]|capturar <bola>|removergolpe <n>|doar|joy <n,n,...>|atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalhe e capture por bioma, veja o ativo, filtre time/Pokédex combinando tipo, raridade, nome e nível, equipe itens e evolua com XP"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
+   {:emoji "🏛️" :uso "pokemon ginasio [nome|time <1,2,3>|desafiar <nome>]" :desc "Cinco líderes 3 × 3, insígnias e pedras de evolução"}
+   {:emoji "💎" :uso "pokemon evoluir <número> <pedra>" :desc "Evolua espécies compatíveis usando uma pedra da mochila"}
+   {:emoji "🔄" :uso "pokemon negociar <seu número> <número do outro> @pessoa" :desc "Proponha uma troca; destinatário aceita e autor confirma usando o ID da proposta"}
+   {:emoji "🎉" :uso "pokemon eventos" :desc "Confira as espécies em destaque nas caçadas e o tempo restante do evento"}
    {:emoji "📋" :uso "missoes [resgatar]" :desc "Missões diárias com XP de treinador, Pokébolas e chance de Grande ou Ultra Bola"}
    {:emoji "🎒" :uso "mochila [kit|resgatar]" :desc "Veja itens e bolas, resgate o kit inicial ou recompensas de vitórias"}
    {:emoji "🏪" :uso "loja [comprar|detalhes <item>]" :desc "Compre bolas, curas, MT, itens equipáveis e expansões de mochila; consulte preços e efeitos"}

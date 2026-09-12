@@ -12,20 +12,11 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["Ligas sem restrição de diferença de nível entre os times da mesma liga"
-   "Até três tentativas de captura por encontro, com possibilidade de fuga após cada falha"
-   (str "Bônus diário manual com três bolas aleatórias: " config/prefix "mochila diario")
-   "Pokébolas saíram da loja e agora vêm do kit inicial, missões, bônus diário e nocautes PvP"
-   "Os dois jogadores recebem uma bola por cada nocaute que fizerem no PvP, conforme a liga"
-   "Tetos de captura distintos: Pokébola 75%, Grande Bola 88% e Ultra Bola 95%"
-   (str "Mochila com 50 vagas, expansões de +25 por 200 moedas e recompensas pendentes: " config/prefix "mochila")
-   (str "Missões diárias crescem a cada 5 níveis e renovam à meia-noite de São Paulo: " config/prefix "missoes resgatar")
-   "Missões dão XP de treinador e Pokébolas; cada uma tem 25% de chance de Grande Bola, 10% de Ultra e 20% independentes de Reviver"
-   (str "Reviver exclusivo das missões recupera 100% do HP e remove status, fora de combate: " config/prefix "pokemon reviver [número]")
-   (str "MT de Ataque por 200 moedas adiciona ou substitui um ataque compatível do ativo: " config/prefix "pokemon mt [1-4]")
-   "Insígnias por doar 1, 10, 50 e 100 Pokémon, com recompensas de XP de treinador"
-   (str "Listagem do time em texto puro, sem as fotos e sem cortar em 24: " config/prefix "pokemon time txt")
-   (str "O modo texto aceita os mesmos filtros dos cartões, por exemplo " config/prefix "pokemon time txt fogo lendario")])
+  ["Inicial só pode ser escolhido uma vez por treinador, mesmo com a equipe vazia ou na enfermaria"
+   (str "Cinco ginásios 3 × 3 com líderes, insígnias, pedras e revanches diárias: " config/prefix "pokemon ginasio")
+   (str "Evolução com Pedras da Água, Trovão, Fogo, Folha e Lua: " config/prefix "pokemon evoluir <número> <pedra>")
+   (str "Trocas de Pokémon com proposta, aceite e confirmação: " config/prefix "pokemon negociar <seu número> <número do outro> @pessoa")
+   (str "Eventos de captura a cada 6 horas, com 50% de encontros de espécies em destaque: " config/prefix "pokemon eventos")])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

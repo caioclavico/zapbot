@@ -26,6 +26,15 @@
 (defn- conta [cid pid]
   (get-in @contas [cid pid] conta-vazia))
 
+(defn inicial-disponivel?
+  "Contas antigas também são reconhecidas pelo histórico de Pokémon."
+  [cid pid]
+  (let [c (conta cid pid)]
+    (not (or (get c "inicial-escolhido")
+             (seq (get c "equipe")) (seq (get c "enfermaria")) (seq (get c "pokedex"))
+             (pos? (get c "ultima-cacada" 0)) (pos? (get c "vitorias-treinador" 0))
+             (pos? (get c "doacoes-pokemon" 0))))))
+
 (defn- golpe->registro [g]
   {"slug" (golpes/chave g) "nome-exibicao" (:nome-exibicao (golpes/traduzir g)) "tipo" (:tipo g) "poder" (:poder g) "classe" (name (:classe g))
    "alvo" (when (:alvo g) (name (:alvo g)))
@@ -154,11 +163,11 @@
                           times)))))
 
 (defn- ajustar-times-remocao [c idx]
-  (update c "times-liga"
-          (fn [times]
-            (into {} (map (fn [[id slots]]
-                            [id (mapv #(cond (nil? %) nil (= % idx) nil (> % idx) (dec %) :else %) slots)])
-                          times)))))
+  (let [ajustar #(mapv (fn [slot]
+                         (cond (nil? slot) nil (= slot idx) nil (> slot idx) (dec slot) :else slot)) %)]
+    (-> c
+        (update "times-liga" (fn [times] (into {} (map (fn [[id slots]] [id (ajustar slots)]) times))))
+        (update "time-ginasio" ajustar))))
 
 (defn selecionar-liga! [cid pid id]
   (when (obter-liga id)
@@ -382,6 +391,17 @@
   (persistir!)
   (dec (count (equipe cid pid))))
 
+(defn receber-inicial!
+  "Valida novamente após a consulta à API e registra a escolha junto com o Pokémon."
+  [cid pid pokemon]
+  (when (inicial-disponivel? cid pid)
+    (swap! contas update-in [cid pid]
+           (fn [c] (-> (or c conta-vazia)
+                       (assoc "inicial-escolhido" true)
+                       (update "equipe" conj (pokemon->registro pokemon (:hp pokemon) nil)))))
+    (persistir!)
+    true))
+
 (defn receber-doacao!
   "Acrescenta um registro JÁ no formato persistido (ver pokemon->registro)
   direto na equipe do destinatário, preservando nível/hp-atual/status como
@@ -404,7 +424,7 @@
                           (< idx ativo-atual)    (dec ativo-atual)
                           (= idx ativo-atual)    0
                           :else                  (min ativo-atual (dec (count eq-nova))))]
-        (swap! contas update-in [cid pid] #(ajustar-times-remocao (assoc % "equipe" eq-nova "ativo" ativo-novo) idx))
+        (swap! contas update-in [cid pid] #(ajustar-times-remocao (assoc % "equipe" eq-nova "ativo" ativo-novo "inicial-escolhido" true) idx))
         (persistir!)
         true)
       false)))
@@ -460,7 +480,7 @@
         (swap! contas update-in [cid pid]
                (fn [c]
                  (let [c (ajustar-times-remocao (or c conta-vazia) idx)]
-                   (assoc c "equipe" equipe-nova
+                   (assoc c "equipe" equipe-nova "inicial-escolhido" true
                             "enfermaria" (conj (vec (get c "enfermaria" [])) entrada)
                             "ativo" (if (empty? equipe-nova) 0
                                         (let [ativo (get c "ativo" 0)]
@@ -759,3 +779,41 @@
      :xp-necessario xp-necessario
      :sequencia (sequencia-capturas cid pid) :recorde recorde
      :insignias (insignias-treinador cid pid)}))
+
+;; Ginásios e trocas preservam registros completos e persistem no mesmo estado.
+(defn insignias-ginasio [cid pid]
+  (get (conta cid pid) "ginasios" {}))
+
+(defn registrar-ginasio! [cid pid id dia]
+  (let [anterior (get (insignias-ginasio cid pid) id)]
+    (when (not= anterior dia)
+      (swap! contas assoc-in [cid pid "ginasios" id] dia)
+      (persistir!)
+      (if anterior :revanche :primeira))))
+
+(defn trocar-registros! [cid a ia ra b ib rb]
+  (when (and (not= a b) ra rb
+             (= ra (get (equipe cid a) ia))
+             (= rb (get (equipe cid b) ib)))
+    (swap! contas
+           (fn [estado]
+             (-> estado
+                 (assoc-in [cid a "equipe" ia] rb)
+                 (assoc-in [cid b "equipe" ib] ra)
+                 (update-in [cid a] limpar-times)
+                 (update-in [cid b] limpar-times))))
+    (persistir!)
+    true))
+
+(defn atualizar-especie! [cid pid idx pokemon]
+  (swap! contas update-in [cid pid "equipe" idx]
+         #(assoc % "taxa-captura" (:taxa-captura pokemon)
+                   "raridade" (:raridade pokemon)))
+  (persistir!))
+
+(defn time-ginasio [cid pid]
+  (get (conta cid pid) "time-ginasio" []))
+
+(defn salvar-time-ginasio! [cid pid indices]
+  (swap! contas assoc-in [cid pid "time-ginasio"] (vec indices))
+  (persistir!))
