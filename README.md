@@ -604,7 +604,23 @@ ou `!pokemon time txt char nivel 25`. Os modos `!pokemon time ativo`,
 `!pokemon time csv` e `!pokemon time liga` seguem inalterados, assim como o
 `!pokemon time` sem argumento, que continua enviando os cartões.
 
+Para ordenar o time pela soma dos atributos (HP máximo, ataque, defesa,
+ataque especial, defesa especial e velocidade), use `!pokemon time >`
+do mais forte ao mais fraco ou `!pokemon time <` na ordem inversa.
+Funciona nos cartões e no modo texto, combinado com filtros, por exemplo:
+`!pokemon time fogo >` ou `!pokemon time txt bronze <`.
+A ordenação preserva os números usados para escolher cada Pokémon e,
+quando combinada com uma liga, substitui a ordem padrão por nível.
+
 ### Ginásios, evolução, trocas e eventos (0.10.0)
+
+Consulte `!pokemon ajuda` para começar ou abra um guia específico:
+`!pokemon ajuda batalhas`, `!pokemon ajuda ginasios`,
+`!pokemon ajuda cacadas`, `!pokemon ajuda ligas`, `!pokemon ajuda time`
+e `!pokemon ajuda evolucao`. Os guias explicam preparação, comandos e regras
+com exemplos. Também aceitam a ordem `!pokemon ginasio ajuda`,
+`!pokemon cacar ajuda` ou `!pokemon liga ajuda`, inclusive com acentos.
+A consulta funciona durante partidas sem gastar turno nem acionar o líder.
 
 - `!pokemon ginasio`: lista cinco ginásios em sequência — Pedra, Água,
   Elétrico, Planta e Fogo — com líderes de níveis 10, 20, 30, 40 e 50.

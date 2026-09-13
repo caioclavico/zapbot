@@ -16,6 +16,7 @@
             [zapbot.rank :as rank]
             [zapbot.loja :as loja]
             [zapbot.pokedex :as pokedex]
+            [zapbot.pokemon-ajuda :as pokemon-ajuda]
             [zapbot.treinador :as treinador]))
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))
@@ -1251,7 +1252,8 @@
                                        (str (inc slot) ". #" (inc idx) " " (get r "nome") " • Nv. " (get r "nivel" 1) " • HP " (get r "hp-atual") "/" (get r "hp"))
                                        (str (inc slot) ". Vazio — escolha um substituto")))
                                    (treinador/time-liga cid pid id)))))
-            "\n\nTrês Pokémon saudáveis são necessários. Pareamento: mesma liga, sem restrição de diferença de nível entre os times.")))))
+            "\n\nTrês Pokémon saudáveis são necessários. Pareamento: mesma liga, sem restrição de diferença de nível entre os times."
+            "\nComo jogar: " config/prefix "pokemon liga ajuda")))))
 
 (defn- iniciar-ou-entrar-atualizado [message]
   (let [cid        (chat-id message)
@@ -1741,10 +1743,20 @@
                     (:nivel filtro) (:liga filtro) (seq (:nome filtro)))
             filtro))))))
 
-(defn- descricao-filtros [{:keys [tipos nivel nome liga] raridades-filtradas :raridades}]
+(defn- interpretar-filtros-time [texto]
+  (let [tokens (str/split (str/trim texto) #"\s+")
+        ordem (last (filter #{"<" ">"} tokens))
+        filtros (interpretar-filtros (str/join " " (remove #{"<" ">"} tokens)))]
+    (cond-> filtros
+      ordem (assoc :ordem-forca ordem))))
+
+(defn- descricao-filtros [{:keys [tipos nivel nome liga ordem-forca] raridades-filtradas :raridades}]
   (str/join " + "
             (concat
-             (when liga [(str "liga " (:nome liga) " (" (:min liga) "–" (:max liga) ") — nível decrescente")])
+             (when liga [(str "liga " (:nome liga) " (" (:min liga) "–" (:max liga) ")"
+                             (when-not ordem-forca " — nível decrescente"))])
+             (when ordem-forca
+               [(if (= ordem-forca ">") "força: maior → menor" "força: menor → maior")])
              (when (seq tipos)
                [(str "tipo " (str/join "/" (map tipos-pt tipos)))])
              (when (seq raridades-filtradas)
@@ -1761,19 +1773,24 @@
        (or (str/blank? nome) (str/includes? (normalizar-texto (:nome pokemon)) nome))))
 
 (defn- filtrar-time [eq filtro]
-  (let [filtros (interpretar-filtros filtro)]
+  (let [filtros (interpretar-filtros-time filtro)]
     (->> eq
          (map-indexed (fn [indice registro] {:indice indice :registro registro}))
          (filter (fn [{:keys [registro]}]
                    (let [[pokemon] (treinador/registro->pokemon registro)]
                      (or (nil? filtros) (corresponde-aos-filtros? pokemon filtros)))))
-         (#(if (:liga filtros)
+         (#(cond
+             (:ordem-forca filtros)
+             (sort-by (fn [{:keys [registro]}]
+                        (poder-total (first (treinador/registro->pokemon registro))))
+                      (if (= ">" (:ordem-forca filtros)) > <) %)
+             (:liga filtros)
              (sort-by (fn [{:keys [indice registro]}]
                         [(- (get registro "nivel" 1))
                          (- (reduce + 0 (map (fn [stat] (get registro stat 0))
                                              ["hp" "ataque" "defesa" "atq-esp" "def-esp" "veloc"])))
                          indice]) %)
-             %))
+             :else %))
          vec)))
 
 (defn- ver-time [message filtro]
@@ -1789,7 +1806,7 @@
             " (sobe vencendo batalhas de " config/prefix "pokemon, calibra a força dos selvagens na caçada)\n\n"
             "🎒 *Seu time:*\n\n"
             (when-not (str/blank? filtro)
-              (str "🔎 Filtros: " (descricao-filtros (interpretar-filtros filtro)) "\n\n"))
+              (str "🔎 Filtros: " (descricao-filtros (interpretar-filtros-time filtro)) "\n\n"))
             (if (seq filtrado)
               (str/join "\n" (map
                               (fn [{:keys [indice registro]}]
@@ -1814,7 +1831,8 @@
             "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉), ou " config/prefix
             "pokemon joy para enviar os feridos à Enfermeira Joy."
             "\nVeja a ficha do ativo com " config/prefix "pokemon time ativo."
-            "\nCombine filtros com " config/prefix "pokemon time [liga] [tipo] [raridade] [nome] [nivel N].")))))
+            "\nCombine filtros com " config/prefix "pokemon time [liga] [tipo] [raridade] [nome] [nivel N]."
+            "\nOrdene por força: " config/prefix "pokemon time > (mais forte primeiro) ou < (mais fraco primeiro).")))))
 
 (defn- ver-treinador [message]
   (let [cid (chat-id message)
@@ -2159,9 +2177,7 @@
          (when-not (str/blank? (:habilidades-pt especie))
            (str "✨ Habilidades: " (encurtar (:habilidades-pt especie) limite-habilidades) "\n"))
          "🔺 Evolução: "
-         (if (seq (:evolucoes especie))
-           (str/join " | " (map #(str (:nome %) " — nível " (:nivel %)) (:evolucoes especie)))
-           "não possui evolução por nível"))))
+         (pokedex/formatar-evolucoes especie))))
 
 (defn- legenda-ficha-time
   "Ficha de um pokémon do time: stats de batalha, golpes, XP/nível + os dados
@@ -3319,7 +3335,8 @@
          "\nNíveis recomendados, sem nivelamento. Cada vitória premiada dá 1 XP de treinador."
          "\nUse " config/prefix "pokemon ginasio <nome> para detalhes."
          "\nEscale: " config/prefix "pokemon ginasio time 1,3,5"
-         "\nDesafie: " config/prefix "pokemon ginasio desafiar pedra")))
+         "\nDesafie: " config/prefix "pokemon ginasio desafiar pedra"
+         "\nComo jogar: " config/prefix "pokemon ginasio ajuda")))
 
 (defn- configurar-ginasio [message args]
   (let [cid (chat-id message) pid (jogador-id message)
@@ -3625,7 +3642,7 @@
                              config/prefix "pokemon joy <número>, "
                              config/prefix "pokemon atacar <1-4>, " config/prefix "pokemon defender, "
                              config/prefix "pokemon curar, " config/prefix "pokemon pocao ou " config/prefix
-                             "pokemon sair.")))))
+                             "pokemon sair.\n📚 Como jogar: " config/prefix "pokemon ajuda.")))))
 
 (defn- turno-lider [message cid]
   (let [jogo (get @jogos cid)]
@@ -3642,8 +3659,10 @@
       (p/resolved ""))))
 
 (defn jogar [message args]
-  (let [cid (chat-id message)]
+  (if-let [ajuda (pokemon-ajuda/resposta args)]
+    (p/resolved ajuda)
+    (let [cid (chat-id message)]
     (p/let [resposta (jogar-comando message args)
             lider (turno-lider message cid)]
       (if (str/blank? lider) resposta
-          (str (if (map? resposta) (:texto resposta) resposta) "\n\n🏛️ *Vez do líder*\n" lider)))))
+          (str (if (map? resposta) (:texto resposta) resposta) "\n\n🏛️ *Vez do líder*\n" lider))))))

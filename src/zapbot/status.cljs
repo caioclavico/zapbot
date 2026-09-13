@@ -12,11 +12,9 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  ["Inicial só pode ser escolhido uma vez por treinador, mesmo com a equipe vazia ou na enfermaria"
-   (str "Cinco ginásios 3 × 3 com líderes, insígnias, pedras e revanches diárias: " config/prefix "pokemon ginasio")
-   (str "Evolução com Pedras da Água, Trovão, Fogo, Folha e Lua: " config/prefix "pokemon evoluir <número> <pedra>")
-   (str "Trocas de Pokémon com proposta, aceite e confirmação: " config/prefix "pokemon negociar <seu número> <número do outro> @pessoa")
-   (str "Eventos de captura a cada 6 horas, com 50% de encontros de espécies em destaque: " config/prefix "pokemon eventos")])
+  ["Pokédex e fichas do time mostram evoluções com as pedras disponíveis no bot e o item necessário"
+   (str "Ordene o time por força: " config/prefix "pokemon time > (maior primeiro) ou < (menor primeiro), inclusive com filtros e modo texto")
+   (str "Guias de batalhas, ginásios, caçadas, ligas, time e evolução: " config/prefix "pokemon ajuda")])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

@@ -6,6 +6,7 @@
             ["whatsapp-web.js" :as wwjs]
             [zapbot.config :as config]
             [zapbot.armazenamento :as armazenamento]
+            [zapbot.aventuras :as aventuras]
             [zapbot.traducao :as traducao]))
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))
@@ -73,6 +74,21 @@
 
 (defn- nome-formatado [slug]
   (->> (str/split slug #"-") (map str/capitalize) (str/join " ")))
+
+(defn formatar-evolucoes
+  "Mostra evoluções por nível e os itens disponíveis no bot, inclusive para
+  espécies carregadas do cache anterior à inclusão das pedras na Pokédex."
+  [pokemon]
+  (let [slug (normalizar (:nome pokemon))
+        por-nivel (map #(str (:nome %) " — nível " (:nivel %)) (:evolucoes pokemon))
+        por-item (for [[id pedra] (sort-by key aventuras/pedras)
+                       :let [destino (get-in pedra [:evolucoes slug])]
+                       :when destino]
+                   (str (nome-formatado destino) " — " (:nome pedra) " (" id ")"))
+        evolucoes (concat por-nivel por-item)]
+    (if (seq evolucoes)
+      (str/join " | " evolucoes)
+      "não possui evolução por nível ou por item disponível no bot")))
 
 (defn- proximas-evolucoes-por-nivel
   "Retorna as evoluções diretas que acontecem por nível, no formato
@@ -149,9 +165,7 @@
        "❤️ HP: " (:hp pokemon) " | ⚔️ Ataque: " (:ataque pokemon) " | 🛡️ Defesa: " (:defesa pokemon) "\n"
        "🔮 Atq. Especial: " (:atq-esp pokemon) " | 🌀 Def. Especial: " (:def-esp pokemon)
        " | 💨 Velocidade: " (:veloc pokemon)
-       "\n🔺 Evolução: " (if (seq (:evolucoes pokemon))
-                            (str/join " | " (map #(str (:nome %) " — nível " (:nivel %)) (:evolucoes pokemon)))
-                            "não possui evolução por nível")
+       "\n🔺 Evolução: " (formatar-evolucoes pokemon)
        (when-not (str/blank? descricao-pt) (str "\n\n📜 _" descricao-pt "_"))))
 
 (defn- enviar-cartao [message pokemon legenda]
