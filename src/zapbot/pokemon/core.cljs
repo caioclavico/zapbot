@@ -1,4 +1,4 @@
-(ns zapbot.pokemon
+(ns zapbot.pokemon.core
   "Comando !pokemon - batalha entre duas pessoas do chat, cada uma com um
   Pokémon sorteado (nome, imagem, golpes reais e stats via PokeAPI - grátis,
   sem chave). Cada jogador escolhe qual dos 4 golpes do seu Pokémon usar a
@@ -8,16 +8,18 @@
   a reinício do bot)."
   (:require [promesa.core :as p]
             [clojure.string :as str]
-            [zapbot.golpes :as golpes]
-            [zapbot.aventuras :as aventuras]
+            [zapbot.pokemon.golpes :as golpes]
+            [zapbot.pokemon.aventuras :as aventuras]
+            [zapbot.pokemon.ginasios :as ginasios]
+            [zapbot.pokemon.shiny :as shiny]
             ["whatsapp-web.js" :as wwjs]
             ["sharp" :as sharp]
             [zapbot.config :as config]
             [zapbot.rank :as rank]
-            [zapbot.loja :as loja]
-            [zapbot.pokedex :as pokedex]
-            [zapbot.pokemon-ajuda :as pokemon-ajuda]
-            [zapbot.treinador :as treinador]))
+            [zapbot.pokemon.loja :as loja]
+            [zapbot.pokemon.pokedex :as pokedex]
+            [zapbot.pokemon.ajuda :as pokemon-ajuda]
+            [zapbot.pokemon.treinador :as treinador]))
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 
@@ -226,6 +228,8 @@
 (defn- pokemon-de-dados [dados]
   {:nome         (str/capitalize (:name dados))
    :slug-especie (get-in dados [:species :name])
+   :imagem-shiny (or (get-in dados [:sprites :other :official-artwork :front_shiny])
+                     (get-in dados [:sprites :front_shiny]))
    :imagem       (or (get-in dados [:sprites :other :official-artwork :front_default])
                      (get-in dados [:sprites :front_default]))
    :tipos        (mapv #(get-in % [:type :name]) (:types dados))
@@ -317,7 +321,7 @@
   "Se o pokémon ATIVO do jogador já estiver no nível de evoluir (por
   nível - ver proxima-evolucao), busca a espécie evoluída e recalcula seus
   stats no MESMO nível atual (mesma fórmula de crescimento do
-  zapbot.treinador). Retorna uma promise com {:nome-antigo :nome-novo
+  zapbot.pokemon.treinador). Retorna uma promise com {:nome-antigo :nome-novo
   :imagem :tipos :habilidade :hp :ataque :defesa :atq-esp :def-esp :veloc}
   ou nil (não evoluiu - já é a forma final, ou não atingiu o nível ainda)."
   ([cid pid] (tentar-evoluir! cid pid (treinador/indice-ativo cid pid)))
@@ -335,7 +339,8 @@
                            evoluido (pokemon-de-dados (js->clj data :keywordize-keys true))
                            fator    (js/Math.pow treinador/fator-crescimento-por-nivel (dec nivel))]
                      {:nome-antigo (:nome pokemon) :nome-novo (:nome evoluido)
-                      :imagem      (:imagem evoluido) :tipos (:tipos evoluido) :habilidade (:habilidade evoluido)
+                      :imagem      (if (:shiny? pokemon) (or (:imagem-shiny evoluido) (:imagem evoluido)) (:imagem evoluido))
+                      :imagem-shiny (:imagem-shiny evoluido) :tipos (:tipos evoluido) :habilidade (:habilidade evoluido)
                       :hp          (js/Math.round (* (:hp evoluido) fator))
                       :ataque      (js/Math.round (* (:ataque evoluido) fator))
                       :defesa      (js/Math.round (* (:defesa evoluido) fator))
@@ -351,6 +356,9 @@
   (cond
     (treinador/inicial-disponivel? cid pid)
     (str "🌟 Escolha seu Pokémon inicial: " config/prefix "pokemon inicial.")
+    (seq (ginasios/liderados cid pid))
+    (str "🏛️ Você tem Pokémon reservados nos ginásios. Eles ficam inativos até outro treinador derrubar você. Consulte "
+         config/prefix "pokemon ginasio. Para usar outros Pokémon disponíveis, consulte " config/prefix "pokemon time.")
     (seq (treinador/em-tratamento cid pid))
     (str "🏥 Seu inicial já foi escolhido. Seus Pokémon estão com a Enfermeira Joy; aguarde a recuperação. Veja "
          config/prefix "pokemon time para conferir o tempo restante.")
@@ -516,11 +524,11 @@
 
 (defn- texto-raridade [pokemon]
   (let [{:keys [nome emoji]} (get raridades (or (:raridade pokemon) "comum"))]
-    (str emoji " " nome)))
+    (str emoji " " nome (when (:shiny? pokemon) " ✨ Shiny"))))
 
 ;; Caçada (!pokemon cacar): sorteia um selvagem com poder-total (acima)
 ;; próximo de um alvo calculado a partir do nível do jogador (derivado das
-;; vitórias em !pokemon, ver zapbot.treinador). Diferente do balanceamento
+;; vitórias em !pokemon, ver zapbot.pokemon.treinador). Diferente do balanceamento
 ;; de PvP (que só evita confrontos injustos), aqui um "estouro pra cima" é
 ;; um problema de verdade (treinador iniciante levando um lendário) - por
 ;; isso NUNCA aceita algo acima do teto (alvo + tolerância), nem como
@@ -836,7 +844,7 @@
       :else
       [jogo nil])))
 
-;; escreve o hp/status atual de cada lado de volta na equipe (zapbot.treinador)
+;; escreve o hp/status atual de cada lado de volta na equipe (zapbot.pokemon.treinador)
 ;; do respectivo dono - chamar sempre que `jogo` mudar, senão dano/cura/status
 ;; não sobrevivem entre batalhas (o objetivo inteiro de ter equipe persistida)
 (defn- sincronizar-equipe! [cid jogo]
@@ -1805,6 +1813,10 @@
        (str (cabecalho) "🧑‍🎓 *Nível de treinador:* " (treinador/nivel-jogador cid pid)
             " (sobe vencendo batalhas de " config/prefix "pokemon, calibra a força dos selvagens na caçada)\n\n"
             "🎒 *Seu time:*\n\n"
+            (when-let [liderados (seq (ginasios/liderados cid pid))]
+              (str "🏛️ " (* 3 (count liderados)) " Pokémon inativos nos ginásios: "
+                   (str/join ", " (map first liderados))
+                   ". Consulte !pokemon ginasio para ver os times reservados.\n\n"))
             (when-not (str/blank? filtro)
               (str "🔎 Filtros: " (descricao-filtros (interpretar-filtros-time filtro)) "\n\n"))
             (if (seq filtrado)
@@ -1837,17 +1849,18 @@
 (defn- ver-treinador [message]
   (let [cid (chat-id message)
         pid (jogador-id message)
-        {:keys [nivel xp xp-insignias xp-missoes xp-atual xp-necessario sequencia recorde insignias]}
+        {:keys [nivel xp xp-insignias xp-missoes pe-ginasios xp-atual xp-necessario sequencia recorde insignias]}
         (treinador/perfil-treinador cid pid)
         numero-ativo (inc (treinador/indice-ativo cid pid))
         [ativo] (treinador/pokemon-ativo cid pid)]
     (p/let [nome (nome-de message)]
       (str "🧢 *Treinador: " nome "*\n\n"
            "⭐ Nível do treinador: " nivel
-           "\n✨ XP total do treinador: " xp
-           "\n🎖️ XP recebido por insígnias: " xp-insignias
-           "\n📋 XP recebido por missões: " xp-missoes
-           "\nPróximo nível: " xp-atual "/" xp-necessario " XP (vitórias + insígnias + missões)"
+           "\n✨ PE (Pontos de experiência): " xp
+           "\n🎖️ PE recebido por insígnias: " xp-insignias
+           "\n📋 PE recebido por missões: " xp-missoes
+           "\n🏛️ PE adicional de ginásios: " pe-ginasios
+           "\nPróximo nível: " xp-atual "/" xp-necessario " PE (vitórias + ginásios + insígnias + missões)"
            "\n🏛️ Insígnias de ginásio: "
            (let [ids (keys (treinador/insignias-ginasio cid pid))]
              (if (seq ids) (str/join ", " (map #(or (:nome (aventuras/obter-ginasio %)) %) ids)) "nenhuma"))
@@ -1859,7 +1872,7 @@
            "\n\n🎖️ *Insígnias: " (count (filter :conquistada? insignias)) "/" (count insignias) "*\n"
            (str/join "\n" (map (fn [{:keys [nome requisito conquistada? xp-recompensa]}]
                                  (str (if conquistada? "🏅" "🔒") " " nome " — " requisito
-                                      " • +" xp-recompensa " XP do treinador"
+                                      " • +" xp-recompensa " PE"
                                       (when conquistada? " (recebido)")))
                                insignias))))))
 
@@ -2811,6 +2824,7 @@
                                     (sortear-selvagem (poder-alvo-caca nivel) (:tipos bioma)))
                       selvagem (buscar-info-especie selvagem)
                       selvagem (com-raridade selvagem)
+                      selvagem (shiny/sortear selvagem)
                       selvagem (com-golpes selvagem)]
                 (when (or (get @jogos cid) (get @cacadas-selvagens cid)
                           (not= [pokemon hp-atual status] (treinador/pokemon-ativo cid pid)))
@@ -3288,8 +3302,24 @@
 (defn- finalizar-ginasio [message cid jogo vencedor]
   (sincronizar-equipe! cid jogo)
   (if (not= vencedor :x)
-    (do (swap! jogos dissoc cid)
-        "\n🏛️ O líder venceu. Recupere seu time e tente novamente! Suas insígnias foram mantidas.")
+    (let [pid (get-in jogo [:jogadores :x])
+          finalizando (assoc jogo :finalizando? true)
+          _ (swap! jogos assoc cid finalizando)
+          _ (treinador/ganhar-pe-ginasio! cid pid 1)
+          subidas (vec (for [idx (keys (get-in jogo [:participacao :x]))]
+                         [idx (treinador/ganhar-xp-no-indice! cid pid idx 2)]))]
+      (-> (p/all
+           (for [[idx subida] subidas :when subida]
+             (-> (verificar-evolucao! message cid pid idx)
+                 (p/then (fn [_] (aprender-golpe-por-nivel! message cid pid (:nivel subida) idx))))))
+          (p/finally #(swap! jogos (fn [estado]
+                                    (if (= finalizando (get estado cid)) (dissoc estado cid) estado)))))
+      (str "\nO líder venceu. Recupere seu time e tente novamente! Suas insígnias foram mantidas."
+           "\n✨ +2 XP por Pokémon que participou."
+           "\n⭐ +1 PE (Pontos de experiência) para o treinador."
+           (apply str (for [[_ subida] subidas :when subida]
+                        (str "\n✨ " (:nome subida) " chegou ao nível " (:nivel subida) "!"
+                             (aviso-saida-liga subida))))))
     (let [pid (get-in jogo [:jogadores :x])
           g (:ginasio jogo)
           premio (treinador/registrar-ginasio! cid pid (:id g) (dia-ginasio))
@@ -3301,6 +3331,7 @@
           subidas (when premio
                     (do (loja/creditar-quantia! cid pid moedas)
                         (treinador/registrar-vitoria-treinador! cid pid)
+                        (treinador/ganhar-pe-ginasio! cid pid (if primeira? 5 2))
                         (vec (for [idx (keys (get-in jogo [:participacao :x]))]
                                [idx (treinador/ganhar-xp-no-indice! cid pid idx (if primeira? 6 2))]))))
           texto-pedra (when pedra? (loja/premiar-item-evolucao! cid pid (:item g)))]
@@ -3308,18 +3339,40 @@
            (for [[idx subida] subidas :when subida]
              (-> (verificar-evolucao! message cid pid idx)
                  (p/then (fn [_] (aprender-golpe-por-nivel! message cid pid (:nivel subida) idx))))))
+          (p/then (fn [_]
+                    (when-let [ocupacao (ginasios/ocupar! cid (:id g) (:lider-anterior jogo) pid
+                                                        (:nome-desafiante jogo) (:time-desafiante jogo) (.now js/Date))]
+                      (enviar-aviso-temporizado cid message
+                        (str "🏛️ Você é o novo líder de " (:nome g) "! Seu time está inativo e reservado até alguém derrubar você."
+                             " Consulte os Pokémon com !pokemon ginasio " (:id g) "."
+                             (when-let [anterior (:anterior ocupacao)]
+                               (str "\nO time de " (get anterior "nome") " voltou à coleção."
+                                    (when (pos? (:moedas ocupacao))
+                                      " Recebeu 50 moedas por permanecer mais de 6 horas.")))) []))))
+          (p/catch (fn [err]
+                     (js/console.error "Erro ao finalizar ocupação do ginásio:" err)
+                     (enviar-aviso-temporizado cid message "⚠️ Não consegui concluir a ocupação do ginásio. Consulte !pokemon ginasio." [])))
           (p/finally #(swap! jogos (fn [estado]
                                     (if (= finalizando (get estado cid)) (dissoc estado cid) estado)))))
       (str "\n🏅 Você venceu o ginásio " (:nome g) "!"
            (if premio
              (str (when primeira? "\nNova insígnia conquistada e próximo ginásio liberado!")
                   "\n💰 +" moedas " moedas; +" (if primeira? 6 2) " XP por Pokémon que participou."
-                  "\n⭐ +1 XP de treinador."
+                  "\n⭐ +" (if primeira? 6 3) " PE para o treinador."
                   (when texto-pedra (str "\n" texto-pedra))
                   (apply str (for [[_ subida] subidas :when subida]
                                (str "\n🌟 " (:nome subida) " chegou ao nível " (:nivel subida) "!"
                                     (aviso-saida-liga subida)))))
              "\nVocê já recebeu a recompensa deste ginásio hoje.")))))
+
+(defn- descricao-lider [cid g]
+  (if-let [lider (ginasios/lider cid (:id g))]
+    (str (get lider "nome") " — há "
+         (js/Math.floor (/ (- (.now js/Date) (get lider "desde")) 60000)) " min"
+         "\nTime reservado: "
+         (str/join ", " (map #(str (get % "nome") (when (get % "shiny") " ✨ Shiny")
+                                   " Nv." (get % "nivel" 1)) (get lider "time"))))
+    (str (:lider g) " (NPC) — Nv. " (:nivel g))))
 
 (defn- menu-ginasios [cid pid]
   (let [insignias (treinador/insignias-ginasio cid pid)]
@@ -3329,10 +3382,13 @@
                      (str (cond (contains? insignias (:id g)) "🏅 "
                                 (aventuras/desbloqueado? (keys insignias) (:id g)) "🔓 "
                                 :else "🔒 ")
-                          (:nome g) " — " (:lider g) " — Nv. " (:nivel g))))
+                          (:nome g) " — " (descricao-lider cid g))))
          "\n\nPrimeira vitória: insígnia, 100 moedas, 6 XP por participante e uma pedra."
          "\nRevanche: recompensa uma vez por dia por ginásio (São Paulo): 25 moedas, 2 XP e 25% de chance da pedra."
-         "\nNíveis recomendados, sem nivelamento. Cada vitória premiada dá 1 XP de treinador."
+         "\nDerrota: 2 XP por Pokémon que participou, a cada batalha."
+         "\nPE do treinador: primeira vitória 6; revanche premiada 3; derrota 1."
+         "\nVencer torna você líder. Os três Pokémon ficam inativos no ginásio até você ser derrubado."
+         "\nMais de 6h como líder: 50 moedas, pagas apenas ao ser derrubado."
          "\nUse " config/prefix "pokemon ginasio <nome> para detalhes."
          "\nEscale: " config/prefix "pokemon ginasio time 1,3,5"
          "\nDesafie: " config/prefix "pokemon ginasio desafiar pedra"
@@ -3341,7 +3397,8 @@
 (defn- configurar-ginasio [message args]
   (let [cid (chat-id message) pid (jogador-id message)
         [acao id] args
-        g (aventuras/obter-ginasio (normalizar-texto (if (= acao "desafiar") id acao)))]
+        g (aventuras/obter-ginasio (normalizar-texto (if (= acao "desafiar") id acao)))
+        ocupante (ginasios/lider cid (:id g))]
     (cond
       (empty? args) (p/resolved (menu-ginasios cid pid))
       (= acao "time")
@@ -3357,14 +3414,17 @@
       (nil? g) (p/resolved (menu-ginasios cid pid))
       (not= acao "desafiar")
       (p/resolved
-       (str (:nome g) " — " (:lider g) "\nEquipe: " (str/join ", " (:time g))
-            " — todos Nv. " (:nivel g) ".\nRecompensa: " (get-in aventuras/pedras [(:item g) :nome])
+       (str (:nome g) " — " (descricao-lider cid g)
+            (when-not ocupante (str "\nEquipe: " (str/join ", " (:time g))))
+            "\nRecompensa: " (get-in aventuras/pedras [(:item g) :nome])
             "\nUse " config/prefix "pokemon ginasio desafiar " (:id g) "."))
+      (= pid (get ocupante "pid"))
+      (p/resolved "🏛️ Você já lidera este ginásio. Seu time será liberado quando outro treinador vencer você.")
       (or (get @jogos cid) (get @cacadas-selvagens cid) (aprendizado-bloqueado? cid pid))
       (p/resolved "🚫 Termine a batalha, caçada ou alteração pendente antes do ginásio.")
       (not (aventuras/desbloqueado? (keys (treinador/insignias-ginasio cid pid)) (:id g)))
       (p/resolved "🔒 Vença os ginásios anteriores primeiro.")
-      (= (dia-ginasio) (get (treinador/insignias-ginasio cid pid) (:id g)))
+      (and (nil? ocupante) (= (dia-ginasio) (get (treinador/insignias-ginasio cid pid) (:id g))))
       (p/resolved "⏳ Você já venceu este ginásio hoje. A revanche abre à meia-noite de São Paulo.")
       :else
       (let [indices (treinador/time-ginasio cid pid)
@@ -3376,10 +3436,14 @@
           (p/resolved "❓ Escale novamente três Pokémon saudáveis: !pokemon ginasio time 1,3,5.")
           (let [reserva {:carregando? true :message message :jogadores {:x pid}}
                 _ (swap! jogos assoc cid reserva)]
-            (-> (p/let [adversarios (p/all (map #(p/let [pokemon (buscar-pokemon-por-nome %)
+            (-> (p/let [nome-desafiante (nome-de message)
+                       adversarios (if ocupante
+                                     (mapv #(first (treinador/registro->pokemon %)) (get ocupante "time"))
+                                     (p/all (map #(p/let [pokemon (buscar-pokemon-por-nome %)
                                                         pronto (com-golpes (escalar-nivel pokemon (:nivel g)) (:nivel g))]
-                                                  pronto) (:time g)))]
+                                                  pronto) (:time g))))]
                   (if-not (and (= reserva (get @jogos cid))
+                               (= ocupante (ginasios/lider cid (:id g)))
                                (= registros (mapv #(get (treinador/equipe cid pid) %) indices)))
                     "⚠️ A equipe mudou durante a preparação. Escale novamente."
                     (let [_ (treinador/definir-ativo! cid pid (first indices))
@@ -3387,7 +3451,9 @@
                           lider (first adversarios)
                           jogo (-> (criar-jogo message pid "Você" meu hp status)
                                    (assoc :ginasio g :jogadores {:x pid :o "lider-ginasio"}
-                                          :nomes {:x "Você" :o (:lider g)}
+                                          :lider-anterior ocupante :nome-desafiante nome-desafiante
+                                          :time-desafiante indices
+                                          :nomes {:x "Você" :o (or (get ocupante "nome") (:lider g))}
                                           :pokemons {:x meu :o lider}
                                           :hp {:x hp :o (:hp lider)} :status {:x status :o nil}
                                           :defendendo {:x false :o false}
@@ -3397,7 +3463,7 @@
                                           :itens-usados {:x {} :o {}}))
                           [jogo aviso] (aplicar-intimidacao jogo)]
                       (swap! jogos assoc cid jogo)
-                      (str "🏛️ Desafio contra " (:lider g) "!\n" aviso "\n" (mensagem-estado jogo)))))
+                      (str "🏛️ Desafio contra " (or (get ocupante "nome") (:lider g)) "!\n" aviso "\n" (mensagem-estado jogo)))))
                 (p/catch (fn [err]
                            (js/console.error "Erro ao preparar ginásio:" err)
                            "❌ Não consegui preparar o líder. Tente novamente."))

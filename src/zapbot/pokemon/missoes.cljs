@@ -1,4 +1,4 @@
-(ns zapbot.missoes
+(ns zapbot.pokemon.missoes
   "Regras das missões diárias. Progresso, resgates e XP ficam na conta da
   loja, para salvar a recompensa e o resgate na mesma atualização."
   (:require [zapbot.config :as config]))

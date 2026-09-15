@@ -1,6 +1,6 @@
-(ns zapbot.resetar-pokemon
+(ns zapbot.pokemon.resetar
   "Script pra rodar UMA VEZ na VM (não daqui do sandbox - precisa alcançar
-  o Cassandra de produção): zera só os dados de !pokemon (zapbot.treinador
+  o Cassandra de produção): zera só os dados de !pokemon (zapbot.pokemon.treinador
   - time capturado, nível/evolução de cada pokémon, ativo, cooldown de
   caçada e nível de treinador de TODOS os jogadores em todos os chats).
   NÃO mexe em !loja (moedas/inventário) nem no !rank (placar geral).

@@ -285,7 +285,18 @@ src/zapbot/
 ├── sorteio.cljs       ; !sorteio
 ├── velha.cljs         ; !velha
 ├── naval.cljs         ; !naval
-├── pokemon.cljs       ; !pokemon
+├── pokemon/           ; módulos do jogo Pokémon
+│   ├── core.cljs      ; comando !pokemon, batalhas e caçadas
+│   ├── ajuda.cljs     ; guias do jogo
+│   ├── treinador.cljs ; coleção e progressão
+│   ├── ginasios.cljs  ; liderança e times reservados
+│   ├── aventuras.cljs ; ginásios, pedras e eventos
+│   ├── golpes.cljs    ; golpes e traduções
+│   ├── pokedex.cljs   ; consulta de espécies
+│   ├── shiny.cljs     ; sorteio de shiny
+│   ├── loja.cljs      ; moedas, itens e recompensas
+│   ├── missoes.cljs   ; regras das missões
+│   └── resetar.cljs   ; script administrativo de reset
 ├── quiz.cljs          ; !quiz
 ├── adedonha.cljs      ; !adedonha
 ├── spotify.cljs       ; wrapper da API do Spotify (usado por !musica)
@@ -304,7 +315,7 @@ src/zapbot/
 
 ### Perfil do treinador Pokémon
 
-Use `!pokemon treinador` para ver o nível e XP do treinador, Pokémon ativo com seu número no time, sequência atual, recorde de capturas e insígnias conquistadas ou bloqueadas. O treinador recebe 1 XP por vitória mais XP por insígnias conquistadas e missões diárias resgatadas e precisa de 5 XP para chegar ao nível 2, mais 7 para o nível 3, mais 9 para o nível 4 e assim por diante (+2 XP no custo de cada próximo nível); esse XP é separado do XP do Pokémon. As insígnias reconhecem 1, 10, 50 e 100 vitórias, além de sequências de 3, 5, 10 e 20 capturas.
+Use `!pokemon treinador` para ver o nível e PE do treinador, Pokémon ativo com seu número no time, sequência atual, recorde de capturas e insígnias conquistadas ou bloqueadas. O treinador recebe 1 PE por vitória comum, PE por insígnias e missões, e os bônus de ginásio descritos abaixo. Precisa de 5 PE para o nível 2, mais 7 para o nível 3, mais 9 para o nível 4 e assim por diante (+2 PE no custo de cada próximo nível); Pokémon continuam recebendo XP. As insígnias reconhecem 1, 10, 50 e 100 vitórias, além de sequências de 3, 5, 10 e 20 capturas.
 
 O recorde é preservado quando uma sequência termina. Para contas antigas, parte da sequência atual salva: sequências anteriores à implementação não podem ser recuperadas.
 
@@ -375,11 +386,11 @@ Falha de captura, fuga ou desistência reiniciam a sequência; a próxima captur
 bem-sucedida volta ao bônus zero. O recorde de capturas permanece salvo.
 
 
-### XP do treinador por insígnias (0.7.2)
+### PE do treinador por insígnias (0.7.2)
 
-Cada insígnia contribui uma única vez para o XP total do treinador:
+Cada insígnia contribui uma única vez para o PE total do treinador:
 
-| Vitórias | Capturas seguidas | XP por insígnia |
+| Vitórias | Capturas seguidas | PE por insígnia |
 |---|---|---:|
 | Primeira vitória (1) | Capturador (3) | 3 |
 | Batalhador (10) | Caçador (5) | 6 |
@@ -388,9 +399,9 @@ Cada insígnia contribui uma única vez para o XP total do treinador:
 
 As duas insígnias de cada linha são independentes e cada uma concede o valor
 indicado. O perfil `!pokemon treinador` mostra os valores, as conquistas e o total
-de XP por insígnias. As conquistas antigas também contam automaticamente.
+de PE por insígnias. As conquistas antigas também contam automaticamente.
 Repetir uma sequência, consultar o perfil ou reiniciar o bot não duplica o bônus.
-Quebrar a sequência não retira XP, pois vale o recorde permanente de capturas.
+Quebrar a sequência não retira PE, pois vale o recorde permanente de capturas.
 O bônus não conta como vitória para desbloquear outras insígnias e não concede XP
 aos Pokémon. O novo nível do treinador também é usado na calibragem das caçadas.
 
@@ -486,7 +497,7 @@ selecionada nem a escalação salva e pode incluir Pokémon desmaiados.
 - Bolas obtidas apenas pelo kit inicial, missões, bônus diário manual e nocautes PvP; estoques antigos são preservados.
 - Bônus diário com três bolas aleatórias e recompensa de uma bola por nocaute conforme a liga PvP.
 - Missões diárias com dificuldade e recompensas proporcionais ao nível, renovadas à meia-noite de São Paulo.
-- XP de treinador, Pokébolas garantidas e chances de Grande Bola (25%), Ultra Bola (10%) e Reviver (20% independente) por missão.
+- PE do treinador, Pokébolas garantidas e chances de Grande Bola (25%), Ultra Bola (10%) e Reviver (20% independente) por missão.
 - Reviver exclusivo das missões, com recuperação de 100% do HP e remoção de status fora de combate.
 - MT de Ataque por 200 moedas e insígnias por 1, 10, 50 e 100 doações.
 
@@ -496,8 +507,8 @@ selecionada nem a escalação salva e pode incluir Pokémon desmaiados.
 - `!pokemon mt`: consome um MT para adicionar um ataque aleatório compatível ao Pokémon ativo, se houver menos de quatro golpes.
 - `!pokemon mt 2`: substitui o segundo golpe por outro ataque compatível e diferente dos conhecidos. Preserva ao menos um ataque do próprio tipo.
 - O MT só é consumido quando o aprendizado dá certo; seu uso fica bloqueado durante combate ou remoção pendente.
-- A primeira doação concluída com `!pokemon doar` conquista a insígnia **Doador de Pokémon**, com 3 XP de treinador. Doações anteriores à atualização não entram na contagem.
-- Ao completar 10, 50 e 100 doações, conquista **Doador Generoso** (6 XP), **Benfeitor Pokémon** (12 XP) e **Mestre das Doações** (24 XP), respectivamente. As recompensas são cumulativas e concedidas uma única vez por insígnia; a contagem já salva vale para esses marcos. Consulte as conquistas com `!pokemon treinador`.
+- A primeira doação concluída com `!pokemon doar` conquista a insígnia **Doador de Pokémon**, com 3 PE do treinador. Doações anteriores à atualização não entram na contagem.
+- Ao completar 10, 50 e 100 doações, conquista **Doador Generoso** (6 PE), **Benfeitor Pokémon** (12 PE) e **Mestre das Doações** (24 PE), respectivamente. As recompensas são cumulativas e concedidas uma única vez por insígnia; a contagem já salva vale para esses marcos. Consulte as conquistas com `!pokemon treinador`.
 
 ### Mochila e bolas de captura
 
@@ -550,7 +561,7 @@ renovam à **meia-noite no horário de São Paulo** (`America/Sao_Paulo`, config
 por `MISSOES_TIMEZONE`). O progresso conta a partir desta atualização, por chat
 e treinador; não é necessário abrir o menu antes de jogar.
 
-| Missão | Objetivo do dia | XP de treinador | Pokébolas simples |
+| Missão | Objetivo do dia | PE do treinador | Pokébolas simples |
 | --- | --- | ---: | ---: |
 | Explorador (níveis 1–5) | Derrotar 3 selvagens | 2 | 3 |
 | Colecionador (níveis 1–5) | Capturar 2 Pokémon selvagens | 3 | 4 |
@@ -560,11 +571,11 @@ e treinador; não é necessário abrir o menu antes de jogar.
 Cada missão inclui **um sorteio**: **25%** de chance de receber **1 Grande Bola**,
 **10%** de receber **1 Ultra Bola** e **65%** de não receber bola bônus. Esse bônus
 é adicional às Pokébolas simples garantidas; Grande e Ultra não saem juntas no
-mesmo sorteio. Nos níveis 1–5, completar as três dá **8 XP de treinador e 10 Pokébolas simples**,
-além de até três bolas bônus. O XP não altera o nível do Pokémon nem o contador
+mesmo sorteio. Nos níveis 1–5, completar as três dá **8 PE do treinador e 10 Pokébolas simples**,
+além de até três bolas bônus. O PE não altera o nível do Pokémon nem o contador
 de vitórias e permanece no perfil após a virada do dia.
 
-O resgate é único por missão e dia e salva XP, bolas e conclusão juntos. Mochila
+O resgate é único por missão e dia e salva PE, bolas e conclusão juntos. Mochila
 cheia não perde prêmios: os três tipos de bola ficam pendentes e podem ser
 retirados com `!mochila resgatar`, conforme houver espaço. As recompensas já
 resgatadas e pendentes sobrevivem à renovação e ao reinício. Missões não
@@ -634,14 +645,33 @@ A consulta funciona durante partidas sem gastar turno nem acionar o líder.
 - A primeira vitória dá uma insígnia persistente, 100 moedas, 6 XP por
   Pokémon participante e uma pedra. A revanche fica disponível no dia
   seguinte, à meia-noite de São Paulo: 25 moedas, 2 XP por participante e
-  25% de chance da mesma pedra. Cada vitória premiada também dá 1 XP de
-  treinador. Ginásios não dão pontos no ranking PvP nem Pokébolas por
-  nocaute. Derrotas e desistências preservam insígnias e não premiam o líder.
+  25% de chance da mesma pedra. O treinador recebe 6 PE na primeira vitória,
+  3 PE na revanche premiada e 1 PE na derrota. Cada Pokémon participante
+  recebe 2 XP na derrota, inclusive desmaiado. Desistências não dão recompensas.
+  Ginásios não dão pontos no ranking PvP nem Pokébolas por nocaute.
+- Quem vence assume a liderança naquele chat. Os três Pokémon escalados
+  saem da coleção disponível e ficam **inativos e reservados** até outro jogador
+  derrubar o líder. Não podem ser usados, doados, trocados ou alterados nesse período.
+  `!pokemon ginasio` e `!pokemon ginasio pedra` mostram líder, permanência e time.
+  O time defende automaticamente com HP cheio a cada desafio; ao ser liberado,
+  retorna ao fim da coleção preservando os dados e HP de quando assumiu.
+  Confira a nova numeração com `!pokemon time` e refaça as escalações necessárias.
+- Mais de 6 horas de permanência dão **50 moedas**, pagas ao antigo líder
+  somente quando ele for derrubado, uma vez por ocupação. Exatamente 6 horas
+  ainda não dão a recompensa. A liderança persiste após reiniciar o bot.
+  Você não pode desafiar seu próprio ginásio. É possível reconquistar a liderança
+  no mesmo dia; as recompensas de vitória continuam limitadas a uma por dia.
+- **PE (Pontos de experiência)** é o nome da progressão do treinador.
+  O progresso antigo é preservado; XP continua sendo a progressão dos Pokémon.
+- Cada encontro de caçada tem **1/512** de chance de ser **✨ Shiny**, com
+  imagem especial da [PokéAPI](https://pokeapi.co/docs/v2#pokemon).
+  Shiny não muda atributos nem a chance de captura e é preservado na evolução,
+  nas doações, nas trocas e no time reservado do ginásio.
 - `!pokemon evoluir 3 pedra-agua` usa uma pedra compatível. Estão
   disponíveis `pedra-agua`, `pedra-trovao`, `pedra-fogo`,
   `pedra-folha` e `pedra-lua`. A forma evoluída é consultada na
   [PokéAPI](https://pokeapi.co/docs/v2); a lista de compatibilidade desta
-  versão fica em `src/zapbot/aventuras.cljs`. Evoluções regionais ou com
+  versão fica em `src/zapbot/pokemon/aventuras.cljs`. Evoluções regionais ou com
   outras condições não são inferidas. Nível, XP e item equipado são
   preservados, e os atributos são recalculados no mesmo nível.
   Pedras recebidas com mochila cheia ficam pendentes para `!mochila resgatar`.

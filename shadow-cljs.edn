@@ -1,7 +1,11 @@
-{:source-paths ["src"]
+{:source-paths ["src" "test"]
  :dependencies [[funcool/promesa "12.0.0"]]
  :builds
- {:app {:target :node-script
+ {:test {:target :node-test
+         :output-to "target/test.js"
+         :ns-regexp "-test$"
+         :autorun true}
+  :app {:target :node-script
         :main zapbot.core/main
         :output-to "target/main.js"
         ;; :simple avoids Closure Closure's property renaming, which would
@@ -13,6 +17,6 @@
                    :output-to "target/migrar-estado.js"
                    :compiler-options {:optimizations :simple}}
   :resetar-pokemon {:target :node-script
-                     :main zapbot.resetar-pokemon/-main
+                     :main zapbot.pokemon.resetar/-main
                      :output-to "target/resetar-pokemon.js"
                      :compiler-options {:optimizations :simple}}}}

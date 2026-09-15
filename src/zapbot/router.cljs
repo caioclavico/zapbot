@@ -26,9 +26,9 @@
             [zapbot.status :as status]
             [zapbot.quiz :as quiz]
             [zapbot.bloqueio :as bloqueio]
-            [zapbot.pokemon :as pokemon]
-            [zapbot.pokedex :as pokedex]
-            [zapbot.loja :as loja]
+            [zapbot.pokemon.core :as pokemon]
+            [zapbot.pokemon.pokedex :as pokedex]
+            [zapbot.pokemon.loja :as loja]
             [zapbot.rank :as rank]))
 
 (def ^:private comandos
@@ -62,7 +62,7 @@
    {:emoji "💎" :uso "pokemon evoluir <número> <pedra>" :desc "Evolua espécies compatíveis usando uma pedra da mochila"}
    {:emoji "🔄" :uso "pokemon negociar <seu número> <número do outro> @pessoa" :desc "Proponha uma troca; destinatário aceita e autor confirma usando o ID da proposta"}
    {:emoji "🎉" :uso "pokemon eventos" :desc "Confira as espécies em destaque nas caçadas e o tempo restante do evento"}
-   {:emoji "📋" :uso "missoes [resgatar]" :desc "Missões diárias com XP de treinador, Pokébolas e chance de Grande ou Ultra Bola"}
+   {:emoji "📋" :uso "missoes [resgatar]" :desc "Missões diárias com PE do treinador, Pokébolas e chance de Grande ou Ultra Bola"}
    {:emoji "🎒" :uso "mochila [kit|resgatar]" :desc "Veja itens e bolas, resgate o kit inicial ou recompensas de vitórias"}
    {:emoji "🏪" :uso "loja [comprar|detalhes <item>]" :desc "Compre bolas, curas, MT, itens equipáveis e expansões de mochila; consulte preços e efeitos"}
    {:emoji "🏆" :uso "rank"                :desc "Mostra o rank de pontos desse chat (vitórias em !velha, !naval, !pokemon e !quiz)"}

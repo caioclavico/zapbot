@@ -9,7 +9,7 @@
             [zapbot.adedonha :as adedonha]
             [zapbot.lembretes :as lembretes]
             [zapbot.admins :as admins]
-            [zapbot.pokemon :as pokemon]
+            [zapbot.pokemon.core :as pokemon]
             [zapbot.router :as router]))
 
 (def ^:private Client (.-Client wwjs))

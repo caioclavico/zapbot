@@ -14,13 +14,13 @@ npm run build   # shadow-cljs release: compila para target/main.js
 npm start        # node target/main.js: efetivamente conecta ao WhatsApp
 ```
 
-Fluxo normal de desenvolvimento: `npm run dev` num terminal (recompila a cada salvamento) e `node target/main.js` em outro para rodar o bot de verdade. Não há suíte de testes automatizados neste projeto nem linter configurado.
+Fluxo normal de desenvolvimento: `npm run dev` num terminal (recompila a cada salvamento) e `node target/main.js` em outro para rodar o bot de verdade. `npm test` compila e executa os testes em `test/` (PE, shiny e ocupação de ginásios). Não há linter configurado.
 
 Primeira execução gera um QR code no terminal para escanear com o WhatsApp (Aparelhos conectados); a sessão persiste em `.wwebjs_auth/`.
 
 Scripts standalone adicionais (definidos em `shadow-cljs.edn`, cada um com seu próprio build/entrypoint):
 - `zapbot.migrar-estado/-main` → `target/migrar-estado.js` (migração de chaves legadas no Cassandra)
-- `zapbot.resetar-pokemon/-main` → `target/resetar-pokemon.js` (reset do roster de `!pokemon`)
+- `zapbot.pokemon.resetar/-main` → `target/resetar-pokemon.js` (reset do roster de `!pokemon`)
 
 Compile-os manualmente via shadow-cljs se precisar rodá-los (não fazem parte do `npm run build` padrão, que só compila o build `:app`).
 
@@ -47,13 +47,15 @@ O `Dockerfile` é pensado para ARM64 (ex.: Oracle Cloud Free Tier) e usa o Chrom
 
 ### Cada comando é seu próprio namespace
 
+Os módulos do jogo ficam em `src/zapbot/pokemon/`, com namespaces `zapbot.pokemon.*`. A entrada do jogo é `zapbot.pokemon.core`; os testes ficam em `test/zapbot/pokemon/`.
+
 `src/zapbot/*.cljs` — a lista completa de comandos com descrições vive em `zapbot.router/comandos` (também usada para gerar `!ajuda`). Ao adicionar um comando novo: criar o namespace, adicionar ao `require` e `case` de `zapbot.router`, e adicionar entrada em `comandos`.
 
 Namespaces que merecem atenção por não serem óbvios pelo nome:
 - `zapbot.bloqueio` — bloqueio de comandos/jogos/bot por chat (admin), checado antes de todo despacho
 - `zapbot.admins` — cadastro de admins conhecidos por grupo, alimentado passivamente pelo evento `group_admin_changed` (mais confiável que `getChatModel` ao vivo, que falha persistentemente em alguns grupos)
 - `zapbot.historico` — só guarda mensagens vistas desde que o bot foi ligado (não busca histórico completo do grupo) — por isso `!resuma` e `!sorteio` só têm efeito sobre atividade recente
-- `zapbot.pokemon`/`zapbot.pokedex`/`zapbot.treinador`/`zapbot.loja` — sistema de captura/batalha/evolução de Pokémon, com nível de treinador desacoplado do rank e economia de moedas via `zapbot.loja`
+- `zapbot.pokemon.core`/`zapbot.pokemon.pokedex`/`zapbot.pokemon.treinador`/`zapbot.pokemon.loja` — sistema de captura/batalha/evolução de Pokémon, com nível de treinador desacoplado do rank e economia de moedas via `zapbot.pokemon.loja`
 - `zapbot.rank` — pontuação persistida por chat (vitórias em `!velha`, `!naval`, `!pokemon`, `!quiz`)
 - `zapbot.velha`, `!naval`, `!adedonha`, `!quiz` — estado de jogo em memória por chat (não sobrevive a restart, exceto placar via `zapbot.rank`)
 

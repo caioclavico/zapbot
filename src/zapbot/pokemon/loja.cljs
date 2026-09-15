@@ -1,13 +1,13 @@
-(ns zapbot.loja
+(ns zapbot.pokemon.loja
   "Comando !loja - moedas ganhas vencendo batalhas de !pokemon, gastas em
   curas pros status (queimadura/veneno/paralisia) ou em poção de vida
   (recupera HP). Estado (moedas + inventário) por chat+jogador, mesma
   convenção de zapbot.rank; persistido via zapbot.armazenamento (chaves
   sempre string, nunca keyword - ver convenção documentada lá)."
-  (:require [zapbot.aventuras :as aventuras]
+  (:require [zapbot.pokemon.aventuras :as aventuras]
             [clojure.string :as str]
             [zapbot.config :as config]
-            [zapbot.missoes :as missoes]
+            [zapbot.pokemon.missoes :as missoes]
             [zapbot.armazenamento :as armazenamento]))
 
 ;; "queimadura"/"veneno" eram as chaves de compra antigas (renomeadas pra
@@ -277,7 +277,7 @@
         ;; são persistidos juntos, inclusive quando a mochila está cheia.
         (swap! contas assoc-in [cid pid] novo)
         (persistir!)
-        (str "✅ " (count prontas) " missão(ões) resgatada(s)!\n✨ +" xp " XP de treinador"
+        (str "✅ " (count prontas) " missão(ões) resgatada(s)!\n✨ +" xp " PE do treinador"
              "\n🎁 " (texto-recompensas recompensas)
              (when (some pos? (vals (recompensas-pendentes novo)))
                (str "\n🎒 Itens sem espaço ficaram pendentes: " config/prefix "mochila resgatar.")))))))
@@ -301,15 +301,15 @@
                                  resgatada? (some #{id} (get estado "resgatadas"))]]
                        (str (cond resgatada? "🎁" (>= progresso meta) "✅" :else "⬜")
                             " *" nome "*: " objetivo " — " progresso "/" meta
-                            "\n+" xp " XP de treinador e " pokebolas " Pokébolas"
+                            "\n+" xp " PE do treinador e " pokebolas " Pokébolas"
                             (when resgatada? " (resgatada)"))))
            "\n\nCada missão: 25% de chance de +1 Grande Bola, 10% de +1 Ultra Bola; 65% sem bônus."
            " Um único sorteio de bola bônus por missão, além das Pokébolas garantidas."
            "\n💎 Chance independente de 20% de +1 Reviver por missão, exclusivo das missões."
-           "\nMetas, XP e Pokébolas aumentam a cada 5 níveis; a faixa fica fixa até a próxima renovação."
+           "\nMetas, PE e Pokébolas aumentam a cada 5 níveis; a faixa fica fixa até a próxima renovação."
            "\nResgate as concluídas com " config/prefix "missoes resgatar."
            "\nRenovação à meia-noite (" config/missoes-timezone "). Resgate antes da virada!"
-           "\nDesistências e fugas não contam como vitórias. O XP é do treinador, não do Pokémon."))))
+           "\nDesistências e fugas não contam como vitórias. PE significa Pontos de experiência do treinador; Pokémon recebem XP."))))
 
 (defn moedas [cid pid]
   (get (conta cid pid) "moedas"))
@@ -392,7 +392,7 @@
            "\nNo PvP, cada nocaute rende uma bola definida pela liga."
            "\nRecompensas pendentes: " (let [texto (texto-recompensas (recompensas-pendentes (conta cid pid)))] (if (str/blank? texto) "nenhuma" texto))
            " — " config/prefix "mochila resgatar."
-           "\nGanhe XP e bolas nas missões: " config/prefix "missoes."))))
+           "\nGanhe PE e bolas nas missões: " config/prefix "missoes."))))
 
 (defn detalhes
   "!loja detalhes <item> - explica o efeito e como usar um item."

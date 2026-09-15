@@ -1,8 +1,8 @@
-(ns zapbot.pokemon-ajuda
+(ns zapbot.pokemon.ajuda
   "Guias de jogo consultáveis sem alterar o estado da partida."
   (:require [clojure.string :as str]
             [zapbot.config :as config]
-            [zapbot.treinador :as treinador]))
+            [zapbot.pokemon.treinador :as treinador]))
 
 (defn- comando [texto]
   (str config/prefix "pokemon" (when (seq texto) (str " " texto))))
@@ -34,6 +34,9 @@
          "4. Use " (comando "atacar 1") " e as demais ações de batalha. O líder responde automaticamente.\n\n"
          "São combates 3 × 3, sem ajuste dos níveis. Vença os ginásios na ordem para liberar os próximos. A escalação de ginásio é separada da liga.\n"
          "Primeira vitória: insígnia, 100 moedas, 6 XP por participante e uma pedra. Revanche premiada: 25 moedas, 2 XP e 25% de chance de pedra, uma vez por dia por ginásio. Reinicia à meia-noite de São Paulo.\n"
+         "Derrota: 2 XP para cada Pokémon participante. O treinador ganha PE (Pontos de experiência): 6 na primeira vitória, 3 na revanche premiada e 1 na derrota.\n"
+         "Quem vence assume a liderança. Os três Pokémon ficam fora da coleção disponível, inativos e reservados até outro jogador vencer. O time defende automaticamente, com HP cheio em cada desafio. Ao cair, volta à coleção com o HP que tinha ao assumir.\n"
+         "Permanecer mais de 6 horas rende 50 moedas, pagas uma única vez ao ser derrubado. É possível disputar a liderança novamente no mesmo dia, mas a recompensa de vitória continua diária.\n"
          "Para recuperar o time, consulte " (comando "ajuda time") ".")
 
     :cacadas
@@ -43,6 +46,7 @@
          "3. Inicie com " (comando "cacar") ". Os encontros variam com o bioma, horário e eventos; a força da caçada considera seu nível de treinador.\n"
          "4. Derrote o selvagem usando " (comando "atacar 1") ". Depois escolha uma bola no menu: " (comando "capturar pokebola") ".\n\n"
          "A captura exige uma bola da mochila e pode falhar. Há até três tentativas, mas o selvagem pode fugir antes.\n"
+         "Cada encontro tem chance de 1 em 512 de ser ✨ Shiny: cores especiais, mesmos atributos. A característica é preservada ao evoluir, doar ou trocar.\n"
          "Durante o combate, é permitida uma troca de Pokémon com " (comando "escolher <número>") "; ela gasta sua ação.\n"
          "Só pode haver uma batalha ou caçada por vez no chat. Respeite o intervalo informado entre caçadas e aja em até 5 minutos. " (comando "sair") " abandona a caçada.")
 

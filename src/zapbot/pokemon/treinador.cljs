@@ -1,4 +1,4 @@
-(ns zapbot.treinador
+(ns zapbot.pokemon.treinador
   "Estado de 'treinador' de cada jogador pro !pokemon: time de pokémons
   capturados (persistido), qual está ativo pra batalhar, o cooldown de
   caçada, e o nível do treinador (contador próprio - ver nivel-jogador -
@@ -8,10 +8,10 @@
   Convenção de persistência (ver zapbot.armazenamento): chaves sempre
   string, nunca keyword - por isso os pokémons da equipe são guardados num
   formato próprio (ver pokemon->registro/registro->pokemon), diferente do
-  mapa interno (chaves keyword) que o zapbot.pokemon usa durante a batalha."
+  mapa interno (chaves keyword) que o zapbot.pokemon.core usa durante a batalha."
   (:require [clojure.string :as str]
-            [zapbot.golpes :as golpes]
-            [zapbot.loja :as loja]
+            [zapbot.pokemon.golpes :as golpes]
+            [zapbot.pokemon.loja :as loja]
             [zapbot.armazenamento :as armazenamento]))
 
 (defonce ^:private contas (atom (or (armazenamento/obter "treinador") {})))
@@ -98,10 +98,11 @@
         golpes))))
 
 (defn pokemon->registro
-  "Converte um pokémon (mapa interno do zapbot.pokemon, chaves keyword) +
+  "Converte um pokémon (mapa interno do zapbot.pokemon.core, chaves keyword) +
   hp-atual/status pro formato persistido (chaves string) guardado na equipe."
   [pokemon hp-atual status]
   {"nome" (:nome pokemon) "imagem" (:imagem pokemon) "tipos" (vec (:tipos pokemon))
+   "shiny" (boolean (:shiny? pokemon)) "imagem-shiny" (:imagem-shiny pokemon)
    "habilidade" (:habilidade pokemon) "hp" (:hp pokemon) "ataque" (:ataque pokemon)
    "defesa" (:defesa pokemon) "atq-esp" (:atq-esp pokemon) "def-esp" (:def-esp pokemon)
    "veloc" (:veloc pokemon) "golpes" (mapv golpe->registro (garantir-ataque-do-tipo (:golpes pokemon) (:tipos pokemon)))
@@ -116,9 +117,10 @@
 
 (defn registro->pokemon
   "Converte um registro da equipe (chaves string) de volta pro formato
-  interno do zapbot.pokemon (chaves keyword). Retorna [pokemon hp-atual status]."
+  interno do zapbot.pokemon.core (chaves keyword). Retorna [pokemon hp-atual status]."
   [registro]
   [{:nome (get registro "nome") :imagem (get registro "imagem") :tipos (vec (get registro "tipos"))
+    :shiny? (get registro "shiny" false) :imagem-shiny (get registro "imagem-shiny")
     :habilidade (get registro "habilidade") :hp (get registro "hp") :ataque (get registro "ataque")
     :defesa (get registro "defesa") :atq-esp (get registro "atq-esp") :def-esp (get registro "def-esp")
     :veloc (get registro "veloc") :golpes (mapv golpe<-registro (get registro "golpes"))
@@ -350,7 +352,7 @@
 (defn golpes-removidos
   "Nomes dos golpes que o dono mandou remover desse pokémon. Guardados por
   NOME (e não por posição) porque a lista de golpes é regerada inteira a
-  cada subida de nível - ver zapbot.pokemon/atualizar-golpes-por-nivel!."
+  cada subida de nível - ver zapbot.pokemon.core/atualizar-golpes-por-nivel!."
   [registro]
   (set (map golpes/identificador (get registro "golpes-removidos" []))))
 
@@ -382,7 +384,7 @@
         nome))))
 
 (defn adicionar-pokemon!
-  "Acrescenta um pokémon (mapa interno do zapbot.pokemon + hp-atual/status)
+  "Acrescenta um pokémon (mapa interno do zapbot.pokemon.core + hp-atual/status)
   na equipe do jogador nesse chat; se for o primeiro, já fica ativo (índice
   0) automaticamente. Retorna o índice (0-based) dele na equipe nova."
   [cid pid pokemon hp-atual status]
@@ -605,7 +607,7 @@
 ;; sequência, e derrota dá 1; o ritmo anterior do PvP é preservado)
 ;; e todos os
 ;; stats crescem um fator fixo por nível, até um teto de 100 (mesmo limite
-;; dos jogos originais). Público porque zapbot.pokemon precisa do MESMO
+;; dos jogos originais). Público porque zapbot.pokemon.core precisa do MESMO
 ;; fator pra calcular stats pós-evolução.
 (def ^:private nivel-maximo 100)
 (def fator-crescimento-por-nivel 1.03)
@@ -691,13 +693,14 @@
   status e nível não mudam; hp-atual ganha o mesmo incremento absoluto que
   o HP máximo (mesma regra do subir-nivel!). Retorna true se aplicou,
   false se não tinha pokémon no índice informado."
-  [cid pid idx {:keys [nome-novo imagem tipos habilidade hp ataque defesa atq-esp def-esp veloc]}]
+  [cid pid idx {:keys [nome-novo imagem imagem-shiny tipos habilidade hp ataque defesa atq-esp def-esp veloc]}]
   (do
     (if-let [registro (get (equipe cid pid) idx)]
       (let [incremento-hp (- hp (get registro "hp"))]
         (swap! contas update-in [cid pid "equipe" idx]
                #(-> %
-                    (assoc "nome" nome-novo "imagem" imagem "tipos" (vec tipos) "habilidade" habilidade
+                    (assoc "nome" nome-novo "imagem" (if (get registro "shiny") (or imagem-shiny imagem) imagem)
+                           "imagem-shiny" imagem-shiny "tipos" (vec tipos) "habilidade" habilidade
                            "hp" hp "ataque" ataque "defesa" defesa "atq-esp" atq-esp "def-esp" def-esp
                            "veloc" veloc)
                     (update "golpes" (fn [gs]
@@ -745,7 +748,12 @@
   (reduce + 0 (map :xp-recompensa (filter :conquistada? (insignias-treinador cid pid)))))
 
 (defn xp-treinador [cid pid]
-  (+ (get (conta cid pid) "vitorias-treinador" 0) (xp-insignias cid pid) (loja/xp-missoes cid pid)))
+  (+ (get (conta cid pid) "vitorias-treinador" 0) (xp-insignias cid pid) (loja/xp-missoes cid pid)
+     (get (conta cid pid) "pe-ginasios" 0)))
+
+(defn ganhar-pe-ginasio! [cid pid quantidade]
+  (swap! contas update-in [cid pid "pe-ginasios"] (fnil + 0) quantidade)
+  (persistir!))
 
 (defn progresso-treinador
   "Distribui o XP total entre níveis com custos de 5, 7, 9, 11... XP."
@@ -775,6 +783,7 @@
         recorde (maior-sequencia-capturas cid pid)]
     {:nivel nivel
      :xp xp :xp-insignias (xp-insignias cid pid) :xp-missoes (loja/xp-missoes cid pid)
+     :pe-ginasios (get (conta cid pid) "pe-ginasios" 0)
      :xp-atual xp-atual
      :xp-necessario xp-necessario
      :sequencia (sequencia-capturas cid pid) :recorde recorde

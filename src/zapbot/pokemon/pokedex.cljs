@@ -1,4 +1,4 @@
-(ns zapbot.pokedex
+(ns zapbot.pokemon.pokedex
   "Comando !pokedex - mostra tipo, altura, peso, habilidades, status base e
   descrição de um Pokémon (via PokeAPI), traduzido pro português."
   (:require [promesa.core :as p]
@@ -6,7 +6,7 @@
             ["whatsapp-web.js" :as wwjs]
             [zapbot.config :as config]
             [zapbot.armazenamento :as armazenamento]
-            [zapbot.aventuras :as aventuras]
+            [zapbot.pokemon.aventuras :as aventuras]
             [zapbot.traducao :as traducao]))
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))

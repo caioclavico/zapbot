@@ -1,4 +1,4 @@
-(ns zapbot.aventuras)
+(ns zapbot.pokemon.aventuras)
 
 (def pedras
   {"pedra-agua" {:nome "Pedra da Água" :emoji "💧"

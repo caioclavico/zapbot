@@ -1,4 +1,4 @@
-(ns zapbot.golpes
+(ns zapbot.pokemon.golpes
   "Identidade dos golpes e nomes em português. Catálogo PokeAPI (2026-09-09).
   Traduções disponíveis em WatWowMap/pogo-data-api, complementadas por
   traduções locais do bot; não pressupõe nomes oficiais para todo o catálogo."
