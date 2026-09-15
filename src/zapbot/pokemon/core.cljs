@@ -1856,7 +1856,7 @@
 (defn- ver-treinador [message]
   (let [cid (chat-id message)
         pid (jogador-id message)
-        {:keys [nivel xp xp-insignias xp-missoes pe-ginasios xp-atual xp-necessario sequencia recorde insignias]}
+        {:keys [nivel xp xp-insignias xp-missoes pe-ginasios pe-raids xp-atual xp-necessario sequencia recorde insignias]}
         (treinador/perfil-treinador cid pid)
         numero-ativo (inc (treinador/indice-ativo cid pid))
         [ativo] (treinador/pokemon-ativo cid pid)]
@@ -1867,7 +1867,8 @@
            "\n🎖️ PE recebido por insígnias: " xp-insignias
            "\n📋 PE recebido por missões: " xp-missoes
            "\n🏛️ PE adicional de ginásios: " pe-ginasios
-           "\nPróximo nível: " xp-atual "/" xp-necessario " PE (vitórias + ginásios + insígnias + missões)"
+           "\n🤝 PE recebido por raids: " pe-raids
+           "\nPróximo nível: " xp-atual "/" xp-necessario " PE (vitórias + ginásios + raids + insígnias + missões)"
            "\n🏛️ Insígnias de ginásio: "
            (let [ids (keys (treinador/insignias-ginasio cid pid))]
              (if (seq ids) (str/join ", " (map #(or (:nome (aventuras/obter-ginasio %)) %) ids)) "nenhuma"))
@@ -3644,8 +3645,17 @@
             idx (if numero (parse-indice-golpe numero (count eq)) (treinador/indice-ativo cid pid))]
         (if (and (= acao "entrar") (aprendizado-bloqueado? cid pid))
           "🚫 Termine sua batalha e as alterações pendentes antes de entrar na raid."
-          (raids/comando! cid pid nome args (when (some? idx) (get eq idx))
-                          (treinador/liga-selecionada cid pid) (.now js/Date)))))))
+          (p/let [resultado (raids/comando! cid pid nome args
+                                           (when (some? idx)
+                                             (if (= acao "entrar")
+                                               (treinador/registro-para-raid! cid pid idx)
+                                               (get eq idx)))
+                                           (treinador/liga-selecionada cid pid) (.now js/Date))
+                  _ (p/all (for [{jogador :pid indice :indice subida :subida} (:subidas resultado)]
+                             (-> (verificar-evolucao! message cid jogador indice)
+                                 (p/then (fn [_]
+                                           (aprender-golpe-por-nivel! message cid jogador (:nivel subida) indice))))))]
+            (:texto resultado)))))))
 (defn- jogar-comando
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
   batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
@@ -3794,7 +3804,13 @@
     (let [cid (chat-id message)
           resultado-derrota (:resultado-derrota (get @jogos cid))]
       ;; A referência continua disponível após a limpeza assíncrona da batalha.
-      (p/let [resposta (jogar-comando message args)
+      (p/let [_ (treinador/recolher-curados! cid (jogador-id message))
+              _ (p/all (for [{:keys [indice subida]} (treinador/resgatar-xp-raids! cid (jogador-id message))
+                             :when subida]
+                         (-> (verificar-evolucao! message cid (jogador-id message) indice)
+                             (p/then (fn [_]
+                                       (aprender-golpe-por-nivel! message cid (jogador-id message) (:nivel subida) indice))))))
+              resposta (jogar-comando message args)
               lider (turno-lider message cid)]
         (or (when resultado-derrota @resultado-derrota)
             (if (str/blank? lider) resposta

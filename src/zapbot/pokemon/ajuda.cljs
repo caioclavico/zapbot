@@ -35,7 +35,7 @@
          "O chefe Snorlax contra-ataca a cada ação. Só golpes físicos ou especiais de dano são aceitos; o combate da raid usa regras próprias, sem efeitos de status, itens ou vantagens de tipo.\n"
          "O time e o HP são cópias da inscrição: dano da raid não altera sua coleção.\n"
          "Inscrições duram 15 minutos; combate, 30 minutos. O chat pode iniciar uma nova raid após 6 horas.\n"
-         "Vitória: 40 moedas para cada participante que causou dano, inclusive quem caiu. Uma recompensa por jogador ao dia, no mesmo fuso das missões.\n"
+         "Vitória: 40 moedas, 6 PE para o treinador e 6 XP para o Pokémon inscrito de cada participante que causou dano, inclusive quem caiu. Uma recompensa por jogador/chat ao dia, no mesmo fuso das missões. Se o Pokémon estiver fora da equipe, o XP fica reservado até ele voltar e você usar um comando Pokémon.\n"
          "Durante as inscrições, use " (comando "raid sair") " ou, se for o criador, " (comando "raid cancelar") ".")
 
     :shiny

@@ -682,6 +682,40 @@
   [cid pid quantidade]
   (ganhar-xp-no-indice! cid pid (indice-ativo cid pid) quantidade))
 
+(defn registro-para-raid! [cid pid idx]
+  (when-let [registro (get (equipe cid pid) idx)]
+    (if (get registro "id-pokemon") registro
+        (let [novo (assoc registro "id-pokemon" (str (random-uuid)))]
+          (swap! contas assoc-in [cid pid "equipe" idx] novo)
+          (persistir!)
+          novo))))
+
+(defn resgatar-xp-raids! [cid pid]
+  (vec (for [[id quantidade] (get (conta cid pid) "xp-raids-pendente" {})
+             :let [idx (first (keep-indexed #(when (= id (get %2 "id-pokemon")) %1)
+                                           (equipe cid pid)))]
+             :when (some? idx)]
+         (let [subida (ganhar-xp-no-indice! cid pid idx quantidade)]
+           (swap! contas update-in [cid pid "xp-raids-pendente"] dissoc id)
+           (persistir!)
+           {:indice idx :subida subida}))))
+
+(defn premiar-progresso-raid! [cid pid dia registro]
+  (when (not= dia (get (conta cid pid) "raid-progresso-dia"))
+    (let [id (get registro "id-pokemon")
+          idx (when id (first (keep-indexed
+                              #(when (= id (get %2 "id-pokemon")) %1)
+                              (equipe cid pid))))]
+      (swap! contas update-in [cid pid]
+             #(-> (or % conta-vazia)
+                  (assoc "raid-progresso-dia" dia)
+                  (update "pe-raids" (fnil + 0) 6)
+                  (cond-> id (update-in ["xp-raids-pendente" id] (fnil + 0) 6))))
+      (persistir!)
+      (let [resgate (first (filter #(= idx (:indice %)) (resgatar-xp-raids! cid pid)))]
+        {:pe 6 :xp (if id 6 0) :pendente? (and id (nil? idx)) :indice idx
+         :subida (:subida resgate)}))))
+
 (defn subir-nivel!
   "Concede ao pokémon ativo o XP de uma vitória."
   [cid pid]
@@ -758,7 +792,7 @@
 
 (defn xp-treinador [cid pid]
   (+ (get (conta cid pid) "vitorias-treinador" 0) (xp-insignias cid pid) (loja/xp-missoes cid pid)
-     (get (conta cid pid) "pe-ginasios" 0)))
+     (get (conta cid pid) "pe-ginasios" 0) (get (conta cid pid) "pe-raids" 0)))
 
 (defn ganhar-pe-ginasio! [cid pid quantidade]
   (swap! contas update-in [cid pid "pe-ginasios"] (fnil + 0) quantidade)
@@ -793,6 +827,7 @@
     {:nivel nivel
      :xp xp :xp-insignias (xp-insignias cid pid) :xp-missoes (loja/xp-missoes cid pid)
      :pe-ginasios (get (conta cid pid) "pe-ginasios" 0)
+     :pe-raids (get (conta cid pid) "pe-raids" 0)
      :xp-atual xp-atual
      :xp-necessario xp-necessario
      :sequencia (sequencia-capturas cid pid) :recorde recorde

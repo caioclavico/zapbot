@@ -137,9 +137,25 @@
     (when (not= novo raid)
       (swap! raids assoc cid novo)
       (armazenamento/salvar! "raids" @raids))
-    (let [premios (when (and (= "vitoria" (get novo "fase")) (not= "vitoria" (get raid "fase")))
-                    (for [[jogador p] (get novo "participantes") :when (pos? (get p "dano" 0))]
-                      (str "\n💰 " (get p "nome") ": +"
-                           (or (loja/premiar-raid! cid jogador (missoes/dia-atual)) 0)
-                           " moedas (limite: uma recompensa por dia).")))]
-      (str texto (apply str premios) (when texto "\n\n") (resumo novo agora)))))
+    (let [dia (missoes/dia-atual)
+          premios (when (and (= "vitoria" (get novo "fase")) (not= "vitoria" (get raid "fase")))
+                    (mapv (fn [[jogador participante]]
+                            (let [moedas (loja/premiar-raid! cid jogador dia)
+                                  progresso (when moedas
+                                              (treinador/premiar-progresso-raid!
+                                               cid jogador dia (get participante "pokemon")))]
+                              (assoc progresso :pid jogador
+                                     :texto (str "\n💰 " (get participante "nome") ": "
+                                                 (if moedas
+                                                   (str "+" moedas " moedas; +" (:pe progresso 0) " PE; +"
+                                                        (:xp progresso 0) " XP para o Pokémon inscrito."
+                                                        (when (:pendente? progresso)
+                                                          " XP reservado até o Pokémon voltar à equipe e você usar um comando Pokémon.")
+                                                        (when (zero? (:xp progresso 0))
+                                                          " O Pokémon não está disponível na sua equipe."))
+                                                   "recompensa diária já recebida.")
+                                                 (when-let [subida (:subida progresso)]
+                                                   (str "\n✨ " (:nome subida) " chegou ao nível " (:nivel subida) "!"))))))
+                          (filter #(pos? (get (second %) "dano" 0)) (get novo "participantes"))))]
+      {:texto (str texto (apply str (map :texto premios)) (when texto "\n\n") (resumo novo agora))
+       :subidas (vec (filter :subida premios))})))

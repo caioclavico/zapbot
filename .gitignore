@@ -7,5 +7,6 @@ data/
 .env
 *.log
 .nrepl-port
-.clj-kondo/
+.clj-kondo/*
+!.clj-kondo/config.edn
 .lsp/
