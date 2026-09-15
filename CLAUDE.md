@@ -14,7 +14,7 @@ npm run build   # shadow-cljs release: compila para target/main.js
 npm start        # node target/main.js: efetivamente conecta ao WhatsApp
 ```
 
-Fluxo normal de desenvolvimento: `npm run dev` num terminal (recompila a cada salvamento) e `node target/main.js` em outro para rodar o bot de verdade. `npm test` compila e executa os testes em `test/` (PE, shiny e ocupação de ginásios). Não há linter configurado.
+Fluxo normal de desenvolvimento: `npm run dev` num terminal (recompila a cada salvamento) e `node target/main.js` em outro para rodar o bot de verdade. Não há linter configurado.
 
 Primeira execução gera um QR code no terminal para escanear com o WhatsApp (Aparelhos conectados); a sessão persiste em `.wwebjs_auth/`.
 
@@ -47,7 +47,7 @@ O `Dockerfile` é pensado para ARM64 (ex.: Oracle Cloud Free Tier) e usa o Chrom
 
 ### Cada comando é seu próprio namespace
 
-Os módulos do jogo ficam em `src/zapbot/pokemon/`, com namespaces `zapbot.pokemon.*`. A entrada do jogo é `zapbot.pokemon.core`; os testes ficam em `test/zapbot/pokemon/`.
+Os módulos do jogo ficam em `src/zapbot/pokemon/`, com namespaces `zapbot.pokemon.*`. A entrada do jogo é `zapbot.pokemon.core`.
 
 `src/zapbot/*.cljs` — a lista completa de comandos com descrições vive em `zapbot.router/comandos` (também usada para gerar `!ajuda`). Ao adicionar um comando novo: criar o namespace, adicionar ao `require` e `case` de `zapbot.router`, e adicionar entrada em `comandos`.
 

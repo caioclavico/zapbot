@@ -690,8 +690,7 @@ A consulta funciona durante partidas sem gastar turno nem acionar o líder.
   O evento aparece na mensagem do encontro. Permanecem as três tentativas
   de captura, o consumo de bolas, a chance de fuga e o cooldown.
 
-Execute `npm test` para validar progressão, trocas, recompensas e integração
-dos ginásios; `npm run build` gera o bot.
+`npm run build` gera o bot.
 
 O inicial só pode ser escolhido uma vez por treinador em cada chat.
 Mandar o único Pokémon para a Enfermeira Joy, doá-lo ou ficar com a equipe

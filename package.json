@@ -8,7 +8,6 @@
   },
   "scripts": {
     "dev": "shadow-cljs watch app",
-    "test": "shadow-cljs compile test",
     "build": "shadow-cljs release app",
     "start": "node target/main.js"
   },

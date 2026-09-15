@@ -1,11 +1,7 @@
-{:source-paths ["src" "test"]
+{:source-paths ["src"]
  :dependencies [[funcool/promesa "12.0.0"]]
  :builds
- {:test {:target :node-test
-         :output-to "target/test.js"
-         :ns-regexp "-test$"
-         :autorun true}
-  :app {:target :node-script
+ {:app {:target :node-script
         :main zapbot.core/main
         :output-to "target/main.js"
         ;; :simple avoids Closure Closure's property renaming, which would
