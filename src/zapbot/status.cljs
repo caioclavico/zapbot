@@ -11,20 +11,13 @@
     (.-version (js/require "../package.json"))
     (catch :default _ "desconhecida")))
 
+;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["15/09 — Raids marcam o próximo jogador e detalham os danos; cartões de presentes com bolas para amigos"
-   "15/09 — !missoes mostra diárias e semanais; todas recompensam bolas conforme dificuldade, incluindo envios de presentes"
-   (str "15/09 — Ranking de líderes por defesas e permanência: " config/prefix "pokemon ginasio ranking [nome]")
-   (str "15/09 — Histórico de defesas: " config/prefix "pokemon ginasio historico [nome]")
-   (str "15/09 — Coleção shiny histórica: " config/prefix "pokemon shiny; filtre as fotos com " config/prefix "pokemon time shiny")
-   (str "15/09 — Missões semanais com moedas: " config/prefix "missoes semanais [resgatar]")
-   (str "15/09 — Raid cooperativa: vitória diária rende 40 moedas, 6 PE e 6 XP para o Pokémon inscrito; de 2 a 6 jogadores por liga: " config/prefix "pokemon ajuda raid")
-   "15/09 — Derrotas no ginásio mostram apenas o resultado e as recompensas, sem os golpes do adversário"
-   (str "15/09 — O time reservado no ginásio aparece com fotos, como no " config/prefix "pokemon time. Confira: " config/prefix "pokemon ginasio <nome>")
-   "14/09 — Pokémon shiny: chance de 1 em 512 por encontro, visual especial e brilho mantido ao evoluir, sem alterar os atributos"
-   "14/09 — Vença um ginásio para se tornar líder! Seus três Pokémon ficam reservados até outro treinador vencer você e depois voltam à coleção"
-   "14/09 — Líderes que permanecem mais de 6 horas recebem 50 moedas ao perder o ginásio"
-   "14/09 — PE (Pontos de experiência) do treinador nos ginásios: 6 na primeira vitória, 3 na revanche premiada e 1 na derrota"])
+  ["15/09 — Raids marcam com @ quem deve atacar e descrevem o dano do golpe e do contra-ataque"
+   (str "15/09 — Cartões de presentes por 20 moedas: " config/prefix "loja comprar cartao-presente; envie com " config/prefix "presente @amigo para sortear Pokébolas, Grandes ou Ultras")
+   (str "15/09 — " config/prefix "missoes mostra todas; filtre com " config/prefix "missoes diarias ou " config/prefix "missoes semanais e acrescente resgatar para receber")
+   "15/09 — Novas missões diárias e semanais de envio de presentes"
+   "15/09 — Todas as missões garantem bolas, com quantidade e qualidade conforme a dificuldade"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))
