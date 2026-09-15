@@ -57,8 +57,13 @@
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
   {:emoji "⚡" :uso "pokemon [liga [nome|time <n1,n2,n3>]|inicial|cacar|treinador|pokedex [n|filtros]|time [ativo|filtros|csv]|trocar <n>|equipar|aprender [n|recusar]|reaprender [n] [troca]|mt [1-4]|reviver [n]|mochila|missoes [resgatar]|capturar <bola>|removergolpe <n>|doar|joy <n,n,...>|atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalhe e capture por bioma, veja o ativo, filtre time/Pokédex combinando tipo, raridade, nome e nível, equipe itens e evolua com XP"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
-   {:emoji "📚" :uso "pokemon ajuda [batalhas|ginasios|cacadas|ligas|time|evolucao]" :desc "Guias de como jogar, com passos, regras e exemplos; também aceita pokemon <módulo> ajuda"}
+   {:emoji "📚" :uso "pokemon ajuda [batalhas|ginasios|cacadas|ligas|time|evolucao|shiny|semanais|raid]" :desc "Guias de como jogar, com passos, regras e exemplos; também aceita pokemon <módulo> ajuda"}
    {:emoji "🏛️" :uso "pokemon ginasio [nome|time <1,2,3>|desafiar <nome>]" :desc "Cinco líderes 3 × 3, insígnias e pedras de evolução"}
+   {:emoji "🏛️" :uso "pokemon ginasio ranking [nome]" :desc "Líderes com mais defesas e maior permanência em cada ginásio"}
+   {:emoji "🛡️" :uso "pokemon ginasio historico [nome]" :desc "Últimas defesas, desafiantes e resultados"}
+   {:emoji "✨" :uso "pokemon shiny" :desc "Coleção shiny histórica; fotos dos disponíveis com pokemon time shiny"}
+   {:emoji "📅" :uso "pokemon missoes semanais [resgatar]" :desc "Objetivos semanais de ginásios, capturas e PvP com moedas"}
+   {:emoji "🤝" :uso "pokemon raid [abrir <liga>|entrar [n]|iniciar|atacar <1-4>|sair|cancelar]" :desc "Enfrente Snorlax com 2 a 6 jogadores da mesma liga; regras em pokemon ajuda raid"}
    {:emoji "💎" :uso "pokemon evoluir <número> <pedra>" :desc "Evolua espécies compatíveis usando uma pedra da mochila"}
    {:emoji "🔄" :uso "pokemon negociar <seu número> <número do outro> @pessoa" :desc "Proponha uma troca; destinatário aceita e autor confirma usando o ID da proposta"}
    {:emoji "🎉" :uso "pokemon eventos" :desc "Confira as espécies em destaque nas caçadas e o tempo restante do evento"}

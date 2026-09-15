@@ -463,3 +463,33 @@
           :else
           (str "❌ Moedas insuficientes! Você tem " saldo ", " (:nome item) " custa " (:preco item) ".")))
       (str "❓ Item \"" nome-item "\" não encontrado. Use " config/prefix "loja pra ver o catálogo."))))
+
+(defn registrar-semanal! [cid pid evento valores]
+  (swap! contas update-in [cid pid]
+         #(missoes/registrar-semanal (or % {}) (missoes/semana-de (missoes/dia-atual)) evento valores))
+  (persistir!))
+
+(defn ver-semanais [cid pid resgatar?]
+  (let [semana (missoes/semana-de (missoes/dia-atual))
+        [nova moedas] (missoes/resgatar-semanais (conta cid pid) semana)]
+    (when resgatar?
+      ;; Progresso, marcação do resgate e saldo são persistidos juntos.
+      (swap! contas assoc-in [cid pid] nova)
+      (persistir!))
+    (let [estado (missoes/estado-semanal (conta cid pid) semana)]
+      (str "📅 *Missões semanais — semana de " semana "*\n"
+           (when resgatar? (str "💰 " moedas " moedas resgatadas.\n"))
+           (str/join "\n" (for [{:keys [id objetivo meta moedas]} missoes/semanais]
+                             (str (if (some #{id} (get estado "resgatadas")) "✅ " "🎯 ")
+                                  objetivo ": " (missoes/progresso-semanal estado id) "/" meta
+                                  " • " moedas " moedas")))
+           "\nReinicia na segunda-feira (" config/missoes-timezone ")."
+           "\nResgate até o fim da semana: " config/prefix "pokemon missoes semanais resgatar."))))
+
+(defn premiar-raid! [cid pid dia]
+  ;; Uma recompensa diária por jogador, gravada junto com as moedas.
+  (when (not= dia (get-in @contas [cid pid "raid-premiada-dia"]))
+    (swap! contas update-in [cid pid]
+           #(-> (or % {}) (assoc "raid-premiada-dia" dia) (update "moedas" (fnil + 0) 40)))
+    (persistir!)
+    40))

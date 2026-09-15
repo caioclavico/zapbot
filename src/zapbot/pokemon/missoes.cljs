@@ -53,3 +53,40 @@
 
 (defn sortear-reviver? []
   (< (rand-int 100) 20))
+
+;; A semana começa na segunda-feira, no mesmo fuso das missões diárias.
+(defn semana-de [dia]
+  (let [data (js/Date. (str dia "T12:00:00Z"))
+        deslocamento (mod (+ (.getUTCDay data) 6) 7)]
+    (.setUTCDate data (- (.getUTCDate data) deslocamento))
+    (subs (.toISOString data) 0 10)))
+
+(def semanais
+  [{:id "ginasios" :objetivo "Vencer em 2 ginásios diferentes" :meta 2 :moedas 60}
+   {:id "tipos" :objetivo "Capturar Pokémon de 5 tipos diferentes" :meta 5 :moedas 50}
+   {:id "pvp" :objetivo "Vencer 3 batalhas PvP" :meta 3 :moedas 60}])
+
+(defn estado-semanal [conta semana]
+  (let [estado (get conta "missoes-semanais")]
+    (if (= semana (get estado "semana")) estado
+        {"semana" semana "ginasios" [] "tipos" [] "pvp" 0 "resgatadas" []})))
+
+(defn progresso-semanal [estado id]
+  (if (= id "pvp") (get estado id 0) (count (get estado id []))))
+
+(defn registrar-semanal [conta semana evento valores]
+  (let [estado (estado-semanal conta semana)]
+    (assoc conta "missoes-semanais"
+           (case evento
+             "pvp" (update estado "pvp" #(min 3 (inc (or % 0))))
+             ("ginasios" "tipos") (update estado evento #(vec (distinct (concat % valores))))
+             estado))))
+
+(defn resgatar-semanais [conta semana]
+  (let [estado (estado-semanal conta semana)
+        prontas (filter #(and (>= (progresso-semanal estado (:id %)) (:meta %))
+                              (not (some #{(:id %)} (get estado "resgatadas")))) semanais)
+        moedas (reduce + 0 (map :moedas prontas))]
+    [(-> conta
+         (assoc "missoes-semanais" (update estado "resgatadas" into (map :id prontas)))
+         (update "moedas" (fnil + 0) moedas)) moedas]))

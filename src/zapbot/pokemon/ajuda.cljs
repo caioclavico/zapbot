@@ -13,6 +13,7 @@
    "cacar" :cacadas "cacada" :cacadas "cacadas" :cacadas
    "liga" :ligas "ligas" :ligas
    "time" :time "equipe" :time
+   "raid" :raid "raids" :raid "shiny" :shiny "missoes" :semanais "semanais" :semanais
    "evoluir" :evolucao "evolucao" :evolucao})
 
 (defn- guia [assunto]
@@ -26,6 +27,32 @@
          "Após um nocaute, entra o próximo da escalação. Vença os três adversários. Pokémon participantes podem ganhar XP e subir de nível.\n"
          "Há 30 minutos para entrar ou agir no PvP. " (comando "sair") " cancela a espera ou desiste da partida; desistir de uma batalha iniciada perde 1 ponto no rank e não dá XP nem moedas.")
 
+    :raid
+    (str "🤝 *Como jogar: raid cooperativa*\n\n"
+         "1. Abra com " (comando "raid abrir iniciante") " (ou bronze, prata, ouro, diamante).\n"
+         "2. Cada jogador, inclusive o criador, usa " (comando "raid entrar 1") " para inscrever um Pokémon saudável da liga. Sem número, entra o ativo. São 2 a 6 pessoas.\n"
+         "3. O criador usa " (comando "raid iniciar") ". Na sua vez, use " (comando "raid atacar 1") ". Consulte HP e golpes com " (comando "raid") ".\n"
+         "O chefe Snorlax contra-ataca a cada ação. Só golpes físicos ou especiais de dano são aceitos; o combate da raid usa regras próprias, sem efeitos de status, itens ou vantagens de tipo.\n"
+         "O time e o HP são cópias da inscrição: dano da raid não altera sua coleção.\n"
+         "Inscrições duram 15 minutos; combate, 30 minutos. O chat pode iniciar uma nova raid após 6 horas.\n"
+         "Vitória: 40 moedas para cada participante que causou dano, inclusive quem caiu. Uma recompensa por jogador ao dia, no mesmo fuso das missões.\n"
+         "Durante as inscrições, use " (comando "raid sair") " ou, se for o criador, " (comando "raid cancelar") ".")
+
+    :shiny
+    (str "✨ *Coleção shiny*\n\n"
+         (comando "time shiny") " mostra os shiny disponíveis com fotos. Combine filtros: " (comando "time shiny fogo >") ".\n"
+         (comando "pokedex shiny") " ou " (comando "shiny") " mostra as espécies shiny já registradas.\n"
+         "Novas capturas permanecem no histórico após doações, trocas e evoluções. Shiny antigos ainda na coleção, na enfermaria ou em ginásios são recuperados ao consultar.\n"
+         "Encontros têm chance de 1 em 512; shiny muda o visual, mantendo os atributos.")
+
+    :semanais
+    (str "📅 *Missões semanais*\n\n"
+         "Consulte " (comando "missoes semanais") " e receba com " (comando "missoes semanais resgatar") ".\n"
+         "• Vencer em 2 ginásios diferentes: 60 moedas.\n"
+         "• Capturar Pokémon de 5 tipos diferentes: 50 moedas.\n"
+         "• Vencer 3 batalhas PvP: 60 moedas.\n"
+         "Cada missão pode ser resgatada uma vez por semana. Progresso começa nesta atualização; a semana reinicia na segunda-feira no fuso das missões. Resgate antes da virada.")
+
     :ginasios
     (str "🏛️ *Como jogar: ginásios*\n\n"
          "1. Veja líderes, níveis e desbloqueios com " (comando "ginasio") ".\n"
@@ -37,6 +64,7 @@
          "Derrota: 2 XP para cada Pokémon participante. O treinador ganha PE (Pontos de experiência): 6 na primeira vitória, 3 na revanche premiada e 1 na derrota.\n"
          "Quem vence assume a liderança. Os três Pokémon ficam fora da coleção disponível, inativos e reservados até outro jogador vencer. O time defende automaticamente, com HP cheio em cada desafio. Ao cair, volta à coleção com o HP que tinha ao assumir.\n"
          "Permanecer mais de 6 horas rende 50 moedas, pagas uma única vez ao ser derrubado. É possível disputar a liderança novamente no mesmo dia, mas a recompensa de vitória continua diária.\n"
+         "Ranking por defesas e tempo: " (comando "ginasio ranking pedra") ". Últimas batalhas: " (comando "ginasio historico pedra") ". Sem nome, mostra todos os ginásios. Defesas começam a ser registradas nesta atualização.\n"
          "Para recuperar o time, consulte " (comando "ajuda time") ".")
 
     :cacadas
@@ -88,6 +116,9 @@
                                 ["cacadas" "selvagens e captura"]
                                 ["ligas" "faixas de nível e escalação"]
                                 ["time" "filtros, ativo e recuperação"]
+                                ["shiny" "coleção histórica e fotos"]
+                                ["semanais" "objetivos e recompensas semanais"]
+                                ["raid" "chefe cooperativo por liga"]
                                 ["evolucao" "XP e pedras de evolução"]]))
          "\n\nTambém funciona: " (comando "ginasio ajuda") " ou " (comando "cacar ajuda") ". Consultar a ajuda não gasta turno.")))
 

@@ -404,12 +404,15 @@
     (persistir!)
     true))
 
+(declare colecao-shiny!)
+
 (defn receber-doacao!
   "Acrescenta um registro JÁ no formato persistido (ver pokemon->registro)
   direto na equipe do destinatário, preservando nível/hp-atual/status como
   estavam - usado por !pokemon doar (não reseta o pokémon doado)."
   [cid pid registro]
   (swap! contas update-in [cid pid] (fn [c] (update (or c conta-vazia) "equipe" conj registro)))
+  (colecao-shiny! cid pid [registro])
   (persistir!))
 
 (defn remover-pokemon!
@@ -426,6 +429,7 @@
                           (< idx ativo-atual)    (dec ativo-atual)
                           (= idx ativo-atual)    0
                           :else                  (min ativo-atual (dec (count eq-nova))))]
+        (colecao-shiny! cid pid [(get eq idx)])
         (swap! contas update-in [cid pid] #(ajustar-times-remocao (assoc % "equipe" eq-nova "ativo" ativo-novo "inicial-escolhido" true) idx))
         (persistir!)
         true)
@@ -560,6 +564,9 @@
                               {"nome" (:nome pokemon) "tipos" (vec (:tipos pokemon))
                                "raridade" (or (:raridade pokemon) "comum")
                                "capturas" (inc (get entrada "capturas" 0))})))))
+    (when (:shiny? pokemon)
+      (swap! contas assoc-in [cid pid "shiny-colecao" chave]
+             {"nome" (:nome pokemon) "imagem" (:imagem pokemon)}))
     (persistir!)
     (sequencia-capturas cid pid)))
 
@@ -697,6 +704,7 @@
   (do
     (if-let [registro (get (equipe cid pid) idx)]
       (let [incremento-hp (- hp (get registro "hp"))]
+        (colecao-shiny! cid pid [registro])
         (swap! contas update-in [cid pid "equipe" idx]
                #(-> %
                     (assoc "nome" nome-novo "imagem" (if (get registro "shiny") (or imagem-shiny imagem) imagem)
@@ -707,6 +715,7 @@
                                         (mapv golpe->registro
                                               (garantir-ataque-do-tipo (mapv golpe<-registro gs) tipos))))
                     (update "hp-atual" (fn [hp-atual] (if (pos? hp-atual) (+ hp-atual incremento-hp) 0)))))
+        (colecao-shiny! cid pid [(get (equipe cid pid) idx)])
         (persistir!)
         true)
       false)))
@@ -826,3 +835,16 @@
 (defn salvar-time-ginasio! [cid pid indices]
   (swap! contas assoc-in [cid pid "time-ginasio"] (vec indices))
   (persistir!))
+
+(defn colecao-shiny! [cid pid registros]
+  ;; Recupera os shiny ainda disponíveis de contas anteriores à coleção histórica.
+  (let [antes (get (conta cid pid) "shiny-colecao" {})
+        depois (reduce (fn [dex r]
+                         (if (get r "shiny")
+                           (assoc dex (-> (get r "nome") str/lower-case (str/replace #"\s+" "-"))
+                                  {"nome" (get r "nome") "imagem" (get r "imagem")}) dex))
+                       antes registros)]
+    (when (not= antes depois)
+      (swap! contas assoc-in [cid pid "shiny-colecao"] depois)
+      (persistir!))
+    depois))

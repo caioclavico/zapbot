@@ -697,3 +697,23 @@ O inicial só pode ser escolhido uma vez por treinador em cada chat.
 Mandar o único Pokémon para a Enfermeira Joy, doá-lo ou ficar com a equipe
 vazia não libera outro inicial. Contas antigas são reconhecidas pelo
 histórico; dois pedidos simultâneos também não entregam dois iniciais.
+
+### Novidades Pokémon — 15/09/2026
+
+- `!pokemon ginasio ranking [nome]`: rankings por defesas vencidas e tempo acumulado de liderança, por ginásio. Inclui o tempo da ocupação atual; defesas anteriores à atualização não podem ser recuperadas.
+- `!pokemon ginasio historico [nome]`: últimos 10 resultados, com data, desafiante e líder. São armazenadas as últimas 50 batalhas de cada ginásio.
+- `!pokemon time shiny`: fotos dos shiny disponíveis, combinável com filtros, ordenação e `txt`. `!pokemon shiny` ou `!pokemon pokedex shiny` consulta a coleção histórica de espécies. Capturas, recebimentos e evoluções ficam registrados mesmo após transferência; ao evoluir, as duas espécies permanecem no histórico. Shiny antigos ainda disponíveis, na enfermaria ou em ginásios são recuperados ao consultar.
+- `!pokemon missoes semanais [resgatar]`: vencer em 2 ginásios diferentes (60 moedas), capturar 5 tipos diferentes (50 moedas) e vencer 3 batalhas PvP (60 moedas). Reinicia às segundas-feiras no fuso configurado para missões. Resgate uma vez por missão, antes da virada. Progresso e pagamento são salvos na mesma conta da loja.
+
+#### Raid cooperativa
+
+1. `!pokemon raid abrir <liga>` abre inscrições para 2 a 6 jogadores.
+2. Todos, inclusive o criador, enviam `!pokemon raid entrar [número]`. Sem número, inscreve o ativo. O Pokémon precisa ter HP, pertencer à liga e possuir um ataque de dano.
+3. O criador envia `!pokemon raid iniciar`.
+4. Na sua vez, use `!pokemon raid atacar <1-4>`. `!pokemon raid` mostra HP, participantes e golpes disponíveis.
+
+O chefe é Snorlax. A raid usa uma cópia do Pokémon e do HP da inscrição; dano não altera a coleção. O chefe contra-ataca a cada ação que não o derrota. O dano considera poder e atributos físicos/especiais; status, itens e vantagens de tipo não são usados neste modo. Pokémon desmaiados deixam de receber turnos.
+
+Inscrições expiram após 15 minutos e o combate após 30 minutos. O chat tem intervalo de 6 horas entre inícios. `raid sair` remove a inscrição; o criador pode usar `raid cancelar` antes do combate. Na vitória, quem causou dano recebe 40 moedas, inclusive se desmaiou, com limite de uma recompensa diária por jogador/chat no fuso das missões. Raid e turnos são persistidos e respeitam os prazos após reiniciar o bot.
+
+Guias: `!pokemon ajuda raid`, `!pokemon ajuda shiny` e `!pokemon ajuda semanais`. Novidades também disponíveis em `!status`.

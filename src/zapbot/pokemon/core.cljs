@@ -12,6 +12,7 @@
             [zapbot.pokemon.aventuras :as aventuras]
             [zapbot.pokemon.ginasios :as ginasios]
             [zapbot.pokemon.shiny :as shiny]
+            [zapbot.pokemon.raids :as raids]
             ["whatsapp-web.js" :as wwjs]
             ["sharp" :as sharp]
             [zapbot.config :as config]
@@ -983,6 +984,7 @@
         vencedor-pid (get-in jogo [:jogadores vencedor-marca])
         _ (rank/pontuar! cid vencedor-pid (get-in jogo [:nomes vencedor-marca]) "pokemon")
         _ (treinador/registrar-vitoria-treinador! cid vencedor-pid)
+        _ (loja/registrar-semanal! cid vencedor-pid "pvp" [])
         ganho (loja/creditar! cid vencedor-pid)
         aviso-missao (loja/registrar-missao! cid vencedor-pid "vitorias" (treinador/nivel-jogador cid vencedor-pid))
         recompensas (recompensas-partida! cid jogo)
@@ -1714,6 +1716,9 @@
         (let [proximo (second restantes)
               nivel-no-token (second (re-matches #"(?:nivel|nv)\.?([0-9]+)" token))]
           (cond
+            (= token "shiny")
+            (recur (next restantes) (assoc filtro :shiny? true))
+
             (and (= token "liga") (treinador/obter-liga proximo))
             (recur (nnext restantes) (assoc filtro :liga (treinador/obter-liga proximo)))
 
@@ -1748,7 +1753,7 @@
                          (assoc :nome (str/join " " (:nome-tokens filtro)))
                          (dissoc :nome-tokens))]
           (when (or (seq (:tipos filtro)) (seq (:raridades filtro))
-                    (:nivel filtro) (:liga filtro) (seq (:nome filtro)))
+                    (:nivel filtro) (:liga filtro) (:shiny? filtro) (seq (:nome filtro)))
             filtro))))))
 
 (defn- interpretar-filtros-time [texto]
@@ -1758,9 +1763,10 @@
     (cond-> filtros
       ordem (assoc :ordem-forca ordem))))
 
-(defn- descricao-filtros [{:keys [tipos nivel nome liga ordem-forca] raridades-filtradas :raridades}]
+(defn- descricao-filtros [{:keys [tipos nivel nome liga ordem-forca shiny?] raridades-filtradas :raridades}]
   (str/join " + "
             (concat
+             (when shiny? ["✨ shiny"])
              (when liga [(str "liga " (:nome liga) " (" (:min liga) "–" (:max liga) ")"
                              (when-not ordem-forca " — nível decrescente"))])
              (when ordem-forca
@@ -1773,8 +1779,9 @@
              (when (seq nome) [(str "nome contendo “" nome "”")])
              (when nivel [(str "nível " nivel)]))))
 
-(defn- corresponde-aos-filtros? [pokemon {:keys [tipos raridades nivel nome liga]}]
-  (and (or (nil? liga) (<= (:min liga) (nivel-pokemon pokemon) (:max liga)))
+(defn- corresponde-aos-filtros? [pokemon {:keys [tipos raridades nivel nome liga shiny?]}]
+  (and (or (not shiny?) (:shiny? pokemon))
+       (or (nil? liga) (<= (:min liga) (nivel-pokemon pokemon) (:max liga)))
        (or (empty? tipos) (every? (set (:tipos pokemon)) tipos))
        (or (empty? raridades) (contains? (set raridades) (or (:raridade pokemon) "comum")))
        (or (nil? nivel) (= nivel (nivel-pokemon pokemon)))
@@ -2527,6 +2534,7 @@
         moedas         (if capturou? (+ 2 (min 10 sequencia)) 0)
         subida         (treinador/ganhar-xp! cid pid xp)]
     (swap! cacadas-selvagens dissoc cid)
+    (when capturou? (loja/registrar-semanal! cid pid "tipos" (:tipos selvagem)))
     (when (pos? moedas) (loja/creditar-quantia! cid pid moedas))
     (when subida
       (-> (verificar-evolucao! (:message caca) cid pid)
@@ -3300,6 +3308,11 @@
             (assoc pokemon :nivel nivel) [:hp :ataque :defesa :atq-esp :def-esp :veloc])))
 
 (defn- finalizar-ginasio [message cid jogo vencedor]
+  (ginasios/registrar-resultado! cid (get-in jogo [:ginasio :id]) (:lider-anterior jogo)
+                                (get-in jogo [:jogadores :x]) (:nome-desafiante jogo)
+                                (= vencedor :x) (.now js/Date))
+  (when (= vencedor :x)
+    (loja/registrar-semanal! cid (get-in jogo [:jogadores :x]) "ginasios" [(get-in jogo [:ginasio :id])]))
   (sincronizar-equipe! cid jogo)
   (if (not= vencedor :x)
     (let [pid (get-in jogo [:jogadores :x])
@@ -3314,12 +3327,14 @@
                  (p/then (fn [_] (aprender-golpe-por-nivel! message cid pid (:nivel subida) idx))))))
           (p/finally #(swap! jogos (fn [estado]
                                     (if (= finalizando (get estado cid)) (dissoc estado cid) estado)))))
-      (str "\nO líder venceu. Recupere seu time e tente novamente! Suas insígnias foram mantidas."
+      (let [texto (str "\nO líder venceu. Recupere seu time e tente novamente! Suas insígnias foram mantidas."
            "\n✨ +2 XP por Pokémon que participou."
            "\n⭐ +1 PE (Pontos de experiência) para o treinador."
            (apply str (for [[_ subida] subidas :when subida]
                         (str "\n✨ " (:nome subida) " chegou ao nível " (:nivel subida) "!"
-                             (aviso-saida-liga subida))))))
+                             (aviso-saida-liga subida)))))]
+        (when-let [resultado (:resultado-derrota jogo)] (reset! resultado texto))
+        texto))
     (let [pid (get-in jogo [:jogadores :x])
           g (:ginasio jogo)
           premio (treinador/registrar-ginasio! cid pid (:id g) (dia-ginasio))
@@ -3392,6 +3407,8 @@
          "\nUse " config/prefix "pokemon ginasio <nome> para detalhes."
          "\nEscale: " config/prefix "pokemon ginasio time 1,3,5"
          "\nDesafie: " config/prefix "pokemon ginasio desafiar pedra"
+         "\nRanking: " config/prefix "pokemon ginasio ranking [nome]"
+         "\nDefesas: " config/prefix "pokemon ginasio historico [nome]"
          "\nComo jogar: " config/prefix "pokemon ginasio ajuda")))
 
 (defn- configurar-ginasio [message args]
@@ -3400,6 +3417,14 @@
         g (aventuras/obter-ginasio (normalizar-texto (if (= acao "desafiar") id acao)))
         ocupante (ginasios/lider cid (:id g))]
     (cond
+      (contains? #{"ranking" "historico" "histórico"} acao)
+      (p/resolved
+       (if (and id (nil? (aventuras/obter-ginasio (normalizar-texto id))))
+         "❓ Ginásio desconhecido. Use pedra, agua, eletrico, planta ou fogo."
+         (str/join "\n\n"
+                   (for [gym (if id [(aventuras/obter-ginasio (normalizar-texto id))] aventuras/ginasios)]
+                     (if (= acao "ranking") (ginasios/ranking cid (:id gym) (.now js/Date))
+                         (ginasios/historico cid (:id gym)))))))
       (empty? args) (p/resolved (menu-ginasios cid pid))
       (= acao "time")
       (p/resolved
@@ -3413,11 +3438,20 @@
              "❓ Escolha três Pokémon diferentes: !pokemon ginasio time 1,3,5."))))
       (nil? g) (p/resolved (menu-ginasios cid pid))
       (not= acao "desafiar")
-      (p/resolved
-       (str (:nome g) " — " (descricao-lider cid g)
-            (when-not ocupante (str "\nEquipe: " (str/join ", " (:time g))))
-            "\nRecompensa: " (get-in aventuras/pedras [(:item g) :nome])
-            "\nUse " config/prefix "pokemon ginasio desafiar " (:id g) "."))
+      (let [texto (str (:nome g) " — " (descricao-lider cid g)
+                       (when-not ocupante (str "\nEquipe: " (str/join ", " (:time g))))
+                       "\nRecompensa: " (get-in aventuras/pedras [(:item g) :nome])
+                       "\nUse " config/prefix "pokemon ginasio desafiar " (:id g) ".")]
+        (if (seq (get ocupante "time"))
+          (-> (p/let [media (criar-cartao-time
+                             (map-indexed (fn [indice registro] {:indice indice :registro registro})
+                                          (get ocupante "time"))
+                             nil (treinador/nivel-jogador cid (get ocupante "pid")))]
+                {:media media :texto texto})
+              (p/catch (fn [err]
+                         (js/console.error "Erro ao gerar cartão do ginásio:" err)
+                         texto)))
+          (p/resolved texto)))
       (= pid (get ocupante "pid"))
       (p/resolved "🏛️ Você já lidera este ginásio. Seu time será liberado quando outro treinador vencer você.")
       (or (get @jogos cid) (get @cacadas-selvagens cid) (aprendizado-bloqueado? cid pid))
@@ -3453,6 +3487,7 @@
                                    (assoc :ginasio g :jogadores {:x pid :o "lider-ginasio"}
                                           :lider-anterior ocupante :nome-desafiante nome-desafiante
                                           :time-desafiante indices
+                                          :resultado-derrota (atom nil)
                                           :nomes {:x "Você" :o (or (get ocupante "nome") (:lider g))}
                                           :pokemons {:x meu :o lider}
                                           :hp {:x hp :o (:hp lider)} :status {:x status :o nil}
@@ -3588,6 +3623,29 @@
               (swap! propostas-troca assoc [cid id] proposta)
               (descrever-troca proposta))))))))
 
+(defn- ver-colecao-shiny [message]
+  (let [cid (chat-id message) pid (jogador-id message)
+        registros (concat (treinador/equipe cid pid)
+                          (map #(get % "pokemon") (treinador/em-tratamento cid pid))
+                          (mapcat #(get (second %) "time") (ginasios/liderados cid pid)))
+        dex (treinador/colecao-shiny! cid pid registros)
+        nomes (sort (map #(get % "nome") (vals dex)))]
+    (str "✨ *Coleção shiny — " (count nomes) " espécies registradas*\n"
+         (if (seq nomes) (str/join ", " nomes) "Nenhum shiny registrado ainda.")
+         "\nO registro permanece após doações, trocas e evoluções. Shiny antigos ainda na coleção também são incluídos."
+         "\nVeja os disponíveis com fotos: " config/prefix "pokemon time shiny (aceita os demais filtros).")))
+
+(defn- comando-raid [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        [acao numero] args]
+    (p/let [nome (nome-de message)]
+      ;; A consulta do contato é assíncrona: confira o time depois que ela terminar.
+      (let [eq (treinador/equipe cid pid)
+            idx (if numero (parse-indice-golpe numero (count eq)) (treinador/indice-ativo cid pid))]
+        (if (and (= acao "entrar") (aprendizado-bloqueado? cid pid))
+          "🚫 Termine sua batalha e as alterações pendentes antes de entrar na raid."
+          (raids/comando! cid pid nome args (when (some? idx) (get eq idx))
+                          (treinador/liga-selecionada cid pid) (.now js/Date)))))))
 (defn- jogar-comando
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
   batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
@@ -3656,16 +3714,22 @@
       (contains? #{"evento" "eventos"} cmd) (p/resolved (ver-evento))
       (= cmd "evoluir") (evoluir-com-item message resto)
       (= cmd "negociar") (negociar-pokemon message resto)
+      (= cmd "raid") (comando-raid message resto)
+      (= cmd "shiny") (p/resolved (ver-colecao-shiny message))
       (= cmd "treinador") (ver-treinador message)
       (= cmd "aprender") (aprender-oferta message resto)
       (= cmd "reaprender") (reaprender-golpe message resto)
       (= cmd "mt") (usar-mt message resto)
       (= cmd "reviver") (reviver-pokemon message resto)
       (= cmd "mochila") (p/resolved (loja/mochila message (first resto)))
+      (and (contains? #{"missoes" "missões"} cmd) (= "semanais" (first resto)))
+      (p/resolved (loja/ver-semanais cid pid (= "resgatar" (second resto))))
       (contains? #{"missoes" "missões"} cmd) (p/resolved (loja/ver-missoes message (first resto) (treinador/nivel-jogador cid pid)))
       (= cmd "capturar") (capturar-selvagem message resto)
       (contains? #{"inicial" "iniciais"} cmd) (escolher-inicial message (first resto))
       (contains? #{"cacar" "caçar"} cmd) (cacar message)
+      (and (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd) (= "shiny" (first resto)))
+      (p/resolved (ver-colecao-shiny message))
       (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd)
       (if (and (= 1 (count resto)) (re-matches #"[0-9]+" (first resto)))
         (ver-pokemon-do-time message (first resto))
@@ -3727,8 +3791,11 @@
 (defn jogar [message args]
   (if-let [ajuda (pokemon-ajuda/resposta args)]
     (p/resolved ajuda)
-    (let [cid (chat-id message)]
-    (p/let [resposta (jogar-comando message args)
-            lider (turno-lider message cid)]
-      (if (str/blank? lider) resposta
-          (str (if (map? resposta) (:texto resposta) resposta) "\n\n🏛️ *Vez do líder*\n" lider))))))
+    (let [cid (chat-id message)
+          resultado-derrota (:resultado-derrota (get @jogos cid))]
+      ;; A referência continua disponível após a limpeza assíncrona da batalha.
+      (p/let [resposta (jogar-comando message args)
+              lider (turno-lider message cid)]
+        (or (when resultado-derrota @resultado-derrota)
+            (if (str/blank? lider) resposta
+                (str (if (map? resposta) (:texto resposta) resposta) "\n\n🏛️ *Vez do líder*\n" lider)))))))
