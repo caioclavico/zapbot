@@ -79,9 +79,9 @@
             novo (cond venceu? (assoc novo "fase" "vitoria")
                        (empty? vivos) (assoc novo "fase" "derrota")
                        :else (assoc novo "vez" proximo))]
-        [novo (str "💥 " (get participante "nome") " usou " (get golpe "nome-exibicao" (get golpe "slug"))
-                   ": " dano " de dano."
-                   (when (pos? revide) (str " O chefe revidou: " revide " de dano."))
+        [novo (str "💥 " (get golpe "nome-exibicao" (get golpe "slug")) " de *" (get pokemon "nome") "* (" (get participante "nome") ") causou "
+                   dano " de dano em *Snorlax*!"
+                   (when (pos? revide) (str "\n💥 *Snorlax* contra-atacou e causou " (min revide (get participante "hp")) " de dano em *" (get pokemon "nome") "*!"))
                    (when venceu? "\n🏆 O grupo venceu a raid!")
                    (when (= "derrota" (get novo "fase")) "\n😵 O grupo caiu. A raid terminou sem recompensa."))]))))
 
@@ -91,7 +91,7 @@
          (if (= "inscricoes" (get raid "fase"))
            "Inscrições abertas (2 a 6 jogadores)."
            (str "HP do chefe: " (get raid "hp-chefe") "/" (get raid "hp-max")
-                "\nVez de: " (get-in raid ["participantes" (get raid "vez") "nome"])))
+                "\nVez de: " (get-in raid ["participantes" (get raid "vez") "nome"]) " (@" (first (str/split (get raid "vez") #"@")) ")"))
          "\n" (str/join "\n" (for [pid (get raid "ordem")
                                       :let [p (get-in raid ["participantes" pid])]]
                                   (str "• " (get p "nome") " — " (get-in p ["pokemon" "nome"])
@@ -158,4 +158,5 @@
                                                    (str "\n✨ " (:nome subida) " chegou ao nível " (:nivel subida) "!"))))))
                           (filter #(pos? (get (second %) "dano" 0)) (get novo "participantes"))))]
       {:texto (str texto (apply str (map :texto premios)) (when texto "\n\n") (resumo novo agora))
+       :mentions (if (and (ativa? novo agora) (= "combate" (get novo "fase"))) [(get novo "vez")] [])
        :subidas (vec (filter :subida premios))})))

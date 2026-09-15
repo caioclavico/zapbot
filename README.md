@@ -716,3 +716,11 @@ O chefe é Snorlax. A raid usa uma cópia do Pokémon e do HP da inscrição; da
 Inscrições expiram após 15 minutos e o combate após 30 minutos. O chat tem intervalo de 6 horas entre inícios. `raid sair` remove a inscrição; o criador pode usar `raid cancelar` antes do combate. Na vitória, quem causou dano recebe 40 moedas, 6 PE para o treinador e 6 XP para o Pokémon inscrito, inclusive se desmaiou, com limite de uma recompensa diária por jogador/chat no fuso das missões. O XP acompanha o Pokémon mesmo que a ordem da equipe mude. Se ele estiver na enfermaria, reservado em um ginásio ou transferido, o XP fica pendente na conta do participante até o mesmo Pokémon voltar à equipe e o jogador usar um comando Pokémon. Subidas de nível processam evolução e aprendizado de golpes normalmente. Raid e turnos são persistidos e respeitam os prazos após reiniciar o bot.
 
 Guias: `!pokemon ajuda raid`, `!pokemon ajuda shiny` e `!pokemon ajuda semanais`. Novidades também disponíveis em `!status`.
+
+### Atualização 0.12.1
+
+- Raids marcam com @ quem deve atacar e descrevem golpe, Pokémon, alvo e dano, incluindo o contra-ataque do Snorlax.
+- `!missoes` mostra todas; `!missoes diarias` e `!missoes semanais` filtram. Adicione `resgatar` para receber as recompensas da categoria. `!missoes resgatar` continua resgatando as diárias.
+- Todas as missões garantem Pokébolas. Capturas diárias garantem também Grandes; PvP diário e missões semanais incluem Ultras. Recompensas diárias crescem junto das metas a cada cinco níveis.
+- Compre cartões por 20 moedas com `!loja comprar cartao-presente` e envie com `!presente @amigo` (também `!pokemon presente @amigo`). Cada cartão entrega automaticamente 3 Pokébolas (65%), 2 Grandes (25%) ou 1 Ultra (10%). Sem espaço, as bolas ficam em `!mochila resgatar`.
+- Missões de presentes: 2 envios diários na faixa inicial e 10 semanais. Envios para si mesmo não são permitidos.

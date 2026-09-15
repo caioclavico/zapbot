@@ -3655,7 +3655,7 @@
                              (-> (verificar-evolucao! message cid jogador indice)
                                  (p/then (fn [_]
                                            (aprender-golpe-por-nivel! message cid jogador (:nivel subida) indice))))))]
-            (:texto resultado)))))))
+            (select-keys resultado [:texto :mentions])))))))
 (defn- jogar-comando
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
   batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
@@ -3734,7 +3734,13 @@
       (= cmd "mochila") (p/resolved (loja/mochila message (first resto)))
       (and (contains? #{"missoes" "missões"} cmd) (= "semanais" (first resto)))
       (p/resolved (loja/ver-semanais cid pid (= "resgatar" (second resto))))
-      (contains? #{"missoes" "missões"} cmd) (p/resolved (loja/ver-missoes message (first resto) (treinador/nivel-jogador cid pid)))
+      (contains? #{"presente" "presentes"} cmd)
+      (p/resolved (loja/enviar-presente! cid pid (alvo-mencionado message) (treinador/nivel-jogador cid pid)))
+      (contains? #{"missoes" "missões"} cmd)
+      (p/resolved (let [acao (if (= "diarias" (first resto)) (second resto) (first resto))
+                        diarias (loja/ver-missoes message acao (treinador/nivel-jogador cid pid))]
+                    (if (or (empty? resto) (= "todas" (first resto)))
+                      (str diarias "\n\n" (loja/ver-semanais cid pid false)) diarias)))
       (= cmd "capturar") (capturar-selvagem message resto)
       (contains? #{"inicial" "iniciais"} cmd) (escolher-inicial message (first resto))
       (contains? #{"cacar" "caçar"} cmd) (cacar message)

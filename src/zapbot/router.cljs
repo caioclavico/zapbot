@@ -62,12 +62,13 @@
    {:emoji "🏛️" :uso "pokemon ginasio ranking [nome]" :desc "Líderes com mais defesas e maior permanência em cada ginásio"}
    {:emoji "🛡️" :uso "pokemon ginasio historico [nome]" :desc "Últimas defesas, desafiantes e resultados"}
    {:emoji "✨" :uso "pokemon shiny" :desc "Coleção shiny histórica; fotos dos disponíveis com pokemon time shiny"}
-   {:emoji "📅" :uso "pokemon missoes semanais [resgatar]" :desc "Objetivos semanais de ginásios, capturas e PvP com moedas"}
+   {:emoji "📅" :uso "missoes semanais [resgatar]" :desc "Objetivos semanais de ginásios, capturas e PvP com moedas"}
    {:emoji "🤝" :uso "pokemon raid [abrir <liga>|entrar [n]|iniciar|atacar <1-4>|sair|cancelar]" :desc "Enfrente Snorlax com 2 a 6 jogadores da mesma liga; regras em pokemon ajuda raid"}
    {:emoji "💎" :uso "pokemon evoluir <número> <pedra>" :desc "Evolua espécies compatíveis usando uma pedra da mochila"}
    {:emoji "🔄" :uso "pokemon negociar <seu número> <número do outro> @pessoa" :desc "Proponha uma troca; destinatário aceita e autor confirma usando o ID da proposta"}
    {:emoji "🎉" :uso "pokemon eventos" :desc "Confira as espécies em destaque nas caçadas e o tempo restante do evento"}
-   {:emoji "📋" :uso "missoes [resgatar]" :desc "Missões diárias com PE do treinador, Pokébolas e chance de Grande ou Ultra Bola"}
+   {:emoji "🎁" :uso "presente @amigo" :desc "Envie um cartão comprado na loja com bolas sorteadas para um amigo"}
+   {:emoji "📋" :uso "missoes [diarias|semanais] [resgatar]" :desc "Todas as missões; recompensas conforme dificuldade. Missões diárias com PE do treinador, Pokébolas e chance de Grande ou Ultra Bola"}
    {:emoji "🎒" :uso "mochila [kit|resgatar]" :desc "Veja itens e bolas, resgate o kit inicial ou recompensas de vitórias"}
    {:emoji "🏪" :uso "loja [comprar|detalhes <item>]" :desc "Compre bolas, curas, MT, itens equipáveis e expansões de mochila; consulte preços e efeitos"}
    {:emoji "🏆" :uso "rank"                :desc "Mostra o rank de pontos desse chat (vitórias em !velha, !naval, !pokemon e !quiz)"}
@@ -141,6 +142,7 @@
     "quiz"      (quiz/jogar message (str/join " " args))
     "pokemon"   (pokemon/jogar message (str/join " " args))
     ("pokedex" "dex") (pokedex/buscar message (str/join " " args))
+    ("presente" "presentes") (pokemon/jogar message (str "presente " (str/join " " args)))
     ("missoes" "missões") (pokemon/jogar message (str "missoes " (str/join " " args)))
     "mochila"   (p/resolved (loja/mochila message (first args)))
     "loja"      (case (some-> (first args) str/lower-case (str/replace #":" ""))

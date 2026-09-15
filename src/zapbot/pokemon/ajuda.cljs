@@ -48,9 +48,11 @@
     :semanais
     (str "📅 *Missões semanais*\n\n"
          "Consulte " (comando "missoes semanais") " e receba com " (comando "missoes semanais resgatar") ".\n"
-         "• Vencer em 2 ginásios diferentes: 60 moedas.\n"
-         "• Capturar Pokémon de 5 tipos diferentes: 50 moedas.\n"
-         "• Vencer 3 batalhas PvP: 60 moedas.\n"
+         "• Vencer em 2 ginásios diferentes: 60 moedas, 8 Pokébolas, 4 Grandes e 2 Ultras.\n"
+         "• Capturar Pokémon de 5 tipos diferentes: 50 moedas, 6 Pokébolas, 3 Grandes e 1 Ultra.\n"
+         "• Vencer 3 batalhas PvP: 60 moedas, 8 Pokébolas, 4 Grandes e 2 Ultras.\n"
+         "• Enviar 10 presentes: 50 moedas, 6 Pokébolas, 3 Grandes e 1 Ultra.\n"
+         "Use !missoes para ver todas ou !missoes diarias / !missoes semanais. Presentes: !loja comprar cartao-presente e !presente @amigo.\n"
          "Cada missão pode ser resgatada uma vez por semana. Progresso começa nesta atualização; a semana reinicia na segunda-feira no fuso das missões. Resgate antes da virada.")
 
     :ginasios

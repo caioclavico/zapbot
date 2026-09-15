@@ -12,10 +12,12 @@
     (catch :default _ "desconhecida")))
 
 (def ^:private changelog-ultima-versao
-  [(str "15/09 — Ranking de líderes por defesas e permanência: " config/prefix "pokemon ginasio ranking [nome]")
+  ["15/09 — Raids marcam o próximo jogador e detalham os danos; cartões de presentes com bolas para amigos"
+   "15/09 — !missoes mostra diárias e semanais; todas recompensam bolas conforme dificuldade, incluindo envios de presentes"
+   (str "15/09 — Ranking de líderes por defesas e permanência: " config/prefix "pokemon ginasio ranking [nome]")
    (str "15/09 — Histórico de defesas: " config/prefix "pokemon ginasio historico [nome]")
    (str "15/09 — Coleção shiny histórica: " config/prefix "pokemon shiny; filtre as fotos com " config/prefix "pokemon time shiny")
-   (str "15/09 — Missões semanais com moedas: " config/prefix "pokemon missoes semanais [resgatar]")
+   (str "15/09 — Missões semanais com moedas: " config/prefix "missoes semanais [resgatar]")
    (str "15/09 — Raid cooperativa: vitória diária rende 40 moedas, 6 PE e 6 XP para o Pokémon inscrito; de 2 a 6 jogadores por liga: " config/prefix "pokemon ajuda raid")
    "15/09 — Derrotas no ginásio mostram apenas o resultado e as recompensas, sem os golpes do adversário"
    (str "15/09 — O time reservado no ginásio aparece com fotos, como no " config/prefix "pokemon time. Confira: " config/prefix "pokemon ginasio <nome>")

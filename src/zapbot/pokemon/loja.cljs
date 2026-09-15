@@ -58,7 +58,9 @@
 ;; chaves nomeadas pelo ITEM que você compra (não pelo status que ele cura),
 ;; então "loja comprar atadura"/"antidoto" fazem sentido de verdade
 (def ^:private itens-base
-  {"reviver" {:nome "Reviver" :emoji "💎" :exclusivo-missoes true
+  {"cartao-presente" {:nome "Cartão de presente" :emoji "🎁" :preco 20
+                       :descricao "Envie com !presente @amigo. Sorteia 3 Pokébolas (65%), 2 Grandes (25%) ou 1 Ultra (10%) para o amigo."}
+   "reviver" {:nome "Reviver" :emoji "💎" :exclusivo-missoes true
               :descricao "Exclusivo das missões: revive um Pokémon desmaiado com 100% do HP e remove seu status. Use !pokemon reviver [número], fora de batalhas e caçadas."}
    "pokebola" {:nome "Pokébola" :emoji "🔴" :multiplicador-captura 1 :limite-captura 75
                :descricao "Bola normal, com até 75% de chance. Obtida em missões, bônus diário, kit inicial e nocautes PvP."}
@@ -253,7 +255,7 @@
     (swap! contas assoc-in [cid pid] novo)
     (persistir!)
     (when (> (count (missoes/disponiveis (missoes/estado-do-dia novo dia nivel))) antes)
-      (str "\n📋 Missão diária concluída! Resgate com " config/prefix "missoes resgatar."))))
+      (str "\n📋 Missão diária concluída! Resgate com " config/prefix "missoes diarias resgatar."))))
 
 (defn- resgatar-missoes! [cid pid nivel]
   (let [dia (missoes/dia-atual)
@@ -264,7 +266,7 @@
       "📋 Nenhuma missão concluída disponível para resgatar hoje."
       (let [xp (reduce + (map :xp prontas))
             recompensas (reduce (fn [r missao]
-                                  (let [r (update r "pokebola" (fnil + 0) (:pokebolas missao))]
+                                  (let [r (merge-with + r (missoes/recompensas-bolas missao))]
                                     (cond-> (if-let [bonus (missoes/sortear-bonus)]
                                               (update r bonus (fnil inc 0)) r)
                                       (missoes/sortear-reviver?) (update "reviver" (fnil inc 0)))))
@@ -296,18 +298,18 @@
       (resgatar-missoes! cid pid nivel)
       (str "📋 *Missões diárias — " dia "*\nNível de referência hoje: " (get estado "nivel" 1) "\n"
            (str/join "\n\n"
-                     (for [{:keys [id nome objetivo meta xp pokebolas]} (missoes/catalogo-do-dia estado)
+                     (for [{:keys [id nome objetivo meta xp pokebolas grandes ultras]} (missoes/catalogo-do-dia estado)
                            :let [progresso (get-in estado ["progresso" id] 0)
                                  resgatada? (some #{id} (get estado "resgatadas"))]]
                        (str (cond resgatada? "🎁" (>= progresso meta) "✅" :else "⬜")
                             " *" nome "*: " objetivo " — " progresso "/" meta
-                            "\n+" xp " PE do treinador e " pokebolas " Pokébolas"
+                            "\n+" xp " PE do treinador e " pokebolas " Pokébolas, " grandes " Grandes e " ultras " Ultras"
                             (when resgatada? " (resgatada)"))))
            "\n\nCada missão: 25% de chance de +1 Grande Bola, 10% de +1 Ultra Bola; 65% sem bônus."
            " Um único sorteio de bola bônus por missão, além das Pokébolas garantidas."
            "\n💎 Chance independente de 20% de +1 Reviver por missão, exclusivo das missões."
            "\nMetas, PE e Pokébolas aumentam a cada 5 níveis; a faixa fica fixa até a próxima renovação."
-           "\nResgate as concluídas com " config/prefix "missoes resgatar."
+           "\nResgate as concluídas com " config/prefix "missoes diarias resgatar."
            "\nRenovação à meia-noite (" config/missoes-timezone "). Resgate antes da virada!"
            "\nDesistências e fugas não contam como vitórias. PE significa Pontos de experiência do treinador; Pokémon recebem XP."))))
 
@@ -471,20 +473,20 @@
 
 (defn ver-semanais [cid pid resgatar?]
   (let [semana (missoes/semana-de (missoes/dia-atual))
-        [nova moedas] (missoes/resgatar-semanais (conta cid pid) semana)]
+        [nova moedas bolas] (missoes/resgatar-semanais (conta cid pid) semana)]
     (when resgatar?
       ;; Progresso, marcação do resgate e saldo são persistidos juntos.
-      (swap! contas assoc-in [cid pid] nova)
+      (swap! contas assoc-in [cid pid] (guardar-recompensas nova bolas))
       (persistir!))
     (let [estado (missoes/estado-semanal (conta cid pid) semana)]
       (str "📅 *Missões semanais — semana de " semana "*\n"
-           (when resgatar? (str "💰 " moedas " moedas resgatadas.\n"))
-           (str/join "\n" (for [{:keys [id objetivo meta moedas]} missoes/semanais]
+           (when resgatar? (str "💰 " moedas " moedas resgatadas.\n🎁 " (texto-recompensas bolas) "\n"))
+           (str/join "\n" (for [{:keys [id objetivo meta moedas] :as missao} missoes/semanais]
                              (str (if (some #{id} (get estado "resgatadas")) "✅ " "🎯 ")
                                   objetivo ": " (missoes/progresso-semanal estado id) "/" meta
-                                  " • " moedas " moedas")))
+                                  " • " moedas " moedas • " (texto-recompensas (missoes/recompensas-bolas missao)))))
            "\nReinicia na segunda-feira (" config/missoes-timezone ")."
-           "\nResgate até o fim da semana: " config/prefix "pokemon missoes semanais resgatar."))))
+           "\nResgate até o fim da semana: " config/prefix "missoes semanais resgatar."))))
 
 (defn premiar-raid! [cid pid dia]
   ;; Uma recompensa diária por jogador, gravada junto com as moedas.
@@ -493,3 +495,28 @@
            #(-> (or % {}) (assoc "raid-premiada-dia" dia) (update "moedas" (fnil + 0) 40)))
     (persistir!)
     40))
+
+(defn enviar-presente! [cid pid alvo nivel]
+  (cond
+    (nil? alvo) (str "🎁 Use " config/prefix "presente @amigo. Compre cartões com " config/prefix "loja comprar cartao-presente.")
+    (= pid alvo) "❌ Escolha um amigo para receber o presente."
+    (not (pos? (quantidade-item cid pid "cartao-presente"))) "🎁 Você precisa de um cartão: !loja comprar cartao-presente."
+    :else
+    (let [sorteio (rand-int 100)
+          recompensa (cond (< sorteio 10) {"ultra-bola" 1}
+                           (< sorteio 35) {"grande-bola" 2}
+                           :else {"pokebola" 3})
+          dia (missoes/dia-atual)]
+      (swap! contas
+             (fn [estado]
+               (-> estado
+                   (update-in [cid pid "inventario" "cartao-presente"] dec)
+                   (update-in [cid pid] #(-> %
+                                            (missoes/registrar-evento dia "presentes" nivel)
+                                            (missoes/registrar-semanal (missoes/semana-de dia) "presentes" [])))
+                   (update-in [cid alvo] #(guardar-recompensas (or % {"moedas" 0 "inventario" {}}) recompensa)))))
+      (persistir!)
+      {:texto (str "🎁 Presente enviado para @" (first (str/split alvo #"@")) "!\n" (texto-recompensas recompensa)
+                   "\nBolas sem espaço ficam pendentes em !mochila resgatar."
+                   "\n📋 Envio registrado nas missões diárias e semanais.")
+       :mentions [alvo]})))
