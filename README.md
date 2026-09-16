@@ -276,6 +276,17 @@ git push origin vX.Y.Z
 
 ## Estrutura do projeto
 
+### Testes do jogo Pokémon
+
+Os testes unitários ficam em `test/zapbot/pokemon`, separados pelo módulo que
+eles verificam. Execute a suíte completa com:
+
+```bash
+npm test
+```
+
+O comando compila o alvo `:test` do Shadow CLJS e executa os testes no Node.js.
+
 ```
 src/zapbot/
 ├── core.cljs        ; conexão com o WhatsApp e ligação dos eventos

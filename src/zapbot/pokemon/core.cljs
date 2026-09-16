@@ -51,7 +51,8 @@
 (defonce ^:private limites-turno (atom {}))
 
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
-(declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado parse-indice-golpe estado-cacada turno-selvagem escalar-nivel)
+(declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado
+         parse-indice-golpe estado-cacada turno-selvagem escalar-nivel com-raridade)
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -356,7 +357,7 @@
                           {:slug (get-in prox [:species :name])
                            :item-consumido (when item item-equipado)})))
                     (:evolution_details prox)))
-            (:evolves_to no)))))
+            (:evolves_to no-atual)))))
 
 (defn- preparar-evolucao-troca [registro parceiro]
   (let [slug-atual (-> (get registro "nome") str/lower-case (str/replace #"\s+" "-"))
@@ -387,6 +388,7 @@
    (-> (p/let [ativo (treinador/pokemon-no-indice cid pid idx)]
          (when ativo
            (let [[pokemon _ _] ativo
+                 registro      (get (treinador/equipe cid pid) idx)
                  slug-atual    (str/lower-case (:nome pokemon))
                  nivel         (or (:nivel pokemon) 1)]
              (p/let [cadeia (buscar-cadeia-evolucao slug-atual)]

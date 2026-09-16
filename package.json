@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "shadow-cljs watch app",
     "build": "shadow-cljs release app",
+    "test": "shadow-cljs compile test && node target/test.js",
     "start": "node target/main.js"
   },
   "dependencies": {
