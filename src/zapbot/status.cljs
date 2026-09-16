@@ -13,11 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["15/09 — Raids marcam com @ quem deve atacar e descrevem o dano do golpe e do contra-ataque"
-   (str "15/09 — Cartões de presentes por 20 moedas: " config/prefix "loja comprar cartao-presente; envie com " config/prefix "presente @amigo para sortear Pokébolas, Grandes ou Ultras")
-   (str "15/09 — " config/prefix "missoes mostra todas; filtre com " config/prefix "missoes diarias ou " config/prefix "missoes semanais e acrescente resgatar para receber")
-   "15/09 — Novas missões diárias e semanais de envio de presentes"
-   "15/09 — Todas as missões garantem bolas, com quantidade e qualidade conforme a dificuldade"])
+  ["16/09 — Disputas de ginásio exibem os Pokémon em uma arena com molduras douradas"
+   "16/09 — Corrigido [object Object] nas mensagens da vez automática do líder do ginásio"
+   "16/09 — Comandos Pokémon inválidos agora mostram a lista alinhada à esquerda, com um comando por linha"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

@@ -1194,6 +1194,46 @@
         (.png)
         (.toBuffer))))
 
+(defn- svg-arena-ginasio []
+  (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
+       "<defs>"
+       "<linearGradient id='ceu' x1='0' y1='0' x2='0' y2='1'><stop stop-color='#172554'/><stop offset='1' stop-color='#4338ca'/></linearGradient>"
+       "<linearGradient id='chao' x1='0' y1='0' x2='0' y2='1'><stop stop-color='#334155'/><stop offset='1' stop-color='#0f172a'/></linearGradient>"
+       "<filter id='brilho'><feDropShadow dx='0' dy='0' stdDeviation='7' flood-color='#facc15'/></filter>"
+       "</defs>"
+       "<rect width='760' height='400' rx='28' fill='url(#ceu)'/>"
+       "<path d='M0 245 L760 245 L760 400 L0 400Z' fill='url(#chao)'/>"
+       "<path d='M0 245 Q380 330 760 245' fill='none' stroke='#64748b' stroke-width='5'/>"
+       "<circle cx='380' cy='320' r='62' fill='none' stroke='#94a3b8' stroke-width='5'/><path d='M318 320h124' stroke='#94a3b8' stroke-width='5'/>"
+       "<path d='M30 245V82Q30 35 77 35H323Q370 35 370 82V245' fill='#0f172a' fill-opacity='.38' stroke='#facc15' stroke-width='7' filter='url(#brilho)'/>"
+       "<path d='M390 245V82Q390 35 437 35H683Q730 35 730 82V245' fill='#0f172a' fill-opacity='.38' stroke='#facc15' stroke-width='7' filter='url(#brilho)'/>"
+       "<circle cx='380' cy='62' r='35' fill='#facc15' stroke='#fef3c7' stroke-width='5'/><circle cx='380' cy='62' r='13' fill='#172554'/><path d='M345 62h70' stroke='#172554' stroke-width='7'/>"
+       "<text x='380' y='112' fill='#fef3c7' font-size='25' font-family='sans-serif' font-weight='bold' text-anchor='middle'>BATALHA DE GINÁSIO</text>"
+       "</svg>"))
+
+(defn- criar-imagem-ginasio [url-desafiante url-lider]
+  (p/let [[desafiante lider] (p/all [(sprite-redimensionado url-desafiante)
+                                      (sprite-redimensionado url-lider)])]
+    (-> (sharp (js/Buffer.from (svg-arena-ginasio)))
+        (.composite #js [#js {:input desafiante :left 70 :top 95}
+                         #js {:input lider :left 430 :top 95}])
+        (.png)
+        (.toBuffer))))
+
+(defn- enviar-imagem-ginasio [message jogo]
+  (-> (p/let [buffer (criar-imagem-ginasio (get-in jogo [:pokemons :x :imagem])
+                                            (get-in jogo [:pokemons :o :imagem]))
+              media (MessageMedia. "image/png" (.toString buffer "base64") "ginasio.png")
+              _ (.reply message media nil
+                        #js {:caption (str "🏛️ *" (get-in jogo [:ginasio :nome]) "*\n"
+                                           (get-in jogo [:pokemons :x :nome]) " desafia "
+                                           (get-in jogo [:pokemons :o :nome]) "!")})]
+        nil)
+      (p/catch (fn [err]
+                 ;; A batalha continua normalmente se a imagem ou o download falhar.
+                 (js/console.error "Erro ao montar imagem do ginásio:" err)
+                 nil))))
+
 (defn- legenda-vs [nome-x pokemon-x nome-o pokemon-o]
   (str (cabecalho) "⚔️ *" nome-x "* vs *" nome-o "*!\n\n"
        (legenda-pokemon nome-x pokemon-x) "\n\n"
@@ -3499,7 +3539,9 @@
                                           :itens-usados {:x {} :o {}}))
                           [jogo aviso] (aplicar-intimidacao jogo)]
                       (swap! jogos assoc cid jogo)
-                      (str "🏛️ Desafio contra " (or (get ocupante "nome") (:lider g)) "!\n" aviso "\n" (mensagem-estado jogo)))))
+                      (p/let [_ (enviar-imagem-ginasio message jogo)]
+                        (str "🏛️ Desafio contra " (or (get ocupante "nome") (:lider g)) "!\n"
+                             (when aviso (str aviso "\n")) (mensagem-estado jogo))))))
                 (p/catch (fn [err]
                            (js/console.error "Erro ao preparar ginásio:" err)
                            "❌ Não consegui preparar o líder. Tente novamente."))
@@ -3773,22 +3815,54 @@
       (contains? #{"defender" "defesa" "esquivar" "evasiva"} cmd) (defender-turno message)
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
       (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
-      :else (p/resolved (str (cabecalho) "❓ Novidades: " config/prefix "pokemon ginasio, "
-                             config/prefix "pokemon evoluir <número> <pedra>, "
-                             config/prefix "pokemon negociar <seu número> <número do outro> @pessoa, "
-                             config/prefix "pokemon eventos.\nUse " config/prefix "pokemon liga [nome|time <n1,n2,n3>], " config/prefix "pokemon inicial, " config/prefix "pokemon cacar, "
-                             config/prefix "pokemon treinador, " config/prefix "pokemon pokedex [número|filtros], " config/prefix "pokemon time [ativo|filtros|csv|txt], " config/prefix "pokemon escolher <número>, "
-                             config/prefix "pokemon equipar <número> <item>, "
-                             config/prefix "pokemon aprender [número|aceitar|recusar], "
-                             config/prefix "pokemon reaprender [número] [substituir], "
-                             config/prefix "pokemon mt [1-4], " config/prefix "pokemon reviver [número], "
-                             config/prefix "pokemon missoes [resgatar], " config/prefix "pokemon mochila [kit|diario|resgatar], " config/prefix "pokemon capturar <bola>, "
-                             config/prefix "pokemon removergolpe <número>, "
-                             config/prefix "pokemon doar <número>, " config/prefix "pokemon (abrir/entrar), "
-                             config/prefix "pokemon joy <número>, "
-                             config/prefix "pokemon atacar <1-4>, " config/prefix "pokemon defender, "
-                             config/prefix "pokemon curar, " config/prefix "pokemon pocao ou " config/prefix
-                             "pokemon sair.\n📚 Como jogar: " config/prefix "pokemon ajuda.")))))
+      :else
+      (p/resolved
+       (str (cabecalho) "❓ *Comando Pokémon não reconhecido.*\n\n"
+            "*Novidades*\n"
+            "• " config/prefix "pokemon ginasio\n"
+            "• " config/prefix "pokemon raid\n"
+            "• " config/prefix "pokemon evoluir <número> <pedra>\n"
+            "• " config/prefix "pokemon negociar <seu número> <número do outro> @pessoa\n"
+            "• " config/prefix "pokemon eventos\n"
+            "• " config/prefix "presente @amigo\n\n"
+            "*Comandos*\n"
+            "• " config/prefix "pokemon liga [nome|time <n1,n2,n3>]\n"
+            "• " config/prefix "pokemon inicial\n"
+            "• " config/prefix "pokemon cacar\n"
+            "• " config/prefix "pokemon treinador\n"
+            "• " config/prefix "pokemon pokedex [número|filtros]\n"
+            "• " config/prefix "pokemon time [ativo|filtros|csv|txt]\n"
+            "• " config/prefix "pokemon escolher <número>\n"
+            "• " config/prefix "pokemon equipar <número> <item>\n"
+            "• " config/prefix "pokemon aprender [número|aceitar|recusar]\n"
+            "• " config/prefix "pokemon reaprender [número] [substituir]\n"
+            "• " config/prefix "pokemon mt [1-4]\n"
+            "• " config/prefix "pokemon reviver [número]\n"
+            "• " config/prefix "missoes [diarias|semanais] [resgatar]\n"
+            "• " config/prefix "pokemon mochila [kit|diario|resgatar]\n"
+            "• " config/prefix "pokemon capturar <bola>\n"
+            "• " config/prefix "pokemon removergolpe <número>\n"
+            "• " config/prefix "pokemon doar <número>\n"
+            "• " config/prefix "pokemon abrir ou " config/prefix "pokemon entrar\n"
+            "• " config/prefix "pokemon joy <número>\n"
+            "• " config/prefix "pokemon atacar <1-4>\n"
+            "• " config/prefix "pokemon defender\n"
+            "• " config/prefix "pokemon curar\n"
+            "• " config/prefix "pokemon pocao\n"
+            "• " config/prefix "pokemon sair\n\n"
+            "📚 Como jogar: " config/prefix "pokemon ajuda.")))))
+
+
+(defn- texto-resposta
+  "Extrai texto das respostas simples ou estruturadas antes de concatená-las.
+  Evita que mapas/objetos apareçam como [object Object] nas jogadas automáticas."
+  [resposta]
+  (cond
+    (nil? resposta) ""
+    (string? resposta) resposta
+    (map? resposta) (or (:texto resposta) "")
+    (object? resposta) (or (aget resposta "texto") "")
+    :else (str resposta)))
 
 (defn- turno-lider [message cid]
   (let [jogo (get @jogos cid)]
@@ -3799,9 +3873,9 @@
                                    (:golpes pokemon))
             idx (if (seq ataques) (rand-nth (vec ataques)) 0)
             npc #js {:from cid :author "lider-ginasio"}]
-        (p/let [texto (atacar npc (str (inc idx)))
+        (p/let [resposta (atacar npc (str (inc idx)))
                 restante (turno-lider message cid)]
-          (str (if (map? texto) (:texto texto) texto) restante)))
+          (str (texto-resposta resposta) (texto-resposta restante))))
       (p/resolved ""))))
 
 (defn jogar [message args]
@@ -3819,5 +3893,5 @@
               resposta (jogar-comando message args)
               lider (turno-lider message cid)]
         (or (when resultado-derrota @resultado-derrota)
-            (if (str/blank? lider) resposta
-                (str (if (map? resposta) (:texto resposta) resposta) "\n\n🏛️ *Vez do líder*\n" lider)))))))
+            (if (str/blank? (texto-resposta lider)) resposta
+                (str (texto-resposta resposta) "\n\n🏛️ *Vez do líder*\n" (texto-resposta lider))))))))
