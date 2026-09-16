@@ -51,7 +51,7 @@
 (defonce ^:private limites-turno (atom {}))
 
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
-(declare finalizar-ginasio enviar-imagem enviar-aviso-temporizado parse-indice-golpe estado-cacada turno-selvagem)
+(declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado parse-indice-golpe estado-cacada turno-selvagem)
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -1055,8 +1055,13 @@
       (seq caidos)
       (finalizar-vitoria message cid novo (outro (first caidos)) motivo-extra)
       :else
-      (do (swap! jogos assoc cid novo)
-          (str "\n\n" (str/join "\n" avisos) "\n\n" (mensagem-estado novo))))))
+      (do
+        (swap! jogos assoc cid novo)
+        ;; Cada substituição abre um novo confronto dentro do mesmo desafio.
+        ;; Mostra novamente a arena com os dois Pokémon que agora estão ativos.
+        (when (and (:ginasio novo) (seq avisos))
+          (enviar-imagem-ginasio (:message novo) novo))
+        (str "\n\n" (str/join "\n" avisos) "\n\n" (mensagem-estado novo))))))
 
 (defn- tentar-encerrar-por-desistencia!
   "Encerra uma batalha abandonada sem premiar nenhum dos jogadores.

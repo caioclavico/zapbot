@@ -92,13 +92,26 @@ aparelho pelo celular).
 
 ## Persistência (Cassandra)
 
-Rank, loja (moedas/curas do `!pokemon`), admins conhecidos, participantes do
-chat, histórico anti-repetição do `!quiz`, lembretes e enquetes são persistidos no Cassandra (ver
-`zapbot.armazenamento`), numa única tabela `<keyspace>.estado (chave text
-PRIMARY KEY, valor text)` - `valor` guarda um JSON por chave, um por
-namespace (`rank`, `loja`, `admins-conhecidos`, `participantes`,
-`quiz-historico`, `bloqueio`, `lembretes`, `enquetes`). O conteúdo usado por
-`!resuma` continua apenas em memória.
+Rank, loja, treinadores, ginásios, raids, admins conhecidos, participantes,
+histórico do quiz, lembretes e enquetes são persistidos pelo
+`zapbot.armazenamento`. O estado corrente usa a tabela
+`<keyspace>.estado_particionado`, com uma linha por módulo e partição do
+primeiro nível (normalmente um chat, jogador ou item de cache):
+
+```sql
+modulo text,
+particao text,
+valor text,
+PRIMARY KEY ((modulo, particao))
+```
+
+A tabela antiga `<keyspace>.estado` é mantida como cópia de segurança. Na
+primeira inicialização, o bot divide automaticamente cada JSON legado em
+linhas menores. O marcador de conclusão de cada módulo só é gravado depois
+de todas as linhas, então uma interrupção pode retomar a migração sem perder
+dados. Novas gravações atualizam somente partições alteradas, sem regravar o
+estado inteiro do módulo. O conteúdo usado por `!resuma` continua apenas em
+memória.
 
 Pra rodar localmente com Docker Compose (recomendado - já vem configurado):
 

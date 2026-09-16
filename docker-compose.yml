@@ -4,7 +4,7 @@ services:
     container_name: zapbot-cassandra
     restart: unless-stopped
     environment:
-      # dataset é minúsculo (só rank/loja/admins/participantes/quiz), então
+      # estado é particionado por módulo/registro; 1 GB basta para a carga atual, então
       # limita o heap pra sobrar RAM pro Puppeteer/Chromium do bot na mesma VM
       - MAX_HEAP_SIZE=1G
       - HEAP_NEWSIZE=200M
