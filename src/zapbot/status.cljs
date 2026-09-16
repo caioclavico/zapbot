@@ -13,9 +13,10 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["16/09 — Disputas de ginásio exibem os Pokémon em uma arena com molduras douradas"
-   "16/09 — Corrigido [object Object] nas mensagens da vez automática do líder do ginásio"
-   "16/09 — Comandos Pokémon inválidos agora mostram a lista alinhada à esquerda, com um comando por linha"])
+  ["16/09 — Evoluções por troca, amizade e horário; condições especiais usam Catalisadores ganhos em missões"
+   "16/09 — Pokédex agora explica como realizar cada evolução disponível"
+   "16/09 — Itens oficiais de evolução por troca e Pedra Solar adicionados às recompensas de missões"
+   "16/09 — Itens evolutivos podem ser equipados, usados nas trocas e são consumidos após a evolução"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

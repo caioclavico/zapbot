@@ -57,8 +57,30 @@
 ;; catálogo estático (nunca persistido, então pode usar keyword à vontade) -
 ;; chaves nomeadas pelo ITEM que você compra (não pelo status que ele cura),
 ;; então "loja comprar atadura"/"antidoto" fazem sentido de verdade
+(def itens-evolucao-troca
+  ["revestimento-metalico" "escama-dragao" "upgrade" "protetor" "pedra-rei"
+   "eletrizador" "magmarizador" "tecido-ceifador" "escama-prisma"
+   "chicote-doce" "sache-perfumado"])
+
+(def ^:private nomes-itens-evolucao
+  {"revestimento-metalico" ["Revestimento Metálico" "metal-coat"]
+   "escama-dragao" ["Escama de Dragão" "dragon-scale"]
+   "upgrade" ["Upgrade" "up-grade"]
+   "protetor" ["Protetor" "protector"]
+   "pedra-rei" ["Pedra do Rei" "kings-rock"]
+   "eletrizador" ["Eletrizador" "electirizer"]
+   "magmarizador" ["Magmarizador" "magmarizer"]
+   "tecido-ceifador" ["Tecido do Ceifador" "reaper-cloth"]
+   "escama-prisma" ["Escama Prisma" "prism-scale"]
+   "chicote-doce" ["Chicote Doce" "whipped-dream"]
+   "sache-perfumado" ["Sachê Perfumado" "sachet"]})
+
+(defn item-evolucao-pokeapi [id] (second (get nomes-itens-evolucao id)))
+
 (def ^:private itens-base
-  {"cartao-presente" {:nome "Cartão de presente" :emoji "🎁" :preco 20
+  {"catalisador-evolutivo" {:nome "Catalisador Evolutivo" :emoji "🧬" :exclusivo-missoes true
+                              :descricao "Cumpre condições evolutivas especiais sem equivalente no WhatsApp. Use !pokemon evoluir <número> especial [destino]."}
+   "cartao-presente" {:nome "Cartão de presente" :emoji "🎁" :preco 20
                        :descricao "Envie com !presente @amigo. Sorteia 3 Pokébolas (65%), 2 Grandes (25%) ou 1 Ultra (10%) para o amigo."}
    "reviver" {:nome "Reviver" :emoji "💎" :exclusivo-missoes true
               :descricao "Exclusivo das missões: revive um Pokémon desmaiado com 100% do HP e remove seu status. Use !pokemon reviver [número], fora de batalhas e caçadas."}
@@ -97,6 +119,10 @@
 
 (def ^:private itens
   (merge itens-base
+         (into {} (map (fn [[id [nome _]]]
+                         [id {:nome nome :emoji "🧬" :equipavel true :exclusivo-missoes true
+                              :descricao "Equipe no Pokémon e conclua a troca exigida. O item é consumido ao evoluir."}])
+                       nomes-itens-evolucao))
          (into {} (map (fn [[id pedra]]
                          [id (assoc pedra :evolucao true
                                     :descricao "Primeira vitória no ginásio correspondente ou revanche diária. Use !pokemon evoluir <número> <pedra>.")])
@@ -129,7 +155,9 @@
   (get-in @contas [cid pid] {"moedas" 0 "inventario" {}}))
 
 (def bolas ["pokebola" "grande-bola" "ultra-bola"])
-(def ^:private ordem-recompensas (into (conj bolas "reviver") (sort (keys aventuras/pedras))))
+(def ^:private ordem-recompensas (vec (concat bolas ["reviver" "catalisador-evolutivo"] itens-evolucao-troca (sort (keys aventuras/pedras)))))
+
+(defn sortear-item-evolucao [] (rand-nth itens-evolucao-troca))
 
 (defn normalizar-item [nome]
   (let [chave (-> (or nome "") str/trim str/lower-case remover-acentos
@@ -157,6 +185,12 @@
 (defn consumir-reviver! [cid pid]
   (when (pos? (quantidade-item cid pid "reviver"))
     (swap! contas update-in [cid pid "inventario" "reviver"] dec)
+    (persistir!)
+    true))
+
+(defn consumir-catalisador! [cid pid]
+  (when (pos? (quantidade-item cid pid "catalisador-evolutivo"))
+    (swap! contas update-in [cid pid "inventario" "catalisador-evolutivo"] dec)
     (persistir!)
     true))
 
@@ -269,7 +303,8 @@
                                   (let [r (merge-with + r (missoes/recompensas-bolas missao))]
                                     (cond-> (if-let [bonus (missoes/sortear-bonus)]
                                               (update r bonus (fnil inc 0)) r)
-                                      (missoes/sortear-reviver?) (update "reviver" (fnil inc 0)))))
+                                      (missoes/sortear-reviver?) (update "reviver" (fnil inc 0))
+                                      (< (rand-int 100) 20) (update (sortear-item-evolucao) (fnil inc 0)))))
                                 {} prontas)
             novo (-> c
                      (assoc "missoes-diarias" (update estado "resgatadas" into (map :id prontas)))
@@ -298,12 +333,13 @@
       (resgatar-missoes! cid pid nivel)
       (str "📋 *Missões diárias — " dia "*\nNível de referência hoje: " (get estado "nivel" 1) "\n"
            (str/join "\n\n"
-                     (for [{:keys [id nome objetivo meta xp pokebolas grandes ultras]} (missoes/catalogo-do-dia estado)
+                     (for [{:keys [id nome objetivo meta xp pokebolas grandes ultras catalisadores]} (missoes/catalogo-do-dia estado)
                            :let [progresso (get-in estado ["progresso" id] 0)
                                  resgatada? (some #{id} (get estado "resgatadas"))]]
                        (str (cond resgatada? "🎁" (>= progresso meta) "✅" :else "⬜")
                             " *" nome "*: " objetivo " — " progresso "/" meta
                             "\n+" xp " PE do treinador e " pokebolas " Pokébolas, " grandes " Grandes e " ultras " Ultras"
+                            (when (pos? (or catalisadores 0)) (str ", " catalisadores " Catalisador Evolutivo"))
                             (when resgatada? " (resgatada)"))))
            "\n\nCada missão: 25% de chance de +1 Grande Bola, 10% de +1 Ultra Bola; 65% sem bônus."
            " Um único sorteio de bola bônus por missão, além das Pokébolas garantidas."
@@ -473,7 +509,9 @@
 
 (defn ver-semanais [cid pid resgatar?]
   (let [semana (missoes/semana-de (missoes/dia-atual))
-        [nova moedas bolas] (missoes/resgatar-semanais (conta cid pid) semana)]
+        [nova moedas bolas-base] (missoes/resgatar-semanais (conta cid pid) semana)
+        bolas (cond-> bolas-base (and resgatar? (pos? moedas))
+                (update (sortear-item-evolucao) (fnil inc 0)))]
     (when resgatar?
       ;; Progresso, marcação do resgate e saldo são persistidos juntos.
       (swap! contas assoc-in [cid pid] (guardar-recompensas nova bolas))

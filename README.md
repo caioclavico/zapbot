@@ -695,8 +695,26 @@ A consulta funciona durante partidas sem gastar turno nem acionar o líder.
   `!pokemon negociar cancelar <id>`. Propostas expiram em cinco minutos
   ou ao reiniciar o bot. Mudanças nos Pokémon invalidam a proposta; os
   dois participantes precisam estar fora de combate. Os registros completos,
-  incluindo itens equipados, são trocados juntos. A troca não desencadeia
-  evolução automática. `!pokemon trocar` continua selecionando o ativo.
+  incluindo itens equipados, são trocados juntos. Evoluções por troca simples
+  acontecem automaticamente; Karrablast e Shelmet exigem um ao outro como
+  parceiro. Evoluções por troca segurando item ainda não estão disponíveis,
+  pois esses itens evolutivos não existem no inventário. `!pokemon trocar`
+  continua selecionando o ativo.
+- Itens oficiais de troca — Revestimento Metálico, Escama de Dragão, Upgrade,
+  Protetor, Pedra do Rei, Eletrizador, Magmarizador, Tecido do Ceifador,
+  Escama Prisma, Chicote Doce e Sachê Perfumado — são obtidos nas missões.
+  Equipe com `!pokemon equipar <número> <item>` antes da negociação; o item
+  correto é consumido apenas quando a evolução acontece. A Pedra Solar é
+  usada diretamente com `!pokemon evoluir <número> pedra-solar`.
+- A amizade começa em 70 e sobe 10 pontos sempre que o Pokémon recebe XP em
+  batalhas, ginásios, caçadas ou raids. Evoluções por amizade são verificadas
+  ao subir de nível e respeitam os requisitos de dia/noite da PokéAPI.
+- Condições sem equivalente direto no WhatsApp — item de troca, local, clima,
+  gênero, atributos, golpe conhecido, espécie no time, passos, giro e modo
+  cooperativo — usam o **Catalisador Evolutivo**. Ele é recompensa garantida
+  nas missões diárias difíceis e semanais. Use
+  `!pokemon evoluir <número> especial [destino]`; quando houver ramificações,
+  o bot lista os destinos válidos antes de consumir o item.
 - `!pokemon eventos` mostra o surto atual. A cada seis horas, alternam-se
   quatro eventos globais. Cada caçada tem 50% de chance de escolher uma das
   quatro espécies do evento; os outros encontros seguem o bioma.

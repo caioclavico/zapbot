@@ -51,7 +51,7 @@
 (defonce ^:private limites-turno (atom {}))
 
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
-(declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado parse-indice-golpe estado-cacada turno-selvagem)
+(declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado parse-indice-golpe estado-cacada turno-selvagem escalar-nivel)
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -303,20 +303,77 @@
   "Acha, na árvore da cadeia de evolução, o próximo estágio a partir do
   slug atual que evolui por NÍVEL. Retorna {:slug :nivel-min} ou nil (não
   achou o slug atual na cadeia, ou a próxima evolução não é por nível)."
-  [cadeia slug-atual]
+  [cadeia slug-atual registro]
   (letfn [(achar-no [no]
             (if (= (get-in no [:species :name]) slug-atual)
               no
               (some achar-no (:evolves_to no))))
-          (por-nivel [no]
-            (some (fn [prox]
-                    (some (fn [detalhe]
-                            (when-let [nivel (:min_level detalhe)]
-                              {:slug (get-in prox [:species :name]) :nivel-min nivel}))
-                          (:evolution_details prox)))
-                  (:evolves_to no)))]
+          (por-nivel [no registro]
+            (let [hora (js/parseInt (.format (js/Intl.DateTimeFormat. "pt-BR"
+                                              #js {:timeZone config/missoes-timezone :hour "2-digit" :hour12 false})
+                                             (js/Date.)) 10)
+                  periodo (if (and (>= hora 6) (< hora 18)) "day" "night")]
+              (some (fn [prox]
+                      (some (fn [detalhe]
+                              (let [gatilho (get-in detalhe [:trigger :name])
+                                    nivel (or (:min_level detalhe) 1)
+                                    amizade (or (:min_happiness detalhe) (:min_affection detalhe) 0)
+                                    horario (:time_of_day detalhe)]
+                                (when (and (= "level-up" gatilho)
+                                           (>= (get registro "nivel" 1) nivel)
+                                           (>= (get registro "amizade" 70) amizade)
+                                           (or (str/blank? horario) (= horario periodo))
+                                           ;; As demais condições especiais usam Catalisador.
+                                           (nil? (:known_move detalhe)) (nil? (:known_move_type detalhe))
+                                           (nil? (:location detalhe)) (nil? (:party_species detalhe))
+                                           (nil? (:party_type detalhe)) (nil? (:relative_physical_stats detalhe))
+                                           (not (:needs_overworld_rain detalhe))
+                                           (not (:turn_upside_down detalhe)))
+                                  {:slug (get-in prox [:species :name]) :nivel-min nivel})))
+                            (:evolution_details prox)))
+                    (:evolves_to no))))]
     (when-let [no-atual (achar-no (:chain cadeia))]
-      (por-nivel no-atual))))
+      (por-nivel no-atual registro))))
+
+(defn- proxima-evolucao-por-troca
+  "Retorna a próxima espécie quando a cadeia exige uma troca simples ou um
+  parceiro específico, validando também o item equipado quando exigido."
+  [cadeia slug-atual slug-parceiro registro]
+  (letfn [(achar-no [no]
+            (if (= (get-in no [:species :name]) slug-atual)
+              no
+              (some achar-no (:evolves_to no))))]
+    (when-let [no-atual (achar-no (:chain cadeia))]
+      (some (fn [prox]
+              (some (fn [detalhe]
+                      (let [gatilho (get-in detalhe [:trigger :name])
+                            item (get-in detalhe [:held_item :name])
+                            item-equipado (get registro "item")
+                            parceiro (get-in detalhe [:trade_species :name])]
+                        (when (and (= "trade" gatilho)
+                                   (or (nil? item) (= item (loja/item-evolucao-pokeapi item-equipado)))
+                                   (or (nil? parceiro) (= parceiro slug-parceiro)))
+                          {:slug (get-in prox [:species :name])
+                           :item-consumido (when item item-equipado)})))
+                    (:evolution_details prox)))
+            (:evolves_to no)))))
+
+(defn- preparar-evolucao-troca [registro parceiro]
+  (let [slug-atual (-> (get registro "nome") str/lower-case (str/replace #"\s+" "-"))
+        slug-parceiro (-> (get parceiro "nome") str/lower-case (str/replace #"\s+" "-"))
+        nivel (get registro "nivel" 1)]
+    (p/let [cadeia (buscar-cadeia-evolucao slug-atual)]
+      (when-let [{:keys [slug item-consumido]} (and cadeia (proxima-evolucao-por-troca cadeia slug-atual slug-parceiro registro))]
+        (p/let [evoluido (buscar-pokemon-por-nome slug)
+                evoluido (buscar-info-especie evoluido)
+                evoluido (com-raridade evoluido)
+                evoluido (escalar-nivel evoluido nivel)]
+          (assoc evoluido :nome-antigo (get registro "nome")
+                          :nome-novo (:nome evoluido)
+                          :imagem (if (get registro "shiny")
+                                    (or (:imagem-shiny evoluido) (:imagem evoluido))
+                                    (:imagem evoluido))
+                          :item-consumido item-consumido))))))
 
 (defn- tentar-evoluir!
   "Se o pokémon ATIVO do jogador já estiver no nível de evoluir (por
@@ -333,7 +390,7 @@
                  slug-atual    (str/lower-case (:nome pokemon))
                  nivel         (or (:nivel pokemon) 1)]
              (p/let [cadeia (buscar-cadeia-evolucao slug-atual)]
-               (when-let [{:keys [slug nivel-min]} (and cadeia (proxima-evolucao cadeia slug-atual))]
+               (when-let [{:keys [slug nivel-min]} (and cadeia (proxima-evolucao cadeia slug-atual registro))]
                  (when (>= nivel nivel-min)
                    (p/let [res      (js/fetch (str "https://pokeapi.co/api/v2/pokemon/" slug))
                            data     (.json res)
@@ -3561,15 +3618,69 @@
          "\nTroca de evento em " minutos " minutos. Os eventos mudam a cada 6 horas."
          "\nUse " config/prefix "pokemon cacar. As três tentativas e a chance de fuga continuam valendo.")))
 
+(defn- evolucoes-especiais [cadeia slug-atual]
+  (letfn [(achar [no]
+            (if (= slug-atual (get-in no [:species :name])) no
+                (some achar (:evolves_to no))))]
+    (when-let [no (achar (:chain cadeia))]
+      (vec (distinct
+            (for [prox (:evolves_to no)
+                  detalhe (:evolution_details prox)
+                  :let [gatilho (get-in detalhe [:trigger :name])
+                        item-evolucao (get-in detalhe [:item :name])]
+                  :when (or (and (= "use-item" gatilho)
+                                 (not (contains? #{"water-stone" "thunder-stone" "fire-stone" "leaf-stone" "moon-stone" "sun-stone"} item-evolucao)))
+                            (contains? #{"shed" "spin" "tower-of-darkness" "tower-of-waters" "three-critical-hits" "take-damage" "other"} gatilho)
+                            (:known_move detalhe) (:known_move_type detalhe) (:location detalhe)
+                            (:party_species detalhe) (:party_type detalhe)
+                            (:relative_physical_stats detalhe) (:min_beauty detalhe)
+                            (:near_special_rock detalhe) (:needs_overworld_rain detalhe)
+                            (:needs_multiplayer detalhe) (:turn_upside_down detalhe)
+                            (:used_move detalhe) (:min_steps detalhe) (:min_damage_taken detalhe)
+                            (:gender detalhe))]
+              (get-in prox [:species :name])))))))
+
+(defn- evoluir-especial [message cid pid idx registro destino]
+  (if-not (pos? (loja/quantidade-item cid pid "catalisador-evolutivo"))
+    (p/resolved (str "🧬 Você precisa de um Catalisador Evolutivo, obtido em missões difíceis e semanais. Veja " config/prefix "missoes."))
+    (let [slug-atual (-> (get registro "nome") str/lower-case (str/replace #"\s+" "-"))]
+      (p/let [cadeia (buscar-cadeia-evolucao slug-atual)
+              opcoes (evolucoes-especiais cadeia slug-atual)]
+        (cond
+          (empty? opcoes) "❌ Esse Pokémon não possui uma evolução especial disponível."
+          (and (> (count opcoes) 1) (str/blank? destino))
+          (str "🧬 Escolha o destino: " (str/join ", " opcoes) ". Use " config/prefix
+               "pokemon evoluir " (inc idx) " especial <destino>.")
+          :else
+          (let [escolhida (if (seq destino)
+                            (some #(when (= (normalizar-texto %) (normalizar-texto destino)) %) opcoes)
+                            (first opcoes))]
+            (if-not escolhida
+              (str "❓ Destino inválido. Opções: " (str/join ", " opcoes) ".")
+              (p/let [evoluido (buscar-pokemon-por-nome escolhida)
+                      evoluido (buscar-info-especie evoluido)
+                      evoluido (com-raridade evoluido)
+                      evoluido (escalar-nivel evoluido (get registro "nivel" 1))]
+                (if (and (= registro (get (treinador/equipe cid pid) idx))
+                         (loja/consumir-catalisador! cid pid))
+                  (do (treinador/evoluir-no-indice! cid pid idx (assoc evoluido :nome-novo (:nome evoluido)))
+                      (treinador/atualizar-especie! cid pid idx evoluido)
+                      (str "🧬 " (get registro "nome") " evoluiu para *" (:nome evoluido)
+                           "*! 1 Catalisador Evolutivo consumido."))
+                  "⚠️ O Pokémon ou a mochila mudou. Tente novamente.")))))))))
+
 (defn- evoluir-com-item [message args]
   (let [cid (chat-id message) pid (jogador-id message)
         idx (parse-indice-golpe (first args) (count (treinador/equipe cid pid)))
-        item (loja/normalizar-item (str/join " " (rest args)))
+        item (loja/normalizar-item (second args))
+        destino-especial (str/join " " (drop 2 args))
         registro (when (some? idx) (get (treinador/equipe cid pid) idx))
         slug (some-> (get registro "nome") str/lower-case)
         destino (get-in aventuras/pedras [item :evolucoes slug])]
     (cond
       (aprendizado-bloqueado? cid pid) (p/resolved "🚫 Termine a batalha e as alterações pendentes antes de evoluir.")
+      (and registro (= item "especial"))
+      (evoluir-especial message cid pid idx registro destino-especial)
       (or (nil? registro) (nil? destino))
       (p/resolved
        (str "❓ Use " config/prefix "pokemon evoluir <número> <pedra>."
@@ -3613,10 +3724,51 @@
        "\nSolicitado: #" (inc (:ib proposta)) " " (get-in proposta [:registro-b "nome"])
        " Nv. " (get-in proposta [:registro-b "nivel"] 1)
        "\nHP, status, golpes e itens equipados acompanham os Pokémon."
+       "\nPokémon com evolução por troca simples ou parceiro específico evoluem ao concluir."
        "\nExpira em 5 minutos. Qualquer mudança nos Pokémon invalida a proposta."
        "\nDestinatário: " config/prefix "pokemon negociar aceitar " (:id proposta)
        "\nDepois, autor: " config/prefix "pokemon negociar confirmar " (:id proposta)
        "\nPara cancelar/recusar: " config/prefix "pokemon negociar cancelar " (:id proposta)))
+
+(defn- concluir-troca! [message cid chave proposta]
+  (let [{:keys [a b ia ib registro-a registro-b]} proposta]
+    (swap! evolucoes-pendentes into [[cid a] [cid b]])
+    (-> (p/let [[evolucao-a evolucao-b]
+                (p/all [(preparar-evolucao-troca registro-b registro-a)
+                        (preparar-evolucao-troca registro-a registro-b)])]
+          ;; Revalida depois das consultas externas. Nenhum registro é alterado
+          ;; se a proposta deixou de representar exatamente os dois Pokémon.
+          (if-not (aventuras/troca-valida? proposta (.now js/Date)
+                                           (get (treinador/equipe cid a) ia)
+                                           (get (treinador/equipe cid b) ib))
+            (do (swap! propostas-troca dissoc chave)
+                "⚠️ Um Pokémon mudou ou a proposta expirou. Crie uma nova proposta.")
+            (if-not (treinador/trocar-registros! cid a ia registro-a b ib registro-b)
+              "⚠️ Os Pokémon mudaram. Faça uma nova proposta."
+              (do
+                (swap! propostas-troca dissoc chave)
+                (when evolucao-a
+                  (treinador/evoluir-no-indice! cid a ia evolucao-a)
+                  (treinador/atualizar-especie! cid a ia evolucao-a)
+                  (when-let [item (:item-consumido evolucao-a)]
+                    (treinador/consumir-item-equipado! cid a ia item)))
+                (when evolucao-b
+                  (treinador/evoluir-no-indice! cid b ib evolucao-b)
+                  (treinador/atualizar-especie! cid b ib evolucao-b)
+                  (when-let [item (:item-consumido evolucao-b)]
+                    (treinador/consumir-item-equipado! cid b ib item)))
+                (str "✅ Troca concluída! Os dois Pokémon foram transferidos com seus dados e itens."
+                     (when evolucao-a
+                       (str "\n✨ " (:nome-antigo evolucao-a) " evoluiu para *" (:nome-novo evolucao-a) "*!"
+                            (when (:item-consumido evolucao-a) " O item evolutivo foi consumido.")))
+                     (when evolucao-b
+                       (str "\n✨ " (:nome-antigo evolucao-b) " evoluiu para *" (:nome-novo evolucao-b) "*!"
+                            (when (:item-consumido evolucao-b) " O item evolutivo foi consumido.")))
+                     "\nConfira " config/prefix "pokemon time.")))))
+        (p/catch (fn [err]
+                   (js/console.error "Erro ao concluir troca/evolução:" err)
+                   "❌ Não consegui consultar as evoluções agora. Nenhum Pokémon foi transferido."))
+        (p/finally #(swap! evolucoes-pendentes disj [cid a] [cid b])))))
 
 (defn- negociar-pokemon [message args]
   (let [cid (chat-id message) pid (jogador-id message)
@@ -3646,10 +3798,7 @@
            (or (not= pid a) (not (:aceita? proposta)))
            "🚫 O destinatário precisa aceitar e o autor precisa confirmar."
            :else
-           (if (treinador/trocar-registros! cid a ia registro-a b ib registro-b)
-             (do (swap! propostas-troca dissoc chave)
-                 "✅ Troca concluída! Os dois Pokémon foram transferidos com seus dados e itens. Confira !pokemon time.")
-             "⚠️ Os Pokémon mudaram. Faça uma nova proposta."))))
+           (concluir-troca! message cid chave proposta))))
       (p/let [alvo (resolver-alvo-doacao message)]
         (let [ia (parse-indice-golpe acao (count (treinador/equipe cid pid)))
               ib (parse-indice-golpe id (count (treinador/equipe cid alvo)))

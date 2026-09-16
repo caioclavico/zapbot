@@ -9,7 +9,7 @@
    {:id "capturas" :nome "Colecionador" :objetivo "Capturar Pokémon selvagens"
     :meta 2 :xp 3 :pokebolas 4 :grandes 1}
    {:id "vitorias" :nome "Desafiante" :objetivo "Vencer batalhas PvP"
-    :meta 1 :xp 3 :pokebolas 3 :grandes 1 :ultras 1}
+    :meta 1 :xp 3 :pokebolas 3 :grandes 1 :ultras 1 :catalisadores 1}
    {:id "presentes" :nome "Amigo generoso" :objetivo "Enviar presentes aos amigos"
     :meta 2 :xp 2 :pokebolas 3}])
 
@@ -66,11 +66,11 @@
     (subs (.toISOString data) 0 10)))
 
 (def semanais
-  [{:id "ginasios" :objetivo "Vencer em 2 ginásios diferentes" :meta 2 :moedas 60 :pokebolas 8 :grandes 4 :ultras 2}
-   {:id "tipos" :objetivo "Capturar Pokémon de 5 tipos diferentes" :meta 5 :moedas 50 :pokebolas 6 :grandes 3 :ultras 1}
-   {:id "pvp" :objetivo "Vencer 3 batalhas PvP" :meta 3 :moedas 60 :pokebolas 8 :grandes 4 :ultras 2}
+  [{:id "ginasios" :objetivo "Vencer em 2 ginásios diferentes" :meta 2 :moedas 60 :pokebolas 8 :grandes 4 :ultras 2 :catalisadores 1}
+   {:id "tipos" :objetivo "Capturar Pokémon de 5 tipos diferentes" :meta 5 :moedas 50 :pokebolas 6 :grandes 3 :ultras 1 :catalisadores 1}
+   {:id "pvp" :objetivo "Vencer 3 batalhas PvP" :meta 3 :moedas 60 :pokebolas 8 :grandes 4 :ultras 2 :catalisadores 1}
    {:id "presentes" :objetivo "Enviar 10 presentes aos amigos" :meta 10 :moedas 50
-    :pokebolas 6 :grandes 3 :ultras 1}])
+    :pokebolas 6 :grandes 3 :ultras 1 :catalisadores 1}])
 
 (defn estado-semanal [conta semana]
   (let [estado (get conta "missoes-semanais")]
@@ -92,7 +92,8 @@
 (defn recompensas-bolas [missao]
   {"pokebola" (:pokebolas missao 0)
    "grande-bola" (:grandes missao 0)
-   "ultra-bola" (:ultras missao 0)})
+   "ultra-bola" (:ultras missao 0)
+   "catalisador-evolutivo" (:catalisadores missao 0)})
 
 (defn resgatar-semanais [conta semana]
   (let [estado (estado-semanal conta semana)

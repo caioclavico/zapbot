@@ -107,7 +107,11 @@
          "1. Consulte a ficha com " (comando "pokedex 1") " (número do Pokémon no seu time) ou " config/prefix "pokedex pikachu (nome da espécie).\n"
          "2. A ficha informa evoluções por nível e as pedras compatíveis disponíveis no bot. Ganhe XP nas batalhas para alcançar o nível necessário.\n"
          "3. Ganhe pedras nos ginásios e confira " (comando "mochila") ".\n"
-         "4. Para um Pikachu compatível na posição 1, use " (comando "evoluir 1 pedra-trovao") ". A evolução consome uma pedra e exige estar fora de combate.\n\n"
+         "4. Para um Pikachu compatível na posição 1, use " (comando "evoluir 1 pedra-trovao") ". A evolução consome uma pedra e exige estar fora de combate.\n"
+         "5. Evoluções por troca simples acontecem ao concluir " (comando "negociar <seu número> <número do outro> @pessoa") ". Karrablast e Shelmet precisam ser trocados entre si.\n\n"
+         "Itens oficiais como Revestimento Metálico, Escama de Dragão e Upgrade vêm das missões; equipe antes de negociar e o item será consumido na evolução.\n"
+         "A amizade sobe 10 pontos sempre que o Pokémon recebe XP; evoluções por amizade ocorrem ao subir de nível, respeitando dia ou noite.\n"
+         "Condições sem equivalente no WhatsApp usam 🧬 Catalisador Evolutivo, ganho em missões difíceis e semanais: " (comando "evoluir <número> especial [destino]") ".\n"
          "Use o identificador do item exibido na ficha. Veja detalhes em " config/prefix "loja detalhes pedra-trovao. Guia de recompensas: " (comando "ajuda ginasios") ".")
 
     (str "📖 *Como jogar Pokémon*\n\n"

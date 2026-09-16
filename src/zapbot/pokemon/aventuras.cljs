@@ -9,6 +9,9 @@
                  :evolucoes {"vulpix" "ninetales" "growlithe" "arcanine" "eevee" "flareon" "pansear" "simisear" "capsakid" "scovillain"}}
    "pedra-folha" {:nome "Pedra da Folha" :emoji "🍃"
                   :evolucoes {"gloom" "vileplume" "weepinbell" "victreebel" "exeggcute" "exeggutor" "nuzleaf" "shiftry" "pansage" "simisage" "eevee" "leafeon"}}
+   "pedra-solar" {:nome "Pedra Solar" :emoji "☀️"
+                  :evolucoes {"gloom" "bellossom" "sunkern" "sunflora" "cottonee" "whimsicott"
+                              "petilil" "lilligant" "helioptile" "heliolisk"}}
    "pedra-lua" {:nome "Pedra da Lua" :emoji "🌙"
                 :evolucoes {"nidorina" "nidoqueen" "nidorino" "nidoking" "clefairy" "clefable" "jigglypuff" "wigglytuff" "skitty" "delcatty" "munna" "musharna"}}})
 

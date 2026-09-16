@@ -113,6 +113,7 @@
    "mitico-api" (boolean (:mitico-api? pokemon))
    "paradox-api" (boolean (:paradox-api? pokemon))
    "taxa-captura" (:taxa-captura pokemon)
+   "amizade" (or (:amizade pokemon) 70)
    "item" (:item pokemon)})
 
 (defn registro->pokemon
@@ -233,6 +234,12 @@
       (persistir!)
       anterior)
     ::inexistente))
+
+(defn consumir-item-equipado! [cid pid idx item]
+  (when (= item (get-in @contas [cid pid "equipe" idx "item"]))
+    (swap! contas assoc-in [cid pid "equipe" idx "item"] nil)
+    (persistir!)
+    true))
 
 (defn atualizar-golpes-ativo!
   "Substitui os golpes do pokémon ativo, preservando todos os demais dados."
@@ -645,6 +652,7 @@
   [cid pid idx quantidade]
   (do
     (when-let [registro (get (equipe cid pid) idx)]
+      (swap! contas update-in [cid pid "equipe" idx "amizade"] #(min 255 (+ (or % 70) 10)))
       (let [nivel-atual (get registro "nivel" 1)]
         (when (< nivel-atual nivel-maximo)
           (let [xp-anterior (get registro "xp-desde-nivel"

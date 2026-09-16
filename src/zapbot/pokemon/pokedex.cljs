@@ -76,36 +76,81 @@
   (->> (str/split slug #"-") (map str/capitalize) (str/join " ")))
 
 (defn formatar-evolucoes
-  "Mostra evoluções por nível e os itens disponíveis no bot, inclusive para
-  espécies carregadas do cache anterior à inclusão das pedras na Pokédex."
+  "Mostra todas as evoluções diretas e como ativá-las no bot."
   [pokemon]
   (let [slug (normalizar (:nome pokemon))
-        por-nivel (map #(str (:nome %) " — nível " (:nivel %)) (:evolucoes pokemon))
-        por-item (for [[id pedra] (sort-by key aventuras/pedras)
-                       :let [destino (get-in pedra [:evolucoes slug])]
-                       :when destino]
-                   (str (nome-formatado destino) " — " (:nome pedra) " (" id ")"))
-        evolucoes (concat por-nivel por-item)]
-    (if (seq evolucoes)
-      (str/join " | " evolucoes)
-      "não possui evolução por nível ou por item disponível no bot")))
+        da-cadeia (for [{:keys [nome como]} (:evolucoes pokemon)]
+                    (str nome " — " como))
+        ;; Mantém compatibilidade com pedras configuradas localmente, inclusive
+        ;; quando a PokéAPI representa uma forma regional de modo diferente.
+        por-pedra (for [[id pedra] (sort-by key aventuras/pedras)
+                        :let [destino (get-in pedra [:evolucoes slug])]
+                        :when destino]
+                    (str (nome-formatado destino) " — " (:nome pedra) " (" id ")"))
+        evolucoes (distinct (concat da-cadeia por-pedra))]
+    (if (seq evolucoes) (str/join " | " evolucoes) "forma final — não evolui")))
 
-(defn- proximas-evolucoes-por-nivel
-  "Retorna as evoluções diretas que acontecem por nível, no formato
-  [{:nome :nivel}]. Cadeias de item, troca, amizade etc. ficam de fora."
+(defn- nome-recurso [detalhe chave]
+  (some-> (get-in detalhe [chave :name]) nome-formatado))
+
+(defn- condicao-especial? [d]
+  (boolean
+   (or (:known_move d) (:known_move_type d) (:location d) (:party_species d)
+       (:party_type d) (:relative_physical_stats d) (:min_beauty d)
+       (:near_special_rock d) (:needs_overworld_rain d) (:needs_multiplayer d)
+       (:turn_upside_down d) (:used_move d) (:min_steps d) (:min_damage_taken d)
+       (:gender d))))
+
+(def ^:private pedras-pokeapi
+  {"water-stone" "pedra-agua" "thunder-stone" "pedra-trovao"
+   "fire-stone" "pedra-fogo" "leaf-stone" "pedra-folha" "moon-stone" "pedra-lua"
+   "sun-stone" "pedra-solar"})
+
+(def ^:private itens-troca-pokeapi
+  {"metal-coat" "Revestimento Metálico" "dragon-scale" "Escama de Dragão"
+   "up-grade" "Upgrade" "protector" "Protetor" "kings-rock" "Pedra do Rei"
+   "electirizer" "Eletrizador" "magmarizer" "Magmarizador"
+   "reaper-cloth" "Tecido do Ceifador" "prism-scale" "Escama Prisma"
+   "whipped-dream" "Chicote Doce" "sachet" "Sachê Perfumado"})
+
+(defn- descrever-detalhe [d]
+  (let [gatilho (get-in d [:trigger :name])
+        horario (case (:time_of_day d) "day" " de dia" "night" " à noite" "")]
+    (cond
+      (= gatilho "trade")
+      (if-let [parceiro (nome-recurso d :trade_species)]
+        (str "trocar por " parceiro)
+        (if-let [item-id (get-in d [:held_item :name])]
+          (str "troca segurando " (get itens-troca-pokeapi item-id (nome-formatado item-id)))
+          "troca entre jogadores"))
+
+      (and (= gatilho "level-up") (not (condicao-especial? d)))
+      (str (when-let [nivel (:min_level d)] (str "nível " nivel))
+           (when-let [amizade (or (:min_happiness d) (:min_affection d))]
+             (str (when (:min_level d) " + ") "amizade " amizade))
+           horario)
+
+      (= gatilho "use-item")
+      (if-let [id (get pedras-pokeapi (get-in d [:item :name]))]
+        (str (get-in aventuras/pedras [id :nome]) " (" id ")")
+        (str "Catalisador Evolutivo"
+             (when-let [item (nome-recurso d :item)] (str " (adapta " item ")"))))
+
+      (condicao-especial? d) "Catalisador Evolutivo"
+
+      :else "Catalisador Evolutivo")))
+
+(defn- proximas-evolucoes
   [cadeia slug-atual]
   (letfn [(achar-no [no]
-            (if (= slug-atual (get-in no [:species :name]))
-              no
-              (some achar-no (:evolves_to no))))]
-    (when-let [atual (achar-no (get cadeia :chain))]
-      (->> (:evolves_to atual)
-           (keep (fn [proximo]
-                   (when-let [nivel (some #(when (= "level-up" (get-in % [:trigger :name]))
-                                             (:min_level %))
-                                          (:evolution_details proximo))]
-                     {:nome (nome-formatado (get-in proximo [:species :name])) :nivel nivel})))
-           vec))))
+            (if (= slug-atual (get-in no [:species :name])) no
+                (some achar-no (:evolves_to no))))]
+    (when-let [atual (achar-no (:chain cadeia))]
+      (vec
+       (for [proximo (:evolves_to atual)]
+         {:nome (nome-formatado (get-in proximo [:species :name]))
+          :como (->> (:evolution_details proximo)
+                     (map descrever-detalhe) distinct (str/join " ou "))})))))
 
 (defn- buscar-dados [entrada]
   (let [slug (normalizar entrada)]
@@ -131,7 +176,8 @@
            :atq-esp        (stat-base dados "special-attack")
            :def-esp        (stat-base dados "special-defense")
            :veloc          (stat-base dados "speed")
-           :evolucoes      (proximas-evolucoes-por-nivel cadeia (:name dados))
+           :evolucoes      (proximas-evolucoes cadeia (:name dados))
+           :versao-evolucoes 2
            :descricao-en   (descricao-em-ingles especie)})))))
 
 (defn dados-especie
@@ -143,7 +189,15 @@
   [entrada]
   (let [chave (normalizar entrada)]
     (if-let [pokemon (get @cache chave)]
-      (p/resolved pokemon)
+      (if (= 2 (:versao-evolucoes pokemon))
+        (p/resolved pokemon)
+        (p/let [atualizado (buscar-dados entrada)]
+          (when atualizado
+            (p/let [descricao-pt (when (:descricao-en atualizado)
+                                   (traducao/traduzir (:descricao-en atualizado) "en" "pt"))
+                    habilidades-pt (traducao/traduzir (:habilidades-en atualizado) "en" "pt")]
+              (salvar-no-cache! chave (assoc atualizado :descricao-pt descricao-pt
+                                                        :habilidades-pt habilidades-pt))))))
       (p/let [pokemon (buscar-dados entrada)]
         (when pokemon
           (p/let [descricao-pt   (when (:descricao-en pokemon)
