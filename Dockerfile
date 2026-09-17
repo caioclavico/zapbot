@@ -17,6 +17,9 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true \
 WORKDIR /app
 
 COPY package*.json ./
+# O postinstall aplica uma correção mínima do upstream no transporte de mídia.
+# O script precisa existir antes do npm ci executar os scripts de ciclo de vida.
+COPY scripts/patch-whatsapp-media.js ./scripts/patch-whatsapp-media.js
 # Instala exatamente o lockfile. Isso impede um rebuild de trocar silenciosamente
 # a versão do transporte do WhatsApp e quebrar novamente o envio de imagens.
 RUN npm ci

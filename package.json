@@ -1,6 +1,6 @@
 {
   "name": "zapbot",
-  "version": "0.14.11",
+  "version": "0.14.12",
   "private": true,
   "description": "Bot para WhatsApp escrito em ClojureScript (piadas, notícias, cotações, previsão do tempo, horóscopo, moderação de grupo).",
   "engines": {
@@ -8,9 +8,11 @@
   },
   "scripts": {
     "dev": "shadow-cljs watch app",
-    "build": "shadow-cljs release app",
-    "test": "shadow-cljs compile test && node target/test.js",
-    "start": "node target/main.js"
+    "build": "npm run verify:media-patch && shadow-cljs release app",
+    "test": "npm run verify:media-patch && shadow-cljs compile test && node target/test.js",
+    "start": "node target/main.js",
+    "postinstall": "node scripts/patch-whatsapp-media.js",
+    "verify:media-patch": "node scripts/patch-whatsapp-media.js --check"
   },
   "dependencies": {
     "cassandra-driver": "^4.7.2",
