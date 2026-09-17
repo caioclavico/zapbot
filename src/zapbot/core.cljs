@@ -76,7 +76,8 @@
                                                                 #js {:sendMediaAsDocument true}))))
                     (:media resposta) (.reply message (:media resposta) nil
                                               #js {:caption (:texto resposta)
-                                                   :mentions (clj->js (:mentions resposta))})
+                                                   :mentions (clj->js (:mentions resposta))
+                                                   :sendVideoAsGif (true? (:send-video-as-gif? resposta))})
                     ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
                     ;; de quem for a vez) resolvem {:texto :mentions} em vez de
                     ;; uma string simples - todo o resto continua string normal

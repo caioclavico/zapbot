@@ -1542,7 +1542,10 @@
   (-> (p/let [buffer (criar-gif-captura bola capturou? fugiu?)]
         {:media (MessageMedia. "image/gif" (.toString buffer "base64")
                               (if capturou? "captura-concluida.gif" "captura-falhou.gif"))
-         :texto texto})
+         :texto texto
+         ;; O WhatsApp Web precisa desta opção para tratar a mídia como
+         ;; animação; sem ela costuma publicar apenas o primeiro quadro.
+         :send-video-as-gif? true})
       (p/catch (fn [err]
                  (js/console.error "Erro ao montar imagem da captura:" err)
                  texto))))
@@ -1558,7 +1561,9 @@
   (boolean (re-find #"(?i)captura concluída" (or texto ""))))
 
 (defn- tentativa-captura-realizada? [texto]
-  (boolean (re-find #"(?i)(lançada: captura concluída|\bfalhou[,!])" (or texto ""))))
+  ;; Inclui "falhou e ... fugiu": esse resultado também deve usar a animação
+  ;; da Pokébola aberta, em vez da imagem geral da caçada com o treinador.
+  (boolean (re-find #"(?i)(lançada: captura concluída|\bfalhou\b)" (or texto ""))))
 
 (defn- svg-sobreposicao-batalha
   ([texto shiny?] (svg-sobreposicao-batalha texto shiny? nil))

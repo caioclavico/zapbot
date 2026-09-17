@@ -13,12 +13,8 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — O tamanho dos Pokémon nas arenas agora respeita a altura real de cada espécie"
-   "17/09 — Espécies pequenas continuam legíveis, enquanto Pokémon grandes ocupam mais espaço na moldura"
-   "17/09 — Pokémon antigos recebem suas medidas automaticamente pela PokéAPI ao aparecerem em imagens"
-   "17/09 — Fogo, raio, água e veneno agora usam cores sólidas e brilho sem o aro branco de contorno"
-   "17/09 — Capturas agora mostram um GIF da bola sendo lançada, balançando e revelando sucesso ou falha"
-   "17/09 — Efeitos dos golpes ficaram maiores e foram organizados verticalmente entre os Pokémon"])
+  ["17/09 — A animação da Pokébola agora é enviada no modo GIF do WhatsApp"
+   "17/09 — Quando a captura falha e o Pokémon foge, aparecem a Pokébola aberta e a fumaça"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

@@ -158,7 +158,15 @@
   (is (nil? (core/bola-do-comando-captura "capturar invalida")))
   (is (true? (core/captura-concluida? "✅ Pokébola lançada: captura concluída!")))
   (is (true? (core/tentativa-captura-realizada? "💥 A Grande Bola falhou, mas continua aqui!")))
+  (is (true? (core/tentativa-captura-realizada? "💨 A Pokébola falhou e Pikachu fugiu!")))
   (is (false? (core/tentativa-captura-realizada? "🎒 Você não tem essa bola."))))
+
+(deftest fuga-da-captura-mostra-bola-aberta-com-fumaca
+  (let [quadro (core/svg-quadro-captura
+                "pokebola" {:x 380 :y 245 :angulo 0 :estado :falha :fugiu? true})]
+    (is (str/includes? quadro "M-70 8a70 70"))
+    (is (str/includes? quadro "fill-opacity='.9'"))
+    (is (not (str/includes? quadro "<image")))))
 
 (deftest gif-de-captura-anima-balanco-sucesso-e-falha
   (async done
