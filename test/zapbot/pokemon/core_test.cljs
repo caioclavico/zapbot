@@ -2,7 +2,8 @@
   (:require [cljs.test :refer-macros [async deftest is testing]]
             [clojure.string :as str]
             [zapbot.pokemon.core :as core]
-            [zapbot.pokemon.ginasios :as ginasios]))
+            [zapbot.pokemon.ginasios :as ginasios]
+            ["sharp" :as sharp]))
 
 (def pikachu
   {:nome "Pikachu" :tipos ["electric"] :habilidade "static"
@@ -159,6 +160,27 @@
   (is (true? (core/tentativa-captura-realizada? "💥 A Grande Bola falhou, mas continua aqui!")))
   (is (false? (core/tentativa-captura-realizada? "🎒 Você não tem essa bola."))))
 
+(deftest gif-de-captura-anima-balanco-sucesso-e-falha
+  (async done
+    (-> (js/Promise.all
+         #js [(core/criar-gif-captura "ultra-bola" true false)
+              (core/criar-gif-captura "grande-bola" false true)])
+        (.then (fn [buffers]
+                 (js/Promise.all
+                  #js [(.metadata (sharp (aget buffers 0) #js {:animated true}))
+                       (.metadata (sharp (aget buffers 1) #js {:animated true}))])))
+        (.then (fn [metadados]
+                 (let [sucesso (aget metadados 0)
+                       falha (aget metadados 1)]
+                   (is (= "gif" (.-format sucesso)))
+                   (is (= 9 (.-pages sucesso)))
+                   (is (= 400 (.-pageHeight sucesso)))
+                   (is (= 9 (.-pages falha)))
+                   (done))))
+        (.catch (fn [erro]
+                  (is false (str "Não conseguiu gerar os GIFs de captura: " erro))
+                  (done))))))
+
 (deftest efeitos-visuais-cobrem-golpes-status-shiny-e-substituicao
   (let [efeitos (core/svg-sobreposicao-batalha
                  "causou queimadura, paralisia, envenenamento, congelamento, dormiu, confusão e entrou na batalha"
@@ -176,14 +198,20 @@
       (is (not (str/includes? inicio "M405 75")))
       (is (not (str/includes? inicio "M380 125")))))
   (testing "o tipo real seleciona um efeito diferente"
-    (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "electric"}) "M405 75"))
+    (let [raio (core/svg-sobreposicao-batalha "golpe" false {:tipo "electric"})
+          fogo (core/svg-sobreposicao-batalha "golpe" false {:tipo "fire"})]
+      (is (str/includes? raio "M405 75"))
+      (is (str/includes? raio "fill='#fde047'"))
+      (is (str/includes? fogo "fill='#f97316'"))
+      (is (str/includes? fogo "fill='#fde047'"))
+      (is (not (str/includes? fogo "fill-opacity='.82'"))))
     (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "water"}) "M380 80"))
     (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "grass"}) "<ellipse"))
     (let [psiquico (core/svg-sobreposicao-batalha "golpe" false {:tipo "psychic"})]
       (is (str/includes? psiquico "#e879f9"))
       (is (str/includes? psiquico "M380 210C380 178"))
-      (is (str/includes? psiquico "translate(247 147.5) scale(.25)"))
-      (is (str/includes? psiquico "translate(310 147.5) scale(.25)")))))
+      (is (str/includes? psiquico "translate(247 76.5) scale(.35)"))
+      (is (str/includes? psiquico "translate(266 189.3) scale(.30)")))))
 
 (deftest efeito-visual-usa-o-golpe-escolhido
   (let [golpes [{:nome-exibicao "Choque" :tipo "electric" :classe :especial}
@@ -193,6 +221,15 @@
            (core/golpe-do-comando jogo :x "atk 1")))
     (is (= "grass" (:tipo (core/golpe-do-comando jogo :x "atacar 2"))))
     (is (nil? (core/golpe-do-comando jogo :x "def")))))
+
+(deftest tamanho-visual-respeita-a-altura-da-especie
+  (let [inseto (core/tamanho-visual-pokemon {:altura 0.3} 260)
+        medio  (core/tamanho-visual-pokemon {:altura 1.0} 260)
+        grande (core/tamanho-visual-pokemon {:altura 2.1} 260)
+        gigante (core/tamanho-visual-pokemon {:altura 8.8} 260)]
+    (is (< inseto medio grande gigante))
+    (is (<= 130 inseto))
+    (is (<= gigante 260))))
 
 (deftest classifica-cartoes-dos-eventos-pokemon
   (is (= :nivel (core/tema-evento-da-resposta "" "Pikachu subiu para o nível 12")))
@@ -248,7 +285,9 @@
                       (.toString (js/Buffer.from
                                   "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><circle cx='16' cy='16' r='14' fill='red'/></svg>")
                                  "base64"))
-          pokemons [{:imagem sprite} {:imagem sprite} {:imagem sprite}]]
+          pokemons [{:imagem sprite :altura 0.3}
+                    {:imagem sprite :altura 1.0}
+                    {:imagem sprite :altura 2.1}]]
       (-> (core/criar-imagem-time-ginasio pokemons)
           (.then (fn [buffer]
                    (is (> (.-length buffer) 10000))

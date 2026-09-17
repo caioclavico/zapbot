@@ -241,6 +241,8 @@
                      (get-in dados [:sprites :front_shiny]))
    :imagem       (or (get-in dados [:sprites :other :official-artwork :front_default])
                      (get-in dados [:sprites :front_default]))
+   :altura       (/ (:height dados) 10.0)
+   :peso         (/ (:weight dados) 10.0)
    :tipos        (mapv #(get-in % [:type :name]) (:types dados))
    ;; prefere a habilidade "normal" (não-oculta); só cai pra
    ;; oculta se por algum motivo não houver nenhuma outra
@@ -1254,16 +1256,45 @@
         (.png)
         (.toBuffer))))
 
-(defn- criar-imagem-vs [url-x url-o]
-  (p/let [[sprite-x sprite-o] (p/all [(sprite-redimensionado url-x) (sprite-redimensionado url-o)])
-          largura 760
-          margem (quot (- largura (+ (* 2 tamanho-sprite) tamanho-x)) 2)]
-    (-> (sharp #js {:create #js {:width largura :height 400 :channels 4
+(defn- tamanho-visual-pokemon
+  "Converte a altura real da espécie em tamanho de sprite. A escala logarítmica
+  preserva a diferença entre espécies sem tornar insetos ilegíveis ou gigantes
+  maiores que a moldura."
+  [pokemon maximo]
+  (let [altura (max 0.1 (or (:altura pokemon) 1.0))
+        proporcao (min 1 (/ (js/Math.log1p altura) (js/Math.log 5)))]
+    (js/Math.round (* maximo (+ 0.5 (* 0.5 proporcao))))))
+
+(defn- pokemon-com-medidas [pokemon]
+  (if (or (:altura pokemon) (str/blank? (:nome pokemon)))
+    (p/resolved pokemon)
+    (-> (buscar-pokemon-por-nome (str/lower-case (:nome pokemon)))
+        (p/then (fn [dados] (assoc pokemon :altura (:altura dados) :peso (:peso dados))))
+        (p/catch (fn [_] pokemon)))))
+
+(defn- sprite-proporcional [pokemon maximo]
+  (p/let [pokemon (pokemon-com-medidas pokemon)
+          tamanho (tamanho-visual-pokemon pokemon maximo)
+          buffer (baixar-buffer (:imagem pokemon))
+          sprite (-> (sharp buffer)
+                     (.resize tamanho tamanho #js {:fit "contain"
+                                                   :background #js {:r 255 :g 255 :b 255 :alpha 0}})
+                     (.png)
+                     (.toBuffer))]
+    {:buffer sprite :tamanho tamanho}))
+
+(defn- criar-imagem-vs [pokemon-x pokemon-o]
+  (p/let [[sprite-x sprite-o] (p/all [(sprite-proporcional pokemon-x tamanho-sprite)
+                                      (sprite-proporcional pokemon-o tamanho-sprite)])]
+    (-> (sharp #js {:create #js {:width 760 :height 400 :channels 4
                                  :background #js {:r 255 :g 255 :b 255 :alpha 0}}})
-        (.composite #js [#js {:input sprite-x :left margem :top 70}
-                         #js {:input (js/Buffer.from (svg-x)) :left (+ margem tamanho-sprite)
-                              :top (+ 70 (quot (- tamanho-sprite tamanho-x) 2))}
-                         #js {:input sprite-o :left (+ margem tamanho-sprite tamanho-x) :top 70}])
+        (.composite #js [#js {:input (:buffer sprite-x)
+                              :left (- 200 (quot (:tamanho sprite-x) 2))
+                              :top (- 330 (:tamanho sprite-x))}
+                         #js {:input (js/Buffer.from (svg-x)) :left 330 :top 150}
+                         #js {:input (:buffer sprite-o)
+                              :left (- 560 (quot (:tamanho sprite-o) 2))
+                              :top (- 330 (:tamanho sprite-o))}])
         (.png)
         (.toBuffer))))
 
@@ -1284,12 +1315,16 @@
        "<text x='380' y='112' fill='#fef3c7' font-size='25' font-family='sans-serif' font-weight='bold' text-anchor='middle'>BATALHA DE GINÁSIO</text>"
        "</svg>"))
 
-(defn- criar-imagem-ginasio [url-desafiante url-lider]
-  (p/let [[desafiante lider] (p/all [(sprite-redimensionado url-desafiante)
-                                      (sprite-redimensionado url-lider)])]
+(defn- criar-imagem-ginasio [pokemon-desafiante pokemon-lider]
+  (p/let [[desafiante lider] (p/all [(sprite-proporcional pokemon-desafiante tamanho-sprite)
+                                      (sprite-proporcional pokemon-lider tamanho-sprite)])]
     (-> (sharp (js/Buffer.from (svg-arena-ginasio)))
-        (.composite #js [#js {:input desafiante :left 70 :top 95}
-                         #js {:input lider :left 430 :top 95}])
+        (.composite #js [#js {:input (:buffer desafiante)
+                              :left (- 200 (quot (:tamanho desafiante) 2))
+                              :top (- 355 (:tamanho desafiante))}
+                         #js {:input (:buffer lider)
+                              :left (- 560 (quot (:tamanho lider) 2))
+                              :top (- 355 (:tamanho lider))}])
         (.png)
         (.toBuffer))))
 
@@ -1310,20 +1345,14 @@
        "<g fill='#facc15' font-size='24' font-family='sans-serif' font-weight='bold' text-anchor='middle'><text x='145' y='360'>1</text><text x='380' y='360'>2</text><text x='615' y='360'>3</text></g>"
        "</svg>"))
 
-(defn- sprite-time-ginasio [url]
-  (p/let [buffer (baixar-buffer url)]
-    (-> (sharp buffer)
-        (.resize 190 190 #js {:fit "contain"
-                              :background #js {:r 255 :g 255 :b 255 :alpha 0}})
-        (.png)
-        (.toBuffer))))
-
 (defn- criar-imagem-time-ginasio [pokemons]
-  (p/let [sprites (p/all (map #(sprite-time-ginasio (:imagem %)) pokemons))]
+  (p/let [sprites (p/all (map #(sprite-proporcional % 190) pokemons))]
     (-> (sharp (js/Buffer.from (svg-time-ginasio)))
-        (.composite (to-array (map (fn [sprite esquerda]
-                                    #js {:input sprite :left esquerda :top 82})
-                                  sprites [50 285 520])))
+        (.composite (to-array (map (fn [sprite centro]
+                                    #js {:input (:buffer sprite)
+                                         :left (- centro (quot (:tamanho sprite) 2))
+                                         :top (- 270 (:tamanho sprite))})
+                                  sprites [145 380 615])))
         (.png)
         (.toBuffer))))
 
@@ -1336,8 +1365,8 @@
                  texto))))
 
 (defn- enviar-imagem-ginasio [message jogo]
-  (-> (p/let [buffer (criar-imagem-ginasio (get-in jogo [:pokemons :x :imagem])
-                                            (get-in jogo [:pokemons :o :imagem]))
+  (-> (p/let [buffer (criar-imagem-ginasio (get-in jogo [:pokemons :x])
+                                            (get-in jogo [:pokemons :o]))
               media (MessageMedia. "image/png" (.toString buffer "base64") "ginasio.png")
               _ (.reply message media nil
                         #js {:caption (str "🏛️ *" (get-in jogo [:ginasio :nome]) "*\n"
@@ -1354,8 +1383,8 @@
   ataque do ginásio leva a foto dos dois Pokémon ativos e o texto completo da
   rodada vira a legenda, inclusive quando o líder contra-ataca."
   [jogo texto efeito]
-  (-> (p/let [base (criar-imagem-ginasio (get-in jogo [:pokemons :x :imagem])
-                                          (get-in jogo [:pokemons :o :imagem]))
+  (-> (p/let [base (criar-imagem-ginasio (get-in jogo [:pokemons :x])
+                                          (get-in jogo [:pokemons :o]))
               buffer (aplicar-sobreposicao-batalha base texto false efeito)]
         {:media (MessageMedia. "image/png" (.toString buffer "base64") "ataque-ginasio.png")
          :texto texto})
@@ -1384,12 +1413,17 @@
        "</svg>"))
 
 (defn- criar-imagem-cacada [caca fugiu?]
-  (p/let [meu (sprite-redimensionado (get-in caca [:pokemons :x :imagem]))
+  (p/let [meu (sprite-proporcional (get-in caca [:pokemons :x]) tamanho-sprite)
           selvagem (when-not fugiu?
-                     (sprite-redimensionado (get-in caca [:pokemons :o :imagem])))]
+                     (sprite-proporcional (get-in caca [:pokemons :o]) tamanho-sprite))]
     (-> (sharp (js/Buffer.from (svg-arena-cacada fugiu?)))
-        (.composite (to-array (cond-> [#js {:input meu :left 70 :top 105}]
-                                selvagem (conj #js {:input selvagem :left 430 :top 90}))))
+        (.composite (to-array
+                     (cond-> [#js {:input (:buffer meu)
+                                   :left (- 200 (quot (:tamanho meu) 2))
+                                   :top (- 365 (:tamanho meu))}]
+                       selvagem (conj #js {:input (:buffer selvagem)
+                                           :left (- 560 (quot (:tamanho selvagem) 2))
+                                           :top (- 350 (:tamanho selvagem))}))))
         (.png)
         (.toBuffer))))
 
@@ -1448,12 +1482,66 @@
                 "<circle cx='690' cy='210' r='46'/><circle cx='645' cy='225' r='48'/></g>"))
          "</svg>")))
 
+(defn- svg-quadro-captura [bola {:keys [x y angulo estado fugiu?]}]
+  (let [cor (cor-bola bola)
+        sucesso? (= estado :sucesso)
+        falha? (= estado :falha)]
+    (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
+         "<defs><linearGradient id='ceu-gif' x1='0' y1='0' x2='0' y2='1'><stop stop-color='#7dd3fc'/><stop offset='1' stop-color='#e0f2fe'/></linearGradient>"
+         "<linearGradient id='grama-gif' x1='0' y1='0' x2='0' y2='1'><stop stop-color='#65a30d'/><stop offset='1' stop-color='#166534'/></linearGradient>"
+         "<filter id='sombra-gif'><feDropShadow dx='0' dy='7' stdDeviation='7' flood-opacity='.35'/></filter></defs>"
+         "<rect width='760' height='400' rx='28' fill='url(#ceu-gif)'/><path d='M0 285Q180 245 380 285T760 280V400H0Z' fill='url(#grama-gif)'/>"
+         (if falha?
+           (str "<g transform='translate(" x " " y ")' filter='url(#sombra-gif)'>"
+                "<path d='M-70 8a70 70 0 0 0 140 0Z' fill='#f8fafc' stroke='#111827' stroke-width='9'/><path d='M-68 8H68' stroke='#111827' stroke-width='11'/><circle cy='8' r='20' fill='#f8fafc' stroke='#111827' stroke-width='8'/>"
+                "<g transform='translate(0 -28) rotate(-22)'><path d='M-70 0a70 70 0 0 1 140 0Z' fill='" cor "' stroke='#111827' stroke-width='9'/><path d='M-68 0H68' stroke='#111827' stroke-width='10'/></g></g>")
+           (str "<g transform='translate(" x " " y ") rotate(" angulo ")' filter='url(#sombra-gif)'>"
+                "<circle r='70' fill='#f8fafc' stroke='#111827' stroke-width='9'/><path d='M-70 0a70 70 0 0 1 140 0Z' fill='" cor "'/><path d='M-68 0H68' stroke='#111827' stroke-width='11'/><circle r='20' fill='#f8fafc' stroke='#111827' stroke-width='8'/></g>"))
+         (when sucesso?
+           (str "<g fill='#fde047' stroke='#f59e0b' stroke-width='3'>"
+                "<path d='M270 125l9 22 24 2-18 15 5 24-20-13-20 13 5-24-18-15 24-2Z'/><path d='M490 115l8 19 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z'/><path d='M500 265l7 17 19 1-15 12 5 19-16-10-16 10 5-19-15-12 19-1Z'/></g>"))
+         (when (and falha? fugiu?)
+           (str "<g fill='#f8fafc' fill-opacity='.9' stroke='#cbd5e1' stroke-width='3'>"
+                "<circle cx='515' cy='205' r='38'/><circle cx='555' cy='185' r='31'/><circle cx='590' cy='215' r='42'/><circle cx='550' cy='235' r='44'/></g>"))
+         "</svg>")))
+
+(defn- quadros-captura [capturou? fugiu?]
+  (let [movimento [{:x 190 :y 125 :angulo -32 :estado :fechada}
+                   {:x 285 :y 185 :angulo 24 :estado :fechada}
+                   {:x 380 :y 245 :angulo 0 :estado :fechada}
+                   {:x 345 :y 245 :angulo -20 :estado :fechada}
+                   {:x 415 :y 245 :angulo 20 :estado :fechada}
+                   {:x 350 :y 245 :angulo -16 :estado :fechada}
+                   {:x 410 :y 245 :angulo 16 :estado :fechada}
+                   {:x 380 :y 245 :angulo 0 :estado :fechada}]
+        final (if capturou?
+                [{:x 380 :y 245 :angulo 0 :estado :sucesso}]
+                [{:x 380 :y 245 :angulo 0 :estado :falha :fugiu? fugiu?}])]
+    (vec (concat movimento final))))
+
+(defn- criar-gif-captura [bola capturou? fugiu?]
+  (let [quadros (quadros-captura capturou? fugiu?)
+        altura-quadro 400
+        delays (vec (concat [110 110 140 180 180 190 190 260]
+                            [750]))]
+    (-> (sharp #js {:create #js {:width 760
+                                 :height (* altura-quadro (count quadros))
+                                 :pageHeight altura-quadro
+                                 :channels 4
+                                 :background #js {:r 0 :g 0 :b 0 :alpha 0}}})
+        (.composite
+         (to-array
+          (map-indexed (fn [indice quadro]
+                         #js {:input (js/Buffer.from (svg-quadro-captura bola quadro))
+                              :left 0 :top (* indice altura-quadro)})
+                       quadros)))
+        (.gif (clj->js {:delay delays :loop 1 :effort 3}))
+        (.toBuffer))))
+
 (defn- resposta-imagem-captura [bola texto capturou? fugiu?]
-  (-> (p/let [buffer (-> (sharp (js/Buffer.from (svg-bola-captura bola capturou? fugiu?)))
-                              (.png)
-                              (.toBuffer))]
-        {:media (MessageMedia. "image/png" (.toString buffer "base64")
-                              (if capturou? "captura-concluida.png" "captura-falhou.png"))
+  (-> (p/let [buffer (criar-gif-captura bola capturou? fugiu?)]
+        {:media (MessageMedia. "image/gif" (.toString buffer "base64")
+                              (if capturou? "captura-concluida.gif" "captura-falhou.gif"))
          :texto texto})
       (p/catch (fn [err]
                  (js/console.error "Erro ao montar imagem da captura:" err)
@@ -1490,23 +1578,22 @@
         desmaio? (boolean (re-find #"(?i)(desmaiou|caiu por causa|caiu com o recuo)" texto))
         entrada? (boolean (re-find #"(?i)(envia \*|entrou na batalha)" texto))]
     (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
+         "<defs><filter id='golpe-glow'><feDropShadow dx='0' dy='0' stdDeviation='9' flood-color='#ffffff' flood-opacity='.75'/></filter></defs>"
          (when (or fogo? raio? agua? grama? psiquico? veneno? gelo?)
-           "<g transform='translate(247 147.5) scale(.25)'>")
-         (when (or fogo? raio? veneno? gelo?)
-           "<circle cx='380' cy='215' r='72' fill='none' stroke='#ffffff' stroke-opacity='.8' stroke-width='9'/>")
-         (when fogo? "<path d='M350 280q-55-70 5-120-5 45 28 58-8-72 42-112 55 80 10 174Z' fill='#f97316' fill-opacity='.82'/>")
+           "<g transform='translate(247 76.5) scale(.35)' filter='url(#golpe-glow)'>")
+         (when fogo? "<g><path d='M350 280q-55-70 5-120-5 45 28 58-8-72 42-112 55 80 10 174Z' fill='#f97316' stroke='#c2410c' stroke-width='8'/><path d='M377 268q-27-38 2-69 1 24 20 34-2-33 19-57 24 48-4 92Z' fill='#fde047'/></g>")
          (when raio? "<path d='M405 75l-82 145h62l-34 112 101-157h-65Z' fill='#fde047' stroke='#eab308' stroke-width='8'/>")
-         (when agua? "<path d='M380 80C330 155 300 195 300 245a80 80 0 0 0 160 0c0-50-30-90-80-165Z' fill='#38bdf8' fill-opacity='.78' stroke='#0369a1' stroke-width='8'/>")
+         (when agua? "<path d='M380 80C330 155 300 195 300 245a80 80 0 0 0 160 0c0-50-30-90-80-165Z' fill='#38bdf8' stroke='#0369a1' stroke-width='8'/>")
          (when grama? "<g fill='#4ade80' stroke='#15803d' stroke-width='6'><ellipse cx='345' cy='210' rx='38' ry='75' transform='rotate(-35 345 210)'/><ellipse cx='420' cy='205' rx='38' ry='75' transform='rotate(35 420 205)'/></g>")
          (when psiquico? "<path d='M380 210C380 178 425 180 425 218C425 270 355 280 325 228C288 164 360 102 435 137C530 182 493 315 382 326' fill='none' stroke='#e879f9' stroke-width='14' stroke-linecap='round' stroke-linejoin='round'/>")
-         (when veneno? "<g fill='#a855f7' fill-opacity='.75'><circle cx='340' cy='245' r='28'/><circle cx='410' cy='205' r='38'/><circle cx='455' cy='270' r='20'/></g>")
+         (when veneno? "<g fill='#a855f7' stroke='#7e22ce' stroke-width='6'><circle cx='340' cy='245' r='28'/><circle cx='410' cy='205' r='38'/><circle cx='455' cy='270' r='20'/></g>")
          (when gelo? "<path d='M380 90v245M275 150l210 125M275 275l210-125' stroke='#67e8f9' stroke-width='18' stroke-linecap='round'/>")
          (when (or fogo? raio? agua? grama? psiquico? veneno? gelo?) "</g>")
          (when (or sono? confuso?)
            "<circle cx='380' cy='215' r='72' fill='none' stroke='#ffffff' stroke-opacity='.8' stroke-width='9'/>")
          (when sono? "<g fill='#312e81' font-family='sans-serif' font-weight='bold'><text x='420' y='145' font-size='48'>Z</text><text x='475' y='105' font-size='36'>Z</text></g>")
          (when confuso? "<path d='M315 180q65-80 130 0t-130 0q65-55 130 0' fill='none' stroke='#f472b6' stroke-width='14'/>")
-         (when impacto? "<g transform='translate(310 147.5) scale(.25)'><path d='M380 125l22 58 61-17-37 52 51 37-63-4-9 62-25-57-57 30 34-53-53-34 63 1Z' fill='#ffffff' fill-opacity='.45' stroke='#facc15' stroke-width='7'/></g>")
+         (when impacto? "<g transform='translate(266 189.3) scale(.30)'><path d='M380 125l22 58 61-17-37 52 51 37-63-4-9 62-25-57-57 30 34-53-53-34 63 1Z' fill='#ffffff' fill-opacity='.45' stroke='#facc15' stroke-width='7'/></g>")
          (when desmaio? "<g stroke='#0f172a' stroke-width='13' stroke-linecap='round'><path d='M555 130l38 38m0-38l-38 38M635 130l38 38m0-38l-38 38'/></g>")
          (when entrada? "<g transform='translate(585 250)'><circle r='55' fill='#f8fafc' stroke='#111827' stroke-width='8'/><path d='M-55 0a55 55 0 0 1 110 0Z' fill='#dc2626'/><path d='M-52 0h104' stroke='#111827' stroke-width='10'/><circle r='15' fill='#fff' stroke='#111827' stroke-width='7'/></g>")
          (when shiny?
@@ -1613,16 +1700,16 @@
 
 ;; monta e envia a imagem vs; se algo falhar (rede/sharp), cai pra um texto
 ;; simples com a mesma legenda em vez de deixar a batalha travada sem anúncio
-(defn- enviar-anuncio-batalha [message url-x url-o legenda]
-  (-> (p/let [buffer (criar-imagem-vs url-x url-o)]
+(defn- enviar-anuncio-batalha [message pokemon-x pokemon-o legenda]
+  (-> (p/let [buffer (criar-imagem-vs pokemon-x pokemon-o)]
         (enviar-imagem-vs message buffer legenda))
       (p/catch (fn [err]
                  (js/console.error "Erro ao montar imagem da batalha:" err)
                  (.reply message legenda)))))
 
 (defn- resposta-imagem-pvp [jogo texto efeito]
-  (-> (p/let [base (criar-imagem-vs (get-in jogo [:pokemons :x :imagem])
-                                     (get-in jogo [:pokemons :o :imagem]))
+  (-> (p/let [base (criar-imagem-vs (get-in jogo [:pokemons :x])
+                                     (get-in jogo [:pokemons :o]))
               buffer (aplicar-sobreposicao-batalha base texto false efeito)]
         {:media (MessageMedia. "image/png" (.toString buffer "base64") "golpe-pvp.png")
          :texto texto
@@ -1748,8 +1835,8 @@
                       [jogo-novo msg-intimidacao] (aplicar-intimidacao jogo-pre)]
                   (if (tentar-registrar! cid jogo-novo (fn [atual] (and (= atual jogo-atual) (configuracao-valida?))))
                     (p/let [_ (enviar-anuncio-batalha message
-                                                      (get-in jogo-novo [:pokemons :x :imagem])
-                                                      (get-in jogo-novo [:pokemons :o :imagem])
+                                                      (get-in jogo-novo [:pokemons :x])
+                                                      (get-in jogo-novo [:pokemons :o])
                                                       (legenda-vs (get-in jogo-novo [:nomes :x]) (get-in jogo-novo [:pokemons :x])
                                                                   nome (get-in jogo-novo [:pokemons :o])))]
                       (com-mencao jogo-novo

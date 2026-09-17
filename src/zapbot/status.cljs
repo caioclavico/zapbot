@@ -13,12 +13,12 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Atendimentos da Enfermeira Joy agora exibem uma ilustração dela no Centro Pokémon"
-   "17/09 — O catálogo da loja agora aparece com uma ilustração própria"
-   "17/09 — Missões diárias e semanais agora são apresentadas pelo Professor Carvalho"
-   "17/09 — A escalação e a consulta de um ginásio ocupado mostram os três Pokémon dentro da arena"
-   "17/09 — O menu de ginásios ficou mais limpo; os times aparecem apenas na consulta de cada ginásio"
-   "17/09 — Golpes psíquicos usam uma espiral roxa; energia e impacto ficam pequenos e separados entre os Pokémon"])
+  ["17/09 — O tamanho dos Pokémon nas arenas agora respeita a altura real de cada espécie"
+   "17/09 — Espécies pequenas continuam legíveis, enquanto Pokémon grandes ocupam mais espaço na moldura"
+   "17/09 — Pokémon antigos recebem suas medidas automaticamente pela PokéAPI ao aparecerem em imagens"
+   "17/09 — Fogo, raio, água e veneno agora usam cores sólidas e brilho sem o aro branco de contorno"
+   "17/09 — Capturas agora mostram um GIF da bola sendo lançada, balançando e revelando sucesso ou falha"
+   "17/09 — Efeitos dos golpes ficaram maiores e foram organizados verticalmente entre os Pokémon"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

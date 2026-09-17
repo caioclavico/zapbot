@@ -102,6 +102,7 @@
   hp-atual/status pro formato persistido (chaves string) guardado na equipe."
   [pokemon hp-atual status]
   {"nome" (:nome pokemon) "imagem" (:imagem pokemon) "tipos" (vec (:tipos pokemon))
+   "altura" (:altura pokemon) "peso" (:peso pokemon)
    "shiny" (boolean (:shiny? pokemon)) "imagem-shiny" (:imagem-shiny pokemon)
    "habilidade" (:habilidade pokemon) "hp" (:hp pokemon) "ataque" (:ataque pokemon)
    "defesa" (:defesa pokemon) "atq-esp" (:atq-esp pokemon) "def-esp" (:def-esp pokemon)
@@ -121,6 +122,7 @@
   interno do zapbot.pokemon.core (chaves keyword). Retorna [pokemon hp-atual status]."
   [registro]
   [{:nome (get registro "nome") :imagem (get registro "imagem") :tipos (vec (get registro "tipos"))
+    :altura (get registro "altura") :peso (get registro "peso")
     :shiny? (get registro "shiny" false) :imagem-shiny (get registro "imagem-shiny")
     :habilidade (get registro "habilidade") :hp (get registro "hp") :ataque (get registro "ataque")
     :defesa (get registro "defesa") :atq-esp (get registro "atq-esp") :def-esp (get registro "def-esp")
