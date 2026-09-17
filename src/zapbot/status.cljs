@@ -13,8 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — A animação da Pokébola agora é enviada no modo GIF do WhatsApp"
-   "17/09 — Quando a captura falha e o Pokémon foge, aparecem a Pokébola aberta e a fumaça"])
+  ["17/09 — Capturas bem-sucedidas mostram a Pokébola fechada com estrelas acima"
+   "17/09 — Quando o Pokémon foge, a imagem mostra a Pokébola aberta com fumaça acima"
+   "17/09 — O menu de captura mostra somente o Pokémon derrotado, centralizado na arena selvagem"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

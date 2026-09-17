@@ -1412,20 +1412,28 @@
               "<path d='M510 290q55-40 110 0t110 0' fill='none' stroke='#e2e8f0' stroke-width='18' stroke-linecap='round'/>"))
        "</svg>"))
 
+(defn- layout-imagem-cacada [caca fugiu?]
+  (let [captura? (and (:aguardando-captura? caca) (not fugiu?))]
+    {:mostrar-meu? (not captura?)
+     :centro-selvagem (if captura? 380 560)}))
+
 (defn- criar-imagem-cacada [caca fugiu?]
-  (p/let [meu (sprite-proporcional (get-in caca [:pokemons :x]) tamanho-sprite)
+  (let [{:keys [mostrar-meu? centro-selvagem]} (layout-imagem-cacada caca fugiu?)]
+  (p/let [meu (when mostrar-meu?
+                (sprite-proporcional (get-in caca [:pokemons :x]) tamanho-sprite))
           selvagem (when-not fugiu?
                      (sprite-proporcional (get-in caca [:pokemons :o]) tamanho-sprite))]
     (-> (sharp (js/Buffer.from (svg-arena-cacada fugiu?)))
         (.composite (to-array
-                     (cond-> [#js {:input (:buffer meu)
-                                   :left (- 200 (quot (:tamanho meu) 2))
-                                   :top (- 365 (:tamanho meu))}]
+                     (cond-> []
+                       meu (conj #js {:input (:buffer meu)
+                                      :left (- 200 (quot (:tamanho meu) 2))
+                                      :top (- 365 (:tamanho meu))})
                        selvagem (conj #js {:input (:buffer selvagem)
-                                           :left (- 560 (quot (:tamanho selvagem) 2))
+                                           :left (- centro-selvagem (quot (:tamanho selvagem) 2))
                                            :top (- 350 (:tamanho selvagem))}))))
         (.png)
-        (.toBuffer))))
+        (.toBuffer)))))
 
 (defn- resposta-imagem-cacada
   ([caca texto fugiu?] (resposta-imagem-cacada caca texto fugiu? nil))
@@ -1468,9 +1476,9 @@
                 "<path d='M278 225h204' stroke='#111827' stroke-width='16'/>"
                 "<circle cx='380' cy='225' r='31' fill='#f8fafc' stroke='#111827' stroke-width='12'/>"
                 "</g><g fill='#fde047' stroke='#f59e0b' stroke-width='3'>"
-                "<path d='M226 104l10 24 26 2-20 17 6 25-22-14-22 14 6-25-20-17 26-2Z'/>"
-                "<path d='M540 92l8 19 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z'/>"
-                "<path d='M560 260l7 17 19 1-15 12 5 19-16-10-16 10 5-19-15-12 19-1Z'/></g>")
+                "<path d='M300 72l10 24 26 2-20 17 6 25-22-14-22 14 6-25-20-17 26-2Z'/>"
+                "<path d='M380 42l8 19 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z'/>"
+                "<path d='M460 72l10 24 26 2-20 17 6 25-22-14-22 14 6-25-20-17 26-2Z'/></g>")
            (str "<g filter='url(#sombra-bola)'>"
                 "<path d='M275 250a105 105 0 0 0 210 0Z' fill='#f8fafc' stroke='#111827' stroke-width='12'/>"
                 "<path d='M275 250h210' stroke='#111827' stroke-width='16'/><circle cx='380' cy='250' r='29' fill='#f8fafc' stroke='#111827' stroke-width='11'/>"
@@ -1478,74 +1486,17 @@
                 "<path d='M278 205h204' stroke='#111827' stroke-width='14'/></g></g>"))
          (when fugiu?
            (str "<g fill='#f8fafc' fill-opacity='.9' stroke='#cbd5e1' stroke-width='3'>"
-                "<circle cx='610' cy='190' r='42'/><circle cx='655' cy='175' r='36'/>"
-                "<circle cx='690' cy='210' r='46'/><circle cx='645' cy='225' r='48'/></g>"))
+                "<circle cx='335' cy='112' r='40'/><circle cx='375' cy='88' r='34'/>"
+                "<circle cx='420' cy='105' r='44'/><circle cx='385' cy='130' r='48'/></g>"))
          "</svg>")))
-
-(defn- svg-quadro-captura [bola {:keys [x y angulo estado fugiu?]}]
-  (let [cor (cor-bola bola)
-        sucesso? (= estado :sucesso)
-        falha? (= estado :falha)]
-    (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
-         "<defs><linearGradient id='ceu-gif' x1='0' y1='0' x2='0' y2='1'><stop stop-color='#7dd3fc'/><stop offset='1' stop-color='#e0f2fe'/></linearGradient>"
-         "<linearGradient id='grama-gif' x1='0' y1='0' x2='0' y2='1'><stop stop-color='#65a30d'/><stop offset='1' stop-color='#166534'/></linearGradient>"
-         "<filter id='sombra-gif'><feDropShadow dx='0' dy='7' stdDeviation='7' flood-opacity='.35'/></filter></defs>"
-         "<rect width='760' height='400' rx='28' fill='url(#ceu-gif)'/><path d='M0 285Q180 245 380 285T760 280V400H0Z' fill='url(#grama-gif)'/>"
-         (if falha?
-           (str "<g transform='translate(" x " " y ")' filter='url(#sombra-gif)'>"
-                "<path d='M-70 8a70 70 0 0 0 140 0Z' fill='#f8fafc' stroke='#111827' stroke-width='9'/><path d='M-68 8H68' stroke='#111827' stroke-width='11'/><circle cy='8' r='20' fill='#f8fafc' stroke='#111827' stroke-width='8'/>"
-                "<g transform='translate(0 -28) rotate(-22)'><path d='M-70 0a70 70 0 0 1 140 0Z' fill='" cor "' stroke='#111827' stroke-width='9'/><path d='M-68 0H68' stroke='#111827' stroke-width='10'/></g></g>")
-           (str "<g transform='translate(" x " " y ") rotate(" angulo ")' filter='url(#sombra-gif)'>"
-                "<circle r='70' fill='#f8fafc' stroke='#111827' stroke-width='9'/><path d='M-70 0a70 70 0 0 1 140 0Z' fill='" cor "'/><path d='M-68 0H68' stroke='#111827' stroke-width='11'/><circle r='20' fill='#f8fafc' stroke='#111827' stroke-width='8'/></g>"))
-         (when sucesso?
-           (str "<g fill='#fde047' stroke='#f59e0b' stroke-width='3'>"
-                "<path d='M270 125l9 22 24 2-18 15 5 24-20-13-20 13 5-24-18-15 24-2Z'/><path d='M490 115l8 19 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z'/><path d='M500 265l7 17 19 1-15 12 5 19-16-10-16 10 5-19-15-12 19-1Z'/></g>"))
-         (when (and falha? fugiu?)
-           (str "<g fill='#f8fafc' fill-opacity='.9' stroke='#cbd5e1' stroke-width='3'>"
-                "<circle cx='515' cy='205' r='38'/><circle cx='555' cy='185' r='31'/><circle cx='590' cy='215' r='42'/><circle cx='550' cy='235' r='44'/></g>"))
-         "</svg>")))
-
-(defn- quadros-captura [capturou? fugiu?]
-  (let [movimento [{:x 190 :y 125 :angulo -32 :estado :fechada}
-                   {:x 285 :y 185 :angulo 24 :estado :fechada}
-                   {:x 380 :y 245 :angulo 0 :estado :fechada}
-                   {:x 345 :y 245 :angulo -20 :estado :fechada}
-                   {:x 415 :y 245 :angulo 20 :estado :fechada}
-                   {:x 350 :y 245 :angulo -16 :estado :fechada}
-                   {:x 410 :y 245 :angulo 16 :estado :fechada}
-                   {:x 380 :y 245 :angulo 0 :estado :fechada}]
-        final (if capturou?
-                [{:x 380 :y 245 :angulo 0 :estado :sucesso}]
-                [{:x 380 :y 245 :angulo 0 :estado :falha :fugiu? fugiu?}])]
-    (vec (concat movimento final))))
-
-(defn- criar-gif-captura [bola capturou? fugiu?]
-  (let [quadros (quadros-captura capturou? fugiu?)
-        altura-quadro 400
-        delays (vec (concat [110 110 140 180 180 190 190 260]
-                            [750]))]
-    (-> (sharp #js {:create #js {:width 760
-                                 :height (* altura-quadro (count quadros))
-                                 :pageHeight altura-quadro
-                                 :channels 4
-                                 :background #js {:r 0 :g 0 :b 0 :alpha 0}}})
-        (.composite
-         (to-array
-          (map-indexed (fn [indice quadro]
-                         #js {:input (js/Buffer.from (svg-quadro-captura bola quadro))
-                              :left 0 :top (* indice altura-quadro)})
-                       quadros)))
-        (.gif (clj->js {:delay delays :loop 1 :effort 3}))
-        (.toBuffer))))
 
 (defn- resposta-imagem-captura [bola texto capturou? fugiu?]
-  (-> (p/let [buffer (criar-gif-captura bola capturou? fugiu?)]
-        {:media (MessageMedia. "image/gif" (.toString buffer "base64")
-                              (if capturou? "captura-concluida.gif" "captura-falhou.gif"))
-         :texto texto
-         ;; O WhatsApp Web precisa desta opção para tratar a mídia como
-         ;; animação; sem ela costuma publicar apenas o primeiro quadro.
-         :send-video-as-gif? true})
+  (-> (p/let [buffer (-> (sharp (js/Buffer.from (svg-bola-captura bola capturou? fugiu?)))
+                              (.png)
+                              (.toBuffer))]
+        {:media (MessageMedia. "image/png" (.toString buffer "base64")
+                              (if capturou? "captura-concluida.png" "captura-falhou.png"))
+         :texto texto})
       (p/catch (fn [err]
                  (js/console.error "Erro ao montar imagem da captura:" err)
                  texto))))
@@ -1561,7 +1512,7 @@
   (boolean (re-find #"(?i)captura concluída" (or texto ""))))
 
 (defn- tentativa-captura-realizada? [texto]
-  ;; Inclui "falhou e ... fugiu": esse resultado também deve usar a animação
+  ;; Inclui "falhou e ... fugiu": esse resultado também deve usar a imagem
   ;; da Pokébola aberta, em vez da imagem geral da caçada com o treinador.
   (boolean (re-find #"(?i)(lançada: captura concluída|\bfalhou\b)" (or texto ""))))
 

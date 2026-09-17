@@ -162,32 +162,34 @@
   (is (false? (core/tentativa-captura-realizada? "🎒 Você não tem essa bola."))))
 
 (deftest fuga-da-captura-mostra-bola-aberta-com-fumaca
-  (let [quadro (core/svg-quadro-captura
-                "pokebola" {:x 380 :y 245 :angulo 0 :estado :falha :fugiu? true})]
-    (is (str/includes? quadro "M-70 8a70 70"))
+  (let [quadro (core/svg-bola-captura "pokebola" false true)]
+    (is (str/includes? quadro "rotate(-18"))
     (is (str/includes? quadro "fill-opacity='.9'"))
+    (is (str/includes? quadro "cx='385' cy='130'"))
     (is (not (str/includes? quadro "<image")))))
 
-(deftest gif-de-captura-anima-balanco-sucesso-e-falha
+(deftest imagens-estaticas-de-captura-sao-png
   (async done
-    (-> (js/Promise.all
-         #js [(core/criar-gif-captura "ultra-bola" true false)
-              (core/criar-gif-captura "grande-bola" false true)])
-        (.then (fn [buffers]
-                 (js/Promise.all
-                  #js [(.metadata (sharp (aget buffers 0) #js {:animated true}))
-                       (.metadata (sharp (aget buffers 1) #js {:animated true}))])))
+    (-> (sharp (js/Buffer.from (core/svg-bola-captura "ultra-bola" true false)))
+        (.png)
+        (.toBuffer)
+        (.then (fn [buffer] (.metadata (sharp buffer))))
         (.then (fn [metadados]
-                 (let [sucesso (aget metadados 0)
-                       falha (aget metadados 1)]
-                   (is (= "gif" (.-format sucesso)))
-                   (is (= 9 (.-pages sucesso)))
-                   (is (= 400 (.-pageHeight sucesso)))
-                   (is (= 9 (.-pages falha)))
-                   (done))))
+                 (is (= "png" (.-format metadados)))
+                 (is (= 760 (.-width metadados)))
+                 (is (= 400 (.-height metadados)))
+                 (done)))
         (.catch (fn [erro]
-                  (is false (str "Não conseguiu gerar os GIFs de captura: " erro))
+                  (is false (str "Não conseguiu gerar a imagem de captura: " erro))
                   (done))))))
+
+(deftest menu-de-captura-centraliza-apenas-o-selvagem-derrotado
+  (let [batalha (core/layout-imagem-cacada {} false)
+        captura (core/layout-imagem-cacada {:aguardando-captura? true} false)]
+    (is (true? (:mostrar-meu? batalha)))
+    (is (= 560 (:centro-selvagem batalha)))
+    (is (false? (:mostrar-meu? captura)))
+    (is (= 380 (:centro-selvagem captura)))))
 
 (deftest efeitos-visuais-cobrem-golpes-status-shiny-e-substituicao
   (let [efeitos (core/svg-sobreposicao-batalha
