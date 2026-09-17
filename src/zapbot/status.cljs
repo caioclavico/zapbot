@@ -13,9 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Restaurado o envio de imagens da loja, Enfermeira Joy e Pokémon"
-   "17/09 — Corrigida incompatibilidade do ID interno de mídia com o WhatsApp Web atual"
-   "17/09 — Build agora verifica automaticamente se a correção de imagens foi aplicada"])
+  ["17/09 — Batalhas PvP, ginásios e caçadas agora retomam do Cassandra após reinício"
+   "17/09 — Perfil mostra Ash e Pokémon destacados, com os dados na legenda da imagem"
+   "17/09 — Enfermeira Joy agora exibe atendimento ou o hospital conforme houver feridos"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

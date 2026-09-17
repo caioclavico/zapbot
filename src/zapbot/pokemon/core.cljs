@@ -4,10 +4,11 @@
   sem chave). Cada jogador escolhe qual dos 4 golpes do seu Pokémon usar a
   cada turno; ataques consideram o tipo/poder/classe do golpe escolhido,
   chance de crítico, status (paralisia/queimadura/veneno) e um punhado de
-  habilidades icônicas. Estado guardado em memória por chat (não sobrevive
-  a reinício do bot)."
+  habilidades icônicas. Batalhas e caçadas em andamento são espelhadas no
+  Cassandra para poderem ser retomadas depois de um reinício do bot."
   (:require [promesa.core :as p]
             [clojure.string :as str]
+            [cljs.reader :as reader]
             [zapbot.pokemon.golpes :as golpes]
             [zapbot.pokemon.aventuras :as aventuras]
             [zapbot.pokemon.ginasios :as ginasios]
@@ -17,6 +18,7 @@
             ["sharp" :as sharp]
             ["fs" :as fs]
             [zapbot.config :as config]
+            [zapbot.armazenamento :as armazenamento]
             [zapbot.rank :as rank]
             [zapbot.pokemon.loja :as loja]
             [zapbot.pokemon.pokedex :as pokedex]
@@ -25,8 +27,11 @@
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 
-(def ^:private imagem-enfermeira-joy
-  (str js/__dirname "/../assets/enfermeira-joy.png"))
+(def ^:private imagem-enfermeira-joy-tratando
+  (str js/__dirname "/../assets/enfermeira-joy-tratando.png"))
+
+(def ^:private imagem-centro-pokemon
+  (str js/__dirname "/../assets/centro-pokemon.png"))
 
 (def ^:private imagem-professor-carvalho
   (str js/__dirname "/../assets/professor-carvalho.png"))
@@ -37,18 +42,6 @@
 ;; total de espécies conhecidas pela PokeAPI (até a geração 9)
 (def ^:private total-pokemons 1025)
 
-(defonce ^:private jogos (atom {}))
-(defonce ^:private cacadas-selvagens (atom {}))
-(defonce ^:private cliente-whatsapp (atom nil))
-
-(defn iniciar!
-  "Registra o cliente conectado para avisos assíncronos de batalha."
-  [client]
-  (reset! cliente-whatsapp client))
-
-;; Remoções de golpe aguardando a janela de arrependimento, por [chat jogador].
-(defonce ^:private remocoes-pendentes (atom {}))
-
 ;; Tempo máximo que quem está na vez tem pra agir. Estourou, o bot trata a
 ;; pessoa como quem mandou `!pokemon sair` - sem isso uma batalha esquecida
 ;; trava o `!pokemon` do chat inteiro pra sempre. Na caçada quem demora é o
@@ -56,6 +49,167 @@
 ;; pessoa (que pode estar no trabalho, dormindo, etc.), daí ser bem mais folgado.
 (def ^:private minutos-limite-caca 5)
 (def ^:private minutos-limite-pvp 30)
+
+(def ^:private chave-batalhas-ativas "pokemon-batalhas-ativas")
+(def ^:private chave-cacadas-ativas "pokemon-cacadas-ativas")
+(def ^:private versao-combate-persistido 1)
+(def ^:private duracao-marcador-terminal-ms (* 24 60 60 1000))
+
+(defn- combate-retomavel?
+  "Estados intermediários de rede e de premiação não podem ser repetidos após
+  uma queda: isso duplicaria recompensas ou deixaria o chat preso."
+  [combate]
+  (let [pokemon-x (get-in combate [:pokemons :x])
+        pokemon-o (get-in combate [:pokemons :o])
+        hp-x      (get-in combate [:hp :x])
+        hp-o      (get-in combate [:hp :o])
+        jogadores (:jogadores combate)
+        vez       (:vez combate)
+        lado-o?   (and (string? (:o jogadores)) (map? pokemon-o) (number? hp-o) (pos? hp-o))
+        batalha?  (and (map? jogadores) (string? (:x jogadores))
+                       (map? pokemon-x) (number? hp-x) (pos? hp-x)
+                       (or (= :x vez) (and (= :o vez) lado-o?))
+                       (or (not (contains? jogadores :o)) lado-o?))
+        cacada?   (and (string? (:pid combate))
+                       (map? pokemon-x) (map? pokemon-o)
+                       (number? hp-x) (pos? hp-x)
+                       (number? hp-o) (not (neg? hp-o))
+                       (or (pos? hp-o)
+                           (and (zero? hp-o) (:aguardando-captura? combate))))]
+    (and (map? combate)
+         (not (:carregando? combate))
+         (not (:finalizando? combate))
+         (or batalha? cacada?))))
+
+(defn- serializar-combates
+  "Converte os combates vivos para o formato JSON do armazenamento. Objetos
+  do WhatsApp e atoms servem apenas durante o processo atual e são removidos.
+  O relógio só avança para o chat cujo estado serializável realmente mudou.
+  Encerramentos viram marcadores temporários em vez de DELETE imediato: se o
+  processo cair durante uma premiação, o snapshot ativo antigo não ressuscita."
+  ([estado] (serializar-combates estado {} (.now js/Date)))
+  ([estado agora] (serializar-combates estado {} agora))
+  ([estado registros-anteriores agora]
+   (let [cids (set (concat (keys estado) (keys registros-anteriores)))]
+     (into {}
+           (keep
+            (fn [cid]
+              (let [combate            (get estado cid)
+                    anterior           (get registros-anteriores cid)
+                    terminal-anterior? (true? (get anterior "terminal"))
+                    idade-terminal     (when (number? (get anterior "atualizado-em"))
+                                         (- agora (get anterior "atualizado-em")))]
+                (cond
+                  (combate-retomavel? combate)
+                  (let [estado-edn (pr-str (dissoc combate :message :resultado-derrota))
+                        mudou?     (not= estado-edn (get anterior "estado"))]
+                    [cid {"versao" versao-combate-persistido
+                          "atualizado-em" (if mudou? agora (get anterior "atualizado-em" agora))
+                          "estado" estado-edn}])
+
+                  ;; Reservas de rede nunca chegaram a formar uma batalha.
+                  (:carregando? combate) nil
+
+                  ;; Mantém o marcador estável sem renovar sua retenção a cada
+                  ;; jogada que acontecer em outro chat.
+                  (and (nil? combate) terminal-anterior?
+                       (number? idade-terminal)
+                       (<= idade-terminal duracao-marcador-terminal-ms))
+                  [cid anterior]
+
+                  (and (nil? combate) terminal-anterior?) nil
+
+                  ;; Estado terminal explícito, inválido, ou que acabou de ser
+                  ;; removido. Não há EDN para restaurar neste registro.
+                  (or (some? combate) anterior)
+                  [cid {"versao" versao-combate-persistido
+                        "atualizado-em" agora
+                        "terminal" true}]
+
+                  :else nil)))
+           cids)))))
+
+(defn- restaurar-combates
+  "Restaura apenas registros íntegros e ainda dentro do tempo normal da vez.
+  O reinício concede uma nova janela completa ao jogador, mas uma batalha que
+  já estava vencida no Cassandra é descartada em vez de bloquear o chat."
+  ([registros minutos-validade]
+   (restaurar-combates registros minutos-validade (.now js/Date)))
+  ([registros minutos-validade agora]
+   (let [validade-ms (* minutos-validade 60 1000)]
+     (into {}
+           (keep (fn [[cid registro]]
+                   (try
+                     (let [versao       (get registro "versao")
+                           atualizado-em (get registro "atualizado-em")
+                           estado-edn    (get registro "estado")
+                           idade         (when (number? atualizado-em) (- agora atualizado-em))
+                           combate       (when (and (not (true? (get registro "terminal")))
+                                                    (= versao-combate-persistido versao)
+                                                    (string? estado-edn)
+                                                    (number? idade)
+                                                    (<= idade validade-ms))
+                                           (reader/read-string estado-edn))
+                           combate       (cond-> combate
+                                           (:ginasio combate) (assoc :resultado-derrota (atom nil)))]
+                       (when (combate-retomavel? combate) [cid combate]))
+                     (catch :default erro
+                       (js/console.warn "Combate temporário inválido ignorado:" cid (.-message erro))
+                       nil))))
+           (or registros {})))))
+
+(defonce ^:private jogos
+  (atom (restaurar-combates (armazenamento/obter chave-batalhas-ativas)
+                            minutos-limite-pvp)))
+(defonce ^:private cacadas-selvagens
+  (atom (restaurar-combates (armazenamento/obter chave-cacadas-ativas)
+                            minutos-limite-caca)))
+
+(armazenamento/registrar!
+ chave-batalhas-ativas jogos
+ #(restaurar-combates % minutos-limite-pvp))
+(armazenamento/registrar!
+ chave-cacadas-ativas cacadas-selvagens
+ #(restaurar-combates % minutos-limite-caca))
+
+;; Cada mutação atualiza a partição do chat no Cassandra. Ao terminar, sair ou
+;; expirar, o dissoc no atom também apaga automaticamente o registro temporário.
+(defonce ^:private gravacoes-combates (atom {}))
+
+(add-watch jogos ::persistir-batalhas
+           (fn [_ _ _ depois]
+             (let [gravacao (armazenamento/salvar!
+                             chave-batalhas-ativas
+                             (serializar-combates depois
+                                                   (or (armazenamento/obter chave-batalhas-ativas) {})
+                                                   (.now js/Date)))]
+               (swap! gravacoes-combates assoc chave-batalhas-ativas gravacao))))
+(add-watch cacadas-selvagens ::persistir-cacadas
+           (fn [_ _ _ depois]
+             (let [gravacao (armazenamento/salvar!
+                             chave-cacadas-ativas
+                             (serializar-combates depois
+                                                   (or (armazenamento/obter chave-cacadas-ativas) {})
+                                                   (.now js/Date)))]
+               (swap! gravacoes-combates assoc chave-cacadas-ativas gravacao))))
+
+(defn- aguardar-gravacoes-combates! []
+  ;; A ação do jogo continua disponível mesmo se o Cassandra estiver em uma
+  ;; indisponibilidade prolongada; `salvar!` já tentou novamente e registrou o
+  ;; erro, e seu snapshot confirmado fará a próxima alteração repetir o diff.
+  (p/all (map #(p/catch % (fn [_] nil)) (vals @gravacoes-combates))))
+
+(defonce ^:private cliente-whatsapp (atom nil))
+(declare rearmar-limites-restaurados!)
+
+(defn iniciar!
+  "Registra o cliente conectado e só então rearma os relógios restaurados."
+  [client]
+  (reset! cliente-whatsapp client)
+  (rearmar-limites-restaurados!))
+
+;; Remoções de golpe aguardando a janela de arrependimento, por [chat jogador].
+(defonce ^:private remocoes-pendentes (atom {}))
 
 ;; Relógio da vez em andamento, por chat: {chat {:token :timer}}.
 (defonce ^:private limites-turno (atom {}))
@@ -1081,7 +1235,8 @@
 
 (defn- finalizar-vitoria [message cid jogo vencedor-marca motivo-extra]
   (if (:ginasio jogo)
-    (finalizar-ginasio (:message jogo) cid jogo vencedor-marca)
+    (finalizar-ginasio (if (and message (.-reply message)) message (:message jogo))
+                       cid jogo vencedor-marca)
     (finalizar-vitoria-pvp message cid jogo vencedor-marca motivo-extra)))
 
 (defn- anunciar-vitoria [message cid jogo _vencedor-marca motivo-extra]
@@ -1646,6 +1801,7 @@
    :lider ["NOVO LÍDER" "#b91c1c" "♛"]
    :raid ["RAID COOPERATIVA" "#7e22ce" "⚔"]
    :joy ["ENFERMEIRA JOY" "#db2777" "+"]
+   :hospital ["CENTRO POKÉMON" "#0284c7" "+"]
    :missao ["MISSÃO CONCLUÍDA" "#15803d" "✓"]
    :evolucao ["EVOLUÇÃO" "#4f46e5" "→"]})
 
@@ -1673,7 +1829,8 @@
 
 (defn- criar-cartao-evento [tema url texto]
   (if-let [imagem (case tema
-                    :joy imagem-enfermeira-joy
+                    :joy imagem-enfermeira-joy-tratando
+                    :hospital imagem-centro-pokemon
                     :missao imagem-professor-carvalho
                     nil)]
     (-> (sharp imagem)
@@ -1706,10 +1863,16 @@
 
 (defn- tema-evento-da-resposta [args texto]
   (let [texto (or texto "")
-        comando (-> (or args "") str/trim str/lower-case (str/split #"\s+") first expandir-atalho)]
+        comando (-> (or args "") str/trim str/lower-case (str/split #"\s+") first expandir-atalho)
+        joy? (contains? #{"joy" "enfermeira" "enfermaria" "hospital"} comando)]
     (cond
       (= comando "raid") :raid
-      (and (= comando "joy") (str/includes? texto "A Enfermeira Joy recebeu")) :joy
+      (and joy? (str/includes? texto "não pode enviar Pokémon")) nil
+      (and joy? (re-find #"(?i)time já está saudável" texto)) :hospital
+      (and joy? (str/includes? texto "Enfermeira Joy")) :joy
+      ;; Sem equipe e sem ninguém em tratamento também significa que não há
+      ;; feridos; o comando continua útil mostrando a entrada do Centro Pokémon.
+      joy? :hospital
       (contains? #{"missoes" "missões"} comando) :missao
       (str/includes? texto "venceu o ginásio") :insignia
       (re-find #"(?i)evoluiu para" texto) :evolucao
@@ -2081,7 +2244,12 @@
   (let [cid  (chat-id message)
         pid  (jogador-id message)
         jogo (get @jogos cid)
-        eq   (treinador/equipe cid pid)]
+        eq   (treinador/equipe cid pid)
+        tem-ferido? (boolean
+                     (some (fn [registro]
+                             (let [[pokemon hp-atual status] (treinador/registro->pokemon registro)]
+                               (or (< hp-atual (:hp pokemon)) status)))
+                           eq))]
     (p/resolved
      (cond
        (or (jogador-na-batalha? jogo pid)
@@ -2126,7 +2294,9 @@
                     "Eles voltarão totalmente curados em " treinador/tempo-tratamento-minutos " minutos.\n\n"
                     "Pokémon já saudáveis foram ignorados. Use " config/prefix
                     "pokemon time para acompanhar o retorno.")
-               (str (cabecalho) "❓ Os Pokémon escolhidos já estão saudáveis e não precisam da Enfermeira Joy.")))))))))
+               (if tem-ferido?
+                 (str (cabecalho) "❓ Os Pokémon escolhidos já estão saudáveis. A Enfermeira Joy ainda pode atender outro Pokémon ferido do seu time.")
+                 (str (cabecalho) "✨ Seu time já está saudável; a Enfermeira Joy não precisa atender ninguém agora."))))))))))
 (defn- curar-turno [message]
   (let [cid  (chat-id message)
         pid  (jogador-id message)
@@ -2390,9 +2560,7 @@
 
 (defn- svg-cartao-treinador
   ([nome nivel ativo numero-ativo] (svg-cartao-treinador nome nivel ativo numero-ativo true))
-  ([nome nivel ativo numero-ativo desenhar-ash?]
-   (let [nome-ativo (or (:nome ativo) "Nenhum")
-         nivel-ativo (when ativo (nivel-pokemon ativo))]
+  ([_nome _nivel _ativo _numero-ativo desenhar-ash?]
     (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
          "<defs>"
          "<linearGradient id='fundo-treinador' x1='0' y1='0' x2='1' y2='1'><stop stop-color='#7f1d1d'/><stop offset='.48' stop-color='#dc2626'/><stop offset='1' stop-color='#450a0a'/></linearGradient>"
@@ -2405,6 +2573,7 @@
          "<circle cx='640' cy='42' r='70' fill='none' stroke='#fee2e2' stroke-width='18' opacity='.18'/>"
          "<path d='M0 318Q160 282 340 312T760 294V400H0Z' fill='#111827' opacity='.22'/>"
          "<path d='M0 296H760' stroke='#fee2e2' stroke-width='10' opacity='.2'/>"
+         "<ellipse cx='550' cy='357' rx='122' ry='22' fill='#111827' opacity='.2'/>"
          (when desenhar-ash?
            (str "<g filter='url(#sombra-treinador)'>"
                 "<ellipse cx='214' cy='348' rx='92' ry='18' fill='#14532d' opacity='.28'/>"
@@ -2419,17 +2588,7 @@
                 "<path d='M199 181Q214 193 229 181' fill='none' stroke='#111827' stroke-width='5' stroke-linecap='round'/>"
                 "<path d='M184 225L123 265' stroke='#f2c29b' stroke-width='18' stroke-linecap='round'/><path d='M244 225L305 265' stroke='#f2c29b' stroke-width='18' stroke-linecap='round'/>"
                 "</g>"))
-         "<g filter='url(#sombra-treinador)'>"
-         "<rect x='338' y='58' width='350' height='112' rx='22' fill='#0f172a' fill-opacity='.72' stroke='#facc15' stroke-width='5'/>"
-         "<text x='365' y='103' font-size='30' font-family='Arial,sans-serif' font-weight='bold' fill='#f8fafc'>Treinador</text>"
-         "<text x='365' y='140' font-size='24' font-family='Arial,sans-serif' fill='#dbeafe'>" (escapar-xml nome) " • Nv. " nivel "</text>"
-         "<rect x='356' y='205' width='280' height='116' rx='22' fill='#f8fafc' fill-opacity='.9' stroke='#111827' stroke-width='6'/>"
-         "<text x='496' y='244' font-size='25' font-family='Arial,sans-serif' font-weight='bold' text-anchor='middle' fill='#111827'>Pokémon ativo</text>"
-         "<text x='496' y='282' font-size='23' font-family='Arial,sans-serif' text-anchor='middle' fill='#334155'>"
-         (if ativo (str "#" numero-ativo " " (escapar-xml nome-ativo) " • Nv. " nivel-ativo) "Nenhum")
-         "</text>"
-         "</g>"
-         "</svg>"))))
+         "</svg>")))
 
 (defn- sprite-ash-treinador []
   (when (.existsSync fs imagem-ash-treinador)
@@ -2439,12 +2598,30 @@
         (.png)
         (.toBuffer))))
 
+(def ^:private tamanho-pokemon-treinador 280)
+
+(defn- sprite-pokemon-treinador
+  "No perfil, toda espécie recebe o mesmo espaço visual. A proporção interna
+  da arte é preservada, mas a altura real não deixa Pokémon pequenos ilegíveis."
+  [pokemon]
+  (p/let [buffer (-> (baixar-buffer (:imagem pokemon))
+                     (p/catch (fn [erro]
+                                (js/console.warn "Cartão do treinador sem sprite ativo:"
+                                                 (.-message erro))
+                                nil)))
+          entrada (or buffer (js/Buffer.from (svg-sprite-indisponivel tamanho-pokemon-treinador)))]
+    (-> (sharp entrada)
+        (.resize tamanho-pokemon-treinador tamanho-pokemon-treinador
+                 #js {:fit "contain" :background #js {:r 0 :g 0 :b 0 :alpha 0}})
+        (.png)
+        (.toBuffer))))
+
 (defn- criar-cartao-treinador [nome nivel ativo numero-ativo]
   ;; Cria a promessa enquanto `with-redefs`/chamador ainda está no mesmo
   ;; contexto e isola sua falha: Ash e a ficha continuam aparecendo mesmo que
   ;; a arte remota do Pokémon esteja temporariamente indisponível.
   (let [sprite-promessa (when ativo
-                          (-> (sprite-proporcional ativo 190)
+                          (-> (sprite-pokemon-treinador ativo)
                               (p/catch (fn [erro]
                                          (js/console.warn "Cartão do treinador sem sprite ativo:"
                                                           (.-message erro))
@@ -2456,38 +2633,36 @@
                        sprite-ash (conj #js {:input sprite-ash
                                              :left 78
                                              :top 50})
-                       sprite (conj #js {:input (:buffer sprite)
-                                         :left (- 515 (quot (:tamanho sprite) 2))
-                                         :top (- 360 (:tamanho sprite))}))]
+                       sprite (conj #js {:input sprite
+                                         :left 410
+                                         :top 88}))]
       (-> (sharp (js/Buffer.from svg))
           (.composite (clj->js overlays))
           (.png)
           (.toBuffer)))))
 
 (defn- texto-treinador [cid pid nome perfil numero-ativo ativo]
-  (let [{:keys [nivel xp xp-insignias xp-missoes pe-ginasios pe-raids xp-atual xp-necessario sequencia recorde insignias]} perfil]
-    (str "🧢 *Treinador: " nome "*\n\n"
-         "⭐ Nível do treinador: " nivel
-         "\n✨ PE (Pontos de experiência): " xp
-         "\n🎖️ PE recebido por insígnias: " xp-insignias
-         "\n📋 PE recebido por missões: " xp-missoes
-         "\n🏛️ PE adicional de ginásios: " pe-ginasios
-         "\n🤝 PE recebido por raids: " pe-raids
-         "\nPróximo nível: " xp-atual "/" xp-necessario " PE (vitórias + ginásios + raids + insígnias + missões)"
-         "\n🏛️ Insígnias de ginásio: "
-         (let [ids (keys (treinador/insignias-ginasio cid pid))]
-           (if (seq ids) (str/join ", " (map #(or (:nome (aventuras/obter-ginasio %)) %) ids)) "nenhuma"))
-         "\n🔥 Sequência atual: " sequencia " capturas"
-         "\n🏆 Maior sequência de capturas: " recorde
-         "\n\n⚡ Pokémon ativo: "
-         (if ativo (str "#" numero-ativo " *" (:nome ativo) "* — nível " (or (:nivel ativo) 1))
-             "Nenhum")
-         "\n\n🎖️ *Insígnias: " (count (filter :conquistada? insignias)) "/" (count insignias) "*\n"
-         (str/join "\n" (map (fn [{:keys [nome requisito conquistada? xp-recompensa]}]
-                               (str (if conquistada? "🏅" "🔒") " " nome " — " requisito
-                                    " • +" xp-recompensa " PE"
-                                    (when conquistada? " (recebido)")))
-                             insignias)))))
+  (let [{:keys [nivel xp xp-insignias xp-missoes pe-ginasios pe-raids xp-atual xp-necessario sequencia recorde insignias]} perfil
+        ids-ginasio  (keys (treinador/insignias-ginasio cid pid))
+        nomes-ginasio (if (seq ids-ginasio)
+                        (str/join ", " (map #(or (:nome (aventuras/obter-ginasio %)) %) ids-ginasio))
+                        "nenhuma")
+        conquistadas (count (filter :conquistada? insignias))]
+    ;; Mantido abaixo do limite de legenda para imagem e dados chegarem juntos.
+    (str "🧢 *Treinador: " nome "*"
+         "\n⭐ Nível " nivel " • ✨ PE " xp " • próximo " xp-atual "/" xp-necessario
+         "\n🎖️ PE extra: insígnias +" xp-insignias " • missões +" xp-missoes
+         " • ginásios +" pe-ginasios " • raids +" pe-raids
+         "\n🏛️ Ginásios: " nomes-ginasio
+         "\n🔥 Capturas: sequência " sequencia " • recorde " recorde
+         "\n⚡ Ativo: "
+         (if ativo (str "#" numero-ativo " *" (:nome ativo) "* • Nv." (or (:nivel ativo) 1)) "nenhum")
+         "\n\n🏅 *Conquistas: " conquistadas "/" (count insignias) "*\n"
+         (str/join "\n"
+                   (map (fn [{:keys [nome requisito conquistada? xp-recompensa]}]
+                          (str (if conquistada? "🏅" "🔒") " " nome " — " requisito
+                               " (+" xp-recompensa " PE)"))
+                        insignias)))))
 
 (defn- ver-treinador [message]
   (let [cid (chat-id message)
@@ -2499,6 +2674,9 @@
             texto (texto-treinador cid pid nome perfil numero-ativo ativo)]
       (-> (p/let [buffer (criar-cartao-treinador nome (:nivel perfil) ativo numero-ativo)]
             {:media (MessageMedia. "image/png" (.toString buffer "base64") "treinador-pokemon.png")
+             ;; Normalmente `:texto` cabe inteiro e vira a própria legenda. Esta
+             ;; opção curta só é usada como proteção se dados futuros passarem
+             ;; do limite prático do WhatsApp.
              :legenda (str "🧢 *Perfil do treinador " nome "*")
              :texto texto})
           (p/catch (fn [err]
@@ -3678,8 +3856,12 @@
     (-> (.sendMessage client cid texto #js {:mentions (clj->js mentions)})
         (p/catch (fn [err]
                    (js/console.error "Erro ao enviar aviso assíncrono pelo cliente:" err)
-                   (.reply message texto nil #js {:mentions (clj->js mentions)}))))
-    (.reply message texto nil #js {:mentions (clj->js mentions)})))
+                   (if message
+                     (.reply message texto nil #js {:mentions (clj->js mentions)})
+                     (p/resolved nil)))))
+    (if message
+      (.reply message texto nil #js {:mentions (clj->js mentions)})
+      (p/resolved nil))))
 
 (defn- vigiar-limite-turno!
   "Amarra o relógio ao atom de estado: qualquer mudança no jogo de um chat
@@ -3696,7 +3878,10 @@
                        :when (not (identical? anterior atual))]
                  (if (nil? atual)
                    (cancelar-limite-turno! cid)
-                   (agendar-limite-turno! cid alvo atual minutos ao-estourar))))))
+                   ;; A hidratação acontece antes do evento ready. Esperar o
+                   ;; cliente evita consumir o prazo enquanto ninguém pode jogar.
+                   (when @cliente-whatsapp
+                     (agendar-limite-turno! cid alvo atual minutos ao-estourar)))))))
 
 (defn- expirar-cacada!
   "Ninguém agiu a tempo na caçada: vale exatamente como ter mandado
@@ -3706,13 +3891,16 @@
   (let [pid      (:pid caca)
         selvagem (get-in caca [:pokemons :o])]
     (swap! cacadas-selvagens dissoc cid)
-    (treinador/quebrar-sequencia-capturas! cid pid)
-    (-> (enviar-aviso-temporizado
-         cid (:message caca)
-         (str (cabecalho) "⏰ @" (so-numero pid) " passou " minutos-limite-caca
-              " minutos sem jogar e fugiu da batalha.\n\n💨 *" (:nome selvagem)
-              "* cansou de esperar e sumiu no mato. A sequência de capturas foi encerrada.")
-         [pid])
+    (-> (p/let [_ (aguardar-gravacoes-combates!)
+                _ (treinador/quebrar-sequencia-capturas! cid pid)
+                _ (armazenamento/aguardar-todas!)
+                _ (enviar-aviso-temporizado
+                   cid (:message caca)
+                   (str (cabecalho) "⏰ @" (so-numero pid) " passou " minutos-limite-caca
+                        " minutos sem jogar e fugiu da batalha.\n\n💨 *" (:nome selvagem)
+                        "* cansou de esperar e sumiu no mato. A sequência de capturas foi encerrada.")
+                   [pid])]
+          nil)
         (p/catch (fn [err] (js/console.error "Erro ao avisar fuga por tempo na caçada:" err))))))
 
 (defn- expirar-batalha!
@@ -3725,25 +3913,57 @@
         marca   (:vez jogo)
         pid     (get-in jogo [:jogadores marca])]
     (-> (if-not (contains? (:jogadores jogo) :o)
-          (do (swap! jogos dissoc cid)
-              (enviar-aviso-temporizado
-               cid message
-               (str (cabecalho) "⏰ Ninguém entrou nessa batalha em " minutos-limite-pvp
-                    " minutos, então ela foi cancelada. Abra outra com " config/prefix
-                    "pokemon quando quiser.") []))
+          (do
+            (swap! jogos dissoc cid)
+            (p/let [_ (aguardar-gravacoes-combates!)
+                    _ (enviar-aviso-temporizado
+                       cid message
+                       (str (cabecalho) "⏰ Ninguém entrou nessa batalha em " minutos-limite-pvp
+                            " minutos, então ela foi cancelada. Abra outra com " config/prefix
+                            "pokemon quando quiser.") [])]
+              nil))
           (if (tentar-encerrar-por-desistencia! cid jogo)
-            (let [perdeu-ponto? (when-not (:ginasio jogo) (rank/penalizar! cid pid))]
-              (enviar-aviso-temporizado
-               cid message
-               (str (cabecalho) "⏰ *" (get-in jogo [:nomes marca]) "* (@" (so-numero pid)
-                    ") passou " minutos-limite-pvp " minutos sem jogar e fugiu da batalha."
-                    "\n\n⚖️ Fuga não concede XP nem moedas a ninguém. "
-                    (if perdeu-ponto?
-                      "Quem fugiu perdeu 1 ponto no rank."
-                      "Nenhum ponto foi descontado."))
-               [pid]))
+            (p/let [_ (aguardar-gravacoes-combates!)
+                    perdeu-ponto? (when-not (:ginasio jogo) (rank/penalizar! cid pid))
+                    _ (armazenamento/aguardar-todas!)
+                    _ (enviar-aviso-temporizado
+                       cid message
+                       (str (cabecalho) "⏰ *" (get-in jogo [:nomes marca]) "* (@" (so-numero pid)
+                            ") passou " minutos-limite-pvp " minutos sem jogar e fugiu da batalha."
+                            "\n\n⚖️ Fuga não concede XP nem moedas a ninguém. "
+                            (if perdeu-ponto?
+                              "Quem fugiu perdeu 1 ponto no rank."
+                              "Nenhum ponto foi descontado."))
+                       [pid])]
+              nil)
             (p/resolved nil)))
         (p/catch (fn [err] (js/console.error "Erro ao avisar fuga por tempo na batalha:" err))))))
+
+(defn- rearmar-limites-restaurados!
+  "Concede a janela normal completa quando o WhatsApp volta a ficar pronto."
+  []
+  ;; A nova janela também vira o prazo persistido. Assim, se houver outra
+  ;; queda logo depois, o próximo boot não descarta um combate ainda válido.
+  (let [agora (.now js/Date)
+        gravacao-cacas (armazenamento/salvar!
+                        chave-cacadas-ativas
+                        (serializar-combates @cacadas-selvagens {} agora))
+        gravacao-batalhas (armazenamento/salvar!
+                           chave-batalhas-ativas
+                           (serializar-combates @jogos {} agora))]
+    (swap! gravacoes-combates assoc
+           chave-cacadas-ativas gravacao-cacas
+           chave-batalhas-ativas gravacao-batalhas)
+    (-> (p/all [gravacao-cacas gravacao-batalhas])
+        (p/catch (fn [erro]
+                   (js/console.error "Não consegui renovar o prazo dos combates restaurados:" erro)
+                   nil))
+        (p/finally
+         (fn []
+           (doseq [[cid caca] @cacadas-selvagens]
+             (agendar-limite-turno! cid cacadas-selvagens caca minutos-limite-caca expirar-cacada!))
+           (doseq [[cid jogo] @jogos]
+             (agendar-limite-turno! cid jogos jogo minutos-limite-pvp expirar-batalha!)))))))
 
 (vigiar-limite-turno! ::limite-cacada cacadas-selvagens minutos-limite-caca expirar-cacada!)
 (vigiar-limite-turno! ::limite-batalha jogos minutos-limite-pvp expirar-batalha!)
@@ -4605,6 +4825,14 @@
   (if-let [ajuda (pokemon-ajuda/resposta args)]
     (p/resolved ajuda)
     (let [cid (chat-id message)
+          ;; Objetos Message não podem ir ao Cassandra. No primeiro comando
+          ;; após um reinício, reconecta o estado restaurado à mensagem viva
+          ;; para respostas, evolução e fallbacks assíncronos.
+          _ (when (and (get @jogos cid) (nil? (:message (get @jogos cid))))
+              (swap! jogos update cid assoc :message message))
+          _ (when (and (get @cacadas-selvagens cid)
+                       (nil? (:message (get @cacadas-selvagens cid))))
+              (swap! cacadas-selvagens update cid assoc :message message))
           jogo-inicial (get @jogos cid)
           caca-inicial (get @cacadas-selvagens cid)
           bola-captura (bola-do-comando-captura args)
@@ -4639,33 +4867,40 @@
               url-evento (or (get-in (get @jogos cid) [:pokemons :x :imagem])
                              (get-in (get @cacadas-selvagens cid) [:pokemons :x :imagem])
                              (get-in jogo-inicial [:pokemons :x :imagem])
-                             (get-in caca-inicial [:pokemons :x :imagem]))]
-        (cond
-          ataque-no-ginasio?
-          (resposta-imagem-ginasio (or (get @jogos cid) jogo-inicial) texto-final efeitos-golpe)
+                             (get-in caca-inicial [:pokemons :x :imagem]))
+              resultado-final
+              (cond
+                ataque-no-ginasio?
+                (resposta-imagem-ginasio (or (get @jogos cid) jogo-inicial) texto-final efeitos-golpe)
 
-          ataque-no-pvp?
-          (resposta-imagem-pvp (or (get @jogos cid) jogo-inicial) texto-final efeitos-golpe)
+                ataque-no-pvp?
+                (resposta-imagem-pvp (or (get @jogos cid) jogo-inicial) texto-final efeitos-golpe)
 
-          (and caca-inicial bola-captura (tentativa-captura-realizada? (texto-resposta texto)))
-          (resposta-imagem-captura bola-captura
-                                   texto-final
-                                   (captura-concluida? texto-final)
-                                   (fuga-selvagem-na-resposta? texto-final))
+                (and caca-inicial bola-captura (tentativa-captura-realizada? (texto-resposta texto)))
+                (resposta-imagem-captura bola-captura
+                                         texto-final
+                                         (captura-concluida? texto-final)
+                                         (fuga-selvagem-na-resposta? texto-final))
 
-          (and caca-inicial
-               (or ataque-na-cacada? (fuga-selvagem-na-resposta? texto-final)))
-          (resposta-imagem-cacada (or (get @cacadas-selvagens cid) caca-inicial)
-                                  texto-final
-                                  (fuga-selvagem-na-resposta? texto-final)
-                                  (when-not (:aguardando-captura? (get @cacadas-selvagens cid))
-                                    efeitos-golpe))
+                (and caca-inicial
+                     (or ataque-na-cacada? (fuga-selvagem-na-resposta? texto-final)))
+                (resposta-imagem-cacada (or (get @cacadas-selvagens cid) caca-inicial)
+                                        texto-final
+                                        (fuga-selvagem-na-resposta? texto-final)
+                                        (when-not (:aguardando-captura? (get @cacadas-selvagens cid))
+                                          efeitos-golpe))
 
-          tema-evento
-          (resposta-cartao-evento tema-evento
-                                  (if (= tema-evento :raid)
-                                    "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/143.png"
-                                    url-evento)
-                                  texto-final (:mentions resposta))
+                tema-evento
+                (resposta-cartao-evento tema-evento
+                                        (if (= tema-evento :raid)
+                                          "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/143.png"
+                                          url-evento)
+                                        texto-final (:mentions resposta))
 
-          :else texto)))))
+                :else texto)
+              _ (aguardar-gravacoes-combates!)
+              ;; Rank, treinador, loja e ginásios possuem filas próprias. Só
+              ;; entrega a resposta depois que todas as alterações já iniciadas
+              ;; terminaram suas tentativas de persistência.
+              _ (armazenamento/aguardar-todas!)]
+        resultado-final))))

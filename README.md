@@ -92,8 +92,8 @@ aparelho pelo celular).
 
 ## Persistência (Cassandra)
 
-Rank, loja, treinadores, ginásios, raids, admins conhecidos, participantes,
-histórico do quiz, lembretes e enquetes são persistidos pelo
+Rank, loja, treinadores, ginásios, raids, batalhas/caçadas Pokémon ativas,
+admins conhecidos, participantes, histórico do quiz, lembretes e enquetes são persistidos pelo
 `zapbot.armazenamento`. O estado corrente usa a tabela
 `<keyspace>.estado_particionado`, com uma linha por módulo e partição do
 primeiro nível (normalmente um chat, jogador ou item de cache):
@@ -575,8 +575,11 @@ diário renova à meia-noite no fuso configurado para as missões e não acumula
 entre dias.
 
 A mochila, a expansão, o kit e as recompensas pendentes são persistidos por chat
-e treinador. Assim como as batalhas, a captura em andamento não sobrevive a um
-reinício do bot.
+e treinador. Batalhas PvP, desafios de ginásio e caçadas — inclusive a fase de
+captura — ficam temporariamente no Cassandra e são retomados após reiniciar o bot.
+Estados concluídos, abandonados ou expirados não são retomados; um marcador
+terminal curto evita ressuscitar uma batalha antiga durante a premiação e é
+limpo depois. Estados que ainda estavam em preparação também são descartados.
 
 ### Missões diárias
 

@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [zapbot.pokemon.core :as core]
             [zapbot.pokemon.ginasios :as ginasios]
+            [zapbot.pokemon.treinador :as treinador]
             ["sharp" :as sharp]))
 
 (def pikachu
@@ -290,20 +291,40 @@
   (is (= :insignia (core/tema-evento-da-resposta "atk 1" "Você venceu o ginásio Pedra")))
   (is (= :raid (core/tema-evento-da-resposta "raid atacar 1" "HP do chefe: 200/440")))
   (is (= :joy (core/tema-evento-da-resposta "joy 1" "A Enfermeira Joy recebeu *Pikachu*")))
+  (is (= :joy (core/tema-evento-da-resposta "joy" "Escolha quem a Enfermeira Joy deve atender")))
+  (is (= :hospital (core/tema-evento-da-resposta
+                    "joy" "Seu time já está saudável; a Enfermeira Joy não precisa atender ninguém agora.")))
+  (is (= :hospital (core/tema-evento-da-resposta
+                    "hospital" "Seu time já está saudável; a Enfermeira Joy não precisa atender ninguém agora.")))
+  (is (= :joy (core/tema-evento-da-resposta
+               "joy 1" "Os Pokémon escolhidos já estão saudáveis. A Enfermeira Joy ainda pode atender outro Pokémon ferido do seu time.")))
+  (is (= :hospital (core/tema-evento-da-resposta
+                    "enfermaria" "Escolha primeiro seu Pokémon inicial.")))
+  (is (nil? (core/tema-evento-da-resposta
+             "joy" "Você não pode enviar Pokémon para a Enfermeira Joy durante uma batalha.")))
   (is (= :missao (core/tema-evento-da-resposta "missoes" "Missões diárias em andamento")))
   (is (= :missao (core/tema-evento-da-resposta "missoes semanais" "Missões semanais")))
   (is (= :missao (core/tema-evento-da-resposta "missoes resgatar" "2 missões resgatadas")))
   (is (= "HP 200/440" (core/detalhe-cartao-evento :raid "HP do chefe: 200/440")))
   (is (= "Nv. 12" (core/detalhe-cartao-evento :nivel "subiu para o nível 12"))))
 
-(deftest cartao-da-joy-usa-imagem-propria
+(deftest cartoes-da-joy-e-do-hospital-usam-imagens-no-tamanho-padrao
   (async done
-    (-> (core/criar-cartao-evento :joy nil "A Enfermeira Joy recebeu Pikachu")
-        (.then (fn [buffer]
-                 (is (> (.-length buffer) 10000))
+    (-> (js/Promise.all
+         #js [(core/criar-cartao-evento :joy nil "A Enfermeira Joy recebeu Pikachu")
+              (core/criar-cartao-evento :hospital nil "Seu time já está saudável")])
+        (.then (fn [buffers]
+                 (js/Promise.all
+                  #js [(.metadata (sharp (aget buffers 0)))
+                       (.metadata (sharp (aget buffers 1)))])))
+        (.then (fn [metadados]
+                 (doseq [info (array-seq metadados)]
+                   (is (= "png" (.-format info)))
+                   (is (= 760 (.-width info)))
+                   (is (= 400 (.-height info))))
                  (done)))
         (.catch (fn [erro]
-                  (is false (str "Não conseguiu carregar a imagem da Joy: " erro))
+                  (is false (str "Não conseguiu carregar as imagens da Joy/hospital: " erro))
                   (done))))))
 
 (deftest cartao-das-missoes-usa-imagem-do-professor
@@ -319,15 +340,111 @@
 (deftest cartao-do-treinador-mostra-ash-e-pokemon-ativo
   (let [svg (core/svg-cartao-treinador "Ash" 7 pikachu 1)
         sem-desenho (core/svg-cartao-treinador "Ash" 7 pikachu 1 false)]
-    (is (str/includes? svg "Treinador"))
-    (is (str/includes? svg "Ash • Nv. 7"))
-    (is (str/includes? svg "Pokémon ativo"))
-    (is (str/includes? svg "#1 Pikachu"))
     (is (str/includes? svg "fundo-treinador"))
     (is (str/includes? svg "stop-color='#dc2626'"))
     (is (str/includes? svg "fill='#ef4444'"))
+    (is (not (str/includes? svg "<rect x='338'")))
+    (is (not (str/includes? svg "<rect x='356'")))
+    (is (not (str/includes? svg "Pokémon ativo")))
+    (is (not (str/includes? svg "Ash • Nv. 7")))
     (is (str/includes? svg "M257 119L305 129"))
     (is (not (str/includes? sem-desenho "M257 119L305 129")))))
+
+(deftest batalhas-temporarias-preservam-keywords-e-removem-objetos-de-runtime
+  (let [agora 1000000
+        golpe {:nome-exibicao "Choque" :tipo "electric" :classe :especial :poder 40}
+        pvp {:message #js {:id "nao-serializar"}
+             :pokemons {:x (assoc pikachu :golpes [golpe]) :o geodude}
+             :jogadores {:x "1@c.us" :o "2@c.us"}
+             :hp {:x 70 :o 80} :status {:x :paralisado :o nil} :vez :o}
+        ginasio (assoc pvp :ginasio {:id "pedra"} :resultado-derrota (atom nil))
+        caca {:message #js {:id "nao-serializar"}
+              :pokemons {:x pikachu :o geodude} :hp {:x 70 :o 0}
+              :pid "1@c.us" :aguardando-captura? true :tentativas-captura 2}
+        registros (core/serializar-combates
+                   {"pvp@g.us" pvp "ginasio@g.us" ginasio "caca@g.us" caca} agora)
+        batalhas (core/restaurar-combates
+                  (select-keys registros ["pvp@g.us" "ginasio@g.us"]) 30 (+ agora 1000))
+        cacadas (core/restaurar-combates
+                (select-keys registros ["caca@g.us"]) 5 (+ agora 1000))]
+    (is (= :o (get-in batalhas ["pvp@g.us" :vez])))
+    (is (= :especial (get-in batalhas ["pvp@g.us" :pokemons :x :golpes 0 :classe])))
+    (is (= :paralisado (get-in batalhas ["pvp@g.us" :status :x])))
+    (is (nil? (get-in batalhas ["pvp@g.us" :message])))
+    (is (satisfies? IDeref (get-in batalhas ["ginasio@g.us" :resultado-derrota])))
+    (is (true? (get-in cacadas ["caca@g.us" :aguardando-captura?])))
+    (is (= 2 (get-in cacadas ["caca@g.us" :tentativas-captura])))
+    (is (not (str/includes? (get-in registros ["pvp@g.us" "estado"]) "nao-serializar")))))
+
+(deftest persistencia-temporaria-descarta-estados-perigosos-e-expirados
+  (let [base {:pokemons {:x pikachu} :jogadores {:x "1@c.us"}
+              :hp {:x 80} :vez :x}
+        batalha-completa {:pokemons {:x pikachu :o geodude}
+                           :jogadores {:x "1@c.us" :o "2@c.us"}
+                           :hp {:x 80 :o 0} :vez :x}
+        caca-derrotada {:pokemons {:x pikachu :o geodude}
+                        :hp {:x 80 :o 0} :pid "1@c.us"}
+        registros (core/serializar-combates
+                   {"valido" base
+                    "carregando" (assoc base :carregando? true)
+                    "finalizando" (assoc base :finalizando? true)
+                    "batalha-completa" batalha-completa
+                    "caca-sem-captura" caca-derrotada
+                    "caca-em-captura" (assoc caca-derrotada :aguardando-captura? true)}
+                   1000)
+        desconhecido {"versao" 99 "atualizado-em" 1000 "estado" (pr-str base)}]
+    (is (= #{"valido" "finalizando" "batalha-completa" "caca-sem-captura" "caca-em-captura"}
+           (set (keys registros))))
+    (doseq [cid ["finalizando" "batalha-completa" "caca-sem-captura"]]
+      (is (true? (get-in registros [cid "terminal"])))
+      (is (nil? (get-in registros [cid "estado"]))))
+    (is (= #{"valido" "caca-em-captura"}
+           (set (keys (core/restaurar-combates registros 5 2000)))))
+    (is (empty? (core/restaurar-combates registros 5 301001)))
+    (is (empty? (core/restaurar-combates {"x" desconhecido} 5 2000)))
+    (is (empty? (core/restaurar-combates
+                 {"x" {"versao" 1 "atualizado-em" 1000 "estado" "{:quebrado"}}
+                 5 2000)))))
+
+(deftest marcador-terminal-impede-ressurreicao-e-expira
+  (let [base {:pokemons {:x pikachu} :jogadores {:x "1@c.us"}
+              :hp {:x 80} :vez :x}
+        ativo (core/serializar-combates {"chat" base} 1000)
+        terminal (core/serializar-combates {} ativo 2000)
+        preservado (core/serializar-combates {} terminal 3000)
+        expirado (core/serializar-combates {} terminal (+ 2000 (* 24 60 60 1000) 1))]
+    (is (true? (get-in terminal ["chat" "terminal"])))
+    (is (= terminal preservado))
+    (is (empty? (core/restaurar-combates terminal 30 3000)))
+    (is (empty? expirado))))
+
+(deftest persistencia-atualiza-somente-o-chat-que-mudou
+  (let [base {:pokemons {:x pikachu} :jogadores {:x "1@c.us"}
+              :hp {:x 80} :vez :x}
+        inicial (core/serializar-combates {"a" base "b" base} 1000)
+        alterado (core/serializar-combates
+                  {"a" (assoc-in base [:hp :x] 70)
+                   "b" (assoc base :message #js {:id "somente-runtime"})}
+                  inicial 2000)]
+    (is (= 2000 (get-in alterado ["a" "atualizado-em"])))
+    (is (= 1000 (get-in alterado ["b" "atualizado-em"])))
+    (is (= (get-in inicial ["b" "estado"]) (get-in alterado ["b" "estado"])))))
+
+(deftest dados-do-treinador-cabem-na-legenda-da-imagem
+  (let [insignias (mapv #(assoc % :conquistada? true)
+                        (treinador/insignias-treinador "chat" "jogador"))
+        perfil {:nivel 100 :xp 99999 :xp-insignias 999 :xp-missoes 999
+                :pe-ginasios 999 :pe-raids 999 :xp-atual 999 :xp-necessario 999
+                :sequencia 999 :recorde 999 :insignias insignias}
+        ativo (assoc pikachu :nivel 100)]
+    (with-redefs [treinador/insignias-ginasio
+                  (fn [_ _] {"pedra" "dia" "agua" "dia" "eletrico" "dia"
+                              "planta" "dia" "fogo" "dia"})]
+      (let [texto (core/texto-treinador "chat" "jogador" "Ash Ketchum" perfil 999 ativo)]
+        (is (<= (count texto) 900))
+        (is (str/includes? texto "⚡ Ativo: #999 *Pikachu*"))
+        (doseq [{:keys [nome]} insignias]
+          (is (str/includes? texto nome)))))))
 
 (deftest candidatos-de-sprite-priorizam-jsdelivr-para-github-raw
   (let [original "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png"]
@@ -356,8 +473,8 @@
   (async done
     (let [tentativas (atom 0)
           ativo (assoc pikachu :imagem "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png")]
-      (with-redefs [core/sprite-proporcional
-                    (fn [_ _]
+      (with-redefs [core/sprite-pokemon-treinador
+                    (fn [_]
                       (swap! tentativas inc)
                       (js/Promise.reject (js/Error. "sprite indisponível")))]
         (-> (core/criar-cartao-treinador "Ash" 7 ativo 1)

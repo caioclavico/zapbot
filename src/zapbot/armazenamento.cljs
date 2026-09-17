@@ -18,10 +18,28 @@
 
 (defonce ^:private client (atom nil))
 (defonce ^:private cache (atom {}))
+(defonce ^:private confirmados (atom {}))
 (defonce ^:private registros (atom {}))
 ;; Serializa gravações do mesmo módulo para uma atualização antiga nunca
 ;; terminar depois de uma nova e restaurar dados removidos.
 (defonce ^:private filas-gravacao (atom {}))
+
+(defn- esperar [ms]
+  (p/create (fn [resolve _] (js/setTimeout resolve ms))))
+
+(def ^:private tentativas-gravacao 3)
+(def ^:private espera-base-gravacao-ms 150)
+
+(defn- tentar-operacao!
+  "Repete operações idempotentes do Cassandra com espera crescente."
+  [acao restantes tentativa]
+  (-> (acao)
+      (p/catch
+       (fn [erro]
+         (if (pos? restantes)
+           (p/then (esperar (* espera-base-gravacao-ms tentativa))
+                   (fn [_] (tentar-operacao! acao (dec restantes) (inc tentativa))))
+           (p/rejected erro))))))
 
 (defn registrar!
   ([chave atom-chamador] (registrar! chave atom-chamador identity))
@@ -64,21 +82,44 @@
     (p/all (concat alteradas removidas))))
 
 (defn salvar!
-  "Atualiza o cache imediatamente e persiste apenas as partições alteradas."
+  "Atualiza o cache imediatamente e persiste apenas as partições alteradas.
+  Retorna uma promise que termina quando esta gravação entra em ordem e conclui.
+  O diff usa somente o último snapshot confirmado: uma falha parcial será
+  repetida de forma idempotente pela próxima gravação, em vez de desaparecer
+  atrás do cache otimista."
   [chave valor]
-  (let [anterior (get @cache chave {})]
+  (do
     (swap! cache assoc chave valor)
-    (when-let [c @client]
+    (if-let [c @client]
       (let [anterior-fila (get @filas-gravacao chave (p/resolved nil))
-            proxima (-> anterior-fila
-                        (p/catch (fn [_] nil))
-                        (p/then (fn [_] (operacoes-alteradas! c chave anterior valor)))
-                        (p/catch (fn [err]
-                                   (js/console.error (str "Erro ao salvar módulo \"" chave "\" no Cassandra:") err))))]
-        (swap! filas-gravacao assoc chave proxima)))))
+            gravacao (-> anterior-fila
+                         (p/catch (fn [_] nil))
+                         (p/then
+                          (fn [_]
+                            (let [anterior (get @confirmados chave {})]
+                              (-> (tentar-operacao!
+                                   #(operacoes-alteradas! c chave anterior valor)
+                                   (dec tentativas-gravacao) 1)
+                                  (p/then (fn [_]
+                                            (swap! confirmados assoc chave valor))))))))
+            ;; A fila precisa continuar mesmo após uma falha, mas o chamador
+            ;; recebe `gravacao` e pode decidir não confirmar a própria ação.
+            fila-segura (p/catch gravacao
+                                 (fn [err]
+                                   (js/console.error
+                                    (str "Erro ao salvar módulo \"" chave "\" no Cassandra após "
+                                         tentativas-gravacao " tentativas:") err)
+                                   nil))]
+        (swap! filas-gravacao assoc chave fila-segura)
+        gravacao)
+      (p/resolved nil))))
 
-(defn- esperar [ms]
-  (p/create (fn [resolve _] (js/setTimeout resolve ms))))
+(defn aguardar-todas!
+  "Espera as filas de persistência conhecidas terminarem (com sucesso ou após
+  esgotarem as tentativas). Útil antes de responder ações que alteram vários
+  módulos, como recompensas de uma batalha."
+  []
+  (p/all (vals @filas-gravacao)))
 
 (def ^:private tentativas-conexao 5)
 (def ^:private espera-entre-tentativas-ms 3000)
@@ -130,9 +171,11 @@
                 pendentes (remove (fn [[modulo _]] (contains? migrados modulo)) legados)]
             ;; Durante esta inicialização, módulos ainda não marcados usam o
             ;; JSON legado completo. A próxima inicialização já lerá as partes.
-            (reset! cache
-                    (merge (into {} (map (fn [[modulo ps]] [modulo (reconstruir ps)]) dados))
-                           (into {} pendentes)))
+            (let [carregados
+                  (merge (into {} (map (fn [[modulo ps]] [modulo (reconstruir ps)]) dados))
+                         (into {} pendentes))]
+              (reset! cache carregados)
+              (reset! confirmados carregados))
             (doseq [[chave [atom-chamador transformar]] @registros]
               (when (contains? @cache chave)
                 (reset! atom-chamador (transformar (get @cache chave)))))

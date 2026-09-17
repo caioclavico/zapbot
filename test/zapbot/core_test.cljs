@@ -55,6 +55,24 @@
                     (is false (str "Falha ao separar texto longo da mídia: " erro))
                     (done)))))))
 
+(deftest resposta-curta-envia-os-dados-na-legenda-da-propria-imagem
+  (async done
+    (let [chamadas (atom [])
+          media #js {:mimetype "image/png" :data "imagem-base64"}
+          texto "🧢 Dados completos do treinador"
+          message (mensagem-com-reply chamadas (fn [_] (js/Promise.resolve nil)))]
+      (-> (core/responder-com-midia
+           message {:media media :texto texto :legenda "legenda alternativa"})
+          (.then (fn [_]
+                   (let [[envio] @chamadas]
+                     (is (= 1 (count @chamadas)))
+                     (is (identical? media (first envio)))
+                     (is (= texto (.-caption (nth envio 2))))
+                     (done))))
+          (.catch (fn [erro]
+                    (is false (str "Falha ao usar os dados como legenda: " erro))
+                    (done)))))))
+
 (deftest falha-no-envio-da-midia-faz-fallback-para-texto
   (async done
     (let [chamadas (atom [])
