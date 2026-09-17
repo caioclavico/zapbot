@@ -1,5 +1,6 @@
 (ns zapbot.pokemon.loja-test
-  (:require [cljs.test :refer-macros [deftest is testing]]
+  (:require [cljs.test :refer-macros [async deftest is testing]]
+            [clojure.string :as str]
             [zapbot.pokemon.loja :as loja]))
 
 (def itens-oficiais
@@ -33,3 +34,15 @@
   (is (loja/item-equipavel? "restos"))
   (is (not (loja/item-equipavel? "pokebola")))
   (is (nil? (loja/item-evolucao-pokeapi "pokebola"))))
+
+(deftest catalogo-da-loja-usa-imagem-propria
+  (async done
+    (let [message #js {:from "chat" :author "jogador"}]
+      (-> (loja/ver-loja-com-imagem message)
+          (.then (fn [resposta]
+                   (is (some? (:media resposta)))
+                   (is (str/includes? (:texto resposta) "Loja do tio"))
+                   (done)))
+          (.catch (fn [erro]
+                    (is false (str "Não conseguiu carregar a imagem da loja: " erro))
+                    (done)))))))

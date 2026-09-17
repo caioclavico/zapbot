@@ -13,9 +13,12 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Efeito visual da batalha agora usa o tipo real do golpe escolhido"
-   "17/09 — Arenas não começam mais exibindo raio e brilho causados pelo emoji do cabeçalho"
-   "17/09 — Fogo, elétrico, água, grama e golpes psíquicos ganharam efeitos visuais distintos"])
+  ["17/09 — Atendimentos da Enfermeira Joy agora exibem uma ilustração dela no Centro Pokémon"
+   "17/09 — O catálogo da loja agora aparece com uma ilustração própria"
+   "17/09 — Missões diárias e semanais agora são apresentadas pelo Professor Carvalho"
+   "17/09 — A escalação e a consulta de um ginásio ocupado mostram os três Pokémon dentro da arena"
+   "17/09 — O menu de ginásios ficou mais limpo; os times aparecem apenas na consulta de cada ginásio"
+   "17/09 — Golpes psíquicos usam uma espiral roxa; energia e impacto ficam pequenos e separados entre os Pokémon"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

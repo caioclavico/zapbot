@@ -4,11 +4,17 @@
   (recupera HP). Estado (moedas + inventário) por chat+jogador, mesma
   convenção de zapbot.rank; persistido via zapbot.armazenamento (chaves
   sempre string, nunca keyword - ver convenção documentada lá)."
-  (:require [zapbot.pokemon.aventuras :as aventuras]
+  (:require [promesa.core :as p]
+            [zapbot.pokemon.aventuras :as aventuras]
             [clojure.string :as str]
             [zapbot.config :as config]
             [zapbot.pokemon.missoes :as missoes]
-            [zapbot.armazenamento :as armazenamento]))
+            [zapbot.armazenamento :as armazenamento]
+            ["whatsapp-web.js" :as wwjs]
+            ["sharp" :as sharp]))
+
+(def ^:private MessageMedia (.-MessageMedia wwjs))
+(def ^:private imagem-loja (str js/__dirname "/../assets/loja-pokemon.png"))
 
 ;; "queimadura"/"veneno" eram as chaves de compra antigas (renomeadas pra
 ;; "atadura"/"antidoto" - ver comentário no catálogo `itens` abaixo); sem
@@ -469,6 +475,21 @@
          "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, cure status com " config/prefix
          "pokemon curar, recupere HP com " config/prefix "pokemon pocao e equipe itens com "
          config/prefix "pokemon equipar <nº> <item>!")))
+
+(defn ver-loja-com-imagem
+  "Retorna o catálogo como legenda de uma imagem da loja; se o asset não puder
+  ser processado, mantém a resposta textual para o comando continuar útil."
+  [message]
+  (let [texto (ver-loja message)]
+    (-> (p/let [buffer (-> (sharp imagem-loja)
+                           (.resize 760 400 #js {:fit "cover" :position "center"})
+                           (.png)
+                           (.toBuffer))]
+          {:media (MessageMedia. "image/png" (.toString buffer "base64") "loja-pokemon.png")
+           :texto texto})
+        (p/catch (fn [erro]
+                   (js/console.error "Erro ao montar imagem da loja Pokémon:" erro)
+                   texto)))))
 
 (defn comprar
   "!loja comprar <item> - compra 1 unidade do item pro inventário de quem

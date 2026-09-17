@@ -1,7 +1,8 @@
 (ns zapbot.pokemon.core-test
-  (:require [cljs.test :refer-macros [deftest is testing]]
+  (:require [cljs.test :refer-macros [async deftest is testing]]
             [clojure.string :as str]
-            [zapbot.pokemon.core :as core]))
+            [zapbot.pokemon.core :as core]
+            [zapbot.pokemon.ginasios :as ginasios]))
 
 (def pikachu
   {:nome "Pikachu" :tipos ["electric"] :habilidade "static"
@@ -178,7 +179,11 @@
     (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "electric"}) "M405 75"))
     (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "water"}) "M380 80"))
     (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "grass"}) "<ellipse"))
-    (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "psychic"}) "#e879f9"))))
+    (let [psiquico (core/svg-sobreposicao-batalha "golpe" false {:tipo "psychic"})]
+      (is (str/includes? psiquico "#e879f9"))
+      (is (str/includes? psiquico "M380 210C380 178"))
+      (is (str/includes? psiquico "translate(247 147.5) scale(.25)"))
+      (is (str/includes? psiquico "translate(310 147.5) scale(.25)")))))
 
 (deftest efeito-visual-usa-o-golpe-escolhido
   (let [golpes [{:nome-exibicao "Choque" :tipo "electric" :classe :especial}
@@ -196,9 +201,31 @@
   (is (= :insignia (core/tema-evento-da-resposta "atk 1" "Você venceu o ginásio Pedra")))
   (is (= :raid (core/tema-evento-da-resposta "raid atacar 1" "HP do chefe: 200/440")))
   (is (= :joy (core/tema-evento-da-resposta "joy 1" "A Enfermeira Joy recebeu *Pikachu*")))
+  (is (= :missao (core/tema-evento-da-resposta "missoes" "Missões diárias em andamento")))
+  (is (= :missao (core/tema-evento-da-resposta "missoes semanais" "Missões semanais")))
   (is (= :missao (core/tema-evento-da-resposta "missoes resgatar" "2 missões resgatadas")))
   (is (= "HP 200/440" (core/detalhe-cartao-evento :raid "HP do chefe: 200/440")))
   (is (= "Nv. 12" (core/detalhe-cartao-evento :nivel "subiu para o nível 12"))))
+
+(deftest cartao-da-joy-usa-imagem-propria
+  (async done
+    (-> (core/criar-cartao-evento :joy nil "A Enfermeira Joy recebeu Pikachu")
+        (.then (fn [buffer]
+                 (is (> (.-length buffer) 10000))
+                 (done)))
+        (.catch (fn [erro]
+                  (is false (str "Não conseguiu carregar a imagem da Joy: " erro))
+                  (done))))))
+
+(deftest cartao-das-missoes-usa-imagem-do-professor
+  (async done
+    (-> (core/criar-cartao-evento :missao nil "Missões diárias")
+        (.then (fn [buffer]
+                 (is (> (.-length buffer) 10000))
+                 (done)))
+        (.catch (fn [erro]
+                  (is false (str "Não conseguiu carregar a imagem do professor: " erro))
+                  (done))))))
 
 (deftest ataques-pvp-tambem-recebem-arena-visual
   (let [pvp {:jogadores {:x "a" :o "b"}}
@@ -207,3 +234,33 @@
     (is (true? (core/ataque-pvp? pvp "atk 1")))
     (is (false? (core/ataque-pvp? espera "atk 1")))
     (is (false? (core/ataque-pvp? ginasio "atk 1")))))
+
+(deftest moldura-do-time-de-ginasio-tem-tres-espacos
+  (let [svg (core/svg-time-ginasio)]
+    (is (str/includes? svg "M25 270V105"))
+    (is (str/includes? svg "M260 270V105"))
+    (is (str/includes? svg "M495 270V105"))
+    (is (str/includes? svg "TIME DO GINÁSIO"))))
+
+(deftest imagem-do-ginasio-compoe-os-tres-defensores
+  (async done
+    (let [sprite (str "data:image/svg+xml;base64,"
+                      (.toString (js/Buffer.from
+                                  "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><circle cx='16' cy='16' r='14' fill='red'/></svg>")
+                                 "base64"))
+          pokemons [{:imagem sprite} {:imagem sprite} {:imagem sprite}]]
+      (-> (core/criar-imagem-time-ginasio pokemons)
+          (.then (fn [buffer]
+                   (is (> (.-length buffer) 10000))
+                   (done)))
+          (.catch (fn [erro]
+                    (is false (str "Não conseguiu compor os defensores no ginásio: " erro))
+                    (done)))))))
+
+(deftest menu-de-ginasios-omite-pokemons-do-lider
+  (with-redefs [ginasios/lider (fn [_ _]
+                                 {"nome" "Misty" "desde" (.now js/Date)
+                                  "time" [{"nome" "Starmie" "nivel" 30}]})]
+    (is (not (str/includes? (core/descricao-lider "chat" {:id "agua"} false)
+                            "Time reservado")))
+    (is (str/includes? (core/descricao-lider "chat" {:id "agua"}) "Starmie"))))

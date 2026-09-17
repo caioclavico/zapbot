@@ -149,7 +149,7 @@
                   "comprar"  (p/resolved (loja/comprar message (str/join " " (rest args))))
                   "detalhes" (p/resolved (loja/detalhes (str/join " " (rest args))))
                   "detalhe"  (p/resolved (loja/detalhes (str/join " " (rest args))))
-                  (p/resolved (loja/ver-loja message)))
+                  (loja/ver-loja-com-imagem message))
     "rank"      (p/resolved (rank/formatar-rank (bloqueio/chat-id message)))
     "meuid"     (p/resolved (str "🪪 Seu ID: " (or (.-author message) (.-from message))
                                  "\n\nAdicione esse valor em ADMIN_NUMBERS no .env (separado por vírgula, "

@@ -24,6 +24,12 @@
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 
+(def ^:private imagem-enfermeira-joy
+  (str js/__dirname "/../assets/enfermeira-joy.png"))
+
+(def ^:private imagem-professor-carvalho
+  (str js/__dirname "/../assets/professor-carvalho.png"))
+
 ;; total de espécies conhecidas pela PokeAPI (até a geração 9)
 (def ^:private total-pokemons 1025)
 
@@ -1287,6 +1293,48 @@
         (.png)
         (.toBuffer))))
 
+(defn- svg-time-ginasio []
+  (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
+       "<defs><linearGradient id='ceu-time' x1='0' y1='0' x2='0' y2='1'><stop stop-color='#172554'/><stop offset='1' stop-color='#4338ca'/></linearGradient>"
+       "<linearGradient id='chao-time' x1='0' y1='0' x2='0' y2='1'><stop stop-color='#334155'/><stop offset='1' stop-color='#0f172a'/></linearGradient>"
+       "<filter id='brilho-time'><feDropShadow dx='0' dy='0' stdDeviation='6' flood-color='#facc15'/></filter></defs>"
+       "<rect width='760' height='400' rx='28' fill='url(#ceu-time)'/>"
+       "<path d='M0 270H760V400H0Z' fill='url(#chao-time)'/>"
+       "<path d='M0 270Q380 345 760 270' fill='none' stroke='#64748b' stroke-width='5'/>"
+       "<g fill='#0f172a' fill-opacity='.38' stroke='#facc15' stroke-width='6' filter='url(#brilho-time)'>"
+       "<path d='M25 270V105Q25 62 68 62H222Q265 62 265 105V270Z'/>"
+       "<path d='M260 270V105Q260 62 303 62H457Q500 62 500 105V270Z'/>"
+       "<path d='M495 270V105Q495 62 538 62H692Q735 62 735 105V270Z'/></g>"
+       "<circle cx='380' cy='42' r='28' fill='#facc15' stroke='#fef3c7' stroke-width='4'/><circle cx='380' cy='42' r='10' fill='#172554'/><path d='M352 42h56' stroke='#172554' stroke-width='6'/>"
+       "<text x='380' y='310' fill='#fef3c7' font-size='27' font-family='sans-serif' font-weight='bold' text-anchor='middle'>TIME DO GINÁSIO</text>"
+       "<g fill='#facc15' font-size='24' font-family='sans-serif' font-weight='bold' text-anchor='middle'><text x='145' y='360'>1</text><text x='380' y='360'>2</text><text x='615' y='360'>3</text></g>"
+       "</svg>"))
+
+(defn- sprite-time-ginasio [url]
+  (p/let [buffer (baixar-buffer url)]
+    (-> (sharp buffer)
+        (.resize 190 190 #js {:fit "contain"
+                              :background #js {:r 255 :g 255 :b 255 :alpha 0}})
+        (.png)
+        (.toBuffer))))
+
+(defn- criar-imagem-time-ginasio [pokemons]
+  (p/let [sprites (p/all (map #(sprite-time-ginasio (:imagem %)) pokemons))]
+    (-> (sharp (js/Buffer.from (svg-time-ginasio)))
+        (.composite (to-array (map (fn [sprite esquerda]
+                                    #js {:input sprite :left esquerda :top 82})
+                                  sprites [50 285 520])))
+        (.png)
+        (.toBuffer))))
+
+(defn- resposta-time-ginasio [pokemons texto]
+  (-> (p/let [buffer (criar-imagem-time-ginasio pokemons)]
+        {:media (MessageMedia. "image/png" (.toString buffer "base64") "time-ginasio.png")
+         :texto texto})
+      (p/catch (fn [err]
+                 (js/console.error "Erro ao montar imagem do time do ginásio:" err)
+                 texto))))
+
 (defn- enviar-imagem-ginasio [message jogo]
   (-> (p/let [buffer (criar-imagem-ginasio (get-in jogo [:pokemons :x :imagem])
                                             (get-in jogo [:pokemons :o :imagem]))
@@ -1442,18 +1490,23 @@
         desmaio? (boolean (re-find #"(?i)(desmaiou|caiu por causa|caiu com o recuo)" texto))
         entrada? (boolean (re-find #"(?i)(envia \*|entrou na batalha)" texto))]
     (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
-         (when (or fogo? raio? veneno? gelo? sono? confuso?)
+         (when (or fogo? raio? agua? grama? psiquico? veneno? gelo?)
+           "<g transform='translate(247 147.5) scale(.25)'>")
+         (when (or fogo? raio? veneno? gelo?)
            "<circle cx='380' cy='215' r='72' fill='none' stroke='#ffffff' stroke-opacity='.8' stroke-width='9'/>")
          (when fogo? "<path d='M350 280q-55-70 5-120-5 45 28 58-8-72 42-112 55 80 10 174Z' fill='#f97316' fill-opacity='.82'/>")
          (when raio? "<path d='M405 75l-82 145h62l-34 112 101-157h-65Z' fill='#fde047' stroke='#eab308' stroke-width='8'/>")
          (when agua? "<path d='M380 80C330 155 300 195 300 245a80 80 0 0 0 160 0c0-50-30-90-80-165Z' fill='#38bdf8' fill-opacity='.78' stroke='#0369a1' stroke-width='8'/>")
          (when grama? "<g fill='#4ade80' stroke='#15803d' stroke-width='6'><ellipse cx='345' cy='210' rx='38' ry='75' transform='rotate(-35 345 210)'/><ellipse cx='420' cy='205' rx='38' ry='75' transform='rotate(35 420 205)'/></g>")
-         (when psiquico? "<g fill='none' stroke='#e879f9' stroke-width='12'><circle cx='380' cy='210' r='45'/><circle cx='380' cy='210' r='90' stroke-opacity='.7'/></g>")
+         (when psiquico? "<path d='M380 210C380 178 425 180 425 218C425 270 355 280 325 228C288 164 360 102 435 137C530 182 493 315 382 326' fill='none' stroke='#e879f9' stroke-width='14' stroke-linecap='round' stroke-linejoin='round'/>")
          (when veneno? "<g fill='#a855f7' fill-opacity='.75'><circle cx='340' cy='245' r='28'/><circle cx='410' cy='205' r='38'/><circle cx='455' cy='270' r='20'/></g>")
          (when gelo? "<path d='M380 90v245M275 150l210 125M275 275l210-125' stroke='#67e8f9' stroke-width='18' stroke-linecap='round'/>")
+         (when (or fogo? raio? agua? grama? psiquico? veneno? gelo?) "</g>")
+         (when (or sono? confuso?)
+           "<circle cx='380' cy='215' r='72' fill='none' stroke='#ffffff' stroke-opacity='.8' stroke-width='9'/>")
          (when sono? "<g fill='#312e81' font-family='sans-serif' font-weight='bold'><text x='420' y='145' font-size='48'>Z</text><text x='475' y='105' font-size='36'>Z</text></g>")
          (when confuso? "<path d='M315 180q65-80 130 0t-130 0q65-55 130 0' fill='none' stroke='#f472b6' stroke-width='14'/>")
-         (when impacto? "<path d='M380 125l22 58 61-17-37 52 51 37-63-4-9 62-25-57-57 30 34-53-53-34 63 1Z' fill='#ffffff' fill-opacity='.45' stroke='#facc15' stroke-width='7'/>")
+         (when impacto? "<g transform='translate(310 147.5) scale(.25)'><path d='M380 125l22 58 61-17-37 52 51 37-63-4-9 62-25-57-57 30 34-53-53-34 63 1Z' fill='#ffffff' fill-opacity='.45' stroke='#facc15' stroke-width='7'/></g>")
          (when desmaio? "<g stroke='#0f172a' stroke-width='13' stroke-linecap='round'><path d='M555 130l38 38m0-38l-38 38M635 130l38 38m0-38l-38 38'/></g>")
          (when entrada? "<g transform='translate(585 250)'><circle r='55' fill='#f8fafc' stroke='#111827' stroke-width='8'/><path d='M-55 0a55 55 0 0 1 110 0Z' fill='#dc2626'/><path d='M-52 0h104' stroke='#111827' stroke-width='10'/><circle r='15' fill='#fff' stroke='#111827' stroke-width='7'/></g>")
          (when shiny?
@@ -1502,11 +1555,19 @@
          "</svg>")))
 
 (defn- criar-cartao-evento [tema url texto]
-  (p/let [sprite (when url (sprite-redimensionado url))]
-    (-> (sharp (js/Buffer.from (svg-cartao-evento tema texto)))
-        (.composite (to-array (if sprite [#js {:input sprite :left 250 :top 55}] [])))
+  (if-let [imagem (case tema
+                    :joy imagem-enfermeira-joy
+                    :missao imagem-professor-carvalho
+                    nil)]
+    (-> (sharp imagem)
+        (.resize 760 400 #js {:fit "cover" :position "center"})
         (.png)
-        (.toBuffer))))
+        (.toBuffer))
+    (p/let [sprite (when url (sprite-redimensionado url))]
+      (-> (sharp (js/Buffer.from (svg-cartao-evento tema texto)))
+          (.composite (to-array (if sprite [#js {:input sprite :left 250 :top 55}] [])))
+          (.png)
+          (.toBuffer)))))
 
 (defn- resposta-cartao-evento
   ([tema url texto] (resposta-cartao-evento tema url texto nil))
@@ -1532,8 +1593,7 @@
     (cond
       (= comando "raid") :raid
       (and (= comando "joy") (str/includes? texto "A Enfermeira Joy recebeu")) :joy
-      (and (contains? #{"missoes" "missões"} comando)
-           (re-find #"(?i)(missão.*resgatada|missões.*resgatadas|missão diária concluída)" texto)) :missao
+      (contains? #{"missoes" "missões"} comando) :missao
       (str/includes? texto "venceu o ginásio") :insignia
       (re-find #"(?i)evoluiu para" texto) :evolucao
       (re-find #"(?i)(subiu para o nível|chegou ao nível)" texto) :nivel
@@ -3742,14 +3802,17 @@
                                     (aviso-saida-liga subida)))))
              "\nVocê já recebeu a recompensa deste ginásio hoje.")))))
 
-(defn- descricao-lider [cid g]
-  (if-let [lider (ginasios/lider cid (:id g))]
-    (str (get lider "nome") " — há "
-         (js/Math.floor (/ (- (.now js/Date) (get lider "desde")) 60000)) " min"
-         "\nTime reservado: "
-         (str/join ", " (map #(str (get % "nome") (when (get % "shiny") " ✨ Shiny")
-                                   " Nv." (get % "nivel" 1)) (get lider "time"))))
-    (str (:lider g) " (NPC) — Nv. " (:nivel g))))
+(defn- descricao-lider
+  ([cid g] (descricao-lider cid g true))
+  ([cid g mostrar-time?]
+   (if-let [lider (ginasios/lider cid (:id g))]
+     (str (get lider "nome") " — há "
+          (js/Math.floor (/ (- (.now js/Date) (get lider "desde")) 60000)) " min"
+          (when mostrar-time?
+            (str "\nTime reservado: "
+                 (str/join ", " (map #(str (get % "nome") (when (get % "shiny") " ✨ Shiny")
+                                           " Nv." (get % "nivel" 1)) (get lider "time"))))))
+     (str (:lider g) " (NPC) — Nv. " (:nivel g)))))
 
 (defn- menu-ginasios [cid pid]
   (let [insignias (treinador/insignias-ginasio cid pid)]
@@ -3759,7 +3822,7 @@
                      (str (cond (contains? insignias (:id g)) "🏅 "
                                 (aventuras/desbloqueado? (keys insignias) (:id g)) "🔓 "
                                 :else "🔒 ")
-                          (:nome g) " — " (descricao-lider cid g))))
+                          (:nome g) " — " (descricao-lider cid g false))))
          "\n\nPrimeira vitória: insígnia, 100 moedas, 6 XP por participante e uma pedra."
          "\nRevanche: recompensa uma vez por dia por ginásio (São Paulo): 25 moedas, 2 XP e 25% de chance da pedra."
          "\nDerrota: 2 XP por Pokémon que participou, a cada batalha."
@@ -3789,15 +3852,18 @@
                          (ginasios/historico cid (:id gym)))))))
       (empty? args) (p/resolved (menu-ginasios cid pid))
       (= acao "time")
-      (p/resolved
-       (if (aprendizado-bloqueado? cid pid)
-         "🚫 Termine a batalha e as alterações pendentes antes de escalar."
-         (let [eq (treinador/equipe cid pid)
-               indices (mapv #(parse-indice-golpe % (count eq)) (str/split (or id "") #","))]
-           (if (and (= 3 (count indices)) (= 3 (count (set indices))) (every? some? indices))
-             (do (treinador/salvar-time-ginasio! cid pid indices)
-                 "✅ Time de ginásio salvo. Use !pokemon ginasio desafiar <nome>.")
-             "❓ Escolha três Pokémon diferentes: !pokemon ginasio time 1,3,5."))))
+      (if (aprendizado-bloqueado? cid pid)
+        (p/resolved "🚫 Termine a batalha e as alterações pendentes antes de escalar.")
+        (let [eq (treinador/equipe cid pid)
+              indices (mapv #(parse-indice-golpe % (count eq)) (str/split (or id "") #","))]
+          (if (and (= 3 (count indices)) (= 3 (count (set indices))) (every? some? indices))
+            (let [pokemons (mapv #(first (treinador/registro->pokemon (get eq %))) indices)
+                  texto (str "✅ Time de ginásio salvo: "
+                             (str/join ", " (map #(str "*" (:nome %) "*") pokemons))
+                             ".\nUse !pokemon ginasio desafiar <nome>.")]
+              (treinador/salvar-time-ginasio! cid pid indices)
+              (resposta-time-ginasio pokemons texto))
+            (p/resolved "❓ Escolha três Pokémon diferentes: !pokemon ginasio time 1,3,5."))))
       (nil? g) (p/resolved (menu-ginasios cid pid))
       (not= acao "desafiar")
       (let [texto (str (:nome g) " — " (descricao-lider cid g)
@@ -3805,14 +3871,9 @@
                        "\nRecompensa: " (get-in aventuras/pedras [(:item g) :nome])
                        "\nUse " config/prefix "pokemon ginasio desafiar " (:id g) ".")]
         (if (seq (get ocupante "time"))
-          (-> (p/let [media (criar-cartao-time
-                             (map-indexed (fn [indice registro] {:indice indice :registro registro})
-                                          (get ocupante "time"))
-                             nil (treinador/nivel-jogador cid (get ocupante "pid")))]
-                {:media media :texto texto})
-              (p/catch (fn [err]
-                         (js/console.error "Erro ao gerar cartão do ginásio:" err)
-                         texto)))
+          (resposta-time-ginasio
+           (mapv #(first (treinador/registro->pokemon %)) (get ocupante "time"))
+           texto)
           (p/resolved texto)))
       (= pid (get ocupante "pid"))
       (p/resolved "🏛️ Você já lidera este ginásio. Seu time será liberado quando outro treinador vencer você.")
