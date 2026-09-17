@@ -1,6 +1,6 @@
 {
   "name": "zapbot",
-  "version": "0.14.10",
+  "version": "0.14.11",
   "private": true,
   "description": "Bot para WhatsApp escrito em ClojureScript (piadas, notícias, cotações, previsão do tempo, horóscopo, moderação de grupo).",
   "engines": {
@@ -18,7 +18,7 @@
     "qrcode-terminal": "^0.12.0",
     "rss-parser": "^3.13.0",
     "sharp": "^0.35.3",
-    "whatsapp-web.js": "1.34.6"
+    "whatsapp-web.js": "https://github.com/wwebjs/whatsapp-web.js/archive/b0a4b6c6c10868fad4881fb484b97895ce898b5d.tar.gz"
   },
   "overrides": {
     "adm-zip": "^0.6.0"

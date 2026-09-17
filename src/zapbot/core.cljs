@@ -16,6 +16,22 @@
 (def ^:private Client (.-Client wwjs))
 (def ^:private LocalAuth (.-LocalAuth wwjs))
 
+(defn configurar-envio-seguro!
+  "Desativa o sendSeen quebrado do WhatsApp Web antes de qualquer envio.
+
+  Message.reply também delega para client.sendMessage, então este único
+  wrapper protege respostas de texto, imagens e os envios diretos do bot."
+  [client]
+  (let [enviar-original (.bind (.-sendMessage client) client)]
+    (set! (.-sendMessage client)
+          (fn [chat-id conteudo opcoes]
+            (let [opcoes-seguras (js/Object.assign
+                                  #js {}
+                                  (or opcoes #js {})
+                                  #js {:sendSeen false})]
+              (enviar-original chat-id conteudo opcoes-seguras))))
+    client))
+
 (defn- on-qr [qr]
   (js/console.log "📱 Escaneie o QR code abaixo com o WhatsApp (Aparelhos conectados > Conectar aparelho):")
   (.generate qrcode qr #js {:small true}))
@@ -146,7 +162,8 @@
                                            "--disable-quic" "--disable-features=Quic"]}
                          config/puppeteer-executable-path (assoc :executablePath config/puppeteer-executable-path))
         client (Client. #js {:authStrategy (LocalAuth.)
-                             :puppeteer    (clj->js puppeteer-opts)})]
+                             :puppeteer    (clj->js puppeteer-opts)})
+        _ (configurar-envio-seguro! client)]
     (.on client "qr" on-qr)
     (.on client "ready" (fn [] (on-ready client)))
     (.on client "auth_failure" on-auth-failure)

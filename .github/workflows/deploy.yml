@@ -120,6 +120,37 @@ jobs:
 
           docker compose up -d
 
+          # `up -d` só confirma que o processo foi iniciado. Aguarda o evento
+          # ready do WhatsApp para não marcar o deploy como verde com o bot
+          # travado, reiniciando ou aguardando uma nova autenticação.
+          pronto=0
+          for tentativa in $(seq 1 24); do
+            if [ "$(docker inspect --format '{{.State.Running}}' zapbot 2>/dev/null || true)" != "true" ]; then
+              echo "O container do bot parou durante a inicialização." >&2
+              docker compose ps
+              exit 1
+            fi
+
+            logs_bot="$(docker compose logs --no-color bot 2>&1)"
+            case "$logs_bot" in
+              *"conectado e pronto para uso"*)
+                pronto=1
+                break
+                ;;
+            esac
+            sleep 5
+          done
+
+          if [ "$pronto" -ne 1 ]; then
+            echo "O container iniciou, mas o WhatsApp não ficou pronto em 120 segundos." >&2
+            docker compose ps
+            # Mostra somente linhas diagnósticas; não publica o QR code nos logs.
+            printf '%s\n' "$logs_bot" | grep -E '✅|❌|⚠️|Erro|Error|error|Falha|Desconectado' || true
+            exit 1
+          fi
+
+          echo "Bot conectado ao WhatsApp e pronto para responder."
+
           docker image prune -f
           REMOTE_SCRIPT
 

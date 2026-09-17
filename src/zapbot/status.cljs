@@ -13,9 +13,10 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Restaurado o envio de todas as imagens do jogo, incluindo Joy e loja"
-   "17/09 — Corrigida regressão do whatsapp-web.js que travava o envio de PNG e JPG"
-   "17/09 — Docker agora instala exatamente as versões validadas no lockfile"])
+  ["17/09 — Restauradas as respostas de status, loja e Pokémon"
+   "17/09 — Corrigido o sendSeen que bloqueava mensagens de texto e imagens"
+   "17/09 — Cliente do WhatsApp fixado no commit validado com envio de imagens"
+   "17/09 — Deploy agora confirma que o WhatsApp ficou pronto antes de concluir"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

@@ -7,6 +7,26 @@
                 (swap! chamadas conj (vec args))
                 (responder (count @chamadas)))})
 
+(deftest envio-seguro-desativa-send-seen-sem-perder-opcoes
+  (let [chamadas (atom [])
+        client #js {:sendMessage
+                    (fn [chat-id conteudo opcoes]
+                      (swap! chamadas conj [chat-id conteudo opcoes])
+                      "enviado")}
+        opcoes #js {:caption "Teste" :sendSeen true}]
+    (is (identical? client (core/configurar-envio-seguro! client)))
+    (is (= "enviado" (.sendMessage client "grupo@g.us" "Oi" opcoes)))
+    (is (= "enviado" (.sendMessage client "outro@g.us" "Olá")))
+    (let [[[chat-id conteudo opcoes-seguras]
+           [_ _ opcoes-sem-entrada]] @chamadas]
+      (is (= "grupo@g.us" chat-id))
+      (is (= "Oi" conteudo))
+      (is (= "Teste" (.-caption opcoes-seguras)))
+      (is (false? (.-sendSeen opcoes-seguras)))
+      (is (false? (.-sendSeen opcoes-sem-entrada)))
+      ;; Não altera o objeto recebido do chamador.
+      (is (true? (.-sendSeen opcoes))))))
+
 (deftest resposta-longa-envia-midia-com-legenda-curta-e-texto-separado
   (async done
     (let [chamadas (atom [])
