@@ -13,10 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Corrigido o carregamento infinito das fotos e sprites Pokémon"
-   "17/09 — Sprites agora usam timeout, CDN alternativa e marcador local se a rede falhar"
-   "17/09 — O perfil do treinador volta a responder mesmo com legenda grande ou falha no envio da imagem"
-   "17/09 — Restaurados os atalhos !pk e os comandos visuais de loja, missões e mochila"])
+  ["17/09 — Restaurado o envio de todas as imagens do jogo, incluindo Joy e loja"
+   "17/09 — Corrigida regressão do whatsapp-web.js que travava o envio de PNG e JPG"
+   "17/09 — Docker agora instala exatamente as versões validadas no lockfile"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

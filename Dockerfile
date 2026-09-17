@@ -17,7 +17,9 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true \
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+# Instala exatamente o lockfile. Isso impede um rebuild de trocar silenciosamente
+# a versão do transporte do WhatsApp e quebrar novamente o envio de imagens.
+RUN npm ci
 
 COPY . .
 RUN npm run build
