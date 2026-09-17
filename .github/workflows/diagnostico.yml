@@ -1,0 +1,67 @@
+name: Diagnóstico do bot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostico:
+    name: Verificar container e mídia
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verificar secrets obrigatórios
+        env:
+          SSH_HOST: ${{ secrets.ORACLE_HOST }}
+          SSH_USER: ${{ secrets.ORACLE_USER }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          APP_DIR: ${{ secrets.ORACLE_APP_DIR }}
+        run: |
+          [ -n "$SSH_HOST" ]
+          [ -n "$SSH_USER" ]
+          [ -n "$SSH_KEY" ]
+          [ -n "$APP_DIR" ]
+
+      - name: Configurar chave SSH
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          SSH_HOST: ${{ secrets.ORACLE_HOST }}
+          SSH_PORT: ${{ secrets.ORACLE_SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Coletar diagnóstico seguro
+        env:
+          SSH_HOST: ${{ secrets.ORACLE_HOST }}
+          SSH_PORT: ${{ secrets.ORACLE_SSH_PORT }}
+          SSH_USER: ${{ secrets.ORACLE_USER }}
+          APP_DIR: ${{ secrets.ORACLE_APP_DIR }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" bash -s -- "$APP_DIR" <<'REMOTE_SCRIPT'
+          set -eu
+          APP_DIR="$1"
+          cd "$APP_DIR"
+
+          echo "Estado do container:"
+          docker inspect zapbot --format 'status={{.State.Status}} running={{.State.Running}} reinicios={{.RestartCount}}'
+
+          echo "Cliente e patch de mídia:"
+          docker exec zapbot node -e 'const fs=require("fs"); const p=require("whatsapp-web.js/package.json"); const u=fs.readFileSync(require.resolve("whatsapp-web.js/src/util/Injected/Utils.js"),"utf8"); console.log("versao="+p.version+" patch_x_id="+u.includes("delete message.__x_id"))'
+
+          echo "Assets estáticos:"
+          docker exec zapbot node -e 'const fs=require("fs"),sharp=require("sharp"); const a=["/app/assets/enfermeira-joy.png","/app/assets/loja-pokemon.png"]; (async()=>{for(const f of a){try{const m=await sharp(f).metadata(); console.log(f+": legivel "+m.format+" "+m.width+"x"+m.height+" "+fs.statSync(f).size+" bytes")}catch(e){console.log(f+": FALHA "+(e.code||e.name))}}})().catch(e=>{console.error(e.name);process.exit(1)})'
+
+          echo "Erros de mídia filtrados:"
+          docker compose logs --no-color --since 6h --tail 2000 bot 2>&1 \
+            | grep -E -i 'Erro ao enviar (mídia|imagem|cartão)|Erro ao montar imagem|MessageMedia|sendMessage|Protocol error|Evaluation failed|Data passed to getter|getLastMsgKeyForAction|Error: [tr]: [tr]' \
+            || echo "Nenhum erro de mídia correspondente foi registrado."
+          REMOTE_SCRIPT
+
+      - name: Remover chave SSH
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
