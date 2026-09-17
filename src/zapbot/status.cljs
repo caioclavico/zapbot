@@ -15,7 +15,8 @@
 (def ^:private changelog-ultima-versao
   ["17/09 — Corrigido o carregamento infinito das fotos e sprites Pokémon"
    "17/09 — Sprites agora usam timeout, CDN alternativa e marcador local se a rede falhar"
-   "17/09 — O perfil do treinador volta a responder mesmo com legenda grande ou falha no envio da imagem"])
+   "17/09 — O perfil do treinador volta a responder mesmo com legenda grande ou falha no envio da imagem"
+   "17/09 — Restaurados os atalhos !pk e os comandos visuais de loja, missões e mochila"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))
