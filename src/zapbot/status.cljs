@@ -13,9 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — A Pokébola aberta de fuga ficou mais perto do rodapé e ganhou fumaça mais cheia acima"
-   "17/09 — Ginásios agora mostram permanência em segundos, minutos e horas"
-   "17/09 — Pokémon defensores ganham XP por permanência no ginásio: quanto mais tempo segurarem, mais XP recebem ao voltar"])
+  ["17/09 — Corrigido o carregamento infinito das fotos e sprites Pokémon"
+   "17/09 — Sprites agora usam timeout, CDN alternativa e marcador local se a rede falhar"
+   "17/09 — O perfil do treinador volta a responder mesmo com legenda grande ou falha no envio da imagem"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

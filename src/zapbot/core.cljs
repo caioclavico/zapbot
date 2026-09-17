@@ -1,6 +1,7 @@
 (ns zapbot.core
   "Ponto de entrada do bot: conecta ao WhatsApp Web e liga os eventos."
   (:require [promesa.core :as p]
+            [clojure.string :as str]
             ["whatsapp-web.js" :as wwjs]
             ["qrcode-terminal" :as qrcode]
             [zapbot.config :as config]
@@ -41,6 +42,34 @@
   (or (not= config/app-env "development")
       (= (chat-id message) config/dev-group-id)))
 
+(def ^:private limite-legenda-midia 900)
+
+(defn- enviar-texto-estruturado [message texto mentions]
+  (when-not (str/blank? texto)
+    (.reply message texto nil #js {:mentions (clj->js mentions)})))
+
+(defn- responder-com-midia
+  "Envia imagem sem exceder o limite prático das legendas do WhatsApp.
+  Se a mídia for recusada, ainda entrega a resposta em texto em vez de deixar
+  o comando aparentemente travado."
+  [message resposta]
+  (let [texto       (or (:texto resposta) "")
+        mentions    (:mentions resposta)
+        texto-longo? (> (count texto) limite-legenda-midia)
+        legenda     (if texto-longo?
+                      (or (:legenda resposta) "🖼️ *Imagem Pokémon*")
+                      texto)]
+    (-> (.reply message (:media resposta) nil
+                #js {:caption legenda :mentions (clj->js mentions)})
+        (p/then (fn [_]
+                  (when texto-longo?
+                    (enviar-texto-estruturado message texto mentions))))
+        (p/catch (fn [erro]
+                   (js/console.error "Erro ao enviar mídia; usando resposta em texto:" erro)
+                   (if (str/blank? texto)
+                     (p/rejected erro)
+                     (enviar-texto-estruturado message texto mentions)))))))
+
 (defn- on-message [message]
   (when (permitido-pelo-ambiente? message)
     (historico/registrar! message)
@@ -55,18 +84,22 @@
                                          ;; Cada imagem pode demorar um tempo diferente para subir ao
                                          ;; WhatsApp. Encadeamos os envios para as páginas não chegarem
                                          ;; embaralhadas no grupo.
-                                         (reduce
-                                          (fn [envio [idx media]]
-                                            (p/then envio
-                                                    (fn [_]
-                                                      (.reply message media nil
-                                                              #js {:caption
-                                                                   (str "🎒 Página " (inc idx) "/" total
-                                                                        (when (and legenda-ultima
-                                                                                   (= idx (dec total)))
-                                                                          (str "\n\n" legenda-ultima)))}))))
-                                          (p/resolved nil)
-                                          (map-indexed vector medias)))
+                                         (-> (reduce
+                                              (fn [envio [idx media]]
+                                                (p/then envio
+                                                        (fn [_]
+                                                          (.reply message media nil
+                                                                  #js {:caption
+                                                                       (str "🎒 Página " (inc idx) "/" total
+                                                                            (when (and legenda-ultima
+                                                                                       (= idx (dec total)))
+                                                                              (str "\n\n" legenda-ultima)))}))))
+                                              (p/resolved nil)
+                                              (map-indexed vector medias))
+                                             (p/catch
+                                              (fn [erro]
+                                                (js/console.error "Erro ao enviar cartões; usando lista em texto:" erro)
+                                                (enviar-texto-estruturado message (:texto resposta) (:mentions resposta))))))
                     ;; documento (ex.: !pokemon time csv): manda o texto primeiro e o
                     ;; arquivo em seguida - legenda em documento não aparece de forma
                     ;; confiável no WhatsApp
@@ -74,9 +107,7 @@
                                               (p/then (fn [_]
                                                         (.reply message (:documento resposta) nil
                                                                 #js {:sendMediaAsDocument true}))))
-                    (:media resposta) (.reply message (:media resposta) nil
-                                              #js {:caption (:texto resposta)
-                                                   :mentions (clj->js (:mentions resposta))})
+                    (:media resposta) (responder-com-midia message resposta)
                     ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
                     ;; de quem for a vez) resolvem {:texto :mentions} em vez de
                     ;; uma string simples - todo o resto continua string normal

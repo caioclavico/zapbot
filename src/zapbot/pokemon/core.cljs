@@ -63,7 +63,7 @@
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
 (declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado
          parse-indice-golpe estado-cacada turno-selvagem escalar-nivel com-raridade expandir-atalho
-         enviar-cartao-evento! aplicar-sobreposicao-batalha)
+         enviar-cartao-evento! aplicar-sobreposicao-batalha escapar-xml baixar-buffer)
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -1228,7 +1228,8 @@
   ([message url legenda] (enviar-imagem message url legenda []))
   ([message url legenda mentions]
    (if url
-     (-> (p/let [media (.fromUrl MessageMedia url)
+     (-> (p/let [buffer (baixar-buffer url)
+                 media (MessageMedia. "image/png" (.toString buffer "base64") "pokemon.png")
                  _     (.reply message media nil #js {:caption legenda :mentions (clj->js mentions)})]
            nil)
          (p/catch (fn [err]
@@ -1239,20 +1240,63 @@
 ;; monta a imagem "pokémon-x vs pokémon-o" mostrada quando a batalha começa
 (def ^:private tamanho-sprite 260)
 (def ^:private tamanho-x 100)
+(def ^:private timeout-download-imagem-ms 6000)
 
 (defn- svg-x []
   (str "<svg xmlns='http://www.w3.org/2000/svg' width='" tamanho-x "' height='" tamanho-x "'>"
        "<text x='50%' y='54%' font-size='90' font-family='sans-serif' font-weight='bold' "
        "fill='#e63946' text-anchor='middle' dominant-baseline='middle'>X</text></svg>"))
 
-(defn- baixar-buffer [url]
-  (p/let [res (js/fetch url)
+(defn- url-jsdelivr-sprite
+  "Converte as URLs de sprites devolvidas pela PokeAPI para um espelho CDN.
+  A VM pode alcançar a PokeAPI normalmente e ainda assim ficar sem resposta do
+  raw.githubusercontent.com; o jsDelivr evita que isso paralise as imagens."
+  [url]
+  (when-let [[_ caminho]
+             (and (string? url)
+                  (re-matches
+                   #"https://raw\.githubusercontent\.com/PokeAPI/sprites/(?:master|refs/heads/master)/(.+)"
+                   url))]
+    (str "https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/" caminho)))
+
+(defn- candidatos-url-sprite [url]
+  (->> [(url-jsdelivr-sprite url) url]
+       (remove str/blank?)
+       distinct
+       vec))
+
+(defn- baixar-buffer-url [url]
+  (p/let [res (js/fetch url #js {:signal (.timeout js/AbortSignal timeout-download-imagem-ms)})
+          _   (when-not (.-ok res)
+                (throw (js/Error. (str "Imagem respondeu HTTP " (.-status res)))))
           arr (.arrayBuffer res)]
     (js/Buffer.from arr)))
 
+(defn- baixar-buffer
+  "Baixa uma imagem com timeout e tenta o host original se o CDN falhar.
+  Nunca deixa uma mensagem esperando indefinidamente por um sprite."
+  [url]
+  (letfn [(tentar [[atual & restantes] ultimo-erro]
+            (if atual
+              (-> (baixar-buffer-url atual)
+                  (p/catch (fn [erro] (tentar restantes erro))))
+              (p/rejected (or ultimo-erro (js/Error. "Pokémon sem URL de imagem")))))]
+    (tentar (candidatos-url-sprite url) nil)))
+
+(defn- svg-sprite-indisponivel [tamanho]
+  (str "<svg xmlns='http://www.w3.org/2000/svg' width='" tamanho "' height='" tamanho "'>"
+       "<circle cx='50%' cy='50%' r='42%' fill='#f8fafc' stroke='#111827' stroke-width='8'/>"
+       "<path d='M8 " (/ tamanho 2) "H" (- tamanho 8) "' stroke='#111827' stroke-width='10'/>"
+       "<path d='M8 " (/ tamanho 2) "A" (* tamanho 0.42) " " (* tamanho 0.42)
+       " 0 0 1 " (- tamanho 8) " " (/ tamanho 2) "Z' fill='#ef4444'/>"
+       "<circle cx='50%' cy='50%' r='13%' fill='#fff' stroke='#111827' stroke-width='7'/>"
+       "</svg>"))
+
 (defn- sprite-redimensionado [url]
-  (p/let [buffer (baixar-buffer url)]
-    (-> (sharp buffer)
+  (p/let [buffer (-> (baixar-buffer url)
+                     (p/catch (fn [_] nil)))
+          entrada (or buffer (js/Buffer.from (svg-sprite-indisponivel tamanho-sprite)))]
+    (-> (sharp entrada)
         (.resize tamanho-sprite tamanho-sprite #js {:fit "contain"
                                                     :background #js {:r 255 :g 255 :b 255 :alpha 0}})
         (.png)
@@ -1277,8 +1321,13 @@
 (defn- sprite-proporcional [pokemon maximo]
   (p/let [pokemon (pokemon-com-medidas pokemon)
           tamanho (tamanho-visual-pokemon pokemon maximo)
-          buffer (baixar-buffer (:imagem pokemon))
-          sprite (-> (sharp buffer)
+          buffer (-> (baixar-buffer (:imagem pokemon))
+                     (p/catch (fn [erro]
+                                (js/console.warn "Não foi possível baixar o sprite; usando marcador local:"
+                                                 (:nome pokemon) (.-message erro))
+                                nil)))
+          entrada (or buffer (js/Buffer.from (svg-sprite-indisponivel tamanho)))
+          sprite (-> (sharp entrada)
                      (.resize tamanho tamanho #js {:fit "contain"
                                                    :background #js {:r 255 :g 255 :b 255 :alpha 0}})
                      (.png)
@@ -2373,11 +2422,11 @@
          "<g filter='url(#sombra-treinador)'>"
          "<rect x='338' y='58' width='350' height='112' rx='22' fill='#0f172a' fill-opacity='.72' stroke='#facc15' stroke-width='5'/>"
          "<text x='365' y='103' font-size='30' font-family='Arial,sans-serif' font-weight='bold' fill='#f8fafc'>Treinador</text>"
-         "<text x='365' y='140' font-size='24' font-family='Arial,sans-serif' fill='#dbeafe'>" nome " • Nv. " nivel "</text>"
+         "<text x='365' y='140' font-size='24' font-family='Arial,sans-serif' fill='#dbeafe'>" (escapar-xml nome) " • Nv. " nivel "</text>"
          "<rect x='356' y='205' width='280' height='116' rx='22' fill='#f8fafc' fill-opacity='.9' stroke='#111827' stroke-width='6'/>"
          "<text x='496' y='244' font-size='25' font-family='Arial,sans-serif' font-weight='bold' text-anchor='middle' fill='#111827'>Pokémon ativo</text>"
          "<text x='496' y='282' font-size='23' font-family='Arial,sans-serif' text-anchor='middle' fill='#334155'>"
-         (if ativo (str "#" numero-ativo " " nome-ativo " • Nv. " nivel-ativo) "Nenhum")
+         (if ativo (str "#" numero-ativo " " (escapar-xml nome-ativo) " • Nv. " nivel-ativo) "Nenhum")
          "</text>"
          "</g>"
          "</svg>"))))
@@ -2391,20 +2440,29 @@
         (.toBuffer))))
 
 (defn- criar-cartao-treinador [nome nivel ativo numero-ativo]
-  (p/let [sprite-ash (sprite-ash-treinador)
-          sprite (when ativo (sprite-proporcional ativo 190))
-          svg    (svg-cartao-treinador nome nivel ativo numero-ativo (nil? sprite-ash))
-          overlays (cond-> []
-                     sprite-ash (conj #js {:input sprite-ash
-                                           :left 78
-                                           :top 50})
-                     sprite (conj #js {:input (:buffer sprite)
-                                       :left (- 515 (quot (:tamanho sprite) 2))
-                                       :top (- 360 (:tamanho sprite))}))]
-    (-> (sharp (js/Buffer.from svg))
-        (.composite (clj->js overlays))
-        (.png)
-        (.toBuffer))))
+  ;; Cria a promessa enquanto `with-redefs`/chamador ainda está no mesmo
+  ;; contexto e isola sua falha: Ash e a ficha continuam aparecendo mesmo que
+  ;; a arte remota do Pokémon esteja temporariamente indisponível.
+  (let [sprite-promessa (when ativo
+                          (-> (sprite-proporcional ativo 190)
+                              (p/catch (fn [erro]
+                                         (js/console.warn "Cartão do treinador sem sprite ativo:"
+                                                          (.-message erro))
+                                         nil))))]
+    (p/let [sprite-ash (sprite-ash-treinador)
+            sprite sprite-promessa
+            svg    (svg-cartao-treinador nome nivel ativo numero-ativo (nil? sprite-ash))
+            overlays (cond-> []
+                       sprite-ash (conj #js {:input sprite-ash
+                                             :left 78
+                                             :top 50})
+                       sprite (conj #js {:input (:buffer sprite)
+                                         :left (- 515 (quot (:tamanho sprite) 2))
+                                         :top (- 360 (:tamanho sprite))}))]
+      (-> (sharp (js/Buffer.from svg))
+          (.composite (clj->js overlays))
+          (.png)
+          (.toBuffer)))))
 
 (defn- texto-treinador [cid pid nome perfil numero-ativo ativo]
   (let [{:keys [nivel xp xp-insignias xp-missoes pe-ginasios pe-raids xp-atual xp-necessario sequencia recorde insignias]} perfil]
@@ -2437,15 +2495,15 @@
         perfil (treinador/perfil-treinador cid pid)
         numero-ativo (inc (treinador/indice-ativo cid pid))
         [ativo] (treinador/pokemon-ativo cid pid)]
-    (-> (p/let [nome (nome-de message)
-                texto (texto-treinador cid pid nome perfil numero-ativo ativo)
-                buffer (criar-cartao-treinador nome (:nivel perfil) ativo numero-ativo)]
-          {:media (MessageMedia. "image/png" (.toString buffer "base64") "treinador-pokemon.png")
-           :texto texto})
-        (p/catch (fn [err]
-                   (js/console.error "Erro ao montar imagem do treinador:" err)
-                   (p/let [nome (nome-de message)]
-                     (texto-treinador cid pid nome perfil numero-ativo ativo)))))))
+    (p/let [nome (nome-de message)
+            texto (texto-treinador cid pid nome perfil numero-ativo ativo)]
+      (-> (p/let [buffer (criar-cartao-treinador nome (:nivel perfil) ativo numero-ativo)]
+            {:media (MessageMedia. "image/png" (.toString buffer "base64") "treinador-pokemon.png")
+             :legenda (str "🧢 *Perfil do treinador " nome "*")
+             :texto texto})
+          (p/catch (fn [err]
+                     (js/console.error "Erro ao montar imagem do treinador:" err)
+                     texto))))))
 
 (defn- renderizar-pokedex-pessoal [message filtro]
   (let [cid       (chat-id message)
@@ -2626,15 +2684,14 @@
          " • " (count entradas) " Pokémon</text>" cards "</svg>")))
 
 (defn- baixar-sprite-time [url]
-  (when url
-    (-> (p/let [res (js/fetch url)
-                _   (when-not (.-ok res) (throw (js/Error. "Sprite indisponível")))
-                arr (.arrayBuffer res)]
-          (-> (sharp (js/Buffer.from arr))
-              (.resize 145 145 #js {:fit "contain" :background #js {:r 0 :g 0 :b 0 :alpha 0}})
-              (.png)
-              (.toBuffer)))
-        (p/catch (fn [_] nil)))))
+  (p/let [buffer (when url
+                   (-> (baixar-buffer url)
+                       (p/catch (fn [_] nil))))
+          entrada (or buffer (js/Buffer.from (svg-sprite-indisponivel 145)))]
+    (-> (sharp entrada)
+        (.resize 145 145 #js {:fit "contain" :background #js {:r 0 :g 0 :b 0 :alpha 0}})
+        (.png)
+        (.toBuffer))))
 
 (defn- criar-cartao-time [registros indice-ativo nivel]
   (let [entradas (->> registros

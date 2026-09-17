@@ -329,6 +329,14 @@
     (is (str/includes? svg "M257 119L305 129"))
     (is (not (str/includes? sem-desenho "M257 119L305 129")))))
 
+(deftest candidatos-de-sprite-priorizam-jsdelivr-para-github-raw
+  (let [original "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png"]
+    (is (= ["https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/other/official-artwork/25.png"
+            original]
+           (core/candidatos-url-sprite original)))
+    (is (= ["https://exemplo.com/pikachu.png"]
+           (core/candidatos-url-sprite "https://exemplo.com/pikachu.png")))))
+
 (deftest cartao-do-treinador-renderiza-pokemon-ativo
   (async done
     (let [sprite (str "data:image/svg+xml;base64,"
@@ -343,6 +351,27 @@
           (.catch (fn [erro]
                     (is false (str "Não conseguiu gerar o cartão do treinador: " erro))
                     (done)))))))
+
+(deftest cartao-do-treinador-sobrevive-a-sprite-indisponivel
+  (async done
+    (let [tentativas (atom 0)
+          ativo (assoc pikachu :imagem "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png")]
+      (with-redefs [core/sprite-proporcional
+                    (fn [_ _]
+                      (swap! tentativas inc)
+                      (js/Promise.reject (js/Error. "sprite indisponível")))]
+        (-> (core/criar-cartao-treinador "Ash" 7 ativo 1)
+            (.then (fn [buffer]
+                     (is (= 1 @tentativas))
+                     (.metadata (sharp buffer))))
+            (.then (fn [metadados]
+                     (is (= "png" (.-format metadados)))
+                     (is (= 760 (.-width metadados)))
+                     (is (= 400 (.-height metadados)))
+                     (done)))
+            (.catch (fn [erro]
+                      (is false (str "O cartão não usou o fallback quando o sprite falhou: " erro))
+                      (done))))))))
 
 (deftest ataques-pvp-tambem-recebem-arena-visual
   (let [pvp {:jogadores {:x "a" :o "b"}}

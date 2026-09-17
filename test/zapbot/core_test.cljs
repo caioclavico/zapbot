@@ -1,0 +1,59 @@
+(ns zapbot.core-test
+  (:require [cljs.test :refer-macros [async deftest is]]
+            [zapbot.core :as core]))
+
+(defn- mensagem-com-reply [chamadas responder]
+  #js {:reply (fn [& args]
+                (swap! chamadas conj (vec args))
+                (responder (count @chamadas)))})
+
+(deftest resposta-longa-envia-midia-com-legenda-curta-e-texto-separado
+  (async done
+    (let [chamadas (atom [])
+          media #js {:mimetype "image/png" :data "imagem-base64"}
+          texto (apply str (repeat 901 "x"))
+          message (mensagem-com-reply chamadas
+                                      (fn [_] (js/Promise.resolve nil)))]
+      (-> (core/responder-com-midia
+           message {:media media
+                    :texto texto
+                    :legenda "🧢 Perfil do treinador"
+                    :mentions ["123@c.us"]})
+          (.then (fn [_]
+                   (let [[envio-midia envio-texto] @chamadas
+                         opcoes-midia (nth envio-midia 2)
+                         opcoes-texto (nth envio-texto 2)]
+                     (is (= 2 (count @chamadas)))
+                     (is (identical? media (first envio-midia)))
+                     (is (= "🧢 Perfil do treinador" (.-caption opcoes-midia)))
+                     (is (< (count (.-caption opcoes-midia)) 900))
+                     (is (= texto (first envio-texto)))
+                     (is (= ["123@c.us"] (js->clj (.-mentions opcoes-midia))))
+                     (is (= ["123@c.us"] (js->clj (.-mentions opcoes-texto))))
+                     (done))))
+          (.catch (fn [erro]
+                    (is false (str "Falha ao separar texto longo da mídia: " erro))
+                    (done)))))))
+
+(deftest falha-no-envio-da-midia-faz-fallback-para-texto
+  (async done
+    (let [chamadas (atom [])
+          media #js {:mimetype "image/png" :data "imagem-base64"}
+          texto "Ficha do treinador em texto"
+          message (mensagem-com-reply
+                   chamadas
+                   (fn [numero-da-chamada]
+                     (if (= 1 numero-da-chamada)
+                       (js/Promise.reject (js/Error. "mídia recusada"))
+                       (js/Promise.resolve nil))))]
+      (-> (core/responder-com-midia message {:media media :texto texto})
+          (.then (fn [_]
+                   (let [[envio-midia envio-texto] @chamadas]
+                     (is (= 2 (count @chamadas)))
+                     (is (identical? media (first envio-midia)))
+                     (is (= texto (.-caption (nth envio-midia 2))))
+                     (is (= texto (first envio-texto)))
+                     (done))))
+          (.catch (fn [erro]
+                    (is false (str "O fallback textual também falhou: " erro))
+                    (done)))))))
