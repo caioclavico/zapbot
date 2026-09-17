@@ -141,15 +141,28 @@
 (deftest pokebolas-de-captura-tem-cores-e-estados-visuais
   (is (= "#dc2626" (core/cor-bola "pokebola")))
   (is (= "#2563eb" (core/cor-bola "grande-bola")))
-  (is (= "#111827" (core/cor-bola "ultra-bola")))
-  (let [aberta (core/svg-bola-captura "grande-bola" false false)
+    (is (= "#111827" (core/cor-bola "ultra-bola")))
+    (let [aberta (core/svg-bola-captura "grande-bola" false false)
+        comum (core/svg-bola-captura "pokebola" false false)
+        ultra (core/svg-bola-captura "ultra-bola" false false)
         fechada (core/svg-bola-captura "ultra-bola" true false)
         fuga (core/svg-bola-captura "pokebola" false true)]
-    (is (str/includes? aberta "rotate(-18"))
+    (is (str/includes? aberta "fill='#1f2937'"))
+    (is (str/includes? comum "cx='380' cy='150' rx='116' ry='82' fill='#dc2626'"))
+    (is (str/includes? aberta "transform='translate(0 34)'"))
+    (is (str/includes? aberta "cx='380' cy='150' rx='116' ry='82' fill='#2563eb'"))
+    (is (str/includes? ultra "cx='380' cy='150' rx='116' ry='82' fill='#111827'"))
+    (is (str/includes? aberta "fill='#93c5fd' fill-opacity='.58'"))
+    (is (str/includes? aberta "cx='380' cy='118' r='35' fill='#0f172a'"))
+    (is (str/includes? aberta "cx='380' cy='118' r='13' fill='#f8fafc'"))
+    (is (str/includes? aberta "M350 247A30 24"))
+    (is (not (str/includes? aberta "cx='380' cy='248' r='28' fill='#f8fafc'")))
+    (is (not (str/includes? aberta "cx='319' cy='146'")))
+    (is (not (str/includes? aberta "M360 250A20")))
     (is (not (str/includes? aberta "#fde047")))
     (is (str/includes? fechada "#fde047"))
-    (is (not (str/includes? fechada "rotate(-18")))
-    (is (str/includes? fuga "fill-opacity='.9'"))))
+    (is (not (str/includes? fechada "fill='#050505'")))
+    (is (str/includes? fuga "fill-opacity='.92'"))))
 
 (deftest reconhece-comandos-e-resultados-de-captura
   (is (= "pokebola" (core/bola-do-comando-captura "capturar pokebola")))
@@ -162,11 +175,26 @@
   (is (false? (core/tentativa-captura-realizada? "🎒 Você não tem essa bola."))))
 
 (deftest fuga-da-captura-mostra-bola-aberta-com-fumaca
-  (let [quadro (core/svg-bola-captura "pokebola" false true)]
-    (is (str/includes? quadro "rotate(-18"))
-    (is (str/includes? quadro "fill-opacity='.9'"))
-    (is (str/includes? quadro "cx='385' cy='130'"))
+    (let [quadro (core/svg-bola-captura "pokebola" false true)]
+    (is (str/includes? quadro "fill='#1f2937'"))
+    (is (str/includes? quadro "fill-opacity='.92'"))
+    (is (not (str/includes? quadro "cy='82' rx='92'")))
+    (is (str/includes? quadro "cx='380' cy='118' r='13' fill='#f8fafc'"))
+    (is (str/includes? quadro "M350 247A30 24"))
+    (is (not (str/includes? quadro "fill='#f97316'")))
+    (is (not (str/includes? quadro "M360 250A20")))
+    (is (str/includes? quadro "cx='381' cy='50'"))
+    (is (str/includes? quadro "M380 22C364 8"))
     (is (not (str/includes? quadro "<image")))))
+
+(deftest permanencia-de-ginasio-formata-tempo-e-xp
+  (is (= "59s" (ginasios/formatar-duracao 59000)))
+  (is (= "1m 1s" (ginasios/formatar-duracao 61000)))
+  (is (= "1h 0m" (ginasios/formatar-duracao (* 60 60 1000))))
+  (let [agora (* 3 60 60 1000)
+        ocupacao {"desde" 0}]
+    (is (= 6 (ginasios/xp-permanencia ocupacao agora))))
+  (is (= 24 (ginasios/xp-permanencia {"desde" 0} (* 30 60 60 1000)))))
 
 (deftest imagens-estaticas-de-captura-sao-png
   (async done
@@ -197,8 +225,6 @@
                  true {:tipo "fire" :classe :especial})]
     (is (str/includes? efeitos "#f97316"))
     (is (str/includes? efeitos "#fde047"))
-    (is (str/includes? efeitos "#a855f7"))
-    (is (str/includes? efeitos "#67e8f9"))
     (is (str/includes? efeitos ">Z</text>"))
     (is (str/includes? efeitos "#f472b6"))
     (is (str/includes? efeitos "translate(585 250)"))
@@ -219,9 +245,25 @@
     (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "grass"}) "<ellipse"))
     (let [psiquico (core/svg-sobreposicao-batalha "golpe" false {:tipo "psychic"})]
       (is (str/includes? psiquico "#e879f9"))
-      (is (str/includes? psiquico "M380 210C380 178"))
-      (is (str/includes? psiquico "translate(247 76.5) scale(.35)"))
-      (is (str/includes? psiquico "translate(266 189.3) scale(.30)")))))
+      (is (str/includes? psiquico "M380 210C380 178")))))
+
+(deftest golpes-da-rodada-ficam-lado-a-lado-e-escalam-com-dano
+  (let [fraco (core/svg-golpe-posicionado {:tipo "fire" :origem :x :dano 10})
+        forte (core/svg-golpe-posicionado {:tipo "fire" :origem :x :dano 90})
+        lider (core/svg-golpe-posicionado {:tipo "water" :origem :o :dano 40})
+        rodada (core/svg-sobreposicao-batalha
+                "rodada" false [{:tipo "fire" :origem :x :dano 20}
+                                 {:tipo "water" :origem :o :dano 60}])]
+    (is (< (core/escala-visual-dano 10) (core/escala-visual-dano 90)))
+    (is (not= fraco forte))
+    (is (not= fraco lider))
+    (is (str/includes? rodada "#f97316"))
+    (is (str/includes? rodada "#38bdf8"))))
+
+(deftest rodada-do-ginasio-remove-estado-intermediario
+  (is (= "Ataque do treinador"
+         (core/sem-estado-intermediario "Ataque do treinador\n\n🐾 Ash - Pikachu")))
+  (is (= 37 (core/dano-da-resposta "causou 37 de dano em Onix!"))))
 
 (deftest efeito-visual-usa-o-golpe-escolhido
   (let [golpes [{:nome-exibicao "Choque" :tipo "electric" :classe :especial}
@@ -273,6 +315,34 @@
         (.catch (fn [erro]
                   (is false (str "Não conseguiu carregar a imagem do professor: " erro))
                   (done))))))
+
+(deftest cartao-do-treinador-mostra-ash-e-pokemon-ativo
+  (let [svg (core/svg-cartao-treinador "Ash" 7 pikachu 1)
+        sem-desenho (core/svg-cartao-treinador "Ash" 7 pikachu 1 false)]
+    (is (str/includes? svg "Treinador"))
+    (is (str/includes? svg "Ash • Nv. 7"))
+    (is (str/includes? svg "Pokémon ativo"))
+    (is (str/includes? svg "#1 Pikachu"))
+    (is (str/includes? svg "fundo-treinador"))
+    (is (str/includes? svg "stop-color='#dc2626'"))
+    (is (str/includes? svg "fill='#ef4444'"))
+    (is (str/includes? svg "M257 119L305 129"))
+    (is (not (str/includes? sem-desenho "M257 119L305 129")))))
+
+(deftest cartao-do-treinador-renderiza-pokemon-ativo
+  (async done
+    (let [sprite (str "data:image/svg+xml;base64,"
+                      (.toString (js/Buffer.from
+                                  "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><circle cx='32' cy='32' r='28' fill='gold'/></svg>")
+                                 "base64"))
+          ativo (assoc pikachu :imagem sprite)]
+      (-> (core/criar-cartao-treinador "Ash" 7 ativo 1)
+          (.then (fn [buffer]
+                   (is (> (.-length buffer) 10000))
+                   (done)))
+          (.catch (fn [erro]
+                    (is false (str "Não conseguiu gerar o cartão do treinador: " erro))
+                    (done)))))))
 
 (deftest ataques-pvp-tambem-recebem-arena-visual
   (let [pvp {:jogadores {:x "a" :o "b"}}

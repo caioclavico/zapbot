@@ -15,6 +15,7 @@
             [zapbot.pokemon.raids :as raids]
             ["whatsapp-web.js" :as wwjs]
             ["sharp" :as sharp]
+            ["fs" :as fs]
             [zapbot.config :as config]
             [zapbot.rank :as rank]
             [zapbot.pokemon.loja :as loja]
@@ -29,6 +30,9 @@
 
 (def ^:private imagem-professor-carvalho
   (str js/__dirname "/../assets/professor-carvalho.png"))
+
+(def ^:private imagem-ash-treinador
+  (str js/__dirname "/../assets/ash.png"))
 
 ;; total de espécies conhecidas pela PokeAPI (até a geração 9)
 (def ^:private total-pokemons 1025)
@@ -1126,10 +1130,8 @@
       :else
       (do
         (swap! jogos assoc cid novo)
-        ;; Cada substituição abre um novo confronto dentro do mesmo desafio.
-        ;; Mostra novamente a arena com os dois Pokémon que agora estão ativos.
-        (when (and (:ginasio novo) (seq avisos))
-          (enviar-imagem-ginasio (:message novo) novo))
+        ;; A resposta principal da rodada já usa o estado atualizado e mostra
+        ;; quem entrou. Não envia outra foto em paralelo no ginásio.
         (str "\n\n" (str/join "\n" avisos) "\n\n" (mensagem-estado novo))))))
 
 (defn- tentar-encerrar-por-desistencia!
@@ -1479,15 +1481,29 @@
                 "<path d='M300 72l10 24 26 2-20 17 6 25-22-14-22 14 6-25-20-17 26-2Z'/>"
                 "<path d='M380 42l8 19 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z'/>"
                 "<path d='M460 72l10 24 26 2-20 17 6 25-22-14-22 14 6-25-20-17 26-2Z'/></g>")
-           (str "<g filter='url(#sombra-bola)'>"
-                "<path d='M275 250a105 105 0 0 0 210 0Z' fill='#f8fafc' stroke='#111827' stroke-width='12'/>"
-                "<path d='M275 250h210' stroke='#111827' stroke-width='16'/><circle cx='380' cy='250' r='29' fill='#f8fafc' stroke='#111827' stroke-width='11'/>"
-                "<g transform='rotate(-18 380 205)'><path d='M275 205a105 105 0 0 1 210 0Z' fill='" cor "' stroke='#111827' stroke-width='12'/>"
-                "<path d='M278 205h204' stroke='#111827' stroke-width='14'/></g></g>"))
+           (str "<g filter='url(#sombra-bola)' transform='translate(0 34)'>"
+                "<ellipse cx='380' cy='150' rx='116' ry='82' fill='" cor "' stroke='#111827' stroke-width='9'/>"
+                "<ellipse cx='380' cy='160' rx='101' ry='66' fill='#1f2937' stroke='#111827' stroke-width='6'/>"
+                "<path d='M289 161C313 128 335 112 366 104L351 198C325 194 303 181 289 161Z' fill='#93c5fd' fill-opacity='.58' stroke='#111827' stroke-width='5'/>"
+                "<path d='M471 161C447 128 425 112 394 104L409 198C435 194 457 181 471 161Z' fill='#93c5fd' fill-opacity='.58' stroke='#111827' stroke-width='5'/>"
+                "<path d='M350 198L366 104H394L410 198Z' fill='#cbd5e1' fill-opacity='.72' stroke='#111827' stroke-width='5'/>"
+                "<circle cx='380' cy='118' r='35' fill='#0f172a' stroke='#111827' stroke-width='6'/>"
+                "<circle cx='380' cy='118' r='26' fill='#67e8f9' fill-opacity='.42' stroke='#334155' stroke-width='5'/>"
+                "<path d='M362 100L398 136M398 100L362 136' stroke='#111827' stroke-width='4' opacity='.75'/>"
+                "<circle cx='380' cy='118' r='13' fill='#f8fafc' stroke='#cbd5e1' stroke-width='3'/>"
+                "<path d='M270 248C285 205 475 205 490 248C490 311 438 347 380 347C322 347 270 311 270 248Z' fill='#f1f5f9' stroke='#111827' stroke-width='9'/>"
+                "<ellipse cx='380' cy='248' rx='108' ry='33' fill='#111827' stroke='#e5e7eb' stroke-width='5'/>"
+                "<path d='M270 248C305 275 455 275 490 248' fill='none' stroke='#111827' stroke-width='5' opacity='.5'/>"
+                "<path d='M350 247A30 24 0 0 0 410 247V268A30 24 0 0 1 350 268Z' fill='#0f172a' stroke='#111827' stroke-width='7'/></g>"))
          (when fugiu?
-           (str "<g fill='#f8fafc' fill-opacity='.9' stroke='#cbd5e1' stroke-width='3'>"
-                "<circle cx='335' cy='112' r='40'/><circle cx='375' cy='88' r='34'/>"
-                "<circle cx='420' cy='105' r='44'/><circle cx='385' cy='130' r='48'/></g>"))
+           (str "<g fill='#f8fafc' fill-opacity='.92' stroke='#cbd5e1' stroke-width='3'>"
+                "<circle cx='315' cy='78' r='22'/><circle cx='348' cy='56' r='26'/>"
+                "<circle cx='381' cy='50' r='30'/><circle cx='414' cy='56' r='26'/>"
+                "<circle cx='445' cy='78' r='22'/>"
+                "</g><g fill='none' stroke='#e2e8f0' stroke-width='8' stroke-linecap='round' opacity='.78'>"
+                "<path d='M304 40C287 24 299 10 323 8'/>"
+                "<path d='M380 22C364 8 378 -5 404 0'/>"
+                "<path d='M456 40C474 23 464 9 440 7'/></g>"))
          "</svg>")))
 
 (defn- resposta-imagem-captura [bola texto capturou? fugiu?]
@@ -1516,40 +1532,49 @@
   ;; da Pokébola aberta, em vez da imagem geral da caçada com o treinador.
   (boolean (re-find #"(?i)(lançada: captura concluída|\bfalhou\b)" (or texto ""))))
 
+(defn- dano-da-resposta [texto]
+  (if-let [[_ dano] (re-find #"(?i)causou\s+(\d+)\s+de dano" (or texto ""))]
+    (js/parseInt dano 10)
+    0))
+
+(defn- escala-visual-dano [dano]
+  (+ 0.24 (min 0.18 (/ (max 0 (or dano 0)) 500))))
+
+(defn- forma-svg-golpe [tipo]
+  (cond
+    (= tipo "fire") "<g><path d='M350 280q-55-70 5-120-5 45 28 58-8-72 42-112 55 80 10 174Z' fill='#f97316' stroke='#c2410c' stroke-width='8'/><path d='M377 268q-27-38 2-69 1 24 20 34-2-33 19-57 24 48-4 92Z' fill='#fde047'/></g>"
+    (= tipo "electric") "<path d='M405 75l-82 145h62l-34 112 101-157h-65Z' fill='#fde047' stroke='#eab308' stroke-width='8'/>"
+    (= tipo "water") "<path d='M380 80C330 155 300 195 300 245a80 80 0 0 0 160 0c0-50-30-90-80-165Z' fill='#38bdf8' stroke='#0369a1' stroke-width='8'/>"
+    (= tipo "grass") "<g fill='#4ade80' stroke='#15803d' stroke-width='6'><ellipse cx='345' cy='210' rx='38' ry='75' transform='rotate(-35 345 210)'/><ellipse cx='420' cy='205' rx='38' ry='75' transform='rotate(35 420 205)'/></g>"
+    (contains? #{"psychic" "ghost" "fairy"} tipo) "<path d='M380 210C380 178 425 180 425 218C425 270 355 280 325 228C288 164 360 102 435 137C530 182 493 315 382 326' fill='none' stroke='#e879f9' stroke-width='14' stroke-linecap='round' stroke-linejoin='round'/>"
+    (= tipo "poison") "<g fill='#a855f7' stroke='#7e22ce' stroke-width='6'><circle cx='340' cy='245' r='28'/><circle cx='410' cy='205' r='38'/><circle cx='455' cy='270' r='20'/></g>"
+    (= tipo "ice") "<path d='M380 90v245M275 150l210 125M275 275l210-125' stroke='#67e8f9' stroke-width='18' stroke-linecap='round'/>"
+    :else "<path d='M380 125l22 58 61-17-37 52 51 37-63-4-9 62-25-57-57 30 34-53-53-34 63 1Z' fill='#ffffff' fill-opacity='.72' stroke='#facc15' stroke-width='9'/>"))
+
+(defn- svg-golpe-posicionado [{:keys [tipo origem dano]}]
+  (let [escala (escala-visual-dano dano)
+        centro (if (= origem :o) 445 315)
+        esquerda (- centro (* 380 escala))
+        topo (- 205 (* 210 escala))]
+    (str "<g transform='translate(" esquerda " " topo ") scale(" escala ")' filter='url(#golpe-glow)'>"
+         (forma-svg-golpe tipo) "</g>")))
+
 (defn- svg-sobreposicao-batalha
   ([texto shiny?] (svg-sobreposicao-batalha texto shiny? nil))
   ([texto shiny? efeito]
   (let [texto (or texto "")
-        tipo (:tipo efeito)
-        fogo? (or (= tipo "fire") (str/includes? (str/lower-case texto) "queimad"))
-        raio? (or (= tipo "electric") (str/includes? (str/lower-case texto) "paralis"))
-        agua? (= tipo "water")
-        grama? (= tipo "grass")
-        psiquico? (contains? #{"psychic" "ghost" "fairy"} tipo)
-        veneno? (or (= tipo "poison") (str/includes? (str/lower-case texto) "envenen"))
-        gelo? (or (= tipo "ice") (str/includes? (str/lower-case texto) "congel"))
+        efeitos (cond (nil? efeito) [] (sequential? efeito) efeito :else [efeito])
         sono? (str/includes? (str/lower-case texto) "dorm")
         confuso? (str/includes? (str/lower-case texto) "confus")
-        impacto? (some? efeito)
         desmaio? (boolean (re-find #"(?i)(desmaiou|caiu por causa|caiu com o recuo)" texto))
         entrada? (boolean (re-find #"(?i)(envia \*|entrou na batalha)" texto))]
     (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
          "<defs><filter id='golpe-glow'><feDropShadow dx='0' dy='0' stdDeviation='9' flood-color='#ffffff' flood-opacity='.75'/></filter></defs>"
-         (when (or fogo? raio? agua? grama? psiquico? veneno? gelo?)
-           "<g transform='translate(247 76.5) scale(.35)' filter='url(#golpe-glow)'>")
-         (when fogo? "<g><path d='M350 280q-55-70 5-120-5 45 28 58-8-72 42-112 55 80 10 174Z' fill='#f97316' stroke='#c2410c' stroke-width='8'/><path d='M377 268q-27-38 2-69 1 24 20 34-2-33 19-57 24 48-4 92Z' fill='#fde047'/></g>")
-         (when raio? "<path d='M405 75l-82 145h62l-34 112 101-157h-65Z' fill='#fde047' stroke='#eab308' stroke-width='8'/>")
-         (when agua? "<path d='M380 80C330 155 300 195 300 245a80 80 0 0 0 160 0c0-50-30-90-80-165Z' fill='#38bdf8' stroke='#0369a1' stroke-width='8'/>")
-         (when grama? "<g fill='#4ade80' stroke='#15803d' stroke-width='6'><ellipse cx='345' cy='210' rx='38' ry='75' transform='rotate(-35 345 210)'/><ellipse cx='420' cy='205' rx='38' ry='75' transform='rotate(35 420 205)'/></g>")
-         (when psiquico? "<path d='M380 210C380 178 425 180 425 218C425 270 355 280 325 228C288 164 360 102 435 137C530 182 493 315 382 326' fill='none' stroke='#e879f9' stroke-width='14' stroke-linecap='round' stroke-linejoin='round'/>")
-         (when veneno? "<g fill='#a855f7' stroke='#7e22ce' stroke-width='6'><circle cx='340' cy='245' r='28'/><circle cx='410' cy='205' r='38'/><circle cx='455' cy='270' r='20'/></g>")
-         (when gelo? "<path d='M380 90v245M275 150l210 125M275 275l210-125' stroke='#67e8f9' stroke-width='18' stroke-linecap='round'/>")
-         (when (or fogo? raio? agua? grama? psiquico? veneno? gelo?) "</g>")
+         (apply str (map svg-golpe-posicionado efeitos))
          (when (or sono? confuso?)
            "<circle cx='380' cy='215' r='72' fill='none' stroke='#ffffff' stroke-opacity='.8' stroke-width='9'/>")
          (when sono? "<g fill='#312e81' font-family='sans-serif' font-weight='bold'><text x='420' y='145' font-size='48'>Z</text><text x='475' y='105' font-size='36'>Z</text></g>")
          (when confuso? "<path d='M315 180q65-80 130 0t-130 0q65-55 130 0' fill='none' stroke='#f472b6' stroke-width='14'/>")
-         (when impacto? "<g transform='translate(266 189.3) scale(.30)'><path d='M380 125l22 58 61-17-37 52 51 37-63-4-9 62-25-57-57 30 34-53-53-34 63 1Z' fill='#ffffff' fill-opacity='.45' stroke='#facc15' stroke-width='7'/></g>")
          (when desmaio? "<g stroke='#0f172a' stroke-width='13' stroke-linecap='round'><path d='M555 130l38 38m0-38l-38 38M635 130l38 38m0-38l-38 38'/></g>")
          (when entrada? "<g transform='translate(585 250)'><circle r='55' fill='#f8fafc' stroke='#111827' stroke-width='8'/><path d='M-55 0a55 55 0 0 1 110 0Z' fill='#dc2626'/><path d='M-52 0h104' stroke='#111827' stroke-width='10'/><circle r='15' fill='#fff' stroke='#111827' stroke-width='7'/></g>")
          (when shiny?
@@ -2314,36 +2339,113 @@
             "\nCombine filtros com " config/prefix "pokemon time [liga] [tipo] [raridade] [nome] [nivel N]."
             "\nOrdene por força: " config/prefix "pokemon time > (mais forte primeiro) ou < (mais fraco primeiro).")))))
 
+(defn- svg-cartao-treinador
+  ([nome nivel ativo numero-ativo] (svg-cartao-treinador nome nivel ativo numero-ativo true))
+  ([nome nivel ativo numero-ativo desenhar-ash?]
+   (let [nome-ativo (or (:nome ativo) "Nenhum")
+         nivel-ativo (when ativo (nivel-pokemon ativo))]
+    (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
+         "<defs>"
+         "<linearGradient id='fundo-treinador' x1='0' y1='0' x2='1' y2='1'><stop stop-color='#7f1d1d'/><stop offset='.48' stop-color='#dc2626'/><stop offset='1' stop-color='#450a0a'/></linearGradient>"
+         "<radialGradient id='brilho-treinador' cx='.3' cy='.18' r='.9'><stop stop-color='#fecaca' stop-opacity='.55'/><stop offset='.55' stop-color='#ef4444' stop-opacity='.15'/><stop offset='1' stop-color='#450a0a' stop-opacity='0'/></radialGradient>"
+         "<filter id='sombra-treinador'><feDropShadow dx='0' dy='9' stdDeviation='7' flood-opacity='.3'/></filter>"
+         "</defs>"
+         "<rect width='760' height='400' rx='28' fill='url(#fundo-treinador)'/>"
+         "<rect width='760' height='400' rx='28' fill='url(#brilho-treinador)'/>"
+         "<circle cx='640' cy='42' r='130' fill='#991b1b' opacity='.34'/>"
+         "<circle cx='640' cy='42' r='70' fill='none' stroke='#fee2e2' stroke-width='18' opacity='.18'/>"
+         "<path d='M0 318Q160 282 340 312T760 294V400H0Z' fill='#111827' opacity='.22'/>"
+         "<path d='M0 296H760' stroke='#fee2e2' stroke-width='10' opacity='.2'/>"
+         (when desenhar-ash?
+           (str "<g filter='url(#sombra-treinador)'>"
+                "<ellipse cx='214' cy='348' rx='92' ry='18' fill='#14532d' opacity='.28'/>"
+                "<path d='M165 332L184 218H244L263 332Z' fill='#2563eb' stroke='#111827' stroke-width='7'/>"
+                "<path d='M181 218Q214 195 247 218L239 270H189Z' fill='#f8fafc' stroke='#111827' stroke-width='7'/>"
+                "<circle cx='214' cy='154' r='49' fill='#f2c29b' stroke='#111827' stroke-width='7'/>"
+                "<path d='M166 145Q214 93 262 145Q235 131 214 133Q193 131 166 145Z' fill='#111827'/>"
+                "<path d='M162 120Q214 69 266 120L257 139Q214 119 171 139Z' fill='#ef4444' stroke='#111827' stroke-width='7'/>"
+                "<path d='M190 84H238V126Q214 112 190 126Z' fill='#f8fafc' stroke='#111827' stroke-width='7'/>"
+                "<path d='M257 119L305 129Q282 146 258 139Z' fill='#ef4444' stroke='#111827' stroke-width='7'/>"
+                "<circle cx='196' cy='158' r='5' fill='#111827'/><circle cx='232' cy='158' r='5' fill='#111827'/>"
+                "<path d='M199 181Q214 193 229 181' fill='none' stroke='#111827' stroke-width='5' stroke-linecap='round'/>"
+                "<path d='M184 225L123 265' stroke='#f2c29b' stroke-width='18' stroke-linecap='round'/><path d='M244 225L305 265' stroke='#f2c29b' stroke-width='18' stroke-linecap='round'/>"
+                "</g>"))
+         "<g filter='url(#sombra-treinador)'>"
+         "<rect x='338' y='58' width='350' height='112' rx='22' fill='#0f172a' fill-opacity='.72' stroke='#facc15' stroke-width='5'/>"
+         "<text x='365' y='103' font-size='30' font-family='Arial,sans-serif' font-weight='bold' fill='#f8fafc'>Treinador</text>"
+         "<text x='365' y='140' font-size='24' font-family='Arial,sans-serif' fill='#dbeafe'>" nome " • Nv. " nivel "</text>"
+         "<rect x='356' y='205' width='280' height='116' rx='22' fill='#f8fafc' fill-opacity='.9' stroke='#111827' stroke-width='6'/>"
+         "<text x='496' y='244' font-size='25' font-family='Arial,sans-serif' font-weight='bold' text-anchor='middle' fill='#111827'>Pokémon ativo</text>"
+         "<text x='496' y='282' font-size='23' font-family='Arial,sans-serif' text-anchor='middle' fill='#334155'>"
+         (if ativo (str "#" numero-ativo " " nome-ativo " • Nv. " nivel-ativo) "Nenhum")
+         "</text>"
+         "</g>"
+         "</svg>"))))
+
+(defn- sprite-ash-treinador []
+  (when (.existsSync fs imagem-ash-treinador)
+    (-> (sharp imagem-ash-treinador)
+        (.resize 270 350 #js {:fit "contain"
+                              :background #js {:r 0 :g 0 :b 0 :alpha 0}})
+        (.png)
+        (.toBuffer))))
+
+(defn- criar-cartao-treinador [nome nivel ativo numero-ativo]
+  (p/let [sprite-ash (sprite-ash-treinador)
+          sprite (when ativo (sprite-proporcional ativo 190))
+          svg    (svg-cartao-treinador nome nivel ativo numero-ativo (nil? sprite-ash))
+          overlays (cond-> []
+                     sprite-ash (conj #js {:input sprite-ash
+                                           :left 78
+                                           :top 50})
+                     sprite (conj #js {:input (:buffer sprite)
+                                       :left (- 515 (quot (:tamanho sprite) 2))
+                                       :top (- 360 (:tamanho sprite))}))]
+    (-> (sharp (js/Buffer.from svg))
+        (.composite (clj->js overlays))
+        (.png)
+        (.toBuffer))))
+
+(defn- texto-treinador [cid pid nome perfil numero-ativo ativo]
+  (let [{:keys [nivel xp xp-insignias xp-missoes pe-ginasios pe-raids xp-atual xp-necessario sequencia recorde insignias]} perfil]
+    (str "🧢 *Treinador: " nome "*\n\n"
+         "⭐ Nível do treinador: " nivel
+         "\n✨ PE (Pontos de experiência): " xp
+         "\n🎖️ PE recebido por insígnias: " xp-insignias
+         "\n📋 PE recebido por missões: " xp-missoes
+         "\n🏛️ PE adicional de ginásios: " pe-ginasios
+         "\n🤝 PE recebido por raids: " pe-raids
+         "\nPróximo nível: " xp-atual "/" xp-necessario " PE (vitórias + ginásios + raids + insígnias + missões)"
+         "\n🏛️ Insígnias de ginásio: "
+         (let [ids (keys (treinador/insignias-ginasio cid pid))]
+           (if (seq ids) (str/join ", " (map #(or (:nome (aventuras/obter-ginasio %)) %) ids)) "nenhuma"))
+         "\n🔥 Sequência atual: " sequencia " capturas"
+         "\n🏆 Maior sequência de capturas: " recorde
+         "\n\n⚡ Pokémon ativo: "
+         (if ativo (str "#" numero-ativo " *" (:nome ativo) "* — nível " (or (:nivel ativo) 1))
+             "Nenhum")
+         "\n\n🎖️ *Insígnias: " (count (filter :conquistada? insignias)) "/" (count insignias) "*\n"
+         (str/join "\n" (map (fn [{:keys [nome requisito conquistada? xp-recompensa]}]
+                               (str (if conquistada? "🏅" "🔒") " " nome " — " requisito
+                                    " • +" xp-recompensa " PE"
+                                    (when conquistada? " (recebido)")))
+                             insignias)))))
+
 (defn- ver-treinador [message]
   (let [cid (chat-id message)
         pid (jogador-id message)
-        {:keys [nivel xp xp-insignias xp-missoes pe-ginasios pe-raids xp-atual xp-necessario sequencia recorde insignias]}
-        (treinador/perfil-treinador cid pid)
+        perfil (treinador/perfil-treinador cid pid)
         numero-ativo (inc (treinador/indice-ativo cid pid))
         [ativo] (treinador/pokemon-ativo cid pid)]
-    (p/let [nome (nome-de message)]
-      (str "🧢 *Treinador: " nome "*\n\n"
-           "⭐ Nível do treinador: " nivel
-           "\n✨ PE (Pontos de experiência): " xp
-           "\n🎖️ PE recebido por insígnias: " xp-insignias
-           "\n📋 PE recebido por missões: " xp-missoes
-           "\n🏛️ PE adicional de ginásios: " pe-ginasios
-           "\n🤝 PE recebido por raids: " pe-raids
-           "\nPróximo nível: " xp-atual "/" xp-necessario " PE (vitórias + ginásios + raids + insígnias + missões)"
-           "\n🏛️ Insígnias de ginásio: "
-           (let [ids (keys (treinador/insignias-ginasio cid pid))]
-             (if (seq ids) (str/join ", " (map #(or (:nome (aventuras/obter-ginasio %)) %) ids)) "nenhuma"))
-           "\n🔥 Sequência atual: " sequencia " capturas"
-           "\n🏆 Maior sequência de capturas: " recorde
-           "\n\n⚡ Pokémon ativo: "
-           (if ativo (str "#" numero-ativo " *" (:nome ativo) "* — nível " (or (:nivel ativo) 1))
-               "Nenhum")
-           "\n\n🎖️ *Insígnias: " (count (filter :conquistada? insignias)) "/" (count insignias) "*\n"
-           (str/join "\n" (map (fn [{:keys [nome requisito conquistada? xp-recompensa]}]
-                                 (str (if conquistada? "🏅" "🔒") " " nome " — " requisito
-                                      " • +" xp-recompensa " PE"
-                                      (when conquistada? " (recebido)")))
-                               insignias))))))
+    (-> (p/let [nome (nome-de message)
+                texto (texto-treinador cid pid nome perfil numero-ativo ativo)
+                buffer (criar-cartao-treinador nome (:nivel perfil) ativo numero-ativo)]
+          {:media (MessageMedia. "image/png" (.toString buffer "base64") "treinador-pokemon.png")
+           :texto texto})
+        (p/catch (fn [err]
+                   (js/console.error "Erro ao montar imagem do treinador:" err)
+                   (p/let [nome (nome-de message)]
+                     (texto-treinador cid pid nome perfil numero-ativo ativo)))))))
 
 (defn- renderizar-pokedex-pessoal [message filtro]
   (let [cid       (chat-id message)
@@ -3827,6 +3929,8 @@
                             " Consulte os Pokémon com !pokemon ginasio " (:id g) "."
                             (when-let [anterior (:anterior ocupacao)]
                               (str "\nO time de " (get anterior "nome") " voltou à coleção."
+                                   "\n⏱️ Permaneceu por " (ginasios/formatar-duracao (:tempo-ms ocupacao))
+                                   ". Os defensores receberam +" (:xp ocupacao) " XP cada."
                                    (when (pos? (:moedas ocupacao))
                                      " Recebeu 50 moedas por permanecer mais de 6 horas."))))))))
           (p/catch (fn [err]
@@ -3850,7 +3954,7 @@
   ([cid g mostrar-time?]
    (if-let [lider (ginasios/lider cid (:id g))]
      (str (get lider "nome") " — há "
-          (js/Math.floor (/ (- (.now js/Date) (get lider "desde")) 60000)) " min"
+          (ginasios/formatar-duracao (- (.now js/Date) (get lider "desde")))
           (when mostrar-time?
             (str "\nTime reservado: "
                  (str/join ", " (map #(str (get % "nome") (when (get % "shiny") " ✨ Shiny")
@@ -4429,11 +4533,16 @@
                                      (when (contains? #{:fisico :especial} (:classe golpe)) i))
                                    (:golpes pokemon))
             idx (if (seq ataques) (rand-nth (vec ataques)) 0)
+            golpe (select-keys (nth (:golpes pokemon) idx) [:tipo :classe :nome-exibicao])
             npc #js {:from cid :author "lider-ginasio"}]
         (p/let [resposta (atacar npc (str (inc idx)))
-                restante (turno-lider message cid)]
-          (str (texto-resposta resposta) (texto-resposta restante))))
-      (p/resolved ""))))
+                texto (texto-resposta resposta)]
+          {:texto texto
+           :efeitos [(assoc golpe :origem :o :dano (dano-da-resposta texto))]}))
+      (p/resolved {:texto "" :efeitos []}))))
+
+(defn- sem-estado-intermediario [texto]
+  (first (str/split (or texto "") #"\n\n🐾 " 2)))
 
 (defn jogar [message args]
   (if-let [ajuda (pokemon-ajuda/resposta args)]
@@ -4458,9 +4567,16 @@
                                        (aprender-golpe-por-nivel! message cid (jogador-id message) (:nivel subida) indice))))))
               resposta (jogar-comando message args)
               lider (turno-lider message cid)
+              efeito-jogador (when efeito-golpe
+                               (assoc efeito-golpe
+                                      :origem (or (:vez jogo-inicial) :x)
+                                      :dano (dano-da-resposta (texto-resposta resposta))))
+              efeitos-golpe (vec (concat (when efeito-jogador [efeito-jogador])
+                                          (:efeitos lider)))
               texto (or (when resultado-derrota @resultado-derrota)
                         (if (str/blank? (texto-resposta lider)) resposta
-                            (str (texto-resposta resposta) "\n\n🏛️ *Vez do líder*\n" (texto-resposta lider))))
+                            (str (sem-estado-intermediario (texto-resposta resposta))
+                                 "\n\n🏛️ *Ataque do líder*\n" (texto-resposta lider))))
               texto-final (texto-resposta texto)
               tema-evento (tema-evento-da-resposta args texto-final)
               url-evento (or (get-in (get @jogos cid) [:pokemons :x :imagem])
@@ -4469,10 +4585,10 @@
                              (get-in caca-inicial [:pokemons :x :imagem]))]
         (cond
           ataque-no-ginasio?
-          (resposta-imagem-ginasio (or (get @jogos cid) jogo-inicial) texto-final efeito-golpe)
+          (resposta-imagem-ginasio (or (get @jogos cid) jogo-inicial) texto-final efeitos-golpe)
 
           ataque-no-pvp?
-          (resposta-imagem-pvp (or (get @jogos cid) jogo-inicial) texto-final efeito-golpe)
+          (resposta-imagem-pvp (or (get @jogos cid) jogo-inicial) texto-final efeitos-golpe)
 
           (and caca-inicial bola-captura (tentativa-captura-realizada? (texto-resposta texto)))
           (resposta-imagem-captura bola-captura
@@ -4485,7 +4601,8 @@
           (resposta-imagem-cacada (or (get @cacadas-selvagens cid) caca-inicial)
                                   texto-final
                                   (fuga-selvagem-na-resposta? texto-final)
-                                  efeito-golpe)
+                                  (when-not (:aguardando-captura? (get @cacadas-selvagens cid))
+                                    efeitos-golpe))
 
           tema-evento
           (resposta-cartao-evento tema-evento

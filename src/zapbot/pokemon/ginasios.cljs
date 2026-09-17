@@ -17,6 +17,30 @@
 (defn recompensa-permanencia [ocupacao agora]
   (if (and ocupacao (> (- agora (get ocupacao "desde" agora)) (* 6 60 60 1000))) 50 0))
 
+(defn duracao-ms [ocupacao agora]
+  (max 0 (- agora (get ocupacao "desde" agora))))
+
+(defn formatar-duracao [ms]
+  (let [total-segundos (js/Math.floor (/ (max 0 ms) 1000))
+        horas (js/Math.floor (/ total-segundos 3600))
+        minutos (js/Math.floor (/ (mod total-segundos 3600) 60))
+        segundos (mod total-segundos 60)
+        partes (cond-> []
+                 (pos? horas) (conj (str horas "h"))
+                 (or (pos? minutos) (pos? horas)) (conj (str minutos "m"))
+                 (or (pos? segundos) (zero? total-segundos)) (conj (str segundos "s")))]
+    (str/join " " partes)))
+
+(defn xp-permanencia
+  "XP para cada Pokémon defensor ao sair do ginásio.
+  Cresce com o tempo: +1 XP a cada 30 minutos completos, mínimo +1 se ficou
+  algum tempo e limite de 24 XP por queda."
+  [ocupacao agora]
+  (let [ms (duracao-ms ocupacao agora)]
+    (if (pos? ms)
+      (min 24 (max 1 (js/Math.floor (/ ms (* 30 60 1000)))))
+      0)))
+
 (declare registrar-permanencia!)
 
 (defn ocupar!
@@ -25,18 +49,24 @@
   (when (and (= anterior (lider cid id)) (not= pid (get anterior "pid")))
     (let [registros (mapv #(get (treinador/equipe cid pid) %) indices)
           moedas (recompensa-permanencia anterior agora)
+          xp (xp-permanencia anterior agora)
           nova {"pid" pid "nome" nome "time" (vec registros) "desde" agora}]
       (when-not (and (= 3 (count indices)) (= 3 (count (set indices))) (every? some? registros))
         (throw (js/Error. "Time de ocupação inválido.")))
       ;; Fora da coleção utilizável, como na enfermaria: não pode ser alterado.
       (doseq [idx (sort > indices)] (treinador/remover-pokemon! cid pid idx))
-      (doseq [registro (get anterior "time")]
-        (treinador/receber-doacao! cid (get anterior "pid") registro))
+      (let [pid-anterior (get anterior "pid")
+            inicio (count (treinador/equipe cid pid-anterior))]
+        (doseq [registro (get anterior "time")]
+          (treinador/receber-doacao! cid pid-anterior registro))
+        (when (pos? xp)
+          (doseq [idx (range inicio (+ inicio (count (get anterior "time"))))]
+            (treinador/ganhar-xp-no-indice! cid pid-anterior idx xp))))
       (registrar-permanencia! cid id anterior agora)
       (swap! ocupacoes assoc-in [cid id] nova)
       (when (pos? moedas) (loja/creditar-quantia! cid (get anterior "pid") moedas))
       (armazenamento/salvar! "ginasios" @ocupacoes)
-      {:anterior anterior :moedas moedas})))
+      {:anterior anterior :moedas moedas :xp xp :tempo-ms (duracao-ms anterior agora)})))
 
 (defonce ^:private estatisticas (atom (or (armazenamento/obter "ginasios-estatisticas") {})))
 (armazenamento/registrar! "ginasios-estatisticas" estatisticas)
@@ -82,12 +112,12 @@
                     (fn [i entrada]
                       (str (inc i) ". " (get entrada "nome") " — "
                            (if (= chave "tempo-ms")
-                             (js/Math.floor (/ (get entrada chave 0) 60000))
+                             (formatar-duracao (get entrada chave 0))
                              (get entrada chave 0)) unidade))
                     (take 10 (sort-by #(get % chave 0) > dados))))
                   "Ainda não há líderes registrados."))]
     (str "🏛️ *Ranking — " id "*\n🛡️ Defesas vencidas\n" (lista "defesas" " vitória(s)")
-         "\n\n⏱️ Permanência acumulada\n" (lista "tempo-ms" " min")
+         "\n\n⏱️ Permanência acumulada\n" (lista "tempo-ms" "")
          "\nDefesas são contadas a partir desta atualização.")))
 
 (defn historico [cid id]

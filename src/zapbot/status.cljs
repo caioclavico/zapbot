@@ -13,9 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Capturas bem-sucedidas mostram a Pokébola fechada com estrelas acima"
-   "17/09 — Quando o Pokémon foge, a imagem mostra a Pokébola aberta com fumaça acima"
-   "17/09 — O menu de captura mostra somente o Pokémon derrotado, centralizado na arena selvagem"])
+  ["17/09 — A Pokébola aberta de fuga ficou mais perto do rodapé e ganhou fumaça mais cheia acima"
+   "17/09 — Ginásios agora mostram permanência em segundos, minutos e horas"
+   "17/09 — Pokémon defensores ganham XP por permanência no ginásio: quanto mais tempo segurarem, mais XP recebem ao voltar"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))
