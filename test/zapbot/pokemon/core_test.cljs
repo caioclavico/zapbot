@@ -135,3 +135,56 @@
     (is (not (str/includes? normal "fill-opacity='.92'")))
     (is (str/includes? fuga "id='grama'"))
     (is (str/includes? fuga "fill-opacity='.92'"))))
+
+(deftest pokebolas-de-captura-tem-cores-e-estados-visuais
+  (is (= "#dc2626" (core/cor-bola "pokebola")))
+  (is (= "#2563eb" (core/cor-bola "grande-bola")))
+  (is (= "#111827" (core/cor-bola "ultra-bola")))
+  (let [aberta (core/svg-bola-captura "grande-bola" false false)
+        fechada (core/svg-bola-captura "ultra-bola" true false)
+        fuga (core/svg-bola-captura "pokebola" false true)]
+    (is (str/includes? aberta "rotate(-18"))
+    (is (not (str/includes? aberta "#fde047")))
+    (is (str/includes? fechada "#fde047"))
+    (is (not (str/includes? fechada "rotate(-18")))
+    (is (str/includes? fuga "fill-opacity='.9'"))))
+
+(deftest reconhece-comandos-e-resultados-de-captura
+  (is (= "pokebola" (core/bola-do-comando-captura "capturar pokebola")))
+  (is (= "grande-bola" (core/bola-do-comando-captura "cap grande")))
+  (is (= "ultra-bola" (core/bola-do-comando-captura "capturar ultra-bola")))
+  (is (nil? (core/bola-do-comando-captura "capturar invalida")))
+  (is (true? (core/captura-concluida? "✅ Pokébola lançada: captura concluída!")))
+  (is (true? (core/tentativa-captura-realizada? "💥 A Grande Bola falhou, mas continua aqui!")))
+  (is (false? (core/tentativa-captura-realizada? "🎒 Você não tem essa bola."))))
+
+(deftest efeitos-visuais-cobrem-golpes-status-shiny-e-substituicao
+  (let [efeitos (core/svg-sobreposicao-batalha
+                 "💥 causou dano 🔥 ⚡ ☠️ 🧊 💤 💫 e entrou na batalha" true)]
+    (is (str/includes? efeitos "#f97316"))
+    (is (str/includes? efeitos "#fde047"))
+    (is (str/includes? efeitos "#a855f7"))
+    (is (str/includes? efeitos "#67e8f9"))
+    (is (str/includes? efeitos ">Z</text>"))
+    (is (str/includes? efeitos "#f472b6"))
+    (is (str/includes? efeitos "translate(585 250)"))
+    (is (str/includes? efeitos "M555 60"))))
+
+(deftest classifica-cartoes-dos-eventos-pokemon
+  (is (= :nivel (core/tema-evento-da-resposta "" "Pikachu subiu para o nível 12")))
+  (is (= :desmaio (core/tema-evento-da-resposta "" "Seu Pokémon desmaiou")))
+  (is (= :entrada (core/tema-evento-da-resposta "" "Treinador envia *Eevee*")))
+  (is (= :insignia (core/tema-evento-da-resposta "atk 1" "Você venceu o ginásio Pedra")))
+  (is (= :raid (core/tema-evento-da-resposta "raid atacar 1" "HP do chefe: 200/440")))
+  (is (= :joy (core/tema-evento-da-resposta "joy 1" "A Enfermeira Joy recebeu *Pikachu*")))
+  (is (= :missao (core/tema-evento-da-resposta "missoes resgatar" "2 missões resgatadas")))
+  (is (= "HP 200/440" (core/detalhe-cartao-evento :raid "HP do chefe: 200/440")))
+  (is (= "Nv. 12" (core/detalhe-cartao-evento :nivel "subiu para o nível 12"))))
+
+(deftest ataques-pvp-tambem-recebem-arena-visual
+  (let [pvp {:jogadores {:x "a" :o "b"}}
+        espera {:jogadores {:x "a"}}
+        ginasio {:ginasio {:id "pedra"} :jogadores {:x "a" :o "lider"}}]
+    (is (true? (core/ataque-pvp? pvp "atk 1")))
+    (is (false? (core/ataque-pvp? espera "atk 1")))
+    (is (false? (core/ataque-pvp? ginasio "atk 1")))))

@@ -52,7 +52,8 @@
 
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
 (declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado
-         parse-indice-golpe estado-cacada turno-selvagem escalar-nivel com-raridade)
+         parse-indice-golpe estado-cacada turno-selvagem escalar-nivel com-raridade expandir-atalho
+         enviar-cartao-evento! aplicar-sobreposicao-batalha)
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -918,9 +919,10 @@
        (p/then (fn [dados]
                  (when dados
                    (treinador/evoluir-no-indice! cid pid idx dados)
-                   (enviar-imagem message (:imagem dados)
-                                  (str (cabecalho) "✨ *" (:nome-antigo dados) "* evoluiu para *"
-                                       (:nome-novo dados) "*!")))))
+                   (enviar-cartao-evento!
+                    message :evolucao (:imagem dados)
+                    (str (cabecalho) "✨ *" (:nome-antigo dados) "* evoluiu para *"
+                         (:nome-novo dados) "*!")))))
        (p/catch (fn [err] (js/console.error "Erro ao processar evolução:" err))))))
 
 (defn- sem-golpes-removidos
@@ -1248,13 +1250,14 @@
 
 (defn- criar-imagem-vs [url-x url-o]
   (p/let [[sprite-x sprite-o] (p/all [(sprite-redimensionado url-x) (sprite-redimensionado url-o)])
-          largura (+ (* 2 tamanho-sprite) tamanho-x)]
-    (-> (sharp #js {:create #js {:width largura :height tamanho-sprite :channels 4
+          largura 760
+          margem (quot (- largura (+ (* 2 tamanho-sprite) tamanho-x)) 2)]
+    (-> (sharp #js {:create #js {:width largura :height 400 :channels 4
                                  :background #js {:r 255 :g 255 :b 255 :alpha 0}}})
-        (.composite #js [#js {:input sprite-x :left 0 :top 0}
-                         #js {:input (js/Buffer.from (svg-x)) :left tamanho-sprite
-                              :top (quot (- tamanho-sprite tamanho-x) 2)}
-                         #js {:input sprite-o :left (+ tamanho-sprite tamanho-x) :top 0}])
+        (.composite #js [#js {:input sprite-x :left margem :top 70}
+                         #js {:input (js/Buffer.from (svg-x)) :left (+ margem tamanho-sprite)
+                              :top (+ 70 (quot (- tamanho-sprite tamanho-x) 2))}
+                         #js {:input sprite-o :left (+ margem tamanho-sprite tamanho-x) :top 70}])
         (.png)
         (.toBuffer))))
 
@@ -1303,8 +1306,9 @@
   ataque do ginásio leva a foto dos dois Pokémon ativos e o texto completo da
   rodada vira a legenda, inclusive quando o líder contra-ataca."
   [jogo texto]
-  (-> (p/let [buffer (criar-imagem-ginasio (get-in jogo [:pokemons :x :imagem])
-                                            (get-in jogo [:pokemons :o :imagem]))]
+  (-> (p/let [base (criar-imagem-ginasio (get-in jogo [:pokemons :x :imagem])
+                                          (get-in jogo [:pokemons :o :imagem]))
+              buffer (aplicar-sobreposicao-batalha base texto false)]
         {:media (MessageMedia. "image/png" (.toString buffer "base64") "ataque-ginasio.png")
          :texto texto})
       (p/catch (fn [err]
@@ -1342,7 +1346,9 @@
         (.toBuffer))))
 
 (defn- resposta-imagem-cacada [caca texto fugiu?]
-  (-> (p/let [buffer (criar-imagem-cacada caca fugiu?)]
+  (-> (p/let [base (criar-imagem-cacada caca fugiu?)
+              buffer (aplicar-sobreposicao-batalha
+                      base texto (and (not fugiu?) (get-in caca [:pokemons :o :shiny?])))]
         {:media (MessageMedia. "image/png" (.toString buffer "base64")
                               (if fugiu? "fuga-selvagem.png" "batalha-selvagem.png"))
          :texto texto})
@@ -1352,6 +1358,177 @@
 
 (defn- fuga-selvagem-na-resposta? [texto]
   (boolean (re-find #"(?i)(fugiu|escapou|sumiu no mato)" (or texto ""))))
+
+(def ^:private cores-bolas
+  {"pokebola" "#dc2626"
+   "grande-bola" "#2563eb"
+   "ultra-bola" "#111827"})
+
+(defn- cor-bola [bola]
+  (get cores-bolas bola "#dc2626"))
+
+(defn- svg-bola-captura [bola capturou? fugiu?]
+  (let [cor (cor-bola bola)]
+    (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
+         "<defs><linearGradient id='ceu-captura' x1='0' y1='0' x2='0' y2='1'>"
+         "<stop stop-color='#7dd3fc'/><stop offset='1' stop-color='#e0f2fe'/></linearGradient>"
+         "<linearGradient id='grama-captura' x1='0' y1='0' x2='0' y2='1'>"
+         "<stop stop-color='#65a30d'/><stop offset='1' stop-color='#166534'/></linearGradient>"
+         "<filter id='sombra-bola'><feDropShadow dx='0' dy='10' stdDeviation='9' flood-opacity='.35'/></filter>"
+         "</defs><rect width='760' height='400' rx='28' fill='url(#ceu-captura)'/>"
+         "<path d='M0 260 Q180 215 380 260 T760 255 V400 H0Z' fill='url(#grama-captura)'/>"
+         (if capturou?
+           (str "<g filter='url(#sombra-bola)'>"
+                "<circle cx='380' cy='225' r='105' fill='#f8fafc' stroke='#111827' stroke-width='12'/>"
+                "<path d='M275 225a105 105 0 0 1 210 0Z' fill='" cor "'/>"
+                "<path d='M278 225h204' stroke='#111827' stroke-width='16'/>"
+                "<circle cx='380' cy='225' r='31' fill='#f8fafc' stroke='#111827' stroke-width='12'/>"
+                "</g><g fill='#fde047' stroke='#f59e0b' stroke-width='3'>"
+                "<path d='M226 104l10 24 26 2-20 17 6 25-22-14-22 14 6-25-20-17 26-2Z'/>"
+                "<path d='M540 92l8 19 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z'/>"
+                "<path d='M560 260l7 17 19 1-15 12 5 19-16-10-16 10 5-19-15-12 19-1Z'/></g>")
+           (str "<g filter='url(#sombra-bola)'>"
+                "<path d='M275 250a105 105 0 0 0 210 0Z' fill='#f8fafc' stroke='#111827' stroke-width='12'/>"
+                "<path d='M275 250h210' stroke='#111827' stroke-width='16'/><circle cx='380' cy='250' r='29' fill='#f8fafc' stroke='#111827' stroke-width='11'/>"
+                "<g transform='rotate(-18 380 205)'><path d='M275 205a105 105 0 0 1 210 0Z' fill='" cor "' stroke='#111827' stroke-width='12'/>"
+                "<path d='M278 205h204' stroke='#111827' stroke-width='14'/></g></g>"))
+         (when fugiu?
+           (str "<g fill='#f8fafc' fill-opacity='.9' stroke='#cbd5e1' stroke-width='3'>"
+                "<circle cx='610' cy='190' r='42'/><circle cx='655' cy='175' r='36'/>"
+                "<circle cx='690' cy='210' r='46'/><circle cx='645' cy='225' r='48'/></g>"))
+         "</svg>")))
+
+(defn- resposta-imagem-captura [bola texto capturou? fugiu?]
+  (-> (p/let [buffer (-> (sharp (js/Buffer.from (svg-bola-captura bola capturou? fugiu?)))
+                              (.png)
+                              (.toBuffer))]
+        {:media (MessageMedia. "image/png" (.toString buffer "base64")
+                              (if capturou? "captura-concluida.png" "captura-falhou.png"))
+         :texto texto})
+      (p/catch (fn [err]
+                 (js/console.error "Erro ao montar imagem da captura:" err)
+                 texto))))
+
+(defn- bola-do-comando-captura [args]
+  (let [[comando & partes] (-> (or args "") str/trim str/lower-case (str/split #"\s+"))
+        bola (loja/normalizar-item (str/join " " partes))]
+    (when (and (= "capturar" (expandir-atalho comando))
+               (some #{bola} loja/bolas))
+      bola)))
+
+(defn- captura-concluida? [texto]
+  (boolean (re-find #"(?i)captura concluída" (or texto ""))))
+
+(defn- tentativa-captura-realizada? [texto]
+  (boolean (re-find #"(?i)(lançada: captura concluída|\bfalhou[,!])" (or texto ""))))
+
+(defn- svg-sobreposicao-batalha [texto shiny?]
+  (let [texto (or texto "")
+        fogo? (str/includes? texto "🔥")
+        raio? (str/includes? texto "⚡")
+        veneno? (or (str/includes? texto "☠️") (str/includes? texto "envenen"))
+        gelo? (str/includes? texto "🧊")
+        sono? (str/includes? texto "💤")
+        confuso? (str/includes? texto "💫")
+        impacto? (boolean (re-find #"(?i)(causou|usou|errou o alvo|de dano|💥|🔮)" texto))
+        desmaio? (boolean (re-find #"(?i)(desmaiou|caiu por causa|caiu com o recuo)" texto))
+        entrada? (boolean (re-find #"(?i)(envia \*|entrou na batalha)" texto))]
+    (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
+         (when (or fogo? raio? veneno? gelo? sono? confuso?)
+           "<circle cx='380' cy='215' r='72' fill='none' stroke='#ffffff' stroke-opacity='.8' stroke-width='9'/>")
+         (when fogo? "<path d='M350 280q-55-70 5-120-5 45 28 58-8-72 42-112 55 80 10 174Z' fill='#f97316' fill-opacity='.82'/>")
+         (when raio? "<path d='M405 75l-82 145h62l-34 112 101-157h-65Z' fill='#fde047' stroke='#eab308' stroke-width='8'/>")
+         (when veneno? "<g fill='#a855f7' fill-opacity='.75'><circle cx='340' cy='245' r='28'/><circle cx='410' cy='205' r='38'/><circle cx='455' cy='270' r='20'/></g>")
+         (when gelo? "<path d='M380 90v245M275 150l210 125M275 275l210-125' stroke='#67e8f9' stroke-width='18' stroke-linecap='round'/>")
+         (when sono? "<g fill='#312e81' font-family='sans-serif' font-weight='bold'><text x='420' y='145' font-size='48'>Z</text><text x='475' y='105' font-size='36'>Z</text></g>")
+         (when confuso? "<path d='M315 180q65-80 130 0t-130 0q65-55 130 0' fill='none' stroke='#f472b6' stroke-width='14'/>")
+         (when impacto? "<path d='M380 125l22 58 61-17-37 52 51 37-63-4-9 62-25-57-57 30 34-53-53-34 63 1Z' fill='#ffffff' fill-opacity='.45' stroke='#facc15' stroke-width='7'/>")
+         (when desmaio? "<g stroke='#0f172a' stroke-width='13' stroke-linecap='round'><path d='M555 130l38 38m0-38l-38 38M635 130l38 38m0-38l-38 38'/></g>")
+         (when entrada? "<g transform='translate(585 250)'><circle r='55' fill='#f8fafc' stroke='#111827' stroke-width='8'/><path d='M-55 0a55 55 0 0 1 110 0Z' fill='#dc2626'/><path d='M-52 0h104' stroke='#111827' stroke-width='10'/><circle r='15' fill='#fff' stroke='#111827' stroke-width='7'/></g>")
+         (when shiny?
+           "<g fill='#fde047' stroke='#f59e0b' stroke-width='2'><path d='M555 60l9 22 24 2-18 15 5 24-20-13-20 13 5-24-18-15 24-2Z'/><path d='M685 125l7 17 19 2-15 12 5 19-16-10-16 10 5-19-15-12 19-2Z'/></g>")
+         "</svg>")))
+
+(defn- aplicar-sobreposicao-batalha [buffer texto shiny?]
+  (-> (sharp buffer)
+      (.composite #js [#js {:input (js/Buffer.from (svg-sobreposicao-batalha texto shiny?))
+                            :left 0 :top 0}])
+      (.png)
+      (.toBuffer)))
+
+(def ^:private temas-eventos
+  {:nivel ["SUBIU DE NÍVEL" "#7c3aed" "⭐"]
+   :desmaio ["POKÉMON DESMAIOU" "#334155" "✕"]
+   :entrada ["NOVO POKÉMON" "#0284c7" "↗"]
+   :shiny ["POKÉMON SHINY" "#ca8a04" "✦"]
+   :insignia ["INSÍGNIA CONQUISTADA" "#d97706" "◆"]
+   :lider ["NOVO LÍDER" "#b91c1c" "♛"]
+   :raid ["RAID COOPERATIVA" "#7e22ce" "⚔"]
+   :joy ["ENFERMEIRA JOY" "#db2777" "+"]
+   :missao ["MISSÃO CONCLUÍDA" "#15803d" "✓"]
+   :evolucao ["EVOLUÇÃO" "#4f46e5" "→"]})
+
+(defn- detalhe-cartao-evento [tema texto]
+  (case tema
+    :nivel (when-let [[_ nivel] (re-find #"(?i)(?:nível|nivel)\s+(\d+)" (or texto ""))] (str "Nv. " nivel))
+    :raid (when-let [[_ hp maximo] (re-find #"HP do chefe:\s*(\d+)/(\d+)" (or texto ""))] (str "HP " hp "/" maximo))
+    :joy "Recuperação em andamento"
+    :missao "Recompensas liberadas"
+    :insignia "Vitória no ginásio"
+    nil))
+
+(defn- svg-cartao-evento [tema texto]
+  (let [[titulo cor simbolo] (get temas-eventos tema ["EVENTO POKÉMON" "#334155" "✦"])
+        detalhe (detalhe-cartao-evento tema texto)]
+    (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
+         "<defs><linearGradient id='evento-bg' x1='0' y1='0' x2='1' y2='1'><stop stop-color='" cor "'/><stop offset='1' stop-color='#0f172a'/></linearGradient>"
+         "<filter id='evento-glow'><feDropShadow dx='0' dy='0' stdDeviation='10' flood-color='#fde047'/></filter></defs>"
+         "<rect width='760' height='400' rx='28' fill='url(#evento-bg)'/>"
+         "<circle cx='380' cy='190' r='118' fill='#ffffff' fill-opacity='.12' stroke='#ffffff' stroke-opacity='.65' stroke-width='6'/>
+         <text x='380' y='220' fill='#ffffff' font-size='105' font-family='sans-serif' font-weight='bold' text-anchor='middle' filter='url(#evento-glow)'>" simbolo "</text>"
+         "<text x='380' y='345' fill='#ffffff' font-size='36' font-family='sans-serif' font-weight='bold' text-anchor='middle'>" titulo "</text>"
+         (when detalhe (str "<text x='380' y='382' fill='#e2e8f0' font-size='22' font-family='sans-serif' text-anchor='middle'>" detalhe "</text>"))
+         "</svg>")))
+
+(defn- criar-cartao-evento [tema url texto]
+  (p/let [sprite (when url (sprite-redimensionado url))]
+    (-> (sharp (js/Buffer.from (svg-cartao-evento tema texto)))
+        (.composite (to-array (if sprite [#js {:input sprite :left 250 :top 55}] [])))
+        (.png)
+        (.toBuffer))))
+
+(defn- resposta-cartao-evento
+  ([tema url texto] (resposta-cartao-evento tema url texto nil))
+  ([tema url texto mentions]
+   (-> (p/let [buffer (criar-cartao-evento tema url texto)]
+         (cond-> {:media (MessageMedia. "image/png" (.toString buffer "base64") (str (name tema) ".png"))
+                  :texto texto}
+           (seq mentions) (assoc :mentions mentions)))
+      (p/catch (fn [err]
+                 (js/console.error "Erro ao montar cartão de evento Pokémon:" err)
+                 texto)))))
+
+(defn- enviar-cartao-evento! [message tema url texto]
+  (-> (p/let [resposta (resposta-cartao-evento tema url texto)]
+        (if (map? resposta)
+          (.reply message (:media resposta) nil #js {:caption (:texto resposta)})
+          (.reply message resposta)))
+      (p/catch (fn [err] (js/console.error "Erro ao enviar cartão de evento Pokémon:" err)))))
+
+(defn- tema-evento-da-resposta [args texto]
+  (let [texto (or texto "")
+        comando (-> (or args "") str/trim str/lower-case (str/split #"\s+") first expandir-atalho)]
+    (cond
+      (= comando "raid") :raid
+      (and (= comando "joy") (str/includes? texto "A Enfermeira Joy recebeu")) :joy
+      (and (contains? #{"missoes" "missões"} comando)
+           (re-find #"(?i)(missão.*resgatada|missões.*resgatadas|missão diária concluída)" texto)) :missao
+      (str/includes? texto "venceu o ginásio") :insignia
+      (re-find #"(?i)evoluiu para" texto) :evolucao
+      (re-find #"(?i)(subiu para o nível|chegou ao nível)" texto) :nivel
+      (re-find #"(?i)(desmaiou|caiu por causa|caiu com o recuo)" texto) :desmaio
+      (re-find #"(?i)(envia \*|entrou na batalha)" texto) :entrada
+      :else nil)))
 
 (defn- legenda-vs [nome-x pokemon-x nome-o pokemon-o]
   (str (cabecalho) "⚔️ *" nome-x "* vs *" nome-o "*!\n\n"
@@ -1371,6 +1548,17 @@
       (p/catch (fn [err]
                  (js/console.error "Erro ao montar imagem da batalha:" err)
                  (.reply message legenda)))))
+
+(defn- resposta-imagem-pvp [jogo texto]
+  (-> (p/let [base (criar-imagem-vs (get-in jogo [:pokemons :x :imagem])
+                                     (get-in jogo [:pokemons :o :imagem]))
+              buffer (aplicar-sobreposicao-batalha base texto false)]
+        {:media (MessageMedia. "image/png" (.toString buffer "base64") "golpe-pvp.png")
+         :texto texto
+         :mentions (when-let [pid (get-in jogo [:jogadores (:vez jogo)])] [pid])})
+      (p/catch (fn [err]
+                 (js/console.error "Erro ao montar imagem do golpe PvP:" err)
+                 texto))))
 
 (defn- tentar-registrar!
   "Tenta gravar jogo-novo em `jogos` pro chat `cid`, mas só se `valido?`
@@ -3519,13 +3707,14 @@
           (p/then (fn [_]
                     (when-let [ocupacao (ginasios/ocupar! cid (:id g) (:lider-anterior jogo) pid
                                                         (:nome-desafiante jogo) (:time-desafiante jogo) (.now js/Date))]
-                      (enviar-aviso-temporizado cid message
-                        (str "🏛️ Você é o novo líder de " (:nome g) "! Seu time está inativo e reservado até alguém derrubar você."
-                             " Consulte os Pokémon com !pokemon ginasio " (:id g) "."
-                             (when-let [anterior (:anterior ocupacao)]
-                               (str "\nO time de " (get anterior "nome") " voltou à coleção."
-                                    (when (pos? (:moedas ocupacao))
-                                      " Recebeu 50 moedas por permanecer mais de 6 horas.")))) []))))
+                      (enviar-cartao-evento!
+                       message :lider (get-in jogo [:pokemons :x :imagem])
+                       (str "🏛️ Você é o novo líder de " (:nome g) "! Seu time está inativo e reservado até alguém derrubar você."
+                            " Consulte os Pokémon com !pokemon ginasio " (:id g) "."
+                            (when-let [anterior (:anterior ocupacao)]
+                              (str "\nO time de " (get anterior "nome") " voltou à coleção."
+                                   (when (pos? (:moedas ocupacao))
+                                     " Recebeu 50 moedas por permanecer mais de 6 horas."))))))))
           (p/catch (fn [err]
                      (js/console.error "Erro ao finalizar ocupação do ginásio:" err)
                      (enviar-aviso-temporizado cid message "⚠️ Não consegui concluir a ocupação do ginásio. Consulte !pokemon ginasio." [])))
@@ -3929,6 +4118,11 @@
     (and (boolean (:ginasio jogo))
          (contains? #{"atacar" "ataque" "atirar" "usar"} comando))))
 
+(defn- ataque-pvp? [jogo args]
+  (let [comando (-> (or args "") str/trim str/lower-case (str/split #"\s+") first expandir-atalho)]
+    (and jogo (not (:ginasio jogo)) (contains? (:jogadores jogo) :o)
+         (contains? #{"atacar" "ataque" "atirar" "usar"} comando))))
+
 (defn- ataque-cacada? [caca args]
   (let [comando (-> (or args "") str/trim str/lower-case (str/split #"\s+") first expandir-atalho)]
     (and (some? caca)
@@ -4121,7 +4315,9 @@
     (let [cid (chat-id message)
           jogo-inicial (get @jogos cid)
           caca-inicial (get @cacadas-selvagens cid)
+          bola-captura (bola-do-comando-captura args)
           ataque-no-ginasio? (ataque-ginasio? jogo-inicial args)
+          ataque-no-pvp? (ataque-pvp? jogo-inicial args)
           ataque-na-cacada? (ataque-cacada? caca-inicial args)
           resultado-derrota (:resultado-derrota jogo-inicial)]
       ;; A referência continua disponível após a limpeza assíncrona da batalha.
@@ -4135,15 +4331,37 @@
               lider (turno-lider message cid)
               texto (or (when resultado-derrota @resultado-derrota)
                         (if (str/blank? (texto-resposta lider)) resposta
-                            (str (texto-resposta resposta) "\n\n🏛️ *Vez do líder*\n" (texto-resposta lider))))]
+                            (str (texto-resposta resposta) "\n\n🏛️ *Vez do líder*\n" (texto-resposta lider))))
+              texto-final (texto-resposta texto)
+              tema-evento (tema-evento-da-resposta args texto-final)
+              url-evento (or (get-in (get @jogos cid) [:pokemons :x :imagem])
+                             (get-in (get @cacadas-selvagens cid) [:pokemons :x :imagem])
+                             (get-in jogo-inicial [:pokemons :x :imagem])
+                             (get-in caca-inicial [:pokemons :x :imagem]))]
         (cond
           ataque-no-ginasio?
-          (resposta-imagem-ginasio (or (get @jogos cid) jogo-inicial) (texto-resposta texto))
+          (resposta-imagem-ginasio (or (get @jogos cid) jogo-inicial) texto-final)
+
+          ataque-no-pvp?
+          (resposta-imagem-pvp (or (get @jogos cid) jogo-inicial) texto-final)
+
+          (and caca-inicial bola-captura (tentativa-captura-realizada? (texto-resposta texto)))
+          (resposta-imagem-captura bola-captura
+                                   texto-final
+                                   (captura-concluida? texto-final)
+                                   (fuga-selvagem-na-resposta? texto-final))
 
           (and caca-inicial
-               (or ataque-na-cacada? (fuga-selvagem-na-resposta? (texto-resposta texto))))
+               (or ataque-na-cacada? (fuga-selvagem-na-resposta? texto-final)))
           (resposta-imagem-cacada (or (get @cacadas-selvagens cid) caca-inicial)
-                                  (texto-resposta texto)
-                                  (fuga-selvagem-na-resposta? (texto-resposta texto)))
+                                  texto-final
+                                  (fuga-selvagem-na-resposta? texto-final))
+
+          tema-evento
+          (resposta-cartao-evento tema-evento
+                                  (if (= tema-evento :raid)
+                                    "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/143.png"
+                                    url-evento)
+                                  texto-final (:mentions resposta))
 
           :else texto)))))

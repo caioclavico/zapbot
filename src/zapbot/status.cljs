@@ -13,10 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Caçadas ganharam uma arena com grama, exibida no encontro e junto de cada golpe"
-   "17/09 — Quando o Pokémon selvagem foge, a imagem da caçada agora mostra uma nuvem de fumaça"
-   "17/09 — Ataques em ginásios mostram a arena com as fotos dos Pokémon ativos"
-   "17/09 — Comandos Pokémon ganharam formas curtas, como !pk atk 1, !pk def, !pk cur e !pk pot"])
+  ["17/09 — Golpes, efeitos de status, desmaios e entradas de Pokémon ganharam efeitos visuais nas arenas"
+   "17/09 — Evolução, nível, shiny, insígnias, liderança, raids, Enfermeira Joy e missões ganharam cartões próprios"
+   "17/09 — Capturas mostram bolas abertas nas falhas e fechadas com estrelas no sucesso, respeitando cada tipo de bola"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))
