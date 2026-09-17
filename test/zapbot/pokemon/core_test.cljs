@@ -160,7 +160,8 @@
 
 (deftest efeitos-visuais-cobrem-golpes-status-shiny-e-substituicao
   (let [efeitos (core/svg-sobreposicao-batalha
-                 "💥 causou dano 🔥 ⚡ ☠️ 🧊 💤 💫 e entrou na batalha" true)]
+                 "causou queimadura, paralisia, envenenamento, congelamento, dormiu, confusão e entrou na batalha"
+                 true {:tipo "fire" :classe :especial})]
     (is (str/includes? efeitos "#f97316"))
     (is (str/includes? efeitos "#fde047"))
     (is (str/includes? efeitos "#a855f7"))
@@ -168,7 +169,25 @@
     (is (str/includes? efeitos ">Z</text>"))
     (is (str/includes? efeitos "#f472b6"))
     (is (str/includes? efeitos "translate(585 250)"))
-    (is (str/includes? efeitos "M555 60"))))
+    (is (str/includes? efeitos "M555 60")))
+  (testing "o raio do cabeçalho não cria efeito elétrico"
+    (let [inicio (core/svg-sobreposicao-batalha "⚡ *Pokémon* selvagem apareceu" false nil)]
+      (is (not (str/includes? inicio "M405 75")))
+      (is (not (str/includes? inicio "M380 125")))))
+  (testing "o tipo real seleciona um efeito diferente"
+    (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "electric"}) "M405 75"))
+    (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "water"}) "M380 80"))
+    (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "grass"}) "<ellipse"))
+    (is (str/includes? (core/svg-sobreposicao-batalha "golpe" false {:tipo "psychic"}) "#e879f9"))))
+
+(deftest efeito-visual-usa-o-golpe-escolhido
+  (let [golpes [{:nome-exibicao "Choque" :tipo "electric" :classe :especial}
+                 {:nome-exibicao "Folha" :tipo "grass" :classe :fisico}]
+        jogo {:vez :x :pokemons {:x (assoc pikachu :golpes golpes)}}]
+    (is (= {:nome-exibicao "Choque" :tipo "electric" :classe :especial}
+           (core/golpe-do-comando jogo :x "atk 1")))
+    (is (= "grass" (:tipo (core/golpe-do-comando jogo :x "atacar 2"))))
+    (is (nil? (core/golpe-do-comando jogo :x "def")))))
 
 (deftest classifica-cartoes-dos-eventos-pokemon
   (is (= :nivel (core/tema-evento-da-resposta "" "Pikachu subiu para o nível 12")))

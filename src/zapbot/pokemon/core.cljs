@@ -1305,10 +1305,10 @@
   "Monta o cartão da arena como a própria resposta do comando. Assim cada
   ataque do ginásio leva a foto dos dois Pokémon ativos e o texto completo da
   rodada vira a legenda, inclusive quando o líder contra-ataca."
-  [jogo texto]
+  [jogo texto efeito]
   (-> (p/let [base (criar-imagem-ginasio (get-in jogo [:pokemons :x :imagem])
                                           (get-in jogo [:pokemons :o :imagem]))
-              buffer (aplicar-sobreposicao-batalha base texto false)]
+              buffer (aplicar-sobreposicao-batalha base texto false efeito)]
         {:media (MessageMedia. "image/png" (.toString buffer "base64") "ataque-ginasio.png")
          :texto texto})
       (p/catch (fn [err]
@@ -1345,16 +1345,18 @@
         (.png)
         (.toBuffer))))
 
-(defn- resposta-imagem-cacada [caca texto fugiu?]
+(defn- resposta-imagem-cacada
+  ([caca texto fugiu?] (resposta-imagem-cacada caca texto fugiu? nil))
+  ([caca texto fugiu? efeito]
   (-> (p/let [base (criar-imagem-cacada caca fugiu?)
               buffer (aplicar-sobreposicao-batalha
-                      base texto (and (not fugiu?) (get-in caca [:pokemons :o :shiny?])))]
+                      base texto (and (not fugiu?) (get-in caca [:pokemons :o :shiny?])) efeito)]
         {:media (MessageMedia. "image/png" (.toString buffer "base64")
                               (if fugiu? "fuga-selvagem.png" "batalha-selvagem.png"))
          :texto texto})
       (p/catch (fn [err]
                  (js/console.error "Erro ao montar imagem da caçada:" err)
-                 texto))))
+                 texto)))))
 
 (defn- fuga-selvagem-na-resposta? [texto]
   (boolean (re-find #"(?i)(fugiu|escapou|sumiu no mato)" (or texto ""))))
@@ -1422,15 +1424,21 @@
 (defn- tentativa-captura-realizada? [texto]
   (boolean (re-find #"(?i)(lançada: captura concluída|\bfalhou[,!])" (or texto ""))))
 
-(defn- svg-sobreposicao-batalha [texto shiny?]
+(defn- svg-sobreposicao-batalha
+  ([texto shiny?] (svg-sobreposicao-batalha texto shiny? nil))
+  ([texto shiny? efeito]
   (let [texto (or texto "")
-        fogo? (str/includes? texto "🔥")
-        raio? (str/includes? texto "⚡")
-        veneno? (or (str/includes? texto "☠️") (str/includes? texto "envenen"))
-        gelo? (str/includes? texto "🧊")
-        sono? (str/includes? texto "💤")
-        confuso? (str/includes? texto "💫")
-        impacto? (boolean (re-find #"(?i)(causou|usou|errou o alvo|de dano|💥|🔮)" texto))
+        tipo (:tipo efeito)
+        fogo? (or (= tipo "fire") (str/includes? (str/lower-case texto) "queimad"))
+        raio? (or (= tipo "electric") (str/includes? (str/lower-case texto) "paralis"))
+        agua? (= tipo "water")
+        grama? (= tipo "grass")
+        psiquico? (contains? #{"psychic" "ghost" "fairy"} tipo)
+        veneno? (or (= tipo "poison") (str/includes? (str/lower-case texto) "envenen"))
+        gelo? (or (= tipo "ice") (str/includes? (str/lower-case texto) "congel"))
+        sono? (str/includes? (str/lower-case texto) "dorm")
+        confuso? (str/includes? (str/lower-case texto) "confus")
+        impacto? (some? efeito)
         desmaio? (boolean (re-find #"(?i)(desmaiou|caiu por causa|caiu com o recuo)" texto))
         entrada? (boolean (re-find #"(?i)(envia \*|entrou na batalha)" texto))]
     (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
@@ -1438,6 +1446,9 @@
            "<circle cx='380' cy='215' r='72' fill='none' stroke='#ffffff' stroke-opacity='.8' stroke-width='9'/>")
          (when fogo? "<path d='M350 280q-55-70 5-120-5 45 28 58-8-72 42-112 55 80 10 174Z' fill='#f97316' fill-opacity='.82'/>")
          (when raio? "<path d='M405 75l-82 145h62l-34 112 101-157h-65Z' fill='#fde047' stroke='#eab308' stroke-width='8'/>")
+         (when agua? "<path d='M380 80C330 155 300 195 300 245a80 80 0 0 0 160 0c0-50-30-90-80-165Z' fill='#38bdf8' fill-opacity='.78' stroke='#0369a1' stroke-width='8'/>")
+         (when grama? "<g fill='#4ade80' stroke='#15803d' stroke-width='6'><ellipse cx='345' cy='210' rx='38' ry='75' transform='rotate(-35 345 210)'/><ellipse cx='420' cy='205' rx='38' ry='75' transform='rotate(35 420 205)'/></g>")
+         (when psiquico? "<g fill='none' stroke='#e879f9' stroke-width='12'><circle cx='380' cy='210' r='45'/><circle cx='380' cy='210' r='90' stroke-opacity='.7'/></g>")
          (when veneno? "<g fill='#a855f7' fill-opacity='.75'><circle cx='340' cy='245' r='28'/><circle cx='410' cy='205' r='38'/><circle cx='455' cy='270' r='20'/></g>")
          (when gelo? "<path d='M380 90v245M275 150l210 125M275 275l210-125' stroke='#67e8f9' stroke-width='18' stroke-linecap='round'/>")
          (when sono? "<g fill='#312e81' font-family='sans-serif' font-weight='bold'><text x='420' y='145' font-size='48'>Z</text><text x='475' y='105' font-size='36'>Z</text></g>")
@@ -1447,11 +1458,11 @@
          (when entrada? "<g transform='translate(585 250)'><circle r='55' fill='#f8fafc' stroke='#111827' stroke-width='8'/><path d='M-55 0a55 55 0 0 1 110 0Z' fill='#dc2626'/><path d='M-52 0h104' stroke='#111827' stroke-width='10'/><circle r='15' fill='#fff' stroke='#111827' stroke-width='7'/></g>")
          (when shiny?
            "<g fill='#fde047' stroke='#f59e0b' stroke-width='2'><path d='M555 60l9 22 24 2-18 15 5 24-20-13-20 13 5-24-18-15 24-2Z'/><path d='M685 125l7 17 19 2-15 12 5 19-16-10-16 10 5-19-15-12 19-2Z'/></g>")
-         "</svg>")))
+         "</svg>"))))
 
-(defn- aplicar-sobreposicao-batalha [buffer texto shiny?]
+(defn- aplicar-sobreposicao-batalha [buffer texto shiny? efeito]
   (-> (sharp buffer)
-      (.composite #js [#js {:input (js/Buffer.from (svg-sobreposicao-batalha texto shiny?))
+      (.composite #js [#js {:input (js/Buffer.from (svg-sobreposicao-batalha texto shiny? efeito))
                             :left 0 :top 0}])
       (.png)
       (.toBuffer)))
@@ -1549,10 +1560,10 @@
                  (js/console.error "Erro ao montar imagem da batalha:" err)
                  (.reply message legenda)))))
 
-(defn- resposta-imagem-pvp [jogo texto]
+(defn- resposta-imagem-pvp [jogo texto efeito]
   (-> (p/let [base (criar-imagem-vs (get-in jogo [:pokemons :x :imagem])
                                      (get-in jogo [:pokemons :o :imagem]))
-              buffer (aplicar-sobreposicao-batalha base texto false)]
+              buffer (aplicar-sobreposicao-batalha base texto false efeito)]
         {:media (MessageMedia. "image/png" (.toString buffer "base64") "golpe-pvp.png")
          :texto texto
          :mentions (when-let [pid (get-in jogo [:jogadores (:vez jogo)])] [pid])})
@@ -4128,6 +4139,17 @@
     (and (some? caca)
          (contains? #{"atacar" "ataque" "atirar" "usar"} comando))))
 
+(defn- golpe-do-comando
+  "Obtém o golpe real escolhido antes de a rodada alterar o estado. A arte usa
+  seu tipo, sem tentar deduzi-lo dos emojis gerais do cabeçalho ou do menu."
+  [estado marca args]
+  (let [[comando numero] (-> (or args "") str/trim str/lower-case (str/split #"\s+"))
+        golpes (get-in estado [:pokemons marca :golpes])
+        indice (parse-indice-golpe numero (count golpes))]
+    (when (and (contains? #{"atacar" "ataque" "atirar" "usar"} (expandir-atalho comando))
+               (some? indice))
+      (select-keys (nth golpes indice) [:tipo :classe :nome-exibicao]))))
+
 (defn- jogar-comando
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
   batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
@@ -4319,6 +4341,9 @@
           ataque-no-ginasio? (ataque-ginasio? jogo-inicial args)
           ataque-no-pvp? (ataque-pvp? jogo-inicial args)
           ataque-na-cacada? (ataque-cacada? caca-inicial args)
+          efeito-golpe (if caca-inicial
+                         (golpe-do-comando caca-inicial :x args)
+                         (golpe-do-comando jogo-inicial (:vez jogo-inicial) args))
           resultado-derrota (:resultado-derrota jogo-inicial)]
       ;; A referência continua disponível após a limpeza assíncrona da batalha.
       (p/let [_ (treinador/recolher-curados! cid (jogador-id message))
@@ -4340,10 +4365,10 @@
                              (get-in caca-inicial [:pokemons :x :imagem]))]
         (cond
           ataque-no-ginasio?
-          (resposta-imagem-ginasio (or (get @jogos cid) jogo-inicial) texto-final)
+          (resposta-imagem-ginasio (or (get @jogos cid) jogo-inicial) texto-final efeito-golpe)
 
           ataque-no-pvp?
-          (resposta-imagem-pvp (or (get @jogos cid) jogo-inicial) texto-final)
+          (resposta-imagem-pvp (or (get @jogos cid) jogo-inicial) texto-final efeito-golpe)
 
           (and caca-inicial bola-captura (tentativa-captura-realizada? (texto-resposta texto)))
           (resposta-imagem-captura bola-captura
@@ -4355,7 +4380,8 @@
                (or ataque-na-cacada? (fuga-selvagem-na-resposta? texto-final)))
           (resposta-imagem-cacada (or (get @cacadas-selvagens cid) caca-inicial)
                                   texto-final
-                                  (fuga-selvagem-na-resposta? texto-final))
+                                  (fuga-selvagem-na-resposta? texto-final)
+                                  efeito-golpe)
 
           tema-evento
           (resposta-cartao-evento tema-evento
