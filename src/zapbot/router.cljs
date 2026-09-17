@@ -55,7 +55,7 @@
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra versão, últimas mudanças, consumo de recursos e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
-  {:emoji "⚡" :uso "pokemon [liga [nome|time <n1,n2,n3>]|inicial|cacar|treinador|pokedex [n|filtros]|time [ativo|filtros|csv]|trocar <n>|equipar|aprender [n|recusar]|reaprender [n] [troca]|mt [1-4]|reviver [n]|mochila|missoes [resgatar]|capturar <bola>|removergolpe <n>|doar|joy <n,n,...>|atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalhe e capture por bioma, veja o ativo, filtre time/Pokédex combinando tipo, raridade, nome e nível, equipe itens e evolua com XP"}
+  {:emoji "⚡" :uso "pokemon [liga [nome|time <n1,n2,n3>]|inicial|cacar|treinador|pokedex [n|filtros]|time [ativo|filtros|csv]|trocar <n>|equipar|aprender [n|recusar]|reaprender [n] [troca]|mt [1-4]|reviver [n]|mochila|missoes [resgatar]|capturar <bola>|removergolpe <n>|doar|joy <n,n,...>|atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalhe e capture por bioma; atalhos: !pk atk 1, !pk def, !pk cur e !pk pot"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
    {:emoji "📚" :uso "pokemon ajuda [batalhas|ginasios|cacadas|ligas|time|evolucao|shiny|semanais|raid]" :desc "Guias de como jogar, com passos, regras e exemplos; também aceita pokemon <módulo> ajuda"}
    {:emoji "🏛️" :uso "pokemon ginasio [nome|time <1,2,3>|desafiar <nome>]" :desc "Cinco líderes 3 × 3, insígnias e pedras de evolução"}
@@ -140,7 +140,7 @@
     "ban"       (moderacao/banir message)
     "status"    (status/status-vm)
     "quiz"      (quiz/jogar message (str/join " " args))
-    "pokemon"   (pokemon/jogar message (str/join " " args))
+    ("pokemon" "pk") (pokemon/jogar message (str/join " " args))
     ("pokedex" "dex") (pokedex/buscar message (str/join " " args))
     ("presente" "presentes") (pokemon/jogar message (str "presente " (str/join " " args)))
     ("missoes" "missões") (pokemon/jogar message (str "missoes " (str/join " " args)))
@@ -168,6 +168,7 @@
     (when (comando? texto)
       (let [[cmd & args] (tokenizar texto)
             cmd          (-> cmd remover-acentos str/lower-case)
+            cmd-bloqueio (if (= cmd "pk") "pokemon" cmd)
             cid          (bloqueio/chat-id message)]
         (cond
           (contains? #{"bloquear" "desbloquear"} cmd)
@@ -176,9 +177,9 @@
           (bloqueio/bot-bloqueado? cid)
           nil
 
-          (bloqueio/comando-bloqueado? cid cmd)
-          (p/resolved (str "🔇 " config/prefix cmd " está bloqueado nesse chat. Peça a um "
-                           "admin para liberar com " config/prefix "desbloquear " cmd "."))
+          (bloqueio/comando-bloqueado? cid cmd-bloqueio)
+          (p/resolved (str "🔇 " config/prefix cmd-bloqueio " está bloqueado nesse chat. Peça a um "
+                           "admin para liberar com " config/prefix "desbloquear " cmd-bloqueio "."))
 
           :else
           (despachar message cmd args))))))

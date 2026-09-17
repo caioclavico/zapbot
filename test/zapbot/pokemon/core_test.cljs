@@ -94,3 +94,44 @@
 (deftest barra-de-hp-nao-exibe-valor-negativo
   (is (= "[█████░░░░░] 50/100" (core/barra-hp 50 100)))
   (is (= "[░░░░░░░░░░] 0/100" (core/barra-hp -10 100))))
+
+(deftest atalhos-pokemon-sao-expandidos
+  (testing "atalhos de batalha"
+    (is (= "atacar" (core/expandir-atalho "atk")))
+    (is (= "defender" (core/expandir-atalho "def")))
+    (is (= "curar" (core/expandir-atalho "cur")))
+    (is (= "pocao" (core/expandir-atalho "pot"))))
+  (testing "atalhos de navegação e gerenciamento"
+    (is (= "ginasio" (core/expandir-atalho "gin")))
+    (is (= "cacar" (core/expandir-atalho "cac")))
+    (is (= "time" (core/expandir-atalho "tm")))
+    (is (= "pokedex" (core/expandir-atalho "dex"))))
+  (testing "comandos completos permanecem inalterados"
+    (is (= "atacar" (core/expandir-atalho "atacar")))
+    (is (= "raid" (core/expandir-atalho "raid")))))
+
+(deftest identifica-ataques-que-devem-levar-foto-do-ginasio
+  (let [ginasio {:ginasio {:id "pedra"}}
+        pvp {:jogadores {:x "a" :o "b"}}]
+    (is (true? (core/ataque-ginasio? ginasio "atk 1")))
+    (is (true? (core/ataque-ginasio? ginasio "atacar 2")))
+    (is (false? (core/ataque-ginasio? ginasio "def 1")))
+    (is (false? (core/ataque-ginasio? pvp "atk 1")))))
+
+(deftest identifica-imagens-da-cacada-e-fugas
+  (let [caca {:pokemons {:x pikachu :o geodude}}]
+    (is (true? (core/ataque-cacada? caca "atk 1")))
+    (is (true? (core/ataque-cacada? caca "atacar 2")))
+    (is (false? (core/ataque-cacada? caca "def")))
+    (is (false? (core/ataque-cacada? nil "atk 1"))))
+  (is (true? (core/fuga-selvagem-na-resposta? "💨 Pikachu fugiu durante a batalha")))
+  (is (true? (core/fuga-selvagem-na-resposta? "Geodude escapou e sua sequência acabou")))
+  (is (false? (core/fuga-selvagem-na-resposta? "O selvagem continua aqui"))))
+
+(deftest arena-da-cacada-tem-grama-e-fumaca-apenas-na-fuga
+  (let [normal (core/svg-arena-cacada false)
+        fuga (core/svg-arena-cacada true)]
+    (is (str/includes? normal "id='grama'"))
+    (is (not (str/includes? normal "fill-opacity='.92'")))
+    (is (str/includes? fuga "id='grama'"))
+    (is (str/includes? fuga "fill-opacity='.92'"))))

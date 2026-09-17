@@ -1298,6 +1298,61 @@
                  (js/console.error "Erro ao montar imagem do ginásio:" err)
                  nil))))
 
+(defn- resposta-imagem-ginasio
+  "Monta o cartão da arena como a própria resposta do comando. Assim cada
+  ataque do ginásio leva a foto dos dois Pokémon ativos e o texto completo da
+  rodada vira a legenda, inclusive quando o líder contra-ataca."
+  [jogo texto]
+  (-> (p/let [buffer (criar-imagem-ginasio (get-in jogo [:pokemons :x :imagem])
+                                            (get-in jogo [:pokemons :o :imagem]))]
+        {:media (MessageMedia. "image/png" (.toString buffer "base64") "ataque-ginasio.png")
+         :texto texto})
+      (p/catch (fn [err]
+                 ;; A falha da arte não pode esconder o resultado nem travar a luta.
+                 (js/console.error "Erro ao montar imagem do ataque no ginásio:" err)
+                 texto))))
+
+(defn- svg-arena-cacada [fugiu?]
+  (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
+       "<defs><linearGradient id='ceu-caca' x1='0' y1='0' x2='0' y2='1'>"
+       "<stop stop-color='#7dd3fc'/><stop offset='1' stop-color='#e0f2fe'/></linearGradient>"
+       "<linearGradient id='grama' x1='0' y1='0' x2='0' y2='1'>"
+       "<stop stop-color='#65a30d'/><stop offset='1' stop-color='#166534'/></linearGradient></defs>"
+       "<rect width='760' height='400' rx='28' fill='url(#ceu-caca)'/>"
+       "<path d='M0 245 Q120 210 250 245 T510 245 T760 240 V400 H0Z' fill='url(#grama)'/>"
+       "<g stroke='#14532d' stroke-width='5' stroke-linecap='round'>"
+       "<path d='M25 330l10-28m0 28l18-22M105 370l8-30m0 30l20-24M245 345l12-35m0 35l22-25"
+       "M390 372l10-31m0 31l19-25M540 340l12-32m0 32l22-25M690 365l10-30m0 30l20-24'/></g>"
+       (when fugiu?
+         (str "<g fill='#f8fafc' fill-opacity='.92' stroke='#cbd5e1' stroke-width='3'>"
+              "<circle cx='555' cy='205' r='62'/><circle cx='615' cy='180' r='52'/>"
+              "<circle cx='665' cy='220' r='64'/><circle cx='600' cy='245' r='70'/>"
+              "<circle cx='690' cy='165' r='31'/><circle cx='710' cy='125' r='20'/></g>"
+              "<path d='M510 290q55-40 110 0t110 0' fill='none' stroke='#e2e8f0' stroke-width='18' stroke-linecap='round'/>"))
+       "</svg>"))
+
+(defn- criar-imagem-cacada [caca fugiu?]
+  (p/let [meu (sprite-redimensionado (get-in caca [:pokemons :x :imagem]))
+          selvagem (when-not fugiu?
+                     (sprite-redimensionado (get-in caca [:pokemons :o :imagem])))]
+    (-> (sharp (js/Buffer.from (svg-arena-cacada fugiu?)))
+        (.composite (to-array (cond-> [#js {:input meu :left 70 :top 105}]
+                                selvagem (conj #js {:input selvagem :left 430 :top 90}))))
+        (.png)
+        (.toBuffer))))
+
+(defn- resposta-imagem-cacada [caca texto fugiu?]
+  (-> (p/let [buffer (criar-imagem-cacada caca fugiu?)]
+        {:media (MessageMedia. "image/png" (.toString buffer "base64")
+                              (if fugiu? "fuga-selvagem.png" "batalha-selvagem.png"))
+         :texto texto})
+      (p/catch (fn [err]
+                 (js/console.error "Erro ao montar imagem da caçada:" err)
+                 texto))))
+
+(defn- fuga-selvagem-na-resposta? [texto]
+  (boolean (re-find #"(?i)(fugiu|escapou|sumiu no mato)" (or texto ""))))
+
 (defn- legenda-vs [nome-x pokemon-x nome-o pokemon-o]
   (str (cabecalho) "⚔️ *" nome-x "* vs *" nome-o "*!\n\n"
        (legenda-pokemon nome-x pokemon-x) "\n\n"
@@ -2950,12 +3005,14 @@
                             :pid pid :message message :bioma bioma
                             :item-usado-turno? false :acao-realizada? false}]
                   (swap! cacadas-selvagens assoc cid caca)
-                  (enviar-imagem message (:imagem selvagem)
-                                 (str (cabecalho) (:emoji bioma) " Você entrou em *" (:nome bioma) "*!\n"
-                                      (when surto? (str "🎉 " (:nome evento) " — encontro do evento!\n"))
-                                      "Um " (texto-raridade selvagem) " *" (:nome selvagem)
-                                      "* apareceu. Derrote-o antes de tentar capturar!\n\n"
-                                      (estado-cacada caca)))))
+                  (resposta-imagem-cacada
+                   caca
+                   (str (cabecalho) (:emoji bioma) " Você entrou em *" (:nome bioma) "*!\n"
+                        (when surto? (str "🎉 " (:nome evento) " — encontro do evento!\n"))
+                        "Um " (texto-raridade selvagem) " *" (:nome selvagem)
+                        "* apareceu. Derrote-o antes de tentar capturar!\n\n"
+                        (estado-cacada caca))
+                   false)))
               (p/catch (fn [err]
                          (js/console.error "Erro ao caçar pokemon:" err)
                          (str (cabecalho) "❌ Não consegui buscar um pokémon selvagem agora. Tente de novo.")))))))))
@@ -3854,6 +3911,29 @@
                                  (p/then (fn [_]
                                            (aprender-golpe-por-nivel! message cid jogador (:nivel subida) indice))))))]
             (select-keys resultado [:texto :mentions])))))))
+(def ^:private atalhos-comandos
+  {"gin" "ginasio" "lig" "liga" "evt" "eventos" "evo" "evoluir"
+   "neg" "negociar" "tre" "treinador" "apr" "aprender"
+   "reap" "reaprender" "rev" "reviver" "mch" "mochila"
+   "mis" "missoes" "pre" "presente" "cap" "capturar"
+   "ini" "inicial" "cac" "cacar" "dex" "pokedex" "tm" "time"
+   "rmg" "removergolpe" "can" "cancelar" "esc" "escolher"
+   "eqp" "equipar" "doa" "doar" "atk" "atacar" "def" "defender"
+   "cur" "curar" "pot" "pocao" "sai" "sair"})
+
+(defn- expandir-atalho [comando]
+  (get atalhos-comandos comando comando))
+
+(defn- ataque-ginasio? [jogo args]
+  (let [comando (-> (or args "") str/trim str/lower-case (str/split #"\s+") first expandir-atalho)]
+    (and (boolean (:ginasio jogo))
+         (contains? #{"atacar" "ataque" "atirar" "usar"} comando))))
+
+(defn- ataque-cacada? [caca args]
+  (let [comando (-> (or args "") str/trim str/lower-case (str/split #"\s+") first expandir-atalho)]
+    (and (some? caca)
+         (contains? #{"atacar" "ataque" "atirar" "usar"} comando))))
+
 (defn- jogar-comando
   "!pokemon inicial <1-3> escolhe seu pokémon inicial (obrigatório antes de
   batalhar/caçar); !pokemon cacar inicia uma batalha contra um pokémon
@@ -3899,7 +3979,8 @@
                                 (not= pid (:pid (get @cacadas-selvagens cid))))
                        (treinador/corrigir-ataques-iniciais! cid pid))
         args         (str/trim (str/lower-case (or args "")))
-        [cmd & resto] (str/split args #"\s+")]
+        [cmd-original & resto] (str/split args #"\s+")
+        cmd          (expandir-atalho cmd-original)]
     (cond
       (:carregando? (get @jogos cid))
       (p/resolved "⏳ Preparando o ginásio. Aguarde.")
@@ -3910,7 +3991,7 @@
       (and (= pid (:pid (get @cacadas-selvagens cid)))
            (:aguardando-captura? (get @cacadas-selvagens cid))
            (or (str/blank? args)
-               (contains? #{"atacar" "ataque" "atirar" "usar" "defender" "defesa" "esquivar" "evasiva"
+               (contains? #{"atacar" "ataque" "atirar" "usar" "atk" "defender" "defesa" "esquivar" "evasiva"
                             "curar" "cura" "pocao" "poção" "vida" "escolher" "trocar" "troca"} cmd)))
       (p/resolved (menu-captura cid pid (get @cacadas-selvagens cid)))
       (and (str/blank? args) (:ginasio (get @jogos cid)))
@@ -3967,7 +4048,7 @@
       (= cmd "doar") (doar message (first resto))
       (contains? #{"joy" "enfermeira" "enfermaria" "hospital"} cmd)
       (enfermeira-joy message (str/join " " resto))
-      (contains? #{"atacar" "ataque" "atirar" "usar"} cmd) (atacar message (first resto))
+      (contains? #{"atacar" "ataque" "atirar" "usar" "atk"} cmd) (atacar message (first resto))
       (contains? #{"defender" "defesa" "esquivar" "evasiva"} cmd) (defender-turno message)
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
       (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
@@ -4038,7 +4119,11 @@
   (if-let [ajuda (pokemon-ajuda/resposta args)]
     (p/resolved ajuda)
     (let [cid (chat-id message)
-          resultado-derrota (:resultado-derrota (get @jogos cid))]
+          jogo-inicial (get @jogos cid)
+          caca-inicial (get @cacadas-selvagens cid)
+          ataque-no-ginasio? (ataque-ginasio? jogo-inicial args)
+          ataque-na-cacada? (ataque-cacada? caca-inicial args)
+          resultado-derrota (:resultado-derrota jogo-inicial)]
       ;; A referência continua disponível após a limpeza assíncrona da batalha.
       (p/let [_ (treinador/recolher-curados! cid (jogador-id message))
               _ (p/all (for [{:keys [indice subida]} (treinador/resgatar-xp-raids! cid (jogador-id message))
@@ -4047,7 +4132,18 @@
                              (p/then (fn [_]
                                        (aprender-golpe-por-nivel! message cid (jogador-id message) (:nivel subida) indice))))))
               resposta (jogar-comando message args)
-              lider (turno-lider message cid)]
-        (or (when resultado-derrota @resultado-derrota)
-            (if (str/blank? (texto-resposta lider)) resposta
-                (str (texto-resposta resposta) "\n\n🏛️ *Vez do líder*\n" (texto-resposta lider))))))))
+              lider (turno-lider message cid)
+              texto (or (when resultado-derrota @resultado-derrota)
+                        (if (str/blank? (texto-resposta lider)) resposta
+                            (str (texto-resposta resposta) "\n\n🏛️ *Vez do líder*\n" (texto-resposta lider))))]
+        (cond
+          ataque-no-ginasio?
+          (resposta-imagem-ginasio (or (get @jogos cid) jogo-inicial) (texto-resposta texto))
+
+          (and caca-inicial
+               (or ataque-na-cacada? (fuga-selvagem-na-resposta? (texto-resposta texto))))
+          (resposta-imagem-cacada (or (get @cacadas-selvagens cid) caca-inicial)
+                                  (texto-resposta texto)
+                                  (fuga-selvagem-na-resposta? (texto-resposta texto)))
+
+          :else texto)))))

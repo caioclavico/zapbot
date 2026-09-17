@@ -9,12 +9,12 @@
 
 (def ^:private assuntos
   {"batalha" :batalhas "batalhas" :batalhas "pvp" :batalhas
-   "ginasio" :ginasios "ginasios" :ginasios
-   "cacar" :cacadas "cacada" :cacadas "cacadas" :cacadas
-   "liga" :ligas "ligas" :ligas
-   "time" :time "equipe" :time
+   "ginasio" :ginasios "ginasios" :ginasios "gin" :ginasios
+   "cacar" :cacadas "cacada" :cacadas "cacadas" :cacadas "cac" :cacadas
+   "liga" :ligas "ligas" :ligas "lig" :ligas
+   "time" :time "equipe" :time "tm" :time
    "raid" :raid "raids" :raid "shiny" :shiny "missoes" :semanais "semanais" :semanais
-   "evoluir" :evolucao "evolucao" :evolucao})
+   "evoluir" :evolucao "evolucao" :evolucao "evo" :evolucao})
 
 (defn- guia [assunto]
   (case assunto
@@ -60,7 +60,7 @@
          "1. Veja líderes, níveis e desbloqueios com " (comando "ginasio") ".\n"
          "2. Consulte seu time: " (comando "time >") ". Escale três Pokémon diferentes e com HP: " (comando "ginasio time 1,2,3") ". Use os números da sua coleção.\n"
          "3. Veja o primeiro líder com " (comando "ginasio pedra") " e inicie com " (comando "ginasio desafiar pedra") ".\n"
-         "4. Use " (comando "atacar 1") " e as demais ações de batalha. O líder responde automaticamente.\n\n"
+         "4. Use " (comando "atacar 1") " (ou o atalho " config/prefix "pk atk 1) e as demais ações de batalha. O líder responde automaticamente. Cada ataque mostra a foto dos Pokémon na arena.\n\n"
          "São combates 3 × 3, sem ajuste dos níveis. Vença os ginásios na ordem para liberar os próximos. A escalação de ginásio é separada da liga.\n"
          "Primeira vitória: insígnia, 100 moedas, 6 XP por participante e uma pedra. Revanche premiada: 25 moedas, 2 XP e 25% de chance de pedra, uma vez por dia por ginásio. Reinicia à meia-noite de São Paulo.\n"
          "Derrota: 2 XP para cada Pokémon participante. O treinador ganha PE (Pontos de experiência): 6 na primeira vitória, 3 na revanche premiada e 1 na derrota.\n"
@@ -116,6 +116,9 @@
 
     (str "📖 *Como jogar Pokémon*\n\n"
          "Comece com " (comando "inicial") ", escolha seu Pokémon e faça caçadas para capturar mais. Com três Pokémon, prepare seu time para ligas e ginásios.\n\n"
+         "⚡ *Atalhos:* " config/prefix "pk atk 1, " config/prefix "pk def, " config/prefix "pk cur, "
+         config/prefix "pk pot, " config/prefix "pk cac, " config/prefix "pk gin, "
+         config/prefix "pk lig, " config/prefix "pk tm e " config/prefix "pk dex.\n\n"
          (str/join "\n" (map (fn [[nome titulo]] (str "• " (comando (str "ajuda " nome)) " — " titulo))
                                [["batalhas" "turnos, golpes e vitória"]
                                 ["ginasios" "líderes, insígnias e recompensas"]
