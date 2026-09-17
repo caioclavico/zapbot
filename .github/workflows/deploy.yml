@@ -105,6 +105,12 @@ jobs:
 
           mkdir -p data
 
+          # Constrói antes de interromper o serviço para reduzir o tempo fora
+          # do ar. Depois encerra e remove completamente os containers da
+          # composição anterior, sem `-v` para preservar Cassandra e sessão.
+          docker compose build
+          docker compose down --remove-orphans
+
           # migração única do modelo antigo (docker run --name zapbot) pro
           # docker compose: se sobrar um container com esse nome que não foi
           # criado pelo compose, `docker compose up` recusa por conflito de
@@ -112,7 +118,7 @@ jobs:
           # já que a partir daqui quem recria o container é sempre o compose)
           docker rm -f zapbot 2>/dev/null || true
 
-          docker compose up -d --build
+          docker compose up -d
 
           docker image prune -f
           REMOTE_SCRIPT
