@@ -114,6 +114,10 @@
                  :descricao "Remove a confusão do Pokémon. É consumida ao usar !pokemon curar."}
    "pocao"      {:nome "Poção de Vida" :emoji "🧪" :cura-hp 0.4 :preco 20
                  :descricao "Recupera 40% do HP máximo. É consumida ao usar !pokemon pocao."}
+   "fruta"      {:nome "Fruta Frambo" :emoji "🍓" :motivacao 20 :preco 10
+                 :descricao "Recupera 20 pontos de motivação de um defensor no ginásio."}
+   "fruta-dourada" {:nome "Fruta Frambo Dourada" :emoji "🌟" :motivacao 100 :exclusivo-diario true
+                     :descricao "Recupera toda a motivação de um defensor. Prêmio da sequência diária."}
    "restos"     {:nome "Restos" :emoji "🍱" :equipavel true :efeito :regeneracao :preco 45
                  :descricao "Recupera 1/16 do HP máximo ao final de cada turno em que o Pokémon agir."}
    "banda"      {:nome "Banda Musculosa" :emoji "💪" :equipavel true :efeito :fisico :preco 40
@@ -161,7 +165,9 @@
   (get-in @contas [cid pid] {"moedas" 0 "inventario" {}}))
 
 (def bolas ["pokebola" "grande-bola" "ultra-bola"])
-(def ^:private ordem-recompensas (vec (concat bolas ["reviver" "catalisador-evolutivo"] itens-evolucao-troca (sort (keys aventuras/pedras)))))
+(def ^:private ordem-recompensas
+  (vec (concat bolas ["fruta" "fruta-dourada" "reviver" "catalisador-evolutivo"]
+               itens-evolucao-troca (sort (keys aventuras/pedras)))))
 
 (defn sortear-item-evolucao [] (rand-nth itens-evolucao-troca))
 
@@ -251,19 +257,33 @@
           (< sorteio 40) "grande-bola"
           :else "pokebola")))
 
+(defn proxima-sequencia-diaria [ultimo dia sequencia-atual]
+  (let [dia-seguinte (when ultimo
+                       (let [d (js/Date. (str ultimo "T12:00:00Z"))]
+                         (.setUTCDate d (inc (.getUTCDate d)))
+                         (subs (.toISOString d) 0 10)))]
+    (if (= dia dia-seguinte) (inc (or sequencia-atual 1)) 1)))
+
 (defn- resgatar-bonus-diario! [cid pid]
   (let [dia (missoes/dia-atual)
         c (conta cid pid)]
     (if (= dia (get c "ultimo-bonus-diario"))
       (str "🎁 O bônus diário de hoje já foi resgatado. Volte após a meia-noite ("
            config/missoes-timezone ").")
-      (let [recompensas (frequencies (repeatedly 3 sortear-bola-diaria))
+      (let [ultimo (get c "ultimo-bonus-diario")
+            sequencia (proxima-sequencia-diaria ultimo dia (get c "sequencia-bonus-diario" 1))
+            quantidade (+ 3 (min 4 (dec sequencia)))
+            recompensas (cond-> (frequencies (repeatedly quantidade sortear-bola-diaria))
+                          (zero? (mod sequencia 7)) (assoc "fruta-dourada" 1))
             novo (-> c
                      (assoc "ultimo-bonus-diario" dia)
+                     (assoc "sequencia-bonus-diario" sequencia)
                      (guardar-recompensas recompensas))]
         (swap! contas assoc-in [cid pid] novo)
         (persistir!)
-        (str "🎁 *Bônus diário resgatado:* " (texto-recompensas recompensas) "!"
+        (str "🎁 *Bônus diário resgatado — sequência de " sequencia " dia(s):* "
+             (texto-recompensas recompensas) "!"
+             (when (zero? (mod sequencia 7)) " 🌟 Você ganhou uma Fruta Frambo Dourada!")
              (when (some pos? (vals (recompensas-pendentes novo)))
                (str " Itens sem espaço ficaram pendentes: " config/prefix "mochila resgatar.")))))))
 
@@ -411,8 +431,19 @@
     (persistir!)
     (:cura-hp (get itens "pocao"))))
 
-(defn- formatar-item [chave {:keys [nome emoji preco evolucao]}]
-  (str emoji " *" nome "* (`" chave "`) - " (cond preco (str preco " moedas") evolucao "recompensa de ginásio" :else "exclusivo das missões")))
+(defn usar-fruta!
+  "Consome a fruta indicada e retorna quantos pontos de motivação ela recupera."
+  [cid pid chave]
+  (when (and (contains? #{"fruta" "fruta-dourada"} chave)
+             (pos? (quantidade-item cid pid chave)))
+    (swap! contas update-in [cid pid "inventario" chave] dec)
+    (persistir!)
+    (:motivacao (get itens chave))))
+
+(defn- formatar-item [chave {:keys [nome emoji preco evolucao exclusivo-diario]}]
+  (str emoji " *" nome "* (`" chave "`) - "
+       (cond preco (str preco " moedas") evolucao "recompensa de ginásio"
+             exclusivo-diario "recompensa da sequência diária" :else "exclusivo das missões")))
 
 (defn- formatar-inventario [inventario]
   (let [posse (filter (fn [[_ qtd]] (pos? qtd)) inventario)]
@@ -432,7 +463,7 @@
            "\n\nCada unidade ocupa uma vaga. Itens equipados não ocupam espaço."
            "\nExpansão: +25 vagas por 200 moedas — " config/prefix "loja comprar mochila."
            "\nKit inicial: 10 Pokébolas — " config/prefix "mochila kit."
-           "\nBônus diário: 3 bolas aleatórias — " config/prefix "mochila diario."
+           "\nBônus diário: 3 a 7 bolas conforme a sequência; a cada 7 dias, Fruta Dourada — " config/prefix "mochila diario."
            "\nNo PvP, cada nocaute rende uma bola definida pela liga."
            "\nRecompensas pendentes: " (let [texto (texto-recompensas (recompensas-pendentes (conta cid pid)))] (if (str/blank? texto) "nenhuma" texto))
            " — " config/prefix "mochila resgatar."

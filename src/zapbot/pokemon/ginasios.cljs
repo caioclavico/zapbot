@@ -59,10 +59,8 @@
       (salvar-ocupacoes!)
       novas)))
 
-(defn usar-pocao!
-  "Consome uma Poção de Vida do líder e recupera 40 pontos de motivação de um
-  defensor. Retorna um mapa com :status e os dados necessários para a resposta."
-  [cid pid id indice agora]
+(defn- recuperar-motivacao!
+  [cid pid id indice agora item consumir!]
   (let [ocupacao (lider cid id)
         atuais (when ocupacao (motivacoes ocupacao agora))]
     (cond
@@ -71,16 +69,28 @@
       (not (and (number? indice) (<= 0 indice (dec (count atuais))))) {:status :indice-invalido}
       (>= (get atuais indice) motivacao-maxima) {:status :motivacao-cheia}
       :else
-      (if-let [fracao (loja/usar-pocao! cid pid)]
+      (if-let [pontos (consumir! cid pid)]
         (let [antes (get atuais indice)
-              depois (min motivacao-maxima (+ antes (js/Math.round (* 100 fracao))))
+              depois (min motivacao-maxima (+ antes pontos))
               novas (assoc atuais indice depois)]
           (swap! ocupacoes update-in [cid id]
                  #(assoc % "motivacao" novas "motivacao-em" agora))
           (salvar-ocupacoes!)
           {:status :ok :antes antes :depois depois
-           :nome (get-in ocupacao ["time" indice "nome"])})
-        {:status :sem-pocao}))))
+           :item item :nome (get-in ocupacao ["time" indice "nome"])})
+        {:status :sem-item :item item}))))
+
+(defn usar-pocao!
+  "Consome uma Poção de Vida e recupera 40 pontos de motivação."
+  [cid pid id indice agora]
+  (recuperar-motivacao! cid pid id indice agora :pocao
+                        (fn [c p] (some-> (loja/usar-pocao! c p) (* 100) js/Math.round))))
+
+(defn usar-fruta!
+  "Consome Fruta Frambo comum ou dourada para recuperar motivação."
+  [cid pid id indice agora fruta]
+  (recuperar-motivacao! cid pid id indice agora (keyword fruta)
+                        #(loja/usar-fruta! %1 %2 fruta)))
 
 (defn recompensa-permanencia [ocupacao agora]
   (if (and ocupacao (> (- agora (get ocupacao "desde" agora)) (* 6 60 60 1000))) 50 0))

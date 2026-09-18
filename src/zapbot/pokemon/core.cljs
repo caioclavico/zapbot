@@ -12,6 +12,7 @@
             [zapbot.pokemon.golpes :as golpes]
             [zapbot.pokemon.aventuras :as aventuras]
             [zapbot.pokemon.ginasios :as ginasios]
+            [zapbot.pokemon.mundo :as mundo]
             [zapbot.pokemon.shiny :as shiny]
             [zapbot.pokemon.raids :as raids]
             ["whatsapp-web.js" :as wwjs]
@@ -781,17 +782,6 @@
 (defn- poder-alvo-caca [nivel]
   (+ poder-alvo-nivel-1 (* incremento-poder-por-nivel (dec (min nivel nivel-maximo-caca)))))
 
-(def ^:private biomas-por-periodo
-  [{:inicio 5  :fim 11 :nome "Floresta da Manhã" :emoji "🌳" :tipos #{"grass" "bug" "flying" "normal"}}
-   {:inicio 11 :fim 18 :nome "Campos do Sol"     :emoji "☀️" :tipos #{"fire" "ground" "fighting" "rock"}}
-   {:inicio 18 :fim 23 :nome "Lago do Crepúsculo" :emoji "🌊" :tipos #{"water" "electric" "ice" "fairy"}}
-   {:inicio 0  :fim 24 :nome "Caverna Noturna"  :emoji "🌙" :tipos #{"ghost" "dark" "poison" "psychic"}}])
-
-(defn- bioma-atual []
-  (let [hora (.getHours (js/Date.))]
-    (or (some #(when (and (>= hora (:inicio %)) (< hora (:fim %))) %) (butlast biomas-por-periodo))
-        (last biomas-por-periodo))))
-
 (defn- pertence-ao-bioma? [pokemon tipos]
   (some tipos (:tipos pokemon)))
 
@@ -1499,11 +1489,11 @@
     (-> (sharp #js {:create #js {:width 760 :height 400 :channels 4
                                  :background #js {:r 255 :g 255 :b 255 :alpha 0}}})
         (.composite #js [#js {:input (:buffer sprite-x)
-                              :left (- 200 (quot (:tamanho sprite-x) 2))
+                              :left (- 170 (quot (:tamanho sprite-x) 2))
                               :top (- 330 (:tamanho sprite-x))}
                          #js {:input (js/Buffer.from (svg-x)) :left 330 :top 150}
                          #js {:input (:buffer sprite-o)
-                              :left (- 560 (quot (:tamanho sprite-o) 2))
+                              :left (- 590 (quot (:tamanho sprite-o) 2))
                               :top (- 330 (:tamanho sprite-o))}])
         (.png)
         (.toBuffer))))
@@ -1532,14 +1522,14 @@
                                       (sprite-proporcional pokemon-lider tamanho-sprite)])]
     (-> (sharp (js/Buffer.from (svg-arena-ginasio)))
         (.composite #js [#js {:input (:buffer desafiante)
-                              :left (- 200 (quot (:tamanho desafiante) 2))
+                              :left (- 170 (quot (:tamanho desafiante) 2))
                               :top (- 355 (:tamanho desafiante))}
                          #js {:input (:buffer lider)
-                              :left (- 560 (quot (:tamanho lider) 2))
+                              :left (- 590 (quot (:tamanho lider) 2))
                               :top (- 355 (:tamanho lider))}
                          #js {:input (js/Buffer.from
                                       (svg-marcador-motivacao (:motivacao-ginasio pokemon-lider)))
-                              :left 514
+                              :left 544
                               :top 55}])
         (.png)
         (.toBuffer))))
@@ -1626,7 +1616,10 @@
   [jogo texto efeito]
   (-> (p/let [base (criar-imagem-ginasio (get-in jogo [:pokemons :x])
                                           (get-in jogo [:pokemons :o]))
-              buffer (aplicar-sobreposicao-batalha base texto false efeito)]
+              ;; A Pokébola de substituição ficava sobre o defensor e sobre o
+              ;; coração de motivação. No ginásio a própria moldura já deixa
+              ;; claro quem entrou; o ícone continua disponível no PvP.
+              buffer (aplicar-sobreposicao-batalha base texto false efeito false)]
         {:media (MessageMedia. "image/png" (.toString buffer "base64") "ataque-ginasio.png")
          :texto texto})
       (p/catch (fn [err]
@@ -1634,13 +1627,70 @@
                  (js/console.error "Erro ao montar imagem do ataque no ginásio:" err)
                  texto))))
 
-(defn- svg-arena-cacada [fugiu?]
+(defn- id-cenario-bioma [area]
+  (let [valor (cond
+                (map? area) (or (:id area) (get area "id")
+                                (:nome area) (get area "nome"))
+                (keyword? area) (name area)
+                :else area)
+        id (mundo/normalizar valor)]
+    (cond
+      (str/includes? id "floresta") "floresta"
+      (str/includes? id "praia") "praia"
+      (str/includes? id "caverna") "caverna"
+      (str/includes? id "cidade") "cidade"
+      (str/includes? id "lago") "lago"
+      (str/includes? id "vulcao") "vulcao"
+      :else id)))
+
+(defn- svg-cenario-bioma [id]
+  (case id
+    "floresta"
+    (str "<g id='cenario-floresta'>"
+         "<g fill='#14532d' stroke='#052e16' stroke-width='5'>"
+         "<rect x='74' y='105' width='24' height='170' rx='10' fill='#78350f'/><circle cx='86' cy='92' r='63'/><circle cx='38' cy='126' r='43'/><circle cx='132' cy='128' r='48'/>"
+         "<rect x='657' y='112' width='24' height='163' rx='10' fill='#78350f'/><circle cx='669' cy='94' r='60'/><circle cx='625' cy='132' r='42'/><circle cx='713' cy='130' r='45'/></g>"
+         "<g fill='#4ade80' opacity='.8'><circle cx='214' cy='92' r='22'/><circle cx='543' cy='104' r='26'/></g></g>")
+    "praia"
+    (str "<g id='cenario-praia'><circle cx='650' cy='75' r='45' fill='#fde047'/>"
+         "<path d='M0 176Q95 148 190 176T380 176T570 176T760 176V267H0Z' fill='#0284c7'/>"
+         "<path d='M0 202Q95 174 190 202T380 202T570 202T760 202' fill='none' stroke='#bae6fd' stroke-width='10'/>"
+         "<path d='M40 239q55-35 110 0M585 235q60-37 125 0' fill='none' stroke='#f8fafc' stroke-width='8' stroke-linecap='round'/></g>")
+    "caverna"
+    (str "<g id='cenario-caverna' fill='#1e293b' stroke='#0f172a' stroke-width='5'>"
+         "<path d='M0 0h760v45L700 93l-35-50-52 86-46-95-58 74-55-108H0Z'/>"
+         "<path d='M0 400V112l58 66 55-105 44 112 54-78 51 125 42-58 54 99v127Z'/>"
+         "<path d='M760 400V92l-54 83-48-104-44 117-51-74-50 126-45-66-47 99v127Z'/></g>")
+    "cidade"
+    (str "<g id='cenario-cidade' stroke='#334155' stroke-width='5'>"
+         "<path d='M18 238V82h132v156M155 238V118h120v120M498 238V105h108v133M611 238V65h132v173' fill='#64748b'/>"
+         "<g fill='#fde68a' stroke='none'><path d='M42 108h24v25H42zm55 0h24v25H97zm-55 50h24v25H42zm55 0h24v25H97zM180 143h25v27h-25zm46 0h25v27h-25zM522 130h24v26h-24zm40 0h24v26h-24zm75-39h27v28h-27zm51 0h27v28h-27zm-51 51h27v28h-27zm51 0h27v28h-27z'/></g>"
+         "<path d='M320 238V145h120v93M350 145v-37h60v37' fill='#475569'/></g>")
+    "lago"
+    (str "<g id='cenario-lago'><path d='M0 190Q120 160 245 190T510 190T760 184V300H0Z' fill='#0891b2'/>"
+         "<g fill='none' stroke='#a5f3fc' stroke-width='7' stroke-linecap='round'><path d='M20 222h150m55 35h180m95-38h225'/></g>"
+         "<g fill='#65a30d' stroke='#365314' stroke-width='3'><ellipse cx='115' cy='263' rx='40' ry='14'/><ellipse cx='630' cy='255' rx='48' ry='16'/></g>"
+         "<g stroke='#166534' stroke-width='7'><path d='M46 260v-82m28 82v-105m640 105v-90m-31 90v-70'/></g></g>")
+    "vulcao"
+    (str "<g id='cenario-vulcao'><path d='M166 249L355 53l52 58 42-26 154 164Z' fill='#3f3f46' stroke='#18181b' stroke-width='8'/>"
+         "<path d='M355 53l52 58 42-26 35 37-54 27-41-17-51 28-48-28Z' fill='#f97316'/>"
+         "<path d='M386 130l25 13-17 48 29 54' fill='none' stroke='#ef4444' stroke-width='15' stroke-linecap='round'/>"
+         "<g fill='#d6d3d1' opacity='.75'><circle cx='375' cy='45' r='26'/><circle cx='416' cy='29' r='34'/><circle cx='458' cy='49' r='25'/></g></g>")
+    ""))
+
+(defn- svg-arena-cacada
+  ([fugiu?] (svg-arena-cacada {} fugiu?))
+  ([caca fugiu?]
+  (let [area (:bioma caca)
+        cor-ceu (or (:ceu area) "#7dd3fc")
+        cor-chao (or (:chao area) "#166534")]
   (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
        "<defs><linearGradient id='ceu-caca' x1='0' y1='0' x2='0' y2='1'>"
-       "<stop stop-color='#7dd3fc'/><stop offset='1' stop-color='#e0f2fe'/></linearGradient>"
+       "<stop stop-color='" cor-ceu "'/><stop offset='1' stop-color='#e0f2fe'/></linearGradient>"
        "<linearGradient id='grama' x1='0' y1='0' x2='0' y2='1'>"
-       "<stop stop-color='#65a30d'/><stop offset='1' stop-color='#166534'/></linearGradient></defs>"
+       "<stop stop-color='" cor-chao "'/><stop offset='1' stop-color='#111827'/></linearGradient></defs>"
        "<rect width='760' height='400' rx='28' fill='url(#ceu-caca)'/>"
+       (svg-cenario-bioma (id-cenario-bioma area))
        "<path d='M0 245 Q120 210 250 245 T510 245 T760 240 V400 H0Z' fill='url(#grama)'/>"
        "<g stroke='#14532d' stroke-width='5' stroke-linecap='round'>"
        "<path d='M25 330l10-28m0 28l18-22M105 370l8-30m0 30l20-24M245 345l12-35m0 35l22-25"
@@ -1651,24 +1701,25 @@
               "<circle cx='665' cy='220' r='64'/><circle cx='600' cy='245' r='70'/>"
               "<circle cx='690' cy='165' r='31'/><circle cx='710' cy='125' r='20'/></g>"
               "<path d='M510 290q55-40 110 0t110 0' fill='none' stroke='#e2e8f0' stroke-width='18' stroke-linecap='round'/>"))
-       "</svg>"))
+       "</svg>"))))
 
 (defn- layout-imagem-cacada [caca fugiu?]
   (let [captura? (and (:aguardando-captura? caca) (not fugiu?))]
     {:mostrar-meu? (not captura?)
-     :centro-selvagem (if captura? 380 560)}))
+     :centro-meu 165
+     :centro-selvagem (if captura? 380 595)}))
 
 (defn- criar-imagem-cacada [caca fugiu?]
-  (let [{:keys [mostrar-meu? centro-selvagem]} (layout-imagem-cacada caca fugiu?)]
+  (let [{:keys [mostrar-meu? centro-meu centro-selvagem]} (layout-imagem-cacada caca fugiu?)]
   (p/let [meu (when mostrar-meu?
                 (sprite-proporcional (get-in caca [:pokemons :x]) tamanho-sprite-cacada))
           selvagem (when-not fugiu?
                      (sprite-proporcional (get-in caca [:pokemons :o]) tamanho-sprite-cacada))]
-    (-> (sharp (js/Buffer.from (svg-arena-cacada fugiu?)))
+    (-> (sharp (js/Buffer.from (svg-arena-cacada caca fugiu?)))
         (.composite (to-array
                      (cond-> []
                        meu (conj #js {:input (:buffer meu)
-                                      :left (- 200 (quot (:tamanho meu) 2))
+                                      :left (- centro-meu (quot (:tamanho meu) 2))
                                       :top (- 365 (:tamanho meu))})
                        selvagem (conj #js {:input (:buffer selvagem)
                                            :left (- centro-selvagem (quot (:tamanho selvagem) 2))
@@ -1777,7 +1828,7 @@
     0))
 
 (defn- escala-visual-dano [dano]
-  (+ 0.24 (min 0.18 (/ (max 0 (or dano 0)) 500))))
+  (+ 0.29 (min 0.19 (/ (max 0 (or dano 0)) 500))))
 
 (defn- forma-svg-golpe [tipo]
   (cond
@@ -1792,21 +1843,23 @@
 
 (defn- svg-golpe-posicionado [{:keys [tipo origem dano]}]
   (let [escala (escala-visual-dano dano)
-        centro (if (= origem :o) 445 315)
+        centro (if (= origem :o) 432 328)
         esquerda (- centro (* 380 escala))
         topo (- 205 (* 210 escala))]
-    (str "<g transform='translate(" esquerda " " topo ") scale(" escala ")' filter='url(#golpe-glow)'>"
+    (str "<g data-centro='" centro "' transform='translate(" esquerda " " topo ") scale(" escala ")' filter='url(#golpe-glow)'>"
          (forma-svg-golpe tipo) "</g>")))
 
 (defn- svg-sobreposicao-batalha
   ([texto shiny?] (svg-sobreposicao-batalha texto shiny? nil))
-  ([texto shiny? efeito]
+  ([texto shiny? efeito] (svg-sobreposicao-batalha texto shiny? efeito true))
+  ([texto shiny? efeito mostrar-entrada?]
   (let [texto (or texto "")
         efeitos (cond (nil? efeito) [] (sequential? efeito) efeito :else [efeito])
         sono? (str/includes? (str/lower-case texto) "dorm")
         confuso? (str/includes? (str/lower-case texto) "confus")
         desmaio? (boolean (re-find #"(?i)(desmaiou|caiu por causa|caiu com o recuo)" texto))
-        entrada? (boolean (re-find #"(?i)(envia \*|entrou na batalha)" texto))]
+        entrada? (and mostrar-entrada?
+                      (boolean (re-find #"(?i)(envia \*|entrou na batalha)" texto)))]
     (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
          "<defs><filter id='golpe-glow'><feDropShadow dx='0' dy='0' stdDeviation='9' flood-color='#ffffff' flood-opacity='.75'/></filter></defs>"
          (apply str (map svg-golpe-posicionado efeitos))
@@ -1820,12 +1873,17 @@
            "<g fill='#fde047' stroke='#f59e0b' stroke-width='2'><path d='M555 60l9 22 24 2-18 15 5 24-20-13-20 13 5-24-18-15 24-2Z'/><path d='M685 125l7 17 19 2-15 12 5 19-16-10-16 10 5-19-15-12 19-2Z'/></g>")
          "</svg>"))))
 
-(defn- aplicar-sobreposicao-batalha [buffer texto shiny? efeito]
-  (-> (sharp buffer)
-      (.composite #js [#js {:input (js/Buffer.from (svg-sobreposicao-batalha texto shiny? efeito))
-                            :left 0 :top 0}])
-      (.png)
-      (.toBuffer)))
+(defn- aplicar-sobreposicao-batalha
+  ([buffer texto shiny? efeito]
+   (aplicar-sobreposicao-batalha buffer texto shiny? efeito true))
+  ([buffer texto shiny? efeito mostrar-entrada?]
+   (-> (sharp buffer)
+       (.composite #js [#js {:input (js/Buffer.from
+                                     (svg-sobreposicao-batalha
+                                      texto shiny? efeito mostrar-entrada?))
+                             :left 0 :top 0}])
+       (.png)
+       (.toBuffer))))
 
 (def ^:private temas-eventos
   {:nivel ["SUBIU DE NÍVEL" "#7c3aed" "⭐"]
@@ -2208,6 +2266,7 @@
 
       :else
       (do (treinador/atualizar-ativo! cid pid hp-atual nil)
+          (treinador/ganhar-amizade! cid pid (treinador/indice-ativo cid pid) 2)
           (str (cabecalho) "💊 *" (:nome pokemon) "* usou uma cura e se livrou de " (nome-status status) "!")))
     (orientacao-equipe cid pid)))
 
@@ -2223,6 +2282,7 @@
           (let [cura    (js/Math.round (* fracao hp-max))
                 hp-novo (min hp-max (+ hp-atual cura))]
             (treinador/atualizar-ativo! cid pid hp-novo status)
+            (treinador/ganhar-amizade! cid pid (treinador/indice-ativo cid pid) 2)
             (str (cabecalho) "🧪 *" (:nome pokemon) "* usou uma Poção de Vida e recuperou "
                  (- hp-novo hp-atual) " de HP! (" hp-novo "/" hp-max ")"))
           (str (cabecalho) "❌ Você não tem uma Poção de Vida no inventário (compre na " config/prefix "loja)."))))
@@ -2248,6 +2308,7 @@
       (let [caca-nova (-> caca
                           (assoc-in [:status :x] nil)
                           (assoc :item-usado-turno? true))]
+        (treinador/ganhar-amizade! cid pid (treinador/indice-ativo cid pid) 2)
         (turno-selvagem cid pid caca-nova false
                         (str "💊 *" (:nome pokemon) "* se livrou de " (nome-status status) "!"))))))
 
@@ -2273,6 +2334,7 @@
           ;; Atualiza as duas fontes imediatamente: o estado vivo da batalha
           ;; selvagem e o registro persistido do Pokémon ativo.
           (treinador/atualizar-ativo! cid pid hp-novo (get-in caca-nova [:status :x]))
+          (treinador/ganhar-amizade! cid pid (treinador/indice-ativo cid pid) 2)
           (turno-selvagem cid pid caca-nova false
                           (str "🧪 *" (:nome pokemon) "* recuperou " (- hp-novo hp-atual)
                                " de HP! (" hp-novo "/" hp-max ")")))
@@ -2371,6 +2433,7 @@
                      jogo-novo (-> jogo (assoc-in [:status marca] nil) (assoc :vez alvo))]
                  (swap! jogos assoc cid jogo-novo)
                  (sincronizar-equipe! cid jogo-novo)
+                 (treinador/ganhar-amizade! cid pid (treinador/indice-ativo cid pid) 2)
                  (com-mencao jogo-novo
                              (str (cabecalho) "💊 *" (:nome pokemon) "* usou uma cura e se livrou de "
                                   (nome-status status-atual) "!\n\n" (mensagem-estado jogo-novo))))))))))))
@@ -2410,6 +2473,7 @@
                        jogo-novo (-> jogo (assoc-in [:hp marca] hp-novo) (assoc :vez alvo))]
                    (swap! jogos assoc cid jogo-novo)
                    (sincronizar-equipe! cid jogo-novo)
+                   (treinador/ganhar-amizade! cid pid (treinador/indice-ativo cid pid) 2)
                    (com-mencao jogo-novo
                                (str (cabecalho) "🧪 *" (:nome pokemon) "* usou uma Poção de Vida e recuperou "
                                     (- hp-novo hp-atual) " de HP!\n\n" (mensagem-estado jogo-novo))))
@@ -2681,7 +2745,7 @@
           (.toBuffer)))))
 
 (defn- texto-treinador [cid pid nome perfil numero-ativo ativo]
-  (let [{:keys [nivel xp xp-insignias xp-missoes pe-ginasios pe-raids xp-atual xp-necessario sequencia recorde insignias]} perfil
+  (let [{:keys [nivel xp xp-insignias xp-missoes pe-ginasios pe-raids xp-atual xp-necessario sequencia recorde insignias titulo]} perfil
         ids-ginasio  (keys (treinador/insignias-ginasio cid pid))
         nomes-ginasio (if (seq ids-ginasio)
                         (str/join ", " (map #(or (:nome (aventuras/obter-ginasio %)) %) ids-ginasio))
@@ -2689,6 +2753,7 @@
         conquistadas (count (filter :conquistada? insignias))]
     ;; Mantido abaixo do limite de legenda para imagem e dados chegarem juntos.
     (str "🧢 *Treinador: " nome "*"
+         (when titulo (str "\n🏷️ Título: *" titulo "*"))
          "\n⭐ Nível " nivel " • ✨ PE " xp " • próximo " xp-atual "/" xp-necessario
          "\n🎖️ PE extra: insígnias +" xp-insignias " • missões +" xp-missoes
          " • ginásios +" pe-ginasios " • raids +" pe-raids
@@ -2702,6 +2767,54 @@
                           (str (if conquistada? "🏅" "🔒") " " nome " — " requisito
                                " (+" xp-recompensa " PE)"))
                         insignias)))))
+
+(defn- configurar-titulo [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        numero (when-let [texto (first args)] (js/parseInt texto 10))
+        titulos (treinador/titulos-disponiveis cid pid)]
+    (if (and (number? numero) (not (js/isNaN numero)))
+      (let [resultado (treinador/selecionar-titulo! cid pid numero)]
+        (if (= :ok (:status resultado))
+          (str "🏷️ Título selecionado: *" (:titulo resultado) "*.")
+          (str "❓ Título inválido. Use um número da lista em " config/prefix "pokemon titulo.")))
+      (str "🏷️ *Títulos conquistados*\n"
+           (if (seq titulos)
+             (str/join "\n" (map-indexed #(str (inc %1) ". " %2) titulos))
+             "Nenhum ainda. Complete conquistas do treinador.")
+           "\n\nEscolha com " config/prefix "pokemon titulo <número>."))))
+
+(defn- ver-amizade [message numero]
+  (let [cid (chat-id message) pid (jogador-id message)
+        idx (if (and numero (re-matches #"[0-9]+" numero))
+              (dec (js/parseInt numero 10)) (treinador/indice-ativo cid pid))
+        registro (get (treinador/equipe cid pid) idx)]
+    (if registro
+      (let [valor (treinador/amizade cid pid idx)
+            faixa (cond (>= valor 220) "melhor amigo" (>= valor 160) "grande amigo"
+                        (>= valor 100) "amigo" :else "ainda se conhecendo")]
+        (str "💞 *" (get registro "nome") "*: " valor "/255 — " faixa
+             "\nA amizade aumenta ao ganhar XP e ao receber cuidados."))
+      (str "❓ Pokémon não encontrado. Use " config/prefix "pokemon amizade [número]."))))
+
+(defn- ver-descobertas [message]
+  (let [cid (chat-id message) pid (jogador-id message)
+        {:keys [vistos avistamentos capturados capturas shiny primeiros-shiny primeiros-globais]}
+        (treinador/resumo-descobertas cid pid)
+        desconhecidos (max 0 (- total-pokemons vistos))]
+    (str "🔎 *Descobertas da Pokédex*\n\n"
+         "👀 Espécies vistas: " vistos "/" total-pokemons " • " avistamentos " encontros\n"
+         "📚 Espécies capturadas: " capturados " • " capturas " capturas\n"
+         "✨ Shiny capturados: " shiny "\n"
+         "⬛ Silhuetas ainda desconhecidas: " desconhecidos "\n"
+         (apply str (repeat (min 12 desconhecidos) "⬛"))
+         (when (> desconhecidos 12) " …")
+         (when (seq primeiros-shiny)
+           (str "\n🌟 Primeiros shiny descobertos por você: "
+                (str/join ", " (map #(get % "nome") primeiros-shiny))))
+         (when (seq primeiros-globais)
+           (str "\n\n🏆 *Primeiras descobertas shiny*\n"
+                (str/join "\n" (map #(str "✨ " (get % "nome") " — " (get % "treinador"))
+                                      primeiros-globais)))))))
 
 (defn- ver-treinador [message]
   (let [cid (chat-id message)
@@ -2782,10 +2895,15 @@
                                                 (str (str/join ", " (map #(str "#" %) numeros)) " "))
                                               (:emoji (get raridades (get e "raridade" "comum"))) " *"
                                               (get e "nome") "* — " (get e "capturas") "x"
+                                              (when (pos? (get e "maior-nivel" 0))
+                                                (str " • maior Nv." (get e "maior-nivel")))
+                                              (when (pos? (get e "shiny-capturados" 0))
+                                                (str " • ✨ " (get e "shiny-capturados")))
                                               (when-not (seq numeros) " (fora da coleção disponível)"))))
                                      (take 60 entradas)))
                  (str "\n\nOs números são os mesmos de " config/prefix "pokemon time."
                       " Abra a ficha com " config/prefix "pokemon pokedex <número>."
+                      " Veja estatísticas e silhuetas em " config/prefix "pokemon pokedex descobertas."
                       "\nPokémon na Joy ficam sem número até retornarem.")
                  (when (> unicos 60) (str "\n… e mais " (- unicos 60) " espécies.")))
             (if filtro
@@ -3347,7 +3465,8 @@
 (defn- estado-cacada [caca]
   (let [meu (:x (:pokemons caca))
         selvagem (:o (:pokemons caca))]
-    (str (:emoji (:bioma caca)) " *" (:nome (:bioma caca)) "*\n\n"
+    (str (:emoji (:bioma caca)) " *" (:nome (:bioma caca)) "* • "
+         (:emoji (:clima caca)) " " (:nome (:clima caca)) "\n\n"
          "🐾 *" (:nome meu) "*" (emoji-status (get-in caca [:status :x])) " — "
          (barra-hp (get-in caca [:hp :x]) (:hp meu)) "\n"
          "👾 *" (:nome selvagem) "*" (emoji-status (get-in caca [:status :o])) " — "
@@ -3365,7 +3484,7 @@
         raridade      (or (:raridade selvagem) "comum")
         sequencia-ant  (treinador/sequencia-capturas cid pid)
         sequencia      (if capturou?
-                         (treinador/registrar-captura! cid pid selvagem)
+                         (treinador/registrar-captura! cid pid selvagem (:nome-treinador caca))
                          (do (treinador/quebrar-sequencia-capturas! cid pid) 0))
         bonus-seq      (if capturou? (treinador/bonus-xp-sequencia-capturas sequencia) 0)
         xp             (if capturou? (+ (get xp-base-raridade raridade 2) bonus-seq) 1)
@@ -3643,10 +3762,16 @@
                    (turno-selvagem cid pid caca false
                                    (str aviso mensagem msg-efeitos extra))))))))))))
 
-(defn- cacar [message]
+(defn- cacar [message args]
   (let [cid (chat-id message)
-        pid (jogador-id message)]
+        pid (jogador-id message)
+        pedido (str/join " " args)
+        area (if (str/blank? pedido) (mundo/area-padrao) (mundo/area-disponivel pedido))]
     (cond
+      (nil? area)
+      (p/resolved (str (cabecalho) "🗺️ Essa área não está disponível hoje.\n" (mundo/resumo)
+                       "\nUse " config/prefix "pokemon cacar <área>."))
+
       (not (treinador/tem-pokemon? cid pid))
       (p/resolved (orientacao-equipe cid pid))
 
@@ -3659,15 +3784,18 @@
 
       :else
       (let [nivel (treinador/nivel-jogador cid pid)
-            bioma (bioma-atual)
+            bioma area
+            clima (mundo/clima-do-dia)
+            tipos-encontro (if (< (rand-int 100) 35) (:tipos clima) (:tipos bioma))
             evento (aventuras/evento-atual (.now js/Date))
             surto? (< (rand-int 100) (:chance evento))
             [pokemon hp-atual status] (treinador/pokemon-ativo cid pid)]
         (if (zero? hp-atual)
           (p/resolved (str (cabecalho) "😵 Seu Pokémon ativo está desmaiado. Cure-o antes de caçar."))
-          (-> (p/let [selvagem (if surto?
+          (-> (p/let [nome-treinador (nome-de message)
+                      selvagem (if surto?
                                     (buscar-pokemon-por-nome (rand-nth (:especies evento)))
-                                    (sortear-selvagem (poder-alvo-caca nivel) (:tipos bioma)))
+                                    (sortear-selvagem (poder-alvo-caca nivel) tipos-encontro))
                       selvagem (buscar-info-especie selvagem)
                       selvagem (com-raridade selvagem)
                       selvagem (shiny/sortear selvagem)
@@ -3676,16 +3804,20 @@
                           (not= [pokemon hp-atual status] (treinador/pokemon-ativo cid pid)))
                   (throw (js/Error. "O estado do combate mudou durante a preparação.")))
                 (treinador/registrar-cacada! cid pid)
+                (treinador/registrar-avistamento! cid pid selvagem)
                 (let [caca {:pokemons {:x pokemon :o selvagem}
                             :hp {:x hp-atual :o (:hp selvagem)}
                             :status {:x status :o nil} :estagios {:x {} :o {}}
                             :defendendo {:x false :o false} :itens-usados {:x {} :o {}}
-                            :pid pid :message message :bioma bioma
+                            :pid pid :message message :bioma bioma :clima clima
+                            :nome-treinador nome-treinador
                             :item-usado-turno? false :acao-realizada? false}]
                   (swap! cacadas-selvagens assoc cid caca)
                   (resposta-imagem-cacada
                    caca
                    (str (cabecalho) (:emoji bioma) " Você entrou em *" (:nome bioma) "*!\n"
+                        (:emoji clima) " Clima *" (:nome clima) "*: tipos "
+                        (str/join ", " (sort (:tipos clima))) " aparecem mais.\n"
                         (when surto? (str "🎉 " (:nome evento) " — encontro do evento!\n"))
                         "Um " (texto-raridade selvagem) " *" (:nome selvagem)
                         "* apareceu. Derrote-o antes de tentar capturar!\n\n"
@@ -4302,6 +4434,7 @@
          "\nEscale: " config/prefix "pokemon ginasio time 1,3,5"
          "\nDesafie: " config/prefix "pokemon ginasio desafiar pedra"
          "\nRecupere: " config/prefix "pokemon ginasio pocao pedra 1"
+         "\nAlimente: " config/prefix "pokemon ginasio fruta pedra 1"
          "\nRanking: " config/prefix "pokemon ginasio ranking [nome]"
          "\nDefesas: " config/prefix "pokemon ginasio historico [nome]"
          "\nComo jogar: " config/prefix "pokemon ginasio ajuda")))
@@ -4310,8 +4443,10 @@
   (let [cid (chat-id message) pid (jogador-id message)
         [acao id numero] args
         pocao? (contains? #{"pocao" "poção" "pot"} acao)
+        fruta? (contains? #{"fruta" "frambo" "fruta-dourada" "dourada"} acao)
+        recuperacao? (or pocao? fruta?)
         g (aventuras/obter-ginasio
-           (normalizar-texto (if (or (= acao "desafiar") pocao?) id acao)))
+           (normalizar-texto (if (or (= acao "desafiar") recuperacao?) id acao)))
         ocupante (ginasios/lider cid (:id g))]
     (cond
       (contains? #{"ranking" "historico" "histórico"} acao)
@@ -4323,7 +4458,7 @@
                      (if (= acao "ranking") (ginasios/ranking cid (:id gym) (.now js/Date))
                          (ginasios/historico cid (:id gym)))))))
       (empty? args) (p/resolved (menu-ginasios cid pid))
-      pocao?
+      recuperacao?
       (cond
         (nil? g) (p/resolved "❓ Ginásio desconhecido. Use pedra, agua, eletrico, planta ou fogo.")
         (or (get @jogos cid) (get @cacadas-selvagens cid))
@@ -4331,16 +4466,23 @@
         :else
         (let [indice (when (and numero (re-matches #"[1-3]" numero))
                        (dec (js/parseInt numero 10)))
-              resultado (ginasios/usar-pocao! cid pid (:id g) indice (.now js/Date))]
+              item-fruta (if (contains? #{"fruta-dourada" "dourada"} acao) "fruta-dourada" "fruta")
+              resultado (if pocao?
+                          (ginasios/usar-pocao! cid pid (:id g) indice (.now js/Date))
+                          (ginasios/usar-fruta! cid pid (:id g) indice (.now js/Date) item-fruta))]
           (p/resolved
            (case (:status resultado)
              :ok (str "🧪 *" (:nome resultado) "* recuperou motivação no ginásio " (:nome g)
-                      ": " (:antes resultado) "% → " (:depois resultado) "%. Uma Poção de Vida foi consumida.")
+                      ": " (:antes resultado) "% → " (:depois resultado) "%. "
+                      (if pocao? "Uma Poção de Vida" (if (= item-fruta "fruta-dourada") "Uma Fruta Dourada" "Uma Fruta Frambo"))
+                      " foi consumida.")
              :sem-lider "🏛️ Esse ginásio ainda não possui um treinador como líder."
              :nao-e-lider "🚫 Somente o líder atual pode recuperar os defensores desse ginásio."
              :indice-invalido (str "❓ Use " config/prefix "pokemon ginasio pocao " (:id g) " <1-3>.")
              :motivacao-cheia "💚 Esse defensor já está com 100% de motivação. A poção não foi consumida."
-             :sem-pocao (str "🎒 Você não possui Poção de Vida. Compre na " config/prefix "loja.")))))
+             :sem-item (if pocao?
+                         (str "🎒 Você não possui Poção de Vida. Compre na " config/prefix "loja.")
+                         (str "🎒 Você não possui essa fruta. Veja " config/prefix "mochila diario ou " config/prefix "loja."))))))
       (= acao "time")
       (if (aprendizado-bloqueado? cid pid)
         (p/resolved "🚫 Termine a batalha e as alterações pendentes antes de escalar.")
@@ -4773,6 +4915,9 @@
       (= cmd "raid") (comando-raid message resto)
       (= cmd "shiny") (p/resolved (ver-colecao-shiny message))
       (= cmd "treinador") (ver-treinador message)
+      (= cmd "titulo") (p/resolved (configurar-titulo message resto))
+      (= cmd "amizade") (p/resolved (ver-amizade message (first resto)))
+      (contains? #{"clima" "areas" "áreas" "mapa"} cmd) (p/resolved (mundo/resumo))
       (= cmd "aprender") (aprender-oferta message resto)
       (= cmd "reaprender") (reaprender-golpe message resto)
       (= cmd "mt") (usar-mt message resto)
@@ -4789,13 +4934,15 @@
                       (str diarias "\n\n" (loja/ver-semanais cid pid false)) diarias)))
       (= cmd "capturar") (capturar-selvagem message resto)
       (contains? #{"inicial" "iniciais"} cmd) (escolher-inicial message (first resto))
-      (contains? #{"cacar" "caçar"} cmd) (cacar message)
+      (contains? #{"cacar" "caçar"} cmd) (cacar message resto)
       (and (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd) (= "shiny" (first resto)))
       (p/resolved (ver-colecao-shiny message))
       (contains? #{"pokedex" "dex" "colecao" "coleção"} cmd)
-      (if (and (= 1 (count resto)) (re-matches #"[0-9]+" (first resto)))
+      (cond
+        (= "descobertas" (first resto)) (p/resolved (ver-descobertas message))
+        (and (= 1 (count resto)) (re-matches #"[0-9]+" (first resto)))
         (ver-pokemon-do-time message (first resto))
-        (ver-pokedex-pessoal message (str/join " " resto)))
+        :else (ver-pokedex-pessoal message (str/join " " resto)))
       (contains? #{"time" "equipe"} cmd)
       ;; O marcador de texto puro pode vir em qualquer posição, pra combinar com
       ;; os filtros (ex.: !pokemon time txt fogo ou !pokemon time bronze txt).
@@ -4833,8 +4980,12 @@
             "• " config/prefix "pokemon liga [nome|time <n1,n2,n3>]\n"
             "• " config/prefix "pokemon inicial\n"
             "• " config/prefix "pokemon cacar\n"
+            "• " config/prefix "pokemon cacar <área> | clima\n"
             "• " config/prefix "pokemon treinador\n"
+            "• " config/prefix "pokemon titulo [número]\n"
+            "• " config/prefix "pokemon amizade [número]\n"
             "• " config/prefix "pokemon pokedex [número|filtros]\n"
+            "• " config/prefix "pokemon pokedex descobertas\n"
             "• " config/prefix "pokemon time [ativo|filtros|csv|txt]\n"
             "• " config/prefix "pokemon escolher <número>\n"
             "• " config/prefix "pokemon equipar <número> <item>\n"

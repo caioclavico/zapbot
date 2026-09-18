@@ -16,6 +16,9 @@
 
 (defonce ^:private contas (atom (or (armazenamento/obter "treinador") {})))
 (armazenamento/registrar! "treinador" contas)
+(defonce ^:private descobertas-globais
+  (atom (or (armazenamento/obter "pokemon-descobertas") {})))
+(armazenamento/registrar! "pokemon-descobertas" descobertas-globais)
 
 (defn- persistir! []
   (armazenamento/salvar! "treinador" @contas))
@@ -556,10 +559,21 @@
   (max (sequencia-capturas cid pid)
        (get (conta cid pid) "maior-sequencia-capturas" 0)))
 
+(defn registrar-avistamento! [cid pid pokemon]
+  (let [chave (-> (:nome pokemon) str/lower-case (str/replace #"\s+" "-"))]
+    (swap! contas update-in [cid pid]
+           #(-> (or % conta-vazia)
+                (update "avistamentos" (fnil inc 0))
+                (update-in ["vistos" chave "vezes"] (fnil inc 0))
+                (assoc-in ["vistos" chave "nome"] (:nome pokemon))))
+    (persistir!)
+    true))
+
 (defn registrar-captura!
   "Registra a espécie na Pokédex pessoal, incrementa a sequência e retorna
   a nova sequência de capturas."
-  [cid pid pokemon]
+  ([cid pid pokemon] (registrar-captura! cid pid pokemon nil))
+  ([cid pid pokemon nome-treinador]
   (let [chave (-> (:nome pokemon) str/lower-case (str/replace #"\s+" "-"))]
     (swap! contas update-in [cid pid]
            (fn [c]
@@ -572,12 +586,44 @@
                             (fn [entrada]
                               {"nome" (:nome pokemon) "tipos" (vec (:tipos pokemon))
                                "raridade" (or (:raridade pokemon) "comum")
-                               "capturas" (inc (get entrada "capturas" 0))})))))
+                               "capturas" (inc (get entrada "capturas" 0))
+                               "maior-nivel" (max (or (:nivel pokemon) 1) (get entrada "maior-nivel" 0))
+                               "shiny-capturados" (+ (get entrada "shiny-capturados" 0)
+                                                       (if (:shiny? pokemon) 1 0))
+                               "primeira-captura" (or (get entrada "primeira-captura") (js/Date.now))
+                               "ultima-captura" (js/Date.now)})))))
     (when (:shiny? pokemon)
       (swap! contas assoc-in [cid pid "shiny-colecao" chave]
-             {"nome" (:nome pokemon) "imagem" (:imagem pokemon)}))
+             {"nome" (:nome pokemon) "imagem" (:imagem pokemon)})
+      (when-not (get @descobertas-globais chave)
+        (swap! descobertas-globais assoc chave
+               {"nome" (:nome pokemon) "pid" pid "treinador" (or nome-treinador pid)
+                "quando" (js/Date.now)})
+        (armazenamento/salvar! "pokemon-descobertas" @descobertas-globais)))
     (persistir!)
-    (sequencia-capturas cid pid)))
+    (sequencia-capturas cid pid))))
+
+(defn resumo-descobertas [cid pid]
+  (let [c (conta cid pid)
+        dex (get c "pokedex" {})
+        vistos (get c "vistos" {})]
+    {:vistos (count vistos)
+     :avistamentos (get c "avistamentos" 0)
+     :capturados (count dex)
+     :capturas (reduce + 0 (map #(get % "capturas" 0) (vals dex)))
+     :shiny (reduce + 0 (map #(get % "shiny-capturados" 0) (vals dex)))
+     :primeiros-shiny (->> @descobertas-globais vals (filter #(= (get % "pid") pid)) vec)
+     :primeiros-globais (->> @descobertas-globais vals (sort-by #(get % "quando" 0) >) (take 10) vec)}))
+
+(defn amizade [cid pid idx]
+  (get-in (conta cid pid) ["equipe" idx "amizade"] 70))
+
+(defn ganhar-amizade! [cid pid idx quantidade]
+  (when (get (equipe cid pid) idx)
+    (swap! contas update-in [cid pid "equipe" idx "amizade"]
+           #(min 255 (+ (or % 70) quantidade)))
+    (persistir!)
+    (amizade cid pid idx)))
 
 (defn quebrar-sequencia-capturas! [cid pid]
   (swap! contas update-in [cid pid]
@@ -794,6 +840,21 @@
     (mapv #(assoc % :conquistada? (>= (get metricas (:metrica %)) (:minimo %)))
           catalogo-insignias)))
 
+(defn titulos-disponiveis [cid pid]
+  (mapv :nome (filter :conquistada? (insignias-treinador cid pid))))
+
+(defn titulo-selecionado [cid pid]
+  (get (conta cid pid) "titulo"))
+
+(defn selecionar-titulo! [cid pid numero]
+  (let [titulos (titulos-disponiveis cid pid)
+        idx (dec numero)]
+    (if-let [titulo (get titulos idx)]
+      (do (swap! contas assoc-in [cid pid "titulo"] titulo)
+          (persistir!)
+          {:status :ok :titulo titulo})
+      {:status :invalido :titulos titulos})))
+
 (defn xp-insignias [cid pid]
   ;; Cada conquista permanente contribui uma única vez para o total. Derivar
   ;; dos marcos persistidos também reconhece contas antigas, sem duplicar XP
@@ -841,6 +902,7 @@
      :xp-atual xp-atual
      :xp-necessario xp-necessario
      :sequencia (sequencia-capturas cid pid) :recorde recorde
+     :titulo (titulo-selecionado cid pid)
      :insignias (insignias-treinador cid pid)}))
 
 ;; Ginásios e trocas preservam registros completos e persistem no mesmo estado.

@@ -650,6 +650,31 @@ Funciona nos cartões e no modo texto, combinado com filtros, por exemplo:
 A ordenação preserva os números usados para escolher cada Pokémon e,
 quando combinada com uma liga, substitui a ordem padrão por nível.
 
+### Exploração, vínculo e progressão diária (0.15.0)
+
+- `!mochila diario` mantém uma sequência: começa com 3 bolas, cresce até 7
+  e entrega uma Fruta Frambo Dourada a cada 7 dias consecutivos.
+- `!pokemon clima` mostra o bioma atual, os três biomas da rotação diária e,
+  separadamente, somente os biomas que não podem ser acessados por horário.
+  `!pokemon cacar floresta` escolhe uma delas. Floresta, praia, caverna,
+  cidade, lago e vulcão possuem tipos, cores e cenários próprios; o clima
+  aumenta a presença dos tipos favorecidos.
+- Nas imagens de batalha, os Pokémon ficam mais afastados nas laterais e os
+  golpes aparecem maiores, lado a lado, no corredor central.
+- A área automática usa o horário do fuso configurado no bot. Estados de
+  caçada restaurados também recuperam corretamente o cenário do bioma.
+- Fruta Frambo recupera 20 pontos de motivação no ginásio e pode ser comprada.
+  A dourada recupera tudo. Exemplos: `!pokemon ginasio fruta pedra 1` e
+  `!pokemon ginasio fruta-dourada pedra 1`.
+- `!pokemon pokedex descobertas` mostra espécies vistas, capturas, shiny,
+  primeiras descobertas e silhuetas ainda desconhecidas. Cada espécie registra
+  também o maior nível capturado.
+- Conquistas liberam títulos. Consulte e escolha com `!pokemon titulo [número]`;
+  o título selecionado aparece no perfil do treinador.
+- `!pokemon amizade [número]` mostra o vínculo de 0 a 255. Ganhar XP concede
+  10 pontos e receber poções ou curas concede 2; evoluções por amizade continuam
+  sendo verificadas ao subir de nível.
+
 ### Ginásios, evolução, trocas e eventos (0.10.0)
 
 Consulte `!pokemon ajuda` para começar ou abra um guia específico:

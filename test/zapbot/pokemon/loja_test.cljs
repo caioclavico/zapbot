@@ -35,6 +35,17 @@
   (is (not (loja/item-equipavel? "pokebola")))
   (is (nil? (loja/item-evolucao-pokeapi "pokebola"))))
 
+(deftest frutas-possuem-recuperacao-de-motivacao
+  (is (= 20 (:motivacao (loja/dados-item "fruta"))))
+  (is (= 100 (:motivacao (loja/dados-item "fruta-dourada"))))
+  (is (= 10 (:preco (loja/dados-item "fruta"))))
+  (is (true? (:exclusivo-diario (loja/dados-item "fruta-dourada")))))
+
+(deftest sequencia-diaria-avanca-ou-reinicia
+  (is (= 6 (loja/proxima-sequencia-diaria "2026-09-16" "2026-09-17" 5)))
+  (is (= 1 (loja/proxima-sequencia-diaria "2026-09-15" "2026-09-17" 5)))
+  (is (= 1 (loja/proxima-sequencia-diaria nil "2026-09-17" nil))))
+
 (deftest catalogo-da-loja-usa-imagem-propria
   (async done
     (let [message #js {:from "chat" :author "jogador"}]

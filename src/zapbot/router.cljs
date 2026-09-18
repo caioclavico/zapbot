@@ -55,10 +55,10 @@
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra versão, últimas mudanças, consumo de recursos e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
-   {:emoji "⚡" :uso "pokemon [liga [nome|time <n1,n2,n3>]|inicial|cacar|treinador|pokedex [n|filtros]|time [ativo|filtros|csv|txt]|trocar <n>|equipar|aprender [n|recusar]|reaprender [n] [troca]|mt [1-4]|reviver [n]|mochila [kit|diario|resgatar]|missoes [resgatar]|capturar <bola>|removergolpe <n>|doar|joy <n,n,...>|atacar <1-4>|defender|curar|pocao|sair]" :desc "Batalhe e capture por bioma; atalhos: !pk atk 1, !pk def, !pk cur, !pk pot e outros"}
+   {:emoji "⚡" :uso "pokemon [inicial|cacar [area]|clima|treinador|titulo|amizade|pokedex [n|descobertas]|ginasio|liga|time|mochila|missoes|atacar|sair]" :desc "Batalhe, explore áreas com clima e complete sua Pokédex"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
    {:emoji "📚" :uso "pokemon ajuda [batalhas|ginasios|cacadas|ligas|time|evolucao|shiny|semanais|raid]" :desc "Guias de como jogar, com passos, regras e exemplos; também aceita pokemon <módulo> ajuda"}
-   {:emoji "🏛️" :uso "pokemon ginasio [nome|time <1,2,3>|desafiar <nome>]" :desc "Cinco líderes 3 × 3, insígnias e pedras de evolução"}
+   {:emoji "🏛️" :uso "pokemon ginasio [nome|time <1,2,3>|desafiar <nome>|fruta <nome> <1-3>]" :desc "Cinco líderes 3 × 3, motivação, insígnias e pedras"}
    {:emoji "🏛️" :uso "pokemon ginasio ranking [nome]" :desc "Líderes com mais defesas e maior permanência em cada ginásio"}
    {:emoji "🛡️" :uso "pokemon ginasio historico [nome]" :desc "Últimas defesas, desafiantes e resultados"}
    {:emoji "✨" :uso "pokemon shiny" :desc "Coleção shiny histórica; fotos dos disponíveis com pokemon time shiny"}

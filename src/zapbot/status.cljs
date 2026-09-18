@@ -13,9 +13,12 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Defensores de ginásio agora exibem um coração com a motivação restante"
-   "17/09 — O coração esvazia e muda de cor conforme o Pokémon enfraquece"
-   "17/09 — Pokémon aparecem maiores nas imagens das batalhas selvagens"])
+  ["17/09 — Sequência diária crescente, frutas de ginásio e Fruta Dourada semanal"
+   "17/09 — Clima diário e cenários próprios para floresta, praia, caverna, cidade, lago e vulcão"
+   "17/09 — Pokédex de descobertas, títulos de conquistas e amizade visível dos Pokémon"
+   "17/09 — Golpes maiores e mais afastados dos Pokémon nas imagens de batalha"
+   "18/09 — Cenário acompanha o bioma no fuso do jogo e a Pokébola não cobre o defensor do ginásio"
+   "18/09 — Mapa separa a rotação diária dos biomas realmente inacessíveis por horário"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

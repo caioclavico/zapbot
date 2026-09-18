@@ -1,10 +1,12 @@
 (ns zapbot.pokemon.core-test
   (:require [cljs.test :refer-macros [async deftest is testing]]
+            [clojure.set :as set]
             [clojure.string :as str]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.pokemon.core :as core]
             [zapbot.pokemon.ginasios :as ginasios]
             [zapbot.pokemon.loja :as loja]
+            [zapbot.pokemon.mundo :as mundo]
             [zapbot.pokemon.treinador :as treinador]
             ["sharp" :as sharp]))
 
@@ -141,6 +143,20 @@
     (is (str/includes? fuga "id='grama'"))
     (is (str/includes? fuga "fill-opacity='.92'"))))
 
+(deftest arena-da-cacada-muda-o-cenario-conforme-o-bioma
+  (doseq [id ["floresta" "praia" "caverna" "cidade" "lago" "vulcao"]]
+    (let [svg (core/svg-arena-cacada
+               {:bioma {:id id :ceu "#abcdef" :chao "#123456"}} false)]
+      (is (str/includes? svg (str "id='cenario-" id "'")) id)))
+  (is (not= (core/svg-arena-cacada {:bioma {:id "praia"}} false)
+            (core/svg-arena-cacada {:bioma {:id "caverna"}} false)))
+  (testing "aceita bioma restaurado, nome completo e palavra-chave"
+    (is (= "vulcao" (core/id-cenario-bioma {"nome" "Vulcão Rubro"})))
+    (is (= "floresta" (core/id-cenario-bioma :floresta)))
+    (is (str/includes?
+         (core/svg-arena-cacada {:bioma {"id" "lago"}} false)
+         "id='cenario-lago'"))))
+
 (deftest pokebolas-de-captura-tem-cores-e-estados-visuais
   (is (= "#dc2626" (core/cor-bola "pokebola")))
   (is (= "#2563eb" (core/cor-bola "grande-bola")))
@@ -237,6 +253,45 @@
         (is (= [48 78 78]
                (ginasios/desgastar-defesa! "chat" "pedra" ocupacao agora)))))))
 
+(deftest fruta-recupera-motivacao-do-defensor
+  (let [registro (treinador/pokemon->registro pikachu (:hp pikachu) nil)
+        ocupacao {"pid" "lider" "time" [registro registro registro]
+                  "desde" 0 "motivacao" [30 100 100] "motivacao-em" 0}
+        estado (atom {"chat" {"pedra" ocupacao}})]
+    (with-redefs [ginasios/ocupacoes estado
+                  armazenamento/salvar! (fn [& _] (js/Promise.resolve nil))
+                  loja/usar-fruta! (fn [_ _ item] (if (= item "fruta-dourada") 100 20))]
+      (let [comum (ginasios/usar-fruta! "chat" "lider" "pedra" 0 0 "fruta")
+            dourada (ginasios/usar-fruta! "chat" "lider" "pedra" 0 0 "fruta-dourada")]
+        (is (= 50 (:depois comum)))
+        (is (= 100 (:depois dourada)))))))
+
+(deftest clima-e-areas-possuem-rotacao-diaria-estavel
+  (let [dia "2026-09-17"
+        areas (mundo/areas-do-dia dia)
+        indisponiveis (mundo/areas-indisponiveis dia)]
+    (is (= 3 (count areas)))
+    (is (= 3 (count indisponiveis)))
+    (is (empty? (set/intersection (set (map :id areas))
+                                  (set (map :id indisponiveis)))))
+    (is (= areas (mundo/areas-do-dia dia)))
+    (is (= (mundo/clima-do-dia dia) (mundo/clima-do-dia dia)))
+    (is (every? seq (map :tipos areas)))
+    (is (= "praia" (:id (mundo/obter-area "Praia"))))))
+
+(deftest amizade-titulos-e-descobertas-sao-persistentes
+  (let [registro (treinador/pokemon->registro pikachu (:hp pikachu) nil)
+        estado (atom {"chat" {"ash" {"equipe" [registro]
+                                      "vitorias-treinador" 1 "pokedex" {}}}})]
+    (with-redefs [treinador/contas estado
+                  armazenamento/salvar! (fn [& _] (js/Promise.resolve nil))]
+      (is (= 72 (treinador/ganhar-amizade! "chat" "ash" 0 2)))
+      (is (= :ok (:status (treinador/selecionar-titulo! "chat" "ash" 1))))
+      (treinador/registrar-avistamento! "chat" "ash" pikachu)
+      (let [resumo (treinador/resumo-descobertas "chat" "ash")]
+        (is (= 1 (:vistos resumo)))
+        (is (= 1 (:avistamentos resumo)))))))
+
 (deftest imagens-estaticas-de-captura-sao-png
   (async done
     (-> (sharp (js/Buffer.from (core/svg-bola-captura "ultra-bola" true false)))
@@ -256,7 +311,8 @@
   (let [batalha (core/layout-imagem-cacada {} false)
         captura (core/layout-imagem-cacada {:aguardando-captura? true} false)]
     (is (true? (:mostrar-meu? batalha)))
-    (is (= 560 (:centro-selvagem batalha)))
+    (is (= 165 (:centro-meu batalha)))
+    (is (= 595 (:centro-selvagem batalha)))
     (is (false? (:mostrar-meu? captura)))
     (is (= 380 (:centro-selvagem captura)))))
 
@@ -270,6 +326,13 @@
     (is (str/includes? efeitos "#f472b6"))
     (is (str/includes? efeitos "translate(585 250)"))
     (is (str/includes? efeitos "M555 60")))
+  (testing "a substituição do ginásio não desenha Pokébola sobre o defensor"
+    (let [com-bola (core/svg-sobreposicao-batalha
+                    "Onix entrou na batalha" false nil true)
+          sem-bola (core/svg-sobreposicao-batalha
+                    "Onix entrou na batalha" false nil false)]
+      (is (str/includes? com-bola "translate(585 250)"))
+      (is (not (str/includes? sem-bola "translate(585 250)")))))
   (testing "o raio do cabeçalho não cria efeito elétrico"
     (let [inicio (core/svg-sobreposicao-batalha "⚡ *Pokémon* selvagem apareceu" false nil)]
       (is (not (str/includes? inicio "M405 75")))
@@ -296,6 +359,9 @@
                 "rodada" false [{:tipo "fire" :origem :x :dano 20}
                                  {:tipo "water" :origem :o :dano 60}])]
     (is (< (core/escala-visual-dano 10) (core/escala-visual-dano 90)))
+    (is (> (core/escala-visual-dano 0) 0.28))
+    (is (str/includes? fraco "data-centro='328'"))
+    (is (str/includes? lider "data-centro='432'"))
     (is (not= fraco forte))
     (is (not= fraco lider))
     (is (str/includes? rodada "#f97316"))

@@ -65,7 +65,7 @@
          "Primeira vitória: insígnia, 100 moedas, 6 XP por participante e uma pedra. Revanche premiada: 25 moedas, 2 XP e 25% de chance de pedra, uma vez por dia por ginásio. Reinicia à meia-noite de São Paulo.\n"
          "Derrota: 2 XP para cada Pokémon participante. O treinador ganha PE (Pontos de experiência): 6 na primeira vitória, 3 na revanche premiada e 1 na derrota.\n"
          "Quem vence assume a liderança. Os três Pokémon ficam fora da coleção disponível, inativos e reservados até outro jogador vencer. A motivação começa em 100%, cai 5 pontos por hora e 12 após cada defesa, enfraquecendo HP e atributos até o mínimo de 20%.\n"
-         "O coração acima de cada defensor mostra a motivação restante. O líder recupera 40 pontos gastando uma Poção de Vida: " (comando "ginasio pocao pedra 1") ". Ao cair, o time volta à coleção com o HP que tinha ao assumir.\n"
+         "O coração acima de cada defensor mostra a motivação restante. O líder pode recuperar 40 pontos com " (comando "ginasio pocao pedra 1") ", 20 com " (comando "ginasio fruta pedra 1") " ou tudo com uma fruta dourada. Ao cair, o time volta à coleção com o HP que tinha ao assumir.\n"
          "Permanecer mais de 6 horas rende 50 moedas, pagas uma única vez ao ser derrubado. É possível disputar a liderança novamente no mesmo dia, mas a recompensa de vitória continua diária.\n"
          "Ranking por defesas e tempo: " (comando "ginasio ranking pedra") ". Últimas batalhas: " (comando "ginasio historico pedra") ". Sem nome, mostra todos os ginásios. Defesas começam a ser registradas nesta atualização.\n"
          "Para recuperar o time, consulte " (comando "ajuda time") ".")
@@ -74,10 +74,10 @@
     (str "🌿 *Como jogar: caçadas*\n\n"
          "1. Escolha seu inicial com " (comando "inicial") ". Confira as bolas em " (comando "mochila") " e os itens em " config/prefix "loja.\n"
          "2. Use " (comando "time") " e " (comando "escolher 1") " para definir um Pokémon com HP.\n"
-         "3. Inicie com " (comando "cacar") ". Os encontros variam com o bioma, horário e eventos; a força da caçada considera seu nível de treinador.\n"
+         "3. Consulte clima e áreas com " (comando "clima") ". Três áreas ficam disponíveis por dia; escolha, por exemplo, com " (comando "cacar floresta") ". O clima aumenta os encontros de tipos favorecidos.\n"
          "4. Derrote o selvagem usando " (comando "atacar 1") ". Depois escolha uma bola no menu: " (comando "capturar pokebola") ".\n\n"
          "A captura exige uma bola da mochila e pode falhar. Há até três tentativas, mas o selvagem pode fugir antes.\n"
-         "Cada encontro tem chance de 1 em 512 de ser ✨ Shiny: cores especiais, mesmos atributos. A característica é preservada ao evoluir, doar ou trocar.\n"
+         "Cada encontro tem chance de 1 em 512 de ser ✨ Shiny: cores especiais, mesmos atributos. Avistamentos, maiores níveis e primeiros shiny ficam em " (comando "pokedex descobertas") ".\n"
          "Durante o combate, é permitida uma troca de Pokémon com " (comando "escolher <número>") "; ela gasta sua ação.\n"
          "Só pode haver uma batalha ou caçada por vez no chat. Respeite o intervalo informado entre caçadas e aja em até 5 minutos. " (comando "sair") " abandona a caçada.")
 
@@ -111,7 +111,7 @@
          "4. Para um Pikachu compatível na posição 1, use " (comando "evoluir 1 pedra-trovao") ". A evolução consome uma pedra e exige estar fora de combate.\n"
          "5. Evoluções por troca simples acontecem ao concluir " (comando "negociar <seu número> <número do outro> @pessoa") ". Karrablast e Shelmet precisam ser trocados entre si.\n\n"
          "Itens oficiais como Revestimento Metálico, Escama de Dragão e Upgrade vêm das missões; equipe antes de negociar e o item será consumido na evolução.\n"
-         "A amizade sobe 10 pontos sempre que o Pokémon recebe XP; evoluções por amizade ocorrem ao subir de nível, respeitando dia ou noite.\n"
+         "A amizade sobe 10 pontos sempre que o Pokémon recebe XP e 2 ao receber poções ou curas. Consulte com " (comando "amizade [número]") "; evoluções por amizade ocorrem ao subir de nível, respeitando dia ou noite.\n"
          "Condições sem equivalente no WhatsApp usam 🧬 Catalisador Evolutivo, ganho em missões difíceis e semanais: " (comando "evoluir <número> especial [destino]") ".\n"
          "Use o identificador do item exibido na ficha. Veja detalhes em " config/prefix "loja detalhes pedra-trovao. Guia de recompensas: " (comando "ajuda ginasios") ".")
 
