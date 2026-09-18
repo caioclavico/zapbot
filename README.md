@@ -680,7 +680,13 @@ A consulta funciona durante partidas sem gastar turno nem acionar o líder.
   saem da coleção disponível e ficam **inativos e reservados** até outro jogador
   derrubar o líder. Não podem ser usados, doados, trocados ou alterados nesse período.
   `!pokemon ginasio` e `!pokemon ginasio pedra` mostram líder, permanência e time.
-  O time defende automaticamente com HP cheio a cada desafio; ao ser liberado,
+  Cada defensor começa com 100% de motivação, perde 5 pontos por hora completa
+  e mais 12 depois de cada defesa vencida, até o mínimo de 20%. A motivação reduz
+  gradualmente o HP e os atributos usados nas batalhas; no mínimo, o Pokémon luta
+  com 60% da força original. O líder pode usar
+  `!pokemon ginasio pocao pedra 1` para gastar uma Poção de Vida e recuperar
+  40 pontos da motivação do defensor escolhido. Uma poção não é consumida se a
+  motivação já estiver cheia ou se o número for inválido. Ao ser liberado, o time
   retorna ao fim da coleção preservando os dados e HP de quando assumiu.
   Confira a nova numeração com `!pokemon time` e refaça as escalações necessárias.
 - Mais de 6 horas de permanência dão **50 moedas**, pagas ao antigo líder

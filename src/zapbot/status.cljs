@@ -13,9 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Enfermeira Joy agora mostra uma imagem diferente em cada etapa do atendimento"
-   "17/09 — Centro Pokémon aparece quando não há feridos; Joy tratando aparece ao escolher"
-   "17/09 — Após enviar o Pokémon, aparece a imagem tradicional da Enfermeira Joy"])
+  ["17/09 — Pokémon de ginásio agora perdem motivação conforme o tempo de permanência"
+   "17/09 — Cada defesa vencida também enfraquece o time, evitando líderes permanentes"
+   "17/09 — O líder pode gastar Poção de Vida para recuperar a motivação de um defensor"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

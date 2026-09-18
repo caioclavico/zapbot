@@ -9,10 +9,78 @@
 (defonce ^:private ocupacoes (atom (or (armazenamento/obter "ginasios") {})))
 (armazenamento/registrar! "ginasios" ocupacoes)
 
+(def motivacao-maxima 100)
+(def motivacao-minima 20)
+(def perda-motivacao-por-hora 5)
+(def perda-motivacao-por-defesa 12)
+
+(defn- salvar-ocupacoes! []
+  (armazenamento/salvar! "ginasios" @ocupacoes))
+
 (defn lider [cid id] (get-in @ocupacoes [cid id]))
 
 (defn liderados [cid pid]
   (filter (fn [[_ ocupacao]] (= pid (get ocupacao "pid"))) (get @ocupacoes cid)))
+
+(defn motivacoes
+  "Motivação atual dos três defensores. A queda por tempo é calculada sob
+  demanda, então não exige cron nem timers para cada ginásio."
+  [ocupacao agora]
+  (let [quantidade (count (get ocupacao "time"))
+        base (vec (or (seq (get ocupacao "motivacao"))
+                      (repeat quantidade motivacao-maxima)))
+        atualizado-em (get ocupacao "motivacao-em" (get ocupacao "desde" agora))
+        horas (js/Math.floor (/ (max 0 (- agora atualizado-em)) (* 60 60 1000)))
+        perda (* horas perda-motivacao-por-hora)]
+    (mapv #(max motivacao-minima (- (or % motivacao-maxima) perda)) base)))
+
+(defn time-defensor
+  "Aplica a motivação ao time copiado do ginásio. Em 100% mantém os atributos;
+  no mínimo de 20% luta com 60% da força, sem alterar a coleção do treinador."
+  [ocupacao agora]
+  (mapv (fn [registro motivacao]
+          (let [[pokemon _ _] (treinador/registro->pokemon registro)
+                fator (+ 0.5 (* 0.5 (/ motivacao motivacao-maxima)))]
+            (-> (reduce (fn [p atributo]
+                          (update p atributo #(max 1 (js/Math.round (* % fator)))))
+                        pokemon [:hp :ataque :defesa :atq-esp :def-esp :veloc])
+                (assoc :motivacao-ginasio motivacao))))
+        (get ocupacao "time")
+        (motivacoes ocupacao agora)))
+
+(defn desgastar-defesa!
+  "Uma defesa vencida cansa todo o time, além do desgaste já acumulado pelo tempo."
+  [cid id ocupacao agora]
+  (when (= ocupacao (lider cid id))
+    (let [novas (mapv #(max motivacao-minima (- % perda-motivacao-por-defesa))
+                      (motivacoes ocupacao agora))]
+      (swap! ocupacoes update-in [cid id]
+             #(assoc % "motivacao" novas "motivacao-em" agora))
+      (salvar-ocupacoes!)
+      novas)))
+
+(defn usar-pocao!
+  "Consome uma Poção de Vida do líder e recupera 40 pontos de motivação de um
+  defensor. Retorna um mapa com :status e os dados necessários para a resposta."
+  [cid pid id indice agora]
+  (let [ocupacao (lider cid id)
+        atuais (when ocupacao (motivacoes ocupacao agora))]
+    (cond
+      (nil? ocupacao) {:status :sem-lider}
+      (not= pid (get ocupacao "pid")) {:status :nao-e-lider}
+      (not (and (number? indice) (<= 0 indice (dec (count atuais))))) {:status :indice-invalido}
+      (>= (get atuais indice) motivacao-maxima) {:status :motivacao-cheia}
+      :else
+      (if-let [fracao (loja/usar-pocao! cid pid)]
+        (let [antes (get atuais indice)
+              depois (min motivacao-maxima (+ antes (js/Math.round (* 100 fracao))))
+              novas (assoc atuais indice depois)]
+          (swap! ocupacoes update-in [cid id]
+                 #(assoc % "motivacao" novas "motivacao-em" agora))
+          (salvar-ocupacoes!)
+          {:status :ok :antes antes :depois depois
+           :nome (get-in ocupacao ["time" indice "nome"])})
+        {:status :sem-pocao}))))
 
 (defn recompensa-permanencia [ocupacao agora]
   (if (and ocupacao (> (- agora (get ocupacao "desde" agora)) (* 6 60 60 1000))) 50 0))
@@ -50,7 +118,8 @@
     (let [registros (mapv #(get (treinador/equipe cid pid) %) indices)
           moedas (recompensa-permanencia anterior agora)
           xp (xp-permanencia anterior agora)
-          nova {"pid" pid "nome" nome "time" (vec registros) "desde" agora}]
+          nova {"pid" pid "nome" nome "time" (vec registros) "desde" agora
+                "motivacao" (vec (repeat 3 motivacao-maxima)) "motivacao-em" agora}]
       (when-not (and (= 3 (count indices)) (= 3 (count (set indices))) (every? some? registros))
         (throw (js/Error. "Time de ocupação inválido.")))
       ;; Fora da coleção utilizável, como na enfermaria: não pode ser alterado.
@@ -65,7 +134,7 @@
       (registrar-permanencia! cid id anterior agora)
       (swap! ocupacoes assoc-in [cid id] nova)
       (when (pos? moedas) (loja/creditar-quantia! cid (get anterior "pid") moedas))
-      (armazenamento/salvar! "ginasios" @ocupacoes)
+      (salvar-ocupacoes!)
       {:anterior anterior :moedas moedas :xp xp :tempo-ms (duracao-ms anterior agora)})))
 
 (defonce ^:private estatisticas (atom (or (armazenamento/obter "ginasios-estatisticas") {})))
@@ -85,6 +154,8 @@
 (defn registrar-resultado! [cid id ocupante desafiante nome venceu? agora]
   (let [entrada {"quando" agora "desafiante" desafiante "nome" nome
                  "lider" (get ocupante "nome" "Líder NPC") "venceu" venceu?}]
+    (when (and ocupante (not venceu?))
+      (desgastar-defesa! cid id ocupante agora))
     (swap! estatisticas update-in [cid id]
            (fn [estado]
              (cond-> (update (or estado {}) "historico"

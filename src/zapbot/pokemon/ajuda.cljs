@@ -64,7 +64,8 @@
          "São combates 3 × 3, sem ajuste dos níveis. Vença os ginásios na ordem para liberar os próximos. A escalação de ginásio é separada da liga.\n"
          "Primeira vitória: insígnia, 100 moedas, 6 XP por participante e uma pedra. Revanche premiada: 25 moedas, 2 XP e 25% de chance de pedra, uma vez por dia por ginásio. Reinicia à meia-noite de São Paulo.\n"
          "Derrota: 2 XP para cada Pokémon participante. O treinador ganha PE (Pontos de experiência): 6 na primeira vitória, 3 na revanche premiada e 1 na derrota.\n"
-         "Quem vence assume a liderança. Os três Pokémon ficam fora da coleção disponível, inativos e reservados até outro jogador vencer. O time defende automaticamente, com HP cheio em cada desafio. Ao cair, volta à coleção com o HP que tinha ao assumir.\n"
+         "Quem vence assume a liderança. Os três Pokémon ficam fora da coleção disponível, inativos e reservados até outro jogador vencer. A motivação começa em 100%, cai 5 pontos por hora e 12 após cada defesa, enfraquecendo HP e atributos até o mínimo de 20%.\n"
+         "O líder recupera 40 pontos de um defensor gastando uma Poção de Vida: " (comando "ginasio pocao pedra 1") ". Consulte o ginásio para ver a motivação. Ao cair, o time volta à coleção com o HP que tinha ao assumir.\n"
          "Permanecer mais de 6 horas rende 50 moedas, pagas uma única vez ao ser derrubado. É possível disputar a liderança novamente no mesmo dia, mas a recompensa de vitória continua diária.\n"
          "Ranking por defesas e tempo: " (comando "ginasio ranking pedra") ". Últimas batalhas: " (comando "ginasio historico pedra") ". Sem nome, mostra todos os ginásios. Defesas começam a ser registradas nesta atualização.\n"
          "Para recuperar o time, consulte " (comando "ajuda time") ".")

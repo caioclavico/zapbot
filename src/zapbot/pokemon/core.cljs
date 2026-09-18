@@ -4237,12 +4237,17 @@
   ([cid g] (descricao-lider cid g true))
   ([cid g mostrar-time?]
    (if-let [lider (ginasios/lider cid (:id g))]
-     (str (get lider "nome") " — há "
-          (ginasios/formatar-duracao (- (.now js/Date) (get lider "desde")))
-          (when mostrar-time?
-            (str "\nTime reservado: "
-                 (str/join ", " (map #(str (get % "nome") (when (get % "shiny") " ✨ Shiny")
-                                           " Nv." (get % "nivel" 1)) (get lider "time"))))))
+     (let [agora (.now js/Date)
+           motivacoes (ginasios/motivacoes lider agora)]
+       (str (get lider "nome") " — há "
+            (ginasios/formatar-duracao (- agora (get lider "desde")))
+            (when mostrar-time?
+              (str "\nTime reservado: "
+                   (str/join ", "
+                             (map (fn [registro motivacao]
+                                    (str (get registro "nome") (when (get registro "shiny") " ✨ Shiny")
+                                         " Nv." (get registro "nivel" 1) " • " motivacao "% motivação"))
+                                  (get lider "time") motivacoes))))))
      (str (:lider g) " (NPC) — Nv. " (:nivel g)))))
 
 (defn- menu-ginasios [cid pid]
@@ -4259,18 +4264,22 @@
          "\nDerrota: 2 XP por Pokémon que participou, a cada batalha."
          "\nPE do treinador: primeira vitória 6; revanche premiada 3; derrota 1."
          "\nVencer torna você líder. Os três Pokémon ficam inativos no ginásio até você ser derrubado."
+         "\nDefensores perdem motivação com o tempo e após cada defesa. O líder pode usar Poções de Vida para recuperá-los."
          "\nMais de 6h como líder: 50 moedas, pagas apenas ao ser derrubado."
          "\nUse " config/prefix "pokemon ginasio <nome> para detalhes."
          "\nEscale: " config/prefix "pokemon ginasio time 1,3,5"
          "\nDesafie: " config/prefix "pokemon ginasio desafiar pedra"
+         "\nRecupere: " config/prefix "pokemon ginasio pocao pedra 1"
          "\nRanking: " config/prefix "pokemon ginasio ranking [nome]"
          "\nDefesas: " config/prefix "pokemon ginasio historico [nome]"
          "\nComo jogar: " config/prefix "pokemon ginasio ajuda")))
 
 (defn- configurar-ginasio [message args]
   (let [cid (chat-id message) pid (jogador-id message)
-        [acao id] args
-        g (aventuras/obter-ginasio (normalizar-texto (if (= acao "desafiar") id acao)))
+        [acao id numero] args
+        pocao? (contains? #{"pocao" "poção" "pot"} acao)
+        g (aventuras/obter-ginasio
+           (normalizar-texto (if (or (= acao "desafiar") pocao?) id acao)))
         ocupante (ginasios/lider cid (:id g))]
     (cond
       (contains? #{"ranking" "historico" "histórico"} acao)
@@ -4282,6 +4291,24 @@
                      (if (= acao "ranking") (ginasios/ranking cid (:id gym) (.now js/Date))
                          (ginasios/historico cid (:id gym)))))))
       (empty? args) (p/resolved (menu-ginasios cid pid))
+      pocao?
+      (cond
+        (nil? g) (p/resolved "❓ Ginásio desconhecido. Use pedra, agua, eletrico, planta ou fogo.")
+        (or (get @jogos cid) (get @cacadas-selvagens cid))
+        (p/resolved "🚫 Aguarde a batalha ou caçada deste chat terminar antes de recuperar um ginásio.")
+        :else
+        (let [indice (when (and numero (re-matches #"[1-3]" numero))
+                       (dec (js/parseInt numero 10)))
+              resultado (ginasios/usar-pocao! cid pid (:id g) indice (.now js/Date))]
+          (p/resolved
+           (case (:status resultado)
+             :ok (str "🧪 *" (:nome resultado) "* recuperou motivação no ginásio " (:nome g)
+                      ": " (:antes resultado) "% → " (:depois resultado) "%. Uma Poção de Vida foi consumida.")
+             :sem-lider "🏛️ Esse ginásio ainda não possui um treinador como líder."
+             :nao-e-lider "🚫 Somente o líder atual pode recuperar os defensores desse ginásio."
+             :indice-invalido (str "❓ Use " config/prefix "pokemon ginasio pocao " (:id g) " <1-3>.")
+             :motivacao-cheia "💚 Esse defensor já está com 100% de motivação. A poção não foi consumida."
+             :sem-pocao (str "🎒 Você não possui Poção de Vida. Compre na " config/prefix "loja.")))))
       (= acao "time")
       (if (aprendizado-bloqueado? cid pid)
         (p/resolved "🚫 Termine a batalha e as alterações pendentes antes de escalar.")
@@ -4303,7 +4330,7 @@
                        "\nUse " config/prefix "pokemon ginasio desafiar " (:id g) ".")]
         (if (seq (get ocupante "time"))
           (resposta-time-ginasio
-           (mapv #(first (treinador/registro->pokemon %)) (get ocupante "time"))
+           (ginasios/time-defensor ocupante (.now js/Date))
            texto)
           (p/resolved texto)))
       (= pid (get ocupante "pid"))
@@ -4326,7 +4353,7 @@
                 _ (swap! jogos assoc cid reserva)]
             (-> (p/let [nome-desafiante (nome-de message)
                        adversarios (if ocupante
-                                     (mapv #(first (treinador/registro->pokemon %)) (get ocupante "time"))
+                                     (ginasios/time-defensor ocupante (.now js/Date))
                                      (p/all (map #(p/let [pokemon (buscar-pokemon-por-nome %)
                                                         pronto (com-golpes (escalar-nivel pokemon (:nivel g)) (:nivel g))]
                                                   pronto) (:time g))))]

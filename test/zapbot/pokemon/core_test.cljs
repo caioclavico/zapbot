@@ -1,8 +1,10 @@
 (ns zapbot.pokemon.core-test
   (:require [cljs.test :refer-macros [async deftest is testing]]
             [clojure.string :as str]
+            [zapbot.armazenamento :as armazenamento]
             [zapbot.pokemon.core :as core]
             [zapbot.pokemon.ginasios :as ginasios]
+            [zapbot.pokemon.loja :as loja]
             [zapbot.pokemon.treinador :as treinador]
             ["sharp" :as sharp]))
 
@@ -196,6 +198,44 @@
         ocupacao {"desde" 0}]
     (is (= 6 (ginasios/xp-permanencia ocupacao agora))))
   (is (= 24 (ginasios/xp-permanencia {"desde" 0} (* 30 60 60 1000)))))
+
+(deftest motivacao-do-ginasio-cai-com-o-tempo-e-enfraquece-defensores
+  (let [registro (treinador/pokemon->registro pikachu (:hp pikachu) nil)
+        ocupacao {"time" [registro registro registro]
+                  "desde" 0
+                  "motivacao" [100 70 25]
+                  "motivacao-em" 0}
+        tres-horas (* 3 60 60 1000)
+        trinta-horas (* 30 60 60 1000)
+        time-fraco (ginasios/time-defensor ocupacao trinta-horas)]
+    (is (= [85 55 20] (ginasios/motivacoes ocupacao tres-horas)))
+    (is (= [20 20 20] (ginasios/motivacoes ocupacao trinta-horas)))
+    (is (= 20 (:motivacao-ginasio (first time-fraco))))
+    (is (= (js/Math.round (* 0.6 (:hp pikachu))) (:hp (first time-fraco))))
+    (is (= (js/Math.round (* 0.6 (:ataque pikachu))) (:ataque (first time-fraco))))))
+
+(deftest pocao-recupera-motivacao-e-defesa-vencida-desgasta-o-time
+  (let [registro (treinador/pokemon->registro pikachu (:hp pikachu) nil)
+        ocupacao {"pid" "lider" "nome" "Ash" "time" [registro registro registro]
+                  "desde" 0 "motivacao" [70 100 100] "motivacao-em" 0}
+        estado (atom {"chat" {"pedra" ocupacao}})
+        consumidas (atom 0)
+        agora (* 2 60 60 1000)]
+    (with-redefs [ginasios/ocupacoes estado
+                  armazenamento/salvar! (fn [& _] (js/Promise.resolve nil))
+                  loja/usar-pocao! (fn [_ _] (swap! consumidas inc) 0.4)]
+      (let [invalida (ginasios/usar-pocao! "chat" "lider" "pedra" nil agora)
+            resultado (ginasios/usar-pocao! "chat" "lider" "pedra" 0 agora)]
+        (is (= :indice-invalido (:status invalida)))
+        (is (= :ok (:status resultado)))
+        (is (= 60 (:antes resultado)))
+        (is (= 100 (:depois resultado)))
+        (is (= 1 @consumidas))))
+    (let [estado-defesa (atom {"chat" {"pedra" ocupacao}})]
+      (with-redefs [ginasios/ocupacoes estado-defesa
+                    armazenamento/salvar! (fn [& _] (js/Promise.resolve nil))]
+        (is (= [48 78 78]
+               (ginasios/desgastar-defesa! "chat" "pedra" ocupacao agora)))))))
 
 (deftest imagens-estaticas-de-captura-sao-png
   (async done
