@@ -215,6 +215,14 @@
     (is (= 6 (ginasios/xp-permanencia ocupacao agora))))
   (is (= 24 (ginasios/xp-permanencia {"desde" 0} (* 30 60 60 1000)))))
 
+(deftest tentativa-de-ginasio-recompensa-participacao-e-nocautes
+  (is (= 3 (core/xp-ginasio-participante false nil 0)))
+  (is (= 5 (core/xp-ginasio-participante false nil 2)))
+  (is (= 7 (core/xp-ginasio-participante true :primeira 0)))
+  (is (= 9 (core/xp-ginasio-participante true :primeira 2)))
+  (is (= 5 (core/xp-ginasio-participante true :revanche 1)))
+  (is (= 3 (core/xp-ginasio-participante true nil 1))))
+
 (deftest motivacao-do-ginasio-cai-com-o-tempo-e-enfraquece-defensores
   (let [registro (treinador/pokemon->registro pikachu (:hp pikachu) nil)
         ocupacao {"time" [registro registro registro]

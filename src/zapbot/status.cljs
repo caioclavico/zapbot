@@ -13,12 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Sequência diária crescente, frutas de ginásio e Fruta Dourada semanal"
-   "17/09 — Clima diário e cenários próprios para floresta, praia, caverna, cidade, lago e vulcão"
-   "17/09 — Pokédex de descobertas, títulos de conquistas e amizade visível dos Pokémon"
-   "17/09 — Golpes maiores e mais afastados dos Pokémon nas imagens de batalha"
-   "18/09 — Cenário acompanha o bioma no fuso do jogo e a Pokébola não cobre o defensor do ginásio"
-   "18/09 — Mapa separa a rotação diária dos biomas realmente inacessíveis por horário"])
+  ["18/09 — Tentativas de ginásio dão XP-base maior para todos os participantes"
+   "18/09 — Cada defensor nocauteado concede +1 XP ao Pokémon responsável"
+   "18/09 — Vitórias repetidas continuam dando XP de combate sem repetir prêmios diários"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

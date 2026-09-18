@@ -4321,6 +4321,32 @@
     (reduce #(update %1 %2 (fn [v] (js/Math.round (* v fator))))
             (assoc pokemon :nivel nivel) [:hp :ataque :defesa :atq-esp :def-esp :veloc])))
 
+(defn- xp-ginasio-participante
+  "XP de combate por participante. O bônus por nocaute recompensa progresso
+  real mesmo quando o desafiante ainda não consegue derrubar todo o ginásio."
+  [venceu? premio nocautes]
+  (+ (cond
+       (not venceu?) 3
+       (= premio :primeira) 7
+       (= premio :revanche) 4
+       :else 2)
+     (max 0 (or nocautes 0))))
+
+(defn- conceder-xp-ginasio! [cid pid jogo venceu? premio]
+  (vec
+   (for [[idx nocautes] (sort-by key (get-in jogo [:participacao :x]))
+         :let [xp (xp-ginasio-participante venceu? premio nocautes)
+               subida (treinador/ganhar-xp-no-indice! cid pid idx xp)]]
+     {:idx idx :nocautes nocautes :xp xp :subida subida})))
+
+(defn- texto-xp-ginasio [recompensas]
+  (str "\n✨ *XP de combate por participante:*"
+       (apply str
+              (for [{:keys [idx nocautes xp]} recompensas]
+                (str "\n• Pokémon " (inc idx) ": +" xp " XP"
+                     (when (pos? nocautes)
+                       (str " (" nocautes " nocaute" (when (> nocautes 1) "s") ")")))))))
+
 (defn- finalizar-ginasio [message cid jogo vencedor]
   (ginasios/registrar-resultado! cid (get-in jogo [:ginasio :id]) (:lider-anterior jogo)
                                 (get-in jogo [:jogadores :x]) (:nome-desafiante jogo)
@@ -4333,18 +4359,17 @@
           finalizando (assoc jogo :finalizando? true)
           _ (swap! jogos assoc cid finalizando)
           _ (treinador/ganhar-pe-ginasio! cid pid 1)
-          subidas (vec (for [idx (keys (get-in jogo [:participacao :x]))]
-                         [idx (treinador/ganhar-xp-no-indice! cid pid idx 2)]))]
+          recompensas (conceder-xp-ginasio! cid pid jogo false nil)]
       (-> (p/all
-           (for [[idx subida] subidas :when subida]
+           (for [{:keys [idx subida]} recompensas :when subida]
              (-> (verificar-evolucao! message cid pid idx)
                  (p/then (fn [_] (aprender-golpe-por-nivel! message cid pid (:nivel subida) idx))))))
           (p/finally #(swap! jogos (fn [estado]
                                     (if (= finalizando (get estado cid)) (dissoc estado cid) estado)))))
       (let [texto (str "\nO líder venceu. Recupere seu time e tente novamente! Suas insígnias foram mantidas."
-           "\n✨ +2 XP por Pokémon que participou."
+           (texto-xp-ginasio recompensas)
            "\n⭐ +1 PE (Pontos de experiência) para o treinador."
-           (apply str (for [[_ subida] subidas :when subida]
+           (apply str (for [{:keys [subida]} recompensas :when subida]
                         (str "\n✨ " (:nome subida) " chegou ao nível " (:nivel subida) "!"
                              (aviso-saida-liga subida)))))]
         (when-let [resultado (:resultado-derrota jogo)] (reset! resultado texto))
@@ -4357,15 +4382,14 @@
           pedra? (or primeira? (and premio (< (rand-int 100) 25)))
           finalizando (assoc jogo :finalizando? true)
           _ (swap! jogos assoc cid finalizando)
-          subidas (when premio
-                    (do (loja/creditar-quantia! cid pid moedas)
-                        (treinador/registrar-vitoria-treinador! cid pid)
-                        (treinador/ganhar-pe-ginasio! cid pid (if primeira? 5 2))
-                        (vec (for [idx (keys (get-in jogo [:participacao :x]))]
-                               [idx (treinador/ganhar-xp-no-indice! cid pid idx (if primeira? 6 2))]))))
+          _ (when premio
+              (loja/creditar-quantia! cid pid moedas)
+              (treinador/registrar-vitoria-treinador! cid pid)
+              (treinador/ganhar-pe-ginasio! cid pid (if primeira? 5 2)))
+          recompensas (conceder-xp-ginasio! cid pid jogo true premio)
           texto-pedra (when pedra? (loja/premiar-item-evolucao! cid pid (:item g)))]
       (-> (p/all
-           (for [[idx subida] subidas :when subida]
+           (for [{:keys [idx subida]} recompensas :when subida]
              (-> (verificar-evolucao! message cid pid idx)
                  (p/then (fn [_] (aprender-golpe-por-nivel! message cid pid (:nivel subida) idx))))))
           (p/then (fn [_]
@@ -4389,13 +4413,14 @@
       (str "\n🏅 Você venceu o ginásio " (:nome g) "!"
            (if premio
              (str (when primeira? "\nNova insígnia conquistada e próximo ginásio liberado!")
-                  "\n💰 +" moedas " moedas; +" (if primeira? 6 2) " XP por Pokémon que participou."
+                  "\n💰 +" moedas " moedas."
                   "\n⭐ +" (if primeira? 6 3) " PE para o treinador."
                   (when texto-pedra (str "\n" texto-pedra))
-                  (apply str (for [[_ subida] subidas :when subida]
+                  (apply str (for [{:keys [subida]} recompensas :when subida]
                                (str "\n🌟 " (:nome subida) " chegou ao nível " (:nivel subida) "!"
                                     (aviso-saida-liga subida)))))
-             "\nVocê já recebeu a recompensa deste ginásio hoje.")))))
+             "\nVocê já recebeu a recompensa diária deste ginásio; o XP de combate continua valendo.")
+           (texto-xp-ginasio recompensas)))))
 
 (defn- descricao-lider
   ([cid g] (descricao-lider cid g true))
@@ -4423,10 +4448,14 @@
                                 (aventuras/desbloqueado? (keys insignias) (:id g)) "🔓 "
                                 :else "🔒 ")
                           (:nome g) " — " (descricao-lider cid g false))))
-         "\n\nPrimeira vitória: insígnia, 100 moedas, 6 XP por participante e uma pedra."
-         "\nRevanche: recompensa uma vez por dia por ginásio (São Paulo): 25 moedas, 2 XP e 25% de chance da pedra."
-         "\nDerrota: 2 XP por Pokémon que participou, a cada batalha."
-         "\nPE do treinador: primeira vitória 6; revanche premiada 3; derrota 1."
+         "\n\n✨ *XP dos Pokémon que entraram na batalha*"
+         "\n• Derrota: 3 XP-base por participante."
+         "\n• Primeira vitória: 7 XP-base, insígnia, 100 moedas e uma pedra."
+         "\n• Revanche premiada: 4 XP-base, 25 moedas e 25% de chance da pedra."
+         "\n• Outra vitória no mesmo dia: 2 XP-base, sem repetir os prêmios diários."
+         "\n• Cada defensor nocauteado dá +1 XP ao Pokémon responsável. Ex.: derrota com 2 nocautes = 5 XP."
+         "\n• Desistência ou expiração não concede XP. A recompensa diária reinicia à meia-noite de São Paulo."
+         "\n⭐ *PE do treinador:* primeira vitória 6; revanche premiada 3; derrota 1. PE é separado do XP dos Pokémon."
          "\nVencer torna você líder. Os três Pokémon ficam inativos no ginásio até você ser derrubado."
          "\nDefensores perdem motivação com o tempo e após cada defesa. O líder pode usar Poções de Vida para recuperá-los."
          "\nMais de 6h como líder: 50 moedas, pagas apenas ao ser derrubado."

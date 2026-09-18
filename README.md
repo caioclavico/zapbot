@@ -650,6 +650,13 @@ Funciona nos cartões e no modo texto, combinado com filtros, por exemplo:
 A ordenação preserva os números usados para escolher cada Pokémon e,
 quando combinada com uma liga, substitui a ordem padrão por nível.
 
+### XP de combate nos ginásios (0.15.1)
+
+- Tentativas de ginásio dão XP-base a cada participante e +1 XP individual por
+  defensor nocauteado, valorizando o progresso mesmo antes da vitória completa.
+- Derrota concede 3 XP-base, primeira vitória 7, revanche diária 4 e vitória
+  repetida no mesmo dia 2. Moedas, pedras e PE mantêm seus limites diários.
+
 ### Exploração, vínculo e progressão diária (0.15.0)
 
 - `!mochila diario` mantém uma sequência: começa com 3 bolas, cresce até 7
@@ -694,13 +701,16 @@ A consulta funciona durante partidas sem gastar turno nem acionar o líder.
   automaticamente e o próximo Pokémon entra após um nocaute. A escalação
   é persistida; doações e envio para a enfermaria deixam vagas que precisam
   ser preenchidas novamente.
-- A primeira vitória dá uma insígnia persistente, 100 moedas, 6 XP por
-  Pokémon participante e uma pedra. A revanche fica disponível no dia
-  seguinte, à meia-noite de São Paulo: 25 moedas, 2 XP por participante e
-  25% de chance da mesma pedra. O treinador recebe 6 PE na primeira vitória,
-  3 PE na revanche premiada e 1 PE na derrota. Cada Pokémon participante
-  recebe 2 XP na derrota, inclusive desmaiado. Desistências não dão recompensas.
-  Ginásios não dão pontos no ranking PvP nem Pokébolas por nocaute.
+- Somente Pokémon que entraram no combate recebem XP. O valor-base é 3 na
+  derrota, 7 na primeira vitória, 4 na revanche premiada do dia e 2 nas demais
+  vitórias do mesmo dia. Cada defensor nocauteado concede +1 XP ao Pokémon
+  responsável; por exemplo, perder após dois nocautes rende 5 XP. A primeira
+  vitória também dá insígnia, 100 moedas e uma pedra; a revanche premiada dá
+  25 moedas e 25% de chance da pedra. Esses prêmios reiniciam à meia-noite de
+  São Paulo, mas o XP de combate continua valendo. O treinador recebe 6 PE na
+  primeira vitória, 3 PE na revanche premiada e 1 PE na derrota. Desistências
+  e expirações não dão XP. Ginásios não dão pontos no ranking PvP nem
+  Pokébolas por nocaute.
 - Quem vence assume a liderança naquele chat. Os três Pokémon escalados
   saem da coleção disponível e ficam **inativos e reservados** até outro jogador
   derrubar o líder. Não podem ser usados, doados, trocados ou alterados nesse período.
