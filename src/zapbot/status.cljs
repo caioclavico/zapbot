@@ -13,9 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Batalhas PvP, ginásios e caçadas agora retomam do Cassandra após reinício"
-   "17/09 — Perfil mostra Ash e Pokémon destacados, com os dados na legenda da imagem"
-   "17/09 — Enfermeira Joy agora exibe atendimento ou o hospital conforme houver feridos"])
+  ["17/09 — Enfermeira Joy agora mostra uma imagem diferente em cada etapa do atendimento"
+   "17/09 — Centro Pokémon aparece quando não há feridos; Joy tratando aparece ao escolher"
+   "17/09 — Após enviar o Pokémon, aparece a imagem tradicional da Enfermeira Joy"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

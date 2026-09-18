@@ -291,13 +291,14 @@
   (is (= :insignia (core/tema-evento-da-resposta "atk 1" "Você venceu o ginásio Pedra")))
   (is (= :raid (core/tema-evento-da-resposta "raid atacar 1" "HP do chefe: 200/440")))
   (is (= :joy (core/tema-evento-da-resposta "joy 1" "A Enfermeira Joy recebeu *Pikachu*")))
-  (is (= :joy (core/tema-evento-da-resposta "joy" "Escolha quem a Enfermeira Joy deve atender")))
+  (is (= :joy-tratando (core/tema-evento-da-resposta
+                         "joy" "Escolha quem a Enfermeira Joy deve atender")))
   (is (= :hospital (core/tema-evento-da-resposta
                     "joy" "Seu time já está saudável; a Enfermeira Joy não precisa atender ninguém agora.")))
   (is (= :hospital (core/tema-evento-da-resposta
                     "hospital" "Seu time já está saudável; a Enfermeira Joy não precisa atender ninguém agora.")))
-  (is (= :joy (core/tema-evento-da-resposta
-               "joy 1" "Os Pokémon escolhidos já estão saudáveis. A Enfermeira Joy ainda pode atender outro Pokémon ferido do seu time.")))
+  (is (= :joy-tratando (core/tema-evento-da-resposta
+                         "joy 1" "Os Pokémon escolhidos já estão saudáveis. A Enfermeira Joy ainda pode atender outro Pokémon ferido do seu time.")))
   (is (= :hospital (core/tema-evento-da-resposta
                     "enfermaria" "Escolha primeiro seu Pokémon inicial.")))
   (is (nil? (core/tema-evento-da-resposta
@@ -308,23 +309,32 @@
   (is (= "HP 200/440" (core/detalhe-cartao-evento :raid "HP do chefe: 200/440")))
   (is (= "Nv. 12" (core/detalhe-cartao-evento :nivel "subiu para o nível 12"))))
 
-(deftest cartoes-da-joy-e-do-hospital-usam-imagens-no-tamanho-padrao
+(deftest cartoes-da-joy-tratando-e-do-hospital-usam-imagens-distintas-no-tamanho-padrao
   (async done
     (-> (js/Promise.all
          #js [(core/criar-cartao-evento :joy nil "A Enfermeira Joy recebeu Pikachu")
+              (core/criar-cartao-evento :joy-tratando nil "Escolha quem a Enfermeira Joy deve atender")
               (core/criar-cartao-evento :hospital nil "Seu time já está saudável")])
         (.then (fn [buffers]
                  (js/Promise.all
                   #js [(.metadata (sharp (aget buffers 0)))
-                       (.metadata (sharp (aget buffers 1)))])))
+                       (.metadata (sharp (aget buffers 1)))
+                       (.metadata (sharp (aget buffers 2)))])))
         (.then (fn [metadados]
                  (doseq [info (array-seq metadados)]
                    (is (= "png" (.-format info)))
                    (is (= 760 (.-width info)))
                    (is (= 400 (.-height info))))
-                 (done)))
+                 (-> (js/Promise.all
+                      #js [(core/criar-cartao-evento :joy nil "recebido")
+                           (core/criar-cartao-evento :joy-tratando nil "tratando")
+                           (core/criar-cartao-evento :hospital nil "saudável")])
+                     (.then (fn [buffers]
+                              (is (not (.equals (aget buffers 0) (aget buffers 1))))
+                              (is (not (.equals (aget buffers 1) (aget buffers 2))))
+                              (done))))))
         (.catch (fn [erro]
-                  (is false (str "Não conseguiu carregar as imagens da Joy/hospital: " erro))
+                  (is false (str "Não conseguiu carregar as três imagens da Joy/hospital: " erro))
                   (done))))))
 
 (deftest cartao-das-missoes-usa-imagem-do-professor

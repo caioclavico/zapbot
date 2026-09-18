@@ -27,6 +27,9 @@
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 
+(def ^:private imagem-enfermeira-joy
+  (str js/__dirname "/../assets/enfermeira-joy.png"))
+
 (def ^:private imagem-enfermeira-joy-tratando
   (str js/__dirname "/../assets/enfermeira-joy-tratando.png"))
 
@@ -1801,6 +1804,7 @@
    :lider ["NOVO LÍDER" "#b91c1c" "♛"]
    :raid ["RAID COOPERATIVA" "#7e22ce" "⚔"]
    :joy ["ENFERMEIRA JOY" "#db2777" "+"]
+   :joy-tratando ["ENFERMEIRA JOY" "#db2777" "+"]
    :hospital ["CENTRO POKÉMON" "#0284c7" "+"]
    :missao ["MISSÃO CONCLUÍDA" "#15803d" "✓"]
    :evolucao ["EVOLUÇÃO" "#4f46e5" "→"]})
@@ -1810,6 +1814,7 @@
     :nivel (when-let [[_ nivel] (re-find #"(?i)(?:nível|nivel)\s+(\d+)" (or texto ""))] (str "Nv. " nivel))
     :raid (when-let [[_ hp maximo] (re-find #"HP do chefe:\s*(\d+)/(\d+)" (or texto ""))] (str "HP " hp "/" maximo))
     :joy "Recuperação em andamento"
+    :joy-tratando "Atendimento disponível"
     :missao "Recompensas liberadas"
     :insignia "Vitória no ginásio"
     nil))
@@ -1829,7 +1834,8 @@
 
 (defn- criar-cartao-evento [tema url texto]
   (if-let [imagem (case tema
-                    :joy imagem-enfermeira-joy-tratando
+                    :joy imagem-enfermeira-joy
+                    :joy-tratando imagem-enfermeira-joy-tratando
                     :hospital imagem-centro-pokemon
                     :missao imagem-professor-carvalho
                     nil)]
@@ -1869,7 +1875,8 @@
       (= comando "raid") :raid
       (and joy? (str/includes? texto "não pode enviar Pokémon")) nil
       (and joy? (re-find #"(?i)time já está saudável" texto)) :hospital
-      (and joy? (str/includes? texto "Enfermeira Joy")) :joy
+      (and joy? (str/includes? texto "A Enfermeira Joy recebeu")) :joy
+      (and joy? (str/includes? texto "Enfermeira Joy")) :joy-tratando
       ;; Sem equipe e sem ninguém em tratamento também significa que não há
       ;; feridos; o comando continua útil mostrando a entrada do Centro Pokémon.
       joy? :hospital
