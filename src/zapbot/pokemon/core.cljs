@@ -1397,6 +1397,7 @@
 
 ;; monta a imagem "pokémon-x vs pokémon-o" mostrada quando a batalha começa
 (def ^:private tamanho-sprite 260)
+(def ^:private tamanho-sprite-cacada 320)
 (def ^:private tamanho-x 100)
 (def ^:private timeout-download-imagem-ms 6000)
 
@@ -1524,6 +1525,8 @@
        "<text x='380' y='112' fill='#fef3c7' font-size='25' font-family='sans-serif' font-weight='bold' text-anchor='middle'>BATALHA DE GINÁSIO</text>"
        "</svg>"))
 
+(declare svg-marcador-motivacao)
+
 (defn- criar-imagem-ginasio [pokemon-desafiante pokemon-lider]
   (p/let [[desafiante lider] (p/all [(sprite-proporcional pokemon-desafiante tamanho-sprite)
                                       (sprite-proporcional pokemon-lider tamanho-sprite)])]
@@ -1533,7 +1536,11 @@
                               :top (- 355 (:tamanho desafiante))}
                          #js {:input (:buffer lider)
                               :left (- 560 (quot (:tamanho lider) 2))
-                              :top (- 355 (:tamanho lider))}])
+                              :top (- 355 (:tamanho lider))}
+                         #js {:input (js/Buffer.from
+                                      (svg-marcador-motivacao (:motivacao-ginasio pokemon-lider)))
+                              :left 514
+                              :top 55}])
         (.png)
         (.toBuffer))))
 
@@ -1554,14 +1561,39 @@
        "<g fill='#facc15' font-size='24' font-family='sans-serif' font-weight='bold' text-anchor='middle'><text x='145' y='360'>1</text><text x='380' y='360'>2</text><text x='615' y='360'>3</text></g>"
        "</svg>"))
 
+(defn- svg-marcador-motivacao [motivacao]
+  (let [valor (-> (or motivacao 100) (max 0) (min 100))
+        altura (* 0.5 valor)
+        inicio (- 58 altura)
+        cor (cond
+              (> valor 60) "#ef4444"
+              (> valor 30) "#f59e0b"
+              :else "#64748b")]
+    (str "<svg xmlns='http://www.w3.org/2000/svg' width='92' height='68'>"
+         "<defs><filter id='sombra-coracao'><feDropShadow dx='0' dy='2' stdDeviation='3' flood-opacity='.65'/></filter>"
+         "<clipPath id='nivel-coracao'><rect x='5' y='" inicio "' width='82' height='" altura "'/></clipPath></defs>"
+         "<g filter='url(#sombra-coracao)'>"
+         "<path d='M46 61C38 53 10 37 10 21C10 7 28 3 46 19C64 3 82 7 82 21C82 37 54 53 46 61Z' fill='#1f2937' stroke='#f8fafc' stroke-width='6'/>"
+         "<path d='M46 61C38 53 10 37 10 21C10 7 28 3 46 19C64 3 82 7 82 21C82 37 54 53 46 61Z' fill='" cor "' clip-path='url(#nivel-coracao)'/>"
+         "<text x='46' y='35' fill='#fff' stroke='#111827' stroke-width='3' paint-order='stroke' font-size='17' font-family='sans-serif' font-weight='bold' text-anchor='middle'>" valor "%</text>"
+         "</g></svg>")))
+
 (defn- criar-imagem-time-ginasio [pokemons]
   (p/let [sprites (p/all (map #(sprite-proporcional % 190) pokemons))]
     (-> (sharp (js/Buffer.from (svg-time-ginasio)))
-        (.composite (to-array (map (fn [sprite centro]
-                                    #js {:input (:buffer sprite)
-                                         :left (- centro (quot (:tamanho sprite) 2))
-                                         :top (- 270 (:tamanho sprite))})
-                                  sprites [145 380 615])))
+        (.composite
+         (to-array
+          (concat
+           (map (fn [sprite centro]
+                  #js {:input (:buffer sprite)
+                       :left (- centro (quot (:tamanho sprite) 2))
+                       :top (- 270 (:tamanho sprite))})
+                sprites [145 380 615])
+           (map (fn [pokemon centro]
+                  #js {:input (js/Buffer.from (svg-marcador-motivacao (:motivacao-ginasio pokemon)))
+                       :left (- centro 46)
+                       :top 68})
+                pokemons [145 380 615]))))
         (.png)
         (.toBuffer))))
 
@@ -1629,9 +1661,9 @@
 (defn- criar-imagem-cacada [caca fugiu?]
   (let [{:keys [mostrar-meu? centro-selvagem]} (layout-imagem-cacada caca fugiu?)]
   (p/let [meu (when mostrar-meu?
-                (sprite-proporcional (get-in caca [:pokemons :x]) tamanho-sprite))
+                (sprite-proporcional (get-in caca [:pokemons :x]) tamanho-sprite-cacada))
           selvagem (when-not fugiu?
-                     (sprite-proporcional (get-in caca [:pokemons :o]) tamanho-sprite))]
+                     (sprite-proporcional (get-in caca [:pokemons :o]) tamanho-sprite-cacada))]
     (-> (sharp (js/Buffer.from (svg-arena-cacada fugiu?)))
         (.composite (to-array
                      (cond-> []

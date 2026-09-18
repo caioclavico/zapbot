@@ -13,9 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["17/09 — Pokémon de ginásio agora perdem motivação conforme o tempo de permanência"
-   "17/09 — Cada defesa vencida também enfraquece o time, evitando líderes permanentes"
-   "17/09 — O líder pode gastar Poção de Vida para recuperar a motivação de um defensor"])
+  ["17/09 — Defensores de ginásio agora exibem um coração com a motivação restante"
+   "17/09 — O coração esvazia e muda de cor conforme o Pokémon enfraquece"
+   "17/09 — Pokémon aparecem maiores nas imagens das batalhas selvagens"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

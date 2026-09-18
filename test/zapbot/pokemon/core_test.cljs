@@ -322,7 +322,9 @@
         gigante (core/tamanho-visual-pokemon {:altura 8.8} 260)]
     (is (< inseto medio grande gigante))
     (is (<= 130 inseto))
-    (is (<= gigante 260))))
+    (is (<= gigante 260))
+    (is (> (core/tamanho-visual-pokemon {:altura 1.0} core/tamanho-sprite-cacada)
+           medio))))
 
 (deftest classifica-cartoes-dos-eventos-pokemon
   (is (= :nivel (core/tema-evento-da-resposta "" "Pikachu subiu para o nível 12")))
@@ -555,15 +557,24 @@
     (is (str/includes? svg "M495 270V105"))
     (is (str/includes? svg "TIME DO GINÁSIO"))))
 
+(deftest marcador-do-ginasio-mostra-e-esvazia-a-motivacao
+  (let [cheio (core/svg-marcador-motivacao 100)
+        baixo (core/svg-marcador-motivacao 20)]
+    (is (str/includes? cheio "100%"))
+    (is (str/includes? baixo "20%"))
+    (is (str/includes? cheio "height='50'"))
+    (is (str/includes? baixo "height='10'"))
+    (is (str/includes? baixo "#64748b"))))
+
 (deftest imagem-do-ginasio-compoe-os-tres-defensores
   (async done
     (let [sprite (str "data:image/svg+xml;base64,"
                       (.toString (js/Buffer.from
                                   "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><circle cx='16' cy='16' r='14' fill='red'/></svg>")
                                  "base64"))
-          pokemons [{:imagem sprite :altura 0.3}
-                    {:imagem sprite :altura 1.0}
-                    {:imagem sprite :altura 2.1}]]
+          pokemons [{:imagem sprite :altura 0.3 :motivacao-ginasio 100}
+                    {:imagem sprite :altura 1.0 :motivacao-ginasio 65}
+                    {:imagem sprite :altura 2.1 :motivacao-ginasio 20}]]
       (-> (core/criar-imagem-time-ginasio pokemons)
           (.then (fn [buffer]
                    (is (> (.-length buffer) 10000))

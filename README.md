@@ -683,12 +683,15 @@ A consulta funciona durante partidas sem gastar turno nem acionar o líder.
   Cada defensor começa com 100% de motivação, perde 5 pontos por hora completa
   e mais 12 depois de cada defesa vencida, até o mínimo de 20%. A motivação reduz
   gradualmente o HP e os atributos usados nas batalhas; no mínimo, o Pokémon luta
-  com 60% da força original. O líder pode usar
+  com 60% da força original. Um coração acima de cada defensor mostra visualmente
+  a motivação restante e vai esvaziando junto com ela. O líder pode usar
   `!pokemon ginasio pocao pedra 1` para gastar uma Poção de Vida e recuperar
   40 pontos da motivação do defensor escolhido. Uma poção não é consumida se a
   motivação já estiver cheia ou se o número for inválido. Ao ser liberado, o time
   retorna ao fim da coleção preservando os dados e HP de quando assumiu.
   Confira a nova numeração com `!pokemon time` e refaça as escalações necessárias.
+- As imagens das batalhas e encontros selvagens usam sprites maiores, mantendo
+  a diferença proporcional de altura entre as espécies.
 - Mais de 6 horas de permanência dão **50 moedas**, pagas ao antigo líder
   somente quando ele for derrubado, uma vez por ocupação. Exatamente 6 horas
   ainda não dão a recompensa. A liderança persiste após reiniciar o bot.
