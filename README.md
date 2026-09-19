@@ -650,6 +650,16 @@ Funciona nos cartões e no modo texto, combinado com filtros, por exemplo:
 A ordenação preserva os números usados para escolher cada Pokémon e,
 quando combinada com uma liga, substitui a ordem padrão por nível.
 
+### Correções de retorno do ginásio (0.15.2)
+
+- Ganhos grandes processam todas as subidas de nível e conservam apenas a sobra
+  de XP. Progressos antigos como `15/9` são corrigidos automaticamente ao iniciar.
+- Ao ser derrubado, o time defensor volta desmaiado e precisa ser revivido ou
+  enviado à Enfermeira Joy; subir de nível não cura um Pokémon desmaiado.
+- `!pokemon pocao [número]` recupera 40% do HP do Pokémon indicado, usando o
+  ativo quando o número é omitido. A nova `!pokemon pocao-maxima [número]`
+  custa 60 moedas e restaura todo o HP.
+
 ### XP de combate nos ginásios (0.15.1)
 
 - Tentativas de ginásio dão XP-base a cada participante e +1 XP individual por

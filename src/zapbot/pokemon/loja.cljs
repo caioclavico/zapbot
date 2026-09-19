@@ -113,7 +113,9 @@
    "persim"     {:nome "Baya Caquic" :emoji "💫" :status :confuso :preco 15
                  :descricao "Remove a confusão do Pokémon. É consumida ao usar !pokemon curar."}
    "pocao"      {:nome "Poção de Vida" :emoji "🧪" :cura-hp 0.4 :preco 20
-                 :descricao "Recupera 40% do HP máximo. É consumida ao usar !pokemon pocao."}
+                 :descricao "Recupera 40% do HP máximo. Use !pokemon pocao [número]; sem número, cura o ativo."}
+   "pocao-maxima" {:nome "Poção Máxima" :emoji "💖" :cura-hp 1.0 :preco 60
+                   :descricao "Restaura todo o HP. Use !pokemon pocao-maxima [número]; sem número, cura o ativo."}
    "fruta"      {:nome "Fruta Frambo" :emoji "🍓" :motivacao 20 :preco 10
                  :descricao "Recupera 20 pontos de motivação de um defensor no ginásio."}
    "fruta-dourada" {:nome "Fruta Frambo Dourada" :emoji "🌟" :motivacao 100 :exclusivo-diario true
@@ -174,7 +176,8 @@
 (defn normalizar-item [nome]
   (let [chave (-> (or nome "") str/trim str/lower-case remover-acentos
                   (str/replace #"\s+" "-"))]
-    (get {"normal" "pokebola" "grande" "grande-bola" "ultra" "ultra-bola"} chave chave)))
+    (get {"normal" "pokebola" "grande" "grande-bola" "ultra" "ultra-bola"
+          "maxima" "pocao-maxima" "maxima-pocao" "pocao-maxima"} chave chave)))
 
 (defn quantidade-item [cid pid chave]
   (get-in (conta cid pid) ["inventario" chave] 0))
@@ -425,11 +428,13 @@
   "Se pid tiver, nesse chat, uma poção de vida em estoque, consome 1 unidade
   e retorna a fração de HP máximo que ela cura (ex.: 0.4 = 40%); senão não
   mexe em nada e retorna nil."
-  [cid pid]
-  (when (pos? (get-in (conta cid pid) ["inventario" "pocao"] 0))
-    (swap! contas update-in [cid pid "inventario" "pocao"] dec)
-    (persistir!)
-    (:cura-hp (get itens "pocao"))))
+  ([cid pid] (usar-pocao! cid pid "pocao"))
+  ([cid pid chave]
+   (when (and (contains? #{"pocao" "pocao-maxima"} chave)
+              (pos? (get-in (conta cid pid) ["inventario" chave] 0)))
+     (swap! contas update-in [cid pid "inventario" chave] dec)
+     (persistir!)
+     (:cura-hp (get itens chave)))))
 
 (defn usar-fruta!
   "Consome a fruta indicada e retorna quantos pontos de motivação ela recupera."
@@ -504,7 +509,8 @@
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"
          "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, cure status com " config/prefix
-         "pokemon curar, recupere HP com " config/prefix "pokemon pocao e equipe itens com "
+         "pokemon curar, recupere HP com " config/prefix "pokemon pocao [nº] ou "
+         config/prefix "pokemon pocao-maxima [nº] e equipe itens com "
          config/prefix "pokemon equipar <nº> <item>!")))
 
 (defn ver-loja-com-imagem

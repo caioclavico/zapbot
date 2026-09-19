@@ -14,8 +14,47 @@
             [zapbot.pokemon.loja :as loja]
             [zapbot.armazenamento :as armazenamento]))
 
-(defonce ^:private contas (atom (or (armazenamento/obter "treinador") {})))
-(armazenamento/registrar! "treinador" contas)
+(def ^:private nivel-maximo 100)
+(def fator-crescimento-por-nivel 1.03)
+(def ^:private xp-por-nivel 9)
+
+(defn- normalizar-xp-registro
+  "Converte excesso legado (ex.: 15/9) em todas as subidas cabíveis."
+  [registro]
+  (let [nivel (get registro "nivel" 1)
+        xp (max 0 (get registro "xp-desde-nivel"
+                       (* 3 (get registro "vitorias-desde-nivel" 0))))
+        subidas (min (js/Math.floor (/ xp xp-por-nivel)) (- nivel-maximo nivel))
+        crescer #(js/Math.round (* % fator-crescimento-por-nivel))
+        subir (fn [r]
+                (let [hp-antigo (get r "hp")
+                      hp-novo (crescer hp-antigo)
+                      incremento (- hp-novo hp-antigo)]
+                  (-> r
+                      (update "nivel" inc)
+                      (assoc "hp" hp-novo)
+                      (update "hp-atual" #(if (pos? %) (+ % incremento) 0))
+                      (update "ataque" crescer) (update "defesa" crescer)
+                      (update "atq-esp" crescer) (update "def-esp" crescer)
+                      (update "veloc" crescer))))]
+    (-> (nth (iterate subir registro) subidas)
+        (assoc "xp-desde-nivel" (if (= (+ nivel subidas) nivel-maximo)
+                                   0 (- xp (* subidas xp-por-nivel))))
+        (dissoc "vitorias-desde-nivel"))))
+
+(defn- normalizar-xp-contas [estado]
+  (into {}
+        (map (fn [[cid jogadores]]
+               [cid (into {}
+                          (map (fn [[pid conta]]
+                                 [pid (update conta "equipe"
+                                              #(mapv normalizar-xp-registro (or % [])))])
+                               jogadores))])
+             (or estado {}))))
+
+(defonce ^:private contas
+  (atom (normalizar-xp-contas (armazenamento/obter "treinador"))))
+(armazenamento/registrar! "treinador" contas normalizar-xp-contas)
 (defonce ^:private descobertas-globais
   (atom (or (armazenamento/obter "pokemon-descobertas") {})))
 (armazenamento/registrar! "pokemon-descobertas" descobertas-globais)
@@ -525,6 +564,15 @@
              #(assoc % "hp-atual" hp-atual "status" (when status (name status))))
       (persistir!))))
 
+(defn atualizar-no-indice!
+  "Atualiza HP/status de qualquer Pokémon do time sem trocar o Pokémon ativo."
+  [cid pid idx hp-atual status]
+  (when (get (equipe cid pid) idx)
+    (swap! contas update-in [cid pid "equipe" idx]
+           #(assoc % "hp-atual" hp-atual "status" (when status (name status))))
+    (persistir!)
+    true))
+
 (defn reviver! [cid pid idx]
   (let [registro (get (equipe cid pid) idx)]
     (cond
@@ -671,9 +719,6 @@
 ;; stats crescem um fator fixo por nível, até um teto de 100 (mesmo limite
 ;; dos jogos originais). Público porque zapbot.pokemon.core precisa do MESMO
 ;; fator pra calcular stats pós-evolução.
-(def ^:private nivel-maximo 100)
-(def fator-crescimento-por-nivel 1.03)
-(def ^:private xp-por-nivel 9)
 (def xp-por-vitoria 3)
 (def xp-por-derrota 1)
 
@@ -698,41 +743,36 @@
   já no nível máximo, ou ainda falta XP). Registros antigos de progresso
   por vitória são convertidos sem perder o avanço já conquistado."
   [cid pid idx quantidade]
-  (do
-    (when-let [registro (get (equipe cid pid) idx)]
-      (swap! contas update-in [cid pid "equipe" idx "amizade"] #(min 255 (+ (or % 70) 10)))
-      (let [nivel-atual (get registro "nivel" 1)]
-        (when (< nivel-atual nivel-maximo)
-          (let [xp-anterior (get registro "xp-desde-nivel"
-                                 (* xp-por-vitoria (get registro "vitorias-desde-nivel" 0)))
-                xp-novo     (+ xp-anterior quantidade)]
-            (if (< xp-novo xp-por-nivel)
-              (do (swap! contas update-in [cid pid "equipe" idx]
-                         #(-> % (assoc "xp-desde-nivel" xp-novo) (dissoc "vitorias-desde-nivel")))
-                  (persistir!)
-                  nil)
-              (let [crescer       #(js/Math.round (* % fator-crescimento-por-nivel))
-                    hp-max-antigo (get registro "hp")
-                    hp-max-novo   (crescer hp-max-antigo)
-                    incremento-hp (- hp-max-novo hp-max-antigo)
-                    ligas-removidas (vec (for [[id slots] (get (conta cid pid) "times-liga")
-                                              :when (and (some #{idx} slots)
-                                                         (not (elegivel? (obter-liga id) (assoc registro "nivel" (inc nivel-atual)))))] id))
-                    registro-novo (-> registro
-                                      (assoc "nivel" (inc nivel-atual))
-                                      (assoc "xp-desde-nivel" (- xp-novo xp-por-nivel))
-                                      (dissoc "vitorias-desde-nivel")
-                                      (assoc "hp" hp-max-novo)
-                                      (update "hp-atual" #(if (pos? %) (+ % incremento-hp) 0))
-                                      (update "ataque" crescer)
-                                      (update "defesa" crescer)
-                                      (update "atq-esp" crescer)
-                                      (update "def-esp" crescer)
-                                      (update "veloc" crescer))]
-                (swap! contas update-in [cid pid]
-                       #(limpar-times (assoc-in % ["equipe" idx] registro-novo)))
-                (persistir!)
-                {:nome (get registro "nome") :nivel (inc nivel-atual) :ligas-removidas ligas-removidas}))))))))
+  (when-let [registro (get (equipe cid pid) idx)]
+    (let [nivel-atual (get registro "nivel" 1)
+          xp-anterior (get registro "xp-desde-nivel"
+                           (* xp-por-vitoria (get registro "vitorias-desde-nivel" 0)))
+          xp-total (+ xp-anterior (max 0 quantidade))
+          subidas (if (< nivel-atual nivel-maximo)
+                    (min (js/Math.floor (/ xp-total xp-por-nivel))
+                         (- nivel-maximo nivel-atual))
+                    0)
+          nivel-final (+ nivel-atual subidas)
+          xp-restante (if (= nivel-final nivel-maximo)
+                        0
+                        (- xp-total (* subidas xp-por-nivel)))
+          registro-novo (-> registro
+                            (assoc "amizade" (min 255 (+ (get registro "amizade" 70) 10)))
+                            (assoc "xp-desde-nivel" xp-total)
+                            normalizar-xp-registro)
+          ligas-removidas (vec
+                           (for [[id slots] (get (conta cid pid) "times-liga")
+                                 :when (and (some #{idx} slots)
+                                            (not (elegivel? (obter-liga id) registro-novo)))]
+                             id))]
+      (swap! contas update-in [cid pid]
+             #(limpar-times (assoc-in % ["equipe" idx] registro-novo)))
+      (persistir!)
+      (when (pos? subidas)
+        {:nome (get registro "nome")
+         :nivel nivel-final
+         :niveis-subidos subidas
+         :ligas-removidas ligas-removidas}))))
 
 (defn ganhar-xp!
   [cid pid quantidade]

@@ -107,7 +107,8 @@
     (is (= "atacar" (core/expandir-atalho "atk")))
     (is (= "defender" (core/expandir-atalho "def")))
     (is (= "curar" (core/expandir-atalho "cur")))
-    (is (= "pocao" (core/expandir-atalho "pot"))))
+    (is (= "pocao" (core/expandir-atalho "pot")))
+    (is (= "pocao-maxima" (core/expandir-atalho "pmax"))))
   (testing "atalhos de navegação e gerenciamento"
     (is (= "ginasio" (core/expandir-atalho "gin")))
     (is (= "cacar" (core/expandir-atalho "cac")))
@@ -215,6 +216,37 @@
     (is (= 6 (ginasios/xp-permanencia ocupacao agora))))
   (is (= 24 (ginasios/xp-permanencia {"desde" 0} (* 30 60 60 1000)))))
 
+(deftest xp-grande-processa-varios-niveis-e-preserva-desmaio
+  (let [registro (assoc (treinador/pokemon->registro pikachu 0 nil)
+                        "nivel" 4 "xp-desde-nivel" 0)
+        estado (atom {"chat" {"ash" {"equipe" [registro]}}})]
+    (with-redefs [treinador/contas estado
+                  armazenamento/salvar! (fn [& _] (js/Promise.resolve nil))]
+      (let [subida (treinador/ganhar-xp-no-indice! "chat" "ash" 0 24)
+            atualizado (first (treinador/equipe "chat" "ash"))]
+        (is (= 6 (:nivel subida)))
+        (is (= 2 (:niveis-subidos subida)))
+        (is (= 6 (get atualizado "xp-desde-nivel")))
+        (is (= 0 (get atualizado "hp-atual")))
+        (is (= {:atual 6 :necessario 9} (treinador/progresso-xp atualizado)))))))
+
+(deftest progresso-legado-acima-de-nove-e-corrigido-ao-carregar
+  (let [registro (assoc (treinador/pokemon->registro pikachu 0 nil)
+                        "nivel" 5 "xp-desde-nivel" 15)
+        contas (treinador/normalizar-xp-contas
+                {"chat" {"ash" {"equipe" [registro]}}})
+        corrigido (get-in contas ["chat" "ash" "equipe" 0])]
+    (is (= 6 (get corrigido "nivel")))
+    (is (= 6 (get corrigido "xp-desde-nivel")))
+    (is (= 0 (get corrigido "hp-atual")))))
+
+(deftest defensor-volta-do-ginasio-desmaiado
+  (let [registro (treinador/pokemon->registro pikachu (:hp pikachu) :veneno)
+        derrotado (ginasios/registro-apos-derrota registro)]
+    (is (= 0 (get derrotado "hp-atual")))
+    (is (nil? (get derrotado "status")))
+    (is (= (get registro "hp") (get derrotado "hp")))))
+
 (deftest tentativa-de-ginasio-recompensa-participacao-e-nocautes
   (is (= 3 (core/xp-ginasio-participante false nil 0)))
   (is (= 5 (core/xp-ginasio-participante false nil 2)))
@@ -222,6 +254,22 @@
   (is (= 9 (core/xp-ginasio-participante true :primeira 2)))
   (is (= 5 (core/xp-ginasio-participante true :revanche 1)))
   (is (= 3 (core/xp-ginasio-participante true nil 1))))
+
+(deftest pocao-sem-numero-usa-ativo-e-com-numero-cura-o-escolhido
+  (let [ferido (treinador/pokemon->registro pikachu 20 nil)
+        outro (treinador/pokemon->registro geodude 30 nil)
+        estado (atom {"chat" {"ash" {"equipe" [ferido outro] "ativo" 0}}})]
+    (with-redefs [treinador/contas estado
+                  armazenamento/salvar! (fn [& _] (js/Promise.resolve nil))
+                  loja/usar-pocao! (fn
+                                     ([_ _] 0.4)
+                                     ([_ _ _] 0.4))]
+      (is (= 0 (core/indice-alvo-pocao "chat" "ash" nil)))
+      (is (= 1 (core/indice-alvo-pocao "chat" "ash" "2")))
+      (is (str/includes? (core/pocao-fora-de-batalha "chat" "ash" "pocao" "2")
+                         "Geodude"))
+      (is (= 20 (get-in @estado ["chat" "ash" "equipe" 0 "hp-atual"])))
+      (is (> (get-in @estado ["chat" "ash" "equipe" 1 "hp-atual"]) 30)))))
 
 (deftest motivacao-do-ginasio-cai-com-o-tempo-e-enfraquece-defensores
   (let [registro (treinador/pokemon->registro pikachu (:hp pikachu) nil)
@@ -247,7 +295,9 @@
         agora (* 2 60 60 1000)]
     (with-redefs [ginasios/ocupacoes estado
                   armazenamento/salvar! (fn [& _] (js/Promise.resolve nil))
-                  loja/usar-pocao! (fn [_ _] (swap! consumidas inc) 0.4)]
+                  loja/usar-pocao! (fn
+                                     ([_ _] (swap! consumidas inc) 0.4)
+                                     ([_ _ _] (swap! consumidas inc) 0.4))]
       (let [invalida (ginasios/usar-pocao! "chat" "lider" "pedra" nil agora)
             resultado (ginasios/usar-pocao! "chat" "lider" "pedra" 0 agora)]
         (is (= :indice-invalido (:status invalida)))

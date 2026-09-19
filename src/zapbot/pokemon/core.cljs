@@ -2270,23 +2270,35 @@
           (str (cabecalho) "💊 *" (:nome pokemon) "* usou uma cura e se livrou de " (nome-status status) "!")))
     (orientacao-equipe cid pid)))
 
-(defn- pocao-fora-de-batalha [cid pid]
-  (if-let [[pokemon hp-atual status] (treinador/pokemon-ativo cid pid)]
+(defn- nome-pocao [item]
+  (if (= item "pocao-maxima") "Poção Máxima" "Poção de Vida"))
+
+(defn- indice-alvo-pocao [cid pid numero]
+  (if (str/blank? (or numero ""))
+    (treinador/indice-ativo cid pid)
+    (parse-indice-golpe numero (count (treinador/equipe cid pid)))))
+
+(defn- pocao-fora-de-batalha [cid pid item numero]
+  (if-let [idx (indice-alvo-pocao cid pid numero)]
+    (if-let [[pokemon hp-atual status] (treinador/pokemon-no-indice cid pid idx)]
     (let [hp-max (:hp pokemon)]
       (cond
         (>= hp-atual hp-max)
         (str (cabecalho) "❓ *" (:nome pokemon) "* já está com HP cheio.")
 
         :else
-        (if-let [fracao (loja/usar-pocao! cid pid)]
+        (if-let [fracao (loja/usar-pocao! cid pid item)]
           (let [cura    (js/Math.round (* fracao hp-max))
                 hp-novo (min hp-max (+ hp-atual cura))]
-            (treinador/atualizar-ativo! cid pid hp-novo status)
-            (treinador/ganhar-amizade! cid pid (treinador/indice-ativo cid pid) 2)
-            (str (cabecalho) "🧪 *" (:nome pokemon) "* usou uma Poção de Vida e recuperou "
+            (treinador/atualizar-no-indice! cid pid idx hp-novo status)
+            (treinador/ganhar-amizade! cid pid idx 2)
+            (str (cabecalho) "🧪 *" (:nome pokemon) "* usou uma " (nome-pocao item) " e recuperou "
                  (- hp-novo hp-atual) " de HP! (" hp-novo "/" hp-max ")"))
-          (str (cabecalho) "❌ Você não tem uma Poção de Vida no inventário (compre na " config/prefix "loja)."))))
-    (orientacao-equipe cid pid)))
+          (str (cabecalho) "❌ Você não tem uma " (nome-pocao item)
+               " no inventário (compre na " config/prefix "loja)."))))
+      (orientacao-equipe cid pid))
+    (str (cabecalho) "❓ Número inválido. Use " config/prefix
+         "pokemon " item " [número do Pokémon].")))
 
 (defn- curar-na-cacada [cid pid caca]
   (let [pokemon (get-in caca [:pokemons :x])
@@ -2312,11 +2324,17 @@
         (turno-selvagem cid pid caca-nova false
                         (str "💊 *" (:nome pokemon) "* se livrou de " (nome-status status) "!"))))))
 
-(defn- pocao-na-cacada [cid pid caca]
+(defn- pocao-na-cacada [cid pid caca item numero]
   (let [pokemon  (get-in caca [:pokemons :x])
         hp-max   (:hp pokemon)
-        hp-atual (get-in caca [:hp :x])]
+        hp-atual (get-in caca [:hp :x])
+        alvo (indice-alvo-pocao cid pid numero)
+        ativo (treinador/indice-ativo cid pid)]
     (cond
+      (or (nil? alvo) (not= alvo ativo))
+      (str (cabecalho) "🚫 Durante a caçada, a poção só pode ser usada no Pokémon ativo (número "
+           (inc ativo) ").\n\n" (estado-cacada caca))
+
       (:item-usado-turno? caca)
       (str (cabecalho) "🚫 Você já usou um item neste turno. Ataque antes de usar outro.\n\n"
            (estado-cacada caca))
@@ -2325,7 +2343,7 @@
       (str (cabecalho) "❓ *" (:nome pokemon) "* já está com HP cheio.\n\n" (estado-cacada caca))
 
       :else
-      (if-let [fracao (loja/usar-pocao! cid pid)]
+      (if-let [fracao (loja/usar-pocao! cid pid item)]
         (let [cura      (js/Math.round (* fracao hp-max))
               hp-novo   (min hp-max (+ hp-atual cura))
               caca-nova (-> caca
@@ -2336,9 +2354,9 @@
           (treinador/atualizar-ativo! cid pid hp-novo (get-in caca-nova [:status :x]))
           (treinador/ganhar-amizade! cid pid (treinador/indice-ativo cid pid) 2)
           (turno-selvagem cid pid caca-nova false
-                          (str "🧪 *" (:nome pokemon) "* recuperou " (- hp-novo hp-atual)
+                          (str "🧪 *" (:nome pokemon) "* usou uma " (nome-pocao item) " e recuperou " (- hp-novo hp-atual)
                                " de HP! (" hp-novo "/" hp-max ")")))
-        (str (cabecalho) "❌ Você não tem uma Poção de Vida no inventário.\n\n"
+        (str (cabecalho) "❌ Você não tem uma " (nome-pocao item) " no inventário.\n\n"
              (estado-cacada caca))))))
 
 (defn- enfermeira-joy [message indice-texto]
@@ -2438,15 +2456,15 @@
                              (str (cabecalho) "💊 *" (:nome pokemon) "* usou uma cura e se livrou de "
                                   (nome-status status-atual) "!\n\n" (mensagem-estado jogo-novo))))))))))))
 
-(defn- pocao-turno [message]
+(defn- pocao-turno [message item numero]
   (let [cid  (chat-id message)
         pid  (jogador-id message)
         jogo (get @jogos cid)
         caca (get @cacadas-selvagens cid)]
     (if (and caca (= pid (:pid caca)))
-      (p/resolved (pocao-na-cacada cid pid caca))
+      (p/resolved (pocao-na-cacada cid pid caca item numero))
       (if-not (jogador-na-batalha? jogo pid)
-        (p/resolved (pocao-fora-de-batalha cid pid))
+        (p/resolved (pocao-fora-de-batalha cid pid item numero))
         (p/resolved
          (cond
            (not (contains? (:jogadores jogo) :o))
@@ -2459,14 +2477,20 @@
            (let [marca    (:vez jogo)
                  pokemon  (get-in jogo [:pokemons marca])
                  hp-max   (:hp pokemon)
-                 hp-atual (get-in jogo [:hp marca])]
+                 hp-atual (get-in jogo [:hp marca])
+                 alvo-pedido (indice-alvo-pocao cid pid numero)
+                 ativo (treinador/indice-ativo cid pid)]
              (cond
+               (or (nil? alvo-pedido) (not= alvo-pedido ativo))
+               (com-mencao jogo (str (cabecalho) "🚫 Durante a batalha, a poção só pode ser usada no Pokémon ativo (número "
+                                     (inc ativo) ").\n\n" (mensagem-estado jogo)))
+
                (>= hp-atual hp-max)
                (com-mencao jogo (str (cabecalho) "❓ *" (:nome pokemon) "* já está com HP cheio.\n\n"
                                      (mensagem-estado jogo)))
 
                :else
-               (if-let [fracao (loja/usar-pocao! cid pid)]
+               (if-let [fracao (loja/usar-pocao! cid pid item)]
                  (let [cura      (js/Math.round (* fracao hp-max))
                        hp-novo   (min hp-max (+ hp-atual cura))
                        alvo      (outro marca)
@@ -2475,9 +2499,9 @@
                    (sincronizar-equipe! cid jogo-novo)
                    (treinador/ganhar-amizade! cid pid (treinador/indice-ativo cid pid) 2)
                    (com-mencao jogo-novo
-                               (str (cabecalho) "🧪 *" (:nome pokemon) "* usou uma Poção de Vida e recuperou "
+                               (str (cabecalho) "🧪 *" (:nome pokemon) "* usou uma " (nome-pocao item) " e recuperou "
                                     (- hp-novo hp-atual) " de HP!\n\n" (mensagem-estado jogo-novo))))
-                 (com-mencao jogo (str (cabecalho) "❌ Você não tem uma Poção de Vida no inventário (compre na "
+                 (com-mencao jogo (str (cabecalho) "❌ Você não tem uma " (nome-pocao item) " no inventário (compre na "
                                        config/prefix "loja).\n\n" (mensagem-estado jogo))))))))))))
 
 (defn- parse-indice-golpe [texto total]
@@ -4841,7 +4865,7 @@
    "ini" "inicial" "cac" "cacar" "dex" "pokedex" "tm" "time"
    "rmg" "removergolpe" "can" "cancelar" "esc" "escolher"
    "eqp" "equipar" "doa" "doar" "atk" "atacar" "def" "defender"
-   "cur" "curar" "pot" "pocao" "sai" "sair"})
+   "cur" "curar" "pot" "pocao" "pmax" "pocao-maxima" "sai" "sair"})
 
 (defn- expandir-atalho [comando]
   (get atalhos-comandos comando comando))
@@ -4900,8 +4924,9 @@
   golpe correspondente (ver o menu de golpes em cada mensagem de estado);
   !pokemon defender entra em posição defensiva/evasiva; !pokemon curar usa
   uma cura do inventário (ver !loja) pro status atual (dentro ou fora de
-  uma batalha); !pokemon pocao usa uma Poção de Vida do inventário pra
-  recuperar HP (dentro ou fora de uma batalha); !pokemon joy <números> envia
+  uma batalha); !pokemon pocao [número] recupera 40% do HP e !pokemon
+  pocao-maxima [número] recupera todo o HP; sem número, usa o ativo;
+  !pokemon joy <números> envia
   um ou vários Pokémon separados por vírgula para a Enfermeira Joy, que os devolve curados após 30
   minutos; !pokemon sair cancela (se
   só um jogador entrou ainda) ou desiste - perdendo 1 ponto no rank, sem XP
@@ -4994,7 +5019,11 @@
       (contains? #{"atacar" "ataque" "atirar" "usar" "atk"} cmd) (atacar message (first resto))
       (contains? #{"defender" "defesa" "esquivar" "evasiva"} cmd) (defender-turno message)
       (contains? #{"curar" "cura"} cmd) (curar-turno message)
-      (contains? #{"pocao" "poção" "vida"} cmd) (pocao-turno message)
+      (contains? #{"pocao" "poção" "vida" "pocao-maxima" "maxima"} cmd)
+      (let [maxima-no-resto? (contains? #{"maxima" "máxima" "max"} (first resto))
+            maxima? (or (contains? #{"pocao-maxima" "maxima"} cmd) maxima-no-resto?)
+            numero (if maxima-no-resto? (second resto) (first resto))]
+        (pocao-turno message (if maxima? "pocao-maxima" "pocao") numero))
       :else
       (p/resolved
        (str (cabecalho) "❓ *Comando Pokémon não reconhecido.*\n\n"
@@ -5032,7 +5061,8 @@
             "• " config/prefix "pokemon atacar <1-4>\n"
             "• " config/prefix "pokemon defender\n"
             "• " config/prefix "pokemon curar\n"
-            "• " config/prefix "pokemon pocao\n"
+            "• " config/prefix "pokemon pocao [número]\n"
+            "• " config/prefix "pokemon pocao-maxima [número]\n"
             "• " config/prefix "pokemon sair\n\n"
             "📚 Como jogar: " config/prefix "pokemon ajuda.")))))
 

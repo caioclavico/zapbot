@@ -41,6 +41,13 @@
   (is (= 10 (:preco (loja/dados-item "fruta"))))
   (is (true? (:exclusivo-diario (loja/dados-item "fruta-dourada")))))
 
+(deftest pocoes-possuem-precos-e-curas-diferentes
+  (is (= 0.4 (:cura-hp (loja/dados-item "pocao"))))
+  (is (= 20 (:preco (loja/dados-item "pocao"))))
+  (is (= 1 (:cura-hp (loja/dados-item "pocao-maxima"))))
+  (is (= 60 (:preco (loja/dados-item "pocao-maxima"))))
+  (is (= "pocao-maxima" (loja/normalizar-item "Máxima"))))
+
 (deftest sequencia-diaria-avanca-ou-reinicia
   (is (= 6 (loja/proxima-sequencia-diaria "2026-09-16" "2026-09-17" 5)))
   (is (= 1 (loja/proxima-sequencia-diaria "2026-09-15" "2026-09-17" 5)))

@@ -13,9 +13,10 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["18/09 — Tentativas de ginásio dão XP-base maior para todos os participantes"
-   "18/09 — Cada defensor nocauteado concede +1 XP ao Pokémon responsável"
-   "18/09 — Vitórias repetidas continuam dando XP de combate sem repetir prêmios diários"])
+  ["18/09 — Ganhos grandes de XP agora processam todas as subidas de nível"
+   "18/09 — Progressos inválidos como 15/9 são reparados automaticamente"
+   "18/09 — Pokémon derrubados voltam do ginásio desmaiados, sem cura indevida"
+   "18/09 — Poções aceitam o número do Pokémon e a nova Poção Máxima restaura todo o HP"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

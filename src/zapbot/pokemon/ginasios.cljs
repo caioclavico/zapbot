@@ -121,6 +121,11 @@
 
 (declare registrar-permanencia!)
 
+(defn registro-apos-derrota
+  "O defensor só deixa o ginásio depois que seu time inteiro foi derrotado."
+  [registro]
+  (assoc registro "hp-atual" 0 "status" nil))
+
 (defn ocupar!
   "Troca o líder somente se ainda for o enfrentado. Paga o anterior ao cair."
   [cid id anterior pid nome indices agora]
@@ -137,7 +142,7 @@
       (let [pid-anterior (get anterior "pid")
             inicio (count (treinador/equipe cid pid-anterior))]
         (doseq [registro (get anterior "time")]
-          (treinador/receber-doacao! cid pid-anterior registro))
+          (treinador/receber-doacao! cid pid-anterior (registro-apos-derrota registro)))
         (when (pos? xp)
           (doseq [idx (range inicio (+ inicio (count (get anterior "time"))))]
             (treinador/ganhar-xp-no-indice! cid pid-anterior idx xp))))
