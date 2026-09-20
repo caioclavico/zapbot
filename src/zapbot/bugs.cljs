@@ -120,7 +120,8 @@
 (defn comando!
   "Executa !pk bug, !pk bugs [versão], !pk bug ver <id> e resolver <id>."
   [message cmd args]
-  (let [[acao valor] args]
+  (let [[acao-original valor] args
+        acao (get {"res" "resolver"} acao-original acao-original)]
     (cond
       (= cmd "bugs") (somente-admin message #(p/resolved (listar (or acao ""))))
       (= acao "ver") (somente-admin message #(p/resolved (detalhar valor)))

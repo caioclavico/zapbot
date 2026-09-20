@@ -801,6 +801,7 @@ A consulta funciona durante partidas sem gastar turno nem acionar o líder.
 - Escalações nomeadas não reservam Pokémon: `!pk time salvar os fodoes 1,4,7`, `!pk times`, `!pk time ver os fodoes`, `!pk time usar os fodoes liga|ginasio` e `!pk time excluir os fodoes`.
 - Atalhos adicionais: `!pk pdx` para a Pokédex e `!pk gin des pedra` para desafiar o ginásio.
 - `!pk ajd` exibe em uma única página todos os comandos Pokémon abreviados; `!pk ajuda atalhos` é equivalente.
+- Atalhos também funcionam em subcomandos, por exemplo `!pk tm usa os fodoes gin`, `!pk lig tm`, `!pk gin hist pedra` e `!pk raid atk 1`.
 
 O inicial só pode ser escolhido uma vez por treinador em cada chat.
 Mandar o único Pokémon para a Enfermeira Joy, doá-lo ou ficar com a equipe

@@ -119,6 +119,17 @@
     (is (= "atacar" (core/expandir-atalho "atacar")))
     (is (= "raid" (core/expandir-atalho "raid")))))
 
+(deftest atalhos-funcionam-tambem-nos-subcomandos
+  (is (= "time" (core/expandir-subcomando :liga "tm")))
+  (is (= "desafiar" (core/expandir-subcomando :ginasio "des")))
+  (is (= "historico" (core/expandir-subcomando :ginasio "hist")))
+  (is (= "atacar" (core/expandir-subcomando :raid "atk")))
+  (is (= "iniciar" (core/expandir-subcomando :raid "ini")))
+  (is (= "usar" (core/expandir-subcomando :time "usa")))
+  (is (= "ginasio" (core/expandir-destino-time "gin")))
+  (is (= "liga" (core/expandir-destino-time "lig")))
+  (is (= "os fodoes" (core/expandir-destino-time "os fodoes"))))
+
 (deftest identifica-ataques-que-devem-levar-foto-do-ginasio
   (let [ginasio {:ginasio {:id "pedra"}}
         pvp {:jogadores {:x "a" :o "b"}}]

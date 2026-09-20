@@ -18,7 +18,7 @@
    "20/09 — Trocas do time do ginásio não revelam mais o nome e os golpes do NPC"
    "20/09 — !pk bug salva a mensagem respondida (ou a anterior) e a versão no Cassandra"
    "20/09 — Pokémon favorito volta saudável como ativo e escalações nomeadas podem ser reutilizadas"
-   "20/09 — !pk ajd reúne todos os comandos Pokémon abreviados"])
+   "20/09 — !pk ajd reúne atalhos que agora também funcionam nos subcomandos"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

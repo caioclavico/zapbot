@@ -2057,10 +2057,26 @@
   (swap! jogos (fn [estado] (if (valido? (get estado cid)) (assoc estado cid jogo-novo) estado)))
   (= jogo-novo (get @jogos cid)))
 
+(def ^:private atalhos-subcomandos
+  {:liga {"tm" "time"}
+   :ginasio {"des" "desafiar" "dsf" "desafiar" "tm" "time"
+              "pot" "pocao" "fru" "fruta" "ran" "ranking" "hist" "historico"}
+   :raid {"abr" "abrir" "ent" "entrar" "ini" "iniciar" "atk" "atacar"
+          "sai" "sair" "can" "cancelar"}
+   :time {"sal" "salvar" "usa" "usar" "exc" "excluir" "apa" "apagar" "rm" "remover"}
+   :bug {"res" "resolver"}})
+
+(defn- expandir-subcomando [contexto token]
+  (get-in atalhos-subcomandos [contexto token] token))
+
+(defn- expandir-destino-time [token]
+  (get {"gin" "ginasio" "lig" "liga"} token token))
+
 (defn- configurar-liga [message args]
   (let [cid (chat-id message) pid (jogador-id message)
         id (treinador/liga-selecionada cid pid)
-        [cmd & partes] args
+        [cmd-original & partes] args
+        cmd (expandir-subcomando :liga cmd-original)
         consulta-time? (and (= cmd "time") (empty? partes))
         texto-numeros (str/join " " partes)
         numeros (mapv str/trim (str/split texto-numeros #","))
@@ -2115,7 +2131,8 @@
 
 (defn- configurar-time-pronto [message args]
   (let [cid (chat-id message) pid (jogador-id message)
-        [acao & resto] args
+        [acao-original & resto] args
+        acao (expandir-subcomando :time acao-original)
         times (treinador/times-prontos cid pid)
         ocupado? (or (some #{pid} (vals (:jogadores (get @jogos cid))))
                      (= pid (:pid (get @cacadas-selvagens cid))))]
@@ -2137,7 +2154,8 @@
                 config/prefix "pk time salvar os fodoes 1,4,7."))))
 
       "usar"
-      (let [destino-explicito (last resto)
+      (let [destino-original (last resto)
+            destino-explicito (expandir-destino-time destino-original)
             destino (if (contains? #{"liga" "ginasio" "ginásio"} destino-explicito)
                       destino-explicito "liga")
             nome (nome-time-pronto (if (= destino "liga")
@@ -4641,7 +4659,7 @@
 (defn- configurar-ginasio [message args]
   (let [cid (chat-id message) pid (jogador-id message)
         [acao-original id numero] args
-        acao (get {"des" "desafiar" "dsf" "desafiar"} acao-original acao-original)
+        acao (expandir-subcomando :ginasio acao-original)
         pocao? (contains? #{"pocao" "poção" "pot"} acao)
         fruta? (contains? #{"fruta" "frambo" "fruta-dourada" "dourada"} acao)
         recuperacao? (or pocao? fruta?)
@@ -4986,7 +5004,9 @@
 
 (defn- comando-raid [message args]
   (let [cid (chat-id message) pid (jogador-id message)
-        [acao numero] args]
+        [acao-original numero] args
+        acao (expandir-subcomando :raid acao-original)
+        args (cond-> (vec args) (seq args) (assoc 0 acao))]
     (p/let [nome (nome-de message)]
       ;; A consulta do contato é assíncrona: confira o time depois que ela terminar.
       (let [eq (treinador/equipe cid pid)
@@ -5152,7 +5172,8 @@
       (let [modo-texto? (boolean (some marcadores-texto resto))
             resto       (remove marcadores-texto resto)]
         (cond
-          (contains? #{"salvar" "usar" "ver" "excluir" "apagar" "remover"} (first resto))
+          (contains? #{"salvar" "usar" "ver" "excluir" "apagar" "remover"}
+                     (expandir-subcomando :time (first resto)))
           (configurar-time-pronto message resto)
           (= ["liga"] (vec resto)) (configurar-liga message ["time"])
           (contains? #{"csv" "planilha"} (first resto)) (resposta-time-csv message)
