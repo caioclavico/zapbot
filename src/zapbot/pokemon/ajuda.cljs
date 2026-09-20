@@ -105,7 +105,7 @@
          "A recompensa diária reinicia à meia-noite de São Paulo. Desistir ou deixar a batalha expirar não dá XP.\n"
          "⭐ *PE do treinador:* 6 na primeira vitória, 3 na revanche premiada e 1 na derrota. PE é separado do XP recebido pelos Pokémon.\n"
          "Quem vence assume a liderança. Os três Pokémon ficam fora da coleção disponível, inativos e reservados até outro jogador vencer. A motivação começa em 100%, cai 5 pontos por hora e 12 após cada defesa, enfraquecendo HP e atributos até o mínimo de 20%.\n"
-         "O coração acima de cada defensor mostra a motivação restante. O líder pode recuperar 40 pontos com " (comando "ginasio pocao pedra 1") ", 20 com " (comando "ginasio fruta pedra 1") " ou tudo com uma fruta dourada. Ao cair, o time volta à coleção com o HP que tinha ao assumir.\n"
+         "O coração aparece apenas nos defensores de jogadores e mostra a motivação restante; NPCs não têm esse indicador. O líder pode recuperar 40 pontos com " (comando "ginasio pocao pedra 1") ", 20 com " (comando "ginasio fruta pedra 1") " ou tudo com uma fruta dourada. Ao cair, o time volta à coleção com o HP que tinha ao assumir.\n"
          "Permanecer mais de 6 horas rende 50 moedas, pagas uma única vez ao ser derrubado. É possível disputar a liderança novamente no mesmo dia, mas a recompensa de vitória continua diária.\n"
          "Ranking por defesas e tempo: " (comando "ginasio ranking pedra") ". Últimas batalhas: " (comando "ginasio historico pedra") ". Sem nome, mostra todos os ginásios. Defesas começam a ser registradas nesta atualização.\n"
          "Para recuperar o time, consulte " (comando "ajuda time") ".")

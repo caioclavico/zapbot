@@ -802,6 +802,13 @@ A consulta funciona durante partidas sem gastar turno nem acionar o líder.
 - Atalhos adicionais: `!pk pdx` para a Pokédex e `!pk gin des pedra` para desafiar o ginásio.
 - `!pk ajd` exibe em uma única página todos os comandos Pokémon abreviados; `!pk ajuda atalhos` é equivalente.
 - Atalhos também funcionam em subcomandos, por exemplo `!pk tm usa os fodoes gin`, `!pk lig tm`, `!pk gin hist pedra` e `!pk raid atk 1`.
+### Ginásios: proteção das rodadas e menu simplificado (0.15.4)
+
+- A lista de ginásios mostra apenas líderes e desbloqueios. Regras, recompensas e comandos ficam em `!pk gin ajuda`.
+- O coração de motivação aparece apenas nos defensores de jogadores, não nos NPCs.
+- Quando o último golpe do líder derrota o time desafiante, a mensagem preserva o ataque e o dano antes do encerramento da batalha.
+- Se o líder cair por recuo/status, seu reserva conclui o turno automaticamente; `!pk bug` e `!pk bugs` não avançam a batalha.
+- O líder só responde a uma ação de combate do desafiante que efetivamente passou a vez. Consultas, comandos inválidos e comandos de terceiros não acionam ataques; comandos Pokémon do mesmo chat são processados em sequência, incluindo a resposta automática do líder.
 
 O inicial só pode ser escolhido uma vez por treinador em cada chat.
 Mandar o único Pokémon para a Enfermeira Joy, doá-lo ou ficar com a equipe

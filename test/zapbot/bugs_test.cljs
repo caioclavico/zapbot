@@ -18,7 +18,7 @@
                    (let [item (first (filter #(= "[object Object]" (get % "mensagem"))
                                              (vals @bugs/relatorios)))]
                      (is (= "[object Object]" (get item "mensagem")))
-                     (is (= "0.15.3" (get item "versao")))
+                     (is (= (.-version (js/require "../package.json")) (get item "versao")))
                      (is (= "citada" (get item "origem")))
                      (is (str/includes? texto "Bug registrado"))
                      (done))))

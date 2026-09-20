@@ -13,12 +13,11 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["20/09 — Evoluções agora mostram a forma anterior e a forma evoluída na mesma imagem"
-   "20/09 — Respostas estruturadas do líder não exibem mais [object Object]"
-   "20/09 — Trocas do time do ginásio não revelam mais o nome e os golpes do NPC"
-   "20/09 — !pk bug salva a mensagem respondida (ou a anterior) e a versão no Cassandra"
-   "20/09 — Pokémon favorito volta saudável como ativo e escalações nomeadas podem ser reutilizadas"
-   "20/09 — !pk ajd reúne atalhos que agora também funcionam nos subcomandos"])
+  ["20/09 — Lista de ginásios mais curta; regras, recompensas e comandos em !pk gin ajuda"
+   "20/09 — A derrota no ginásio preserva o último golpe e o dano causado pelo líder"
+   "20/09 — O reserva do líder age automaticamente após recuo/status; !pk bug não avança a batalha"
+   "20/09 — Só ações válidas do desafiante acionam o líder; comandos simultâneos aguardam a rodada terminar"
+   "20/09 — NPCs de ginásio não exibem mais o coração de motivação dos defensores de jogadores"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

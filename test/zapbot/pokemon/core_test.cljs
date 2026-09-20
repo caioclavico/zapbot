@@ -2,6 +2,8 @@
   (:require [cljs.test :refer-macros [async deftest is testing]]
             [clojure.set :as set]
             [clojure.string :as str]
+            [promesa.core :as p]
+            [zapbot.bugs :as bugs]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.pokemon.core :as core]
             [zapbot.pokemon.ginasios :as ginasios]
@@ -476,6 +478,26 @@
     (is (= "Ataque do líder"
            (core/texto-resposta #js {:texto #js {:texto "Ataque do líder"}})))))
 
+(deftest derrota-no-ultimo-golpe-do-lider-preserva-o-dano
+  (let [derrota "💀 Seu time foi derrotado no ginásio."
+        golpe (str "🔥 Charizard usou Lança-Chamas e causou 42 de dano!\n\n" derrota)
+        texto (core/texto-rodada-ginasio
+               "Ataque do treinador\n\n🐾 Estado intermediário"
+               {:texto golpe}
+               derrota)]
+    (is (str/includes? texto "Ataque do treinador"))
+    (is (str/includes? texto "causou 42 de dano"))
+    (is (< (.indexOf texto "causou 42 de dano")
+           (.indexOf texto derrota)))
+    (is (= 1 (count (re-seq #"Seu time foi derrotado" texto)))))
+  (testing "acrescenta o encerramento quando ele vem separado do golpe"
+    (let [texto (core/texto-rodada-ginasio
+                 "Ataque do treinador"
+                 {:texto "Onix usou Impacto e causou 18 de dano!"}
+                 "Fim da batalha")]
+      (is (str/includes? texto "causou 18 de dano"))
+      (is (str/ends-with? texto "Fim da batalha")))))
+
 (deftest vez-automatica-do-lider-nao-expoe-golpes-do-npc
   (let [golpe-secreto {:nome-exibicao "Golpe secreto do NPC" :tipo "rock" :classe :fisico}
         jogo (assoc (jogo-base (assoc pikachu :golpes [golpe-secreto])
@@ -489,6 +511,96 @@
     (is (str/includes? texto "ele responderá automaticamente"))
     (is (not (str/includes? texto "Golpe secreto do NPC")))
     (is (not (str/includes? texto "escolha um golpe")))))
+
+(deftest substituicao-do-lider-resolve-turno-pendente-na-mesma-rodada
+  (async done
+    (let [cid "teste-lider-reserva"
+          golpe {:nome-exibicao "Impacto" :tipo "normal" :classe :fisico}
+          pokemon (assoc geodude :golpes [golpe])
+          atacar-original core/atacar
+          chamadas (atom 0)]
+      (swap! core/jogos assoc cid {:ginasio {:id "pedra"} :vez :o
+                                  :pokemons {:o pokemon} :reservas {:o [pokemon]}})
+      (set! core/atacar
+            (fn [_ _]
+              (if (= 1 (swap! chamadas inc))
+                (do (swap! core/jogos assoc-in [cid :reservas :o] [])
+                    (p/resolved {:texto "Líder caiu com recuo. Reserva entrou!\n\n🐾 Vez do líder"}))
+                (do (swap! core/jogos assoc-in [cid :vez] :x)
+                    (p/resolved {:texto "Reserva causou 18 de dano!\n\n🐾 Sua vez"})))))
+      (-> (core/turno-lider nil cid)
+          (p/then (fn [resposta]
+                    (is (= 2 @chamadas))
+                    (is (= :x (get-in @core/jogos [cid :vez])))
+                    (is (str/includes? (:texto resposta) "Reserva entrou!"))
+                    (is (str/includes? (:texto resposta) "causou 18 de dano"))
+                    (is (not (str/includes? (:texto resposta) "Vez do líder")))
+                    (is (= 2 (count (:efeitos resposta))))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! core/atacar atacar-original)
+                       (swap! core/jogos dissoc cid)
+                       (done)))))))
+
+(deftest comandos-de-bug-nao-executam-rodada
+  (with-redefs [bugs/comando! (fn [_ cmd args] [cmd args])
+                core/jogar-rodada (fn [_ _] (throw (js/Error. "Executou combate ao consultar bug")))]
+    (is (= ["bug" nil] (core/jogar #js {} "bug")))
+    (is (= ["bug" '("ver" "1")] (core/jogar #js {} "bug ver 1")))
+    (is (= ["bugs" '("0.15.3")] (core/jogar #js {} "bugs 0.15.3")))))
+
+(deftest somente-acao-aceita-do-desafiante-autoriza-lider
+  (let [antes {:ginasio {:id "pedra"} :jogadores {:x "ash" :o "lider-ginasio"} :vez :x}
+        depois (assoc antes :vez :o)]
+    (doseq [cmd ["atacar 1" "atk 1" "ataque 1" "atirar 1" "usar 1"
+                 "defender" "def" "defesa" "esquivar" "evasiva"
+                 "curar" "cur" "cura" "pocao" "pot" "poção" "vida"
+                 "pocao-maxima" "pmax" "maxima"]]
+      (is (core/autoriza-turno-lider? antes depois "ash" cmd) cmd)
+      (is (not (core/autoriza-turno-lider? antes depois "outro" cmd)) cmd)
+      (is (not (core/autoriza-turno-lider? antes antes "ash" cmd))
+          (str "Ação rejeitada não passa o turno: " cmd))
+      (is (not (core/autoriza-turno-lider? depois depois "ash" cmd))
+          (str "Turno já pendente não pertence a este comando: " cmd)))
+    (doseq [cmd ["" "time" "tm" "treinador" "pokedex" "ajuda" "ajd" "bug"
+                 "bugs" "ginasio" "gin hist pedra" "raid atacar 1" "sair"
+                 "escolher 2" "equipar 1" "comando-inexistente"]]
+      (is (not (core/autoriza-turno-lider? antes depois "ash" cmd)) cmd))
+    (is (not (core/autoriza-turno-lider? antes nil "ash" "atk 1")))
+    (is (not (core/autoriza-turno-lider? antes (assoc depois :finalizando? true) "ash" "atk 1")))
+    (is (not (core/autoriza-turno-lider? (dissoc antes :ginasio) (dissoc depois :ginasio) "ash" "atk 1")))))
+
+(deftest comandos-do-mesmo-chat-aguardam-a-rodada-completa
+  (async done
+    (let [cid "teste-fila-rodadas"
+          eventos (atom [])
+          liberar (p/deferred)
+          primeira (core/enfileirar-jogada cid #(do (swap! eventos conj :primeira) liberar))
+          segunda (core/enfileirar-jogada cid #(do (swap! eventos conj :segunda) :ok))
+          outro (core/enfileirar-jogada "teste-outro-chat" #(swap! eventos conj :outro))]
+      (-> outro
+          (p/then (fn [_]
+                    (is (= [:primeira :outro] @eventos))
+                    (p/resolve! liberar :fim)
+                    (p/all [primeira segunda])))
+          (p/then (fn [_]
+                    (is (= [:primeira :outro :segunda] @eventos))
+                    (is (nil? (get @core/filas-jogadas cid)))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally done)))))
+
+(deftest erro-na-rodada-nao-bloqueia-proximo-comando
+  (async done
+    (let [cid "teste-fila-erro"
+          primeira (core/enfileirar-jogada cid #(throw (js/Error. "erro esperado")))
+          _ (p/catch primeira (fn [_] nil))
+          segunda (core/enfileirar-jogada cid #(p/resolved :recuperou))]
+      (-> segunda
+          (p/then (fn [resultado]
+                    (is (= :recuperou resultado))
+                    (is (nil? (get @core/filas-jogadas cid)))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally done)))))
 
 (deftest efeito-visual-usa-o-golpe-escolhido
   (let [golpes [{:nome-exibicao "Choque" :tipo "electric" :classe :especial}

@@ -1528,16 +1528,18 @@
   (p/let [[desafiante lider] (p/all [(sprite-proporcional pokemon-desafiante tamanho-sprite)
                                       (sprite-proporcional pokemon-lider tamanho-sprite)])]
     (-> (sharp (js/Buffer.from (svg-arena-ginasio)))
-        (.composite #js [#js {:input (:buffer desafiante)
-                              :left (- 170 (quot (:tamanho desafiante) 2))
-                              :top (- 355 (:tamanho desafiante))}
-                         #js {:input (:buffer lider)
-                              :left (- 590 (quot (:tamanho lider) 2))
-                              :top (- 355 (:tamanho lider))}
-                         #js {:input (js/Buffer.from
-                                      (svg-marcador-motivacao (:motivacao-ginasio pokemon-lider)))
-                              :left 544
-                              :top 55}])
+        (.composite (to-array
+                     (cond-> [#js {:input (:buffer desafiante)
+                                  :left (- 170 (quot (:tamanho desafiante) 2))
+                                  :top (- 355 (:tamanho desafiante))}
+                              #js {:input (:buffer lider)
+                                   :left (- 590 (quot (:tamanho lider) 2))
+                                   :top (- 355 (:tamanho lider))}]
+                       (number? (:motivacao-ginasio pokemon-lider))
+                       (conj #js {:input (js/Buffer.from
+                                          (svg-marcador-motivacao (:motivacao-ginasio pokemon-lider)))
+                                  :left 544
+                                  :top 55}))))
         (.png)
         (.toBuffer))))
 
@@ -1586,11 +1588,12 @@
                        :left (- centro (quot (:tamanho sprite) 2))
                        :top (- 270 (:tamanho sprite))})
                 sprites [145 380 615])
-           (map (fn [pokemon centro]
-                  #js {:input (js/Buffer.from (svg-marcador-motivacao (:motivacao-ginasio pokemon)))
-                       :left (- centro 46)
-                       :top 68})
-                pokemons [145 380 615]))))
+           (keep (fn [[pokemon centro]]
+                  (when (number? (:motivacao-ginasio pokemon))
+                    #js {:input (js/Buffer.from (svg-marcador-motivacao (:motivacao-ginasio pokemon)))
+                         :left (- centro 46)
+                         :top 68}))
+                 (map vector pokemons [145 380 615])))))
         (.png)
         (.toBuffer))))
 
@@ -4636,25 +4639,7 @@
                                 (aventuras/desbloqueado? (keys insignias) (:id g)) "🔓 "
                                 :else "🔒 ")
                           (:nome g) " — " (descricao-lider cid g false))))
-         "\n\n✨ *XP dos Pokémon que entraram na batalha*"
-         "\n• Derrota: 3 XP-base por participante."
-         "\n• Primeira vitória: 7 XP-base, insígnia, 100 moedas e uma pedra."
-         "\n• Revanche premiada: 4 XP-base, 25 moedas e 25% de chance da pedra."
-         "\n• Outra vitória no mesmo dia: 2 XP-base, sem repetir os prêmios diários."
-         "\n• Cada defensor nocauteado dá +1 XP ao Pokémon responsável. Ex.: derrota com 2 nocautes = 5 XP."
-         "\n• Desistência ou expiração não concede XP. A recompensa diária reinicia à meia-noite de São Paulo."
-         "\n⭐ *PE do treinador:* primeira vitória 6; revanche premiada 3; derrota 1. PE é separado do XP dos Pokémon."
-         "\nVencer torna você líder. Os três Pokémon ficam inativos no ginásio até você ser derrubado."
-         "\nDefensores perdem motivação com o tempo e após cada defesa. O líder pode usar Poções de Vida para recuperá-los."
-         "\nMais de 6h como líder: 50 moedas, pagas apenas ao ser derrubado."
-         "\nUse " config/prefix "pokemon ginasio <nome> para detalhes."
-         "\nEscale: " config/prefix "pokemon ginasio time 1,3,5"
-         "\nDesafie: " config/prefix "pokemon ginasio desafiar pedra"
-         "\nRecupere: " config/prefix "pokemon ginasio pocao pedra 1"
-         "\nAlimente: " config/prefix "pokemon ginasio fruta pedra 1"
-         "\nRanking: " config/prefix "pokemon ginasio ranking [nome]"
-         "\nDefesas: " config/prefix "pokemon ginasio historico [nome]"
-         "\nComo jogar: " config/prefix "pokemon ginasio ajuda")))
+         "\n\n📖 Regras, recompensas e comandos: " config/prefix "pk gin ajuda")))
 
 (defn- configurar-ginasio [message args]
   (let [cid (chat-id message) pid (jogador-id message)
@@ -5252,6 +5237,9 @@
     (object? resposta) (texto-resposta (aget resposta "texto"))
     :else (str resposta)))
 
+(defn- sem-estado-intermediario [texto]
+  (first (str/split (or texto "") #"\n\n🐾 " 2)))
+
 (defn- turno-lider [message cid]
   (let [jogo (get @jogos cid)]
     (if (and (:ginasio jogo) (not (:finalizando? jogo)) (= :o (:vez jogo)))
@@ -5263,15 +5251,51 @@
             golpe (select-keys (nth (:golpes pokemon) idx) [:tipo :classe :nome-exibicao])
             npc #js {:from cid :author "lider-ginasio"}]
         (p/let [resposta (atacar npc (str (inc idx)))
-                texto (texto-resposta resposta)]
-          {:texto texto
-           :efeitos [(assoc golpe :origem :o :dano (dano-da-resposta texto))]}))
+                texto (texto-resposta resposta)
+                ;; Recuo/status pode derrubar o próprio líder. A substituição
+                ;; mantém sua vez; resolve também o reserva nesta mesma rodada.
+                atual (get @jogos cid)
+                proximo (when (and (:ginasio atual) (= :o (:vez atual))
+                                   (< (count (get-in atual [:reservas :o]))
+                                      (count (get-in jogo [:reservas :o]))))
+                          (turno-lider message cid))]
+          {:texto (if (str/blank? (:texto proximo)) texto
+                      (str (sem-estado-intermediario texto) "\n\n" (:texto proximo)))
+           :efeitos (into [(assoc golpe :origem :o :dano (dano-da-resposta texto))]
+                          (:efeitos proximo))}))
       (p/resolved {:texto "" :efeitos []}))))
 
-(defn- sem-estado-intermediario [texto]
-  (first (str/split (or texto "") #"\n\n🐾 " 2)))
+(defn- texto-rodada-ginasio
+  "Preserva o último golpe do líder antes do resumo de derrota. O encerramento
+  do ginásio também grava esse resumo em resultado-derrota, portanto só o
+  acrescenta quando a resposta do líder ainda não o contém."
+  [resposta lider derrota]
+  (let [texto-jogador (sem-estado-intermediario (texto-resposta resposta))
+        texto-lider (texto-resposta lider)
+        derrota (texto-resposta derrota)]
+    (cond
+      (not (str/blank? texto-lider))
+      (str texto-jogador
+           "\n\n🏛️ *Ataque do líder*\n"
+           texto-lider
+           (when (and (not (str/blank? derrota))
+                      (not (str/includes? texto-lider derrota)))
+             (str "\n\n" derrota)))
 
-(defn jogar [message args]
+      (not (str/blank? derrota)) derrota
+      :else resposta)))
+
+(defn- autoriza-turno-lider? [antes depois pid args]
+  (let [cmd (-> (or args "") str/trim str/lower-case (str/split #"\s+") first expandir-atalho)]
+    (and (:ginasio antes) (:ginasio depois)
+         (not (:finalizando? depois))
+         (= pid (get-in antes [:jogadores :x]) (get-in depois [:jogadores :x]))
+         (= :x (:vez antes)) (= :o (:vez depois))
+         (contains? #{"atacar" "ataque" "atirar" "usar"
+                      "defender" "defesa" "esquivar" "evasiva"
+                      "curar" "cura" "pocao" "poção" "vida" "pocao-maxima" "maxima"} cmd))))
+
+(defn- jogar-rodada [message args]
   (if-let [ajuda (pokemon-ajuda/resposta args)]
     (p/resolved ajuda)
     (let [cid (chat-id message)
@@ -5300,18 +5324,19 @@
                          (-> (verificar-evolucao! message cid (jogador-id message) indice)
                              (p/then (fn [_]
                                        (aprender-golpe-por-nivel! message cid (jogador-id message) (:nivel subida) indice))))))
+              antes-comando (get @jogos cid)
               resposta (jogar-comando message args)
-              lider (turno-lider message cid)
+              lider (when (autoriza-turno-lider? antes-comando (get @jogos cid)
+                                               (jogador-id message) args)
+                      (turno-lider message cid))
               efeito-jogador (when efeito-golpe
                                (assoc efeito-golpe
                                       :origem (or (:vez jogo-inicial) :x)
                                       :dano (dano-da-resposta (texto-resposta resposta))))
               efeitos-golpe (vec (concat (when efeito-jogador [efeito-jogador])
                                           (:efeitos lider)))
-              texto (or (when resultado-derrota @resultado-derrota)
-                        (if (str/blank? (texto-resposta lider)) resposta
-                            (str (sem-estado-intermediario (texto-resposta resposta))
-                                 "\n\n🏛️ *Ataque do líder*\n" (texto-resposta lider))))
+              texto (texto-rodada-ginasio resposta lider
+                                          (when resultado-derrota @resultado-derrota))
               texto-final (texto-resposta texto)
               tema-evento (tema-evento-da-resposta args texto-final)
               url-evento (or (get-in (get @jogos cid) [:pokemons :x :imagem])
@@ -5354,3 +5379,25 @@
               ;; terminaram suas tentativas de persistência.
               _ (armazenamento/aguardar-todas!)]
         resultado-final))))
+
+(defonce ^:private filas-jogadas (atom {}))
+
+(defn- enfileirar-jogada [cid acao]
+  ;; A ação e toda a resposta automática formam uma rodada indivisível.
+  ;; O próximo comando lê o estado apenas depois que a rodada anterior termina.
+  (let [anterior (get @filas-jogadas cid (p/resolved nil))
+        atual (-> anterior
+                  (p/catch (fn [_] nil))
+                  (p/then (fn [_] (acao))))]
+    (swap! filas-jogadas assoc cid atual)
+    (p/finally atual
+               (fn []
+                 (when (identical? atual (get @filas-jogadas cid))
+                   (swap! filas-jogadas dissoc cid))))))
+
+(defn jogar [message args]
+  (let [[cmd & resto] (str/split (str/trim (str/lower-case (or args ""))) #"\s+")]
+    ;; Registrar/consultar bugs não executa ações nem aplica dano na batalha.
+    (if (contains? #{"bug" "bugs"} cmd)
+      (bugs/comando! message cmd resto)
+      (enfileirar-jogada (chat-id message) #(jogar-rodada message args)))))
