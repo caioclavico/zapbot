@@ -13,10 +13,12 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["18/09 — Ganhos grandes de XP agora processam todas as subidas de nível"
-   "18/09 — Progressos inválidos como 15/9 são reparados automaticamente"
-   "18/09 — Pokémon derrubados voltam do ginásio desmaiados, sem cura indevida"
-   "18/09 — Poções aceitam o número do Pokémon e a nova Poção Máxima restaura todo o HP"])
+  ["20/09 — Evoluções agora mostram a forma anterior e a forma evoluída na mesma imagem"
+   "20/09 — Respostas estruturadas do líder não exibem mais [object Object]"
+   "20/09 — Trocas do time do ginásio não revelam mais o nome e os golpes do NPC"
+   "20/09 — !pk bug salva a mensagem respondida (ou a anterior) e a versão no Cassandra"
+   "20/09 — Pokémon favorito volta saudável como ativo e escalações nomeadas podem ser reutilizadas"
+   "20/09 — !pk ajd reúne todos os comandos Pokémon abreviados"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

@@ -113,7 +113,8 @@
     (is (= "ginasio" (core/expandir-atalho "gin")))
     (is (= "cacar" (core/expandir-atalho "cac")))
     (is (= "time" (core/expandir-atalho "tm")))
-    (is (= "pokedex" (core/expandir-atalho "dex"))))
+    (is (= "pokedex" (core/expandir-atalho "dex")))
+    (is (= "pokedex" (core/expandir-atalho "pdx"))))
   (testing "comandos completos permanecem inalterados"
     (is (= "atacar" (core/expandir-atalho "atacar")))
     (is (= "raid" (core/expandir-atalho "raid")))))
@@ -246,6 +247,36 @@
     (is (= 0 (get derrotado "hp-atual")))
     (is (nil? (get derrotado "status")))
     (is (= (get registro "hp") (get derrotado "hp")))))
+
+(deftest favorito-volta-da-joy-saudavel-e-fica-ativo
+  (let [primeiro (treinador/pokemon->registro pikachu (:hp pikachu) nil)
+        favorito (treinador/pokemon->registro geodude 20 nil)
+        estado (atom {"chat" {"ash" {"equipe" [primeiro favorito] "ativo" 0
+                                      "enfermaria" []}}})]
+    (with-redefs [treinador/contas estado
+                  armazenamento/salvar! (fn [& _] (js/Promise.resolve nil))]
+      (treinador/definir-favorito! "chat" "ash" 1)
+      (is (= 1 (treinador/indice-ativo "chat" "ash")))
+      (treinador/enviar-ferido-para-enfermaria! "chat" "ash" 1)
+      (swap! estado assoc-in ["chat" "ash" "enfermaria" 0 "pronto-em"] 0)
+      (treinador/recolher-curados! "chat" "ash")
+      (is (= "Geodude" (get-in @estado ["chat" "ash" "favorito" "nome"])))
+      (is (= 1 (treinador/indice-ativo "chat" "ash")))
+      (is (= (:hp geodude) (get-in @estado ["chat" "ash" "equipe" 1 "hp-atual"]))))))
+
+(deftest escalacao-nomeada-usa-identidades-sem-reservar-pokemons
+  (let [terceiro (assoc pikachu :nome "Raichu")
+        registros [(treinador/pokemon->registro pikachu 80 nil)
+                   (treinador/pokemon->registro geodude 100 nil)
+                   (treinador/pokemon->registro terceiro 80 nil)]
+        estado (atom {"chat" {"ash" {"equipe" registros}}})]
+    (with-redefs [treinador/contas estado
+                  armazenamento/salvar! (fn [& _] (js/Promise.resolve nil))]
+      (is (= 3 (count (treinador/salvar-time-pronto! "chat" "ash" "os fodoes" [0 1 2]))))
+      (is (= 3 (count (treinador/equipe "chat" "ash"))))
+      (is (= [0 1 2] (treinador/indices-time-pronto "chat" "ash" "os fodoes")))
+      (treinador/remover-pokemon! "chat" "ash" 0)
+      (is (= [nil 0 1] (treinador/indices-time-pronto "chat" "ash" "os fodoes"))))))
 
 (deftest tentativa-de-ginasio-recompensa-participacao-e-nocautes
   (is (= 3 (core/xp-ginasio-participante false nil 0)))
@@ -428,7 +459,25 @@
 (deftest rodada-do-ginasio-remove-estado-intermediario
   (is (= "Ataque do treinador"
          (core/sem-estado-intermediario "Ataque do treinador\n\n🐾 Ash - Pikachu")))
-  (is (= 37 (core/dano-da-resposta "causou 37 de dano em Onix!"))))
+  (is (= 37 (core/dano-da-resposta "causou 37 de dano em Onix!")))
+  (testing "respostas estruturadas aninhadas nunca viram [object Object]"
+    (is (= "Ataque resolvido" (core/texto-resposta {:texto {:texto "Ataque resolvido"}})))
+    (is (= "Ataque do líder"
+           (core/texto-resposta #js {:texto #js {:texto "Ataque do líder"}})))))
+
+(deftest vez-automatica-do-lider-nao-expoe-golpes-do-npc
+  (let [golpe-secreto {:nome-exibicao "Golpe secreto do NPC" :tipo "rock" :classe :fisico}
+        jogo (assoc (jogo-base (assoc pikachu :golpes [golpe-secreto])
+                               (assoc geodude :golpes [golpe-secreto]))
+                    :nomes {:x "Ash" :o "Brock"}
+                    :jogadores {:x "551199999999" :o "lider-ginasio"}
+                    :vez :o
+                    :ginasio {:id "pedra"})
+        texto (core/mensagem-estado jogo)]
+    (is (str/includes? texto "Vez do líder"))
+    (is (str/includes? texto "ele responderá automaticamente"))
+    (is (not (str/includes? texto "Golpe secreto do NPC")))
+    (is (not (str/includes? texto "escolha um golpe")))))
 
 (deftest efeito-visual-usa-o-golpe-escolhido
   (let [golpes [{:nome-exibicao "Choque" :tipo "electric" :classe :especial}
@@ -474,6 +523,26 @@
   (is (= :missao (core/tema-evento-da-resposta "missoes resgatar" "2 missões resgatadas")))
   (is (= "HP 200/440" (core/detalhe-cartao-evento :raid "HP do chefe: 200/440")))
   (is (= "Nv. 12" (core/detalhe-cartao-evento :nivel "subiu para o nível 12"))))
+
+(deftest cartao-de-evolucao-mostra-as-duas-formas
+  (let [svg (core/svg-cartao-evolucao {:nome-antigo "Pichu" :nome-novo "Pikachu"})]
+    (is (str/includes? svg "Pichu"))
+    (is (str/includes? svg "Pikachu"))
+    (is (str/includes? svg "cx='185'"))
+    (is (str/includes? svg "cx='575'")))
+  (async done
+    (let [sprite (str "data:image/svg+xml;base64,"
+                      (.toString (js/Buffer.from
+                                  "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><circle cx='16' cy='16' r='14' fill='yellow'/></svg>")
+                                 "base64"))]
+      (-> (core/criar-cartao-evolucao {:nome-antigo "Pichu" :nome-novo "Pikachu"
+                                       :imagem-antiga sprite :imagem sprite})
+          (.then (fn [buffer]
+                   (is (> (.-length buffer) 10000))
+                   (done)))
+          (.catch (fn [erro]
+                    (is false (str "Não conseguiu compor as duas formas da evolução: " erro))
+                    (done)))))))
 
 (deftest cartoes-da-joy-tratando-e-do-hospital-usam-imagens-distintas-no-tamanho-padrao
   (async done

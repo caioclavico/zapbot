@@ -146,6 +146,7 @@
         (when (pos? xp)
           (doseq [idx (range inicio (+ inicio (count (get anterior "time"))))]
             (treinador/ganhar-xp-no-indice! cid pid-anterior idx xp))))
+      (treinador/ativar-favorito-se-disponivel! cid pid-anterior)
       (registrar-permanencia! cid id anterior agora)
       (swap! ocupacoes assoc-in [cid id] nova)
       (when (pos? moedas) (loja/creditar-quantia! cid (get anterior "pid") moedas))

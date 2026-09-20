@@ -88,9 +88,11 @@
 
 (defn- on-message [message]
   (when (permitido-pelo-ambiente? message)
-    (historico/registrar! message)
     (adedonha/capturar-resposta! message)
-    (-> (router/processar message)
+    ;; Aguarda a fila do histórico: assim !pk bug sempre encontra exatamente
+    ;; a mensagem anterior, mesmo quando os eventos chegam muito próximos.
+    (-> (p/resolved (historico/registrar! message))
+        (p/then (fn [_] (router/processar message)))
         (p/then (fn [resposta]
                   (cond
                     (nil? resposta) nil

@@ -13,6 +13,7 @@
             [zapbot.pokemon.aventuras :as aventuras]
             [zapbot.pokemon.ginasios :as ginasios]
             [zapbot.pokemon.mundo :as mundo]
+            [zapbot.bugs :as bugs]
             [zapbot.pokemon.shiny :as shiny]
             [zapbot.pokemon.raids :as raids]
             ["whatsapp-web.js" :as wwjs]
@@ -221,7 +222,7 @@
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
 (declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado
          parse-indice-golpe estado-cacada turno-selvagem escalar-nivel com-raridade expandir-atalho
-         enviar-cartao-evento! aplicar-sobreposicao-batalha escapar-xml baixar-buffer)
+         enviar-cartao-evento! enviar-cartao-evolucao! aplicar-sobreposicao-batalha escapar-xml baixar-buffer)
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -542,6 +543,9 @@
                 evoluido (escalar-nivel evoluido nivel)]
           (assoc evoluido :nome-antigo (get registro "nome")
                           :nome-novo (:nome evoluido)
+                          :imagem-antiga (if (get registro "shiny")
+                                           (or (get registro "imagem-shiny") (get registro "imagem"))
+                                           (get registro "imagem"))
                           :imagem (if (get registro "shiny")
                                     (or (:imagem-shiny evoluido) (:imagem evoluido))
                                     (:imagem evoluido))
@@ -570,6 +574,7 @@
                            evoluido (pokemon-de-dados (js->clj data :keywordize-keys true))
                            fator    (js/Math.pow treinador/fator-crescimento-por-nivel (dec nivel))]
                      {:nome-antigo (:nome pokemon) :nome-novo (:nome evoluido)
+                      :imagem-antiga (:imagem pokemon)
                       :imagem      (if (:shiny? pokemon) (or (:imagem-shiny evoluido) (:imagem evoluido)) (:imagem evoluido))
                       :imagem-shiny (:imagem-shiny evoluido) :tipos (:tipos evoluido) :habilidade (:habilidade evoluido)
                       :hp          (js/Math.round (* (:hp evoluido) fator))
@@ -891,13 +896,15 @@
          "🐾 " (get nomes :o) " - *" (get-in pokemons [:o :nome]) "* Nv." (nivel-pokemon (:o pokemons))
          (when (:o defendendo) " 🛡️") (emoji-status (:o status)) "\n"
          (barra-hp (get hp :o) (get-in pokemons [:o :hp])) "\n\n"
-         "Vez de " (get nomes vez)
-         (when-not ginasio (str " (@" (so-numero (get jogadores vez)) ")"))
-         " - escolha um golpe:\n"
-         (menu-golpes meu (:tipos adversario) (:habilidade adversario))
-         "\n\nUse " config/prefix "pokemon atacar <número>, defenda com " config/prefix
-         "pokemon defender, cure um status com " config/prefix "pokemon curar, ou recupere HP com "
-         config/prefix "pokemon pocao (compre curas/poções na " config/prefix "loja)")))
+         (if (and ginasio (= vez :o))
+           "Vez do líder — ele responderá automaticamente."
+           (str "Vez de " (get nomes vez)
+                (when-not ginasio (str " (@" (so-numero (get jogadores vez)) ")"))
+                " - escolha um golpe:\n"
+                (menu-golpes meu (:tipos adversario) (:habilidade adversario))
+                "\n\nUse " config/prefix "pokemon atacar <número>, defenda com " config/prefix
+                "pokemon defender, cure um status com " config/prefix "pokemon curar, ou recupere HP com "
+                config/prefix "pokemon pocao (compre curas/poções na " config/prefix "loja)")))))
 
 ;; comandos normais do router resolvem uma string simples (ver zapbot.core);
 ;; aqui a gente precisa marcar quem tem que jogar, então resolve um mapa
@@ -1078,8 +1085,8 @@
        (p/then (fn [dados]
                  (when dados
                    (treinador/evoluir-no-indice! cid pid idx dados)
-                   (enviar-cartao-evento!
-                    message :evolucao (:imagem dados)
+                   (enviar-cartao-evolucao!
+                    message dados
                     (str (cabecalho) "✨ *" (:nome-antigo dados) "* evoluiu para *"
                          (:nome-novo dados) "*!")))))
        (p/catch (fn [err] (js/console.error "Erro ao processar evolução:" err))))))
@@ -1939,6 +1946,37 @@
           (.png)
           (.toBuffer)))))
 
+(defn- svg-cartao-evolucao [{:keys [nome-antigo nome-novo]}]
+  (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
+       "<defs><linearGradient id='evo-bg' x1='0' y1='0' x2='1' y2='1'><stop stop-color='#312e81'/><stop offset='.52' stop-color='#7c3aed'/><stop offset='1' stop-color='#0f172a'/></linearGradient>"
+       "<filter id='evo-glow'><feDropShadow dx='0' dy='0' stdDeviation='9' flood-color='#fde047'/></filter></defs>"
+       "<rect width='760' height='400' rx='28' fill='url(#evo-bg)'/>"
+       "<circle cx='185' cy='180' r='137' fill='#ffffff' fill-opacity='.12' stroke='#c4b5fd' stroke-width='5'/>"
+       "<circle cx='575' cy='180' r='137' fill='#ffffff' fill-opacity='.16' stroke='#fde047' stroke-width='6' filter='url(#evo-glow)'/>"
+       "<text x='380' y='205' fill='#ffffff' font-size='76' font-family='sans-serif' font-weight='bold' text-anchor='middle'>→</text>"
+       "<text x='185' y='354' fill='#e2e8f0' font-size='28' font-family='sans-serif' font-weight='bold' text-anchor='middle'>"
+       (escapar-xml (or nome-antigo "FORMA ANTERIOR")) "</text>"
+       "<text x='575' y='354' fill='#ffffff' font-size='28' font-family='sans-serif' font-weight='bold' text-anchor='middle'>"
+       (escapar-xml (or nome-novo "NOVA FORMA")) "</text>"
+       "</svg>"))
+
+(defn- criar-cartao-evolucao [dados]
+  (p/let [antiga (sprite-redimensionado (:imagem-antiga dados))
+          nova (sprite-redimensionado (:imagem dados))]
+    (-> (sharp (js/Buffer.from (svg-cartao-evolucao dados)))
+        (.composite #js [#js {:input antiga :left 55 :top 48}
+                         #js {:input nova :left 445 :top 48}])
+        (.png)
+        (.toBuffer))))
+
+(defn- enviar-cartao-evolucao! [message dados texto]
+  (-> (p/let [buffer (criar-cartao-evolucao dados)
+              media (MessageMedia. "image/png" (.toString buffer "base64") "evolucao.png")]
+        (.reply message media nil #js {:caption texto}))
+      (p/catch (fn [err]
+                 (js/console.error "Erro ao montar cartão de evolução Pokémon:" err)
+                 (.reply message texto)))))
+
 (defn- resposta-cartao-evento
   ([tema url texto] (resposta-cartao-evento tema url texto nil))
   ([tema url texto mentions]
@@ -2059,6 +2097,110 @@
                                    (treinador/time-liga cid pid id)))))
             "\n\nTrês Pokémon saudáveis são necessários. Pareamento: mesma liga, sem restrição de diferença de nível entre os times."
             "\nComo jogar: " config/prefix "pokemon liga ajuda")))))
+
+(defn- nome-time-pronto [partes]
+  (-> (str/join " " partes) str/trim normalizar-texto))
+
+(defn- descrever-time-pronto [cid pid [nome dados]]
+  (let [indices (treinador/indices-time-pronto cid pid nome)
+        eq (treinador/equipe cid pid)]
+    (str "• *" (get dados "nome" nome) "*: "
+         (str/join ", "
+                   (map-indexed
+                    (fn [slot idx]
+                      (if-let [registro (when (some? idx) (get eq idx))]
+                        (str "#" (inc idx) " " (get registro "nome"))
+                        (str "slot " (inc slot) " indisponível")))
+                    indices)))))
+
+(defn- configurar-time-pronto [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        [acao & resto] args
+        times (treinador/times-prontos cid pid)
+        ocupado? (or (some #{pid} (vals (:jogadores (get @jogos cid))))
+                     (= pid (:pid (get @cacadas-selvagens cid))))]
+    (case acao
+      "salvar"
+      (let [numeros-texto (last resto)
+            nome (nome-time-pronto (butlast resto))
+            eq (treinador/equipe cid pid)
+            numeros (str/split (or numeros-texto "") #",")
+            indices (mapv #(parse-indice-golpe (str/trim %) (count eq)) numeros)]
+        (p/resolved
+         (if (and (not (str/blank? nome)) (= 3 (count indices))
+                  (= 3 (count (set indices))) (every? some? indices)
+                  (treinador/salvar-time-pronto! cid pid nome indices))
+           (str "✅ Escalação *" nome "* salva com "
+                (str/join ", " (map #(get % "nome") (map eq indices)))
+                ". Os Pokémon continuam disponíveis normalmente.")
+           (str "❓ Use " config/prefix "pk time salvar <nome> <n1,n2,n3>. Ex.: "
+                config/prefix "pk time salvar os fodoes 1,4,7."))))
+
+      "usar"
+      (let [destino-explicito (last resto)
+            destino (if (contains? #{"liga" "ginasio" "ginásio"} destino-explicito)
+                      destino-explicito "liga")
+            nome (nome-time-pronto (if (= destino "liga")
+                                     (if (= destino-explicito "liga") (butlast resto) resto)
+                                     (butlast resto)))
+            indices (treinador/indices-time-pronto cid pid nome)]
+        (p/resolved
+         (cond
+           ocupado? "🚫 Termine ou saia da batalha antes de aplicar outra escalação."
+           (nil? (get times nome)) (str "❓ Escalação *" nome "* não encontrada. Use " config/prefix "pk times.")
+           (or (not= 3 (count indices)) (some nil? indices))
+           "🚫 Um ou mais Pokémon dessa escalação estão na Joy, em um ginásio ou não pertencem mais ao treinador."
+           (contains? #{"ginasio" "ginásio"} destino)
+           (do (treinador/salvar-time-ginasio! cid pid indices)
+               (str "🏛️ Escalação *" nome "* preparada para o ginásio. Nenhum Pokémon foi reservado agora."))
+           :else
+           (let [liga (treinador/liga-selecionada cid pid)]
+             (if (treinador/escalar! cid pid liga indices)
+               (str "⚔️ Escalação *" nome "* preparada para a liga "
+                    (:nome (treinador/obter-liga liga)) ".")
+               "🚫 Os três Pokémon precisam estar disponíveis, saudáveis e dentro da faixa da liga selecionada.")))))
+
+      "ver"
+      (let [nome (nome-time-pronto resto)]
+        (p/resolved (if-let [time (get times nome)]
+                      (str "👥 *Escalação " nome "*\n" (descrever-time-pronto cid pid [nome time]))
+                      (str "❓ Escalação *" nome "* não encontrada."))))
+
+      ("excluir" "apagar" "remover")
+      (let [nome (nome-time-pronto resto)]
+        (p/resolved (if (treinador/excluir-time-pronto! cid pid nome)
+                      (str "🗑️ Escalação *" nome "* excluída. Nenhum Pokémon foi removido.")
+                      (str "❓ Escalação *" nome "* não encontrada."))))
+
+      (p/resolved
+       (if (seq times)
+         (str "👥 *Escalações salvas*\n\n"
+              (str/join "\n" (map #(descrever-time-pronto cid pid %) (sort-by key times)))
+              "\n\nUse " config/prefix "pk time usar <nome> [liga|ginasio].")
+         (str "👥 Nenhuma escalação salva. Crie uma com " config/prefix
+              "pk time salvar <nome> <n1,n2,n3>."))))))
+
+(defn- configurar-favorito [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        escolha (first args)
+        atual (treinador/favorito cid pid)]
+    (p/resolved
+     (cond
+       (contains? #{"remover" "tirar" "nenhum"} escolha)
+       (do (treinador/remover-favorito! cid pid) "💔 Pokémon favorito removido.")
+
+       (str/blank? escolha)
+       (if atual
+         (str "⭐ Seu Pokémon favorito é *" (get atual "nome") "*. Quando voltar saudável da Joy ou do ginásio, ficará ativo automaticamente.")
+         (str "⭐ Escolha com " config/prefix "pk favorito <número>."))
+
+       :else
+       (let [idx (parse-indice-golpe escolha (count (treinador/equipe cid pid)))]
+         (if-let [registro (when (some? idx) (treinador/definir-favorito! cid pid idx))]
+           (str "⭐ *" (get registro "nome") "* agora é seu favorito"
+                (when (pos? (get registro "hp-atual" 0)) " e também ficou ativo")
+                ". Ao voltar saudável da Joy ou do ginásio, será ativado automaticamente.")
+           (str "❓ Pokémon inválido. Veja os números com " config/prefix "pk time.")))))))
 
 (defn- iniciar-ou-entrar-atualizado [message]
   (let [cid        (chat-id message)
@@ -2662,7 +2804,10 @@
               (str/join "\n" (map
                               (fn [{:keys [indice registro]}]
                                 (let [[p hp-atual status] (treinador/registro->pokemon registro)]
-                                  (str (inc indice) ". " (if (= indice (treinador/indice-ativo cid pid)) "👉 " "") "*" (:nome p)
+                                  (str (inc indice) ". " (if (= indice (treinador/indice-ativo cid pid)) "👉 " "")
+                                       (when (= (get registro "id-pokemon")
+                                                (get (treinador/favorito cid pid) "id")) "⭐ ")
+                                       "*" (:nome p)
                                        "* Nv." (nivel-pokemon p) " • " (texto-raridade p)
                                        (when-let [item (texto-item p)] (str " • " item))
                                        "\n   " (barra-hp hp-atual (:hp p)) (emoji-status status)
@@ -2682,6 +2827,7 @@
             "\n\nUse " config/prefix "pokemon escolher <número> pra trocar o ativo (👉), ou " config/prefix
             "pokemon joy para enviar os feridos à Enfermeira Joy."
             "\nVeja a ficha do ativo com " config/prefix "pokemon time ativo."
+            "\nFavorito: " config/prefix "pk favorito <número>. Escalações: " config/prefix "pk times."
             "\nCombine filtros com " config/prefix "pokemon time [liga] [tipo] [raridade] [nome] [nivel N]."
             "\nOrdene por força: " config/prefix "pokemon time > (mais forte primeiro) ou < (mais fraco primeiro).")))))
 
@@ -4494,7 +4640,8 @@
 
 (defn- configurar-ginasio [message args]
   (let [cid (chat-id message) pid (jogador-id message)
-        [acao id numero] args
+        [acao-original id numero] args
+        acao (get {"des" "desafiar" "dsf" "desafiar"} acao-original acao-original)
         pocao? (contains? #{"pocao" "poção" "pot"} acao)
         fruta? (contains? #{"fruta" "frambo" "fruta-dourada" "dourada"} acao)
         recuperacao? (or pocao? fruta?)
@@ -4862,7 +5009,7 @@
    "neg" "negociar" "tre" "treinador" "apr" "aprender"
    "reap" "reaprender" "rev" "reviver" "mch" "mochila"
    "mis" "missoes" "pre" "presente" "cap" "capturar"
-   "ini" "inicial" "cac" "cacar" "dex" "pokedex" "tm" "time"
+   "ini" "inicial" "cac" "cacar" "dex" "pokedex" "pdx" "pokedex" "tm" "time"
    "rmg" "removergolpe" "can" "cancelar" "esc" "escolher"
    "eqp" "equipar" "doa" "doar" "atk" "atacar" "def" "defender"
    "cur" "curar" "pot" "pocao" "pmax" "pocao-maxima" "sai" "sair"})
@@ -4945,6 +5092,7 @@
         [cmd-original & resto] (str/split args #"\s+")
         cmd          (expandir-atalho cmd-original)]
     (cond
+      (contains? #{"bug" "bugs"} cmd) (bugs/comando! message cmd resto)
       (:carregando? (get @jogos cid))
       (p/resolved "⏳ Preparando o ginásio. Aguarde.")
       (contains? @evolucoes-pendentes [cid pid])
@@ -4969,6 +5117,7 @@
       (= cmd "raid") (comando-raid message resto)
       (= cmd "shiny") (p/resolved (ver-colecao-shiny message))
       (= cmd "treinador") (ver-treinador message)
+      (contains? #{"favorito" "fav"} cmd) (configurar-favorito message resto)
       (= cmd "titulo") (p/resolved (configurar-titulo message resto))
       (= cmd "amizade") (p/resolved (ver-amizade message (first resto)))
       (contains? #{"clima" "areas" "áreas" "mapa"} cmd) (p/resolved (mundo/resumo))
@@ -5003,11 +5152,14 @@
       (let [modo-texto? (boolean (some marcadores-texto resto))
             resto       (remove marcadores-texto resto)]
         (cond
+          (contains? #{"salvar" "usar" "ver" "excluir" "apagar" "remover"} (first resto))
+          (configurar-time-pronto message resto)
           (= ["liga"] (vec resto)) (configurar-liga message ["time"])
           (contains? #{"csv" "planilha"} (first resto)) (resposta-time-csv message)
           (= "ativo" (first resto)) (ver-pokemon-ativo-do-time message)
           modo-texto? (ver-time message (str/join " " resto))
           :else (resposta-time-visual message (str/join " " resto))))
+      (= cmd "times") (configurar-time-pronto message [])
       (contains? #{"removergolpe" "removergolpes" "esquecer" "esquecergolpe"} cmd)
       (remover-golpe message (first resto))
       (contains? #{"cancelar" "cancela"} cmd) (cancelar-remocao message)
@@ -5063,6 +5215,7 @@
             "• " config/prefix "pokemon curar\n"
             "• " config/prefix "pokemon pocao [número]\n"
             "• " config/prefix "pokemon pocao-maxima [número]\n"
+            "• " config/prefix "pk bug\n"
             "• " config/prefix "pokemon sair\n\n"
             "📚 Como jogar: " config/prefix "pokemon ajuda.")))))
 
@@ -5074,8 +5227,8 @@
   (cond
     (nil? resposta) ""
     (string? resposta) resposta
-    (map? resposta) (or (:texto resposta) "")
-    (object? resposta) (or (aget resposta "texto") "")
+    (map? resposta) (texto-resposta (:texto resposta))
+    (object? resposta) (texto-resposta (aget resposta "texto"))
     :else (str resposta)))
 
 (defn- turno-lider [message cid]

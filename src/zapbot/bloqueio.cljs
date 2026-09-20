@@ -92,7 +92,9 @@
             (distinct [autor-id contato-id])))
         (p/catch (fn [_] [autor-id])))))
 
-(defn- autorizado? [message]
+(defn autorizado?
+  "Confirma se o autor está autorizado como administrador do bot ou do grupo."
+  [message]
   (let [autor-id (or (.-author message) (.-from message))
         cid      (chat-id message)]
     (cond

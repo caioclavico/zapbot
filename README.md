@@ -791,6 +791,17 @@ A consulta funciona durante partidas sem gastar turno nem acionar o líder.
 
 `npm run build` gera o bot.
 
+### Correções visuais e de batalha (0.15.3)
+
+- A imagem de evolução mostra lado a lado a forma anterior e a forma evoluída.
+- Respostas aninhadas do turno automático do líder são convertidas corretamente em texto, sem `[object Object]`.
+- Quando o líder troca um Pokémon derrotado, o estado intermediário não revela o menu de golpes do NPC.
+- `!pk bug` registra a mensagem respondida — ou, sem resposta, a mensagem anterior — e a versão atual no Cassandra. Administradores podem consultar com `!pk bugs [versão]`, detalhar com `!pk bug ver <número>` e encerrar com `!pk bug resolver <número>`.
+- `!pk favorito <número>` marca um Pokémon favorito e o torna ativo quando ele voltar saudável da Joy ou de um ginásio. Use `!pk favorito remover` para desmarcar.
+- Escalações nomeadas não reservam Pokémon: `!pk time salvar os fodoes 1,4,7`, `!pk times`, `!pk time ver os fodoes`, `!pk time usar os fodoes liga|ginasio` e `!pk time excluir os fodoes`.
+- Atalhos adicionais: `!pk pdx` para a Pokédex e `!pk gin des pedra` para desafiar o ginásio.
+- `!pk ajd` exibe em uma única página todos os comandos Pokémon abreviados; `!pk ajuda atalhos` é equivalente.
+
 O inicial só pode ser escolhido uma vez por treinador em cada chat.
 Mandar o único Pokémon para a Enfermeira Joy, doá-lo ou ficar com a equipe
 vazia não libera outro inicial. Contas antigas são reconhecidas pelo

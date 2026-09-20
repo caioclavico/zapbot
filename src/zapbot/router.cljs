@@ -56,6 +56,7 @@
    {:emoji "📊" :uso "status"             :desc "Mostra versão, últimas mudanças, consumo de recursos e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
    {:emoji "⚡" :uso "pokemon [inicial|cacar [area]|clima|treinador|titulo|amizade|pokedex [n|descobertas]|ginasio|liga|time|mochila|missoes|atacar|sair]" :desc "Batalhe, explore áreas com clima e complete sua Pokédex"}
+   {:emoji "🐛" :uso "pk bug" :desc "Registra no Cassandra a mensagem respondida ou a anterior, junto da versão atual"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
    {:emoji "📚" :uso "pokemon ajuda [batalhas|ginasios|cacadas|ligas|time|evolucao|shiny|semanais|raid]" :desc "Guias de como jogar, com passos, regras e exemplos; também aceita pokemon <módulo> ajuda"}
    {:emoji "🏛️" :uso "pokemon ginasio [nome|time <1,2,3>|desafiar <nome>|fruta <nome> <1-3>]" :desc "Cinco líderes 3 × 3, motivação, insígnias e pedras"}
@@ -141,7 +142,7 @@
     "status"    (status/status-vm)
     "quiz"      (quiz/jogar message (str/join " " args))
     ("pokemon" "pk") (pokemon/jogar message (str/join " " args))
-    ("pokedex" "dex") (pokedex/buscar message (str/join " " args))
+    ("pokedex" "dex" "pdx") (pokedex/buscar message (str/join " " args))
     ("presente" "presentes") (pokemon/jogar message (str "presente " (str/join " " args)))
     ("missoes" "missões") (pokemon/jogar message (str "missoes " (str/join " " args)))
     "mochila"   (p/resolved (loja/mochila message (first args)))

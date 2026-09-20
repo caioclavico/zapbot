@@ -143,7 +143,8 @@
   "Converte um pokémon (mapa interno do zapbot.pokemon.core, chaves keyword) +
   hp-atual/status pro formato persistido (chaves string) guardado na equipe."
   [pokemon hp-atual status]
-  {"nome" (:nome pokemon) "imagem" (:imagem pokemon) "tipos" (vec (:tipos pokemon))
+  {"id-pokemon" (or (:id-pokemon pokemon) (str (random-uuid)))
+   "nome" (:nome pokemon) "imagem" (:imagem pokemon) "tipos" (vec (:tipos pokemon))
    "altura" (:altura pokemon) "peso" (:peso pokemon)
    "shiny" (boolean (:shiny? pokemon)) "imagem-shiny" (:imagem-shiny pokemon)
    "habilidade" (:habilidade pokemon) "hp" (:hp pokemon) "ataque" (:ataque pokemon)
@@ -267,6 +268,76 @@
   (if (contains? (vec (equipe cid pid)) idx)
     (do (swap! contas assoc-in [cid pid "ativo"] idx) (persistir!) true)
     false))
+
+(defn garantir-id-pokemon!
+  "Garante uma identidade estável ao Pokémon, inclusive em contas antigas."
+  [cid pid idx]
+  (when-let [registro (get (equipe cid pid) idx)]
+    (if (get registro "id-pokemon")
+      registro
+      (let [novo (assoc registro "id-pokemon" (str (random-uuid)))]
+        (swap! contas assoc-in [cid pid "equipe" idx] novo)
+        (persistir!)
+        novo))))
+
+(defn favorito [cid pid]
+  (get (conta cid pid) "favorito"))
+
+(defn definir-favorito!
+  "Marca o Pokémon pelo ID estável e o torna ativo se estiver saudável."
+  [cid pid idx]
+  (when-let [registro (garantir-id-pokemon! cid pid idx)]
+    (swap! contas update-in [cid pid]
+           #(cond-> (assoc % "favorito" {"id" (get registro "id-pokemon")
+                                         "nome" (get registro "nome")})
+              (pos? (get registro "hp-atual" 0)) (assoc "ativo" idx)))
+    (persistir!)
+    registro))
+
+(defn remover-favorito! [cid pid]
+  (swap! contas update-in [cid pid] dissoc "favorito")
+  (persistir!))
+
+(defn ativar-favorito-se-disponivel!
+  "Ativa o favorito quando ele reaparece na equipe com HP."
+  [cid pid]
+  (when-let [id (get (favorito cid pid) "id")]
+    (when-let [idx (first (keep-indexed
+                           (fn [i registro]
+                             (when (and (= id (get registro "id-pokemon"))
+                                        (pos? (get registro "hp-atual" 0))) i))
+                           (equipe cid pid)))]
+      (swap! contas assoc-in [cid pid "ativo"] idx)
+      (persistir!)
+      idx)))
+
+(defn times-prontos [cid pid]
+  (get (conta cid pid) "times-prontos" {}))
+
+(defn salvar-time-pronto!
+  "Salva uma escalação nomeada por IDs; não reserva nem remove Pokémon."
+  [cid pid nome indices]
+  (when (and (seq nome) (= 3 (count indices)) (= 3 (count (set indices)))
+             (every? #(get (equipe cid pid) %) indices))
+    (let [registros (mapv #(garantir-id-pokemon! cid pid %) indices)
+          ids (mapv #(get % "id-pokemon") registros)]
+      (swap! contas assoc-in [cid pid "times-prontos" nome]
+             {"nome" nome "pokemons" ids})
+      (persistir!)
+      registros)))
+
+(defn indices-time-pronto [cid pid nome]
+  (when-let [ids (get-in (times-prontos cid pid) [nome "pokemons"])]
+    (let [por-id (into {} (keep-indexed (fn [idx r]
+                                          (when-let [id (get r "id-pokemon")] [id idx]))
+                                        (equipe cid pid)))]
+      (mapv por-id ids))))
+
+(defn excluir-time-pronto! [cid pid nome]
+  (when (get (times-prontos cid pid) nome)
+    (swap! contas update-in [cid pid "times-prontos"] dissoc nome)
+    (persistir!)
+    true))
 
 (defn equipar-item!
   "Equipa item no Pokémon do índice informado e retorna o item anterior.
@@ -517,6 +588,7 @@
                             ;; deve poder ser usado imediatamente.
                             "ativo" (if (empty? equipe-atual) 0 (get c "ativo" 0))))))
         (persistir!)
+        (ativar-favorito-se-disponivel! cid pid)
         curados))))
 
 (defn enviar-ferido-para-enfermaria!
@@ -779,12 +851,7 @@
   (ganhar-xp-no-indice! cid pid (indice-ativo cid pid) quantidade))
 
 (defn registro-para-raid! [cid pid idx]
-  (when-let [registro (get (equipe cid pid) idx)]
-    (if (get registro "id-pokemon") registro
-        (let [novo (assoc registro "id-pokemon" (str (random-uuid)))]
-          (swap! contas assoc-in [cid pid "equipe" idx] novo)
-          (persistir!)
-          novo))))
+  (garantir-id-pokemon! cid pid idx))
 
 (defn resgatar-xp-raids! [cid pid]
   (vec (for [[id quantidade] (get (conta cid pid) "xp-raids-pendente" {})

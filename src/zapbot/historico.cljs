@@ -16,6 +16,7 @@
 
 (defonce ^:private historicos (atom {}))
 (defonce ^:private participantes (atom (or (armazenamento/obter "participantes") {})))
+(defonce ^:private fila-registros (atom (p/resolved nil)))
 (armazenamento/registrar! "participantes" participantes)
 
 (defn- chat-id [message]
@@ -36,25 +37,41 @@
   registra quem mandou como participante conhecido do chat."
   [message]
   (when-not (str/blank? (.-body message))
-    (-> (rotulo-autor message)
-        (p/then (fn [autor]
-                  (let [id   (chat-id message)
-                        ;; O horário permite que !resuma filtre o trecho pedido,
-                        ;; sem transformar o histórico em armazenamento persistente.
-                        item {:autor autor :corpo (.-body message) :em (.now js/Date)}]
-                    (swap! historicos update id
-                           (fn [msgs] (vec (take-last limite-por-chat (conj (or msgs []) item)))))
-                    (when-not (.-fromMe message)
-                      (swap! participantes update id
-                             (fnil assoc {}) (participante-id message) autor)
-                      (armazenamento/salvar! "participantes" @participantes)))))
-        (p/catch (fn [_] nil)))))
+    (let [registro (-> @fila-registros
+                       (p/catch (fn [_] nil))
+                       (p/then (fn [_] (rotulo-autor message)))
+                       (p/then (fn [autor]
+                                 (let [id   (chat-id message)
+                                       ;; O horário permite que !resuma filtre o trecho pedido,
+                                       ;; sem transformar o histórico em armazenamento persistente.
+                                       item {:id (some-> message .-id .-_serialized)
+                                             :autor autor :corpo (.-body message) :em (.now js/Date)}]
+                                   (swap! historicos update id
+                                          (fn [msgs] (vec (take-last limite-por-chat (conj (or msgs []) item)))))
+                                   (when-not (.-fromMe message)
+                                     (swap! participantes update id
+                                            (fnil assoc {}) (participante-id message) autor)
+                                     (armazenamento/salvar! "participantes" @participantes)))))
+                       (p/catch (fn [_] nil)))]
+      (reset! fila-registros registro)
+      registro)))
 
 
 (defn obter
   "Retorna o histórico (vetor de {:autor :corpo}) do chat da mensagem dada."
   [message]
   (get @historicos (chat-id message) []))
+
+(defn mensagem-anterior
+  "Retorna a mensagem que precedeu `message` no histórico do chat. Exclui a
+  própria mensagem pelo ID quando ela já tiver sido registrada pelo listener."
+  [message]
+  (let [id-atual (some-> message .-id .-_serialized)
+        itens (obter message)
+        itens (if id-atual
+                (remove #(= id-atual (:id %)) itens)
+                (if (= (.-body message) (:corpo (last itens))) (butlast itens) itens))]
+    (last itens)))
 
 (defn participantes-conhecidos
   "Retorna os participantes conhecidos do chat (vetor de {:id :nome}),

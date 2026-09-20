@@ -13,11 +13,35 @@
    "cacar" :cacadas "cacada" :cacadas "cacadas" :cacadas "cac" :cacadas
    "liga" :ligas "ligas" :ligas "lig" :ligas
    "time" :time "equipe" :time "tm" :time
+   "atalho" :atalhos "atalhos" :atalhos "abreviacoes" :atalhos "abreviacao" :atalhos
    "raid" :raid "raids" :raid "shiny" :shiny "missoes" :semanais "semanais" :semanais
    "evoluir" :evolucao "evolucao" :evolucao "evo" :evolucao})
 
 (defn- guia [assunto]
   (case assunto
+    :atalhos
+    (str "⚡ *Comandos Pokémon abreviados*\n\n"
+         "• `ajd` → esta lista de abreviações\n\n"
+         "*Batalha*\n"
+         "• `atk` → atacar · Ex.: " config/prefix "pk atk 1\n"
+         "• `def` → defender · `cur` → curar\n"
+         "• `pot` → pocao · `pmax` → pocao-maxima · `sai` → sair\n\n"
+         "*Exploração e coleção*\n"
+         "• `cac` → cacar · `cap` → capturar · `ini` → inicial\n"
+         "• `dex` ou `pdx` → pokedex · `tm` → time · `mch` → mochila\n"
+         "• `fav` → favorito · `tre` → treinador\n\n"
+         "*Ginásio, liga e eventos*\n"
+         "• `gin` → ginasio · `lig` → liga · `evt` → eventos\n"
+         "• Dentro do ginásio: `des` ou `dsf` → desafiar\n"
+         "  Ex.: " config/prefix "pk gin des pedra\n\n"
+         "*Gerenciamento*\n"
+         "• `evo` → evoluir · `neg` → negociar · `doa` → doar\n"
+         "• `eqp` → equipar · `esc` → escolher · `rmg` → removergolpe\n"
+         "• `apr` → aprender · `reap` → reaprender · `rev` → reviver\n"
+         "• `can` → cancelar · `mis` → missoes · `pre` → presente\n\n"
+         "Você pode continuar usando os nomes completos. Consulte os guias com "
+         config/prefix "pk ajuda.")
+
     :batalhas
     (str "⚔️ *Como jogar: batalhas*\n\n"
          "1. Selecione uma liga e escale três Pokémon saudáveis. Veja " (comando "ajuda ligas") ".\n"
@@ -104,6 +128,8 @@
          "• " (comando "time >") ": maior força primeiro; " (comando "time <") ": menor primeiro. A força é a soma dos seis atributos.\n"
          "• Combine filtros: " (comando "time txt fogo >") " ou " (comando "time bronze") ". Os números da coleção não mudam.\n"
          "• " (comando "escolher 2") ": define o ativo; " (comando "time ativo") ": ficha e golpes.\n"
+         "• " (comando "favorito 2") ": marca o favorito, que volta saudável da Joy ou do ginásio como ativo.\n"
+         "• " (comando "time salvar os fodoes 1,4,7") ": salva uma escalação nomeada sem reservar os Pokémon. Liste com " (comando "times") " e aplique com " (comando "time usar os fodoes liga") " ou troque `liga` por `ginasio`.\n"
          "• " (comando "pocao [número]") " recupera 40% do HP; " (comando "pocao-maxima [número]") " recupera tudo. Sem número, cura o ativo. " (comando "curar") " trata status.\n"
          "• " (comando "joy 1,2") ": envia os Pokémon indicados à Enfermeira Joy por 30 minutos. Veja o tempo restante em " (comando "time") ".\n\n"
          "Começando agora? Use " (comando "inicial") ", escolha uma opção e consulte " (comando "ajuda cacadas") " para ampliar sua coleção.")
@@ -143,9 +169,10 @@
   (let [tokens (-> (or args "") str/lower-case (.normalize "NFD")
                    (str/replace #"[\u0300-\u036f]" "") str/trim (str/split #"\s+"))
         [primeiro segundo] tokens
-        ajuda? #{"ajuda" "help" "?"}]
-    (when (or (ajuda? primeiro) (ajuda? segundo))
-      (let [tema (if (ajuda? primeiro) segundo primeiro)
+        ajuda? #{"ajuda" "help" "?"}
+        atalho-direto? (= "ajd" primeiro)]
+    (when (or atalho-direto? (ajuda? primeiro) (ajuda? segundo))
+      (let [tema (if atalho-direto? "atalhos" (if (ajuda? primeiro) segundo primeiro))
             assunto (get assuntos tema)]
         (str (when (and (seq tema) (nil? assunto)) "❓ Não encontrei esse módulo. Escolha um dos guias abaixo.\n\n")
              (guia assunto))))))
