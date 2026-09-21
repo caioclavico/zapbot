@@ -9,8 +9,10 @@
 
 (def ^:private assuntos
   {"batalha" :batalhas "batalhas" :batalhas "pvp" :batalhas
+   "atacar" :ataques "ataque" :ataques "atk" :ataques
    "ginasio" :ginasios "ginasios" :ginasios "gin" :ginasios
    "cacar" :cacadas "cacada" :cacadas "cacadas" :cacadas "cac" :cacadas
+   "capturar" :captura "captura" :captura "cap" :captura "pokebola" :captura
    "liga" :ligas "ligas" :ligas "lig" :ligas
    "time" :time "equipe" :time "tm" :time
    "atalho" :atalhos "atalhos" :atalhos "abreviacoes" :atalhos "abreviacao" :atalhos
@@ -52,6 +54,16 @@
          "• Em `bug`: `res` → resolver\n\n"
          "Você pode continuar usando os nomes completos. Consulte os guias com "
          config/prefix "pk ajuda.")
+
+    :ataques
+    (str "⚔️ *Como usar: atacar e ações de batalha*\n\n"
+         "Na sua vez, escolha um golpe pelo número mostrado na mensagem: " (comando "atacar 1") " ou " config/prefix "pk atk 1. Confira o tipo e a efetividade contra o adversário.\n"
+         "• " (comando "defender") ": tenta esquivar e reduz o dano recebido.\n"
+         "• " (comando "curar") ": usa uma cura da mochila para remover status.\n"
+         "• " (comando "pocao [número]") ": recupera 40% do HP; " (comando "pocao-maxima [número]") " recupera todo o HP. Sem número, usa no Pokémon ativo. Compre itens na " config/prefix "loja.\n"
+         "Essas ações consomem sua vez quando aceitas. No ginásio e na caçada, o adversário responde automaticamente.\n"
+         "Na caçada, você pode trocar uma vez com " (comando "trocar <número>") ", como primeira ação; a troca gasta a vez. No PvP e no ginásio, não há troca manual durante a batalha.\n"
+         "Para desistir: " (comando "sair") ". Consultar esta ajuda não gasta turno.")
 
     :batalhas
     (str "⚔️ *Como jogar: batalhas*\n\n"
@@ -110,13 +122,25 @@
          "Ranking por defesas e tempo: " (comando "ginasio ranking pedra") ". Últimas batalhas: " (comando "ginasio historico pedra") ". Sem nome, mostra todos os ginásios. Defesas começam a ser registradas nesta atualização.\n"
          "Para recuperar o time, consulte " (comando "ajuda time") ".")
 
+    :captura
+    (str "🎯 *Como jogar: captura*\n\n"
+         "Derrote o selvagem e escolha uma bola da mochila:\n"
+         "• " (comando "capturar pokebola") "\n"
+         "• " (comando "capturar grande-bola") "\n"
+         "• " (comando "capturar ultra-bola") "\n\n"
+         "O menu mostra o estoque e a chance de cada bola. Cada lançamento consome uma bola. São até três tentativas: o Pokémon pode fugir após uma falha e foge após a terceira.\n"
+         "✨ Capturar na primeira tentativa dá +1 XP extra ao Pokémon ativo, além do XP de raridade e do bônus de sequência. Comando inválido ou falta de bola não conta como tentativa.\n"
+         "Você tem 5 minutos para agir. Para desistir: " (comando "sair") ".\n"
+         "Sem bolas? Compre na " config/prefix "loja ou use " config/prefix "mochila kit, "
+         config/prefix "mochila diario e " config/prefix "mochila resgatar. Missões e nocautes no PvP também dão bolas.")
+
     :cacadas
     (str "🌿 *Como jogar: caçadas*\n\n"
          "1. Escolha seu inicial com " (comando "inicial") ". Confira as bolas em " (comando "mochila") " e os itens em " config/prefix "loja.\n"
          "2. Use " (comando "time") " e " (comando "escolher 1") " para definir um Pokémon com HP.\n"
          "3. Consulte clima e áreas com " (comando "clima") ". Três áreas ficam disponíveis por dia; escolha, por exemplo, com " (comando "cacar floresta") ". O clima aumenta os encontros de tipos favorecidos.\n"
          "4. Derrote o selvagem usando " (comando "atacar 1") ". Depois escolha uma bola no menu: " (comando "capturar pokebola") ".\n\n"
-         "A captura exige uma bola da mochila e pode falhar. Há até três tentativas, mas o selvagem pode fugir antes.\n"
+         "A captura exige uma bola da mochila e pode falhar. Há até três tentativas, mas o selvagem pode fugir antes. Capturar de primeira dá +1 XP extra. Veja as regras em " (comando "capturar ajuda") ".\n"
          "Cada encontro tem chance de 1 em 512 de ser ✨ Shiny: cores especiais, mesmos atributos. Avistamentos, maiores níveis e primeiros shiny ficam em " (comando "pokedex descobertas") ".\n"
          "Durante o combate, é permitida uma troca de Pokémon com " (comando "escolher <número>") "; ela gasta sua ação.\n"
          "Só pode haver uma batalha ou caçada por vez no chat. Respeite o intervalo informado entre caçadas e aja em até 5 minutos. " (comando "sair") " abandona a caçada.")
@@ -163,9 +187,11 @@
          config/prefix "pk pot, " config/prefix "pk cac, " config/prefix "pk gin, "
          config/prefix "pk lig, " config/prefix "pk tm e " config/prefix "pk dex.\n\n"
          (str/join "\n" (map (fn [[nome titulo]] (str "• " (comando (str "ajuda " nome)) " — " titulo))
-                               [["batalhas" "turnos, golpes e vitória"]
+                               [["ataque" "golpes, defesa, curas e poções"]
+                                ["batalhas" "turnos, golpes e vitória"]
                                 ["ginasios" "líderes, insígnias e recompensas"]
                                 ["cacadas" "selvagens e captura"]
+                                ["captura" "Pokébolas, tentativas e bônus de XP"]
                                 ["ligas" "faixas de nível e escalação"]
                                 ["time" "filtros, ativo e recuperação"]
                                 ["shiny" "coleção histórica e fotos"]

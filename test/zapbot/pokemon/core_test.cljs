@@ -98,7 +98,25 @@
 (deftest bonus-das-bolas-respeita-o-limite
   (is (= 70 (core/chance-com-bola 70 "pokebola")))
   (is (= 88 (core/chance-com-bola 70 "grande-bola")))
-  (is (= 95 (core/chance-com-bola 70 "ultra-bola"))))
+    (is (= 95 (core/chance-com-bola 70 "ultra-bola"))))
+
+(deftest captura-de-primeira-concede-xp-extra-apenas-no-sucesso
+  (let [creditado (atom nil)]
+    (with-redefs [treinador/sequencia-capturas (fn [_ _] 0)
+                  treinador/registrar-captura! (fn ([_ _ _] 1) ([_ _ _ _] 1))
+                  treinador/quebrar-sequencia-capturas! (fn [_ _] nil)
+                  treinador/bonus-xp-sequencia-capturas (fn [_] 2)
+                  treinador/ganhar-xp! (fn [_ _ xp] (reset! creditado xp) nil)
+                  loja/registrar-semanal! (fn [_ _ _ _] nil)
+                  loja/creditar-quantia! (fn [_ _ _] nil)]
+      (doseq [[falhas capturou? xp bonus] [[0 true 5 1] [1 true 4 0] [2 true 4 0]
+                                        [0 false 1 0] [2 false 1 0]]]
+        (let [resultado (core/encerrar-cacada!
+                         "teste-xp-captura" "ash"
+                         {:tentativas-captura falhas :pokemons {:o {:raridade "comum"}}}
+                         capturou?)]
+          (is (= xp (:xp resultado) @creditado))
+          (is (= bonus (:bonus-primeira resultado))))))))
 
 (deftest barra-de-hp-nao-exibe-valor-negativo
   (is (= "[█████░░░░░] 50/100" (core/barra-hp 50 100)))
@@ -452,6 +470,16 @@
     (let [psiquico (core/svg-sobreposicao-batalha "golpe" false {:tipo "psychic"})]
       (is (str/includes? psiquico "#e879f9"))
       (is (str/includes? psiquico "M380 210C380 178")))))
+
+(deftest menu-de-golpes-nao-cria-efeitos-de-status
+  (let [texto "🔄 Brock envia *Onix*!\n\n🐾 Ash - Abra\nVez de Ash\n1. Confusão\n2. Faz o rival dormir"
+        svg (core/svg-sobreposicao-batalha texto false nil false)]
+    (is (not (str/includes? svg "#f472b6")))
+    (is (not (str/includes? svg ">Z</text>")))
+    (is (not (str/includes? svg "r='72'"))))
+  (is (str/includes? (core/svg-sobreposicao-batalha
+                      "Onix ficou confuso!\n\n🐾 Ash - Abra" false nil false)
+                    "#f472b6")))
 
 (deftest golpes-da-rodada-ficam-lado-a-lado-e-escalam-com-dano
   (let [fraco (core/svg-golpe-posicionado {:tipo "fire" :origem :x :dano 10})

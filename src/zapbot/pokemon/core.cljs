@@ -902,9 +902,7 @@
                 (when-not ginasio (str " (@" (so-numero (get jogadores vez)) ")"))
                 " - escolha um golpe:\n"
                 (menu-golpes meu (:tipos adversario) (:habilidade adversario))
-                "\n\nUse " config/prefix "pokemon atacar <número>, defenda com " config/prefix
-                "pokemon defender, cure um status com " config/prefix "pokemon curar, ou recupere HP com "
-                config/prefix "pokemon pocao (compre curas/poções na " config/prefix "loja)")))))
+                "\n\n📖 Ações de batalha: " config/prefix "pk atacar ajuda")))))
 
 ;; comandos normais do router resolvem uma string simples (ver zapbot.core);
 ;; aqui a gente precisa marcar quem tem que jogar, então resolve um mapa
@@ -1865,8 +1863,10 @@
   ([texto shiny? efeito mostrar-entrada?]
   (let [texto (or texto "")
         efeitos (cond (nil? efeito) [] (sequential? efeito) efeito :else [efeito])
-        sono? (str/includes? (str/lower-case texto) "dorm")
-        confuso? (str/includes? (str/lower-case texto) "confus")
+        ;; Nomes/descrições no menu de golpes não são eventos da rodada.
+        eventos (first (str/split texto #"(?:^|\n)(?:🐾 |Escolha:|Vez de )" 2))
+        sono? (str/includes? (str/lower-case eventos) "dorm")
+        confuso? (str/includes? (str/lower-case eventos) "confus")
         desmaio? (boolean (re-find #"(?i)(desmaiou|caiu por causa|caiu com o recuo)" texto))
         entrada? (and mostrar-entrada?
                       (boolean (re-find #"(?i)(envia \*|entrou na batalha)" texto)))]
@@ -3665,10 +3665,7 @@
          (barra-hp (get-in caca [:hp :o]) (:hp selvagem)) "\n\n"
          "Escolha: " config/prefix "pokemon atacar <1-" (count (:golpes meu)) ">\n"
          (menu-golpes meu (:tipos selvagem) (:habilidade selvagem))
-         "\n\nVocê também pode usar " config/prefix "pokemon defender, " config/prefix
-         "pokemon curar, " config/prefix "pokemon pocao, "
-         (when-not (:acao-realizada? caca) (str config/prefix "pokemon trocar <número>, "))
-         "ou " config/prefix "pokemon sair.")))
+         "\n\n📖 Ações de batalha: " config/prefix "pk atacar ajuda.")))
 
 (defn- encerrar-cacada! [cid pid caca capturou?]
   (let [selvagem      (get-in caca [:pokemons :o])
@@ -3678,7 +3675,8 @@
                          (treinador/registrar-captura! cid pid selvagem (:nome-treinador caca))
                          (do (treinador/quebrar-sequencia-capturas! cid pid) 0))
         bonus-seq      (if capturou? (treinador/bonus-xp-sequencia-capturas sequencia) 0)
-        xp             (if capturou? (+ (get xp-base-raridade raridade 2) bonus-seq) 1)
+        bonus-primeira (if (and capturou? (zero? (get caca :tentativas-captura 0))) 1 0)
+        xp             (if capturou? (+ (get xp-base-raridade raridade 2) bonus-seq bonus-primeira) 1)
         moedas         (if capturou? (+ 2 (min 10 sequencia)) 0)
         subida         (treinador/ganhar-xp! cid pid xp)]
     (swap! cacadas-selvagens dissoc cid)
@@ -3687,7 +3685,7 @@
     (when subida
       (-> (verificar-evolucao! (:message caca) cid pid)
           (p/then (fn [_] (aprender-golpe-por-nivel! (:message caca) cid pid (:nivel subida))))))
-    {:xp xp :bonus-xp bonus-seq :moedas moedas :subida subida :sequencia sequencia :sequencia-anterior sequencia-ant}))
+    {:xp xp :bonus-xp bonus-seq :bonus-primeira bonus-primeira :moedas moedas :subida subida :sequencia sequencia :sequencia-anterior sequencia-ant}))
 
 (defn- chance-com-bola [chance-base bola]
   (let [{:keys [multiplicador-captura limite-captura]} (loja/dados-item bola)]
@@ -3700,13 +3698,8 @@
                    (str (:emoji item) " " (:nome item) " — "
                         (loja/quantidade-item cid pid bola) " disponível(is) — "
                         (chance-com-bola (:chance-base-captura caca) bola) "% de chance")))
-       "\n\nUse " config/prefix "pokemon capturar <pokebola|grande-bola|ultra-bola>."
-       "\nTentativas restantes: " (- 3 (get caca :tentativas-captura 0)) " de 3."
-       "\nA bola é consumida a cada lançamento. O Pokémon pode fugir após uma falha e foge após a terceira."
-       "\nVocê tem 5 minutos."
-       "\nSem bolas? Use " config/prefix "mochila kit, " config/prefix "mochila diario, "
-       config/prefix "mochila resgatar ou cumpra missões e consiga nocautes no PvP."
-       "\nPara desistir: " config/prefix "pokemon sair."))
+       "\n\nTentativas restantes: " (- 3 (get caca :tentativas-captura 0)) " de 3."
+       "\n📖 Como capturar e obter bolas: " config/prefix "pk cap ajuda."))
 
 (defn- preparar-captura-pos-batalha [cid pid caca]
   (let [selvagem (get-in caca [:pokemons :o])
@@ -3749,7 +3742,10 @@
                   "\n📚 Registrado na Pokédex e adicionado ao time como nº " (inc idx) "."
                   "\n🔥 Sequência de capturas: " (:sequencia recompensa)
                   "\n✨ +" (:xp recompensa) " XP (raridade +"
-                  (- (:xp recompensa) (:bonus-xp recompensa)) " • sequência +" (:bonus-xp recompensa)
+                  (- (:xp recompensa) (:bonus-xp recompensa) (:bonus-primeira recompensa))
+                  " • sequência +" (:bonus-xp recompensa)
+                  (when (pos? (:bonus-primeira recompensa))
+                    (str " • primeira tentativa +" (:bonus-primeira recompensa)))
                   ") • +" (:moedas recompensa) " moedas"
                   (when-let [subida (:subida recompensa)]
                     (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!" (aviso-saida-liga subida)))))

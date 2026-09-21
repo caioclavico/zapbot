@@ -17,7 +17,9 @@
    "20/09 — A derrota no ginásio preserva o último golpe e o dano causado pelo líder"
    "20/09 — O reserva do líder age automaticamente após recuo/status; !pk bug não avança a batalha"
    "20/09 — Só ações válidas do desafiante acionam o líder; comandos simultâneos aguardam a rodada terminar"
-   "20/09 — NPCs de ginásio não exibem mais o coração de motivação dos defensores de jogadores"])
+   "20/09 — NPCs de ginásio não exibem mais o coração de motivação dos defensores de jogadores"
+   "20/09 — Captura de primeira dá +1 XP extra; instruções das Pokébolas em !pk cap ajuda"
+   "20/09 — Rodapés de batalha mais curtos com !pk atacar ajuda; menu de golpes não cria efeitos de status"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

@@ -3,6 +3,12 @@
             [clojure.string :as str]
             [zapbot.pokemon.ajuda :as ajuda]))
 
+(deftest ajuda-de-ataque-aceita-comando-e-atalho
+  (let [texto (ajuda/resposta "atacar ajuda")]
+    (is (str/includes? texto "Como usar: atacar"))
+    (is (= texto (ajuda/resposta "atk ajuda") (ajuda/resposta "ajuda ataque")))
+    (is (nil? (ajuda/resposta "atacar 1")))))
+
 (deftest ajd-exibe-todos-os-atalhos-pokemon
   (let [texto (ajuda/resposta "ajd")]
     (is (str/includes? texto "Comandos Pokémon abreviados"))
