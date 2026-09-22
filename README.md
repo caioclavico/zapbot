@@ -802,7 +802,7 @@ A consulta funciona durante partidas sem gastar turno nem acionar o líder.
 - Atalhos adicionais: `!pk pdx` para a Pokédex e `!pk gin des pedra` para desafiar o ginásio.
 - `!pk ajd` exibe em uma única página todos os comandos Pokémon abreviados; `!pk ajuda atalhos` é equivalente.
 - Atalhos também funcionam em subcomandos, por exemplo `!pk tm usa os fodoes gin`, `!pk lig tm`, `!pk gin hist pedra` e `!pk raid atk 1`.
-### Captura e mensagens de batalha — próxima atualização
+### Captura e mensagens de batalha (0.15.5)
 
 - Rodapés de luta resumidos com `!pk atacar ajuda` para ataques, defesa, curas e poções. Nomes e descrições no menu de golpes não geram efeitos visuais de status.
 
