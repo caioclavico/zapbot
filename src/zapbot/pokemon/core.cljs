@@ -222,7 +222,8 @@
 ;; Definidas mais abaixo, mas usadas por rotinas de evolução/enfermaria.
 (declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado
          parse-indice-golpe estado-cacada turno-selvagem escalar-nivel com-raridade expandir-atalho
-         enviar-cartao-evento! enviar-cartao-evolucao! aplicar-sobreposicao-batalha escapar-xml baixar-buffer)
+         enviar-cartao-evento! enviar-cartao-evolucao! aplicar-sobreposicao-batalha escapar-xml baixar-buffer
+         evolucoes-pendentes)
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -592,6 +593,8 @@
   (cond
     (treinador/inicial-disponivel? cid pid)
     (str "🌟 Escolha seu Pokémon inicial: " config/prefix "pokemon inicial.")
+    (seq (treinador/pc cid pid))
+    (str "💻 Seus Pokémon estão com o professor. Retire um com " config/prefix "pk pc retirar <número>. Consulte " config/prefix "pk pc.")
     (seq (ginasios/liderados cid pid))
     (str "🏛️ Você tem Pokémon reservados nos ginásios. Eles ficam inativos até outro treinador derrubar você. Consulte "
          config/prefix "pokemon ginasio. Para usar outros Pokémon disponíveis, consulte " config/prefix "pokemon time.")
@@ -2170,7 +2173,7 @@
            ocupado? "🚫 Termine ou saia da batalha antes de aplicar outra escalação."
            (nil? (get times nome)) (str "❓ Escalação *" nome "* não encontrada. Use " config/prefix "pk times.")
            (or (not= 3 (count indices)) (some nil? indices))
-           "🚫 Um ou mais Pokémon dessa escalação estão na Joy, em um ginásio ou não pertencem mais ao treinador."
+           "🚫 Um ou mais Pokémon dessa escalação estão no PC (retire-os primeiro), na Joy, em um ginásio ou não pertencem mais ao treinador."
            (contains? #{"ginasio" "ginásio"} destino)
            (do (treinador/salvar-time-ginasio! cid pid indices)
                (str "🏛️ Escalação *" nome "* preparada para o ginásio. Nenhum Pokémon foi reservado agora."))
@@ -2220,7 +2223,7 @@
          (if-let [registro (when (some? idx) (treinador/definir-favorito! cid pid idx))]
            (str "⭐ *" (get registro "nome") "* agora é seu favorito"
                 (when (pos? (get registro "hp-atual" 0)) " e também ficou ativo")
-                ". Ao voltar saudável da Joy ou do ginásio, será ativado automaticamente.")
+                ". Ao voltar saudável para a equipe, será ativado automaticamente. Se ela estiver cheia, consulte o PC.")
            (str "❓ Pokémon inválido. Veja os números com " config/prefix "pk time.")))))))
 
 (defn- iniciar-ou-entrar-atualizado [message]
@@ -2573,7 +2576,7 @@
              (if (seq enviados)
                (str (cabecalho) "🏥 A Enfermeira Joy recebeu "
                     (str/join ", " (map #(str "*" (get % "nome") "*") (reverse enviados))) ".\n"
-                    "Eles voltarão totalmente curados em " treinador/tempo-tratamento-minutos " minutos.\n\n"
+                    "Eles voltarão totalmente curados para a equipe (ou para o PC se estiver cheia) em " treinador/tempo-tratamento-minutos " minutos.\n\n"
                     "Pokémon já saudáveis foram ignorados. Use " config/prefix
                     "pokemon time para acompanhar o retorno.")
                (if tem-ferido?
@@ -3611,6 +3614,84 @@
          (str (cabecalho) (:emoji dados) " *" (:nome dados) "* equipado em *" pokemon "*!"
               (when anterior " O item anterior voltou para o inventário.")))))))
 
+(defn- ocupacao-pokemon [cid pid]
+  (+ (treinador/quantidade-guardada cid pid)
+     (reduce + 0 (map #(count (get (second %) "time")) (ginasios/liderados cid pid)))))
+
+(defn- cabe-pokemon? [cid pid]
+  (< (ocupacao-pokemon cid pid) (loja/capacidade-pokemon cid pid)))
+
+(defn- estoque-cheio []
+  (str "💻 Estoque Pokémon cheio. Libere uma vaga por doação ou compre +10 vagas com "
+       config/prefix "pk pc comprar. Consulte " config/prefix "pk pc."))
+
+(defn- ocupado-pc? [cid pid]
+  (or (jogador-na-batalha? (get @jogos cid) pid)
+      (= pid (:pid (get @cacadas-selvagens cid)))
+      (contains? @evolucoes-pendentes [cid pid])
+      (get @remocoes-pendentes [cid pid])))
+
+(defn- indice-pc [texto total]
+  (when (re-matches #"[1-9][0-9]*" (or texto ""))
+    (parse-indice-golpe texto total)))
+
+(defn- comando-pc [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        [acao numero numero-equipe] args
+        ocupado? (ocupado-pc? cid pid)
+        _ (when-not ocupado? (treinador/migrar-pc! cid pid))
+        banco (vec (treinador/pc cid pid))
+        eq (treinador/equipe cid pid)
+        capacidade (loja/capacidade-pokemon cid pid)
+        quantidade (ocupacao-pokemon cid pid)
+        linha (fn [i r] (str (inc i) ". " (get r "nome") " Nv." (get r "nivel" 1)
+                             " • HP " (get r "hp-atual") "/" (get r "hp")
+                             (when (and (get r "id-pokemon")
+                                        (= (get r "id-pokemon") (get (treinador/favorito cid pid) "id"))) " ⭐")))]
+    (case acao
+      "ver"
+      (if-let [r (get banco (indice-pc numero (count banco)))]
+        (let [[pokemon hp status] (treinador/registro->pokemon r)]
+          (str "💻 *" (:nome pokemon) "* Nv." (:nivel pokemon)
+               "\nHP " hp "/" (:hp pokemon) (emoji-status status)
+               "\n" (texto-xp r)
+               (when-let [item (texto-item pokemon)] (str "\nItem: " item))
+               "\n\n" (menu-golpes pokemon [] nil)))
+        "❓ Número inválido. Consulte !pk pc.")
+      "comprar"
+      (let [{:keys [status preco capacidade]} (loja/comprar-espaco-pc! cid pid)]
+        (if (= status :ok)
+          (str "✅ +10 vagas Pokémon por " preco " moedas! Capacidade total: " capacidade ".")
+          (str "💰 Moedas insuficientes. A próxima expansão custa " preco " moedas.")))
+      ("depositar" "retirar" "trocar")
+      (if ocupado?
+        "🚫 Termine a batalha, caçada ou alteração pendente antes de movimentar Pokémon no PC."
+        (let [idx (indice-pc numero (if (= acao "depositar") (count eq) (count banco)))
+              outro (indice-pc numero-equipe (count eq))]
+          (cond
+            (or (nil? idx) (and (= acao "trocar") (nil? outro)))
+            (str "❓ Use " config/prefix "pk pc " acao " <número>"
+                 (when (= acao "trocar") " <número da equipe>") ". Veja os números em !pk pc e !pk time.")
+            (and (= acao "retirar") (>= (count eq) 6))
+            "👥 Equipe cheia (6/6). Use !pk pc trocar <número do PC> <número da equipe>."
+            (treinador/mover-pc! cid pid (keyword acao) idx outro)
+            "✅ Pokémon movimentado. Confira os novos números em !pk pc e !pk time."
+            :else "❓ Não foi possível movimentar esse Pokémon.")))
+      (if (or (nil? acao) (= acao "listar") (re-matches #"[1-9][0-9]*" (or acao "")))
+        (let [pagina (if (re-matches #"[1-9][0-9]*" (or acao "")) (js/parseInt acao 10) 1)
+              inicio (* 20 (dec pagina))]
+          (str "💻 *PC do Centro Pokémon — Professor*\n"
+               "Equipe: " (count eq) "/6 • PC: " (count banco) "\n"
+               "Estoque total: " quantidade "/" capacidade " (inclui Joy e ginásios)."
+               (when (> quantidade capacidade) "\n⚠️ Excedente preservado. Novas aquisições bloqueadas até liberar/comprar vagas.")
+               "\nPróxima expansão: +10 vagas por " (loja/preco-expansao-pc cid pid) " moedas.\n\n"
+               (if (seq banco)
+                 (str "Página " pagina "/" (js/Math.ceil (/ (count banco) 20)) "\n"
+                      (str/join "\n" (map-indexed #(linha (+ inicio %1) %2) (take 20 (drop inicio banco)))))
+                 "Nenhum Pokémon guardado com o professor.")
+               "\n\n📖 Comandos: " config/prefix "pk pc ajuda"))
+        "❓ Use !pk pc ajuda."))))
+
 (defn- doar [message indice-texto]
   (let [cid   (chat-id message)
         pid   (jogador-id message)
@@ -3635,8 +3716,15 @@
                     (= alvo pid)
                     (str (cabecalho) "❓ Você não pode doar um pokémon pra si mesmo.")
 
+                    (or (ocupado-pc? cid pid) (ocupado-pc? cid alvo))
+                    "🚫 Ambos precisam estar fora de combate e de alterações pendentes para doar."
+
+                    (not (cabe-pokemon? cid alvo))
+                    "💻 O destinatário está sem espaço Pokémon. Ele precisa liberar ou comprar vagas no PC."
+
                     :else
-                    (let [registro      (nth (treinador/equipe cid pid) indice)
+                    (let [_ (treinador/migrar-pc! cid alvo)
+                          registro      (nth (treinador/equipe cid pid) indice)
                           [pokemon _ _] (treinador/registro->pokemon registro)]
                       (treinador/remover-pokemon! cid pid indice)
                       (treinador/receber-doacao! cid alvo registro)
@@ -3722,6 +3810,7 @@
        (not (:aguardando-captura? caca)) "⚔️ Derrote o Pokémon selvagem antes de capturar."
        (empty? args) (menu-captura cid pid caca)
        (not (some #{bola} loja/bolas)) (str "❓ Bola desconhecida." (menu-captura cid pid caca))
+       (not (cabe-pokemon? cid pid)) (estoque-cheio)
        (not (loja/consumir-bola! cid pid bola))
        (str "🎒 Você não tem essa bola. Escolha outra ou compre na loja." (menu-captura cid pid caca))
        :else
@@ -3736,10 +3825,12 @@
                           (encerrar-cacada! cid pid caca capturou?))
              nome-bola (:nome (loja/dados-item bola))]
          (if capturou?
-           (let [idx (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil)
+           (let [{:keys [destino indice]} (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil)
                  aviso-missao (loja/registrar-missao! cid pid "capturas" (treinador/nivel-jogador cid pid))]
              (str "✅ " nome-bola " lançada: captura concluída! (" chance "% de chance)" aviso-missao
-                  "\n📚 Registrado na Pokédex e adicionado ao time como nº " (inc idx) "."
+                  "\n📚 Registrado na Pokédex e "
+                  (if (= destino :pc) "guardado com o professor no PC como nº " "adicionado ao time como nº ")
+                  (inc indice) "."
                   "\n🔥 Sequência de capturas: " (:sequencia recompensa)
                   "\n✨ +" (:xp recompensa) " XP (raridade +"
                   (- (:xp recompensa) (:bonus-xp recompensa) (:bonus-primeira recompensa))
@@ -3961,6 +4052,9 @@
 
       (not (treinador/tem-pokemon? cid pid))
       (p/resolved (orientacao-equipe cid pid))
+
+      (not (cabe-pokemon? cid pid))
+      (p/resolved (estoque-cheio))
 
       (not (treinador/pode-cacar? cid pid))
       (p/resolved (str (cabecalho) "⏳ Calma aí! Você pode caçar de novo em "
@@ -4894,8 +4988,10 @@
                                            (get (treinador/equipe cid b) ib))
             (do (swap! propostas-troca dissoc chave)
                 "⚠️ Um Pokémon mudou ou a proposta expirou. Crie uma nova proposta.")
-            (if-not (treinador/trocar-registros! cid a ia registro-a b ib registro-b)
-              "⚠️ Os Pokémon mudaram. Faça uma nova proposta."
+            (if-not (and (<= (ocupacao-pokemon cid a) (loja/capacidade-pokemon cid a))
+                         (<= (ocupacao-pokemon cid b) (loja/capacidade-pokemon cid b))
+                         (treinador/trocar-registros! cid a ia registro-a b ib registro-b))
+              "⚠️ Os Pokémon mudaram ou um treinador está acima da capacidade. Regularize o estoque e faça uma nova proposta."
               (do
                 (swap! propostas-troca dissoc chave)
                 (when evolucao-a
@@ -4974,6 +5070,7 @@
 (defn- ver-colecao-shiny [message]
   (let [cid (chat-id message) pid (jogador-id message)
         registros (concat (treinador/equipe cid pid)
+                          (treinador/pc cid pid)
                           (map #(get % "pokemon") (treinador/em-tratamento cid pid))
                           (mapcat #(get (second %) "time") (ginasios/liderados cid pid)))
         dex (treinador/colecao-shiny! cid pid registros)
@@ -5085,6 +5182,7 @@
   [message args]
   (let [cid          (chat-id message)
         pid          (jogador-id message)
+        _            (when-not (ocupado-pc? cid pid) (treinador/migrar-pc! cid pid))
         _            (treinador/recolher-curados! cid pid)
         _            (when (and (not (some #{pid} (vals (:jogadores (get @jogos cid)))))
                                 (not= pid (:pid (get @cacadas-selvagens cid))))
@@ -5094,6 +5192,8 @@
         cmd          (expandir-atalho cmd-original)]
     (cond
       (contains? #{"bug" "bugs"} cmd) (bugs/comando! message cmd resto)
+      (contains? #{"pc" "computador" "centro"} cmd)
+      (p/resolved (comando-pc message (if (= "pc" (first resto)) (rest resto) resto)))
       (:carregando? (get @jogos cid))
       (p/resolved "⏳ Preparando o ginásio. Aguarde.")
       (contains? @evolucoes-pendentes [cid pid])

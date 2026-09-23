@@ -47,8 +47,9 @@
         (map (fn [[cid jogadores]]
                [cid (into {}
                           (map (fn [[pid conta]]
-                                 [pid (update conta "equipe"
-                                              #(mapv normalizar-xp-registro (or % [])))])
+                                 [pid (-> conta
+                                          (update "equipe" #(mapv normalizar-xp-registro (or % [])))
+                                          (update "pc" #(mapv normalizar-xp-registro (or % []))))])
                                jogadores))])
              (or estado {}))))
 
@@ -73,7 +74,7 @@
   [cid pid]
   (let [c (conta cid pid)]
     (not (or (get c "inicial-escolhido")
-             (seq (get c "equipe")) (seq (get c "enfermaria")) (seq (get c "pokedex"))
+             (seq (get c "equipe")) (seq (get c "pc")) (seq (get c "enfermaria")) (seq (get c "pokedex"))
              (pos? (get c "ultima-cacada" 0)) (pos? (get c "vitorias-treinador" 0))
              (pos? (get c "doacoes-pokemon" 0))))))
 
@@ -505,15 +506,94 @@
         (persistir!)
         nome))))
 
+(defn pc [cid pid] (get (conta cid pid) "pc" []))
+
+(defn quantidade-guardada [cid pid]
+  (+ (count (equipe cid pid)) (count (pc cid pid))
+     (count (get (conta cid pid) "enfermaria" []))))
+
+(defn- guardar-registro [c registro]
+  (let [c (or c conta-vazia)
+        destino (if (< (count (get c "equipe" [])) 6) "equipe" "pc")]
+    (update c destino (fnil conj []) registro)))
+
+(defn migrar-pc!
+  "Migração idempotente; chamar somente fora de combates que referenciam índices."
+  [cid pid]
+  (let [c (conta cid pid) eq (vec (get c "equipe" []))]
+    (when (and (not (get c "pc-migrado")) (seq eq))
+      (let [eq (mapv #(if (get % "id-pokemon") % (assoc % "id-pokemon" (str (random-uuid)))) eq)
+            favorito (first (keep-indexed #(when (= (get-in c ["favorito" "id"]) (get %2 "id-pokemon")) %1) eq))
+            prioridades (concat [(get c "ativo" 0) favorito]
+                                (get c "time-ginasio")
+                                (get-in c ["times-liga" (get c "liga")])
+                                (range (count eq)))
+            escolhidos (if (<= (count eq) 6) (vec (range (count eq)))
+                           (vec (sort (take 6 (distinct (filter #(and (integer? %) (<= 0 %) (< % (count eq))) prioridades))))))
+            por-indice (zipmap escolhidos (range))
+            ajustar #(mapv por-indice %)
+            salvos (reduce (fn [acc [nome indices]]
+                             (if (and (= 3 (count indices)) (every? #(get eq %) indices))
+                               (let [livre (first (remove #(contains? acc %)
+                                                         (cons nome (map #(str nome " " %) (iterate inc 2)))))]
+                                 (assoc acc livre {"nome" livre "pokemons" (mapv #(get (get eq %) "id-pokemon") indices)}))
+                               acc))
+                           (get c "times-prontos" {})
+                           (concat [["ginasio anterior" (get c "time-ginasio")]]
+                                   (map (fn [[id indices]] [(str "liga " id " anterior") indices]) (get c "times-liga"))))
+            novo (-> c
+                     (assoc "pc-migrado" true "equipe" (mapv eq escolhidos)
+                            "pc" (into (vec (get c "pc" []))
+                                       (keep-indexed #(when-not (contains? por-indice %1) %2) eq))
+                            "ativo" (get por-indice (get c "ativo" 0) 0)
+                            "times-prontos" salvos)
+                     (update "time-ginasio" ajustar)
+                     (update "times-liga" #(into {} (map (fn [[id slots]] [id (ajustar slots)]) %))))]
+        (swap! contas assoc-in [cid pid] novo)
+        (persistir!)))))
+
+(defn mover-pc! [cid pid acao idx outro]
+  (let [c (conta cid pid) eq (vec (get c "equipe" [])) banco (vec (get c "pc" []))
+        tirar (fn [v i] (vec (concat (subvec v 0 i) (subvec v (inc i)))))
+        novo (case acao
+               :depositar (when (get eq idx)
+                            (-> (ajustar-times-remocao c idx)
+                                (assoc "equipe" (tirar eq idx)
+                                       "ativo" (let [a (get c "ativo" 0)] (cond (= a idx) 0 (> a idx) (dec a) :else a)))
+                                (update "pc" (fnil conj []) (get eq idx))))
+               :retirar (when (and (< (count eq) 6) (get banco idx))
+                          (-> c (assoc "pc" (tirar banco idx))
+                              (update "equipe" (fnil conj []) (get banco idx))))
+               :trocar (when (and (get banco idx) (get eq outro))
+                         (-> c (assoc-in ["pc" idx] (get eq outro))
+                             (assoc-in ["equipe" outro] (get banco idx))
+                             (update "times-liga" #(into {} (map (fn [[id slots]] [id (mapv (fn [i] (when (not= i outro) i)) slots)]) %)))
+                             (update "time-ginasio" #(mapv (fn [i] (when (not= i outro) i)) %))))
+               nil)]
+    (when novo
+      (swap! contas assoc-in [cid pid] novo)
+      (persistir!) true)))
+
+(defn receber-registro! [cid pid registro]
+  (let [destino (if (< (count (equipe cid pid)) 6) :equipe :pc)]
+    (swap! contas update-in [cid pid] guardar-registro registro)
+    (persistir!)
+    {:destino destino :indice (dec (count (if (= destino :pc) (pc cid pid) (equipe cid pid))))}))
+
+(defn receber-retorno-ginasio! [cid pid registro xp]
+  (receber-registro! cid pid
+                    (if (pos? xp)
+                      (normalizar-xp-registro
+                       (-> (normalizar-xp-registro registro)
+                           (update "amizade" #(min 255 (+ (or % 70) 10)))
+                           (update "xp-desde-nivel" (fnil + 0) xp)))
+                      registro)))
+
 (defn adicionar-pokemon!
   "Acrescenta um pokémon (mapa interno do zapbot.pokemon.core + hp-atual/status)
-  na equipe do jogador nesse chat; se for o primeiro, já fica ativo (índice
-  0) automaticamente. Retorna o índice (0-based) dele na equipe nova."
+  na equipe ou no PC quando a equipe está cheia. Retorna destino e índice."
   [cid pid pokemon hp-atual status]
-  (swap! contas update-in [cid pid]
-         (fn [c] (update (or c conta-vazia) "equipe" conj (pokemon->registro pokemon hp-atual status))))
-  (persistir!)
-  (dec (count (equipe cid pid))))
+  (receber-registro! cid pid (pokemon->registro pokemon hp-atual status)))
 
 (defn receber-inicial!
   "Valida novamente após a consulta à API e registra a escolha junto com o Pokémon."
@@ -533,9 +613,10 @@
   direto na equipe do destinatário, preservando nível/hp-atual/status como
   estavam - usado por !pokemon doar (não reseta o pokémon doado)."
   [cid pid registro]
-  (swap! contas update-in [cid pid] (fn [c] (update (or c conta-vazia) "equipe" conj registro)))
-  (colecao-shiny! cid pid [registro])
-  (persistir!))
+  (let [destino (receber-registro! cid pid registro)]
+    (colecao-shiny! cid pid [registro])
+    (persistir!)
+    destino))
 
 (defn remover-pokemon!
   "Remove o pokémon no índice (0-based) da equipe do jogador, ajustando o
@@ -581,7 +662,8 @@
         (swap! contas update-in [cid pid]
                (fn [c]
                  (let [c (or c conta-vazia)
-                       equipe-nova (into (vec (get c "equipe" [])) curados)]
+                       c (reduce guardar-registro c curados)
+                       equipe-nova (get c "equipe")]
                    (assoc c "enfermaria" em-tratamento
                             "equipe" equipe-nova
                             ;; se a equipe estava vazia, o primeiro que voltou
@@ -777,7 +859,7 @@
                                                             (get registro "raridade" "comum")
                                                             (raridade-por-registro registro))
                                                "capturas" 1}))))
-                       antes (equipe cid pid))]
+                       antes (concat (equipe cid pid) (pc cid pid)))]
     (when (not= antes depois)
       (swap! contas assoc-in [cid pid "pokedex"] depois)
       (persistir!))

@@ -50,6 +50,30 @@
 
 (def preco-reaprender 50)
 
+(defn expansoes-pc [cid pid]
+  (get-in @contas [cid pid "expansoes-pc"] 0))
+
+(defn capacidade-pokemon [cid pid]
+  (+ 26 (* 10 (expansoes-pc cid pid))))
+
+(defn preco-expansao-pc [cid pid]
+  (* 200 (inc (expansoes-pc cid pid))))
+
+(defn comprar-espaco-pc! [cid pid]
+  ;; Saldo e expansão pertencem ao mesmo registro persistido.
+  (let [resultado (volatile! nil)]
+    (swap! contas update-in [cid pid]
+           (fn [c]
+             (let [c (or c {"moedas" 0 "inventario" {}})
+                   n (get c "expansoes-pc" 0)
+                   preco (* 200 (inc n))]
+               (if (< (get c "moedas" 0) preco)
+                 (do (vreset! resultado {:status :sem-moedas :preco preco}) c)
+                 (do (vreset! resultado {:status :ok :preco preco :capacidade (+ 26 (* 10 (inc n)))})
+                     (-> c (update "moedas" - preco) (assoc "expansoes-pc" (inc n))))))))
+    (persistir!)
+    @resultado))
+
 (defn pagar-reaprendizado! [cid pid]
   (when (>= (get-in @contas [cid pid "moedas"] 0) preco-reaprender)
     (swap! contas update-in [cid pid "moedas"] - preco-reaprender)
@@ -505,6 +529,7 @@
          "Veja seus itens e kits grátis com " config/prefix "mochila.\n\n*Catálogo de itens:*\n"
          (str/join "\n" (map (fn [[chave info]] (formatar-item chave info))
                              (remove (fn [[chave _]] (some #{chave} bolas)) itens)))
+         "\n💻 +10 vagas Pokémon — " (preco-expansao-pc cid pid) " moedas: " config/prefix "pk pc comprar."
          "\n📚 Reaprender golpe — " preco-reaprender " moedas. Use " config/prefix "pokemon reaprender."
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"

@@ -14,6 +14,7 @@
    "cacar" :cacadas "cacada" :cacadas "cacadas" :cacadas "cac" :cacadas
    "capturar" :captura "captura" :captura "cap" :captura "pokebola" :captura
    "liga" :ligas "ligas" :ligas "lig" :ligas
+   "pc" :pc "computador" :pc "centro" :pc
    "time" :time "equipe" :time "tm" :time
    "atalho" :atalhos "atalhos" :atalhos "abreviacoes" :atalhos "abreviacao" :atalhos
    "raid" :raid "raids" :raid "shiny" :shiny "missoes" :semanais "semanais" :semanais
@@ -117,7 +118,7 @@
          "A recompensa diária reinicia à meia-noite de São Paulo. Desistir ou deixar a batalha expirar não dá XP.\n"
          "⭐ *PE do treinador:* 6 na primeira vitória, 3 na revanche premiada e 1 na derrota. PE é separado do XP recebido pelos Pokémon.\n"
          "Quem vence assume a liderança. Os três Pokémon ficam fora da coleção disponível, inativos e reservados até outro jogador vencer. A motivação começa em 100%, cai 5 pontos por hora e 12 após cada defesa, enfraquecendo HP e atributos até o mínimo de 20%.\n"
-         "O coração aparece apenas nos defensores de jogadores e mostra a motivação restante; NPCs não têm esse indicador. O líder pode recuperar 40 pontos com " (comando "ginasio pocao pedra 1") ", 20 com " (comando "ginasio fruta pedra 1") " ou tudo com uma fruta dourada. Ao cair, o time volta à coleção com o HP que tinha ao assumir.\n"
+         "O coração aparece apenas nos defensores de jogadores e mostra a motivação restante; NPCs não têm esse indicador. O líder pode recuperar 40 pontos com " (comando "ginasio pocao pedra 1") ", 20 com " (comando "ginasio fruta pedra 1") " ou tudo com uma fruta dourada. Ao ser derrotado, o time retorna desmaiado à equipe ou ao PC se ela estiver cheia.\n"
          "Permanecer mais de 6 horas rende 50 moedas, pagas uma única vez ao ser derrubado. É possível disputar a liderança novamente no mesmo dia, mas a recompensa de vitória continua diária.\n"
          "Ranking por defesas e tempo: " (comando "ginasio ranking pedra") ". Últimas batalhas: " (comando "ginasio historico pedra") ". Sem nome, mostra todos os ginásios. Defesas começam a ser registradas nesta atualização.\n"
          "Para recuperar o time, consulte " (comando "ajuda time") ".")
@@ -156,14 +157,30 @@
          "A ordem da escalação define quem começa e quem entra após cada nocaute. Não há limite adicional de diferença de nível entre times da mesma liga.\n"
          "Confira sua escalação com " (comando "liga time") ". Se um Pokémon sair da faixa ao subir de nível, ajuste o time. Regras de combate: " (comando "ajuda batalhas") ".")
 
+    :pc
+    (str "💻 *PC do Centro Pokémon — Professor*\n\n"
+         "Você leva até 6 Pokémon na equipe. O restante fica com o professor no PC, preservando nível, XP, golpes, itens e HP.\n"
+         "• " (comando "pc") ": lista o PC; use pc 2 para a próxima página.\n"
+         "• " (comando "pc ver <número>") ": consulta os dados de um Pokémon guardado.\n"
+         "• " (comando "pc depositar <número da equipe>") ": guarda um Pokémon.\n"
+         "• " (comando "pc retirar <número do PC>") ": leva para uma vaga livre da equipe.\n"
+         "• " (comando "pc trocar <número do PC> <número da equipe>") ": troca mesmo com equipe cheia.\n"
+         "• " (comando "pc comprar") ": compra +10 vagas. Primeira expansão: 200 moedas; segunda: 400; terceira: 600, e assim por diante.\n\n"
+         "Capacidade inicial total: 26 Pokémon (6 vagas de equipe +20 de reserva). Joy e ginásios também contam; enviar Pokémon para lá não libera espaço. Retornos são sempre preservados e vão ao PC se a equipe estiver cheia.\n"
+         "Equipe cheia envia novas capturas e doações ao PC. Estoque total cheio bloqueia novas caçadas, lançamentos de bolas e doações recebidas antes de consumir recursos. Trocas 1 por 1 são permitidas no limite, mas não acima dele.\n"
+         "Pokémon antigos excedentes não são apagados. Libere espaço por doação ou compre vagas para adquirir mais. Você pode reorganizá-los normalmente fora de combate.\n"
+         "Movimentações do PC ficam bloqueadas durante batalha, caçada, evolução ou remoção pendente de golpe. Listar e comprar vagas continuam disponíveis.\n"
+         "Na migração, priorizamos o ativo, favorito, time de ginásio e liga selecionada; escalações antigas são salvas por identidade. Retire seus membros do PC antes de reutilizá-las. Os números podem mudar após movimentações; confira time e PC.")
+
     :time
     (str "🎒 *Como jogar: time e recuperação*\n\n"
          "• " (comando "time") ": cartões dos seus Pokémon.\n"
+         "A equipe leva até 6 Pokémon. Reserve e retire os demais pelo " (comando "pc") "; veja " (comando "pc ajuda") ".\n"
          "• " (comando "time txt") ": lista completa em texto; " (comando "time csv") ": planilha.\n"
          "• " (comando "time >") ": maior força primeiro; " (comando "time <") ": menor primeiro. A força é a soma dos seis atributos.\n"
          "• Combine filtros: " (comando "time txt fogo >") " ou " (comando "time bronze") ". Os números da coleção não mudam.\n"
          "• " (comando "escolher 2") ": define o ativo; " (comando "time ativo") ": ficha e golpes.\n"
-         "• " (comando "favorito 2") ": marca o favorito, que volta saudável da Joy ou do ginásio como ativo.\n"
+         "• " (comando "favorito 2") ": marca o favorito, que é ativado quando volta saudável para a equipe. Com equipe cheia, procure-o no PC.\n"
          "• " (comando "time salvar os fodoes 1,4,7") ": salva uma escalação nomeada sem reservar os Pokémon. Liste com " (comando "times") " e aplique com " (comando "time usar os fodoes liga") " ou troque `liga` por `ginasio`.\n"
          "• " (comando "pocao [número]") " recupera 40% do HP; " (comando "pocao-maxima [número]") " recupera tudo. Sem número, cura o ativo. " (comando "curar") " trata status.\n"
          "• " (comando "joy 1,2") ": envia os Pokémon indicados à Enfermeira Joy por 30 minutos. Veja o tempo restante em " (comando "time") ".\n\n"
@@ -194,6 +211,7 @@
                                 ["captura" "Pokébolas, tentativas e bônus de XP"]
                                 ["ligas" "faixas de nível e escalação"]
                                 ["time" "filtros, ativo e recuperação"]
+                                ["pc" "professor, estoque e expansões"]
                                 ["shiny" "coleção histórica e fotos"]
                                 ["semanais" "objetivos e recompensas semanais"]
                                 ["raid" "chefe cooperativo por liga"]

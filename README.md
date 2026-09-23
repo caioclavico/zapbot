@@ -848,3 +848,15 @@ Guias: `!pokemon ajuda raid`, `!pokemon ajuda shiny` e `!pokemon ajuda semanais`
 - Todas as missões garantem Pokébolas. Capturas diárias garantem também Grandes; PvP diário e missões semanais incluem Ultras. Recompensas diárias crescem junto das metas a cada cinco níveis.
 - Compre cartões por 20 moedas com `!loja comprar cartao-presente` e envie com `!presente @amigo` (também `!pokemon presente @amigo`). Cada cartão entrega automaticamente 3 Pokébolas (65%), 2 Grandes (25%) ou 1 Ultra (10%). Sem espaço, as bolas ficam em `!mochila resgatar`.
 - Missões de presentes: 2 envios diários na faixa inicial e 10 semanais. Envios para si mesmo não são permitidos.
+
+
+### PC do Centro Pokémon e estoque (0.16.0)
+
+- Equipe de até 6 Pokémon e estoque inicial total de 26. O professor guarda os demais no PC; Pokémon na Joy e nos ginásios também contam.
+- `!pk pc` ou `!pk centro`: lista o PC; `!pk pc 2` abre a segunda página, com 20 registros por página. `!pk pc ver <número>` mostra HP, XP, golpes e item.
+- `!pk pc depositar <número da equipe>`, `!pk pc retirar <número do PC>` e `!pk pc trocar <número do PC> <número da equipe>` reorganizam o time. Consultar `!pk pc ajuda` não consome turno.
+- `!pk pc comprar` acrescenta 10 vagas ao estoque: 200 moedas na primeira compra, 400 na segunda, 600 na terceira e +200 no preço de cada compra seguinte. A loja mostra o preço da próxima expansão.
+- Capturas e doações vão automaticamente ao PC se a equipe estiver cheia. Sem espaço total, a caçada e o lançamento da bola são bloqueados antes de consumir recursos. Doações recebidas também são bloqueadas. Trocas 1 por 1 são permitidas no limite, mas não acima dele.
+- Todo excedente antigo é preservado. Na primeira ação fora de combate, o time é organizado priorizando ativo, favorito, ginásio e liga selecionada; escalações antigas são salvas por identidade. Retire seus membros do PC para reutilizá-las. As escalas que não cabem simultaneamente na equipe de 6 permanecem salvas, mas precisam de reorganização.
+- A migração é adiada durante partidas em andamento. Pokémon no PC não podem batalhar nem ser escalados até serem retirados. Retornos da Joy e dos ginásios são sempre preservados, inclusive acima da capacidade, e ocupam vagas da equipe ou do PC. Movimentações ficam bloqueadas durante batalhas, caçadas e alterações pendentes; comprar espaço e consultar o PC continuam disponíveis.
+- Depositar ou retirar não cura Pokémon nem remove itens, XP, golpes, identidade ou favorito. Os números da equipe e do PC são separados e podem mudar após movimentações. Para liberar capacidade total, doe Pokémon; depositar no PC, na Joy ou em ginásios não libera capacidade.

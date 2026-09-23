@@ -13,9 +13,10 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["22/09 — Captura de primeira dá +1 XP extra; instruções das Pokébolas em !pk cap ajuda"
-   "22/09 — Rodapés de batalha mais curtos com !pk atacar ajuda"
-   "22/09 — Nomes e descrições no menu de golpes não criam efeitos visuais de status"])
+  ["22/09 — PC do Centro Pokémon: equipe de 6 e excedentes guardados com o professor"
+   "22/09 — Estoque inicial de 26 Pokémon; compre +10 vagas com !pk pc comprar"
+   "22/09 — Joy e ginásios contam no estoque; capturas e doações respeitam a capacidade"
+   "22/09 — Pokémon antigos preservados; movimentações seguras com !pk pc ajuda"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

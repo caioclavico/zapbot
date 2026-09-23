@@ -139,14 +139,10 @@
         (throw (js/Error. "Time de ocupação inválido.")))
       ;; Fora da coleção utilizável, como na enfermaria: não pode ser alterado.
       (doseq [idx (sort > indices)] (treinador/remover-pokemon! cid pid idx))
-      (let [pid-anterior (get anterior "pid")
-            inicio (count (treinador/equipe cid pid-anterior))]
+      (let [pid-anterior (get anterior "pid")]
         (doseq [registro (get anterior "time")]
-          (treinador/receber-doacao! cid pid-anterior (registro-apos-derrota registro)))
-        (when (pos? xp)
-          (doseq [idx (range inicio (+ inicio (count (get anterior "time"))))]
-            (treinador/ganhar-xp-no-indice! cid pid-anterior idx xp))))
-      (treinador/ativar-favorito-se-disponivel! cid pid-anterior)
+          (treinador/receber-retorno-ginasio! cid pid-anterior (registro-apos-derrota registro) xp))
+        (treinador/ativar-favorito-se-disponivel! cid pid-anterior))
       (registrar-permanencia! cid id anterior agora)
       (swap! ocupacoes assoc-in [cid id] nova)
       (when (pos? moedas) (loja/creditar-quantia! cid (get anterior "pid") moedas))
