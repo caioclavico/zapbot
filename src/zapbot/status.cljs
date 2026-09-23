@@ -13,10 +13,10 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["23/09 — Coleção única no !pk tm, com filtros e uma imagem de até 12 Pokémon por página"
-   "23/09 — Antigo PC e excedentes preservados; +50 vagas por preço fixo de 200 moedas"
-   "23/09 — Professor recebe transferências confirmadas e entrega cartões de XP por família"
-   "23/09 — Cada cartão concede +3 XP; ligas e ginásios continuam com três Pokémon"])
+  ["23/09 — Antigo PC unificado ao carregar, preservando os índices durante batalhas"
+   "23/09 — !pk espaco mostra a capacidade e preserva as vagas já compradas no PC"
+   "23/09 — !pk pc orienta a usar a coleção única; +50 vagas por 200 moedas"
+   "23/09 — Professor confirma transferências com código curto de três dígitos"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

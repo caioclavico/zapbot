@@ -3603,7 +3603,7 @@
 
 (defn- estoque-cheio []
   (str "💻 Estoque Pokémon cheio. Transfira ao professor, doe ou compre +50 vagas com "
-       config/prefix "pk pc comprar. Consulte " config/prefix "pk tm."))
+       config/prefix "pk espaco comprar. Consulte " config/prefix "pk tm."))
 
 (defn- ocupado-pc? [cid pid]
   (or (jogador-na-batalha? (get @jogos cid) pid)
@@ -3643,7 +3643,7 @@
                    (when (and valida? (> pagina 1)) (str "\n⬅️ Anterior: " (comando-pagina (dec pagina))))
                    (when (< (or pagina 1) paginas) (str "\n➡️ Próxima: " (comando-pagina (inc (or pagina 1)))))
                    "\n🔎 Filtros: " config/prefix "pk tm [liga] [tipo] [raridade] [nome] [nivel N] [shiny] [>|<]"
-                   "\n📖 " config/prefix "pk tm ajuda • +50 vagas: " config/prefix "pk pc comprar ("
+                   "\n📖 " config/prefix "pk tm ajuda • +50 vagas: " config/prefix "pk espaco comprar ("
                    (loja/preco-expansao-pc cid pid) " moedas).")]
     (cond
       (not valida?)
@@ -3663,22 +3663,28 @@
                                                   (str (inc indice) ". " (get registro "nome")
                                                        " Nv." (get registro "nivel" 1))) entradas)))))))))
 
-(defn- comando-pc [message args]
-  (let [cid (chat-id message) pid (jogador-id message)
-        [acao numero] args]
-    (when-not (ocupado-pc? cid pid) (treinador/migrar-colecao! cid pid))
-    (case acao
-      "comprar"
+(defn- comando-espaco [message args]
+  (let [cid (chat-id message) pid (jogador-id message)]
+    (treinador/migrar-colecao! cid pid)
+    (if (= "comprar" (first args))
       (let [{:keys [status preco capacidade]} (loja/comprar-espaco-pc! cid pid)]
         (if (= status :ok)
           (str "✅ +50 vagas Pokémon por " preco " moedas! Capacidade total: " capacidade ".")
-          (str "💰 Moedas insuficientes. A próxima expansão custa " preco " moedas.")))
-      "ver" (ver-pokemon-do-time message numero)
-      ("depositar" "retirar" "trocar")
-      (str "🎒 Agora todos os Pokémon ficam na sua coleção: " config/prefix "pk tm."
-           "\nPara enviar definitivamente ao professor e ganhar um cartão de XP: "
-           config/prefix "pk professor enviar <número> (exige confirmação).")
-      (resposta-colecao-visual message args))))
+          (str "💰 Moedas insuficientes. A expansão custa " preco " moedas.")))
+      (str "🎒 *Espaço Pokémon*\n"
+           "Ocupação: " (ocupacao-pokemon cid pid) "/" (loja/capacidade-pokemon cid pid)
+           " (inclui Joy e ginásios)."
+           "\nVagas compradas: " (* 50 (loja/expansoes-pc cid pid))
+           " — compras do antigo PC já incluídas, sem nova cobrança."
+           "\n+50 vagas por 200 moedas: " config/prefix "pk espaco comprar"
+           "\nTodos os Pokémon: " config/prefix "pk tm"))))
+
+(defn- comando-pc [message args]
+  (if (= "comprar" (first args))
+    (comando-espaco message args)
+    (str "💻 O PC separado foi desativado. Os Pokémon agora ficam na coleção: " config/prefix "pk tm."
+         "\nAs vagas compradas no PC valem no espaço Pokémon: " config/prefix "pk espaco."
+         "\nPara enviar definitivamente ao professor: " config/prefix "pk professor ajuda.")))
 
 (defn- doar [message indice-texto]
   (let [cid   (chat-id message)
@@ -5256,7 +5262,7 @@
   [message args]
   (let [cid          (chat-id message)
         pid          (jogador-id message)
-        _            (when-not (ocupado-pc? cid pid) (treinador/migrar-colecao! cid pid))
+        _            (treinador/migrar-colecao! cid pid)
         _            (treinador/recolher-curados! cid pid)
         _            (when (and (not (some #{pid} (vals (:jogadores (get @jogos cid)))))
                                 (not= pid (:pid (get @cacadas-selvagens cid))))
@@ -5266,6 +5272,8 @@
         cmd          (expandir-atalho cmd-original)]
     (cond
       (contains? #{"bug" "bugs"} cmd) (bugs/comando! message cmd resto)
+      (contains? #{"espaco" "espaço"} cmd)
+      (p/resolved (comando-espaco message resto))
       (contains? #{"pc" "computador" "centro"} cmd)
       (p/promise (comando-pc message (if (= "pc" (first resto)) (rest resto) resto)))
       (:carregando? (get @jogos cid))

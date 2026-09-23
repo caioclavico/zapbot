@@ -42,6 +42,13 @@
                                    0 (- xp (* subidas xp-por-nivel))))
         (dissoc "vitorias-desde-nivel"))))
 
+(defn- unificar-colecao [conta]
+  ;; Apenas acrescenta o PC ao fim: índices e registros usados por combates
+  ;; permanecem exatamente iguais. Recarregar não duplica os Pokémon.
+  (-> conta
+      (assoc "equipe" (into (vec (get conta "equipe" [])) (get conta "pc" []))
+             "pc" [] "colecao-unificada" true)))
+
 (defn- normalizar-xp-contas [estado]
   (into {}
         (map (fn [[cid jogadores]]
@@ -49,7 +56,8 @@
                           (map (fn [[pid conta]]
                                  [pid (-> conta
                                           (update "equipe" #(mapv normalizar-xp-registro (or % [])))
-                                          (update "pc" #(mapv normalizar-xp-registro (or % []))))])
+                                          (update "pc" #(mapv normalizar-xp-registro (or % [])))
+                                          unificar-colecao)])
                                jogadores))])
              (or estado {}))))
 
@@ -516,19 +524,13 @@
   (update (or c conta-vazia) "equipe" (fnil conj []) registro))
 
 (defn migrar-colecao!
-  "Reúne o antigo PC à coleção sem reordenar os índices já usados no time.
-  Não corta excedentes. Chamar fora de combates/alterações em andamento."
+  "Acrescenta o PC à coleção, preservando os índices inclusive em combate."
   [cid pid]
   (let [c (conta cid pid)]
-    (when (or (seq (get c "pc")) (not (get c "colecao-unificada")))
-      (swap! contas update-in [cid pid]
-             (fn [atual]
-               (-> (or atual conta-vazia)
-                   (update "equipe" #(mapv (fn [r]
-                                             (if (get r "id-pokemon") r
-                                                 (assoc r "id-pokemon" (str (random-uuid)))))
-                                           (concat % (get atual "pc" []))))
-                   (assoc "pc" [] "colecao-unificada" true))))
+    (when (or (seq (get c "pc")) (not (get c "colecao-unificada"))
+              ;; A hidratação já unificou a memória; grava o legado na primeira consulta.
+              (seq (get-in (armazenamento/obter "treinador") [cid pid "pc"])))
+      (swap! contas update-in [cid pid] #(unificar-colecao (or % conta-vazia)))
       (persistir!))))
 
 (defn receber-registro! [cid pid registro]
@@ -554,7 +556,11 @@
   (when (and (seq familia) (get registro "id-pokemon")
              (some #{registro} (equipe cid pid))
              (not= (get registro "id-pokemon") (get (favorito cid pid) "id")))
-    (let [pendente {"token" (str (random-uuid)) "registro" registro
+    (let [anterior (get (transferencia-professor cid pid) "token")
+          sorteado (+ 100 (rand-int 900))
+          codigo (str (if (= (str sorteado) anterior)
+                        (+ 100 (mod (inc (- sorteado 100)) 900)) sorteado))
+          pendente {"token" codigo "registro" registro
                     "familia" familia "expira" (+ agora (* 5 60 1000))}]
       (swap! contas assoc-in [cid pid "transferencia-professor"] pendente)
       (persistir!)

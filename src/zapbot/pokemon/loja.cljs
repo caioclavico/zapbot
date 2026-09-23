@@ -529,7 +529,7 @@
          "*Catálogo de itens:*\n"
          (str/join "\n" (map (fn [[chave info]] (formatar-item chave info))
                              (remove (fn [[chave _]] (some #{chave} bolas)) itens)))
-         "\n💻 +50 vagas Pokémon — " (preco-expansao-pc cid pid) " moedas: " config/prefix "pk pc comprar."
+         "\n💻 +50 vagas Pokémon — " (preco-expansao-pc cid pid) " moedas: " config/prefix "pk espaco comprar."
          "\n📚 Reaprender golpe — " preco-reaprender " moedas. Use " config/prefix "pokemon reaprender."
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"

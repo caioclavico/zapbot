@@ -14,7 +14,7 @@
    "cacar" :cacadas "cacada" :cacadas "cacadas" :cacadas "cac" :cacadas
    "capturar" :captura "captura" :captura "cap" :captura "pokebola" :captura
    "liga" :ligas "ligas" :ligas "lig" :ligas
-   "pc" :pc "computador" :pc "centro" :pc
+   "pc" :pc "computador" :pc "centro" :pc "espaco" :pc "espaço" :pc
    "professor" :professor
    "time" :time "equipe" :time "tm" :time
    "atalho" :atalhos "atalhos" :atalhos "abreviacoes" :atalhos "abreviacao" :atalhos
@@ -160,9 +160,9 @@
 
     :pc
     (str "🎒 *Coleção e espaço Pokémon*\n\n"
-         "Todos os seus Pokémon disponíveis ficam em " (comando "time") " (atalho !pk tm), com filtros e uma imagem de até 12 por página. " (comando "pc") " também abre a coleção.\n"
-         "• " (comando "pc comprar") ": +50 vagas por 200 moedas, preço fixo em todas as compras.\n"
-         "Capacidade inicial: 26 Pokémon. Joy e defensores dos ginásios também contam. Compras anteriores continuam valendo; os Pokémon do antigo PC voltam automaticamente à coleção fora de combate.\n"
+         "Todos os seus Pokémon disponíveis ficam em " (comando "time") " (atalho !pk tm), com filtros e uma imagem de até 12 por página. " (comando "pc") " orienta sobre a coleção unificada.\n"
+         "• " (comando "espaco comprar") ": +50 vagas por 200 moedas, preço fixo em todas as compras.\n"
+         "Capacidade inicial: 26 Pokémon. Joy e defensores dos ginásios também contam. Compras anteriores continuam valendo; os Pokémon do antigo PC são incorporados ao carregar os dados, preservando os índices de batalha.\n"
          "Pokémon antigos acima do limite são preservados e continuam utilizáveis. Sem vaga, novas caçadas, capturas e doações recebidas ficam bloqueadas. Retornos da Joy e dos ginásios nunca são descartados.\n"
          "Para liberar espaço, doe ou consulte " (comando "professor ajuda") ". A transferência ao professor é definitiva e dá 1 cartão de XP da família.\n"
          "Ginásios e ligas continuam usando escalações de três Pokémon da sua coleção.")
@@ -170,7 +170,7 @@
     :professor
     (str "👨‍🔬 *Professor — transferência e cartões de XP*\n\n"
          "• " (comando "professor enviar <número>") ": prepara o envio de um Pokémon da coleção.\n"
-         "O envio é definitivo e libera uma vaga. Confirme pelo código da mensagem em até 5 minutos; para desistir: " (comando "professor cancelar") ". Não há envio em lote.\n"
+         "O envio é definitivo e libera uma vaga. Confirme pelo código de 3 dígitos da mensagem em até 5 minutos; para desistir: " (comando "professor cancelar") ". Não há envio em lote.\n"
          "Cada Pokémon transferido dá 1 cartão da família evolutiva. Pidgey, Pidgeotto e Pidgeot rendem cartões da família Pidgey. O item equipado volta à mochila e o registro shiny histórico é preservado.\n"
          "• " (comando "professor cartoes") ": saldo por família.\n"
          "• " (comando "professor usar <número>") ": gasta 1 cartão da família do Pokémon escolhido e concede +3 XP. São 9 XP por nível; três cartões rendem um nível. No nível 100, nenhum cartão é gasto.\n"
@@ -182,7 +182,7 @@
     (str "🎒 *Como jogar: time e recuperação*\n\n"
          "• " (comando "time") ": coleção completa, com uma imagem de até 12 Pokémon por página.\n"
          "Use " (comando "time 2") " para a página seguinte, ou " (comando "time 2 fogo >") " para manter filtros. Um número no início indica página; para nível, use nivel N.\n"
-         "Compre +50 vagas com " (comando "pc comprar") ". Ginásios e ligas usam escalações de três Pokémon.\n"
+         "Compre +50 vagas com " (comando "espaco comprar") ". Ginásios e ligas usam escalações de três Pokémon.\n"
          "Envie repetidos ao professor para liberar vagas e ganhar cartões de XP: " (comando "professor ajuda") ".\n"
          "• " (comando "time txt") ": lista completa em texto; " (comando "time csv") ": planilha.\n"
          "• " (comando "time >") ": maior força primeiro; " (comando "time <") ": menor primeiro. A força é a soma dos seis atributos.\n"
@@ -221,7 +221,7 @@
                                 ["ligas" "faixas de nível e escalação"]
                                 ["time" "coleção, páginas, filtros e recuperação"]
                                 ["professor" "transferência e cartões de XP"]
-                                ["pc" "estoque e expansões"]
+                                ["espaco" "estoque e expansões"]
                                 ["shiny" "coleção histórica e fotos"]
                                 ["semanais" "objetivos e recompensas semanais"]
                                 ["raid" "chefe cooperativo por liga"]

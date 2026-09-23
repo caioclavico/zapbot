@@ -49,6 +49,21 @@
       (is (= 79 (treinador/indice-ativo "chat" "ash")))
       (is (= 80 (treinador/quantidade-guardada "chat" "ash"))))))
 
+(deftest colecao-unificada-ao-carregar-e-gravada-na-primeira-consulta
+  (let [legado {"chat" {"ash" {"equipe" (mapv registro (range 6))
+                                "pc" (mapv registro (range 6 20)) "ativo" 5}}}
+        estado (atom (treinador/normalizar-xp-contas legado))
+        gravado (atom nil)]
+    (with-redefs [treinador/contas estado
+                  armazenamento/obter (fn [_] legado)
+                  armazenamento/salvar! (fn [_ dados] (reset! gravado dados) (sem-gravacao))]
+      (is (= 20 (count (treinador/equipe "chat" "ash"))))
+      (treinador/migrar-colecao! "chat" "ash")
+      (is (= @estado @gravado))
+      (is (empty? (get-in @gravado ["chat" "ash" "pc"])))
+      (is (= (mapv registro (range 20)) (get-in @gravado ["chat" "ash" "equipe"])))
+      (is (= 5 (get-in @gravado ["chat" "ash" "ativo"]))))))
+
 (deftest expansao-debita-preco-fixo-e-nao-cobra-sem-saldo
   (let [estado (atom {"chat" {"ash" {"moedas" 600}}})]
     (with-redefs [loja/contas estado armazenamento/salvar! sem-gravacao]
@@ -106,7 +121,7 @@
                   core/cacadas-selvagens (atom {}) loja/contas (atom {})
                   ginasios/liderados (fn [_ _] [])]
       (let [antes @estado texto (core/comando-pc #js {:from "chat" :author "ash"} ["trocar" "1" "1"])]
-        (is (str/includes? texto "Agora todos os Pokémon"))
+        (is (str/includes? texto "PC separado foi desativado"))
         (is (= antes @estado)))))
   (is (= (ajuda/resposta "pc ajuda") (ajuda/resposta "centro ajuda")))
   (is (str/includes? (ajuda/resposta "pc ajuda") "200 moedas")))
@@ -119,7 +134,11 @@
       (let [antes @estado
             recarregado (treinador/normalizar-xp-contas
                           (js->clj (js/JSON.parse (js/JSON.stringify (clj->js antes)))))]
-        (is (= antes recarregado)))))
+        (is (= [(registro 1)] (get-in recarregado ["chat" "ash" "equipe"])))
+        (is (empty? (get-in recarregado ["chat" "ash" "pc"])))
+        (is (= (get-in antes ["chat" "ash" "times-prontos"])
+               (get-in recarregado ["chat" "ash" "times-prontos"])))
+        (is (= recarregado (treinador/normalizar-xp-contas recarregado))))))
   (is (nil? (core/indice-pc "1abc" 10)))
   (is (nil? (core/indice-pc "0" 10)))
   (is (= 9 (core/indice-pc "10" 10))))
@@ -164,21 +183,43 @@
                      (done)))
             (.catch (fn [erro] (is false (str erro)) (done))))))))
 
-(deftest comando-pc-adia-migracao-enquanto-batalha-usa-indices
+(deftest comando-unifica-colecao-em-combate-sem-mudar-indices
   (async done
-    (let [estado (atom {"chat" {"ash" {"equipe" (mapv registro (range 9)) "ativo" 8}}})
-          antes @estado]
+    (let [eq (mapv registro (range 6)) banco (mapv registro (range 6 18))
+          estado (atom {"chat" {"ash" {"equipe" eq "pc" banco "ativo" 5
+                                        "time-ginasio" [3 4 5]}}})
+          jogo {:jogadores {:x "ash" :o "lider-ginasio"} :vez :o :indices-ativos {:x 5}}]
       (with-redefs [treinador/contas estado loja/contas (atom {})
-                    core/jogos (atom {"chat" {:jogadores {:x "ash" :o "lider-ginasio"}}})
+                    armazenamento/salvar! sem-gravacao
+                    core/jogos (atom {"chat" jogo})
                     core/cacadas-selvagens (atom {})
                     ginasios/liderados (fn [_ _] [])]
-        (-> (core/jogar-comando #js {:from "chat" :author "ash"} "pc")
-            (.then (fn [texto]
-                     (is (str/includes? (:texto texto) "Sua coleção"))
-                     (is (= antes @estado))
-                     (done)))
-            (.catch (fn [erro] (is false (str erro)) (done))))))))
+        (let [resposta (core/jogar-comando #js {:from "chat" :author "ash"} "tm")]
+          (is (= (into eq banco) (treinador/equipe "chat" "ash")))
+          (is (empty? (treinador/pc "chat" "ash")))
+          (is (= 5 (treinador/indice-ativo "chat" "ash")))
+          (is (= [3 4 5] (treinador/time-ginasio "chat" "ash")))
+          (is (= jogo (get @core/jogos "chat")))
+          (-> resposta
+              (p/then (fn [r]
+                        (is (some? (:media r)))
+                        (is (str/includes? (:texto r) "Mostrando 12 de 18"))))
+              (p/catch (fn [erro] (is false (str erro))))
+              (p/finally done)))))))
 
+(deftest compras-do-pc-valem-na-colecao-sem-nova-cobranca
+  (let [estado (atom (loja/migrar-chaves-antigas
+                     {"chat" {"ash" {"moedas" 200 "expansoes-pc" 3 "inventario" {}}}}))]
+    (with-redefs [loja/contas estado treinador/contas (atom {})
+                  armazenamento/salvar! sem-gravacao ginasios/liderados (fn [_ _] [])]
+      (let [antes @estado texto (core/comando-espaco #js {:from "chat" :author "ash"} [])]
+        (is (= 176 (loja/capacidade-pokemon "chat" "ash")))
+        (is (str/includes? texto "Vagas compradas: 150"))
+        (is (= antes @estado)))
+      (is (str/includes? (core/comando-espaco #js {:from "chat" :author "ash"} ["comprar"])
+                         "Capacidade total: 226"))
+      (is (= 0 (loja/moedas "chat" "ash")))
+      (is (= 226 (loja/capacidade-pokemon "chat" "ash"))))))
 
 (deftest doacao-revalida-capacidade-e-entrega-na-colecao
   (async done

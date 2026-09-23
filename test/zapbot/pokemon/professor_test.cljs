@@ -37,6 +37,7 @@
     (with-redefs [treinador/contas estado armazenamento/salvar! sem-gravacao]
       (let [pedido (treinador/preparar-transferencia-professor! "chat" "ash" r "pidgey" 100)
             token (get pedido "token")]
+        (is (re-matches #"[1-9][0-9]{2}" token))
         (is (= [r outro] (treinador/equipe "chat" "ash")))
         (is (empty? (treinador/cartoes-professor "chat" "ash")))
         (is (= :invalida (:status (treinador/confirmar-transferencia-professor! "chat" "misty" token 101))))
@@ -117,6 +118,20 @@
     (with-redefs [treinador/contas estado armazenamento/salvar! sem-gravacao]
       (is (nil? (treinador/preparar-transferencia-professor! "chat" "ash" r "pidgey" 0)))
       (is (nil? (treinador/transferencia-professor "chat" "ash"))))))
+
+(deftest novo-pedido-usa-outro-codigo-curto-e-invalida-o-anterior
+  (let [r (registro "a") estado (atom {"chat" {"ash" {"equipe" [r]}}})]
+    (with-redefs [treinador/contas estado armazenamento/salvar! sem-gravacao
+                  cljs.core/rand-int (fn [_] 899)]
+      (let [primeiro (treinador/preparar-transferencia-professor! "chat" "ash" r "pidgey" 0)
+            segundo (treinador/preparar-transferencia-professor! "chat" "ash" r "pidgey" 1)]
+        (is (= "999" (get primeiro "token")))
+        (is (= "100" (get segundo "token")))
+        (is (= :invalida (:status (treinador/confirmar-transferencia-professor!
+                                   "chat" "ash" (get primeiro "token") 2))))
+        (is (= [r] (treinador/equipe "chat" "ash")))
+        (is (= :ok (:status (treinador/confirmar-transferencia-professor!
+                             "chat" "ash" (get segundo "token") 2))))))))
 
 (deftest comando-professor-exige-codigo-e-devolve-item-uma-vez
   (async done
