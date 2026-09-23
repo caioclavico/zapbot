@@ -43,9 +43,10 @@
 
 (def festival-colecao
   {:id "colecao-2026-09" :meta 3 :nome "Festival da Coleção" :vagas 300
-   ;; Janela única de sete dias: reiniciar o bot não renova o bônus.
+   ;; Início preservado; encerra após 30/09, à meia-noite de São Paulo.
+   ;; Reiniciar o bot não renova o bônus.
    :inicio (js/Date.parse "2026-09-23T21:50:00Z")
-   :fim (js/Date.parse "2026-09-30T21:50:00Z")})
+   :fim (js/Date.parse "2026-10-01T00:00:00-03:00")})
 
 (defn evento-espaco [agora]
   (when (<= (:inicio festival-colecao) agora (dec (:fim festival-colecao)))

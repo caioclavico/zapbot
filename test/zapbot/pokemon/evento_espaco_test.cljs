@@ -6,9 +6,12 @@
             [zapbot.pokemon.loja :as loja]
             [zapbot.pokemon.core :as core]))
 
-(deftest janela-fixa-de-sete-dias
+(deftest janela-fixa-encerra-a-meia-noite-de-sao-paulo
   (let [{:keys [inicio fim]} aventuras/festival-colecao]
-    (is (= (* 7 24 60 60 1000) (- fim inicio)))
+    (is (= (js/Date.parse "2026-09-23T21:50:00Z") inicio))
+    (is (= (js/Date.parse "2026-10-01T03:00:00Z") fim))
+    (is (= "00:00" (.toLocaleTimeString (js/Date. fim) "pt-BR"
+                    #js {:timeZone "America/Sao_Paulo" :hour "2-digit" :minute "2-digit" :hourCycle "h23"})))
     (is (nil? (aventuras/evento-espaco (dec inicio))))
     (is (= 300 (:vagas (aventuras/evento-espaco inicio))))
     (is (some? (aventuras/evento-espaco (dec fim))))
@@ -32,8 +35,9 @@
       (dotimes [_ 2] (loja/registrar-evento-espaco! "chat" "ash" "professor"))
       (is (= 126 (loja/capacidade-pokemon "chat" "ash")))
       (is (str/includes? (loja/registrar-evento-espaco! "chat" "ash" "professor") "300 vagas liberadas"))
-      (is (nil? (loja/registrar-evento-espaco! "chat" "ash" "professor")))
+      ;; A última conquista já altera a capacidade, sem consultar/resgatar o evento.
       (is (= 426 (loja/capacidade-pokemon "chat" "ash")))
+      (is (nil? (loja/registrar-evento-espaco! "chat" "ash" "professor")))
       (is (= 26 (loja/capacidade-pokemon "chat" "misty")))
       (is (= 26 (loja/capacidade-pokemon "outro" "ash")))
       (loja/registrar-missao! "chat" "ash" "selvagens" 5)

@@ -3633,11 +3633,11 @@
   (when-let [evento (loja/progresso-evento-espaco cid pid)]
     (str "🎉 *" (:nome evento) "*: +" (:vagas evento) " vagas temporárias até "
          (.toLocaleString (js/Date. (:fim evento)) "pt-BR"
-                          #js {:timeZone "America/Campo_Grande" :dateStyle "short" :timeStyle "short"})
-         " (Campo Grande)."
+                          #js {:timeZone "America/Sao_Paulo" :dateStyle "short" :timeStyle "short" :hourCycle "h23"})
+         " (São Paulo)."
          (apply str (for [[id rotulo] loja/objetivos-evento-espaco]
                       (str "\n• " rotulo ": " (get (:progresso evento) id 0) "/" (:meta evento))))
-         (if (:concluido? evento) " • Vagas liberadas!" " • Complete os quatro objetivos uma vez para liberar as vagas."))))
+         (if (:concluido? evento) " • Vagas liberadas!" " • Ao completar os quatro objetivos, as 300 vagas são liberadas imediatamente, sem resgate."))))
 
 (defn- resposta-colecao-visual [message args]
   (let [cid (chat-id message) pid (jogador-id message)
