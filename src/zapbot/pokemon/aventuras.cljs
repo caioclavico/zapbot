@@ -41,6 +41,16 @@
 
 (def duracao-evento-ms (* 6 60 60 1000))
 
+(def festival-colecao
+  {:id "colecao-2026-09" :meta 3 :nome "Festival da Coleção" :vagas 300
+   ;; Janela única de sete dias: reiniciar o bot não renova o bônus.
+   :inicio (js/Date.parse "2026-09-23T21:50:00Z")
+   :fim (js/Date.parse "2026-09-30T21:50:00Z")})
+
+(defn evento-espaco [agora]
+  (when (<= (:inicio festival-colecao) agora (dec (:fim festival-colecao)))
+    festival-colecao))
+
 (defn evento-atual [agora]
   (let [periodo (quot agora duracao-evento-ms)]
     (assoc (nth surtos (mod periodo (count surtos)))

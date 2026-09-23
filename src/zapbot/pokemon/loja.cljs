@@ -55,15 +55,48 @@
 (defn expansoes-pc [cid pid]
   (get-in @contas [cid pid "expansoes-pc"] 0))
 
-(defn capacidade-pokemon [cid pid]
+(defn capacidade-permanente-pokemon [cid pid]
   (+ 26 (* vagas-por-expansao-pc (expansoes-pc cid pid))))
+
+(def objetivos-evento-espaco
+  [["selvagens" "Vitórias contra selvagens"]
+   ["pvp" "Vitórias PvP"]
+   ["ginasios" "Vitórias em ginásios"]
+   ["professor" "Transferências ao professor"]])
+
+(defn progresso-evento-espaco [cid pid]
+  (when-let [evento (aventuras/evento-espaco (.now js/Date))]
+    (let [salvo (get-in @contas [cid pid "missoes-eventos" (:id evento)])
+          progresso (if (map? salvo) salvo {})]
+      (assoc evento :progresso progresso
+             :concluido? (every? #(>= (get progresso (first %) 0) (:meta evento)) objetivos-evento-espaco)))))
+
+(defn bonus-espaco-pokemon [cid pid]
+  (let [evento (progresso-evento-espaco cid pid)]
+    (if (:concluido? evento) (:vagas evento) 0)))
+
+(defn registrar-evento-espaco! [cid pid objetivo]
+  (when-let [evento (progresso-evento-espaco cid pid)]
+    (when-let [rotulo (some (fn [[id nome]] (when (= id objetivo) nome)) objetivos-evento-espaco)]
+      (let [antes (get (:progresso evento) objetivo 0)]
+        (when (< antes (:meta evento))
+          (swap! contas assoc-in [cid pid "missoes-eventos" (:id evento)]
+                 (assoc (:progresso evento) objetivo (inc antes)))
+          (persistir!)
+          (str "\n🎉 " rotulo ": " (inc antes) "/" (:meta evento) "."
+               (when (:concluido? (progresso-evento-espaco cid pid))
+                 (str " +" (:vagas evento) " vagas liberadas até o fim do evento!"))))))))
+
+(defn capacidade-pokemon [cid pid]
+  (+ (capacidade-permanente-pokemon cid pid) (bonus-espaco-pokemon cid pid)))
 
 (defn preco-expansao-pc [_cid _pid]
   preco-fixo-expansao-pc)
 
 (defn comprar-espaco-pc! [cid pid]
   ;; Saldo e expansão pertencem ao mesmo registro persistido.
-  (let [resultado (volatile! nil)]
+  (let [resultado (volatile! nil)
+        bonus (bonus-espaco-pokemon cid pid)]
     (swap! contas update-in [cid pid]
            (fn [c]
              (let [c (or c {"moedas" 0 "inventario" {}})
@@ -71,7 +104,7 @@
                    preco preco-fixo-expansao-pc]
                (if (< (get c "moedas" 0) preco)
                  (do (vreset! resultado {:status :sem-moedas :preco preco}) c)
-                 (do (vreset! resultado {:status :ok :preco preco :capacidade (+ 26 (* vagas-por-expansao-pc (inc n)))})
+                 (do (vreset! resultado {:status :ok :preco preco :capacidade (+ 26 bonus (* vagas-por-expansao-pc (inc n)))})
                      (-> c (update "moedas" - preco) (assoc "expansoes-pc" (inc n))))))))
     (persistir!)
     @resultado))
@@ -343,8 +376,10 @@
         novo (missoes/registrar-evento c dia evento nivel)]
     (swap! contas assoc-in [cid pid] novo)
     (persistir!)
-    (when (> (count (missoes/disponiveis (missoes/estado-do-dia novo dia nivel))) antes)
-      (str "\n📋 Missão diária concluída! Resgate com " config/prefix "missoes diarias resgatar."))))
+    (str
+      (when (> (count (missoes/disponiveis (missoes/estado-do-dia novo dia nivel))) antes)
+        (str "\n📋 Missão diária concluída! Resgate com " config/prefix "missoes diarias resgatar."))
+      (when (= evento "selvagens") (registrar-evento-espaco! cid pid "selvagens")))))
 
 (defn- resgatar-missoes! [cid pid nivel]
   (let [dia (missoes/dia-atual)

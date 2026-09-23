@@ -1,5 +1,5 @@
 (ns zapbot.pokemon.pc-test
-  (:require [cljs.test :refer-macros [deftest is async]]
+  (:require [cljs.test :refer-macros [deftest is async] :refer [use-fixtures]]
             [clojure.string :as str]
             [promesa.core :as p]
             [zapbot.armazenamento :as armazenamento]
@@ -8,7 +8,14 @@
             [zapbot.pokemon.loja :as loja]
             [zapbot.pokemon.core :as core]
             [zapbot.pokemon.ajuda :as ajuda]
+            [zapbot.pokemon.aventuras :as aventuras]
             ["sharp" :as sharp]))
+
+(def evento-espaco-real aventuras/evento-espaco)
+;; Estes testes verificam as vagas permanentes; o evento tem sua própria suíte.
+(use-fixtures :each
+  {:before #(set! aventuras/evento-espaco (fn [_] nil))
+   :after #(set! aventuras/evento-espaco evento-espaco-real)})
 
 (defn registro [id]
   {"id-pokemon" (str id) "nome" (str "Pokemon " id) "nivel" 5
@@ -170,15 +177,15 @@
       (is (= 0 (count (treinador/equipe "chat" "ash"))))
       (is (= 3 (core/ocupacao-pokemon "chat" "ash"))))))
 
-(deftest estoque-cheio-bloqueia-cacada-antes-do-cooldown
+(deftest estoque-cheio-permite-cacada-respeitando-cooldown
   (async done
     (let [estado (atom {"chat" {"ash" {"equipe" [(registro 0)] "pc" (mapv registro (range 1 26))}}})]
       (with-redefs [treinador/contas estado loja/contas (atom {})
                     ginasios/liderados (fn [_ _] [])
-                    treinador/pode-cacar? (fn [_ _] (throw (js/Error. "Consultou cooldown antes de verificar estoque")))]
+                    treinador/pode-cacar? (fn [_ _] false)]
         (-> (core/cacar #js {:from "chat" :author "ash"} [])
             (.then (fn [texto]
-                     (is (str/includes? texto "Estoque Pokémon cheio"))
+                     (is (str/includes? texto "Você pode caçar de novo"))
                      (is (nil? (get-in @estado ["chat" "ash" "ultima-cacada"])))
                      (done)))
             (.catch (fn [erro] (is false (str erro)) (done))))))))
