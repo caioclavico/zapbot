@@ -17,6 +17,11 @@
   (and (contains? #{"inscricoes" "combate"} (get raid "fase"))
        (< agora (get raid "expira" 0))))
 
+(defn participando? [cid pid]
+  (let [raid (get @raids cid)]
+    (and (ativa? raid (.now js/Date))
+         (contains? (get raid "participantes" {}) pid))))
+
 (defn entrar [raid pid nome registro agora]
   (cond
     (not (and (ativa? raid agora) (= "inscricoes" (get raid "fase"))))

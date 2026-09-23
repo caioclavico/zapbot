@@ -184,8 +184,8 @@
    (when (get registro "status") (keyword (get registro "status")))])
 
 (defn equipe
-  "Vetor de registros (chaves string, ver pokemon->registro) da equipe do
-  jogador nesse chat."
+  "Vetor da coleção disponível (chaves string, ver pokemon->registro) do
+  jogador nesse chat. Joy e defensores de ginásios ficam separados."
   [cid pid]
   (get (conta cid pid) "equipe"))
 
@@ -513,72 +513,106 @@
      (count (get (conta cid pid) "enfermaria" []))))
 
 (defn- guardar-registro [c registro]
-  (let [c (or c conta-vazia)
-        destino (if (< (count (get c "equipe" [])) 6) "equipe" "pc")]
-    (update c destino (fnil conj []) registro)))
+  (update (or c conta-vazia) "equipe" (fnil conj []) registro))
 
-(defn migrar-pc!
-  "Migração idempotente; chamar somente fora de combates que referenciam índices."
+(defn migrar-colecao!
+  "Reúne o antigo PC à coleção sem reordenar os índices já usados no time.
+  Não corta excedentes. Chamar fora de combates/alterações em andamento."
   [cid pid]
-  (let [c (conta cid pid) eq (vec (get c "equipe" []))]
-    (when (and (not (get c "pc-migrado")) (seq eq))
-      (let [eq (mapv #(if (get % "id-pokemon") % (assoc % "id-pokemon" (str (random-uuid)))) eq)
-            favorito (first (keep-indexed #(when (= (get-in c ["favorito" "id"]) (get %2 "id-pokemon")) %1) eq))
-            prioridades (concat [(get c "ativo" 0) favorito]
-                                (get c "time-ginasio")
-                                (get-in c ["times-liga" (get c "liga")])
-                                (range (count eq)))
-            escolhidos (if (<= (count eq) 6) (vec (range (count eq)))
-                           (vec (sort (take 6 (distinct (filter #(and (integer? %) (<= 0 %) (< % (count eq))) prioridades))))))
-            por-indice (zipmap escolhidos (range))
-            ajustar #(mapv por-indice %)
-            salvos (reduce (fn [acc [nome indices]]
-                             (if (and (= 3 (count indices)) (every? #(get eq %) indices))
-                               (let [livre (first (remove #(contains? acc %)
-                                                         (cons nome (map #(str nome " " %) (iterate inc 2)))))]
-                                 (assoc acc livre {"nome" livre "pokemons" (mapv #(get (get eq %) "id-pokemon") indices)}))
-                               acc))
-                           (get c "times-prontos" {})
-                           (concat [["ginasio anterior" (get c "time-ginasio")]]
-                                   (map (fn [[id indices]] [(str "liga " id " anterior") indices]) (get c "times-liga"))))
-            novo (-> c
-                     (assoc "pc-migrado" true "equipe" (mapv eq escolhidos)
-                            "pc" (into (vec (get c "pc" []))
-                                       (keep-indexed #(when-not (contains? por-indice %1) %2) eq))
-                            "ativo" (get por-indice (get c "ativo" 0) 0)
-                            "times-prontos" salvos)
-                     (update "time-ginasio" ajustar)
-                     (update "times-liga" #(into {} (map (fn [[id slots]] [id (ajustar slots)]) %))))]
-        (swap! contas assoc-in [cid pid] novo)
-        (persistir!)))))
-
-(defn mover-pc! [cid pid acao idx outro]
-  (let [c (conta cid pid) eq (vec (get c "equipe" [])) banco (vec (get c "pc" []))
-        tirar (fn [v i] (vec (concat (subvec v 0 i) (subvec v (inc i)))))
-        novo (case acao
-               :depositar (when (get eq idx)
-                            (-> (ajustar-times-remocao c idx)
-                                (assoc "equipe" (tirar eq idx)
-                                       "ativo" (let [a (get c "ativo" 0)] (cond (= a idx) 0 (> a idx) (dec a) :else a)))
-                                (update "pc" (fnil conj []) (get eq idx))))
-               :retirar (when (and (< (count eq) 6) (get banco idx))
-                          (-> c (assoc "pc" (tirar banco idx))
-                              (update "equipe" (fnil conj []) (get banco idx))))
-               :trocar (when (and (get banco idx) (get eq outro))
-                         (-> c (assoc-in ["pc" idx] (get eq outro))
-                             (assoc-in ["equipe" outro] (get banco idx))
-                             (update "times-liga" #(into {} (map (fn [[id slots]] [id (mapv (fn [i] (when (not= i outro) i)) slots)]) %)))
-                             (update "time-ginasio" #(mapv (fn [i] (when (not= i outro) i)) %))))
-               nil)]
-    (when novo
-      (swap! contas assoc-in [cid pid] novo)
-      (persistir!) true)))
+  (let [c (conta cid pid)]
+    (when (or (seq (get c "pc")) (not (get c "colecao-unificada")))
+      (swap! contas update-in [cid pid]
+             (fn [atual]
+               (-> (or atual conta-vazia)
+                   (update "equipe" #(mapv (fn [r]
+                                             (if (get r "id-pokemon") r
+                                                 (assoc r "id-pokemon" (str (random-uuid)))))
+                                           (concat % (get atual "pc" []))))
+                   (assoc "pc" [] "colecao-unificada" true))))
+      (persistir!))))
 
 (defn receber-registro! [cid pid registro]
-  (let [destino (if (< (count (equipe cid pid)) 6) :equipe :pc)]
-    (swap! contas update-in [cid pid] guardar-registro registro)
-    (persistir!)
-    {:destino destino :indice (dec (count (if (= destino :pc) (pc cid pid) (equipe cid pid))))}))
+  (swap! contas update-in [cid pid] guardar-registro registro)
+  (persistir!)
+  {:destino :equipe :indice (dec (count (equipe cid pid)))})
+
+(declare colecao-shiny!)
+
+(def xp-por-cartao-professor 3)
+
+(defn cartoes-professor [cid pid]
+  (get (conta cid pid) "cartoes-professor" {}))
+
+(defn transferencia-professor [cid pid]
+  (get (conta cid pid) "transferencia-professor"))
+
+(defn cancelar-transferencia-professor! [cid pid]
+  (swap! contas update-in [cid pid] dissoc "transferencia-professor")
+  (persistir!))
+
+(defn preparar-transferencia-professor! [cid pid registro familia agora]
+  (when (and (seq familia) (get registro "id-pokemon")
+             (some #{registro} (equipe cid pid))
+             (not= (get registro "id-pokemon") (get (favorito cid pid) "id")))
+    (let [pendente {"token" (str (random-uuid)) "registro" registro
+                    "familia" familia "expira" (+ agora (* 5 60 1000))}]
+      (swap! contas assoc-in [cid pid "transferencia-professor"] pendente)
+      (persistir!)
+      pendente)))
+
+(defn confirmar-transferencia-professor! [cid pid token agora]
+  (let [resultado (volatile! {:status :invalida})]
+    (swap! contas update-in [cid pid]
+           (fn [c]
+             (let [pendente (get c "transferencia-professor")
+                   registro (get pendente "registro")
+                   id (get registro "id-pokemon")
+                   eq (vec (get c "equipe" []))
+                   idx (first (keep-indexed #(when (= id (get %2 "id-pokemon")) %1) eq))
+                   familia (get pendente "familia")]
+               (if (and pendente (= token (get pendente "token"))
+                        (< agora (get pendente "expira" 0)) (some? idx)
+                        (= registro (get eq idx))
+                        (not= id (get-in c ["favorito" "id"])))
+                 (let [ativo (get c "ativo" 0)]
+                   (vreset! resultado {:status :ok :registro registro :familia familia})
+                   (-> (ajustar-times-remocao c idx)
+                       (assoc "equipe" (vec (concat (subvec eq 0 idx) (subvec eq (inc idx))))
+                              "ativo" (cond (= ativo idx) 0 (> ativo idx) (dec ativo) :else ativo)
+                              "inicial-escolhido" true)
+                       (update-in ["cartoes-professor" familia] (fnil inc 0))
+                       (dissoc "transferencia-professor")))
+                 c))))
+    (when (= :ok (:status @resultado))
+      (colecao-shiny! cid pid [(:registro @resultado)])
+      (persistir!))
+    @resultado))
+
+(defn usar-cartao-professor! [cid pid idx registro familia]
+  ;; Cartão e XP são alterados no mesmo registro persistido, sem intervalo assíncrono.
+  (let [resultado (volatile! {:status :alterado})]
+    (swap! contas update-in [cid pid]
+           (fn [c]
+             (cond
+               (or (nil? registro) (not= registro (get-in c ["equipe" idx]))) c
+               (>= (get registro "nivel" 1) nivel-maximo)
+               (do (vreset! resultado {:status :nivel-maximo}) c)
+               (not (pos? (get-in c ["cartoes-professor" familia] 0)))
+               (do (vreset! resultado {:status :sem-cartoes}) c)
+               :else
+               (let [novo (normalizar-xp-registro
+                           (-> registro
+                               (update "xp-desde-nivel" (fnil + 0) xp-por-cartao-professor)
+                               (update "amizade" #(min 255 (+ (or % 70) 10)))))
+                     subiu? (> (get novo "nivel") (get registro "nivel" 1))]
+                 (vreset! resultado {:status :ok :nome (get novo "nome")
+                                     :nivel (get novo "nivel") :subiu? subiu?})
+                 (-> c
+                     (assoc-in ["equipe" idx] novo)
+                     (update-in ["cartoes-professor" familia] dec)
+                     limpar-times)))))
+    (when (= :ok (:status @resultado)) (persistir!))
+    @resultado))
 
 (defn receber-retorno-ginasio! [cid pid registro xp]
   (receber-registro! cid pid
@@ -591,7 +625,7 @@
 
 (defn adicionar-pokemon!
   "Acrescenta um pokémon (mapa interno do zapbot.pokemon.core + hp-atual/status)
-  na equipe ou no PC quando a equipe está cheia. Retorna destino e índice."
+  na coleção do jogador. Retorna destino e índice."
   [cid pid pokemon hp-atual status]
   (receber-registro! cid pid (pokemon->registro pokemon hp-atual status)))
 
@@ -605,8 +639,6 @@
                        (update "equipe" conj (pokemon->registro pokemon (:hp pokemon) nil)))))
     (persistir!)
     true))
-
-(declare colecao-shiny!)
 
 (defn receber-doacao!
   "Acrescenta um registro JÁ no formato persistido (ver pokemon->registro)

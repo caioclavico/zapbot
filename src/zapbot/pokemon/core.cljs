@@ -594,7 +594,7 @@
     (treinador/inicial-disponivel? cid pid)
     (str "🌟 Escolha seu Pokémon inicial: " config/prefix "pokemon inicial.")
     (seq (treinador/pc cid pid))
-    (str "💻 Seus Pokémon estão com o professor. Retire um com " config/prefix "pk pc retirar <número>. Consulte " config/prefix "pk pc.")
+    (str "🎒 Seus Pokémon do antigo PC voltarão à coleção após o combate. Consulte " config/prefix "pk tm.")
     (seq (ginasios/liderados cid pid))
     (str "🏛️ Você tem Pokémon reservados nos ginásios. Eles ficam inativos até outro treinador derrubar você. Consulte "
          config/prefix "pokemon ginasio. Para usar outros Pokémon disponíveis, consulte " config/prefix "pokemon time.")
@@ -2173,7 +2173,7 @@
            ocupado? "🚫 Termine ou saia da batalha antes de aplicar outra escalação."
            (nil? (get times nome)) (str "❓ Escalação *" nome "* não encontrada. Use " config/prefix "pk times.")
            (or (not= 3 (count indices)) (some nil? indices))
-           "🚫 Um ou mais Pokémon dessa escalação estão no PC (retire-os primeiro), na Joy, em um ginásio ou não pertencem mais ao treinador."
+           "🚫 Um ou mais Pokémon dessa escalação estão na Joy, em um ginásio ou não pertencem mais ao treinador."
            (contains? #{"ginasio" "ginásio"} destino)
            (do (treinador/salvar-time-ginasio! cid pid indices)
                (str "🏛️ Escalação *" nome "* preparada para o ginásio. Nenhum Pokémon foi reservado agora."))
@@ -2223,7 +2223,7 @@
          (if-let [registro (when (some? idx) (treinador/definir-favorito! cid pid idx))]
            (str "⭐ *" (get registro "nome") "* agora é seu favorito"
                 (when (pos? (get registro "hp-atual" 0)) " e também ficou ativo")
-                ". Ao voltar saudável para a equipe, será ativado automaticamente. Se ela estiver cheia, consulte o PC.")
+                ". Ao voltar saudável para a equipe, será ativado automaticamente.")
            (str "❓ Pokémon inválido. Veja os números com " config/prefix "pk time.")))))))
 
 (defn- iniciar-ou-entrar-atualizado [message]
@@ -2576,7 +2576,7 @@
              (if (seq enviados)
                (str (cabecalho) "🏥 A Enfermeira Joy recebeu "
                     (str/join ", " (map #(str "*" (get % "nome") "*") (reverse enviados))) ".\n"
-                    "Eles voltarão totalmente curados para a equipe (ou para o PC se estiver cheia) em " treinador/tempo-tratamento-minutos " minutos.\n\n"
+                    "Eles voltarão totalmente curados para a coleção em " treinador/tempo-tratamento-minutos " minutos.\n\n"
                     "Pokémon já saudáveis foram ignorados. Use " config/prefix
                     "pokemon time para acompanhar o retorno.")
                (if tem-ferido?
@@ -3124,7 +3124,6 @@
       (renderizar-pokedex-pessoal message filtro-pokedex))))
 
 (def ^:private pokemons-por-cartao 12)
-(def ^:private maximo-paginas-time 2)
 
 (def ^:private marcadores-texto
   "Palavras que pedem a listagem do time em texto puro, sem os cartões."
@@ -3249,34 +3248,10 @@
             buffer  (-> (sharp base) (.composite imagens) (.png) (.toBuffer))]
       (MessageMedia. "image/png" (.toString buffer "base64") arquivo)))))
 
+(declare resposta-colecao-visual)
+
 (defn- resposta-time-visual [message filtro]
-  (let [cid   (chat-id message)
-        pid   (jogador-id message)
-        eq    (treinador/equipe cid pid)
-        filtrado (filtrar-time eq filtro)
-        limite (* pokemons-por-cartao maximo-paginas-time)
-        exibidos (vec (take limite filtrado))
-        ocultos (- (count filtrado) (count exibidos))]
-    (if (seq filtrado)
-      (-> (p/let [texto  (ver-time message filtro)
-                  paginas (vec (partition-all pokemons-por-cartao exibidos))
-                  medias  (p/all (map-indexed
-                                  (fn [_ pokemon-da-pagina]
-                                    (criar-cartao-time pokemon-da-pagina
-                                                       (treinador/indice-ativo cid pid)
-                                                       (treinador/nivel-jogador cid pid)))
-                                  paginas))]
-            {:medias medias
-             :texto texto
-             :legenda-ultima
-             (str (when (pos? ocultos)
-                    (str "⚠️ Mostrando os primeiros " limite " de " (count filtrado) " Pokémon.\n"))
-                  "🔎 Use " config/prefix "pokemon time [liga] [tipo] [raridade] [nome] [nivel N] para encontrar o que procura; os filtros podem ser combinados."
-                  "\n📝 Prefere a lista completa sem as fotos? " config/prefix "pokemon time txt (aceita os mesmos filtros).")})
-          (p/catch (fn [err]
-                     (js/console.error "Erro ao gerar cartão do time:" err)
-                     (ver-time message filtro))))
-      (ver-time message filtro))))
+  (resposta-colecao-visual message (str/split (str/trim filtro) #"\s+")))
 
 (def ^:private colunas-csv-time
   ["Nº" "Situação" "Nome" "Nível" "Raridade" "Tipos" "HP atual" "HP máximo"
@@ -3627,8 +3602,8 @@
   (< (ocupacao-pokemon cid pid) (loja/capacidade-pokemon cid pid)))
 
 (defn- estoque-cheio []
-  (str "💻 Estoque Pokémon cheio. Libere uma vaga por doação ou compre +50 vagas com "
-       config/prefix "pk pc comprar. Consulte " config/prefix "pk pc."))
+  (str "💻 Estoque Pokémon cheio. Transfira ao professor, doe ou compre +50 vagas com "
+       config/prefix "pk pc comprar. Consulte " config/prefix "pk tm."))
 
 (defn- ocupado-pc? [cid pid]
   (or (jogador-na-batalha? (get @jogos cid) pid)
@@ -3640,7 +3615,7 @@
   (when (re-matches #"[1-9][0-9]*" (or texto ""))
     (parse-indice-golpe texto total)))
 
-(defn- pagina-pc [banco args]
+(defn- pagina-colecao [banco args]
   (let [tokens (vec (if (= "listar" (first args)) (rest args) args))
         explicita? (contains? #{"pagina" "página" "pag"} (first tokens))
         numerica? (boolean (re-matches #"[+-]?[0-9]+" (or (first tokens) "")))
@@ -3648,41 +3623,41 @@
         pagina (when (re-matches #"[0-9]+" (or texto-pagina "")) (js/parseInt texto-pagina 10))
         filtro (str/join " " (drop (cond explicita? 2 numerica? 1 :else 0) tokens))
         filtrado (filtrar-time banco filtro)
-        paginas (max 1 (js/Math.ceil (/ (count filtrado) 12)))
+        paginas (max 1 (js/Math.ceil (/ (count filtrado) pokemons-por-cartao)))
         valida? (and (number? pagina) (js/Number.isSafeInteger pagina) (<= 1 pagina paginas))]
     {:pagina pagina :paginas paginas :valida? valida? :filtro filtro :total (count filtrado)
-     :entradas (if valida? (vec (take 12 (drop (* 12 (dec pagina)) filtrado))) [])}))
+     :entradas (if valida? (vec (take pokemons-por-cartao (drop (* pokemons-por-cartao (dec pagina)) filtrado))) [])}))
 
-(defn- resposta-pc-visual [message args]
+(defn- resposta-colecao-visual [message args]
   (let [cid (chat-id message) pid (jogador-id message)
-        banco (treinador/pc cid pid)
-        {:keys [pagina paginas valida? filtro total entradas]} (pagina-pc banco args)
-        comando-pagina (fn [n] (str config/prefix "pk pc " n (when (seq filtro) (str " " filtro))))
+        banco (treinador/equipe cid pid)
+        {:keys [pagina paginas valida? filtro total entradas]} (pagina-colecao banco args)
+        comando-pagina (fn [n] (str config/prefix "pk tm " n (when (seq filtro) (str " " filtro))))
         quantidade (ocupacao-pokemon cid pid)
         capacidade (loja/capacidade-pokemon cid pid)
-        texto (str "💻 *PC do Centro Pokémon — Professor* • Página " pagina "/" paginas
-                   "\nEquipe: " (count (treinador/equipe cid pid)) "/6 • PC: " (count banco)
-                   " • Estoque total: " quantidade "/" capacidade " (inclui Joy e ginásios)."
+        texto (str "🎒 *Sua coleção Pokémon* • Página " pagina "/" paginas
+                   "\nEstoque total: " quantidade "/" capacidade " (inclui Joy e ginásios)."
                    (when (> quantidade capacidade) "\n⚠️ Excedente preservado. Libere ou compre vagas para adquirir mais.")
                    (when (seq filtro) (str "\n🔎 " (descricao-filtros (interpretar-filtros-time filtro))))
-                   "\nMostrando " (count entradas) " de " total " Pokémon. Números originais do PC."
+                   "\nMostrando " (count entradas) " de " total " Pokémon. Números originais da coleção."
+                   (when (and valida? (> pagina 1)) (str "\n⬅️ Anterior: " (comando-pagina (dec pagina))))
                    (when (< (or pagina 1) paginas) (str "\n➡️ Próxima: " (comando-pagina (inc (or pagina 1)))))
-                   "\n🔎 Filtros: " config/prefix "pk pc [liga] [tipo] [raridade] [nome] [nivel N] [shiny] [>|<]"
-                   "\n📖 " config/prefix "pk pc ajuda • +50 vagas: " config/prefix "pk pc comprar ("
+                   "\n🔎 Filtros: " config/prefix "pk tm [liga] [tipo] [raridade] [nome] [nivel N] [shiny] [>|<]"
+                   "\n📖 " config/prefix "pk tm ajuda • +50 vagas: " config/prefix "pk pc comprar ("
                    (loja/preco-expansao-pc cid pid) " moedas).")]
     (cond
       (not valida?)
       (p/resolved (str "❓ Página inválida. Escolha de 1 a " paginas ": " (comando-pagina 1)))
       (empty? entradas)
-      (p/resolved (str texto "\n" (if (empty? banco) "Nenhum Pokémon guardado com o professor."
-                                      "Nenhum Pokémon do PC corresponde aos filtros.")))
+      (p/resolved (str texto "\n" (if (empty? banco) "Nenhum Pokémon disponível. Consulte !pk inicial ou !pk tm txt para ver a Joy."
+                                      "Nenhum Pokémon da coleção corresponde aos filtros.")))
       :else
-      (-> (p/let [media (criar-cartao-time entradas nil (treinador/nivel-jogador cid pid)
-                                          {:titulo (str "PC do Professor — " pagina "/" paginas)
-                                           :arquivo "pc-professor.png"})]
+      (-> (p/let [media (criar-cartao-time entradas (treinador/indice-ativo cid pid) (treinador/nivel-jogador cid pid)
+                                          {:titulo (str "Sua coleção Pokémon — " pagina "/" paginas)
+                                           :arquivo "colecao-pokemon.png"})]
             {:media media :texto texto})
           (p/catch (fn [erro]
-                     (js/console.error "Erro ao gerar cartão do PC:" erro)
+                     (js/console.error "Erro ao gerar cartão da coleção:" erro)
                      (str texto "\n\n"
                           (str/join "\n" (map (fn [{:keys [indice registro]}]
                                                   (str (inc indice) ". " (get registro "nome")
@@ -3690,41 +3665,20 @@
 
 (defn- comando-pc [message args]
   (let [cid (chat-id message) pid (jogador-id message)
-        [acao numero numero-equipe] args
-        ocupado? (ocupado-pc? cid pid)
-        _ (when-not ocupado? (treinador/migrar-pc! cid pid))
-        banco (vec (treinador/pc cid pid))
-        eq (vec (treinador/equipe cid pid))]
+        [acao numero] args]
+    (when-not (ocupado-pc? cid pid) (treinador/migrar-colecao! cid pid))
     (case acao
-      "ver"
-      (if-let [r (get banco (indice-pc numero (count banco)))]
-        (let [[pokemon hp status] (treinador/registro->pokemon r)]
-          (str "💻 *" (:nome pokemon) "* Nv." (:nivel pokemon)
-               "\nHP " hp "/" (:hp pokemon) (emoji-status status)
-               "\n" (texto-xp r)
-               (when-let [item (texto-item pokemon)] (str "\nItem: " item))
-               "\n\n" (menu-golpes pokemon [] nil)))
-        "❓ Número inválido. Consulte !pk pc.")
       "comprar"
       (let [{:keys [status preco capacidade]} (loja/comprar-espaco-pc! cid pid)]
         (if (= status :ok)
           (str "✅ +50 vagas Pokémon por " preco " moedas! Capacidade total: " capacidade ".")
           (str "💰 Moedas insuficientes. A próxima expansão custa " preco " moedas.")))
+      "ver" (ver-pokemon-do-time message numero)
       ("depositar" "retirar" "trocar")
-      (if ocupado?
-        "🚫 Termine a batalha, caçada ou alteração pendente antes de movimentar Pokémon no PC."
-        (let [idx (indice-pc numero (if (= acao "depositar") (count eq) (count banco)))
-              outro (indice-pc numero-equipe (count eq))]
-          (cond
-            (or (nil? idx) (and (= acao "trocar") (nil? outro)))
-            (str "❓ Use " config/prefix "pk pc " acao " <número>"
-                 (when (= acao "trocar") " <número da equipe>") ". Veja os números em !pk pc e !pk time.")
-            (and (= acao "retirar") (>= (count eq) 6))
-            "👥 Equipe cheia (6/6). Use !pk pc trocar <número do PC> <número da equipe>."
-            (treinador/mover-pc! cid pid (keyword acao) idx outro)
-            "✅ Pokémon movimentado. Confira os novos números em !pk pc e !pk time."
-            :else "❓ Não foi possível movimentar esse Pokémon.")))
-      (resposta-pc-visual message args))))
+      (str "🎒 Agora todos os Pokémon ficam na sua coleção: " config/prefix "pk tm."
+           "\nPara enviar definitivamente ao professor e ganhar um cartão de XP: "
+           config/prefix "pk professor enviar <número> (exige confirmação).")
+      (resposta-colecao-visual message args))))
 
 (defn- doar [message indice-texto]
   (let [cid   (chat-id message)
@@ -3757,7 +3711,7 @@
                     "💻 O destinatário está sem espaço Pokémon. Ele precisa liberar ou comprar vagas no PC."
 
                     :else
-                    (let [_ (treinador/migrar-pc! cid alvo)
+                    (let [_ (treinador/migrar-colecao! cid alvo)
                           registro      (nth (treinador/equipe cid pid) indice)
                           [pokemon _ _] (treinador/registro->pokemon registro)]
                       (treinador/remover-pokemon! cid pid indice)
@@ -3863,7 +3817,7 @@
                  aviso-missao (loja/registrar-missao! cid pid "capturas" (treinador/nivel-jogador cid pid))]
              (str "✅ " nome-bola " lançada: captura concluída! (" chance "% de chance)" aviso-missao
                   "\n📚 Registrado na Pokédex e "
-                  (if (= destino :pc) "guardado com o professor no PC como nº " "adicionado ao time como nº ")
+                  "adicionado à coleção como nº "
                   (inc indice) "."
                   "\n🔥 Sequência de capturas: " (:sequencia recompensa)
                   "\n✨ +" (:xp recompensa) " XP (raridade +"
@@ -4993,6 +4947,92 @@
                        "❌ Não consegui concluir a evolução. Consulte o time e a mochila antes de tentar novamente."))
             (p/finally #(swap! evolucoes-pendentes disj [cid pid])))))))
 
+(defn- familia-da-cadeia [cadeia slug]
+  (letfn [(contem? [no]
+            (or (= slug (get-in no [:species :name]))
+                (some contem? (:evolves_to no))))]
+    (when (and (seq (get-in cadeia [:chain :species :name])) (contem? (:chain cadeia)))
+      (get-in cadeia [:chain :species :name]))))
+
+(defn- professor-bloqueado? [cid pid]
+  (or (ocupado-pc? cid pid) (raids/participando? cid pid)))
+
+(defn- comando-professor [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        [acao numero] args
+        idx (indice-pc numero (count (treinador/equipe cid pid)))
+        registro (when (some? idx) (get (treinador/equipe cid pid) idx))
+        guia (str "👨‍🔬 *Professor — cartões de XP*"
+                  "\nEnviar definitivamente: " config/prefix "pk professor enviar <número>"
+                  "\nCada transferência dá 1 cartão da família. Confirme em até 5 minutos."
+                  "\nUsar 1 cartão (+3 XP): " config/prefix "pk professor usar <número>"
+                  "\nSaldo: " config/prefix "pk professor cartoes"
+                  "\nCancelar envio: " config/prefix "pk professor cancelar")]
+    (cond
+      (= acao "cancelar")
+      (do (treinador/cancelar-transferencia-professor! cid pid)
+          (p/resolved "✅ Transferência cancelada. Nenhum Pokémon foi enviado."))
+      (contains? #{"cartoes" "cartões" "saldo"} acao)
+      (p/resolved (str "🎟️ *Cartões de XP por família*\n"
+                       (or (not-empty (str/join "\n" (for [[familia quantidade] (sort-by key (treinador/cartoes-professor cid pid))
+                                                             :when (pos? quantidade)]
+                                                         (str familia ": " quantidade))))
+                           "Você ainda não tem cartões.")
+                       "\nCada cartão concede +3 XP: " config/prefix "pk professor usar <número>."))
+      (not (contains? #{"enviar" "confirmar" "usar"} acao)) (p/resolved guia)
+      (professor-bloqueado? cid pid)
+      (p/resolved "🚫 Termine a batalha, caçada, raid e alterações pendentes antes de usar o professor.")
+      (= acao "confirmar")
+      (p/resolved
+       (let [{:keys [status registro familia]} (treinador/confirmar-transferencia-professor! cid pid numero (.now js/Date))]
+         (if (= status :ok)
+           (do (when-let [item (get registro "item")] (loja/devolver-item! cid pid item))
+               (str "✅ *" (get registro "nome") "* enviado definitivamente ao professor."
+                    "\n+1 cartão da família *" familia "* e uma vaga liberada."
+                    (when (get registro "item") " O item equipado voltou para a mochila.")
+                    "\nConfira os novos números em " config/prefix "pk tm."))
+           "❓ Confirmação inválida, expirada ou Pokémon alterado/protegido. Faça um novo pedido de envio.")))
+      (nil? registro) (p/resolved (str "❓ Número inválido. Consulte " config/prefix "pk tm."))
+      (and (= acao "enviar") (some? (get registro "id-pokemon"))
+           (= (get registro "id-pokemon") (get (treinador/favorito cid pid) "id")))
+      (p/resolved "⭐ Remova a marca de favorito antes de enviar este Pokémon ao professor.")
+      :else
+      (let [registro (treinador/garantir-id-pokemon! cid pid idx)
+            slug (-> (get registro "nome") str/lower-case (str/replace #"\s+" "-"))]
+        (swap! evolucoes-pendentes conj [cid pid])
+        (-> (p/let [cadeia (buscar-cadeia-evolucao slug)
+                    familia (familia-da-cadeia cadeia slug)]
+              (cond
+                (nil? familia) "❌ Não consegui consultar a família deste Pokémon. Tente novamente; nada foi consumido."
+                (or (aprendizado-bloqueado? cid pid) (raids/participando? cid pid)
+                    (not= registro (get (treinador/equipe cid pid) idx)))
+                "⚠️ O Pokémon mudou ou entrou em combate. Tente novamente; nada foi consumido."
+                (= acao "enviar")
+                (if-let [pendente (treinador/preparar-transferencia-professor! cid pid registro familia (.now js/Date))]
+                  (str "⚠️ Enviar *" (get registro "nome") "* nº " (inc idx)
+                       " Nv." (get registro "nivel" 1) (when (get registro "shiny") " ✨ SHINY")
+                       " ao professor? A transferência é definitiva: você não poderá recuperar este Pokémon."
+                       "\nReceberá 1 cartão da família *" familia "* (+3 XP ao usar em outro membro da família)."
+                       (when (get registro "item") "\nO item equipado será devolvido à mochila.")
+                       "\nConfirme em até 5 minutos: " config/prefix "pk professor confirmar " (get pendente "token")
+                       "\nCancelar: " config/prefix "pk professor cancelar")
+                  "⚠️ Pokémon alterado ou favorito. Faça um novo pedido.")
+                :else
+                (let [{:keys [status nome nivel subiu?]} (treinador/usar-cartao-professor! cid pid idx registro familia)]
+                  (case status
+                    :nivel-maximo "🏅 Este Pokémon já está no nível máximo. Nenhum cartão foi gasto."
+                    :sem-cartoes (str "🎟️ Você não tem cartões da família *" familia "*.")
+                    :ok (p/let [_ (when subiu? (verificar-evolucao! message cid pid idx))
+                                _ (when subiu? (aprender-golpe-por-nivel! message cid pid nivel idx))]
+                          (str "🎟️ 1 cartão da família *" familia "* usado em *" nome "*: +3 XP."
+                               (when subiu? (str " Subiu para o nível " nivel "!"))
+                               "\n" (texto-xp (get (treinador/equipe cid pid) idx))))
+                    "⚠️ O Pokémon mudou. Nenhum cartão foi gasto."))))
+            (p/catch (fn [erro]
+                       (js/console.error "Erro no professor:" erro)
+                       "❌ Não consegui concluir a operação. Confira !pk tm e !pk professor cartoes antes de tentar novamente."))
+            (p/finally #(swap! evolucoes-pendentes disj [cid pid])))))))
+
 (defn- ocupado-troca? [cid pid]
   (or (aprendizado-bloqueado? cid pid) (contains? @evolucoes-pendentes [cid pid])))
 
@@ -5216,7 +5256,7 @@
   [message args]
   (let [cid          (chat-id message)
         pid          (jogador-id message)
-        _            (when-not (ocupado-pc? cid pid) (treinador/migrar-pc! cid pid))
+        _            (when-not (ocupado-pc? cid pid) (treinador/migrar-colecao! cid pid))
         _            (treinador/recolher-curados! cid pid)
         _            (when (and (not (some #{pid} (vals (:jogadores (get @jogos cid)))))
                                 (not= pid (:pid (get @cacadas-selvagens cid))))
@@ -5247,6 +5287,7 @@
       (contains? #{"liga" "ligas"} cmd) (configurar-liga message resto)
       (contains? #{"ginasio" "ginásio" "ginasios" "ginásios"} cmd) (configurar-ginasio message resto)
       (contains? #{"evento" "eventos"} cmd) (p/resolved (ver-evento))
+      (= cmd "professor") (comando-professor message resto)
       (= cmd "evoluir") (evoluir-com-item message resto)
       (= cmd "negociar") (negociar-pokemon message resto)
       (= cmd "raid") (comando-raid message resto)

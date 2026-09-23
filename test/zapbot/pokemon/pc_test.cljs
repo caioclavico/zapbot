@@ -20,67 +20,63 @@
 
 (deftest migracao-preserva-todos-os-registros-e-escalacoes
   (let [registros (mapv registro (range 32))
-        estado (atom {"chat" {"ash" {"equipe" registros "ativo" 31
-                                      "favorito" {"id" "30"}
+        salvo {"nome" "antigo" "pokemons" ["6" "10" "30"]}
+        estado (atom {"chat" {"ash" {"equipe" (subvec registros 0 6)
+                                      "pc" (subvec registros 6) "ativo" 5
+                                      "favorito" {"id" "30"} "pc-migrado" true
+                                      "times-prontos" {"antigo" salvo}
                                       "time-ginasio" [0 1 2] "liga" "iniciante"
                                       "times-liga" {"iniciante" [3 4 5]}}}})]
     (with-redefs [treinador/contas estado armazenamento/salvar! sem-gravacao]
-      (treinador/migrar-pc! "chat" "ash")
-      (let [migrado @estado eq (treinador/equipe "chat" "ash") pc (treinador/pc "chat" "ash")]
-        (is (= 6 (count eq)))
-        (is (= 26 (count pc)))
-        (is (= (set registros) (set (concat eq pc))))
-        (is (= "31" (get (get eq (treinador/indice-ativo "chat" "ash")) "id-pokemon")))
-        (is (some #(= "30" (get % "id-pokemon")) eq))
-        (is (= ["0" "1" "2"] (get-in @estado ["chat" "ash" "times-prontos" "ginasio anterior" "pokemons"])))
-        (is (= ["3" "4" "5"] (get-in @estado ["chat" "ash" "times-prontos" "liga iniciante anterior" "pokemons"])))
-        (treinador/migrar-pc! "chat" "ash")
+      (treinador/migrar-colecao! "chat" "ash")
+      (let [migrado @estado]
+        (is (= registros (treinador/equipe "chat" "ash")))
+        (is (empty? (treinador/pc "chat" "ash")))
+        (is (= 5 (treinador/indice-ativo "chat" "ash")))
+        (is (= [0 1 2] (treinador/time-ginasio "chat" "ash")))
+        (is (= [3 4 5] (treinador/time-liga "chat" "ash" "iniciante")))
+        (is (= "30" (get (treinador/favorito "chat" "ash") "id")))
+        (is (= salvo (get-in @estado ["chat" "ash" "times-prontos" "antigo"])))
+        (treinador/migrar-colecao! "chat" "ash")
         (is (= migrado @estado))))))
 
-(deftest expansao-debita-preco-progressivo-e-nao-cobra-sem-saldo
-  (let [estado (atom {"chat" {"ash" {"moedas" 1200}}})]
+(deftest migracao-de-conta-anterior-ao-pc-nao-corta-excedentes
+  (let [registros (mapv registro (range 80))
+        estado (atom {"chat" {"ash" {"equipe" registros "ativo" 79}}})]
+    (with-redefs [treinador/contas estado armazenamento/salvar! sem-gravacao]
+      (treinador/migrar-colecao! "chat" "ash")
+      (is (= registros (treinador/equipe "chat" "ash")))
+      (is (= 79 (treinador/indice-ativo "chat" "ash")))
+      (is (= 80 (treinador/quantidade-guardada "chat" "ash"))))))
+
+(deftest expansao-debita-preco-fixo-e-nao-cobra-sem-saldo
+  (let [estado (atom {"chat" {"ash" {"moedas" 600}}})]
     (with-redefs [loja/contas estado armazenamento/salvar! sem-gravacao]
       (is (= 26 (loja/capacidade-pokemon "chat" "ash")))
-      (doseq [[preco capacidade] [[200 76] [400 126] [600 176]]]
+      (doseq [[preco capacidade] [[200 76] [200 126] [200 176]]]
+        (is (= 200 (loja/preco-expansao-pc "chat" "ash")))
         (is (= {:status :ok :preco preco :capacidade capacidade}
                (loja/comprar-espaco-pc! "chat" "ash")))
         (is (= capacidade (loja/capacidade-pokemon "chat" "ash"))))
       (is (= 0 (loja/moedas "chat" "ash")))
-      (is (= {:status :sem-moedas :preco 800} (loja/comprar-espaco-pc! "chat" "ash")))
+      (is (= {:status :sem-moedas :preco 200} (loja/comprar-espaco-pc! "chat" "ash")))
       (is (= 176 (loja/capacidade-pokemon "chat" "ash"))))))
 
-(deftest movimentacoes-preservam-dados-e-limite-da-equipe
-  (let [eq (mapv registro (range 6)) r (registro 6)
-        estado (atom {"chat" {"ash" {"equipe" eq "pc" [r] "ativo" 2 "pc-migrado" true
-                                      "time-ginasio" [0 1 2] "times-liga" {"iniciante" [0 1 2]}}}})]
-    (with-redefs [treinador/contas estado armazenamento/salvar! sem-gravacao]
-      (is (nil? (treinador/mover-pc! "chat" "ash" :retirar 0 nil)))
-      (is (true? (treinador/mover-pc! "chat" "ash" :trocar 0 1)))
-      (is (= r (get (treinador/equipe "chat" "ash") 1)))
-      (is (= (eq 1) (first (treinador/pc "chat" "ash"))))
-      (is (= [0 nil 2] (treinador/time-ginasio "chat" "ash")))
-      (is (treinador/mover-pc! "chat" "ash" :depositar 0 nil))
-      (is (= 1 (treinador/indice-ativo "chat" "ash")))
-      (is (treinador/mover-pc! "chat" "ash" :retirar 0 nil))
-      (is (= 6 (count (treinador/equipe "chat" "ash"))))
-      (is (= (set (conj eq r)) (set (concat (treinador/equipe "chat" "ash") (treinador/pc "chat" "ash")))))
-      (is (nil? (treinador/mover-pc! "chat" "ash" :depositar 99 nil))))))
-
-(deftest retornos-e-doacoes-vao-ao-pc-sem-exceder-seis
+(deftest retornos-e-doacoes-vao-a-colecao-sem-cortar-excedentes
   (let [estado (atom {"chat" {"ash" {"equipe" (mapv registro (range 6))
                                       "enfermaria" [{"pokemon" (registro 8) "pronto-em" 0}]}}})]
     (with-redefs [treinador/contas estado armazenamento/salvar! sem-gravacao]
-      (is (= :pc (:destino (treinador/receber-doacao! "chat" "ash" (registro 7)))))
+      (is (= :equipe (:destino (treinador/receber-doacao! "chat" "ash" (registro 7)))))
       (treinador/recolher-curados! "chat" "ash")
       (treinador/receber-retorno-ginasio! "chat" "ash" (assoc (registro 9) "hp-atual" 0) 9)
-      (let [[doado curado defensor] (treinador/pc "chat" "ash")]
+      (let [[doado curado defensor] (drop 6 (treinador/equipe "chat" "ash"))]
         (is (= (registro 7) doado))
         (is (= 80 (get curado "hp-atual")))
         (is (nil? (get curado "status")))
         (is (= 6 (get defensor "nivel")))
         (is (= 3 (get defensor "xp-desde-nivel")))
         (is (= 0 (get defensor "hp-atual")))
-        (is (= 6 (count (treinador/equipe "chat" "ash"))))
+        (is (= 9 (count (treinador/equipe "chat" "ash"))))
         (is (= 9 (treinador/quantidade-guardada "chat" "ash")))))))
 
 (deftest estoque-inclui-joy-e-ginasios-e-bloqueia-antes-da-bola
@@ -110,7 +106,7 @@
                   core/cacadas-selvagens (atom {}) loja/contas (atom {})
                   ginasios/liderados (fn [_ _] [])]
       (let [antes @estado texto (core/comando-pc #js {:from "chat" :author "ash"} ["trocar" "1" "1"])]
-        (is (str/includes? texto "Termine a batalha"))
+        (is (str/includes? texto "Agora todos os Pokémon"))
         (is (= antes @estado)))))
   (is (= (ajuda/resposta "pc ajuda") (ajuda/resposta "centro ajuda")))
   (is (str/includes? (ajuda/resposta "pc ajuda") "200 moedas")))
@@ -128,19 +124,19 @@
   (is (nil? (core/indice-pc "0" 10)))
   (is (= 9 (core/indice-pc "10" 10))))
 
-(deftest captura-com-equipe-cheia-guarda-no-pc-sem-perder-dados
+(deftest captura-acrescenta-a-colecao-sem-limite-de-seis
   (let [estado (atom {"chat" {"ash" {"equipe" (mapv registro (range 6))}}})
         [pokemon hp status] (treinador/registro->pokemon (registro 20))]
     (with-redefs [treinador/contas estado armazenamento/salvar! sem-gravacao]
-      (is (= {:destino :pc :indice 0} (treinador/adicionar-pokemon! "chat" "ash" pokemon hp status)))
-      (is (= 6 (count (treinador/equipe "chat" "ash"))))
-      (let [r (first (treinador/pc "chat" "ash"))]
+      (is (= {:destino :equipe :indice 6} (treinador/adicionar-pokemon! "chat" "ash" pokemon hp status)))
+      (is (= 7 (count (treinador/equipe "chat" "ash"))))
+      (let [r (last (treinador/equipe "chat" "ash"))]
         (is (= "Pokemon 20" (get r "nome")))
         (is (= 40 (get r "hp-atual")))
         (is (= "queimado" (get r "status")))
         (is (= "restos" (get r "item")))))))
 
-(deftest retorno-real-do-ginasio-vai-ao-pc-e-mantem-xp
+(deftest retorno-real-do-ginasio-vai-a-colecao-e-mantem-xp
   (let [anterior {"pid" "brock" "nome" "Brock" "time" (mapv registro [10 11 12]) "desde" 0}
         estado (atom {"chat" {"ash" {"equipe" (mapv registro [0 1 2]) "ativo" 0}
                               "brock" {"equipe" (mapv registro (range 20 26)) "ativo" 0}}})]
@@ -148,10 +144,10 @@
                   ginasios/ocupacoes (atom {"chat" {"pedra" anterior}})
                   ginasios/estatisticas (atom {}) armazenamento/salvar! sem-gravacao]
       (is (some? (ginasios/ocupar! "chat" "pedra" anterior "ash" "Ash" [0 1 2] (* 60 60 1000))))
-      (is (= 6 (count (treinador/equipe "chat" "brock"))))
-      (is (= 3 (count (treinador/pc "chat" "brock"))))
-      (is (every? #(= 0 (get % "hp-atual")) (treinador/pc "chat" "brock")))
-      (is (every? #(= 5 (get % "xp-desde-nivel")) (treinador/pc "chat" "brock")))
+      (is (= 9 (count (treinador/equipe "chat" "brock"))))
+      (is (empty? (treinador/pc "chat" "brock")))
+      (is (every? #(= 0 (get % "hp-atual")) (drop 6 (treinador/equipe "chat" "brock"))))
+      (is (every? #(= 5 (get % "xp-desde-nivel")) (drop 6 (treinador/equipe "chat" "brock"))))
       (is (= 0 (count (treinador/equipe "chat" "ash"))))
       (is (= 3 (core/ocupacao-pokemon "chat" "ash"))))))
 
@@ -178,13 +174,13 @@
                     ginasios/liderados (fn [_ _] [])]
         (-> (core/jogar-comando #js {:from "chat" :author "ash"} "pc")
             (.then (fn [texto]
-                     (is (str/includes? texto "PC do Centro"))
+                     (is (str/includes? (:texto texto) "Sua coleção"))
                      (is (= antes @estado))
                      (done)))
             (.catch (fn [erro] (is false (str erro)) (done))))))))
 
 
-(deftest doacao-revalida-capacidade-e-entrega-no-pc
+(deftest doacao-revalida-capacidade-e-entrega-na-colecao
   (async done
     (let [cid "teste-doacao-pc"
           anterior (get @treinador/contas cid)
@@ -204,9 +200,9 @@
           (p/then (fn [texto]
                     (is (str/includes? texto "com sucesso"))
                     (is (empty? (treinador/equipe cid "ash")))
-                    (is (= 6 (count (treinador/equipe cid "misty"))))
+                    (is (= 26 (count (treinador/equipe cid "misty"))))
                     (is (= 26 (core/ocupacao-pokemon cid "misty")))
-                    (is (= doado (last (treinador/pc cid "misty"))))))
+                    (is (= doado (last (treinador/equipe cid "misty"))))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally (fn []
                        (if anterior (swap! treinador/contas assoc cid anterior)
@@ -215,9 +211,9 @@
 
 (deftest paginas-do-pc-tem-doze-e-preservam-os-numeros-originais
   (let [banco (mapv #(assoc (registro %) "tipos" [(if (odd? %) "fire" "water")]) (range 50))
-        segunda (core/pagina-pc banco ["2"])
-        fogo (core/pagina-pc banco ["2" "fogo"])
-        ultima (core/pagina-pc banco ["3" "fogo"])]
+        segunda (core/pagina-colecao banco ["2"])
+        fogo (core/pagina-colecao banco ["2" "fogo"])
+        ultima (core/pagina-colecao banco ["3" "fogo"])]
     (is (= 5 (:paginas segunda)))
     (is (= (vec (range 12 24)) (mapv :indice (:entradas segunda))))
     (is (= 25 (:total fogo)))
@@ -225,31 +221,31 @@
     (is (= (vec (range 25 49 2)) (mapv :indice (:entradas fogo))))
     (is (= [49] (mapv :indice (:entradas ultima))))
     (doseq [args [["0"] ["-1"] ["6"] ["pagina"] ["pagina" "abc"] ["9007199254740992"]]]
-      (is (not (:valida? (core/pagina-pc banco args))) (str args)))
-  (is (empty? (:entradas (core/pagina-pc [] []))))))
+      (is (not (:valida? (core/pagina-colecao banco args))) (str args)))
+  (is (empty? (:entradas (core/pagina-colecao [] []))))))
 
 (deftest filtros-do-pc-usam-a-mesma-ordenacao-do-time
   (let [banco (mapv #(assoc (registro %) "shiny" (even? %) "nivel" (inc %) "ataque" (+ 60 %)) (range 30))]
     (doseq [filtro ["shiny" "normal" "nivel 20" "bronze" "pokemon 5" "shiny >" "normal <" "raro"]]
-      (let [pagina (core/pagina-pc banco (str/split filtro #" "))]
+      (let [pagina (core/pagina-colecao banco (str/split filtro #" "))]
         (is (= (vec (take 12 (core/filtrar-time banco filtro))) (:entradas pagina)) filtro)))
-    (is (= [19] (mapv :indice (:entradas (core/pagina-pc banco ["nivel" "20"])))))))
+    (is (= [19] (mapv :indice (:entradas (core/pagina-colecao banco ["nivel" "20"])))))))
 
-(deftest pc-envia-uma-imagem-com-doze-pokemon-e-proxima-pagina
+(deftest time-envia-uma-imagem-com-doze-pokemon-e-proxima-pagina
   (async done
     (let [estado (atom {"chat" {"ash" {"equipe" [] "pc-migrado" true
                                         "pc" (mapv #(assoc (registro %) "tipos" ["fire"]) (range 25))}}})]
       (with-redefs [treinador/contas estado loja/contas (atom {})
                     ginasios/liderados (fn [_ _] [])]
-        (-> (core/jogar-comando #js {:from "chat" :author "ash"} "pc 2 fogo")
+        (-> (core/jogar-comando #js {:from "chat" :author "ash"} "tm 2 fogo")
             (p/then (fn [resposta]
                       (is (some? (:media resposta)))
                       (is (nil? (:medias resposta)))
                       (is (str/includes? (:texto resposta) "Página 2/3"))
                       (is (str/includes? (:texto resposta) "Mostrando 12 de 25"))
-                      (is (str/includes? (:texto resposta) "!pk pc 3 fogo"))
+                      (is (str/includes? (:texto resposta) "!pk tm 3 fogo"))
                       (is (< (count (:texto resposta)) 900))
-                      (is (= "pc-professor.png" (.-filename (:media resposta))))
+                      (is (= "colecao-pokemon.png" (.-filename (:media resposta))))
                       (-> (sharp (js/Buffer.from (.-data (:media resposta)) "base64")) (.metadata))))
             (p/then (fn [metadata]
                       (is (= "png" (.-format metadata)))

@@ -15,6 +15,7 @@
    "capturar" :captura "captura" :captura "cap" :captura "pokebola" :captura
    "liga" :ligas "ligas" :ligas "lig" :ligas
    "pc" :pc "computador" :pc "centro" :pc
+   "professor" :professor
    "time" :time "equipe" :time "tm" :time
    "atalho" :atalhos "atalhos" :atalhos "abreviacoes" :atalhos "abreviacao" :atalhos
    "raid" :raid "raids" :raid "shiny" :shiny "missoes" :semanais "semanais" :semanais
@@ -158,32 +159,36 @@
          "Confira sua escalação com " (comando "liga time") ". Se um Pokémon sair da faixa ao subir de nível, ajuste o time. Regras de combate: " (comando "ajuda batalhas") ".")
 
     :pc
-    (str "💻 *PC do Centro Pokémon — Professor*\n\n"
-         "Você leva até 6 Pokémon na equipe. O restante fica com o professor no PC, preservando nível, XP, golpes, itens e HP.\n"
-         "• " (comando "pc") ": mostra uma única imagem com até 12 Pokémon. Use " (comando "pc 2") " para a página seguinte.\n"
-         "• Filtros iguais ao time: " (comando "pc [liga] [tipo] [raridade] [nome] [nivel N] [shiny] [>|<]") ".\n"
-         "• Exemplo: " (comando "pc fogo >") "; próxima página com os mesmos filtros: " (comando "pc 2 fogo >") ". Use nivel N para filtrar por nível: o número no início indica a página.\n"
-         "Os números dos cards são os números originais do PC, mesmo após filtrar e ordenar.\n"
-         "• " (comando "pc ver <número>") ": consulta os dados de um Pokémon guardado.\n"
-         "• " (comando "pc depositar <número da equipe>") ": guarda um Pokémon.\n"
-         "• " (comando "pc retirar <número do PC>") ": leva para uma vaga livre da equipe.\n"
-         "• " (comando "pc trocar <número do PC> <número da equipe>") ": troca mesmo com equipe cheia.\n"
-         "• " (comando "pc comprar") ": compra +50 vagas. Primeira expansão: 200 moedas; segunda: 400; terceira: 600, e assim por diante.\n\n"
-         "Capacidade inicial total: 26 Pokémon (6 vagas de equipe +20 de reserva). Joy e ginásios também contam; enviar Pokémon para lá não libera espaço. Retornos são sempre preservados e vão ao PC se a equipe estiver cheia.\n"
-         "Equipe cheia envia novas capturas e doações ao PC. Estoque total cheio bloqueia novas caçadas, lançamentos de bolas e doações recebidas antes de consumir recursos. Trocas 1 por 1 são permitidas no limite, mas não acima dele.\n"
-         "Pokémon antigos excedentes não são apagados. Libere espaço por doação ou compre vagas para adquirir mais. Você pode reorganizá-los normalmente fora de combate.\n"
-         "Movimentações do PC ficam bloqueadas durante batalha, caçada, evolução ou remoção pendente de golpe. Listar e comprar vagas continuam disponíveis.\n"
-         "Na migração, priorizamos o ativo, favorito, time de ginásio e liga selecionada; escalações antigas são salvas por identidade. Retire seus membros do PC antes de reutilizá-las. Os números podem mudar após movimentações; confira time e PC.")
+    (str "🎒 *Coleção e espaço Pokémon*\n\n"
+         "Todos os seus Pokémon disponíveis ficam em " (comando "time") " (atalho !pk tm), com filtros e uma imagem de até 12 por página. " (comando "pc") " também abre a coleção.\n"
+         "• " (comando "pc comprar") ": +50 vagas por 200 moedas, preço fixo em todas as compras.\n"
+         "Capacidade inicial: 26 Pokémon. Joy e defensores dos ginásios também contam. Compras anteriores continuam valendo; os Pokémon do antigo PC voltam automaticamente à coleção fora de combate.\n"
+         "Pokémon antigos acima do limite são preservados e continuam utilizáveis. Sem vaga, novas caçadas, capturas e doações recebidas ficam bloqueadas. Retornos da Joy e dos ginásios nunca são descartados.\n"
+         "Para liberar espaço, doe ou consulte " (comando "professor ajuda") ". A transferência ao professor é definitiva e dá 1 cartão de XP da família.\n"
+         "Ginásios e ligas continuam usando escalações de três Pokémon da sua coleção.")
+
+    :professor
+    (str "👨‍🔬 *Professor — transferência e cartões de XP*\n\n"
+         "• " (comando "professor enviar <número>") ": prepara o envio de um Pokémon da coleção.\n"
+         "O envio é definitivo e libera uma vaga. Confirme pelo código da mensagem em até 5 minutos; para desistir: " (comando "professor cancelar") ". Não há envio em lote.\n"
+         "Cada Pokémon transferido dá 1 cartão da família evolutiva. Pidgey, Pidgeotto e Pidgeot rendem cartões da família Pidgey. O item equipado volta à mochila e o registro shiny histórico é preservado.\n"
+         "• " (comando "professor cartoes") ": saldo por família.\n"
+         "• " (comando "professor usar <número>") ": gasta 1 cartão da família do Pokémon escolhido e concede +3 XP. São 9 XP por nível; três cartões rendem um nível. No nível 100, nenhum cartão é gasto.\n"
+         "O XP segue as regras normais de atributos, HP, golpes e evolução por nível. As evoluções por pedras e trocas continuam disponíveis.\n"
+         "Favoritos não podem ser enviados. Operações ficam bloqueadas durante batalha, caçada, raid e alterações pendentes. Pokémon na Joy ou defendendo ginásios devem retornar primeiro.\n"
+         "Confira os números após cada transferência: " (comando "time") ".")
 
     :time
     (str "🎒 *Como jogar: time e recuperação*\n\n"
-         "• " (comando "time") ": cartões dos seus Pokémon.\n"
-         "A equipe leva até 6 Pokémon. Reserve e retire os demais pelo " (comando "pc") "; veja " (comando "pc ajuda") ".\n"
+         "• " (comando "time") ": coleção completa, com uma imagem de até 12 Pokémon por página.\n"
+         "Use " (comando "time 2") " para a página seguinte, ou " (comando "time 2 fogo >") " para manter filtros. Um número no início indica página; para nível, use nivel N.\n"
+         "Compre +50 vagas com " (comando "pc comprar") ". Ginásios e ligas usam escalações de três Pokémon.\n"
+         "Envie repetidos ao professor para liberar vagas e ganhar cartões de XP: " (comando "professor ajuda") ".\n"
          "• " (comando "time txt") ": lista completa em texto; " (comando "time csv") ": planilha.\n"
          "• " (comando "time >") ": maior força primeiro; " (comando "time <") ": menor primeiro. A força é a soma dos seis atributos.\n"
          "• Combine filtros: " (comando "time txt fogo >") " ou " (comando "time bronze") ". Os números da coleção não mudam.\n"
          "• " (comando "escolher 2") ": define o ativo; " (comando "time ativo") ": ficha e golpes.\n"
-         "• " (comando "favorito 2") ": marca o favorito, que é ativado quando volta saudável para a equipe. Com equipe cheia, procure-o no PC.\n"
+         "• " (comando "favorito 2") ": marca o favorito, que é ativado quando volta saudável para a equipe.\n"
          "• " (comando "time salvar os fodoes 1,4,7") ": salva uma escalação nomeada sem reservar os Pokémon. Liste com " (comando "times") " e aplique com " (comando "time usar os fodoes liga") " ou troque `liga` por `ginasio`.\n"
          "• " (comando "pocao [número]") " recupera 40% do HP; " (comando "pocao-maxima [número]") " recupera tudo. Sem número, cura o ativo. " (comando "curar") " trata status.\n"
          "• " (comando "joy 1,2") ": envia os Pokémon indicados à Enfermeira Joy por 30 minutos. Veja o tempo restante em " (comando "time") ".\n\n"
@@ -192,6 +197,7 @@
     :evolucao
     (str "💎 *Como jogar: evolução*\n\n"
          "1. Consulte a ficha com " (comando "pokedex 1") " (número do Pokémon no seu time) ou " config/prefix "pokedex pikachu (nome da espécie).\n"
+         "Cartões do professor concedem XP: " (comando "professor usar <número>") ". Consulte " (comando "professor ajuda") ".\n"
          "2. A ficha informa evoluções por nível e as pedras compatíveis disponíveis no bot. Ganhe XP nas batalhas para alcançar o nível necessário.\n"
          "3. Ganhe pedras nos ginásios e confira " (comando "mochila") ".\n"
          "4. Para um Pikachu compatível na posição 1, use " (comando "evoluir 1 pedra-trovao") ". A evolução consome uma pedra e exige estar fora de combate.\n"
@@ -213,8 +219,9 @@
                                 ["cacadas" "selvagens e captura"]
                                 ["captura" "Pokébolas, tentativas e bônus de XP"]
                                 ["ligas" "faixas de nível e escalação"]
-                                ["time" "filtros, ativo e recuperação"]
-                                ["pc" "professor, estoque e expansões"]
+                                ["time" "coleção, páginas, filtros e recuperação"]
+                                ["professor" "transferência e cartões de XP"]
+                                ["pc" "estoque e expansões"]
                                 ["shiny" "coleção histórica e fotos"]
                                 ["semanais" "objetivos e recompensas semanais"]
                                 ["raid" "chefe cooperativo por liga"]

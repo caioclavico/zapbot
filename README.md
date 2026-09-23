@@ -345,11 +345,11 @@ O recorde é preservado quando uma sequência termina. Para contas antigas, part
 
 O time pode ser filtrado por tipo, raridade, nome parcial ou nível, sem alterar a
 numeração usada pelos outros comandos: `!pokemon time fogo`, `!pokemon time lendario`,
-`!pokemon time char` e `!pokemon time nivel 25` (também aceita apenas
-`!pokemon time 25`). As raridades aceitas são comum, incomum, raro, épico,
+`!pokemon time char` e `!pokemon time nivel 25`. O número no início agora
+seleciona a página: `!pokemon time 2`; use `nivel N` para filtrar por nível. As raridades aceitas são comum, incomum, raro, épico,
 lendário e mítico, com ou sem acento e também no plural. A visualização
-envia no máximo duas páginas, com 12 Pokémon cada, e orienta o uso dos filtros na
-última imagem. Os filtros podem ser combinados com lógica cumulativa, por exemplo
+envia uma página por consulta, com até 12 Pokémon, e orienta o uso dos filtros na
+legenda da imagem. Os filtros podem ser combinados com lógica cumulativa, por exemplo
 `!pokemon time char fogo lendario nivel 25`: o resultado precisa corresponder ao
 nome, tipo, raridade e nível informados. Mais de uma raridade funciona como
 alternativa, por exemplo `!pokemon time lendario mitico`. Todos eles valem
@@ -632,8 +632,7 @@ inválida não consome o item. Pokémon na enfermaria devem aguardar o atendimen
 ### Time em texto puro
 
 `!pokemon time txt` responde com a listagem do time em uma única mensagem de
-texto, sem gerar os cartões com as fotos. Diferente da versão visual, não corta
-em 24 Pokémon, mostra a barra de HP, o XP de cada um e o bloco da Enfermeira
+texto, sem gerar os cartões com as fotos. Mostra todos os resultados dos filtros, a barra de HP, o XP de cada um e o bloco da Enfermeira
 Joy, e pode ser pesquisada dentro da conversa no WhatsApp.
 
 O marcador `txt` (ou `texto`) pode vir em qualquer posição e combina com todos os
@@ -850,13 +849,14 @@ Guias: `!pokemon ajuda raid`, `!pokemon ajuda shiny` e `!pokemon ajuda semanais`
 - Missões de presentes: 2 envios diários na faixa inicial e 10 semanais. Envios para si mesmo não são permitidos.
 
 
-### PC do Centro Pokémon e estoque (0.16.0)
+### Coleção Pokémon, espaço e professor
 
-- Equipe de até 6 Pokémon e estoque inicial total de 26. O professor guarda os demais no PC; Pokémon na Joy e nos ginásios também contam.
-- `!pk pc` ou `!pk centro`: mostra uma única imagem com até 12 Pokémon; `!pk pc 2` abre a segunda página. Aceita os mesmos filtros do time: `!pk pc fogo >`, `!pk pc shiny raro`, `!pk pc bronze` e `!pk pc nivel 20`. Para paginar mantendo os filtros: `!pk pc 2 fogo >`. Os números dos cards continuam sendo os números originais do PC. `!pk pc ver <número>` mostra HP, XP, golpes e item.
-- `!pk pc depositar <número da equipe>`, `!pk pc retirar <número do PC>` e `!pk pc trocar <número do PC> <número da equipe>` reorganizam o time. Consultar `!pk pc ajuda` não consome turno.
-- Desde a versão 0.16.1, `!pk pc comprar` acrescenta 50 vagas ao estoque: 200 moedas na primeira compra, 400 na segunda, 600 na terceira e +200 no preço de cada compra seguinte. Expansões já compradas também passam a valer 50 vagas cada. A loja mostra o preço da próxima expansão.
-- Capturas e doações vão automaticamente ao PC se a equipe estiver cheia. Sem espaço total, a caçada e o lançamento da bola são bloqueados antes de consumir recursos. Doações recebidas também são bloqueadas. Trocas 1 por 1 são permitidas no limite, mas não acima dele.
-- Todo excedente antigo é preservado. Na primeira ação fora de combate, o time é organizado priorizando ativo, favorito, ginásio e liga selecionada; escalações antigas são salvas por identidade. Retire seus membros do PC para reutilizá-las. As escalas que não cabem simultaneamente na equipe de 6 permanecem salvas, mas precisam de reorganização.
-- A migração é adiada durante partidas em andamento. Pokémon no PC não podem batalhar nem ser escalados até serem retirados. Retornos da Joy e dos ginásios são sempre preservados, inclusive acima da capacidade, e ocupam vagas da equipe ou do PC. Movimentações ficam bloqueadas durante batalhas, caçadas e alterações pendentes; comprar espaço e consultar o PC continuam disponíveis.
-- Depositar ou retirar não cura Pokémon nem remove itens, XP, golpes, identidade ou favorito. Os números da equipe e do PC são separados e podem mudar após movimentações. Para liberar capacidade total, doe Pokémon; depositar no PC, na Joy ou em ginásios não libera capacidade.
+- `!pk tm` mostra todos os Pokémon disponíveis da coleção, incluindo os que estavam no antigo PC. Uma imagem por consulta, com até 12 Pokémon. `!pk tm 2` abre a página seguinte.
+- Filtros e ordenação: `!pk tm fogo >`, `!pk tm shiny raro`, `!pk tm bronze`, `!pk tm nivel 20`. Para continuar: `!pk tm 2 fogo >`. Os números dos cards são os originais da coleção. `!pk tm txt` e `!pk tm csv` exportam a listagem completa.
+- Ginásios e ligas continuam com escalações de três Pokémon. O ativo, os favoritos e as escalações existentes são preservados. A migração adiciona o antigo PC ao fim da coleção, sem reordenar os índices atuais, e aguarda o fim de combates/alterações pendentes.
+- Estoque inicial de 26 Pokémon; cada compra em `!pk pc comprar` acrescenta 50 vagas por **200 moedas**, preço fixo em todas as compras. Expansões já adquiridas continuam valendo. `!pk pc` é um atalho para a coleção; depositar, retirar e trocar com o PC deixaram de ser necessários.
+- Pokémon com a Joy e defendendo ginásios também contam no estoque. Seus retornos sempre são preservados. Quem já está acima do limite mantém todos os Pokémon e pode usá-los, mas precisa liberar/comprar vagas para novas aquisições. Caçadas, bolas de captura e doações recebidas verificam a capacidade antes de consumir recursos.
+- `!pk professor enviar <número>` prepara uma transferência **definitiva**, individual. A mensagem mostra o Pokémon e o comando `!pk professor confirmar <código>`, válido por 5 minutos. `!pk professor cancelar` desiste. Sem confirmação, nada é enviado. Favoritos são protegidos; Pokémon na Joy ou em ginásios precisam voltar à coleção. Batalhas, caçadas, raids e alterações pendentes bloqueiam a operação.
+- Cada transferência libera uma vaga e concede **1 cartão da família evolutiva** (Pidgey, Pidgeotto e Pidgeot usam a família Pidgey). O item equipado retorna à mochila. Cartões e remoção do Pokémon são persistidos no mesmo registro; confirmação repetida não entrega outra recompensa. Mudanças no Pokémon invalidam o envio.
+- `!pk professor cartoes` mostra o saldo. `!pk professor usar <número>` consome um cartão da família correspondente e concede **+3 XP**: três cartões completam os 9 XP de um nível. No nível 100, não consome. XP e consumo são persistidos juntos, preservando identidade, shiny, itens, HP/status e o progresso existente. Ao subir de nível, seguem as regras usuais de golpes e evolução; as evoluções por item e troca continuam funcionando.
+- Ajuda: `!pk tm ajuda`, `!pk pc ajuda`, `!pk professor ajuda`.

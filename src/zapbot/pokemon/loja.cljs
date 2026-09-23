@@ -50,6 +50,7 @@
 
 (def preco-reaprender 50)
 (def ^:private vagas-por-expansao-pc 50)
+(def ^:private preco-fixo-expansao-pc 200)
 
 (defn expansoes-pc [cid pid]
   (get-in @contas [cid pid "expansoes-pc"] 0))
@@ -57,8 +58,8 @@
 (defn capacidade-pokemon [cid pid]
   (+ 26 (* vagas-por-expansao-pc (expansoes-pc cid pid))))
 
-(defn preco-expansao-pc [cid pid]
-  (* 200 (inc (expansoes-pc cid pid))))
+(defn preco-expansao-pc [_cid _pid]
+  preco-fixo-expansao-pc)
 
 (defn comprar-espaco-pc! [cid pid]
   ;; Saldo e expansão pertencem ao mesmo registro persistido.
@@ -67,7 +68,7 @@
            (fn [c]
              (let [c (or c {"moedas" 0 "inventario" {}})
                    n (get c "expansoes-pc" 0)
-                   preco (* 200 (inc n))]
+                   preco preco-fixo-expansao-pc]
                (if (< (get c "moedas" 0) preco)
                  (do (vreset! resultado {:status :sem-moedas :preco preco}) c)
                  (do (vreset! resultado {:status :ok :preco preco :capacidade (+ 26 (* vagas-por-expansao-pc (inc n)))})
