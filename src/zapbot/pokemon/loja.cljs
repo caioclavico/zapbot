@@ -49,12 +49,13 @@
   (armazenamento/salvar! "loja" @contas))
 
 (def preco-reaprender 50)
+(def ^:private vagas-por-expansao-pc 50)
 
 (defn expansoes-pc [cid pid]
   (get-in @contas [cid pid "expansoes-pc"] 0))
 
 (defn capacidade-pokemon [cid pid]
-  (+ 26 (* 10 (expansoes-pc cid pid))))
+  (+ 26 (* vagas-por-expansao-pc (expansoes-pc cid pid))))
 
 (defn preco-expansao-pc [cid pid]
   (* 200 (inc (expansoes-pc cid pid))))
@@ -69,7 +70,7 @@
                    preco (* 200 (inc n))]
                (if (< (get c "moedas" 0) preco)
                  (do (vreset! resultado {:status :sem-moedas :preco preco}) c)
-                 (do (vreset! resultado {:status :ok :preco preco :capacidade (+ 26 (* 10 (inc n)))})
+                 (do (vreset! resultado {:status :ok :preco preco :capacidade (+ 26 (* vagas-por-expansao-pc (inc n)))})
                      (-> c (update "moedas" - preco) (assoc "expansoes-pc" (inc n))))))))
     (persistir!)
     @resultado))
@@ -517,19 +518,17 @@
            "loja para ver os nomes e " config/prefix "loja detalhes <item> para consultar um efeito."))))
 
 (defn ver-loja
-  "!loja - mostra o catálogo, o saldo de moedas e o inventário de curas de
-  quem chamou, nesse chat."
+  "!loja - mostra o catálogo e o saldo de moedas de quem chamou nesse chat."
   [message]
   (let [cid (if (.-fromMe message) (.-to message) (.-from message))
         pid (or (.-author message) (.-from message))
         c   (conta cid pid)]
     (str "🏪 *Loja do tio " config/bot-name "*\n\n"
-         "💰 Suas moedas: " (get c "moedas") "\n"
-         "🎒 Mochila: " (ocupacao cid pid) "/" (capacidade cid pid) " — " (formatar-inventario (get c "inventario")) "\n\n"
-         "Veja seus itens e kits grátis com " config/prefix "mochila.\n\n*Catálogo de itens:*\n"
+         "💰 Suas moedas: " (get c "moedas") "\n\n"
+         "*Catálogo de itens:*\n"
          (str/join "\n" (map (fn [[chave info]] (formatar-item chave info))
                              (remove (fn [[chave _]] (some #{chave} bolas)) itens)))
-         "\n💻 +10 vagas Pokémon — " (preco-expansao-pc cid pid) " moedas: " config/prefix "pk pc comprar."
+         "\n💻 +50 vagas Pokémon — " (preco-expansao-pc cid pid) " moedas: " config/prefix "pk pc comprar."
          "\n📚 Reaprender golpe — " preco-reaprender " moedas. Use " config/prefix "pokemon reaprender."
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"

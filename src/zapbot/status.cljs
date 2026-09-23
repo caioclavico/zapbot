@@ -13,10 +13,10 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["22/09 — PC do Centro Pokémon: equipe de 6 e excedentes guardados com o professor"
-   "22/09 — Estoque inicial de 26 Pokémon; compre +10 vagas com !pk pc comprar"
-   "22/09 — Joy e ginásios contam no estoque; capturas e doações respeitam a capacidade"
-   "22/09 — Pokémon antigos preservados; movimentações seguras com !pk pc ajuda"])
+  ["23/09 — PC do professor em uma imagem com até 12 Pokémon, filtros do time e paginação manual"
+   "23/09 — Cada expansão do estoque Pokémon agora libera +50 vagas, incluindo compras anteriores"
+   "23/09 — Inventário e ocupação da mochila ficam apenas em !mochila, sem repetir na loja"
+   "23/09 — Batalhas de ginásio sem repetir o cabeçalho após o ataque do líder"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

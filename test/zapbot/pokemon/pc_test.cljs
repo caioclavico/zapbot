@@ -7,7 +7,8 @@
             [zapbot.pokemon.ginasios :as ginasios]
             [zapbot.pokemon.loja :as loja]
             [zapbot.pokemon.core :as core]
-            [zapbot.pokemon.ajuda :as ajuda]))
+            [zapbot.pokemon.ajuda :as ajuda]
+            ["sharp" :as sharp]))
 
 (defn registro [id]
   {"id-pokemon" (str id) "nome" (str "Pokemon " id) "nivel" 5
@@ -40,12 +41,13 @@
   (let [estado (atom {"chat" {"ash" {"moedas" 1200}}})]
     (with-redefs [loja/contas estado armazenamento/salvar! sem-gravacao]
       (is (= 26 (loja/capacidade-pokemon "chat" "ash")))
-      (doseq [[preco capacidade] [[200 36] [400 46] [600 56]]]
+      (doseq [[preco capacidade] [[200 76] [400 126] [600 176]]]
         (is (= {:status :ok :preco preco :capacidade capacidade}
-               (loja/comprar-espaco-pc! "chat" "ash"))))
+               (loja/comprar-espaco-pc! "chat" "ash")))
+        (is (= capacidade (loja/capacidade-pokemon "chat" "ash"))))
       (is (= 0 (loja/moedas "chat" "ash")))
       (is (= {:status :sem-moedas :preco 800} (loja/comprar-espaco-pc! "chat" "ash")))
-      (is (= 56 (loja/capacidade-pokemon "chat" "ash"))))))
+      (is (= 176 (loja/capacidade-pokemon "chat" "ash"))))))
 
 (deftest movimentacoes-preservam-dados-e-limite-da-equipe
   (let [eq (mapv registro (range 6)) r (registro 6)
@@ -210,3 +212,48 @@
                        (if anterior (swap! treinador/contas assoc cid anterior)
                            (swap! treinador/contas dissoc cid))
                        (done)))))))
+
+(deftest paginas-do-pc-tem-doze-e-preservam-os-numeros-originais
+  (let [banco (mapv #(assoc (registro %) "tipos" [(if (odd? %) "fire" "water")]) (range 50))
+        segunda (core/pagina-pc banco ["2"])
+        fogo (core/pagina-pc banco ["2" "fogo"])
+        ultima (core/pagina-pc banco ["3" "fogo"])]
+    (is (= 5 (:paginas segunda)))
+    (is (= (vec (range 12 24)) (mapv :indice (:entradas segunda))))
+    (is (= 25 (:total fogo)))
+    (is (= "fogo" (:filtro fogo)))
+    (is (= (vec (range 25 49 2)) (mapv :indice (:entradas fogo))))
+    (is (= [49] (mapv :indice (:entradas ultima))))
+    (doseq [args [["0"] ["-1"] ["6"] ["pagina"] ["pagina" "abc"] ["9007199254740992"]]]
+      (is (not (:valida? (core/pagina-pc banco args))) (str args)))
+  (is (empty? (:entradas (core/pagina-pc [] []))))))
+
+(deftest filtros-do-pc-usam-a-mesma-ordenacao-do-time
+  (let [banco (mapv #(assoc (registro %) "shiny" (even? %) "nivel" (inc %) "ataque" (+ 60 %)) (range 30))]
+    (doseq [filtro ["shiny" "normal" "nivel 20" "bronze" "pokemon 5" "shiny >" "normal <" "raro"]]
+      (let [pagina (core/pagina-pc banco (str/split filtro #" "))]
+        (is (= (vec (take 12 (core/filtrar-time banco filtro))) (:entradas pagina)) filtro)))
+    (is (= [19] (mapv :indice (:entradas (core/pagina-pc banco ["nivel" "20"])))))))
+
+(deftest pc-envia-uma-imagem-com-doze-pokemon-e-proxima-pagina
+  (async done
+    (let [estado (atom {"chat" {"ash" {"equipe" [] "pc-migrado" true
+                                        "pc" (mapv #(assoc (registro %) "tipos" ["fire"]) (range 25))}}})]
+      (with-redefs [treinador/contas estado loja/contas (atom {})
+                    ginasios/liderados (fn [_ _] [])]
+        (-> (core/jogar-comando #js {:from "chat" :author "ash"} "pc 2 fogo")
+            (p/then (fn [resposta]
+                      (is (some? (:media resposta)))
+                      (is (nil? (:medias resposta)))
+                      (is (str/includes? (:texto resposta) "Página 2/3"))
+                      (is (str/includes? (:texto resposta) "Mostrando 12 de 25"))
+                      (is (str/includes? (:texto resposta) "!pk pc 3 fogo"))
+                      (is (< (count (:texto resposta)) 900))
+                      (is (= "pc-professor.png" (.-filename (:media resposta))))
+                      (-> (sharp (js/Buffer.from (.-data (:media resposta)) "base64")) (.metadata))))
+            (p/then (fn [metadata]
+                      (is (= "png" (.-format metadata)))
+                      (is (= 1000 (.-width metadata)))
+                      (is (= 1370 (.-height metadata)))))
+            (p/catch (fn [erro] (is false (str erro))))
+            (p/finally done))))))

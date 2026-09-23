@@ -506,6 +506,19 @@
     (is (= "Ataque do líder"
            (core/texto-resposta #js {:texto #js {:texto "Ataque do líder"}})))))
 
+(deftest rodada-do-ginasio-mostra-cabecalho-apenas-no-inicio
+  (let [cabecalho (core/cabecalho)
+        jogador (str cabecalho "Pikachu atacou!\n\n🐾 Estado intermediário")
+        lider (str cabecalho "Onix caiu com recuo. Reserva entrou!\n\n"
+                   cabecalho "Geodude causou 18 de dano!\n\n🐾 Sua vez")
+        texto (core/texto-rodada-ginasio {:texto jogador} {:texto lider} nil)]
+    (is (str/starts-with? texto cabecalho))
+    (is (= 1 (count (re-seq #"Batalha Pokémon do tio" texto))))
+    (is (str/includes? texto "🏛️ *Ataque do líder*\nOnix caiu com recuo. Reserva entrou!"))
+    (is (str/includes? texto "Geodude causou 18 de dano!\n\n🐾 Sua vez"))
+    (is (not (str/includes? texto "Estado intermediário")))
+    (is (= {:texto jogador} (core/texto-rodada-ginasio {:texto jogador} nil nil)))))
+
 (deftest derrota-no-ultimo-golpe-do-lider-preserva-o-dano
   (let [derrota "💀 Seu time foi derrotado no ginásio."
         golpe (str "🔥 Charizard usou Lança-Chamas e causou 42 de dano!\n\n" derrota)

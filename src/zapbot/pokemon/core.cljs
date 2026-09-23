@@ -3164,7 +3164,9 @@
 (defn- linha-csv [campos]
   (str/join separador-csv (map escapar-csv campos)))
 
-(defn- svg-cartao-time [entradas nivel]
+(defn- svg-cartao-time
+  ([entradas nivel] (svg-cartao-time entradas nivel "Seu time Pokémon"))
+  ([entradas nivel titulo]
   (let [largura 1000
         altura  (+ 120 (* 205 (js/Math.ceil (/ (count entradas) 2))) 20)
         cards   (apply str
@@ -3208,9 +3210,9 @@
                         entradas))]
     (str "<svg xmlns='http://www.w3.org/2000/svg' width='" largura "' height='" altura "'>"
          "<rect width='100%' height='100%' fill='#0f172a'/><rect width='100%' height='100' fill='#1e293b'/>"
-         "<text x='35' y='45' font-size='32' font-family='Arial,sans-serif' font-weight='bold' fill='#f8fafc'>Seu time Pokémon</text>"
+         "<text x='35' y='45' font-size='32' font-family='Arial,sans-serif' font-weight='bold' fill='#f8fafc'>" (escapar-xml titulo) "</text>"
          "<text x='35' y='76' font-size='18' font-family='Arial,sans-serif' fill='#cbd5e1'>Nível de treinador: " nivel
-         " • " (count entradas) " Pokémon</text>" cards "</svg>")))
+         " • " (count entradas) " Pokémon</text>" cards "</svg>"))))
 
 (defn- baixar-sprite-time [url]
   (p/let [buffer (when url
@@ -3222,7 +3224,10 @@
         (.png)
         (.toBuffer))))
 
-(defn- criar-cartao-time [registros indice-ativo nivel]
+(defn- criar-cartao-time
+  ([registros indice-ativo nivel] (criar-cartao-time registros indice-ativo nivel {}))
+  ([registros indice-ativo nivel {:keys [titulo arquivo]
+                                :or {titulo "Seu time Pokémon" arquivo "meu-time-pokemon.png"}}]
   (let [entradas (->> registros
                       (map (fn [{:keys [indice registro]}]
                              (let [[pokemon hp-atual status] (treinador/registro->pokemon registro)]
@@ -3232,7 +3237,7 @@
                                 :numero  (inc indice)})))
                       vec)]
     (p/let [sprites (p/all (map #(baixar-sprite-time (get-in % [:pokemon :imagem])) entradas))
-            svg     (svg-cartao-time entradas nivel)
+            svg     (svg-cartao-time entradas nivel titulo)
             base    (js/Buffer.from svg)
             imagens (->> sprites
                          (map-indexed (fn [idx sprite]
@@ -3242,7 +3247,7 @@
                          (remove nil?)
                          clj->js)
             buffer  (-> (sharp base) (.composite imagens) (.png) (.toBuffer))]
-      (MessageMedia. "image/png" (.toString buffer "base64") "meu-time-pokemon.png"))))
+      (MessageMedia. "image/png" (.toString buffer "base64") arquivo)))))
 
 (defn- resposta-time-visual [message filtro]
   (let [cid   (chat-id message)
@@ -3622,7 +3627,7 @@
   (< (ocupacao-pokemon cid pid) (loja/capacidade-pokemon cid pid)))
 
 (defn- estoque-cheio []
-  (str "💻 Estoque Pokémon cheio. Libere uma vaga por doação ou compre +10 vagas com "
+  (str "💻 Estoque Pokémon cheio. Libere uma vaga por doação ou compre +50 vagas com "
        config/prefix "pk pc comprar. Consulte " config/prefix "pk pc."))
 
 (defn- ocupado-pc? [cid pid]
@@ -3635,19 +3640,61 @@
   (when (re-matches #"[1-9][0-9]*" (or texto ""))
     (parse-indice-golpe texto total)))
 
+(defn- pagina-pc [banco args]
+  (let [tokens (vec (if (= "listar" (first args)) (rest args) args))
+        explicita? (contains? #{"pagina" "página" "pag"} (first tokens))
+        numerica? (boolean (re-matches #"[+-]?[0-9]+" (or (first tokens) "")))
+        texto-pagina (cond explicita? (second tokens) numerica? (first tokens) :else "1")
+        pagina (when (re-matches #"[0-9]+" (or texto-pagina "")) (js/parseInt texto-pagina 10))
+        filtro (str/join " " (drop (cond explicita? 2 numerica? 1 :else 0) tokens))
+        filtrado (filtrar-time banco filtro)
+        paginas (max 1 (js/Math.ceil (/ (count filtrado) 12)))
+        valida? (and (number? pagina) (js/Number.isSafeInteger pagina) (<= 1 pagina paginas))]
+    {:pagina pagina :paginas paginas :valida? valida? :filtro filtro :total (count filtrado)
+     :entradas (if valida? (vec (take 12 (drop (* 12 (dec pagina)) filtrado))) [])}))
+
+(defn- resposta-pc-visual [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        banco (treinador/pc cid pid)
+        {:keys [pagina paginas valida? filtro total entradas]} (pagina-pc banco args)
+        comando-pagina (fn [n] (str config/prefix "pk pc " n (when (seq filtro) (str " " filtro))))
+        quantidade (ocupacao-pokemon cid pid)
+        capacidade (loja/capacidade-pokemon cid pid)
+        texto (str "💻 *PC do Centro Pokémon — Professor* • Página " pagina "/" paginas
+                   "\nEquipe: " (count (treinador/equipe cid pid)) "/6 • PC: " (count banco)
+                   " • Estoque total: " quantidade "/" capacidade " (inclui Joy e ginásios)."
+                   (when (> quantidade capacidade) "\n⚠️ Excedente preservado. Libere ou compre vagas para adquirir mais.")
+                   (when (seq filtro) (str "\n🔎 " (descricao-filtros (interpretar-filtros-time filtro))))
+                   "\nMostrando " (count entradas) " de " total " Pokémon. Números originais do PC."
+                   (when (< (or pagina 1) paginas) (str "\n➡️ Próxima: " (comando-pagina (inc (or pagina 1)))))
+                   "\n🔎 Filtros: " config/prefix "pk pc [liga] [tipo] [raridade] [nome] [nivel N] [shiny] [>|<]"
+                   "\n📖 " config/prefix "pk pc ajuda • +50 vagas: " config/prefix "pk pc comprar ("
+                   (loja/preco-expansao-pc cid pid) " moedas).")]
+    (cond
+      (not valida?)
+      (p/resolved (str "❓ Página inválida. Escolha de 1 a " paginas ": " (comando-pagina 1)))
+      (empty? entradas)
+      (p/resolved (str texto "\n" (if (empty? banco) "Nenhum Pokémon guardado com o professor."
+                                      "Nenhum Pokémon do PC corresponde aos filtros.")))
+      :else
+      (-> (p/let [media (criar-cartao-time entradas nil (treinador/nivel-jogador cid pid)
+                                          {:titulo (str "PC do Professor — " pagina "/" paginas)
+                                           :arquivo "pc-professor.png"})]
+            {:media media :texto texto})
+          (p/catch (fn [erro]
+                     (js/console.error "Erro ao gerar cartão do PC:" erro)
+                     (str texto "\n\n"
+                          (str/join "\n" (map (fn [{:keys [indice registro]}]
+                                                  (str (inc indice) ". " (get registro "nome")
+                                                       " Nv." (get registro "nivel" 1))) entradas)))))))))
+
 (defn- comando-pc [message args]
   (let [cid (chat-id message) pid (jogador-id message)
         [acao numero numero-equipe] args
         ocupado? (ocupado-pc? cid pid)
         _ (when-not ocupado? (treinador/migrar-pc! cid pid))
         banco (vec (treinador/pc cid pid))
-        eq (treinador/equipe cid pid)
-        capacidade (loja/capacidade-pokemon cid pid)
-        quantidade (ocupacao-pokemon cid pid)
-        linha (fn [i r] (str (inc i) ". " (get r "nome") " Nv." (get r "nivel" 1)
-                             " • HP " (get r "hp-atual") "/" (get r "hp")
-                             (when (and (get r "id-pokemon")
-                                        (= (get r "id-pokemon") (get (treinador/favorito cid pid) "id"))) " ⭐")))]
+        eq (vec (treinador/equipe cid pid))]
     (case acao
       "ver"
       (if-let [r (get banco (indice-pc numero (count banco)))]
@@ -3661,7 +3708,7 @@
       "comprar"
       (let [{:keys [status preco capacidade]} (loja/comprar-espaco-pc! cid pid)]
         (if (= status :ok)
-          (str "✅ +10 vagas Pokémon por " preco " moedas! Capacidade total: " capacidade ".")
+          (str "✅ +50 vagas Pokémon por " preco " moedas! Capacidade total: " capacidade ".")
           (str "💰 Moedas insuficientes. A próxima expansão custa " preco " moedas.")))
       ("depositar" "retirar" "trocar")
       (if ocupado?
@@ -3677,20 +3724,7 @@
             (treinador/mover-pc! cid pid (keyword acao) idx outro)
             "✅ Pokémon movimentado. Confira os novos números em !pk pc e !pk time."
             :else "❓ Não foi possível movimentar esse Pokémon.")))
-      (if (or (nil? acao) (= acao "listar") (re-matches #"[1-9][0-9]*" (or acao "")))
-        (let [pagina (if (re-matches #"[1-9][0-9]*" (or acao "")) (js/parseInt acao 10) 1)
-              inicio (* 20 (dec pagina))]
-          (str "💻 *PC do Centro Pokémon — Professor*\n"
-               "Equipe: " (count eq) "/6 • PC: " (count banco) "\n"
-               "Estoque total: " quantidade "/" capacidade " (inclui Joy e ginásios)."
-               (when (> quantidade capacidade) "\n⚠️ Excedente preservado. Novas aquisições bloqueadas até liberar/comprar vagas.")
-               "\nPróxima expansão: +10 vagas por " (loja/preco-expansao-pc cid pid) " moedas.\n\n"
-               (if (seq banco)
-                 (str "Página " pagina "/" (js/Math.ceil (/ (count banco) 20)) "\n"
-                      (str/join "\n" (map-indexed #(linha (+ inicio %1) %2) (take 20 (drop inicio banco)))))
-                 "Nenhum Pokémon guardado com o professor.")
-               "\n\n📖 Comandos: " config/prefix "pk pc ajuda"))
-        "❓ Use !pk pc ajuda."))))
+      (resposta-pc-visual message args))))
 
 (defn- doar [message indice-texto]
   (let [cid   (chat-id message)
@@ -5193,7 +5227,7 @@
     (cond
       (contains? #{"bug" "bugs"} cmd) (bugs/comando! message cmd resto)
       (contains? #{"pc" "computador" "centro"} cmd)
-      (p/resolved (comando-pc message (if (= "pc" (first resto)) (rest resto) resto)))
+      (p/promise (comando-pc message (if (= "pc" (first resto)) (rest resto) resto)))
       (:carregando? (get @jogos cid))
       (p/resolved "⏳ Preparando o ginásio. Aguarde.")
       (contains? @evolucoes-pendentes [cid pid])
@@ -5367,7 +5401,9 @@
   acrescenta quando a resposta do líder ainda não o contém."
   [resposta lider derrota]
   (let [texto-jogador (sem-estado-intermediario (texto-resposta resposta))
-        texto-lider (texto-resposta lider)
+        ;; O cabeçalho já está na ação do treinador. O líder pode trazer
+        ;; vários quando um reserva também age nesta mesma rodada.
+        texto-lider (str/replace (texto-resposta lider) (cabecalho) "")
         derrota (texto-resposta derrota)]
     (cond
       (not (str/blank? texto-lider))
