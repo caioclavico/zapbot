@@ -106,7 +106,7 @@
                   treinador/registrar-captura! (fn ([_ _ _] 1) ([_ _ _ _] 1))
                   treinador/quebrar-sequencia-capturas! (fn [_ _] nil)
                   treinador/bonus-xp-sequencia-capturas (fn [_] 2)
-                  treinador/ganhar-xp! (fn [_ _ xp] (reset! creditado xp) nil)
+                  treinador/ganhar-xp-no-indice! (fn [_ _ _ xp] (reset! creditado xp) nil)
                   loja/registrar-semanal! (fn [_ _ _ _] nil)
                   loja/creditar-quantia! (fn [_ _ _] nil)]
       (doseq [[falhas capturou? xp bonus] [[0 true 5 1] [1 true 4 0] [2 true 4 0]
@@ -947,3 +947,16 @@
     (is (not (str/includes? (core/descricao-lider "chat" {:id "agua"} false)
                             "Time reservado")))
     (is (str/includes? (core/descricao-lider "chat" {:id "agua"}) "Starmie"))))
+
+(deftest vitoria-sem-captura-premia-raridade-e-base-fixa-sem-bonus-de-primeira
+  (with-redefs [treinador/sequencia-capturas (fn [& _] 5)
+                treinador/bonus-xp-sequencia-capturas (fn [_] (throw (js/Error. "Não usar sequência no cálculo")))
+                treinador/registrar-captura! (fn [& _] (throw (js/Error. "Não houve captura")))
+                treinador/quebrar-sequencia-capturas! (fn [& _] (throw (js/Error. "Preservar sequência")))
+                treinador/ganhar-xp-no-indice! (fn [& _] nil)]
+    (doseq [[raridade base] [["comum" 2] ["incomum" 3] ["raro" 4] ["epico" 5] ["lendario" 6] ["mitico" 7]]]
+      (let [resultado (core/encerrar-cacada! "teste-sem-captura" "ash"
+                        {:vitoria-sem-captura? true :pokemons {:o {:raridade raridade}}} false)]
+        (is (= (+ base 1) (:xp resultado)))
+        (is (= 0 (:bonus-primeira resultado)))
+        (is (= 5 (:sequencia resultado)))))))

@@ -3549,6 +3549,7 @@
                   (treinador/atualizar-ativo! cid pid hp-anterior status-anterior)
                   (treinador/definir-ativo! cid pid indice)
                   (let [caca-nova (-> caca
+                                      (assoc :indice-pokemon indice)
                                       (assoc-in [:pokemons :x] novo-pokemon)
                                       (assoc-in [:hp :x] novo-hp)
                                       (assoc-in [:status :x] novo-status)
@@ -3765,24 +3766,33 @@
          (menu-golpes meu (:tipos selvagem) (:habilidade selvagem))
          "\n\n📖 Ações de batalha: " config/prefix "pk atacar ajuda.")))
 
+(def ^:private bonus-base-vitoria-sem-captura 1)
+
 (defn- encerrar-cacada! [cid pid caca capturou?]
   (let [selvagem      (get-in caca [:pokemons :o])
         raridade      (or (:raridade selvagem) "comum")
         sequencia-ant  (treinador/sequencia-capturas cid pid)
-        sequencia      (if capturou?
-                         (treinador/registrar-captura! cid pid selvagem (:nome-treinador caca))
-                         (do (treinador/quebrar-sequencia-capturas! cid pid) 0))
-        bonus-seq      (if capturou? (treinador/bonus-xp-sequencia-capturas sequencia) 0)
+        vitoria-sem-captura? (:vitoria-sem-captura? caca)
+        sequencia      (cond
+                         capturou? (treinador/registrar-captura! cid pid selvagem (:nome-treinador caca))
+                         vitoria-sem-captura? sequencia-ant
+                         :else (do (treinador/quebrar-sequencia-capturas! cid pid) 0))
+        bonus-seq      (cond
+                         capturou? (treinador/bonus-xp-sequencia-capturas sequencia)
+                         vitoria-sem-captura? bonus-base-vitoria-sem-captura
+                         :else 0)
         bonus-primeira (if (and capturou? (zero? (get caca :tentativas-captura 0))) 1 0)
-        xp             (if capturou? (+ (get xp-base-raridade raridade 2) bonus-seq bonus-primeira) 1)
+        xp             (if (or capturou? vitoria-sem-captura?)
+                         (+ (get xp-base-raridade raridade 2) bonus-seq bonus-primeira) 1)
         moedas         (if capturou? (+ 2 (min 10 sequencia)) 0)
-        subida         (treinador/ganhar-xp! cid pid xp)]
+        indice         (or (:indice-pokemon caca) (treinador/indice-ativo cid pid))
+        subida         (treinador/ganhar-xp-no-indice! cid pid indice xp)]
     (swap! cacadas-selvagens dissoc cid)
     (when capturou? (loja/registrar-semanal! cid pid "tipos" (:tipos selvagem)))
     (when (pos? moedas) (loja/creditar-quantia! cid pid moedas))
     (when subida
-      (-> (verificar-evolucao! (:message caca) cid pid)
-          (p/then (fn [_] (aprender-golpe-por-nivel! (:message caca) cid pid (:nivel subida))))))
+      (-> (verificar-evolucao! (:message caca) cid pid indice)
+          (p/then (fn [_] (aprender-golpe-por-nivel! (:message caca) cid pid (:nivel subida) indice)))))
     {:xp xp :bonus-xp bonus-seq :bonus-primeira bonus-primeira :moedas moedas :subida subida :sequencia sequencia :sequencia-anterior sequencia-ant}))
 
 (defn- chance-com-bola [chance-base bola]
@@ -3808,11 +3818,13 @@
     (swap! cacadas-selvagens assoc cid pronta)
     (let [aviso (loja/registrar-missao! cid pid "selvagens" (treinador/nivel-jogador cid pid))]
       (str aviso
-           (if (cabe-pokemon? cid pid)
+           (if (and (not (:somente-batalha? caca)) (cabe-pokemon? cid pid))
              (menu-captura cid pid pronta)
-             (let [recompensa (encerrar-cacada! cid pid pronta false)]
+             (let [recompensa (encerrar-cacada! cid pid (assoc pronta :vitoria-sem-captura? true) false)]
                (str "\n🎒 Bolsa cheia: o selvagem foi liberado. Vitória registrada! +" (:xp recompensa)
-                    " XP. Você já pode iniciar outra caçada após o intervalo habitual.")))))))
+                    " XP para " (get-in caca [:pokemons :x :nome])
+                    " (raridade +" (- (:xp recompensa) (:bonus-xp recompensa))
+                    " • sequência +" (:bonus-xp recompensa) "). Você já pode iniciar outra caçada após o intervalo habitual.")))))))
 
 (defn- capturar-selvagem [message args]
   (let [cid (chat-id message) pid (jogador-id message)
@@ -3823,6 +3835,7 @@
        (nil? caca) "❓ Não há caçada em andamento."
        (not= pid (:pid caca)) "🚫 Essa caçada pertence a outro treinador."
        (not (:aguardando-captura? caca)) "⚔️ Derrote o Pokémon selvagem antes de capturar."
+       (:somente-batalha? caca) "🎒 Esta caçada começou com a bolsa cheia: somente batalha, sem captura."
        (empty? args) (menu-captura cid pid caca)
        (not (some #{bola} loja/bolas)) (str "❓ Bola desconhecida." (menu-captura cid pid caca))
        (not (cabe-pokemon? cid pid)) (estoque-cheio)
@@ -4103,6 +4116,8 @@
                             :status {:x status :o nil} :estagios {:x {} :o {}}
                             :defendendo {:x false :o false} :itens-usados {:x {} :o {}}
                             :pid pid :message message :bioma bioma :clima clima
+                            :indice-pokemon (treinador/indice-ativo cid pid)
+                            :somente-batalha? (not (cabe-pokemon? cid pid))
                             :nome-treinador nome-treinador
                             :item-usado-turno? false :acao-realizada? false}]
                   (swap! cacadas-selvagens assoc cid caca)
@@ -4113,7 +4128,10 @@
                         (str/join ", " (sort (:tipos clima))) " aparecem mais.\n"
                         (when surto? (str "🎉 " (:nome evento) " — encontro do evento!\n"))
                         "Um " (texto-raridade selvagem) " *" (:nome selvagem)
-                        "* apareceu. Derrote-o antes de tentar capturar!\n\n"
+                        "* apareceu."
+                        (if (:somente-batalha? caca)
+                          " Bolsa cheia: esta caçada vale batalha e XP, sem captura.\n\n"
+                          " Derrote-o antes de tentar capturar!\n\n")
                         (estado-cacada caca))
                    false)))
               (p/catch (fn [err]

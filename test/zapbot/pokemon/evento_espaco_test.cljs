@@ -4,7 +4,8 @@
             [zapbot.armazenamento :as armazenamento]
             [zapbot.pokemon.aventuras :as aventuras]
             [zapbot.pokemon.loja :as loja]
-            [zapbot.pokemon.core :as core]))
+            [zapbot.pokemon.core :as core]
+            [zapbot.pokemon.treinador :as treinador]))
 
 (deftest janela-fixa-encerra-a-meia-noite-de-sao-paulo
   (let [{:keys [inicio fim]} aventuras/festival-colecao]
@@ -59,3 +60,38 @@
           (is (str/includes? texto "Missão registrada"))
           (is (= (if tem-vaga? 0 1) @encerradas))
           (is (str/includes? texto (if tem-vaga? "Menu de captura" "Bolsa cheia"))))))))
+
+(deftest vitoria-selvagem-atualiza-consulta-e-sobrevive-a-recarga
+  (let [estado (atom {})
+        salvo (atom nil)
+        mensagem #js {:from "grupo-evento" :author "ash"}]
+    (with-redefs [loja/contas estado
+                  aventuras/evento-espaco (fn [_] aventuras/festival-colecao)
+                  armazenamento/salvar! (fn [modulo dados]
+                                          (when (= modulo "loja") (reset! salvo dados)))
+                  core/cacadas-selvagens (atom {})
+                  core/cabe-pokemon? (fn [& _] true)
+                  core/menu-captura (fn [& _] "Capturar")]
+      (is (str/includes? (core/ver-evento mensagem) "Vitórias contra selvagens: 0/3"))
+      (core/preparar-captura-pos-batalha "grupo-evento" "ash" {:pokemons {:o {:raridade "comum"}}})
+      (is (str/includes? (core/ver-evento mensagem) "Vitórias contra selvagens: 1/3"))
+      (is (str/includes? (core/texto-evento-espaco "grupo-evento" "ash") "Vitórias contra selvagens: 1/3"))
+      (reset! estado (loja/migrar-chaves-antigas (js->clj (js/JSON.parse (js/JSON.stringify (clj->js @salvo))))))
+      (is (str/includes? (core/ver-evento mensagem) "Vitórias contra selvagens: 1/3")))))
+
+(deftest bolsa-cheia-na-entrada-nao-oferece-captura-mesmo-com-vagas-liberadas
+  (let [xp (atom nil) cacas (atom {}) estado (atom {})]
+    (with-redefs [loja/contas estado core/cacadas-selvagens cacas
+                  aventuras/evento-espaco (fn [_] aventuras/festival-colecao)
+                  armazenamento/salvar! (fn [& _] nil)
+                  core/cabe-pokemon? (fn [& _] true)
+                  core/menu-captura (fn [& _] (throw (js/Error. "Não deve oferecer captura")))
+                  treinador/ganhar-xp-no-indice! (fn [cid pid idx qtd] (reset! xp [cid pid idx qtd]) nil)
+                  treinador/quebrar-sequencia-capturas! (fn [& _] nil)]
+      (let [texto (core/preparar-captura-pos-batalha "chat" "ash"
+                    {:somente-batalha? true :indice-pokemon 2
+                     :pokemons {:x {:nome "Pikachu"} :o {:raridade "comum"}}})]
+        (is (str/includes? texto "XP para Pikachu"))
+        (is (= ["chat" "ash" 2 3] @xp))
+        (is (nil? (get @cacas "chat")))
+        (is (= 1 (get-in (loja/progresso-evento-espaco "chat" "ash") [:progresso "selvagens"])))))))
