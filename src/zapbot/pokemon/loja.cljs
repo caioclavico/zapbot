@@ -645,12 +645,12 @@
            "\nResgate até o fim da semana: " config/prefix "missoes semanais resgatar."))))
 
 (defn premiar-raid! [cid pid dia]
-  ;; Uma recompensa diária por jogador, gravada junto com as moedas.
+  ;; Uma recompensa por identificador de raide, gravada junto com as moedas.
   (when (not= dia (get-in @contas [cid pid "raid-premiada-dia"]))
     (swap! contas update-in [cid pid]
-           #(-> (or % {}) (assoc "raid-premiada-dia" dia) (update "moedas" (fnil + 0) 40)))
+           #(-> (or % {}) (assoc "raid-premiada-dia" dia) (update "moedas" (fnil + 0) 50)))
     (persistir!)
-    40))
+    50))
 
 (defn enviar-presente! [cid pid alvo nivel]
   (cond

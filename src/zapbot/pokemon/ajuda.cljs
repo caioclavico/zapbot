@@ -18,7 +18,7 @@
    "professor" :professor
    "time" :time "equipe" :time "tm" :time
    "atalho" :atalhos "atalhos" :atalhos "abreviacoes" :atalhos "abreviacao" :atalhos
-   "raid" :raid "raids" :raid "shiny" :shiny "missoes" :semanais "semanais" :semanais
+   "raide" :raid "raides" :raid "raid" :raid "raids" :raid "shiny" :shiny "missoes" :semanais "semanais" :semanais
    "evoluir" :evolucao "evolucao" :evolucao "evo" :evolucao})
 
 (defn- guia [assunto]
@@ -77,15 +77,15 @@
          "Há 30 minutos para entrar ou agir no PvP. " (comando "sair") " cancela a espera ou desiste da partida; desistir de uma batalha iniciada perde 1 ponto no rank e não dá XP nem moedas.")
 
     :raid
-    (str "🤝 *Como jogar: raid cooperativa*\n\n"
-         "1. Abra com " (comando "raid abrir iniciante") " (ou bronze, prata, ouro, diamante).\n"
-         "2. Cada jogador, inclusive o criador, usa " (comando "raid entrar 1") " para inscrever um Pokémon saudável da liga. Sem número, entra o ativo. São 2 a 6 pessoas.\n"
-         "3. O criador usa " (comando "raid iniciar") ". Na sua vez, use " (comando "raid atacar 1") ". Consulte HP e golpes com " (comando "raid") ".\n"
-         "O chefe Snorlax contra-ataca a cada ação. Só golpes físicos ou especiais de dano são aceitos; o combate da raid usa regras próprias, sem efeitos de status, itens ou vantagens de tipo.\n"
-         "O time e o HP são cópias da inscrição: dano da raid não altera sua coleção.\n"
-         "Inscrições duram 15 minutos; combate, 30 minutos. O chat pode iniciar uma nova raid após 6 horas.\n"
-         "Vitória: 40 moedas, 6 PE para o treinador e 6 XP para o Pokémon inscrito de cada participante que causou dano, inclusive quem caiu. Uma recompensa por jogador/chat ao dia, no mesmo fuso das missões. Se o Pokémon estiver fora da equipe, o XP fica reservado até ele voltar e você usar um comando Pokémon.\n"
-         "Durante as inscrições, use " (comando "raid sair") " ou, se for o criador, " (comando "raid cancelar") ".")
+    (str "🤝 *Raide nos ginásios*\n\n"
+         "Uma raide por vez no grupo, a cada 6 horas, alternando Pedra → Água → Elétrico → Planta → Fogo. O chefe é sorteado conforme o nível do ginásio. Os defensores ficam preservados e voltam ao terminar.\n"
+         "Inscrições: 15 minutos, de 2 a 6 jogadores. Use " (comando "gin entrar 1") " com um Pokémon saudável da liga indicada.\n"
+         "Escolha visual: " (comando "raide time") ". Escolha automática: " (comando "gin entrar") ".\n"
+         "Qualquer inscrito pode usar " (comando "gin iniciar") ". Combate: até 30 minutos, alternando " (comando "gin atacar 1") ".\n"
+         "Quem causar dano recebe 50 moedas, 6 PE e 6 XP para o Pokémon inscrito por vitória, mesmo se cair.\n"
+         "Após vencer: " (comando "gin capturar pokebola") ". São 3 tentativas durante 30 minutos, usando suas bolas e uma vaga na coleção.\n"
+         "Chance base: raro 35%, lendário 8%, mítico 4%; bolas melhores aumentam a chance. Capturado: nível 1 e atributos normais da espécie.\n"
+         "O combate usa cópias do HP e regras próprias, sem efeitos de status, itens ou vantagens de tipo. Consulte " (comando "raide") ".")
 
     :shiny
     (str "✨ *Coleção shiny*\n\n"
@@ -107,7 +107,7 @@
     :ginasios
     (str "🏛️ *Como jogar: ginásios*\n\n"
          "1. Veja líderes, níveis e desbloqueios com " (comando "ginasio") ".\n"
-         "2. Consulte seu time: " (comando "time >") ". Escale três Pokémon diferentes e com HP: " (comando "ginasio time 1,2,3") ". Use os números da sua coleção.\n"
+         "2. Monte e veja a foto dos três mais fortes aptos com " (comando "gin time") ". Para escolher manualmente: " (comando "ginasio time 1,2,3") ". Use os números da sua coleção.\n"
          "3. Veja o primeiro líder com " (comando "ginasio pedra") " e inicie com " (comando "ginasio desafiar pedra") ".\n"
          "4. Use " (comando "atacar 1") " (ou o atalho " config/prefix "pk atk 1) e as demais ações de batalha. O líder responde automaticamente. Cada ataque mostra a foto dos Pokémon na arena.\n\n"
          "São combates 3 × 3, sem ajuste dos níveis. Vença os ginásios na ordem para liberar os próximos. A escalação de ginásio é separada da liga.\n"
@@ -176,7 +176,7 @@
          "• " (comando "professor cartoes") ": saldo por família.\n"
          "• " (comando "professor usar <número>") ": gasta 1 cartão da família do Pokémon escolhido e concede +3 XP. São 9 XP por nível; três cartões rendem um nível. No nível 100, nenhum cartão é gasto.\n"
          "O XP segue as regras normais de atributos, HP, golpes e evolução por nível. As evoluções por pedras e trocas continuam disponíveis.\n"
-         "Favoritos não podem ser enviados. Operações ficam bloqueadas durante batalha, caçada, raid e alterações pendentes. Pokémon na Joy ou defendendo ginásios devem retornar primeiro.\n"
+         "Favoritos não podem ser enviados. Operações ficam bloqueadas durante batalha, caçada, raide e alterações pendentes. Pokémon na Joy ou defendendo ginásios devem retornar primeiro.\n"
          "Confira os números após cada transferência: " (comando "time") ".")
 
     :time
@@ -225,7 +225,7 @@
                                 ["espaco" "estoque e expansões"]
                                 ["shiny" "coleção histórica e fotos"]
                                 ["semanais" "objetivos e recompensas semanais"]
-                                ["raid" "chefe cooperativo por liga"]
+                                ["raide" "chefe cooperativo por liga"]
                                 ["evolucao" "XP e pedras de evolução"]]))
          "\n\nTambém funciona: " (comando "ginasio ajuda") " ou " (comando "cacar ajuda") ". Consultar a ajuda não gasta turno.")))
 

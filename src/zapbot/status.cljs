@@ -13,10 +13,10 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["23/09 — Antigo PC unificado ao carregar, preservando os índices durante batalhas"
-   "23/09 — !pk espaco mostra a capacidade e preserva as vagas já compradas no PC"
-   "23/09 — !pk pc orienta a usar a coleção única; +50 vagas por 200 moedas"
-   "23/09 — Professor confirma transferências com código curto de três dígitos"])
+  ["23/09 — Raides automáticas em rodízio nos ginásios, com chefes raros, lendários e míticos"
+   "23/09 — Vitória na raide: 50 moedas, XP e chance de captura no nível 1"
+   "23/09 — !pk gin time monta e mostra os três mais fortes; comandos de ginásio também servem para raides"
+   "23/09 — Evento de 300 vagas com quatro objetivos; caçadas com bolsa cheia concedem XP sem captura"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

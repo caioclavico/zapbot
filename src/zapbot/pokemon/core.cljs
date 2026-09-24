@@ -205,13 +205,14 @@
   (p/all (map #(p/catch % (fn [_] nil)) (vals @gravacoes-combates))))
 
 (defonce ^:private cliente-whatsapp (atom nil))
-(declare rearmar-limites-restaurados!)
+(declare rearmar-limites-restaurados! iniciar-raides!)
 
 (defn iniciar!
   "Registra o cliente conectado e só então rearma os relógios restaurados."
   [client]
   (reset! cliente-whatsapp client)
-  (rearmar-limites-restaurados!))
+  (rearmar-limites-restaurados!)
+  (iniciar-raides!))
 
 ;; Remoções de golpe aguardando a janela de arrependimento, por [chat jogador].
 (defonce ^:private remocoes-pendentes (atom {}))
@@ -1906,7 +1907,7 @@
    :shiny ["POKÉMON SHINY" "#ca8a04" "✦"]
    :insignia ["INSÍGNIA CONQUISTADA" "#d97706" "◆"]
    :lider ["NOVO LÍDER" "#b91c1c" "♛"]
-   :raid ["RAID COOPERATIVA" "#7e22ce" "⚔"]
+   :raid ["RAIDE NO GINÁSIO" "#7e22ce" "⚔"]
    :joy ["ENFERMEIRA JOY" "#db2777" "+"]
    :joy-tratando ["ENFERMEIRA JOY" "#db2777" "+"]
    :hospital ["CENTRO POKÉMON" "#0284c7" "+"]
@@ -1930,8 +1931,10 @@
          "<defs><linearGradient id='evento-bg' x1='0' y1='0' x2='1' y2='1'><stop stop-color='" cor "'/><stop offset='1' stop-color='#0f172a'/></linearGradient>"
          "<filter id='evento-glow'><feDropShadow dx='0' dy='0' stdDeviation='10' flood-color='#fde047'/></filter></defs>"
          "<rect width='760' height='400' rx='28' fill='url(#evento-bg)'/>"
+         (when (= tema :raid)
+           "<path d='M110 108 L380 20 L650 108Z' fill='#94a3b8' stroke='#e2e8f0' stroke-width='6'/><path d='M115 110H180V290H115Z M580 110H645V290H580Z' fill='#64748b' stroke='#cbd5e1' stroke-width='6'/><ellipse cx='380' cy='287' rx='250' ry='35' fill='#334155' stroke='#facc15' stroke-width='5'/><ellipse cx='380' cy='287' rx='115' ry='18' fill='none' stroke='#e2e8f0' stroke-width='3'/>")
          "<circle cx='380' cy='190' r='118' fill='#ffffff' fill-opacity='.12' stroke='#ffffff' stroke-opacity='.65' stroke-width='6'/>
-         <text x='380' y='220' fill='#ffffff' font-size='105' font-family='sans-serif' font-weight='bold' text-anchor='middle' filter='url(#evento-glow)'>" simbolo "</text>"
+         <text x='380' y='220' fill='#ffffff' font-size='105' font-family='sans-serif' font-weight='bold' text-anchor='middle' filter='url(#evento-glow)'>" (if (= tema :raid) "" simbolo) "</text>"
          "<text x='380' y='345' fill='#ffffff' font-size='36' font-family='sans-serif' font-weight='bold' text-anchor='middle'>" titulo "</text>"
          (when detalhe (str "<text x='380' y='382' fill='#e2e8f0' font-size='22' font-family='sans-serif' text-anchor='middle'>" detalhe "</text>"))
          "</svg>")))
@@ -2007,7 +2010,8 @@
         comando (-> (or args "") str/trim str/lower-case (str/split #"\s+") first expandir-atalho)
         joy? (contains? #{"joy" "enfermeira" "enfermaria" "hospital"} comando)]
     (cond
-      (= comando "raid") :raid
+      (or (= comando "raid")
+          (and (= comando "ginasio") (re-find #"(?i)raide|HP do chefe" texto))) :raid
       (and joy? (str/includes? texto "não pode enviar Pokémon")) nil
       (and joy? (re-find #"(?i)time já está saudável" texto)) :hospital
       (and joy? (str/includes? texto "A Enfermeira Joy recebeu")) :joy
@@ -2067,7 +2071,8 @@
 (def ^:private atalhos-subcomandos
   {:liga {"tm" "time"}
    :ginasio {"des" "desafiar" "dsf" "desafiar" "tm" "time"
-              "pot" "pocao" "fru" "fruta" "ran" "ranking" "hist" "historico"}
+              "pot" "pocao" "fru" "fruta" "ran" "ranking" "hist" "historico"
+              "ent" "entrar" "ini" "iniciar" "atk" "atacar" "cap" "capturar" "sai" "sair"}
    :raid {"abr" "abrir" "ent" "entrar" "ini" "iniciar" "atk" "atacar"
           "sai" "sair" "can" "cancelar"}
    :time {"sal" "salvar" "usa" "usar" "exc" "excluir" "apa" "apagar" "rm" "remover"}
@@ -2077,7 +2082,7 @@
   (get-in atalhos-subcomandos [contexto token] token))
 
 (defn- expandir-destino-time [token]
-  (get {"gin" "ginasio" "lig" "liga"} token token))
+  (get {"raide" "raid" "raides" "raid" "gin" "ginasio" "lig" "liga"} token token))
 
 (defn- configurar-liga [message args]
   (let [cid (chat-id message) pid (jogador-id message)
@@ -2951,7 +2956,7 @@
          (when titulo (str "\n🏷️ Título: *" titulo "*"))
          "\n⭐ Nível " nivel " • ✨ PE " xp " • próximo " xp-atual "/" xp-necessario
          "\n🎖️ PE extra: insígnias +" xp-insignias " • missões +" xp-missoes
-         " • ginásios +" pe-ginasios " • raids +" pe-raids
+         " • ginásios +" pe-ginasios " • raides +" pe-raids
          "\n🏛️ Ginásios: " nomes-ginasio
          "\n🔥 Capturas: sequência " sequencia " • recorde " recorde
          "\n⚡ Ativo: "
@@ -4759,11 +4764,63 @@
                      (str (cond (contains? insignias (:id g)) "🏅 "
                                 (aventuras/desbloqueado? (keys insignias) (:id g)) "🔓 "
                                 :else "🔒 ")
-                          (:nome g) " — " (descricao-lider cid g false))))
+                          (:nome g) " — " (if (raids/no-ginasio? cid (:id g) (.now js/Date))
+                                               (str "⚔️ Raide: " (get-in (raids/atual cid) ["chefe" "nome"]))
+                                               (descricao-lider cid g false)))))
          "\n\n📖 Regras, recompensas e comandos: " config/prefix "pk gin ajuda")))
+
+(defn- candidatos-escalacao [cid pid liga]
+  (->> (treinador/equipe cid pid)
+       (keep-indexed
+        (fn [idx registro]
+          (when (and (pos? (get registro "hp-atual" 0))
+                     (or (nil? liga) (treinador/elegivel? liga registro))
+                     (some #(and (contains? #{"fisico" "especial"} (get % "classe"))
+                                 (pos? (get % "poder" 0))) (get registro "golpes")))
+            {:indice idx :registro registro})))
+       (sort-by (fn [{:keys [registro]}]
+                  (- (reduce + (map #(get registro % 0)
+                                    ["hp-atual" "ataque" "defesa" "atq-esp" "def-esp" "veloc"])))))
+       vec))
+
+(defn- mostrar-escalacao [message modo pagina-texto]
+  (let [cid (chat-id message) pid (jogador-id message)
+        raide? (= modo :raide)
+        r (raids/atual cid)
+        liga (when raide? (treinador/obter-liga (get r "liga")))
+        candidatos (candidatos-escalacao cid pid liga)
+        paginas (max 1 (js/Math.ceil (/ (count candidatos) 12)))
+        pagina (if (nil? pagina-texto) 1 (js/Number pagina-texto))
+        comando (if raide? "raide time" "gin time")]
+    (cond
+      (and raide? (not (raids/ativa? r (.now js/Date))))
+      (p/resolved "❓ Aguarde uma raide abrir para escolher um Pokémon da liga correta.")
+      (not (and (js/Number.isSafeInteger pagina) (<= 1 pagina paginas)))
+      (p/resolved (str "❓ Use !pk " comando " pagina <1-" paginas ">."))
+      (empty? candidatos) (p/resolved "❌ Nenhum Pokémon apto. Cure seus Pokémon e confira a liga da batalha.")
+      :else
+      (let [entradas (vec (take 12 (drop (* 12 (dec pagina)) candidatos)))
+            texto (str "⚔️ *Escolha " (if raide? "1 Pokémon para a raide" "3 Pokémon para o ginásio") "*"
+                       "\nAptos, ordenados por atributos e HP atual. Números da coleção."
+                       (when raide? (str " Liga: " (:nome liga) "."))
+                       "\nPágina " pagina "/" paginas
+                       "\n" (if raide? "!pk raide entrar <número> • automático: !pk raide entrar auto"
+                                  "!pk gin time 1,3,5 • automático: !pk gin time auto")
+                       (when (< pagina paginas) (str "\nPróxima: !pk " comando " pagina " (inc pagina)))
+                       (when (> pagina 1) (str "\nAnterior: !pk " comando " pagina " (dec pagina))))]
+        (-> (p/let [media (criar-cartao-time entradas (treinador/indice-ativo cid pid)
+                                            (treinador/nivel-jogador cid pid)
+                                            {:titulo "Escolha para a batalha" :arquivo "escalacao.png"})]
+              {:media media :texto texto})
+            (p/catch (fn [_]
+                       (str texto "\n" (str/join "\n" (map #(str (inc (:indice %)) ". "
+                                                                            (get-in % [:registro "nome"])) entradas))))))))))
+
+(declare comando-raid)
 
 (defn- configurar-ginasio [message args]
   (let [cid (chat-id message) pid (jogador-id message)
+        _ (raids/acompanhar! cid (.now js/Date))
         [acao-original id numero] args
         acao (expandir-subcomando :ginasio acao-original)
         pocao? (contains? #{"pocao" "poção" "pot"} acao)
@@ -4773,6 +4830,12 @@
            (normalizar-texto (if (or (= acao "desafiar") recuperacao?) id acao)))
         ocupante (ginasios/lider cid (:id g))]
     (cond
+      (contains? #{"entrar" "iniciar" "atacar" "capturar" "sair" "cancelar"} acao)
+      (if (and (= acao "atacar") (:ginasio (get @jogos cid)))
+        (atacar message id)
+        (comando-raid message (into [acao] (if (and (= acao "entrar") (nil? id)) ["auto"] (rest args)))))
+      (and (= acao "desafiar") g (raids/no-ginasio? cid (:id g) (.now js/Date)))
+      (comando-raid message ["entrar" "auto"])
       (contains? #{"ranking" "historico" "histórico"} acao)
       (p/resolved
        (if (and id (nil? (aventuras/obter-ginasio (normalizar-texto id))))
@@ -4807,20 +4870,29 @@
              :sem-item (if pocao?
                          (str "🎒 Você não possui Poção de Vida. Compre na " config/prefix "loja.")
                          (str "🎒 Você não possui essa fruta. Veja " config/prefix "mochila diario ou " config/prefix "loja."))))))
+      (and (= acao "time") (= id "pagina"))
+      (mostrar-escalacao message :ginasio numero)
       (= acao "time")
       (if (aprendizado-bloqueado? cid pid)
         (p/resolved "🚫 Termine a batalha e as alterações pendentes antes de escalar.")
         (let [eq (treinador/equipe cid pid)
-              indices (mapv #(parse-indice-golpe % (count eq)) (str/split (or id "") #","))]
-          (if (and (= 3 (count indices)) (= 3 (count (set indices))) (every? some? indices))
+              indices (if (or (nil? id) (= id "auto"))
+                        (mapv :indice (take 3 (candidatos-escalacao cid pid nil)))
+                        (mapv #(parse-indice-golpe % (count eq))
+                              (remove str/blank? (str/split (str/join " " (rest args)) #"[,\s]+"))))]
+          (if (and (= 3 (count indices)) (= 3 (count (set indices))) (every? some? indices)
+                   (every? #(pos? (get-in eq [% "hp-atual"] 0)) indices))
             (let [pokemons (mapv #(first (treinador/registro->pokemon (get eq %))) indices)
                   texto (str "✅ Time de ginásio salvo: "
                              (str/join ", " (map #(str "*" (:nome %) "*") pokemons))
-                             ".\nUse !pokemon ginasio desafiar <nome>.")]
+                             ".\nUse !pk gin desafiar <nome>. Se houver raide, você entra nela com o Pokémon apto mais forte da liga.")]
               (treinador/salvar-time-ginasio! cid pid indices)
               (resposta-time-ginasio pokemons texto))
-            (p/resolved "❓ Escolha três Pokémon diferentes: !pokemon ginasio time 1,3,5."))))
+            (p/resolved "❓ Escolha três Pokémon saudáveis: !pk gin time para ver a lista ou !pk gin time auto."))))
       (nil? g) (p/resolved (menu-ginasios cid pid))
+      (raids/no-ginasio? cid (:id g) (.now js/Date))
+      (p/resolved (str "🏛️ Raide temporária neste ginásio. Os defensores estão preservados.\n"
+                       (raids/resumo (raids/atual cid) (.now js/Date))))
       (not= acao "desafiar")
       (let [texto (str (:nome g) " — " (descricao-lider cid g)
                        (when-not ocupante (str "\nEquipe: " (str/join ", " (:time g))))
@@ -4846,7 +4918,7 @@
         (if-not (and (= 3 (count indices))
                      (= 3 (count (set indices))) (every? some? indices)
                      (every? #(pos? (get % "hp-atual" 0)) registros))
-          (p/resolved "❓ Escale novamente três Pokémon saudáveis: !pokemon ginasio time 1,3,5.")
+          (p/resolved "❓ Escale três Pokémon saudáveis: !pk gin time para escolher ou !pk gin time auto.")
           (let [reserva {:carregando? true :message message :jogadores {:x pid}}
                 _ (swap! jogos assoc cid reserva)]
             (-> (p/let [nome-desafiante (nome-de message)
@@ -5029,7 +5101,7 @@
                        "\nCada cartão concede +3 XP: " config/prefix "pk professor usar <número>."))
       (not (contains? #{"enviar" "confirmar" "usar"} acao)) (p/resolved guia)
       (professor-bloqueado? cid pid)
-      (p/resolved "🚫 Termine a batalha, caçada, raid e alterações pendentes antes de usar o professor.")
+      (p/resolved "🚫 Termine a batalha, caçada, raide e alterações pendentes antes de usar o professor.")
       (= acao "confirmar")
       (p/resolved
        (let [{:keys [status registro familia]} (treinador/confirmar-transferencia-professor! cid pid numero (.now js/Date))]
@@ -5203,17 +5275,53 @@
          "\nO registro permanece após doações, trocas e evoluções. Shiny antigos ainda na coleção também são incluídos."
          "\nVeja os disponíveis com fotos: " config/prefix "pokemon time shiny (aceita os demais filtros).")))
 
+(defn- capturar-raide [message args]
+  (let [cid (chat-id message) pid (jogador-id message)
+        r (raids/captura-pendente cid pid (.now js/Date))
+        bola (loja/normalizar-item (str/join " " args))]
+    (cond
+      (nil? r) "❓ Você não tem captura de raide disponível (prazo de 30 minutos, até 3 tentativas)."
+      (or (aprendizado-bloqueado? cid pid) (raids/participando? cid pid)) "🚫 Termine o combate antes de capturar."
+      (not (cabe-pokemon? cid pid)) (estoque-cheio)
+      (not (some #{bola} loja/bolas)) "🎯 Use !pk raide capturar pokebola, grande-bola ou ultra-bola."
+      :else
+      (let [registro (get r "chefe")
+            chance (chance-com-bola (raids/chance-captura (get registro "raridade")) bola)]
+        (if-not (loja/consumir-bola! cid pid bola)
+          "🎒 Você não tem essa bola."
+          (let [sucesso? (< (rand-int 100) chance)]
+            (raids/registrar-tentativa! cid pid sucesso?)
+            (if sucesso?
+              (let [[pokemon] (treinador/registro->pokemon registro)
+                    pokemon (dissoc pokemon :id-pokemon)
+                    resultado (treinador/adicionar-pokemon! cid pid pokemon (:hp pokemon) nil)]
+                (treinador/registrar-captura! cid pid pokemon)
+                (str "✅ Capturou *" (:nome pokemon) "* da raide! Nível 1, atributos normais. Nº "
+                     (inc (:indice resultado)) " na coleção. Chance: " chance "%."))
+              (str "💨 O Pokémon escapou da bola (" chance "%). Tentativas restantes: "
+                   (- 3 (get-in (raids/atual cid) ["capturas" pid "tentativas"] 0)) "."))))))))
+
 (defn- comando-raid [message args]
   (let [cid (chat-id message) pid (jogador-id message)
+        _ (raids/acompanhar! cid (.now js/Date))
         [acao-original numero] args
-        acao (expandir-subcomando :raid acao-original)
+        acao (if (contains? #{"cap" "capturar"} acao-original) "capturar"
+                 (expandir-subcomando :raid acao-original))
         args (cond-> (vec args) (seq args) (assoc 0 acao))]
     (p/let [nome (nome-de message)]
       ;; A consulta do contato é assíncrona: confira o time depois que ela terminar.
       (let [eq (treinador/equipe cid pid)
-            idx (if numero (parse-indice-golpe numero (count eq)) (treinador/indice-ativo cid pid))]
-        (if (and (= acao "entrar") (aprendizado-bloqueado? cid pid))
-          "🚫 Termine sua batalha e as alterações pendentes antes de entrar na raid."
+            idx (if (= numero "auto")
+                  (when-let [liga (treinador/obter-liga (get (raids/atual cid) "liga"))]
+                    (:indice (first (candidatos-escalacao cid pid liga))))
+                  (if numero (parse-indice-golpe numero (count eq)) (treinador/indice-ativo cid pid)))]
+        (cond
+          (= acao "time") (mostrar-escalacao message :raide
+                              (if (= numero "pagina") (nth args 2 nil) numero))
+          (= acao "capturar") (capturar-raide message (rest args))
+          (and (= acao "entrar") (aprendizado-bloqueado? cid pid))
+          "🚫 Termine sua batalha e as alterações pendentes antes de entrar na raide."
+          :else
           (p/let [resultado (raids/comando! cid pid nome args
                                            (when (some? idx)
                                              (if (= acao "entrar")
@@ -5226,7 +5334,7 @@
                                            (aprender-golpe-por-nivel! message cid jogador (:nivel subida) indice))))))]
             (select-keys resultado [:texto :mentions])))))))
 (def ^:private atalhos-comandos
-  {"gin" "ginasio" "lig" "liga" "evt" "eventos" "evo" "evoluir"
+  {"raide" "raid" "raides" "raid" "gin" "ginasio" "lig" "liga" "evt" "eventos" "evo" "evoluir"
    "neg" "negociar" "tre" "treinador" "apr" "aprender"
    "reap" "reaprender" "rev" "reviver" "mch" "mochila"
    "mis" "missoes" "pre" "presente" "cap" "capturar"
@@ -5409,7 +5517,7 @@
        (str (cabecalho) "❓ *Comando Pokémon não reconhecido.*\n\n"
             "*Novidades*\n"
             "• " config/prefix "pokemon ginasio\n"
-            "• " config/prefix "pokemon raid\n"
+            "• " config/prefix "pokemon raide\n"
             "• " config/prefix "pokemon evoluir <número> <pedra>\n"
             "• " config/prefix "pokemon negociar <seu número> <número do outro> @pessoa\n"
             "• " config/prefix "pokemon eventos\n"
@@ -5569,6 +5677,7 @@
                              (get-in caca-inicial [:pokemons :x :imagem]))
               resultado-final
               (cond
+                (and (map? resposta) (:media resposta)) resposta
                 ataque-no-ginasio?
                 (resposta-imagem-ginasio (or (get @jogos cid) jogo-inicial) texto-final efeitos-golpe)
 
@@ -5592,7 +5701,7 @@
                 tema-evento
                 (resposta-cartao-evento tema-evento
                                         (if (= tema-evento :raid)
-                                          "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/143.png"
+                                          (get-in (raids/atual cid) ["chefe" "imagem"])
                                           url-evento)
                                         texto-final (:mentions resposta))
 
@@ -5624,4 +5733,50 @@
     ;; Registrar/consultar bugs não executa ações nem aplica dano na batalha.
     (if (contains? #{"bug" "bugs"} cmd)
       (bugs/comando! message cmd resto)
-      (enfileirar-jogada (chat-id message) #(jogar-rodada message args)))))
+      (enfileirar-jogada (chat-id message)
+                        #(jogar-rodada message
+                          (if (and (:ginasio (get @jogos (chat-id message)))
+                                   (contains? #{"gin" "ginasio" "ginásio"} cmd)
+                                   (contains? #{"atacar" "atk"} (first resto)))
+                            (str "atacar " (second resto)) args))))))
+
+
+(defonce ^:private relogio-raides (atom nil))
+(defonce ^:private verificando-raides? (atom false))
+
+(defn- verificar-raides! []
+  (when (and @cliente-whatsapp (compare-and-set! verificando-raides? false true))
+    (-> (p/all
+         (for [[cid agenda] @raids/agendas]
+           (enfileirar-jogada
+            cid
+            (fn []
+              (let [agora (.now js/Date)]
+                (when (and (<= (get agenda "proxima" 0) agora)
+                           (not (raids/ativa? (raids/atual cid) agora))
+                           (nil? (get @jogos cid)) (nil? (get @cacadas-selvagens cid)))
+                  (p/let [g (raids/proximo-ginasio cid)
+                          [slug raridade] (rand-nth (raids/candidatos (:nivel g)))
+                          base (buscar-pokemon-por-nome slug)
+                          pokemon (com-golpes (assoc base :nivel 1 :raridade raridade
+                                                       :lendario-api? (= raridade "lendario")
+                                                       :mitico-api? (= raridade "mitico")) 1)
+                          chefe (treinador/pokemon->registro pokemon (:hp pokemon) nil)
+                          r (raids/criar! cid g chefe agora)
+                          _ (armazenamento/aguardar-todas!)
+                          resposta (when r (resposta-cartao-evento :raid (:imagem pokemon)
+                                             (str "🏛️ Uma raide apareceu no ginásio " (:nome g) "!\n"
+                                                  (raids/resumo r agora))))]
+                    (when resposta
+                      (if (map? resposta)
+                        (.sendMessage @cliente-whatsapp cid (:media resposta) #js {:caption (:texto resposta)})
+                        (.sendMessage @cliente-whatsapp cid resposta))))))))))
+        (p/catch #(js/console.error "Erro ao preparar aparição de raide:" %))
+        (p/finally #(reset! verificando-raides? false)))))
+
+(defn iniciar-raides! []
+  (when-let [timer @relogio-raides] (js/clearInterval timer))
+  (doseq [cid (keys (or (armazenamento/obter "ginasios") {}))]
+    (raids/acompanhar! cid (.now js/Date)))
+  (reset! relogio-raides (js/setInterval verificar-raides! 60000))
+  (verificar-raides!))
