@@ -1493,11 +1493,19 @@
                      (.toBuffer))]
     {:buffer sprite :tamanho tamanho}))
 
+(defn- svg-arena-pvp []
+  (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
+       "<defs><linearGradient id='arena-pvp' x2='0' y2='1'><stop stop-color='#172554'/><stop offset='1' stop-color='#0f172a'/></linearGradient></defs>"
+       "<rect width='760' height='400' fill='url(#arena-pvp)'/>"
+       "<path d='M0 260Q380 190 760 260V400H0Z' fill='#334155'/>"
+       "<ellipse cx='170' cy='332' rx='146' ry='32' fill='#1e293b' stroke='#60a5fa' stroke-width='4'/>"
+       "<ellipse cx='590' cy='332' rx='146' ry='32' fill='#1e293b' stroke='#f87171' stroke-width='4'/>"
+       "<text x='380' y='42' text-anchor='middle' fill='#e2e8f0' font-family='sans-serif' font-size='24' font-weight='bold'>BATALHA POKÉMON</text></svg>"))
+
 (defn- criar-imagem-vs [pokemon-x pokemon-o]
   (p/let [[sprite-x sprite-o] (p/all [(sprite-proporcional pokemon-x tamanho-sprite)
                                       (sprite-proporcional pokemon-o tamanho-sprite)])]
-    (-> (sharp #js {:create #js {:width 760 :height 400 :channels 4
-                                 :background #js {:r 255 :g 255 :b 255 :alpha 0}}})
+    (-> (sharp (js/Buffer.from (svg-arena-pvp)))
         (.composite #js [#js {:input (:buffer sprite-x)
                               :left (- 170 (quot (:tamanho sprite-x) 2))
                               :top (- 330 (:tamanho sprite-x))}
@@ -2049,7 +2057,7 @@
 (defn- resposta-imagem-pvp [jogo texto efeito]
   (-> (p/let [base (criar-imagem-vs (get-in jogo [:pokemons :x])
                                      (get-in jogo [:pokemons :o]))
-              buffer (aplicar-sobreposicao-batalha base texto false efeito)]
+              buffer (aplicar-sobreposicao-batalha base texto false efeito false)]
         {:media (MessageMedia. "image/png" (.toString buffer "base64") "golpe-pvp.png")
          :texto texto
          :mentions (when-let [pid (get-in jogo [:jogadores (:vez jogo)])] [pid])})

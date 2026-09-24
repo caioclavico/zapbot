@@ -79,7 +79,7 @@
     :raid
     (str "🤝 *Raide nos ginásios*\n\n"
          "Uma raide por vez no grupo, a cada 6 horas, alternando Pedra → Água → Elétrico → Planta → Fogo. O chefe é sorteado conforme o nível do ginásio. Os defensores ficam preservados e voltam ao terminar.\n"
-         "Inscrições: 15 minutos, de 2 a 6 jogadores. Use " (comando "gin entrar 1") " com um Pokémon saudável da liga indicada.\n"
+         "Inscrições: 45 minutos, de 2 a 6 jogadores. Use " (comando "gin entrar 1") " com um Pokémon saudável da liga indicada.\n"
          "Escolha visual: " (comando "raide time") ". Escolha automática: " (comando "gin entrar") ".\n"
          "Qualquer inscrito pode usar " (comando "gin iniciar") ". Combate: até 30 minutos, alternando " (comando "gin atacar 1") ".\n"
          "Quem causar dano recebe 50 moedas, 6 PE e 6 XP para o Pokémon inscrito por vitória, mesmo se cair.\n"

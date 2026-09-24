@@ -960,3 +960,19 @@
         (is (= (+ base 1) (:xp resultado)))
         (is (= 0 (:bonus-primeira resultado)))
         (is (= 5 (:sequencia resultado)))))))
+
+(deftest arena-pvp-e-opaca-e-entrada-nao-cobre-o-pokemon
+  (async done
+    (is (not (str/includes? (core/svg-sobreposicao-batalha
+                             "Misty envia *Starmie*!" false nil false) "translate(585 250)")))
+    (-> (sharp (js/Buffer.from (core/svg-arena-pvp)))
+        (.ensureAlpha)
+        (.raw)
+        (.toBuffer #js {:resolveWithObject true})
+        (.then (fn [resultado]
+                 (let [dados (.-data resultado) canais (.. resultado -info -channels)]
+                   (is (= 4 canais))
+                   (is (every? #(= 255 (aget dados %)) (range 3 (.-length dados) canais)))
+                   (is (< (aget dados 0) 100)))
+                 (done)))
+        (.catch (fn [erro] (is false (str erro)) (done))))))

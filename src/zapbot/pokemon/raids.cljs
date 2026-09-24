@@ -10,7 +10,7 @@
 
 (defonce ^:private raids (atom (or (armazenamento/obter "raids") {})))
 (armazenamento/registrar! "raids" raids)
-(def duracao-inscricoes (* 15 60 1000))
+(def duracao-inscricoes (* 45 60 1000))
 (def duracao-combate (* 30 60 1000))
 (def intervalo (* 6 60 60 1000))
 
