@@ -95,3 +95,30 @@
           (.catch (fn [erro]
                     (is false (str "O fallback textual também falhou: " erro))
                     (done)))))))
+
+(deftest main-impede-duas-inicializacoes-inclusive-apos-erro
+  (async done
+    (let [criados (atom 0) inicializados (atom 0)
+          client #js {:on (fn [& _]) :sendMessage (fn [& _])
+                      :initialize (fn []
+                                    (swap! inicializados inc)
+                                    (js/Promise.reject (js/Error. "falha simulada")))}
+          guarda (atom false)
+          resultado
+          (with-redefs [core/iniciado? guarda
+                        core/Client (fn [_] (swap! criados inc) client)
+                        core/LocalAuth (fn [] #js {})
+                        core/encerrar-com-sessao! (fn [& _])
+                        zapbot.whatsapp-saude/servir! (fn [& _])
+                        zapbot.armazenamento/iniciar! (fn [] (js/Promise.resolve nil))]
+            (let [primeira (core/main)]
+              (is (nil? (core/main)))
+              primeira))]
+      (-> resultado
+          (.then (fn [_]
+                   (is (= 1 @criados))
+                   (is (= 1 @inicializados))
+                   (with-redefs [core/iniciado? guarda]
+                     (is (nil? (core/main))))))
+          (.catch (fn [erro] (is false (str erro))))
+          (.finally done)))))

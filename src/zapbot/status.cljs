@@ -13,10 +13,9 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["23/09 — Raides automáticas em rodízio nos ginásios, com chefes raros, lendários e míticos"
-   "23/09 — Vitória na raide: 50 moedas, XP e chance de captura no nível 1"
-   "23/09 — !pk gin time monta e mostra os três mais fortes; comandos de ginásio também servem para raides"
-   "23/09 — Evento de 300 vagas com quatro objetivos; caçadas com bolsa cheia concedem XP sem captura"])
+  ["Novo Recomeço: 3 vitórias contra selvagens dão 10 Pokébolas; 3 capturas dão 5 Grandes Bolas e 2 Reviver"
+   "Evento até 04/10 às 00h de São Paulo; consulte !pk eventos"
+   "Festival da Coleção encerrado: removido o bônus temporário de 300 vagas; Pokémon existentes preservados"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))

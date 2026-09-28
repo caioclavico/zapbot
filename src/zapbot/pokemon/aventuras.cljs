@@ -41,16 +41,19 @@
 
 (def duracao-evento-ms (* 6 60 60 1000))
 
-(def festival-colecao
-  {:id "colecao-2026-09" :meta 3 :nome "Festival da Coleção" :vagas 300
-   ;; Início preservado; encerra após 30/09, à meia-noite de São Paulo.
-   ;; Reiniciar o bot não renova o bônus.
-   :inicio (js/Date.parse "2026-09-23T21:50:00Z")
-   :fim (js/Date.parse "2026-10-01T00:00:00-03:00")})
+(def novo-recomeco
+  {:id "novo-recomeco-2026-09" :nome "Novo Recomeço"
+   ;; Sete dias fixos: reiniciar ou atualizar o bot não renova o evento.
+   :inicio (js/Date.parse "2026-09-27T00:00:00-03:00")
+   :fim (js/Date.parse "2026-10-04T00:00:00-03:00")
+   :objetivos [{:id "selvagens" :nome "Vencer selvagens" :meta 3
+                :recompensas {"pokebola" 10}}
+               {:id "capturas" :nome "Capturar Pokémon" :meta 3
+                :recompensas {"grande-bola" 5 "reviver" 2}}]})
 
-(defn evento-espaco [agora]
-  (when (<= (:inicio festival-colecao) agora (dec (:fim festival-colecao)))
-    festival-colecao))
+(defn evento-recomeco [agora]
+  (when (<= (:inicio novo-recomeco) agora (dec (:fim novo-recomeco)))
+    novo-recomeco))
 
 (defn evento-atual [agora]
   (let [periodo (quot agora duracao-evento-ms)]

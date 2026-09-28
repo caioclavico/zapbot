@@ -228,51 +228,77 @@ que tudo volte a rodar sozinho se a VM reiniciar. Para ver os logs do bot:
 
 ### 6. CI/CD automático (GitHub Actions)
 
-Depois do setup manual acima (passos 1-5, incluindo o QR code inicial), os
-próximos deploys são automáticos: o workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
-builda o projeto a cada push/PR e, a cada push direto na `master` (com o
-build passando), conecta na VM via SSH e roda `git pull` + `docker compose up
--d --build` - preservando `.env` e a sessão em `.wwebjs_auth/` (nenhum dos
-dois é tocado pelo pipeline), além dos dados do Cassandra (volume nomeado
-`cassandra-data`, também não tocado).
+O workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) executa
+os testes e constrói a imagem Docker Linux AMD64 no runner do GitHub. Push na
+`master` (ou execução manual nessa branch) envia a imagem comprimida por SSH,
+carrega com `docker load` e atualiza apenas o bot. PRs executam os testes e o
+build sem acessar a VM.
 
-Configure estes *secrets* no repositório GitHub (`Settings > Secrets and
-variables > Actions`):
+A VM não compila mais o projeto. A imagem de execução não inclui Java nem o
+compilador ClojureScript. O deploy usa `docker-compose.production.yml`,
+preserva `.env`, `.wwebjs_auth/` e `data/`, e não inicia Cassandra local.
+O `.env` de produção precisa conter `CASSANDRA_CONTACT_POINTS=10.0.0.234`.
 
-| Secret              | Valor                                                              |
-|----------------------|---------------------------------------------------------------------|
-| `ORACLE_HOST`        | IP público da VM                                                    |
-| `ORACLE_USER`        | usuário SSH (ex.: `ubuntu`)                                          |
-| `ORACLE_APP_DIR`     | caminho absoluto do repo na VM (ex.: `/home/ubuntu/zapbot`)          |
-| `ORACLE_SSH_KEY`     | chave privada SSH (par autorizado em `~/.ssh/authorized_keys` na VM) |
-| `ORACLE_SSH_PORT`    | porta SSH, opcional (padrão `22`)                                    |
+Em **Settings → Secrets and variables → Actions**, configure:
 
-> 🔒 Gere um par de chaves **dedicado só para o deploy** (não reaproveite sua
-> chave pessoal), ex.: `ssh-keygen -t ed25519 -f deploy_key -C "gh-actions"`,
-> adicione `deploy_key.pub` ao `authorized_keys` da VM e cole o conteúdo de
-> `deploy_key` (privada) no secret `ORACLE_SSH_KEY`.
+| Tipo | Nome | Valor |
+|---|---|---|
+| Secret | `ORACLE_SSH_KEY` | Chave privada autorizada na VM atual do bot |
+| Secret | `ORACLE_KNOWN_HOSTS` | Linha de host SSH verificada da VM atual |
+| Variable, opcional | `ORACLE_HOST` | Padrão: `129.148.52.187` |
+| Variable, opcional | `ORACLE_USER` | Padrão: `ubuntu` |
+| Variable, opcional | `ORACLE_APP_DIR` | Padrão: `/home/ubuntu/zapbot` |
+| Variable, opcional | `ORACLE_SSH_PORT` | Padrão: `22` |
 
-### 7. Versionamento
+Os antigos secrets de host/usuário/diretório não são usados; as configurações
+agora são variables com os padrões acima. Atualize a chave privada se ainda
+estiver cadastrada a chave da VM antiga. Use a chave da VM **do bot**, não a
+da VM do Cassandra. Nunca coloque a chave privada no repositório.
 
-Cada release que vai pra VM ganha uma tag anotada `vMAJOR.MINOR.PATCH`, além
-do commit normal - assim dá pra saber exatamente qual versão está rodando
-(`git describe --tags` na VM) e voltar pra uma anterior se precisar
-(`git checkout vX.Y.Z && docker compose up -d --build`). Pushar só a tag
-(sem mudar `master`) não dispara o deploy - o workflow só reage a push/PR na
-branch `master`.
+Para `ORACLE_KNOWN_HOSTS`, copie a linha da VM de um arquivo `known_hosts`
+cuja identidade você já verificou. Se usar `ssh-keyscan`, confira a impressão
+digital com a chave de host da VM antes de cadastrar o resultado. Em porta
+diferente de 22, a entrada usa `[host]:porta`.
 
-Ao preparar um release:
+O usuário precisa ter acesso ao Docker diretamente ou via `sudo -n docker`.
+A sessão do WhatsApp deve estar autenticada. O deploy aguarda até 300 segundos
+por **Cassandra conectado e `/health` saudável**. Falha de banco ou processo
+provoca tentativa de rollback. Demora do WhatsApp marca o workflow como falho,
+mas preserva o container para diagnóstico, sem restart/rollback por timeout. Os logs do Actions não exibem
+QR codes nem números de telefone.
 
-```bash
-# 1. bump no campo "version" do package.json, depois:
-git add package.json
-git commit -m "chore: bump version to X.Y.Z"
-git push origin master        # dispara o deploy de verdade
+### 7. Versões e retorno à imagem anterior
 
-# 2. marca esse commit como a versão:
-git tag -a vX.Y.Z -m "vX.Y.Z"
-git push origin vX.Y.Z
-```
+Cada imagem recebe a tag `zapbot:<SHA-do-commit>`. A VM salva o SHA validado em
+`/home/ubuntu/zapbot/deployed-revision` e os arquivos de cada deploy em
+`/home/ubuntu/zapbot/releases/<SHA>/`. Não é necessário ter um clone Git na VM.
+As imagens anteriores são preservadas para permitir retorno; monitore o
+espaço em disco e remova apenas versões que não serão mais utilizadas.
+
+Para retornar a uma imagem anterior sem executar sua antiga limpeza de locks,
+use o Compose da nova release, conforme os [comandos de rollback](docs/estabilidade-whatsapp.md#rollback).
+O deploy salva a referência anterior no arquivo `previous-image` na VM.
+
+As tags de release `vMAJOR.MINOR.PATCH` continuam opcionais. Push apenas de
+tag não dispara deploy; o gatilho é a branch `master`.
+
+### Evento Novo Recomeço — versão 0.19.0
+
+De **27/09/2026 às 00h até 04/10/2026 às 00h**, no horário de São Paulo:
+
+- Vencer **3 selvagens**: **10 Pokébolas**.
+- Capturar **3 Pokémon**: **5 Grandes Bolas e 2 Reviver**.
+- Consulte o progresso e a data final em `!pk eventos`.
+- Cada objetivo paga automaticamente uma vez por jogador em cada chat.
+  O progresso persiste entre reinícios e não zera diariamente. Só ações
+  realizadas durante o evento contam.
+- Itens que não couberem na mochila ficam pendentes em `!mochila resgatar`,
+  inclusive depois que o evento encerrar.
+
+O Festival da Coleção foi encerrado e seu bônus temporário de 300 vagas foi
+removido. Compras de espaço e Pokémon já existentes são preservados. Quem
+estiver acima da capacidade permanente precisa liberar ou comprar vagas
+para novas aquisições. Caçadas com a bolsa cheia continuam concedendo XP.
 
 ## Estrutura do projeto
 
@@ -860,3 +886,16 @@ Guias: `!pokemon ajuda raid`, `!pokemon ajuda shiny` e `!pokemon ajuda semanais`
 - Cada transferência libera uma vaga e concede **1 cartão da família evolutiva** (Pidgey, Pidgeotto e Pidgeot usam a família Pidgey). O item equipado retorna à mochila. Cartões e remoção do Pokémon são persistidos no mesmo registro; confirmação repetida não entrega outra recompensa. Mudanças no Pokémon invalidam o envio.
 - `!pk professor cartoes` mostra o saldo. `!pk professor usar <número>` consome um cartão da família correspondente e concede **+3 XP**: três cartões completam os 9 XP de um nível. No nível 100, não consome. XP e consumo são persistidos juntos, preservando identidade, shiny, itens, HP/status e o progresso existente. Ao subir de nível, seguem as regras usuais de golpes e evolução; as evoluções por item e troca continuam funcionando.
 - Ajuda: `!pk tm ajuda`, `!pk pc ajuda`, `!pk professor ajuda`.
+
+### Estabilidade e saúde do WhatsApp
+
+Consulte [o relatório e guia de operação](docs/estabilidade-whatsapp.md) para
+estados, timeouts, limites da verificação, deploy e rollback preservando a sessão.
+
+```bash
+sudo docker exec zapbot node scripts/healthcheck.js
+sudo docker logs --since 10m --timestamps zapbot
+```
+
+Somente `READY` com navegador conectado e página aberta retorna saúde `ok`.
+O watchdog de 180s é diagnóstico; não reinicia o bot.

@@ -25,6 +25,9 @@ services:
   bot:
     build: .
     container_name: zapbot
+    stop_grace_period: 60s
+    # Também impede limpeza de locks no CMD de imagens antigas em rollback.
+    command: ["node", "target/main.js"]
     restart: unless-stopped
     depends_on:
       cassandra:

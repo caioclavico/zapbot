@@ -1215,8 +1215,7 @@
         _ (treinador/registrar-vitoria-treinador! cid vencedor-pid)
         _ (loja/registrar-semanal! cid vencedor-pid "pvp" [])
         ganho (loja/creditar! cid vencedor-pid)
-        aviso-missao (str (loja/registrar-missao! cid vencedor-pid "vitorias" (treinador/nivel-jogador cid vencedor-pid))
-                          (loja/registrar-evento-espaco! cid vencedor-pid "pvp"))
+        aviso-missao (loja/registrar-missao! cid vencedor-pid "vitorias" (treinador/nivel-jogador cid vencedor-pid))
         recompensas (recompensas-partida! cid jogo)
         premio-bolas (premiar-nocautes-pvp! cid jogo)]
     (-> (p/all (for [{:keys [pid idx subida]} recompensas :when subida]
@@ -3643,16 +3642,6 @@
     {:pagina pagina :paginas paginas :valida? valida? :filtro filtro :total (count filtrado)
      :entradas (if valida? (vec (take pokemons-por-cartao (drop (* pokemons-por-cartao (dec pagina)) filtrado))) [])}))
 
-(defn- texto-evento-espaco [cid pid]
-  (when-let [evento (loja/progresso-evento-espaco cid pid)]
-    (str "🎉 *" (:nome evento) "*: +" (:vagas evento) " vagas temporárias até "
-         (.toLocaleString (js/Date. (:fim evento)) "pt-BR"
-                          #js {:timeZone "America/Sao_Paulo" :dateStyle "short" :timeStyle "short" :hourCycle "h23"})
-         " (São Paulo)."
-         (apply str (for [[id rotulo] loja/objetivos-evento-espaco]
-                      (str "\n• " rotulo ": " (get (:progresso evento) id 0) "/" (:meta evento))))
-         (if (:concluido? evento) " • Vagas liberadas!" " • Ao completar os quatro objetivos, as 300 vagas são liberadas imediatamente, sem resgate."))))
-
 (defn- resposta-colecao-visual [message args]
   (let [cid (chat-id message) pid (jogador-id message)
         banco (treinador/equipe cid pid)
@@ -3662,7 +3651,6 @@
         capacidade (loja/capacidade-pokemon cid pid)
         texto (str "🎒 *Sua coleção Pokémon* • Página " pagina "/" paginas
                    "\nEstoque total: " quantidade "/" capacidade " (inclui Joy e ginásios)."
-                   (when-let [evento (texto-evento-espaco cid pid)] (str "\n" evento))
                    (when (> quantidade capacidade) "\n⚠️ Excedente preservado. Libere ou compre vagas para adquirir mais.")
                    (when (seq filtro) (str "\n🔎 " (descricao-filtros (interpretar-filtros-time filtro))))
                    "\nMostrando " (count entradas) " de " total " Pokémon. Números originais da coleção."
@@ -3703,9 +3691,6 @@
            "\nCapacidade permanente: " (loja/capacidade-permanente-pokemon cid pid)
            "\nVagas compradas: " (* 50 (loja/expansoes-pc cid pid))
            " — compras do antigo PC já incluídas, sem nova cobrança."
-           (when-let [evento (texto-evento-espaco cid pid)]
-             (str "\n" evento
-                  "\nAo terminar, todos os Pokémon serão preservados. Acima da capacidade permanente, libere ou compre vagas para novas aquisições."))
            "\n+50 vagas por 200 moedas: " config/prefix "pk espaco comprar"
            "\nTodos os Pokémon: " config/prefix "pk tm"))))
 
@@ -4735,7 +4720,6 @@
           (p/finally #(swap! jogos (fn [estado]
                                     (if (= finalizando (get estado cid)) (dissoc estado cid) estado)))))
       (str "\n🏅 Você venceu o ginásio " (:nome g) "!"
-           (loja/registrar-evento-espaco! cid pid "ginasios")
            (if premio
              (str (when primeira? "\nNova insígnia conquistada e próximo ginásio liberado!")
                   "\n💰 +" moedas " moedas."
@@ -4974,10 +4958,8 @@
          "\n50% das caçadas encontram uma dessas espécies; os demais encontros seguem o bioma."
          "\nTroca de evento em " minutos " minutos. Os eventos mudam a cada 6 horas."
          "\nUse " config/prefix "pokemon cacar. As três tentativas e a chance de fuga continuam valendo."
-         (when-let [espaco (texto-evento-espaco cid pid)]
-           (str "\n\n" espaco
-                "\nSomente ações durante o evento contam; o progresso não reinicia diariamente. Você pode caçar com a bolsa cheia. A recompensa é liberada automaticamente ao completar a missão. Confira " config/prefix "pk espaco."
-                "\nApós o evento, nenhum Pokémon será removido. Se exceder a capacidade permanente, libere ou compre vagas para adquirir mais.")))))
+         (when-let [recomeco (loja/texto-evento-recomeco cid pid)]
+           (str "\n\n" recomeco)))))
 
 (defn- evolucoes-especiais [cadeia slug-atual]
   (letfn [(achar [no]
@@ -5117,7 +5099,6 @@
            (do (when-let [item (get registro "item")] (loja/devolver-item! cid pid item))
                (str "✅ *" (get registro "nome") "* enviado definitivamente ao professor."
                     "\n+1 cartão da família *" familia "* e uma vaga liberada."
-                    (loja/registrar-evento-espaco! cid pid "professor")
                     (when (get registro "item") " O item equipado voltou para a mochila.")
                     "\nConfira os novos números em " config/prefix "pk tm."))
            "❓ Confirmação inválida, expirada ou Pokémon alterado/protegido. Faça um novo pedido de envio.")))

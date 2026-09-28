@@ -58,45 +58,15 @@
 (defn capacidade-permanente-pokemon [cid pid]
   (+ 26 (* vagas-por-expansao-pc (expansoes-pc cid pid))))
 
-(def objetivos-evento-espaco
-  [["selvagens" "Vitórias contra selvagens"]
-   ["pvp" "Vitórias PvP"]
-   ["ginasios" "Vitórias em ginásios"]
-   ["professor" "Transferências ao professor"]])
-
-(defn progresso-evento-espaco [cid pid]
-  (when-let [evento (aventuras/evento-espaco (.now js/Date))]
-    (let [salvo (get-in @contas [cid pid "missoes-eventos" (:id evento)])
-          progresso (if (map? salvo) salvo {})]
-      (assoc evento :progresso progresso
-             :concluido? (every? #(>= (get progresso (first %) 0) (:meta evento)) objetivos-evento-espaco)))))
-
-(defn bonus-espaco-pokemon [cid pid]
-  (let [evento (progresso-evento-espaco cid pid)]
-    (if (:concluido? evento) (:vagas evento) 0)))
-
-(defn registrar-evento-espaco! [cid pid objetivo]
-  (when-let [evento (progresso-evento-espaco cid pid)]
-    (when-let [rotulo (some (fn [[id nome]] (when (= id objetivo) nome)) objetivos-evento-espaco)]
-      (let [antes (get (:progresso evento) objetivo 0)]
-        (when (< antes (:meta evento))
-          (swap! contas assoc-in [cid pid "missoes-eventos" (:id evento)]
-                 (assoc (:progresso evento) objetivo (inc antes)))
-          (persistir!)
-          (str "\n🎉 " rotulo ": " (inc antes) "/" (:meta evento) "."
-               (when (:concluido? (progresso-evento-espaco cid pid))
-                 (str " +" (:vagas evento) " vagas liberadas até o fim do evento!"))))))))
-
 (defn capacidade-pokemon [cid pid]
-  (+ (capacidade-permanente-pokemon cid pid) (bonus-espaco-pokemon cid pid)))
+  (capacidade-permanente-pokemon cid pid))
 
 (defn preco-expansao-pc [_cid _pid]
   preco-fixo-expansao-pc)
 
 (defn comprar-espaco-pc! [cid pid]
   ;; Saldo e expansão pertencem ao mesmo registro persistido.
-  (let [resultado (volatile! nil)
-        bonus (bonus-espaco-pokemon cid pid)]
+  (let [resultado (volatile! nil)]
     (swap! contas update-in [cid pid]
            (fn [c]
              (let [c (or c {"moedas" 0 "inventario" {}})
@@ -104,7 +74,7 @@
                    preco preco-fixo-expansao-pc]
                (if (< (get c "moedas" 0) preco)
                  (do (vreset! resultado {:status :sem-moedas :preco preco}) c)
-                 (do (vreset! resultado {:status :ok :preco preco :capacidade (+ 26 bonus (* vagas-por-expansao-pc (inc n)))})
+                 (do (vreset! resultado {:status :ok :preco preco :capacidade (+ 26 (* vagas-por-expansao-pc (inc n)))})
                      (-> c (update "moedas" - preco) (assoc "expansoes-pc" (inc n))))))))
     (persistir!)
     @resultado))
@@ -293,6 +263,56 @@
   (str/join ", " (for [bola ordem-recompensas :let [qtd (get recompensas bola 0)] :when (pos? qtd)]
                    (str qtd "× " (:nome (dados-item bola))))))
 
+(defn progresso-evento-recomeco [cid pid]
+  (when-let [evento (aventuras/evento-recomeco (.now js/Date))]
+    (let [salvo (get-in @contas [cid pid "missoes-eventos" (:id evento)] {})]
+      (assoc evento :progresso (get salvo "progresso" {})
+             :premiados (set (get salvo "premiados" []))))))
+
+(defn texto-evento-recomeco [cid pid]
+  (when-let [evento (progresso-evento-recomeco cid pid)]
+    (str "🌅 *" (:nome evento) "* — até "
+         (.toLocaleString (js/Date. (:fim evento)) "pt-BR"
+                          #js {:timeZone "America/Sao_Paulo" :dateStyle "short" :timeStyle "short" :hourCycle "h23"})
+         " (São Paulo)."
+         (apply str
+                (for [{:keys [id nome meta recompensas]} (:objetivos evento)]
+                  (str "\n• " nome ": " (get (:progresso evento) id 0) "/" meta
+                       " — " (texto-recompensas recompensas)
+                       (when (contains? (:premiados evento) id) " ✅ Entregue"))))
+         "\nCada missão entrega os itens automaticamente uma vez por jogador neste chat."
+         "\nSó ações durante o evento contam; o progresso não reinicia diariamente."
+         "\nMochila cheia: os itens ficam pendentes em " config/prefix "mochila resgatar.")))
+
+(defn registrar-evento-recomeco! [cid pid objetivo]
+  (when-let [evento (aventuras/evento-recomeco (.now js/Date))]
+    (when-let [missao (some #(when (= objetivo (:id %)) %) (:objetivos evento))]
+      (let [aviso (volatile! nil)
+            caminho ["missoes-eventos" (:id evento)]]
+        ;; Progresso, marcador de entrega e inventário mudam no mesmo registro.
+        (swap! contas update-in [cid pid]
+               (fn [c]
+                 (let [c (or c {})
+                       antes (get-in c (conj caminho "progresso" objetivo) 0)
+                       premiados (set (get-in c (conj caminho "premiados") []))]
+                   (if (or (contains? premiados objetivo) (>= antes (:meta missao)))
+                     c
+                     (let [atual (inc antes)
+                           completo? (= atual (:meta missao))
+                           novo (assoc-in c (conj caminho "progresso" objetivo) atual)]
+                       (vreset! aviso
+                                (str "\n🌅 Novo Recomeço — " (:nome missao) ": " atual "/" (:meta missao)
+                                     (when completo?
+                                       (str "\n🎁 " (texto-recompensas (:recompensas missao))
+                                            ". Itens sem espaço ficam em " config/prefix "mochila resgatar."))))
+                       (if completo?
+                         (-> novo
+                             (assoc-in (conj caminho "premiados") (vec (conj premiados objetivo)))
+                             (guardar-recompensas (:recompensas missao)))
+                         novo))))))
+        (when @aviso (persistir!))
+        @aviso))))
+
 (defn premiar-bolas! [cid pid bola quantidade]
   (swap! contas update-in [cid pid] guardar-recompensas {bola quantidade})
   (persistir!)
@@ -379,7 +399,7 @@
     (str
       (when (> (count (missoes/disponiveis (missoes/estado-do-dia novo dia nivel))) antes)
         (str "\n📋 Missão diária concluída! Resgate com " config/prefix "missoes diarias resgatar."))
-      (when (= evento "selvagens") (registrar-evento-espaco! cid pid "selvagens")))))
+      (registrar-evento-recomeco! cid pid evento))))
 
 (defn- resgatar-missoes! [cid pid nivel]
   (let [dia (missoes/dia-atual)

@@ -5,6 +5,7 @@
             ["whatsapp-web.js" :as wwjs]
             ["qrcode-terminal" :as qrcode]
             [zapbot.config :as config]
+            [zapbot.whatsapp-saude :as saude]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.historico :as historico]
             [zapbot.adedonha :as adedonha]
@@ -41,12 +42,6 @@
   (js/console.log (str "📞 Número conectado: +" (.. client -info -wid -user)))
   (pokemon/iniciar! client)
   (lembretes/iniciar! client))
-
-(defn- on-auth-failure [msg]
-  (js/console.error "❌ Falha na autenticação:" msg))
-
-(defn- on-disconnected [reason]
-  (js/console.warn "⚠️ Desconectado:" reason))
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -140,45 +135,49 @@
 (defn- on-group-admin-changed [notification]
   (admins/processar-evento-promocao! notification))
 
-(def ^:private timeout-aviso-inicializacao-ms (* 60 1000))
+(defonce ^:private iniciado? (atom false))
 
-;; sem isso, uma trava no Puppeteer/Chromium (RAM/CPU insuficiente, processo
-;; zumbi antigo segurando o profile, etc.) fica em silêncio total no log -
-;; "qr"/"ready" cancelam o aviso assim que um dos dois acontecer de verdade.
-(defn- avisar-se-travar! [client]
-  (let [id (js/setTimeout
-            (fn []
-              (js/console.warn
-               (str "⚠️ Já se passaram " (/ timeout-aviso-inicializacao-ms 1000)
-                    "s sem QR code nem conexão - o Chromium pode estar travado "
-                    "(RAM/CPU insuficiente, processo zumbi antigo, SingletonLock, etc). "
-                    "Verifique com 'docker stats' e 'docker exec zapbot ps aux'.")))
-            timeout-aviso-inicializacao-ms)]
-    (.once client "qr" (fn [_] (js/clearTimeout id)))
-    (.once client "ready" (fn [] (js/clearTimeout id)))))
+(defn- encerrar-com-sessao! [^js client diagnostico ^js server]
+  (let [encerrando? (atom false)]
+    (doseq [sinal ["SIGTERM" "SIGINT"]]
+      (.on js/process sinal
+           (fn []
+             (when (compare-and-set! encerrando? false true)
+               (saude/atualizar! diagnostico "DISCONNECTED" "Encerrando navegador; preservando sessão.")
+               (.close server)
+               ;; Limite apenas para uma parada solicitada, nunca para startup lento.
+               (js/setTimeout #(js/process.exit 1) 45000)
+               (-> (p/resolved nil)
+                   (p/then (fn [_] (.destroy client)))
+                   (p/then (fn [_] (js/process.exit 0)))
+                   (p/catch (fn [err]
+                              (saude/log! (str "Erro ao encerrar: " (.-message err)))
+                              (js/process.exit 1))))))))))
 
 (defn main [& _args]
-  (let [puppeteer-opts (cond-> {:args #js ["--no-sandbox" "--disable-setuid-sandbox"
-                                           ;; --disable-quic evita ERR_CONNECTION_CLOSED comum em redes
-                                           ;; WSL2/containers onde o QUIC (HTTP/3, via UDP) não funciona.
+  ;; Uma única tentativa por processo, inclusive se initialize rejeitar.
+  (when (compare-and-set! iniciado? false true)
+    (let [puppeteer-opts (cond-> {:protocolTimeout 300000
+                                :args #js ["--no-sandbox" "--disable-setuid-sandbox"
                                            "--disable-quic" "--disable-features=Quic"]}
-                         config/puppeteer-executable-path (assoc :executablePath config/puppeteer-executable-path))
-        client (Client. #js {:authStrategy (LocalAuth.)
-                             :puppeteer    (clj->js puppeteer-opts)})
-        _ (configurar-envio-seguro! client)]
-    (.on client "qr" on-qr)
-    (.on client "ready" (fn [] (on-ready client)))
-    (.on client "auth_failure" on-auth-failure)
-    (.on client "disconnected" on-disconnected)
-    ;; message_create cobre também mensagens enviadas pelo próprio número
-    ;; conectado (fromMe), diferente de "message" (só mensagens recebidas).
-    (.on client "message_create" on-message)
-    (.on client "group_admin_changed" on-group-admin-changed)
-    ;; espera o Cassandra carregar (rank/loja/admins/etc.) antes de conectar
-    ;; no WhatsApp - iniciar! nunca rejeita (loga e segue sem persistência
-    ;; nessa execução se não conseguir conectar), então isso nunca trava o boot.
-    (p/then (armazenamento/iniciar!)
-            (fn [_]
-              (avisar-se-travar! client)
-              (-> (.initialize client)
-                  (p/catch (fn [err] (js/console.error "❌ Erro ao inicializar o cliente do WhatsApp:" err))))))))
+                          config/puppeteer-executable-path (assoc :executablePath config/puppeteer-executable-path))
+          client (Client. #js {:authStrategy (LocalAuth.)
+                               :puppeteer (clj->js puppeteer-opts)})
+          diagnostico (saude/criar)
+          server (saude/servir! diagnostico client)]
+      (configurar-envio-seguro! client)
+      (saude/acompanhar! diagnostico client)
+      (encerrar-com-sessao! client diagnostico server)
+      (.on client "qr" on-qr)
+      (.on client "ready" (fn [] (on-ready client)))
+      ;; Preserva o fluxo de mensagens e os inicializadores dos jogos.
+      (.on client "message_create" on-message)
+      (.on client "group_admin_changed" on-group-admin-changed)
+      (-> (armazenamento/iniciar!)
+          (p/then (fn [_]
+                    (saude/iniciar-avisos! diagnostico)
+                    (.initialize client)))
+          (p/catch (fn [err]
+                     (saude/atualizar! diagnostico "ERROR"
+                                      (str "Erro ao inicializar: " (.-message err)))
+                     (js/console.error err)))))))

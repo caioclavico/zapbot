@@ -1,40 +1,29 @@
-# Imagem pensada para ARM64 (ex.: Oracle Cloud Free Tier - Ampere A1),
-# onde o Puppeteer não tem Chromium pré-compilado: usamos o Chromium do
-# sistema (apt) em vez do download automático do Puppeteer.
-FROM node:20-bookworm-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      chromium \
-      fonts-liberation \
-      ca-certificates \
-      tini \
-      default-jre-headless \
+# Compilação no runner; a VM recebe somente a imagem de execução.
+FROM node:22-bookworm-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends default-jre-headless ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
-ENV PUPPETEER_SKIP_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 WORKDIR /app
-
 COPY package*.json ./
-# O postinstall aplica uma correção mínima do upstream no transporte de mídia.
-# O script precisa existir antes do npm ci executar os scripts de ciclo de vida.
 COPY scripts/patch-whatsapp-media.js ./scripts/patch-whatsapp-media.js
-# Instala exatamente o lockfile. Isso impede um rebuild de trocar silenciosamente
-# a versão do transporte do WhatsApp e quebrar novamente o envio de imagens.
 RUN npm ci
+COPY shadow-cljs.edn ./
+COPY src ./src
+RUN npm run build && npm prune --omit=dev
 
-COPY . .
-RUN npm run build
-
-# NODE_ENV=production só depois do build: setado antes, o npm install pula
-# devDependencies (shadow-cljs) e o build falha com "shadow-cljs: not found"
-ENV NODE_ENV=production
-
-# tini evita processos zumbis do Chromium ao encerrar o container
+FROM node:22-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production \
+    PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/target/main.js ./target/main.js
+COPY package*.json ./
+COPY assets ./assets
 ENTRYPOINT ["/usr/bin/tini", "--"]
-# limpa o lock do Chromium (SingletonLock) antes de iniciar: como o volume
-# .wwebjs_auth persiste entre deploys mas o hostname do container muda a
-# cada `docker run`, o Chromium acha que o lock é de "outra máquina" e se
-# recusa a destravar sozinho, travando o start em todo redeploy
-CMD ["sh", "-c", "find /app/.wwebjs_auth -iname 'Singleton*' -delete 2>/dev/null; exec npm start"]
+# LocalAuth usa /app/.wwebjs_auth, persistido pelo Compose. Nunca limpar locks.
+COPY scripts/healthcheck.js ./scripts/healthcheck.js
+HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 CMD ["node", "scripts/healthcheck.js"]
+CMD ["node", "target/main.js"]

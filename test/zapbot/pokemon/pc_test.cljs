@@ -1,5 +1,5 @@
 (ns zapbot.pokemon.pc-test
-  (:require [cljs.test :refer-macros [deftest is async] :refer [use-fixtures]]
+  (:require [cljs.test :refer-macros [deftest is async]]
             [clojure.string :as str]
             [promesa.core :as p]
             [zapbot.armazenamento :as armazenamento]
@@ -8,14 +8,7 @@
             [zapbot.pokemon.loja :as loja]
             [zapbot.pokemon.core :as core]
             [zapbot.pokemon.ajuda :as ajuda]
-            [zapbot.pokemon.aventuras :as aventuras]
             ["sharp" :as sharp]))
-
-(def evento-espaco-real aventuras/evento-espaco)
-;; Estes testes verificam as vagas permanentes; o evento tem sua própria suíte.
-(use-fixtures :each
-  {:before #(set! aventuras/evento-espaco (fn [_] nil))
-   :after #(set! aventuras/evento-espaco evento-espaco-real)})
 
 (defn registro [id]
   {"id-pokemon" (str id) "nome" (str "Pokemon " id) "nivel" 5

@@ -1,0 +1,23 @@
+# Imagem construída no GitHub Actions. Cassandra roda em outra VM.
+services:
+  bot:
+    image: ${ZAPBOT_IMAGE:?Defina a imagem do commit}
+    container_name: zapbot
+    stop_grace_period: 60s
+    # Também impede limpeza de locks no CMD de imagens antigas em rollback.
+    command: ["node", "target/main.js"]
+    restart: unless-stopped
+    env_file:
+      - ${ZAPBOT_APP_DIR:?Defina o diretório do bot}/.env
+    environment:
+      NODE_OPTIONS: --max-old-space-size=384
+    volumes:
+      - ${ZAPBOT_APP_DIR}/.wwebjs_auth:/app/.wwebjs_auth
+      - ${ZAPBOT_APP_DIR}/data:/app/data
+    mem_limit: 1280m
+    memswap_limit: 2g
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

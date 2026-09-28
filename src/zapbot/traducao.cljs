@@ -5,13 +5,32 @@
             [zapbot.config :as config]
             [zapbot.gemini :as gemini]))
 
+(defonce ^:private google-pausado-ate (atom 0))
+
+(defn- pausar-google! [res]
+  (let [agora (js/Date.now)
+        retry-after (some-> res .-headers (.get "retry-after"))
+        segundos (js/Number retry-after)
+        espera (cond
+                 (nil? retry-after) 60000
+                 (js/Number.isFinite segundos) (* 1000 segundos)
+                 :else (- (js/Date.parse retry-after) agora))
+        ;; Respeita Retry-After, limitado entre 1 minuto e 15 minutos.
+        espera (if (js/Number.isFinite espera)
+                 (max 60000 (min 900000 espera)) 60000)]
+    (when (<= @google-pausado-ate agora)
+      (js/console.warn "Google Translate respondeu HTTP 429; usando Gemini durante cooldown."))
+    (swap! google-pausado-ate max (+ agora espera))))
+
 (defn- traduzir-google [texto origem destino]
   (let [url (str "https://translate.googleapis.com/translate_a/single"
                  "?client=gtx&dt=t&sl=" origem "&tl=" destino
                  "&q=" (js/encodeURIComponent texto))]
     (p/let [res (js/fetch url)]
       (if-not (.-ok res)
-        (p/rejected (js/Error. (str "Google Translate respondeu HTTP " (.-status res))))
+        (do
+          (when (= 429 (.-status res)) (pausar-google! res))
+          (p/rejected (js/Error. (str "Google Translate respondeu HTTP " (.-status res)))))
         (p/let [data (.json res)]
           (->> (aget data 0)
                (map #(aget % 0))
@@ -28,10 +47,13 @@
   contrário de `traduzir`, não devolve silenciosamente o texto original - útil
   para o comando !traduza poder informar uma falha de verdade ao usuário."
   [texto origem destino]
-  (-> (traduzir-google texto origem destino)
-      (p/catch (fn [err]
-                 (js/console.warn "Google Translate falhou; tentando Gemini:" err)
-                 (traduzir-gemini texto origem destino)))
+  (-> (if (< (js/Date.now) @google-pausado-ate)
+        (p/resolved (traduzir-gemini texto origem destino))
+        (-> (traduzir-google texto origem destino)
+            (p/catch (fn [err]
+                       (when (<= @google-pausado-ate (js/Date.now))
+                         (js/console.warn "Google Translate falhou; tentando Gemini:" err))
+                       (traduzir-gemini texto origem destino)))))
       (p/catch (fn [err]
                  (js/console.error "Todos os provedores de tradução falharam:" err)
                  nil))))
