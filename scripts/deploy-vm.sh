@@ -22,11 +22,16 @@ if ! docker info >/dev/null 2>&1; then
 fi
 "${docker_cmd[@]}" info >/dev/null
 "${docker_cmd[@]}" image inspect "$ZAPBOT_IMAGE" >/dev/null
+# Override persistente da VM mantém a identidade do Chromium entre releases.
+compose_files=(-f "$release_dir/docker-compose.production.yml")
+if [[ -f "$ZAPBOT_APP_DIR/docker-compose.hostname.yml" ]]; then
+  compose_files+=(-f "$ZAPBOT_APP_DIR/docker-compose.hostname.yml")
+fi
 # Passa somente estas duas variáveis depois do sudo, que limpa o ambiente.
 # Resolve a imagem a cada chamada para também respeitar o rollback.
 compose() {
   "${compose_runner[@]}" "ZAPBOT_APP_DIR=$ZAPBOT_APP_DIR" "ZAPBOT_IMAGE=$ZAPBOT_IMAGE" \
-    docker compose --project-name zapbot -f "$release_dir/docker-compose.production.yml" "$@"
+    docker compose --project-name zapbot "${compose_files[@]}" "$@"
 }
 compose config --quiet
 previous_image=$("${docker_cmd[@]}" inspect --format '{{.Config.Image}}' zapbot 2>/dev/null || true)

@@ -214,3 +214,23 @@ de sessão ou Cassandra nesta revisão.
 - [Docker: restart policies](https://docs.docker.com/engine/containers/start-containers-automatically/)
 - Implementação instalada e fixada em package-lock: whatsapp-web.js
   `src/Client.js`, `src/authStrategies/LocalAuth.js` e `BaseAuthStrategy.js`.
+
+## Hostname persistente para o perfil existente
+
+Quando um perfil aponta para um hostname de container antigo já removido, após
+confirmar que não há outro navegador usando o perfil, mantenha esse hostname em
+`/home/ubuntu/zapbot/docker-compose.hostname.yml`:
+
+```yaml
+services:
+  bot:
+    hostname: cf399453163f
+```
+
+Esse é o hostname identificado nesta instalação; outras instalações devem usar
+o hostname correspondente ao próprio perfil. Não é o hostname da VM Oracle.
+O deploy inclui esse override se presente, tanto na atualização quanto no rollback.
+Em operações manuais de Compose, acrescente
+`-f "$APP_DIR/docker-compose.hostname.yml"` após o Compose da release.
+O arquivo fica fora das releases e não contém credenciais. Nenhum arquivo do
+perfil é removido pelo script; a verificação do lock pertence ao Chromium.

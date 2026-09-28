@@ -52,7 +52,7 @@ os.execvpe(sys.argv[2], sys.argv[2:], env)
 
 
 class DeployTest(unittest.TestCase):
-    def run_deploy(self, scenario, has_env=True, require_sudo=False):
+    def run_deploy(self, scenario, has_env=True, require_sudo=False, hostname_override=False):
         import json
         with tempfile.TemporaryDirectory(prefix='zapbot-deploy-', dir='/tmp') as tmp:
             root = Path(tmp)
@@ -69,6 +69,8 @@ class DeployTest(unittest.TestCase):
             (release / 'docker-compose.production.yml').write_text('services: {}\n')
             if has_env:
                 (app / '.env').write_text('CASSANDRA_CONTACT_POINTS=10.0.0.234\n')
+            if hostname_override:
+                (app / 'docker-compose.hostname.yml').write_text('services:\n  bot:\n    hostname: hostname-preservado\n')
             calls_file = root / 'calls'
             env = dict(os.environ, PATH=str(bin_dir) + ':' + os.environ['PATH'],
                        SCENARIO=scenario, DEPLOY_CALLS=str(calls_file),
@@ -123,6 +125,16 @@ class DeployTest(unittest.TestCase):
                 else:
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual(updates, ['zapbot:' + SHA, 'zapbot:previous'])
+
+    def test_hostname_override_used_for_deploy_and_rollback(self):
+        result, calls, revision = self.run_deploy('database-error', require_sudo=True,
+                                                 hostname_override=True)
+        self.assertNotEqual(result.returncode, 0)
+        updates = [args for args, image in calls if 'up' in args]
+        self.assertEqual(len(updates), 2)
+        for args in updates:
+            self.assertEqual(args.count('-f'), 2)
+            self.assertTrue(any(arg.endswith('/docker-compose.hostname.yml') for arg in args))
 
     def test_missing_env_fails_before_changing_container(self):
         result, calls, revision = self.run_deploy('ready', has_env=False)
