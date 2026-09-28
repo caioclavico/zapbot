@@ -15,17 +15,26 @@ exec 9>"$ZAPBOT_APP_DIR/.deploy.lock"
 flock -n 9 || { echo 'Já existe um deploy em andamento.' >&2; exit 1; }
 
 docker_cmd=(docker)
-if ! docker info >/dev/null 2>&1; then docker_cmd=(sudo -n docker); fi
+compose_runner=(env)
+if ! docker info >/dev/null 2>&1; then
+  docker_cmd=(sudo -n docker)
+  compose_runner=(sudo -n env)
+fi
 "${docker_cmd[@]}" info >/dev/null
 "${docker_cmd[@]}" image inspect "$ZAPBOT_IMAGE" >/dev/null
-compose=("${docker_cmd[@]}" compose --project-name zapbot -f "$release_dir/docker-compose.production.yml")
-"${compose[@]}" config --quiet
+# Passa somente estas duas variáveis depois do sudo, que limpa o ambiente.
+# Resolve a imagem a cada chamada para também respeitar o rollback.
+compose() {
+  "${compose_runner[@]}" "ZAPBOT_APP_DIR=$ZAPBOT_APP_DIR" "ZAPBOT_IMAGE=$ZAPBOT_IMAGE" \
+    docker compose --project-name zapbot -f "$release_dir/docker-compose.production.yml" "$@"
+}
+compose config --quiet
 previous_image=$("${docker_cmd[@]}" inspect --format '{{.Config.Image}}' zapbot 2>/dev/null || true)
 
 rollback() {
   echo 'Deploy falhou; tentando restaurar a imagem anterior.' >&2
   if [[ -n "$previous_image" ]]; then
-    ZAPBOT_IMAGE="$previous_image" "${compose[@]}" up -d --no-build --pull never --no-deps bot || true
+    ZAPBOT_IMAGE="$previous_image" compose up -d --no-build --pull never --no-deps bot || true
   fi
 }
 # Mantém a referência para rollback manual, sem copiar/tocar nas credenciais.
@@ -34,7 +43,7 @@ if [[ -n "$previous_image" ]]; then
 fi
 trap rollback ERR
 # Só recria o bot. Não remove órfãos nem volumes do banco antigo.
-"${compose[@]}" up -d --no-build --pull never --no-deps bot
+compose up -d --no-build --pull never --no-deps bot
 container_id=$("${docker_cmd[@]}" inspect --format '{{.Id}}' zapbot)
 started=$("${docker_cmd[@]}" inspect --format '{{.State.StartedAt}}' "$container_id")
 ready=0

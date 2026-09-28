@@ -14,6 +14,11 @@ from pathlib import Path
 args = sys.argv[1:]
 with open(os.environ['DEPLOY_CALLS'], 'a') as f:
     f.write(json.dumps([args, os.environ.get('ZAPBOT_IMAGE')]) + '\\n')
+if args[0] == 'info' and os.environ.get('REQUIRE_SUDO') == '1' and not os.environ.get('MOCK_ROOT'):
+    sys.exit(1)
+if args[0] == 'compose':
+    assert os.environ.get('ZAPBOT_APP_DIR'), 'Diretório perdido após sudo'
+    assert os.environ.get('ZAPBOT_IMAGE'), 'Imagem perdida após sudo'
 if args[0] == 'inspect':
     fmt = args[2]
     if 'Config.Image' in fmt: print('zapbot:previous')
@@ -35,14 +40,25 @@ elif args[0] == 'logs':
 '''
 
 
+SUDO = '''#!/usr/bin/env python3
+import os, sys
+assert sys.argv[1] == '-n'
+env = dict(os.environ)
+env.pop('ZAPBOT_APP_DIR', None)
+env.pop('ZAPBOT_IMAGE', None)
+env['MOCK_ROOT'] = '1'
+os.execvpe(sys.argv[2], sys.argv[2:], env)
+'''
+
+
 class DeployTest(unittest.TestCase):
-    def run_deploy(self, scenario, has_env=True):
+    def run_deploy(self, scenario, has_env=True, require_sudo=False):
         import json
         with tempfile.TemporaryDirectory(prefix='zapbot-deploy-', dir='/tmp') as tmp:
             root = Path(tmp)
             bin_dir = root / 'bin'
             bin_dir.mkdir()
-            for name, content in [('docker', DOCKER), ('sleep', '#!/bin/sh\nexit 0\n'),
+            for name, content in [('docker', DOCKER), ('sudo', SUDO), ('sleep', '#!/bin/sh\nexit 0\n'),
                                   ('flock', '#!/bin/sh\nexit 0\n')]:
                 target = bin_dir / name
                 target.write_text(content)
@@ -55,7 +71,8 @@ class DeployTest(unittest.TestCase):
                 (app / '.env').write_text('CASSANDRA_CONTACT_POINTS=10.0.0.234\n')
             calls_file = root / 'calls'
             env = dict(os.environ, PATH=str(bin_dir) + ':' + os.environ['PATH'],
-                       SCENARIO=scenario, DEPLOY_CALLS=str(calls_file))
+                       SCENARIO=scenario, DEPLOY_CALLS=str(calls_file),
+                       REQUIRE_SUDO='1' if require_sudo else '0')
             result = subprocess.run(['bash', str(SCRIPT), str(app), SHA], env=env,
                                     capture_output=True, text=True, timeout=15)
             calls = [json.loads(line) for line in calls_file.read_text().splitlines()] if calls_file.exists() else []
@@ -93,6 +110,19 @@ class DeployTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIsNone(revision)
         self.assertEqual([image for args, image in calls if 'up' in args], ['zapbot:' + SHA])
+
+    def test_sudo_preserves_compose_variables_for_deploy_and_rollback(self):
+        for scenario in ['ready', 'database-error']:
+            with self.subTest(scenario=scenario):
+                result, calls, revision = self.run_deploy(scenario, require_sudo=True)
+                updates = [image for args, image in calls if 'up' in args]
+                if scenario == 'ready':
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(revision, SHA)
+                    self.assertEqual(updates, ['zapbot:' + SHA])
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(updates, ['zapbot:' + SHA, 'zapbot:previous'])
 
     def test_missing_env_fails_before_changing_container(self):
         result, calls, revision = self.run_deploy('ready', has_env=False)
