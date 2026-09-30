@@ -122,3 +122,13 @@
                      (is (nil? (core/main))))))
           (.catch (fn [erro] (is false (str erro))))
           (.finally done)))))
+
+(deftest flag-gpu-reversivel-preserva-demais-opcoes
+  (let [padrao (with-redefs [zapbot.config/chromium-disable-gpu false]
+                 (core/opcoes-puppeteer))
+        teste (with-redefs [zapbot.config/chromium-disable-gpu true]
+                (core/opcoes-puppeteer))]
+    (is (= 300000 (:protocolTimeout teste)))
+    (is (= (conj (js->clj (:args padrao)) "--disable-gpu")
+           (js->clj (:args teste))))
+    (is (= (dissoc padrao :args) (dissoc teste :args)))))

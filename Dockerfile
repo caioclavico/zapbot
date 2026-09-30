@@ -16,7 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
     PUPPETEER_SKIP_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    CHROMIUM_DISABLE_GPU=true
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/target/main.js ./target/main.js

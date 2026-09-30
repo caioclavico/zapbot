@@ -26,6 +26,7 @@
 (def news-feed-url (env "NEWS_FEED_URL" "https://g1.globo.com/rss/g1/"))
 (def default-currencies (env-list "CURRENCY_DEFAULT" ["USD-BRL" "EUR-BRL" "BTC-BRL"]))
 ;; usado em ARM64/Docker, onde o Puppeteer não baixa um Chromium próprio
+(def chromium-disable-gpu (= "true" (str/lower-case (env "CHROMIUM_DISABLE_GPU" "false"))))
 (def puppeteer-executable-path (env "PUPPETEER_EXECUTABLE_PATH"))
 ;; chave gratuita em https://www.themoviedb.org/settings/api (usada pelo !filme)
 (def tmdb-api-key (env "TMDB_API_KEY"))

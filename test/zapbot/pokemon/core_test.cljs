@@ -883,7 +883,7 @@
     (let [tentativas (atom 0)
           ativo (assoc pikachu :imagem "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png")]
       (with-redefs [core/sprite-pokemon-treinador
-                    (fn [_]
+                    (fn [_ & _ctx]
                       (swap! tentativas inc)
                       (js/Promise.reject (js/Error. "sprite indisponível")))]
         (-> (core/criar-cartao-treinador "Ash" 7 ativo 1)

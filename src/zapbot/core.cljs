@@ -5,6 +5,7 @@
             ["whatsapp-web.js" :as wwjs]
             ["qrcode-terminal" :as qrcode]
             [zapbot.config :as config]
+            [zapbot.desempenho :as desempenho]
             [zapbot.whatsapp-saude :as saude]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.historico :as historico]
@@ -81,52 +82,67 @@
                      (p/rejected erro)
                      (enviar-texto-estruturado message texto mentions)))))))
 
-(defn- on-message [message]
+(defn- processar-mensagem [message ctx]
   (when (permitido-pelo-ambiente? message)
     (adedonha/capturar-resposta! message)
     ;; Aguarda a fila do histórico: assim !pk bug sempre encontra exatamente
     ;; a mensagem anterior, mesmo quando os eventos chegam muito próximos.
-    (-> (p/resolved (historico/registrar! message))
-        (p/then (fn [_] (router/processar message)))
+    (-> (p/resolved (desempenho/medir! ctx "historico" #(historico/registrar! message)))
+        (p/then (fn [_] (desempenho/medir! ctx "processamento" #(router/processar message))))
         (p/then (fn [resposta]
-                  (cond
-                    (nil? resposta) nil
-                    (:medias resposta) (let [medias (:medias resposta)
-                                             total  (count medias)
-                                             legenda-ultima (:legenda-ultima resposta)]
-                                         ;; Cada imagem pode demorar um tempo diferente para subir ao
-                                         ;; WhatsApp. Encadeamos os envios para as páginas não chegarem
-                                         ;; embaralhadas no grupo.
-                                         (-> (reduce
-                                              (fn [envio [idx media]]
-                                                (p/then envio
-                                                        (fn [_]
-                                                          (.reply message media nil
-                                                                  #js {:caption
-                                                                       (str "🎒 Página " (inc idx) "/" total
-                                                                            (when (and legenda-ultima
-                                                                                       (= idx (dec total)))
-                                                                              (str "\n\n" legenda-ultima)))}))))
-                                              (p/resolved nil)
-                                              (map-indexed vector medias))
-                                             (p/catch
-                                              (fn [erro]
-                                                (js/console.error "Erro ao enviar cartões; usando lista em texto:" erro)
-                                                (enviar-texto-estruturado message (:texto resposta) (:mentions resposta))))))
-                    ;; documento (ex.: !pokemon time csv): manda o texto primeiro e o
-                    ;; arquivo em seguida - legenda em documento não aparece de forma
-                    ;; confiável no WhatsApp
-                    (:documento resposta) (-> (.reply message (:texto resposta))
-                                              (p/then (fn [_]
-                                                        (.reply message (:documento resposta) nil
-                                                                #js {:sendMediaAsDocument true}))))
-                    (:media resposta) (responder-com-midia message resposta)
-                    ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
-                    ;; de quem for a vez) resolvem {:texto :mentions} em vez de
-                    ;; uma string simples - todo o resto continua string normal
-                    (string? resposta) (.reply message resposta)
-                    :else (.reply message (:texto resposta) nil #js {:mentions (clj->js (:mentions resposta))}))))
+                  (desempenho/medir! ctx "envio"
+                    (fn []
+                      (cond
+                        (nil? resposta) nil
+                        (:medias resposta) (let [medias (:medias resposta)
+                                                 total  (count medias)
+                                                 legenda-ultima (:legenda-ultima resposta)]
+                                             ;; Cada imagem pode demorar um tempo diferente para subir ao
+                                             ;; WhatsApp. Encadeamos os envios para as páginas não chegarem
+                                             ;; embaralhadas no grupo.
+                                             (-> (reduce
+                                                  (fn [envio [idx media]]
+                                                    (p/then envio
+                                                            (fn [_]
+                                                              (.reply message media nil
+                                                                      #js {:caption
+                                                                           (str "🎒 Página " (inc idx) "/" total
+                                                                                (when (and legenda-ultima
+                                                                                           (= idx (dec total)))
+                                                                                  (str "\n\n" legenda-ultima)))}))))
+                                                  (p/resolved nil)
+                                                  (map-indexed vector medias))
+                                                 (p/catch
+                                                  (fn [erro]
+                                                    (js/console.error "Erro ao enviar cartões; usando lista em texto:" erro)
+                                                    (enviar-texto-estruturado message (:texto resposta) (:mentions resposta))))))
+                        ;; documento (ex.: !pokemon time csv): manda o texto primeiro e o
+                        ;; arquivo em seguida - legenda em documento não aparece de forma
+                        ;; confiável no WhatsApp
+                        (:documento resposta) (-> (.reply message (:texto resposta))
+                                                  (p/then (fn [_]
+                                                            (.reply message (:documento resposta) nil
+                                                                    #js {:sendMediaAsDocument true}))))
+                        (:media resposta) (responder-com-midia message resposta)
+                        ;; comandos que precisam marcar alguém com @ (ex.: !pokemon,
+                        ;; de quem for a vez) resolvem {:texto :mentions} em vez de
+                        ;; uma string simples - todo o resto continua string normal
+                        (string? resposta) (.reply message resposta)
+                        :else (.reply message (:texto resposta) nil #js {:mentions (clj->js (:mentions resposta))}))))))
         (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" err))))))
+
+(defn- on-message [message]
+  (if (and (permitido-pelo-ambiente? message)
+           (desempenho/treinador? (.-body message)))
+    (desempenho/acompanhar! message #(processar-mensagem message %))
+    (processar-mensagem message nil)))
+
+(defn opcoes-puppeteer []
+  (cond-> {:protocolTimeout 300000
+           :args (clj->js (cond-> ["--no-sandbox" "--disable-setuid-sandbox"
+                                   "--disable-quic" "--disable-features=Quic"]
+                           config/chromium-disable-gpu (conj "--disable-gpu")))}
+    config/puppeteer-executable-path (assoc :executablePath config/puppeteer-executable-path)))
 
 ;; alimenta o cadastro de admins conhecidos (zapbot.admins) direto do evento
 ;; do WhatsApp - não depende do getChatModel instável usado na checagem ao
@@ -157,10 +173,7 @@
 (defn main [& _args]
   ;; Uma única tentativa por processo, inclusive se initialize rejeitar.
   (when (compare-and-set! iniciado? false true)
-    (let [puppeteer-opts (cond-> {:protocolTimeout 300000
-                                :args #js ["--no-sandbox" "--disable-setuid-sandbox"
-                                           "--disable-quic" "--disable-features=Quic"]}
-                          config/puppeteer-executable-path (assoc :executablePath config/puppeteer-executable-path))
+    (let [puppeteer-opts (opcoes-puppeteer)
           client (Client. #js {:authStrategy (LocalAuth.)
                                :puppeteer (clj->js puppeteer-opts)})
           diagnostico (saude/criar)

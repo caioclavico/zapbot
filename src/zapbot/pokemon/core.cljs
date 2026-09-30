@@ -20,6 +20,7 @@
             ["sharp" :as sharp]
             ["fs" :as fs]
             [zapbot.config :as config]
+            [zapbot.desempenho :as desempenho]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.rank :as rank]
             [zapbot.pokemon.loja :as loja]
@@ -2913,30 +2914,30 @@
 (defn- sprite-pokemon-treinador
   "No perfil, toda espécie recebe o mesmo espaço visual. A proporção interna
   da arte é preservada, mas a altura real não deixa Pokémon pequenos ilegíveis."
-  [pokemon]
-  (p/let [buffer (-> (baixar-buffer (:imagem pokemon))
+  [pokemon & [ctx]]
+  (p/let [buffer (-> (desempenho/medir! ctx "sprite_download" #(baixar-buffer (:imagem pokemon)))
                      (p/catch (fn [erro]
                                 (js/console.warn "Cartão do treinador sem sprite ativo:"
                                                  (.-message erro))
                                 nil)))
           entrada (or buffer (js/Buffer.from (svg-sprite-indisponivel tamanho-pokemon-treinador)))]
-    (-> (sharp entrada)
+    (desempenho/medir! ctx "sprite_resize" #(-> (sharp entrada)
         (.resize tamanho-pokemon-treinador tamanho-pokemon-treinador
                  #js {:fit "contain" :background #js {:r 0 :g 0 :b 0 :alpha 0}})
         (.png)
-        (.toBuffer))))
+        (.toBuffer)))))
 
-(defn- criar-cartao-treinador [nome nivel ativo numero-ativo]
+(defn- criar-cartao-treinador [nome nivel ativo numero-ativo & [ctx]]
   ;; Cria a promessa enquanto `with-redefs`/chamador ainda está no mesmo
   ;; contexto e isola sua falha: Ash e a ficha continuam aparecendo mesmo que
   ;; a arte remota do Pokémon esteja temporariamente indisponível.
   (let [sprite-promessa (when ativo
-                          (-> (sprite-pokemon-treinador ativo)
+                          (-> (sprite-pokemon-treinador ativo ctx)
                               (p/catch (fn [erro]
                                          (js/console.warn "Cartão do treinador sem sprite ativo:"
                                                           (.-message erro))
                                          nil))))]
-    (p/let [sprite-ash (sprite-ash-treinador)
+    (p/let [sprite-ash (desempenho/medir! ctx "ash_resize" sprite-ash-treinador)
             sprite sprite-promessa
             svg    (svg-cartao-treinador nome nivel ativo numero-ativo (nil? sprite-ash))
             overlays (cond-> []
@@ -2946,10 +2947,10 @@
                        sprite (conj #js {:input sprite
                                          :left 410
                                          :top 88}))]
-      (-> (sharp (js/Buffer.from svg))
+      (desempenho/medir! ctx "composicao_png" #(-> (sharp (js/Buffer.from svg))
           (.composite (clj->js overlays))
           (.png)
-          (.toBuffer)))))
+          (.toBuffer))))))
 
 (defn- texto-treinador [cid pid nome perfil numero-ativo ativo]
   (let [{:keys [nivel xp xp-insignias xp-missoes pe-ginasios pe-raids xp-atual xp-necessario sequencia recorde insignias titulo]} perfil
@@ -3024,14 +3025,17 @@
                                       primeiros-globais)))))))
 
 (defn- ver-treinador [message]
-  (let [cid (chat-id message)
+  (let [ctx (desempenho/contexto-de message)
+        inicio-dados (desempenho/agora)
+        cid (chat-id message)
         pid (jogador-id message)
         perfil (treinador/perfil-treinador cid pid)
         numero-ativo (inc (treinador/indice-ativo cid pid))
         [ativo] (treinador/pokemon-ativo cid pid)]
-    (p/let [nome (nome-de message)
+    (desempenho/registrar! ctx "dados_memoria" inicio-dados)
+    (p/let [nome (desempenho/medir! ctx "nome_whatsapp" #(nome-de message))
             texto (texto-treinador cid pid nome perfil numero-ativo ativo)]
-      (-> (p/let [buffer (criar-cartao-treinador nome (:nivel perfil) ativo numero-ativo)]
+      (-> (p/let [buffer (desempenho/medir! ctx "imagem_total" #(criar-cartao-treinador nome (:nivel perfil) ativo numero-ativo ctx))]
             {:media (MessageMedia. "image/png" (.toString buffer "base64") "treinador-pokemon.png")
              ;; Normalmente `:texto` cabe inteiro e vira a própria legenda. Esta
              ;; opção curta só é usada como proteção se dados futuros passarem
