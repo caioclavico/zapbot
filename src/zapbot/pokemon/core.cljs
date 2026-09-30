@@ -4815,7 +4815,8 @@
 (declare comando-raid)
 
 (defn- configurar-ginasio [message args]
-  (let [cid (chat-id message) pid (jogador-id message)
+  (let [ctx (desempenho/contexto-de message)
+        cid (chat-id message) pid (jogador-id message)
         _ (raids/acompanhar! cid (.now js/Date))
         [acao-original id numero] args
         acao (expandir-subcomando :ginasio acao-original)
@@ -4917,12 +4918,12 @@
           (p/resolved "❓ Escale três Pokémon saudáveis: !pk gin time para escolher ou !pk gin time auto.")
           (let [reserva {:carregando? true :message message :jogadores {:x pid}}
                 _ (swap! jogos assoc cid reserva)]
-            (-> (p/let [nome-desafiante (nome-de message)
-                       adversarios (if ocupante
+            (-> (p/let [nome-desafiante (desempenho/medir! ctx "ginasio_nome" #(nome-de message))
+                       adversarios (desempenho/medir! ctx "ginasio_adversarios" (fn [] (if ocupante
                                      (ginasios/time-defensor ocupante (.now js/Date))
                                      (p/all (map #(p/let [pokemon (buscar-pokemon-por-nome %)
                                                         pronto (com-golpes (escalar-nivel pokemon (:nivel g)) (:nivel g))]
-                                                  pronto) (:time g))))]
+                                                  pronto) (:time g))))))]
                   (if-not (and (= reserva (get @jogos cid))
                                (= ocupante (ginasios/lider cid (:id g)))
                                (= registros (mapv #(get (treinador/equipe cid pid) %) indices)))
@@ -4945,7 +4946,7 @@
                                           :itens-usados {:x {} :o {}}))
                           [jogo aviso] (aplicar-intimidacao jogo)]
                       (swap! jogos assoc cid jogo)
-                      (p/let [_ (enviar-imagem-ginasio message jogo)]
+                      (p/let [_ (desempenho/medir! ctx "ginasio_imagem_envio" #(enviar-imagem-ginasio message jogo))]
                         (str "🏛️ Desafio contra " (or (get ocupante "nome") (:lider g)) "!\n"
                              (when aviso (str aviso "\n")) (mensagem-estado jogo))))))
                 (p/catch (fn [err]
@@ -5623,7 +5624,8 @@
 (defn- jogar-rodada [message args]
   (if-let [ajuda (pokemon-ajuda/resposta args)]
     (p/resolved ajuda)
-    (let [cid (chat-id message)
+    (let [ctx (desempenho/contexto-de message)
+          cid (chat-id message)
           ;; Objetos Message não podem ir ao Cassandra. No primeiro comando
           ;; após um reinício, reconecta o estado restaurado à mensagem viva
           ;; para respostas, evolução e fallbacks assíncronos.
@@ -5643,17 +5645,17 @@
                          (golpe-do-comando jogo-inicial (:vez jogo-inicial) args))
           resultado-derrota (:resultado-derrota jogo-inicial)]
       ;; A referência continua disponível após a limpeza assíncrona da batalha.
-      (p/let [_ (treinador/recolher-curados! cid (jogador-id message))
-              _ (p/all (for [{:keys [indice subida]} (treinador/resgatar-xp-raids! cid (jogador-id message))
+      (p/let [_ (desempenho/medir! ctx "recolher_curados" #(treinador/recolher-curados! cid (jogador-id message)))
+              _ (desempenho/medir! ctx "xp_raid_evolucao" #(p/all (for [{:keys [indice subida]} (treinador/resgatar-xp-raids! cid (jogador-id message))
                              :when subida]
                          (-> (verificar-evolucao! message cid (jogador-id message) indice)
                              (p/then (fn [_]
-                                       (aprender-golpe-por-nivel! message cid (jogador-id message) (:nivel subida) indice))))))
+                                       (aprender-golpe-por-nivel! message cid (jogador-id message) (:nivel subida) indice)))))))
               antes-comando (get @jogos cid)
-              resposta (jogar-comando message args)
+              resposta (desempenho/medir! ctx "comando_pokemon" #(jogar-comando message args))
               lider (when (autoriza-turno-lider? antes-comando (get @jogos cid)
                                                (jogador-id message) args)
-                      (turno-lider message cid))
+                      (desempenho/medir! ctx "turno_lider" #(turno-lider message cid)))
               efeito-jogador (when efeito-golpe
                                (assoc efeito-golpe
                                       :origem (or (:vez jogo-inicial) :x)
@@ -5699,27 +5701,33 @@
                                         texto-final (:mentions resposta))
 
                 :else texto)
-              _ (aguardar-gravacoes-combates!)
+              _ (desempenho/medir! ctx "persistencia_combate" aguardar-gravacoes-combates!)
               ;; Rank, treinador, loja e ginásios possuem filas próprias. Só
               ;; entrega a resposta depois que todas as alterações já iniciadas
               ;; terminaram suas tentativas de persistência.
-              _ (armazenamento/aguardar-todas!)]
+              _ (desempenho/medir! ctx "persistencia_modulos" armazenamento/aguardar-todas!)]
         resultado-final))))
 
 (defonce ^:private filas-jogadas (atom {}))
+(defonce ^:private contextos-filas (atom {}))
 
-(defn- enfileirar-jogada [cid acao]
+(defn- enfileirar-jogada [cid acao & [ctx]]
   ;; A ação e toda a resposta automática formam uma rodada indivisível.
   ;; O próximo comando lê o estado apenas depois que a rodada anterior termina.
   (let [anterior (get @filas-jogadas cid (p/resolved nil))
-        atual (-> anterior
+        _ (desempenho/dependencia! ctx (get @contextos-filas cid))
+        atual (-> (desempenho/medir! ctx "fila_pokemon" #(identity anterior))
                   (p/catch (fn [_] nil))
-                  (p/then (fn [_] (acao))))]
+                  (p/then (fn [_]
+                            (desempenho/dependencia! ctx nil)
+                            (desempenho/medir! ctx "rodada_pokemon" acao))))]
     (swap! filas-jogadas assoc cid atual)
+    (swap! contextos-filas assoc cid ctx)
     (p/finally atual
                (fn []
                  (when (identical? atual (get @filas-jogadas cid))
-                   (swap! filas-jogadas dissoc cid))))))
+                   (swap! filas-jogadas dissoc cid)
+                   (swap! contextos-filas dissoc cid))))))
 
 (defn jogar [message args]
   (let [[cmd & resto] (str/split (str/trim (str/lower-case (or args ""))) #"\s+")]
@@ -5731,7 +5739,8 @@
                           (if (and (:ginasio (get @jogos (chat-id message)))
                                    (contains? #{"gin" "ginasio" "ginásio"} cmd)
                                    (contains? #{"atacar" "atk"} (first resto)))
-                            (str "atacar " (second resto)) args))))))
+                            (str "atacar " (second resto)) args))
+                        (desempenho/contexto-de message)))))
 
 
 (defonce ^:private relogio-raides (atom nil))
@@ -5741,6 +5750,8 @@
   (when (and @cliente-whatsapp (compare-and-set! verificando-raides? false true))
     (-> (p/all
          (for [[cid agenda] @raids/agendas]
+           (desempenho/observar-operacao! "raid_automatica"
+            (fn [ctx]
            (enfileirar-jogada
             cid
             (fn []
@@ -5750,20 +5761,24 @@
                            (nil? (get @jogos cid)) (nil? (get @cacadas-selvagens cid)))
                   (p/let [g (raids/proximo-ginasio cid)
                           [slug raridade] (rand-nth (raids/candidatos (:nivel g)))
-                          base (buscar-pokemon-por-nome slug)
-                          pokemon (com-golpes (assoc base :nivel 1 :raridade raridade
+                          base (desempenho/medir! ctx "raid_pokemon" #(buscar-pokemon-por-nome slug))
+                          pokemon (desempenho/medir! ctx "raid_golpes"
+                                   #(com-golpes (assoc base :nivel 1 :raridade raridade
                                                        :lendario-api? (= raridade "lendario")
-                                                       :mitico-api? (= raridade "mitico")) 1)
+                                                       :mitico-api? (= raridade "mitico")) 1))
                           chefe (treinador/pokemon->registro pokemon (:hp pokemon) nil)
                           r (raids/criar! cid g chefe agora)
-                          _ (armazenamento/aguardar-todas!)
-                          resposta (when r (resposta-cartao-evento :raid (:imagem pokemon)
+                          _ (desempenho/medir! ctx "persistencia_modulos" armazenamento/aguardar-todas!)
+                          resposta (when r (desempenho/medir! ctx "raid_imagem"
+                                           #(resposta-cartao-evento :raid (:imagem pokemon)
                                              (str "🏛️ Uma raide apareceu no ginásio " (:nome g) "!\n"
-                                                  (raids/resumo r agora))))]
+                                                  (raids/resumo r agora)))))]
                     (when resposta
-                      (if (map? resposta)
+                      (desempenho/medir! ctx "raid_envio"
+                       #(if (map? resposta)
                         (.sendMessage @cliente-whatsapp cid (:media resposta) #js {:caption (:texto resposta)})
-                        (.sendMessage @cliente-whatsapp cid resposta))))))))))
+                        (.sendMessage @cliente-whatsapp cid resposta)))))))
+            ctx))))))
         (p/catch #(js/console.error "Erro ao preparar aparição de raide:" %))
         (p/finally #(reset! verificando-raides? false)))))
 

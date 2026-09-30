@@ -1,5 +1,42 @@
 # Medições do comando de treinador
 
+## Diagnóstico de fila Pokémon
+
+Todos os comandos `!pk` e `!pokemon` agora recebem contexto de medição. O campo
+`comando` contém apenas um rótulo fixo (`pokemon` ou `pk treinador`), sem os
+argumentos enviados pelo jogador. As raides automáticas também são medidas,
+mas só geram logs em caso de erro ou duração de pelo menos 30 segundos.
+
+`fila_pokemon` significa espera pela rodada anterior do mesmo chat;
+`aguardando.id` aponta para o identificador da operação anterior. Ela pode ser
+outro comando ou `raid_automatica`. `rodada_pokemon` significa que a operação
+já adquiriu sua vez. As etapas internas incluem `recolher_curados`,
+`xp_raid_evolucao`, `comando_pokemon`, `turno_lider`, `persistencia_combate` e
+`persistencia_modulos`. Desafios de ginásio detalham `ginasio_nome`,
+`ginasio_adversarios` e `ginasio_imagem_envio`. Raides detalham `raid_pokemon`,
+`raid_golpes`, `raid_imagem` e `raid_envio`.
+
+Para consultar as operações pendentes **sem enviar novos comandos ao WhatsApp**:
+
+```bash
+sudo docker exec zapbot node -e 'const http=require("node:http"); const r=http.get("http://127.0.0.1:3001/diagnostics",s=>s.pipe(process.stdout)); r.setTimeout(5000,()=>r.destroy(new Error("timeout"))); r.on("error",e=>{console.error(e.message);process.exitCode=1})'
+```
+
+Esse endpoint usa o servidor interno existente, sem publicar portas. Não acessa
+Chromium, Cassandra ou credenciais: consulta apenas os contextos em memória.
+Eles são retirados quando terminam; os identificadores recomeçam a cada processo.
+O `/health` mantém sua semântica de conexão e não garante que a fila esteja livre.
+
+O diagnóstico **não destrava nem cancela operações**, não executa jogadas fora
+de ordem e não muda as regras do jogo. Esta versão permite localizar a espera;
+não constitui uma correção confirmada para o incidente. Um deploy reinicia o
+processo e perde as filas em memória; não reenvie desafios antigos em massa.
+
+Para rollback, use a imagem anterior com o mesmo Compose, `.env`, volumes e
+override de hostname descritos em `estabilidade-whatsapp.md`. Não remova a sessão.
+
+## Tempos de treinador
+
 `!pk treinador`, `!pokemon treinador` e o atalho `tre` geram logs
 `[Desempenho]` com um identificador numérico por chamada. Não são registrados
 nome, telefone, chat, mensagem, URL de sprite ou credenciais.

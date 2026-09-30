@@ -19,6 +19,35 @@
   (let [promessa (js/Promise.resolve "texto")]
     (is (identical? promessa (desempenho/medir! nil "dados" (fn [] promessa))))))
 
+(deftest seleciona-comandos-pokemon-sem-confundir-outros-textos
+  (with-redefs [config/prefix "!"]
+    (doseq [texto ["!pk" "!pk time" "!pokemon ginasio desafiar agua" " !PK tre "]]
+      (is (desempenho/pokemon? texto)))
+    (doseq [texto [nil "oi" "!status" "!pkxyz" "texto !pk time"]]
+      (is (not (desempenho/pokemon? texto))))))
+
+(deftest consulta-pendentes-nao-expoe-mensagem-e-limpa-ao-terminar
+  (async done
+    (let [liberar (p/deferred)
+          ctx-atual (atom nil)
+          mensagem #js {:body "segredo" :from "telefone"}
+          tarefa (desempenho/acompanhar! mensagem
+                   (fn [ctx]
+                     (reset! ctx-atual ctx)
+                     (desempenho/medir! ctx "envio" #(identity liberar)))
+                   (fn [_]))
+          id (:id @ctx-atual)
+          resumo (first (filter #(= id (:id %)) (desempenho/pendentes)))]
+      (is (= ["envio"] (:pendentes resumo)))
+      (is (not (re-find #"segredo|telefone" (pr-str resumo))))
+      (p/resolve! liberar :ok)
+      (-> tarefa
+          (.then (fn [_]
+                   (is (nil? (desempenho/contexto-de mensagem)))
+                   (is (empty? (filter #(= id (:id %)) (desempenho/pendentes))))))
+          (.catch (fn [erro] (is false (str erro))))
+          (.finally done)))))
+
 (deftest contextos-concorrentes-isolados-com-promesa-e-etapas-aninhadas
   (async done
     (let [logs (atom [])

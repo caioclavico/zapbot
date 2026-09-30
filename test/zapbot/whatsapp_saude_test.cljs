@@ -1,6 +1,7 @@
 (ns zapbot.whatsapp-saude-test
   (:require [cljs.test :refer-macros [deftest is]]
             ["node:events" :refer [EventEmitter]]
+            [zapbot.desempenho :as desempenho]
             [zapbot.whatsapp-saude :as saude]))
 
 (defn cliente []
@@ -55,3 +56,13 @@
     (is (= 200 @codigo))
     (saude/atender! s c #js {:method "GET" :url "/"} res)
     (is (= 404 @codigo))))
+
+(deftest diagnostico-passivo-nao-consulta-chromium
+  (let [codigo (atom nil) corpo (atom nil)
+        res #js {:writeHead (fn [n & _] (reset! codigo n))
+                 :end #(reset! corpo %)}]
+    (with-redefs [desempenho/pendentes (fn [] [{:id 7 :pendentes ["fila_pokemon"]}])]
+      (saude/atender! (saude/criar) nil #js {:method "GET" :url "/diagnostics"} res)
+      (is (= 200 @codigo))
+      (is (= {:operacoes [{:id 7 :pendentes ["fila_pokemon"]}]}
+             (js->clj (js/JSON.parse @corpo) :keywordize-keys true))))))

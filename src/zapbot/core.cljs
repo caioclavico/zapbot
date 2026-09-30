@@ -133,8 +133,8 @@
 
 (defn- on-message [message]
   (if (and (permitido-pelo-ambiente? message)
-           (desempenho/treinador? (.-body message)))
-    (desempenho/acompanhar! message #(processar-mensagem message %))
+           (desempenho/pokemon? (.-body message)))
+    (desempenho/acompanhar-mensagem! message #(processar-mensagem message %))
     (processar-mensagem message nil)))
 
 (defn opcoes-puppeteer []

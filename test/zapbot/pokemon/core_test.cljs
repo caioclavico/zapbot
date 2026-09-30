@@ -4,6 +4,7 @@
             [clojure.string :as str]
             [promesa.core :as p]
             [zapbot.bugs :as bugs]
+            [zapbot.desempenho :as desempenho]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.pokemon.core :as core]
             [zapbot.pokemon.ginasios :as ginasios]
@@ -640,6 +641,37 @@
           (p/then (fn [resultado]
                     (is (= :recuperou resultado))
                     (is (nil? (get @core/filas-jogadas cid)))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally done)))))
+
+(deftest diagnostico-identifica-predecessor-sem-liberar-fila
+  (async done
+    (let [cid "teste-diagnostico-fila"
+          logs (atom [])
+          liberar (p/deferred)
+          iniciou (p/deferred)
+          contextos (atom [])
+          criar (fn [acao]
+                  (desempenho/acompanhar! #js {}
+                    (fn [ctx]
+                      (swap! contextos conj ctx)
+                      (core/enfileirar-jogada cid acao ctx))
+                    #(swap! logs conj %)))
+          primeira (criar #(do (p/resolve! iniciou true) liberar))
+          segunda (criar (fn [] :segunda))]
+      (-> iniciou
+          (p/then (fn [_]
+                    (let [[a b] @contextos]
+                      (is (= #{"rodada_pokemon"} @(:pendentes a)))
+                      (is (= #{"fila_pokemon"} @(:pendentes b)))
+                      (is (= (:id a) (:id @(:aguardando b)))))
+                    (p/resolve! liberar :primeira)
+                    (p/all [primeira segunda])))
+          (p/then (fn [valores]
+                    (is (= [:primeira :segunda] valores))
+                    (is (every? #(nil? @(:aguardando %)) @contextos))
+                    (is (every? #(empty? @(:pendentes %)) @contextos))
+                    (is (nil? (get @core/contextos-filas cid)))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally done)))))
 

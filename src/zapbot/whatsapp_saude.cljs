@@ -1,6 +1,7 @@
 (ns zapbot.whatsapp-saude
   "Diagnóstico passivo: nunca reinicia o cliente nem acessa credenciais."
-  (:require ["node:http" :as http]))
+  (:require ["node:http" :as http]
+            [zapbot.desempenho :as desempenho]))
 
 (defn log! [mensagem]
   (js/console.log (str (.toISOString (js/Date.)) " [WhatsApp] " mensagem)))
@@ -67,12 +68,17 @@
      :whatsapp estado :chromium chromium?}))
 
 (defn atender! [saude ^js client ^js req ^js res]
-  (if (and (= "GET" (.-method req)) (= "/health" (.-url req)))
+  (cond
+    (and (= "GET" (.-method req)) (= "/diagnostics" (.-url req)))
+    (do
+      (.writeHead res 200 #js {"Content-Type" "application/json" "Cache-Control" "no-store"})
+      (.end res (js/JSON.stringify (clj->js {:operacoes (desempenho/pendentes)}))))
+    (and (= "GET" (.-method req)) (= "/health" (.-url req)))
     (let [dados (resposta saude client)]
       (.writeHead res (if (= "ok" (:status dados)) 200 503)
                   #js {"Content-Type" "application/json" "Cache-Control" "no-store"})
       (.end res (js/JSON.stringify (clj->js dados))))
-    (do (.writeHead res 404) (.end res))))
+    :else (do (.writeHead res 404) (.end res))))
 
 (defn servir! [saude ^js client]
   ;; Loopback dentro do container: nenhuma porta publicada na VM.
