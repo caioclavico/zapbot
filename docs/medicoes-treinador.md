@@ -35,6 +35,12 @@ processo e perde as filas em memória; não reenvie desafios antigos em massa.
 Para rollback, use a imagem anterior com o mesmo Compose, `.env`, volumes e
 override de hostname descritos em `estabilidade-whatsapp.md`. Não remova a sessão.
 
+Se o deploy detectar parada/reinício inesperado e fizer rollback, os últimos
+300 registros do container ficam em `releases/<commit>/deploy-failure.*`,
+com permissão `0600`, antes da recriação. Esse arquivo pode conter mensagens
+ou QR Code: consulte na VM e não publique seu conteúdo integral. O timeout
+de inicialização continua preservando o container, sem rollback por demora.
+
 ## Tempos de treinador
 
 `!pk treinador`, `!pokemon treinador` e o atalho `tre` geram logs

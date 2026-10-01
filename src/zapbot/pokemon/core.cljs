@@ -5777,8 +5777,8 @@
                       (desempenho/medir! ctx "raid_envio"
                        #(if (map? resposta)
                         (.sendMessage @cliente-whatsapp cid (:media resposta) #js {:caption (:texto resposta)})
-                        (.sendMessage @cliente-whatsapp cid resposta)))))))
-            ctx))))))
+                        (.sendMessage @cliente-whatsapp cid resposta))))))))
+            ctx)))))
         (p/catch #(js/console.error "Erro ao preparar aparição de raide:" %))
         (p/finally #(reset! verificando-raides? false)))))
 

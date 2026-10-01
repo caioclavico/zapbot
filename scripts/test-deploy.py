@@ -30,7 +30,7 @@ elif args[0] == 'exec':
     sys.exit(1 if os.environ['SCENARIO'] in ['qr', 'disconnected'] else 0)
 elif args[0] == 'logs':
     assert args[1:3] == ['--since', '2026-09-27T17:00:00Z']
-    assert args[3] == 'new-container'
+    assert args[-1] == 'new-container'
     scenario = os.environ['SCENARIO']
     if scenario == 'database-error': print('seguindo sem persistência')
     elif scenario != 'qr':
@@ -79,6 +79,8 @@ class DeployTest(unittest.TestCase):
                                     capture_output=True, text=True, timeout=15)
             calls = [json.loads(line) for line in calls_file.read_text().splitlines()] if calls_file.exists() else []
             revision = app / 'deployed-revision'
+            self.failure_logs = [(p.read_text(), p.stat().st_mode & 0o777)
+                                 for p in release.glob('deploy-failure.*')]
             return result, calls, revision.read_text().strip() if revision.exists() else None
 
     def test_ready_records_revision_without_touching_database(self):
@@ -100,6 +102,14 @@ class DeployTest(unittest.TestCase):
                 self.assertIsNone(revision)
                 updates = [image for args, image in calls if 'up' in args]
                 self.assertEqual(updates, ['zapbot:' + SHA, 'zapbot:previous'])
+                self.assertEqual(len(self.failure_logs), 1)
+                self.assertEqual(self.failure_logs[0][1], 0o600)
+                self.assertTrue(self.failure_logs[0][0])
+                saved = next(i for i, (args, _) in enumerate(calls)
+                             if args[0] == 'logs' and '--tail' in args)
+                restored = next(i for i, (args, image) in enumerate(calls)
+                                if 'up' in args and image == 'zapbot:previous')
+                self.assertLess(saved, restored)
 
     def test_stale_ready_log_does_not_report_health_or_restart(self):
         result, calls, revision = self.run_deploy('disconnected')

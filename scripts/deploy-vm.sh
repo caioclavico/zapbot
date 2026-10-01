@@ -38,6 +38,16 @@ previous_image=$("${docker_cmd[@]}" inspect --format '{{.Config.Image}}' zapbot 
 
 rollback() {
   echo 'Deploy falhou; tentando restaurar a imagem anterior.' >&2
+  # Recriar o container remove seus logs. Preserve a evidência antes do rollback,
+  # em arquivo privado da release, sem imprimir mensagens/QR no GitHub Actions.
+  if [[ -n "${container_id:-}" && -n "${started:-}" ]]; then
+    failure_log=$(mktemp "$release_dir/deploy-failure.XXXXXX") || failure_log=''
+    if [[ -n "$failure_log" ]]; then
+      "${docker_cmd[@]}" logs --since "$started" --tail 300 --timestamps "$container_id" \
+        > "$failure_log" 2>&1 || true
+      echo "Logs anteriores ao rollback preservados em $failure_log" >&2
+    fi
+  fi
   if [[ -n "$previous_image" ]]; then
     ZAPBOT_IMAGE="$previous_image" compose up -d --no-build --pull never --no-deps bot || true
   fi

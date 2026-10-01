@@ -10,6 +10,7 @@
             [zapbot.pokemon.ginasios :as ginasios]
             [zapbot.pokemon.loja :as loja]
             [zapbot.pokemon.mundo :as mundo]
+            [zapbot.pokemon.raids :as raids]
             [zapbot.pokemon.treinador :as treinador]
             ["sharp" :as sharp]))
 
@@ -672,6 +673,29 @@
                     (is (every? #(nil? @(:aguardando %)) @contextos))
                     (is (every? #(empty? @(:pendentes %)) @contextos))
                     (is (nil? (get @core/contextos-filas cid)))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally done)))))
+
+(deftest raide-passa-contexto-para-fila-e-aguarda-conclusao
+  (async done
+    (let [liberar (p/deferred)
+          contexto (atom nil)
+          trabalho
+          (with-redefs [core/cliente-whatsapp (atom #js {})
+                        raids/agendas (atom {"teste-raid" {"proxima" (+ (.now js/Date) 60000)}})
+                        core/enfileirar-jogada
+                        (fn [cid acao & [ctx]]
+                          (reset! contexto ctx)
+                          (is (= "teste-raid" cid))
+                          (is (some? ctx) "O contexto pertence à fila, não ao retorno da ação")
+                          (is (nil? (acao)) "Raide fora do horário não inicia trabalho")
+                          liberar)]
+            (core/verificar-raides!))]
+      (is @core/verificando-raides?)
+      (is (= "raid_automatica" (:comando @contexto)))
+      (p/resolve! liberar :fim)
+      (-> trabalho
+          (p/then (fn [_] (is (false? @core/verificando-raides?))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally done)))))
 
