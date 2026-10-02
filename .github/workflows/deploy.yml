@@ -68,14 +68,24 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh-keygen -y -f ~/.ssh/deploy_key -P '' >/dev/null
-          ssh_opts=(-i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
+          ssh_opts=(-i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
           target="$SSH_USER@$SSH_HOST"
           release_dir="$APP_DIR/releases/$GITHUB_SHA"
-          ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" "mkdir -p '$release_dir'"
+          echo "[$(date -u +%FT%TZ)] Preparando diretório da release na VM (limite: 60s)."
+          timeout 60s ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" "mkdir -p '$release_dir'"
           # A VM recebe a imagem pronta, sem Java, npm install ou compilação.
-          docker save "zapbot:$GITHUB_SHA" | gzip -1 | ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
-            'set -eu; if docker info >/dev/null 2>&1; then docker load; else sudo -n docker load; fi'
-          scp "${ssh_opts[@]}" -P "$SSH_PORT" docker-compose.production.yml scripts/deploy-vm.sh "$target:$release_dir/"
+          echo "[$(date -u +%FT%TZ)] Enviando e carregando imagem na VM (limite: 15min)."
+          docker image inspect --format 'Tamanho da imagem: {{.Size}} bytes' "zapbot:$GITHUB_SHA"
+          if docker save "zapbot:$GITHUB_SHA" | gzip -1 | timeout 15m ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
+            'set -eu; if docker info >/dev/null 2>&1; then docker load; else sudo -n docker load; fi'; then
+            echo "[$(date -u +%FT%TZ)] Imagem carregada na VM."
+          else
+            echo '::error::Falha ou timeout no envio/carregamento da imagem. A atualização do container ainda não foi iniciada.'
+            exit 1
+          fi
+          echo "[$(date -u +%FT%TZ)] Copiando arquivos do deploy (limite: 120s)."
+          timeout 120s scp "${ssh_opts[@]}" -P "$SSH_PORT" docker-compose.production.yml scripts/deploy-vm.sh "$target:$release_dir/"
+          echo "[$(date -u +%FT%TZ)] Iniciando atualização do bot e verificação de saúde."
           ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" "bash '$release_dir/deploy-vm.sh' '$APP_DIR' '$GITHUB_SHA'"
       - name: Remover chave do runner
         if: always()
