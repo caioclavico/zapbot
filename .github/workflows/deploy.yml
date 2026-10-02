@@ -73,14 +73,46 @@ jobs:
           release_dir="$APP_DIR/releases/$GITHUB_SHA"
           echo "[$(date -u +%FT%TZ)] Preparando diretório da release na VM (limite: 60s)."
           timeout 60s ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" "mkdir -p '$release_dir'"
-          # A VM recebe a imagem pronta, sem Java, npm install ou compilação.
-          echo "[$(date -u +%FT%TZ)] Enviando e carregando imagem na VM (limite: 15min)."
-          docker image inspect --format 'Tamanho da imagem: {{.Size}} bytes' "zapbot:$GITHUB_SHA"
-          if docker save "zapbot:$GITHUB_SHA" | gzip -1 | timeout 15m ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
-            'set -eu; if docker info >/dev/null 2>&1; then docker load; else sudo -n docker load; fi'; then
+          # Separa rede e Docker: o carregamento só começa após validar o arquivo.
+          image_archive="$RUNNER_TEMP/zapbot-image.tar.gz"
+          echo "[$(date -u +%FT%TZ)] Verificando Docker e espaço livre na VM."
+          timeout 60s ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
+            "set -eu; df -h '$release_dir'; if timeout 15s docker info >/dev/null 2>&1; then docker version --format '{{.Server.Version}}'; else timeout 15s sudo -n docker info --format '{{.ServerVersion}}'; fi"
+          echo "[$(date -u +%FT%TZ)] Exportando e comprimindo imagem no runner."
+          docker save "zapbot:$GITHUB_SHA" | gzip -6 > "$image_archive"
+          archive_bytes=$(stat -c %s "$image_archive")
+          archive_sha=$(sha256sum "$image_archive" | cut -d ' ' -f 1)
+          echo "Imagem comprimida: $archive_bytes bytes."
+          echo "[$(date -u +%FT%TZ)] Transferindo arquivo para a VM (limite: 15min)."
+          timeout 15m scp "${ssh_opts[@]}" -P "$SSH_PORT" "$image_archive" "$target:$release_dir/image.tar.gz" &
+          transfer_pid=$!
+          # scp desativa a barra de progresso no Actions; informa bytes a cada 30s.
+          (
+            while kill -0 "$transfer_pid" 2>/dev/null; do
+              sleep 30
+              kill -0 "$transfer_pid" 2>/dev/null || break
+              timeout 10s ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
+                "stat -c 'Transferidos: %s de $archive_bytes bytes' '$release_dir/image.tar.gz'" || true
+            done
+          ) &
+          progress_pid=$!
+          transfer_status=0
+          wait "$transfer_pid" || transfer_status=$?
+          kill "$progress_pid" 2>/dev/null || true
+          wait "$progress_pid" 2>/dev/null || true
+          if [[ "$transfer_status" != 0 ]]; then
+            echo "::error::Transferência SSH falhou (código $transfer_status). O docker load e a atualização do bot não foram iniciados."
+            exit "$transfer_status"
+          fi
+          echo "[$(date -u +%FT%TZ)] Transferência concluída. Validando SHA-256 (limite: 120s)."
+          timeout 120s ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
+            "printf '%s  %s\\n' '$archive_sha' '$release_dir/image.tar.gz' | sha256sum -c -"
+          echo "[$(date -u +%FT%TZ)] Carregando imagem no Docker da VM (limite: 8min)."
+          if timeout 9m ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
+            "set -eu; if timeout 15s docker info >/dev/null 2>&1; then timeout 8m docker load -i '$release_dir/image.tar.gz'; else timeout 8m sudo -n docker load -i '$release_dir/image.tar.gz'; fi; rm -f '$release_dir/image.tar.gz'"; then
             echo "[$(date -u +%FT%TZ)] Imagem carregada na VM."
           else
-            echo '::error::Falha ou timeout no envio/carregamento da imagem. A atualização do container ainda não foi iniciada.'
+            echo '::error::Arquivo transferido e validado, mas o Docker da VM falhou ou demorou demais para carregar a imagem. O bot ainda não foi atualizado.'
             exit 1
           fi
           echo "[$(date -u +%FT%TZ)] Copiando arquivos do deploy (limite: 120s)."
