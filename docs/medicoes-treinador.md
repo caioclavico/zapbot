@@ -43,6 +43,34 @@ de inicialização continua preservando o container, sem rollback por demora.
 
 ## Tempos de treinador
 
+### Investigação de mídia — 2 de outubro de 2026
+
+Teste real de `!pk time`: 44.196 ms no Node, sendo 13.998 ms de processamento
+e 29.695 ms de envio. Espera na fila Pokémon: 7 ms. O teste seguinte em texto
+terminou em 1.505 ms, com 163 ms de envio. São amostras individuais, com carga
+variável na VM; não representam uma comparação controlada de capacidade.
+
+Conversão isolada de buffers sintéticos na mesma VM: 1 MiB levou de 1,158 a
+1,367 ms; 4 MiB, de 4,718 a 6,658 ms. Uma amostra de 256 KiB levou 90,783 ms
+(as outras duas ficaram abaixo de 1 ms). A transferência de uma string base64
+para o Chromium já aberto, retornando só seu comprimento, levou 906 ms para
+256 KiB de entrada e 2.595 ms para 1 MiB. Não houve envio de mensagem nesse teste.
+Esses tempos não incluem preparação da mídia nem upload pelo WhatsApp.
+
+A mídia de saída registrada no WhatsApp às 17:37:50 UTC tinha 171.000 bytes.
+Esse é o tamanho após processamento no WhatsApp, não o tamanho confirmado do
+PNG original. A conversão Node para base64 não parece explicar sozinha a demora;
+ainda falta separar o processamento de mídia dentro do navegador do upload.
+
+O cartão da coleção passa a medir `time_sprites` (download e resize juntos),
+`time_svg`, `time_png` (composição e codificação) e `imagem_base64` separadamente.
+O campo `midias` registra somente `bytes` do PNG original e `base64_chars`,
+sem conteúdo, nomes, destinatários ou credenciais. Tempos por etapa são
+arredondados em milissegundos; zero pode representar duração menor que 0,5 ms.
+O envio de uma imagem agora distingue `envio_midia`, `envio_texto_extra`
+(quando a legenda é longa) e `envio_texto_fallback` (após erro da mídia).
+`envio_midia` ainda inclui o trabalho interno do WhatsApp e o upload.
+
 `!pk treinador`, `!pokemon treinador` e o atalho `tre` geram logs
 `[Desempenho]` com um identificador numérico por chamada. Não são registrados
 nome, telefone, chat, mensagem, URL de sprite ou credenciais.

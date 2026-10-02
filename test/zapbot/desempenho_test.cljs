@@ -1,5 +1,6 @@
 (ns zapbot.desempenho-test
   (:require [cljs.test :refer-macros [async deftest is]]
+            [clojure.string :as str]
             [promesa.core :as p]
             [zapbot.config :as config]
             [zapbot.desempenho :as desempenho]))
@@ -18,6 +19,22 @@
   (is (= 42 (desempenho/medir! nil "dados" (fn [] 42))))
   (let [promessa (js/Promise.resolve "texto")]
     (is (identical? promessa (desempenho/medir! nil "dados" (fn [] promessa))))))
+
+(deftest base64-preserva-bytes-e-registra-apenas-tamanhos
+  (async done
+    (let [logs (atom [])
+          buffer (js/Buffer.from #js [0 255 31 128 3])]
+      (is (= (.toString buffer "base64") (desempenho/codificar-base64! nil buffer)))
+      (-> (desempenho/acompanhar! #js {}
+            #(desempenho/codificar-base64! % buffer)
+            #(swap! logs conj %))
+          (.then (fn [texto]
+                   (is (.equals buffer (js/Buffer.from texto "base64")))
+                   (is (= [{:bytes 5 :base64_chars 8}] (:midias (last @logs))))
+                   (is (contains? (:etapas_ms (last @logs)) "imagem_base64"))
+                   (is (not (str/includes? (pr-str @logs) texto)))))
+          (.catch (fn [erro] (is false (str erro))))
+          (.finally done)))))
 
 (deftest seleciona-comandos-pokemon-sem-confundir-outros-textos
   (with-redefs [config/prefix "!"]

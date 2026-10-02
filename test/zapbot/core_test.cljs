@@ -1,5 +1,6 @@
 (ns zapbot.core-test
   (:require [cljs.test :refer-macros [async deftest is]]
+            [zapbot.desempenho :as desempenho]
             [zapbot.core :as core]))
 
 (defn- mensagem-com-reply [chamadas responder]
@@ -72,6 +73,25 @@
           (.catch (fn [erro]
                     (is false (str "Falha ao usar os dados como legenda: " erro))
                     (done)))))))
+
+(deftest diagnostico-separa-midia-e-texto-extra-sem-mudar-ordem
+  (async done
+    (let [chamadas (atom []) logs (atom [])
+          media #js {:mimetype "image/png" :data "imagem-base64"}
+          texto (apply str (repeat 901 "x"))
+          message (mensagem-com-reply chamadas (fn [_] (js/Promise.resolve nil)))]
+      (-> (desempenho/acompanhar! message
+            (fn [_] (core/responder-com-midia message {:media media :texto texto}))
+            #(swap! logs conj %))
+          (.then (fn [_]
+                   (is (= 2 (count @chamadas)))
+                   (is (identical? media (ffirst @chamadas)))
+                   (is (= texto (first (second @chamadas))))
+                   (is (= #{"envio_midia" "envio_texto_extra"}
+                          (set (keys (:etapas_ms (last @logs))))))
+                   (is (empty? (:pendentes (last @logs))))))
+          (.catch (fn [erro] (is false (str erro))))
+          (.finally done)))))
 
 (deftest falha-no-envio-da-midia-faz-fallback-para-texto
   (async done

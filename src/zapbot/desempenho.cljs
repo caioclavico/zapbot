@@ -55,6 +55,14 @@
         (catch :default erro (falhar erro))))
     (executar)))
 
+(defn codificar-base64!
+  "Codifica o mesmo buffer e registra apenas tamanhos, nunca os dados da imagem."
+  [ctx buffer]
+  (let [texto (medir! ctx "imagem_base64" #(.toString buffer "base64"))]
+    (when ctx
+      (swap! (:midias ctx) conj {:bytes (.-length buffer) :base64_chars (count texto)}))
+    texto))
+
 (defn acompanhar!
   ([message executar] (acompanhar! message executar emitir!))
   ([message executar registrar-log!]
@@ -62,13 +70,14 @@
   ([message executar registrar-log! comando]
    (let [inicio (agora)
          ctx {:id (swap! sequencia inc) :comando comando :aguardando (atom nil) :etapas (atom {})
-              :pendentes (atom #{}) :falhas (atom #{})}
+              :pendentes (atom #{}) :falhas (atom #{}) :midias (atom [])}
          resumo (fn [evento]
                   {:id (:id ctx) :comando comando :evento evento
                    :timestamp (.toISOString (js/Date.))
                    :total_ms (js/Math.round (- (agora) inicio))
                    :etapas_ms @(:etapas ctx) :pendentes (vec @(:pendentes ctx))
-                   :falhas (vec @(:falhas ctx)) :aguardando @(:aguardando ctx)})
+                   :falhas (vec @(:falhas ctx)) :aguardando @(:aguardando ctx)
+                   :midias @(:midias ctx)})
          timer (js/setTimeout #(registrar-log! (resumo "pendente_30s")) 30000)
          finalizar (fn [evento]
                      (js/clearTimeout timer)

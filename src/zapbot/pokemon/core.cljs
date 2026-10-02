@@ -3242,7 +3242,7 @@
 
 (defn- criar-cartao-time
   ([registros indice-ativo nivel] (criar-cartao-time registros indice-ativo nivel {}))
-  ([registros indice-ativo nivel {:keys [titulo arquivo]
+  ([registros indice-ativo nivel {:keys [titulo arquivo ctx]
                                 :or {titulo "Seu time Pokémon" arquivo "meu-time-pokemon.png"}}]
   (let [entradas (->> registros
                       (map (fn [{:keys [indice registro]}]
@@ -3252,8 +3252,9 @@
                                 :ativo? (= indice indice-ativo)
                                 :numero  (inc indice)})))
                       vec)]
-    (p/let [sprites (p/all (map #(baixar-sprite-time (get-in % [:pokemon :imagem])) entradas))
-            svg     (svg-cartao-time entradas nivel titulo)
+    (p/let [sprites (desempenho/medir! ctx "time_sprites"
+                     (fn [] (p/all (map #(baixar-sprite-time (get-in % [:pokemon :imagem])) entradas))))
+            svg     (desempenho/medir! ctx "time_svg" #(svg-cartao-time entradas nivel titulo))
             base    (js/Buffer.from svg)
             imagens (->> sprites
                          (map-indexed (fn [idx sprite]
@@ -3262,8 +3263,9 @@
                                                :top (+ 140 (* (quot idx 2) 205))})))
                          (remove nil?)
                          clj->js)
-            buffer  (-> (sharp base) (.composite imagens) (.png) (.toBuffer))]
-      (MessageMedia. "image/png" (.toString buffer "base64") arquivo)))))
+            buffer  (desempenho/medir! ctx "time_png"
+                      #(-> (sharp base) (.composite imagens) (.png) (.toBuffer)))]
+      (MessageMedia. "image/png" (desempenho/codificar-base64! ctx buffer) arquivo)))))
 
 (declare resposta-colecao-visual)
 
@@ -3672,7 +3674,8 @@
       :else
       (-> (p/let [media (criar-cartao-time entradas (treinador/indice-ativo cid pid) (treinador/nivel-jogador cid pid)
                                           {:titulo (str "Sua coleção Pokémon — " pagina "/" paginas)
-                                           :arquivo "colecao-pokemon.png"})]
+                                           :arquivo "colecao-pokemon.png"
+                                           :ctx (desempenho/contexto-de message)})]
             {:media media :texto texto})
           (p/catch (fn [erro]
                      (js/console.error "Erro ao gerar cartão da coleção:" erro)

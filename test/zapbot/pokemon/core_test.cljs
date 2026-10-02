@@ -919,6 +919,29 @@
     (is (= ["https://exemplo.com/pikachu.png"]
            (core/candidatos-url-sprite "https://exemplo.com/pikachu.png")))))
 
+(deftest cartao-time-mede-png-e-base64-sem-alterar-a-imagem
+  (async done
+    (let [sprite (str "data:image/svg+xml;base64,"
+                      (.toString (js/Buffer.from
+                                  "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><circle cx='32' cy='32' r='28' fill='gold'/></svg>")
+                                 "base64"))
+          registro (treinador/pokemon->registro (assoc pikachu :imagem sprite) 80 nil)
+          logs (atom [])]
+      (-> (desempenho/acompanhar! #js {}
+            #(core/criar-cartao-time [{:indice 0 :registro registro}] 0 1 {:ctx %})
+            #(swap! logs conj %))
+          (.then (fn [media]
+                   (let [buffer (js/Buffer.from (.-data media) "base64")
+                         resumo (last @logs)]
+                     (is (= "image/png" (.-mimetype media)))
+                     (is (= "PNG" (.toString (.subarray buffer 1 4) "ascii")))
+                     (is (= [{:bytes (.-length buffer) :base64_chars (count (.-data media))}]
+                            (:midias resumo)))
+                     (is (= #{"time_sprites" "time_svg" "time_png" "imagem_base64"}
+                            (set (keys (:etapas_ms resumo))))))))
+          (.catch (fn [erro] (is false (str erro))))
+          (.finally done)))))
+
 (deftest cartao-do-treinador-renderiza-pokemon-ativo
   (async done
     (let [sprite (str "data:image/svg+xml;base64,"

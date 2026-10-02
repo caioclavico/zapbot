@@ -65,22 +65,26 @@
   Se a mídia for recusada, ainda entrega a resposta em texto em vez de deixar
   o comando aparentemente travado."
   [message resposta]
-  (let [texto       (or (:texto resposta) "")
+  (let [ctx         (desempenho/contexto-de message)
+        texto       (or (:texto resposta) "")
         mentions    (:mentions resposta)
         texto-longo? (> (count texto) limite-legenda-midia)
         legenda     (if texto-longo?
                       (or (:legenda resposta) "🖼️ *Imagem Pokémon*")
                       texto)]
-    (-> (.reply message (:media resposta) nil
-                #js {:caption legenda :mentions (clj->js mentions)})
+    (-> (desempenho/medir! ctx "envio_midia"
+          #(.reply message (:media resposta) nil
+                   #js {:caption legenda :mentions (clj->js mentions)}))
         (p/then (fn [_]
                   (when texto-longo?
-                    (enviar-texto-estruturado message texto mentions))))
+                    (desempenho/medir! ctx "envio_texto_extra"
+                      #(enviar-texto-estruturado message texto mentions)))))
         (p/catch (fn [erro]
                    (js/console.error "Erro ao enviar mídia; usando resposta em texto:" erro)
                    (if (str/blank? texto)
                      (p/rejected erro)
-                     (enviar-texto-estruturado message texto mentions)))))))
+                     (desempenho/medir! ctx "envio_texto_fallback"
+                       #(enviar-texto-estruturado message texto mentions))))))))
 
 (defn- processar-mensagem [message ctx]
   (when (permitido-pelo-ambiente? message)
