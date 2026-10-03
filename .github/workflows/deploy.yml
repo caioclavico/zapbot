@@ -18,7 +18,7 @@ jobs:
   build-and-deploy:
     name: Testar, construir imagem e enviar à VM
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
     steps:
@@ -35,8 +35,9 @@ jobs:
       - run: npm test
       - name: Validar deploy e retorno à imagem anterior
         run: |
-          bash -n scripts/deploy-vm.sh
+          bash -n scripts/deploy-vm.sh scripts/load-image-vm.sh
           python3 scripts/test-deploy.py
+          python3 scripts/test-load-image.py
       - uses: docker/setup-buildx-action@v3
       - name: Construir imagem Linux AMD64 no runner
         uses: docker/build-push-action@v6
@@ -107,12 +108,13 @@ jobs:
           echo "[$(date -u +%FT%TZ)] Transferência concluída. Validando SHA-256 (limite: 120s)."
           timeout 120s ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
             "printf '%s  %s\\n' '$archive_sha' '$release_dir/image.tar.gz' | sha256sum -c -"
-          echo "[$(date -u +%FT%TZ)] Carregando imagem no Docker da VM (limite: 8min)."
-          if timeout 9m ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
-            "set -eu; if timeout 15s docker info >/dev/null 2>&1; then timeout 8m docker load -i '$release_dir/image.tar.gz'; else timeout 8m sudo -n docker load -i '$release_dir/image.tar.gz'; fi; rm -f '$release_dir/image.tar.gz'"; then
+          echo "[$(date -u +%FT%TZ)] Enviando rotina de carregamento e diagnóstico."
+          timeout 120s scp "${ssh_opts[@]}" -P "$SSH_PORT" scripts/load-image-vm.sh "$target:$release_dir/"
+          if timeout 28m ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
+            "bash '$release_dir/load-image-vm.sh' '$release_dir/image.tar.gz' 'zapbot:$GITHUB_SHA'"; then
             echo "[$(date -u +%FT%TZ)] Imagem carregada na VM."
           else
-            echo '::error::Arquivo transferido e validado, mas o Docker da VM falhou ou demorou demais para carregar a imagem. O bot ainda não foi atualizado.'
+            echo '::error::Falha no carregamento da imagem na VM. Consulte o código de saída e as medições de CPU, memória e disco acima. O bot ainda não foi atualizado.'
             exit 1
           fi
           echo "[$(date -u +%FT%TZ)] Copiando arquivos do deploy (limite: 120s)."
