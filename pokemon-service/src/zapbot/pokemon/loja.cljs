@@ -1,0 +1,697 @@
+(ns zapbot.pokemon.loja
+  "Comando !loja - moedas ganhas vencendo batalhas de !pokemon, gastas em
+  curas pros status (queimadura/veneno/paralisia) ou em poção de vida
+  (recupera HP). Estado (moedas + inventário) por chat+jogador, mesma
+  convenção de zapbot.rank; persistido via zapbot.armazenamento (chaves
+  sempre string, nunca keyword - ver convenção documentada lá)."
+  (:require [promesa.core :as p]
+            [zapbot.pokemon.aventuras :as aventuras]
+            [clojure.string :as str]
+            [zapbot.config :as config]
+            [zapbot.pokemon.missoes :as missoes]
+            [zapbot.armazenamento :as armazenamento]
+            [zapbot.pokemon.boundary :as boundary]
+            ["sharp" :as sharp]))
+
+(def ^:private imagem-loja (str js/__dirname "/../assets/loja-pokemon.png"))
+
+;; "queimadura"/"veneno" eram as chaves de compra antigas (renomeadas pra
+;; "atadura"/"antidoto" - ver comentário no catálogo `itens` abaixo); sem
+;; isso, inventários já persistidos com as chaves antigas ficam sem emoji/
+;; nome no !loja (a chave não existe mais no catálogo novo).
+(def ^:private renomeacoes-antigas {"queimadura" "atadura" "veneno" "antidoto"})
+
+(defn- migrar-inventario [inventario]
+  (reduce-kv (fn [acc chave qtd]
+               (update acc (get renomeacoes-antigas chave chave) (fnil + 0) qtd))
+             {}
+             (or inventario {})))
+
+(defn- migrar-chaves-antigas [dados]
+  (reduce-kv (fn [acc cid contas-chat]
+               (assoc acc cid
+                      (reduce-kv (fn [acc2 pid conta]
+                                   (assoc acc2 pid
+                                          (let [c (update conta "inventario" migrar-inventario)]
+                                            (if (contains? c "capacidade-mochila") c
+                                                (assoc c "capacidade-mochila"
+                                                       (max 50 (reduce + 0 (vals (get c "inventario")))))))))
+                                 {}
+                                 contas-chat)))
+             {}
+             (or dados {})))
+
+(defonce ^:private contas (atom (migrar-chaves-antigas (armazenamento/obter "loja"))))
+(armazenamento/registrar! "loja" contas migrar-chaves-antigas)
+
+(defn- persistir! []
+  (armazenamento/salvar! "loja" @contas))
+
+(def preco-reaprender 50)
+(def ^:private vagas-por-expansao-pc 50)
+(def ^:private preco-fixo-expansao-pc 200)
+
+(defn expansoes-pc [cid pid]
+  (get-in @contas [cid pid "expansoes-pc"] 0))
+
+(defn capacidade-permanente-pokemon [cid pid]
+  (+ 26 (* vagas-por-expansao-pc (expansoes-pc cid pid))))
+
+(defn capacidade-pokemon [cid pid]
+  (capacidade-permanente-pokemon cid pid))
+
+(defn preco-expansao-pc [_cid _pid]
+  preco-fixo-expansao-pc)
+
+(defn comprar-espaco-pc! [cid pid]
+  ;; Saldo e expansão pertencem ao mesmo registro persistido.
+  (let [resultado (volatile! nil)]
+    (swap! contas update-in [cid pid]
+           (fn [c]
+             (let [c (or c {"moedas" 0 "inventario" {}})
+                   n (get c "expansoes-pc" 0)
+                   preco preco-fixo-expansao-pc]
+               (if (< (get c "moedas" 0) preco)
+                 (do (vreset! resultado {:status :sem-moedas :preco preco}) c)
+                 (do (vreset! resultado {:status :ok :preco preco :capacidade (+ 26 (* vagas-por-expansao-pc (inc n)))})
+                     (-> c (update "moedas" - preco) (assoc "expansoes-pc" (inc n))))))))
+    (persistir!)
+    @resultado))
+
+(defn pagar-reaprendizado! [cid pid]
+  (when (>= (get-in @contas [cid pid "moedas"] 0) preco-reaprender)
+    (swap! contas update-in [cid pid "moedas"] - preco-reaprender)
+    (persistir!) true))
+
+(defn- remover-acentos [s]
+  (-> s (.normalize "NFD") (str/replace #"[\u0300-\u036f]" "")))
+
+(def ^:private moedas-por-vitoria 10)
+
+;; catálogo estático (nunca persistido, então pode usar keyword à vontade) -
+;; chaves nomeadas pelo ITEM que você compra (não pelo status que ele cura),
+;; então "loja comprar atadura"/"antidoto" fazem sentido de verdade
+(def itens-evolucao-troca
+  ["revestimento-metalico" "escama-dragao" "upgrade" "protetor" "pedra-rei"
+   "eletrizador" "magmarizador" "tecido-ceifador" "escama-prisma"
+   "chicote-doce" "sache-perfumado"])
+
+(def ^:private nomes-itens-evolucao
+  {"revestimento-metalico" ["Revestimento Metálico" "metal-coat"]
+   "escama-dragao" ["Escama de Dragão" "dragon-scale"]
+   "upgrade" ["Upgrade" "up-grade"]
+   "protetor" ["Protetor" "protector"]
+   "pedra-rei" ["Pedra do Rei" "kings-rock"]
+   "eletrizador" ["Eletrizador" "electirizer"]
+   "magmarizador" ["Magmarizador" "magmarizer"]
+   "tecido-ceifador" ["Tecido do Ceifador" "reaper-cloth"]
+   "escama-prisma" ["Escama Prisma" "prism-scale"]
+   "chicote-doce" ["Chicote Doce" "whipped-dream"]
+   "sache-perfumado" ["Sachê Perfumado" "sachet"]})
+
+(defn item-evolucao-pokeapi [id] (second (get nomes-itens-evolucao id)))
+
+(def ^:private itens-base
+  {"catalisador-evolutivo" {:nome "Catalisador Evolutivo" :emoji "🧬" :exclusivo-missoes true
+                              :descricao "Cumpre condições evolutivas especiais sem equivalente no WhatsApp. Use !pokemon evoluir <número> especial [destino]."}
+   "cartao-presente" {:nome "Cartão de presente" :emoji "🎁" :preco 20
+                       :descricao "Envie com !presente @amigo. Sorteia 3 Pokébolas (65%), 2 Grandes (25%) ou 1 Ultra (10%) para o amigo."}
+   "reviver" {:nome "Reviver" :emoji "💎" :exclusivo-missoes true
+              :descricao "Exclusivo das missões: revive um Pokémon desmaiado com 100% do HP e remove seu status. Use !pokemon reviver [número], fora de batalhas e caçadas."}
+   "pokebola" {:nome "Pokébola" :emoji "🔴" :multiplicador-captura 1 :limite-captura 75
+               :descricao "Bola normal, com até 75% de chance. Obtida em missões, bônus diário, kit inicial e nocautes PvP."}
+   "grande-bola" {:nome "Grande Bola" :emoji "🔵" :multiplicador-captura 1.5 :limite-captura 88
+                  :descricao "Multiplica a chance por 1,5, até 88%. Obtida em missões, bônus diário e nocautes PvP de ligas intermediárias."}
+   "ultra-bola" {:nome "Ultra Bola" :emoji "🟡" :multiplicador-captura 2 :limite-captura 95
+                 :descricao "Multiplica a chance por 2, até 95%. Obtida em missões, bônus diário e nocautes PvP da Liga Diamante."}
+   "mochila" {:nome "Expansão de Mochila" :emoji "🎒" :preco 200 :expansao 25
+              :descricao "Aumenta permanentemente a capacidade em 25 unidades. Pode comprar várias vezes; não ocupa espaço."}
+   "mt" {:nome "MT de Ataque" :emoji "💿" :preco 200
+         :descricao "Sorteia um novo ataque compatível com o Pokémon ativo. Use !pokemon mt para preencher uma vaga ou !pokemon mt <1-4> para substituir um ataque. Consumido apenas ao aprender."}
+   "atadura"    {:nome "Atadura" :emoji "🔥" :status :queimado :preco 15
+                 :descricao "Remove a queimadura do Pokémon. É consumida ao usar !pokemon curar."}
+   "antidoto"   {:nome "Antídoto" :emoji "☠️" :status :envenenado :preco 15
+                 :descricao "Remove o envenenamento do Pokémon. É consumido ao usar !pokemon curar."}
+   "paralisia"  {:nome "Cura de Paralisia" :emoji "⚡" :status :paralisado :preco 15
+                 :descricao "Remove a paralisia do Pokémon. É consumida ao usar !pokemon curar."}
+   "despertar"  {:nome "Despertar" :emoji "💤" :status :adormecido :preco 15
+                 :descricao "Acorda um Pokémon adormecido. É consumido ao usar !pokemon curar."}
+   "degelo"     {:nome "Antigelo" :emoji "🧊" :status :congelado :preco 15
+                 :descricao "Descongela o Pokémon. É consumido ao usar !pokemon curar."}
+   "persim"     {:nome "Baya Caquic" :emoji "💫" :status :confuso :preco 15
+                 :descricao "Remove a confusão do Pokémon. É consumida ao usar !pokemon curar."}
+   "pocao"      {:nome "Poção de Vida" :emoji "🧪" :cura-hp 0.4 :preco 20
+                 :descricao "Recupera 40% do HP máximo. Use !pokemon pocao [número]; sem número, cura o ativo."}
+   "pocao-maxima" {:nome "Poção Máxima" :emoji "💖" :cura-hp 1.0 :preco 60
+                   :descricao "Restaura todo o HP. Use !pokemon pocao-maxima [número]; sem número, cura o ativo."}
+   "fruta"      {:nome "Fruta Frambo" :emoji "🍓" :motivacao 20 :preco 10
+                 :descricao "Recupera 20 pontos de motivação de um defensor no ginásio."}
+   "fruta-dourada" {:nome "Fruta Frambo Dourada" :emoji "🌟" :motivacao 100 :exclusivo-diario true
+                     :descricao "Recupera toda a motivação de um defensor. Prêmio da sequência diária."}
+   "restos"     {:nome "Restos" :emoji "🍱" :equipavel true :efeito :regeneracao :preco 45
+                 :descricao "Recupera 1/16 do HP máximo ao final de cada turno em que o Pokémon agir."}
+   "banda"      {:nome "Banda Musculosa" :emoji "💪" :equipavel true :efeito :fisico :preco 40
+                 :descricao "Aumenta em 15% o dano causado por golpes físicos."}
+   "oculos"     {:nome "Óculos Sábios" :emoji "👓" :equipavel true :efeito :especial :preco 40
+                 :descricao "Aumenta em 15% o dano causado por golpes especiais."}
+   "faixa-foco" {:nome "Faixa de Foco" :emoji "🥋" :equipavel true :efeito :sobreviver :preco 55
+                 :descricao "Se estiver com HP cheio, sobrevive uma vez por batalha a um golpe fatal, ficando com 1 HP."}})
+
+(def ^:private itens
+  (merge itens-base
+         (into {} (map (fn [[id [nome _]]]
+                         [id {:nome nome :emoji "🧬" :equipavel true :exclusivo-missoes true
+                              :descricao "Equipe no Pokémon e conclua a troca exigida. O item é consumido ao evoluir."}])
+                       nomes-itens-evolucao))
+         (into {} (map (fn [[id pedra]]
+                         [id (assoc pedra :evolucao true
+                                    :descricao "Primeira vitória no ginásio correspondente ou revanche diária. Use !pokemon evoluir <número> <pedra>.")])
+                       aventuras/pedras))))
+
+(declare conta)
+
+(defn dados-item [chave] (get itens chave))
+(defn item-equipavel? [chave] (true? (get-in itens [chave :equipavel])))
+
+(defn consumir-item!
+  "Remove uma unidade de um item equipável do inventário."
+  [cid pid chave]
+  (when (and (item-equipavel? chave) (pos? (get-in (conta cid pid) ["inventario" chave] 0)))
+    (swap! contas update-in [cid pid "inventario" chave] dec)
+    (persistir!)
+    true))
+
+(defn devolver-item!
+  "Devolve um item equipável ao inventário (ao trocar/desequipar)."
+  [cid pid chave]
+  (when (item-equipavel? chave)
+    (swap! contas update-in [cid pid]
+           (fn [c] (update-in (or c {"moedas" 0 "inventario" {}})
+                              ["inventario" chave] (fnil inc 0))))
+    (persistir!)
+    true))
+
+(defn- conta [cid pid]
+  (get-in @contas [cid pid] {"moedas" 0 "inventario" {}}))
+
+(def bolas ["pokebola" "grande-bola" "ultra-bola"])
+(def ^:private ordem-recompensas
+  (vec (concat bolas ["fruta" "fruta-dourada" "reviver" "catalisador-evolutivo"]
+               itens-evolucao-troca (sort (keys aventuras/pedras)))))
+
+(defn sortear-item-evolucao [] (rand-nth itens-evolucao-troca))
+
+(defn normalizar-item [nome]
+  (let [chave (-> (or nome "") str/trim str/lower-case remover-acentos
+                  (str/replace #"\s+" "-"))]
+    (get {"normal" "pokebola" "grande" "grande-bola" "ultra" "ultra-bola"
+          "maxima" "pocao-maxima" "maxima-pocao" "pocao-maxima"} chave chave)))
+
+(defn quantidade-item [cid pid chave]
+  (get-in (conta cid pid) ["inventario" chave] 0))
+
+(defn capacidade [cid pid]
+  (get (conta cid pid) "capacidade-mochila" 50))
+
+(defn ocupacao [cid pid]
+  (reduce + 0 (vals (get (conta cid pid) "inventario"))))
+
+(defn- cabe? [cid pid quantidade]
+  (<= (+ (ocupacao cid pid) quantidade) (capacidade cid pid)))
+
+(defn consumir-bola! [cid pid chave]
+  (when (and (some #{chave} bolas) (pos? (quantidade-item cid pid chave)))
+    (swap! contas update-in [cid pid "inventario" chave] dec)
+    (persistir!)
+    true))
+
+(defn consumir-reviver! [cid pid]
+  (when (pos? (quantidade-item cid pid "reviver"))
+    (swap! contas update-in [cid pid "inventario" "reviver"] dec)
+    (persistir!)
+    true))
+
+(defn consumir-catalisador! [cid pid]
+  (when (pos? (quantidade-item cid pid "catalisador-evolutivo"))
+    (swap! contas update-in [cid pid "inventario" "catalisador-evolutivo"] dec)
+    (persistir!)
+    true))
+
+(defn- recompensas-pendentes [c]
+  ;; Compatibilidade com recompensas anteriores, que só guardavam Pokébolas.
+  (update (get c "recompensas-pendentes" {}) "pokebola"
+          (fnil + 0) (get c "bolas-pendentes" 0)))
+
+(defn- guardar-recompensas [c recompensas]
+  (let [c (or c {"moedas" 0 "inventario" {}})
+        livres (max 0 (- (get c "capacidade-mochila" 50)
+                         (reduce + 0 (vals (get c "inventario")))))
+        c (-> c (assoc "recompensas-pendentes" (recompensas-pendentes c))
+              (dissoc "bolas-pendentes"))]
+    (first
+     (reduce (fn [[c livres] bola]
+               (let [qtd (get recompensas bola 0)
+                     recebidas (min qtd livres)]
+                 [(-> c
+                      (update-in ["inventario" bola] (fnil + 0) recebidas)
+                      (update-in ["recompensas-pendentes" bola] (fnil + 0) (- qtd recebidas)))
+                  (- livres recebidas)]))
+             [c livres] ordem-recompensas))))
+
+(defn- texto-recompensas [recompensas]
+  (str/join ", " (for [bola ordem-recompensas :let [qtd (get recompensas bola 0)] :when (pos? qtd)]
+                   (str qtd "× " (:nome (dados-item bola))))))
+
+(defn progresso-evento-recomeco [cid pid]
+  (when-let [evento (aventuras/evento-recomeco (.now js/Date))]
+    (let [salvo (get-in @contas [cid pid "missoes-eventos" (:id evento)] {})]
+      (assoc evento :progresso (get salvo "progresso" {})
+             :premiados (set (get salvo "premiados" []))))))
+
+(defn texto-evento-recomeco [cid pid]
+  (when-let [evento (progresso-evento-recomeco cid pid)]
+    (str "🌅 *" (:nome evento) "* — até "
+         (.toLocaleString (js/Date. (:fim evento)) "pt-BR"
+                          #js {:timeZone "America/Sao_Paulo" :dateStyle "short" :timeStyle "short" :hourCycle "h23"})
+         " (São Paulo)."
+         (apply str
+                (for [{:keys [id nome meta recompensas]} (:objetivos evento)]
+                  (str "\n• " nome ": " (get (:progresso evento) id 0) "/" meta
+                       " — " (texto-recompensas recompensas)
+                       (when (contains? (:premiados evento) id) " ✅ Entregue"))))
+         "\nCada missão entrega os itens automaticamente uma vez por jogador neste chat."
+         "\nSó ações durante o evento contam; o progresso não reinicia diariamente."
+         "\nMochila cheia: os itens ficam pendentes em " config/prefix "mochila resgatar.")))
+
+(defn registrar-evento-recomeco! [cid pid objetivo]
+  (when-let [evento (aventuras/evento-recomeco (.now js/Date))]
+    (when-let [missao (some #(when (= objetivo (:id %)) %) (:objetivos evento))]
+      (let [aviso (volatile! nil)
+            caminho ["missoes-eventos" (:id evento)]]
+        ;; Progresso, marcador de entrega e inventário mudam no mesmo registro.
+        (swap! contas update-in [cid pid]
+               (fn [c]
+                 (let [c (or c {})
+                       antes (get-in c (conj caminho "progresso" objetivo) 0)
+                       premiados (set (get-in c (conj caminho "premiados") []))]
+                   (if (or (contains? premiados objetivo) (>= antes (:meta missao)))
+                     c
+                     (let [atual (inc antes)
+                           completo? (= atual (:meta missao))
+                           novo (assoc-in c (conj caminho "progresso" objetivo) atual)]
+                       (vreset! aviso
+                                (str "\n🌅 Novo Recomeço — " (:nome missao) ": " atual "/" (:meta missao)
+                                     (when completo?
+                                       (str "\n🎁 " (texto-recompensas (:recompensas missao))
+                                            ". Itens sem espaço ficam em " config/prefix "mochila resgatar."))))
+                       (if completo?
+                         (-> novo
+                             (assoc-in (conj caminho "premiados") (vec (conj premiados objetivo)))
+                             (guardar-recompensas (:recompensas missao)))
+                         novo))))))
+        (when @aviso (persistir!))
+        @aviso))))
+
+(defn premiar-bolas! [cid pid bola quantidade]
+  (swap! contas update-in [cid pid] guardar-recompensas {bola quantidade})
+  (persistir!)
+  (str "🎁 +" quantidade " " (:nome (dados-item bola)) " por nocaute(s) no PvP."
+       (when (some pos? (vals (recompensas-pendentes (conta cid pid))))
+         (str " Há recompensas pendentes: libere espaço e use " config/prefix "mochila resgatar."))))
+
+(defn premiar-item-evolucao! [cid pid item]
+  (swap! contas update-in [cid pid] guardar-recompensas {item 1})
+  (persistir!)
+  (str "🎁 +1 " (:nome (dados-item item))
+       (when (some pos? (vals (recompensas-pendentes (conta cid pid))))
+         ". Mochila cheia: use !mochila resgatar após liberar espaço.")))
+
+(defn consumir-pedra! [cid pid item]
+  (when (and (contains? aventuras/pedras item) (pos? (quantidade-item cid pid item)))
+    (swap! contas update-in [cid pid "inventario" item] dec)
+    (persistir!)
+    true))
+
+(defn- sortear-bola-diaria []
+  (let [sorteio (rand-int 100)]
+    (cond (< sorteio 10) "ultra-bola"
+          (< sorteio 40) "grande-bola"
+          :else "pokebola")))
+
+(defn proxima-sequencia-diaria [ultimo dia sequencia-atual]
+  (let [dia-seguinte (when ultimo
+                       (let [d (js/Date. (str ultimo "T12:00:00Z"))]
+                         (.setUTCDate d (inc (.getUTCDate d)))
+                         (subs (.toISOString d) 0 10)))]
+    (if (= dia dia-seguinte) (inc (or sequencia-atual 1)) 1)))
+
+(defn- resgatar-bonus-diario! [cid pid]
+  (let [dia (missoes/dia-atual)
+        c (conta cid pid)]
+    (if (= dia (get c "ultimo-bonus-diario"))
+      (str "🎁 O bônus diário de hoje já foi resgatado. Volte após a meia-noite ("
+           config/missoes-timezone ").")
+      (let [ultimo (get c "ultimo-bonus-diario")
+            sequencia (proxima-sequencia-diaria ultimo dia (get c "sequencia-bonus-diario" 1))
+            quantidade (+ 3 (min 4 (dec sequencia)))
+            recompensas (cond-> (frequencies (repeatedly quantidade sortear-bola-diaria))
+                          (zero? (mod sequencia 7)) (assoc "fruta-dourada" 1))
+            novo (-> c
+                     (assoc "ultimo-bonus-diario" dia)
+                     (assoc "sequencia-bonus-diario" sequencia)
+                     (guardar-recompensas recompensas))]
+        (swap! contas assoc-in [cid pid] novo)
+        (persistir!)
+        (str "🎁 *Bônus diário resgatado — sequência de " sequencia " dia(s):* "
+             (texto-recompensas recompensas) "!"
+             (when (zero? (mod sequencia 7)) " 🌟 Você ganhou uma Fruta Frambo Dourada!")
+             (when (some pos? (vals (recompensas-pendentes novo)))
+               (str " Itens sem espaço ficaram pendentes: " config/prefix "mochila resgatar.")))))))
+
+(defn resgatar-bolas! [cid pid kit?]
+  (let [c (conta cid pid)
+        recompensas (if kit? {"pokebola" 10} (recompensas-pendentes c))]
+    (cond
+      (and kit? (get c "kit-inicial-resgatado")) "🎁 Você já resgatou o kit inicial."
+      (or (not (some pos? (vals recompensas))) (not (cabe? cid pid (if kit? 10 1))))
+      "🎒 Sem recompensas disponíveis para resgatar ou espaço insuficiente. Libere vagas ou compre uma expansão."
+      :else
+      (let [novo (guardar-recompensas (if kit? (assoc c "kit-inicial-resgatado" true)
+                                          (dissoc c "bolas-pendentes" "recompensas-pendentes")) recompensas)
+            recebidas (into {} (for [bola ordem-recompensas]
+                                 [bola (- (get-in novo ["inventario" bola] 0)
+                                          (get-in c ["inventario" bola] 0))]))]
+        (swap! contas assoc-in [cid pid] novo)
+        (persistir!)
+        (str "🎁 Você recebeu " (texto-recompensas recebidas) "!")))))
+
+(defn xp-missoes [cid pid]
+  (get (conta cid pid) "xp-missoes" 0))
+
+(defn registrar-missao! [cid pid evento nivel]
+  (let [dia (missoes/dia-atual)
+        c (conta cid pid)
+        antes (count (missoes/disponiveis (missoes/estado-do-dia c dia nivel)))
+        novo (missoes/registrar-evento c dia evento nivel)]
+    (swap! contas assoc-in [cid pid] novo)
+    (persistir!)
+    (str
+      (when (> (count (missoes/disponiveis (missoes/estado-do-dia novo dia nivel))) antes)
+        (str "\n📋 Missão diária concluída! Resgate com " config/prefix "missoes diarias resgatar."))
+      (registrar-evento-recomeco! cid pid evento))))
+
+(defn- resgatar-missoes! [cid pid nivel]
+  (let [dia (missoes/dia-atual)
+        c (conta cid pid)
+        estado (missoes/estado-do-dia c dia nivel)
+        prontas (missoes/disponiveis estado)]
+    (if (empty? prontas)
+      "📋 Nenhuma missão concluída disponível para resgatar hoje."
+      (let [xp (reduce + (map :xp prontas))
+            recompensas (reduce (fn [r missao]
+                                  (let [r (merge-with + r (missoes/recompensas-bolas missao))]
+                                    (cond-> (if-let [bonus (missoes/sortear-bonus)]
+                                              (update r bonus (fnil inc 0)) r)
+                                      (missoes/sortear-reviver?) (update "reviver" (fnil inc 0))
+                                      (< (rand-int 100) 20) (update (sortear-item-evolucao) (fnil inc 0)))))
+                                {} prontas)
+            novo (-> c
+                     (assoc "missoes-diarias" (update estado "resgatadas" into (map :id prontas)))
+                     (update "xp-missoes" (fnil + 0) xp)
+                     (guardar-recompensas recompensas))]
+        ;; Sem espera assíncrona: XP, sorteio, mochila e marca de resgate
+        ;; são persistidos juntos, inclusive quando a mochila está cheia.
+        (swap! contas assoc-in [cid pid] novo)
+        (persistir!)
+        (str "✅ " (count prontas) " missão(ões) resgatada(s)!\n✨ +" xp " PE do treinador"
+             "\n🎁 " (texto-recompensas recompensas)
+             (when (some pos? (vals (recompensas-pendentes novo)))
+               (str "\n🎒 Itens sem espaço ficaram pendentes: " config/prefix "mochila resgatar.")))))))
+
+(defn ver-missoes [contexto acao nivel]
+  (let [cid (:chat-id contexto)
+        pid (:player-id contexto)
+        dia (missoes/dia-atual)
+        estado (missoes/estado-do-dia (conta cid pid) dia nivel)]
+    ;; O primeiro acesso ou evento do dia fixa a faixa, sem mudar metas
+    ;; depois de resgatar XP e subir de nível no mesmo dia.
+    (when (not= estado (get (conta cid pid) "missoes-diarias"))
+      (swap! contas update-in [cid pid] #(assoc (or % {"moedas" 0 "inventario" {}}) "missoes-diarias" estado))
+      (persistir!))
+    (if (= "resgatar" (normalizar-item acao))
+      (resgatar-missoes! cid pid nivel)
+      (str "📋 *Missões diárias — " dia "*\nNível de referência hoje: " (get estado "nivel" 1) "\n"
+           (str/join "\n\n"
+                     (for [{:keys [id nome objetivo meta xp pokebolas grandes ultras catalisadores]} (missoes/catalogo-do-dia estado)
+                           :let [progresso (get-in estado ["progresso" id] 0)
+                                 resgatada? (some #{id} (get estado "resgatadas"))]]
+                       (str (cond resgatada? "🎁" (>= progresso meta) "✅" :else "⬜")
+                            " *" nome "*: " objetivo " — " progresso "/" meta
+                            "\n+" xp " PE do treinador e " pokebolas " Pokébolas, " grandes " Grandes e " ultras " Ultras"
+                            (when (pos? (or catalisadores 0)) (str ", " catalisadores " Catalisador Evolutivo"))
+                            (when resgatada? " (resgatada)"))))
+           "\n\nCada missão: 25% de chance de +1 Grande Bola, 10% de +1 Ultra Bola; 65% sem bônus."
+           " Um único sorteio de bola bônus por missão, além das Pokébolas garantidas."
+           "\n💎 Chance independente de 20% de +1 Reviver por missão, exclusivo das missões."
+           "\nMetas, PE e Pokébolas aumentam a cada 5 níveis; a faixa fica fixa até a próxima renovação."
+           "\nResgate as concluídas com " config/prefix "missoes diarias resgatar."
+           "\nRenovação à meia-noite (" config/missoes-timezone "). Resgate antes da virada!"
+           "\nDesistências e fugas não contam como vitórias. PE significa Pontos de experiência do treinador; Pokémon recebem XP."))))
+
+(defn moedas [cid pid]
+  (get (conta cid pid) "moedas"))
+
+(defn creditar!
+  "Credita as moedas de vitória pro pid nesse chat (chamado ao fechar uma
+  batalha de !pokemon). Retorna a quantidade creditada."
+  [cid pid]
+  (swap! contas update-in [cid pid]
+         (fn [c] (-> (or c {"moedas" 0 "inventario" {}})
+                     (update "moedas" + moedas-por-vitoria))))
+  (persistir!)
+  moedas-por-vitoria)
+
+(defn creditar-quantia!
+  "Credita uma recompensa variável e retorna a quantidade adicionada."
+  [cid pid quantidade]
+  (swap! contas update-in [cid pid]
+         (fn [c] (-> (or c {"moedas" 0 "inventario" {}})
+                     (update "moedas" + quantidade))))
+  (persistir!)
+  quantidade)
+
+(defn- item-por-status [status]
+  (some (fn [[chave info]] (when (= (:status info) status) chave)) itens))
+
+(defn usar-cura!
+  "Se pid tiver, nesse chat, uma cura em estoque pro status dado, consome 1
+  unidade e retorna true; senão não mexe em nada e retorna false."
+  [cid pid status]
+  (if-let [chave (item-por-status status)]
+    (if (pos? (get-in (conta cid pid) ["inventario" chave] 0))
+      (do (swap! contas update-in [cid pid "inventario" chave] dec)
+          (persistir!)
+          true)
+      false)
+    false))
+
+(defn tem-mt? [cid pid]
+  (pos? (get-in (conta cid pid) ["inventario" "mt"] 0)))
+
+(defn consumir-mt! [cid pid]
+  (when (tem-mt? cid pid)
+    (swap! contas update-in [cid pid "inventario" "mt"] dec)
+    (persistir!)
+    true))
+
+(defn usar-pocao!
+  "Se pid tiver, nesse chat, uma poção de vida em estoque, consome 1 unidade
+  e retorna a fração de HP máximo que ela cura (ex.: 0.4 = 40%); senão não
+  mexe em nada e retorna nil."
+  ([cid pid] (usar-pocao! cid pid "pocao"))
+  ([cid pid chave]
+   (when (and (contains? #{"pocao" "pocao-maxima"} chave)
+              (pos? (get-in (conta cid pid) ["inventario" chave] 0)))
+     (swap! contas update-in [cid pid "inventario" chave] dec)
+     (persistir!)
+     (:cura-hp (get itens chave)))))
+
+(defn usar-fruta!
+  "Consome a fruta indicada e retorna quantos pontos de motivação ela recupera."
+  [cid pid chave]
+  (when (and (contains? #{"fruta" "fruta-dourada"} chave)
+             (pos? (quantidade-item cid pid chave)))
+    (swap! contas update-in [cid pid "inventario" chave] dec)
+    (persistir!)
+    (:motivacao (get itens chave))))
+
+(defn- formatar-item [chave {:keys [nome emoji preco evolucao exclusivo-diario]}]
+  (str emoji " *" nome "* (`" chave "`) - "
+       (cond preco (str preco " moedas") evolucao "recompensa de ginásio"
+             exclusivo-diario "recompensa da sequência diária" :else "exclusivo das missões")))
+
+(defn- formatar-inventario [inventario]
+  (let [posse (filter (fn [[_ qtd]] (pos? qtd)) inventario)]
+    (if (seq posse)
+      (str/join ", " (map (fn [[chave qtd]] (str (get-in itens [chave :emoji]) " " qtd "x " (get-in itens [chave :nome]))) posse))
+      "nenhuma ainda")))
+
+(defn mochila [contexto acao]
+  (let [cid (:chat-id contexto)
+        pid (:player-id contexto)]
+    (case (normalizar-item acao)
+      "kit" (resgatar-bolas! cid pid true)
+      "diario" (resgatar-bonus-diario! cid pid)
+      "resgatar" (resgatar-bolas! cid pid false)
+      (str "🎒 *Mochila* — " (ocupacao cid pid) "/" (capacidade cid pid) " unidades\n"
+           (formatar-inventario (get (conta cid pid) "inventario"))
+           "\n\nCada unidade ocupa uma vaga. Itens equipados não ocupam espaço."
+           "\nExpansão: +25 vagas por 200 moedas — " config/prefix "loja comprar mochila."
+           "\nKit inicial: 10 Pokébolas — " config/prefix "mochila kit."
+           "\nBônus diário: 3 a 7 bolas conforme a sequência; a cada 7 dias, Fruta Dourada — " config/prefix "mochila diario."
+           "\nNo PvP, cada nocaute rende uma bola definida pela liga."
+           "\nRecompensas pendentes: " (let [texto (texto-recompensas (recompensas-pendentes (conta cid pid)))] (if (str/blank? texto) "nenhuma" texto))
+           " — " config/prefix "mochila resgatar."
+           "\nGanhe PE e bolas nas missões: " config/prefix "missoes."))))
+
+(defn detalhes
+  "!loja detalhes <item> - explica o efeito e como usar um item."
+  [nome-item]
+  (let [chave (normalizar-item nome-item)]
+    (if-let [{:keys [nome emoji preco descricao equipavel expansao]} (get itens chave)]
+      (str "🔎 *Detalhes do item*\n\n"
+           emoji " *" nome "* (`" chave "`)\n"
+           (cond
+             preco (str "💰 Preço: " preco " moedas\n")
+             (some #{chave} bolas) "🎁 Não está à venda; obtida por recompensas.\n"
+             :else "🎁 Exclusivo das missões; não está à venda.\n")
+           "🏷️ Tipo: " (cond expansao "Melhoria permanente" equipavel "Equipável" :else "Consumível") "\n"
+           "✨ Efeito: " descricao
+           (when equipavel
+             (str "\n\nEquipe com " config/prefix "pokemon equipar <número> " chave ".")))
+      (str "❓ Item \"" nome-item "\" não encontrado. Use " config/prefix
+           "loja para ver os nomes e " config/prefix "loja detalhes <item> para consultar um efeito."))))
+
+(defn ver-loja
+  "!loja - mostra o catálogo e o saldo de moedas de quem chamou nesse chat."
+  [contexto]
+  (let [cid (:chat-id contexto)
+        pid (:player-id contexto)
+        c   (conta cid pid)]
+    (str "🏪 *Loja do tio " config/bot-name "*\n\n"
+         "💰 Suas moedas: " (get c "moedas") "\n\n"
+         "*Catálogo de itens:*\n"
+         (str/join "\n" (map (fn [[chave info]] (formatar-item chave info))
+                             (remove (fn [[chave _]] (some #{chave} bolas)) itens)))
+         "\n💻 +50 vagas Pokémon — " (preco-expansao-pc cid pid) " moedas: " config/prefix "pk espaco comprar."
+         "\n📚 Reaprender golpe — " preco-reaprender " moedas. Use " config/prefix "pokemon reaprender."
+         "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
+         "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"
+         "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, cure status com " config/prefix
+         "pokemon curar, recupere HP com " config/prefix "pokemon pocao [nº] ou "
+         config/prefix "pokemon pocao-maxima [nº] e equipe itens com "
+         config/prefix "pokemon equipar <nº> <item>!")))
+
+(defn ver-loja-com-imagem
+  "Retorna o catálogo como legenda de uma imagem da loja; se o asset não puder
+  ser processado, mantém a resposta textual para o comando continuar útil."
+  [contexto]
+  (let [texto (ver-loja contexto)]
+    (-> (p/let [buffer (-> (sharp imagem-loja)
+                           (.resize 760 400 #js {:fit "cover" :position "center"})
+                           (.png)
+                           (boundary/png-buffer!))]
+          {:media (boundary/midia "image/png" buffer "loja-pokemon.png")
+           :texto texto})
+        (p/catch (fn [erro]
+                   (js/console.error "Erro ao montar imagem da loja Pokémon:" erro)
+                   texto)))))
+
+(defn comprar
+  "!loja comprar <item> - compra 1 unidade do item pro inventário de quem
+  chamou, nesse chat, se tiver moedas suficientes."
+  [contexto nome-item]
+  (let [cid   (:chat-id contexto)
+        pid   (:player-id contexto)
+        chave (normalizar-item nome-item)]
+    (if-let [item (get itens chave)]
+      (let [saldo (moedas cid pid)]
+        (cond
+          (some #{chave} bolas)
+          (str "🎁 Pokébolas não são vendidas. Ganhe em " config/prefix "missoes, "
+               config/prefix "mochila diario ou por nocautes no PvP.")
+          (:evolucao item)
+          "🏛️ Ganhe pedras na primeira vitória de cada ginásio e em revanches diárias: !pokemon ginasio."
+          (:exclusivo-missoes item)
+          (str "💎 Esse item só pode ser ganho nas missões. Veja " config/prefix "missoes.")
+          (and (not (:expansao item)) (not (cabe? cid pid 1)))
+          (str "🎒 Mochila cheia! Use itens ou compre mais 25 vagas com " config/prefix "loja comprar mochila (200 moedas).")
+          (>= saldo (:preco item))
+          (do (swap! contas update-in [cid pid]
+                     (fn [c] (cond-> (update (or c {"moedas" 0 "inventario" {}})
+                                             "moedas" - (:preco item))
+                               (:expansao item) (update "capacidade-mochila" (fnil + 50) (:expansao item))
+                               (not (:expansao item)) (update-in ["inventario" chave] (fnil inc 0)))))
+              (persistir!)
+              (str "✅ Comprou " (:emoji item) " *" (:nome item) "*! Saldo: "
+                   (- saldo (:preco item)) " moedas."))
+          :else
+          (str "❌ Moedas insuficientes! Você tem " saldo ", " (:nome item) " custa " (:preco item) ".")))
+      (str "❓ Item \"" nome-item "\" não encontrado. Use " config/prefix "loja pra ver o catálogo."))))
+
+(defn registrar-semanal! [cid pid evento valores]
+  (swap! contas update-in [cid pid]
+         #(missoes/registrar-semanal (or % {}) (missoes/semana-de (missoes/dia-atual)) evento valores))
+  (persistir!))
+
+(defn ver-semanais [cid pid resgatar?]
+  (let [semana (missoes/semana-de (missoes/dia-atual))
+        [nova moedas bolas-base] (missoes/resgatar-semanais (conta cid pid) semana)
+        bolas (cond-> bolas-base (and resgatar? (pos? moedas))
+                (update (sortear-item-evolucao) (fnil inc 0)))]
+    (when resgatar?
+      ;; Progresso, marcação do resgate e saldo são persistidos juntos.
+      (swap! contas assoc-in [cid pid] (guardar-recompensas nova bolas))
+      (persistir!))
+    (let [estado (missoes/estado-semanal (conta cid pid) semana)]
+      (str "📅 *Missões semanais — semana de " semana "*\n"
+           (when resgatar? (str "💰 " moedas " moedas resgatadas.\n🎁 " (texto-recompensas bolas) "\n"))
+           (str/join "\n" (for [{:keys [id objetivo meta moedas] :as missao} missoes/semanais]
+                             (str (if (some #{id} (get estado "resgatadas")) "✅ " "🎯 ")
+                                  objetivo ": " (missoes/progresso-semanal estado id) "/" meta
+                                  " • " moedas " moedas • " (texto-recompensas (missoes/recompensas-bolas missao)))))
+           "\nReinicia na segunda-feira (" config/missoes-timezone ")."
+           "\nResgate até o fim da semana: " config/prefix "missoes semanais resgatar."))))
+
+(defn premiar-raid! [cid pid dia]
+  ;; Uma recompensa por identificador de raide, gravada junto com as moedas.
+  (when (not= dia (get-in @contas [cid pid "raid-premiada-dia"]))
+    (swap! contas update-in [cid pid]
+           #(-> (or % {}) (assoc "raid-premiada-dia" dia) (update "moedas" (fnil + 0) 50)))
+    (persistir!)
+    50))
+
+(defn enviar-presente! [cid pid alvo nivel]
+  (cond
+    (nil? alvo) (str "🎁 Use " config/prefix "presente @amigo. Compre cartões com " config/prefix "loja comprar cartao-presente.")
+    (= pid alvo) "❌ Escolha um amigo para receber o presente."
+    (not (pos? (quantidade-item cid pid "cartao-presente"))) "🎁 Você precisa de um cartão: !loja comprar cartao-presente."
+    :else
+    (let [sorteio (rand-int 100)
+          recompensa (cond (< sorteio 10) {"ultra-bola" 1}
+                           (< sorteio 35) {"grande-bola" 2}
+                           :else {"pokebola" 3})
+          dia (missoes/dia-atual)]
+      (swap! contas
+             (fn [estado]
+               (-> estado
+                   (update-in [cid pid "inventario" "cartao-presente"] dec)
+                   (update-in [cid pid] #(-> %
+                                            (missoes/registrar-evento dia "presentes" nivel)
+                                            (missoes/registrar-semanal (missoes/semana-de dia) "presentes" [])))
+                   (update-in [cid alvo] #(guardar-recompensas (or % {"moedas" 0 "inventario" {}}) recompensa)))))
+      (persistir!)
+      {:texto (str "🎁 Presente enviado para @" (first (str/split alvo #"@")) "!\n" (texto-recompensas recompensa)
+                   "\nBolas sem espaço ficam pendentes em !mochila resgatar."
+                   "\n📋 Envio registrado nas missões diárias e semanais.")
+       :mentions [alvo]})))

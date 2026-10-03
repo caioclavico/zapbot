@@ -51,3 +51,14 @@
 
 ;; Renovação das missões por data local, independente do fuso do servidor.
 (def missoes-timezone (env "MISSOES_TIMEZONE" "America/Sao_Paulo"))
+
+;; Pokémon roda em serviço independente. O bot mantém apenas o adaptador HTTP.
+(def pokemon-service-url (env "POKEMON_SERVICE_URL"))
+(def pokemon-service-token (env "POKEMON_SERVICE_TOKEN"))
+(defn- inteiro-positivo [nome padrao]
+  (let [valor (js/Number (env nome (str padrao)))]
+    (if (and (js/Number.isSafeInteger valor) (pos? valor)) valor padrao)))
+(def pokemon-connect-timeout-ms (inteiro-positivo "POKEMON_CONNECT_TIMEOUT_MS" 5000))
+(def pokemon-timeout-ms (inteiro-positivo "POKEMON_TIMEOUT_MS" 45000))
+(def pokemon-event-poll-ms (inteiro-positivo "POKEMON_EVENT_POLL_MS" 15000))
+(def pokemon-max-media-bytes (inteiro-positivo "POKEMON_MAX_MEDIA_BYTES" (* 10 1024 1024)))

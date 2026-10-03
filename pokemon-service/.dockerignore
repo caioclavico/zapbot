@@ -1,0 +1,7 @@
+node_modules
+.shadow-cljs
+target
+.git
+.env
+data
+*.log

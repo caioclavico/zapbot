@@ -26,9 +26,7 @@
             [zapbot.status :as status]
             [zapbot.quiz :as quiz]
             [zapbot.bloqueio :as bloqueio]
-            [zapbot.pokemon.core :as pokemon]
-            [zapbot.pokemon.pokedex :as pokedex]
-            [zapbot.pokemon.loja :as loja]
+            [zapbot.pokemon-http :as pokemon]
             [zapbot.rank :as rank]))
 
 (def ^:private comandos
@@ -142,15 +140,11 @@
     "status"    (status/status-vm)
     "quiz"      (quiz/jogar message (str/join " " args))
     ("pokemon" "pk") (pokemon/jogar message (str/join " " args))
-    ("pokedex" "dex" "pdx") (pokedex/buscar message (str/join " " args))
+    ("pokedex" "dex" "pdx") (pokemon/executar message "pokedex" (str/join " " args))
     ("presente" "presentes") (pokemon/jogar message (str "presente " (str/join " " args)))
     ("missoes" "missões") (pokemon/jogar message (str "missoes " (str/join " " args)))
-    "mochila"   (p/resolved (loja/mochila message (first args)))
-    "loja"      (case (some-> (first args) str/lower-case (str/replace #":" ""))
-                  "comprar"  (p/resolved (loja/comprar message (str/join " " (rest args))))
-                  "detalhes" (p/resolved (loja/detalhes (str/join " " (rest args))))
-                  "detalhe"  (p/resolved (loja/detalhes (str/join " " (rest args))))
-                  (loja/ver-loja-com-imagem message))
+    "mochila"   (pokemon/executar message "mochila" (str/join " " args))
+    "loja"      (pokemon/executar message "loja" (str/join " " args))
     "rank"      (p/resolved (rank/formatar-rank (bloqueio/chat-id message)))
     "meuid"     (p/resolved (str "🪪 Seu ID: " (or (.-author message) (.-from message))
                                  "\n\nAdicione esse valor em ADMIN_NUMBERS no .env (separado por vírgula, "

@@ -3,11 +3,13 @@
   !pokemon, !quiz). Persistido via zapbot.armazenamento (sobrevive a
   reinícios/deploys, igual ao resto do estado persistido)."
   (:require [clojure.string :as str]
+            [promesa.core :as p]
             [zapbot.config :as config]
             [zapbot.armazenamento :as armazenamento]))
 
 (defonce ^:private placares (atom (or (armazenamento/obter "rank") {})))
 (armazenamento/registrar! "rank" placares)
+(defonce ^:private filas-efeitos (atom {}))
 
 (defn- persistir! []
   (armazenamento/salvar! "rank" @placares))
@@ -20,6 +22,7 @@
          (fn [info]
            (-> (or info {"nome" nome "pontos" 0 "jogos" {}})
                (assoc "nome" nome)
+               (dissoc "somente-efeitos-http")
                (update "pontos" inc)
                (update-in ["jogos" jogo] (fnil inc 0)))))
   (persistir!))
@@ -43,8 +46,59 @@
 
 (defn- top [cid quantidade]
   (->> (vals (get @placares cid {}))
+       (remove #(get % "somente-efeitos-http"))
        (sort-by #(get % "pontos") >)
        (take quantidade)))
+
+(defn- identidade-efeito [{:keys [type playerName name game]}]
+  {"tipo" type "nome" (or playerName name) "jogo" game})
+
+(defn- aplicar-efeito-agora!
+  [{:keys [id type chatId playerId playerName name game] :as efeito}]
+  (let [anterior (get-in @placares [chatId playerId])
+        salvo (get-in anterior ["efeitos-pokemon-http" id])
+        identidade (identidade-efeito efeito)
+        resultado (if salvo
+                    (get salvo "resultado")
+                    (or (= type "rank.increment") (pos? (get anterior "pontos" 0))))]
+    (when (and salvo (not= identidade (dissoc salvo "resultado")))
+      (throw (js/Error. "ID de efeito de rank reutilizado com conteúdo diferente.")))
+    (when-not salvo
+      (swap! placares update-in [chatId playerId]
+             (fn [info]
+               (let [base (or info {"nome" (or playerName name "Alguém")
+                                   "pontos" 0 "jogos" {}
+                                   "somente-efeitos-http" true})
+                     nova (case type
+                            "rank.increment" (-> base
+                                                 (assoc "nome" (or playerName name (get base "nome")))
+                                                 (dissoc "somente-efeitos-http")
+                                                 (update "pontos" (fnil inc 0))
+                                                 (update-in ["jogos" game] (fnil inc 0)))
+                            "rank.decrement" (if resultado (update base "pontos" dec) base))]
+                 (assoc-in nova ["efeitos-pokemon-http" id]
+                           (assoc identidade "resultado" resultado))))))
+    ;; Mesmo um marcador vindo do cache é reconfirmado: a primeira tentativa
+    ;; pode ter falhado depois da mutação em memória. Nunca repetir a pontuação.
+    (p/let [_ (armazenamento/salvar-confirmado! "rank" @placares)] resultado)))
+
+(defn aplicar-efeito!
+  "Único writer de rank para efeitos HTTP Pokémon. O marcador de dedupe e a
+  pontuação são gravados na mesma linha Cassandra. Retorna promise booleana."
+  [{:keys [id type chatId playerId game] :as efeito}]
+  (if-not (and (every? #(and (string? %) (not (str/blank? %))) [id chatId playerId])
+               (contains? #{"rank.increment" "rank.decrement"} type)
+               (or (= type "rank.decrement") (= game "pokemon")))
+    (p/rejected (js/Error. "Efeito de rank inválido."))
+    (let [anterior (get @filas-efeitos chatId (p/resolved nil))
+          atual (-> anterior
+                    (p/catch (fn [_] nil))
+                    (p/then (fn [_] (aplicar-efeito-agora! efeito))))]
+      (swap! filas-efeitos assoc chatId atual)
+      (p/finally atual
+                 (fn []
+                   (when (identical? atual (get @filas-efeitos chatId))
+                     (swap! filas-efeitos dissoc chatId)))))))
 
 (defn vitorias-jogo
   "Quantas vitórias pid já tem no jogo indicado (string, ex. \"pokemon\"),

@@ -1,0 +1,22 @@
+{:source-paths ["src" "test"]
+ :dependencies [[funcool/promesa "12.0.0"]]
+ :builds
+ {:domain {:target :node-library
+           :output-to "target/domain.cjs"
+           :exports {:diagnostics pokemon-service.entry/diagnostics
+                     :initialize pokemon-service.entry/initialize
+                     :isReady pokemon-service.entry/is-ready
+                     :shutdown pokemon-service.entry/shutdown
+                     :command pokemon-service.entry/command
+                     :startTimers pokemon-service.entry/start-timers
+                     :stopTimers pokemon-service.entry/stop-timers
+                     :load pokemon-service.entry/load-state
+                     :store pokemon-service.entry/store-state
+                     :registerModule pokemon-service.entry/register-module
+                     :reserve pokemon-service.entry/reserve
+                     :takeEffects pokemon-service.entry/take-effects}
+           :compiler-options {:optimizations :simple}}
+  :benchmark {:target :node-library :output-to "target/benchmark.cjs"
+              :exports {:render pokemon-benchmark/render}
+              :compiler-options {:optimizations :simple}}
+  :test {:target :node-test :output-to "target/test.js" :ns-regexp "-test$"}}}

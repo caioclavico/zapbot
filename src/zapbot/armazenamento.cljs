@@ -114,6 +114,13 @@
         gravacao)
       (p/resolved nil))))
 
+(defn salvar-confirmado!
+  "Usado por recibos HTTP: ausência de Cassandra nunca confirma entrega/efeito."
+  [chave valor]
+  (if @client
+    (salvar! chave valor)
+    (p/rejected (js/Error. "Cassandra indisponível; persistência não confirmada."))))
+
 (defn aguardar-todas!
   "Espera as filas de persistência conhecidas terminarem (com sucesso ou após
   esgotarem as tentativas). Útil antes de responder ações que alteram vários
@@ -149,6 +156,32 @@
           _ (gravar-parte! c modulo marcador-migracao true)]
     (js/console.log (str "✅ Cassandra: módulo " modulo " migrado para linhas particionadas."))))
 
+(defn- consultar-paginas!
+  "Lê todas as páginas de uma consulta, sem carregar módulos de outro processo."
+  ([c consulta parametros] (consultar-paginas! c consulta parametros nil []))
+  ([c consulta parametros pagina linhas]
+   (p/let [resultado (.execute c consulta (clj->js parametros)
+                              (clj->js (cond-> {:prepare true :fetchSize 1000}
+                                         pagina (assoc :pageState pagina))))]
+     (let [acumuladas (into linhas (array-seq (.-rows resultado)))]
+       (if-let [proxima (.-pageState resultado)]
+         (consultar-paginas! c consulta parametros proxima acumuladas)
+         acumuladas)))))
+
+(defn- carregar-registrados! [c]
+  ;; A PK existente é ((modulo, particao)). O filtro por módulo evita trazer
+  ;; estado Pokémon para o bot HTTP, sem alterar o schema. Esse scan ocorre
+  ;; apenas na inicialização; os comandos continuam lendo o cache local.
+  (p/let [partes (p/all (for [modulo (keys @registros)]
+                         (consultar-paginas!
+                          c (str "SELECT modulo, particao, valor FROM " tabela
+                                 " WHERE modulo = ? ALLOW FILTERING") [modulo])))
+          legados (p/all (for [modulo (keys @registros)]
+                          (consultar-paginas!
+                           c (str "SELECT chave, valor FROM " tabela-antiga
+                                  " WHERE chave = ?") [modulo])))]
+    [(vec (mapcat identity partes)) (vec (mapcat identity legados))]))
+
 (defn iniciar!
   "Cria a estrutura nova, migra dados legados de modo retomável e hidrata os
   módulos registrados. Se o Cassandra falhar, o bot continua sem persistência."
@@ -163,11 +196,10 @@
                                    " (chave text PRIMARY KEY, valor text)"))
                 _ (.execute c (str "CREATE TABLE IF NOT EXISTS " tabela
                                    " (modulo text, particao text, valor text, PRIMARY KEY ((modulo, particao)))"))
-                novas (.execute c (str "SELECT modulo, particao, valor FROM " tabela))
-                antigas (.execute c (str "SELECT chave, valor FROM " tabela-antiga))]
-          (let [{:keys [dados migrados]} (linhas->modulos (.-rows novas))
+                [novas antigas] (carregar-registrados! c)]
+          (let [{:keys [dados migrados]} (linhas->modulos novas)
                 legados (into {} (map (fn [row] [(.-chave row) (ler-json (.-valor row))])
-                                      (.-rows antigas)))
+                                      antigas))
                 pendentes (remove (fn [[modulo _]] (contains? migrados modulo)) legados)]
             ;; Durante esta inicialização, módulos ainda não marcados usam o
             ;; JSON legado completo. A próxima inicialização já lerá as partes.

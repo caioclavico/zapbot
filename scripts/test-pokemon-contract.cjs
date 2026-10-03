@@ -1,0 +1,27 @@
+'use strict';
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const http=require('node:http');
+const fs=require('node:fs/promises');
+const os=require('node:os');
+const path=require('node:path');
+const {createClient}=require('./lib/pokemon-http-client.cjs');
+const {PokemonService,handler}=require('../pokemon-service/runtime/service.cjs');
+const {MediaStore}=require('../pokemon-service/runtime/media.cjs');
+test('cliente ZapBot usa API, mídia binária, eventos e ack do serviço real',async t=>{
+  const data={};
+  const domain={registerModule:k=>{data[k]||={};},load:k=>data[k],store:async(k,v)=>{data[k]=v;},reserve:async(k,id,v)=>{if(data[k][id])return false;data[k][id]=v;return true;},isReady:()=>true,takeEffects:()=>[],command:async()=>({texto:'Olá',media:{mime:'image/png',buffer:Buffer.from('binary'),filename:'p.png'}}),stopTimers:()=>{},shutdown:async()=>{}};
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'pokemon-contract-'));
+  const service=new PokemonService({domain,media:new MediaStore(dir),logger:()=>{}});
+  const server=http.createServer(handler(service,{token:'secret'}));
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  const client=createClient({baseUrl:`http://127.0.0.1:${server.address().port}`,token:'secret'});
+  t.after(async()=>{client.close();server.closeAllConnections();await new Promise(r=>server.close(r));await fs.rm(dir,{recursive:true,force:true});});
+  const response=await client.command({requestId:'contract',chatId:'c',playerId:'p',command:'pk treinador'});
+  assert.equal(response.messages[0].text,'Olá');
+  const media=await client.media(response.messages[0].mediaId);
+  assert.equal(media.toString(),'binary');
+  await service.enqueueEvent('c','evento');
+  const events=await client.pendingEvents();assert.equal(events.events.length,1);
+  await client.ack(events.events[0].id);assert.equal((await client.pendingEvents()).events.length,0);
+});

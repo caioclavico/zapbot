@@ -12,7 +12,7 @@
             [zapbot.adedonha :as adedonha]
             [zapbot.lembretes :as lembretes]
             [zapbot.admins :as admins]
-            [zapbot.pokemon.core :as pokemon]
+            [zapbot.pokemon-http :as pokemon]
             [zapbot.router :as router]))
 
 (def ^:private Client (.-Client wwjs))
@@ -164,6 +164,7 @@
            (fn []
              (when (compare-and-set! encerrando? false true)
                (saude/atualizar! diagnostico "DISCONNECTED" "Encerrando navegador; preservando sessão.")
+               (pokemon/parar!)
                (.close server)
                ;; Limite apenas para uma parada solicitada, nunca para startup lento.
                (js/setTimeout #(js/process.exit 1) 45000)
@@ -187,6 +188,8 @@
       (encerrar-com-sessao! client diagnostico server)
       (.on client "qr" on-qr)
       (.on client "ready" (fn [] (on-ready client)))
+      (.on client "disconnected" (fn [& _] (pokemon/parar!)))
+      (.on client "auth_failure" (fn [& _] (pokemon/parar!)))
       ;; Preserva o fluxo de mensagens e os inicializadores dos jogos.
       (.on client "message_create" on-message)
       (.on client "group_admin_changed" on-group-admin-changed)

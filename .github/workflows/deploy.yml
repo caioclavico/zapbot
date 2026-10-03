@@ -15,7 +15,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  pokemon-service:
+    name: Validar serviço Pokémon independente
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: pokemon-service/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci
+        working-directory: pokemon-service
+      - run: npm test && npm run test:domain && npm run build
+        working-directory: pokemon-service
+      - run: node --test scripts/test-pokemon-domain-contract.cjs
+      - run: docker build -t pokemon-service:ci pokemon-service
+
   build-and-deploy:
+    needs: pokemon-service
     name: Testar, construir imagem e enviar à VM
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -33,6 +56,7 @@ jobs:
           java-version: '17'
       - run: npm ci
       - run: npm test
+      - run: npm run test:http
       - name: Validar deploy e retorno à imagem anterior
         run: |
           bash -n scripts/deploy-vm.sh scripts/load-image-vm.sh

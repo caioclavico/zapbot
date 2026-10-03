@@ -1,0 +1,52 @@
+{
+  "environment": {
+    "node": "v22.22.0",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "fixture": "cartão treinador com sprite SVG local, 3 warmups + 20 amostras; Cassandra fake; sem WhatsApp",
+  "old": {
+    "pngBytes": 174218,
+    "sha256": "4c77b61fca80f6afb52078a1a839dd846c753db265ba8f1f98593ac6e553314b",
+    "render": {
+      "n": 20,
+      "median_ms": 14.77,
+      "p95_ms": 15.27
+    }
+  },
+  "new": {
+    "pngBytes": 174218,
+    "sha256": "4c77b61fca80f6afb52078a1a839dd846c753db265ba8f1f98593ac6e553314b",
+    "render": {
+      "n": 20,
+      "median_ms": 14.72,
+      "p95_ms": 15.9
+    },
+    "command_http": {
+      "n": 20,
+      "median_ms": 15.71,
+      "p95_ms": 16.05
+    },
+    "service_processing": {
+      "n": 20,
+      "median_ms": 15,
+      "p95_ms": 15
+    },
+    "image_processing": {
+      "n": 20,
+      "median_ms": 16,
+      "p95_ms": 17
+    },
+    "response_preparation": {
+      "n": 20,
+      "median_ms": 0,
+      "p95_ms": 1
+    },
+    "binary_transfer": {
+      "n": 20,
+      "median_ms": 0.29,
+      "p95_ms": 0.35
+    }
+  },
+  "same_png": true
+}

@@ -22,7 +22,8 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/target/main.js ./target/main.js
 COPY package*.json ./
-COPY assets ./assets
+COPY assets/abujamra.png ./assets/abujamra.png
+COPY scripts/lib ./scripts/lib
 ENTRYPOINT ["/usr/bin/tini", "--"]
 # LocalAuth usa /app/.wwebjs_auth, persistido pelo Compose. Nunca limpar locks.
 COPY scripts/healthcheck.js ./scripts/healthcheck.js

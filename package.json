@@ -10,6 +10,7 @@
     "dev": "shadow-cljs watch app",
     "build": "npm run verify:media-patch && shadow-cljs release app",
     "test": "npm run verify:media-patch && shadow-cljs compile test && node target/test.js",
+    "test:http": "node --test test/pokemon-http-client.test.cjs scripts/test-pokemon-contract.cjs pokemon-service/test/*.test.cjs",
     "start": "node target/main.js",
     "postinstall": "node scripts/patch-whatsapp-media.js",
     "verify:media-patch": "node scripts/patch-whatsapp-media.js --check"

@@ -1,0 +1,1591 @@
+[
+  {
+    "file": "src/zapbot/adedonha.cljs",
+    "namespace": "zapbot.adedonha",
+    "requires": [
+      "zapbot.config",
+      "zapbot.rank",
+      "zapbot.gemini"
+    ],
+    "functions": [
+      "chat-id",
+      "participante-id",
+      "nome-autor",
+      "remover-acentos",
+      "normalizar",
+      "comeca-com-letra?",
+      "limpar-linha",
+      "linha-resposta",
+      "truncar",
+      "candidatos-ia",
+      "prompt-validacao",
+      "extrair-json-array",
+      "validar-com-ia",
+      "capturar-resposta!",
+      "pontuar-categoria",
+      "calcular-resultado",
+      "formatar-item",
+      "formatar-categoria",
+      "formatar-totais",
+      "formatar-resultado",
+      "premiar-vencedores!",
+      "finalizar-rodada!",
+      "anunciar-fim!",
+      "iniciar",
+      "parar",
+      "jogar"
+    ],
+    "state": [
+      "rodadas"
+    ],
+    "timers": 1
+  },
+  {
+    "file": "src/zapbot/admins.cljs",
+    "namespace": "zapbot.admins",
+    "requires": [
+      "zapbot.armazenamento"
+    ],
+    "functions": [
+      "transformar",
+      "persistir!",
+      "lembrar-admin!",
+      "esquecer-admin!",
+      "admin-conhecido?",
+      "processar-evento-promocao!"
+    ],
+    "state": [
+      "admins"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/armazenamento.cljs",
+    "namespace": "zapbot.armazenamento",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "esperar",
+      "tentar-operacao!",
+      "registrar!",
+      "obter",
+      "json",
+      "ler-json",
+      "partes",
+      "reconstruir",
+      "gravar-parte!",
+      "apagar-parte!",
+      "operacoes-alteradas!",
+      "salvar!",
+      "aguardar-todas!",
+      "conectar-com-retry",
+      "linhas->modulos",
+      "migrar-modulo!",
+      "iniciar!"
+    ],
+    "state": [
+      "client",
+      "cache",
+      "confirmados",
+      "registros",
+      "filas-gravacao"
+    ],
+    "timers": 1
+  },
+  {
+    "file": "src/zapbot/bloqueio.cljs",
+    "namespace": "zapbot.bloqueio",
+    "requires": [
+      "zapbot.config",
+      "zapbot.armazenamento",
+      "zapbot.admins"
+    ],
+    "functions": [
+      "transformar-estado",
+      "estado->persistivel",
+      "persistir!",
+      "chat-id",
+      "autorizado-por-config?",
+      "esperar",
+      "pegar-chat",
+      "so-usuario",
+      "participante",
+      "admin-do-grupo?",
+      "ids-da-pessoa",
+      "autorizado?",
+      "bot-bloqueado?",
+      "comando-bloqueado?",
+      "formatar-lista",
+      "bloquear!",
+      "desbloquear!",
+      "processar-comando"
+    ],
+    "state": [
+      "estado"
+    ],
+    "timers": 1
+  },
+  {
+    "file": "src/zapbot/bola8.cljs",
+    "namespace": "zapbot.bola8",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "escapar-xml",
+      "quebrar-linhas",
+      "layout-para-tamanho",
+      "escolher-layout",
+      "montar-tspans",
+      "svg-bola",
+      "legenda",
+      "jogar"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/bugs.cljs",
+    "namespace": "zapbot.bugs",
+    "requires": [
+      "zapbot.armazenamento",
+      "zapbot.bloqueio",
+      "zapbot.historico"
+    ],
+    "functions": [
+      "jogador-id",
+      "proximo-id",
+      "mensagem-alvo",
+      "registrar!",
+      "formatar-data",
+      "resumo",
+      "listar",
+      "detalhar",
+      "resolver!",
+      "somente-admin",
+      "comando!"
+    ],
+    "state": [
+      "relatorios"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/config.cljs",
+    "namespace": "zapbot.config",
+    "requires": [],
+    "functions": [
+      "env",
+      "env-list"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/core.cljs",
+    "namespace": "zapbot.core",
+    "requires": [
+      "zapbot.config",
+      "zapbot.desempenho",
+      "zapbot.whatsapp-saude",
+      "zapbot.armazenamento",
+      "zapbot.historico",
+      "zapbot.adedonha",
+      "zapbot.lembretes",
+      "zapbot.admins",
+      "zapbot.pokemon.core",
+      "zapbot.router"
+    ],
+    "functions": [
+      "configurar-envio-seguro!",
+      "on-qr",
+      "on-ready",
+      "chat-id",
+      "permitido-pelo-ambiente?",
+      "enviar-texto-estruturado",
+      "responder-com-midia",
+      "processar-mensagem",
+      "on-message",
+      "opcoes-puppeteer",
+      "on-group-admin-changed",
+      "encerrar-com-sessao!",
+      "main"
+    ],
+    "state": [
+      "iniciado?"
+    ],
+    "timers": 1
+  },
+  {
+    "file": "src/zapbot/cotacao.cljs",
+    "namespace": "zapbot.cotacao",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "formatar-item",
+      "buscar-cotacoes"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/curiosidades.cljs",
+    "namespace": "zapbot.curiosidades",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "curiosidade-aleatoria"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/desempenho.cljs",
+    "namespace": "zapbot.desempenho",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "contexto-de",
+      "dependencia!",
+      "pendentes",
+      "agora",
+      "emitir!",
+      "treinador?",
+      "pokemon?",
+      "registrar!",
+      "medir!",
+      "codificar-base64!",
+      "acompanhar!",
+      "observar-operacao!",
+      "acompanhar-mensagem!"
+    ],
+    "state": [
+      "contextos",
+      "sequencia",
+      "operacoes"
+    ],
+    "timers": 1
+  },
+  {
+    "file": "src/zapbot/dicionario.cljs",
+    "namespace": "zapbot.dicionario",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "limpar-tags",
+      "extrair-defs",
+      "extrair-classe",
+      "linhas-do-def",
+      "formatar-entrada",
+      "buscar-definicao"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/enquetes.cljs",
+    "namespace": "zapbot.enquetes",
+    "requires": [
+      "zapbot.armazenamento",
+      "zapbot.config"
+    ],
+    "functions": [
+      "normalizar-enquetes",
+      "chat-id",
+      "eleitor-id",
+      "salvar!",
+      "formatar",
+      "criar!",
+      "ver",
+      "votar!",
+      "fechar!"
+    ],
+    "state": [
+      "enquetes"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/filme.cljs",
+    "namespace": "zapbot.filme",
+    "requires": [
+      "zapbot.config",
+      "zapbot.traducao"
+    ],
+    "functions": [
+      "chave-ausente",
+      "buscar-json",
+      "ano",
+      "formatar",
+      "enviar-com-capa",
+      "responder",
+      "com-sinopse-traduzida",
+      "buscar-filme",
+      "formatar-item-lista",
+      "buscar-filmes",
+      "buscar-filme-por-titulo-ano",
+      "formatar-concorrentes",
+      "buscar-vencedor-com-concorrentes",
+      "buscar-oscar",
+      "normalizar",
+      "genero-id",
+      "pedido-de-lista?",
+      "listar-generos",
+      "buscar-por-genero"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/gemini.cljs",
+    "namespace": "zapbot.gemini",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "url",
+      "esperar",
+      "chamar-uma-vez",
+      "tentar",
+      "gerar-texto"
+    ],
+    "state": [],
+    "timers": 1
+  },
+  {
+    "file": "src/zapbot/historico.cljs",
+    "namespace": "zapbot.historico",
+    "requires": [
+      "zapbot.armazenamento"
+    ],
+    "functions": [
+      "chat-id",
+      "participante-id",
+      "rotulo-autor",
+      "registrar!",
+      "obter",
+      "mensagem-anterior",
+      "participantes-conhecidos"
+    ],
+    "state": [
+      "historicos",
+      "participantes",
+      "fila-registros"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/horoscopo.cljs",
+    "namespace": "zapbot.horoscopo",
+    "requires": [
+      "zapbot.config",
+      "zapbot.traducao"
+    ],
+    "functions": [
+      "remover-acentos",
+      "signo-aleatorio",
+      "normalizar",
+      "buscar-horoscopo"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/lembretes.cljs",
+    "namespace": "zapbot.lembretes",
+    "requires": [
+      "zapbot.armazenamento"
+    ],
+    "functions": [
+      "normalizar-lembretes",
+      "chat-id",
+      "criador-id",
+      "salvar!",
+      "codigo-id",
+      "novo-id",
+      "nome-para-mencao",
+      "duracao-ms",
+      "criar!",
+      "listar",
+      "cancelar!",
+      "verificar!",
+      "iniciar!"
+    ],
+    "state": [
+      "lembretes",
+      "enviando",
+      "verificador"
+    ],
+    "timers": 1
+  },
+  {
+    "file": "src/zapbot/migrar_estado.cljs",
+    "namespace": "zapbot.migrar-estado",
+    "requires": [
+      "zapbot.armazenamento"
+    ],
+    "functions": [
+      "-main"
+    ],
+    "state": [],
+    "timers": 1
+  },
+  {
+    "file": "src/zapbot/moderacao.cljs",
+    "namespace": "zapbot.moderacao",
+    "requires": [
+      "zapbot.config",
+      "zapbot.admins"
+    ],
+    "functions": [
+      "chat-id",
+      "autorizado-por-config?",
+      "esperar",
+      "pegar-chat",
+      "so-usuario",
+      "participante",
+      "admin?",
+      "ids-da-pessoa",
+      "alvo-mencionado",
+      "alvo-citado",
+      "resolver-alvo",
+      "banir"
+    ],
+    "state": [],
+    "timers": 1
+  },
+  {
+    "file": "src/zapbot/musica.cljs",
+    "namespace": "zapbot.musica",
+    "requires": [
+      "zapbot.config",
+      "zapbot.spotify"
+    ],
+    "functions": [
+      "chave-ausente",
+      "pedido-de-lista?",
+      "listar-generos",
+      "formatar",
+      "buscar-musica"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/naval.cljs",
+    "namespace": "zapbot.naval",
+    "requires": [
+      "zapbot.config",
+      "zapbot.rank"
+    ],
+    "functions": [
+      "chat-id",
+      "jogador-id",
+      "nome-de",
+      "posicao->indice",
+      "dentro-do-tabuleiro?",
+      "posicoes-navio",
+      "posicionar-navio",
+      "criar-tabuleiro",
+      "atacar-tabuleiro",
+      "parse-coordenada",
+      "emoji-celula",
+      "desenhar-tabuleiro",
+      "outro",
+      "cabecalho",
+      "mensagem-estado",
+      "criar-jogo",
+      "tentar-registrar!",
+      "iniciar-ou-entrar",
+      "sair",
+      "atirar-em",
+      "jogar"
+    ],
+    "state": [
+      "jogos"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/noticias.cljs",
+    "namespace": "zapbot.noticias",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "buscar-noticias"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pergunta.cljs",
+    "namespace": "zapbot.pergunta",
+    "requires": [
+      "zapbot.config",
+      "zapbot.gemini"
+    ],
+    "functions": [
+      "remover-acentos",
+      "pergunta-sobre-a-vida?",
+      "resposta-abujamra",
+      "responder-sobre-a-vida",
+      "perguntar"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/piadas.cljs",
+    "namespace": "zapbot.piadas",
+    "requires": [
+      "zapbot.config",
+      "zapbot.gemini"
+    ],
+    "functions": [
+      "gerar-piada-ia",
+      "piada-aleatoria"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pokemon/ajuda.cljs",
+    "namespace": "zapbot.pokemon.ajuda",
+    "requires": [
+      "zapbot.config",
+      "zapbot.pokemon.treinador"
+    ],
+    "functions": [
+      "comando",
+      "guia",
+      "resposta"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pokemon/aventuras.cljs",
+    "namespace": "zapbot.pokemon.aventuras)",
+    "requires": [],
+    "functions": [
+      "obter-ginasio",
+      "desbloqueado?",
+      "evento-recomeco",
+      "evento-atual",
+      "troca-valida?"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pokemon/core.cljs",
+    "namespace": "zapbot.pokemon.core",
+    "requires": [
+      "zapbot.pokemon.golpes",
+      "zapbot.pokemon.aventuras",
+      "zapbot.pokemon.ginasios",
+      "zapbot.pokemon.mundo",
+      "zapbot.bugs",
+      "zapbot.pokemon.shiny",
+      "zapbot.pokemon.raids",
+      "zapbot.config",
+      "zapbot.desempenho",
+      "zapbot.armazenamento",
+      "zapbot.rank",
+      "zapbot.pokemon.loja",
+      "zapbot.pokemon.pokedex",
+      "zapbot.pokemon.ajuda",
+      "zapbot.pokemon.treinador"
+    ],
+    "functions": [
+      "combate-retomavel?",
+      "serializar-combates",
+      "restaurar-combates",
+      "aguardar-gravacoes-combates!",
+      "iniciar!",
+      "chat-id",
+      "jogador-id",
+      "serializar-id",
+      "alvo-mencionado",
+      "alvo-citado",
+      "resolver-alvo-doacao",
+      "so-numero",
+      "nome-de",
+      "stat-base",
+      "suavizar-stat",
+      "alvo-proprio?",
+      "buscar-golpe",
+      "nivel-de-aprendizado",
+      "ordenar-por-poder",
+      "remover-golpes-repetidos",
+      "golpes-ordenados",
+      "escolher-golpes",
+      "com-golpes",
+      "pokemon-de-dados",
+      "buscar-info-especie",
+      "sortear-pokemon",
+      "buscar-pokemon-por-nome",
+      "buscar-cadeia-evolucao",
+      "proxima-evolucao",
+      "proxima-evolucao-por-troca",
+      "preparar-evolucao-troca",
+      "tentar-evoluir!",
+      "cabecalho",
+      "orientacao-equipe",
+      "barra-hp",
+      "outro",
+      "formatar-tipos",
+      "normalizar-texto",
+      "tipo-do-filtro",
+      "multiplicador-vs-tipos",
+      "emoji-golpe",
+      "resumo-alteracoes",
+      "resumo-efeitos-golpe",
+      "linha-golpe",
+      "menu-golpes",
+      "poder-total",
+      "raridade-do-filtro",
+      "maior-raridade",
+      "classificar-raridade",
+      "com-raridade",
+      "texto-raridade",
+      "poder-alvo-caca",
+      "pertence-ao-bioma?",
+      "sortear-selvagem",
+      "chance-captura",
+      "texto-efetividade",
+      "texto-critico",
+      "texto-impulso",
+      "impulso-habilidade",
+      "emoji-status",
+      "nivel-pokemon",
+      "texto-item",
+      "texto-xp",
+      "mensagem-estado",
+      "com-mencao-pvp",
+      "com-mencao",
+      "multiplicador-estagio",
+      "stat-efetivo",
+      "velocidade-efetiva",
+      "chance-esquiva",
+      "aplicar-alteracoes",
+      "mensagem-alteracoes",
+      "calcular-dano",
+      "paralisou-turno?",
+      "impedimento-status",
+      "dano-por-status",
+      "tentar-contagiar",
+      "tentar-status-do-golpe",
+      "msg-status-aplicado",
+      "emoji-dot",
+      "nome-status",
+      "aplicar-dot",
+      "aplicar-restos",
+      "aplicar-fim-de-turno",
+      "aplicar-intimidacao",
+      "sincronizar-equipe!",
+      "verificar-evolucao!",
+      "sem-golpes-removidos",
+      "atualizar-golpes-por-nivel!",
+      "aprender-golpe-por-nivel!",
+      "aviso-saida-liga",
+      "registrar-nocautes",
+      "recompensas-partida!",
+      "premiar-nocautes-pvp!",
+      "finalizar-vitoria-pvp",
+      "finalizar-vitoria",
+      "anunciar-vitoria",
+      "tentar-encerrar-por-desistencia!",
+      "resolver-ataque",
+      "criar-jogo",
+      "legenda-pokemon",
+      "enviar-imagem",
+      "svg-x",
+      "url-jsdelivr-sprite",
+      "candidatos-url-sprite",
+      "baixar-buffer-url",
+      "baixar-buffer",
+      "svg-sprite-indisponivel",
+      "sprite-redimensionado",
+      "tamanho-visual-pokemon",
+      "pokemon-com-medidas",
+      "sprite-proporcional",
+      "svg-arena-pvp",
+      "criar-imagem-vs",
+      "svg-arena-ginasio",
+      "criar-imagem-ginasio",
+      "svg-time-ginasio",
+      "svg-marcador-motivacao",
+      "criar-imagem-time-ginasio",
+      "resposta-time-ginasio",
+      "enviar-imagem-ginasio",
+      "resposta-imagem-ginasio",
+      "id-cenario-bioma",
+      "svg-cenario-bioma",
+      "svg-arena-cacada",
+      "layout-imagem-cacada",
+      "criar-imagem-cacada",
+      "resposta-imagem-cacada",
+      "fuga-selvagem-na-resposta?",
+      "cor-bola",
+      "svg-bola-captura",
+      "resposta-imagem-captura",
+      "bola-do-comando-captura",
+      "captura-concluida?",
+      "tentativa-captura-realizada?",
+      "dano-da-resposta",
+      "escala-visual-dano",
+      "forma-svg-golpe",
+      "svg-golpe-posicionado",
+      "svg-sobreposicao-batalha",
+      "aplicar-sobreposicao-batalha",
+      "detalhe-cartao-evento",
+      "svg-cartao-evento",
+      "criar-cartao-evento",
+      "svg-cartao-evolucao",
+      "criar-cartao-evolucao",
+      "enviar-cartao-evolucao!",
+      "resposta-cartao-evento",
+      "enviar-cartao-evento!",
+      "tema-evento-da-resposta",
+      "legenda-vs",
+      "enviar-imagem-vs",
+      "enviar-anuncio-batalha",
+      "resposta-imagem-pvp",
+      "tentar-registrar!",
+      "expandir-subcomando",
+      "expandir-destino-time",
+      "configurar-liga",
+      "nome-time-pronto",
+      "descrever-time-pronto",
+      "configurar-time-pronto",
+      "configurar-favorito",
+      "iniciar-ou-entrar-atualizado",
+      "iniciar-ou-entrar",
+      "sair",
+      "defender-turno",
+      "jogador-na-batalha?",
+      "curar-fora-de-batalha",
+      "nome-pocao",
+      "indice-alvo-pocao",
+      "pocao-fora-de-batalha",
+      "curar-na-cacada",
+      "pocao-na-cacada",
+      "enfermeira-joy",
+      "curar-turno",
+      "pocao-turno",
+      "parse-indice-golpe",
+      "texto-iniciais",
+      "escolher-inicial",
+      "interpretar-filtros",
+      "interpretar-filtros-time",
+      "descricao-filtros",
+      "corresponde-aos-filtros?",
+      "filtrar-time",
+      "ver-time",
+      "svg-cartao-treinador",
+      "sprite-ash-treinador",
+      "sprite-pokemon-treinador",
+      "criar-cartao-treinador",
+      "texto-treinador",
+      "configurar-titulo",
+      "ver-amizade",
+      "ver-descobertas",
+      "ver-treinador",
+      "renderizar-pokedex-pessoal",
+      "ver-pokedex-pessoal",
+      "escapar-xml",
+      "encurtar",
+      "escapar-csv",
+      "linha-csv",
+      "svg-cartao-time",
+      "baixar-sprite-time",
+      "criar-cartao-time",
+      "resposta-time-visual",
+      "linha-csv-pokemon",
+      "csv-time",
+      "resposta-time-csv",
+      "bloco-especie",
+      "legenda-ficha-time",
+      "ver-pokemon-do-time",
+      "ver-pokemon-ativo-do-time",
+      "aplicar-remocao-golpe!",
+      "remover-golpe",
+      "cancelar-remocao",
+      "escolher-ativo",
+      "equipar-item",
+      "ocupacao-pokemon",
+      "cabe-pokemon?",
+      "estoque-cheio",
+      "ocupado-pc?",
+      "indice-pc",
+      "pagina-colecao",
+      "resposta-colecao-visual",
+      "comando-espaco",
+      "comando-pc",
+      "doar",
+      "estado-cacada",
+      "encerrar-cacada!",
+      "chance-com-bola",
+      "menu-captura",
+      "preparar-captura-pos-batalha",
+      "capturar-selvagem",
+      "turno-selvagem",
+      "atacar-selvagem",
+      "cacar",
+      "atacar",
+      "cancelar-limite-turno!",
+      "agendar-limite-turno!",
+      "enviar-aviso-temporizado",
+      "vigiar-limite-turno!",
+      "expirar-cacada!",
+      "expirar-batalha!",
+      "rearmar-limites-restaurados!",
+      "aprendizado-bloqueado?",
+      "mostrar-oferta",
+      "aprender-oferta",
+      "reaprender-golpe",
+      "sortear-ataque-mt",
+      "usar-mt",
+      "reviver-pokemon",
+      "dia-ginasio",
+      "escalar-nivel",
+      "xp-ginasio-participante",
+      "conceder-xp-ginasio!",
+      "texto-xp-ginasio",
+      "finalizar-ginasio",
+      "descricao-lider",
+      "menu-ginasios",
+      "candidatos-escalacao",
+      "mostrar-escalacao",
+      "configurar-ginasio",
+      "ver-evento",
+      "evolucoes-especiais",
+      "evoluir-especial",
+      "evoluir-com-item",
+      "familia-da-cadeia",
+      "professor-bloqueado?",
+      "comando-professor",
+      "ocupado-troca?",
+      "descrever-troca",
+      "concluir-troca!",
+      "negociar-pokemon",
+      "ver-colecao-shiny",
+      "capturar-raide",
+      "comando-raid",
+      "expandir-atalho",
+      "ataque-ginasio?",
+      "ataque-pvp?",
+      "ataque-cacada?",
+      "golpe-do-comando",
+      "jogar-comando",
+      "texto-resposta",
+      "sem-estado-intermediario",
+      "turno-lider",
+      "texto-rodada-ginasio",
+      "autoriza-turno-lider?",
+      "jogar-rodada",
+      "enfileirar-jogada",
+      "jogar",
+      "verificar-raides!",
+      "iniciar-raides!"
+    ],
+    "state": [
+      "jogos",
+      "cacadas-selvagens",
+      "gravacoes-combates",
+      "cliente-whatsapp",
+      "remocoes-pendentes",
+      "limites-turno",
+      "cache-pokemon-nome",
+      "propostas-troca",
+      "evolucoes-pendentes",
+      "filas-jogadas",
+      "contextos-filas",
+      "relogio-raides",
+      "verificando-raides?"
+    ],
+    "timers": 3
+  },
+  {
+    "file": "src/zapbot/pokemon/ginasios.cljs",
+    "namespace": "zapbot.pokemon.ginasios",
+    "requires": [
+      "zapbot.armazenamento",
+      "zapbot.config",
+      "zapbot.pokemon.treinador",
+      "zapbot.pokemon.loja"
+    ],
+    "functions": [
+      "salvar-ocupacoes!",
+      "lider",
+      "liderados",
+      "motivacoes",
+      "time-defensor",
+      "desgastar-defesa!",
+      "recuperar-motivacao!",
+      "usar-pocao!",
+      "usar-fruta!",
+      "recompensa-permanencia",
+      "duracao-ms",
+      "formatar-duracao",
+      "xp-permanencia",
+      "registro-apos-derrota",
+      "ocupar!",
+      "salvar-estatisticas!",
+      "registrar-permanencia!",
+      "registrar-resultado!",
+      "ranking-dados",
+      "ranking",
+      "historico"
+    ],
+    "state": [
+      "ocupacoes",
+      "estatisticas"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pokemon/golpes.cljs",
+    "namespace": "zapbot.pokemon.golpes",
+    "requires": [],
+    "functions": [
+      "normalizar-nome",
+      "identificador",
+      "chave",
+      "traduzir",
+      "unicos",
+      "ataque-do-tipo?"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pokemon/loja.cljs",
+    "namespace": "zapbot.pokemon.loja",
+    "requires": [
+      "zapbot.pokemon.aventuras",
+      "zapbot.config",
+      "zapbot.pokemon.missoes",
+      "zapbot.armazenamento"
+    ],
+    "functions": [
+      "migrar-inventario",
+      "migrar-chaves-antigas",
+      "persistir!",
+      "expansoes-pc",
+      "capacidade-permanente-pokemon",
+      "capacidade-pokemon",
+      "preco-expansao-pc",
+      "comprar-espaco-pc!",
+      "pagar-reaprendizado!",
+      "remover-acentos",
+      "item-evolucao-pokeapi",
+      "dados-item",
+      "item-equipavel?",
+      "consumir-item!",
+      "devolver-item!",
+      "conta",
+      "sortear-item-evolucao",
+      "normalizar-item",
+      "quantidade-item",
+      "capacidade",
+      "ocupacao",
+      "cabe?",
+      "consumir-bola!",
+      "consumir-reviver!",
+      "consumir-catalisador!",
+      "recompensas-pendentes",
+      "guardar-recompensas",
+      "texto-recompensas",
+      "progresso-evento-recomeco",
+      "texto-evento-recomeco",
+      "registrar-evento-recomeco!",
+      "premiar-bolas!",
+      "premiar-item-evolucao!",
+      "consumir-pedra!",
+      "sortear-bola-diaria",
+      "proxima-sequencia-diaria",
+      "resgatar-bonus-diario!",
+      "resgatar-bolas!",
+      "xp-missoes",
+      "registrar-missao!",
+      "resgatar-missoes!",
+      "ver-missoes",
+      "moedas",
+      "creditar!",
+      "creditar-quantia!",
+      "item-por-status",
+      "usar-cura!",
+      "tem-mt?",
+      "consumir-mt!",
+      "usar-pocao!",
+      "usar-fruta!",
+      "formatar-item",
+      "formatar-inventario",
+      "mochila",
+      "detalhes",
+      "ver-loja",
+      "ver-loja-com-imagem",
+      "comprar",
+      "registrar-semanal!",
+      "ver-semanais",
+      "premiar-raid!",
+      "enviar-presente!"
+    ],
+    "state": [
+      "contas"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pokemon/missoes.cljs",
+    "namespace": "zapbot.pokemon.missoes",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "dia-atual",
+      "catalogo-do-dia",
+      "estado-do-dia",
+      "disponiveis",
+      "registrar-evento",
+      "sortear-bonus",
+      "sortear-reviver?",
+      "semana-de",
+      "estado-semanal",
+      "progresso-semanal",
+      "registrar-semanal",
+      "recompensas-bolas",
+      "resgatar-semanais"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pokemon/mundo.cljs",
+    "namespace": "zapbot.pokemon.mundo",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "dia-atual",
+      "indice-do-dia",
+      "clima-do-dia",
+      "areas-do-dia",
+      "normalizar",
+      "obter-area",
+      "area-disponivel",
+      "hora-no-fuso",
+      "area-padrao",
+      "areas-indisponiveis",
+      "resumo"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pokemon/pokedex.cljs",
+    "namespace": "zapbot.pokemon.pokedex",
+    "requires": [
+      "zapbot.config",
+      "zapbot.armazenamento",
+      "zapbot.pokemon.aventuras",
+      "zapbot.traducao"
+    ],
+    "functions": [
+      "normalizar-cache",
+      "salvar-no-cache!",
+      "remover-acentos",
+      "normalizar",
+      "numero-formatado",
+      "stat-base",
+      "descricao-em-ingles",
+      "nome-habilidade",
+      "formatar-tipos",
+      "buscar-json",
+      "nome-formatado",
+      "formatar-evolucoes",
+      "nome-recurso",
+      "condicao-especial?",
+      "descrever-detalhe",
+      "proximas-evolucoes",
+      "buscar-dados",
+      "dados-especie",
+      "cabecalho",
+      "montar-legenda",
+      "enviar-cartao",
+      "buscar"
+    ],
+    "state": [
+      "cache"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pokemon/raids.cljs",
+    "namespace": "zapbot.pokemon.raids",
+    "requires": [
+      "zapbot.armazenamento",
+      "zapbot.config",
+      "zapbot.pokemon.treinador",
+      "zapbot.pokemon.loja",
+      "zapbot.pokemon.missoes",
+      "zapbot.pokemon.aventuras"
+    ],
+    "functions": [
+      "ativa?",
+      "acompanhar!",
+      "atual",
+      "no-ginasio?",
+      "proximo-ginasio",
+      "candidatos",
+      "liga-do-ginasio",
+      "criar!",
+      "captura-pendente",
+      "registrar-tentativa!",
+      "chance-captura",
+      "participando?",
+      "entrar",
+      "iniciar",
+      "atacar",
+      "resumo",
+      "comando!"
+    ],
+    "state": [
+      "raids",
+      "agendas"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pokemon/resetar.cljs",
+    "namespace": "zapbot.pokemon.resetar",
+    "requires": [
+      "zapbot.armazenamento"
+    ],
+    "functions": [
+      "-main"
+    ],
+    "state": [],
+    "timers": 1
+  },
+  {
+    "file": "src/zapbot/pokemon/shiny.cljs",
+    "namespace": "zapbot.pokemon.shiny)",
+    "requires": [],
+    "functions": [
+      "sortear"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/pokemon/treinador.cljs",
+    "namespace": "zapbot.pokemon.treinador",
+    "requires": [
+      "zapbot.pokemon.golpes",
+      "zapbot.pokemon.loja",
+      "zapbot.armazenamento"
+    ],
+    "functions": [
+      "normalizar-xp-registro",
+      "unificar-colecao",
+      "normalizar-xp-contas",
+      "persistir!",
+      "conta",
+      "inicial-disponivel?",
+      "golpe->registro",
+      "golpe<-registro",
+      "raridade-por-registro",
+      "garantir-ataque-do-tipo",
+      "pokemon->registro",
+      "registro->pokemon",
+      "equipe",
+      "obter-liga",
+      "elegivel?",
+      "liga-selecionada",
+      "time-liga",
+      "limpar-times",
+      "ajustar-times-remocao",
+      "selecionar-liga!",
+      "escalar!",
+      "time-pronto?",
+      "corrigir-ataques-iniciais!",
+      "tem-pokemon?",
+      "indice-ativo",
+      "pokemon-no-indice",
+      "pokemon-ativo",
+      "definir-ativo!",
+      "garantir-id-pokemon!",
+      "favorito",
+      "definir-favorito!",
+      "remover-favorito!",
+      "ativar-favorito-se-disponivel!",
+      "times-prontos",
+      "salvar-time-pronto!",
+      "indices-time-pronto",
+      "excluir-time-pronto!",
+      "equipar-item!",
+      "consumir-item-equipado!",
+      "atualizar-golpes-ativo!",
+      "golpes-atuais?",
+      "aprender-golpe-no-indice!",
+      "registrar-verificacao-golpe!",
+      "ofertas-golpes",
+      "golpes-ja-oferecidos",
+      "oferecer-golpe!",
+      "recusar-oferta!",
+      "opcoes-reaprender",
+      "golpe-memorizado",
+      "preparar-aprendizado",
+      "aplicar-aprendizado!",
+      "aprender-golpe-ativo!",
+      "golpes-removidos",
+      "golpes-removidos-ativo",
+      "remover-golpe-ativo!",
+      "pc",
+      "quantidade-guardada",
+      "guardar-registro",
+      "migrar-colecao!",
+      "receber-registro!",
+      "cartoes-professor",
+      "transferencia-professor",
+      "cancelar-transferencia-professor!",
+      "preparar-transferencia-professor!",
+      "confirmar-transferencia-professor!",
+      "usar-cartao-professor!",
+      "receber-retorno-ginasio!",
+      "adicionar-pokemon!",
+      "receber-inicial!",
+      "receber-doacao!",
+      "remover-pokemon!",
+      "recolher-curados!",
+      "enviar-ferido-para-enfermaria!",
+      "em-tratamento",
+      "atualizar-ativo!",
+      "atualizar-no-indice!",
+      "reviver!",
+      "pode-cacar?",
+      "segundos-restantes-cooldown",
+      "registrar-cacada!",
+      "sequencia-capturas",
+      "maior-sequencia-capturas",
+      "registrar-avistamento!",
+      "registrar-captura!",
+      "resumo-descobertas",
+      "amizade",
+      "ganhar-amizade!",
+      "quebrar-sequencia-capturas!",
+      "pokedex-pessoal",
+      "atualizar-tipos-pokedex!",
+      "sincronizar-pokedex-equipe!",
+      "xp-por-nocautes",
+      "bonus-xp-sequencia-capturas",
+      "ganhar-xp-no-indice!",
+      "ganhar-xp!",
+      "registro-para-raid!",
+      "resgatar-xp-raids!",
+      "premiar-progresso-raid!",
+      "subir-nivel!",
+      "progresso-xp",
+      "evoluir-no-indice!",
+      "evoluir-ativo!",
+      "registrar-doacao!",
+      "insignias-treinador",
+      "titulos-disponiveis",
+      "titulo-selecionado",
+      "selecionar-titulo!",
+      "xp-insignias",
+      "xp-treinador",
+      "ganhar-pe-ginasio!",
+      "progresso-treinador",
+      "nivel-jogador",
+      "registrar-vitoria-treinador!",
+      "perfil-treinador",
+      "insignias-ginasio",
+      "registrar-ginasio!",
+      "trocar-registros!",
+      "atualizar-especie!",
+      "time-ginasio",
+      "salvar-time-ginasio!",
+      "colecao-shiny!"
+    ],
+    "state": [
+      "contas",
+      "descobertas-globais"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/previsao.cljs",
+    "namespace": "zapbot.previsao",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "formatar-dia",
+      "buscar-previsao"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/quiz.cljs",
+    "namespace": "zapbot.quiz",
+    "requires": [
+      "zapbot.config",
+      "zapbot.gemini",
+      "zapbot.armazenamento",
+      "zapbot.rank"
+    ],
+    "functions": [
+      "chat-id",
+      "jogador-id",
+      "nome-de",
+      "cabecalho",
+      "normalizar-resposta",
+      "mensagem-pergunta",
+      "registrar-historico!",
+      "pergunta-estatica-nao-repetida",
+      "prompt-pergunta",
+      "extrair-json",
+      "parsear-pergunta-ia",
+      "gerar-pergunta-ia",
+      "iniciar",
+      "sair",
+      "responder",
+      "jogar"
+    ],
+    "state": [
+      "quizzes",
+      "historico-perguntas"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/rank.cljs",
+    "namespace": "zapbot.rank",
+    "requires": [
+      "zapbot.config",
+      "zapbot.armazenamento"
+    ],
+    "functions": [
+      "persistir!",
+      "pontuar!",
+      "penalizar!",
+      "top",
+      "vitorias-jogo",
+      "formatar-jogador",
+      "formatar-rank"
+    ],
+    "state": [
+      "placares"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/resumo.cljs",
+    "namespace": "zapbot.resumo",
+    "requires": [
+      "zapbot.config",
+      "zapbot.historico",
+      "zapbot.gemini"
+    ],
+    "functions": [
+      "comando?",
+      "montar-transcricao",
+      "inicio-do-dia",
+      "inicio-periodo",
+      "filtrar-periodo",
+      "gerar-resumo",
+      "resumir-chat"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/router.cljs",
+    "namespace": "zapbot.router",
+    "requires": [
+      "zapbot.config",
+      "zapbot.piadas",
+      "zapbot.curiosidades",
+      "zapbot.noticias",
+      "zapbot.cotacao",
+      "zapbot.previsao",
+      "zapbot.horoscopo",
+      "zapbot.filme",
+      "zapbot.dicionario",
+      "zapbot.traduza",
+      "zapbot.resumo",
+      "zapbot.lembretes",
+      "zapbot.enquetes",
+      "zapbot.pergunta",
+      "zapbot.bola8",
+      "zapbot.sorteio",
+      "zapbot.velha",
+      "zapbot.naval",
+      "zapbot.adedonha",
+      "zapbot.musica",
+      "zapbot.moderacao",
+      "zapbot.status",
+      "zapbot.quiz",
+      "zapbot.bloqueio",
+      "zapbot.pokemon.core",
+      "zapbot.pokemon.pokedex",
+      "zapbot.pokemon.loja",
+      "zapbot.rank"
+    ],
+    "functions": [
+      "formatar-comando",
+      "remover-acentos",
+      "comando?",
+      "tokenizar",
+      "despachar",
+      "processar"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/sorteio.cljs",
+    "namespace": "zapbot.sorteio",
+    "requires": [
+      "zapbot.config",
+      "zapbot.historico"
+    ],
+    "functions": [
+      "so-numero",
+      "sortear"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/spotify.cljs",
+    "namespace": "zapbot.spotify",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "token-valido?",
+      "pedir-token",
+      "obter-token",
+      "buscar-faixas"
+    ],
+    "state": [
+      "token-cache"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/status.cljs",
+    "namespace": "zapbot.status",
+    "requires": [
+      "zapbot.config"
+    ],
+    "functions": [
+      "formatar-changelog",
+      "fmt-num",
+      "fmt-pct",
+      "fmt-gb",
+      "fmt-uptime",
+      "cpu-totais",
+      "medir-uso-cpu",
+      "disco",
+      "status-vm"
+    ],
+    "state": [],
+    "timers": 1
+  },
+  {
+    "file": "src/zapbot/traducao.cljs",
+    "namespace": "zapbot.traducao",
+    "requires": [
+      "zapbot.config",
+      "zapbot.gemini"
+    ],
+    "functions": [
+      "pausar-google!",
+      "traduzir-google",
+      "traduzir-gemini",
+      "traduzir-com-status",
+      "traduzir"
+    ],
+    "state": [
+      "google-pausado-ate"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/traduza.cljs",
+    "namespace": "zapbot.traduza",
+    "requires": [
+      "zapbot.config",
+      "zapbot.traducao"
+    ],
+    "functions": [
+      "traduzir-frase"
+    ],
+    "state": [],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/velha.cljs",
+    "namespace": "zapbot.velha",
+    "requires": [
+      "zapbot.config",
+      "zapbot.rank"
+    ],
+    "functions": [
+      "chat-id",
+      "jogador-id",
+      "nome-de",
+      "celula",
+      "desenhar",
+      "vencedor",
+      "empate?",
+      "outro",
+      "cabecalho",
+      "mensagem-estado",
+      "criar-jogo",
+      "tentar-registrar!",
+      "iniciar-ou-entrar",
+      "sair",
+      "jogar-em",
+      "jogar"
+    ],
+    "state": [
+      "jogos"
+    ],
+    "timers": 0
+  },
+  {
+    "file": "src/zapbot/whatsapp_saude.cljs",
+    "namespace": "zapbot.whatsapp-saude",
+    "requires": [
+      "zapbot.desempenho"
+    ],
+    "functions": [
+      "log!",
+      "criar",
+      "cancelar-avisos!",
+      "atualizar!",
+      "avisar!",
+      "acompanhar!",
+      "iniciar-avisos!",
+      "resposta",
+      "atender!",
+      "servir!"
+    ],
+    "state": [],
+    "timers": 1
+  }
+]

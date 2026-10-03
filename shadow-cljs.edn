@@ -16,6 +16,9 @@
                      :main zapbot.pokemon.resetar/-main
                      :output-to "target/resetar-pokemon.js"
                      :compiler-options {:optimizations :simple}}
+  :benchmark {:target :node-library :output-to "target/benchmark.cjs"
+              :exports {:render pokemon-benchmark/render}
+              :compiler-options {:optimizations :simple}}
   :test {:target :node-test
          :output-to "target/test.js"
          :ns-regexp "-test$"}}}

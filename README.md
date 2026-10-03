@@ -4,6 +4,15 @@ Bot para WhatsApp escrito em **ClojureScript**, rodando sobre Node.js com a
 biblioteca [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js)
 (automação do WhatsApp Web via navegador, não oficial).
 
+## Extração Pokémon por HTTP
+
+O novo build delega Pokémon ao serviço independente em [`pokemon-service`](pokemon-service/README.md).
+Configure `POKEMON_SERVICE_URL` e `POKEMON_SERVICE_TOKEN` antes do corte.
+As fontes antigas permanecem para regressão; o rollback usa a imagem anterior.
+Consulte o contrato, os inventários em `docs/pokemon-*.md` e o procedimento de
+corte para impedir dois escritores simultâneos no Cassandra.
+Veja as evidências, medições e limitações no [relatório da migração](docs/pokemon-migration-report.md).
+
 ## Funcionalidades
 
 | Comando                    | Descrição                                                     |
