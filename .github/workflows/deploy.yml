@@ -54,11 +54,15 @@ jobs:
             --production-baselines --github-output "$GITHUB_OUTPUT"
 
   deployment-tests:
-    name: Validate deployment scripts without production
+    name: Validate deployment scripts (Python ${{ matrix.python-version }})
     needs: changes
     if: inputs.operation != 'rollback'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.12']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -66,6 +70,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
       - name: Validate syntax, selection, preservation and isolated rollback
         run: |
           bash -n scripts/deploy-vm.sh scripts/load-image-vm.sh scripts/install-deploy.sh scripts/ci-ssh-deploy.sh

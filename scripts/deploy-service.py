@@ -64,6 +64,7 @@ class Engine:
             if timeout <= 0:
                 raise DeployError('Docker operation deadline exceeded')
         connection = UnixConnection(self.socket_path, timeout=timeout)
+        response = None
         payload = None if data is None else json.dumps(data).encode()
         request_headers = {'Content-Type': 'application/json', **(headers or {})}
         try:
@@ -72,7 +73,9 @@ class Engine:
             wire = connection.sock
             response = connection.getresponse()
             chunks, size = [], 0
-            while True:
+            # Python 3.12 closes the response/socket as soon as Content-Length
+            # is consumed. Do not reset a closed socket's timeout on that EOF.
+            while not response.isclosed():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise DeployError('Docker operation deadline exceeded')
@@ -91,7 +94,11 @@ class Engine:
         except (OSError, http.client.HTTPException, ValueError) as error:
             raise DeployError('Docker API unavailable or invalid response') from error
         finally:
-            connection.close()
+            try:
+                if response is not None:
+                    response.close()
+            finally:
+                connection.close()
 
     def inspect(self, container):
         return self.request('GET', '/containers/' + quote(container, safe='') + '/json')

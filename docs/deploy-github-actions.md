@@ -404,6 +404,9 @@ Os testes com Docker real usaram aplicações HTTP fictícias sobre as imagens d
 runtime; não acessaram WhatsApp ou Cassandra de produção. Também foram
 verificadas permissões do instalador e ausência de secrets fictícios nos logs.
 
+O workflow valida a infraestrutura com Python 3.9 e 3.12. Os testes HTTP incluem
+respostas maiores que o buffer, conexões encerradas, keep-alive, chunked e 204.
+
 Para repetir os testes auxiliares, com Node 22, Python 3.9+ e Docker local:
 
 ```sh
@@ -417,8 +420,10 @@ python3 scripts/test-deploy-ssh.py
 actionlint .github/workflows/deploy.yml
 docker buildx build --platform linux/amd64 --load -t zapbot-odisseu:ci .
 docker buildx build --platform linux/amd64 --load -t zapbot-pokemon:ci pokemon-service
-python3 scripts/test-deploy-docker.py --service odisseu --base-image zapbot-odisseu:ci
-python3 scripts/test-deploy-docker.py --service pokemon --base-image zapbot-pokemon:ci
+local_docker_endpoint=$(docker context inspect --format '{{(index .Endpoints "docker").Host}}')
+case "$local_docker_endpoint" in unix://*) ;; *) echo 'Use Docker local com socket Unix.' >&2; exit 1;; esac
+python3 scripts/test-deploy-docker.py --socket "${local_docker_endpoint#unix://}" --service odisseu --base-image zapbot-odisseu:ci
+python3 scripts/test-deploy-docker.py --socket "${local_docker_endpoint#unix://}" --service pokemon --base-image zapbot-pokemon:ci
 ```
 
 Os fixtures removem somente os recursos identificados pelo UUID daquele teste.

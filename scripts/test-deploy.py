@@ -241,6 +241,31 @@ class Handler(BaseHTTPRequestHandler):
             pass  # An empty 204 response may cause the client to close immediately.
 
 
+class HTTPReplyHandler(BaseHTTPRequestHandler):
+    """Exercise HTTP framing independently of the deployment model."""
+    protocol_version = 'HTTP/1.1'
+
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):
+        self.send_response(self.server.status)
+        if self.server.connection_close:
+            self.send_header('Connection', 'close')
+        if self.server.chunked:
+            self.send_header('Transfer-Encoding', 'chunked')
+        else:
+            self.send_header('Content-Length', str(len(self.server.body)))
+        self.end_headers()
+        if self.server.chunked:
+            for offset in range(0, len(self.server.body), 16384):
+                chunk = self.server.body[offset:offset + 16384]
+                self.wfile.write(('%x\r\n' % len(chunk)).encode() + chunk + b'\r\n')
+            self.wfile.write(b'0\r\n\r\n')
+        else:
+            self.wfile.write(self.server.body)
+
+
 class DeployTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='deploy-', dir='/tmp')
@@ -295,6 +320,25 @@ class DeployTest(unittest.TestCase):
         for _method, path, _query, _data in self.model.calls:
             self.assertNotIn('cassandra', path)
             self.assertNotIn('/delete', path)
+
+    def test_http_framing_preserves_complete_bodies_and_empty_responses(self):
+        body = b'large Docker response\n' * 10000
+        cases = ((True, False, 200, body), (False, False, 200, body),
+                 (False, True, 200, body), (True, False, 204, b''))
+        for connection_close, chunked, status, expected in cases:
+            with self.subTest(connection_close=connection_close, chunked=chunked, status=status):
+                socket_path = str(self.root / ('http-%d.sock' % len(self.servers)))
+                server = UnixHTTPServer(socket_path, HTTPReplyHandler)
+                server.errors = []
+                server.connection_close, server.chunked = connection_close, chunked
+                server.status, server.body = status, expected
+                thread = threading.Thread(target=server.serve_forever,
+                                          kwargs={'poll_interval': 0.01}, daemon=True)
+                thread.start()
+                self.servers.append((server, thread))
+                engine = DEPLOY.Engine(socket_path)
+                self.assertEqual(engine.request('GET', '/response', raw=True,
+                                                expected=(status,)), expected)
 
     def test_success_preserves_resources_actual_hostname_and_effective_env(self):
         for service in ('odisseu', 'pokemon'):
