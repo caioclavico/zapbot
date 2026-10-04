@@ -5,7 +5,9 @@
 Corrigida a observabilidade e a resposta de erro da reserva durável. `pk treinador`
 funciona por HTTP com o domínio real, PNG real e Cassandra 5.0.9 descartável.
 **Não está comprovada a resolução do timeout no Cassandra de produção.** Nenhum
-deploy, restart, comando de jogo ou write de teste foi executado em produção.
+deploy, restart, comando de jogo ou write de teste foi executado em produção
+durante a investigação inicial. O deploy read-only autorizado posteriormente
+está registrado ao final deste relatório.
 
 4352 decimal = 0x1100 = `writeTimeout`, confirmado no driver instalado e no
 [protocolo Cassandra](https://cassandra.apache.org/doc/latest/cassandra/reference/native-protocol.html).
@@ -126,7 +128,8 @@ scp -i ~/.ssh/google_pokemon /tmp/pokemon-http-errors-20261003.tar \
   caiohclavico@34.68.189.66:/home/caiohclavico/pokemon-service/
 ```
 
-A imagem foi construída localmente; transferência e atualização não executadas.
+A imagem foi construída localmente. Transferência e atualização ainda não haviam
+sido executadas na entrega inicial; a execução posterior está registrada abaixo.
 
 ## Atualização Google após autorização
 
@@ -147,7 +150,10 @@ docker create --name zapbot-pokemon --restart unless-stopped \
   -e POKEMON_READ_ONLY=true \
   -p 8080:8080 -v pokemon-data-http-errors:/app/data \
   zapbot-pokemon:http-errors-20261003
-docker cp zapbot-pokemon-before-http-errors:/app/data/. zapbot-pokemon:/app/data/
+media_copy=$(mktemp -d /home/caiohclavico/pokemon-service/media-copy.XXXXXX)
+docker cp zapbot-pokemon-before-http-errors:/app/data/. "$media_copy"/
+docker cp "$media_copy"/. zapbot-pokemon:/app/data/
+rm -rf -- "$media_copy"
 docker run --rm --user root --entrypoint chown \
   -v pokemon-data-http-errors:/app/data \
   zapbot-pokemon:http-errors-20261003 -R node:node /app/data
@@ -176,7 +182,7 @@ imagem real e logs correlacionados.
 
 1. Obter acesso/logs Cassandra para identificar a causa operacional do writeTimeout.
 2. Inspecionar imagem/logs Odisseu para o `INVALID_RESPONSE` histórico.
-3. Aprovar uma atualização/validação de produção, se desejada.
+3. Aprovar a validação com writes somente depois do diagnóstico Cassandra.
 4. Não remover LWT, não trocar por INSERT incondicional e não aumentar timeouts
    por suposição: isso esconderia a falha ou enfraqueceria dedupe.
 
@@ -191,3 +197,41 @@ imagem real e logs correlacionados.
 - `docs/pokemon-http-4352-report.md` (novo)
 
 `pokemon-service/target/domain.cjs` também foi regenerado (artefato ignorado pelo Git).
+
+## Deploy autorizado e concluído — 2026-10-03
+
+- Commit da correção: `76abd80`; imagem `zapbot-pokemon:76abd80`, Linux AMD64,
+  construída fora da VM e transferida via SSH.
+- Container ativo: `zapbot-pokemon`; `unless-stopped`; porta 8080; configuração
+  privada existente preservada, com override `POKEMON_READ_ONLY=true`.
+- Volume novo: `pokemon-data-76abd80`; `/app/data` anterior copiado antes do startup.
+- Container de rollback: `zapbot-pokemon-before-76abd80`, parado (Exited 0).
+- Primeira tentativa: Docker rejeitou cópia direta entre containers; rollback
+  restaurou automaticamente o serviço anterior. A cópia foi corrigida para usar
+  diretório privado intermediário; a segunda tentativa concluiu. O container
+  nunca iniciado e volume vazio da primeira tentativa foram removidos.
+- `/health`: HTTP 200, `{"status":"ok"}`.
+- `/ready`: HTTP 200, `{"ready":true}`.
+- Startup: `readOnly=true`, `gameTimersEnabled=false`, 30 SELECTs, 0 writes,
+  15 módulos e 11 partições hidratados; Cassandra conectado.
+- POST autenticado `/commands`: HTTP 403 `read_only`, confirmando a barreira.
+  Não foi executado comando de jogo para testar writes de produção.
+- RAM observada: 56,78 MiB; CPU 0,19%; disco da VM: 5,8 GB usados de 8,7 GB.
+- API_TOKEN existente validado (>=24 caracteres), sem exibir seu valor.
+- Não houve mudança de firewall nem deploy/restart do Odisseu. Teste externo a
+  partir do Odisseu não foi repetido porque seu acesso SSH segue indisponível.
+- O arquivo de imagem transferido foi removido após sucesso; script reproduzível
+  ficou em `/home/caiohclavico/pokemon-service/deploy-pokemon-76abd80.sh`.
+
+**Comandos e timers Pokémon ficam suspensos nesta fase read-only.** O timeout
+4352 no Cassandra de produção permanece pendente de diagnóstico. Não houve
+cutover ou reabilitação de writes.
+
+Rollback desta publicação, executado na VM caso autorizado:
+
+```sh
+docker stop zapbot-pokemon
+docker rename zapbot-pokemon zapbot-pokemon-readonly-76abd80
+docker rename zapbot-pokemon-before-76abd80 zapbot-pokemon
+docker start zapbot-pokemon
+```
