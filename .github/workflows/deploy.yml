@@ -2,149 +2,381 @@ name: CI/CD
 
 on:
   push:
-    branches: [master]
+    # master remains validation-only until the documented migration to main.
+    branches: [main, master]
   pull_request:
-    branches: [master]
+    branches: [main, master]
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation (production Environment approval applies)
+        type: choice
+        options: [deploy, rollback]
+        default: deploy
+        required: true
+      service:
+        description: Service to deploy or roll back
+        type: choice
+        options: [both, odisseu, pokemon]
+        default: both
+        required: true
 
+# Build/PR jobs receive no production credentials. Only publication grants write.
 permissions:
   contents: read
 
-concurrency:
-  group: zapbot-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
-  pokemon-service:
-    name: Validar serviço Pokémon independente
+  changes:
+    name: Select affected services
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      odisseu: ${{ steps.paths.outputs.odisseu }}
+      pokemon: ${{ steps.paths.outputs.pokemon }}
+      any: ${{ steps.paths.outputs.any }}
+      services: ${{ steps.paths.outputs.services }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Detect runtime, shared and documentation changes
+        id: paths
+        env:
+          SELECTED_SERVICE: ${{ inputs.service || 'both' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/ci-changes.py --event "$GITHUB_EVENT_NAME" \
+            --event-path "$GITHUB_EVENT_PATH" --service "$SELECTED_SERVICE" \
+            --production-baselines --github-output "$GITHUB_OUTPUT"
+
+  deployment-tests:
+    name: Validate deployment scripts without production
+    needs: changes
+    if: inputs.operation != 'rollback'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: pokemon-service/package-lock.json
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - run: npm ci
-        working-directory: pokemon-service
-      - run: npm test && npm run test:domain && npm run build
-        working-directory: pokemon-service
-      - run: node --test scripts/test-pokemon-domain-contract.cjs
-      - run: docker build -t pokemon-service:ci pokemon-service
+      - name: Validate syntax, selection, preservation and isolated rollback
+        run: |
+          bash -n scripts/deploy-vm.sh scripts/load-image-vm.sh scripts/install-deploy.sh scripts/ci-ssh-deploy.sh
+          python3 scripts/test-ci-changes.py
+          python3 scripts/test-ci-ssh.py
+          node --test scripts/test-ci-registry.cjs
+          python3 scripts/test-deploy.py
+          python3 scripts/test-load-image.py
+          python3 scripts/test-deploy-ssh.py
 
-  build-and-deploy:
-    needs: pokemon-service
-    name: Testar, construir imagem e enviar à VM
+  test-odisseu:
+    name: Test and compile Odisseu
+    needs: changes
+    if: needs.changes.outputs.odisseu == 'true' && inputs.operation != 'rollback'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 25
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: '17'
       - run: npm ci
       - run: npm test
       - run: npm run test:http
-      - name: Validar deploy e retorno à imagem anterior
-        run: |
-          bash -n scripts/deploy-vm.sh scripts/load-image-vm.sh
-          python3 scripts/test-deploy.py
-          python3 scripts/test-load-image.py
-      - uses: docker/setup-buildx-action@v3
-      - name: Construir imagem Linux AMD64 no runner
-        uses: docker/build-push-action@v6
+      - run: npm run build
+
+  test-pokemon:
+    name: Test and compile Pokemon
+    needs: changes
+    if: needs.changes.outputs.pokemon == 'true' && inputs.operation != 'rollback'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          context: .
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: pokemon-service/package-lock.json
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci
+        working-directory: pokemon-service
+      - run: npm test
+        working-directory: pokemon-service
+      - run: npm run test:domain
+        working-directory: pokemon-service
+      - run: npm run build
+        working-directory: pokemon-service
+      - run: node --test scripts/test-pokemon-contract.cjs scripts/test-pokemon-domain-contract.cjs
+
+  docker-validation:
+    name: Validate ${{ matrix.service }} AMD64 image (no publication)
+    needs: [changes, deployment-tests, test-odisseu, test-pokemon]
+    if: >-
+      always() && needs.changes.result == 'success' && needs.changes.outputs.any == 'true' &&
+      needs.deployment-tests.result == 'success' &&
+      (needs.test-odisseu.result == 'success' || needs.test-odisseu.result == 'skipped') &&
+      (needs.test-pokemon.result == 'success' || needs.test-pokemon.result == 'skipped') &&
+      (github.event_name == 'pull_request' || github.ref != 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build image on runner
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ matrix.service == 'pokemon' && 'pokemon-service' || '.' }}
           platforms: linux/amd64
           load: true
-          tags: zapbot:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Enviar imagem e atualizar somente o bot
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+          push: false
+          tags: zapbot-${{ matrix.service }}:ci
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+      - name: Assert Linux AMD64 runtime image
         env:
-          SSH_HOST: ${{ vars.ORACLE_HOST || '129.148.52.187' }}
-          SSH_USER: ${{ vars.ORACLE_USER || 'ubuntu' }}
-          SSH_PORT: ${{ vars.ORACLE_SSH_PORT || '22' }}
-          APP_DIR: ${{ vars.ORACLE_APP_DIR || '/home/ubuntu/zapbot' }}
-          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.ORACLE_KNOWN_HOSTS }}
+          SERVICE: ${{ matrix.service }}
         run: |
-          set -euo pipefail
-          [[ -n "$SSH_KEY" && -n "$SSH_KNOWN_HOSTS" ]] || {
-            echo '::error::Configure ORACLE_SSH_KEY e ORACLE_KNOWN_HOSTS para a VM atual.'
-            exit 1
-          }
-          [[ "$APP_DIR" =~ ^/[a-zA-Z0-9_./-]+$ ]] || exit 2
-          mkdir -p ~/.ssh
-          umask 077
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          ssh-keygen -y -f ~/.ssh/deploy_key -P '' >/dev/null
-          ssh_opts=(-i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
-          target="$SSH_USER@$SSH_HOST"
-          release_dir="$APP_DIR/releases/$GITHUB_SHA"
-          echo "[$(date -u +%FT%TZ)] Preparando diretório da release na VM (limite: 60s)."
-          timeout 60s ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" "mkdir -p '$release_dir'"
-          # Separa rede e Docker: o carregamento só começa após validar o arquivo.
-          image_archive="$RUNNER_TEMP/zapbot-image.tar.gz"
-          echo "[$(date -u +%FT%TZ)] Verificando Docker e espaço livre na VM."
-          timeout 60s ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
-            "set -eu; df -h '$release_dir'; if timeout 15s docker info >/dev/null 2>&1; then docker version --format '{{.Server.Version}}'; else timeout 15s sudo -n docker info --format '{{.ServerVersion}}'; fi"
-          echo "[$(date -u +%FT%TZ)] Exportando e comprimindo imagem no runner."
-          docker save "zapbot:$GITHUB_SHA" | gzip -6 > "$image_archive"
-          archive_bytes=$(stat -c %s "$image_archive")
-          archive_sha=$(sha256sum "$image_archive" | cut -d ' ' -f 1)
-          echo "Imagem comprimida: $archive_bytes bytes."
-          echo "[$(date -u +%FT%TZ)] Transferindo arquivo para a VM (limite: 15min)."
-          timeout 15m scp "${ssh_opts[@]}" -P "$SSH_PORT" "$image_archive" "$target:$release_dir/image.tar.gz" &
-          transfer_pid=$!
-          # scp desativa a barra de progresso no Actions; informa bytes a cada 30s.
-          (
-            while kill -0 "$transfer_pid" 2>/dev/null; do
-              sleep 30
-              kill -0 "$transfer_pid" 2>/dev/null || break
-              timeout 10s ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
-                "stat -c 'Transferidos: %s de $archive_bytes bytes' '$release_dir/image.tar.gz'" || true
-            done
-          ) &
-          progress_pid=$!
-          transfer_status=0
-          wait "$transfer_pid" || transfer_status=$?
-          kill "$progress_pid" 2>/dev/null || true
-          wait "$progress_pid" 2>/dev/null || true
-          if [[ "$transfer_status" != 0 ]]; then
-            echo "::error::Transferência SSH falhou (código $transfer_status). O docker load e a atualização do bot não foram iniciados."
-            exit "$transfer_status"
-          fi
-          echo "[$(date -u +%FT%TZ)] Transferência concluída. Validando SHA-256 (limite: 120s)."
-          timeout 120s ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
-            "printf '%s  %s\\n' '$archive_sha' '$release_dir/image.tar.gz' | sha256sum -c -"
-          echo "[$(date -u +%FT%TZ)] Enviando rotina de carregamento e diagnóstico."
-          timeout 120s scp "${ssh_opts[@]}" -P "$SSH_PORT" scripts/load-image-vm.sh "$target:$release_dir/"
-          if timeout 28m ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" \
-            "bash '$release_dir/load-image-vm.sh' '$release_dir/image.tar.gz' 'zapbot:$GITHUB_SHA'"; then
-            echo "[$(date -u +%FT%TZ)] Imagem carregada na VM."
-          else
-            echo '::error::Falha no carregamento da imagem na VM. Consulte o código de saída e as medições de CPU, memória e disco acima. O bot ainda não foi atualizado.'
-            exit 1
-          fi
-          echo "[$(date -u +%FT%TZ)] Copiando arquivos do deploy (limite: 120s)."
-          timeout 120s scp "${ssh_opts[@]}" -P "$SSH_PORT" docker-compose.production.yml scripts/deploy-vm.sh "$target:$release_dir/"
-          echo "[$(date -u +%FT%TZ)] Iniciando atualização do bot e verificação de saúde."
-          ssh "${ssh_opts[@]}" -p "$SSH_PORT" "$target" "bash '$release_dir/deploy-vm.sh' '$APP_DIR' '$GITHUB_SHA'"
-      - name: Remover chave do runner
-        if: always()
-        run: rm -f ~/.ssh/deploy_key
+          architecture=$(docker image inspect "zapbot-$SERVICE:ci" --format '{{.Os}}/{{.Architecture}}')
+          [[ "$architecture" == linux/amd64 ]]
+      - name: Exercise health failure and rollback with isolated Docker fixtures
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: python3 scripts/test-deploy-docker.py --service "$SERVICE" --base-image "zapbot-$SERVICE:ci"
+
+  publish:
+    name: Publish immutable ${{ matrix.service }} commit image
+    needs: [changes, deployment-tests, test-odisseu, test-pokemon]
+    if: >-
+      always() && needs.changes.result == 'success' && needs.changes.outputs.any == 'true' &&
+      needs.deployment-tests.result == 'success' &&
+      (needs.test-odisseu.result == 'success' || needs.test-odisseu.result == 'skipped') &&
+      (needs.test-pokemon.result == 'success' || needs.test-pokemon.result == 'skipped') &&
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.operation != 'rollback'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      packages: write
+    # Reruns of one SHA cannot race to overwrite its immutable registry tag.
+    concurrency:
+      group: publish-${{ matrix.service }}-${{ github.sha }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Normalize GHCR repository
+        id: image
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SERVICE: ${{ matrix.service }}
+        run: |
+          owner="${OWNER,,}"
+          name=zapbot
+          if [[ "$SERVICE" == pokemon ]]; then name=zapbot-pokemon; fi
+          echo "repository=$owner/$name" >> "$GITHUB_OUTPUT"
+          echo "tag=ghcr.io/$owner/$name:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Reuse existing SHA tag without overwriting it
+        id: existing
+        env:
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          (async () => {
+            const credentials = Buffer.from(`${process.env.GITHUB_ACTOR}:${process.env.GITHUB_TOKEN}`).toString('base64');
+            const tokenUrl = new URL('https://ghcr.io/token');
+            tokenUrl.searchParams.set('service', 'ghcr.io');
+            tokenUrl.searchParams.set('scope', `repository:${process.env.IMAGE_REPOSITORY}:pull,push`);
+            const tokenResponse = await fetch(tokenUrl, {headers: {Authorization: `Basic ${credentials}`}, signal: AbortSignal.timeout(20000)});
+            if (!tokenResponse.ok) throw Error(`GHCR authentication failed (HTTP ${tokenResponse.status}).`);
+            const {token} = await tokenResponse.json();
+            if (!token) throw Error('GHCR authentication returned no token.');
+            const response = await fetch(`https://ghcr.io/v2/${process.env.IMAGE_REPOSITORY}/manifests/${process.env.GITHUB_SHA}`, {
+              method: 'HEAD', signal: AbortSignal.timeout(20000),
+              headers: {Authorization: `Bearer ${token}`, Accept: 'application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'},
+            });
+            if (response.status === 404) fs.appendFileSync(process.env.GITHUB_OUTPUT, 'exists=false\n');
+            else if (response.ok) {
+              const digest = response.headers.get('docker-content-digest');
+              if (!/^sha256:[a-f0-9]{64}$/.test(digest || '')) throw Error('GHCR returned an invalid image digest.');
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, `exists=true\ndigest=${digest}\n`);
+              console.log(`Reusing immutable commit image ${digest}.`);
+            } else throw Error(`GHCR tag lookup failed (HTTP ${response.status}); publication stopped.`);
+          })().catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
+      - name: Build Linux AMD64 image before publication
+        if: steps.existing.outputs.exists != 'true'
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ matrix.service == 'pokemon' && 'pokemon-service' || '.' }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ steps.image.outputs.tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+      - name: Load previously published immutable image
+        if: steps.existing.outputs.exists == 'true'
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          IMAGE_DIGEST: ${{ steps.existing.outputs.digest }}
+        run: docker pull --platform linux/amd64 "$IMAGE_TAG@$IMAGE_DIGEST"
+      - name: Assert platform and exercise isolated deployment rollback
+        env:
+          SERVICE: ${{ matrix.service }}
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          IMAGE_DIGEST: ${{ steps.existing.outputs.digest }}
+        run: |
+          fixture_image="$IMAGE_TAG"
+          if [[ -n "$IMAGE_DIGEST" ]]; then fixture_image="$IMAGE_TAG@$IMAGE_DIGEST"; fi
+          architecture=$(docker image inspect "$fixture_image" --format '{{.Os}}/{{.Architecture}}')
+          [[ "$architecture" == linux/amd64 ]]
+          python3 scripts/test-deploy-docker.py --service "$SERVICE" --base-image "$fixture_image"
+      - name: Publish the exact tested image without rebuilding
+        if: steps.existing.outputs.exists != 'true'
+        id: published
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+        run: |
+          docker push "$IMAGE_TAG"
+          repository_digest=$(docker image inspect "$IMAGE_TAG" --format '{{index .RepoDigests 0}}')
+          digest="${repository_digest##*@}"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Record immutable artifact
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          IMAGE_DIGEST: ${{ steps.existing.outputs.digest || steps.published.outputs.digest }}
+        run: |
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf '%s@%s\n' "$IMAGE_TAG" "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-odisseu:
+    name: ${{ inputs.operation || 'deploy' }} Odisseu
+    needs: [changes, publish]
+    if: >-
+      always() && needs.changes.result == 'success' && needs.changes.outputs.odisseu == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'push' && vars.AUTO_DEPLOY_ENABLED == 'true' && needs.publish.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && (inputs.operation == 'rollback' || needs.publish.result == 'success')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    environment: production
+    concurrency:
+      group: production-odisseu
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Request scoped deployment over verified SSH
+        id: remote
+        env:
+          DEPLOY_SERVICE: odisseu
+          DEPLOY_OPERATION: ${{ inputs.operation || 'deploy' }}
+          SSH_HOST: ${{ vars.ODISSEU_HOST || '129.148.52.187' }}
+          SSH_USER: ${{ vars.ODISSEU_USER || 'zapbot-deploy' }}
+          SSH_PORT: ${{ vars.ODISSEU_SSH_PORT || '22' }}
+          SSH_KEY: ${{ secrets.ODISSEU_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.ODISSEU_KNOWN_HOSTS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci-ssh-deploy.sh
+      - name: Record confirmed service operation
+        if: steps.remote.outputs.performed == 'true'
+        run: printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/deployed-revision"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.remote.outputs.performed == 'true'
+        with:
+          name: ${{ inputs.operation == 'rollback' && 'rolled-back' || 'deployed' }}-odisseu-${{ github.sha }}
+          path: ${{ runner.temp }}/deployed-revision
+          retention-days: 90
+          overwrite: true
+
+  deploy-pokemon:
+    name: ${{ inputs.operation || 'deploy' }} Pokemon
+    needs: [changes, publish, deploy-odisseu]
+    if: >-
+      always() && needs.changes.result == 'success' && needs.changes.outputs.pokemon == 'true' &&
+      (needs.deploy-odisseu.result == 'success' || needs.deploy-odisseu.result == 'skipped') &&
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'push' && vars.AUTO_DEPLOY_ENABLED == 'true' && needs.publish.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && (inputs.operation == 'rollback' || needs.publish.result == 'success')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    environment: production
+    concurrency:
+      group: production-pokemon
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Request scoped deployment over verified SSH
+        id: remote
+        env:
+          DEPLOY_SERVICE: pokemon
+          DEPLOY_OPERATION: ${{ inputs.operation || 'deploy' }}
+          SSH_HOST: ${{ vars.POKEMON_HOST || '34.68.189.66' }}
+          SSH_USER: ${{ vars.POKEMON_USER || 'pokemon-deploy' }}
+          SSH_PORT: ${{ vars.POKEMON_SSH_PORT || '22' }}
+          SSH_KEY: ${{ secrets.POKEMON_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.POKEMON_KNOWN_HOSTS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci-ssh-deploy.sh
+      - name: Record confirmed service operation
+        if: steps.remote.outputs.performed == 'true'
+        run: printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/deployed-revision"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.remote.outputs.performed == 'true'
+        with:
+          name: ${{ inputs.operation == 'rollback' && 'rolled-back' || 'deployed' }}-pokemon-${{ github.sha }}
+          path: ${{ runner.temp }}/deployed-revision
+          retention-days: 90
+          overwrite: true

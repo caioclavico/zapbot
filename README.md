@@ -237,59 +237,32 @@ que tudo volte a rodar sozinho se a VM reiniciar. Para ver os logs do bot:
 
 ### 6. CI/CD automático (GitHub Actions)
 
-O workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) executa
-os testes e constrói a imagem Docker Linux AMD64 no runner do GitHub. Push na
-`master` (ou execução manual nessa branch) envia a imagem comprimida por SSH,
-carrega com `docker load` e atualiza apenas o bot. PRs executam os testes e o
-build sem acessar a VM.
+O workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) identifica
+os serviços afetados, executa testes e constrói imagens Linux AMD64 no GitHub.
+Push na `main` publica imagens por SHA no GHCR e atualiza somente os serviços
+afetados, depois da configuração inicial e habilitação da automação.
+PRs validam sem acessar secrets de produção. Deploy e rollback manual usam
+`workflow_dispatch` e o Environment `production`.
 
-A VM não compila mais o projeto. A imagem de execução não inclui Java nem o
-compilador ClojureScript. O deploy usa `docker-compose.production.yml`,
-preserva `.env`, `.wwebjs_auth/` e `data/`, e não inicia Cassandra local.
-O `.env` de produção precisa conter `CASSANDRA_CONTACT_POINTS=10.0.0.234`.
+As VMs não compilam. O deploy preserva a configuração efetiva dos containers,
+`.env`, sessão WhatsApp, volumes e limites de recursos. Cassandra é independente
+e não recebe deploy ou migração automática. A rotina verifica prontidão e
+restaura a versão anterior quando a nova versão falha, inclusive por timeout.
 
-Em **Settings → Secrets and variables → Actions**, configure:
-
-| Tipo | Nome | Valor |
-|---|---|---|
-| Secret | `ORACLE_SSH_KEY` | Chave privada autorizada na VM atual do bot |
-| Secret | `ORACLE_KNOWN_HOSTS` | Linha de host SSH verificada da VM atual |
-| Variable, opcional | `ORACLE_HOST` | Padrão: `129.148.52.187` |
-| Variable, opcional | `ORACLE_USER` | Padrão: `ubuntu` |
-| Variable, opcional | `ORACLE_APP_DIR` | Padrão: `/home/ubuntu/zapbot` |
-| Variable, opcional | `ORACLE_SSH_PORT` | Padrão: `22` |
-
-Os antigos secrets de host/usuário/diretório não são usados; as configurações
-agora são variables com os padrões acima. Atualize a chave privada se ainda
-estiver cadastrada a chave da VM antiga. Use a chave da VM **do bot**, não a
-da VM do Cassandra. Nunca coloque a chave privada no repositório.
-
-Para `ORACLE_KNOWN_HOSTS`, copie a linha da VM de um arquivo `known_hosts`
-cuja identidade você já verificou. Se usar `ssh-keyscan`, confira a impressão
-digital com a chave de host da VM antes de cadastrar o resultado. Em porta
-diferente de 22, a entrada usa `[host]:porta`.
-
-O usuário precisa ter acesso ao Docker diretamente ou via `sudo -n docker`.
-A sessão do WhatsApp deve estar autenticada. O deploy aguarda até 300 segundos
-por **Cassandra conectado e `/health` saudável**. Falha de banco ou processo
-provoca tentativa de rollback. Demora do WhatsApp marca o workflow como falho,
-mas preserva o container para diagnóstico, sem restart/rollback por timeout. Os logs do Actions não exibem
-QR codes nem números de telefone.
+Consulte [a configuração completa](docs/deploy-github-actions.md), com chaves
+SSH exclusivas e restritas, verificação de host, GHCR, secrets, proteções do
+Environment e migração da branch atual `master` para `main`.
 
 ### 7. Versões e retorno à imagem anterior
 
-Cada imagem recebe a tag `zapbot:<SHA-do-commit>`. A VM salva o SHA validado em
-`/home/ubuntu/zapbot/deployed-revision` e os arquivos de cada deploy em
-`/home/ubuntu/zapbot/releases/<SHA>/`. Não é necessário ter um clone Git na VM.
-As imagens anteriores são preservadas para permitir retorno; monitore o
-espaço em disco e remova apenas versões que não serão mais utilizadas.
+As imagens são `ghcr.io/caioclavico/zapbot:<SHA>` e
+`ghcr.io/caioclavico/zapbot-pokemon:<SHA>`. A VM mantém referências privadas da
+imagem funcional e do container anterior em `/var/lib/zapbot-deploy/<serviço>`.
+Não é necessário clone Git nem compilador na VM. O rollback preserva o container
+anterior e seus volumes; nunca reverte dados Cassandra.
 
-Para retornar a uma imagem anterior sem executar sua antiga limpeza de locks,
-use o Compose da nova release, conforme os [comandos de rollback](docs/estabilidade-whatsapp.md#rollback).
-O deploy salva a referência anterior no arquivo `previous-image` na VM.
-
-As tags de release `vMAJOR.MINOR.PATCH` continuam opcionais. Push apenas de
-tag não dispara deploy; o gatilho é a branch `master`.
+Veja [deploy manual e rollback](docs/deploy-github-actions.md). Tags de release
+continuam opcionais; push apenas de tag não dispara deploy.
 
 ### Evento Novo Recomeço — versão 0.19.0
 
