@@ -8,13 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Operation (production Environment approval applies)
+        description: Operation (check validates Odisseu SSH only; production approval applies to deploy/rollback)
         type: choice
-        options: [deploy, rollback]
+        options: [check, deploy, rollback]
         default: deploy
         required: true
       service:
-        description: Service to deploy or roll back
+        description: Service to deploy or roll back (check always targets Odisseu)
         type: choice
         options: [both, odisseu, pokemon]
         default: both
@@ -55,7 +55,7 @@ jobs:
   deployment-tests:
     name: Validate deployment scripts (Python ${{ matrix.python-version }})
     needs: changes
-    if: inputs.operation != 'rollback'
+    if: inputs.operation != 'rollback' && inputs.operation != 'check'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -85,7 +85,7 @@ jobs:
   test-odisseu:
     name: Test and compile Odisseu
     needs: changes
-    if: needs.changes.outputs.odisseu == 'true' && inputs.operation != 'rollback'
+    if: needs.changes.outputs.odisseu == 'true' && inputs.operation != 'rollback' && inputs.operation != 'check'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -110,7 +110,7 @@ jobs:
   test-pokemon:
     name: Test and compile Pokemon
     needs: changes
-    if: needs.changes.outputs.pokemon == 'true' && inputs.operation != 'rollback'
+    if: needs.changes.outputs.pokemon == 'true' && inputs.operation != 'rollback' && inputs.operation != 'check'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -140,7 +140,7 @@ jobs:
     name: Validate ${{ matrix.service }} AMD64 image (no publication)
     needs: [changes, deployment-tests, test-odisseu, test-pokemon]
     if: >-
-      always() && needs.changes.result == 'success' && needs.changes.outputs.any == 'true' &&
+      inputs.operation != 'check' && always() && needs.changes.result == 'success' && needs.changes.outputs.any == 'true' &&
       needs.deployment-tests.result == 'success' &&
       (needs.test-odisseu.result == 'success' || needs.test-odisseu.result == 'skipped') &&
       (needs.test-pokemon.result == 'success' || needs.test-pokemon.result == 'skipped') &&
@@ -184,7 +184,7 @@ jobs:
     name: Publish immutable ${{ matrix.service }} commit image
     needs: [changes, deployment-tests, test-odisseu, test-pokemon]
     if: >-
-      always() && needs.changes.result == 'success' && needs.changes.outputs.any == 'true' &&
+      inputs.operation != 'check' && always() && needs.changes.result == 'success' && needs.changes.outputs.any == 'true' &&
       needs.deployment-tests.result == 'success' &&
       (needs.test-odisseu.result == 'success' || needs.test-odisseu.result == 'skipped') &&
       (needs.test-pokemon.result == 'success' || needs.test-pokemon.result == 'skipped') &&
@@ -308,7 +308,7 @@ jobs:
     name: ${{ inputs.operation || 'deploy' }} Odisseu
     needs: [changes, publish]
     if: >-
-      always() && needs.changes.result == 'success' && needs.changes.outputs.odisseu == 'true' &&
+      inputs.operation != 'check' && always() && needs.changes.result == 'success' && needs.changes.outputs.odisseu == 'true' &&
       github.ref == 'refs/heads/master' &&
       ((github.event_name == 'push' && vars.AUTO_DEPLOY_ENABLED == 'true' && needs.publish.result == 'success') ||
        (github.event_name == 'workflow_dispatch' && (inputs.operation == 'rollback' || needs.publish.result == 'success')))
@@ -349,7 +349,7 @@ jobs:
     name: ${{ inputs.operation || 'deploy' }} Pokemon
     needs: [changes, publish, deploy-odisseu]
     if: >-
-      always() && needs.changes.result == 'success' && needs.changes.outputs.pokemon == 'true' &&
+      inputs.operation != 'check' && always() && needs.changes.result == 'success' && needs.changes.outputs.pokemon == 'true' &&
       (needs.deploy-odisseu.result == 'success' || needs.deploy-odisseu.result == 'skipped') &&
       github.ref == 'refs/heads/master' &&
       ((github.event_name == 'push' && vars.AUTO_DEPLOY_ENABLED == 'true' && needs.publish.result == 'success') ||
@@ -386,3 +386,27 @@ jobs:
           path: ${{ runner.temp }}/deployed-revision
           retention-days: 90
           overwrite: true
+
+  check-odisseu:
+    name: Check Odisseu SSH access
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && inputs.operation == 'check'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    concurrency:
+      group: production-odisseu
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify restricted SSH diagnostic without deploying
+        env:
+          DEPLOY_SERVICE: odisseu
+          DEPLOY_OPERATION: check
+          SSH_HOST: ${{ vars.ODISSEU_HOST || '129.148.52.187' }}
+          SSH_USER: ${{ vars.ODISSEU_USER || 'zapbot-deploy' }}
+          SSH_PORT: ${{ vars.ODISSEU_SSH_PORT || '22' }}
+          SSH_KEY: ${{ secrets.ODISSEU_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.ODISSEU_KNOWN_HOSTS }}
+        run: bash scripts/ci-ssh-deploy.sh

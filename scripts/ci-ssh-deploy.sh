@@ -6,7 +6,11 @@ SSH_PORT=${SSH_PORT:-22}
 
 [[ "${GITHUB_REF:-}" == refs/heads/master ]] || { echo 'Deploy is restricted to master.' >&2; exit 2; }
 [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid commit SHA.' >&2; exit 2; }
-[[ "${DEPLOY_OPERATION:-}" == deploy || "${DEPLOY_OPERATION:-}" == rollback ]] || exit 2
+[[ "${DEPLOY_OPERATION:-}" == deploy || "${DEPLOY_OPERATION:-}" == rollback || "${DEPLOY_OPERATION:-}" == check ]] || exit 2
+if [[ "$DEPLOY_OPERATION" == check && "${DEPLOY_SERVICE:-}" != odisseu ]]; then
+  echo 'SSH check is available only for Odisseu.' >&2
+  exit 2
+fi
 [[ "${SSH_USER:-}" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo 'Invalid SSH user.' >&2; exit 2; }
 [[ "${SSH_HOST:-}" =~ ^[a-zA-Z0-9][a-zA-Z0-9.:-]*$ ]] || { echo 'Invalid SSH host.' >&2; exit 2; }
 [[ "$SSH_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && (( SSH_PORT <= 65535 )) || { echo 'Invalid SSH port.' >&2; exit 2; }
@@ -47,17 +51,22 @@ unset SSH_KEY SSH_KNOWN_HOSTS
 chmod 600 "$ssh_dir/key" "$ssh_dir/known_hosts"
 ssh-keygen -y -P '' -f "$ssh_dir/key" >/dev/null
 ssh-keygen -l -f "$ssh_dir/known_hosts" >/dev/null
-remote_command=rollback
-if [[ "$DEPLOY_OPERATION" == deploy ]]; then remote_command="deploy $GITHUB_SHA"; fi
+case "$DEPLOY_OPERATION" in
+  deploy) remote_command="deploy $GITHUB_SHA" ;;
+  rollback) remote_command=rollback ;;
+  check) remote_command=check ;;
+esac
 echo "Requesting $DEPLOY_OPERATION for ${DEPLOY_SERVICE:?} at commit $GITHUB_SHA."
-timeout 45m ssh -T -F /dev/null -i "$ssh_dir/key" -p "$SSH_PORT" \
+ssh_timeout=45m
+if [[ "$DEPLOY_OPERATION" == check ]]; then ssh_timeout=45s; fi
+timeout "$ssh_timeout" ssh -T -F /dev/null -i "$ssh_dir/key" -p "$SSH_PORT" \
   -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
   -o "UserKnownHostsFile=$ssh_dir/known_hosts" -o GlobalKnownHostsFile=/dev/null \
   -o UpdateHostKeys=no -o ClearAllForwardings=yes -o RequestTTY=no \
   -o ConnectTimeout=20 -o ConnectionAttempts=1 \
   -o ServerAliveInterval=15 -o ServerAliveCountMax=8 \
   "$SSH_USER@$SSH_HOST" "$remote_command"
-if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+if [[ -n "${GITHUB_OUTPUT:-}" && "$DEPLOY_OPERATION" != check ]]; then
   printf 'performed=true\n' >> "$GITHUB_OUTPUT"
   if [[ "$DEPLOY_OPERATION" == deploy ]]; then printf 'deployed=true\n' >> "$GITHUB_OUTPUT"; fi
 fi

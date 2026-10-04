@@ -256,11 +256,12 @@ sudo bash "$bootstrap_dir/scripts/install-deploy.sh" \
 
 As contas `zapbot-deploy`/`pokemon-deploy` não recebem grupo Docker nem sudo
 genérico. `authorized_keys` usa `restrict` e comando forçado; aceita somente
-`deploy SHA` e `rollback`. A entrada privilegiada valida os argumentos e fixa
-serviço, registry e diretório. Não aceita SCP, shell, port forwarding, outro
-container ou diretório fornecido pelo cliente. Biblioteca, configuração,
-baseline e estado ficam sob controle root. Atualizações destes scripts exigem
-nova instalação administrativa revisada, com automação pausada.
+`deploy SHA` e `rollback`, além de `check` para diagnóstico sem `sudo` no
+Odisseu. A entrada privilegiada valida os argumentos e fixa serviço, registry
+e diretório. Não aceita SCP, shell, port forwarding, outro container ou
+diretório fornecido pelo cliente. Biblioteca, configuração, baseline e estado
+ficam sob controle root. Atualizações destes scripts exigem nova instalação
+administrativa revisada, com automação pausada.
 
 Teste a restrição sem executar deploy; a resposta esperada é rejeição de comando:
 
@@ -325,6 +326,15 @@ obsoletas na fila não substituem uma versão mais recente da `master`. Jobs de
 deploy não são cancelados automaticamente por um push novo.
 
 ## Deploy manual, logs e rollback
+
+Para validar a conexão do Actions sem publicar imagem ou alterar a VM, use
+`workflow_dispatch` na branch `master` com `operation=check`. Essa operação
+sempre testa somente Odisseu; o seletor de serviço é ignorado. Os jobs de teste,
+build, Docker, publicação, deploy e rollback ficam ignorados. O comando forçado
+confirma autenticação, chave de host e restrição SSH sem chamar `sudo` nem
+alterar imagens, containers, volumes, arquivos persistentes ou estado da
+aplicação. O `sshd` ainda pode registrar a conexão nos logs normais de
+autenticação.
 
 Deploy manual também altera produção e exige autorização prévia. Após essa
 autorização, na página Actions → CI/CD use Run workflow na `master`, escolha a

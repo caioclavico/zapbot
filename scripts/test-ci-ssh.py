@@ -103,6 +103,17 @@ sys.exit(int(os.environ.get('FAKE_SSH_STATUS','0')))
         self.assertTrue(output.endswith("performed=true\n"))
         self.assertNotIn("deployed=true", output)
 
+    def test_check_sends_only_diagnostic_and_never_marks_deployment(self):
+        result = self.invoke(DEPLOY_OPERATION="check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.args()[-1], "check")
+        self.assertEqual((self.root / "github-output").read_text(), "performed=false\ndeployed=false\n")
+
+    def test_check_is_rejected_for_pokemon(self):
+        result = self.invoke(DEPLOY_OPERATION="check", DEPLOY_SERVICE="pokemon")
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse((self.root / "ssh-args.json").exists())
+
     def test_ssh_failure_also_removes_private_files(self):
         self.assertEqual(self.invoke(FAKE_SSH_STATUS="1").returncode, 1)
 
