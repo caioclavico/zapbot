@@ -43,9 +43,10 @@ infraestrutura de deploy e usa containers HTTP fictícios com Docker real para
 verificar falha de saúde, rollback e preservação de dados.
 
 Não há reinício de um serviço por alteração exclusiva no outro. Quando ambos
-precisam de deploy, Odisseu é atualizado primeiro; sua falha impede continuar
-para Pokémon. Isso não resolve incompatibilidades entre versões da API: mudanças
-de contrato precisam permanecer compatíveis durante a transição.
+precisam de deploy, Odisseu e Pokémon são atualizados em paralelo, com locks e
+rollback independentes: a falha de um não impede nem desfaz o deploy do outro.
+Isso não resolve incompatibilidades entre versões da API: mudanças de contrato
+precisam permanecer compatíveis nos dois sentidos durante a transição.
 
 ## Preservação e rollback
 

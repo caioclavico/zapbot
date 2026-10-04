@@ -347,10 +347,9 @@ jobs:
 
   deploy-pokemon:
     name: ${{ inputs.operation || 'deploy' }} Pokemon
-    needs: [changes, publish, deploy-odisseu]
+    needs: [changes, publish]
     if: >-
       inputs.operation != 'check' && always() && needs.changes.result == 'success' && needs.changes.outputs.pokemon == 'true' &&
-      (needs.deploy-odisseu.result == 'success' || needs.deploy-odisseu.result == 'skipped') &&
       github.ref == 'refs/heads/master' &&
       ((github.event_name == 'push' && vars.AUTO_DEPLOY_ENABLED == 'true' && needs.publish.result == 'success') ||
        (github.event_name == 'workflow_dispatch' && (inputs.operation == 'rollback' || needs.publish.result == 'success')))
