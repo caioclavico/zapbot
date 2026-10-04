@@ -4,6 +4,7 @@ const {performance} = require('node:perf_hooks');
 const {State} = require('./state.cjs');
 const metrics = require('./metrics.cjs');
 const mode = require('./mode.cjs');
+const {logError} = require('./errors.cjs');
 const REQUESTS = 'pokemon-http-requests';
 const EVENTS = 'pokemon-http-events';
 class HttpError extends Error {
@@ -112,7 +113,14 @@ class PokemonService {
     const start=performance.now();
     const record={status:'processing',fingerprint:hash,createdAt:Date.now(),requestId:input.requestId};
     // Reserva durável ANTES das regras. Após crash, processing nunca é reexecutado.
-    const claimed=await this.state.reserve(REQUESTS,key,record);
+    let claimed;
+    try {
+      claimed=await this.state.reserve(REQUESTS,key,record);
+    } catch(error) {
+      logError(this.logger,{event:'command_failed',requestId:input.requestId,command:input.command,stage:'reservation'},error);
+      // A timed-out LWT may have committed. Never retry or enter the domain.
+      throw new HttpError(500,'result_unknown','Falha ao reservar comando; não repita com outro requestId.');
+    }
     if (!claimed) throw new HttpError(409,'already_received','requestId já reservado.');
     const previous=this.chats.get(input.chatId)||Promise.resolve();
     const work=previous.catch(()=>{}).then(async()=>{
@@ -137,15 +145,21 @@ class PokemonService {
         this.logger(JSON.stringify({event:'command_completed',requestId:input.requestId,...timings}));
         return response;
       } catch(error) {
+        logError(this.logger,{event:'command_failed',requestId:input.requestId,command:input.command,
+          stage:'processing',request_total_ms:Math.round(performance.now()-start)},error);
         // Efeitos de rank são uma outbox separada; o consumidor faz dedupe.
         // Drena também se a regra falhou após produzir efeitos intermediários.
         if(!effectsSaved) {
-          effects=[...effects,...(this.domain.takeEffects(input.chatId)||[])];
-          if(effects.length) await this.enqueueEvent(input.chatId,null,effects).catch(()=>{this.accepting=false;});
+          try {
+            effects=[...effects,...(this.domain.takeEffects(input.chatId)||[])];
+            if(effects.length) await this.enqueueEvent(input.chatId,null,effects);
+          } catch(recoveryError) {
+            this.accepting=false;
+            logError(this.logger,{event:'command_recovery_failed',requestId:input.requestId},recoveryError);
+          }
         }
         // Não existe rollback transacional de toda jogada. Bloqueia replay incerto.
         await this.state.update(REQUESTS,records=>{records[key]={...record,status:'uncertain'};}).catch(()=>{});
-        this.logger(JSON.stringify({event:'command_failed',requestId:input.requestId,request_total_ms:Math.round(performance.now()-start)}));
         throw new HttpError(500,'result_unknown','Falha ao concluir comando; não repita com outro requestId.');
       } finally { open=false; }
     });
@@ -172,11 +186,13 @@ async function body(req,max=64*1024) {
 }
 function handler(service,{token}={}) {
   return async(req,res)=>{
+    let pathname='';
     const deadline=setTimeout(()=>json(res,504,{error:'request_timeout',message:'Resultado incerto; reutilize o mesmo requestId.'}),60000);
     deadline.unref();
     res.once('finish',()=>clearTimeout(deadline));res.once('close',()=>clearTimeout(deadline));
     try {
       const url=new URL(req.url,'http://localhost');
+      pathname=url.pathname;
       if(req.method==='GET'&&url.pathname==='/health')return json(res,200,{status:'ok'});
       if(req.method==='GET'&&url.pathname==='/ready')return json(res,service.ready()?200:503,{ready:service.ready()});
       if(!authorized(req,token))throw new HttpError(401,'unauthorized','Autenticação obrigatória.');
@@ -196,7 +212,12 @@ function handler(service,{token}={}) {
         res.writeHead(200,{'Content-Type':found.mimeType,'Content-Length':found.buffer.length,'Cache-Control':'private, max-age=60','X-Content-Type-Options':'nosniff'});return res.end(found.buffer);
       }
       throw new HttpError(404,'not_found','Rota não encontrada.');
-    }catch(e){json(res,e.status||500,{error:e.code||'internal_error',message:e.status?e.message:'Falha interna.'});}
+    }catch(e){
+      const known=e instanceof HttpError;
+      const status=known?e.status:500;
+      logError(service.logger,{event:'http_error',method:req.method,pathname,status},e,[token]);
+      json(res,status,{error:known?e.code:'internal_error',message:known?e.message:'Falha interna.'});
+    }
   };
 }
 module.exports={PokemonService,HttpError,handler,REQUESTS,EVENTS};

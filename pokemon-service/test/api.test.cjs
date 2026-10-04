@@ -33,9 +33,14 @@ async function fixture(t,domain=fakeDomain()) {
 test('API health, ready, auth, ordered responses and binary media',async t=>{
   const {call,domain}=await fixture(t);
   assert.equal((await call('/health',undefined,'')).status,200);
+  assert.equal((await call('/ready')).status,200);
+  assert.deepEqual(await (await call('/events/pending')).json(),{events:[]});
   assert.equal((await call('/commands',request,'wrong')).status,401);
   const response=await call('/commands',request);assert.equal(response.status,200);
   const data=await response.json();assert.equal(data.messages[0].text,'intermediária');
+  assert.equal(data.requestId,request.requestId);
+  assert.ok(Array.isArray(data.messages));assert.ok(Array.isArray(data.effects));
+  assert.equal(typeof data.timings.request_total_ms,'number');
   assert.equal(data.messages[1].type,'image');assert.ok(!JSON.stringify(data).includes('png fixture'));
   const media=await call('/media/'+data.messages[1].mediaId);assert.equal(media.headers.get('content-type'),'image/png');assert.equal(await media.text(),'png fixture');
   domain.healthy=false;assert.equal((await call('/ready')).status,503);assert.equal((await call('/commands',{...request,requestId:'new'})).status,503);
@@ -77,6 +82,56 @@ test('invalid bodies and unknown routes fail without touching domain',async t=>{
   assert.equal((await call('/nothing')).status,404);assert.equal(domain.calls,0);
 });
 module.exports={fakeDomain};
+
+test('Cassandra 4352 before domain execution logs original cause and never retries',async t=>{
+  const f=await fixture(t);const logs=[];f.service.logger=line=>logs.push(JSON.parse(line));
+  const {errors,types}=require('cassandra-driver');
+  const cause=new errors.ResponseError(types.responseErrorCodes.writeTimeout,'CAS reservation timed out');
+  Object.assign(cause,{writeType:'CAS',consistency:types.consistencies.serial,received:0,blockFor:1});
+  let attempts=0;
+  f.domain.reserve=async()=>{attempts++;throw cause;};
+  const response=await f.call('/commands',{...request,requestId:'reservation-timeout'});
+  assert.equal(response.status,500);
+  const data=await response.json();assert.equal(data.error,'result_unknown');
+  assert.ok(!JSON.stringify(data).includes('CAS reservation'));assert.ok(!data.stack);
+  const failed=logs.find(x=>x.event==='command_failed');
+  assert.equal(failed.stage,'reservation');assert.equal(failed.command,'pk treinador');
+  assert.equal(failed.error.code,4352);assert.equal(failed.error.writeType,'CAS');
+  assert.equal(failed.error.message,cause.message);assert.equal(failed.error.stack,cause.stack);
+  assert.equal(logs.find(x=>x.event==='http_error').status,500);
+  assert.equal(f.domain.calls,0);assert.equal(attempts,1);
+  assert.deepEqual(f.domain.data[REQUESTS],{});
+});
+
+test('domain errors retain original diagnostics, redact secrets and preserve uncertain replay',async t=>{
+  const f=await fixture(t);const logs=[];f.service.logger=line=>logs.push(JSON.parse(line));
+  const old=process.env.API_TOKEN;process.env.API_TOKEN='private-fixture-api-token';
+  t.after(()=>{if(old===undefined)delete process.env.API_TOKEN;else process.env.API_TOKEN=old;});
+  const cause=Object.assign(Error('original failure private-fixture-api-token Bearer header-fixture-secret'),{code:'EIO'});
+  f.domain.command=async()=>{f.domain.calls++;throw cause;};
+  const response=await f.call('/commands',request);assert.equal(response.status,500);
+  const data=await response.json();assert.equal(data.error,'result_unknown');
+  assert.ok(!JSON.stringify(data).includes('original failure'));assert.ok(!data.stack);
+  const failed=logs.find(x=>x.event==='command_failed');
+  assert.equal(failed.requestId,request.requestId);assert.equal(failed.command,request.command);
+  assert.equal(failed.error.name,'Error');assert.equal(failed.error.code,'EIO');
+  assert.match(failed.error.message,/original failure/);assert.match(failed.error.stack,/api.test.cjs/);
+  assert.ok(!JSON.stringify(logs).includes('private-fixture-api-token'));
+  assert.ok(!JSON.stringify(logs).includes('header-fixture-secret'));
+  const replay=await f.call('/commands',request);assert.equal(replay.status,409);
+  assert.equal(f.domain.calls,1);
+});
+
+test('HTTP catch sanitizes unknown errors and redacts authorization token in logs',async t=>{
+  const f=await fixture(t);const logs=[];f.service.logger=line=>logs.push(JSON.parse(line));
+  f.service.pendingEvents=()=>{throw Object.assign(Error('failure test-secret'),{code:4352,status:418});};
+  const response=await f.call('/events/pending');assert.equal(response.status,500);
+  assert.deepEqual(await response.json(),{error:'internal_error',message:'Falha interna.'});
+  const logged=logs.find(x=>x.event==='http_error');
+  assert.equal(logged.method,'GET');assert.equal(logged.pathname,'/events/pending');
+  assert.equal(logged.error.code,4352);assert.ok(logged.error.stack);
+  assert.ok(!JSON.stringify(logs).includes('test-secret'));
+});
 
 test('rank effect survives a lost command response and consumer acknowledges it separately',async t=>{
   const f=await fixture(t);

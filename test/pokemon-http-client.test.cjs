@@ -95,6 +95,19 @@ test('malformed JSON fails without retrying', async () => {
   } finally { await f.close(); }
 });
 
+test('Cassandra HTTP 500 is classified as HTTP, never INVALID_RESPONSE or retried', async () => {
+  let calls=0;
+  const f=await fixture((req,res)=>{
+    calls++;res.writeHead(500,{'Content-Type':'application/json'});
+    res.end(JSON.stringify({error:4352,message:'Falha interna.'}));
+  });
+  try {
+    await assert.rejects(f.client.command({requestId:'reservation-timeout'}),
+      error=>error.code==='HTTP' && error.status===500 && !error.message.includes('4352'));
+    assert.equal(calls,1);
+  } finally { await f.close(); }
+});
+
 test('invalid configuration and resource paths fail before network access', () => {
   assert.throws(() => createClient({ baseUrl: 'file:///tmp/test', token: 'x' }), { code: 'CONFIG' });
   assert.throws(() => createClient({ baseUrl: 'http://user:password@localhost', token: 'x' }), { code: 'CONFIG' });
