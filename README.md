@@ -239,10 +239,13 @@ que tudo volte a rodar sozinho se a VM reiniciar. Para ver os logs do bot:
 
 O workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) identifica
 os serviços afetados, executa testes e constrói imagens Linux AMD64 no GitHub.
-Push na `main` publica imagens por SHA no GHCR e atualiza somente os serviços
-afetados, depois da configuração inicial e habilitação da automação.
+Push na `master`, branch principal e de produção, publica imagens por SHA no GHCR
+e atualiza somente os serviços afetados, depois da configuração inicial e de
+autorização futura explícita para habilitar a automação.
 PRs validam sem acessar secrets de produção. Deploy e rollback manual usam
-`workflow_dispatch` e o Environment `production`.
+`workflow_dispatch` na `master`, autorização prévia e as aprovações do Environment
+`production`. A habilitação automática libera o agendamento dos jobs e preserva
+essas aprovações.
 
 As VMs não compilam. O deploy preserva a configuração efetiva dos containers,
 `.env`, sessão WhatsApp, volumes e limites de recursos. Cassandra é independente
@@ -251,7 +254,9 @@ restaura a versão anterior quando a nova versão falha, inclusive por timeout.
 
 Consulte [a configuração completa](docs/deploy-github-actions.md), com chaves
 SSH exclusivas e restritas, verificação de host, GHCR, secrets, proteções do
-Environment e migração da branch atual `master` para `main`.
+Environment e ativação na branch `master`. O guia mantém a branch e o histórico;
+esta revisão não habilita deploy automático. Os cadastros de secrets e variables
+não foram auditados porque o conector GitHub disponível não oferece essas APIs.
 
 ### 7. Versões e retorno à imagem anterior
 

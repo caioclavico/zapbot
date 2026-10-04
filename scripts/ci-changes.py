@@ -13,7 +13,7 @@ SERVICES = ("odisseu", "pokemon")
 
 
 def deployment_baselines(fetch, repository):
-    """Only trusted main push/dispatch artifacts may establish a service baseline.
+    """Only trusted master push/dispatch artifacts may establish a service baseline.
 
     A service marker survives a failure of the other service in the same run.
     Rollback markers invalidate that service's baseline. Bounded missing history
@@ -41,7 +41,7 @@ def deployment_baselines(fetch, repository):
         if run_id not in runs:
             runs[run_id] = fetch(f"/repos/{repository}/actions/runs/{run_id}")
         run = runs[run_id]
-        if (run.get("event") not in {"push", "workflow_dispatch"} or run.get("head_branch") != "main"
+        if (run.get("event") not in {"push", "workflow_dispatch"} or run.get("head_branch") != "master"
                 or (run.get("head_repository") or {}).get("full_name", "").casefold() != repository.casefold()
                 or run.get("path", "").split("@", 1)[0] != ".github/workflows/deploy.yml"
                 or run.get("head_sha") != marker[3]):
@@ -134,7 +134,7 @@ def main():
     args = parser.parse_args()
     if args.event == "workflow_dispatch":
         services = list(SERVICES) if args.service == "both" else [args.service]
-    elif args.production_baselines and args.event == "push" and os.environ.get("GITHUB_REF") == "refs/heads/main":
+    elif args.production_baselines and args.event == "push" and os.environ.get("GITHUB_REF") == "refs/heads/master":
         services = services_since_baselines(github_baselines(), args.head)
     else:
         with open(args.event_path, encoding="utf-8") as event_file:

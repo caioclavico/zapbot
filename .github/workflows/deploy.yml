@@ -2,10 +2,9 @@ name: CI/CD
 
 on:
   push:
-    # master remains validation-only until the documented migration to main.
-    branches: [main, master]
+    branches: [master]
   pull_request:
-    branches: [main, master]
+    branches: [master]
   workflow_dispatch:
     inputs:
       operation:
@@ -145,7 +144,7 @@ jobs:
       needs.deployment-tests.result == 'success' &&
       (needs.test-odisseu.result == 'success' || needs.test-odisseu.result == 'skipped') &&
       (needs.test-pokemon.result == 'success' || needs.test-pokemon.result == 'skipped') &&
-      (github.event_name == 'pull_request' || github.ref != 'refs/heads/main')
+      (github.event_name == 'pull_request' || github.ref != 'refs/heads/master')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -189,7 +188,7 @@ jobs:
       needs.deployment-tests.result == 'success' &&
       (needs.test-odisseu.result == 'success' || needs.test-odisseu.result == 'skipped') &&
       (needs.test-pokemon.result == 'success' || needs.test-pokemon.result == 'skipped') &&
-      github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.operation != 'rollback'
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/master' && inputs.operation != 'rollback'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
@@ -310,7 +309,7 @@ jobs:
     needs: [changes, publish]
     if: >-
       always() && needs.changes.result == 'success' && needs.changes.outputs.odisseu == 'true' &&
-      github.ref == 'refs/heads/main' &&
+      github.ref == 'refs/heads/master' &&
       ((github.event_name == 'push' && vars.AUTO_DEPLOY_ENABLED == 'true' && needs.publish.result == 'success') ||
        (github.event_name == 'workflow_dispatch' && (inputs.operation == 'rollback' || needs.publish.result == 'success')))
     runs-on: ubuntu-latest
@@ -352,7 +351,7 @@ jobs:
     if: >-
       always() && needs.changes.result == 'success' && needs.changes.outputs.pokemon == 'true' &&
       (needs.deploy-odisseu.result == 'success' || needs.deploy-odisseu.result == 'skipped') &&
-      github.ref == 'refs/heads/main' &&
+      github.ref == 'refs/heads/master' &&
       ((github.event_name == 'push' && vars.AUTO_DEPLOY_ENABLED == 'true' && needs.publish.result == 'success') ||
        (github.event_name == 'workflow_dispatch' && (inputs.operation == 'rollback' || needs.publish.result == 'success')))
     runs-on: ubuntu-latest

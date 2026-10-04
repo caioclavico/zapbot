@@ -2,8 +2,13 @@
 """Regression tests for deployment selection, including cross-service moves."""
 
 import importlib.util
+from contextlib import redirect_stdout
+import io
+import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -36,7 +41,7 @@ class ChangeSelectionTests(unittest.TestCase):
 
     def test_artifacts_from_pr_foreign_repo_and_other_workflow_are_ignored(self):
         repo, sha = "fixture/zapbot", "a" * 40
-        trusted = {"event": "push", "head_branch": "main", "head_sha": sha, "head_repository": {"full_name": repo}, "path": ".github/workflows/deploy.yml"}
+        trusted = {"event": "push", "head_branch": "master", "head_sha": sha, "head_repository": {"full_name": repo}, "path": ".github/workflows/deploy.yml"}
         runs = {1: {**trusted, "event": "pull_request"}, 2: {**trusted, "head_repository": {"full_name": "attacker/zapbot"}}, 3: {**trusted, "path": ".github/workflows/other.yml"}, 4: trusted}
         artifacts = [{"name": f"deployed-odisseu-{sha}", "workflow_run": {"id": run_id}} for run_id in runs]
         artifacts.append({"name": f"deployed-pokemon-{sha}", "workflow_run": {"id": 4}})
@@ -46,10 +51,51 @@ class ChangeSelectionTests(unittest.TestCase):
             return runs[int(path.rsplit("/", 1)[1])]
         self.assertEqual(changes.deployment_baselines(fetch, repo), {"odisseu": sha, "pokemon": sha})
 
+    def test_only_master_push_and_dispatch_artifacts_are_trusted(self):
+        repo, sha = "fixture/zapbot", "a" * 40
+        for branch in ("master", "main", "feature/runtime"):
+            for event in ("push", "workflow_dispatch"):
+                with self.subTest(branch=branch, event=event):
+                    run = {"event": event, "head_branch": branch, "head_sha": sha,
+                           "head_repository": {"full_name": repo}, "path": ".github/workflows/deploy.yml"}
+                    artifacts = [{"name": f"deployed-{service}-{sha}", "workflow_run": {"id": 1}}
+                                 for service in changes.SERVICES]
+                    def fetch(path):
+                        return {"artifacts": artifacts} if "/artifacts?" in path else run
+                    expected = sha if branch == "master" else None
+                    self.assertEqual(changes.deployment_baselines(fetch, repo),
+                                     {service: expected for service in changes.SERVICES})
+
+    def test_production_baselines_entrypoint_is_scoped_to_master(self):
+        head, baseline = "a" * 40, "b" * 40
+        for branch in ("master", "main", "feature/runtime"):
+            with self.subTest(branch=branch), tempfile.TemporaryDirectory(prefix="zapbot-ci-entry-") as temp:
+                event_path = Path(temp) / "event.json"
+                event_path.write_text(json.dumps({"before": "c" * 40}))
+                output = io.StringIO()
+                arguments = ["ci-changes.py", "--event", "push", "--event-path", str(event_path),
+                             "--head", head, "--production-baselines"]
+                with (patch.object(sys, "argv", arguments),
+                      patch.dict(os.environ, {"GITHUB_REF": "refs/heads/" + branch}),
+                      patch.object(changes, "github_baselines", return_value={service: baseline for service in changes.SERVICES}) as baselines,
+                      patch.object(changes, "changed_paths", return_value=["pokemon-service/runtime/main.cjs"]) as paths,
+                      redirect_stdout(output)):
+                    changes.main()
+                selection = dict(line.split("=", 1) for line in output.getvalue().splitlines())
+                self.assertEqual(json.loads(selection["services"]), ["pokemon"])
+                self.assertEqual(selection["odisseu"], "false")
+                self.assertEqual(selection["pokemon"], "true")
+                if branch == "master":
+                    baselines.assert_called_once_with()
+                    self.assertEqual(paths.call_args_list, [unittest.mock.call(baseline, head)] * 2)
+                else:
+                    baselines.assert_not_called()
+                    paths.assert_called_once_with("c" * 40, head)
+
     def test_rollback_invalidates_only_its_service_even_when_old_marker_exists(self):
         repo, new, old = "fixture/zapbot", "a" * 40, "b" * 40
         def run(sha):
-            return {"event": "workflow_dispatch", "head_branch": "main", "head_sha": sha, "head_repository": {"full_name": repo}, "path": ".github/workflows/deploy.yml"}
+            return {"event": "workflow_dispatch", "head_branch": "master", "head_sha": sha, "head_repository": {"full_name": repo}, "path": ".github/workflows/deploy.yml"}
         artifacts = [
             {"name": f"rolled-back-odisseu-{new}", "workflow_run": {"id": 2}},
             {"name": f"deployed-odisseu-{old}", "workflow_run": {"id": 1}},
@@ -75,7 +121,7 @@ class ChangeSelectionTests(unittest.TestCase):
                     {"name": f"deployed-pokemon-{newest}", "workflow_run": {"id": 2}},
                     {"name": f"deployed-odisseu-{older}", "workflow_run": {"id": 1}},
                 ]}
-            return {"event": "push", "head_branch": "main", "head_sha": newest if path.endswith("/2") else older,
+            return {"event": "push", "head_branch": "master", "head_sha": newest if path.endswith("/2") else older,
                     "head_repository": {"full_name": "Fixture/ZapBot"}, "path": ".github/workflows/deploy.yml", "conclusion": "failure"}
         self.assertEqual(changes.deployment_baselines(fetch, repo), {"odisseu": None, "pokemon": newest})
         self.assertTrue(any("page=2" in path for path in calls))
@@ -89,7 +135,7 @@ class ChangeSelectionTests(unittest.TestCase):
         def fetch(path):
             if "/artifacts?" in path:
                 return {"artifacts": artifacts, "total_count": 2}
-            return {"event": "workflow_dispatch", "head_branch": "main", "head_sha": new if path.endswith("/2") else old,
+            return {"event": "workflow_dispatch", "head_branch": "master", "head_sha": new if path.endswith("/2") else old,
                     "head_repository": {"full_name": repo}, "path": ".github/workflows/deploy.yml"}
         self.assertEqual(changes.deployment_baselines(fetch, repo), {"odisseu": None, "pokemon": None})
 

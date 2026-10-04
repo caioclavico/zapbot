@@ -32,17 +32,43 @@ umask 077
 printf '{"ghcr_owner":"%s"}\n' "$registry_owner" > "/etc/zapbot-deploy/$service/config.json"
 printf '1\n' > "/etc/zapbot-deploy/$service/persistence-version"
 login_home="/var/lib/zapbot-deploy-login/$service"
-install -d -o root -g root -m 755 /var/lib/zapbot-deploy-login
 if ! id "$deploy_user" >/dev/null 2>&1; then
+  install -d -o root -g root -m 755 /var/lib/zapbot-deploy-login
   useradd --system --create-home --home-dir "$login_home" --shell /bin/sh "$deploy_user"
 fi
-[[ $(getent passwd "$deploy_user" | cut -d: -f6) == "$login_home" ]] || {
-  echo 'Existing deployment account has an unexpected home; inspect manually.' >&2
+account=$(getent passwd "$deploy_user")
+deploy_uid=$(printf '%s\n' "$account" | cut -d: -f3)
+account_home=$(printf '%s\n' "$account" | cut -d: -f6)
+case "$account_home" in
+  "$login_home"|"/home/$deploy_user") login_home=$account_home ;;
+  *) echo 'Existing deployment account has an unexpected home; inspect manually.' >&2
+     exit 1 ;;
+esac
+[[ -d "$login_home" && ! -L "$login_home" ]] || {
+  echo 'Deployment account home must exist and must not be a symlink.' >&2
   exit 1
 }
+home_owner=$(stat -c '%u' "$login_home")
+home_mode=$(stat -c '%a' "$login_home")
+if [[ "$home_owner" != 0 && "$home_owner" != "$deploy_uid" ]] || (( (8#$home_mode & 0022) != 0 )); then
+  echo 'Deployment account home has unsafe ownership or permissions; inspect manually.' >&2
+  exit 1
+fi
+if id -nG "$deploy_user" | tr ' ' '\n' | grep -Fxq docker; then
+  echo 'Deployment account must not belong to the docker group.' >&2
+  exit 1
+fi
 # No password login; a non-locked, unusable hash permits public-key-only SSH.
 usermod --password '*' "$deploy_user"
-install -d -o root -g root -m 755 "$login_home" "$login_home/.ssh"
+[[ $(id -u "$deploy_user") == "$deploy_uid" && $(getent passwd "$deploy_user" | cut -d: -f6) == "$login_home" ]] || {
+  echo 'Deployment account UID or home changed unexpectedly.' >&2
+  exit 1
+}
+[[ ! -L "$login_home/.ssh" ]] || {
+  echo 'Deployment account .ssh directory must not be a symlink.' >&2
+  exit 1
+}
+install -d -o root -g root -m 755 "$login_home/.ssh"
 printf 'restrict,command="/usr/bin/python3 /usr/local/lib/zapbot-deploy/deploy-ssh-command.py %s" %s\n' \
   "$service" "$(cat "$public_key")" > "$login_home/.ssh/authorized_keys"
 chown root:root "$login_home/.ssh/authorized_keys"

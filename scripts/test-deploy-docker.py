@@ -42,16 +42,33 @@ for tool in ssh-keygen visudo python3; do
   chmod 755 "/tmp/validators/$tool"
 done
 export PATH="/tmp/validators:$PATH"
+useradd --uid 2345 --create-home --home-dir /home/zapbot-deploy --shell /bin/sh zapbot-deploy
+chmod 750 /home/zapbot-deploy
 printf 'ssh-ed25519 AAAA fixture-public-key\n' > /tmp/fixture.pub
 bash /bootstrap/install-deploy.sh odisseu fixture /tmp/fixture.pub --confirm-reviewed-persistence-v1
-key=/var/lib/zapbot-deploy-login/odisseu/.ssh/authorized_keys
+key=/home/zapbot-deploy/.ssh/authorized_keys
+test "$(id -u zapbot-deploy)" = '2345'
+test "$(getent passwd zapbot-deploy | cut -d: -f6)" = '/home/zapbot-deploy'
+test "$(stat -c '%u:%a' /home/zapbot-deploy)" = '2345:750'
+test "$(stat -c '%u:%a' /home/zapbot-deploy/.ssh)" = '0:755'
 test "$(stat -c '%u:%a' "$key")" = '0:644'
+test "$(cat "$key")" = 'restrict,command="/usr/bin/python3 /usr/local/lib/zapbot-deploy/deploy-ssh-command.py odisseu" ssh-ed25519 AAAA fixture-public-key'
 runuser -u zapbot-deploy -- test -r "$key"
 runuser -u zapbot-deploy -- test ! -w "$key"
+test "$(stat -c '%u:%a' /etc/zapbot-deploy/odisseu)" = '0:700'
+test "$(stat -c '%u:%a' /etc/zapbot-deploy/odisseu/config.json)" = '0:600'
 runuser -u zapbot-deploy -- test ! -r /etc/zapbot-deploy/odisseu/config.json
-test "$(stat -c '%u:%a' /etc/sudoers.d/zapbot-deploy-odisseu)" = '0:440'
+sudoers=/etc/sudoers.d/zapbot-deploy-odisseu
+test "$(stat -c '%u:%a' "$sudoers")" = '0:440'
+test "$(cat "$sudoers")" = 'zapbot-deploy ALL=(root) NOPASSWD: /usr/local/sbin/zapbot-deploy-odisseu'
 test "$(stat -c '%u:%a' /usr/local/sbin/zapbot-deploy-odisseu)" = '0:755'
 case " $(id -nG zapbot-deploy) " in *' docker '*) exit 1;; esac
+printf '%s\n' '-----BEGIN OPENSSH PRIVATE KEY-----' 'fixture-private-key' > /tmp/private.pub
+if bash /bootstrap/install-deploy.sh odisseu fixture /tmp/private.pub --confirm-reviewed-persistence-v1; then
+    echo 'Installer accepted a private key.' >&2
+    exit 1
+fi
+test "$(cat "$key")" = 'restrict,command="/usr/bin/python3 /usr/local/lib/zapbot-deploy/deploy-ssh-command.py odisseu" ssh-ed25519 AAAA fixture-public-key'
 """
     command("run", "--rm", "--user", "0:0", "--entrypoint", "/bin/bash",
             "-v", str(Path(__file__).resolve().parent) + ":/bootstrap:ro", base_image, "-c", shell)

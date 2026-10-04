@@ -2,15 +2,16 @@
 
 ## Fluxo e estado inicial
 
-O único workflow é `.github/workflows/deploy.yml`. PRs para `main`/`master`
-executam CI sem Environment ou secrets de produção. Push na `main` identifica
+O único workflow é `.github/workflows/deploy.yml`. PRs para `master`
+executam CI sem Environment ou secrets de produção. Push na `master` identifica
 alterações, testa e publica apenas os serviços afetados. Deploy manual e rollback
-usam `workflow_dispatch` na `main`. O deploy automático exige a variable de
+usam `workflow_dispatch` na `master`. O deploy automático exige a variable de
 repositório `AUTO_DEPLOY_ENABLED=true`; ausente ou `false`, ele fica desabilitado.
 
-O repositório estava na branch `master` durante a implementação. Nenhuma branch,
-secret real, VM ou configuração GitHub foi alterada pela implementação. Os
-comandos deste documento são para execução manual após revisão e aprovação.
+`master` permanece como branch principal e de produção. Esta revisão não cria,
+renomeia ou migra branches e não modifica o histórico Git. A automação não foi
+habilitada nesta etapa. Os comandos de configuração e deploy deste documento
+são para execução manual após revisão e autorização explícita.
 
 | Serviço | Imagem GHCR | VM / container | Diretório preservado |
 |---|---|---|---|
@@ -25,7 +26,7 @@ Cassandra de produção ou envia mensagens WhatsApp.
 ## Quais serviços são afetados
 
 `scripts/ci-changes.py` compara cada serviço com seu último deploy confirmado
-na `main`, incluindo os dois caminhos de renames. Os marcadores por serviço são
+na `master`, incluindo os dois caminhos de renames. Os marcadores por serviço são
 artifacts GitHub sem secrets, registrados apenas após saúde confirmada. Isso
 preserva alterações acumuladas quando outro push torna uma execução obsoleta,
 ou quando só um dos dois deploys passa. São consultados até 300 artifacts, com
@@ -85,47 +86,90 @@ não consegue inferir. Nenhuma migração é executada pela pipeline.
 
 ## Secrets e variables GitHub
 
-Crie o Environment **production** e estes quatro secrets nele:
+Checklist do Environment **production** para operar ambos os serviços:
 
-| Secret | Conteúdo |
-|---|---|
-| `ODISSEU_SSH_KEY` | Chave privada exclusiva do Actions para Odisseu |
-| `ODISSEU_KNOWN_HOSTS` | Entrada SSH do Odisseu, fingerprint verificado |
-| `POKEMON_SSH_KEY` | Chave privada exclusiva do Actions para Pokémon |
-| `POKEMON_KNOWN_HOSTS` | Entrada SSH do Pokémon, fingerprint verificado |
+| Requisito | Secret obrigatório | Conteúdo esperado |
+|---|---|---|
+| ☐ | `ODISSEU_SSH_KEY` | Chave privada exclusiva do Actions para Odisseu |
+| ☐ | `ODISSEU_KNOWN_HOSTS` | Entrada SSH do Odisseu, fingerprint verificado |
+| ☐ | `POKEMON_SSH_KEY` | Chave privada exclusiva do Actions para Pokémon |
+| ☐ | `POKEMON_KNOWN_HOSTS` | Entrada SSH do Pokémon, fingerprint verificado |
 
-Variables de repositório:
+Checklist das variables de repositório. As opções de conexão podem ficar
+ausentes quando os defaults correspondem às contas e hosts instalados:
 
-| Variable | Padrão / configuração |
-|---|---|
-| `AUTO_DEPLOY_ENABLED` | `false` até a configuração e aprovação inicial |
-| `ODISSEU_HOST` | `129.148.52.187` |
-| `ODISSEU_USER` | `zapbot-deploy` |
-| `ODISSEU_SSH_PORT` | `22` |
-| `POKEMON_HOST` | `34.68.189.66` |
-| `POKEMON_USER` | `pokemon-deploy` |
-| `POKEMON_SSH_PORT` | `22` |
+| Requisito | Variable | Obrigatoriedade | Default / estado antes da autorização |
+|---|---|---|---|
+| ☐ | `AUTO_DEPLOY_ENABLED` | Exige `true` para ativação automática futura | Ausente ou `false` desabilita deploy automático |
+| ☐ | `ODISSEU_HOST` | Opcional | `129.148.52.187` |
+| ☐ | `ODISSEU_USER` | Opcional | `zapbot-deploy` |
+| ☐ | `ODISSEU_SSH_PORT` | Opcional | `22` |
+| ☐ | `POKEMON_HOST` | Opcional | `34.68.189.66` |
+| ☐ | `POKEMON_USER` | Opcional | `pokemon-deploy` |
+| ☐ | `POKEMON_SSH_PORT` | Opcional | `22` |
+
+Os cadastros atuais de secrets e variables **não foram auditados**: o conector
+GitHub disponível não expõe APIs para consultá-los e um inventário autenticado
+não esteve disponível. A existência e as regras atuais de `production` também
+precisam ser conferidas. Estas tabelas enumeram requisitos; não confirmam que
+estão cadastrados e não mostram valores de secrets. O estado real de
+`AUTO_DEPLOY_ENABLED` não foi alterado nesta revisão.
+Um operador autorizado precisa conferir os nomes em Settings → Environments →
+production e Settings → Secrets and variables → Actions antes da ativação.
+
+Com autenticação e permissões adequadas, estas consultas exibem apenas nomes e
+metadados, sem imprimir valores dos secrets ou variables:
+
+```sh
+gh api repos/caioclavico/zapbot/environments/production \
+  --jq '{name, deployment_branch_policy, protection_rules: [(.protection_rules // [])[] | .type]}'
+gh api repos/caioclavico/zapbot/environments/production/secrets \
+  --jq '.secrets[] | {name, updated_at}'
+gh api repos/caioclavico/zapbot/actions/variables \
+  --jq '.variables[] | {name, updated_at}'
+```
+
+Uma resposta de erro nessas consultas não comprova a ausência do cadastro.
+
+Antes de publicar esta revisão, confirme que `AUTO_DEPLOY_ENABLED` está ausente
+ou `false` enquanto a ativação não tiver sido autorizada. A consulta abaixo
+mostra somente o estado normalizado da flag, sem imprimir seu valor arbitrário:
+
+```sh
+gh api repos/caioclavico/zapbot/actions/variables/AUTO_DEPLOY_ENABLED \
+  --jq 'if (.value | ascii_downcase) == "true" then "AUTO_DEPLOY_ENABLED habilitado" else "AUTO_DEPLOY_ENABLED desabilitado" end'
+```
+
+Se a consulta falhar, confirme o cadastro na interface com uma conta autorizada
+antes do push; não deduza o estado da flag a partir do erro.
 
 `GITHUB_TOKEN` é fornecido automaticamente pelo GitHub. Apenas publicação de
 imagens usa `packages: write`; os demais jobs usam permissões mínimas. Nenhum
 API_TOKEN, credencial Cassandra ou conteúdo `.env` é necessário no GitHub.
 Os antigos `ORACLE_SSH_KEY`/`ORACLE_KNOWN_HOSTS` não são usados por este workflow.
 
-Crie o Environment e restrinja seus deploys à `main` usando GitHub CLI:
+Se uma consulta autenticada com as permissões necessárias confirmar que
+`production` ainda não existe, após autorização para configuração use os
+comandos abaixo para criá-lo com deploys restritos à `master`. Para um
+Environment existente, ajuste a policy em Settings preservando suas regras
+de aprovação; confira a configuração antes de alterá-la:
 
 ```sh
 gh variable set AUTO_DEPLOY_ENABLED --repo caioclavico/zapbot --body false
 printf '%s\n' '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' |
   gh api --method PUT repos/caioclavico/zapbot/environments/production --input -
 gh api --method POST repos/caioclavico/zapbot/environments/production/deployment-branch-policies \
-  -f name=main -f type=branch
+  -f name=master -f type=branch
 ```
 
 Em Settings → Environments → production, configure as regras disponíveis no
-plano do repositório. Para a ativação inicial, use um revisor e desabilite
-autoaprovação. Manter revisor obrigatório exige aprovação em cada deploy;
-para pushes automáticos após a aprovação inicial, use branch `main` protegida
-com PR/revisão obrigatórios e policy de deploy somente `main`.
+plano do repositório, com revisor obrigatório e autoaprovação desabilitada.
+`AUTO_DEPLOY_ENABLED=true` libera o agendamento dos jobs; a aprovação do
+Environment continua exigida em cada deploy conforme suas regras. Mantenha
+`master` protegida com PR/revisão obrigatórios e policy de deploy somente
+`master`. Se o plano não oferecer os controles necessários, mantenha a automação
+desabilitada até existir um controle aprovado. As regras reais de `production`
+não foram modificadas nesta revisão.
 
 Proteja os workflows, Dockerfiles, scripts de deploy e labels de persistência
 com revisão de código. PRs de forks não têm acesso a produção; o workflow não
@@ -176,8 +220,9 @@ sempre usa `StrictHostKeyChecking=yes` e `IdentitiesOnly=yes`.
 ## Instalação manual nas VMs
 
 Revise primeiro os scripts e a compatibilidade de persistência v1 com o
-container atual. O instalador é manual: cria conta exclusiva e arquivos
-root-owned; não inicia, para ou recria nenhum container.
+container atual. O instalador é manual: cria a conta exclusiva quando ausente
+ou reutiliza a conta existente sem alterar seu UID ou home; instala arquivos
+root-owned e não inicia, para ou recria nenhum container.
 
 No Mac, dentro do checkout revisado:
 
@@ -251,50 +296,56 @@ base64 nesse arquivo privado; isso não é criptografia. O engine aceita esse
 formato sem credential helper. Packages públicos dispensam login, mas sua
 visibilidade deve ser uma decisão explícita.
 
-## Branch main e ativação
+## Ativação na branch master
 
-Depois da revisão, configure `production`, as chaves, GHCR e as contas das VMs.
-Mantenha a automação desabilitada durante a migração:
+Depois da revisão e da autorização para configuração, prepare `production`, as
+chaves, GHCR e as contas das VMs. Mantenha a automação desabilitada enquanto
+confere os requisitos; a branch de produção continua sendo `master`:
 
 ```sh
 gh variable set AUTO_DEPLOY_ENABLED --repo caioclavico/zapbot --body false
-# Executar somente após decidir migrar master para main e revisar este checkout.
-git branch -m master main
-git push -u origin main
-gh repo edit caioclavico/zapbot --default-branch main
 ```
 
-Configure proteção de `main` e revise a primeira execução de CI. Faça um deploy
-manual aprovado de `both` e acompanhe saúde/rollback; isso estabelece os dois
-marcadores iniciais de produção. Só então habilite pushes automáticos:
+Confira a proteção de `master`, a policy do Environment e os resultados de CI.
+Após autorização específica para o primeiro deploy, execute um deploy manual
+aprovado de `both` e acompanhe saúde/rollback; isso estabelece os dois marcadores
+iniciais de produção.
+
+Somente depois dessas verificações e de **autorização futura explícita para
+habilitar deploy automático**, o operador pode executar o comando abaixo. Ele
+não foi executado nesta etapa, e a aprovação do Environment permanece aplicável
+a cada deploy:
 
 ```sh
 gh variable set AUTO_DEPLOY_ENABLED --repo caioclavico/zapbot --body true
 ```
 
 O deploy serializa por serviço no GitHub e por lock na VM. Execuções automáticas
-obsoletas na fila não substituem uma versão mais recente da `main`. Jobs de
+obsoletas na fila não substituem uma versão mais recente da `master`. Jobs de
 deploy não são cancelados automaticamente por um push novo.
 
 ## Deploy manual, logs e rollback
 
-Na página Actions → CI/CD, use Run workflow na `main`, escolha a operação e o
-serviço. Pelo CLI, com os mesmos inputs do workflow:
+Deploy manual também altera produção e exige autorização prévia. Após essa
+autorização, na página Actions → CI/CD use Run workflow na `master`, escolha a
+operação e o serviço e cumpra as aprovações de `production`. Pelo CLI, com os
+mesmos inputs do workflow:
 
 ```sh
-gh workflow run deploy.yml --repo caioclavico/zapbot --ref main -f operation=deploy -f service=odisseu
-gh workflow run deploy.yml --repo caioclavico/zapbot --ref main -f operation=deploy -f service=pokemon
-gh workflow run deploy.yml --repo caioclavico/zapbot --ref main -f operation=deploy -f service=both
+gh workflow run deploy.yml --repo caioclavico/zapbot --ref master -f operation=deploy -f service=odisseu
+gh workflow run deploy.yml --repo caioclavico/zapbot --ref master -f operation=deploy -f service=pokemon
+gh workflow run deploy.yml --repo caioclavico/zapbot --ref master -f operation=deploy -f service=both
 gh run list --repo caioclavico/zapbot --workflow deploy.yml
 gh run watch --repo caioclavico/zapbot RUN_ID
 gh run view --repo caioclavico/zapbot RUN_ID --log-failed
 ```
 
-Rollback manual restaura a referência anterior retida e verifica sua saúde:
+Rollback manual exige autorização, restaura a referência anterior retida e
+verifica sua saúde:
 
 ```sh
-gh workflow run deploy.yml --repo caioclavico/zapbot --ref main -f operation=rollback -f service=odisseu
-gh workflow run deploy.yml --repo caioclavico/zapbot --ref main -f operation=rollback -f service=pokemon
+gh workflow run deploy.yml --repo caioclavico/zapbot --ref master -f operation=rollback -f service=odisseu
+gh workflow run deploy.yml --repo caioclavico/zapbot --ref master -f operation=rollback -f service=pokemon
 ```
 
 Rollback não compila e não migra dados. Logs de aplicação podem conter QR ou

@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 SSH_PORT=${SSH_PORT:-22}
 
-[[ "${GITHUB_REF:-}" == refs/heads/main ]] || { echo 'Deploy is restricted to main.' >&2; exit 2; }
+[[ "${GITHUB_REF:-}" == refs/heads/master ]] || { echo 'Deploy is restricted to master.' >&2; exit 2; }
 [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid commit SHA.' >&2; exit 2; }
 [[ "${DEPLOY_OPERATION:-}" == deploy || "${DEPLOY_OPERATION:-}" == rollback ]] || exit 2
 [[ "${SSH_USER:-}" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo 'Invalid SSH user.' >&2; exit 2; }
@@ -16,22 +16,22 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
 fi
 
 # Recheck after the concurrency queue and Environment approval. An old run must
-# never silently replace a newer commit from main.
+# never silently replace a newer commit from master.
 if [[ "${GITHUB_EVENT_NAME:-}" == push ]]; then
   node <<'NODE'
 const fs = require('node:fs');
 (async () => {
-  const url = `${process.env.GITHUB_API_URL || 'https://api.github.com'}/repos/${process.env.GITHUB_REPOSITORY}/git/ref/heads/main`;
+  const url = `${process.env.GITHUB_API_URL || 'https://api.github.com'}/repos/${process.env.GITHUB_REPOSITORY}/git/ref/heads/master`;
   const response = await fetch(url, {
     headers: {Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: 'application/vnd.github+json'},
     signal: AbortSignal.timeout(20000),
   });
-  if (!response.ok) throw Error(`Could not verify main HEAD (HTTP ${response.status}).`);
+  if (!response.ok) throw Error(`Could not verify master HEAD (HTTP ${response.status}).`);
   const data = await response.json();
-  if (!/^[a-f0-9]{40}$/.test(data.object?.sha || '')) throw Error('Invalid main HEAD response.');
+  if (!/^[a-f0-9]{40}$/.test(data.object?.sha || '')) throw Error('Invalid master HEAD response.');
   if (data.object.sha !== process.env.GITHUB_SHA) {
     fs.writeFileSync(`${process.env.RUNNER_TEMP}/zapbot-stale-${process.env.GITHUB_SHA}`, 'stale');
-    console.log('Automatic deployment skipped: main has a newer commit.');
+    console.log('Automatic deployment skipped: master has a newer commit.');
   }
 })().catch(error => { console.error(error.message); process.exitCode = 1; });
 NODE
