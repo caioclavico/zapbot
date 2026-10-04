@@ -174,6 +174,99 @@ docker rename zapbot-pokemon-before-http-errors zapbot-pokemon
 docker start zapbot-pokemon
 ```
 
+## Atualização do diagnóstico Cassandra após recuperação do SSH
+
+O acesso a `ubuntu@144.22.248.79` funcionou com
+`~/Downloads/ssh-key-2026-10-04.key`. Foram executadas somente leituras de logs,
+configuração e métricas; nenhuma alteração no Cassandra ou write de teste.
+
+- Container: `zapbot-cassandra`, imagem `cassandra:5`; Cassandra não é um serviço
+  systemd nessa VM. Os logs relevantes ficam em `/var/log/cassandra` no container.
+- `nodetool status`: único nó `10.0.0.234`, `UN` (Up/Normal), DC `datacenter1`.
+- Memória da VM: 954 MiB totais, 773 MiB usados, 180 MiB disponíveis;
+  swap: 511 MiB usados de 4 GiB. Container: 388 MiB no instante observado.
+- Heap: 368,84 MiB de 512 MiB. Disco: 7,9 GiB usados de 45 GiB, 37 GiB livres.
+- `nodetool info`: zero exceptions; `tpstats`: sem tarefas pendentes/bloqueadas
+  e sem mensagens descartadas no instante observado.
+- Configuração existente: write timeout 2000 ms, CAS contention timeout 1000 ms,
+  read timeout 5000 ms. Nenhum desses valores foi alterado.
+- Logs atual e arquivado de 2026-10-03: pausas GC registradas entre 218 e 403 ms
+  e algumas consultas SELECT lentas de aproximadamente 508–546 ms. Não foi
+  encontrado erro explícito que explique o timeout 4352 informado.
+- Sem registros OOM/I/O nos logs do kernel consultados. A pressão de memória e
+  as pausas observadas, isoladamente, **não demonstram a causa do timeout**.
+
+A causa operacional do LWT continuava não comprovada nessa fase. A reprodução precisa
+capturar `writeType`, `consistency`, `received` e `blockFor` do erro do driver.
+Uma reprodução LWT no cluster real exige autorização explícita para uma escrita
+diagnóstica isolada, pois a investigação autorizada restringiu produção a leituras.
+O serviço Pokémon continua em read-only, sem reabilitação de timers ou comandos.
+
+## LWT diagnóstica e habilitação posterior autorizadas
+
+A única LWT diagnóstica autorizada foi executada da VM Google contra o Cassandra,
+com módulo `pokemon-http-diagnostics`, partição
+`bc82d8db-25af-44c7-a7be-07ed095feadf` e TTL 600 segundos. Resultado:
+`applied=true`, 2502 ms incluindo preparação/comunicação. Um SELECT confirmou TTL
+restante de 549 segundos. Não houve retries nem execução do domínio. O erro 4352
+não foi reproduzido e sua causa histórica permanece não identificada.
+
+Após autorização para habilitar comandos, o Odisseu foi inspecionado via
+`ubuntu@129.148.52.187`, chave `~/Downloads/ssh-key-2026-09-27.key`. Seu único
+container ativo do bot usa `zapbot:f4d08d066e3bb11323b763e952ae2e73745e7d6c`:
+bundle contém o cliente HTTP e não contém `zapbot.pokemon.core`; apenas o processo
+atual Node do bot foi encontrado. URL e token já estavam configurados para Google.
+
+O serviço Google foi recriado, sem rebuild, com `POKEMON_READ_ONLY=false`, mesma
+imagem `zapbot-pokemon:76abd80`, mesmo token e volume `pokemon-data-76abd80`.
+O container read-only foi preservado parado como `zapbot-pokemon-readonly-76abd80`.
+O backup anterior `zapbot-pokemon-before-76abd80` também permanece parado.
+
+- Modo efetivo: `readOnly=false`; timers: `gameTimersEnabled=true`.
+- Startup: 15 módulos/11 partições hidratados, 30 SELECTs, zero writes no startup.
+- Container: `healthy`, restart `unless-stopped`, porta 8080.
+- Odisseu → Google: `/health`, `/ready` e `/events/pending` autenticado retornaram
+  HTTP 200; eventos pendentes vazios no instante consultado.
+- Odisseu não foi recriado nem reiniciado. Nenhum comando real do jogo foi
+  executado automaticamente para validação. Os comandos estão liberados para
+  teste pelo usuário; sucesso de `pk treinador` em produção ainda não foi medido.
+
+**Estado atual: modo normal ativo.** A observabilidade corrigida está disponível
+para diagnosticar qualquer nova ocorrência do 4352.
+
+## Causa confirmada do INVALID_RESPONSE no Odisseu
+
+O pedido `pk treinador` de `2026-10-04T03:23:12.996Z` falhou no Odisseu sem log
+correspondente no serviço Google e sem etapa `pokemon_http`/contexto WhatsApp.
+A inspeção somente leitura do Chromium do Odisseu confirmou, em 20 mensagens,
+que o ID atual tem `$1` (string), mas não `_serialized`. O valor `$1` coincide
+com `MsgKey.toString()` nas 20 amostras, incluindo mensagens com e sem participante.
+Somente nomes/tipos de campos e resultados booleanos foram exibidos; nenhum ID
+ou conteúdo de mensagem foi exposto.
+
+O adaptador `src/zapbot/pokemon_http.cljs` aceitava somente strings ou
+`id._serialized`; portanto obtinha nil e lançava `INVALID_RESPONSE` com
+"Mensagem sem identificador estável; comando não encaminhado." antes do HTTP.
+Essa falha é distinta do timeout Cassandra 4352.
+
+Correção: aceitar o ID canônico em `$1` quando `_serialized` não está presente,
+preservando prioridade do formato legado e rejeitando valores vazios/não string.
+O log de `INVALID_RESPONSE` agora inclui o motivo textual seguro do contrato.
+Não há geração de ID aleatório, alteração de identidade ou de regras do jogo.
+
+Validação local: 177 testes/1144 assertions, zero falhas/erros; 25 testes HTTP
+aprovados; `npm run build` concluído. Os testes novos cobrem formato atual,
+compatibilidade legado, repetibilidade do ID, rejeição de IDs inválidos e o fluxo
+completo de montagem do pedido, cliente fake e entrega fake, sem writes reais.
+
+Esta correção exige imagem nova e recriação do **Odisseu**. A publicação desta
+correção ainda não foi executada; nenhuma mensagem real foi reenviada.
+
+Imagem local preparada: `zapbot:whatsapp-id-fix-20261003`, Linux AMD64. A função
+de serialização extraída do bundle dessa imagem foi executada isoladamente:
+aceita `$1`, mantém `_serialized`, rejeita ausência de ID, e o bundle continua
+sem `zapbot.pokemon.core`. Nenhum bot/timer foi iniciado nessa verificação.
+
 Odisseu não precisa de nova imagem ou restart **para esta alteração do serviço**.
 A divergência histórica `INVALID_RESPONSE` permanece pendente até verificar sua
 imagem real e logs correlacionados.

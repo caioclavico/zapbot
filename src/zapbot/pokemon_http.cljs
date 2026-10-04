@@ -43,7 +43,11 @@
   (if (.-fromMe message) (.-to message) (.-from message)))
 
 (defn- serializar-id [id]
-  (if (string? id) id (some-> id .-_serialized)))
+  ;; WhatsApp atual serializa MsgKey em $1; builds anteriores usam _serialized.
+  ;; Preservar o ID canônico recebido mantém dedupe e identidade entre versões.
+  (let [valor (if (string? id) id
+                (when id (or (.-_serialized id) (aget id "$1"))))]
+    (when (and (string? valor) (not (str/blank? valor))) valor)))
 
 (defn- com-limite [executar ms fallback]
   (p/create
@@ -224,7 +228,8 @@
                                ctx (str "command:" (:requestId pedido)) resposta)]
             nil)
           (p/catch (fn [erro]
-                     (js/console.warn "[PokemonHTTP] Falha:" (or (.-code erro) "DELIVERY") (or (.-status erro) ""))
+                     (js/console.warn "[PokemonHTTP] Falha:" (or (.-code erro) "DELIVERY") (or (.-status erro) "")
+                                      (when (= "INVALID_RESPONSE" (.-code erro)) (.-message erro)))
                      (mensagem-falha erro)))))
      ctx)))
 

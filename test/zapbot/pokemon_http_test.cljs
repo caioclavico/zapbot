@@ -54,6 +54,54 @@
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally done)))))
 
+(deftest whatsapp-atual-preserva-id-canonico-dollar-sem-serialized
+  (async done
+    (let [id "false_grupo@g.us_nonce_jogador@lid"
+          message #js {:id #js {:$1 id :fromMe false :remote "grupo@g.us"
+                                :id "nonce" :participant #js {:user "jogador" :server "lid"}}
+                       :from "grupo@g.us" :author "jogador@lid"
+                       :mentionedIds #js []}]
+      (-> (p/let [primeiro (http/contexto-pedido message "pokemon" "treinador")
+                  replay (http/contexto-pedido message "pokemon" "treinador")]
+            (is (= id (:requestId primeiro)))
+            (is (= primeiro replay))
+            (is (= "pokemon treinador" (:command primeiro)))
+            (is (= "jogador@lid" (:playerId primeiro))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally done)))))
+
+(deftest serializacao-preserva-legado-e-rejeita-id-sem-string-estavel
+  (is (= "legado" (http/serializar-id #js {:_serialized "legado" :$1 "novo"})))
+  (is (= "novo" (http/serializar-id #js {:$1 "novo"})))
+  (is (= "direto" (http/serializar-id "direto")))
+  (doseq [id [nil #js {} #js {:$1 #js {}} #js {:$1 ""} " "]]
+    (is (nil? (http/serializar-id id)))))
+
+(deftest comando-whatsapp-atual-chega-ao-http-e-entrega-resposta
+  (async done
+    (let [original @http/cliente-http
+          pedidos (atom []) envios (atom [])
+          id "false_grupo@g.us_nonce_jogador@lid"
+          message #js {:id #js {:$1 id} :from "grupo@g.us" :author "jogador@lid"
+                       :mentionedIds #js []
+                       :reply (fn [texto & _] (swap! envios conj texto) (p/resolved nil))}
+          cliente #js {:command (fn [pedido]
+                                  (swap! pedidos conj (js->clj pedido :keywordize-keys true))
+                                  (p/resolved #js {:requestId (.-requestId pedido)
+                                                   :messages #js [#js {:type "text" :text "Perfil"}]
+                                                   :effects #js [] :timings #js {}}))}]
+      (reset! http/cliente-http cliente)
+      (-> (isolado!
+           (fn []
+             (p/let [resultado (http/executar message "pk" "treinador")]
+               (is (nil? resultado))
+               (is (= 1 (count @pedidos)))
+               (is (= id (:requestId (first @pedidos))))
+               (is (= "pk treinador" (:command (first @pedidos))))
+               (is (= ["Perfil"] @envios)))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn [] (reset! http/cliente-http original) (done)))))))
+
 (deftest bug-tambem-usa-servico-como-unico-dono-dos-relatorios
   (async done
     (let [chamadas (atom [])
