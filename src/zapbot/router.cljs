@@ -15,6 +15,7 @@
             [zapbot.resumo :as resumo]
             [zapbot.lembretes :as lembretes]
             [zapbot.enquetes :as enquetes]
+            [zapbot.apuracao :as apuracao]
             [zapbot.pergunta :as pergunta]
             [zapbot.bola8 :as bola8]
             [zapbot.sorteio :as sorteio]
@@ -43,6 +44,7 @@
    {:emoji "📝" :uso "resuma [30m|8h|hoje|ontem]" :desc "Resume as mensagens do período (sem período, resume todo o histórico disponível)"}
    {:emoji "⏰" :uso "lembrete <tempo> <texto>" :desc "Cria um lembrete, ex.: !lembrete 10s caçar ou !lembrete 30m reunião; use !lembretes para listar"}
    {:emoji "📊" :uso "enquete <pergunta> | <opção 1> | <opção 2>" :desc "Cria uma enquete; vote com !votar <número> e encerre com !enquete fechar"}
+    {:emoji "🗳️" :uso "apuracao" :desc "Mostra a apuração oficial da eleição presidencial pelo TSE"}
    {:emoji "🤔" :uso "pergunta <texto>"   :desc "Faz uma pergunta livre para o tio Odisseu responder com IA"}
    {:emoji "🎱" :uso "bola8 [pergunta]"    :desc "Bola 8 mágica: manda uma imagem e uma resposta aleatória"}
    {:emoji "🎲" :uso "sorteio"            :desc "Sorteia uma pessoa conhecida do chat/grupo"}
@@ -127,6 +129,7 @@
                 (if (empty? args) (p/resolved (enquetes/ver message))
                     (p/resolved (enquetes/criar! message (str/join " " args)))))
     "votar" (p/resolved (enquetes/votar! message (str/join " " args)))
+    "apuracao" (apuracao/buscar-apuracao)
     "pergunta"  (pergunta/perguntar message (str/join " " args))
     "bola8"     (bola8/jogar message (str/join " " args))
     "sorteio"   (sorteio/sortear message)
