@@ -3,6 +3,7 @@
   Não executa DDL nem migra dados. Cada módulo tem um único writer ativo."
   (:require [promesa.core :as p]
             [clojure.string :as str]
+            [pokemon-service.shutdown :as shutdown-log]
             ["cassandra-driver" :as cassandra]
             [zapbot.config :as config]))
 
@@ -20,6 +21,7 @@
 (defonce ^:private modulos (atom #{}))
 (defonce ^:private filas-gravacao (atom {}))
 (defonce ^:private falhas-gravacao (atom {}))
+(defonce ^:private gravacoes-pendentes (atom 0))
 (defonce ^:private estatisticas
   (atom {:readQueries 0 :writeQueries 0 :blockedWrites 0
          :hydratedModules 0 :hydratedPartitions 0 :hydrated false}))
@@ -140,14 +142,17 @@
                               (swap! confirmados assoc chave valor)
                               (swap! falhas-gravacao dissoc chave)
                               nil))))
-            segura (p/catch
-                    gravacao
-                    (fn [erro]
-                      (swap! falhas-gravacao assoc chave erro)
-                      (when (identical? valor (get @cache chave))
-                        (swap! cache assoc chave (get @confirmados chave {})))
-                      (js/console.error "[PokemonCassandra] gravação não confirmada:" chave (.-message erro))
-                      nil))]
+            _ (swap! gravacoes-pendentes inc)
+            segura (p/finally
+                    (p/catch
+                     gravacao
+                     (fn [erro]
+                       (swap! falhas-gravacao assoc chave erro)
+                       (when (identical? valor (get @cache chave))
+                         (swap! cache assoc chave (get @confirmados chave {})))
+                       (js/console.error "[PokemonCassandra] gravação não confirmada:" chave (.-message erro))
+                       nil))
+                    #(swap! gravacoes-pendentes dec))]
         (swap! filas-gravacao assoc chave segura)
         gravacao))))
 
@@ -235,10 +240,19 @@
                (p/catch (fn [_] nil))
                (p/then (fn [_] (p/rejected erro)))))))))
 
+(defn pendentes []
+  {:persistence_pending @gravacoes-pendentes
+   :persistence_failed_modules (count @falhas-gravacao)})
+
 (defn encerrar! []
   (reset! pronto false)
   (let [^js c @client]
-    (-> (aguardar-todas!)
-        (p/finally (fn []
-                     (reset! client nil)
-                     (when c (.shutdown c)))))))
+    ;; Promesa 12's CLJS finally is a notification callback: it returns the
+    ;; original promise without waiting for the callback's asynchronous work.
+    ;; Native finally waits for the driver and preserves a drain rejection.
+    (.finally (js/Promise.resolve
+               (shutdown-log/etapa "aguardar_todas_BANG_" aguardar-todas! pendentes))
+              (fn []
+                (reset! client nil)
+                (when c
+                  (shutdown-log/etapa "client.shutdown" #(.shutdown c) pendentes))))))

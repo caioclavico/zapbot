@@ -5,6 +5,7 @@ const {State} = require('./state.cjs');
 const metrics = require('./metrics.cjs');
 const mode = require('./mode.cjs');
 const {logError} = require('./errors.cjs');
+const shutdown = require('./shutdown.cjs');
 const REQUESTS = 'pokemon-http-requests';
 const EVENTS = 'pokemon-http-events';
 class HttpError extends Error {
@@ -171,7 +172,19 @@ class PokemonService {
     const ids=new Set(this.pendingEvents(Number.MAX_SAFE_INTEGER).flatMap(e=>e.messages.map(m=>m.mediaId).filter(Boolean)));
     await this.media.prune(ids);
   }
-  async close() { this.accepting=false; this.domain.stopTimers(); await Promise.allSettled([...this.active.values()]); await this.domain.shutdown(); }
+  shutdownPending() {
+    const pending={http_active:this.active.size,http_chat_queues:this.chats.size,state_queues:this.state.queues.size};
+    try { if(this.domain.shutdownPending)Object.assign(pending,this.domain.shutdownPending()); }
+    catch {pending.diagnostics_unavailable=true;}
+    return pending;
+  }
+  async close() {
+    return shutdown.observe(async()=>{
+      this.accepting=false; this.domain.stopTimers();
+      await shutdown.stage('active.allSettled',()=>Promise.allSettled([...this.active.values()]));
+      await shutdown.stage('domain.shutdown',()=>this.domain.shutdown());
+    },{logger:this.logger,pending:()=>this.shutdownPending()});
+  }
 }
 function authorized(req,token) {
   if (!token) return true;

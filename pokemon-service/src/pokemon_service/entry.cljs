@@ -2,6 +2,7 @@
   "Fachada do domínio para o processo HTTP. Recebe somente dados neutros."
   (:require [clojure.string :as str]
             [promesa.core :as p]
+            [pokemon-service.shutdown :as shutdown-log]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.config :as config]
             [zapbot.desempenho :as desempenho]
@@ -24,9 +25,13 @@
   (when-not config/read-only?
     (pokemon/iniciar! (fn [chat-id resposta] (emitir chat-id (clj->js resposta))))))
 (defn stop-timers [] (pokemon/parar!))
+(defn shutdown-pending []
+  (clj->js (merge (pokemon/filas-pendentes) (armazenamento/pendentes))))
 (defn shutdown []
   (stop-timers)
-  (p/let [_ (pokemon/aguardar-operacoes!)] (armazenamento/encerrar!)))
+  (p/let [_ (shutdown-log/etapa "aguardar_operacoes_BANG_" pokemon/aguardar-operacoes!
+                               pokemon/filas-pendentes)]
+    (armazenamento/encerrar!)))
 
 (defn contexto-neutro [^js pedido emitir]
   (let [{:keys [requestId chatId playerId playerName context]} (js->clj pedido :keywordize-keys true)

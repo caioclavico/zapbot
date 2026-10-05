@@ -5658,6 +5658,7 @@
         resultado-final))))
 
 (defonce ^:private filas-jogadas (atom {}))
+(defonce ^:private operacoes-pendentes (atom 0))
 (defonce ^:private contextos-filas (atom {}))
 
 (defn- enfileirar-jogada [cid acao & [ctx]]
@@ -5670,10 +5671,12 @@
                   (p/then (fn [_]
                             (desempenho/dependencia! ctx nil)
                             (desempenho/medir! ctx "rodada_pokemon" acao))))]
+    (swap! operacoes-pendentes inc)
     (swap! filas-jogadas assoc cid atual)
     (swap! contextos-filas assoc cid ctx)
     (p/finally atual
                (fn []
+                 (swap! operacoes-pendentes dec)
                  (when (identical? atual (get @filas-jogadas cid))
                    (swap! filas-jogadas dissoc cid)
                    (swap! contextos-filas dissoc cid))))))
@@ -5766,3 +5769,6 @@
 
 (defn aguardar-operacoes! []
   (p/all (vals @filas-jogadas)))
+
+(defn filas-pendentes []
+  {:game_operations @operacoes-pendentes :game_chat_queues (count @filas-jogadas)})

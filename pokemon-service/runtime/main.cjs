@@ -7,6 +7,7 @@ const domain=require('../target/domain.cjs');
 const {PokemonService,handler}=require('./service.cjs');
 const {MediaStore}=require('./media.cjs');
 const {startBackground}=require('./background.cjs');
+const {createStop}=require('./shutdown.cjs');
 const host=process.env.HOST||'127.0.0.1';
 const port=Number(process.env.PORT||8090);
 const token=process.env.API_TOKEN||'';
@@ -23,10 +24,5 @@ service.initialize().then(()=>{if(closing)return;cleanup=startBackground(service
 });
 
 let closing=false;
-async function stop(){
-  if(closing)return;closing=true;clearInterval(cleanup);service.accepting=false;
-  server.close();
-  const deadline=setTimeout(()=>process.exit(1),60000);deadline.unref();
-  await service.close();clearTimeout(deadline);process.exit(0);
-}
-process.on('SIGTERM',stop);process.on('SIGINT',stop);
+const stop=createStop({service,server,cleanup:()=>{closing=true;clearInterval(cleanup);}});
+process.on('SIGTERM',()=>stop('SIGTERM'));process.on('SIGINT',()=>stop('SIGINT'));
