@@ -1,6 +1,7 @@
 (ns zapbot.whatsapp-saude
   "Diagnóstico passivo: nunca reinicia o cliente nem acessa credenciais."
   (:require ["node:http" :as http]
+            [zapbot.recursos :as recursos]
             [zapbot.desempenho :as desempenho]))
 
 (defn log! [mensagem]
@@ -70,9 +71,11 @@
 (defn atender! [saude ^js client ^js req ^js res]
   (cond
     (and (= "GET" (.-method req)) (= "/diagnostics" (.-url req)))
-    (do
+    (let [amostra (recursos/amostra)
+          dados (cond-> {:operacoes (desempenho/pendentes)}
+                  amostra (assoc :recursos amostra))]
       (.writeHead res 200 #js {"Content-Type" "application/json" "Cache-Control" "no-store"})
-      (.end res (js/JSON.stringify (clj->js {:operacoes (desempenho/pendentes)}))))
+      (.end res (js/JSON.stringify (clj->js dados))))
     (and (= "GET" (.-method req)) (= "/health" (.-url req)))
     (let [dados (resposta saude client)]
       (.writeHead res (if (= "ok" (:status dados)) 200 503)

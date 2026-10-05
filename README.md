@@ -879,6 +879,10 @@ Guias: `!pokemon ajuda raid`, `!pokemon ajuda shiny` e `!pokemon ajuda semanais`
 Consulte [o relatório e guia de operação](docs/estabilidade-whatsapp.md) para
 estados, timeouts, limites da verificação, deploy e rollback preservando a sessão.
 
+Para CPU, RAM, latência e possíveis processos órfãos, consulte
+[o diagnóstico de recursos do Chromium e Node](docs/recursos-chromium.md),
+incluindo as variáveis para desativar as novas flags e a coleta de métricas.
+
 ```bash
 sudo docker exec zapbot node scripts/healthcheck.js
 sudo docker logs --since 10m --timestamps zapbot

@@ -6,6 +6,7 @@
             ["qrcode-terminal" :as qrcode]
             [zapbot.config :as config]
             [zapbot.desempenho :as desempenho]
+            [zapbot.recursos :as recursos]
             [zapbot.whatsapp-saude :as saude]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.historico :as historico]
@@ -136,15 +137,21 @@
         (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" err))))))
 
 (defn- on-message [message]
-  (if (and (permitido-pelo-ambiente? message)
-           (desempenho/pokemon? (.-body message)))
-    (desempenho/acompanhar-mensagem! message #(processar-mensagem message %))
-    (processar-mensagem message nil)))
+  (let [executar #(if (and (permitido-pelo-ambiente? message)
+                          (desempenho/pokemon? (.-body message)))
+                   (desempenho/acompanhar-mensagem! message (fn [ctx] (processar-mensagem message ctx)))
+                   (processar-mensagem message nil))]
+    (if (and (permitido-pelo-ambiente? message)
+             (str/starts-with? (str/trim (or (.-body message) "")) config/prefix))
+      (recursos/medir-comando! executar)
+      (executar))))
 
 (defn opcoes-puppeteer []
   (cond-> {:protocolTimeout 300000
            :args (clj->js (cond-> ["--no-sandbox" "--disable-setuid-sandbox"
                                    "--disable-quic" "--disable-features=Quic"]
+                           config/chromium-low-resource-mode
+                           (into ["--disable-extensions" "--disable-default-apps" "--no-first-run"])
                            config/chromium-disable-gpu (conj "--disable-gpu")))}
     config/puppeteer-executable-path (assoc :executablePath config/puppeteer-executable-path)))
 
@@ -163,6 +170,7 @@
       (.on js/process sinal
            (fn []
              (when (compare-and-set! encerrando? false true)
+               (recursos/parar!)
                (saude/atualizar! diagnostico "DISCONNECTED" "Encerrando navegador; preservando sessão.")
                (pokemon/parar!)
                (.close server)
@@ -185,6 +193,7 @@
           server (saude/servir! diagnostico client)]
       (configurar-envio-seguro! client)
       (saude/acompanhar! diagnostico client)
+      (recursos/iniciar! client)
       (encerrar-com-sessao! client diagnostico server)
       (.on client "qr" on-qr)
       (.on client "ready" (fn [] (on-ready client)))

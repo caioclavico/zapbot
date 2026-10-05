@@ -2,6 +2,7 @@
   (:require [cljs.test :refer-macros [deftest is]]
             ["node:events" :refer [EventEmitter]]
             [zapbot.desempenho :as desempenho]
+            [zapbot.recursos :as recursos]
             [zapbot.whatsapp-saude :as saude]))
 
 (defn cliente []
@@ -65,4 +66,14 @@
       (saude/atender! (saude/criar) nil #js {:method "GET" :url "/diagnostics"} res)
       (is (= 200 @codigo))
       (is (= {:operacoes [{:id 7 :pendentes ["fila_pokemon"]}]}
+             (js->clj (js/JSON.parse @corpo) :keywordize-keys true))))))
+
+(deftest diagnostico-retorna-amostra-em-cache-sem-consultar-browser
+  (let [corpo (atom nil)
+        amostra #js {:node #js {:rss_bytes 12345}}
+        res #js {:writeHead (fn [& _]) :end #(reset! corpo %)}]
+    (with-redefs [recursos/amostra (fn [] amostra)
+                  desempenho/pendentes (fn [] [])]
+      (saude/atender! (saude/criar) nil #js {:method "GET" :url "/diagnostics"} res)
+      (is (= {:operacoes [] :recursos {:node {:rss_bytes 12345}}}
              (js->clj (js/JSON.parse @corpo) :keywordize-keys true))))))

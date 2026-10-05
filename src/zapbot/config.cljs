@@ -27,6 +27,7 @@
 (def default-currencies (env-list "CURRENCY_DEFAULT" ["USD-BRL" "EUR-BRL" "BTC-BRL"]))
 ;; usado em ARM64/Docker, onde o Puppeteer não baixa um Chromium próprio
 (def chromium-disable-gpu (= "true" (str/lower-case (env "CHROMIUM_DISABLE_GPU" "false"))))
+(def chromium-low-resource-mode (= "true" (str/lower-case (env "CHROMIUM_LOW_RESOURCE_MODE" "true"))))
 (def puppeteer-executable-path (env "PUPPETEER_EXECUTABLE_PATH"))
 ;; chave gratuita em https://www.themoviedb.org/settings/api (usada pelo !filme)
 (def tmdb-api-key (env "TMDB_API_KEY"))
@@ -62,3 +63,9 @@
 (def pokemon-timeout-ms (inteiro-positivo "POKEMON_TIMEOUT_MS" 45000))
 (def pokemon-event-poll-ms (inteiro-positivo "POKEMON_EVENT_POLL_MS" 15000))
 (def pokemon-max-media-bytes (inteiro-positivo "POKEMON_MAX_MEDIA_BYTES" (* 10 1024 1024)))
+
+;; Diagnóstico passivo do processo e navegador; false elimina o coletor/timers.
+(def odisseu-resource-metrics-enabled
+  (= "true" (str/lower-case (env "ODISSEU_RESOURCE_METRICS_ENABLED" "true"))))
+(def odisseu-resource-metrics-interval-ms
+  (max 15000 (inteiro-positivo "ODISSEU_RESOURCE_METRICS_INTERVAL_MS" 60000)))

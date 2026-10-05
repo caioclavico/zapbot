@@ -110,6 +110,10 @@ o startup não tentará remover SingletonLock nem recriar a sessão.
 
 ## Recursos: o que mudou e o que foi preservado
 
+A configuração atual e o coletor passivo de CPU/memória/event loop estão em
+[Recursos do Chromium e Node](recursos-chromium.md), com limites da análise e
+um procedimento de comparação sem resultados de produção presumidos.
+
 Não é esperada redução expressiva de RAM do Chromium. O servidor local adiciona
 pequeno custo não medido; cada sonda executa um Node curto por minuto. Cooldown
 reduz chamadas inúteis ao Google durante limitação, sem suprimir Gemini.

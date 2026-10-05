@@ -1,5 +1,6 @@
 (ns zapbot.core-test
   (:require [cljs.test :refer-macros [async deftest is]]
+            [zapbot.recursos :as recursos]
             [zapbot.desempenho :as desempenho]
             [zapbot.core :as core]))
 
@@ -118,7 +119,7 @@
 
 (deftest main-impede-duas-inicializacoes-inclusive-apos-erro
   (async done
-    (let [criados (atom 0) inicializados (atom 0)
+    (let [criados (atom 0) inicializados (atom 0) monitores (atom 0)
           client #js {:on (fn [& _]) :sendMessage (fn [& _])
                       :initialize (fn []
                                     (swap! inicializados inc)
@@ -129,6 +130,9 @@
                         core/Client (fn [_] (swap! criados inc) client)
                         core/LocalAuth (fn [] #js {})
                         core/encerrar-com-sessao! (fn [& _])
+                        recursos/iniciar! (fn [recebido]
+                                            (is (identical? client recebido))
+                                            (swap! monitores inc))
                         zapbot.whatsapp-saude/servir! (fn [& _])
                         zapbot.armazenamento/iniciar! (fn [] (js/Promise.resolve nil))]
             (let [primeira (core/main)]
@@ -138,6 +142,7 @@
           (.then (fn [_]
                    (is (= 1 @criados))
                    (is (= 1 @inicializados))
+                   (is (= 1 @monitores))
                    (with-redefs [core/iniciado? guarda]
                      (is (nil? (core/main))))))
           (.catch (fn [erro] (is false (str erro))))
@@ -152,3 +157,39 @@
     (is (= (conj (js->clj (:args padrao)) "--disable-gpu")
            (js->clj (:args teste))))
     (is (= (dissoc padrao :args) (dissoc teste :args)))))
+
+(deftest modo-chromium-reversivel-preserva-flags-gpu-timeout-e-executavel
+  (doseq [modo? [false true]
+          gpu? [false true]
+          executavel [nil "/usr/bin/chromium"]]
+    (let [opcoes (with-redefs [zapbot.config/chromium-low-resource-mode modo?
+                              zapbot.config/chromium-disable-gpu gpu?
+                              zapbot.config/puppeteer-executable-path executavel]
+                   (core/opcoes-puppeteer))
+          esperado (cond-> ["--no-sandbox" "--disable-setuid-sandbox"
+                             "--disable-quic" "--disable-features=Quic"]
+                     modo? (into ["--disable-extensions" "--disable-default-apps" "--no-first-run"])
+                     gpu? (conj "--disable-gpu"))]
+      (is (js/Array.isArray (:args opcoes)))
+      (is (= esperado (js->clj (:args opcoes))))
+      (is (= 300000 (:protocolTimeout opcoes)))
+      (is (= (cond-> {:protocolTimeout 300000}
+               executavel (assoc :executablePath executavel))
+             (dissoc opcoes :args))))))
+
+(deftest latencia-mede-apenas-comandos-permitidos-preservando-contexto-pokemon
+  (let [medidos (atom 0) processados (atom []) ctx #js {:teste true}]
+    (with-redefs [zapbot.config/app-env "development"
+                  zapbot.config/dev-group-id "teste@g.us"
+                  zapbot.config/prefix "!"
+                  recursos/medir-comando! (fn [executar] (swap! medidos inc) (executar))
+                  desempenho/acompanhar-mensagem! (fn [_ executar] (executar ctx))
+                  core/processar-mensagem (fn [message contexto]
+                                            (swap! processados conj [(.-body message) contexto])
+                                            "resultado")]
+      (doseq [body ["!pk treinador" "  !ping" "mensagem normal" nil]]
+        (is (= "resultado" (core/on-message #js {:from "teste@g.us" :body body}))))
+      (is (= "resultado" (core/on-message #js {:from "outro@g.us" :body "!pk treinador"})))
+      (is (= 2 @medidos))
+      (is (identical? ctx (second (first @processados))))
+      (is (every? nil? (map second (rest @processados)))))))
