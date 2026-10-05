@@ -46,6 +46,7 @@ class DockerModel:
         self.old_starts = 0
         self.faulted = False
         self.architecture, self.version, self.image_service = 'amd64', '1', service
+        self.target_id, self.revision = NEW_IMAGE, 'a' * 40
         host = {'Memory': 1342177280, 'MemorySwap': 2147483648, 'ShmSize': 67108864,
                 'RestartPolicy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0},
                 'NetworkMode': 'bridge', 'AutoRemove': False, 'ReadonlyRootfs': False,
@@ -100,11 +101,12 @@ class DockerModel:
                          for container in self.containers.values() if container['State']['Running']]
         if path.startswith('/images/') and path.endswith('/json'):
             reference = path[len('/images/'):-len('/json')]
-            if reference == OLD_IMAGE:
+            if reference == OLD_IMAGE and self.target_id != OLD_IMAGE:
                 return 200, {'Id': OLD_IMAGE, 'Os': 'linux', 'Architecture': 'amd64', 'Config': {'Labels': {}}}
-            return 200, {'Id': NEW_IMAGE, 'Os': 'linux', 'Architecture': self.architecture,
+            return 200, {'Id': self.target_id, 'Os': 'linux', 'Architecture': self.architecture,
                          'Config': {'Labels': {DEPLOY.SERVICE_LABEL: self.image_service,
-                                               DEPLOY.STORAGE_LABEL: self.version}}}
+                                               DEPLOY.STORAGE_LABEL: self.version,
+                                               DEPLOY.REVISION_LABEL: self.revision}}}
         if path == '/images/create':
             if self.scenario == 'pull-failure':
                 return 200, (json.dumps({'error': SECRET}) + '\n').encode()
@@ -118,6 +120,8 @@ class DockerModel:
             host = copy.deepcopy(data['HostConfig'])
             config = {key: copy.deepcopy(value) for key, value in data.items()
                       if key not in ('HostConfig', 'NetworkingConfig')}
+            if self.scenario == 'wrong-created-revision':
+                config['Labels'][DEPLOY.REVISION_LABEL] = 'd' * 40
             container = {'Id': identifier, 'Name': '/' + query['name'][0], 'Image': data['Image'],
                          'Config': config, 'HostConfig': host, 'Mounts': copy.deepcopy(self.original['Mounts']),
                          'RestartCount': 0, 'State': {'Running': False, 'Paused': False,
@@ -347,6 +351,8 @@ class DeployTest(unittest.TestCase):
                 self.deploy()
                 active = model.container(model.name)
                 self.assertEqual(active['Image'], NEW_IMAGE)
+                self.assertEqual(active['Config']['Labels'][DEPLOY.REVISION_LABEL], 'a' * 40)
+                self.assertEqual(active['Config']['Labels']['operator-label'], 'must-survive')
                 self.assertFalse(model.containers['old']['State']['Running'])
                 self.assertEqual(active['Config']['Env'], model.original['Config']['Env'])
                 self.assertIn('POKEMON_READ_ONLY=false', active['Config']['Env'])
@@ -420,6 +426,79 @@ class DeployTest(unittest.TestCase):
                 self.assertTrue(self.model.containers['old']['State']['Running'])
                 self.assertFalse(any(path.endswith('/stop') for _, path, _, _ in self.model.calls))
                 self.assert_preserved()
+
+    def test_same_image_id_with_stale_or_missing_container_revision_is_replaced(self):
+        for service in ('pokemon', 'odisseu'):
+            for revision in ('5' * 40, None):
+                with self.subTest(service=service, revision=revision):
+                    model = self.fixture(service)
+                    model.target_id = OLD_IMAGE
+                    if revision:
+                        model.containers['old']['Config']['Labels'][DEPLOY.REVISION_LABEL] = revision
+                    self.deploy()
+                    active = model.container(model.name)
+                    self.assertNotEqual(active['Id'], 'old')
+                    self.assertEqual(active['Image'], OLD_IMAGE)
+                    self.assertEqual(active['Config']['Labels'][DEPLOY.REVISION_LABEL], 'a' * 40)
+                    self.assertFalse(any('already healthy' in line for line in self.output))
+                    decision = next(line for line in self.output if 'version decision' in line)
+                    self.assertIn('"decision": "replace"', decision)
+                    self.assertIn('"requested_revision": "' + 'a' * 40 + '"', decision)
+                    self.assert_preserved()
+
+    def test_same_id_and_revision_is_noop_only_after_health_verification(self):
+        model = self.fixture('pokemon')
+        model.target_id = OLD_IMAGE
+        model.containers['old']['Config']['Labels'][DEPLOY.REVISION_LABEL] = 'a' * 40
+        self.deploy()
+        self.assertEqual(model.container(model.name)['Id'], 'old')
+        self.assertEqual(model.created, [])
+        self.assertFalse(any(path.endswith('/stop') for _, path, _, _ in model.calls))
+        self.assertTrue(any('already healthy' in line for line in self.output))
+        self.assert_preserved()
+
+    def test_missing_or_wrong_image_revision_blocks_before_stop(self):
+        for revision in (None, 'd' * 40, SECRET):
+            with self.subTest(revision=revision):
+                model = self.fixture('pokemon')
+                model.revision = revision
+                with self.assertRaises(DEPLOY.DeployError):
+                    self.deploy()
+                self.assertTrue(model.containers['old']['State']['Running'])
+                self.assertFalse(any(path.endswith('/stop') for _, path, _, _ in model.calls))
+                self.assertTrue(any('"decision": "reject-image"' in line for line in self.output))
+                self.assert_preserved()
+
+    def test_rollback_restores_retained_container_even_with_identical_image_id(self):
+        model = self.fixture('pokemon')
+        model.target_id = OLD_IMAGE
+        model.containers['old']['Config']['Labels'][DEPLOY.REVISION_LABEL] = '5' * 40
+        self.deploy()
+        self.model.scenario = 'current-unhealthy'
+        self.deploy('rollback')
+        self.assertEqual(model.container(model.name)['Id'], 'old')
+        self.assertEqual(model.container(model.name)['Config']['Labels'][DEPLOY.REVISION_LABEL], '5' * 40)
+        self.assertEqual(len(model.created), 1)
+        self.assert_preserved()
+
+    def test_same_revision_on_different_image_id_still_deploys(self):
+        model = self.fixture('pokemon')
+        model.containers['old']['Config']['Labels'][DEPLOY.REVISION_LABEL] = 'a' * 40
+        self.deploy()
+        self.assertEqual(model.container(model.name)['Image'], NEW_IMAGE)
+        self.assertNotEqual(model.container(model.name)['Id'], 'old')
+        self.assert_preserved()
+
+    def test_wrong_revision_on_created_container_rolls_back_without_starting_it(self):
+        model = self.fixture('pokemon')
+        model.scenario = 'wrong-created-revision'
+        with self.assertRaises(DEPLOY.DeployError):
+            self.deploy()
+        self.assertEqual(model.container(model.name)['Id'], 'old')
+        self.assertTrue(model.containers['old']['State']['Running'])
+        self.assertFalse(any(path.startswith('/containers/new') and path.endswith('/start')
+                             for _, path, _, _ in model.calls))
+        self.assert_preserved()
 
     def test_manual_rollback_reuses_original_container_and_health_is_rechecked(self):
         self.fixture('pokemon')

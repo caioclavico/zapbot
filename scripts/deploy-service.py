@@ -28,6 +28,7 @@ SERVICES = {
 SERVICE_LABEL = 'io.zapbot.service'
 STORAGE_LABEL = 'io.zapbot.persistence-version'
 DEPLOYMENT_LABEL = 'io.zapbot.deployment-id'
+REVISION_LABEL = 'org.opencontainers.image.revision'
 IMAGE_RE = re.compile(r'^ghcr\.io/[a-z0-9][a-z0-9._-]*/(zapbot(?:-pokemon)?):[0-9a-f]{40}$')
 POKEMON_HEALTH = """const h=require('node:http');
 const host=process.env.HOST==='::1'?'::1':'127.0.0.1';
@@ -319,7 +320,7 @@ class Deployment:
         config['Image'] = image['Id']
         config['StopTimeout'] = max(self.grace_seconds, config.get('StopTimeout') or 0)
         config['Labels'] = dict(config.get('Labels') or {})
-        for label in (SERVICE_LABEL, STORAGE_LABEL):
+        for label in (SERVICE_LABEL, STORAGE_LABEL, REVISION_LABEL):
             config['Labels'][label] = image['Config']['Labels'][label]
         config['Labels'][DEPLOYMENT_LABEL] = self.transaction_name
         # Reattach every Docker-created anonymous volume by its actual name.
@@ -495,7 +496,10 @@ class Deployment:
             self.previous, self.original_state = current, self.state()
             self.single_writer(current['Id'])
             self.persistence(current)
-            self.compatibility(self.engine.image(current['Image']), legacy=True)
+            current_image = self.engine.image(current['Image'])
+            self.compatibility(current_image, legacy=True)
+            def safe_revision(value):
+                return value if isinstance(value, str) and re.fullmatch(r'[0-9a-f]{40}', value) else 'missing-or-invalid'
             # Emergency rollback must work when the currently deployed version
             # has become unhealthy or stopped after its original success.
             if action == 'deploy':
@@ -513,6 +517,14 @@ class Deployment:
                 self.engine.pull(image, self.registry_auth())
                 target = self.engine.image(image)
                 self.compatibility(target)
+                requested_revision = image.rsplit(':', 1)[-1]
+                if (target.get('Config', {}).get('Labels') or {}).get(REVISION_LABEL) != requested_revision:
+                    self.output(self.service + ': version decision ' + json.dumps({
+                        'current_revision': safe_revision((current['Config'].get('Labels') or {}).get(REVISION_LABEL)),
+                        'requested_revision': requested_revision,
+                        'requested_image_revision': safe_revision((target.get('Config', {}).get('Labels') or {}).get(REVISION_LABEL)),
+                        'decision': 'reject-image'}, sort_keys=True))
+                    raise DeployError('Requested image revision is missing or differs from commit SHA')
                 configuration, retained = self.clone(current, target), None
             elif action == 'rollback':
                 if not self.original_state or not self.original_state.get('previous-container'):
@@ -525,9 +537,20 @@ class Deployment:
                 target = self.engine.image(retained['Image'])
                 self.compatibility(target, legacy=True)
                 image = self.original_state['previous-image']
+                requested_revision = (retained['Config'].get('Labels') or {}).get(REVISION_LABEL)
             else:
                 raise DeployError('Unknown deployment action')
-            if target['Id'] == current['Image']:
+            current_revision = (current['Config'].get('Labels') or {}).get(REVISION_LABEL)
+            already_current = (action == 'deploy' and target['Id'] == current['Image']
+                               and current_revision == requested_revision)
+            self.output(self.service + ': version decision ' + json.dumps({
+                'action': action, 'current_image_id': current['Image'], 'requested_image_id': target['Id'],
+                'current_revision': safe_revision(current_revision),
+                'requested_revision': safe_revision(requested_revision),
+                'current_image_revision': safe_revision((current_image.get('Config', {}).get('Labels') or {}).get(REVISION_LABEL)),
+                'requested_image_revision': safe_revision((target.get('Config', {}).get('Labels') or {}).get(REVISION_LABEL)),
+                'decision': 'already-healthy' if already_current else 'replace'}, sort_keys=True))
+            if already_current:
                 self.output(self.service + ': requested image is already healthy; no restart')
                 return
             old_reference = (self.original_state['last-good-image']
@@ -543,6 +566,10 @@ class Deployment:
                 self.create_attempted = True
                 self.new_id = self.engine.create(self.name, configuration)
                 self.verify_created(current, self.new_id)
+                created = self.engine.inspect(self.new_id)
+                if (created['Image'] != target['Id'] or
+                        (created['Config'].get('Labels') or {}).get(REVISION_LABEL) != requested_revision):
+                    raise DeployError('Replacement image identity or revision differs from requested image')
             else:
                 self.new_id = retained['Id']
                 self.engine.rename(self.new_id, self.name)

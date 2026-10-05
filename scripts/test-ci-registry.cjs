@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
+const {spawnSync} = require('node:child_process');
 const yaml = fs.readFileSync(path.join(__dirname, '../.github/workflows/deploy.yml'), 'utf8');
 const section = yaml.split('      - name: Reuse existing SHA tag without overwriting it\n')[1];
 assert.ok(section, 'registry lookup exists in workflow');
@@ -52,4 +53,32 @@ test('registry cannot inject an invalid digest into job outputs', async () => {
   const result = await lookup(200, 'sha256:bad\nexists=false');
   assert.equal(result.exitCode, 1);
   assert.equal(result.output, '');
+});
+
+test('workflow verifies embedded revision for new and reused images before fixtures/publication', () => {
+  const section = yaml.split('      - name: Assert platform and exercise isolated deployment rollback\n')[1];
+  assert.ok(section);
+  const commands = section.split('        run: |\n')[1].split('      - name: Publish the exact tested image')[0]
+    .split('\n').map(line => line.slice(10)).join('\n');
+  const mocks = `docker() {
+    case "$*" in
+      *Architecture*) printf 'linux/amd64';;
+      *org.opencontainers.image.revision*) printf '%s' "$FIXTURE_REVISION";;
+      *) return 99;;
+    esac
+  }
+  python3() { printf 'fixtures-executed\\n'; }
+  `;
+  for (const digest of ['', `sha256:${'b'.repeat(64)}`]) {
+    for (const revision of ['a'.repeat(40), '', 'd'.repeat(40), 'SECRET_CANARY']) {
+      const result = spawnSync('/bin/bash', ['-e', '-c', mocks + commands], {encoding:'utf8',
+        env:{IMAGE_TAG:`ghcr.io/fixture/zapbot-pokemon:${'a'.repeat(40)}`, IMAGE_DIGEST:digest,
+          GITHUB_SHA:'a'.repeat(40), SERVICE:'pokemon', FIXTURE_REVISION:revision}});
+      assert.ifError(result.error);
+      const valid = revision === 'a'.repeat(40);
+      assert.equal(result.status, valid ? 0 : 1);
+      assert.equal(result.stdout.includes('fixtures-executed'), valid);
+      assert.ok(!result.stderr.includes('SECRET_CANARY'));
+    }
+  }
 });

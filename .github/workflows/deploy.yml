@@ -284,6 +284,8 @@ jobs:
           if [[ -n "$IMAGE_DIGEST" ]]; then fixture_image="$IMAGE_TAG@$IMAGE_DIGEST"; fi
           architecture=$(docker image inspect "$fixture_image" --format '{{.Os}}/{{.Architecture}}')
           [[ "$architecture" == linux/amd64 ]]
+          revision=$(docker image inspect "$fixture_image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+          [[ "$revision" == "$GITHUB_SHA" ]] || { echo 'Image revision differs from requested commit; publication/deploy blocked.' >&2; exit 1; }
           python3 scripts/test-deploy-docker.py --service "$SERVICE" --base-image "$fixture_image"
       - name: Publish the exact tested image without rebuilding
         if: steps.existing.outputs.exists != 'true'

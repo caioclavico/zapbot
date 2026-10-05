@@ -114,6 +114,7 @@ def main():
                     f"FROM {args.base_image}\n"
                     f"LABEL io.zapbot.service={args.service} io.zapbot.persistence-version=1\n"
                     f"LABEL io.zapbot.fixture-version={version}\n"
+                    f"LABEL org.opencontainers.image.revision={version * 40}\n"
                     "COPY fixture.cjs /app/fixture.cjs\nCMD [\"node\",\"/app/fixture.cjs\"]\n"
                 )
                 tag = name + ":" + version
