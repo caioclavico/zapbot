@@ -17,6 +17,9 @@
                      :takeEffects pokemon-service.entry/take-effects}
            :compiler-options {:optimizations :simple}}
   :benchmark {:target :node-library :output-to "target/benchmark.cjs"
-              :exports {:render pokemon-benchmark/render}
+              :exports {:render pokemon-benchmark/render
+                        :battle pokemon-benchmark/battle
+                        :raid pokemon-benchmark/raid
+                        :team pokemon-benchmark/team}
               :compiler-options {:optimizations :simple}}
   :test {:target :node-test :output-to "target/test.js" :ns-regexp "-test$"}}}

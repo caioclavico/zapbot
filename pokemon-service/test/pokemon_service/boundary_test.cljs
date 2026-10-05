@@ -78,12 +78,12 @@
     (is (= {["g" "id"] proposta}
            (#'pokemon/restaurar-pendencias (second @salvo))))))
 
-(deftest cartao-treinador-produz-png-sem-transporte-ou-rede
+(deftest cartao-treinador-produz-jpeg-sem-transporte-ou-rede
   (async done
     (-> (#'pokemon/criar-cartao-treinador "Ana" 1 nil 1)
         (p/then (fn [buffer]
                   (is (.isBuffer js/Buffer buffer))
-                  (is (= "89504e470d0a1a0a" (.toString (.subarray buffer 0 8) "hex")))
+                  (is (= "ffd8" (.toString (.subarray buffer 0 2) "hex")))
                   (done)))
         (p/catch (fn [erro] (is false (str erro)) (done))))))
 

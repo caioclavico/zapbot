@@ -5,6 +5,7 @@
             [promesa.core :as p]
             [clojure.string :as str]
             [zapbot.pokemon.boundary :as boundary]
+            [zapbot.pokemon.imagens :as imagens]
             [zapbot.config :as config]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.pokemon.aventuras :as aventuras]
@@ -224,10 +225,9 @@
 
 (defn- enviar-cartao [contexto pokemon legenda]
   (if (:imagem pokemon)
-    (-> (p/let [res (http/fetch! (:imagem pokemon))
-                _ (when-not (.-ok res) (throw (js/Error. "Falha ao baixar imagem da Pokédex")))
-                bytes (.arrayBuffer res)
-                media (boundary/midia "image/png" (js/Buffer.from bytes) "pokedex.png")
+    (-> (p/let [original (imagens/baixar! (:imagem pokemon))
+                buffer (imagens/sprite! original 360 360 1)
+                media (boundary/midia "image/png" buffer "pokedex.png")
                 _     (boundary/emitir! contexto media nil #js {:caption legenda})]
           nil)
         (p/catch (fn [err]

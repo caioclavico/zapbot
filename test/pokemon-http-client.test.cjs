@@ -86,6 +86,83 @@ test('binary body limits apply with and without Content-Length', async () => {
   }
 });
 
+test('binary media preserves every byte across fixed-length and chunked responses', async () => {
+  const bytes = Buffer.alloc(512 * 1024 + 37);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
+  for (const fixedLength of [true, false]) {
+    const f = await fixture((req, res) => {
+      if (fixedLength) res.setHeader('Content-Length', String(bytes.length));
+      else res.setHeader('Transfer-Encoding', 'chunked');
+      const write = offset => {
+        if (offset >= bytes.length) return res.end();
+        res.write(bytes.subarray(offset, offset + 16384));
+        setImmediate(() => write(offset + 16384));
+      };
+      write(0);
+    }, { maxMediaBytes: bytes.length });
+    try { assert.deepEqual(await f.client.media('multi-chunk'), bytes); }
+    finally { await f.close(); }
+  }
+});
+
+test('empty and exactly limited binary media remain valid', async () => {
+  for (const bytes of [Buffer.alloc(0), Buffer.from([0, 255, 128, 1, 2, 3, 4, 5])]) {
+    for (const fixedLength of [true, false]) {
+      const f = await fixture((req, res) => {
+        if (fixedLength) res.setHeader('Content-Length', String(bytes.length));
+        else res.setHeader('Transfer-Encoding', 'chunked');
+        res.end(bytes);
+      }, { maxMediaBytes: 8 });
+      try { assert.deepEqual(await f.client.media('boundary'), bytes); }
+      finally { await f.close(); }
+    }
+  }
+});
+
+test('truncated binary responses reject without returning partial or unwritten bytes', async () => {
+  let calls = 0;
+  const f = await fixture((req, res) => {
+    calls++;
+    if (req.url === '/api/health') return res.end(JSON.stringify({ status: 'ok' }));
+    res.setHeader('Content-Length', '1024');
+    res.write(Buffer.from([0, 255, 128]));
+    setImmediate(() => res.destroy());
+  });
+  try {
+    await assert.rejects(f.client.media('truncated'), { code: 'NETWORK' });
+    assert.equal(calls, 1);
+    assert.deepEqual(await f.client.health(), { status: 'ok' });
+  } finally { await f.close(); }
+});
+
+test('partial binary responses preserve the total timeout classification', async () => {
+  let calls = 0;
+  const f = await fixture((req, res) => {
+    calls++;
+    res.setHeader('Content-Length', '1024');
+    res.write(Buffer.from([0, 255, 128]));
+  }, { timeoutMs: 40 });
+  try {
+    await assert.rejects(f.client.media('partial'), { code: 'TIMEOUT' });
+    assert.equal(calls, 1);
+  } finally { await f.close(); }
+});
+
+test('chunked JSON preserves UTF-8 values and the response contract', async () => {
+  const expected = { requestId: 'utf8', messages: [{ type: 'text', text: '⚡ Pokémon' }], effects: [] };
+  const bytes = Buffer.from(JSON.stringify(expected));
+  const f = await fixture((req, res) => {
+    const write = offset => {
+      if (offset >= bytes.length) return res.end();
+      res.write(bytes.subarray(offset, offset + 2));
+      setImmediate(() => write(offset + 2));
+    };
+    write(0);
+  });
+  try { assert.deepEqual(await f.client.command({ requestId: 'utf8' }), expected); }
+  finally { await f.close(); }
+});
+
 test('malformed JSON fails without retrying', async () => {
   let calls = 0;
   const f = await fixture((req, res) => { calls++; res.end('<html>error</html>'); });

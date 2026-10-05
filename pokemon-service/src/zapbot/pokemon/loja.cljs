@@ -11,7 +11,7 @@
             [zapbot.pokemon.missoes :as missoes]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.pokemon.boundary :as boundary]
-            ["sharp" :as sharp]))
+            [zapbot.pokemon.imagens :as imagens]))
 
 (def ^:private imagem-loja (str js/__dirname "/../assets/loja-pokemon.png"))
 
@@ -597,11 +597,8 @@
   ser processado, mantém a resposta textual para o comando continuar útil."
   [contexto]
   (let [texto (ver-loja contexto)]
-    (-> (p/let [buffer (-> (sharp imagem-loja)
-                           (.resize 760 400 #js {:fit "cover" :position "center"})
-                           (.png)
-                           (boundary/png-buffer!))]
-          {:media (boundary/midia "image/png" buffer "loja-pokemon.png")
+    (-> (p/let [buffer (imagens/arte! imagem-loja)]
+          {:media (boundary/midia "image/jpeg" buffer "loja-pokemon.jpg")
            :texto texto})
         (p/catch (fn [erro]
                    (js/console.error "Erro ao montar imagem da loja Pokémon:" erro)

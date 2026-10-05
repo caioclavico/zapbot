@@ -18,7 +18,7 @@
             [zapbot.pokemon.shiny :as shiny]
             [zapbot.pokemon.raids :as raids]
             [zapbot.pokemon.boundary :as boundary]
-            ["sharp" :as sharp]
+            [zapbot.pokemon.imagens :as imagens]
             ["fs" :as fs]
             [zapbot.config :as config]
             [zapbot.desempenho :as desempenho]
@@ -1381,7 +1381,8 @@
   ([contexto url legenda] (enviar-imagem contexto url legenda []))
   ([contexto url legenda mentions]
    (if url
-     (-> (p/let [buffer (baixar-buffer url)
+     (-> (p/let [original (baixar-buffer url)
+                 buffer (imagens/sprite! original 360 360 1)
                  media (boundary/midia "image/png" buffer "pokemon.png")
                  _     (boundary/emitir! contexto media nil #js {:caption legenda :mentions (clj->js mentions)})]
            nil)
@@ -1394,48 +1395,17 @@
 (def ^:private tamanho-sprite 260)
 (def ^:private tamanho-sprite-cacada 320)
 (def ^:private tamanho-x 100)
-(def ^:private timeout-download-imagem-ms 6000)
 
 (defn- svg-x []
   (str "<svg xmlns='http://www.w3.org/2000/svg' width='" tamanho-x "' height='" tamanho-x "'>"
        "<text x='50%' y='54%' font-size='90' font-family='sans-serif' font-weight='bold' "
        "fill='#e63946' text-anchor='middle' dominant-baseline='middle'>X</text></svg>"))
 
-(defn- url-jsdelivr-sprite
-  "Converte as URLs de sprites devolvidas pela PokeAPI para um espelho CDN.
-  A VM pode alcançar a PokeAPI normalmente e ainda assim ficar sem resposta do
-  raw.githubusercontent.com; o jsDelivr evita que isso paralise as imagens."
-  [url]
-  (when-let [[_ caminho]
-             (and (string? url)
-                  (re-matches
-                   #"https://raw\.githubusercontent\.com/PokeAPI/sprites/(?:master|refs/heads/master)/(.+)"
-                   url))]
-    (str "https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/" caminho)))
+(defn- url-jsdelivr-sprite [url] (imagens/url-cdn url))
 
-(defn- candidatos-url-sprite [url]
-  (->> [(url-jsdelivr-sprite url) url]
-       (remove str/blank?)
-       distinct
-       vec))
+(defn- candidatos-url-sprite [url] (imagens/candidatos url))
 
-(defn- baixar-buffer-url [url]
-  (p/let [res (http/fetch! url #js {:signal (.timeout js/AbortSignal timeout-download-imagem-ms)})
-          _   (when-not (.-ok res)
-                (throw (js/Error. (str "Imagem respondeu HTTP " (.-status res)))))
-          arr (.arrayBuffer res)]
-    (js/Buffer.from arr)))
-
-(defn- baixar-buffer
-  "Baixa uma imagem com timeout e tenta o host original se o CDN falhar.
-  Nunca deixa uma mensagem esperando indefinidamente por um sprite."
-  [url]
-  (letfn [(tentar [[atual & restantes] ultimo-erro]
-            (if atual
-              (-> (baixar-buffer-url atual)
-                  (p/catch (fn [erro] (tentar restantes erro))))
-              (p/rejected (or ultimo-erro (js/Error. "Pokémon sem URL de imagem")))))]
-    (tentar (candidatos-url-sprite url) nil)))
+(defn- baixar-buffer [url] (imagens/baixar! url))
 
 (defn- svg-sprite-indisponivel [tamanho]
   (str "<svg xmlns='http://www.w3.org/2000/svg' width='" tamanho "' height='" tamanho "'>"
@@ -1447,14 +1417,9 @@
        "</svg>"))
 
 (defn- sprite-redimensionado [url]
-  (p/let [buffer (-> (baixar-buffer url)
-                     (p/catch (fn [_] nil)))
+  (p/let [buffer (-> (baixar-buffer url) (p/catch (fn [_] nil)))
           entrada (or buffer (js/Buffer.from (svg-sprite-indisponivel tamanho-sprite)))]
-    (-> (sharp entrada)
-        (.resize tamanho-sprite tamanho-sprite #js {:fit "contain"
-                                                    :background #js {:r 255 :g 255 :b 255 :alpha 0}})
-        (.png)
-        (boundary/png-buffer!))))
+    (imagens/sprite! entrada tamanho-sprite)))
 
 (defn- tamanho-visual-pokemon
   "Converte a altura real da espécie em tamanho de sprite. A escala logarítmica
@@ -1481,11 +1446,7 @@
                                                  (:nome pokemon) (.-message erro))
                                 nil)))
           entrada (or buffer (js/Buffer.from (svg-sprite-indisponivel tamanho)))
-          sprite (-> (sharp entrada)
-                     (.resize tamanho tamanho #js {:fit "contain"
-                                                   :background #js {:r 255 :g 255 :b 255 :alpha 0}})
-                     (.png)
-                     (boundary/png-buffer!))]
+          sprite (imagens/sprite! entrada tamanho)]
     {:buffer sprite :tamanho tamanho}))
 
 (defn- svg-arena-pvp []
@@ -1497,19 +1458,18 @@
        "<ellipse cx='590' cy='332' rx='146' ry='32' fill='#1e293b' stroke='#f87171' stroke-width='4'/>"
        "<text x='380' y='42' text-anchor='middle' fill='#e2e8f0' font-family='sans-serif' font-size='24' font-weight='bold'>BATALHA POKÉMON</text></svg>"))
 
-(defn- criar-imagem-vs [pokemon-x pokemon-o]
+(defn- criar-imagem-vs [pokemon-x pokemon-o & [intermediaria?]]
   (p/let [[sprite-x sprite-o] (p/all [(sprite-proporcional pokemon-x tamanho-sprite)
                                       (sprite-proporcional pokemon-o tamanho-sprite)])]
-    (-> (sharp (js/Buffer.from (svg-arena-pvp)))
-        (.composite #js [#js {:input (:buffer sprite-x)
+    (imagens/cartao! (svg-arena-pvp)
+        #js [#js {:input (:buffer sprite-x)
                               :left (- 170 (quot (:tamanho sprite-x) 2))
                               :top (- 330 (:tamanho sprite-x))}
                          #js {:input (js/Buffer.from (svg-x)) :left 330 :top 150}
                          #js {:input (:buffer sprite-o)
                               :left (- 590 (quot (:tamanho sprite-o) 2))
-                              :top (- 330 (:tamanho sprite-o))}])
-        (.png)
-        (boundary/png-buffer!))))
+                              :top (- 330 (:tamanho sprite-o))}]
+        #js {:intermediate (boolean intermediaria?)})))
 
 (defn- svg-arena-ginasio []
   (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
@@ -1530,11 +1490,11 @@
 
 (declare svg-marcador-motivacao)
 
-(defn- criar-imagem-ginasio [pokemon-desafiante pokemon-lider]
+(defn- criar-imagem-ginasio [pokemon-desafiante pokemon-lider & [intermediaria?]]
   (p/let [[desafiante lider] (p/all [(sprite-proporcional pokemon-desafiante tamanho-sprite)
                                       (sprite-proporcional pokemon-lider tamanho-sprite)])]
-    (-> (sharp (js/Buffer.from (svg-arena-ginasio)))
-        (.composite (to-array
+    (imagens/cartao! (svg-arena-ginasio)
+        (to-array
                      (cond-> [#js {:input (:buffer desafiante)
                                   :left (- 170 (quot (:tamanho desafiante) 2))
                                   :top (- 355 (:tamanho desafiante))}
@@ -1545,9 +1505,8 @@
                        (conj #js {:input (js/Buffer.from
                                           (svg-marcador-motivacao (:motivacao-ginasio pokemon-lider)))
                                   :left 544
-                                  :top 55}))))
-        (.png)
-        (boundary/png-buffer!))))
+                                  :top 55})))
+        #js {:intermediate (boolean intermediaria?)})))
 
 (defn- svg-time-ginasio []
   (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
@@ -1585,9 +1544,8 @@
 
 (defn- criar-imagem-time-ginasio [pokemons]
   (p/let [sprites (p/all (map #(sprite-proporcional % 190) pokemons))]
-    (-> (sharp (js/Buffer.from (svg-time-ginasio)))
-        (.composite
-         (to-array
+    (imagens/cartao! (svg-time-ginasio)
+                 (to-array
           (concat
            (map (fn [sprite centro]
                   #js {:input (:buffer sprite)
@@ -1599,13 +1557,11 @@
                     #js {:input (js/Buffer.from (svg-marcador-motivacao (:motivacao-ginasio pokemon)))
                          :left (- centro 46)
                          :top 68}))
-                 (map vector pokemons [145 380 615])))))
-        (.png)
-        (boundary/png-buffer!))))
+                 (map vector pokemons [145 380 615])))))))
 
 (defn- resposta-time-ginasio [pokemons texto]
   (-> (p/let [buffer (criar-imagem-time-ginasio pokemons)]
-        {:media (boundary/midia "image/png" buffer "time-ginasio.png")
+        {:media (boundary/midia "image/jpeg" buffer "time-ginasio.jpg")
          :texto texto})
       (p/catch (fn [err]
                  (js/console.error "Erro ao montar imagem do time do ginásio:" err)
@@ -1614,7 +1570,7 @@
 (defn- enviar-imagem-ginasio [contexto jogo]
   (-> (p/let [buffer (criar-imagem-ginasio (get-in jogo [:pokemons :x])
                                             (get-in jogo [:pokemons :o]))
-              media (boundary/midia "image/png" buffer "ginasio.png")
+              media (boundary/midia "image/jpeg" buffer "ginasio.jpg")
               _ (boundary/emitir! contexto media nil
                         #js {:caption (str "🏛️ *" (get-in jogo [:ginasio :nome]) "*\n"
                                            (get-in jogo [:pokemons :x :nome]) " desafia "
@@ -1631,12 +1587,12 @@
   rodada vira a legenda, inclusive quando o líder contra-ataca."
   [jogo texto efeito]
   (-> (p/let [base (criar-imagem-ginasio (get-in jogo [:pokemons :x])
-                                          (get-in jogo [:pokemons :o]))
+                                          (get-in jogo [:pokemons :o]) true)
               ;; A Pokébola de substituição ficava sobre o defensor e sobre o
               ;; coração de motivação. No ginásio a própria moldura já deixa
               ;; claro quem entrou; o ícone continua disponível no PvP.
               buffer (aplicar-sobreposicao-batalha base texto false efeito false)]
-        {:media (boundary/midia "image/png" buffer "ataque-ginasio.png")
+        {:media (boundary/midia "image/jpeg" buffer "ataque-ginasio.jpg")
          :texto texto})
       (p/catch (fn [err]
                  ;; A falha da arte não pode esconder o resultado nem travar a luta.
@@ -1725,32 +1681,31 @@
      :centro-meu 165
      :centro-selvagem (if captura? 380 595)}))
 
-(defn- criar-imagem-cacada [caca fugiu?]
+(defn- criar-imagem-cacada [caca fugiu? & [intermediaria?]]
   (let [{:keys [mostrar-meu? centro-meu centro-selvagem]} (layout-imagem-cacada caca fugiu?)]
   (p/let [meu (when mostrar-meu?
                 (sprite-proporcional (get-in caca [:pokemons :x]) tamanho-sprite-cacada))
           selvagem (when-not fugiu?
                      (sprite-proporcional (get-in caca [:pokemons :o]) tamanho-sprite-cacada))]
-    (-> (sharp (js/Buffer.from (svg-arena-cacada caca fugiu?)))
-        (.composite (to-array
+    (imagens/cartao! (svg-arena-cacada caca fugiu?)
+        (to-array
                      (cond-> []
                        meu (conj #js {:input (:buffer meu)
                                       :left (- centro-meu (quot (:tamanho meu) 2))
                                       :top (- 365 (:tamanho meu))})
                        selvagem (conj #js {:input (:buffer selvagem)
                                            :left (- centro-selvagem (quot (:tamanho selvagem) 2))
-                                           :top (- 350 (:tamanho selvagem))}))))
-        (.png)
-        (boundary/png-buffer!)))))
+                                           :top (- 350 (:tamanho selvagem))})))
+        #js {:intermediate (boolean intermediaria?)}))))
 
 (defn- resposta-imagem-cacada
   ([caca texto fugiu?] (resposta-imagem-cacada caca texto fugiu? nil))
   ([caca texto fugiu? efeito]
-  (-> (p/let [base (criar-imagem-cacada caca fugiu?)
+  (-> (p/let [base (criar-imagem-cacada caca fugiu? true)
               buffer (aplicar-sobreposicao-batalha
                       base texto (and (not fugiu?) (get-in caca [:pokemons :o :shiny?])) efeito)]
-        {:media (boundary/midia "image/png" buffer
-                              (if fugiu? "fuga-selvagem.png" "batalha-selvagem.png"))
+        {:media (boundary/midia "image/jpeg" buffer
+                              (if fugiu? "fuga-selvagem.jpg" "batalha-selvagem.jpg"))
          :texto texto})
       (p/catch (fn [err]
                  (js/console.error "Erro ao montar imagem da caçada:" err)
@@ -1813,11 +1768,9 @@
          "</svg>")))
 
 (defn- resposta-imagem-captura [bola texto capturou? fugiu?]
-  (-> (p/let [buffer (-> (sharp (js/Buffer.from (svg-bola-captura bola capturou? fugiu?)))
-                              (.png)
-                              (boundary/png-buffer!))]
-        {:media (boundary/midia "image/png" buffer
-                              (if capturou? "captura-concluida.png" "captura-falhou.png"))
+  (-> (p/let [buffer (imagens/cartao! (svg-bola-captura bola capturou? fugiu?))]
+        {:media (boundary/midia "image/jpeg" buffer
+                              (if capturou? "captura-concluida.jpg" "captura-falhou.jpg"))
          :texto texto})
       (p/catch (fn [err]
                  (js/console.error "Erro ao montar imagem da captura:" err)
@@ -1895,13 +1848,7 @@
   ([buffer texto shiny? efeito]
    (aplicar-sobreposicao-batalha buffer texto shiny? efeito true))
   ([buffer texto shiny? efeito mostrar-entrada?]
-   (-> (sharp buffer)
-       (.composite #js [#js {:input (js/Buffer.from
-                                     (svg-sobreposicao-batalha
-                                      texto shiny? efeito mostrar-entrada?))
-                             :left 0 :top 0}])
-       (.png)
-       (boundary/png-buffer!))))
+   (imagens/sobrepor! buffer (svg-sobreposicao-batalha texto shiny? efeito mostrar-entrada?))))
 
 (def ^:private temas-eventos
   {:nivel ["SUBIU DE NÍVEL" "#7c3aed" "⭐"]
@@ -1949,15 +1896,10 @@
                     :hospital imagem-centro-pokemon
                     :missao imagem-professor-carvalho
                     nil)]
-    (-> (sharp imagem)
-        (.resize 760 400 #js {:fit "cover" :position "center"})
-        (.png)
-        (boundary/png-buffer!))
+    (imagens/arte! imagem)
     (p/let [sprite (when url (sprite-redimensionado url))]
-      (-> (sharp (js/Buffer.from (svg-cartao-evento tema texto)))
-          (.composite (to-array (if sprite [#js {:input sprite :left 250 :top 55}] [])))
-          (.png)
-          (boundary/png-buffer!)))))
+      (imagens/cartao! (svg-cartao-evento tema texto)
+                       (to-array (if sprite [#js {:input sprite :left 250 :top 55}] []))))))
 
 (defn- svg-cartao-evolucao [{:keys [nome-antigo nome-novo]}]
   (str "<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400'>"
@@ -1974,17 +1916,15 @@
        "</svg>"))
 
 (defn- criar-cartao-evolucao [dados]
-  (p/let [antiga (sprite-redimensionado (:imagem-antiga dados))
-          nova (sprite-redimensionado (:imagem dados))]
-    (-> (sharp (js/Buffer.from (svg-cartao-evolucao dados)))
-        (.composite #js [#js {:input antiga :left 55 :top 48}
-                         #js {:input nova :left 445 :top 48}])
-        (.png)
-        (boundary/png-buffer!))))
+  (p/let [[antiga nova] (p/all [(sprite-redimensionado (:imagem-antiga dados))
+                                (sprite-redimensionado (:imagem dados))])]
+    (imagens/cartao! (svg-cartao-evolucao dados)
+        #js [#js {:input antiga :left 55 :top 48}
+                         #js {:input nova :left 445 :top 48}])))
 
 (defn- enviar-cartao-evolucao! [contexto dados texto]
   (-> (p/let [buffer (criar-cartao-evolucao dados)
-              media (boundary/midia "image/png" buffer "evolucao.png")]
+              media (boundary/midia "image/jpeg" buffer "evolucao.jpg")]
         (boundary/emitir! contexto media nil #js {:caption texto}))
       (p/catch (fn [err]
                  (js/console.error "Erro ao montar cartão de evolução Pokémon:" err)
@@ -1994,7 +1934,7 @@
   ([tema url texto] (resposta-cartao-evento tema url texto nil))
   ([tema url texto mentions]
    (-> (p/let [buffer (criar-cartao-evento tema url texto)]
-         (cond-> {:media (boundary/midia "image/png" buffer (str (name tema) ".png"))
+         (cond-> {:media (boundary/midia "image/jpeg" buffer (str (name tema) ".jpg"))
                   :texto texto}
            (seq mentions) (assoc :mentions mentions)))
       (p/catch (fn [err]
@@ -2036,7 +1976,7 @@
        (legenda-pokemon nome-o pokemon-o)))
 
 (defn- enviar-imagem-vs [contexto buffer legenda]
-  (p/let [media (boundary/midia "image/png" buffer "batalha.png")
+  (p/let [media (boundary/midia "image/jpeg" buffer "batalha.jpg")
           _     (boundary/emitir! contexto media nil #js {:caption legenda})]
     nil))
 
@@ -2051,9 +1991,9 @@
 
 (defn- resposta-imagem-pvp [jogo texto efeito]
   (-> (p/let [base (criar-imagem-vs (get-in jogo [:pokemons :x])
-                                     (get-in jogo [:pokemons :o]))
+                                     (get-in jogo [:pokemons :o]) true)
               buffer (aplicar-sobreposicao-batalha base texto false efeito false)]
-        {:media (boundary/midia "image/png" buffer "golpe-pvp.png")
+        {:media (boundary/midia "image/jpeg" buffer "golpe-pvp.jpg")
          :texto texto
          :mentions (when-let [pid (get-in jogo [:jogadores (:vez jogo)])] [pid])})
       (p/catch (fn [err]
@@ -2896,11 +2836,7 @@
 
 (defn- sprite-ash-treinador []
   (when (.existsSync fs imagem-ash-treinador)
-    (-> (sharp imagem-ash-treinador)
-        (.resize 270 350 #js {:fit "contain"
-                              :background #js {:r 0 :g 0 :b 0 :alpha 0}})
-        (.png)
-        (boundary/png-buffer!))))
+    (imagens/sprite! imagem-ash-treinador 270 350)))
 
 (def ^:private tamanho-pokemon-treinador 280)
 
@@ -2914,11 +2850,8 @@
                                                  (.-message erro))
                                 nil)))
           entrada (or buffer (js/Buffer.from (svg-sprite-indisponivel tamanho-pokemon-treinador)))]
-    (desempenho/medir! ctx "sprite_resize" #(-> (sharp entrada)
-        (.resize tamanho-pokemon-treinador tamanho-pokemon-treinador
-                 #js {:fit "contain" :background #js {:r 0 :g 0 :b 0 :alpha 0}})
-        (.png)
-        (boundary/png-buffer!)))))
+    (desempenho/medir! ctx "sprite_resize"
+      #(imagens/sprite! entrada tamanho-pokemon-treinador))))
 
 (defn- criar-cartao-treinador [nome nivel ativo numero-ativo & [ctx]]
   ;; Cria a promessa enquanto `with-redefs`/chamador ainda está no mesmo
@@ -2940,10 +2873,8 @@
                        sprite (conj #js {:input sprite
                                          :left 410
                                          :top 88}))]
-      (desempenho/medir! ctx "composicao_png" #(-> (sharp (js/Buffer.from svg))
-          (.composite (clj->js overlays))
-          (.png)
-          (boundary/png-buffer!))))))
+      (desempenho/medir! ctx "composicao_jpeg"
+        #(imagens/cartao! svg (clj->js overlays))))))
 
 (defn- texto-treinador [cid pid nome perfil numero-ativo ativo]
   (let [{:keys [nivel xp xp-insignias xp-missoes pe-ginasios pe-raids xp-atual xp-necessario sequencia recorde insignias titulo]} perfil
@@ -3029,7 +2960,7 @@
     (p/let [nome (desempenho/medir! ctx "player_name" #(nome-de contexto))
             texto (texto-treinador cid pid nome perfil numero-ativo ativo)]
       (-> (p/let [buffer (desempenho/medir! ctx "imagem_total" #(criar-cartao-treinador nome (:nivel perfil) ativo numero-ativo ctx))]
-            {:media (boundary/midia "image/png" buffer "treinador-pokemon.png")
+            {:media (boundary/midia "image/jpeg" buffer "treinador-pokemon.jpg")
              ;; Normalmente `:texto` cabe inteiro e vira a própria legenda. Esta
              ;; opção curta só é usada como proteção se dados futuros passarem
              ;; do limite prático do WhatsApp.
@@ -3195,7 +3126,7 @@
                                  (if ativo? "#facc15" "#2d3b55") "' stroke-width='" (if ativo? 5 2) "'/>"
                                  "<rect x='" x "' y='" y "' width='12' height='185' rx='6' fill='" cor "'/>"
                                  (when ativo? (str "<text x='" (+ x 28) "' y='" (+ y 28)
-                                                   "' font-size='16' font-family='Arial,sans-serif' font-weight='bold' fill='#facc15'>ATIVO</text>"))
+                                                   "' font-size='18' font-family='Arial,sans-serif' font-weight='bold' fill='#facc15'>ATIVO</text>"))
                                  "<text x='" (+ x 430) "' y='" (+ y 38)
                                  "' font-size='24' font-family='Arial,sans-serif' font-weight='bold' fill='#94a3b8' text-anchor='end'>#"
                                  numero "</text>"
@@ -3206,13 +3137,13 @@
                                  "' font-size='18' font-family='Arial,sans-serif' fill='#cbd5e1'>Nv. " (nivel-pokemon pokemon)
                                  " • " (escapar-xml (formatar-tipos (:tipos pokemon))) "</text>"
                                  "<text x='" (+ x 165) "' y='" (+ y 118)
-                                 "' font-size='17' font-family='Arial,sans-serif' fill='#e2e8f0'>HP " hp-seguro "/" hp-max
+                                 "' font-size='18' font-family='Arial,sans-serif' fill='#e2e8f0'>HP " hp-seguro "/" hp-max
                                  (escapar-xml status-txt) "</text>"
                                  "<rect x='" (+ x 165) "' y='" (+ y 133) "' width='270' height='18' rx='9' fill='#334155'/>"
                                  "<rect x='" (+ x 165) "' y='" (+ y 133) "' width='" hp-largura "' height='18' rx='9' fill='"
                                  (if (> (/ hp-seguro hp-max) 0.3) "#4ade80" "#f87171") "'/>"
                                  "<text x='" (+ x 165) "' y='" (+ y 174)
-                                 "' font-size='15' font-family='Arial,sans-serif' fill='#cbd5e1'>✨ XP "
+                                 "' font-size='18' font-family='Arial,sans-serif' fill='#cbd5e1'>✨ XP "
                                  (:atual xp) "/" (:necessario xp) " • " (escapar-xml (texto-raridade pokemon))
                                  (when-let [item (texto-item pokemon)] (str " • " (escapar-xml item)))
                                  "</text></g>")))
@@ -3224,19 +3155,14 @@
          " • " (count entradas) " Pokémon</text>" cards "</svg>"))))
 
 (defn- baixar-sprite-time [url]
-  (p/let [buffer (when url
-                   (-> (baixar-buffer url)
-                       (p/catch (fn [_] nil))))
+  (p/let [buffer (when url (-> (baixar-buffer url) (p/catch (fn [_] nil))))
           entrada (or buffer (js/Buffer.from (svg-sprite-indisponivel 145)))]
-    (-> (sharp entrada)
-        (.resize 145 145 #js {:fit "contain" :background #js {:r 0 :g 0 :b 0 :alpha 0}})
-        (.png)
-        (boundary/png-buffer!))))
+    (imagens/sprite! entrada 145 145 0.8)))
 
 (defn- criar-cartao-time
   ([registros indice-ativo nivel] (criar-cartao-time registros indice-ativo nivel {}))
   ([registros indice-ativo nivel {:keys [titulo arquivo ctx]
-                                :or {titulo "Seu time Pokémon" arquivo "meu-time-pokemon.png"}}]
+                                :or {titulo "Seu time Pokémon" arquivo "meu-time-pokemon.jpg"}}]
   (let [entradas (->> registros
                       (map (fn [{:keys [indice registro]}]
                              (let [[pokemon hp-atual status] (treinador/registro->pokemon registro)]
@@ -3248,7 +3174,6 @@
     (p/let [sprites (desempenho/medir! ctx "time_sprites"
                      (fn [] (p/all (map #(baixar-sprite-time (get-in % [:pokemon :imagem])) entradas))))
             svg     (desempenho/medir! ctx "time_svg" #(svg-cartao-time entradas nivel titulo))
-            base    (js/Buffer.from svg)
             imagens (->> sprites
                          (map-indexed (fn [idx sprite]
                                         (when sprite
@@ -3256,9 +3181,9 @@
                                                :top (+ 140 (* (quot idx 2) 205))})))
                          (remove nil?)
                          clj->js)
-            buffer  (desempenho/medir! ctx "time_png"
-                      #(-> (sharp base) (.composite imagens) (.png) (boundary/png-buffer!)))]
-      (boundary/midia "image/png" buffer arquivo)))))
+            buffer  (desempenho/medir! ctx "time_jpeg"
+                      #(imagens/cartao! svg imagens #js {:maxWidth 800}))]
+      (boundary/midia "image/jpeg" buffer arquivo)))))
 
 (declare resposta-colecao-visual)
 
@@ -3670,7 +3595,7 @@
       :else
       (-> (p/let [media (criar-cartao-time entradas (treinador/indice-ativo cid pid) (treinador/nivel-jogador cid pid)
                                           {:titulo (str "Sua coleção Pokémon — " pagina "/" paginas)
-                                           :arquivo "colecao-pokemon.png"
+                                           :arquivo "colecao-pokemon.jpg"
                                            :ctx (desempenho/contexto-de contexto)})]
             {:media media :texto texto})
           (p/catch (fn [erro]
@@ -4811,7 +4736,7 @@
                        (when (> pagina 1) (str "\nAnterior: !pk " comando " pagina " (dec pagina))))]
         (-> (p/let [media (criar-cartao-time entradas (treinador/indice-ativo cid pid)
                                             (treinador/nivel-jogador cid pid)
-                                            {:titulo "Escolha para a batalha" :arquivo "escalacao.png"})]
+                                            {:titulo "Escolha para a batalha" :arquivo "escalacao.jpg"})]
               {:media media :texto texto})
             (p/catch (fn [_]
                        (str texto "\n" (str/join "\n" (map #(str (inc (:indice %)) ". "

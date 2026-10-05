@@ -88,7 +88,7 @@ Não normalizar sufixos de IDs nem criar jogadores substitutos.
   "requestId": "id-estavel-da-mensagem",
   "messages": [
     {"type":"image", "text":"Legenda", "mentions":[],
-     "mediaId":"sha256-de-64-caracteres", "mimeType":"image/png", "filename":"perfil.png"}
+     "mediaId":"sha256-de-64-caracteres", "mimeType":"image/jpeg", "filename":"perfil.jpg"}
   ],
   "effects": [],
   "timings": {"request_total_ms":40,"command_processing_ms":32,"response_preparation_ms":8}
@@ -96,7 +96,7 @@ Não normalizar sufixos de IDs nem criar jogadores substitutos.
 ```
 
 As mensagens têm ordem e tipos `text`, `image` ou `document`. O adaptador prepara
-`MessageMedia` apenas na entrega. Resize, composição, PNG e downloads de sprites
+`MessageMedia` apenas na entrega. Resize, composição, codificação e downloads de sprites
 ocorrem aqui. Não há Base64 de imagens no JSON HTTP. A conversão exigida pela
 biblioteca WhatsApp continua somente na fronteira de envio do bot.
 
@@ -230,10 +230,17 @@ e referência até validar o corte; não são importadas pelo novo entrypoint.
 
 ### Benchmark local reproduzível
 
-No repositório de migração, compile `shadow-cljs release benchmark` na raiz e
-neste diretório. Depois execute, na raiz, `node scripts/benchmark-pokemon.cjs`.
-O script compara o PNG real do treinador nas duas versões, usando sprite SVG
-local, e mede o transporte HTTP do novo serviço com persistência em memória.
-Não inicia WhatsApp, acessa Cassandra ou chama PokeAPI. Os resultados não medem
-latência entre VMs nem custo do Cassandra. O benchmark antigo pertence ao
-repositório de migração; o build de produção não o carrega.
+Compile `npx shadow-cljs release benchmark` neste diretório e execute, na raiz,
+`node scripts/benchmark-pokemon-images.cjs`. Ele mede treinador, batalha, raid
+e coleção de 12 Pokémon, usando os renderizadores reais e um sprite SVG local.
+Para comparar com uma versão anterior, compile nela o mesmo target e fixture
+de benchmark e passe `--before /caminho/versao-anterior/target/benchmark.cjs`.
+Cada versão roda em processo separado; há uma execução fria, três aquecimentos
+e vinte amostras. A comparação inclui PNG, JPEG e WebP na mesma resolução.
+Não inicia WhatsApp, acessa Cassandra ou chama PokeAPI. Os números não medem
+latência entre VMs nem envio real pelo WhatsApp. O build de produção não carrega
+o benchmark. [Fluxo, limites e resultados da otimização](../docs/pokemon-images.md).
+
+`scripts/benchmark-pokemon.cjs` mantém a comparação histórica da migração e o
+transporte HTTP com persistência falsa; igualdade de bytes deixou de ser exigida
+porque os novos cartões usam JPEG com perdas.

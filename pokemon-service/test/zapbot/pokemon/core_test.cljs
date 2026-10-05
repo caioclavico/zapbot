@@ -780,9 +780,9 @@
                        (.metadata (sharp (aget buffers 2)))])))
         (.then (fn [metadados]
                  (doseq [info (array-seq metadados)]
-                   (is (= "png" (.-format info)))
-                   (is (= 760 (.-width info)))
-                   (is (= 400 (.-height info))))
+                   (is (= "jpeg" (.-format info)))
+                   (is (= 640 (.-width info)))
+                   (is (= 337 (.-height info))))
                  (-> (js/Promise.all
                       #js [(core/criar-cartao-evento :joy nil "recebido")
                            (core/criar-cartao-evento :joy-tratando nil "tratando")
@@ -922,7 +922,7 @@
     (is (= ["https://exemplo.com/pikachu.png"]
            (core/candidatos-url-sprite "https://exemplo.com/pikachu.png")))))
 
-(deftest cartao-time-mede-png-e-retorna-bytes-sem-alterar-a-imagem
+(deftest cartao-time-mede-jpeg-e-retorna-bytes-compactos
   (async done
     (let [sprite (str "data:image/svg+xml;base64,"
                       (.toString (js/Buffer.from
@@ -936,10 +936,10 @@
           (.then (fn [media]
                    (let [buffer (:buffer media)
                          resumo (last @logs)]
-                     (is (= "image/png" (:mime media)))
-                     (is (= "PNG" (.toString (.subarray buffer 1 4) "ascii")))
+                     (is (= "image/jpeg" (:mime media)))
+                     (is (= "ffd8" (.toString (.subarray buffer 0 2) "hex")))
                      (is (js/Buffer.isBuffer buffer))
-                     (is (= #{"time_sprites" "time_svg" "time_png"}
+                     (is (= #{"time_sprites" "time_svg" "time_jpeg"}
                             (set (keys (:etapas_ms resumo))))))))
           (.catch (fn [erro] (is false (str erro))))
           (.finally done)))))
@@ -972,9 +972,9 @@
                      (is (= 1 @tentativas))
                      (.metadata (sharp buffer))))
             (.then (fn [metadados]
-                     (is (= "png" (.-format metadados)))
-                     (is (= 760 (.-width metadados)))
-                     (is (= 400 (.-height metadados)))
+                     (is (= "jpeg" (.-format metadados)))
+                     (is (= 640 (.-width metadados)))
+                     (is (= 337 (.-height metadados)))
                      (done)))
             (.catch (fn [erro]
                       (is false (str "O cartão não usou o fallback quando o sprite falhou: " erro))

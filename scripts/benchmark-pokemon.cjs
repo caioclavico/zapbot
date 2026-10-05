@@ -20,19 +20,20 @@ async function main(){
       if(p.status!==0)throw Error(p.stderr||p.stdout);
       results[m]=JSON.parse(p.stdout);
     }
-    results.same_png=results.old.sha256===results.new.sha256;
-    if(!results.same_png)throw Error('PNG antigo e novo divergentes');
+    results.same_bytes=results.old.sha256===results.new.sha256;
+    results.note='Historical migration benchmark; images now use lossy JPEG. For equal fixtures use benchmark-pokemon-images.cjs.';
     console.log(JSON.stringify(results,null,2));return;
   }
   const renderer=require(path.join(process.cwd(),'target/benchmark.cjs'));
   const buffer=await renderer.render();
-  const result={pngBytes:buffer.length,sha256:createHash('sha256').update(buffer).digest('hex'),render:await measure(()=>renderer.render())};
+  const info=await require('sharp')(buffer).metadata();
+  const result={mediaBytes:buffer.length,format:info.format,width:info.width,height:info.height,sha256:createHash('sha256').update(buffer).digest('hex'),render:await measure(()=>renderer.render())};
   if(mode==='new'){
     const http=require('node:http');const fs=require('node:fs/promises');const os=require('node:os');
     const {PokemonService,handler}=require('../pokemon-service/runtime/service.cjs');
     const {MediaStore}=require('../pokemon-service/runtime/media.cjs');
     const {createClient}=require('./lib/pokemon-http-client.cjs');
-    const data={};const domain={registerModule:k=>{data[k]||={};},load:k=>data[k],store:async(k,v)=>{data[k]=v;},reserve:async(k,id,v)=>{if(data[k][id])return false;data[k][id]=v;return true;},isReady:()=>true,takeEffects:()=>[],command:async()=>({texto:'treinador',media:{mime:'image/png',buffer:await renderer.render(),filename:'treinador.png'}})};
+    const data={};const domain={registerModule:k=>{data[k]||={};},load:k=>data[k],store:async(k,v)=>{data[k]=v;},reserve:async(k,id,v)=>{if(data[k][id])return false;data[k][id]=v;return true;},isReady:()=>true,takeEffects:()=>[],command:async()=>({texto:'treinador',media:{mime:`image/${info.format}`,buffer:await renderer.render(),filename:info.format==='jpeg'?'treinador.jpg':'treinador.png'}})};
     const dir=await fs.mkdtemp(path.join(os.tmpdir(),'pokemon-benchmark-'));
     const service=new PokemonService({domain,media:new MediaStore(dir),logger:()=>{}});
     const server=http.createServer(handler(service,{token:'local-benchmark'}));

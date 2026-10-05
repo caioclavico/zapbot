@@ -4,7 +4,7 @@
             [pokemon-service.entry :as entry]
             [zapbot.armazenamento :as storage]))
 
-(deftest treinador-real-atravessa-http-com-cassandra-fake-e-png-real
+(deftest treinador-real-atravessa-http-com-cassandra-fake-e-jpeg-real
   (async done
     (let [http (js/require "node:http")
           runtime (js/require "../runtime/service.cjs")
@@ -23,10 +23,12 @@
           media #js {:put (fn [imagem]
                            (swap! imagens inc)
                            (is (.isBuffer js/Buffer (.-buffer imagem)))
-                           (is (= "89504e470d0a1a0a"
-                                  (.toString (.subarray (.-buffer imagem) 0 8) "hex")))
-                           (p/resolved #js {:mediaId (.repeat "a" 64) :mimeType "image/png"
-                                           :filename "treinador-pokemon.png"}))}
+                           (is (= "ffd8"
+                                  (.toString (.subarray (.-buffer imagem) 0 2) "hex")))
+                           (is (= "image/jpeg" (.-mime imagem)))
+                           (is (= "treinador-pokemon.jpg" (.-filename imagem)))
+                           (p/resolved #js {:mediaId (.repeat "a" 64) :mimeType (.-mime imagem)
+                                           :filename (.-filename imagem)}))}
           service (new (.-PokemonService runtime) #js {:domain dominio :media media :logger (fn [_])})
           server (.createServer http ((.-handler runtime) service #js {:token "fixture-token"}))
           pedido #js {:requestId "isolated-trainer-http" :chatId "isolated-http-chat"

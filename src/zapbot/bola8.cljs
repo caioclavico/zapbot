@@ -9,6 +9,7 @@
             [zapbot.config :as config]))
 
 (def ^:private MessageMedia (.-MessageMedia wwjs))
+(defonce ^:private imagens-base64 (atom {}))
 
 (def ^:private respostas
   ["É decididamente assim" "Com certeza" "Sem dúvida" "Sim, definitivamente"
@@ -84,14 +85,26 @@
   (str "🎱 *Bola 8 do tio " config/bot-name "*"
        (when-not (str/blank? pergunta) (str "\n\n❓ " pergunta))))
 
-(defn jogar [message pergunta]
+(defn- imagem-base64 [resposta]
+  ;; As vinte respostas têm imagens fixas. Uma promessa por resposta compartilha
+  ;; a rasterização simultânea e mantém somente a string imutável após resolver.
+  (or (get @imagens-base64 resposta)
+      (let [imagem (-> (p/let [buffer (-> (sharp (js/Buffer.from (svg-bola resposta)))
+                                         (.png) (.toBuffer))]
+                         (.toString buffer "base64"))
+                       (p/catch (fn [err]
+                                  (swap! imagens-base64 dissoc resposta)
+                                  (p/rejected err))))]
+        (swap! imagens-base64 assoc resposta imagem)
+        imagem)))
+
+(defn jogar [^js message pergunta]
   (let [resposta (rand-nth respostas)]
-    (-> (p/let [buffer (-> (sharp (js/Buffer.from (svg-bola resposta))) (.png) (.toBuffer))
-                media  (MessageMedia. "image/png" (.toString buffer "base64") "bola8.png")
+    (-> (p/let [base64 (imagem-base64 resposta)
+                media  (MessageMedia. "image/png" base64 "bola8.png")
                 _      (.reply message media nil #js {:caption (legenda pergunta)})]
           nil)
         (p/catch (fn [err]
                    (js/console.error "Erro ao gerar imagem da bola 8:" err)
                    ;; se a geração/envio da imagem falhar, ainda respondemos com texto
                    (str (legenda pergunta) "\n\n👉 " resposta))))))
-

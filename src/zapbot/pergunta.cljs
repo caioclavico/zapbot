@@ -3,7 +3,7 @@
   (:require [promesa.core :as p]
             [clojure.string :as str]
             ["whatsapp-web.js" :as wwjs]
-            ["fs" :as fs]
+            ["sharp" :as sharp]
             [zapbot.config :as config]
             [zapbot.gemini :as gemini]))
 
@@ -14,6 +14,27 @@
 ;; confirmada - uso pessoal/privado).
 (def ^:private foto-abujamra-path
   (str js/__dirname "/../assets/abujamra.png"))
+
+;; Uma única foto: a Promise compartilha a conversão em andamento e retém só
+;; o JPEG/base64 pronto. Uma falha permite tentar novamente no próximo comando.
+(defonce ^:private foto-abujamra-cache (atom nil))
+
+(defn- preparar-foto-abujamra []
+  (-> (sharp foto-abujamra-path)
+      (.resize #js {:width 640 :withoutEnlargement true})
+      (.jpeg #js {:quality 70})
+      (.toBuffer)
+      (p/then #(.toString % "base64"))))
+
+(defn- foto-abujamra []
+  (let [cache foto-abujamra-cache]
+    (or @cache
+        (let [foto (-> (preparar-foto-abujamra)
+                       (p/catch (fn [erro]
+                                  (reset! cache nil)
+                                  (throw erro))))]
+          (reset! cache foto)
+          foto))))
 
 (defn- remover-acentos [s]
   (-> s (.normalize "NFD") (str/replace #"[\u0300-\u036f]" "")))
@@ -37,10 +58,12 @@
                   (str "🎭 *O tio " config/bot-name " provoca...*\n\n"
                        (or reflexao
                            "A vida é isso que passa enquanto a gente fica se perguntando o que é a vida.")
-                       "\n\nMas afinal... o que é a vida?"))]
-    (-> (p/let [reflexao (resposta-abujamra)
-                dados    (.readFileSync fs foto-abujamra-path "base64")
-                media    (MessageMedia. "image/png" dados "abujamra.png")
+                       "\n\nMas afinal... o que é a vida?"))
+        ;; Inicia as duas operações no contexto do chamador; aguarda em paralelo.
+        reflexao-promessa (resposta-abujamra)
+        foto-promessa (foto-abujamra)]
+    (-> (p/let [[reflexao dados] (p/all [reflexao-promessa foto-promessa])
+                media    (MessageMedia. "image/jpeg" dados "abujamra.jpg")
                 _        (.reply message media nil #js {:caption (legenda reflexao)})]
           nil)
         (p/catch (fn [err]
@@ -72,4 +95,3 @@
         (p/catch (fn [err]
                    (js/console.error "Erro ao responder pergunta:" err)
                    "❌ Não consegui pensar em uma resposta agora. Tente novamente mais tarde.")))))
-

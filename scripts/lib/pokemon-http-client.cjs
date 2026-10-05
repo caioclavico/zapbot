@@ -43,11 +43,16 @@ function createClient(config = {}) {
       let finished = false;
       let connectionTimer;
       let totalTimer;
+      let releaseBody;
       const finish = (error, value) => {
         if (finished) return;
         finished = true;
         clearTimeout(connectionTimer);
         clearTimeout(totalTimer);
+        if (releaseBody) {
+          releaseBody();
+          releaseBody = null;
+        }
         if (error) reject(error); else resolve(value);
       };
       const req = transport.request({
@@ -59,32 +64,53 @@ function createClient(config = {}) {
           ...(body ? { 'Content-Type': 'application/json', 'Content-Length': body.length } : {})
         }
       }, res => {
+        if (finished) { res.destroy(); return; }
         clearTimeout(connectionTimer);
         if (res.statusCode < 200 || res.statusCode >= 300) {
           finish(failure('HTTP', `Serviço Pokémon respondeu HTTP ${res.statusCode}.`, res.statusCode));
           res.destroy();
           return;
         }
-        const length = Number(res.headers['content-length']);
+        const contentLength = res.headers['content-length'];
+        const length = Number(contentLength);
         if (length > limit) {
           finish(failure('LIMIT', 'Resposta Pokémon excedeu o limite.'));
           res.destroy();
           return;
         }
+        // Binary responses with a bounded length need only their final buffer.
+        const expectedLength = binary && typeof contentLength === 'string'
+          && /^\d+$/.test(contentLength) && Number.isSafeInteger(length) && length >= 0
+          ? length : null;
+        let target = expectedLength === null ? null : Buffer.allocUnsafe(expectedLength);
         const chunks = [];
         let size = 0;
+        releaseBody = () => { chunks.length = 0; target = null; };
         res.on('data', chunk => {
-          size += chunk.length;
-          if (size > limit) {
+          if (finished) return;
+          const nextSize = size + chunk.length;
+          if (nextSize > limit) {
             finish(failure('LIMIT', 'Resposta Pokémon excedeu o limite.'));
             res.destroy();
-          } else chunks.push(chunk);
+          } else if (expectedLength !== null && nextSize > expectedLength) {
+            finish(failure('NETWORK', 'Resposta Pokémon interrompida.'));
+            res.destroy();
+          } else {
+            if (target) chunk.copy(target, size);
+            else chunks.push(chunk);
+            size = nextSize;
+          }
         });
         res.on('aborted', () => finish(failure('NETWORK', 'Resposta Pokémon interrompida.')));
         res.on('error', () => finish(failure('NETWORK', 'Falha ao receber resposta Pokémon.')));
         res.on('end', () => {
           if (finished) return;
-          const buffer = Buffer.concat(chunks);
+          // Never expose bytes from an incomplete preallocated response.
+          if (expectedLength !== null && size !== expectedLength) {
+            finish(failure('NETWORK', 'Resposta Pokémon interrompida.'));
+            return;
+          }
+          const buffer = target || (chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, size));
           if (binary) return finish(null, buffer);
           try { finish(null, JSON.parse(buffer.toString('utf8'))); }
           catch (_) { finish(failure('INVALID_RESPONSE', 'Resposta Pokémon não contém JSON válido.')); }
