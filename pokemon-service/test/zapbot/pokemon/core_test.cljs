@@ -588,6 +588,81 @@
                        (swap! core/jogos dissoc cid)
                        (done)))))))
 
+(def ^:private investida
+  {:nome-exibicao "Investida" :tipo "normal" :classe :fisico :poder 40})
+
+(def ^:private impacto
+  {:nome-exibicao "Impacto" :tipo "normal" :classe :fisico :poder 40})
+
+(defn- jogo-de-ginasio [vez]
+  (assoc (jogo-base (assoc pikachu :hp 500 :golpes [investida])
+                    (assoc geodude :hp 500 :golpes [impacto]))
+         :ginasio {:id "pedra" :nome "Ginásio de Pedra"}
+         :jogadores {:x "ash" :o "lider-ginasio"}
+         :nomes {:x "Você" :o "Brock"}
+         :reservas {:x [] :o []}
+         :vez vez))
+
+(deftest contexto-do-lider-e-um-contexto-valido-do-servico
+  (let [npc (core/contexto-do-lider {:chat-id "outro" :player-id "ash" :emit! identity} "chat")]
+    (is (= "chat" (core/chat-id npc)))
+    (is (= "lider-ginasio" (core/jogador-id npc)))
+    (is (fn? (:emit! npc)))))
+
+(deftest turno-do-lider-ataca-de-verdade-e-devolve-a-vez
+  (async done
+    (let [cid "teste-lider-real"]
+      (swap! core/jogos assoc cid (jogo-de-ginasio :o))
+      (-> (core/turno-lider {:chat-id cid :player-id "ash"} cid)
+          (p/then (fn [resposta]
+                    (let [jogo (get @core/jogos cid)]
+                      (is (= :x (:vez jogo)))
+                      (is (< (get-in jogo [:hp :x]) 500))
+                      (is (str/includes? (:texto resposta) "Impacto"))
+                      (is (str/includes? (:texto resposta) "escolha um golpe"))
+                      (is (= [:o] (map :origem (:efeitos resposta)))))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn [] (swap! core/jogos dissoc cid) (done)))))))
+
+(deftest rodada-de-ginasio-completa-passa-pelo-lider-e-volta-ao-desafiante
+  (async done
+    (let [cid "teste-ginasio-rodada"
+          imagem-original core/resposta-imagem-ginasio]
+      (swap! core/jogos assoc cid (jogo-de-ginasio :x))
+      (set! core/resposta-imagem-ginasio (fn [_ texto _] (p/resolved texto)))
+      (-> (core/jogar-rodada {:chat-id cid :player-id "ash"} "atacar 1")
+          (p/then (fn [texto]
+                    (let [jogo (get @core/jogos cid)]
+                      (is (= :x (:vez jogo)) "o líder respondeu e a vez voltou ao desafiante")
+                      (is (< (get-in jogo [:hp :o]) 500))
+                      (is (< (get-in jogo [:hp :x]) 500))
+                      (is (str/includes? texto "Investida"))
+                      (is (str/includes? texto "Ataque do líder"))
+                      (is (str/includes? texto "Impacto"))
+                      (is (not (str/includes? texto "Não tem batalha rolando"))))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! core/resposta-imagem-ginasio imagem-original)
+                       (swap! core/jogos dissoc cid)
+                       (done)))))))
+
+(deftest ginasio-preso-na-vez-do-lider-destrava-no-comando-do-desafiante
+  (let [cid "teste-vez-presa"
+        preso (jogo-de-ginasio :o)]
+    (doseq [[pid args jogo esperado]
+            [["ash" "atacar 1" preso :x]
+             ["ash" "atk 1" preso :x]
+             ["ash" "defender" preso :x]
+             ["ash" "" preso :x]
+             ["outro" "atacar 1" preso :o]
+             ["ash" "time" preso :o]
+             ["ash" "atacar 1" (assoc preso :finalizando? true) :o]
+             ["ash" "atacar 1" (dissoc preso :ginasio) :o]]]
+      (swap! core/jogos assoc cid jogo)
+      (core/destravar-vez-do-lider! cid pid args)
+      (is (= esperado (:vez (get @core/jogos cid))) (str pid " " args))
+      (swap! core/jogos dissoc cid))))
+
 (deftest comandos-de-bug-nao-executam-rodada
   (with-redefs [bugs/comando! (fn [_ cmd args] [cmd args])
                 core/jogar-rodada (fn [_ _] (throw (js/Error. "Executou combate ao consultar bug")))]

@@ -5494,6 +5494,10 @@
 (defn- sem-estado-intermediario [texto]
   (first (str/split (or texto "") #"\n\n🐾 " 2)))
 
+;; Contextos do serviço são mapas; um objeto JS faria chat-id e jogador-id virarem nil.
+(defn- contexto-do-lider [contexto cid]
+  (assoc contexto :chat-id cid :player-id "lider-ginasio"))
+
 (defn- turno-lider [contexto cid]
   (let [jogo (get @jogos cid)]
     (if (and (:ginasio jogo) (not (:finalizando? jogo)) (= :o (:vez jogo)))
@@ -5503,7 +5507,7 @@
                                    (:golpes pokemon))
             idx (if (seq ataques) (rand-nth (vec ataques)) 0)
             golpe (select-keys (nth (:golpes pokemon) idx) [:tipo :classe :nome-exibicao])
-            npc #js {:from cid :author "lider-ginasio"}]
+            npc (contexto-do-lider contexto cid)]
         (p/let [resposta (atacar npc (str (inc idx)))
                 texto (texto-resposta resposta)
                 ;; Recuo/status pode derrubar o próprio líder. A substituição
@@ -5541,15 +5545,29 @@
       (not (str/blank? derrota)) derrota
       :else resposta)))
 
-(defn- autoriza-turno-lider? [antes depois pid args]
+(def ^:private comandos-de-turno
+  #{"atacar" "ataque" "atirar" "usar"
+    "defender" "defesa" "esquivar" "evasiva"
+    "curar" "cura" "pocao" "poção" "vida" "pocao-maxima" "maxima"})
+
+(defn- comando-de-turno? [args]
   (let [cmd (-> (or args "") str/trim str/lower-case (str/split #"\s+") first expandir-atalho)]
-    (and (:ginasio antes) (:ginasio depois)
-         (not (:finalizando? depois))
-         (= pid (get-in antes [:jogadores :x]) (get-in depois [:jogadores :x]))
-         (= :x (:vez antes)) (= :o (:vez depois))
-         (contains? #{"atacar" "ataque" "atirar" "usar"
-                      "defender" "defesa" "esquivar" "evasiva"
-                      "curar" "cura" "pocao" "poção" "vida" "pocao-maxima" "maxima"} cmd))))
+    (contains? comandos-de-turno cmd)))
+
+(defn- autoriza-turno-lider? [antes depois pid args]
+  (and (:ginasio antes) (:ginasio depois)
+       (not (:finalizando? depois))
+       (= pid (get-in antes [:jogadores :x]) (get-in depois [:jogadores :x]))
+       (= :x (:vez antes)) (= :o (:vez depois))
+       (comando-de-turno? args)))
+
+;; Comandos do chat rodam em fila: ao começar um, a vez do líder é estado preso, não turno em andamento.
+(defn- destravar-vez-do-lider! [cid pid args]
+  (let [jogo (get @jogos cid)]
+    (when (and (:ginasio jogo) (not (:finalizando? jogo)) (= :o (:vez jogo))
+               (= pid (get-in jogo [:jogadores :x]))
+               (or (str/blank? args) (comando-de-turno? args)))
+      (swap! jogos assoc-in [cid :vez] :x))))
 
 (defn- jogar-rodada [contexto args]
   (if-let [ajuda (pokemon-ajuda/resposta args)]
@@ -5564,6 +5582,7 @@
           _ (when (and (get @cacadas-selvagens cid)
                        (nil? (:contexto (get @cacadas-selvagens cid))))
               (swap! cacadas-selvagens update cid assoc :contexto contexto))
+          _ (destravar-vez-do-lider! cid (jogador-id contexto) args)
           jogo-inicial (get @jogos cid)
           caca-inicial (get @cacadas-selvagens cid)
           bola-captura (bola-do-comando-captura args)
