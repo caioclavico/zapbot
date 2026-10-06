@@ -61,10 +61,15 @@
 (defn resposta [saude ^js client]
   (let [^js browser (.-pupBrowser client)
         ^js page (.-pupPage client)
-        chromium? (boolean (and browser (.isConnected browser)
-                                page (not (.isClosed page))))
+        chromium? (boolean (try
+                             (and browser (fn? (.-isConnected browser)) (.isConnected browser)
+                                  page (fn? (.-isClosed page)) (not (.isClosed page)))
+                             (catch :default _ false)))
         estado @(:estado saude)
-        pronto? (and (= estado "READY") chromium?)]
+        pronto? (and (= estado "READY") chromium?
+                     (not (.-lastLoggedOut client))
+                     (or (nil? (.-zapbotStartupState client))
+                         (= "ready" (.-zapbotStartupState client))))]
     {:status (if pronto? "ok" "degraded")
      :whatsapp estado :chromium chromium?}))
 

@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 from urllib.parse import quote, urlencode
+from deploy_auth_profile import SessionProfile, ProfileError, sync_dir
 
 SERVICES = {
     'odisseu': ('zapbot', '/home/ubuntu/zapbot', 'zapbot'),
@@ -105,7 +106,10 @@ class Engine:
         return self.request('GET', '/containers/' + quote(container, safe='') + '/json')
 
     def active(self):
-        return self.request('GET', '/containers/json?all=0')
+        return [c for c in self.containers() if c.get('State', 'running') in ('running', 'paused', 'restarting')]
+
+    def containers(self):
+        return self.request('GET', '/containers/json?all=1')
 
     def image(self, image):
         return self.request('GET', '/images/' + quote(image, safe='') + '/json')
@@ -161,7 +165,7 @@ class Engine:
             time.sleep(0.1)
         return False
 
-def private_file(path, owner_uid=0):
+def private_file(path, owner_uid=0, max_bytes=65536):
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid != owner_uid or info.st_mode & 0o077:
         raise DeployError('Deployment configuration must be private and owned by root')
@@ -172,7 +176,10 @@ def private_file(path, owner_uid=0):
             raise DeployError('Deployment configuration changed while opening')
         with os.fdopen(descriptor, 'r', encoding='utf-8') as stream:
             descriptor = None
-            return stream.read(65537)
+            value = stream.read(max_bytes + 1)
+            if len(value) > max_bytes:
+                raise DeployError('Private deployment record exceeds its size limit')
+            return value
     finally:
         if descriptor is not None:
             os.close(descriptor)
@@ -220,8 +227,15 @@ class Deployment:
         self.stop_attempted = self.original_name_changed = False
         self.create_attempted = False
         self.transaction_name = str(time.time_ns())
+        self.auth_backup = None
+        self.auth_restored = False
+        self.new_start_attempted = False
+        self.requested_image = self.retained_id = None
+        self.requested_revision = None
+        self.profile = SessionProfile(self.app_dir, self.state_dir, owner_uid,
+            lambda path, uid: private_file(path, uid, max_bytes=16 * 1024 * 1024), atomic_private)
 
-    def acquire(self):
+    def acquire(self, recovery=False):
         for directory in (self.config_dir, self.state_dir):
             info = directory.lstat()
             if not stat.S_ISDIR(info.st_mode) or info.st_uid != self.owner_uid or info.st_mode & 0o077:
@@ -231,7 +245,7 @@ class Deployment:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise DeployError('Another deployment is running') from error
-        if (self.state_dir / 'transaction.json').exists():
+        if not recovery and (self.state_dir / 'transaction.json').exists():
             raise DeployError('Interrupted deployment requires operator recovery; see transaction.json')
 
     def registry_auth(self):
@@ -279,8 +293,10 @@ class Deployment:
         if version != baseline:
             raise DeployError('Incompatible persistence version; controlled migration required')
 
-    def persistence(self, current):
+    def persistence(self, current, *, restoring_profile=False):
         config, host = current['Config'], current['HostConfig']
+        if self.service == 'odisseu' and (host.get('RestartPolicy') or {}).get('Name', 'no') not in ('', 'no', 'unless-stopped', 'on-failure'):
+            raise DeployError('Odisseu restart policy can revive a retained profile writer; operator review required')
         if host.get('AutoRemove'):
             raise DeployError('Auto-remove must be disabled to retain a rollback container')
         if host.get('NetworkMode', '').startswith('container:'):
@@ -302,7 +318,8 @@ class Deployment:
                                         ('/app/data', self.app_dir / 'data')):
                 mount = mounts.get(destination, {})
                 if (mount.get('Type') != 'bind' or mount.get('Source') != str(source)
-                        or mount.get('RW') is not True or not source.is_dir()):
+                        or mount.get('RW') is not True or source.is_symlink()
+                        or not (source.is_dir() or (restoring_profile and destination == '/app/.wwebjs_auth'))):
                     raise DeployError('Required WhatsApp/session data persistence is missing')
         else:
             mount = mounts.get('/app/data', {})
@@ -351,6 +368,8 @@ class Deployment:
 
     def running(self, container, restart_count):
         inspected = self.engine.inspect(container)
+        if inspected.get('Id') != container:
+            raise DeployError('Readiness response belongs to a different container')
         state = inspected['State']
         if not state.get('Running') or state.get('Paused') or state.get('Restarting'):
             raise DeployError('Container stopped, paused or restarted during readiness verification')
@@ -417,8 +436,11 @@ class Deployment:
         raise DeployError('Readiness timeout')
 
     def ensure_stopped(self, container, *, clean=False):
-        state = self.engine.inspect(container)['State']
-        if state.get('Running'):
+        inspected = self.engine.inspect(container)
+        if inspected.get('Id') != container:
+            raise DeployError('Stop verification belongs to a different container')
+        state = inspected['State']
+        if state.get('Running') or state.get('Restarting') or state.get('Paused') or state.get('Pid', 0):
             raise DeployError('Previous process is still running; replacement cannot start')
         if clean and (state.get('OOMKilled') or state.get('ExitCode', 0) != 0):
             raise DeployError('Previous process did not shut down cleanly; replacement blocked')
@@ -426,11 +448,17 @@ class Deployment:
     def single_writer(self, expected):
         mounts = {(mount['Type'], mount.get('Name') if mount['Type'] == 'volume' else mount.get('Source'))
                   for mount in self.previous.get('Mounts', []) if mount['Type'] in ('bind', 'volume')}
-        for container in self.engine.active():
-            if container['Id'] == expected:
-                continue
+        inventory = self.engine.containers() if self.service == 'odisseu' else self.engine.active()
+        for container in inventory:
             same_mount = any((mount['Type'], mount.get('Name') if mount['Type'] == 'volume' else mount.get('Source'))
                              in mounts for mount in container.get('Mounts', []) if mount['Type'] in ('bind', 'volume'))
+            # Docker normalizes paths differently from an operator's bind. Also
+            # reject a bind of an ancestor/descendant (e.g. /home/ubuntu/zapbot).
+            protected = [Path(m['Source']).resolve() for m in self.previous.get('Mounts', []) if m['Type'] == 'bind']
+            for mount in container.get('Mounts', []):
+                if mount['Type'] == 'bind':
+                    source = Path(mount['Source']).resolve()
+                    same_mount = same_mount or any(source == path or source in path.parents or path in source.parents for path in protected)
             same_service = (container.get('Labels') or {}).get(SERVICE_LABEL) == self.service
             names = [name.lstrip('/') for name in container.get('Names', [])]
             if self.service == 'pokemon':
@@ -440,6 +468,16 @@ class Deployment:
                     (name.startswith('zapbot-') and not name.startswith(('zapbot-pokemon', 'zapbot-cassandra')))
                     for name in names)
             if same_mount or same_service:
+                if self.service == 'odisseu':
+                    actual = self.engine.inspect(container['Id'])
+                    if (actual['HostConfig'].get('RestartPolicy') or {}).get('Name', 'no') not in ('', 'no', 'unless-stopped', 'on-failure'):
+                        raise DeployError('Related Odisseu container can restart a retained profile writer; operator review required')
+                    state = actual['State']
+                    active = state.get('Running') or state.get('Paused') or state.get('Restarting') or state.get('Pid', 0)
+                    if container['Id'] == expected or not active:
+                        continue
+                elif container['Id'] == expected:
+                    continue
                 raise DeployError('Another active container shares this service or its persistence; start blocked')
 
     def preserve_logs(self, container):
@@ -456,9 +494,33 @@ class Deployment:
             self.output(self.service + ': could not save failure logs')
 
     def transaction(self, phase):
-        data = {'phase': phase, 'original-container': self.previous['Id'],
-                'replacement-container': self.new_id, 'service': self.service}
+        if phase == 'profile-restored':
+            self.auth_restored = True
+        data = {'version': 2, 'transaction-id': self.transaction_name,
+                'phase': phase, 'original-container': self.previous['Id'],
+                'original-image': self.previous['Image'], 'requested-image': self.requested_image,
+                'requested-revision': self.requested_revision,
+                'replacement-container': self.new_id, 'retained-container': self.retained_id,
+                'replacement-start-attempted': self.new_start_attempted,
+                'auth-backup': self.auth_backup, 'original-state': self.original_state,
+                'auth-restored': self.auth_restored,
+                'service': self.service}
         atomic_private(self.state_dir / 'transaction.json', json.dumps(data) + '\n')
+
+    def archive_transaction(self, outcome):
+        path = self.state_dir / 'transaction.json'
+        if not path.exists():
+            return
+        archive = self.state_dir / ('transaction.' + self.transaction_name + '.' + outcome + '.json')
+        # Never overwrite earlier evidence, including transaction.recovered.json.
+        if archive.exists():
+            if private_file(archive, self.owner_uid) != private_file(path, self.owner_uid):
+                raise DeployError('Transaction archive conflicts with existing evidence')
+        else:
+            os.link(path, archive, follow_symlinks=False)
+            sync_dir(self.state_dir)
+        path.unlink()
+        sync_dir(self.state_dir)
 
     def restore(self):
         # Never start the old writer before proving the replacement has exited.
@@ -471,29 +533,166 @@ class Deployment:
                 candidate = None
             if candidate and candidate['Config'].get('Labels', {}).get(DEPLOYMENT_LABEL) == self.transaction_name:
                 self.new_id = candidate['Id']
-        self.preserve_logs(self.new_id)
         if self.new_id:
+            candidate = self.engine.inspect(self.new_id)
+            if (candidate.get('Id') != self.new_id or candidate.get('Image') != self.requested_image or
+                    (self.new_id != self.retained_id and (candidate['Config'].get('Labels') or {}).get(DEPLOYMENT_LABEL) != self.transaction_name)):
+                raise DeployError('Rollback replacement identity is uncertain; no container will be stopped')
+            self.preserve_logs(self.new_id)
             self.engine.stop(self.new_id, self.grace_seconds)
-            self.ensure_stopped(self.new_id)
-            self.engine.rename(self.new_id, self.name + '-failed-' + self.transaction_name)
+            self.ensure_stopped(self.new_id, clean=self.service == 'odisseu' and self.new_start_attempted)
+            failed_name = self.name + '-failed-' + self.transaction_name
+            if self.engine.inspect(self.new_id)['Name'] != '/' + failed_name:
+                self.engine.rename(self.new_id, failed_name)
         original_id = self.previous['Id']
+        was_running = self.engine.inspect(original_id)['State'].get('Running')
+        if was_running and self.service == 'odisseu' and self.auth_backup and self.new_start_attempted and not self.auth_restored:
+            raise DeployError('Original was restarted before profile restoration was confirmed; manual review required')
+        if self.service == 'odisseu' and self.auth_backup and self.new_start_attempted and not self.auth_restored:
+            self.ensure_stopped(original_id)
+            self.single_writer(None)
+            self.profile.restore(self.auth_backup, original_id, self.previous['Image'], self.transaction)
+        if self.service == 'odisseu' and (not self.profile.auth.is_dir() or self.profile.auth.is_symlink()):
+            raise DeployError('Restored session root is unavailable; old client will not be started with an empty profile')
         # Rename may also have been committed before a failed HTTP response.
         if self.engine.inspect(original_id)['Name'] != '/' + self.name:
             self.engine.rename(original_id, self.name)
         self.single_writer(original_id)
         if not self.engine.inspect(original_id)['State'].get('Running'):
             self.engine.start(original_id)
-        self.wait_ready(original_id)
+        self.wait_ready(original_id, new_start=not was_running)
         if self.original_state:
             self.record(self.original_state)
-        (self.state_dir / 'transaction.json').unlink(missing_ok=True)
+        self.transaction('rolled-back')
+        self.archive_transaction('rolled-back')
         self.output(self.service + ': rollback healthy; restored ' + self.previous['Image'])
+
+    def recover(self):
+        """Operator-only recovery; never implicitly executed by deploy or SSH."""
+        path = self.state_dir / 'transaction.json'
+        if not path.exists():
+            self.output(self.service + ': no pending transaction; no recovery action performed')
+            return
+        try:
+            data = json.loads(private_file(path, self.owner_uid))
+        except (ValueError, OSError) as error:
+            raise DeployError('Interrupted transaction record is invalid; evidence retained') from error
+        if data.get('version') != 2 or data.get('service') != self.service:
+            raise DeployError('Legacy or foreign transaction requires manual review; no Docker mutations performed')
+        tx = data.get('transaction-id')
+        if not isinstance(tx, str) or not re.fullmatch(r'[0-9]{1,32}', tx):
+            raise DeployError('Invalid transaction identity')
+        phases = {'prepared', 'original-stopped', 'auth-snapshot-ready', 'creating-replacement',
+                  'replacement-created', 'starting-replacement', 'replacement-started',
+                  'replacement-verified', 'committed', 'recovering-rollback', 'profile-restore-ready',
+                  'profile-original-archived', 'profile-restored', 'rolled-back'}
+        if (data.get('phase') not in phases or not isinstance(data.get('replacement-start-attempted'), bool)
+                or not isinstance(data.get('auth-restored'), bool)):
+            raise DeployError('Invalid transaction phase')
+        def identifier(value):
+            return isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value)
+        original_id, new_id = data.get('original-container'), data.get('replacement-container')
+        retained = data.get('retained-container')
+        if not identifier(original_id) or (new_id is not None and not identifier(new_id)) or (
+                retained is not None and not identifier(retained)) or original_id == new_id:
+            raise DeployError('Recovery requires full, distinct container IDs')
+        for key in ('original-image', 'requested-image'):
+            if not isinstance(data.get(key), str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', data[key]):
+                raise DeployError('Recovery requires immutable image IDs')
+        prior = data.get('original-state')
+        if not isinstance(prior, dict) or set(prior) != {'last-good-image', 'last-good-image-id',
+                'previous-image', 'previous-image-id', 'previous-container', 'deployed-revision'}:
+            raise DeployError('Recovery lacks the saved deployment references')
+        if retained and (retained != prior.get('previous-container') or data['requested-image'] != prior.get('previous-image-id')):
+            raise DeployError('Retained rollback target differs from saved references')
+        self.transaction_name, self.original_state = tx, prior
+        self.requested_image, self.requested_revision = data['requested-image'], data.get('requested-revision')
+        self.retained_id, self.auth_backup = retained, data.get('auth-backup')
+        self.new_start_attempted = data['replacement-start-attempted']
+        self.auth_restored = data['auth-restored']
+        if self.auth_backup is not None and (self.service != 'odisseu' or self.auth_backup != tx):
+            raise DeployError('Snapshot belongs to another transaction or service')
+        if self.service == 'odisseu' and self.new_start_attempted and not self.auth_backup:
+            raise DeployError('Started replacement has no consistent session snapshot; manual review required')
+        summaries = self.engine.containers()
+        ids = {c['Id'] for c in summaries}
+        if original_id not in ids or (new_id is not None and new_id not in ids):
+            raise DeployError('Recorded container disappeared; no recovery mutations performed')
+        original = self.engine.inspect(original_id)
+        if original['State'].get('Paused') or original['State'].get('Restarting') or (
+                not original['State'].get('Running') and original['State'].get('Pid', 0)):
+            raise DeployError('Original container has an ambiguous process state')
+        if original.get('Id') != original_id or original.get('Image') != data['original-image'] or original.get('Name') not in (
+                '/' + self.name, '/' + self.name + '-previous-' + tx):
+            raise DeployError('Original container identity or name differs from the transaction')
+        self.previous = original
+        missing_auth = bool(self.auth_backup and not self.profile.auth.exists())
+        self.persistence(original, restoring_profile=missing_auth)
+        self.compatibility(self.engine.image(original['Image']), legacy=True)
+        if self.auth_backup:
+            self.profile.validated(tx, original_id, original['Image'])
+        candidates = [c for c in summaries if (c.get('Labels') or {}).get(DEPLOYMENT_LABEL) == tx and c['Id'] != original_id]
+        if len(candidates) > 1 or (candidates and new_id is not None and candidates[0]['Id'] != new_id):
+            raise DeployError('Ambiguous replacement identity; containers and evidence retained')
+        if new_id is None and candidates:
+            if self.new_start_attempted:
+                raise DeployError('Started replacement is missing its recorded ID')
+            new_id = candidates[0]['Id']
+        if new_id is None and retained is not None and retained in ids:
+            # A retained-container rename may have committed before the next
+            # journal write. Identify it by its saved full ID and image, not by
+            # an unrelated container occupying the production name.
+            candidate = self.engine.inspect(retained)
+            if candidate.get('Name') in ('/' + self.name, '/' + self.name + '-failed-' + tx):
+                new_id = retained
+        replacement = self.engine.inspect(new_id) if new_id else None
+        if replacement:
+            if (replacement.get('Id') != new_id or replacement.get('Image') != self.requested_image or
+                    replacement.get('Name') not in ('/' + self.name, '/' + self.name + '-failed-' + tx) or
+                    (not retained and (replacement['Config'].get('Labels') or {}).get(DEPLOYMENT_LABEL) != tx) or
+                    (replacement['Config'].get('Labels') or {}).get(REVISION_LABEL) != self.requested_revision):
+                raise DeployError('Replacement identity differs from the recorded target')
+            self.persistence(replacement, restoring_profile=missing_auth)
+            if not retained:
+                self.verify_created(original, new_id)
+            if replacement['State'].get('Running') and not self.new_start_attempted:
+                raise DeployError('Replacement started outside the recorded transaction')
+        self.new_id = new_id
+        if original['State'].get('Running') and replacement and replacement['State'].get('Running'):
+            raise DeployError('Both writers are active; manual review required before recovery')
+        for c in self.engine.active():
+            if c['Id'] not in (original_id, new_id):
+                # Validate other containers without exempting either transaction
+                # writer from the profile-overlap check.
+                self.single_writer(new_id if replacement and replacement['State'].get('Running') else original_id)
+                break
+        committed = data['phase'] == 'committed' or (data['phase'] == 'replacement-verified' and
+            (self.state() or {}).get('last-good-image-id') == self.requested_image)
+        if committed:
+            if not replacement or replacement['Name'] != '/' + self.name or (
+                    self.state() or {}).get('last-good-image-id') != self.requested_image:
+                raise DeployError('Committed state does not match the actual replacement')
+            self.ensure_stopped(original_id)
+            self.single_writer(new_id)
+            self.wait_ready(new_id, new_start=False)
+            self.archive_transaction('committed')
+            self.output(self.service + ': committed replacement verified; transaction archived')
+            return
+        if original['State'].get('Running') and original['Name'] != '/' + self.name:
+            raise DeployError('Original is active under an unexpected name; manual review required')
+        self.transaction('recovering-rollback')
+        self.restore()
 
     def run(self, action, image=None):
         try:
-            self.acquire()
+            self.acquire(recovery=action == 'recover')
+            if action == 'recover':
+                self.recover()
+                return
             current = self.engine.inspect(self.name)
             self.previous, self.original_state = current, self.state()
+            if self.original_state is not None and self.original_state.get('last-good-image-id') != current['Image']:
+                raise DeployError('Saved deployment references differ from the current container; operator review required before deployment')
             self.single_writer(current['Id'])
             self.persistence(current)
             current_image = self.engine.image(current['Image'])
@@ -556,14 +755,25 @@ class Deployment:
             old_reference = (self.original_state['last-good-image']
                              if self.original_state and self.original_state.get('last-good-image-id') == current['Image']
                              else current['Image'])
+            self.requested_image = target['Id']
+            self.requested_revision = requested_revision
+            self.retained_id = retained['Id'] if retained is not None else None
             self.transaction('prepared')
             self.stop_attempted = True
             self.engine.stop(current['Id'], max(self.grace_seconds, current['Config'].get('StopTimeout') or 0))
             self.ensure_stopped(current['Id'], clean=action == 'deploy')
+            self.transaction('original-stopped')
+            if self.service == 'odisseu':
+                self.ensure_stopped(current['Id'], clean=True)
+                self.single_writer(None)
+                self.auth_backup = self.profile.snapshot(self.transaction_name, current['Id'], current['Image'])
+                self.profile.validated(self.auth_backup, current['Id'], current['Image'])
+                self.transaction('auth-snapshot-ready')
             self.engine.rename(current['Id'], self.name + '-previous-' + self.transaction_name)
             self.original_name_changed = True
             if retained is None:
                 self.create_attempted = True
+                self.transaction('creating-replacement')
                 self.new_id = self.engine.create(self.name, configuration)
                 self.verify_created(current, self.new_id)
                 created = self.engine.inspect(self.new_id)
@@ -575,17 +785,22 @@ class Deployment:
                 self.engine.rename(self.new_id, self.name)
             self.transaction('replacement-created')
             self.single_writer(self.new_id)
+            self.new_start_attempted = True
+            self.transaction('starting-replacement')
             self.engine.start(self.new_id)
+            self.transaction('replacement-started')
             self.wait_ready(self.new_id, require_no_restarts=retained is None)
+            self.transaction('replacement-verified')
             state = {'last-good-image': image, 'last-good-image-id': target['Id'],
                      'previous-image': old_reference, 'previous-image-id': current['Image'],
                      'previous-container': current['Id'],
                      'deployed-revision': image.rsplit(':', 1)[-1] if IMAGE_RE.fullmatch(image) else ''}
             self.record(state)
-            (self.state_dir / 'transaction.json').unlink()
+            self.transaction('committed')
+            self.archive_transaction('committed')
             self.output(self.service + ': deployment healthy; active image ' + image)
         except BaseException as error:
-            self.output(self.service + ': ' + (str(error) if isinstance(error, DeployError)
+            self.output(self.service + ': ' + (str(error) if isinstance(error, (DeployError, ProfileError))
                                              else 'Deployment interrupted or internal failure'))
             if self.stop_attempted:
                 try:
@@ -603,13 +818,13 @@ def main(argv):
     os.umask(0o077)
     if os.geteuid() != 0:
         raise DeployError('Run through the installed service-specific sudo wrapper')
-    if len(argv) < 2 or argv[0] not in SERVICES or argv[1] not in ('deploy', 'rollback'):
-        raise DeployError('Usage: SERVICE deploy IMAGE [APP_DIR] | SERVICE rollback [APP_DIR]')
+    if len(argv) < 2 or argv[0] not in SERVICES or argv[1] not in ('deploy', 'rollback', 'recover'):
+        raise DeployError('Usage: SERVICE deploy IMAGE [APP_DIR] | SERVICE rollback|recover [APP_DIR]')
     service, action = argv[:2]
     if len(argv) not in ((3, 4) if action == 'deploy' else (2, 3)):
         raise DeployError('Invalid deployment arguments')
     image = argv[2] if action == 'deploy' else None
-    app_dir = argv[3] if action == 'deploy' and len(argv) == 4 else (argv[2] if action == 'rollback' and len(argv) == 3 else None)
+    app_dir = argv[3] if action == 'deploy' and len(argv) == 4 else (argv[2] if action in ('rollback', 'recover') and len(argv) == 3 else None)
     if app_dir and not re.fullmatch(r'/[A-Za-z0-9_./-]+', app_dir):
         raise DeployError('Invalid application directory')
     interruption_seen = False

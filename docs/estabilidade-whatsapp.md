@@ -1,5 +1,9 @@
 # Estabilidade do WhatsApp em VM de 1 GB
 
+A correção atual de startup, snapshot frio, rollback e recuperação de transações
+está em [recuperação do Odisseu](odisseu-deploy-recovery.md). Ela adiciona tentativas
+limitadas de `inject()` e proteção do perfil às medidas históricas descritas aqui.
+
 ## Análise da estrutura existente
 
 O projeto compila ClojureScript para um único processo Node (`target/main.js`).

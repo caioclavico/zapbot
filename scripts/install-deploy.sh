@@ -22,7 +22,7 @@ source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 command -v python3 >/dev/null
 command -v visudo >/dev/null
 install -d -o root -g root -m 755 /usr/local/lib/zapbot-deploy
-for file in deploy-vm.sh deploy-service.py deploy-ssh-command.py; do
+for file in deploy-vm.sh deploy-service.py deploy_auth_profile.py deploy-ssh-command.py; do
   install -o root -g root -m 755 "$source_dir/$file" "/usr/local/lib/zapbot-deploy/$file"
 done
 install -o root -g root -m 755 "$source_dir/deploy-entry.py" "/usr/local/sbin/zapbot-deploy-$service"

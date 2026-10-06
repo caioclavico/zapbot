@@ -10,6 +10,19 @@
     (aset "pupBrowser" #js {:isConnected (fn [] true)})
     (aset "pupPage" #js {:isClosed (fn [] false)})))
 
+(deftest ready-antigo-nao-oculta-recuperacao-falha-ou-logout
+  (let [s (saude/criar) c (cliente)]
+    (reset! (:estado s) "READY")
+    (doseq [estado ["starting" "recovering" "error" "stopped"]]
+      (aset c "zapbotStartupState" estado)
+      (is (= "degraded" (:status (saude/resposta s c)))))
+    (aset c "zapbotStartupState" "ready")
+    (is (= "ok" (:status (saude/resposta s c))))
+    (aset c "lastLoggedOut" true)
+    (is (= "degraded" (:status (saude/resposta s c))))
+    (aset c "pupBrowser" #js {:isConnected (fn [] (throw (js/Error. "context gone")))})
+    (is (= "degraded" (:status (saude/resposta s c))))))
+
 (deftest eventos-controlam-saude-sem-inicializar-navegador
   (let [s (saude/criar) c (cliente)]
     (saude/acompanhar! s c)

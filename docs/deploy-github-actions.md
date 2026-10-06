@@ -1,5 +1,9 @@
 # Deploy do Odisseu e Pokémon com GitHub Actions
 
+O helper atual usa journal v2 e snapshot frio do perfil WhatsApp. Antes de atualizar
+o Odisseu, revisar [startup, recuperação e rollback](odisseu-deploy-recovery.md) e
+instalar o código root-owned revisado, incluindo `deploy_auth_profile.py`.
+
 As imagens usam `PERFORMANCE_METRICS=false` por padrão. Um override explícito
 no ambiente efetivo continua sendo preservado pelo deploy. Veja
 [controle das métricas](performance-metrics.md) para habilitar diagnóstico no
@@ -235,7 +239,7 @@ No Mac, dentro do checkout revisado:
 ```sh
 tar -czf /tmp/zapbot-deploy-bootstrap.tgz \
   scripts/install-deploy.sh scripts/deploy-entry.py scripts/deploy-ssh-command.py \
-  scripts/deploy-vm.sh scripts/deploy-service.py
+  scripts/deploy-vm.sh scripts/deploy-service.py scripts/deploy_auth_profile.py
 scp -i "$HOME/Downloads/ssh-key-2026-09-27.key" \
   /tmp/zapbot-deploy-bootstrap.tgz "$HOME/.ssh/zapbot-actions-odisseu.pub" ubuntu@129.148.52.187:/tmp/
 scp -i "$HOME/.ssh/google_pokemon" \
@@ -403,60 +407,32 @@ sudo cat /var/lib/zapbot-deploy/odisseu/transaction.json
 sudo docker inspect --format 'name={{.Name}} running={{.State.Running}} image={{.Image}}' ID_DO_CONTAINER
 ```
 
-Se rollback automatizado falhar, confirme que a nova instância terminou antes
-de restaurar o container anterior. Os nomes e o procedimento de recuperação
-dependem da fase registrada. Com o deploy pausado, obtenha um shell administrativo
-com o lock do serviço; não prossiga se o lock estiver ocupado:
+Se rollback automatizado falhar, mantenha containers, perfis e journals como
+evidência privada. Não renomeie containers apenas pelo nome nem arquive
+`state.json` para liberar outro deploy. Não inicie o original enquanto outro
+writer usa seu perfil. Shutdown incompleto continua bloqueando a recuperação.
+
+O helper revisado oferece recuperação explícita de journals **v2**, com validação
+dos IDs completos, imagens, mounts, fase e saúde. Após autorização e revisão do
+estado, a conta administrativa pode executar na VM correspondente:
 
 ```sh
-sudo flock -n /var/lib/zapbot-deploy/odisseu/deploy.lock bash
-# Na outra VM, trocar o diretório para pokemon.
+sudo python3 /usr/local/lib/zapbot-deploy/deploy-service.py odisseu recover /home/ubuntu/zapbot
+sudo python3 /usr/local/lib/zapbot-deploy/deploy-service.py pokemon recover /home/caiohclavico/pokemon-service
 ```
 
-Nesse shell, use os IDs verificados da transação. Se houver replacement criado
-e `replacement-container` ainda for null, inspecione o nome canônico e o label
-`io.zapbot.deployment-id` antes de selecionar qualquer container:
+Execute somente o comando do serviço afetado. Ele adquire o lock; não o invoque
+dentro de outro `flock`. A chave de deploy e o workflow não recebem essa operação.
+No Odisseu, restauração do perfil exige snapshot frio válido e ambos os containers
+parados. O helper arquiva o journal apenas após recuperação comprovada ou commit
+já saudável, preservando arquivos anteriores. Sem journal, não altera containers.
 
-```sh
-docker inspect --format '{{.Id}} {{index .Config.Labels "io.zapbot.deployment-id"}}' zapbot
-# Para Pokémon, o nome canônico é zapbot-pokemon.
-docker stop --timeout 90 ID_DA_NOVA_INSTANCIA
-docker inspect --format '{{.State.Running}}' ID_DA_NOVA_INSTANCIA
-# Exigir false. Só então liberar o nome e restaurar o original:
-docker rename ID_DA_NOVA_INSTANCIA "zapbot-failed-recovery-$(date +%s)"
-docker rename ID_ORIGINAL zapbot
-docker start ID_ORIGINAL
-docker exec ID_ORIGINAL node scripts/healthcheck.js
-```
-
-Adapte somente o nome canônico para Pokémon e valide seus dois endpoints
-internamente, sem comandos de jogo:
-
-```sh
-docker exec ID_ORIGINAL node -e 'Promise.all(["/health","/ready"].map(async p=>{const r=await fetch("http://127.0.0.1:"+(process.env.PORT||8090)+p);if(r.status!==200)throw Error("Unhealthy");})).then(()=>console.log("HTTP 200 em ambos")).catch(()=>process.exit(1))'
-```
-
-Pule a renomeação se o original já possui o nome correto; não tente iniciar um
-original enquanto outro writer do serviço permanece ativo. Depois de confirmar
-saúde estável, arquive `transaction.json` e `state.json` com nomes diferentes
-no mesmo diretório privado (sem remover os containers). O próximo deploy
-reestabelece a referência funcional a partir do container restaurado. Mantenha
-o lock até terminar a recuperação e saia com `exit`. Não faça recuperação de
-schema, dados Cassandra ou limpeza de autenticação neste procedimento.
-
-Ainda no shell com lock, após essa verificação:
-
-```sh
-deployment_state=/var/lib/zapbot-deploy/odisseu # pokemon na outra VM
-recovery_stamp=$(date +%s)
-mv "$deployment_state/transaction.json" "$deployment_state/transaction.recovered-$recovery_stamp.json"
-if test -f "$deployment_state/state.json"; then
-  mv "$deployment_state/state.json" "$deployment_state/state.recovered-$recovery_stamp.json"
-fi
-umask 077
-docker inspect --format '{{.Image}}' ID_ORIGINAL > "$deployment_state/last-good-image"
-exit
-```
+Journals legados ou inconsistentes, snapshots inválidos, containers desconhecidos
+e falhas de encerramento exigem análise administrativa específica. Não há receita
+genérica de `stop/rename/start` nem edição manual do journal para forçar sucesso.
+Consulte [recuperação segura do Odisseu](odisseu-deploy-recovery.md) antes de instalar
+os helpers e planejar qualquer intervenção. Não faça recuperação de schema ou
+limpeza de autenticação nesse procedimento.
 
 Mantenha backups externos dos volumes e da sessão segundo a política operacional.
 A retenção do container anterior permite rollback de código e configuração, mas

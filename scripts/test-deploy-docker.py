@@ -102,6 +102,8 @@ def main():
                 (root / "fixture.cjs").write_text(
                     "const fs=require('node:fs'),h=require('node:http');"
                     f"const broken={str(broken).lower()};"
+                    + ("fs.writeFileSync('/app/.wwebjs_auth/fixture-session',broken?'failed-candidate-auth':'retained-session-fixture');"
+                       if args.service == 'odisseu' else '') +
                     "const server=h.createServer((req,res)=>{"
                     "res.writeHead(broken?503:200,{'Content-Type':'application/json'});"
                     "res.end(JSON.stringify(req.url==='/ready'?{ready:!broken}:{status:broken?'error':'ok',whatsapp:broken?'STARTING':'READY',chromium:true}));"
@@ -187,6 +189,14 @@ def main():
             assert engine.inspect(name)["Image"] == images[prefix + "b" * 40]
             assert engine.probe(name, args.service)
             assert any("rollback healthy" in message for message in messages)
+            if args.service == 'odisseu':
+                # Verify a retained container remounts the restored directory,
+                # not the inode archived as the failed candidate's evidence.
+                value = command('exec', name, 'node', '-e',
+                    "process.stdout.write(require('node:fs').readFileSync('/app/.wwebjs_auth/fixture-session','utf8'))")
+                assert value == 'retained-session-fixture'
+                failed = list((app / '.zapbot-auth-recovery').glob('*-failed/fixture-session'))
+                assert len(failed) == 1 and failed[0].read_text() == 'failed-candidate-auth'
             instance().run("rollback")
             assert engine.inspect(name)["Id"] == old_id
             assert engine.probe(name, args.service)

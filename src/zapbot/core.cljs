@@ -18,6 +18,7 @@
 
 (def ^:private Client (.-Client wwjs))
 (def ^:private LocalAuth (.-LocalAuth wwjs))
+(def ^:private startup (js/require "../scripts/lib/whatsapp-startup.cjs"))
 
 (defn configurar-envio-seguro!
   "Desativa o sendSeen quebrado do WhatsApp Web antes de qualquer envio.
@@ -164,7 +165,7 @@
 
 (defonce ^:private iniciado? (atom false))
 
-(defn- encerrar-com-sessao! [^js client diagnostico ^js server]
+(defn- encerrar-com-sessao! [^js recovery diagnostico ^js server]
   (let [encerrando? (atom false)]
     (doseq [sinal ["SIGTERM" "SIGINT"]]
       (.on js/process sinal
@@ -177,26 +178,32 @@
                ;; Limite apenas para uma parada solicitada, nunca para startup lento.
                (js/setTimeout #(js/process.exit 1) 45000)
                (-> (p/resolved nil)
-                   (p/then (fn [_] (.destroy client)))
+                   (p/then (fn [_] (.close recovery)))
                    (p/then (fn [_] (js/process.exit 0)))
                    (p/catch (fn [err]
                               (saude/log! (str "Erro ao encerrar: " (.-message err)))
                               (js/process.exit 1))))))))))
 
 (defn main [& _args]
-  ;; Uma única tentativa por processo, inclusive se initialize rejeitar.
+  ;; Um único cliente/browser por processo; só a injeção pode ser repetida.
   (when (compare-and-set! iniciado? false true)
     (let [puppeteer-opts (opcoes-puppeteer)
           client (Client. #js {:authStrategy (LocalAuth.)
                                :puppeteer (clj->js puppeteer-opts)})
           diagnostico (saude/criar)
+          recovery (.installStartupRecovery startup client
+                     #js {:onState (fn [estado]
+                                     (when (#{"recovering" "error"} estado)
+                                       (saude/atualizar! diagnostico
+                                                        (if (= estado "error") "ERROR" "RECOVERING")
+                                                        "Estado de inicialização atualizado; sessão preservada.")))})
           server (saude/servir! diagnostico client)]
       (configurar-envio-seguro! client)
       (saude/acompanhar! diagnostico client)
       (recursos/iniciar! client)
-      (encerrar-com-sessao! client diagnostico server)
-      (.on client "qr" on-qr)
-      (.on client "ready" (fn [] (on-ready client)))
+      (encerrar-com-sessao! recovery diagnostico server)
+      (.on client "qr" (fn [qr] (when (.acceptingQR recovery) (on-qr qr))))
+      (.on client "ready" (fn [] (when (.acceptingReady recovery) (on-ready client))))
       (.on client "disconnected" (fn [& _] (pokemon/parar!)))
       (.on client "auth_failure" (fn [& _] (pokemon/parar!)))
       ;; Preserva o fluxo de mensagens e os inicializadores dos jogos.
@@ -205,8 +212,9 @@
       (-> (armazenamento/iniciar!)
           (p/then (fn [_]
                     (saude/iniciar-avisos! diagnostico)
-                    (.initialize client)))
+                    (.initialize recovery)))
           (p/catch (fn [err]
-                     (saude/atualizar! diagnostico "ERROR"
-                                      (str "Erro ao inicializar: " (.-message err)))
-                     (js/console.error err)))))))
+                     (when-not (.stopping recovery)
+                       (saude/atualizar! diagnostico "ERROR"
+                                        (str "Erro ao inicializar: " (.-message err)))
+                       (js/console.error err))))))))

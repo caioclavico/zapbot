@@ -79,6 +79,7 @@ jobs:
           python3 scripts/test-ci-ssh.py
           node --test scripts/test-ci-registry.cjs
           python3 scripts/test-deploy.py
+          python3 scripts/test-deploy-recovery.py
           python3 scripts/test-load-image.py
           python3 scripts/test-deploy-ssh.py
 

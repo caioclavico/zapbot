@@ -97,8 +97,9 @@ class DockerModel:
         self.calls.append((method, path, query, copy.deepcopy(data)))
         if path == '/containers/json':
             return 200, [{'Id': container['Id'], 'Names': [container['Name']],
-                          'Mounts': container['Mounts'], 'Labels': container['Config'].get('Labels')}
-                         for container in self.containers.values() if container['State']['Running']]
+                          'Mounts': container['Mounts'], 'Labels': container['Config'].get('Labels'),
+                          'State': 'running' if container['State']['Running'] else 'exited'}
+                         for container in self.containers.values() if query.get('all') == ['1'] or container['State']['Running']]
         if path.startswith('/images/') and path.endswith('/json'):
             reference = path[len('/images/'):-len('/json')]
             if reference == OLD_IMAGE and self.target_id != OLD_IMAGE:
@@ -320,7 +321,7 @@ class DeployTest(unittest.TestCase):
         self.assertNotIn(SECRET, '\n'.join(self.output))
         self.assertNotIn(SECRET, (self.state / 'state.json').read_text())
         for path in self.state.iterdir():
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700 if path.is_dir() else 0o600)
         for _method, path, _query, _data in self.model.calls:
             self.assertNotIn('cassandra', path)
             self.assertNotIn('/delete', path)
@@ -565,6 +566,31 @@ class DeployTest(unittest.TestCase):
         self.assertFalse(any(path.endswith('/stop') for _, path, _, _ in self.model.calls))
         self.assertEqual(self.model.old_starts, 0)
 
+    def test_odisseu_always_restart_policy_blocks_before_stop_including_retained_writer(self):
+        for retained in (False, True):
+            with self.subTest(retained=retained):
+                self.fixture('odisseu')
+                writer = self.model.containers['old']
+                if retained:
+                    writer = copy.deepcopy(writer)
+                    writer.update(Id='retained', Name='/zapbot-previous-retained')
+                    writer['State'].update(Running=False, Pid=0)
+                    self.model.containers['retained'] = writer
+                writer['HostConfig']['RestartPolicy']['Name'] = 'always'
+                with self.assertRaises(DEPLOY.DeployError):
+                    self.deploy()
+                self.assertFalse(any(path.endswith('/stop') or path.endswith('/start')
+                                     for _, path, _, _ in self.model.calls))
+                self.assertFalse((self.state / 'transaction.json').exists())
+
+    def test_stale_saved_references_require_review_before_any_container_changes(self):
+        self.fixture('odisseu')
+        DEPLOY.atomic_private(self.state / 'state.json', json.dumps({'last-good-image-id': NEW_IMAGE}))
+        with self.assertRaises(DEPLOY.DeployError):
+            self.deploy()
+        self.assertFalse(any(method != 'GET' for method, _, _, _ in self.model.calls))
+        self.assertFalse((self.state / 'transaction.json').exists())
+
     def test_daemon_configuration_changes_are_rejected_before_new_start(self):
         for scenario in ('daemon-changes-env', 'daemon-changes-resources', 'daemon-changes-volume'):
             with self.subTest(scenario=scenario):
@@ -632,6 +658,30 @@ class DeployTest(unittest.TestCase):
         self.deploy()
         self.assertEqual(len([path for _, path, _, _ in self.model.calls if path.endswith('/stop')]), count)
         self.assert_preserved()
+
+    def test_failed_candidate_profile_is_restored_from_a_snapshot_taken_only_after_clean_stop(self):
+        from unittest.mock import patch
+        self.fixture('odisseu')
+        self.model.scenario = 'timeout'
+        snapshot = DEPLOY.SessionProfile.snapshot
+        response = self.model.response
+        def checked_snapshot(profile, *args):
+            self.assertFalse(self.model.containers['old']['State']['Running'])
+            self.assertEqual(self.model.containers['old']['State']['ExitCode'], 0)
+            return snapshot(profile, *args)
+        def modified_profile(method, url, data, headers):
+            result = response(method, url, data, headers)
+            if '/start' in url and '/old/' not in url and '/exec/' not in url:
+                (self.app / '.wwebjs_auth' / 'session').write_text('candidate-auth-changes')
+            return result
+        with patch.object(DEPLOY.SessionProfile, 'snapshot', checked_snapshot):
+            self.model.response = modified_profile
+            with self.assertRaises(DEPLOY.DeployError): self.deploy()
+        self.assert_preserved()
+        failed = list((self.app / '.zapbot-auth-recovery').glob('*-failed/session'))
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0].read_text(), 'candidate-auth-changes')
+        self.assertTrue(list(self.state.glob('transaction.*.rolled-back.json')))
 
 
 if __name__ == '__main__':
