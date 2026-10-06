@@ -16,6 +16,7 @@ LABEL io.zapbot.service="odisseu" io.zapbot.persistence-version="1"
 RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates tini \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
+    PERFORMANCE_METRICS=false \
     PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     CHROMIUM_DISABLE_GPU=true

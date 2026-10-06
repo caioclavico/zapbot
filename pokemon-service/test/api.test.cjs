@@ -40,7 +40,8 @@ test('API health, ready, auth, ordered responses and binary media',async t=>{
   const data=await response.json();assert.equal(data.messages[0].text,'intermediária');
   assert.equal(data.requestId,request.requestId);
   assert.ok(Array.isArray(data.messages));assert.ok(Array.isArray(data.effects));
-  assert.equal(typeof data.timings.request_total_ms,'number');
+  if(require('../runtime/metrics.cjs').enabled)assert.equal(typeof data.timings.request_total_ms,'number');
+  else assert.deepEqual(data.timings,{});
   assert.equal(data.messages[1].type,'image');assert.ok(!JSON.stringify(data).includes('png fixture'));
   const media=await call('/media/'+data.messages[1].mediaId);assert.equal(media.headers.get('content-type'),'image/png');assert.equal(await media.text(),'png fixture');
   domain.healthy=false;assert.equal((await call('/ready')).status,503);assert.equal((await call('/commands',{...request,requestId:'new'})).status,503);

@@ -1,5 +1,9 @@
 # Recursos do Chromium e Node no Odisseu
 
+O coletor agora também exige `PERFORMANCE_METRICS=true`. O padrão global é
+`false`; veja [controle de métricas](performance-metrics.md). A flag local
+`ODISSEU_RESOURCE_METRICS_ENABLED` continua disponível.
+
 ## Escopo e resultado da revisão
 
 Esta revisão prepara diagnóstico para o Odisseu em Linux/Docker, considerando

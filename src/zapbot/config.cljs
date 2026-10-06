@@ -19,6 +19,10 @@
          vec)
     default))
 
+;; Métricas opcionais, lidas uma vez ao iniciar o processo.
+(def performance-metrics-enabled
+  (= "true" (str/lower-case (str/trim (env "PERFORMANCE_METRICS" "false")))))
+
 (def bot-name (env "BOT_NAME" "Odisseu"))
 (def prefix (env "PREFIX" "!"))
 (def admin-numbers (set (env-list "ADMIN_NUMBERS" [])))

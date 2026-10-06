@@ -1,5 +1,8 @@
 # Medições do comando de treinador
 
+As medições abaixo exigem `PERFORMANCE_METRICS=true` nos serviços envolvidos.
+O padrão é `false`; veja [controle de métricas](performance-metrics.md).
+
 ## Diagnóstico de fila Pokémon
 
 Todos os comandos `!pk` e `!pokemon` agora recebem contexto de medição. O campo

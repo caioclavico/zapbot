@@ -24,7 +24,9 @@ test('normal shutdown logs stages and exits zero only after draining',async()=>{
   assert.equal(f.service.accepting,false);assert.ok(f.timers.every(t=>t.cancelled));
   const stages=f.logs.filter(l=>l.event==='shutdown_stage_completed').map(l=>l.stage);
   assert.deepEqual(stages,['active.allSettled','aguardar_operacoes_BANG_','aguardar_todas_BANG_','client.shutdown','domain.shutdown','service.close']);
-  assert.ok(f.logs.filter(l=>l.stage).every(l=>l.duration_ms>=0 || l.event==='shutdown_stage_started'));
+  if(require('../runtime/metrics.cjs').enabled)
+    assert.ok(f.logs.filter(l=>l.stage).every(l=>l.duration_ms>=0 || l.event==='shutdown_stage_started'));
+  else assert.ok(f.logs.every(l=>!('elapsed_ms' in l)&&!('duration_ms' in l)));
   await f.stop('SIGINT');assert.deepEqual(f.exits,[0]);
 });
 test('active work is drained before domain and reports 10/30/50 second warnings',async()=>{
@@ -60,7 +62,8 @@ test('timeout keeps 60 seconds and never claims success even if work later settl
   const closing=f.stop('SIGTERM');await new Promise(setImmediate);
   f.fire(60000);assert.deepEqual(f.exits,[1]);
   const timeout=f.logs.find(l=>l.event==='shutdown_timeout');
-  assert.equal(timeout.timeout_ms,60000);assert.equal(timeout.elapsed_ms,60000);
+  assert.equal(timeout.timeout_ms,60000);if(require('../runtime/metrics.cjs').enabled)assert.equal(timeout.elapsed_ms,60000);
+  else assert.equal(timeout.elapsed_ms,undefined);
   assert.ok(timeout.stages.some(s=>s.stage==='client.shutdown'));
   work.resolve();await closing;assert.deepEqual(f.exits,[1]);
   assert.ok(!f.logs.some(l=>l.event==='shutdown_completed'));

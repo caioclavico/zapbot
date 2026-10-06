@@ -4,17 +4,19 @@
             [clojure.string :as str]
             [zapbot.config :as config]))
 
-(defonce ^:private contextos (js/WeakMap.))
-(defn contexto-de [message] (.get contextos message))
+(defonce ^:private contextos (when config/performance-metrics-enabled (js/WeakMap.)))
+(defn contexto-de [message]
+  (when config/performance-metrics-enabled (.get contextos message)))
 (defn dependencia! [ctx anterior]
-  (when ctx
+  (when (and config/performance-metrics-enabled ctx)
     (reset! (:aguardando ctx)
             (when anterior (select-keys anterior [:id :comando])))))
-(defonce ^:private sequencia (atom 0))
-(defonce ^:private operacoes (atom {}))
+(defonce ^:private sequencia (when config/performance-metrics-enabled (atom 0)))
+(defonce ^:private operacoes (when config/performance-metrics-enabled (atom {})))
 (defn pendentes []
-  (mapv #(% "em_andamento") (vals @operacoes)))
-(defn agora [] (.now performance))
+  (when config/performance-metrics-enabled
+    (mapv #(% "em_andamento") (vals @operacoes))))
+(defn agora [] (when config/performance-metrics-enabled (.now performance)))
 (defn- emitir! [dados]
   (js/console.log "[Desempenho]" (js/JSON.stringify (clj->js dados))))
 
@@ -26,17 +28,18 @@
              (contains? #{"treinador" "tre"} sub))))))
 
 (defn pokemon? [texto]
-  (let [texto (str/trim (or texto ""))]
-    (and (str/starts-with? texto config/prefix)
-         (contains? #{"pk" "pokemon"}
-                    (first (str/split (str/lower-case (subs texto (count config/prefix))) #"\s+"))))))
+  (when config/performance-metrics-enabled
+    (let [texto (str/trim (or texto ""))]
+      (and (str/starts-with? texto config/prefix)
+           (contains? #{"pk" "pokemon"}
+                      (first (str/split (str/lower-case (subs texto (count config/prefix))) #"\s+")))))))
 
 (defn registrar! [ctx etapa inicio]
-  (when ctx
+  (when (and config/performance-metrics-enabled ctx)
     (swap! (:etapas ctx) update etapa (fnil + 0) (js/Math.round (- (agora) inicio)))))
 
 (defn medir! [ctx etapa executar]
-  (if ctx
+  (if (and config/performance-metrics-enabled ctx)
     (let [inicio (agora)
           terminar (fn []
                      (registrar! ctx etapa inicio)
@@ -58,51 +61,59 @@
 (defn codificar-base64!
   "Codifica o mesmo buffer e registra apenas tamanhos, nunca os dados da imagem."
   [ctx buffer]
-  (let [texto (medir! ctx "imagem_base64" #(.toString buffer "base64"))]
-    (when ctx
-      (swap! (:midias ctx) conj {:bytes (.-length buffer) :base64_chars (count texto)}))
-    texto))
+  (if-not config/performance-metrics-enabled
+    (.toString buffer "base64")
+    (let [texto (medir! ctx "imagem_base64" #(.toString buffer "base64"))]
+      (when (and config/performance-metrics-enabled ctx)
+        (swap! (:midias ctx) conj {:bytes (.-length buffer) :base64_chars (count texto)}))
+      texto)))
 
 (defn acompanhar!
   ([message executar] (acompanhar! message executar emitir!))
   ([message executar registrar-log!]
    (acompanhar! message executar registrar-log! "pk treinador"))
   ([message executar registrar-log! comando]
-   (let [inicio (agora)
-         ctx {:id (swap! sequencia inc) :comando comando :aguardando (atom nil) :etapas (atom {})
-              :pendentes (atom #{}) :falhas (atom #{}) :midias (atom [])}
-         resumo (fn [evento]
-                  {:id (:id ctx) :comando comando :evento evento
-                   :timestamp (.toISOString (js/Date.))
-                   :total_ms (js/Math.round (- (agora) inicio))
-                   :etapas_ms @(:etapas ctx) :pendentes (vec @(:pendentes ctx))
-                   :falhas (vec @(:falhas ctx)) :aguardando @(:aguardando ctx)
-                   :midias @(:midias ctx)})
-         timer (js/setTimeout #(registrar-log! (resumo "pendente_30s")) 30000)
-         finalizar (fn [evento]
-                     (js/clearTimeout timer)
-                     (swap! operacoes dissoc (:id ctx))
-                     (.delete contextos message)
-                     (registrar-log! (resumo evento)))]
-     (.unref timer)
-     (.set contextos message ctx)
-     (swap! operacoes assoc (:id ctx) resumo)
-     (registrar-log! (resumo "inicio"))
-     (try
-       (.then (js/Promise.resolve (executar ctx))
-              (fn [valor] (finalizar "fim") valor)
-              (fn [erro] (finalizar "erro") (throw erro)))
-       (catch :default erro
-         (finalizar "erro")
-         (throw erro))))))
+   (if-not config/performance-metrics-enabled
+     (executar nil)
+     (let [inicio (agora)
+           ctx {:id (swap! sequencia inc) :comando comando :aguardando (atom nil) :etapas (atom {})
+                :pendentes (atom #{}) :falhas (atom #{}) :midias (atom [])}
+           resumo (fn [evento]
+                    {:id (:id ctx) :comando comando :evento evento
+                     :timestamp (.toISOString (js/Date.))
+                     :total_ms (js/Math.round (- (agora) inicio))
+                     :etapas_ms @(:etapas ctx) :pendentes (vec @(:pendentes ctx))
+                     :falhas (vec @(:falhas ctx)) :aguardando @(:aguardando ctx)
+                     :midias @(:midias ctx)})
+           timer (js/setTimeout #(registrar-log! (resumo "pendente_30s")) 30000)
+           finalizar (fn [evento]
+                       (js/clearTimeout timer)
+                       (swap! operacoes dissoc (:id ctx))
+                       (.delete contextos message)
+                       (registrar-log! (resumo evento)))]
+       (.unref timer)
+       (.set contextos message ctx)
+       (swap! operacoes assoc (:id ctx) resumo)
+       (registrar-log! (resumo "inicio"))
+       (try
+         (.then (js/Promise.resolve (executar ctx))
+                (fn [valor] (finalizar "fim") valor)
+                (fn [erro] (finalizar "erro") (throw erro)))
+         (catch :default erro
+           (finalizar "erro")
+           (throw erro)))))))
 
 (defn observar-operacao!
   "Mede operações internas sem registrar argumentos ou identificadores de chat."
   [comando executar]
-  (acompanhar! #js {} executar
-               #(when (or (= "erro" (:evento %)) (>= (:total_ms %) 30000)) (emitir! %))
-               comando))
+  (if-not config/performance-metrics-enabled
+    (executar nil)
+    (acompanhar! #js {} executar
+                 #(when (or (= "erro" (:evento %)) (>= (:total_ms %) 30000)) (emitir! %))
+                 comando)))
 
 (defn acompanhar-mensagem! [message executar]
-  (acompanhar! message executar emitir!
-               (if (treinador? (.-body message)) "pk treinador" "pokemon")))
+  (if-not config/performance-metrics-enabled
+    (executar nil)
+    (acompanhar! message executar emitir!
+                 (if (treinador? (.-body message)) "pk treinador" "pokemon"))))

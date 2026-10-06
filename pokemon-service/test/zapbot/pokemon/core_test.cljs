@@ -6,6 +6,7 @@
             [promesa.core :as p]
             [zapbot.bugs :as bugs]
             [zapbot.desempenho :as desempenho]
+            [zapbot.config :as config]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.pokemon.core :as core]
             [zapbot.pokemon.ginasios :as ginasios]
@@ -740,16 +741,20 @@
           segunda (criar (fn [] :segunda))]
       (-> iniciou
           (p/then (fn [_]
-                    (let [[a b] @contextos]
+                    (if-not config/performance-metrics-enabled
+                      (is (every? nil? @contextos))
+                      (let [[a b] @contextos]
                       (is (= #{"rodada_pokemon"} @(:pendentes a)))
                       (is (= #{"fila_pokemon"} @(:pendentes b)))
-                      (is (= (:id a) (:id @(:aguardando b)))))
+                      (is (= (:id a) (:id @(:aguardando b))))))
                     (p/resolve! liberar :primeira)
                     (p/all [primeira segunda])))
           (p/then (fn [valores]
                     (is (= [:primeira :segunda] valores))
-                    (is (every? #(nil? @(:aguardando %)) @contextos))
-                    (is (every? #(empty? @(:pendentes %)) @contextos))
+                    (if config/performance-metrics-enabled
+                      (do (is (every? #(nil? @(:aguardando %)) @contextos))
+                          (is (every? #(empty? @(:pendentes %)) @contextos)))
+                      (is (empty? @logs)))
                     (is (nil? (get @core/contextos-filas cid)))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally done)))))
@@ -765,12 +770,12 @@
                         (fn [cid acao & [ctx]]
                           (reset! contexto ctx)
                           (is (= "teste-raid" cid))
-                          (is (some? ctx) "O contexto pertence à fila, não ao retorno da ação")
+                          (is (= config/performance-metrics-enabled (some? ctx)) "Contexto só existe com métricas ligadas")
                           (is (nil? (acao)) "Raide fora do horário não inicia trabalho")
                           liberar)]
             (core/verificar-raides!))]
       (is @core/verificando-raides?)
-      (is (= "raid_automatica" (:comando @contexto)))
+      (is (= (when config/performance-metrics-enabled "raid_automatica") (:comando @contexto)))
       (p/resolve! liberar :fim)
       (-> trabalho
           (p/then (fn [_] (is (false? @core/verificando-raides?))))
@@ -1014,8 +1019,10 @@
                      (is (= "image/jpeg" (:mime media)))
                      (is (= "ffd8" (.toString (.subarray buffer 0 2) "hex")))
                      (is (js/Buffer.isBuffer buffer))
-                     (is (= #{"time_sprites" "time_svg" "time_jpeg"}
-                            (set (keys (:etapas_ms resumo))))))))
+                     (if config/performance-metrics-enabled
+                       (is (= #{"time_sprites" "time_svg" "time_jpeg"}
+                            (set (keys (:etapas_ms resumo)))))
+                       (is (empty? @logs))))))
           (.catch (fn [erro] (is false (str erro))))
           (.finally done)))))
 

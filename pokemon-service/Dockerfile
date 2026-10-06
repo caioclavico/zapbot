@@ -22,7 +22,7 @@ COPY assets ./assets
 COPY package*.json ./
 RUN mkdir /app/data && chown node:node /app/data
 USER node
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=8090 DATA_DIR=/app/data
+ENV PERFORMANCE_METRICS=false NODE_ENV=production HOST=0.0.0.0 PORT=8090 DATA_DIR=/app/data
 EXPOSE 8090
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s CMD ["node", "scripts/healthcheck.cjs"]
 ENTRYPOINT ["/usr/bin/tini", "--"]

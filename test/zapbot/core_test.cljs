@@ -88,8 +88,10 @@
                    (is (= 2 (count @chamadas)))
                    (is (identical? media (ffirst @chamadas)))
                    (is (= texto (first (second @chamadas))))
-                   (is (= #{"envio_midia" "envio_texto_extra"}
-                          (set (keys (:etapas_ms (last @logs))))))
+                   (if zapbot.config/performance-metrics-enabled
+                     (is (= #{"envio_midia" "envio_texto_extra"}
+                            (set (keys (:etapas_ms (last @logs))))))
+                     (is (empty? @logs)))
                    (is (empty? (:pendentes (last @logs))))))
           (.catch (fn [erro] (is false (str erro))))
           (.finally done)))))
@@ -191,5 +193,7 @@
         (is (= "resultado" (core/on-message #js {:from "teste@g.us" :body body}))))
       (is (= "resultado" (core/on-message #js {:from "outro@g.us" :body "!pk treinador"})))
       (is (= 2 @medidos))
-      (is (identical? ctx (second (first @processados))))
+      (if zapbot.config/performance-metrics-enabled
+        (is (identical? ctx (second (first @processados))))
+        (is (nil? (second (first @processados)))))
       (is (every? nil? (map second (rest @processados)))))))

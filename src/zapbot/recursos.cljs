@@ -10,7 +10,7 @@
   (js/console.log "[RecursosOdisseu]" (js/JSON.stringify dados)))
 
 (defn iniciar! [^js client]
-  (when (and config/odisseu-resource-metrics-enabled (nil? @monitor))
+  (when (and config/performance-metrics-enabled config/odisseu-resource-metrics-enabled (nil? @monitor))
     (try
       (reset! monitor
               (.startResourceMonitor coletor
@@ -39,7 +39,7 @@
     (catch :default _ nil)))
 
 (defn medir-comando! [executar]
-  (if-let [^js ativo @monitor]
+  (if-let [^js ativo (when config/performance-metrics-enabled @monitor)]
     (let [inicio (.now performance)]
       (try
         (let [resultado (executar)]

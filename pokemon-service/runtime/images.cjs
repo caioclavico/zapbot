@@ -160,6 +160,8 @@ function asset(input) {
 }
 
 // Keep timing attached to the caller, including queue wait and cache hits.
-const measured = fn => (...args) => metrics.measure('image_processing_ms', () => fn(...args));
+const measured = metrics.enabled
+  ? fn => (...args) => metrics.measure('image_processing_ms', () => fn(...args))
+  : fn => fn;
 module.exports = {CARD_WIDTH, CARD_SCALE, TEAM_WIDTH, QUALITY, ImageCache, limiter,
   download, responseBuffer, sprite:measured(sprite), render:measured(render), overlay:measured(overlay), asset:measured(asset)};

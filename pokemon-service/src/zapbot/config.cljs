@@ -9,6 +9,8 @@
   (let [valor (unchecked-get js/process.env chave)]
     (if (str/blank? valor) padrao valor)))
 
+(def performance-metrics-enabled (.-enabled (js/require "../runtime/metrics.cjs")))
+
 (def read-only? (.-readOnly (js/require "../runtime/mode.cjs")))
 
 (def bot-name (env "BOT_NAME" "Odisseu"))

@@ -1,7 +1,13 @@
 (ns zapbot.recursos-test
-  (:require [cljs.test :refer-macros [async deftest is]]
+  (:require [cljs.test :refer [use-fixtures] :refer-macros [async deftest is]]
             [zapbot.config :as config]
             [zapbot.recursos :as recursos]))
+
+(def flag-anterior (atom nil))
+(use-fixtures :each
+  {:before (fn [] (reset! flag-anterior config/performance-metrics-enabled)
+                   (set! config/performance-metrics-enabled true))
+   :after (fn [] (set! config/performance-metrics-enabled @flag-anterior))})
 
 (deftest coletor-desativado-nao-cria-timers-nem-acessa-navegador
   (with-redefs [config/odisseu-resource-metrics-enabled false
@@ -75,3 +81,13 @@
     (is (nil? (recursos/amostra)))
     (is (nil? (recursos/parar!)))
     (is (nil? @recursos/monitor))))
+
+(deftest flag-global-desliga-coletor-mesmo-com-flag-local-ligada
+  (let [nao-chamar (fn [& _] (throw (js/Error. "coleta indevida")))
+        resultado (js/Promise.resolve :ok)]
+    (with-redefs [config/performance-metrics-enabled false
+                  config/odisseu-resource-metrics-enabled true
+                  recursos/monitor (atom nil)
+                  recursos/coletor #js {:startResourceMonitor nao-chamar}]
+      (is (nil? (recursos/iniciar! #js {})))
+      (is (identical? resultado (recursos/medir-comando! (fn [] resultado)))))))

@@ -1,5 +1,10 @@
 # Deploy do Odisseu e Pokémon com GitHub Actions
 
+As imagens usam `PERFORMANCE_METRICS=false` por padrão. Um override explícito
+no ambiente efetivo continua sendo preservado pelo deploy. Veja
+[controle das métricas](performance-metrics.md) para habilitar diagnóstico no
+próximo reinício autorizado; esta configuração não exige secret no GitHub.
+
 ## Fluxo e estado inicial
 
 O único workflow é `.github/workflows/deploy.yml`. PRs para `master`

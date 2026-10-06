@@ -5725,12 +5725,12 @@
                             (desempenho/dependencia! ctx nil)
                             (desempenho/medir! ctx "rodada_pokemon" acao))))]
     (swap! filas-jogadas assoc cid atual)
-    (swap! contextos-filas assoc cid ctx)
+    (when ctx (swap! contextos-filas assoc cid ctx))
     (p/finally atual
                (fn []
                  (when (identical? atual (get @filas-jogadas cid))
                    (swap! filas-jogadas dissoc cid)
-                   (swap! contextos-filas dissoc cid))))))
+                   (when ctx (swap! contextos-filas dissoc cid)))))))
 
 (defn jogar [message args]
   (let [[cmd & resto] (str/split (str/trim (str/lower-case (or args ""))) #"\s+")]

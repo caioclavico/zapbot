@@ -1,6 +1,5 @@
 'use strict';
 const {createHash, randomUUID, timingSafeEqual} = require('node:crypto');
-const {performance} = require('node:perf_hooks');
 const {State} = require('./state.cjs');
 const metrics = require('./metrics.cjs');
 const mode = require('./mode.cjs');
@@ -111,7 +110,7 @@ class PokemonService {
   }
   async executeReserved(key,hash,input) {
     this.assertWritable();
-    const start=performance.now();
+    const start=metrics.now();
     const record={status:'processing',fingerprint:hash,createdAt:Date.now(),requestId:input.requestId};
     // Reserva durável ANTES das regras. Após crash, processing nunca é reexecutado.
     let claimed;
@@ -126,28 +125,28 @@ class PokemonService {
     const previous=this.chats.get(input.chatId)||Promise.resolve();
     const work=previous.catch(()=>{}).then(async()=>{
       const outputs=[]; let open=true; let effects=[]; let effectsSaved=false;
-      const processingStart=performance.now();
+      const processingStart=metrics.now();
       try {
         const emit=async raw=>{
           if (open) outputs.push(raw);
           else await this.enqueueEvent(input.chatId,raw);
         };
         const result=await this.domain.command(input,emit);
-        const processingMs=performance.now()-processingStart;
+        const processingMs=metrics.elapsed(processingStart);
         effects=this.domain.takeEffects(input.chatId)||[];
         if(effects.length) await this.enqueueEvent(input.chatId,null,effects);
         effectsSaved=true;
-        const responseStart=performance.now();
+        const responseStart=metrics.now();
         const messages=[];
         for (const raw of [...outputs,result]) messages.push(...await this.messages(raw));
-        const timings={...Object.fromEntries(Object.entries(metrics.snapshot()).map(([k,v])=>[k,Math.round(v)])),command_processing_ms:Math.round(processingMs),response_preparation_ms:Math.round(performance.now()-responseStart),request_total_ms:Math.round(performance.now()-start)};
+        const timings=metrics.commandTimings(start,processingMs,responseStart);
         const response={requestId:input.requestId,messages,effects,timings};
         await this.state.update(REQUESTS,records=>{records[key]={...record,status:'completed',response};});
-        this.logger(JSON.stringify({event:'command_completed',requestId:input.requestId,...timings}));
+        metrics.completed(this.logger,input.requestId,timings);
         return response;
       } catch(error) {
         logError(this.logger,{event:'command_failed',requestId:input.requestId,command:input.command,
-          stage:'processing',request_total_ms:Math.round(performance.now()-start)},error);
+          stage:'processing',request_total_ms:metrics.elapsed(start)},error);
         // Efeitos de rank são uma outbox separada; o consumidor faz dedupe.
         // Drena também se a regra falhou após produzir efeitos intermediários.
         if(!effectsSaved) {
