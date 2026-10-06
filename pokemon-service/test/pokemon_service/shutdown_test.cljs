@@ -68,12 +68,14 @@
                                              #(do (swap! ordem conj 1) bloqueada))
           segunda (pokemon/enfileirar-jogada "shutdown-diagnostico"
                                             #(swap! ordem conj 2))]
-      (is (= {:game_operations 2 :game_chat_queues 1} (pokemon/filas-pendentes)))
+      (is (= {:game_operations 2 :game_chat_queues 1}
+             (select-keys (pokemon/filas-pendentes) [:game_operations :game_chat_queues])))
       (@liberar nil)
       (-> (p/all [primeira segunda])
           (p/then (fn [_]
                     (is (= [1 2] @ordem))
-                    (is (= {:game_operations 0 :game_chat_queues 0} (pokemon/filas-pendentes)))))
+                    (is (= {:game_operations 0 :game_chat_queues 0}
+                           (select-keys (pokemon/filas-pendentes) [:game_operations :game_chat_queues])))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally done)))))
 

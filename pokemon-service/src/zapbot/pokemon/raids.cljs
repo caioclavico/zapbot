@@ -27,6 +27,15 @@
     (armazenamento/salvar! "raides-agendas" @agendas)))
 
 (defn atual [cid] (get @raids cid))
+
+(defn proxima-aparicao [cid agenda]
+  ;; A raid and its schedule use two existing persistence modules. After an
+  ;; uncertain/partial write and restart, the raid may be newer than its agenda.
+  ;; Reuse its stored cooldown; never replay creation or repair data here.
+  (let [r (atual cid)]
+    (max (get agenda "proxima" 0)
+         (if (= (get agenda "ultimo-ginasio") (get r "ginasio"))
+           0 (get r "proxima" 0)))))
 (defn no-ginasio? [cid id agora]
   (let [r (atual cid)] (and (= id (get r "ginasio")) (ativa? r agora))))
 

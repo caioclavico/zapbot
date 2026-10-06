@@ -12,11 +12,12 @@
 
 (defn fetch!
   ([url] (fetch! url #js {}))
-  ([url opcoes]
+  ([url opcoes] (fetch! url opcoes timeout-ms))
+  ([url opcoes prazo-ms]
    (let [metricas (js/require "../runtime/metrics.cjs")
          medida (categoria url)
          sinal (.-signal opcoes)
-         limite (.timeout js/AbortSignal timeout-ms)
+         limite (.timeout js/AbortSignal prazo-ms)
          sinal (if sinal (.any js/AbortSignal #js [sinal limite]) limite)
          opcoes (.assign js/Object #js {} opcoes #js {:signal sinal})]
      (p/then

@@ -296,8 +296,12 @@
   {"burn" :queimado "poison" :envenenado "paralysis" :paralisado
    "sleep" :adormecido "freeze" :congelado "confusion" :confuso})
 
-(defn- buscar-golpe [nome]
-  (-> (p/let [res  (http/fetch! (str "https://pokeapi.co/api/v2/move/" nome))
+(def ^:private consultas-golpes
+  (.createMoveLookup (js/require "../runtime/move-lookup.cjs") #js {}))
+
+(defn- carregar-golpe [nome sinal]
+  (p/let [res  (http/fetch! (str "https://pokeapi.co/api/v2/move/" nome)
+                          #js {:signal sinal} 15000)
               data (when (.-ok res) (.json res))]
         (when data
           (let [d          (js->clj data :keywordize-keys true)
@@ -335,7 +339,10 @@
               (and (= "status" classe) (or (seq alteracoes) status (pos? (or (:healing meta) 0))))
               (assoc base :poder 0 :classe :status :alteracoes alteracoes)
 
-              :else nil))))
+              :else nil)))))
+
+(defn- buscar-golpe [nome]
+  (-> (p/promise (.lookup consultas-golpes nome #(carregar-golpe nome %)))
       (p/catch (fn [_] nil))))
 
 ;; Escolhe principalmente golpes do(s) tipo(s) do próprio Pokémon (STAB), em
@@ -5701,18 +5708,19 @@
 (defn- verificar-raides! []
   (let [emitir @emitir-evento]
   (when (and emitir (compare-and-set! verificando-raides? false true))
-    (-> (p/all
-         (for [[cid agenda] @raids/agendas]
+    (-> (js/Promise.allSettled
+         (clj->js (for [[cid agenda] @raids/agendas]
            (desempenho/observar-operacao! "raid_automatica"
             (fn [ctx]
            (enfileirar-jogada
             cid
             (fn []
               (let [agora (.now js/Date)]
-                (when (and (<= (get agenda "proxima" 0) agora)
+                (when (and (<= (raids/proxima-aparicao cid agenda) agora)
                            (not (raids/ativa? (raids/atual cid) agora))
                            (nil? (get @jogos cid)) (nil? (get @cacadas-selvagens cid)))
-                  (p/let [g (raids/proximo-ginasio cid)
+                  (p/let [_ (desempenho/medir! ctx "raid_persistencia_previa" armazenamento/aguardar-todas!)
+                          g (raids/proximo-ginasio cid)
                           [slug raridade] (rand-nth (raids/candidatos (:nivel g)))
                           base (desempenho/medir! ctx "raid_pokemon" #(buscar-pokemon-por-nome slug))
                           pokemon (desempenho/medir! ctx "raid_golpes"
@@ -5729,7 +5737,10 @@
                     (when resposta
                       (desempenho/medir! ctx "raid_envio"
                        #(emitir cid (if (map? resposta) resposta {:texto resposta}))))))))
-            ctx)))))
+            ctx))))))
+        (p/then (fn [resultados]
+                  (when-let [falha (first (filter #(= "rejected" (.-status ^js %)) (array-seq resultados)))]
+                    (throw (.-reason ^js falha)))))
         (p/catch #(js/console.error "Erro ao preparar aparição de raide:" %))
         (p/finally #(reset! verificando-raides? false))))))
 
@@ -5771,4 +5782,6 @@
   (p/all (vals @filas-jogadas)))
 
 (defn filas-pendentes []
-  {:game_operations @operacoes-pendentes :game_chat_queues (count @filas-jogadas)})
+  {:game_operations @operacoes-pendentes :game_chat_queues (count @filas-jogadas)
+   :raid_scheduler_active @verificando-raides?
+   :move_requests (js->clj (.stats consultas-golpes) :keywordize-keys true)})
