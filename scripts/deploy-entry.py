@@ -10,7 +10,7 @@ import sys
 
 
 APP_DIRS = {
-    "odisseu": "/home/ubuntu/zapbot",
+    "odisseu": "/home/caiohclavico/zapbot",
     "pokemon": "/home/caiohclavico/pokemon-service",
 }
 

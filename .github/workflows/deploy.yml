@@ -80,6 +80,7 @@ jobs:
           node --test scripts/test-ci-registry.cjs
           python3 scripts/test-deploy.py
           python3 scripts/test-deploy-recovery.py
+          python3 scripts/test-deploy-compose.py
           python3 scripts/test-load-image.py
           python3 scripts/test-deploy-ssh.py
 
@@ -330,8 +331,8 @@ jobs:
         env:
           DEPLOY_SERVICE: odisseu
           DEPLOY_OPERATION: ${{ inputs.operation || 'deploy' }}
-          SSH_HOST: ${{ vars.ODISSEU_HOST || '129.148.52.187' }}
-          SSH_USER: ${{ vars.ODISSEU_USER || 'zapbot-deploy' }}
+          SSH_HOST: '35.238.24.225'
+          SSH_USER: 'caiohclavico'
           SSH_PORT: ${{ vars.ODISSEU_SSH_PORT || '22' }}
           SSH_KEY: ${{ secrets.ODISSEU_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.ODISSEU_KNOWN_HOSTS }}
@@ -406,8 +407,8 @@ jobs:
         env:
           DEPLOY_SERVICE: odisseu
           DEPLOY_OPERATION: check
-          SSH_HOST: ${{ vars.ODISSEU_HOST || '129.148.52.187' }}
-          SSH_USER: ${{ vars.ODISSEU_USER || 'zapbot-deploy' }}
+          SSH_HOST: '35.238.24.225'
+          SSH_USER: 'caiohclavico'
           SSH_PORT: ${{ vars.ODISSEU_SSH_PORT || '22' }}
           SSH_KEY: ${{ secrets.ODISSEU_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.ODISSEU_KNOWN_HOSTS }}

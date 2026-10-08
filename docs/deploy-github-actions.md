@@ -24,7 +24,7 @@ são para execução manual após revisão e autorização explícita.
 
 | Serviço | Imagem GHCR | VM / container | Diretório preservado |
 |---|---|---|---|
-| Odisseu | `ghcr.io/caioclavico/zapbot:SHA` | `129.148.52.187` / `zapbot` | `/home/ubuntu/zapbot` |
+| Odisseu | `ghcr.io/caioclavico/zapbot:SHA` | `35.238.24.225` (`caiohclavico`) / `zapbot` | `/home/caiohclavico/zapbot` |
 | Pokémon | `ghcr.io/caioclavico/zapbot-pokemon:SHA` | `34.68.189.66` / `zapbot-pokemon` | `/home/caiohclavico/pokemon-service` |
 | Cassandra | Não publicada | `144.22.248.79` / `zapbot-cassandra` | Não acessado pela pipeline |
 
@@ -71,12 +71,18 @@ ambiente continuam sendo feitas pelo operador; editar apenas `.env` não muda
 o Env capturado durante este deploy.
 
 As VMs precisam de Docker Engine 26 ou superior (API v1.45), Python 3.9 ou
-superior e contas/configuração instaladas conforme este guia.
+superior e contas/configuração instaladas conforme este guia. Odisseu também exige
+Docker Compose v2 com `config --format json`, `create --pull never` e `start`.
 O pull e as verificações preliminares acontecem antes da parada. A rotina aguarda
 encerramento gracioso do container anterior e verifica sua saída antes de iniciar
 a nova versão. A tolerância de parada é de pelo menos 60 segundos no Odisseu e
 90 no Pokémon. Nunca há duas instâncias ativas compartilhando sessão ou estado.
-Não existe limpeza automática de locks, credenciais, volumes ou dados Cassandra.
+No Odisseu, após shutdown limpo, exclusividade Docker e inspeção dos processos
+no host, o helper faz snapshot frio verificado e remove **somente** entradas
+órfãs `SingletonLock`, `SingletonSocket` e `SingletonCookie` em diretórios
+`session`/`session-*`. Symlinks são desvinculados sem seguir seus destinos;
+diretórios inesperados bloqueiam a operação. Sessão, credenciais, volumes e
+dados Cassandra nunca são apagados. Falha de inspeção bloqueia a limpeza.
 
 Odisseu exige Cassandra carregado e o healthcheck existente com WhatsApp `READY`
 e Chromium conectado. Pokémon exige HTTP 200 em `/health` e `/ready`, incluindo
@@ -105,27 +111,34 @@ Checklist do Environment **production** para operar ambos os serviços:
 | ☐ | `POKEMON_SSH_KEY` | Chave privada exclusiva do Actions para Pokémon |
 | ☐ | `POKEMON_KNOWN_HOSTS` | Entrada SSH do Pokémon, fingerprint verificado |
 
+Odisseu fixa `35.238.24.225` e `caiohclavico` no workflow. Variables antigas
+`ODISSEU_HOST`/`ODISSEU_USER` são ignoradas para impedir retorno acidental à Oracle.
+Atualize `ODISSEU_SSH_KEY` para a chave privada exclusiva cuja pública restrita
+está instalada no usuário Google, e `ODISSEU_KNOWN_HOSTS` para a entrada validada
+da chave de host da **nova VM**. Não é necessário enviar `.env` ao GitHub.
+Veja o [procedimento da migração Google](odisseu-google-deploy.md).
+
 Checklist das variables de repositório. As opções de conexão podem ficar
 ausentes quando os defaults correspondem às contas e hosts instalados:
 
 | Requisito | Variable | Obrigatoriedade | Default / estado antes da autorização |
 |---|---|---|---|
 | ☐ | `AUTO_DEPLOY_ENABLED` | Exige `true` para ativação automática futura | Ausente ou `false` desabilita deploy automático |
-| ☐ | `ODISSEU_HOST` | Opcional | `129.148.52.187` |
-| ☐ | `ODISSEU_USER` | Opcional | `zapbot-deploy` |
 | ☐ | `ODISSEU_SSH_PORT` | Opcional | `22` |
 | ☐ | `POKEMON_HOST` | Opcional | `34.68.189.66` |
 | ☐ | `POKEMON_USER` | Opcional | `pokemon-deploy` |
 | ☐ | `POKEMON_SSH_PORT` | Opcional | `22` |
 
-Os cadastros atuais de secrets e variables **não foram auditados**: o conector
-GitHub disponível não expõe APIs para consultá-los e um inventário autenticado
-não esteve disponível. A existência e as regras atuais de `production` também
-precisam ser conferidas. Estas tabelas enumeram requisitos; não confirmam que
-estão cadastrados e não mostram valores de secrets. O estado real de
-`AUTO_DEPLOY_ENABLED` não foi alterado nesta revisão.
-Um operador autorizado precisa conferir os nomes em Settings → Environments →
-production e Settings → Secrets and variables → Actions antes da ativação.
+Consulta somente leitura realizada nesta revisão: `AUTO_DEPLOY_ENABLED=true`;
+o Environment `production` existe com policy de branch, sem `required_reviewers`.
+Há secrets `ODISSEU_SSH_KEY`, `ODISSEU_KNOWN_HOSTS`, `POKEMON_SSH_KEY` e
+`POKEMON_KNOWN_HOSTS` em `production`. Os valores secretos não foram acessados:
+existência não comprova que apontem para a nova VM. Atualize/confirme os dois do
+Odisseu após instalar a chave restrita e verificar a identidade Google. Secrets
+`ORACLE_*` de repositório existem, mas não são utilizados por este workflow.
+Nenhuma configuração foi alterada nesta revisão. Até a preparação terminar,
+publicar código pode disparar os jobs automaticamente; não fazer push sem
+revisão/autorização. Aprovação humana só existirá se for configurada pelo operador.
 
 Com autenticação e permissões adequadas, estas consultas exibem apenas nomes e
 metadados, sem imprimir valores dos secrets ou variables:
@@ -209,7 +222,7 @@ No Mac, colete as entradas candidatas e compare seus fingerprints com os do
 console. `ssh-keyscan` sozinho não valida a identidade:
 
 ```sh
-ssh-keyscan -T 10 -t ed25519 129.148.52.187 > /tmp/odisseu-known-hosts
+ssh-keyscan -T 10 -t ed25519 35.238.24.225 > /tmp/odisseu-known-hosts
 ssh-keyscan -T 10 -t ed25519 34.68.189.66 > /tmp/pokemon-known-hosts
 ssh-keygen -lf /tmp/odisseu-known-hosts -E sha256
 ssh-keygen -lf /tmp/pokemon-known-hosts -E sha256
@@ -230,8 +243,9 @@ sempre usa `StrictHostKeyChecking=yes` e `IdentitiesOnly=yes`.
 ## Instalação manual nas VMs
 
 Revise primeiro os scripts e a compatibilidade de persistência v1 com o
-container atual. O instalador é manual: cria a conta exclusiva quando ausente
-ou reutiliza a conta existente sem alterar seu UID ou home; instala arquivos
+container atual. O instalador é manual: no Google reutiliza `caiohclavico`, que deve já existir;
+no Pokémon cria/reutiliza a conta exclusiva. Mantém UID, home e acesso
+administrativo existente; instala arquivos
 root-owned e não inicia, para ou recria nenhum container.
 
 No Mac, dentro do checkout revisado:
@@ -239,9 +253,9 @@ No Mac, dentro do checkout revisado:
 ```sh
 tar -czf /tmp/zapbot-deploy-bootstrap.tgz \
   scripts/install-deploy.sh scripts/deploy-entry.py scripts/deploy-ssh-command.py \
-  scripts/deploy-vm.sh scripts/deploy-service.py scripts/deploy_auth_profile.py
-scp -i "$HOME/Downloads/ssh-key-2026-09-27.key" \
-  /tmp/zapbot-deploy-bootstrap.tgz "$HOME/.ssh/zapbot-actions-odisseu.pub" ubuntu@129.148.52.187:/tmp/
+  scripts/deploy-vm.sh scripts/deploy-service.py scripts/deploy_auth_profile.py scripts/deploy_compose.py
+scp -i "/caminho/da/chave-administrativa-google" \
+  /tmp/zapbot-deploy-bootstrap.tgz "$HOME/.ssh/zapbot-actions-odisseu.pub" caiohclavico@35.238.24.225:/tmp/
 scp -i "$HOME/.ssh/google_pokemon" \
   /tmp/zapbot-deploy-bootstrap.tgz "$HOME/.ssh/zapbot-actions-pokemon.pub" caiohclavico@34.68.189.66:/tmp/
 ```
@@ -264,8 +278,12 @@ sudo bash "$bootstrap_dir/scripts/install-deploy.sh" \
   pokemon caioclavico /tmp/zapbot-actions-pokemon.pub --confirm-reviewed-persistence-v1
 ```
 
-As contas `zapbot-deploy`/`pokemon-deploy` não recebem grupo Docker nem sudo
-genérico. `authorized_keys` usa `restrict` e comando forçado; aceita somente
+A chave Actions do Odisseu é adicionada ao `authorized_keys` de `caiohclavico`
+com `restrict` e comando forçado, preservando as chaves administrativas existentes.
+UID, home, senha e grupos deste usuário Google não são alterados. As permissões
+administrativas preexistentes desta conta não são revogadas; a restrição se aplica
+à chave exclusiva Actions. Pokémon conserva sua conta `pokemon-deploy`, sem
+Docker nem sudo genérico. `authorized_keys` é root-owned e a chave de deploy aceita somente
 `deploy SHA` e `rollback`, além de `check` para diagnóstico sem `sudo` no
 Odisseu. A entrada privilegiada valida os argumentos e fixa serviço, registry
 e diretório. Não aceita SCP, shell, port forwarding, outro container ou
@@ -278,7 +296,7 @@ Teste a restrição sem executar deploy; a resposta esperada é rejeição de co
 ```sh
 ssh -i "$HOME/.ssh/zapbot-actions-odisseu" -o IdentitiesOnly=yes \
   -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/tmp/odisseu-known-hosts \
-  zapbot-deploy@129.148.52.187 check
+  caiohclavico@35.238.24.225 check
 ssh -i "$HOME/.ssh/zapbot-actions-pokemon" -o IdentitiesOnly=yes \
   -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/tmp/pokemon-known-hosts \
   pokemon-deploy@34.68.189.66 check
@@ -417,7 +435,7 @@ dos IDs completos, imagens, mounts, fase e saúde. Após autorização e revisã
 estado, a conta administrativa pode executar na VM correspondente:
 
 ```sh
-sudo python3 /usr/local/lib/zapbot-deploy/deploy-service.py odisseu recover /home/ubuntu/zapbot
+sudo python3 /usr/local/lib/zapbot-deploy/deploy-service.py odisseu recover /home/caiohclavico/zapbot
 sudo python3 /usr/local/lib/zapbot-deploy/deploy-service.py pokemon recover /home/caiohclavico/pokemon-service
 ```
 
@@ -458,6 +476,7 @@ python3 scripts/test-ci-changes.py
 python3 scripts/test-ci-ssh.py
 node --test scripts/test-ci-registry.cjs
 python3 scripts/test-deploy.py
+python3 scripts/test-deploy-compose.py
 python3 scripts/test-load-image.py
 python3 scripts/test-deploy-ssh.py
 actionlint .github/workflows/deploy.yml

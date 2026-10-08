@@ -106,13 +106,13 @@ recusando transações pendentes; recuperação nunca é acionada implicitamente
    dos arquivos de controle. Preservar a transação arquivada do incidente.
 2. Instalar os helpers revisados como root, incluindo `deploy_auth_profile.py`,
    antes de usar o novo fluxo. A imagem sozinha não atualiza o helper da VM.
-   A conta `ubuntu`, home/UID do deploy, chave restrita e sudoers permanecem iguais.
+   No Google, a conta é `caiohclavico`; preserve home/UID, chaves administrativas e sessão. Veja o [procedimento Google](odisseu-google-deploy.md).
    O instalador completo não é necessário para substituir somente código revisado.
 3. Publicar um **novo SHA** aprovado. A imagem imutável de `e5a7e8c` não deve ser
    sobrescrita. Manter `PERFORMANCE_METRICS=false`; não habilitar auto deploy para
    contornar a revisão. Overrides existentes são preservados pelo helper.
-4. Executar o deploy isolado do Odisseu pelo fluxo aprovado. Não usar Compose ou
-   `docker start` em paralelo. Todos os escritores gerenciados passam pelo lock e
+4. Executar o deploy isolado do Odisseu pelo fluxo aprovado. O Compose de produção é executado pelo helper; não usar Compose ou
+   `docker start` manualmente em paralelo. Todos os escritores gerenciados passam pelo lock e
    verificação de mounts; operadores externos precisam respeitar essa exclusividade.
 5. Validar o novo container por saúde estável, revisão e erros. Se falhar, o helper
    executa rollback e mantém logs, containers e perfis como evidência.
@@ -121,7 +121,7 @@ Para uma transação **v2** pendente, após aprovação e revisão dos IDs, a co
 administrativa pode executar:
 
 ```sh
-sudo python3 /usr/local/lib/zapbot-deploy/deploy-service.py odisseu recover /home/ubuntu/zapbot
+sudo python3 /usr/local/lib/zapbot-deploy/deploy-service.py odisseu recover /home/caiohclavico/zapbot
 ```
 
 O comando adquire o lock. Não execute dentro de outro `flock` já adquirido.

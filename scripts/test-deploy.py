@@ -33,6 +33,16 @@ class Clock:
         self.value += seconds
 
 
+class FakeCompose:
+    """Engine-model adapter; the real Compose CLI is tested in Docker fixtures."""
+    def prepare(self, transaction, name, original, configuration):
+        self.configuration = configuration
+    def create(self, engine, name):
+        return engine.create(name, self.configuration)
+    def start(self, engine, identifier, name):
+        engine.start(identifier)
+
+
 class DockerModel:
     def __init__(self, service, app):
         self.service, self.app = service, app
@@ -311,7 +321,8 @@ class DeployTest(unittest.TestCase):
         deployment = DEPLOY.Deployment(self.model.service, self.engine, app_dir=self.app,
                     state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
                     timeout=6, stable_seconds=2, poll_seconds=1,
-                    clock=self.clock.now, sleep=self.clock.sleep, output=self.output.append)
+                    clock=self.clock.now, sleep=self.clock.sleep, output=self.output.append,
+                    compose=FakeCompose(), process_guard=lambda auth: None)
         deployment.run(action, self.model.image if action == 'deploy' else None)
 
     def assert_preserved(self):

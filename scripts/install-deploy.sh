@@ -10,7 +10,11 @@ registry_owner=$2
 public_key=$3
 [[ "$registry_owner" =~ ^[a-z0-9][a-z0-9-]*$ && "$public_key" == *.pub && -f "$public_key" ]] || exit 2
 case "$service" in
-  odisseu) deploy_user=zapbot-deploy ;;
+  odisseu) deploy_user=caiohclavico
+    id "$deploy_user" >/dev/null 2>&1 || {
+      echo 'The Google production account caiohclavico must already exist.' >&2
+      exit 1
+    } ;;
   pokemon) deploy_user=pokemon-deploy ;;
   *) exit 2 ;;
 esac
@@ -22,7 +26,7 @@ source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 command -v python3 >/dev/null
 command -v visudo >/dev/null
 install -d -o root -g root -m 755 /usr/local/lib/zapbot-deploy
-for file in deploy-vm.sh deploy-service.py deploy_auth_profile.py deploy-ssh-command.py; do
+for file in deploy-vm.sh deploy-service.py deploy_auth_profile.py deploy_compose.py deploy-ssh-command.py; do
   install -o root -g root -m 755 "$source_dir/$file" "/usr/local/lib/zapbot-deploy/$file"
 done
 install -o root -g root -m 755 "$source_dir/deploy-entry.py" "/usr/local/sbin/zapbot-deploy-$service"
@@ -54,12 +58,14 @@ if [[ "$home_owner" != 0 && "$home_owner" != "$deploy_uid" ]] || (( (8#$home_mod
   echo 'Deployment account home has unsafe ownership or permissions; inspect manually.' >&2
   exit 1
 fi
-if id -nG "$deploy_user" | tr ' ' '\n' | grep -Fxq docker; then
+if [[ "$service" != odisseu ]] && id -nG "$deploy_user" | tr ' ' '\n' | grep -Fxq docker; then
   echo 'Deployment account must not belong to the docker group.' >&2
   exit 1
 fi
 # No password login; a non-locked, unusable hash permits public-key-only SSH.
-usermod --password '*' "$deploy_user"
+if [[ "$service" != odisseu ]]; then
+  usermod --password '*' "$deploy_user"
+fi
 [[ $(id -u "$deploy_user") == "$deploy_uid" && $(getent passwd "$deploy_user" | cut -d: -f6) == "$login_home" ]] || {
   echo 'Deployment account UID or home changed unexpectedly.' >&2
   exit 1
@@ -69,8 +75,29 @@ usermod --password '*' "$deploy_user"
   exit 1
 }
 install -d -o root -g root -m 755 "$login_home/.ssh"
-printf 'restrict,command="/usr/bin/python3 /usr/local/lib/zapbot-deploy/deploy-ssh-command.py %s" %s\n' \
-  "$service" "$(cat "$public_key")" > "$login_home/.ssh/authorized_keys"
+key_file="$login_home/.ssh/authorized_keys"
+[[ ! -L "$key_file" && ( ! -e "$key_file" || -f "$key_file" ) ]] || {
+  echo 'Authorized keys must be a regular file; inspect manually.' >&2
+  exit 1
+}
+forced_key=$(printf 'restrict,command="/usr/bin/python3 /usr/local/lib/zapbot-deploy/deploy-ssh-command.py %s" %s' \
+  "$service" "$(cat "$public_key")")
+key_blob=$(awk '{print $2}' "$public_key")
+if [[ -f "$key_file" ]] && awk -v key="$key_blob" '{for(i=1;i<=NF;i++) if($i==key) found=1} END{exit !found}' "$key_file"; then
+  grep -Fxq "$forced_key" "$key_file" || {
+    echo 'This deploy key already has other permissions; use a dedicated key.' >&2
+    exit 1
+  }
+  [[ $(awk -v key="$key_blob" '{for(i=1;i<=NF;i++) if($i==key) count++} END{print count+0}' "$key_file") == 1 ]] || {
+    echo 'Duplicate deploy key entries require manual review.' >&2
+    exit 1
+  }
+else
+  # Keep administrative recovery keys. Never replace the Google login account,
+  # its password, UID, groups, home, or its unrelated authorized keys.
+  [[ ! -f "$key_file" || ! -s "$key_file" ]] || printf '\n' >> "$key_file"
+  printf '%s\n' "$forced_key" >> "$key_file"
+fi
 chown root:root "$login_home/.ssh/authorized_keys"
 # sshd opens this file as the login user. It contains only a public key; root
 # ownership and read-only permissions keep the forced-command rule immutable.

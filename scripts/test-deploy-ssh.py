@@ -47,7 +47,7 @@ class RestrictedDeployTest(unittest.TestCase):
         self.assertEqual(result, ["pokemon", "deploy", "ghcr.io/caioclavico/zapbot-pokemon:" + SHA,
                                   "/home/caiohclavico/pokemon-service"])
         self.assertEqual(entry.deployment_args("odisseu", ["rollback"], {"ghcr_owner": "caioclavico"}),
-                         ["odisseu", "rollback", "/home/ubuntu/zapbot"])
+                         ["odisseu", "rollback", "/home/caiohclavico/zapbot"])
         invalid = ({"ghcr_owner": "owner/foreign"}, {"ghcr_owner": "owner; id"},
                    {"ghcr_owner": "owner", "app_dir": "/tmp"}, {"ghcr_owner": "Owner"})
         for config in invalid:

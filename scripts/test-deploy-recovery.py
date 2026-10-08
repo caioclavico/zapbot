@@ -108,7 +108,8 @@ class RecoveryTest(unittest.TestCase):
     def instance(self):
         return D.Deployment('odisseu', self.engine, app_dir=self.app, state_dir=self.state,
                             config_dir=self.config, owner_uid=os.getuid(), timeout=6, stable_seconds=2,
-                            poll_seconds=1, clock=self.clock.now, sleep=self.clock.sleep, output=self.logs.append)
+                            poll_seconds=1, clock=self.clock.now, sleep=self.clock.sleep, output=self.logs.append,
+                            compose=BASE.FakeCompose(), process_guard=lambda auth: None)
 
     def rewrite(self, **values):
         path = self.state / 'transaction.json'

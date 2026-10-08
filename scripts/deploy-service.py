@@ -20,10 +20,11 @@ import sys
 import tempfile
 import time
 from urllib.parse import quote, urlencode
-from deploy_auth_profile import SessionProfile, ProfileError, sync_dir
+from deploy_auth_profile import SessionProfile, ProfileError, sync_dir, assert_profile_idle
+from deploy_compose import ProductionCompose, ComposeError
 
 SERVICES = {
-    'odisseu': ('zapbot', '/home/ubuntu/zapbot', 'zapbot'),
+    'odisseu': ('zapbot', '/home/caiohclavico/zapbot', 'zapbot'),
     'pokemon': ('zapbot-pokemon', '/home/caiohclavico/pokemon-service', 'zapbot-pokemon'),
 }
 SERVICE_LABEL = 'io.zapbot.service'
@@ -204,7 +205,8 @@ def atomic_private(path, value):
 class Deployment:
     def __init__(self, service, engine, *, app_dir=None, state_dir=None, config_dir=None,
                  owner_uid=0, timeout=600, stable_seconds=30, poll_seconds=5,
-                 clock=time.monotonic, sleep=time.sleep, output=print):
+                 clock=time.monotonic, sleep=time.sleep, output=print,
+                 compose=None, process_guard=assert_profile_idle):
         if service not in SERVICES:
             raise DeployError('Unknown service')
         self.service = service
@@ -234,6 +236,14 @@ class Deployment:
         self.requested_revision = None
         self.profile = SessionProfile(self.app_dir, self.state_dir, owner_uid,
             lambda path, uid: private_file(path, uid, max_bytes=16 * 1024 * 1024), atomic_private)
+        self.compose = compose or ProductionCompose(self.app_dir, self.state_dir, atomic_private)
+        self.process_guard = process_guard
+
+    def cold_locks(self):
+        self.single_writer(None)
+        self.process_guard(self.profile.auth)
+        count = self.profile.remove_orphan_locks()
+        self.output('odisseu: cold profile verified; orphan Chromium locks removed: ' + str(count))
 
     def acquire(self, recovery=False):
         for directory in (self.config_dir, self.state_dir):
@@ -453,7 +463,7 @@ class Deployment:
             same_mount = any((mount['Type'], mount.get('Name') if mount['Type'] == 'volume' else mount.get('Source'))
                              in mounts for mount in container.get('Mounts', []) if mount['Type'] in ('bind', 'volume'))
             # Docker normalizes paths differently from an operator's bind. Also
-            # reject a bind of an ancestor/descendant (e.g. /home/ubuntu/zapbot).
+            # reject a bind of an ancestor/descendant of the application directory.
             protected = [Path(m['Source']).resolve() for m in self.previous.get('Mounts', []) if m['Type'] == 'bind']
             for mount in container.get('Mounts', []):
                 if mount['Type'] == 'bind':
@@ -551,6 +561,7 @@ class Deployment:
         if self.service == 'odisseu' and self.auth_backup and self.new_start_attempted and not self.auth_restored:
             self.ensure_stopped(original_id)
             self.single_writer(None)
+            self.process_guard(self.profile.auth)
             self.profile.restore(self.auth_backup, original_id, self.previous['Image'], self.transaction)
         if self.service == 'odisseu' and (not self.profile.auth.is_dir() or self.profile.auth.is_symlink()):
             raise DeployError('Restored session root is unavailable; old client will not be started with an empty profile')
@@ -559,6 +570,10 @@ class Deployment:
             self.engine.rename(original_id, self.name)
         self.single_writer(original_id)
         if not self.engine.inspect(original_id)['State'].get('Running'):
+            if self.service == 'odisseu':
+                self.process_guard(self.profile.auth)
+                if self.auth_backup:
+                    self.cold_locks()
             self.engine.start(original_id)
         self.wait_ready(original_id, new_start=not was_running)
         if self.original_state:
@@ -758,6 +773,8 @@ class Deployment:
             self.requested_image = target['Id']
             self.requested_revision = requested_revision
             self.retained_id = retained['Id'] if retained is not None else None
+            if self.service == 'odisseu' and retained is None:
+                self.compose.prepare(self.transaction_name, self.name, current, configuration)
             self.transaction('prepared')
             self.stop_attempted = True
             self.engine.stop(current['Id'], max(self.grace_seconds, current['Config'].get('StopTimeout') or 0))
@@ -766,15 +783,18 @@ class Deployment:
             if self.service == 'odisseu':
                 self.ensure_stopped(current['Id'], clean=True)
                 self.single_writer(None)
+                self.process_guard(self.profile.auth)
                 self.auth_backup = self.profile.snapshot(self.transaction_name, current['Id'], current['Image'])
                 self.profile.validated(self.auth_backup, current['Id'], current['Image'])
                 self.transaction('auth-snapshot-ready')
+                self.cold_locks()
             self.engine.rename(current['Id'], self.name + '-previous-' + self.transaction_name)
             self.original_name_changed = True
             if retained is None:
                 self.create_attempted = True
                 self.transaction('creating-replacement')
-                self.new_id = self.engine.create(self.name, configuration)
+                self.new_id = (self.compose.create(self.engine, self.name) if self.service == 'odisseu'
+                               else self.engine.create(self.name, configuration))
                 self.verify_created(current, self.new_id)
                 created = self.engine.inspect(self.new_id)
                 if (created['Image'] != target['Id'] or
@@ -787,7 +807,10 @@ class Deployment:
             self.single_writer(self.new_id)
             self.new_start_attempted = True
             self.transaction('starting-replacement')
-            self.engine.start(self.new_id)
+            if self.service == 'odisseu' and retained is None:
+                self.compose.start(self.engine, self.new_id, self.name)
+            else:
+                self.engine.start(self.new_id)
             self.transaction('replacement-started')
             self.wait_ready(self.new_id, require_no_restarts=retained is None)
             self.transaction('replacement-verified')
@@ -800,7 +823,7 @@ class Deployment:
             self.archive_transaction('committed')
             self.output(self.service + ': deployment healthy; active image ' + image)
         except BaseException as error:
-            self.output(self.service + ': ' + (str(error) if isinstance(error, (DeployError, ProfileError))
+            self.output(self.service + ': ' + (str(error) if isinstance(error, (DeployError, ProfileError, ComposeError))
                                              else 'Deployment interrupted or internal failure'))
             if self.stop_attempted:
                 try:

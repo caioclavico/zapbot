@@ -42,33 +42,40 @@ for tool in ssh-keygen visudo python3; do
   chmod 755 "/tmp/validators/$tool"
 done
 export PATH="/tmp/validators:$PATH"
-useradd --uid 2345 --create-home --home-dir /home/zapbot-deploy --shell /bin/sh zapbot-deploy
-chmod 750 /home/zapbot-deploy
+useradd --uid 2345 --create-home --home-dir /home/caiohclavico --shell /bin/sh caiohclavico
+chmod 750 /home/caiohclavico
+mkdir -p /home/caiohclavico/.ssh
+printf 'ssh-ed25519 BBBB administrative-recovery-key\n' > /home/caiohclavico/.ssh/authorized_keys
+password_before=$(getent shadow caiohclavico | cut -d: -f2)
 printf 'ssh-ed25519 AAAA fixture-public-key\n' > /tmp/fixture.pub
 bash /bootstrap/install-deploy.sh odisseu fixture /tmp/fixture.pub --confirm-reviewed-persistence-v1
-key=/home/zapbot-deploy/.ssh/authorized_keys
-test "$(id -u zapbot-deploy)" = '2345'
-test "$(getent passwd zapbot-deploy | cut -d: -f6)" = '/home/zapbot-deploy'
-test "$(stat -c '%u:%a' /home/zapbot-deploy)" = '2345:750'
-test "$(stat -c '%u:%a' /home/zapbot-deploy/.ssh)" = '0:755'
+key=/home/caiohclavico/.ssh/authorized_keys
+test "$(id -u caiohclavico)" = '2345'
+test "$(getent passwd caiohclavico | cut -d: -f6)" = '/home/caiohclavico'
+test "$(stat -c '%u:%a' /home/caiohclavico)" = '2345:750'
+test "$(stat -c '%u:%a' /home/caiohclavico/.ssh)" = '0:755'
 test "$(stat -c '%u:%a' "$key")" = '0:644'
-test "$(cat "$key")" = 'restrict,command="/usr/bin/python3 /usr/local/lib/zapbot-deploy/deploy-ssh-command.py odisseu" ssh-ed25519 AAAA fixture-public-key'
-runuser -u zapbot-deploy -- test -r "$key"
-runuser -u zapbot-deploy -- test ! -w "$key"
+test "$(tail -n1 "$key")" = 'restrict,command="/usr/bin/python3 /usr/local/lib/zapbot-deploy/deploy-ssh-command.py odisseu" ssh-ed25519 AAAA fixture-public-key'
+grep -Fxq 'ssh-ed25519 BBBB administrative-recovery-key' "$key"
+test "$(getent shadow caiohclavico | cut -d: -f2)" = "$password_before"
+bash /bootstrap/install-deploy.sh odisseu fixture /tmp/fixture.pub --confirm-reviewed-persistence-v1
+test "$(grep -c 'fixture-public-key' "$key")" = 1
+runuser -u caiohclavico -- test -r "$key"
+runuser -u caiohclavico -- test ! -w "$key"
 test "$(stat -c '%u:%a' /etc/zapbot-deploy/odisseu)" = '0:700'
 test "$(stat -c '%u:%a' /etc/zapbot-deploy/odisseu/config.json)" = '0:600'
-runuser -u zapbot-deploy -- test ! -r /etc/zapbot-deploy/odisseu/config.json
+runuser -u caiohclavico -- test ! -r /etc/zapbot-deploy/odisseu/config.json
 sudoers=/etc/sudoers.d/zapbot-deploy-odisseu
 test "$(stat -c '%u:%a' "$sudoers")" = '0:440'
-test "$(cat "$sudoers")" = 'zapbot-deploy ALL=(root) NOPASSWD: /usr/local/sbin/zapbot-deploy-odisseu'
+test "$(cat "$sudoers")" = 'caiohclavico ALL=(root) NOPASSWD: /usr/local/sbin/zapbot-deploy-odisseu'
 test "$(stat -c '%u:%a' /usr/local/sbin/zapbot-deploy-odisseu)" = '0:755'
-case " $(id -nG zapbot-deploy) " in *' docker '*) exit 1;; esac
+case " $(id -nG caiohclavico) " in *' docker '*) exit 1;; esac
 printf '%s\n' '-----BEGIN OPENSSH PRIVATE KEY-----' 'fixture-private-key' > /tmp/private.pub
 if bash /bootstrap/install-deploy.sh odisseu fixture /tmp/private.pub --confirm-reviewed-persistence-v1; then
     echo 'Installer accepted a private key.' >&2
     exit 1
 fi
-test "$(cat "$key")" = 'restrict,command="/usr/bin/python3 /usr/local/lib/zapbot-deploy/deploy-ssh-command.py odisseu" ssh-ed25519 AAAA fixture-public-key'
+test "$(tail -n1 "$key")" = 'restrict,command="/usr/bin/python3 /usr/local/lib/zapbot-deploy/deploy-ssh-command.py odisseu" ssh-ed25519 AAAA fixture-public-key'
 """
     command("run", "--rm", "--user", "0:0", "--entrypoint", "/bin/bash",
             "-v", str(Path(__file__).resolve().parent) + ":/bootstrap:ro", base_image, "-c", shell)
@@ -90,6 +97,7 @@ def main():
     suffix = uuid.uuid4().hex[:12]
     name = "cicd-fixture-" + suffix
     volume = name + "-data"
+    network = name + '-existing-network'
     prefix = "ghcr.io/fixture/" + ("zapbot" if args.service == "odisseu" else "zapbot-pokemon") + ":"
     images = {}
     messages = []
@@ -124,6 +132,8 @@ def main():
                 images[prefix + version * 40] = engine.image(tag)["Id"]
             if args.service == "pokemon":
                 command("volume", "create", volume)
+            else:
+                command('network', 'create', network)
             app, state, config = (root / part for part in ("app", "state", "config"))
             for directory in (app, state, config):
                 directory.mkdir(mode=0o700)
@@ -147,9 +157,27 @@ def main():
                 "HostConfig": {"Binds": binds, "Memory": 128 * 1024**2,
                                "MemorySwap": 256 * 1024**2, "ShmSize": 64 * 1024**2,
                                "RestartPolicy": {"Name": "unless-stopped"},
-                               "PortBindings": ports},
+                               "PortBindings": ports,
+                               "NetworkMode": network if args.service == 'odisseu' else 'bridge'},
+                "Labels": {'com.docker.compose.project': name + '-legacy', 'com.docker.compose.service': 'bot'}
+                          if args.service == 'odisseu' else {},
                 "ExposedPorts": {key: {} for key in ports},
             })
+            if args.service == 'odisseu':
+                # Actual Compose creation from this VM's production file. The
+                # fixture uses local images, never GHCR or a real session.
+                (app / 'docker-compose.production.yml').write_text(json.dumps({'services': {'bot': {
+                    'image': '${ZAPBOT_IMAGE}', 'container_name': name,
+                    'command': ['node', '/app/fixture.cjs'], 'restart': 'unless-stopped',
+                    'env_file': [str(app / '.env')],
+                    'volumes': [str(app / 'data') + ':/app/data',
+                                str(app / '.wwebjs_auth') + ':/app/.wwebjs_auth']}}}))
+                session = app / '.wwebjs_auth/session'
+                session.mkdir()
+                (session / 'auth-token').write_text('preserve-auth-token')
+                (session / 'SingletonLock').symlink_to('old-fixture-host-999')
+                (session / 'SingletonSocket').symlink_to('/tmp/fixture-orphan-socket')
+                (session / 'SingletonCookie').symlink_to('orphan-cookie')
             engine.start(old_id)
             before = engine.inspect(old_id)
 
@@ -166,13 +194,14 @@ def main():
                 job = deployment.Deployment(args.service, local, app_dir=app, state_dir=state,
                                             config_dir=config, owner_uid=os.getuid(), timeout=5,
                                             stable_seconds=0.2, poll_seconds=0.2, output=messages.append)
+                job.process_guard = lambda auth: None  # Fixture has no Chromium, runs on a Mac Docker host.
                 job.name = name  # Never use production container names, even locally.
                 return job
 
             instance().run("deploy", prefix + "b" * 40)
             good = engine.inspect(name)
             assert good["Image"] == images[prefix + "b" * 40]
-            assert good["Config"]["Env"] == before["Config"]["Env"]
+            assert dict(e.split('=', 1) for e in good['Config']['Env']) == dict(e.split('=', 1) for e in before['Config']['Env'])
             assert good["Config"]["Hostname"] == before["Config"]["Hostname"]
             for field in ("Memory", "MemorySwap", "ShmSize", "PortBindings", "RestartPolicy", "Binds"):
                 assert good["HostConfig"][field] == before["HostConfig"][field], field
@@ -180,6 +209,13 @@ def main():
                 assert good["Mounts"][0]["Name"] == volume
             else:
                 assert (app / ".wwebjs_auth/fixture-session").read_text() == "retained-session-fixture"
+            if args.service == 'odisseu':
+                assert (app / '.wwebjs_auth/session/auth-token').read_text() == 'preserve-auth-token'
+                assert not (app / '.wwebjs_auth/session/SingletonLock').is_symlink()
+                assert any((p / 'session/SingletonLock').is_symlink() for p in state.iterdir() if p.is_dir() and p.name.startswith('auth-'))
+                assert good['HostConfig']['NetworkMode'] == before['HostConfig']['NetworkMode']
+                assert set(good['NetworkSettings']['Networks']) == {network}
+                assert engine.inspect(old_id)['Id'] == old_id  # Compose did not delete its predecessor.
             assert (app / ".env").read_text() == "POKEMON_READ_ONLY=true\n"
             try:
                 instance().run("deploy", prefix + "c" * 40)
@@ -225,6 +261,8 @@ def main():
         assert {row["Id"] for row in engine.active()} >= original_containers
         if args.service == "pokemon":
             subprocess.run(["docker", "volume", "rm", volume], capture_output=True)
+        else:
+            subprocess.run(['docker', 'network', 'rm', network], capture_output=True)
         for version in ("a", "b", "c"):
             subprocess.run(["docker", "image", "rm", name + ":" + version], capture_output=True)
 

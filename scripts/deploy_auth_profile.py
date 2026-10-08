@@ -11,10 +11,45 @@ import re
 import shutil
 import stat
 import time
+import errno
 
 
 class ProfileError(Exception):
     pass
+
+
+def assert_profile_idle(auth, proc_dir=Path('/proc')):
+    """Inspect host processes without logging command lines or touching them."""
+    if not proc_dir.is_dir():
+        raise ProfileError('Host process inventory unavailable; profile lock cleanup blocked')
+    for process in proc_dir.iterdir():
+        if not process.name.isdigit():
+            continue
+        try:
+            arguments = (process / 'cmdline').read_bytes().split(b'\0')
+        except OSError as error:
+            if error.errno in (errno.ENOENT, errno.ESRCH):
+                continue  # Process exited during inspection.
+            raise ProfileError('Host process cannot be inspected; profile lock cleanup blocked') from error
+        for index, argument in enumerate(arguments):
+            value = None
+            if argument.startswith(b'--user-data-dir='):
+                value = os.fsdecode(argument.split(b'=', 1)[1])
+            elif argument == b'--user-data-dir' and index + 1 < len(arguments):
+                value = os.fsdecode(arguments[index + 1])
+            if value is not None:
+                path = Path(value)
+                if not path.is_absolute():
+                    try:
+                        path = (process / 'cwd').resolve(strict=True) / path
+                    except OSError as error:
+                        raise ProfileError('Browser working directory unavailable; lock cleanup blocked') from error
+                path = path.resolve()
+                # Container paths are intentionally conservative: even another
+                # browser using the same internal path blocks lock removal.
+                for root in (Path(auth).resolve(), Path('/app/.wwebjs_auth')):
+                    if path == root or root in path.parents:
+                        raise ProfileError('A browser still owns a WhatsApp profile; lock cleanup blocked')
 
 
 def sync_dir(path):
@@ -93,6 +128,40 @@ class SessionProfile:
         self.auth = Path(app_dir) / '.wwebjs_auth'
         self.state_dir = Path(state_dir)
         self.owner_uid, self.read, self.write = owner_uid, read_private, write_private
+
+    def remove_orphan_locks(self):
+        """Caller must prove stopped containers AND an idle host process inventory.
+
+        Only unlink lock entries in real session directories. Never follow a
+        SingletonSocket symlink, recurse into a profile, or remove a directory.
+        A cold snapshot is taken by the caller before this operation.
+        """
+        if self.auth.is_symlink() or not self.auth.is_dir():
+            raise ProfileError('Session root unavailable; lock cleanup blocked')
+        entries = []
+        for session in self.auth.iterdir():
+            if session.name != 'session' and not session.name.startswith('session-'):
+                continue
+            if session.is_symlink():
+                raise ProfileError('Symlink session directory requires manual lock review')
+            if not session.is_dir():
+                continue
+            for name in ('SingletonLock', 'SingletonSocket', 'SingletonCookie'):
+                lock = session / name
+                try:
+                    info = lock.lstat()
+                except FileNotFoundError:
+                    continue
+                if not (stat.S_ISLNK(info.st_mode) or stat.S_ISREG(info.st_mode)):
+                    raise ProfileError('Unexpected Chromium lock type; manual review required')
+                entries.append((lock, info.st_dev, info.st_ino))
+        for lock, device, inode in entries:
+            info = lock.lstat()
+            if (info.st_dev, info.st_ino) != (device, inode):
+                raise ProfileError('Chromium lock changed during cold cleanup')
+            lock.unlink()
+            sync_dir(lock.parent)
+        return len(entries)
 
     def paths(self, transaction):
         if not isinstance(transaction, str) or not re.fullmatch(r'[0-9]{1,32}', transaction):
