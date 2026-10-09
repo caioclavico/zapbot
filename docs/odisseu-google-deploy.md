@@ -1,5 +1,10 @@
 # Deploy do Odisseu no Google Cloud
 
+Se a parada de `fead640` terminar com `Chromium closure was not confirmed`,
+consultar o [diagnóstico e primeira transição controlada](odisseu-google-shutdown-incident.md)
+antes de repetir o Actions. A opção de transição é root/operador, não é ativada
+automaticamente pelo workflow.
+
 Destino exclusivo do Odisseu: **35.238.24.225**, SSH **caiohclavico**, aplicação
 **/home/caiohclavico/zapbot**, container **zapbot**. A antiga Oracle não é acessada
 por deploy, rollback ou `check`. Pokémon conserva seu destino e seu helper Docker;

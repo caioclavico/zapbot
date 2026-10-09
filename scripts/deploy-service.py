@@ -151,12 +151,15 @@ class Engine:
 
     def probe(self, container, service):
         command = ['node', 'scripts/healthcheck.js'] if service == 'odisseu' else ['node', '-e', POKEMON_HEALTH]
+        return self.exec_check(container, command)
+
+    def exec_check(self, container, command, timeout=10):
         execution = self.request('POST', '/containers/' + quote(container, safe='') + '/exec',
                                  {'AttachStdout': False, 'AttachStderr': False, 'Cmd': command},
                                  expected=(201,))['Id']
         self.request('POST', '/exec/' + execution + '/start', {'Detach': False, 'Tty': False}, raw=True)
         # With no attached output Docker may return before the probe exits.
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + timeout
         if self.operation_deadline is not None:
             deadline = min(deadline, self.operation_deadline)
         while time.monotonic() < deadline:
@@ -206,7 +209,7 @@ class Deployment:
     def __init__(self, service, engine, *, app_dir=None, state_dir=None, config_dir=None,
                  owner_uid=0, timeout=600, stable_seconds=30, poll_seconds=5,
                  clock=time.monotonic, sleep=time.sleep, output=print,
-                 compose=None, process_guard=assert_profile_idle):
+                 compose=None, process_guard=assert_profile_idle, legacy_graceful_stop=False):
         if service not in SERVICES:
             raise DeployError('Unknown service')
         self.service = service
@@ -238,6 +241,7 @@ class Deployment:
             lambda path, uid: private_file(path, uid, max_bytes=16 * 1024 * 1024), atomic_private)
         self.compose = compose or ProductionCompose(self.app_dir, self.state_dir, atomic_private)
         self.process_guard = process_guard
+        self.legacy_graceful_stop = legacy_graceful_stop
 
     def cold_locks(self):
         self.single_writer(None)
@@ -453,6 +457,10 @@ class Deployment:
         if state.get('Running') or state.get('Restarting') or state.get('Paused') or state.get('Pid', 0):
             raise DeployError('Previous process is still running; replacement cannot start')
         if clean and (state.get('OOMKilled') or state.get('ExitCode', 0) != 0):
+            code = state.get('ExitCode')
+            self.output(self.service + ': unclean shutdown ' + json.dumps({
+                'exit_code': code if type(code) is int else None,
+                'oom_killed': state.get('OOMKilled') is True}, sort_keys=True))
             raise DeployError('Previous process did not shut down cleanly; replacement blocked')
 
     def single_writer(self, expected):
@@ -700,6 +708,8 @@ class Deployment:
 
     def run(self, action, image=None):
         try:
+            if self.legacy_graceful_stop and (self.service != 'odisseu' or action != 'deploy'):
+                raise DeployError('Legacy graceful stop is operator-only and limited to Odisseu deployment')
             self.acquire(recovery=action == 'recover')
             if action == 'recover':
                 self.recover()
@@ -777,6 +787,11 @@ class Deployment:
                 self.compose.prepare(self.transaction_name, self.name, current, configuration)
             self.transaction('prepared')
             self.stop_attempted = True
+            if self.legacy_graceful_stop:
+                self.output('odisseu: operator-requested legacy browser close before SIGTERM')
+                script = Path(__file__).with_name('odisseu-legacy-stop.cjs').read_text() + '\nrunLegacyStop();'
+                if not self.engine.exec_check(current['Id'], ['node', '-e', script], timeout=25):
+                    raise DeployError('Legacy browser close failed; clean shutdown checks remain required')
             self.engine.stop(current['Id'], max(self.grace_seconds, current['Config'].get('StopTimeout') or 0))
             self.ensure_stopped(current['Id'], clean=action == 'deploy')
             self.transaction('original-stopped')
@@ -841,6 +856,11 @@ def main(argv):
     os.umask(0o077)
     if os.geteuid() != 0:
         raise DeployError('Run through the installed service-specific sudo wrapper')
+    legacy_graceful_stop = bool(argv and argv[-1] == '--legacy-graceful-stop')
+    if legacy_graceful_stop:
+        argv = argv[:-1]
+        if argv[:2] != ['odisseu', 'deploy']:
+            raise DeployError('Legacy graceful stop is limited to an operator-requested Odisseu deployment')
     if len(argv) < 2 or argv[0] not in SERVICES or argv[1] not in ('deploy', 'rollback', 'recover'):
         raise DeployError('Usage: SERVICE deploy IMAGE [APP_DIR] | SERVICE rollback|recover [APP_DIR]')
     service, action = argv[:2]
@@ -858,7 +878,7 @@ def main(argv):
             raise DeployError('Deployment interrupted')
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, interrupted)
-    Deployment(service, Engine(), app_dir=app_dir).run(action, image)
+    Deployment(service, Engine(), app_dir=app_dir, legacy_graceful_stop=legacy_graceful_stop).run(action, image)
 
 if __name__ == '__main__':
     try:

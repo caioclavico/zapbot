@@ -27,7 +27,7 @@ class RestrictedDeployTest(unittest.TestCase):
         for command in ("", "bash", "deploy latest", "deploy " + SHA + "; id",
                         "deploy " + SHA + "\n", "rollback now", "rollback; id",
                         "deploy  " + SHA, "deploy " + "A" * 40, "scp -t /tmp/file",
-                        "check; id", "check now"):
+                        "check; id", "check now", "deploy " + SHA + " --legacy-graceful-stop"):
             with self.subTest(command=command), self.assertRaises(ValueError):
                 ssh.arguments("odisseu", command)
         with self.assertRaises(ValueError):
@@ -55,6 +55,8 @@ class RestrictedDeployTest(unittest.TestCase):
                 entry.deployment_args("pokemon", ["deploy", SHA], config)
         with self.assertRaises(ValueError):
             entry.deployment_args("cassandra", ["deploy", SHA], {"ghcr_owner": "owner"})
+        with self.assertRaises(ValueError):
+            entry.deployment_args("odisseu", ["deploy", SHA, "--legacy-graceful-stop"], {"ghcr_owner": "owner"})
 
 
 if __name__ == "__main__":

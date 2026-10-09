@@ -81,6 +81,17 @@ test "$(tail -n1 "$key")" = 'restrict,command="/usr/bin/python3 /usr/local/lib/z
             "-v", str(Path(__file__).resolve().parent) + ":/bootstrap:ro", base_image, "-c", shell)
 
 
+def check_browser_signals(base_image):
+    scripts = Path(__file__).resolve().parent
+    for mode, signal in (('managed', 'SIGTERM'), ('managed', 'SIGINT'), ('legacy', 'SIGTERM')):
+        command('run', '--rm', '--network', 'none', '--memory', '1g',
+                '--env', 'ZAPBOT_SHUTDOWN_FIXTURE=yes', '--entrypoint', 'node',
+                '-v', str(scripts) + ':/fixture-tests:ro',
+                '-v', str(scripts / 'lib') + ':/fixture-lib:ro',
+                base_image, '/fixture-tests/test-whatsapp-signal-docker.cjs', mode, signal)
+    print('Real local Chromium: SIGTERM/SIGINT and operator legacy transition exited cleanly; fixture session preserved.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--socket", default="/var/run/docker.sock")
@@ -240,6 +251,8 @@ def main():
             assert not (state / "transaction.json").exists()
             assert (app / ".env").stat().st_mode & 0o777 == 0o600
             check_installer_permissions(args.base_image)
+            if args.service == 'odisseu':
+                check_browser_signals(args.base_image)
             print(f"Real local Docker ({args.service}): deployment, failed health, automatic/manual rollback and persistence passed.")
     except Exception:
         print("Fixture deployment status:\n" + "\n".join(messages))

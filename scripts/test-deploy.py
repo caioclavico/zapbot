@@ -52,6 +52,7 @@ class DockerModel:
         self.calls = []
         self.executions = {}
         self.execution_polls = {}
+        self.legacy_executions = set()
         self.created = []
         self.old_starts = 0
         self.faulted = False
@@ -153,6 +154,8 @@ class DockerModel:
             execution, operation = path[len('/exec/'):].split('/')
             if operation == 'start':
                 return 200, b''
+            if execution in self.legacy_executions:
+                return 200, {'Running': False, 'ExitCode': 1 if self.scenario == 'legacy-close-failure' else 0}
             self.execution_polls[execution] = self.execution_polls.get(execution, 0) + 1
             if self.scenario == 'async-exec' and self.execution_polls[execution] <= 2:
                 return 200, {'Running': True, 'ExitCode': None}
@@ -182,9 +185,14 @@ class DockerModel:
                     assert "['/health','/ready']" in data['Cmd'][2]
                     assert '/commands' not in data['Cmd'][2]
                 else:
-                    assert data['Cmd'] == ['node', 'scripts/healthcheck.js']
+                    assert data['Cmd'] == ['node', 'scripts/healthcheck.js'] or (
+                        data['Cmd'][:2] == ['node', '-e'] and 'runLegacyStop();' in data['Cmd'][2])
                 identifier = str(len(self.executions) + 1)
                 self.executions[identifier] = container['Id']
+                if self.service == 'odisseu' and data['Cmd'][:2] == ['node', '-e']:
+                    if hasattr(self, 'before_legacy_exec'):
+                        self.before_legacy_exec()
+                    self.legacy_executions.add(identifier)
                 return 201, {'Id': identifier}
             if operation == 'stop':
                 assert int(query['t'][0]) >= 60
@@ -317,12 +325,13 @@ class DeployTest(unittest.TestCase):
         self.output, self.clock = [], Clock()
         return model
 
-    def deploy(self, action='deploy'):
+    def deploy(self, action='deploy', legacy_graceful_stop=False):
         deployment = DEPLOY.Deployment(self.model.service, self.engine, app_dir=self.app,
                     state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
                     timeout=6, stable_seconds=2, poll_seconds=1,
                     clock=self.clock.now, sleep=self.clock.sleep, output=self.output.append,
-                    compose=FakeCompose(), process_guard=lambda auth: None)
+                    compose=FakeCompose(), process_guard=lambda auth: None,
+                    legacy_graceful_stop=legacy_graceful_stop)
         deployment.run(action, self.model.image if action == 'deploy' else None)
 
     def assert_preserved(self):
@@ -620,6 +629,51 @@ class DeployTest(unittest.TestCase):
         with self.assertRaises(DEPLOY.DeployError):
             self.deploy()
         self.assertFalse(any(path.endswith('/stop') or path == '/images/create' for _, path, _, _ in self.model.calls))
+
+    def test_operator_legacy_stop_runs_after_journal_and_before_sigterm(self):
+        self.fixture('odisseu')
+        def verify_journal():
+            data=json.loads((self.state / 'transaction.json').read_text())
+            self.assertEqual(data['phase'], 'prepared')
+            self.assertEqual(data['original-container'], 'old')
+            self.assertIsNone(data['replacement-container'])
+        self.model.before_legacy_exec=verify_journal
+        self.deploy(legacy_graceful_stop=True)
+        calls=self.model.calls
+        close=next(i for i, (_, path, _, data) in enumerate(calls)
+                   if path.endswith('/exec') and data['Cmd'][:2] == ['node', '-e'])
+        stop=next(i for i, (_, path, _, _) in enumerate(calls) if path == '/containers/old/stop')
+        self.assertLess(close, stop)
+        self.assertTrue(self.model.legacy_executions)
+        self.assert_preserved()
+
+    def test_legacy_stop_is_opt_in_and_cannot_target_pokemon(self):
+        self.fixture('odisseu')
+        self.deploy()
+        self.assertFalse(self.model.legacy_executions)
+        self.fixture('pokemon')
+        with self.assertRaises(DEPLOY.DeployError):
+            self.deploy(legacy_graceful_stop=True)
+        self.assertFalse(self.model.calls)
+
+    def test_failed_legacy_close_never_stops_or_replaces_original(self):
+        self.fixture('odisseu')
+        self.model.scenario='legacy-close-failure'
+        with self.assertRaises(DEPLOY.DeployError):
+            self.deploy(legacy_graceful_stop=True)
+        self.assertFalse(any(path.endswith('/stop') or path == '/containers/create' for _, path, _, _ in self.model.calls))
+        self.assertTrue(self.model.containers['old']['State']['Running'])
+        self.assert_preserved()
+
+    def test_legacy_close_never_bypasses_unclean_exit_guard(self):
+        self.fixture('odisseu')
+        self.model.scenario='forced-stop'
+        with self.assertRaises(DEPLOY.DeployError):
+            self.deploy(legacy_graceful_stop=True)
+        self.assertTrue(self.model.legacy_executions)
+        self.assertFalse(self.model.created)
+        self.assertTrue(any('"exit_code": 137' in line for line in self.output))
+        self.assert_preserved()
 
     def test_async_exec_is_polled_until_probe_exit(self):
         self.fixture('pokemon')

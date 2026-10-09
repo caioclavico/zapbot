@@ -175,9 +175,15 @@
       (is (js/Array.isArray (:args opcoes)))
       (is (= esperado (js->clj (:args opcoes))))
       (is (= 300000 (:protocolTimeout opcoes)))
-      (is (= (cond-> {:protocolTimeout 300000}
+      (is (= (cond-> {:protocolTimeout 300000 :handleSIGTERM false :handleSIGINT false}
                executavel (assoc :executablePath executavel))
              (dissoc opcoes :args))))))
+
+(deftest aplicacao-controla-sigterm-e-sigint-sem-kill-concorrente-do-puppeteer
+  (let [opcoes (core/opcoes-puppeteer)]
+    (is (false? (:handleSIGTERM opcoes)))
+    (is (false? (:handleSIGINT opcoes)))
+    (is (= 300000 (:protocolTimeout opcoes)))))
 
 (deftest latencia-mede-apenas-comandos-permitidos-preservando-contexto-pokemon
   (let [medidos (atom 0) processados (atom []) ctx #js {:teste true}]

@@ -77,7 +77,7 @@ jobs:
           bash -n scripts/deploy-vm.sh scripts/load-image-vm.sh scripts/install-deploy.sh scripts/ci-ssh-deploy.sh
           python3 scripts/test-ci-changes.py
           python3 scripts/test-ci-ssh.py
-          node --test scripts/test-ci-registry.cjs
+          node --test scripts/test-ci-registry.cjs test/odisseu-legacy-stop.test.cjs
           python3 scripts/test-deploy.py
           python3 scripts/test-deploy-recovery.py
           python3 scripts/test-deploy-compose.py
