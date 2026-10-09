@@ -140,7 +140,6 @@
       (is (identical? resultado
                      (desempenho/acompanhar! mensagem
                        (fn [ctx] (is (nil? ctx)) (swap! chamadas inc) resultado) nao-chamar)))
-      (is (identical? resultado (desempenho/observar-operacao! "raid" (fn [_] resultado))))
       (is (identical? resultado (desempenho/acompanhar-mensagem! mensagem (fn [_] resultado))))
       (is (identical? resultado (desempenho/medir! {:etapas nil} "etapa" (fn [] resultado))))
       (is (= "e" (desempenho/medir! nil "etapa" (fn [] "e"))))

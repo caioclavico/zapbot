@@ -103,15 +103,6 @@
            (finalizar "erro")
            (throw erro)))))))
 
-(defn observar-operacao!
-  "Mede operações internas sem registrar argumentos ou identificadores de chat."
-  [comando executar]
-  (if-not config/performance-metrics-enabled
-    (executar nil)
-    (acompanhar! #js {} executar
-                 #(when (or (= "erro" (:evento %)) (>= (:total_ms %) 30000)) (emitir! %))
-                 comando)))
-
 (defn acompanhar-mensagem! [message executar]
   (if-not config/performance-metrics-enabled
     (executar nil)

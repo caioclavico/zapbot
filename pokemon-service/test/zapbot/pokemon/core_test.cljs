@@ -759,28 +759,19 @@
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally done)))))
 
-(deftest raide-passa-contexto-para-fila-e-aguarda-conclusao
-  (async done
-    (let [liberar (p/deferred)
-          contexto (atom nil)
-          trabalho
-          (with-redefs [core/emitir-evento (atom #js {})
-                        raids/agendas (atom {"teste-raid" {"proxima" (+ (.now js/Date) 60000)}})
-                        core/enfileirar-jogada
-                        (fn [cid acao & [ctx]]
-                          (reset! contexto ctx)
-                          (is (= "teste-raid" cid))
-                          (is (= config/performance-metrics-enabled (some? ctx)) "Contexto só existe com métricas ligadas")
-                          (is (nil? (acao)) "Raide fora do horário não inicia trabalho")
-                          liberar)]
-            (core/verificar-raides!))]
-      (is @core/verificando-raides?)
-      (is (= (when config/performance-metrics-enabled "raid_automatica") (:comando @contexto)))
-      (p/resolve! liberar :fim)
-      (-> trabalho
-          (p/then (fn [_] (is (false? @core/verificando-raides?))))
-          (p/catch (fn [erro] (is false (str erro))))
-          (p/finally done)))))
+(deftest startup-nao-agenda-nem-cria-raides
+  (let [emissor (atom nil) rearmados (atom [])]
+    (with-redefs [core/emitir-evento emissor
+                  core/rearmar-limites-restaurados! #(swap! rearmados conj :combates)
+                  core/rearmar-remocoes! #(swap! rearmados conj :remocoes)
+                  armazenamento/exigir-escrita! (fn [] nil)
+                  js/setInterval (fn [& _] (throw (js/Error. "Interval de raid indevido")))
+                  armazenamento/salvar! (fn [& _] (throw (js/Error. "Gravação de agenda indevida")))
+                  core/buscar-pokemon-por-nome (fn [& _] (throw (js/Error. "Criação de raid indevida")))]
+      (core/iniciar! (fn [& _]))
+      (is (fn? @emissor))
+      (is (= [:combates :remocoes] @rearmados))
+      (is (not (contains? (core/filas-pendentes) :raid_scheduler_active))))))
 
 (deftest efeito-visual-usa-o-golpe-escolhido
   (let [golpes [{:nome-exibicao "Choque" :tipo "electric" :classe :especial}

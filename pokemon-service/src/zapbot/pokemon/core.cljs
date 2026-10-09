@@ -206,7 +206,7 @@
   (p/all (map #(p/catch % (fn [_] nil)) (vals @gravacoes-combates))))
 
 (defonce ^:private emitir-evento (atom nil))
-(declare rearmar-limites-restaurados! iniciar-raides! rearmar-remocoes! enfileirar-jogada)
+(declare rearmar-limites-restaurados! rearmar-remocoes! enfileirar-jogada)
 
 (defn iniciar!
   "Registra a porta de eventos e rearma os relógios após carregar o estado."
@@ -214,8 +214,7 @@
   (armazenamento/exigir-escrita!)
   (reset! emitir-evento emitir)
   (rearmar-limites-restaurados!)
-  (rearmar-remocoes!)
-  (iniciar-raides!))
+  (rearmar-remocoes!))
 
 ;; Remoções de golpe aguardando a janela de arrependimento, por [chat jogador].
 (defn- restaurar-pendencias [registros]
@@ -4754,7 +4753,6 @@
 (defn- configurar-ginasio [contexto args]
   (let [ctx (desempenho/contexto-de contexto)
         cid (chat-id contexto) pid (jogador-id contexto)
-        _ (raids/acompanhar! cid (.now js/Date))
         [acao-original id numero] args
         acao (expandir-subcomando :ginasio acao-original)
         pocao? (contains? #{"pocao" "poção" "pot"} acao)
@@ -5234,7 +5232,6 @@
 
 (defn- comando-raid [contexto args]
   (let [cid (chat-id contexto) pid (jogador-id contexto)
-        _ (raids/acompanhar! cid (.now js/Date))
         [acao-original numero] args
         acao (if (contains? #{"cap" "capturar"} acao-original) "capturar"
                  (expandir-subcomando :raid acao-original))
@@ -5702,56 +5699,6 @@
                         (desempenho/contexto-de contexto)))))
 
 
-(defonce ^:private relogio-raides (atom nil))
-(defonce ^:private verificando-raides? (atom false))
-
-(defn- verificar-raides! []
-  (let [emitir @emitir-evento]
-  (when (and emitir (compare-and-set! verificando-raides? false true))
-    (-> (js/Promise.allSettled
-         (clj->js (for [[cid agenda] @raids/agendas]
-           (desempenho/observar-operacao! "raid_automatica"
-            (fn [ctx]
-           (enfileirar-jogada
-            cid
-            (fn []
-              (let [agora (.now js/Date)]
-                (when (and (<= (raids/proxima-aparicao cid agenda) agora)
-                           (not (raids/ativa? (raids/atual cid) agora))
-                           (nil? (get @jogos cid)) (nil? (get @cacadas-selvagens cid)))
-                  (p/let [_ (desempenho/medir! ctx "raid_persistencia_previa" armazenamento/aguardar-todas!)
-                          g (raids/proximo-ginasio cid)
-                          [slug raridade] (rand-nth (raids/candidatos (:nivel g)))
-                          base (desempenho/medir! ctx "raid_pokemon" #(buscar-pokemon-por-nome slug))
-                          pokemon (desempenho/medir! ctx "raid_golpes"
-                                   #(com-golpes (assoc base :nivel 1 :raridade raridade
-                                                       :lendario-api? (= raridade "lendario")
-                                                       :mitico-api? (= raridade "mitico")) 1))
-                          chefe (treinador/pokemon->registro pokemon (:hp pokemon) nil)
-                          r (raids/criar! cid g chefe agora)
-                          _ (desempenho/medir! ctx "persistencia_modulos" armazenamento/aguardar-todas!)
-                          resposta (when r (desempenho/medir! ctx "raid_imagem"
-                                           #(resposta-cartao-evento :raid (:imagem pokemon)
-                                             (str "🏛️ Uma raide apareceu no ginásio " (:nome g) "!\n"
-                                                  (raids/resumo r agora)))))]
-                    (when resposta
-                      (desempenho/medir! ctx "raid_envio"
-                       #(emitir cid (if (map? resposta) resposta {:texto resposta}))))))))
-            ctx))))))
-        (p/then (fn [resultados]
-                  (when-let [falha (first (filter #(= "rejected" (.-status ^js %)) (array-seq resultados)))]
-                    (throw (.-reason ^js falha)))))
-        (p/catch #(js/console.error "Erro ao preparar aparição de raide:" %))
-        (p/finally #(reset! verificando-raides? false))))))
-
-(defn iniciar-raides! []
-  (when-let [timer @relogio-raides] (js/clearInterval timer))
-  (doseq [cid (keys (or (armazenamento/obter "ginasios") {}))]
-    (raids/acompanhar! cid (.now js/Date)))
-  (reset! relogio-raides (js/setInterval verificar-raides! 60000))
-  (verificar-raides!))
-
-
 (defn- rearmar-remocoes! []
   (doseq [[[cid pid] pendente] @remocoes-pendentes]
     (when-let [timer (:timer pendente)] (js/clearTimeout timer))
@@ -5770,8 +5717,6 @@
   "Interrompe relógios locais; registros persistidos permanecem para o próximo boot."
   []
   (reset! emitir-evento nil)
-  (when-let [timer @relogio-raides] (js/clearInterval timer))
-  (reset! relogio-raides nil)
   (doseq [[_ {:keys [timer]}] @limites-turno] (js/clearTimeout timer))
   (reset! limites-turno {})
   (doseq [[_ {:keys [timer]}] @remocoes-pendentes] (when timer (js/clearTimeout timer)))
@@ -5783,5 +5728,4 @@
 
 (defn filas-pendentes []
   {:game_operations @operacoes-pendentes :game_chat_queues (count @filas-jogadas)
-   :raid_scheduler_active @verificando-raides?
    :move_requests (js->clj (.stats consultas-golpes) :keywordize-keys true)})

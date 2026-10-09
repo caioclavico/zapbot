@@ -94,7 +94,7 @@ Nas referências de testes: **C** = `test/zapbot/pokemon/core_test.cljs`; **PC**
 | Liga | `time`, `tm` → `time`; nomes definidos em `treinador/ligas` |
 | Ginásio | Consulta vazia/nome; `desafiar`, `des`, `dsf`; `time`, `tm` com `auto`, números, ou `pagina N`; `ranking`, `ran`; `historico`, `histórico`, `hist`; `pocao`, `poção`, `pot`; `fruta`, `frambo`, `fru`, `fruta-dourada`, `dourada` + nome + defensor 1–3 |
 | Ginásio → raide | `entrar/ent`, `iniciar/ini`, `atacar/atk`, `capturar/cap`, `sair/sai`, `cancelar`. Entrada sem número escolhe `auto`. `desafiar <ginásio>` com raide ativa inscreve automaticamente. Ataque em batalha de ginásio continua no combate do ginásio |
-| Raide | `abrir/abr` apenas informa que a aparição é automática; `entrar/ent [n/auto]`; `iniciar/ini`; `atacar/atk <slot>`; `sair/sai`; `cancelar/can`; `time [pagina N ou N]`; `capturar/cap <bola>` |
+| Raide | `abrir/abr` informa que a aparição automática foi removida; `entrar/ent [n/auto]`; `iniciar/ini`; `atacar/atk <slot>`; `sair/sai`; `cancelar/can`; `time [pagina N ou N]`; `capturar/cap <bola>` |
 | Time nomeado | `salvar/sal <nome> n1,n2,n3`; `usar/usa <nome> [liga/lig/ginasio/gin/ginásio]`; `ver <nome>`; `excluir/exc/apagar/apa/remover/rm <nome>`. O mapa de normalização inclui `raide/raides → raid`, mas o handler de aplicação só implementa destinos liga/ginásio |
 | Professor | `enviar <n>`, `confirmar <código>`, `cancelar`; `cartoes/cartões/saldo`; `usar <n>`. Confirmação de transferência vale 5 min; cartão concede 3 XP, sem consumo no nível máximo |
 | Negociar | Propor com dois índices e alvo; `aceitar <id>` pelo destinatário; `confirmar <id>` pelo autor; `cancelar/recusar <id>` por participante; validade de 5 min |
@@ -106,7 +106,7 @@ Filtros de coleção: um ou mais tipos/raridades, liga (direta ou `liga <nome>`)
 ### Diferenças existentes entre código e textos de ajuda
 
 - O texto de comando desconhecido anuncia `pokemon abrir` e `pokemon entrar`, mas `jogar-comando` não tem essas entradas: abrir/entrar PvP ocorre sem argumento.
-- `raid abrir`/`abr` existe apenas como orientação, pois raides agora aparecem automaticamente.
+- `raid abrir`/`abr` existe apenas como orientação; não cria raides. O scheduler automático foi removido.
 - Há textos antigos de ajuda que mencionam PC separado ou bloqueio de caçada com coleção cheia, enquanto os handlers/testes atuais preservam coleção unificada e permitem lutar sem capturar.
 - O inventário toma o dispatcher e seus testes como comportamento atual. Corrigir textos ou adicionar comportamento seria uma alteração funcional separada da extração.
 

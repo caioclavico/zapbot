@@ -158,8 +158,13 @@ escritores de jogo simultâneos. LWT protege requestId, não toda conta do jogad
 
 Joy já usa `pronto-em` persistido. O recolhimento continua na próxima consulta,
 como antes; não adicionamos uma notificação de cura que não existia.
-Raids automáticas e prazos de batalha rodam no serviço. Seus avisos viram eventos
-HTTP persistidos. Propostas de troca e remoções de golpe passam a guardar pendências
+A criação automática de raids foi removida: não há verificação no startup,
+interval de 60 segundos, rodízio de chefes nem cadastro de novas agendas. Registros
+existentes continuam disponíveis para os comandos manuais de inscrição, início,
+ataque, saída, cancelamento e captura. `raid abrir` já era apenas informativo;
+não existe comando de criação manual nesta versão. Agendas antigas no Cassandra
+não são apagadas nem migradas. Prazos de batalha continuam no serviço e seus
+avisos viram eventos HTTP persistidos. Propostas de troca e remoções de golpe passam a guardar pendências
 sem objetos de transporte nem handles de timer. Após restart, os relógios são
 rearmados com os prazos existentes.
 

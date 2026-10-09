@@ -206,14 +206,13 @@
   (p/all (map #(p/catch % (fn [_] nil)) (vals @gravacoes-combates))))
 
 (defonce ^:private cliente-whatsapp (atom nil))
-(declare rearmar-limites-restaurados! iniciar-raides!)
+(declare rearmar-limites-restaurados!)
 
 (defn iniciar!
   "Registra o cliente conectado e só então rearma os relógios restaurados."
   [client]
   (reset! cliente-whatsapp client)
-  (rearmar-limites-restaurados!)
-  (iniciar-raides!))
+  (rearmar-limites-restaurados!))
 
 ;; Remoções de golpe aguardando a janela de arrependimento, por [chat jogador].
 (defonce ^:private remocoes-pendentes (atom {}))
@@ -4820,7 +4819,6 @@
 (defn- configurar-ginasio [message args]
   (let [ctx (desempenho/contexto-de message)
         cid (chat-id message) pid (jogador-id message)
-        _ (raids/acompanhar! cid (.now js/Date))
         [acao-original id numero] args
         acao (expandir-subcomando :ginasio acao-original)
         pocao? (contains? #{"pocao" "poção" "pot"} acao)
@@ -5300,7 +5298,6 @@
 
 (defn- comando-raid [message args]
   (let [cid (chat-id message) pid (jogador-id message)
-        _ (raids/acompanhar! cid (.now js/Date))
         [acao-original numero] args
         acao (if (contains? #{"cap" "capturar"} acao-original) "capturar"
                  (expandir-subcomando :raid acao-original))
@@ -5744,50 +5741,3 @@
                                    (contains? #{"atacar" "atk"} (first resto)))
                             (str "atacar " (second resto)) args))
                         (desempenho/contexto-de message)))))
-
-
-(defonce ^:private relogio-raides (atom nil))
-(defonce ^:private verificando-raides? (atom false))
-
-(defn- verificar-raides! []
-  (when (and @cliente-whatsapp (compare-and-set! verificando-raides? false true))
-    (-> (p/all
-         (for [[cid agenda] @raids/agendas]
-           (desempenho/observar-operacao! "raid_automatica"
-            (fn [ctx]
-           (enfileirar-jogada
-            cid
-            (fn []
-              (let [agora (.now js/Date)]
-                (when (and (<= (get agenda "proxima" 0) agora)
-                           (not (raids/ativa? (raids/atual cid) agora))
-                           (nil? (get @jogos cid)) (nil? (get @cacadas-selvagens cid)))
-                  (p/let [g (raids/proximo-ginasio cid)
-                          [slug raridade] (rand-nth (raids/candidatos (:nivel g)))
-                          base (desempenho/medir! ctx "raid_pokemon" #(buscar-pokemon-por-nome slug))
-                          pokemon (desempenho/medir! ctx "raid_golpes"
-                                   #(com-golpes (assoc base :nivel 1 :raridade raridade
-                                                       :lendario-api? (= raridade "lendario")
-                                                       :mitico-api? (= raridade "mitico")) 1))
-                          chefe (treinador/pokemon->registro pokemon (:hp pokemon) nil)
-                          r (raids/criar! cid g chefe agora)
-                          _ (desempenho/medir! ctx "persistencia_modulos" armazenamento/aguardar-todas!)
-                          resposta (when r (desempenho/medir! ctx "raid_imagem"
-                                           #(resposta-cartao-evento :raid (:imagem pokemon)
-                                             (str "🏛️ Uma raide apareceu no ginásio " (:nome g) "!\n"
-                                                  (raids/resumo r agora)))))]
-                    (when resposta
-                      (desempenho/medir! ctx "raid_envio"
-                       #(if (map? resposta)
-                        (.sendMessage @cliente-whatsapp cid (:media resposta) #js {:caption (:texto resposta)})
-                        (.sendMessage @cliente-whatsapp cid resposta))))))))
-            ctx)))))
-        (p/catch #(js/console.error "Erro ao preparar aparição de raide:" %))
-        (p/finally #(reset! verificando-raides? false)))))
-
-(defn iniciar-raides! []
-  (when-let [timer @relogio-raides] (js/clearInterval timer))
-  (doseq [cid (keys (or (armazenamento/obter "ginasios") {}))]
-    (raids/acompanhar! cid (.now js/Date)))
-  (reset! relogio-raides (js/setInterval verificar-raides! 60000))
-  (verificar-raides!))

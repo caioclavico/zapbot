@@ -260,7 +260,6 @@
       "medir!",
       "codificar-base64!",
       "acompanhar!",
-      "observar-operacao!",
       "acompanhar-mensagem!"
     ],
     "state": [
@@ -892,9 +891,7 @@
       "autoriza-turno-lider?",
       "jogar-rodada",
       "enfileirar-jogada",
-      "jogar",
-      "verificar-raides!",
-      "iniciar-raides!"
+      "jogar"
     ],
     "state": [
       "jogos",
@@ -907,11 +904,9 @@
       "propostas-troca",
       "evolucoes-pendentes",
       "filas-jogadas",
-      "contextos-filas",
-      "relogio-raides",
-      "verificando-raides?"
+      "contextos-filas"
     ],
-    "timers": 3
+    "timers": 2
   },
   {
     "file": "src/zapbot/pokemon/ginasios.cljs",
@@ -1136,18 +1131,12 @@
       "zapbot.config",
       "zapbot.pokemon.treinador",
       "zapbot.pokemon.loja",
-      "zapbot.pokemon.missoes",
-      "zapbot.pokemon.aventuras"
+      "zapbot.pokemon.missoes"
     ],
     "functions": [
       "ativa?",
-      "acompanhar!",
       "atual",
       "no-ginasio?",
-      "proximo-ginasio",
-      "candidatos",
-      "liga-do-ginasio",
-      "criar!",
       "captura-pendente",
       "registrar-tentativa!",
       "chance-captura",
@@ -1159,8 +1148,7 @@
       "comando!"
     ],
     "state": [
-      "raids",
-      "agendas"
+      "raids"
     ],
     "timers": 0
   },

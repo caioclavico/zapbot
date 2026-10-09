@@ -7,17 +7,17 @@ O padrão é `false`; veja [controle de métricas](performance-metrics.md).
 
 Todos os comandos `!pk` e `!pokemon` agora recebem contexto de medição. O campo
 `comando` contém apenas um rótulo fixo (`pokemon` ou `pk treinador`), sem os
-argumentos enviados pelo jogador. As raides automáticas também são medidas,
-mas só geram logs em caso de erro ou duração de pelo menos 30 segundos.
+argumentos enviados pelo jogador. A criação automática de raides foi removida,
+incluindo suas operações e logs de desempenho exclusivos.
 
 `fila_pokemon` significa espera pela rodada anterior do mesmo chat;
 `aguardando.id` aponta para o identificador da operação anterior. Ela pode ser
-outro comando ou `raid_automatica`. `rodada_pokemon` significa que a operação
+outro comando. `rodada_pokemon` significa que a operação
 já adquiriu sua vez. As etapas internas incluem `recolher_curados`,
 `xp_raid_evolucao`, `comando_pokemon`, `turno_lider`, `persistencia_combate` e
 `persistencia_modulos`. Desafios de ginásio detalham `ginasio_nome`,
-`ginasio_adversarios` e `ginasio_imagem_envio`. Raides detalham `raid_pokemon`,
-`raid_golpes`, `raid_imagem` e `raid_envio`.
+`ginasio_adversarios` e `ginasio_imagem_envio`. As etapas `raid_pokemon`,
+`raid_golpes`, `raid_imagem` e `raid_envio` pertenciam ao scheduler removido.
 
 Para consultar as operações pendentes **sem enviar novos comandos ao WhatsApp**:
 

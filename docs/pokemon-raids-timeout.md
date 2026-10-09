@@ -1,5 +1,10 @@
 # Diagnóstico e proteção das raids automáticas
 
+Este documento registra a correção anterior à remoção das raids automáticas.
+O scheduler, criação, agendas e métricas exclusivas desse fluxo foram removidos.
+Timeout, cache e limite das consultas de golpes continuam para caçadas, ginásios
+e aprendizado. Veja o comportamento atual no [README do serviço](../pokemon-service/README.md#nurse-joy-raids-e-relógios).
+
 ## Evidências e limites do diagnóstico
 
 O incidente informado em 05/10/2026 teve uma raid acima de 30 segundos às

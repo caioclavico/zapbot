@@ -5,59 +5,21 @@
             [zapbot.config :as config]
             [zapbot.pokemon.treinador :as treinador]
             [zapbot.pokemon.loja :as loja]
-            [zapbot.pokemon.missoes :as missoes]
-            [zapbot.pokemon.aventuras :as aventuras]))
+            [zapbot.pokemon.missoes :as missoes]))
 
 (defonce ^:private raids (atom (or (armazenamento/obter "raids") {})))
 (armazenamento/registrar! "raids" raids)
-(def duracao-inscricoes (* 45 60 1000))
 (def duracao-combate (* 30 60 1000))
+;; Campo legado atualizado pelo início manual; não agenda novas aparições.
 (def intervalo (* 6 60 60 1000))
 
 (defn ativa? [raid agora]
   (and (contains? #{"inscricoes" "combate"} (get raid "fase"))
        (< agora (get raid "expira" 0))))
 
-(defonce agendas (atom (or (armazenamento/obter "raides-agendas") {})))
-(armazenamento/registrar! "raides-agendas" agendas)
-
-(defn acompanhar! [cid agora]
-  (when-not (contains? @agendas cid)
-    (swap! agendas assoc cid {"proxima" (+ agora intervalo)})
-    (armazenamento/salvar! "raides-agendas" @agendas)))
-
 (defn atual [cid] (get @raids cid))
 (defn no-ginasio? [cid id agora]
   (let [r (atual cid)] (and (= id (get r "ginasio")) (ativa? r agora))))
-
-(defn proximo-ginasio [cid]
-  (let [ultimo (or (get-in @agendas [cid "ultimo-ginasio"])
-                   (get (atual cid) "ginasio"))
-        lista (vec aventuras/ginasios)
-        indice (first (keep-indexed #(when (= ultimo (:id %2)) %1) lista))]
-    (get lista (if (some? indice) (mod (inc indice) (count lista)) 0))))
-
-(defn candidatos [nivel]
-  (cond
-    (>= nivel 50) [["mew" "mitico"] ["celebi" "mitico"] ["jirachi" "mitico"] ["mewtwo" "lendario"]]
-    (>= nivel 30) [["articuno" "lendario"] ["zapdos" "lendario"] ["moltres" "lendario"] ["dragonite" "raro"]]
-    :else [["snorlax" "raro"] ["lapras" "raro"] ["aerodactyl" "raro"] ["dratini" "raro"]]))
-
-(defn liga-do-ginasio [nivel]
-  (cond (>= nivel 50) "diamante" (>= nivel 40) "ouro" (>= nivel 30) "prata"
-        (>= nivel 20) "bronze" :else "iniciante"))
-
-(defn criar! [cid g chefe agora]
-  (when-not (ativa? (atual cid) agora)
-    (let [r {"id" (str (random-uuid)) "ginasio" (:id g) "nome-ginasio" (:nome g)
-             "nivel-ginasio" (:nivel g) "chefe" chefe "fase" "inscricoes"
-             "liga" (liga-do-ginasio (:nivel g)) "ordem" [] "participantes" {}
-             "expira" (+ agora duracao-inscricoes) "proxima" (+ agora intervalo)}]
-      (swap! raids assoc cid r)
-      (swap! agendas assoc cid {"proxima" (+ agora intervalo) "ultimo-ginasio" (:id g)})
-      (armazenamento/salvar! "raids" @raids)
-      (armazenamento/salvar! "raides-agendas" @agendas)
-      r)))
 
 (defn captura-pendente [cid pid agora]
   (let [r (atual cid)]
@@ -169,17 +131,14 @@
                   (get-in raid ["participantes" (get raid "vez") "pokemon" "golpes"])))))
          "\nRestam " (max 1 (js/Math.ceil (/ (- (get raid "expira") agora) 60000))) " min."
          "\n" config/prefix "pokemon gin " (if (= "inscricoes" (get raid "fase")) "entrar [número] | !pk gin iniciar" "atacar <1-4>"))
-    (str "🤝 Raide: " (case (get raid "fase") "vitoria" "vitória do grupo." "derrota" "grupo derrotado." "nenhuma ativa (encerrada ou expirada).")
-         "\nAs raides aparecem automaticamente nos ginásios."
-         (when (> (get raid "proxima" 0) agora)
-           (str " Nova raide em " (js/Math.ceil (/ (- (get raid "proxima") agora) 60000)) " min.")))))
+    (str "🤝 Raide: " (case (get raid "fase") "vitoria" "vitória do grupo." "derrota" "grupo derrotado." "nenhuma ativa (encerrada ou expirada)."))))
 
 (defn comando! [cid pid nome args registro liga-padrao agora]
   (let [[acao valor] args
         raid (get @raids cid)
         [novo texto]
         (case acao
-          "abrir" [raid "As raides aparecem automaticamente nos ginásios. Consulte !pk raide."]
+          "abrir" [raid "A aparição automática de raides foi removida. Consulte !pk raide para acompanhar uma raide existente."]
           "entrar" (entrar raid pid nome registro agora)
           "iniciar" (iniciar raid pid agora)
           "atacar" (atacar raid pid (when (re-matches #"[1-4]" (or valor "")) (dec (js/parseInt valor 10))) agora)

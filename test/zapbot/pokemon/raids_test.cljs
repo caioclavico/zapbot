@@ -14,39 +14,40 @@
               "tipos" ["agua"] "raridade" "raro"
               "golpes" [{"classe" "fisico" "poder" 100 "slug" "tackle" "nome-exibicao" "Investida"}]})
 
-(deftest chefes-e-chances-respeitam-nivel
+(defn raide-em-inscricoes [agora]
+  {"id" "raid-manual-fixture" "ginasio" "pedra" "nome-ginasio" "Pedra"
+   "nivel-ginasio" 10 "chefe" pokemon "fase" "inscricoes" "liga" "iniciante"
+   "ordem" [] "participantes" {} "expira" (+ agora (* 45 60 1000))})
+
+(deftest aliases-e-chances-de-captura-preservados
   (is (= "raid" (core/expandir-atalho "raide")))
   (is (= "raid" (core/expandir-atalho "raid")))
-  (is (every? #(= "raro" (second %)) (raids/candidatos 10)))
-  (is (some #(= "lendario" (second %)) (raids/candidatos 30)))
-  (is (some #(= "mitico" (second %)) (raids/candidatos 50)))
   (is (< (raids/chance-captura "mitico") (raids/chance-captura "lendario") (raids/chance-captura "raro"))))
 
-(deftest aparicao-preserva-defensores-e-agenda-apos-reinicio
-  (let [estado (atom {}) agenda (atom {})
+(deftest raide-existente-preserva-defensores-e-prazos
+  (let [r (raide-em-inscricoes 2000)
+        estado (atom {"chat" r})
         defensores (atom {"chat" {"pedra" {"pid" "lider" "time" [pokemon pokemon pokemon]}}})
         original @defensores]
-    (with-redefs [raids/raids estado raids/agendas agenda ginasios/ocupacoes defensores
-                  armazenamento/salvar! (fn [& _] nil)]
-      (raids/acompanhar! "chat" 1000)
-      (raids/acompanhar! "chat" 2000)
-      (is (= (+ 1000 raids/intervalo) (get-in @agenda ["chat" "proxima"])))
-      (let [r (raids/criar! "chat" {:id "pedra" :nome "Pedra" :nivel 10} pokemon 2000)]
-        (is (raids/no-ginasio? "chat" "pedra" 2000))
-        (is (not (raids/no-ginasio? "chat" "agua" 2000)))
-        (is (nil? (raids/criar! "chat" {:id "agua"} pokemon 2001)))
-        (is (not (raids/no-ginasio? "chat" "pedra" (get r "expira"))))
-        (is (= original @defensores))))))
+    (with-redefs [raids/raids estado ginasios/ocupacoes defensores
+                  armazenamento/salvar! (fn [& _] (throw (js/Error. "Consulta não grava agenda")))]
+      (is (raids/no-ginasio? "chat" "pedra" 2000))
+      (is (not (raids/no-ginasio? "chat" "agua" 2000)))
+      (is (not (raids/no-ginasio? "chat" "pedra" (get r "expira"))))
+      (is (= r (raids/atual "chat")))
+      (is (= original @defensores)))))
 
 (deftest vitoria-premia-uma-vez-e-oferece-captura-aos-participantes-ativos
-  (let [estado (atom {}) contas (atom {}) xp (atom [])]
-    (with-redefs [raids/raids estado raids/agendas (atom {}) loja/contas contas
+  (let [estado (atom {"chat" (raide-em-inscricoes 0)}) contas (atom {}) xp (atom [])]
+    (with-redefs [raids/raids estado loja/contas contas
                   armazenamento/salvar! (fn [& _] nil)
                   treinador/premiar-progresso-raid! (fn [_ pid id _] (swap! xp conj [pid id]) {:xp 6 :pe 6})]
-      (raids/criar! "chat" {:id "pedra" :nivel 10} pokemon 0)
       (doseq [pid ["ash" "misty" "brock"]]
         (raids/comando! "chat" pid pid ["entrar"] pokemon "iniciante" 1))
+      (is (= "inscricoes" (get (raids/atual "chat") "fase")))
       (raids/comando! "chat" "misty" "Misty" ["iniciar"] nil nil 2)
+      (is (= "combate" (get (raids/atual "chat") "fase")))
+      (is (= (+ 2 raids/intervalo) (get (raids/atual "chat") "proxima")))
       (swap! estado assoc-in ["chat" "hp-chefe"] 1)
       (raids/comando! "chat" "ash" "Ash" ["atacar" "1"] nil nil 3)
       (is (= 50 (get-in @contas ["chat" "ash" "moedas"])))
@@ -102,19 +103,14 @@
                  (done)))
         (.catch (fn [erro] (is false (str erro)) (done))))))
 
-(deftest rodizio-persistido-passa-por-todos-sem-sobrepor
-  (let [estado (atom {}) agenda (atom {})]
-    (with-redefs [raids/raids estado raids/agendas agenda armazenamento/salvar! (fn [& _] nil)]
-      (doseq [[i esperado] (map-indexed vector ["pedra" "agua" "eletrico" "planta" "fogo" "pedra"])]
-        (let [g (raids/proximo-ginasio "chat") agora (* i raids/intervalo)]
-          (is (= esperado (:id g)))
-          (raids/criar! "chat" g pokemon agora)
-          (let [salvo @agenda]
-            (is (nil? (raids/criar! "chat" (raids/proximo-ginasio "chat") pokemon (inc agora))))
-            (is (= salvo @agenda))
-            ;; Simula recarga do formato JSON persistido.
-            (reset! agenda (js->clj (js/JSON.parse (js/JSON.stringify (clj->js salvo))))))))
-      (is (= "pedra" (:id (raids/proximo-ginasio "outro-grupo")))))))
+(deftest abrir-e-consultar-nao-criam-raide-nem-prometem-aparicao
+  (let [estado (atom {})]
+    (with-redefs [raids/raids estado
+                  armazenamento/salvar! (fn [& _] (throw (js/Error. "Criação automática indevida")))]
+      (let [resposta (raids/comando! "chat" "ash" "Ash" ["abrir"] nil nil 1)]
+        (is (str/includes? (:texto resposta) "removida"))
+        (is (empty? @estado)))
+      (is (not (str/includes? (raids/resumo {"proxima" 600000} 1) "Nova raide"))))))
 
 (deftest escalacao-automatica-ordena-aptos-e-filtra-a-liga
   (with-redefs [treinador/equipe
@@ -129,7 +125,6 @@
   (let [salvo (atom nil) fotos (atom nil)]
     (with-redefs [treinador/equipe (fn [& _] (mapv #(assoc pokemon "nome" (str %) "ataque" %) [10 40 20 30]))
                   core/aprendizado-bloqueado? (fn [& _] false)
-                  raids/acompanhar! (fn [& _] nil)
                   treinador/salvar-time-ginasio! (fn [_ _ indices] (reset! salvo indices))
                   core/resposta-time-ginasio (fn [pokemons texto] (reset! fotos pokemons) texto)]
       (core/configurar-ginasio #js {:from "chat" :author "ash"} ["time"])
@@ -137,8 +132,7 @@
       (is (= ["40" "30" "20"] (mapv :nome @fotos))))))
 
 (deftest desafiar-ginasio-com-raide-inscreve-sem-outro-comando
-  (with-redefs [raids/acompanhar! (fn [& _] nil)
-                raids/no-ginasio? (fn [_ id _] (= "pedra" id))
+  (with-redefs [raids/no-ginasio? (fn [_ id _] (= "pedra" id))
                 core/comando-raid (fn [_ args] args)]
     (is (= ["entrar" "auto"] (core/configurar-ginasio #js {:from "chat" :author "ash"} ["desafiar" "pedra"])))
     (is (= ["atacar" "2"] (core/configurar-ginasio #js {:from "chat" :author "ash"} ["atk" "2"])))))
