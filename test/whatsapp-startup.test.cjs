@@ -13,7 +13,8 @@ function fixture(inject=async()=>{},options={}){
   const logs=[],states=[],page=new EventEmitter(),client=new EventEmitter();
   const frame={url:()=> 'https://web.whatsapp.com/'};
   page.isClosed=()=>!live;page.mainFrame=()=>frame;
-  const browser={isConnected:()=>live,process:()=>({exitCode:live?null:0,signalCode:null})};
+  const child=new EventEmitter();child.exitCode=null;child.signalCode=null;
+  const browser={isConnected:()=>live,process:()=>child};
   Object.assign(client,{pupPage:page,pupBrowser:browser,
     authStrategy:{logout:async()=>{logouts++;}},
     inject:async()=>{calls++;return inject(client);},
@@ -25,7 +26,7 @@ function fixture(inject=async()=>{},options={}){
       });
       client.emit('ready');
     },
-    destroy:async()=>{closed++;live=false;}
+    destroy:async()=>{closed++;live=false;child.exitCode=0;child.emit('exit',0,null);}
   });
   const recovery=installStartupRecovery(client,{backoff:[1,2],timeoutMs:10000,injectTimeoutMs:1000,
     logger:s=>logs.push(JSON.parse(s)),onState:s=>states.push(s),...options});
@@ -40,6 +41,100 @@ test('transient inject retries the same browser, reaches READY and never initial
   assert.equal(f.closed,0);assert.equal(f.logouts,0);assert.equal(f.recovery.acceptingReady(),true);
   assert.deepEqual(f.logs.map(x=>x.event),['whatsapp_inject_retry']);
   await f.recovery.close();assert.equal(f.closed,1);
+});
+// Independent process metadata lets destroy() finish before Node reports exit.
+function delayedExitFixture(options={}){
+  const f=fixture(undefined,options),child=new EventEmitter();
+  child.exitCode=null;child.signalCode=null;
+  f.client.pupBrowser.process=()=>child;
+  return {f,child,exit(code=0,signal=null){
+    child.exitCode=code;child.signalCode=signal;child.emit('exit',code,signal);
+  }};
+}
+test('close waits for delayed Chromium exit and shares cleanup across concurrent callers',async()=>{
+  const {f,child,exit}=delayedExitFixture();await f.recovery.initialize();
+  let finished=false;
+  const a=f.recovery.close().then(()=>{finished=true;}),b=f.recovery.close();
+  await new Promise(setImmediate);
+  assert.equal(f.closed,1);assert.equal(f.client.pupBrowser.isConnected(),false);
+  assert.equal(child.exitCode,null);assert.equal(finished,false);
+  assert.equal(child.listenerCount('exit'),1);assert.equal(child.listenerCount('error'),1);
+  exit();await Promise.all([a,b]);await f.recovery.close();
+  assert.equal(finished,true);assert.equal(f.closed,1);assert.equal(f.logouts,0);
+  assert.equal(child.listenerCount('exit'),0);assert.equal(child.listenerCount('error'),0);
+});
+test('normal exit before destroy resolves is observed without losing the event',async()=>{
+  const {f,child,exit}=delayedExitFixture(),work=deferred();
+  const destroy=f.client.destroy;
+  f.client.destroy=async()=>{await destroy();exit();await work.promise;};
+  let finished=false;const closing=f.recovery.close().then(()=>{finished=true;});
+  await new Promise(setImmediate);assert.equal(child.exitCode,0);assert.equal(finished,false);
+  work.resolve();await closing;assert.equal(f.logouts,0);
+  assert.equal(child.listenerCount('exit'),0);
+});
+test('already exited Chromium needs no future exit event',async()=>{
+  const {f,child}=delayedExitFixture();child.exitCode=0;
+  await f.recovery.close();assert.equal(f.closed,1);assert.equal(f.logouts,0);
+  assert.equal(child.listenerCount('exit'),0);
+});
+test('delayed SIGKILL remains a fatal shutdown failure',async()=>{
+  const {f,child,exit}=delayedExitFixture();
+  const checked=assert.rejects(f.recovery.close(),e=>e.code==='CHROMIUM_EXIT_SIGNAL'&&/SIGKILL/.test(e.message));
+  await new Promise(setImmediate);exit(null,'SIGKILL');await checked;
+  await assert.rejects(f.recovery.close(),e=>e.code==='CHROMIUM_EXIT_SIGNAL');
+  assert.equal(f.closed,1);assert.equal(f.logouts,0);assert.equal(child.listenerCount('exit'),0);
+});
+test('nonzero Chromium exit is not accepted as clean shutdown',async()=>{
+  const {f,exit}=delayedExitFixture();
+  const checked=assert.rejects(f.recovery.close(),e=>e.code==='CHROMIUM_EXIT_CODE'&&/exit code 7/.test(e.message));
+  await new Promise(setImmediate);exit(7);await checked;assert.equal(f.logouts,0);
+});
+test('living Chromium times out without killing it or repeating cleanup',async()=>{
+  const timers=[],{f,child,exit}=delayedExitFixture({closeTimeoutMs:25,
+    schedule(fn,ms){const t={fn,ms,cancelled:false};timers.push(t);return t;},cancel(t){t.cancelled=true;}});
+  const checked=assert.rejects(f.recovery.close(),e=>e.code==='CHROMIUM_EXIT_TIMEOUT');
+  await new Promise(setImmediate);assert.equal(f.closed,1);
+  const timer=timers.find(t=>t.ms===25);timer.fn();await checked;
+  assert.equal(child.exitCode,null);assert.equal(timer.cancelled,true);
+  assert.equal(child.listenerCount('exit'),0);assert.equal(child.listenerCount('error'),0);
+  exit(); // A late exit must not turn the recorded failure into success.
+  await assert.rejects(f.recovery.close(),e=>e.code==='CHROMIUM_EXIT_TIMEOUT');
+  assert.equal(f.closed,1);assert.equal(f.logouts,0);
+});
+test('destroy rejection is preserved and process observers are removed',async()=>{
+  const {f,child}=delayedExitFixture(),error=new Error('destroy failed');let calls=0;
+  f.client.destroy=async()=>{calls++;throw error;};
+  await assert.rejects(f.recovery.close(),e=>e===error);
+  await assert.rejects(f.recovery.close(),e=>e===error);
+  assert.equal(calls,1);assert.equal(f.logouts,0);
+  assert.equal(child.listenerCount('exit'),0);assert.equal(child.listenerCount('error'),0);
+});
+test('a hung destroy also has a bounded wait and cannot trigger duplicate destroy',async()=>{
+  const timers=[],{f,child}=delayedExitFixture({closeTimeoutMs:25,
+    schedule(fn,ms){const t={fn,ms};timers.push(t);return t;},cancel(){}});
+  let calls=0;const work=deferred();f.client.destroy=()=>{calls++;return work.promise;};
+  const checked=assert.rejects(f.recovery.close(),e=>e.code==='CHROMIUM_EXIT_TIMEOUT');
+  await new Promise(setImmediate);timers.find(t=>t.ms===25).fn();await checked;
+  await assert.rejects(f.recovery.close(),e=>e.code==='CHROMIUM_EXIT_TIMEOUT');
+  assert.equal(calls,1);assert.equal(child.listenerCount('exit'),0);assert.equal(f.logouts,0);
+  work.resolve();
+});
+test('child process errors fail closed without exposing process error details',async()=>{
+  const {f,child}=delayedExitFixture();
+  const checked=assert.rejects(f.recovery.close(),e=>e.code==='CHROMIUM_PROCESS_ERROR'&&!e.message.includes('PRIVATE'));
+  await new Promise(setImmediate);child.emit('error',new Error('PRIVATE_PROCESS_DETAIL'));await checked;
+  assert.equal(child.listenerCount('exit'),0);assert.equal(child.listenerCount('error'),0);
+});
+test('a disconnected process with no exit observation fails closed',async()=>{
+  const f=fixture();f.client.pupBrowser.process=()=>({exitCode:null,signalCode:null});
+  await assert.rejects(f.recovery.close(),e=>e.code==='CHROMIUM_PROCESS_ERROR');
+});
+test('zero exit cannot conceal a still-connected browser',async()=>{
+  const {f,child}=delayedExitFixture();child.exitCode=0;f.client.destroy=async()=>{};
+  await assert.rejects(f.recovery.close(),e=>e.code==='CHROMIUM_STILL_CONNECTED');
+});
+test('close deadline cannot exceed the application shutdown guard',()=>{
+  assert.throws(()=>fixture(undefined,{closeTimeoutMs:45000}),/Invalid WhatsApp startup recovery limits/);
 });
 test('bounded exhaustion closes Chromium, preserves auth and rejects late READY',async()=>{
   const f=fixture(async()=>{throw contextError();});
@@ -161,10 +256,11 @@ test('a page application error mentioning context destruction is not retried as 
 
 test('late launch followed by setup failure cleans up even after the startup timeout won',async()=>{
   const launch=deferred(),timers=[],client=new EventEmitter();let live=true,closed=0;
-  const browser={isConnected:()=>live,process:()=>({exitCode:live?null:0,signalCode:null})};
+  const child=new EventEmitter();child.exitCode=null;child.signalCode=null;
+  const browser={isConnected:()=>live,process:()=>child};
   Object.assign(client,{inject:async()=>{},initialize:async()=>{
     await launch.promise;client.pupBrowser=browser;throw new Error('late page setup failed');
-  },destroy:async()=>{closed++;live=false;}});
+  },destroy:async()=>{closed++;live=false;child.exitCode=0;child.emit('exit',0,null);}});
   const recovery=installStartupRecovery(client,{timeoutMs:100,logger(){},
     schedule(fn,ms){const t={fn,ms};timers.push(t);return t;},cancel(){}});
   const checked=assert.rejects(recovery.initialize(),e=>e.code==='STARTUP_TIMEOUT');

@@ -7,11 +7,12 @@ const path=require('node:path');
 function transient(error) {
   return /^(?:Protocol error \(Runtime\.(?:callFunctionOn|evaluate)\): )?(?:Execution context was destroyed(?:, most likely because of a navigation)?|Cannot find context with specified id)\.?$/i.test(String(error?.message||error).trim());
 }
-function installStartupRecovery(client,{attempts=3,backoff=[2000,5000],timeoutMs=480000,injectTimeoutMs=120000,restoreOnly,
+function installStartupRecovery(client,{attempts=3,backoff=[2000,5000],timeoutMs=480000,injectTimeoutMs=120000,closeTimeoutMs=30000,restoreOnly,
   schedule=setTimeout,cancel=clearTimeout,logger=console.error,onState=()=>{}}={}) {
   if(!Number.isInteger(attempts)||attempts<1||attempts>4||backoff.length<attempts-1||
     !backoff.every(n=>Number.isInteger(n)&&n>=0)||!Number.isInteger(timeoutMs)||timeoutMs<1||
-    !Number.isInteger(injectTimeoutMs)||injectTimeoutMs<1)
+    !Number.isInteger(injectTimeoutMs)||injectTimeoutMs<1||
+    !Number.isInteger(closeTimeoutMs)||closeTimeoutMs<1||closeTimeoutMs>30000)
     throw new Error('Invalid WhatsApp startup recovery limits');
   const inject=client.inject?.bind(client),initialize=client.initialize.bind(client);
   const auth=client.authStrategy;
@@ -37,12 +38,45 @@ function installStartupRecovery(client,{attempts=3,backoff=[2000,5000],timeoutMs
     const browser=client.pupBrowser;
     if(!browser||browser===closedBrowser)return Promise.resolve();
     closing=(async()=>{
-      await client.destroy(); // Browser.close + authStrategy.destroy; no logout.
-      const process=browser.process?.();
-      if(browser.isConnected()||(process&&(process.exitCode!==0||process.signalCode!==null)))
-        throw new Error('Chromium closure was not confirmed');
+      // Capture/listen before destroy(): exit may precede its resolution. Null
+      // exitCode without a signal means pending, never success or failure yet.
+      const child=browser.process?.();
+      let onExit,onError,timer;
+      const failure=(reason,message)=>Object.assign(
+        new Error('Chromium closure was not confirmed: '+message),{code:reason});
+      try{
+        const exited=!child?Promise.resolve():new Promise((resolve,reject)=>{
+          onExit=(code,signal)=>{
+            if(signal!==null)reject(failure('CHROMIUM_EXIT_SIGNAL','terminated by '+signal));
+            else if(code!==0)reject(failure('CHROMIUM_EXIT_CODE','exit code '+code));
+            else resolve();
+          };
+          onError=()=>reject(failure('CHROMIUM_PROCESS_ERROR','child process error'));
+          if(child.exitCode!==null||child.signalCode!==null){onExit(child.exitCode,child.signalCode);return;}
+          if(typeof child.once!=='function'||typeof child.removeListener!=='function'){
+            reject(failure('CHROMIUM_PROCESS_ERROR','exit observation unavailable'));return;
+          }
+          child.once('exit',onExit);child.once('error',onError);
+          // Also cover exit between the initial state check and registration.
+          if(child.exitCode!==null||child.signalCode!==null)onExit(child.exitCode,child.signalCode);
+        });
+        await Promise.race([
+          Promise.all([Promise.resolve().then(()=>client.destroy()),exited]), // No logout.
+          new Promise((_,reject)=>{timer=schedule(()=>reject(
+            failure('CHROMIUM_EXIT_TIMEOUT','shutdown deadline exceeded')),closeTimeoutMs);})
+        ]);
+        if(browser.isConnected())throw failure('CHROMIUM_STILL_CONNECTED','browser still connected');
+      }finally{
+        if(timer!==undefined)cancel(timer);
+        if(child&&typeof child.removeListener==='function'){
+          if(onExit)child.removeListener('exit',onExit);
+          if(onError)child.removeListener('error',onError);
+        }
+      }
       closedBrowser=browser;
-    })().finally(()=>{closing=null;});
+    })().then(()=>{closing=null;});
+    // Retain a failed close, too: a timed-out destroy may still be running.
+    // Retrying cleanup would race it and could mask the original failure.
     return closing;
   }
   async function fail(error,phase){

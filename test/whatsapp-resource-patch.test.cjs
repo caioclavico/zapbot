@@ -27,7 +27,8 @@ test('actual pinned initialize method cleans up after pages, proxy or newPage fa
   for(const stage of ['pages','authenticate','newPage']){
     let live=true,closed=0;const error=new Error('fixture setup failure');
     const page={authenticate:async()=>{throw error;}};
-    const browser={isConnected:()=>live,process:()=>({exitCode:live?null:0,signalCode:null}),
+    const child=new EventEmitter();child.exitCode=null;child.signalCode=null;
+    const browser={isConnected:()=>live,process:()=>child,
       pages:async()=>{if(stage==='pages')throw error;return [page];},newPage:async()=>{throw error;}};
     const initialize=vm.runInNewContext('({'+method+'})',
       {puppeteer:{launch:async()=>browser,connect:async()=>browser}}).initialize;
@@ -35,7 +36,7 @@ test('actual pinned initialize method cleans up after pages, proxy or newPage fa
       options:{puppeteer:stage==='newPage'?{browserURL:'fixture.invalid'}:{},userAgent:false,
         proxyAuthentication:stage==='authenticate'?{}:undefined},
       authStrategy:{beforeBrowserInitialized:async()=>{}},initialize,inject:async()=>{},
-      destroy:async()=>{assert.equal(client.pupBrowser,browser);closed++;live=false;}});
+      destroy:async()=>{assert.equal(client.pupBrowser,browser);closed++;live=false;child.exitCode=0;child.emit('exit',0,null);}});
     const recovery=installStartupRecovery(client,{logger(){}});
     await assert.rejects(recovery.initialize(),e=>e===error);
     assert.equal(closed,1);assert.equal(live,false);await recovery.close();assert.equal(closed,1);

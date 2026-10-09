@@ -44,6 +44,46 @@ O helper registra exit code/OOM quando bloqueia o shutdown. Python usa `-u` para
 entregar os logs ao Actions enquanto a operação acontece, sem esperar pelo exit.
 `PERFORMANCE_METRICS=false` permanece como padrão; logs essenciais continuam.
 
+### Confirmação assíncrona da saída do processo
+
+Uma segunda falha foi reproduzida em teste controlado: se `destroy()` resolve
+antes da atualização do ChildProcess, o código anterior rejeita `exitCode=null`
+imediatamente. A [API do Node](https://nodejs.org/api/child_process.html#subprocessexitcode)
+define esse estado sem `signalCode` como processo ainda pendente. Isso comprova
+a fragilidade da checagem, mas não identifica sozinho a causa do incidente real:
+no Puppeteer 24.38.0 instalado, o caminho normal de `BrowserLauncher.closeBrowser`
+já aguarda `browserProcess.hasClosed()`. Sem código/sinal de saída daquela
+tentativa, não é possível distinguir o atraso da disputa de handlers anterior.
+
+`whatsapp-startup.cjs` agora captura o ChildProcess e registra `exit`/`error`
+antes de chamar `client.destroy()`. Só confirma sucesso quando destroy resolve,
+o processo sai com código 0, sem sinal, e o browser está desconectado. Se o
+processo já saiu, usa seus metadados sem esperar um evento que já aconteceu.
+Para browsers remotos, sem ChildProcess local, exige destroy e desconexão.
+
+A espera total de destroy e saída tem um novo limite interno de **30 segundos**,
+inferior ao guard existente de **45 segundos** e ao stop Docker de **60 segundos**.
+Não há aumento desses limites. O limite inclui destroy travado, além de saída
+pendente; uma VM muito lenta ainda pode falhar legitimamente. Códigos de erro
+distinguem sinal (`CHROMIUM_EXIT_SIGNAL`), saída não zero (`CHROMIUM_EXIT_CODE`),
+timeout (`CHROMIUM_EXIT_TIMEOUT`), erro de processo (`CHROMIUM_PROCESS_ERROR`)
+e browser ainda conectado (`CHROMIUM_STILL_CONNECTED`). Erros de destroy são
+propagados sem serem transformados em sucesso.
+
+Chamadas concorrentes compartilham o fechamento. Uma falha fica retida, pois
+destroy pode continuar pendente após timeout; não se tenta destruir novamente
+nem aceitar uma saída tardia como recuperação. Listeners e timer próprios são
+removidos em todos os resultados. Não há kill, logout, limpeza de perfil ou
+alteração de persistência. O handler existente só retorna exit 0 após confirmação;
+falha retorna exit 1 e continua bloqueando a substituição no deploy/rollback.
+
+Validação local: saída tardia, saída antes de destroy concluir, exit 0, SIGKILL,
+exit não zero, processo/destroy pendentes, erro real, concorrência e remoção dos
+listeners. O fixture Docker existente usa Chromium real com SIGTERM/SIGINT e
+preserva um marcador em perfil temporário, sem conectar ao WhatsApp. Uma imagem
+antiga não recebe esta correção só com a atualização dos helpers; a primeira
+transição continua seguindo o procedimento autorizado abaixo.
+
 ## Pré-requisitos e bootstrap efetivo
 
 Fluxo: workflow → `ci-ssh-deploy.sh` (`deploy SHA`) → forced command → sudo
