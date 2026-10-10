@@ -635,6 +635,37 @@
   [cid pid pokemon hp-atual status]
   (receber-registro! cid pid (pokemon->registro pokemon hp-atual status)))
 
+(defn receber-nascimento! [cid pid hatch-id registro]
+  (armazenamento/alterar-treinador-confirmado!
+   cid
+   (fn [jogadores]
+     ;; A linha antiga pode ainda conter PC/XP no formato anterior, embora a
+     ;; hidratação já tenha normalizado o atom. Aplicar o mesmo conversor antes
+     ;; de anexar o nascimento preserva índices e o Pokémon ativo existentes.
+     (let [conta (get-in (normalizar-xp-contas {cid {pid (get jogadores pid conta-vazia)}}) [cid pid])
+           recibo (get-in conta ["adventure-entregas" hatch-id])
+           id (get registro "id-pokemon")]
+       (when (and recibo (not= recibo id))
+         (throw (ex-info "Nascimento já possui outro Pokémon." {:code :receipt-conflict})))
+       (if recibo
+         {:valor jogadores :resultado {:pokemon-id id :duplicado? true}}
+         (let [chave (str/lower-case (get registro "nome"))
+               nova (-> conta
+                        (update "equipe" (fnil conj []) registro)
+                        (assoc-in ["adventure-entregas" hatch-id] id)
+                        (update-in ["pokedex" chave]
+                                   (fn [entrada]
+                                     (-> (or entrada {"capturas" 0 "shiny-capturados" 0})
+                                         (assoc "nome" (get registro "nome") "tipos" (get registro "tipos")
+                                                "raridade" (get registro "raridade" "comum"))
+                                         (update "maior-nivel" #(max (or % 0) (get registro "nivel" 1)))
+                                         (update "nascimentos" (fnil inc 0))))))]
+           {:valor (assoc jogadores pid nova)
+            :resultado {:pokemon-id id :duplicado? false}}))))))
+
+(defn recibo-nascimento [cid pid hatch-id]
+  (get-in @contas [cid pid "adventure-entregas" hatch-id]))
+
 (defn receber-inicial!
   "Valida novamente após a consulta à API e registra a escolha junto com o Pokémon."
   [cid pid pokemon]

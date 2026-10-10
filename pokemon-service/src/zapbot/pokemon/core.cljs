@@ -5631,7 +5631,7 @@
 (defonce ^:private operacoes-pendentes (atom 0))
 (defonce ^:private contextos-filas (atom {}))
 
-(defn- enfileirar-jogada [cid acao & [ctx]]
+(defn- enfileirar-jogada [cid acao & [ctx recuperacao?]]
   ;; A ação e toda a resposta automática formam uma rodada indivisível.
   ;; O próximo comando lê o estado apenas depois que a rodada anterior termina.
   (let [anterior (get @filas-jogadas cid (p/resolved nil))
@@ -5639,6 +5639,8 @@
         atual (-> (desempenho/medir! ctx "fila_pokemon" #(identity anterior))
                   (p/catch (fn [_] nil))
                   (p/then (fn [_]
+                            (when-not recuperacao?
+                              (armazenamento/exigir-parte-disponivel! "treinador" cid))
                             (desempenho/dependencia! ctx nil)
                             (desempenho/medir! ctx "rodada_pokemon" acao))))]
     (swap! operacoes-pendentes inc)
@@ -5650,6 +5652,23 @@
                  (when (identical? atual (get @filas-jogadas cid))
                    (swap! filas-jogadas dissoc cid)
                    (when ctx (swap! contextos-filas dissoc cid)))))))
+
+(defn enfileirar-operacao-interna! [cid acao & [recuperacao?]]
+  (enfileirar-jogada cid acao nil recuperacao?))
+
+(defn pode-receber-nascimento? [cid pid]
+  (and (not (ocupado-pc? cid pid))
+       (not (raids/participando? cid pid))
+       (not (when-let [pendente (treinador/transferencia-professor cid pid)]
+              (< (.now js/Date) (get pendente "expira" 0))))
+       (cabe-pokemon? cid pid)))
+
+(defn preparar-registro-nascimento [dados pokemon-id]
+  ;; Mesmas fórmulas e conversores do jogo; sem IVs ou rede na entrega.
+  (let [pokemon (-> (pokemon-de-dados dados) com-raridade
+                    (assoc :id-pokemon pokemon-id :nivel 1 :shiny? false
+                           :golpes [golpe-padrao]))]
+    (treinador/pokemon->registro pokemon (:hp pokemon) nil)))
 
 (defn jogar [contexto args]
   (let [[cmd & resto] (str/split (str/trim (str/lower-case (or args ""))) #"\s+")]

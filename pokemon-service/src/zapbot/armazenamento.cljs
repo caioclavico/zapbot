@@ -22,6 +22,8 @@
 (defonce ^:private filas-gravacao (atom {}))
 (defonce ^:private falhas-gravacao (atom {}))
 (defonce ^:private gravacoes-pendentes (atom 0))
+(defonce ^:private partes-bloqueadas (atom {}))
+(defonce ^:private geracoes-partes (atom {}))
 (defonce ^:private estatisticas
   (atom {:readQueries 0 :writeQueries 0 :blockedWrites 0
          :hydratedModules 0 :hydratedPartitions 0 :hydrated false}))
@@ -56,6 +58,11 @@
      (reset! destino (transformar (get @cache chave))))))
 
 (defn obter [chave] (get @cache chave))
+
+(defn exigir-parte-disponivel! [modulo particao]
+  (when (get @partes-bloqueadas [modulo particao])
+    (throw (ex-info "Persistência incerta; recupere a operação antes de prosseguir."
+                    {:code :result-unknown}))))
 (defn- json [valor] (js/JSON.stringify (clj->js valor)))
 (defn- ler-json [valor] (js->clj (js/JSON.parse valor)))
 (defn- partes [valor] (if (map? valor) valor {particao-valor valor}))
@@ -120,6 +127,19 @@
                    #(tentar-operacao! acao (dec restantes)))
            (p/rejected erro))))))
 
+(defn- snapshot-atual [modulo valor geracoes]
+  ;; Uma entrega confirmada pode ocorrer depois da captura de um snapshot de
+  ;; outro chat. Esse snapshot não pode sobrescrever a partição recém-confirmada.
+  (reduce (fn [dados [[m particao] geracao]]
+            (if (and (= m modulo)
+                     (or (not= geracao (get geracoes [m particao] 0))
+                         (get @partes-bloqueadas [m particao])))
+              (if-let [atual (get-in @confirmados [modulo particao])]
+                (assoc dados particao atual)
+                (dissoc dados particao))
+              dados))
+          valor @geracoes-partes))
+
 (defn salvar!
   "Retorna confirmação real. O cache otimista preserva o serializador de
   combates; falha restaura o último snapshot confirmado se nada mais o alterou."
@@ -132,16 +152,18 @@
       (exigir-escrita!)
       (verificar-modulo! chave)
       (swap! cache assoc chave valor)
-      (let [anterior (get @filas-gravacao chave (p/resolved nil))
+      (let [geracoes @geracoes-partes
+            anterior (get @filas-gravacao chave (p/resolved nil))
             gravacao (-> anterior
                          (p/then
                           (fn [_]
-                            (p/let [_ (tentar-operacao!
-                                       #(operacoes-alteradas! @client chave
-                                                             (get @confirmados chave {}) valor) 2)]
-                              (swap! confirmados assoc chave valor)
-                              (swap! falhas-gravacao dissoc chave)
-                              nil))))
+                            (let [efetivo (snapshot-atual chave valor geracoes)]
+                              (p/let [_ (tentar-operacao!
+                                         #(operacoes-alteradas! @client chave
+                                                               (get @confirmados chave {}) efetivo) 2)]
+                                (swap! confirmados assoc chave efetivo)
+                                (swap! falhas-gravacao dissoc chave)
+                                nil)))))
             _ (swap! gravacoes-pendentes inc)
             segura (p/finally
                     (p/catch
@@ -160,8 +182,126 @@
   "Falhas de durabilidade chegam ao handler; nunca significam sucesso HTTP."
   []
   (p/let [_ (p/all (vals @filas-gravacao))]
-    (when-let [erro (first (vals @falhas-gravacao))]
+    (when-let [erro (first (concat (vals @falhas-gravacao) (vals @partes-bloqueadas)))]
       (throw erro))))
+
+(def ^:private quorum (.. cassandra -types -consistencies -localQuorum))
+(def ^:private serial (.. cassandra -types -consistencies -localSerial))
+
+(def ^:private adventure-schema
+  {"adventure_account_binding" {"chat_id" ["text" "partition_key" 0] "player_id" ["text" "clustering" 0]
+                                "account_id" ["uuid" "regular" -1] "created_at" ["timestamp" "regular" -1]}
+   "adventure_account_state" {"account_id" ["uuid" "partition_key" 0] "version" ["bigint" "regular" -1]
+                              "schema_version" ["int" "regular" -1] "updated_at" ["timestamp" "regular" -1]
+                              "payload" ["text" "regular" -1]}
+   "adventure_sync_receipts" {"account_id" ["uuid" "partition_key" 0] "day_utc" ["date" "partition_key" 1]
+                              "batch_id" ["uuid" "clustering" 0] "fingerprint" ["text" "regular" -1]
+                              "state_version" ["bigint" "regular" -1] "payload" ["text" "regular" -1]}
+   "adventure_hatches_by_month" {"account_id" ["uuid" "partition_key" 0] "month_utc" ["text" "partition_key" 1]
+                                 "seq" ["bigint" "clustering" 0] "hatch_id" ["uuid" "regular" -1]
+                                 "egg_id" ["uuid" "regular" -1] "pokemon_id" ["uuid" "regular" -1]
+                                 "payload" ["text" "regular" -1]}})
+(defonce ^:private adventure-schema-client (atom nil))
+
+(defn validar-adventure-schema! []
+  (when-not config/adventure-enabled? (throw (ex-info "Adventure Sync desabilitado." {:code :disabled})))
+  (if (identical? @adventure-schema-client @client) (p/resolved nil)
+    (p/let [^js resultado (executar! @client
+                            (str "SELECT table_name, column_name, type, kind, position FROM system_schema.columns "
+                                 "WHERE keyspace_name = ? AND table_name IN (?, ?, ?, ?)")
+                            (into [config/cassandra-keyspace] (keys adventure-schema)) {:consistency quorum})]
+      (let [actual (reduce (fn [m ^js row] (assoc-in m [(.-table_name row) (.-column_name row)]
+                                              [(.-type row) (.-kind row) (.-position row)]))
+                           {} (array-seq (.-rows resultado)))]
+        (doseq [[t colunas] adventure-schema]
+          (when-not (and (every? (fn [[coluna tipo]] (= tipo (get-in actual [t coluna]))) colunas)
+                         (= (set (for [[c [_ kind _]] colunas :when (not= "regular" kind)] c))
+                            (set (for [[c [_ kind _]] (get actual t) :when (not= "regular" kind)] c))))
+            (throw (ex-info "Schema Adventure ausente ou incompatível; nenhuma migração automática."
+                            {:code :schema-incompatible}))))
+        (reset! adventure-schema-client @client)))))
+
+(defn executar-adventure!
+  "Somente statements preparados e tabelas aditivas desta fase. Sem DDL."
+  [operacao parametros & [pagina]]
+  (when-not config/adventure-enabled? (throw (ex-info "Adventure Sync desabilitado." {:code :disabled})))
+  (when-not (pronto?) (throw (ex-info "Persistência indisponível." {:code :not-ready})))
+  (let [[t sql] (case operacao
+                 :binding-read ["account_binding" "SELECT account_id FROM %s WHERE chat_id = ? AND player_id = ?"]
+                 :binding-insert ["account_binding" "INSERT INTO %s (chat_id, player_id, account_id, created_at) VALUES (?, ?, ?, ?) IF NOT EXISTS"]
+                 :state-read ["account_state" "SELECT version, schema_version, payload FROM %s WHERE account_id = ?"]
+                 :state-insert ["account_state" "INSERT INTO %s (account_id, version, schema_version, updated_at, payload) VALUES (?, ?, ?, ?, ?) IF NOT EXISTS"]
+                 :state-cas ["account_state" "UPDATE %s SET version = ?, payload = ?, updated_at = ? WHERE account_id = ? IF version = ?"]
+                 :state-scan ["account_state" "SELECT version, schema_version, payload FROM %s"]
+                 :receipt-read ["sync_receipts" "SELECT fingerprint, payload FROM %s WHERE account_id = ? AND day_utc = ? AND batch_id = ?"]
+                 :receipt-write ["sync_receipts" "INSERT INTO %s (account_id, day_utc, batch_id, fingerprint, state_version, payload) VALUES (?, ?, ?, ?, ?, ?) USING TTL 1209600"]
+                 :history-write ["hatches_by_month" "INSERT INTO %s (account_id, month_utc, seq, hatch_id, egg_id, pokemon_id, payload) VALUES (?, ?, ?, ?, ?, ?, ?)"]
+                 :history-read ["hatches_by_month" "SELECT seq, payload FROM %s WHERE account_id = ? AND month_utc = ? AND seq < ? ORDER BY seq DESC LIMIT 20"]
+                 (throw (js/Error. "Consulta Adventure não permitida.")))
+        consulta (str/replace sql "%s" (str config/cassandra-keyspace ".adventure_" t))]
+    (p/let [_ (validar-adventure-schema!)]
+      (executar! @client consulta parametros
+                 (cond-> {:consistency (if (contains? #{:state-read :binding-read} operacao) serial quorum)
+                          :serialConsistency serial :fetchSize 32}
+                   pagina (assoc :pageState pagina))))))
+
+(defn- instalar-parte-confirmada! [modulo particao valor]
+  (swap! cache assoc-in [modulo particao] valor)
+  (swap! confirmados assoc-in [modulo particao] valor)
+  (when-let [[destino transformar] (get @registros modulo)]
+    (swap! destino assoc particao (get (transformar {particao valor}) particao)))
+  (swap! geracoes-partes update [modulo particao] (fnil inc 0))
+  (swap! partes-bloqueadas dissoc [modulo particao]))
+
+(defn recuperar-treinador! [cid]
+  "Leitura SERIAL resolve Paxos pendente antes de reabrir o chat incerto."
+  (p/let [_ (get @filas-gravacao "treinador" (p/resolved nil))
+          ^js resultado (executar! @client
+                           (str "SELECT valor FROM " tabela " WHERE modulo = ? AND particao = ?")
+                           ["treinador" cid] {:consistency serial})]
+    (let [row (.first resultado) valor (if (and row (.-valor row)) (ler-json (.-valor row)) {})]
+      (instalar-parte-confirmada! "treinador" cid valor)
+      valor)))
+
+(defn alterar-treinador-confirmado!
+  "Entrega+recibo na mesma linha, CAS sem retry cego. Um writer do jogo."
+  [cid mudar]
+  (exigir-escrita!)
+  (exigir-parte-disponivel! "treinador" cid)
+  (let [anterior (get @filas-gravacao "treinador" (p/resolved nil))
+        trabalho (p/then anterior
+                   (fn [_]
+                     (when-let [erro (get @falhas-gravacao "treinador")] (throw erro))
+                     (swap! geracoes-partes update ["treinador" cid] (fnil inc 0))
+                     (swap! partes-bloqueadas assoc ["treinador" cid]
+                            (ex-info "Entrega ainda não confirmada." {:code :result-unknown}))
+                     (p/let [^js leitura (executar! @client
+                                           (str "SELECT valor FROM " tabela " WHERE modulo = ? AND particao = ?")
+                                           ["treinador" cid] {:consistency serial})
+                             ^js row (.first leitura)
+                             bruto (when row (.-valor row))
+                             {:keys [valor resultado]} (mudar (if bruto (ler-json bruto) {}))
+                             novo (json valor)
+                             ^js gravacao (when (not= bruto novo)
+                                            (executar! @client
+                                              (if bruto
+                                                (str "UPDATE " tabela " SET valor = ? WHERE modulo = ? AND particao = ? IF valor = ?")
+                                                (str "INSERT INTO " tabela " (valor, modulo, particao) VALUES (?, ?, ?) IF NOT EXISTS"))
+                                              (if bruto [novo "treinador" cid bruto] [novo "treinador" cid])
+                                              {:consistency quorum :serialConsistency serial}))]
+                       (when (and gravacao (not (.wasApplied gravacao)))
+                         (throw (ex-info "Snapshot do treinador mudou; recupere antes de entregar." {:code :result-unknown})))
+                       (instalar-parte-confirmada! "treinador" cid valor)
+                       resultado)))
+        _ (swap! gravacoes-pendentes inc)
+        segura (p/finally (p/catch trabalho
+                           (fn [erro]
+                             (swap! partes-bloqueadas assoc ["treinador" cid] erro)
+                             (js/console.error (js/JSON.stringify #js {:event "adventure_delivery_unknown" :stage "trainer_cas"}))
+                             nil))
+                         #(swap! gravacoes-pendentes dec))]
+    (swap! filas-gravacao assoc "treinador" segura)
+    trabalho))
 
 (defn reservar!
   "Reserva uma partição com LWT para requestId. Não repete LWT com resultado
@@ -242,7 +382,8 @@
 
 (defn pendentes []
   {:persistence_pending @gravacoes-pendentes
-   :persistence_failed_modules (count @falhas-gravacao)})
+   :persistence_failed_modules (count @falhas-gravacao)
+   :adventure_blocked_chats (count @partes-bloqueadas)})
 
 (defn encerrar! []
   (reset! pronto false)

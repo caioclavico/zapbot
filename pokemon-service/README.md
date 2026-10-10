@@ -45,6 +45,45 @@ Raids existentes e filtros de coleção ainda podem usar suas faixas históricas
 
 Veja [compatibilidade, testes e recompensas](../docs/pokemon-pvp.md).
 
+## Adventure Sync — Fase 2
+
+Ovos de 2, 5 e 10 km e uma incubadora permanente estão implementados no domínio,
+com inventário de até 9 ovos por grupo/jogador. `ADVENTURE_SYNC_ENABLED=false`
+é o padrão: não há comandos WhatsApp, API móvel, coleta de passos ou timers novos.
+`PERFORMANCE_METRICS=false` permanece como está. Pokémon nascem no modelo atual,
+nível 1, HP cheio, sem IVs novos nem recompensas de captura.
+
+Os exports `eggsActivate`, `eggsCreate`, `eggsIncubate`, `eggsDistance`,
+`eggsState`, `eggsRecover` e `eggsHistory` são internos. Distância recebe
+`event-id`, `from-ms`, `to-ms` e `distance-mm`: incremento já validado e
+consolidado, com ID estável em todo retry. Não usar essa interface diretamente
+com dados móveis não confiáveis. Idempotência não detecta a mesma caminhada
+reenviada sob IDs diferentes.
+
+As quatro tabelas aditivas estão em
+[`adventure-sync-v1.cql`](../scripts/cassandra/adventure-sync-v1.cql), com
+placeholder `{{KEYSPACE}}`. O runtime não instala schema. Quando habilitado,
+valida metadados e reconcilia pendências antes da prontidão; read-only não
+recupera escritas. Instalação/habilitação em produção exige autorização separada.
+Manter **um único writer Pokémon**: CAS novo não torna snapshots legados
+compatíveis com múltiplas réplicas. Estoque cheio adia a entrega sem ressorteio.
+
+Recibos e estado usam CAS; entrega e receipt durável são gravados na mesma
+linha do treinador. Resultado incerto bloqueia o chat até reconciliação SERIAL.
+Histórico e recibos são projeções recuperáveis. Payload canônico máximo:
+512 KiB; recibos permanentes poderão exigir compactação futura aprovada.
+
+Testes de domínio: `npm run test:domain`; Node: `npm test`; build: `npm run build`.
+O teste opt-in `test/adventure-cassandra.integration.cjs` aceita somente o
+Cassandra descartável chamado `zapbot-adventure-cassandra-validation-v2`,
+em rede Docker local isolada; não aceita IP/VM de produção. Ele usa keyspace
+novo e fixtures sintéticas. Compilar antes `target/domain.cjs`, disponibilizar
+`scripts/cassandra/` no caminho relativo do teste e informar
+`ADVENTURE_TEST_HOST=zapbot-adventure-cassandra-validation-v2`.
+
+Decisões, recuperação, retenção e próximas fases:
+[`docs/pokemon-adventure-sync/`](../docs/pokemon-adventure-sync/arquitetura.md).
+
 ## Executar localmente
 
 Requisitos: Node 22, Java 17+ para compilar, npm e Cassandra com o schema atual.

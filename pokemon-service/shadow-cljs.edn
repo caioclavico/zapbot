@@ -15,7 +15,14 @@
                      :store pokemon-service.entry/store-state
                      :registerModule pokemon-service.entry/register-module
                      :reserve pokemon-service.entry/reserve
-                     :takeEffects pokemon-service.entry/take-effects}
+                     :takeEffects pokemon-service.entry/take-effects
+                     :eggsActivate pokemon-service.entry/eggs-activate
+                     :eggsCreate pokemon-service.entry/eggs-create
+                     :eggsIncubate pokemon-service.entry/eggs-incubate
+                     :eggsDistance pokemon-service.entry/eggs-distance
+                     :eggsState pokemon-service.entry/eggs-state
+                     :eggsRecover pokemon-service.entry/eggs-recover
+                     :eggsHistory pokemon-service.entry/eggs-history}
            :compiler-options {:optimizations :simple}}
   :benchmark {:target :node-library :output-to "target/benchmark.cjs"
               :exports {:render pokemon-benchmark/render

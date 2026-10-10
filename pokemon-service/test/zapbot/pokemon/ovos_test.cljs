@@ -1,0 +1,466 @@
+(ns zapbot.pokemon.ovos-test
+  (:require [cljs.test :refer-macros [deftest is async]]
+            [promesa.core :as p]
+            [clojure.string :as str]
+            [pokemon-service.adventure-fixture :as fixture]
+            [zapbot.armazenamento :as storage]
+            [zapbot.config :as config]
+            [zapbot.adventure-store :as store]
+            [zapbot.pokemon.adventure :as adventure]
+            [zapbot.pokemon.adventure-catalog :as catalog]
+            [zapbot.pokemon.ovos :as ovos]
+            [zapbot.pokemon.core :as core]
+            [zapbot.pokemon.treinador :as treinador]))
+
+(defn concluir [trabalho done]
+  (-> trabalho (p/catch #(is false (str % " " (ex-data %) " " (.-stack %)))) (p/finally done)))
+(defn falha [trabalho code]
+  (-> (p/then (p/resolved nil) trabalho)
+      (p/then (fn [_] (is false (str "Esperava erro " code))))
+      (p/catch (fn [erro] (is (= code (:code (ex-data erro))))))))
+(defn abrir [cid pid]
+  (p/let [resposta (adventure/ativar! cid pid)
+          egg-id (get-in resposta [:operation :egg-id])
+          _ (adventure/incubar! cid pid "incubar" egg-id)] egg-id))
+
+(deftest etapa-a-atividade-tempo-pontos-e-incubadoras
+  (let [estado (ovos/estado-atividade-inicial)
+        ovo (ovos/novo-ovo-atividade "ovo-1" :comum 0)
+        estado (ovos/conceder-ovo-atividade estado ovo)
+        estado (ovos/incubar-atividade estado "ovo-1" "permanente" 1000)
+        estado (ovos/aplicar-pontos-atividade estado "evento-1" 100)
+        pronto (first (:eggs estado))]
+    (is (= :ready-to-hatch (:state pronto)))
+    (is (= 100 (:points pronto)))
+    (is (identical? estado (ovos/aplicar-pontos-atividade estado "evento-1" 100)))
+    (is (= :hatched (:state (first (:eggs (ovos/concluir-atividade estado "ovo-1" 2000))))))))
+
+(deftest etapa-a-tempo-natural-e-bonus-especial
+  (let [estado (-> (ovos/estado-atividade-inicial)
+                   (ovos/adicionar-incubadora-atividade "especial" :especial 3 25)
+                   (ovos/conceder-ovo-atividade (ovos/novo-ovo-atividade "ovo-2" :raro 0))
+                   (ovos/incubar-atividade "ovo-2" "especial" 1000)
+                   (ovos/aplicar-pontos-atividade "atividade" 200))
+        parcial (first (:eggs estado))
+        pronto (ovos/avancar-tempo-atividade estado (* 6 60 60 1000 1))]
+    (is (= 250 (:points parcial)))
+    (is (= :ready-to-hatch (:state parcial)))
+    (is (= :ready-to-hatch (:state (first (:eggs pronto)))))))
+
+(deftest etapa-a-limites-e-usos-temporarios
+  (let [estado (-> (ovos/estado-atividade-inicial)
+                   (ovos/adicionar-incubadora-atividade "azul" :extra 1 0)
+                   (ovos/adicionar-incubadora-atividade "roxa" :especial 1 25))]
+    (is (thrown? js/Error (ovos/adicionar-incubadora-atividade estado "outra" :extra 1 0)))
+    (let [estado (-> estado
+                     (ovos/conceder-ovo-atividade (ovos/novo-ovo-atividade "ovo-3" :comum 0))
+                     (ovos/incubar-atividade "ovo-3" "azul" 0)
+                     (ovos/aplicar-pontos-atividade "ganho" 100)
+                     (ovos/concluir-atividade "ovo-3" 1))]
+      (is (empty? (filter #(= "azul" (:incubator-id %)) (:incubators estado)))))))
+
+(deftest regras-puras-e-pesos-do-catalogo
+  (doseq [categoria [2 5 10]]
+    (let [pool (catalog/validar! catalog/distribuicao categoria)
+          ovo (ovos/novo-ovo "id" categoria "v1" pool "seed" 0)]
+      (is (= (* categoria 1000000) (:goal-mm ovo)))
+      (is (= 100 (reduce + (map :weight pool))))
+      (is (= (catalog/sortear pool "seed") (catalog/sortear pool "seed")))))
+  (is (thrown? js/Error (ovos/novo-ovo "id" 3 "v1" [] "seed" 0)))
+  (is (thrown? js/Error (catalog/validar! (assoc-in catalog/distribuicao [:pools 2 0 :weight] 71) 2)))
+  (is (thrown? js/Error (catalog/validar! {:version "bad" :pools {2 [{:weight 100 :species ["mewtwo"]}]}} 2))))
+
+(deftest criar-cada-distancia-com-recibo-e-isolamento
+  (async done
+    (concluir (fixture/com-banco
+      (fn [_]
+        (p/let [respostas (p/all (map #(adventure/criar-ovo! (str "grupo" %) "ash@lid" "mesmo-id" %) [2 5 10]))
+                novamente (adventure/criar-ovo! "grupo2" "ash@lid" "mesmo-id" 2)]
+          (is (= [2 5 10] (mapv #(get-in % [:state :eggs 0 :category]) respostas)))
+          (is (= 3 (count (set (map #(get-in % [:state :account-id]) respostas)))))
+          (is (= (:operation (first respostas)) (:operation novamente)))
+          (is (= 1 (count (get-in novamente [:state :eggs]))))))) done)))
+
+(deftest limite-ovos-nao-consome-moedas-ou-mochila
+  (async done
+    (concluir (fixture/com-banco
+      (fn [_]
+        (p/let [_ (reduce (fn [anterior i] (p/then anterior #(adventure/criar-ovo! "g" "p" (str i) 5)))
+                         (p/resolved nil) (range 9))
+                _ (falha #(adventure/criar-ovo! "g" "p" "dez" 10) :egg-inventory-full)
+                estado (adventure/consultar! "g" "p")]
+          (is (= 9 (count (:eggs estado))))
+          (is (empty? @treinador/contas))))) done)))
+
+(deftest incubacao-valida-invalida-e-um-slot
+  (async done
+    (concluir (fixture/com-banco
+      (fn [_]
+        (p/let [a (adventure/criar-ovo! "g" "p" "a" 2)
+                b (adventure/criar-ovo! "g" "p" "b" 10)
+                id (get-in a [:operation :egg-id])
+                _ (falha #(adventure/incubar! "outro" "p" "i" id) :egg-not-found)
+                _ (falha #(adventure/incubar! "g" "p" "i" "inexistente") :egg-not-found)
+                inicio (adventure/incubar! "g" "p" "i" id)
+                replay (adventure/incubar! "g" "p" "i" id)
+                _ (falha #(adventure/incubar! "g" "p" "outro-i" id) :invalid-incubation)
+                _ (falha #(adventure/incubar! "g" "p" "b-i" (get-in b [:operation :egg-id])) :incubator-busy)]
+          (is (= (:operation inicio) (:operation replay)))
+          (is (= id (get-in inicio [:state :incubators 0 :active-egg-id])))))) done)))
+
+(deftest progresso-parcial-e-replay-com-conteudo-conflitante
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now]}]
+        (p/let [_ (abrir "g" "p")]
+          (let [evento (fixture/caminhada now "andar" 700000)]
+            (p/let [a (adventure/aplicar-distancia! "g" "p" evento)
+                    b (adventure/aplicar-distancia! "g" "p" evento)
+                    _ (falha #(adventure/aplicar-distancia! "g" "p" (assoc evento :distance-mm 900000)) :event-conflict)]
+              (is (= 700000 (get-in b [:state :eggs 0 :progress-mm])))
+              (is (= (:operation a) (:operation b)))
+              (is (empty? (treinador/equipe "g" "p")))))))) done)))
+
+(deftest nascimento-modelo-atual-sem-ivs-sem-recompensa-de-captura
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now db]}]
+        (p/let [_ (abrir "g" "p")
+                resultado (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now "meta" 3000000))
+                historico (adventure/historico! "g" "p" (store/mes @now))]
+          (let [registro (first (treinador/equipe "g" "p")) [pokemon hp status] (treinador/registro->pokemon registro)]
+            (is (= 1 (count (treinador/equipe "g" "p"))))
+            (is (= 1 (get registro "nivel"))) (is (= hp (:hp pokemon))) (is (nil? status))
+            (is (seq (:golpes pokemon))) (is (pos? (:ataque pokemon)))
+            (is (nil? (get registro "ivs"))) (is (nil? (get registro "iv")))
+            (is (= 0 (treinador/sequencia-capturas "g" "p")))
+            (is (empty? (get-in resultado [:state :eggs])))
+            (is (= 2000000 (get-in resultado [:operation :credited-mm])))
+            (is (= 1 (count historico))) (is (= (get registro "id-pokemon") (:pokemon-id (first historico))))
+            (is (= 1 (count (:history @db)))))))) done)))
+
+(deftest novas-distancias-5-e-10-km-completam-sem-excedente
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now]}]
+        (reduce
+          (fn [anterior categoria]
+            (p/let [_ anterior a (adventure/criar-ovo! "g" "p" (str "grant" categoria) categoria)
+                    _ (adventure/incubar! "g" "p" (str "inc" categoria) (get-in a [:operation :egg-id]))
+                    r (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now (str "walk" categoria) (* (inc categoria) 1000000)))]
+              (is (= (* categoria 1000000) (get-in r [:operation :credited-mm])))
+              (is (nil? (get-in r [:state :incubators 0 :active-egg-id])))))
+          (p/resolved nil) [5 10]))) done)))
+
+(deftest estoque-cheio-preserva-resultado-e-recupera-ao-liberar-vaga
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now cap]}]
+        (reset! cap 0)
+        (p/let [_ (abrir "g" "p")
+                r (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now "meta" 2000000))
+                estado (store/resolver! "g" "p" false @now)
+                fixado (:resultado (first (:eggs estado)))
+                _ (adventure/recuperar! "g" "p")
+                _ (reset! cap 1)
+                _ (adventure/recuperar! "g" "p")
+                historia (adventure/historico! "g" "p" (store/mes @now))]
+          (is (= "delivery_pending" (get-in r [:state :eggs 0 :state])))
+          (is (= 1 (count historia)))
+          (is (= (:pokemon-id fixado) (:pokemon-id (first historia))))))) done)))
+
+(deftest incremento-anterior-futuro-e-invalido-nao-gravam-progresso
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now]}]
+        (p/let [_ (abrir "g" "p")
+                _ (falha #(adventure/aplicar-distancia! "g" "p" {:event-id "antes" :from-ms (- @now 1000) :to-ms @now :distance-mm 100}) :before-incubation)
+                _ (falha #(adventure/aplicar-distancia! "g" "p" {:event-id "futuro" :from-ms @now :to-ms (+ @now 300000) :distance-mm 100}) :invalid-interval)
+                _ (falha #(adventure/aplicar-distancia! "g" "p" {:event-id "bad" :from-ms @now :to-ms @now :distance-mm -1}) :invalid-distance)
+                estado (adventure/consultar! "g" "p")]
+          (is (= 0 (:total-credited-mm estado)))))) done)))
+
+(deftest concorrencia-de-ativacao-e-distancia
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now]}]
+        (p/let [respostas (p/all [(adventure/ativar! "g" "p") (adventure/ativar! "g" "p")])
+                _ (is (= 1 (count (get-in (last respostas) [:state :eggs]))))
+                _ (adventure/incubar! "g" "p" "inc" (get-in (first respostas) [:operation :egg-id]))]
+          (let [a (fixture/caminhada now "a" 900000) b (fixture/caminhada now "b" 1200000)]
+            (p/let [_ (p/all [(adventure/aplicar-distancia! "g" "p" a)
+                             (adventure/aplicar-distancia! "g" "p" a)
+                             (adventure/aplicar-distancia! "g" "p" b)])]
+              (is (= 1 (count (treinador/equipe "g" "p"))))))))) done)))
+
+(deftest cas-concorrente-sem-perda-de-atualizacao
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now]}]
+        (p/let [estado (store/resolver! "g" "p" true @now)
+                _ (p/all [(store/alterar! (:account-id estado) #(update % :total-credited-mm + 1) @now)
+                          (store/alterar! (:account-id estado) #(update % :total-credited-mm + 2) @now)])
+                final (store/ler! (:account-id estado))]
+          (is (= 3 (:total-credited-mm final)))))) done)))
+
+(deftest catalogo-configuravel-fixado-no-ovo
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now]}]
+        (let [cfg {:version "only-eevee" :pools {2 [{:weight 100 :species ["eevee"]}]}}]
+          (p/let [a (adventure/criar-ovo! "g" "p" "custom" 2 cfg)
+                  _ (adventure/incubar! "g" "p" "i" (get-in a [:operation :egg-id]))
+                  _ (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now "andar" 2000000))
+                  h (adventure/historico! "g" "p" (store/mes @now))]
+            (is (= "eevee" (:species (first h))))
+            (is (= "only-eevee" (:catalog-version (first h)))))))) done)))
+
+(deftest falha-apos-cas-de-distancia-nao-incrementa-no-replay
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now fault]}]
+        (p/let [_ (abrir "g" "p")]
+          (let [evento (fixture/caminhada now "parcial" 800000)]
+            (reset! fault {:op :state-cas :after? true :match #(str/includes? (second %) "800000")})
+            (p/let [_ (falha #(adventure/aplicar-distancia! "g" "p" evento) :result-unknown)
+                    r (adventure/aplicar-distancia! "g" "p" evento)]
+              (is (= 800000 (get-in r [:state :eggs 0 :progress-mm])))))))) done)))
+
+(deftest falha-apos-entrega-bloqueia-chat-e-recupera-sem-duplicar
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now fault]}]
+        (p/let [_ (abrir "g" "p")]
+          (let [evento (fixture/caminhada now "meta" 2000000)]
+            (reset! fault {:op :trainer-cas :after? true})
+            (p/let [_ (-> (adventure/aplicar-distancia! "g" "p" evento) (p/catch (fn [_] nil)))
+                    _ (is (= 1 (count @storage/partes-bloqueadas)))
+                    _ (falha #(core/enfileirar-operacao-interna! "g" (fn [] (is false "Operação não deveria executar"))) :result-unknown)
+                    _ (adventure/recuperar! "g" "p")
+                    _ (adventure/aplicar-distancia! "g" "p" evento)
+                    h (adventure/historico! "g" "p" (store/mes @now))]
+              (is (empty? @storage/partes-bloqueadas))
+              (is (= 1 (count (treinador/equipe "g" "p")))) (is (= 1 (count h)))))))) done)))
+
+(deftest falha-antes-da-entrega-recupera-uma-vez
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now fault]}]
+        (p/let [_ (abrir "g" "p")]
+          (reset! fault {:op :trainer-cas})
+          (p/let [_ (-> (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now "meta" 2000000)) (p/catch (fn [_] nil)))
+                  _ (adventure/recuperar! "g" "p")
+                  _ (adventure/recuperar! "g" "p")]
+            (is (= 1 (count (treinador/equipe "g" "p")))))))) done)))
+
+(deftest falha-no-historico-e-doacao-nao-reconcedem-pokemon
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now fault db]}]
+        (p/let [_ (abrir "g" "p")]
+          (reset! fault {:op :history-write})
+          (p/let [_ (-> (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now "meta" 2000000)) (p/catch (fn [_] nil)))
+                  _ (is (= 1 (count (treinador/equipe "g" "p"))))
+                  _ (swap! treinador/contas assoc-in ["g" "p" "equipe"] [])
+                  _ (storage/salvar! "treinador" @treinador/contas)
+                  _ (adventure/recuperar! "g" "p")]
+            (is (empty? (treinador/equipe "g" "p"))))
+          (is (= 1 (count (:history @db))))))) done)))
+
+(deftest snapshot-de-outro-chat-nao-apaga-nascimento
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now after-cas db]}]
+        (p/let [_ (abrir "g" "p")]
+          (reset! after-cas #(treinador/receber-registro! "outro" "q" {"id-pokemon" "outro" "nome" "Teste" "nivel" 1}))
+          (p/let [_ (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now "meta" 2000000))
+                  _ (storage/aguardar-todas!)]
+            (is (= 1 (count (get-in (js->clj (js/JSON.parse (get-in @db [:legacy ["treinador" "g"]]))) ["p" "equipe"]))))
+            (is (= 1 (count (get-in (js->clj (js/JSON.parse (get-in @db [:legacy ["treinador" "outro"]]))) ["q" "equipe"])))))))) done)))
+
+(deftest flag-e-read-only-falham-sem-gravacoes
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [queries]}]
+        (set! config/adventure-enabled? false)
+        (p/let [_ (falha #(adventure/ativar! "g" "p") :disabled)
+                _ (set! config/adventure-enabled? true)
+                _ (set! config/read-only? true)
+                _ (-> (p/then (p/resolved nil) #(adventure/ativar! "g" "p"))
+                      (p/catch (fn [erro] (is (str/includes? (.-message erro) "READ_ONLY")))))]
+          (is (empty? @queries))))) done)))
+
+(deftest binding-e-inicializacao-interrompidos-nao-duplicam-boas-vindas
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [fault db]}]
+        (reset! fault {:op :binding-insert :after? true})
+        (p/let [_ (-> (adventure/ativar! "g" "p") (p/catch (fn [_] nil)))
+                _ (reset! fault {:op :state-insert :after? true})
+                _ (-> (adventure/ativar! "g" "p") (p/catch (fn [_] nil)))
+                a (adventure/ativar! "g" "p")
+                b (adventure/ativar! "g" "p")]
+          (is (= 1 (count (:bindings @db)))) (is (= 1 (count (:states @db))))
+          (is (= 1 (count (get-in b [:state :eggs]))))
+          (is (= (:operation a) (:operation b)))))) done)))
+
+(deftest reinicializacao-reconcilia-entrega-incerta-antes-da-admissao
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now fault]}]
+        (p/let [_ (abrir "g" "p")]
+          (reset! fault {:op :trainer-cas :after? true})
+          (p/let [_ (-> (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now "meta" 2000000)) (p/catch (fn [_] nil)))
+                  ;; Simula perda dos guards/cache no restart; banco permanece.
+                  _ (reset! storage/partes-bloqueadas {})
+                  _ (reset! treinador/contas {})
+                  _ (adventure/preparar-inicializacao!)
+                  _ (is (not (adventure/disponivel?)))
+                  _ (adventure/inicializar!)
+                  h (adventure/historico! "g" "p" (store/mes @now))]
+            (is (adventure/disponivel?))
+            (is (= 1 (count (treinador/equipe "g" "p")))) (is (= 1 (count h))))))) done)))
+
+(deftest bootstrap-paginado-nao-hidrata-contas-inteiras-em-cache
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now queries]}]
+        (p/let [_ (reduce (fn [p i] (p/then p #(store/resolver! (str "g" i) "p" true @now)))
+                         (p/resolved nil) (range 35))
+                _ (adventure/inicializar!)]
+          (is (= 2 (count (filter #(= :state-scan (:op %)) @queries))))
+          (is (nil? (storage/obter "adventure_account_state")))))) done)))
+
+(deftest metadados-schema-e-barreiras-serial-verificadas
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [queries now]}]
+        (p/let [_ (abrir "g" "p")
+                _ (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now "meta" 2000000))]
+          (is (some #(= :schema-read (:op %)) @queries))
+          (is (every? #(= storage/serial (get-in % [:options :consistency]))
+                      (filter #(contains? #{:state-read :binding-read :trainer-read} (:op %)) @queries)))
+          (is (not-any? #(re-find #"(?i)^\s*(CREATE|ALTER|DROP|TRUNCATE)\b|ALLOW FILTERING" (:sql %)) @queries))))) done)))
+
+(deftest encerramento-recusa-novas-operacoes-e-drena-nascimento
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now after-cas]}]
+        (p/let [_ (abrir "g" "p")]
+          (reset! after-cas #(adventure/parar!))
+          (p/let [_ (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now "meta" 2000000))
+                  _ (core/aguardar-operacoes!)
+                  _ (storage/aguardar-todas!)
+                  _ (falha #(adventure/ativar! "g" "p") :not-ready)]
+            (is (= 1 (count (treinador/equipe "g" "p")))))))) done)))
+
+(deftest ttl-e-relogio-recuado-nao-reabrem-distancia-antiga
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now db]}]
+        (p/let [_ (abrir "g" "p")]
+          (let [evento (fixture/caminhada now "antigo" 800000) original @now]
+            (p/let [_ (adventure/aplicar-distancia! "g" "p" evento)
+                    _ (swap! now + (* 15 86400000))
+                    _ (adventure/recuperar! "g" "p")
+                    _ (swap! db assoc :receipts {})
+                    _ (reset! now original)
+                    _ (falha #(adventure/aplicar-distancia! "g" "p" evento) :window-expired)
+                    estado (adventure/consultar! "g" "p")]
+              (is (= 800000 (:total-credited-mm estado)))))))) done)))
+
+(deftest bootstrap-read-only-nao-projeta-recuperacao
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [queries]}]
+        (p/let [_ (adventure/ativar! "g" "p")
+                _ (reset! queries [])
+                _ (set! config/read-only? true)
+                _ (adventure/inicializar!)]
+          (is (adventure/disponivel?))
+          (is (not-any? #(not (str/starts-with? (:sql %) "SELECT")) @queries))))) done)))
+
+(deftest encerramento-durante-bootstrap-nao-reabre-admissao
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [queries]}]
+        (let [driver @storage/client original (.-execute driver)]
+          (aset driver "execute"
+                (fn [sql args options]
+                  (when (and (str/includes? sql "adventure_account_state")
+                             (not (str/includes? sql "WHERE")))
+                    (adventure/parar!))
+                  (original sql args options)))
+          (adventure/preparar-inicializacao!)
+          (p/let [_ (falha #(adventure/inicializar!) :stopping)
+                  _ (falha #(adventure/ativar! "g" "p") :not-ready)]
+            (is (not (adventure/disponivel?)))
+            (is (every? #(str/starts-with? (:sql %) "SELECT") @queries)))))) done)))
+
+(deftest schema-incompativel-bloqueia-inicializacao-sem-migracao
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [queries]}]
+        (let [driver @storage/client original (.-execute driver)]
+          (aset driver "execute"
+                (fn [sql args options]
+                  (if (str/includes? sql "system_schema.columns")
+                    (p/resolved (fixture/result [] false))
+                    (original sql args options))))
+          (adventure/preparar-inicializacao!)
+          (p/let [_ (falha #(adventure/inicializar!) :schema-incompatible)]
+            (is (not (adventure/disponivel?)))
+            (is (empty? @queries)))))) done)))
+
+(deftest versao-de-payload-incompativel-bloqueia-bootstrap
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [db now]}]
+        (p/let [estado (store/resolver! "g" "p" true @now)
+                _ (swap! db assoc-in [:states (:account-id estado) :schema_version] 2)
+                _ (adventure/preparar-inicializacao!)
+                _ (falha #(adventure/inicializar!) :schema-incompatible)]
+          (is (not (adventure/disponivel?)))))) done)))
+
+(deftest falha-de-projecao-aguarda-outras-escritas-antes-de-liberar-fila
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now]}]
+        (p/let [estado (store/resolver! "g" "p" true @now)]
+          (let [driver @storage/client original (.-execute driver)
+                liberar (atom nil) iniciou (atom false) terminou (atom false)
+                esperado (p/create (fn [resolve _] (reset! liberar resolve)))
+                recibo (fn [id] {:event-id id :fingerprint "hash" :kind "grant"
+                                :day (store/dia @now) :at @now :result {}})]
+            (aset driver "execute"
+                  (fn [sql args options]
+                    (if (and (str/includes? sql "adventure_sync_receipts")
+                             (str/starts-with? sql "INSERT"))
+                      (if @iniciou
+                        esperado
+                        (do (reset! iniciou true) (p/rejected (js/Error. "projeção falhou"))))
+                      (original sql args options))))
+            (let [trabalho (-> (store/projetar! (assoc estado :receipts [(recibo "a") (recibo "b")]) @now)
+                               (p/catch (fn [erro] (is (= "projeção falhou" (.-message erro)))))
+                               (p/finally #(reset! terminou true)))]
+              (p/let [_ (p/create (fn [resolve _] (js/setTimeout resolve 0)))
+                      _ (is (not @terminou))
+                      _ (@liberar (fixture/result [] true))
+                      _ trabalho]
+                (is @terminou))))))) done)))
+
+(deftest nascimento-preserva-indices-do-pc-legado-e-pokemon-ativo
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now db]}]
+        (p/let [_ (abrir "g" "p")]
+          (let [registro #(core/preparar-registro-nascimento (catalog/especie "eevee") %)
+                conta {"equipe" [(registro "antigo1") (registro "antigo2")]
+                       "pc" [(registro "antigo3")] "ativo" 2}]
+            (swap! db assoc-in [:legacy ["treinador" "g"]] (store/json {"p" conta}))
+            (p/let [_ (storage/recuperar-treinador! "g")
+                    _ (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now "meta" 2000000))]
+              (is (= ["antigo1" "antigo2" "antigo3"]
+                     (mapv #(get % "id-pokemon") (take 3 (treinador/equipe "g" "p")))))
+              (is (= 4 (count (treinador/equipe "g" "p"))))
+              (is (= 2 (get-in @treinador/contas ["g" "p" "ativo"])))))))) done)))

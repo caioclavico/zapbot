@@ -13,6 +13,12 @@
 
 (def read-only? (.-readOnly (js/require "../runtime/mode.cjs")))
 
+(def adventure-enabled?
+  (case (str/lower-case (env "ADVENTURE_SYNC_ENABLED" "false"))
+    "true" true
+    "false" false
+    (throw (js/Error. "ADVENTURE_SYNC_ENABLED deve ser true ou false."))))
+
 (def bot-name (env "BOT_NAME" "Odisseu"))
 (def prefix (env "PREFIX" "!"))
 (def missoes-timezone (env "MISSOES_TIMEZONE" "America/Sao_Paulo"))

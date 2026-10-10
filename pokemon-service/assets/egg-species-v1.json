@@ -1,0 +1,2112 @@
+{
+  "version": "egg-species-v1",
+  "source": "https://github.com/PokeAPI/pokeapi/tree/master/data/v2/csv",
+  "retrievedAt": "2026-10-10",
+  "species": {
+    "bulbasaur": {
+      "name": "bulbasaur",
+      "species": {
+        "name": "bulbasaur"
+      },
+      "height": 7,
+      "weight": 69,
+      "stats": [
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 49,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 49,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 65,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 65,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "grass"
+          }
+        },
+        {
+          "type": {
+            "name": "poison"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "overgrow"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "chlorophyll"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/1.png"
+      }
+    },
+    "charmander": {
+      "name": "charmander",
+      "species": {
+        "name": "charmander"
+      },
+      "height": 6,
+      "weight": 85,
+      "stats": [
+        {
+          "base_stat": 39,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 52,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 43,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 60,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 65,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "fire"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "blaze"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "solar-power"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/4.png"
+      }
+    },
+    "squirtle": {
+      "name": "squirtle",
+      "species": {
+        "name": "squirtle"
+      },
+      "height": 5,
+      "weight": 90,
+      "stats": [
+        {
+          "base_stat": 44,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 48,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 65,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 64,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 43,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "water"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "torrent"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "rain-dish"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/7.png"
+      }
+    },
+    "caterpie": {
+      "name": "caterpie",
+      "species": {
+        "name": "caterpie"
+      },
+      "height": 3,
+      "weight": 29,
+      "stats": [
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 30,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 20,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 20,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "bug"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "shield-dust"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "run-away"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/10.png"
+      }
+    },
+    "weedle": {
+      "name": "weedle",
+      "species": {
+        "name": "weedle"
+      },
+      "height": 3,
+      "weight": 32,
+      "stats": [
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 30,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 20,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 20,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "bug"
+          }
+        },
+        {
+          "type": {
+            "name": "poison"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "shield-dust"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "run-away"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/13.png"
+      }
+    },
+    "pidgey": {
+      "name": "pidgey",
+      "species": {
+        "name": "pidgey"
+      },
+      "height": 3,
+      "weight": 18,
+      "stats": [
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 56,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "normal"
+          }
+        },
+        {
+          "type": {
+            "name": "flying"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "keen-eye"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "tangled-feet"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "big-pecks"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/16.png"
+      }
+    },
+    "rattata": {
+      "name": "rattata",
+      "species": {
+        "name": "rattata"
+      },
+      "height": 3,
+      "weight": 35,
+      "stats": [
+        {
+          "base_stat": 30,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 56,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 25,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 72,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "normal"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "run-away"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "guts"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "hustle"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/19.png"
+      }
+    },
+    "vulpix": {
+      "name": "vulpix",
+      "species": {
+        "name": "vulpix"
+      },
+      "height": 6,
+      "weight": 99,
+      "stats": [
+        {
+          "base_stat": 38,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 41,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 65,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 65,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "fire"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "flash-fire"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "drought"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/37.png"
+      }
+    },
+    "growlithe": {
+      "name": "growlithe",
+      "species": {
+        "name": "growlithe"
+      },
+      "height": 7,
+      "weight": 190,
+      "stats": [
+        {
+          "base_stat": 55,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 70,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 70,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 60,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "fire"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "intimidate"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "flash-fire"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "justified"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/58.png"
+      }
+    },
+    "poliwag": {
+      "name": "poliwag",
+      "species": {
+        "name": "poliwag"
+      },
+      "height": 6,
+      "weight": 124,
+      "stats": [
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 90,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "water"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "water-absorb"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "damp"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "swift-swim"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/60.png"
+      }
+    },
+    "machop": {
+      "name": "machop",
+      "species": {
+        "name": "machop"
+      },
+      "height": 8,
+      "weight": 195,
+      "stats": [
+        {
+          "base_stat": 70,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 80,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "fighting"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "guts"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "no-guard"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "steadfast"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/66.png"
+      }
+    },
+    "geodude": {
+      "name": "geodude",
+      "species": {
+        "name": "geodude"
+      },
+      "height": 4,
+      "weight": 200,
+      "stats": [
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 80,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 100,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 30,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 30,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 20,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "rock"
+          }
+        },
+        {
+          "type": {
+            "name": "ground"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "rock-head"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "sturdy"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "sand-veil"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/74.png"
+      }
+    },
+    "onix": {
+      "name": "onix",
+      "species": {
+        "name": "onix"
+      },
+      "height": 88,
+      "weight": 2100,
+      "stats": [
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 160,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 30,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 70,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "rock"
+          }
+        },
+        {
+          "type": {
+            "name": "ground"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "rock-head"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "sturdy"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "weak-armor"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/95.png"
+      }
+    },
+    "scyther": {
+      "name": "scyther",
+      "species": {
+        "name": "scyther"
+      },
+      "height": 15,
+      "weight": 560,
+      "stats": [
+        {
+          "base_stat": 70,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 110,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 80,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 55,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 80,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 105,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "bug"
+          }
+        },
+        {
+          "type": {
+            "name": "flying"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "swarm"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "technician"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "steadfast"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/123.png"
+      }
+    },
+    "pinsir": {
+      "name": "pinsir",
+      "species": {
+        "name": "pinsir"
+      },
+      "height": 15,
+      "weight": 550,
+      "stats": [
+        {
+          "base_stat": 65,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 125,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 100,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 55,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 70,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 85,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "bug"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "hyper-cutter"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "mold-breaker"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "moxie"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/127.png"
+      }
+    },
+    "eevee": {
+      "name": "eevee",
+      "species": {
+        "name": "eevee"
+      },
+      "height": 3,
+      "weight": 65,
+      "stats": [
+        {
+          "base_stat": 55,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 55,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 65,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 55,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "normal"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "run-away"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "adaptability"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "anticipation"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/133.png"
+      }
+    },
+    "dratini": {
+      "name": "dratini",
+      "species": {
+        "name": "dratini"
+      },
+      "height": 18,
+      "weight": 33,
+      "stats": [
+        {
+          "base_stat": 41,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 64,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "dragon"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "shed-skin"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "marvel-scale"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/147.png"
+      }
+    },
+    "pichu": {
+      "name": "pichu",
+      "species": {
+        "name": "pichu"
+      },
+      "height": 3,
+      "weight": 20,
+      "stats": [
+        {
+          "base_stat": 20,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 15,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 60,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "electric"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "static"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "lightning-rod"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/172.png"
+      }
+    },
+    "cleffa": {
+      "name": "cleffa",
+      "species": {
+        "name": "cleffa"
+      },
+      "height": 3,
+      "weight": 30,
+      "stats": [
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 25,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 28,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 55,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 15,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "fairy"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "cute-charm"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "magic-guard"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "friend-guard"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/173.png"
+      }
+    },
+    "igglybuff": {
+      "name": "igglybuff",
+      "species": {
+        "name": "igglybuff"
+      },
+      "height": 3,
+      "weight": 10,
+      "stats": [
+        {
+          "base_stat": 90,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 30,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 15,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 20,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 15,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "normal"
+          }
+        },
+        {
+          "type": {
+            "name": "fairy"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "cute-charm"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "competitive"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "friend-guard"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/174.png"
+      }
+    },
+    "togepi": {
+      "name": "togepi",
+      "species": {
+        "name": "togepi"
+      },
+      "height": 3,
+      "weight": 15,
+      "stats": [
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 20,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 65,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 65,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 20,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "fairy"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "hustle"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "serene-grace"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "super-luck"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/175.png"
+      }
+    },
+    "mareep": {
+      "name": "mareep",
+      "species": {
+        "name": "mareep"
+      },
+      "height": 6,
+      "weight": 78,
+      "stats": [
+        {
+          "base_stat": 55,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 65,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "electric"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "static"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "plus"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/179.png"
+      }
+    },
+    "larvitar": {
+      "name": "larvitar",
+      "species": {
+        "name": "larvitar"
+      },
+      "height": 6,
+      "weight": 720,
+      "stats": [
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 64,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 41,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "rock"
+          }
+        },
+        {
+          "type": {
+            "name": "ground"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "guts"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "sand-veil"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/246.png"
+      }
+    },
+    "ralts": {
+      "name": "ralts",
+      "species": {
+        "name": "ralts"
+      },
+      "height": 4,
+      "weight": 66,
+      "stats": [
+        {
+          "base_stat": 28,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 25,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 25,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "psychic"
+          }
+        },
+        {
+          "type": {
+            "name": "fairy"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "synchronize"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "trace"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "telepathy"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/280.png"
+      }
+    },
+    "bagon": {
+      "name": "bagon",
+      "species": {
+        "name": "bagon"
+      },
+      "height": 6,
+      "weight": 421,
+      "stats": [
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 75,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 60,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 30,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 50,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "dragon"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "rock-head"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "sheer-force"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/371.png"
+      }
+    },
+    "beldum": {
+      "name": "beldum",
+      "species": {
+        "name": "beldum"
+      },
+      "height": 6,
+      "weight": 952,
+      "stats": [
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 55,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 80,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 60,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 30,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "steel"
+          }
+        },
+        {
+          "type": {
+            "name": "psychic"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "clear-body"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "light-metal"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/374.png"
+      }
+    },
+    "gible": {
+      "name": "gible",
+      "species": {
+        "name": "gible"
+      },
+      "height": 7,
+      "weight": 205,
+      "stats": [
+        {
+          "base_stat": 58,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 70,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 45,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 42,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "dragon"
+          }
+        },
+        {
+          "type": {
+            "name": "ground"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "sand-veil"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "rough-skin"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/443.png"
+      }
+    },
+    "riolu": {
+      "name": "riolu",
+      "species": {
+        "name": "riolu"
+      },
+      "height": 7,
+      "weight": 202,
+      "stats": [
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "hp"
+          }
+        },
+        {
+          "base_stat": 70,
+          "stat": {
+            "name": "attack"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "defense"
+          }
+        },
+        {
+          "base_stat": 35,
+          "stat": {
+            "name": "special-attack"
+          }
+        },
+        {
+          "base_stat": 40,
+          "stat": {
+            "name": "special-defense"
+          }
+        },
+        {
+          "base_stat": 60,
+          "stat": {
+            "name": "speed"
+          }
+        }
+      ],
+      "types": [
+        {
+          "type": {
+            "name": "fighting"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "steadfast"
+          }
+        },
+        {
+          "is_hidden": false,
+          "ability": {
+            "name": "inner-focus"
+          }
+        },
+        {
+          "is_hidden": true,
+          "ability": {
+            "name": "prankster"
+          }
+        }
+      ],
+      "sprites": {
+        "front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/447.png"
+      }
+    }
+  }
+}
