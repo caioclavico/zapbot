@@ -513,3 +513,11 @@
                      (mapv #(get % "id-pokemon") (take 3 (treinador/equipe "g" "p")))))
               (is (= 4 (count (treinador/equipe "g" "p"))))
               (is (= 2 (get-in @treinador/contas ["g" "p" "ativo"])))))))) done)))
+
+(deftest politica-de-recompensa-e-deterministica
+  (is (= 10 (adventure/categoria-recompensa 0 {:epico 3 :raro 0 :comum 0})))
+  (is (= 5 (adventure/categoria-recompensa 3 {:epico 3 :raro 20 :comum 0})))
+  (is (= 2 (adventure/categoria-recompensa 22 {:epico 3 :raro 20 :comum 10})))
+  (is (nil? (adventure/categoria-recompensa 40 {:epico 3 :raro 20 :comum 10})))
+  (is (= 10 (adventure/categoria-recompensa -4 {:epico 3 :raro 0 :comum 0})))
+  (is (= 2 (adventure/categoria-recompensa 180 {:epico 0 :raro 0 :comum 10}))))

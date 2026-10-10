@@ -80,14 +80,21 @@
                 estado (store/projetar! (:state resultado) agora)]
          {:operation (get-in resultado [:receipt :result]) :state (ovos/consulta estado)})))))
 
-(defn- categoria-evento [probabilidades]
-  (let [n (rand-int 100)]
+(defn categoria-recompensa
+  "Converte uma amostra inteira [0,99] em categoria legada do catálogo.
+   Receber a amostra como argumento mantém a política determinística e fácil
+   de testar; os hooks usam rand-int somente na borda."
+  [amostra probabilidades]
+  (let [n (max 0 (min 99 (int amostra)))]
     (cond
       (< n (:epico probabilidades 0)) 10
       (< n (+ (:epico probabilidades 0) (:raro probabilidades 0))) 5
       (< n (+ (:epico probabilidades 0) (:raro probabilidades 0)
               (:comum probabilidades 0))) 2
       :else nil)))
+
+(defn- categoria-evento [probabilidades]
+  (categoria-recompensa (rand-int 100) probabilidades))
 
 (defn registrar-captura!
   "Concede no máximo um ovo por captura concluída. O requestId da captura é
