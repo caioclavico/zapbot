@@ -243,3 +243,14 @@ Readiness do recurso exige schema novo validado e reconciliação das operaçõe
 incertas antes de mutações. Indisponibilidade Adventure Sync deve ser reportada
 no módulo e negar suas rotas; não declarar falha de autenticação WhatsApp nem
 desabilitar outros jogos por ausência de permissão móvel.
+## Endpoints internos da Etapa C
+
+Com `ADVENTURE_SYNC_ENABLED=true` e o mesmo `API_TOKEN` privado do serviço:
+
+- `POST /eggs/state` com `{chatId, playerId}` consulta o estado isolado da conta.
+- `POST /eggs/incubate` com `{chatId, playerId, eventId, eggId}` inicia a incubação
+  usando o recibo idempotente existente.
+
+Essas rotas exigem autenticação, não aceitam dados de passos e permanecem
+indisponíveis quando a feature está desligada. `eventId` deve ser único por
+operação; um resultado incerto não deve ser repetido com outro identificador.

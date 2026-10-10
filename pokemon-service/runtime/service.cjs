@@ -209,6 +209,16 @@ function handler(service,{token}={}) {
       if(req.method==='GET'&&url.pathname==='/ready')return json(res,service.ready()?200:503,{ready:service.ready()});
       if(!authorized(req,token))throw new HttpError(401,'unauthorized','Autenticação obrigatória.');
       service.assertWritable(); // Em validação, apenas health/ready são publicados.
+      if(req.method==='POST'&&url.pathname==='/eggs/state'){
+        const input=await body(req); if(!validString(input.chatId)||!validString(input.playerId))throw new HttpError(400,'invalid_request','chatId e playerId são obrigatórios.');
+        if(typeof service.domain.eggs_state!=='function')throw new HttpError(503,'feature_unavailable','Adventure Sync indisponível.');
+        return json(res,200,await service.domain.eggs_state(input.chatId,input.playerId));
+      }
+      if(req.method==='POST'&&url.pathname==='/eggs/incubate'){
+        const input=await body(req); if(!validString(input.chatId)||!validString(input.playerId)||!validString(input.eventId)||!validString(input.eggId))throw new HttpError(400,'invalid_request','chatId, playerId, eventId e eggId são obrigatórios.');
+        if(typeof service.domain.eggs_incubate!=='function')throw new HttpError(503,'feature_unavailable','Adventure Sync indisponível.');
+        return json(res,200,await service.domain.eggs_incubate(input.chatId,input.playerId,input.eventId,input.eggId));
+      }
       if(req.method==='POST'&&url.pathname==='/commands')return json(res,200,await service.execute(await body(req)));
       if(req.method==='GET'&&url.pathname==='/events/pending'){
         if(!service.ready())throw new HttpError(503,'not_ready','Persistência indisponível.');
