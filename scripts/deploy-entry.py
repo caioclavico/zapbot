@@ -24,7 +24,7 @@ def deployment_args(service, args, config):
         raise ValueError("configuration")
     if args == ["rollback"]:
         return [service, "rollback", APP_DIRS[service]]
-    if service == "odisseu" and args == ["activate-adventure"]:
+    if service == "pokemon" and args == ["activate-adventure"]:
         return [service, "activate-adventure", APP_DIRS[service]]
     if len(args) == 2 and args[0] == "deploy" and re.fullmatch(r"[0-9a-f]{40}", args[1]):
         name = "zapbot" if service == "odisseu" else "zapbot-pokemon"

@@ -761,8 +761,8 @@ class Deployment:
                     raise DeployError('Requested image revision is missing or differs from commit SHA')
                 configuration, retained = self.clone(current, target), None
             elif action == 'activate-adventure':
-                if self.service != 'odisseu':
-                    raise DeployError('Adventure Sync activation is limited to Odisseu')
+                if self.service != 'pokemon':
+                    raise DeployError('Adventure Sync activation is limited to the Pokemon service')
                 target = current_image
                 image = target['Id']
                 requested_revision = (current['Config'].get('Labels') or {}).get(REVISION_LABEL)

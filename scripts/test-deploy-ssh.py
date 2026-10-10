@@ -24,9 +24,9 @@ class RestrictedDeployTest(unittest.TestCase):
         for service in ("odisseu", "pokemon"):
             self.assertEqual(ssh.arguments(service, "deploy " + SHA), ["deploy", SHA])
             self.assertEqual(ssh.arguments(service, "rollback"), ["rollback"])
-        self.assertEqual(ssh.arguments("odisseu", "activate-adventure"), ["activate-adventure"])
+        self.assertEqual(ssh.arguments("pokemon", "activate-adventure"), ["activate-adventure"])
         with self.assertRaises(ValueError):
-            ssh.arguments("pokemon", "activate-adventure")
+            ssh.arguments("odisseu", "activate-adventure")
         for command in ("", "bash", "deploy latest", "deploy " + SHA + "; id",
                         "deploy " + SHA + "\n", "rollback now", "rollback; id",
                         "deploy  " + SHA, "deploy " + "A" * 40, "scp -t /tmp/file",
@@ -51,8 +51,8 @@ class RestrictedDeployTest(unittest.TestCase):
                                   "/home/caiohclavico/pokemon-service"])
         self.assertEqual(entry.deployment_args("odisseu", ["rollback"], {"ghcr_owner": "caioclavico"}),
                          ["odisseu", "rollback", "/home/caiohclavico/zapbot"])
-        self.assertEqual(entry.deployment_args("odisseu", ["activate-adventure"], {"ghcr_owner": "caioclavico"}),
-                         ["odisseu", "activate-adventure", "/home/caiohclavico/zapbot"])
+        self.assertEqual(entry.deployment_args("pokemon", ["activate-adventure"], {"ghcr_owner": "caioclavico"}),
+                         ["pokemon", "activate-adventure", "/home/caiohclavico/pokemon-service"])
         invalid = ({"ghcr_owner": "owner/foreign"}, {"ghcr_owner": "owner; id"},
                    {"ghcr_owner": "owner", "app_dir": "/tmp"}, {"ghcr_owner": "Owner"})
         for config in invalid:
