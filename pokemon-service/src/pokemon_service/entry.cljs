@@ -14,6 +14,7 @@
             [zapbot.pokemon.loja :as loja]))
 
 (defn initialize []
+  (pokemon/configurar-recompensa-ovo! adventure/registrar-captura!)
   (adventure/preparar-inicializacao!)
   ;; Preserva a criação síncrona do driver usada pelo bootstrap e pelos testes.
   (p/then (armazenamento/iniciar!) (fn [_] (adventure/inicializar!))))

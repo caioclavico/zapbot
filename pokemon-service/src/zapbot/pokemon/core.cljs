@@ -208,7 +208,13 @@
   (p/all (map #(p/catch % (fn [_] nil)) (vals @gravacoes-combates))))
 
 (defonce ^:private emitir-evento (atom nil))
+(defonce ^:private registrar-recompensa-ovo (atom nil))
 (declare rearmar-limites-restaurados! rearmar-remocoes! enfileirar-jogada)
+
+(defn configurar-recompensa-ovo!
+  "Instala o adaptador opcional de ovos sem criar dependência circular."
+  [registrar]
+  (reset! registrar-recompensa-ovo registrar))
 
 (defn iniciar!
   "Registra a porta de eventos e rearma os relógios após carregar o estado."
