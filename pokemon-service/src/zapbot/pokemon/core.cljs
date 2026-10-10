@@ -209,12 +209,16 @@
 
 (defonce ^:private emitir-evento (atom nil))
 (defonce ^:private registrar-recompensa-ovo (atom nil))
+(defonce ^:private comando-ovos (atom nil))
 (declare rearmar-limites-restaurados! rearmar-remocoes! enfileirar-jogada)
 
 (defn configurar-recompensa-ovo!
   "Instala o adaptador opcional de ovos sem criar dependência circular."
   [registrar]
   (reset! registrar-recompensa-ovo registrar))
+
+(defn configurar-comando-ovos! [handler]
+  (reset! comando-ovos handler))
 
 (defn iniciar!
   "Registra a porta de eventos e rearma os relógios após carregar o estado."
@@ -5679,8 +5683,12 @@
 (defn jogar [contexto args]
   (let [[cmd & resto] (str/split (str/trim (str/lower-case (or args ""))) #"\s+")]
     ;; Registrar/consultar bugs não executa ações nem aplica dano na batalha.
-    (if (contains? #{"bug" "bugs"} cmd)
+    (cond
+      (and @comando-ovos (contains? #{"ovos" "ovo" "incubar" "incubadoras"} cmd))
+      (@comando-ovos contexto cmd resto)
+      (contains? #{"bug" "bugs"} cmd)
       (bugs/comando! contexto cmd resto)
+      :else
       (enfileirar-jogada (chat-id contexto)
                         #(p/let [jogo (get @jogos (chat-id contexto))
                                  _ (when (pvp/expirado? jogo (.now js/Date))

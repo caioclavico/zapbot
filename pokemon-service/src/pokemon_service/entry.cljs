@@ -15,6 +15,26 @@
 
 (defn initialize []
   (pokemon/configurar-recompensa-ovo! adventure/registrar-captura!)
+  (pokemon/configurar-comando-ovos!
+   (fn [ctx cmd args]
+     (let [cid (:chat-id ctx) pid (:player-id ctx)]
+       (if-not config/adventure-enabled?
+         (p/resolved "🥚 O sistema de ovos está desativado.")
+         (case cmd
+           ("ovos" "ovo") (p/then (adventure/consultar! cid pid)
+                                  (fn [estado]
+                                    (if (nil? estado) "🥚 Você ainda não possui ovos."
+                                        (str "🥚 Ovos disponíveis: "
+                                             (count (filter #(= :inventory (:state %)) (:eggs estado)))
+                                             "\n🔥 Em incubação: "
+                                             (count (filter #(= :incubating (:state %)) (:eggs estado)))))))
+           "incubadoras" (p/then (adventure/consultar! cid pid)
+                                  (fn [estado]
+                                    (str "🧪 Incubadoras: " (count (:incubators estado))))))
+           "incubar" (if-let [egg-id (first args)]
+                       (p/then (adventure/incubar! cid pid (str "whatsapp:" (:request-id ctx) ":incubar") egg-id)
+                               (fn [_] "🥚 Ovo colocado na incubadora."))
+                       "Informe o ID do ovo para incubar."))))))
   (adventure/preparar-inicializacao!)
   ;; Preserva a criação síncrona do driver usada pelo bootstrap e pelos testes.
   (p/then (armazenamento/iniciar!) (fn [_] (adventure/inicializar!))))
