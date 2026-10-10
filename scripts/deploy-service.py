@@ -23,6 +23,12 @@ from urllib.parse import quote, urlencode
 from deploy_auth_profile import SessionProfile, ProfileError, sync_dir, assert_profile_idle
 from deploy_compose import ProductionCompose, ComposeError
 
+
+def has_static_ipam(network):
+    """Return true only when Docker reports a non-empty static IP address."""
+    ipam = network.get('IPAMConfig') or {}
+    return bool(ipam.get('IPv4Address') or ipam.get('IPv6Address'))
+
 SERVICES = {
     'odisseu': ('zapbot', '/home/caiohclavico/zapbot', 'zapbot'),
     'pokemon': ('zapbot-pokemon', '/home/caiohclavico/pokemon-service', 'zapbot-pokemon'),
@@ -316,7 +322,7 @@ class Deployment:
         if host.get('NetworkMode', '').startswith('container:'):
             raise DeployError('Shared container networking requires controlled migration')
         for network in (current.get('NetworkSettings', {}).get('Networks') or {}).values():
-            if network.get('IPAMConfig'):
+            if has_static_ipam(network):
                 raise DeployError('Static network addresses require controlled migration')
         if not config.get('Hostname'):
             raise DeployError('Container hostname must be preserved explicitly')

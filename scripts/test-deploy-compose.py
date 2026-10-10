@@ -12,6 +12,10 @@ import unittest
 from deploy_compose import ProductionCompose, ComposeError
 from deploy_auth_profile import ProfileError, assert_profile_idle
 
+DEPLOY_SERVICE = importlib.util.spec_from_file_location('deploy_service', Path(__file__).with_name('deploy-service.py'))
+DEPLOY_MODULE = importlib.util.module_from_spec(DEPLOY_SERVICE)
+DEPLOY_SERVICE.loader.exec_module(DEPLOY_MODULE)
+
 spec = importlib.util.spec_from_file_location('base', Path(__file__).with_name('test-deploy.py'))
 B = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(B)
@@ -19,6 +23,12 @@ D = B.DEPLOY
 
 
 class ComposeTest(unittest.TestCase):
+    def test_empty_ipam_addresses_are_not_static(self):
+        self.assertFalse(DEPLOY_MODULE.has_static_ipam({'IPAMConfig': {'IPv4Address': '', 'IPv6Address': ''}}))
+
+    def test_nonempty_ipam_address_is_static(self):
+        self.assertTrue(DEPLOY_MODULE.has_static_ipam({'IPAMConfig': {'IPv4Address': '10.0.0.7', 'IPv6Address': ''}}))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
