@@ -346,9 +346,13 @@ class Deployment:
                        for bindings in ports.values() for binding in bindings or []):
                 raise DeployError('Existing Pokemon HTTP port 8080 must be published')
 
-    def clone(self, current, image):
+    def clone(self, current, image, env_updates=None):
         config, host = copy.deepcopy(current['Config']), copy.deepcopy(current['HostConfig'])
         config['Image'] = image['Id']
+        if env_updates:
+            env = dict(item.split('=', 1) for item in config.get('Env', []) if '=' in item)
+            env.update(env_updates)
+            config['Env'] = [key + '=' + env[key] for key in env]
         config['StopTimeout'] = max(self.grace_seconds, config.get('StopTimeout') or 0)
         config['Labels'] = dict(config.get('Labels') or {})
         for label in (SERVICE_LABEL, STORAGE_LABEL, REVISION_LABEL):
@@ -750,6 +754,13 @@ class Deployment:
                         'decision': 'reject-image'}, sort_keys=True))
                     raise DeployError('Requested image revision is missing or differs from commit SHA')
                 configuration, retained = self.clone(current, target), None
+            elif action == 'activate-adventure':
+                if self.service != 'odisseu':
+                    raise DeployError('Adventure Sync activation is limited to Odisseu')
+                target = current_image
+                image = target['Id']
+                requested_revision = (current['Config'].get('Labels') or {}).get(REVISION_LABEL)
+                configuration, retained = self.clone(current, target, {'ADVENTURE_SYNC_ENABLED': 'true'}), None
             elif action == 'rollback':
                 if not self.original_state or not self.original_state.get('previous-container'):
                     raise DeployError('No retained rollback container is available')
@@ -861,7 +872,7 @@ def main(argv):
         argv = argv[:-1]
         if argv[:2] != ['odisseu', 'deploy']:
             raise DeployError('Legacy graceful stop is limited to an operator-requested Odisseu deployment')
-    if len(argv) < 2 or argv[0] not in SERVICES or argv[1] not in ('deploy', 'rollback', 'recover'):
+    if len(argv) < 2 or argv[0] not in SERVICES or argv[1] not in ('deploy', 'rollback', 'recover', 'activate-adventure'):
         raise DeployError('Usage: SERVICE deploy IMAGE [APP_DIR] | SERVICE rollback|recover [APP_DIR]')
     service, action = argv[:2]
     if len(argv) not in ((3, 4) if action == 'deploy' else (2, 3)):

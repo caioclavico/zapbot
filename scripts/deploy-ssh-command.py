@@ -11,6 +11,8 @@ def arguments(service, original):
         raise ValueError("service")
     if service == "odisseu" and original == "check":
         return ["check"]
+    if service == "odisseu" and original == "activate-adventure":
+        return ["activate-adventure"]
     if re.fullmatch(r"deploy [0-9a-f]{40}", original):
         return ["deploy", original.split(" ")[1]]
     if original == "rollback":
@@ -25,7 +27,7 @@ def main():
     except ValueError:
         allowed = "Only deploy <40-character SHA> or rollback is allowed."
         if service == "odisseu":
-            allowed = "Only check, deploy <40-character SHA> or rollback is allowed."
+            allowed = "Only check, activate-adventure, deploy <40-character SHA> or rollback is allowed."
         print(allowed, file=sys.stderr)
         return 2
     if args == ["check"]:
