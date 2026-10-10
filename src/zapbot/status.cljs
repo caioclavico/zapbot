@@ -13,10 +13,10 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["PvP 1x1 com o Pokémon ativo: use !pk para abrir ou aceitar um desafio"
-   "Sem escolha de liga: diferença máxima de 3 níveis entre os Pokémon"
-   "Desafios aguardam adversário por até 5 minutos"
-   "Raids automáticas removidas; comandos de raids existentes preservados"])
+  ["Nova funcionalidade de ovos Pokémon e incubadoras"
+   "Acompanhe ovos comuns, raros e épicos com progresso por pontos e tempo"
+   "Use !pokemon ovos, !pokemon ovo e !pokemon incubadoras para consultar seu estado"
+   "Incube ovos com incubadoras permanentes, extras ou especiais"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))
