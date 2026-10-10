@@ -14,8 +14,8 @@ services:
     volumes:
       - ${ZAPBOT_APP_DIR}/.wwebjs_auth:/app/.wwebjs_auth
       - ${ZAPBOT_APP_DIR}/data:/app/data
-    mem_limit: 1280m
-    memswap_limit: 2g
+    mem_limit: 2560m
+    memswap_limit: 4g
     logging:
       driver: json-file
       options:
