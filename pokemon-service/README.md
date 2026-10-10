@@ -23,6 +23,28 @@ pontuação por HTTP. O bot é o único processo que grava `rank`; o serviço é
 que grava os módulos do jogo. Nunca executar a implementação antiga junto do
 serviço sobre os mesmos dados.
 
+## PvP com Pokémon ativo
+
+`!pokemon` ou `!pk`, sem argumentos, abre ou aceita um desafio 1 × 1 com o
+Pokémon ativo saudável. O adversário pode ter até 3 níveis a mais ou a menos.
+O desafio expira em **5 minutos**, sem penalidade. Não exige liga, três Pokémon
+ou escalação; `!pokemon escolher <número>` seleciona o ativo fora do combate.
+Regras e parâmetros estão centralizados em `zapbot.pokemon.pvp`.
+
+Recusas não cancelam o desafio nem renovam seu prazo. Um jogador não pode abrir
+ou aceitar outro combate em paralelo. A fila por chat e a validação atômica do
+estado após operações assíncronas resolvem entradas simultâneas; os recibos HTTP
+existentes deduplicam o ID da mensagem. Avisos de expiração usam a outbox atual.
+
+Batalhas 3 × 3 já iniciadas continuam até terminar. Desafios legados ainda abertos
+passam à regra por nível e recebem um prazo baseado no timestamp original, sem
+renovação por restart. Contas, coleções, inventários, histórico e escalações
+salvas não são apagados. `liga/ligas/lig` mostra o novo guia; aplicar escalação
+com destino liga não altera mais PvP. O destino explícito `ginasio` continua.
+Raids existentes e filtros de coleção ainda podem usar suas faixas históricas.
+
+Veja [compatibilidade, testes e recompensas](../docs/pokemon-pvp.md).
+
 ## Executar localmente
 
 Requisitos: Node 22, Java 17+ para compilar, npm e Cassandra com o schema atual.

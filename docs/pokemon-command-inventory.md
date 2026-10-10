@@ -2,6 +2,11 @@
 
 Análise do código existente em 2026-10-03. Este documento descreve comportamento atual e pontos de separação; não implementa a extração nem altera regras. O prefixo configurável é representado como `!` nos exemplos. `!pk` e `!pokemon` são equivalentes.
 
+Atualização do PvP em produção: o Odisseu usa `zapbot.pokemon-http` e o domínio
+autoritativo fica em `pokemon-service/src`. Consulte [o novo fluxo PvP](pokemon-pvp.md).
+As referências históricas abaixo ao código legado `src/zapbot/pokemon/core.cljs`
+não significam que esse domínio rode no processo WhatsApp.
+
 ## Entrada e sequência de processamento
 
 - `src/zapbot/core.cljs`: registra o histórico antes de chamar `router/processar`, envia a resposta final e, no evento de conexão, chama `pokemon/iniciar!`.
@@ -34,9 +39,9 @@ Nas referências de testes: **C** = `test/zapbot/pokemon/core_test.cljs`; **PC**
 
 | Comando após `!pk` e aliases completos | Handler e principais funções | Dependências, efeito e resposta | Testes relacionados |
 | --- | --- | --- | --- |
-| Sem argumento | `iniciar-ou-entrar` → `iniciar-ou-entrar-atualizado`; ou `mensagem-estado`/`menu-captura` | Liga, escalação, treinador, contato; abre/entra em PvP 3 × 3, ou consulta combate/captura já existentes. Envia anúncio e estado com menções | C: filas, persistência, arenas PvP; H: batalha/ligas |
+| Sem argumento | `iniciar-ou-entrar` → `iniciar-ou-entrar-atualizado`; ou `mensagem-estado`/`menu-captura` | Pokémon ativo e nível; abre/aceita PvP 1 × 1 com diferença máxima de 3 níveis e espera de 5 min, ou consulta combate/captura já existentes. Envia anúncio e estado com menções | C: filas, persistência, arenas PvP; H: batalha/ligas |
 | `sair`, `sai` | `sair`, `tentar-encerrar-por-desistencia!` | Remove batalha/caçada; encerra sequência; penaliza rank na desistência PvP iniciada; sem prêmio de vitória por desistência | C: persistência/encerramento; testes de regras relacionados |
-| `liga`, `ligas`, `lig` `[nome/time n1,n2,n3]` | `configurar-liga` | `treinador`: seleciona faixa de nível, valida escalação de três diferentes e disponíveis; consulta liga e time | C: escalações nomeadas, progressão; H: ligas |
+| `liga`, `ligas`, `lig` (legado) | Guia PvP | Não seleciona nem exige liga; orienta o uso do Pokémon ativo | Testes PvP do serviço e ajuda |
 | `ginasio`, `ginásio`, `ginasios`, `ginásios`, `gin` | `configurar-ginasio` | `aventuras`, `ginasios`, `treinador`, `loja`, `raids`; liderança, recompensas, time, motivação e batalha; detalhes na tabela de subcomandos | C: ginásios/turno líder/imagens; R; A |
 | `evento`, `eventos`, `evt` | `ver-evento` | `aventuras/evento-atual`, evento recomeço no treinador; consulta espécies em destaque, prazo, missão e recompensas | A: períodos; E: todos |
 | `professor` | `comando-professor`, `familia-da-cadeia`, `buscar-cadeia-evolucao` | Transferência definitiva confirmada; cartões de família; XP com evolução e aprendizado; detalhes abaixo | P: todos |
@@ -68,8 +73,8 @@ Nas referências de testes: **C** = `test/zapbot/pokemon/core_test.cljs`; **PC**
 | Família `time` com `txt` ou `texto` em qualquer posição | `ver-time` | Lista textual filtrada, tratamento Joy, contexto dos defensores | PC: filtros; C: coleção |
 | Família `time` + `csv`/`planilha` | `resposta-time-csv`, `csv-time` | Documento CSV com equipe e Joy, BOM, separador `;`, escape de fórmula; texto antes do documento | Sem teste dedicado ao CSV identificado |
 | Família `time` + `ativo` | `ver-pokemon-ativo-do-time` → `ver-pokemon-do-time` | Ficha do ativo | C: perfil e espécie relacionados |
-| Família `time` + `liga` | `configurar-liga` com `time` | Consulta escalação selecionada | C/H: ligas |
-| Família `time` + `salvar/usar/ver/excluir/apagar/remover` | `configurar-time-pronto`, `nome-time-pronto`, `descrever-time-pronto` | Escalações nomeadas por identidade; não reserva Pokémon; usa em liga/ginásio | C: `escalacao-nomeada-usa-identidades-sem-reservar-pokemons` |
+| Família `time` + `liga` (legado) | Guia PvP | Não consulta/aplica escalação de PvP | Testes PvP do serviço |
+| Família `time` + `salvar/usar/ver/excluir/apagar/remover` | `configurar-time-pronto`, `nome-time-pronto`, `descrever-time-pronto` | Escalações nomeadas por identidade; não reserva Pokémon; aplica no ginásio com destino explícito; destino liga orienta o novo PvP | C: `escalacao-nomeada-usa-identidades-sem-reservar-pokemons` |
 | `times` | `configurar-time-pronto` sem args | Lista escalações nomeadas | C: escalações |
 | `removergolpe`, `removergolpes`, `esquecer`, `esquecergolpe`, `rmg` `<n>` | `remover-golpe` → timer `aplicar-remocao-golpe!` | Janela de 30 s; protege último ataque do tipo; revalida ativo/golpe ao vencer prazo; notificação posterior | G/C: proteção de golpes; timer sem teste isolado identificado |
 | `cancelar`, `cancela`, `can` | `cancelar-remocao` | Cancela exclusivamente remoção de golpe pendente; troca/professor/raid têm cancelamentos próprios | C relacionados |
@@ -91,7 +96,7 @@ Nas referências de testes: **C** = `test/zapbot/pokemon/core_test.cljs`; **PC**
 
 | Família | Entradas e destinos |
 | --- | --- |
-| Liga | `time`, `tm` → `time`; nomes definidos em `treinador/ligas` |
+| Liga (legado) | `liga/ligas/lig` retorna o guia PvP; não seleciona liga nem escala time. Filtros da coleção e requisitos de raids existentes são preservados |
 | Ginásio | Consulta vazia/nome; `desafiar`, `des`, `dsf`; `time`, `tm` com `auto`, números, ou `pagina N`; `ranking`, `ran`; `historico`, `histórico`, `hist`; `pocao`, `poção`, `pot`; `fruta`, `frambo`, `fru`, `fruta-dourada`, `dourada` + nome + defensor 1–3 |
 | Ginásio → raide | `entrar/ent`, `iniciar/ini`, `atacar/atk`, `capturar/cap`, `sair/sai`, `cancelar`. Entrada sem número escolhe `auto`. `desafiar <ginásio>` com raide ativa inscreve automaticamente. Ataque em batalha de ginásio continua no combate do ginásio |
 | Raide | `abrir/abr` informa que a aparição automática foi removida; `entrar/ent [n/auto]`; `iniciar/ini`; `atacar/atk <slot>`; `sair/sai`; `cancelar/can`; `time [pagina N ou N]`; `capturar/cap <bola>` |
@@ -160,8 +165,9 @@ Preservar os seguintes comportamentos do adaptador atual:
 | --- | --- | --- |
 | Remoção de golpe | `setTimeout` de 30 s executa mutação e `.reply` | Agendamento e validação no serviço; entrega posterior autenticada ao adaptador por HTTP, com ID de evento/deduplicação |
 | Prazo de caçada | 5 min; remove combate, quebra sequência, persiste e avisa | Serviço proprietário do relógio e da mutação; entrega de aviso por HTTP |
-| Prazo de PvP/ginásio | 30 min; encerra/penaliza quando aplicável e avisa | Mesmo requisito; preservar que desistência não é vitória |
-| Combates restaurados | `iniciar!` espera WhatsApp pronto e concede nova janela completa | Sinal explícito de disponibilidade do adaptador para o serviço; não começar o prazo durante desconexão |
+| Desafio PvP aberto | 5 min absolutos, sem renovação por consulta/restart; expira sem penalidade | Relógio existente, mesma fila do chat e aviso pela outbox HTTP |
+| Prazo de PvP/ginásio iniciado | 30 min; encerra/penaliza quando aplicável e avisa | Mesmo requisito; preservar que desistência não é vitória |
+| Combates restaurados | Partidas iniciadas rearmam a janela normal; desafios PvP conservam o prazo absoluto e expiram se ele já passou | O serviço rearma os timers após carregar estado; restart não renova o desafio |
 | Aparição de raide | Verificação a cada 60 s; agenda persistida por chat, ocupa mesma fila, monta arte e envia | Agendamento no serviço; HTTP para notificação, sem exigir nova mensagem do jogador |
 | Joy e XP de raid | Recolhimento/resgate preguiçoso ao comando, não timer de WhatsApp | Continuar no preâmbulo do serviço; não inventar notificações extras |
 

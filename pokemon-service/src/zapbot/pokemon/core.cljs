@@ -1,7 +1,7 @@
 (ns zapbot.pokemon.core
-  "Comando !pokemon - batalha entre duas pessoas do chat, cada uma com um
-  Pokémon sorteado (nome, imagem, golpes reais e stats via PokeAPI - grátis,
-  sem chave). Cada jogador escolhe qual dos 4 golpes do seu Pokémon usar a
+  "Comando !pokemon - PvP entre duas pessoas do chat usando seus Pokémon ativos,
+  pareados por nível, sem seleção de liga. Cada jogador escolhe qual dos
+  quatro golpes reais do seu Pokémon usar a
   cada turno; ataques consideram o tipo/poder/classe do golpe escolhido,
   chance de crítico, status (paralisia/queimadura/veneno) e um punhado de
   habilidades icônicas. Batalhas e caçadas em andamento são espelhadas no
@@ -17,6 +17,7 @@
             [zapbot.bugs :as bugs]
             [zapbot.pokemon.shiny :as shiny]
             [zapbot.pokemon.raids :as raids]
+            [zapbot.pokemon.pvp :as pvp]
             [zapbot.pokemon.boundary :as boundary]
             [zapbot.pokemon.imagens :as imagens]
             ["fs" :as fs]
@@ -156,6 +157,7 @@
                                                     (number? idade)
                                                     (<= idade validade-ms))
                                            (reader/read-string estado-edn))
+                           combate       (when combate (pvp/restaurar-espera combate atualizado-em))
                            combate       (cond-> combate
                                            (:ginasio combate) (assoc :resultado-derrota (atom nil)))]
                        (when (combate-retomavel? combate) [cid combate]))
@@ -244,7 +246,7 @@
 (declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado
          parse-indice-golpe estado-cacada turno-selvagem escalar-nivel com-raridade expandir-atalho
          enviar-cartao-evento! enviar-cartao-evolucao! aplicar-sobreposicao-batalha escapar-xml baixar-buffer
-         evolucoes-pendentes)
+         evolucoes-pendentes expirar-batalha!)
 
 (defn- chat-id [contexto]
   (:chat-id contexto))
@@ -1163,11 +1165,6 @@
                         (enviar-aviso-temporizado cid contexto
                                                   (str "📘 Não consegui consultar os golpes agora. Selecione o Pokémon e use " config/prefix "pokemon aprender para tentar novamente.") [])))))))))
 
-(defn- aviso-saida-liga [subida]
-  (when (seq (:ligas-removidas subida))
-    (str "\n⬆️ " (:nome subida) " ultrapassou o limite da liga e saiu da escalação. "
-         "Preencha a vaga com " config/prefix "pokemon liga time <n1,n2,n3>.")))
-
 (defn- registrar-nocautes
   "Conta o adversário que caiu para o Pokémon que o enfrentava, antes de
   substituir os ativos. Inclui quedas por status/recuo e nocaute simultâneo."
@@ -1197,7 +1194,10 @@
    "diamante" "ultra-bola"})
 
 (defn- premiar-nocautes-pvp! [cid jogo]
-  (let [bola (get bola-por-liga (:liga jogo) "pokebola")]
+  (let [bola (if (:pvp? jogo)
+               (pvp/bola-premio (get-in jogo [:pokemons :x]))
+               ;; Somente partidas legadas já iniciadas conservam esta etiqueta.
+               (get bola-por-liga (:liga jogo) "pokebola"))]
     (->> (:jogadores jogo)
          (keep (fn [[marca pid]]
                  (let [nocautes (reduce + 0 (vals (get-in jogo [:participacao marca])))]
@@ -1234,8 +1234,7 @@
                 (for [{:keys [pid nome nocautes xp subida]} recompensas]
                   (str "\n• " (get-in jogo [:nomes (if (= pid vencedor-pid) vencedor-marca (outro vencedor-marca))])
                        " — " nome ": " nocautes " nocaute(s), +" xp " XP"
-                       (when subida (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!"))
-                       (aviso-saida-liga subida)))))))
+                       (when subida (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!"))))))))
 
 (defn- finalizar-vitoria [contexto cid jogo vencedor-marca motivo-extra]
   (if (:ginasio jogo)
@@ -2014,12 +2013,17 @@
   parte lenta (rede: PokeAPI) da jogada. Retorna true se gravou,
   false se `valido?` recusou (nesse caso jogo-novo é descartado)."
   [cid jogo-novo valido?]
-  (swap! jogos (fn [estado] (if (valido? (get estado cid)) (assoc estado cid jogo-novo) estado)))
-  (= jogo-novo (get @jogos cid)))
+  (let [registrou? (volatile! false)]
+    (swap! jogos (fn [estado]
+                  (if (valido? (get estado cid))
+                    (do (vreset! registrou? true) (assoc estado cid jogo-novo))
+                    estado)))
+    ;; Igualdade com um valor previamente registrado não prova que esta chamada
+    ;; venceu; duas entradas idênticas poderiam anunciar a mesma batalha duas vezes.
+    @registrou?))
 
 (def ^:private atalhos-subcomandos
-  {:liga {"tm" "time"}
-   :ginasio {"des" "desafiar" "dsf" "desafiar" "tm" "time"
+  {:ginasio {"des" "desafiar" "dsf" "desafiar" "tm" "time"
               "pot" "pocao" "fru" "fruta" "ran" "ranking" "hist" "historico"
               "ent" "entrar" "ini" "iniciar" "atk" "atacar" "cap" "capturar" "sai" "sair"}
    :raid {"abr" "abrir" "ent" "entrar" "ini" "iniciar" "atk" "atacar"
@@ -2032,48 +2036,6 @@
 
 (defn- expandir-destino-time [token]
   (get {"raide" "raid" "raides" "raid" "gin" "ginasio" "lig" "liga"} token token))
-
-(defn- configurar-liga [contexto args]
-  (let [cid (chat-id contexto) pid (jogador-id contexto)
-        id (treinador/liga-selecionada cid pid)
-        [cmd-original & partes] args
-        cmd (expandir-subcomando :liga cmd-original)
-        consulta-time? (and (= cmd "time") (empty? partes))
-        texto-numeros (str/join " " partes)
-        numeros (mapv str/trim (str/split texto-numeros #","))
-        ocupado? (or (some #{pid} (vals (:jogadores (get @jogos cid))))
-                     (= pid (:pid (get @cacadas-selvagens cid))))]
-    (p/resolved
-     (cond
-       (and (seq args) (not consulta-time?) ocupado?) "🚫 Termine ou saia da batalha antes de alterar a liga ou a escalação."
-       (and (= cmd "time") (not consulta-time?))
-       (if (and id (re-matches #"[1-9][0-9]*\s*,\s*[1-9][0-9]*\s*,\s*[1-9][0-9]*" texto-numeros)
-                (every? #(re-matches #"[1-9][0-9]*" %) numeros)
-                (treinador/escalar! cid pid id (mapv #(dec (js/parseInt % 10)) numeros)))
-         "✅ Time salvo! A ordem escolhida define quem começa e quem entra após cada nocaute."
-         (str "❓ Selecione uma liga e escale três Pokémon diferentes dentro da faixa: " config/prefix
-              "pokemon liga time <n1,n2,n3>. Veja os números com " config/prefix "pokemon time."))
-       (and (seq args) (not consulta-time?))
-       (if (treinador/selecionar-liga! cid pid cmd)
-         (str "✅ Liga " (:nome (treinador/obter-liga cmd)) " selecionada. Escale com "
-              config/prefix "pokemon liga time <n1,n2,n3>.")
-         (str "❓ Liga inválida. Consulte " config/prefix "pokemon liga."))
-       :else
-       (str "🏆 *Ligas Pokémon*\n"
-            (str/join "\n" (map #(str (:nome %) ": níveis " (:min %) "–" (:max %)) treinador/ligas))
-            "\n\nEscolha: " config/prefix "pokemon liga <nome>"
-            "\nEscale: " config/prefix "pokemon liga time <n1,n2,n3>"
-            "\nOs números são da coleção em " config/prefix "pokemon time."
-            (when id
-              (str "\n\nLiga salva: " (:nome (treinador/obter-liga id)) "\n"
-                   (str/join "\n" (map-indexed
-                                   (fn [slot idx]
-                                     (if-let [r (when (some? idx) (get (treinador/equipe cid pid) idx))]
-                                       (str (inc slot) ". #" (inc idx) " " (get r "nome") " • Nv. " (get r "nivel" 1) " • HP " (get r "hp-atual") "/" (get r "hp"))
-                                       (str (inc slot) ". Vazio — escolha um substituto")))
-                                   (treinador/time-liga cid pid id)))))
-            "\n\nTrês Pokémon saudáveis são necessários. Pareamento: mesma liga, sem restrição de diferença de nível entre os times."
-            "\nComo jogar: " config/prefix "pokemon liga ajuda")))))
 
 (defn- nome-time-pronto [partes]
   (-> (str/join " " partes) str/trim normalizar-texto))
@@ -2133,11 +2095,7 @@
            (do (treinador/salvar-time-ginasio! cid pid indices)
                (str "🏛️ Escalação *" nome "* preparada para o ginásio. Nenhum Pokémon foi reservado agora."))
            :else
-           (let [liga (treinador/liga-selecionada cid pid)]
-             (if (treinador/escalar! cid pid liga indices)
-               (str "⚔️ Escalação *" nome "* preparada para a liga "
-                    (:nome (treinador/obter-liga liga)) ".")
-               "🚫 Os três Pokémon precisam estar disponíveis, saudáveis e dentro da faixa da liga selecionada.")))))
+           (pokemon-ajuda/resposta "ajuda pvp"))))
 
       "ver"
       (let [nome (nome-time-pronto resto)]
@@ -2155,7 +2113,7 @@
        (if (seq times)
          (str "👥 *Escalações salvas*\n\n"
               (str/join "\n" (map #(descrever-time-pronto cid pid %) (sort-by key times)))
-              "\n\nUse " config/prefix "pk time usar <nome> [liga|ginasio].")
+              "\n\nUse " config/prefix "pk time usar <nome> ginasio. PvP usa somente o Pokémon ativo.")
          (str "👥 Nenhuma escalação salva. Crie uma com " config/prefix
               "pk time salvar <nome> <n1,n2,n3>."))))))
 
@@ -2185,14 +2143,12 @@
   (let [cid        (chat-id contexto)
         pid        (jogador-id contexto)
         jogo-atual (get @jogos cid)
-        liga (treinador/liga-selecionada cid pid)
-        configuracao #(vector (treinador/liga-selecionada cid pid)
-                              (treinador/time-liga cid pid liga)
-                              (treinador/equipe cid pid)
+        livre? #(not (pvp/outro-combate? @jogos @cacadas-selvagens cid pid (.now js/Date)))
+        configuracao #(vector (treinador/pokemon-ativo cid pid)
                               (treinador/indice-ativo cid pid))
         configuracao-inicial (configuracao)
         configuracao-valida? #(and (= configuracao-inicial (configuracao))
-                                   (not (get @cacadas-selvagens cid)))]
+                                   (not (get @cacadas-selvagens cid)) (livre?))]
     (cond
       (get @cacadas-selvagens cid)
       (p/resolved (str (cabecalho) "🌿 Já existe uma caçada selvagem em andamento neste chat."))
@@ -2204,25 +2160,25 @@
                                    (mensagem-estado jogo-atual))))
 
       (and jogo-atual (= pid (get-in jogo-atual [:jogadores :x])))
-      (p/resolved (str (cabecalho) "⏳ Você já abriu essa batalha, espere um adversário entrar de "
-                       config/prefix "pokemon."))
+      (p/resolved (str "⏳ Você não pode aceitar seu próprio desafio. Aguarde outro treinador ou use "
+                       config/prefix "pokemon sair."))
 
-      (not (treinador/tem-pokemon? cid pid))
-      (p/resolved (orientacao-equipe cid pid))
+      (not (livre?))
+      (p/resolved "🚫 Você já participa de um desafio ou combate em outro grupo. Termine ou saia antes de abrir ou aceitar outro.")
 
-      (not (treinador/time-pronto? cid pid liga))
-      (p/resolved (str "❓ Escolha uma liga e complete o time com três Pokémon da faixa, sem desmaios. Use "
-                       config/prefix "pokemon liga e " config/prefix "pokemon liga time <n1,n2,n3>."))
-
-      (and jogo-atual (not= liga (:liga jogo-atual)))
-      (p/resolved "⏳ Seu time não é compatível com esta batalha: é necessário estar na mesma liga. A batalha continua aguardando adversário.")
+      (nil? (treinador/pokemon-ativo cid pid))
+      (p/resolved (str "❓ Você não tem Pokémon ativo disponível. Use " config/prefix
+                       "pokemon inicial para começar ou " config/prefix "pokemon escolher <número> para selecionar um Pokémon da coleção."))
 
       :else
       (let [[pokemon hp-atual status] (treinador/pokemon-ativo cid pid)]
         (cond
-          (<= hp-atual 0)
+          (not (pos? (or hp-atual 0)))
           (p/resolved (str (cabecalho) "😵 *" (:nome pokemon) "* desmaiou e não pode batalhar! Cure com "
                            config/prefix "pokemon pocao (fora de uma batalha) antes de tentar de novo."))
+
+          (and jogo-atual (not (pvp/compativel? jogo-atual pokemon)))
+          (p/resolved (pvp/incompatibilidade config/prefix pokemon jogo-atual))
 
           jogo-atual
           (-> (p/let [nome (nome-de contexto)]
@@ -2230,21 +2186,25 @@
                                    (assoc-in [:jogadores :o] pid)
                                    (assoc-in [:indices-ativos :o] (treinador/indice-ativo cid pid))
                                    (assoc-in [:participacao :o] {(treinador/indice-ativo cid pid) 0})
-                                   (assoc-in [:reservas :o] (vec (rest (treinador/time-liga cid pid liga))))
                                    (assoc-in [:nomes :o] nome)
                                    (assoc-in [:pokemons :o] pokemon)
                                    (assoc-in [:hp :o] hp-atual)
                                    (assoc-in [:defendendo :o] false)
                                    (assoc-in [:status :o] status)
                                    (assoc :contexto contexto)
-                                   (assoc :estagios {:x {} :o {}}))
+                                   (assoc :estagios {:x {} :o {}})
+                                   (dissoc :desafio-expira-em))
                       velocidade-x (velocidade-efetiva jogo-pre :x)
                       velocidade-o (velocidade-efetiva jogo-pre :o)
                       jogo-pre     (assoc jogo-pre :vez (cond (> velocidade-x velocidade-o) :x
                                                               (> velocidade-o velocidade-x) :o
                                                               :else (rand-nth [:x :o])))
                       [jogo-novo msg-intimidacao] (aplicar-intimidacao jogo-pre)]
-                  (if (tentar-registrar! cid jogo-novo (fn [atual] (and (= atual jogo-atual) (configuracao-valida?))))
+                  (if (tentar-registrar! cid jogo-novo
+                        (fn [atual] (and (= atual jogo-atual) (configuracao-valida?)
+                                         (not (pvp/expirado? jogo-atual (.now js/Date)))
+                                         (not (pvp/outro-combate? @jogos @cacadas-selvagens cid
+                                                (get-in jogo-atual [:jogadores :x]) (.now js/Date))))))
                     (p/let [_ (enviar-anuncio-batalha contexto
                                                       (get-in jogo-novo [:pokemons :x])
                                                       (get-in jogo-novo [:pokemons :o])
@@ -2252,9 +2212,9 @@
                                                                   nome (get-in jogo-novo [:pokemons :o])))]
                       (com-mencao jogo-novo
                                   (str (when msg-intimidacao (str msg-intimidacao "\n\n"))
-                                       "⚔️ Batalha começando! 💨 " (get-in jogo-novo [:nomes (:vez jogo-novo)])
+                                       "✅ Pokémon compatível! Batalha iniciada! 💨 " (get-in jogo-novo [:nomes (:vez jogo-novo)])
                                        " vai atacar primeiro!\n\n" (mensagem-estado jogo-novo))))
-                    (str (cabecalho) "⏳ A batalha ou sua escalação mudou enquanto preparávamos a entrada. Digite "
+                    (str (cabecalho) "⏳ O desafio expirou, mudou ou seu Pokémon ativo mudou durante a entrada. Digite "
                          config/prefix "pokemon pra ver o que rolou ou abrir uma nova."))))
               (p/catch (fn [err]
                          (js/console.error "Erro ao entrar na batalha:" err)
@@ -2265,12 +2225,10 @@
                 (let [jogo-novo (assoc (criar-jogo contexto pid nome pokemon hp-atual status)
                                        :indices-ativos {:x (treinador/indice-ativo cid pid)}
                                        :participacao {:x {(treinador/indice-ativo cid pid) 0}}
-                                       :liga liga
-                                       :reservas {:x (vec (rest (treinador/time-liga cid pid liga)))})]
+                                       :pvp? true :faixa-niveis (pvp/faixa-niveis pokemon)
+                                       :desafio-expira-em (+ (.now js/Date) pvp/tempo-espera-ms))]
                   (if (tentar-registrar! cid jogo-novo #(and (nil? %) (configuracao-valida?)))
-                    (str (cabecalho) "⏳ *" nome "* está esperando um adversário para a batalha!\n\n"
-                         "Liga " (:nome (treinador/obter-liga liga)) " • 3 × 3.\n"
-                         "Quem tiver um time pronto nesta liga pode mandar " config/prefix "pokemon pra entrar.")
+                    (pvp/anuncio config/prefix nome pokemon jogo-novo)
                     (str (cabecalho) "⏳ A batalha ou sua escalação mudou enquanto preparávamos a partida. Digite "
                          config/prefix "pokemon pra entrar nela."))))
               (p/catch (fn [err]
@@ -2280,14 +2238,13 @@
 (defn- iniciar-ou-entrar [contexto]
   (let [cid (chat-id contexto)
         pid (jogador-id contexto)]
-    (when (and (not (get @cacadas-selvagens cid))
-               (not (some #{pid} (vals (:jogadores (get @jogos cid)))))
-               (treinador/time-pronto? cid pid (treinador/liga-selecionada cid pid)))
-      (treinador/definir-ativo! cid pid (first (treinador/time-liga cid pid (treinador/liga-selecionada cid pid)))))
     ;; Times antigos não têm a versão dos golpes. Atualiza o pokémon ativo
     ;; uma vez, antes da primeira batalha após esta mudança, sem forçar uma
     ;; migração de todos os jogadores de uma só vez.
-    (if (and (treinador/tem-pokemon? cid pid) (not (treinador/golpes-atuais? cid pid)))
+    (if (and (treinador/pokemon-ativo cid pid) (not (treinador/golpes-atuais? cid pid))
+             (not (some #{pid} (vals (:jogadores (get @jogos cid)))))
+             (not (get @cacadas-selvagens cid))
+             (not (pvp/outro-combate? @jogos @cacadas-selvagens cid pid (.now js/Date))))
       (-> (or (atualizar-golpes-por-nivel! cid pid) (p/resolved nil))
           (p/then (fn [_] (iniciar-ou-entrar-atualizado contexto))))
       (iniciar-ou-entrar-atualizado contexto))))
@@ -2317,8 +2274,10 @@
 
       ;; ainda não tem os 2 jogadores - cancela sem custo, não há adversário a beneficiar
       (not (contains? (:jogadores jogo) :o))
-      (do (swap! jogos dissoc cid)
-          (p/resolved (str (cabecalho) "🚪 Batalha cancelada.")))
+      (if (= pid (get-in jogo [:jogadores :x]))
+        (do (swap! jogos dissoc cid)
+            (p/resolved (str (cabecalho) "🚪 Desafio cancelado.")))
+        (p/resolved "🚫 Só o desafiante pode cancelar esse desafio."))
 
       :else
       (let [marca-saiu (some #(when (= pid (get-in jogo [:jogadores %])) %) [:x :o])]
@@ -3799,7 +3758,7 @@
                     (str " • primeira tentativa +" (:bonus-primeira recompensa)))
                   ") • +" (:moedas recompensa) " moedas"
                   (when-let [subida (:subida recompensa)]
-                    (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!" (aviso-saida-liga subida)))))
+                    (str "\n🌟 *" (:nome subida) "* subiu para o nível " (:nivel subida) "!" ))))
            (if fugiu?
              (str "💨 A " nome-bola " falhou e *" (:nome selvagem) "* fugiu! (" chance "% de chance)"
                   (when (>= tentativas 3) "\nAs três tentativas de captura acabaram.")
@@ -4017,6 +3976,9 @@
       (p/resolved (str (cabecalho) "⏳ Calma aí! Você pode caçar de novo em "
                        (treinador/segundos-restantes-cooldown cid pid) "s."))
 
+      (pvp/outro-combate? @jogos @cacadas-selvagens cid pid (.now js/Date))
+      (p/resolved "🚫 Termine o desafio ou combate no outro grupo antes de iniciar uma caçada.")
+
       (or (get @jogos cid) (get @cacadas-selvagens cid))
       (p/resolved (str (cabecalho) "⚔️ Já existe uma batalha em andamento neste chat."))
 
@@ -4039,6 +4001,7 @@
                       selvagem (shiny/sortear selvagem)
                       selvagem (com-golpes selvagem)]
                 (when (or (get @jogos cid) (get @cacadas-selvagens cid)
+                          (pvp/outro-combate? @jogos @cacadas-selvagens cid pid (.now js/Date))
                           (not= [pokemon hp-atual status] (treinador/pokemon-ativo cid pid)))
                   (throw (js/Error. "O estado do combate mudou durante a preparação.")))
                 (treinador/registrar-cacada! cid pid)
@@ -4266,7 +4229,9 @@
                           (swap! limites-turno dissoc cid)
                           (ao-estourar cid estado))) nil)
                      (p/catch #(js/console.error "Falha ao concluir turno expirado:" %))))
-               (* 60 1000 minutos))]
+               (if (pvp/aguardando? estado)
+                 (max 0 (- (:desafio-expira-em estado) (.now js/Date)))
+                 (* 60 1000 minutos)))]
     (swap! limites-turno assoc cid {:token token :timer timer})))
 
 (defn- enviar-aviso-temporizado [cid contexto texto mentions]
@@ -4333,8 +4298,8 @@
             (p/let [_ (aguardar-gravacoes-combates!)
                     _ (enviar-aviso-temporizado
                        cid contexto
-                       (str (cabecalho) "⏰ Ninguém entrou nessa batalha em " minutos-limite-pvp
-                            " minutos, então ela foi cancelada. Abra outra com " config/prefix
+                       (str (cabecalho) "⏰ O desafio Pokémon expirou após " pvp/minutos-espera
+                            " minutos sem adversário. Abra outro com " config/prefix
                             "pokemon quando quiser.") [])]
               nil))
           (if (tentar-encerrar-por-desistencia! cid jogo)
@@ -4356,7 +4321,7 @@
         (p/catch (fn [err] (js/console.error "Erro ao avisar fuga por tempo na batalha:" err))))))
 
 (defn- rearmar-limites-restaurados!
-  "Concede a janela normal completa quando o adaptador volta a ficar pronto."
+  "Rearma combates; desafios mantêm seu prazo absoluto, sem renovação no boot."
   []
   ;; A nova janela também vira o prazo persistido. Assim, se houver outra
   ;; queda logo depois, o próximo boot não descarta um combate ainda válido.
@@ -4620,7 +4585,7 @@
            "\n⭐ +1 PE (Pontos de experiência) para o treinador."
            (apply str (for [{:keys [subida]} recompensas :when subida]
                         (str "\n✨ " (:nome subida) " chegou ao nível " (:nivel subida) "!"
-                             (aviso-saida-liga subida)))))]
+                             ))))]
         (when-let [resultado (:resultado-derrota jogo)] (reset! resultado texto))
         texto))
     (let [pid (get-in jogo [:jogadores :x])
@@ -4667,7 +4632,7 @@
                   (when texto-pedra (str "\n" texto-pedra))
                   (apply str (for [{:keys [subida]} recompensas :when subida]
                                (str "\n🌟 " (:nome subida) " chegou ao nível " (:nivel subida) "!"
-                                    (aviso-saida-liga subida)))))
+                                    ))))
              "\nVocê já recebeu a recompensa diária deste ginásio; o XP de combate continua valendo.")
            (texto-xp-ginasio recompensas)))))
 
@@ -4837,7 +4802,8 @@
           (p/resolved texto)))
       (= pid (get ocupante "pid"))
       (p/resolved "🏛️ Você já lidera este ginásio. Seu time será liberado quando outro treinador vencer você.")
-      (or (get @jogos cid) (get @cacadas-selvagens cid) (aprendizado-bloqueado? cid pid))
+      (or (get @jogos cid) (get @cacadas-selvagens cid) (aprendizado-bloqueado? cid pid)
+          (pvp/outro-combate? @jogos @cacadas-selvagens cid pid (.now js/Date)))
       (p/resolved "🚫 Termine a batalha, caçada ou alteração pendente antes do ginásio.")
       (not (aventuras/desbloqueado? (keys (treinador/insignias-ginasio cid pid)) (:id g)))
       (p/resolved "🔒 Vença os ginásios anteriores primeiro.")
@@ -5322,9 +5288,9 @@
   cancelar; !pokemon aprender mostra a oferta salva, aceita uma substituição ou
   recusa; !pokemon reaprender recupera golpes esquecidos por 50 moedas; !pokemon doar <número> (marcando ou respondendo a
   pessoa) doa um pokémon da sua equipe pra outro jogador; !pokemon sem
-  argumento abre/entra numa batalha de liga 3 × 3 (escalação salva via
-  !pokemon liga time <n1,n2,n3>; cada Pokémon que entrou ganha XP por nocautes
-  e pode subir de nível/evoluir); !pokemon atacar <1-4> usa o
+  argumento abre/aceita um desafio PvP 1 × 1 com o Pokémon ativo (faixa de
+  níveis e prazo definidos em zapbot.pokemon.pvp; os participantes ganham XP
+  por nocautes e podem subir de nível/evoluir); !pokemon atacar <1-4> usa o
   golpe correspondente (ver o menu de golpes em cada mensagem de estado);
   !pokemon defender entra em posição defensiva/evasiva; !pokemon curar usa
   uma cura do inventário (ver !loja) pro status atual (dentro ou fora de
@@ -5335,8 +5301,8 @@
   minutos; !pokemon sair cancela (se
   só um jogador entrou ainda) ou desiste - perdendo 1 ponto no rank, sem XP
   nem moedas pra ninguém - se a batalha já tiver os 2 jogadores. Cada vez tem
-  tempo máximo: 5 minutos na caçada e 30 no PvP (30 também pra alguém entrar
-  numa batalha aberta); quem estourar o limite é tratado como quem mandou
+  tempo máximo: 5 minutos na caçada e 30 por turno de PvP; desafios abertos
+  têm o prazo próprio definido em pvp/minutos-espera; quem estourar o limite é tratado como quem mandou
   !pokemon sair."
   [contexto args]
   (let [cid          (chat-id contexto)
@@ -5371,7 +5337,7 @@
       (p/resolved (mensagem-estado (get @jogos cid)))
       (str/blank? args) (iniciar-ou-entrar contexto)
       (= cmd "sair") (sair contexto)
-      (contains? #{"liga" "ligas"} cmd) (configurar-liga contexto resto)
+      (contains? #{"liga" "ligas"} cmd) (p/resolved (pokemon-ajuda/resposta "ajuda pvp"))
       (contains? #{"ginasio" "ginásio" "ginasios" "ginásios"} cmd) (configurar-ginasio contexto resto)
       (contains? #{"evento" "eventos"} cmd) (p/resolved (ver-evento contexto))
       (= cmd "professor") (comando-professor contexto resto)
@@ -5418,7 +5384,7 @@
           (contains? #{"salvar" "usar" "ver" "excluir" "apagar" "remover"}
                      (expandir-subcomando :time (first resto)))
           (configurar-time-pronto contexto resto)
-          (= ["liga"] (vec resto)) (configurar-liga contexto ["time"])
+          (= ["liga"] (vec resto)) (p/resolved (pokemon-ajuda/resposta "ajuda pvp"))
           (contains? #{"csv" "planilha"} (first resto)) (resposta-time-csv contexto)
           (= "ativo" (first resto)) (ver-pokemon-ativo-do-time contexto)
           modo-texto? (ver-time contexto (str/join " " resto))
@@ -5451,7 +5417,7 @@
             "• " config/prefix "pokemon eventos\n"
             "• " config/prefix "presente @amigo\n\n"
             "*Comandos*\n"
-            "• " config/prefix "pokemon liga [nome|time <n1,n2,n3>]\n"
+            "• " config/prefix "pokemon — abrir ou aceitar PvP com seu Pokémon ativo\n"
             "• " config/prefix "pokemon inicial\n"
             "• " config/prefix "pokemon cacar\n"
             "• " config/prefix "pokemon cacar <área> | clima\n"
@@ -5691,11 +5657,14 @@
     (if (contains? #{"bug" "bugs"} cmd)
       (bugs/comando! contexto cmd resto)
       (enfileirar-jogada (chat-id contexto)
-                        #(jogar-rodada contexto
-                          (if (and (:ginasio (get @jogos (chat-id contexto)))
-                                   (contains? #{"gin" "ginasio" "ginásio"} cmd)
-                                   (contains? #{"atacar" "atk"} (first resto)))
-                            (str "atacar " (second resto)) args))
+                        #(p/let [jogo (get @jogos (chat-id contexto))
+                                 _ (when (pvp/expirado? jogo (.now js/Date))
+                                     (expirar-batalha! (chat-id contexto) jogo))]
+                           (jogar-rodada contexto
+                             (if (and (:ginasio (get @jogos (chat-id contexto)))
+                                      (contains? #{"gin" "ginasio" "ginásio"} cmd)
+                                      (contains? #{"atacar" "atk"} (first resto)))
+                               (str "atacar " (second resto)) args)))
                         (desempenho/contexto-de contexto)))))
 
 

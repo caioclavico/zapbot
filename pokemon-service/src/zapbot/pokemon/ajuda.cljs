@@ -2,7 +2,7 @@
   "Guias de jogo consultáveis sem alterar o estado da partida."
   (:require [clojure.string :as str]
             [zapbot.config :as config]
-            [zapbot.pokemon.treinador :as treinador]))
+            [zapbot.pokemon.pvp :as pvp]))
 
 (defn- comando [texto]
   (str config/prefix "pokemon" (when (seq texto) (str " " texto))))
@@ -13,7 +13,7 @@
    "ginasio" :ginasios "ginasios" :ginasios "gin" :ginasios
    "cacar" :cacadas "cacada" :cacadas "cacadas" :cacadas "cac" :cacadas
    "capturar" :captura "captura" :captura "cap" :captura "pokebola" :captura
-   "liga" :ligas "ligas" :ligas "lig" :ligas
+   "liga" :batalhas "ligas" :batalhas "lig" :batalhas
    "pc" :pc "computador" :pc "centro" :pc "espaco" :pc "espaço" :pc
    "professor" :professor
    "time" :time "equipe" :time "tm" :time
@@ -34,18 +34,17 @@
          "• `cac` → cacar · `cap` → capturar · `ini` → inicial\n"
          "• `dex` ou `pdx` → pokedex · `tm` → time · `mch` → mochila\n"
          "• `fav` → favorito · `tre` → treinador\n\n"
-         "*Ginásio, liga e eventos*\n"
-         "• `gin` → ginasio · `lig` → liga · `evt` → eventos\n"
+         "*Ginásio e eventos*\n"
+         "• `gin` → ginasio · `evt` → eventos\n"
          "• Ginásio: `des`/`dsf` → desafiar · `tm` → time · `pot` → pocao\n"
          "• Ginásio: `fru` → fruta · `ran` → ranking · `hist` → historico\n"
-         "• Liga: `tm` → time\n"
          "  Ex.: " config/prefix "pk gin des pedra\n\n"
          "*Raid*\n"
          "• `abr` → abrir · `ent` → entrar · `ini` → iniciar · `atk` → atacar\n"
          "• `sai` → sair · `can` → cancelar\n\n"
          "*Escalações nomeadas*\n"
          "• `sal` → salvar · `usa` → usar · `exc` → excluir · `apa` → apagar · `rm` → remover\n"
-         "• Destino: `gin` → ginasio · `lig` → liga\n"
+         "• Destino: `gin` → ginasio\n• Compatibilidade: `lig` → guia do novo PvP\n"
          "  Ex.: " config/prefix "pk tm usa os fodoes gin\n\n"
          "*Gerenciamento*\n"
          "• `evo` → evoluir · `neg` → negociar · `doa` → doar\n"
@@ -68,13 +67,14 @@
          "Para desistir: " (comando "sair") ". Consultar esta ajuda não gasta turno.")
 
     :batalhas
-    (str "⚔️ *Como jogar: batalhas*\n\n"
-         "1. Selecione uma liga e escale três Pokémon saudáveis. Veja " (comando "ajuda ligas") ".\n"
-         "2. Envie " (comando "") " para abrir uma batalha. Outra pessoa do mesmo chat e da mesma liga envia o mesmo comando para entrar.\n"
-         "3. Na sua vez, consulte os golpes e use " (comando "atacar 1") " (números de 1 a 4). Considere o tipo do adversário ao escolher.\n"
-         "4. Você também pode usar " (comando "defender") ", " (comando "pocao [número]") " para recuperar 40% do HP, " (comando "pocao-maxima [número]") " para encher o HP ou " (comando "curar") " para status. Sem número, a poção vai para o Pokémon ativo.\n\n"
-         "Após um nocaute, entra o próximo da escalação. Vença os três adversários. Pokémon participantes podem ganhar XP e subir de nível.\n"
-         "Há 30 minutos para entrar ou agir no PvP. " (comando "sair") " cancela a espera ou desiste da partida; desistir de uma batalha iniciada perde 1 ponto no rank e não dá XP nem moedas.")
+    (str "⚔️ *Como jogar: PvP com Pokémon ativo*\n\n"
+         "1. Escolha um Pokémon saudável com " (comando "escolher <número>") ".\n"
+         "2. Envie " (comando "") " para abrir um desafio. Outro treinador envia o mesmo comando para aceitar com seu Pokémon ativo.\n"
+         "A diferença máxima é de " pvp/diferenca-maxima-niveis " níveis para cima ou para baixo. A faixa aparece no anúncio; tentativas incompatíveis não cancelam o desafio.\n"
+         "O desafio expira em " pvp/minutos-espera " minutos, sem penalidade. Há um desafio por grupo e você só pode participar de um combate por vez.\n"
+         "3. Na sua vez, use " (comando "atacar 1") " (golpes de 1 a 4), " (comando "defender") ", " (comando "pocao") ", " (comando "pocao-maxima") " ou " (comando "curar") ".\n\n"
+         "O PvP é 1 × 1, sem liga ou escalação obrigatória. Os níveis, atributos, tipos, habilidades e golpes reais são preservados. O nocaute encerra a partida e os participantes recebem o XP das regras existentes.\n"
+         "Após começar, há 30 minutos por turno. " (comando "sair") " cancela seu desafio ou desiste; desistência não dá XP ou moedas e perde 1 ponto no rank.")
 
     :raid
     (str "🤝 *Raide nos ginásios*\n\n"
@@ -110,7 +110,7 @@
          "2. Monte e veja a foto dos três mais fortes aptos com " (comando "gin time") ". Para escolher manualmente: " (comando "ginasio time 1,2,3") ". Use os números da sua coleção.\n"
          "3. Veja o primeiro líder com " (comando "ginasio pedra") " e inicie com " (comando "ginasio desafiar pedra") ".\n"
          "4. Use " (comando "atacar 1") " (ou o atalho " config/prefix "pk atk 1) e as demais ações de batalha. O líder responde automaticamente. Cada ataque mostra a foto dos Pokémon na arena.\n\n"
-         "São combates 3 × 3, sem ajuste dos níveis. Vença os ginásios na ordem para liberar os próximos. A escalação de ginásio é separada da liga.\n"
+         "São combates 3 × 3, sem ajuste dos níveis. Vença os ginásios na ordem para liberar os próximos. A escalação de ginásio é independente do Pokémon ativo usado no PvP.\n"
          "✨ *XP dos Pokémon:* somente Pokémon que realmente entraram na batalha são participantes. Cada um recebe seu XP-base e +1 XP para cada defensor que ele próprio nocauteou:\n"
          "• Derrota: 3 XP-base. Exemplo: derrubou 2 defensores antes de perder = 5 XP.\n"
          "• Primeira vitória no ginásio: 7 XP-base. Com 2 nocautes = 9 XP, além da insígnia, 100 moedas e uma pedra.\n"
@@ -147,17 +147,6 @@
          "Durante o combate, é permitida uma troca de Pokémon com " (comando "escolher <número>") "; ela gasta sua ação.\n"
          "Só pode haver uma batalha ou caçada por vez no chat. Respeite o intervalo informado entre caçadas e aja em até 5 minutos. " (comando "sair") " abandona a caçada.")
 
-    :ligas
-    (str "🏆 *Como jogar: ligas*\n\n"
-         (str/join "\n" (map #(str (:nome %) ": níveis " (:min %) "–" (:max %)) treinador/ligas))
-         "\n\n1. Consulte sua seleção com " (comando "liga") ".\n"
-         "2. Escolha, por exemplo, " (comando "liga bronze") ".\n"
-         "3. Encontre Pokémon da faixa com " (comando "time bronze >") ".\n"
-         "4. Escale três diferentes: " (comando "liga time 1,2,3") ". Substitua os números pelos da sua coleção. Todos precisam estar na faixa da liga e saudáveis para batalhar.\n"
-         "5. Envie " (comando "") " para abrir ou entrar numa batalha com alguém da mesma liga.\n\n"
-         "A ordem da escalação define quem começa e quem entra após cada nocaute. Não há limite adicional de diferença de nível entre times da mesma liga.\n"
-         "Confira sua escalação com " (comando "liga time") ". Se um Pokémon sair da faixa ao subir de nível, ajuste o time. Regras de combate: " (comando "ajuda batalhas") ".")
-
     :pc
     (str "🎒 *Coleção e espaço Pokémon*\n\n"
          "Todos os seus Pokémon disponíveis ficam em " (comando "time") " (atalho !pk tm), com filtros e uma imagem de até 12 por página. " (comando "pc") " orienta sobre a coleção unificada.\n"
@@ -166,7 +155,7 @@
          "Capacidade inicial: 26 Pokémon. Joy e defensores dos ginásios também contam. Compras anteriores continuam valendo; os Pokémon do antigo PC são incorporados ao carregar os dados, preservando os índices de batalha.\n"
          "Pokémon antigos acima do limite são preservados e continuam utilizáveis. Sem vaga, novas caçadas, capturas e doações recebidas ficam bloqueadas. Retornos da Joy e dos ginásios nunca são descartados.\n"
          "Para liberar espaço, doe ou consulte " (comando "professor ajuda") ". A transferência ao professor é definitiva e dá 1 cartão de XP da família.\n"
-         "Ginásios e ligas continuam usando escalações de três Pokémon da sua coleção.")
+         "Ginásios continuam usando três Pokémon da coleção. PvP usa somente o ativo.")
 
     :professor
     (str "👨‍🔬 *Professor — transferência e cartões de XP*\n\n"
@@ -183,14 +172,14 @@
     (str "🎒 *Como jogar: time e recuperação*\n\n"
          "• " (comando "time") ": coleção completa, com uma imagem de até 12 Pokémon por página.\n"
          "Use " (comando "time 2") " para a página seguinte, ou " (comando "time 2 fogo >") " para manter filtros. Um número no início indica página; para nível, use nivel N.\n"
-         "Compre +50 vagas com " (comando "espaco comprar") ". Ginásios e ligas usam escalações de três Pokémon.\n"
+         "Compre +50 vagas com " (comando "espaco comprar") ". Ginásios usam escalações de três Pokémon; PvP usa apenas o ativo.\n"
          "Envie repetidos ao professor para liberar vagas e ganhar cartões de XP: " (comando "professor ajuda") ".\n"
          "• " (comando "time txt") ": lista completa em texto; " (comando "time csv") ": planilha.\n"
          "• " (comando "time >") ": maior força primeiro; " (comando "time <") ": menor primeiro. A força é a soma dos seis atributos.\n"
          "• Combine filtros: " (comando "time txt fogo >") " ou " (comando "time bronze") ". Os números da coleção não mudam.\n"
          "• " (comando "escolher 2") ": define o ativo; " (comando "time ativo") ": ficha e golpes.\n"
          "• " (comando "favorito 2") ": marca o favorito, que é ativado quando volta saudável para a equipe.\n"
-         "• " (comando "time salvar os fodoes 1,4,7") ": salva uma escalação nomeada sem reservar os Pokémon. Liste com " (comando "times") " e aplique com " (comando "time usar os fodoes liga") " ou troque `liga` por `ginasio`.\n"
+         "• " (comando "time salvar os fodoes 1,4,7") ": salva uma escalação nomeada sem reservar os Pokémon. Liste com " (comando "times") " e aplique com " (comando "time usar os fodoes ginasio") ". O PvP não usa escalações.\n"
          "• " (comando "pocao [número]") " recupera 40% do HP; " (comando "pocao-maxima [número]") " recupera tudo. Sem número, cura o ativo. " (comando "curar") " trata status.\n"
          "• " (comando "joy 1,2") ": envia os Pokémon indicados à Enfermeira Joy por 30 minutos. Veja o tempo restante em " (comando "time") ".\n\n"
          "Começando agora? Use " (comando "inicial") ", escolha uma opção e consulte " (comando "ajuda cacadas") " para ampliar sua coleção.")
@@ -209,17 +198,16 @@
          "Use o identificador do item exibido na ficha. Veja detalhes em " config/prefix "loja detalhes pedra-trovao. Guia de recompensas: " (comando "ajuda ginasios") ".")
 
     (str "📖 *Como jogar Pokémon*\n\n"
-         "Comece com " (comando "inicial") ", escolha seu Pokémon e faça caçadas para capturar mais. Com três Pokémon, prepare seu time para ligas e ginásios.\n\n"
+         "Comece com " (comando "inicial") ", escolha seu Pokémon e faça caçadas para capturar mais. Um Pokémon ativo saudável basta para o PvP. Com três, prepare seu time de ginásio.\n\n"
          "⚡ *Atalhos:* " config/prefix "pk atk 1, " config/prefix "pk def, " config/prefix "pk cur, "
          config/prefix "pk pot, " config/prefix "pk cac, " config/prefix "pk gin, "
-         config/prefix "pk lig, " config/prefix "pk tm e " config/prefix "pk dex.\n\n"
+         config/prefix "pk tm e " config/prefix "pk dex.\n\n"
          (str/join "\n" (map (fn [[nome titulo]] (str "• " (comando (str "ajuda " nome)) " — " titulo))
                                [["ataque" "golpes, defesa, curas e poções"]
                                 ["batalhas" "turnos, golpes e vitória"]
                                 ["ginasios" "líderes, insígnias e recompensas"]
                                 ["cacadas" "selvagens e captura"]
                                 ["captura" "Pokébolas, tentativas e bônus de XP"]
-                                ["ligas" "faixas de nível e escalação"]
                                 ["time" "coleção, páginas, filtros e recuperação"]
                                 ["professor" "transferência e cartões de XP"]
                                 ["espaco" "estoque e expansões"]

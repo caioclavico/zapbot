@@ -146,7 +146,7 @@
     (is (= "raid" (core/expandir-atalho "raid")))))
 
 (deftest atalhos-funcionam-tambem-nos-subcomandos
-  (is (= "time" (core/expandir-subcomando :liga "tm")))
+  (is (= "tm" (core/expandir-subcomando :liga "tm")))
   (is (= "desafiar" (core/expandir-subcomando :ginasio "des")))
   (is (= "historico" (core/expandir-subcomando :ginasio "hist")))
   (is (= "atacar" (core/expandir-subcomando :raid "atk")))
