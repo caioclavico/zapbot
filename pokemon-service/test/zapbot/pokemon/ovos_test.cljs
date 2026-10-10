@@ -90,6 +90,24 @@
     (is (nil? (get-in novo [:eggs 0 :resultado])))
     (is (= "ready" (get-in novo [:incubators 0 :active-egg-id])))))
 
+(deftest transicao-persistida-usa-cas-e-e-idempotente
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now db]}]
+        (p/let [estado (store/resolver! "g" "p" true @now)
+                legado (assoc estado :eggs [{:egg-id "legado" :category 2 :goal-mm 2000000
+                                             :progress-mm 1000000 :state "incubating"
+                                             :incubated-at 10}])
+                _ (swap! db assoc-in [:states (:account-id estado)]
+                         {:version (:version estado) :schema_version 1
+                          :payload (store/json legado)})
+                convertido (store/transicionar-legado! (:account-id estado) @now)
+                repetido (store/transicionar-legado! (:account-id estado) @now)]
+          (is (= 2 (:mechanics-version convertido)))
+          (is (= (:version convertido) (:version repetido)))
+          (is (= 1 (count (:eggs repetido))))
+          (is (= 50 (get-in repetido [:eggs 0 :points])))))) done)))
+
 (deftest regras-puras-e-pesos-do-catalogo
   (doseq [categoria [2 5 10]]
     (let [pool (catalog/validar! catalog/distribuicao categoria)

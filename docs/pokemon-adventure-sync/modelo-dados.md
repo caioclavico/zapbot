@@ -10,16 +10,17 @@ Referências: [arquitetura](arquitetura.md), [API](api.md).
 A sincronização por distância/quilômetros foi abandonada como mecânica de
 produto. O novo domínio puro em `ovos.cljs` modela categorias `:comum`, `:raro`
 e `:epico`, com metas configuráveis de 2/6/12 horas ou 100/250/500 pontos,
-respectivamente. Ele ainda não está ligado ao state Cassandra desta Fase 2;
-essa adaptação será feita na Etapa B, preservando recibos e CAS.
+respectivamente. A transição é persistida na Etapa B por
+`transicionar-legado!`, usando o CAS existente, preservando recibos e sem DDL.
 
 Política de conversão aprovada para a Etapa B: distância 2/5/10 km vira
 comum/raro/épico; `points = floor(oldProgress / oldGoal * newPointsGoal)`;
 `incubated-at`, identidade, pool, seed, recibos e estado são preservados.
 Ovos `ready_to_hatch` continuam prontos e não são entregues durante a
 conversão. O marcador `transition-receipt` impede repetição; nenhum prazo é
-reiniciado e nenhuma recompensa é criada. A escrita será protegida pelo CAS
-existente e só ocorrerá depois de confirmar o schema legado.
+reiniciado e nenhuma recompensa é criada. A escrita é protegida pelo CAS
+existente e só ocorre depois de confirmar o schema legado. O bootstrap não a
+executa enquanto a flag estiver desligada.
 
 ## Implementação delimitada da Fase 2
 

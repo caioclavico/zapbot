@@ -14,7 +14,8 @@ Consultar [arquitetura](arquitetura.md), [modelo](modelo-dados.md),
 
 1. Análise/arquitetura: os cinco documentos, concluída.
 2. Ovos/incubadoras, persistência e testes por distância: implementação anterior.
-   Etapa A da nova mecânica por tempo/pontos: núcleo puro implementado, ainda sem persistência.
+   Etapa A da nova mecânica por tempo/pontos: núcleo puro implementado.
+   Etapa B: transição persistida via CAS implementada, ainda sem migração automática.
 3. Comandos WhatsApp e integração de notificações, ainda não implementados.
 4. API de sincronização/autenticação e consolidação de dados móveis, pendente.
 5. Aplicativo Flutter e HealthKit/Health Connect: cancelado; não haverá aplicativo externo.

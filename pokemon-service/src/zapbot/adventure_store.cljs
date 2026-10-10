@@ -86,6 +86,11 @@
                                                      {:code :result-unknown} erro)))))))))]
     (tentar 3)))
 
+(defn transicionar-legado! [id agora]
+  "Aplica a conversão v1->v2 sob o CAS existente. Não cria nascimento nem
+   executa a conversão novamente quando o marcador já foi persistido."
+  (alterar! id ovos/transicionar-legado agora))
+
 (defn operar! [id event-id hash tipo day agora mudar]
   (p/let [externo (recibo! id event-id day)]
     (when (and externo (not= hash (:fingerprint externo)))
