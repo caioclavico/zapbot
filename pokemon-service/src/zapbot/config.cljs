@@ -1,6 +1,7 @@
 (ns zapbot.config
   "Configuração mínima do processo Pokémon."
   (:require [clojure.string :as str]
+            [zapbot.pokemon.egg-rewards :as egg-rewards]
             ["dotenv" :as dotenv]))
 
 (.config dotenv)
@@ -18,6 +19,12 @@
     "true" true
     "false" false
     (throw (js/Error. "ADVENTURE_SYNC_ENABLED deve ser true ou false."))))
+
+(def egg-probabilities
+  (egg-rewards/validar-probabilidades!
+   {:capture-common (js/Number (env "EGG_CAPTURE_COMMON_PERCENT" "10"))
+    :pvp-epic (js/Number (env "EGG_PVP_EPIC_PERCENT" "3"))
+    :pvp-rare (js/Number (env "EGG_PVP_RARE_PERCENT" "20"))}))
 
 (def bot-name (env "BOT_NAME" "Odisseu"))
 (def prefix (env "PREFIX" "!"))

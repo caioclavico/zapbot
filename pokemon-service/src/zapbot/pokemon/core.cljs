@@ -11,6 +11,7 @@
             [clojure.string :as str]
             [cljs.reader :as reader]
             [zapbot.pokemon.golpes :as golpes]
+            [zapbot.pokemon.egg-rewards :as egg-rewards]
             [zapbot.pokemon.aventuras :as aventuras]
             [zapbot.pokemon.ginasios :as ginasios]
             [zapbot.pokemon.mundo :as mundo]
@@ -216,6 +217,15 @@
   "Instala o adaptador opcional de ovos sem criar dependência circular."
   [registrar]
   (reset! registrar-recompensa-ovo registrar))
+
+(defn- evento-atividade [jogo tipo pid]
+  (when (and config/adventure-enabled? (:adventure-id jogo) pid)
+    (egg-rewards/evento (str (name tipo) ":" (:adventure-id jogo))
+                       tipo (.now js/Date))))
+
+(defn- registrar-batalha-atividade! [cid jogo pid venceu?]
+  (when-let [evento (evento-atividade jogo (if venceu? :victory :battle) pid)]
+    (treinador/registrar-evento-atividade! cid pid evento)))
 
 (defn configurar-comando-ovos! [handler]
   (reset! comando-ovos handler))
@@ -1224,12 +1234,16 @@
         _ (swap! jogos assoc cid finalizando)
         vencedor-pid (get-in jogo [:jogadores vencedor-marca])
         _ (rank/pontuar! cid vencedor-pid (get-in jogo [:nomes vencedor-marca]) "pokemon")
-        _ (treinador/registrar-vitoria-treinador! cid vencedor-pid)
+        _ (if-let [evento (evento-atividade jogo :pvp-win vencedor-pid)]
+            (treinador/registrar-vitoria-treinador! cid vencedor-pid evento)
+            (treinador/registrar-vitoria-treinador! cid vencedor-pid))
         _ (loja/registrar-semanal! cid vencedor-pid "pvp" [])
         ganho (loja/creditar! cid vencedor-pid)
         aviso-missao (loja/registrar-missao! cid vencedor-pid "vitorias" (treinador/nivel-jogador cid vencedor-pid))
         recompensas (recompensas-partida! cid jogo)
-        premio-bolas (premiar-nocautes-pvp! cid jogo)]
+        premio-bolas (premiar-nocautes-pvp! cid jogo)
+        _ (doseq [[marca pid] (:jogadores jogo) :when (not= marca vencedor-marca)]
+            (registrar-batalha-atividade! cid jogo pid false))]
     (-> (p/all (for [{:keys [pid idx subida]} recompensas :when subida]
                  (-> (verificar-evolucao! contexto cid pid idx)
                      (p/then (fn [_] (aprender-golpe-por-nivel! contexto cid pid (:nivel subida) idx))))))
@@ -1290,6 +1304,8 @@
     (cond
       (= 2 (count caidos))
       (let [premio-bolas (when-not (:ginasio novo) (premiar-nocautes-pvp! cid novo))]
+        (doseq [[marca pid] (:jogadores novo) :when (not (and (:ginasio novo) (= marca :o)))]
+          (registrar-batalha-atividade! cid novo pid false))
         (swap! jogos dissoc cid)
         (str "\n\n🤝 Os dois times caíram juntos: empate, sem pontos, XP ou moedas."
              (when-not (str/blank? premio-bolas) (str "\n" premio-bolas))))
@@ -3688,6 +3704,8 @@
         moedas         (if capturou? (+ 2 (min 10 sequencia)) 0)
         indice         (or (:indice-pokemon caca) (treinador/indice-ativo cid pid))
         subida         (treinador/ganhar-xp-no-indice! cid pid indice xp)]
+    (when (and (not capturou?) (zero? (get-in caca [:hp :x] 1)))
+      (registrar-batalha-atividade! cid caca pid false))
     (swap! cacadas-selvagens dissoc cid)
     (when capturou? (loja/registrar-semanal! cid pid "tipos" (:tipos selvagem)))
     (when (pos? moedas) (loja/creditar-quantia! cid pid moedas))
@@ -3711,6 +3729,7 @@
        "\n📖 Como capturar e obter bolas: " config/prefix "pk cap ajuda."))
 
 (defn- preparar-captura-pos-batalha [cid pid caca]
+  (registrar-batalha-atividade! cid caca pid true)
   (let [selvagem (get-in caca [:pokemons :o])
         bonus (get bonus-captura-status (get-in caca [:status :o]) 1)
         chance (min 95 (+ (js/Math.round (* bonus (chance-captura selvagem)))
@@ -3754,7 +3773,9 @@
                           (encerrar-cacada! cid pid caca capturou?))
              nome-bola (:nome (loja/dados-item bola))]
          (if capturou?
-           (let [{:keys [destino indice]} (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil)
+           (let [{:keys [destino indice]} (if-let [evento (evento-atividade caca :capture pid)]
+                                          (treinador/adicionar-pokemon-com-evento! cid pid selvagem (:hp selvagem) nil evento)
+                                          (treinador/adicionar-pokemon! cid pid selvagem (:hp selvagem) nil))
                  aviso-missao (loja/registrar-missao! cid pid "capturas" (treinador/nivel-jogador cid pid))]
              (str "✅ " nome-bola " lançada: captura concluída! (" chance "% de chance)" aviso-missao
                   "\n📚 Registrado na Pokédex e "
@@ -4572,6 +4593,7 @@
                        (str " (" nocautes " nocaute" (when (> nocautes 1) "s") ")")))))))
 
 (defn- finalizar-ginasio [contexto cid jogo vencedor]
+  (registrar-batalha-atividade! cid jogo (get-in jogo [:jogadores :x]) (= vencedor :x))
   (ginasios/registrar-resultado! cid (get-in jogo [:ginasio :id]) (:lider-anterior jogo)
                                 (get-in jogo [:jogadores :x]) (:nome-desafiante jogo)
                                 (= vencedor :x) (.now js/Date))
@@ -5563,6 +5585,10 @@
                        (nil? (:contexto (get @cacadas-selvagens cid))))
               (swap! cacadas-selvagens update cid assoc :contexto contexto))
           _ (destravar-vez-do-lider! cid (jogador-id contexto) args)
+          _ (when config/adventure-enabled?
+              (doseq [estados [jogos cacadas-selvagens]]
+                (when (and (get @estados cid) (nil? (:adventure-id (get @estados cid))))
+                  (swap! estados assoc-in [cid :adventure-id] (.randomUUID (js/require "crypto"))))))
           jogo-inicial (get @jogos cid)
           caca-inicial (get @cacadas-selvagens cid)
           bola-captura (bola-do-comando-captura args)
@@ -5574,7 +5600,10 @@
                          (golpe-do-comando jogo-inicial (:vez jogo-inicial) args))
           resultado-derrota (:resultado-derrota jogo-inicial)]
       ;; A referência continua disponível após a limpeza assíncrona da batalha.
-      (p/let [_ (desempenho/medir! ctx "recolher_curados" #(treinador/recolher-curados! cid (jogador-id contexto)))
+      (p/let [;; Confirma o ID persistente do combate antes de executar um desfecho.
+              ;; Após crash, o mesmo combate recuperado gera o mesmo recibo.
+              _ (when config/adventure-enabled? (armazenamento/aguardar-todas!))
+              _ (desempenho/medir! ctx "recolher_curados" #(treinador/recolher-curados! cid (jogador-id contexto)))
               _ (desempenho/medir! ctx "xp_raid_evolucao" #(p/all (for [{:keys [indice subida]} (treinador/resgatar-xp-raids! cid (jogador-id contexto))
                              :when subida]
                          (-> (verificar-evolucao! contexto cid (jogador-id contexto) indice)
@@ -5634,7 +5663,9 @@
               ;; Rank, treinador, loja e ginásios possuem filas próprias. Só
               ;; entrega a resposta depois que todas as alterações já iniciadas
               ;; terminaram suas tentativas de persistência.
-              _ (desempenho/medir! ctx "persistencia_modulos" armazenamento/aguardar-todas!)]
+              _ (desempenho/medir! ctx "persistencia_modulos" armazenamento/aguardar-todas!)
+              _ (when (and config/adventure-enabled? @registrar-recompensa-ovo)
+                  (@registrar-recompensa-ovo cid))]
         resultado-final))))
 
 (defonce ^:private filas-jogadas (atom {}))

@@ -71,10 +71,11 @@
         novo (ovos/transicionar-legado legado)
         novamente (ovos/transicionar-legado novo)]
     (is (= 2 (:mechanics-version novo)))
-    (is (= "distance-to-activity-v2" (:transition-receipt novo)))
+    (is (= "legacy-distance-preserved" (:transition-receipt novo)))
     (is (= ["legacy-2" "legacy-5"] (mapv :egg-id (:eggs novo))))
-    (is (= [:comum :raro] (mapv :category (:eggs novo))))
-    (is (= [50 0] (mapv :points (:eggs novo))))
+    (is (= [2 5] (mapv :category (:eggs novo))))
+    (is (nil? (get-in novo [:eggs 0 :points])))
+    (is (= :approval-required (:activity-migration novo)))
     (is (= [1000 nil] (mapv :incubated-at (:eggs novo))))
     (is (= (:receipts legado) (:receipts novo)))
     (is (= novo novamente))))
@@ -85,7 +86,7 @@
                                           :state "ready_to_hatch"}]
                 :incubators [{:incubator-id "permanente" :active-egg-id "ready"}]}
         novo (ovos/transicionar-legado legado)]
-    (is (= :epico (get-in novo [:eggs 0 :category])))
+    (is (= 10 (get-in novo [:eggs 0 :category])))
     (is (= "ready_to_hatch" (get-in novo [:eggs 0 :state])))
     (is (nil? (get-in novo [:eggs 0 :resultado])))
     (is (= "ready" (get-in novo [:incubators 0 :active-egg-id])))))
@@ -106,7 +107,8 @@
           (is (= 2 (:mechanics-version convertido)))
           (is (= (:version convertido) (:version repetido)))
           (is (= 1 (count (:eggs repetido))))
-          (is (= 50 (get-in repetido [:eggs 0 :points])))))) done)))
+          (is (nil? (get-in repetido [:eggs 0 :points])))
+          (is (= :approval-required (:activity-migration repetido)))))) done)))
 
 (deftest regras-puras-e-pesos-do-catalogo
   (doseq [categoria [2 5 10]]
@@ -517,7 +519,127 @@
 (deftest politica-de-recompensa-e-deterministica
   (is (= 10 (adventure/categoria-recompensa 0 {:epico 3 :raro 0 :comum 0})))
   (is (= 5 (adventure/categoria-recompensa 3 {:epico 3 :raro 20 :comum 0})))
-  (is (= 2 (adventure/categoria-recompensa 22 {:epico 3 :raro 20 :comum 10})))
+  (is (= 2 (adventure/categoria-recompensa 23 {:epico 3 :raro 20 :comum 10})))
   (is (nil? (adventure/categoria-recompensa 40 {:epico 3 :raro 20 :comum 10})))
   (is (= 10 (adventure/categoria-recompensa -4 {:epico 3 :raro 0 :comum 0})))
-  (is (= 2 (adventure/categoria-recompensa 180 {:epico 0 :raro 0 :comum 10}))))
+  (is (nil? (adventure/categoria-recompensa 180 {:epico 0 :raro 0 :comum 10}))))
+
+(deftest atividade-nascimento-pontos-e-replay
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now]}]
+        (p/let [estado (adventure/atividade-ativar! "activity-g" "p" "welcome-activity")
+                ovo (first (:eggs estado))
+                _ (adventure/atividade-incubar! "activity-g" "p" "start" (:egg-id ovo))
+                nasceu (adventure/atividade-pontos! "activity-g" "p" "points" 100)
+                replay (adventure/atividade-pontos! "activity-g" "p" "points" 100)
+                tempo (adventure/atividade-avancar-tempo! "activity-g" "p" (+ @now 7200000))]
+          (is (= :hatched (:state (first (:eggs nasceu)))))
+          (is (= (:species ovo) (get-in nasceu [:eggs 0 :resultado :species])))
+          (is (= 1 (count (treinador/equipe "activity-g" "p"))))
+          (is (= (:eggs replay) (:eggs tempo)))
+          (is (= 1 (get (first (treinador/equipe "activity-g" "p")) "nivel")))))) done)))
+
+(deftest atividade-nascimento-tempo-persistido
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now]}]
+        (p/let [estado (adventure/atividade-ativar! "time-g" "p" "welcome-time")
+                ovo (first (:eggs estado))
+                _ (adventure/atividade-incubar! "time-g" "p" "start" (:egg-id ovo))
+                nasceu (adventure/atividade-avancar-tempo! "time-g" "p" (+ @now 7200000))
+                _ (adventure/atividade-consultar! "time-g" "p")]
+          (is (= :hatched (:state (first (:eggs nasceu)))))
+          (is (= 1 (count (treinador/equipe "time-g" "p"))))))) done)))
+
+(deftest atividade-colecao-cheia-e-resposta-cas-perdida
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now cap fault]}]
+        (p/let [estado (adventure/atividade-ativar! "recover-g" "p" "welcome")
+                ovo (first (:eggs estado))
+                _ (adventure/atividade-incubar! "recover-g" "p" "start" (:egg-id ovo))
+                _ (reset! cap 0)
+                pendente (adventure/atividade-pontos! "recover-g" "p" "points" 100)
+                _ (is (= :ready-to-hatch (get-in pendente [:eggs 0 :state])))
+                _ (is (empty? (treinador/equipe "recover-g" "p")))
+                resultado (get-in pendente [:eggs 0 :resultado])
+                _ (reset! cap 50)
+                _ (reset! fault {:op :trainer-cas :after? true})
+                _ (-> (adventure/atividade-consultar! "recover-g" "p") (p/catch (fn [_] nil)))
+                recuperado (adventure/recuperar! "recover-g" "p")
+                _ (adventure/atividade-consultar! "recover-g" "p")]
+          (is (= resultado (get-in recuperado [:eggs 0 :resultado])))
+          (is (= :hatched (get-in recuperado [:eggs 0 :state])))
+          (is (= 1 (count (treinador/equipe "recover-g" "p"))))))) done)))
+
+(deftest atividade-concorrencia-e-isolamento
+  (async done
+    (concluir (fixture/com-banco
+      (fn [_]
+        (p/let [a (adventure/atividade-ativar! "ga" "p" "welcome")
+                b (adventure/atividade-ativar! "gb" "p" "welcome")
+                _ (adventure/atividade-incubar! "ga" "p" "start" (:egg-id (first (:eggs a))))
+                _ (p/all [(adventure/atividade-pontos! "ga" "p" "points" 100)
+                          (adventure/atividade-pontos! "ga" "p" "points" 100)])]
+          (is (= 1 (count (treinador/equipe "ga" "p"))))
+          (is (empty? (treinador/equipe "gb" "p")))
+          (is (= :inventory (get-in b [:eggs 0 :state])))))) done)))
+
+(deftest atividade-recupera-falhas-de-estado-e-reinicio
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now fault db]}]
+        (reduce
+         (fn [anterior depois?]
+           (p/let [_ anterior
+                   cid (str "fault-" depois?)
+                   a (adventure/atividade-ativar! cid "p" "welcome")
+                   _ (adventure/atividade-incubar! cid "p" "start" (:egg-id (first (:eggs a))))
+                   _ (reset! fault {:op :state-cas :after? depois?})
+                   _ (falha (fn [] (adventure/atividade-pontos! cid "p" "points" 100)) :result-unknown)
+                   _ (adventure/atividade-pontos! cid "p" "points" 100)
+                   _ (adventure/preparar-inicializacao!)
+                   _ (adventure/inicializar!)
+                   estado (adventure/atividade-consultar! cid "p")]
+             (is (= :hatched (get-in estado [:eggs 0 :state])))
+             (is (= 1 (count (treinador/equipe cid "p"))))))
+         (p/resolved nil) [false true]))) done)))
+
+(deftest atividade-preserva-legado-pendente
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [now]}]
+        (p/let [estado (store/resolver! "legacy-activity" "p" true @now)
+                ovo (ovos/novo-ovo "old" 2 "v1" [] "seed" @now)
+                legado (store/alterar! (:account-id estado)
+                         (fn [a] (-> a (ovos/conceder ovo) (ovos/incubar "old" @now)
+                                     (assoc :activity-migration :approval-required))) @now)
+                _ (adventure/atividade-ativar! "legacy-activity" "p" "welcome")
+                _ (adventure/atividade-consultar! "legacy-activity" "p")
+                lido (store/ler! (:account-id estado))]
+          (is (= (:eggs legado) (:eggs lido)))
+          (is (= (:incubators legado) (:incubators lido)))
+          (is (= (:activity-migration legado) (:activity-migration lido)))
+          (is (empty? (treinador/equipe "legacy-activity" "p")))))) done)))
+
+(deftest atividade-resultado-fixado-recuperavel
+  (async done
+    (concluir (fixture/com-banco
+      (fn [{:keys [fault]}]
+        (reduce
+         (fn [anterior depois?]
+           (p/let [_ anterior cid (str "result-" depois?)
+                   a (adventure/atividade-ativar! cid "p" "welcome")
+                   especie (:species (first (:eggs a)))
+                   _ (adventure/atividade-incubar! cid "p" "start" (:egg-id (first (:eggs a))))
+                   _ (reset! fault {:op :state-cas :after? depois?
+                                    :match (fn [args] (str/includes? (second args) "\"resultado\""))})
+                   _ (falha (fn [] (adventure/atividade-pontos! cid "p" "points" 100)) :result-unknown)
+                   _ (is (empty? (treinador/equipe cid "p")))
+                   recuperado (adventure/atividade-consultar! cid "p")
+                   _ (adventure/atividade-consultar! cid "p")]
+             (is (= especie (get-in recuperado [:eggs 0 :resultado :species])))
+             (is (= 1 (count (treinador/equipe cid "p"))))
+             (is (= 0 (treinador/sequencia-capturas cid "p")))))
+         (p/resolved nil) [false true]))) done)))

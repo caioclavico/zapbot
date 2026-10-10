@@ -10,31 +10,13 @@
             [zapbot.rank :as rank]
             [zapbot.pokemon.core :as pokemon]
             [zapbot.pokemon.adventure :as adventure]
+            [zapbot.pokemon.egg-commands :as egg-commands]
             [zapbot.pokemon.pokedex :as pokedex]
             [zapbot.pokemon.loja :as loja]))
 
 (defn initialize []
-  (pokemon/configurar-recompensa-ovo! adventure/registrar-captura!)
-  (pokemon/configurar-comando-ovos!
-   (fn [ctx cmd args]
-     (let [cid (:chat-id ctx) pid (:player-id ctx)]
-       (if-not config/adventure-enabled?
-         (p/resolved "🥚 O sistema de ovos está desativado.")
-         (case cmd
-           ("ovos" "ovo") (p/then (adventure/consultar! cid pid)
-                                  (fn [estado]
-                                    (if (nil? estado) "🥚 Você ainda não possui ovos."
-                                        (str "🥚 Ovos disponíveis: "
-                                             (count (filter #(= :inventory (:state %)) (:eggs estado)))
-                                             "\n🔥 Em incubação: "
-                                             (count (filter #(= :incubating (:state %)) (:eggs estado)))))))
-           "incubadoras" (p/then (adventure/consultar! cid pid)
-                                  (fn [estado]
-                                    (str "🧪 Incubadoras: " (count (:incubators estado))))))
-           "incubar" (if-let [egg-id (first args)]
-                       (p/then (adventure/incubar! cid pid (str "whatsapp:" (:request-id ctx) ":incubar") egg-id)
-                               (fn [_] "🥚 Ovo colocado na incubadora."))
-                       "Informe o ID do ovo para incubar."))))))
+  (pokemon/configurar-recompensa-ovo! adventure/drenar-eventos!)
+  (pokemon/configurar-comando-ovos! egg-commands/comando!)
   (adventure/preparar-inicializacao!)
   ;; Preserva a criação síncrona do driver usada pelo bootstrap e pelos testes.
   (p/then (armazenamento/iniciar!) (fn [_] (adventure/inicializar!))))
@@ -59,8 +41,24 @@
 (defn eggs-recover [cid pid] (p/then (adventure/recuperar! cid pid) clj->js))
 (defn eggs-history [cid pid month cursor]
   (p/then (adventure/historico! cid pid month cursor) clj->js))
+(defn activity-activate [cid pid event-id]
+  (p/then (adventure/atividade-ativar! cid pid event-id) clj->js))
+(defn activity-incubate [cid pid event-id egg-id]
+  (p/then (adventure/atividade-incubar! cid pid event-id egg-id) clj->js))
+(defn activity-drain [cid]
+  (pokemon/enfileirar-operacao-interna! cid (fn [] (adventure/drenar-eventos! cid))))
+(defn activity-grant-incubator [cid pid event-id kind]
+  (p/then (adventure/conceder-incubadora! cid pid event-id (keyword kind)) clj->js))
+(defn activity-points [cid pid event-id points]
+  (p/then (adventure/atividade-pontos! cid pid event-id points) clj->js))
+(defn activity-state [cid pid]
+  (p/then (adventure/atividade-consultar! cid pid) clj->js))
+(defn activity-time [cid pid now]
+  (p/then (adventure/atividade-avancar-tempo! cid pid now) clj->js))
+(defn activity-tick [] (adventure/processar-vencidos!))
 (defn start-timers [emitir]
   (when-not config/read-only?
+    (adventure/iniciar-notificacoes! (fn [cid resposta] (emitir cid (clj->js resposta))))
     (pokemon/iniciar! (fn [chat-id resposta] (emitir chat-id (clj->js resposta))))))
 (defn stop-timers [] (adventure/parar!) (pokemon/parar!))
 (defn shutdown-pending []

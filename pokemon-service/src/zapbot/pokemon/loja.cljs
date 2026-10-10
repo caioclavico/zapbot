@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [zapbot.config :as config]
             [zapbot.pokemon.missoes :as missoes]
+            [zapbot.pokemon.egg-rewards :as egg-rewards]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.pokemon.boundary :as boundary]
             [zapbot.pokemon.imagens :as imagens]))
@@ -388,11 +389,27 @@
 (defn xp-missoes [cid pid]
   (get (conta cid pid) "xp-missoes" 0))
 
+(defn eventos-atividade [cid]
+  (for [[pid conta] (get (armazenamento/obter "loja") cid)
+        [_ evento] (get conta "adventure-eventos")]
+    [pid evento]))
+
+(defn confirmar-evento-atividade! [cid pid event-id]
+  (swap! contas update-in [cid pid "adventure-eventos"] dissoc event-id)
+  (persistir!))
+
 (defn registrar-missao! [cid pid evento nivel]
   (let [dia (missoes/dia-atual)
         c (conta cid pid)
         antes (count (missoes/disponiveis (missoes/estado-do-dia c dia nivel)))
-        novo (missoes/registrar-evento c dia evento nivel)]
+        novo (missoes/registrar-evento c dia evento nivel)
+        missao (some #(when (= evento (:id %)) %) (missoes/catalogo-do-dia (missoes/estado-do-dia novo dia nivel)))
+        completou? (and missao
+                        (< (get-in (missoes/estado-do-dia c dia nivel) ["progresso" evento] 0) (:meta missao))
+                        (>= (get-in (missoes/estado-do-dia novo dia nivel) ["progresso" evento] 0) (:meta missao)))
+        novo (if (and config/adventure-enabled? completou?)
+               (egg-rewards/guardar-evento novo
+                 (egg-rewards/evento (str "daily:" dia ":" evento) :daily-mission (.now js/Date))) novo)]
     (swap! contas assoc-in [cid pid] novo)
     (persistir!)
     (str

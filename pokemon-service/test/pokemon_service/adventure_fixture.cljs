@@ -93,10 +93,13 @@
 (defn com-banco [f]
   (let [atoms [storage/client storage/pronto storage/cache storage/confirmados storage/filas-gravacao
                storage/falhas-gravacao storage/gravacoes-pendentes storage/partes-bloqueadas storage/geracoes-partes
-               treinador/contas core/jogos core/cacadas-selvagens core/filas-jogadas]
-        lifecycle [adventure/aceitando? adventure/pronto? adventure/geracao]
+               treinador/contas core/jogos core/cacadas-selvagens core/filas-jogadas
+               core/registrar-recompensa-ovo core/comando-ovos]
+        lifecycle [adventure/aceitando? adventure/pronto? adventure/geracao
+                   adventure/vencimentos adventure/emissor adventure/processando?]
         old-lifecycle (mapv deref lifecycle)
         antigos (mapv deref atoms)
+        probabilidades config/egg-probabilities
         enabled config/adventure-enabled? readonly config/read-only? clock js/Date.now capacidade loja/capacidade-pokemon
         hidratando @storage/hidratando?
         db (atom {:bindings {} :states {} :receipts {} :history {} :legacy {}})
@@ -104,10 +107,13 @@
         now (atom 1791626400000) cap (atom 50)]
     (reset! storage/hidratando? true)
     (doseq [a (drop 2 atoms)] (reset! a {}))
+    (reset! core/registrar-recompensa-ovo adventure/drenar-eventos!)
+    (reset! core/comando-ovos nil)
     (reset! storage/gravacoes-pendentes 0)
     (reset! storage/client (driver db queries fault after-cas)) (reset! storage/pronto true)
     (reset! storage/hidratando? false)
     (reset! adventure/aceitando? true) (reset! adventure/pronto? true) (reset! adventure/geracao 0)
+    (reset! adventure/vencimentos {}) (reset! adventure/emissor nil) (reset! adventure/processando? false)
     (set! config/adventure-enabled? true) (set! config/read-only? false)
     (set! js/Date.now #(deref now)) (set! loja/capacidade-pokemon (fn [& _] @cap))
     (-> (p/resolved nil)
@@ -117,6 +123,7 @@
                      (doseq [[a valor] (map vector atoms antigos)] (reset! a valor))
                      (reset! storage/hidratando? hidratando)
                      (doseq [[a v] (map vector lifecycle old-lifecycle)] (reset! a v))
+                     (set! config/egg-probabilities probabilidades)
                      (set! config/adventure-enabled? enabled) (set! config/read-only? readonly)
                      (set! js/Date.now clock) (set! loja/capacidade-pokemon capacidade))))))
 

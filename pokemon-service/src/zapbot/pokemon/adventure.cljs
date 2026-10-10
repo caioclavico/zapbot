@@ -1,5 +1,5 @@
 (ns zapbot.pokemon.adventure
-  "Fachada interna de domínio. Nenhuma rota HTTP, comando ou scheduler."
+  "Fachada de incubação e recuperação; processamento limitado de prazos duráveis."
   (:require [promesa.core :as p]
             [clojure.string :as str]
             [zapbot.config :as config]
@@ -8,16 +8,38 @@
             [zapbot.pokemon.ovos :as ovos]
             [zapbot.pokemon.adventure-catalog :as catalog]
             [zapbot.pokemon.core :as core]
-            [zapbot.pokemon.treinador :as treinador]))
+            [zapbot.pokemon.treinador :as treinador]
+            [zapbot.pokemon.loja :as loja]
+            [zapbot.pokemon.egg-rewards :as egg-rewards]))
 
 (defonce ^:private aceitando? (atom true))
 (defonce ^:private pronto? (atom true))
 (defonce ^:private geracao (atom 0))
+(defonce ^:private vencimentos (atom {}))
+(defonce ^:private emissor (atom nil))
+(defonce ^:private relogio (atom nil))
+(defonce ^:private processando? (atom false))
+(defn- acompanhar! [estado]
+  (let [pendente? (or (seq (:hatch-notifications estado))
+                      (some #(= :ready-to-hatch (:state %)) (get-in estado [:activity-state :eggs])))
+        prazo (when-not pendente?
+                (first (sort (keep #(when (= :incubating (:state %)) (:due-at %))
+                                   (get-in estado [:activity-state :eggs])))))
+        id (:account-id estado)]
+    (if (or pendente? prazo)
+      (swap! vencimentos assoc id {:cid (:chat-id estado) :pid (:player-id estado)
+                                  :due (if pendente? 0 prazo)})
+      (swap! vencimentos dissoc id))
+    estado))
 (defn disponivel? [] @pronto?)
 (defn preparar-inicializacao! []
   (swap! geracao inc)
+  (reset! vencimentos {})
   (when config/adventure-enabled? (reset! pronto? false) (reset! aceitando? false)))
-(defn parar! [] (swap! geracao inc) (reset! aceitando? false))
+(defn parar! []
+  (swap! geracao inc) (reset! aceitando? false) (reset! emissor nil)
+  (when-let [timer @relogio] (js/clearInterval timer))
+  (reset! relogio nil))
 
 (defn- texto! [texto]
   (when-not (and (string? texto) (not (str/blank? texto)) (<= (count texto) 128))
@@ -51,7 +73,9 @@
                     (if-not (or (treinador/recibo-nascimento (:chat-id fixado) (:player-id fixado) (:hatch-id resultado))
                                 (core/pode-receber-nascimento? (:chat-id fixado) (:player-id fixado)))
                       fixado
-                      (p/let [_ (treinador/receber-nascimento! (:chat-id fixado) (:player-id fixado)
+                      ;; Pokémon e recibo compartilham o CAS da partição treinador.
+             ;; Se a confirmação do ovo falhar, o recibo impede nova entrega.
+             (p/let [_ (treinador/receber-nascimento! (:chat-id fixado) (:player-id fixado)
                                   (:hatch-id resultado) (:registro resultado))]
                         (store/alterar! (:account-id fixado)
                           #(if (= "delivery_pending" (:state (ovos/ovo % egg-id)))
@@ -64,6 +88,270 @@
   (executar! cid pid
     #(p/let [estado (store/resolver! cid pid false (.now js/Date))]
        (when estado (ovos/consulta estado)))))
+
+;; Estado autoritativo da mecânica nova. O campo é aditivo no payload legado;
+;; nenhum campo de distância é reescrito.
+(defn- garantir-atividade! [estado agora]
+  (if (:activity-state estado)
+    (p/resolved estado)
+    (store/alterar! (:account-id estado)
+                     (fn [a] (if (:activity-state a) a
+                       (assoc a :activity-state (ovos/estado-atividade-inicial)
+                                :activity-schema-version ovos/atividade-schema-version)))
+                     agora)))
+
+(defn- recuperar-atividade!
+  "Reconcilia prazos, fixa resultado por CAS, entrega com recibo da coleção e
+   conclui o ovo. Todas as etapas podem ser repetidas após resultado incerto."
+  [estado agora]
+  (acompanhar! estado)
+  (p/let [estado (store/alterar! (:account-id estado)
+                    (fn [atual] (update atual :activity-state ovos/avancar-tempo-atividade agora)) agora)]
+    (p/then (reduce
+     (fn [anterior egg-id]
+       (p/let [atual anterior
+               ;; Antes de tocar a coleção, os IDs e o registro ficam duráveis.
+               fixado (store/alterar! (:account-id atual)
+                        (fn [a]
+                          (let [ovo (ovos/ovo (:activity-state a) egg-id)]
+                            (if (or (:resultado ovo) (not= :ready-to-hatch (:state ovo))) a
+                              (let [nome (or (:species ovo)
+                                             (ovos/erro! :species-unresolved "Ovo sem espécie fixada; preservar para recuperação explícita."))
+                                    id (store/uuid)
+                                    resultado {:hatch-id (store/uuid) :pokemon-id id :species nome
+                                               :registro (core/preparar-registro-nascimento (catalog/especie nome) id)}]
+                                (update a :activity-state ovos/atualizar-ovo egg-id
+                                        (fn [o] (assoc o :resultado resultado))))))) agora)
+               ovo (ovos/ovo (:activity-state fixado) egg-id)
+               resultado (:resultado ovo)]
+         (if (or (not= :ready-to-hatch (:state ovo)) (nil? resultado)) fixado
+           (if-not (or (treinador/recibo-nascimento (:chat-id fixado) (:player-id fixado) (:hatch-id resultado))
+                       (core/pode-receber-nascimento? (:chat-id fixado) (:player-id fixado))) fixado
+             (p/let [_ (treinador/receber-nascimento! (:chat-id fixado) (:player-id fixado)
+                              (:hatch-id resultado) (:registro resultado))]
+               (store/alterar! (:account-id fixado)
+                 (fn [a]
+                   (if (= :hatched (:state (ovos/ovo (:activity-state a) egg-id))) a
+                     (-> a
+                         (update :activity-state ovos/concluir-atividade egg-id agora)
+                         (update :history-pending conj
+                                 (merge resultado {:egg-id egg-id :category (:category ovo)
+                                                    :seq (:next-hatch-seq a) :hatched-at agora}))
+                         ;; Mesmo CAS que confirma a conclusão, somente após
+                         ;; entrega+recibo duráveis na coleção.
+                         (update :hatch-notifications (fnil conj [])
+                                 {:hatch-id (:hatch-id resultado) :species (:species resultado)
+                                  :category (:category ovo) :at agora})
+                         (update :next-hatch-seq inc)))) agora))))))
+     (p/resolved estado) (map :egg-id (get-in estado [:activity-state :eggs])))
+      (fn [a] (p/then (store/projetar! a agora) acompanhar!)))))
+
+(defn- enviar-notificacoes! [estado]
+  (reduce
+   (fn [anterior aviso]
+     (p/let [atual anterior]
+       (if-let [enviar @emissor]
+         (p/let [_ (enviar (:chat-id atual)
+                          {:event-id (str "egg:" (:hatch-id aviso))
+                           :texto (str "🎉 SEU OVO CHOCOU!\n\n🥚 Ovo " (name (:category aviso))
+                                       "\n👤 Treinador: @" (first (str/split (:player-id atual) #"@"))
+                                       "\n✨ Nasceu " (:species aviso) "!\n⭐ Nível 1\n❤️ HP cheio"
+                                       "\n\nO Pokémon foi adicionado à sua coleção!")
+                           :mentions [(:player-id atual)]})]
+           (store/alterar! (:account-id atual)
+             #(update % :hatch-notifications
+                      (fn [xs] (vec (remove (fn [x] (= (:hatch-id x) (:hatch-id aviso))) xs))))
+             (.now js/Date)))
+         atual)))
+   (p/resolved estado) (:hatch-notifications estado)))
+
+(defn processar-vencidos!
+  "Até dez contas por ciclo; sem SELECT global. O índice é reconstruído no boot."
+  []
+  (when (and config/adventure-enabled? (not config/read-only?) @aceitando? @pronto?
+             (compare-and-set! processando? false true))
+    (let [ticket @geracao agora (.now js/Date)
+          contas (take 10 (sort-by (comp :due val) (filter #(<= (:due (val %)) agora) @vencimentos)))]
+      (-> (reduce
+           (fn [anterior [id {:keys [cid pid]}]]
+             (p/let [_ anterior]
+               (when (= ticket @geracao)
+                 (-> (core/enfileirar-operacao-interna! cid
+                   (fn []
+                     (p/let [_ (armazenamento/recuperar-treinador! cid)
+                             estado (store/resolver! cid pid false (.now js/Date))
+                             recuperado (recuperar-atividade! estado (.now js/Date))
+                             enviado (enviar-notificacoes! recuperado)]
+                       (acompanhar! enviado)
+                       (when (get @vencimentos id)
+                         (swap! vencimentos update-in [id :due] #(max % (+ (.now js/Date) 60000)))))) true)
+                     (p/catch (fn [_]
+                                (when (get @vencimentos id)
+                                  (swap! vencimentos assoc-in [id :due] (+ (.now js/Date) 60000)))
+                                (js/console.error "[Ovos] Recuperação pendente; nova tentativa em próximo ciclo.")))))))
+           (p/resolved nil) contas)
+          (p/finally #(reset! processando? false))))))
+
+(defn iniciar-notificacoes! [enviar]
+  (when (and config/adventure-enabled? (not config/read-only?) (nil? @relogio))
+    (reset! emissor enviar)
+    (let [tick #(-> (p/resolved (processar-vencidos!))
+                   (p/catch (fn [_] (js/console.error "[Ovos] Falha na recuperação/notificação; pendência preservada."))))
+          timer (js/setInterval tick 60000)]
+      (.unref timer)
+      (reset! relogio timer)
+      (tick))))
+
+(defn- garantir-inicial! [estado agora]
+  (p/let [r (store/operar! (:account-id estado) "activity-welcome-v1"
+              (store/fingerprint ["activity-welcome-v1"]) "activity-welcome" (store/dia agora) agora
+              (fn [a]
+                (let [activity (:activity-state a)
+                      legado? (some (fn [r] (= "activity-grant" (:kind r))) (:receipts a))]
+                  (if (or (:welcome-granted? activity) legado?)
+                    [(assoc-in a [:activity-state :welcome-granted?] true) {:already-granted true}]
+                    (let [ovo (assoc (ovos/novo-ovo-atividade (store/uuid) :comum agora)
+                                     :species (catalog/sortear (catalog/validar! catalog/distribuicao 2) (catalog/seed)))]
+                      [(assoc a :activity-state (assoc (ovos/conceder-ovo-atividade activity ovo)
+                                                       :welcome-granted? true))
+                       {:egg-id (:egg-id ovo)}])))))]
+    (:state r)))
+
+(defn sorteios-evento [account-id event-id]
+  (let [hash (store/fingerprint [account-id event-id])]
+    (mapv (fn [inicio] (* 100 (/ (js/parseInt (subs hash inicio (+ inicio 8)) 16) 4294967296))) [0 8])))
+
+(defn- aplicar-evento! [cid pid evento]
+  (let [event-id (get evento "event-id") tipo (keyword (get evento "kind"))
+        ocorrido-em (get evento "at") agora (.now js/Date)]
+    (texto! event-id)
+    (when-not (and (contains? egg-rewards/pontos tipo)
+                   (js/Number.isSafeInteger ocorrido-em) (<= 0 ocorrido-em agora))
+      (ovos/erro! :invalid-game-event "Evento do jogo inválido ou futuro."))
+    (p/let [estado (store/resolver! cid pid true agora)
+            estado (garantir-atividade! estado agora)
+            estado (garantir-inicial! estado agora)
+            categoria (egg-rewards/categoria tipo (sorteios-evento (:account-id estado) event-id)
+                                            config/egg-probabilities)
+            r (store/operar! (:account-id estado) event-id
+                (store/fingerprint ["game-event" tipo ocorrido-em]) "game-event" (store/dia ocorrido-em) agora
+                (fn [a]
+                  (let [activity (ovos/aplicar-pontos-atividade (:activity-state a) event-id
+                                    (get egg-rewards/pontos tipo) ocorrido-em)
+                        cheio? (>= (count (remove (fn [o] (= :hatched (:state o))) (:eggs activity))) ovos/limite-inventario)
+                        ovo (when (and categoria (not cheio?))
+                              (let [km (get {:comum 2 :raro 5 :epico 10} categoria)]
+                                (assoc (ovos/novo-ovo-atividade (store/uuid) categoria agora)
+                                       :species (catalog/sortear (catalog/validar! catalog/distribuicao km)
+                                                  (store/fingerprint [(:account-id a) event-id "species"])))))
+                        novo (if ovo (ovos/conceder-ovo-atividade activity ovo) activity)]
+                    [(assoc a :activity-state novo)
+                     {:points (get egg-rewards/pontos tipo) :category categoria
+                      :egg-id (:egg-id ovo) :inventory-full (boolean (and categoria cheio?))}])))]
+      (recuperar-atividade! (:state r) agora))))
+
+(defn drenar-eventos!
+  "Chamado dentro da fila já adquirida pelo core; não enfileira recursivamente.
+   O diário da fonte só é removido depois do CAS do activity-state e da entrega."
+  [cid]
+  (when config/adventure-enabled?
+    (p/let [_ (armazenamento/aguardar-todas!)]
+      (reduce
+       (fn [anterior [modulo pid evento]]
+         (p/let [_ anterior
+                 _ (aplicar-evento! cid pid evento)]
+           (if (= modulo :treinador)
+             (treinador/confirmar-evento-atividade! cid pid (get evento "event-id"))
+             (loja/confirmar-evento-atividade! cid pid (get evento "event-id")))))
+       (p/resolved nil)
+       (sort-by (fn [[modulo pid e]] [(get e "at") pid (get e "event-id") (name modulo)])
+                (concat (map (fn [[pid e]] [:treinador pid e]) (treinador/eventos-atividade cid))
+                        (map (fn [[pid e]] [:loja pid e]) (loja/eventos-atividade cid))))))))
+
+(defn conceder-incubadora! [cid pid event-id tipo]
+  (texto! event-id)
+  (when-not (contains? #{:extra :especial} tipo)
+    (ovos/erro! :invalid-incubator "Somente incubadoras extra e especial podem ser concedidas."))
+  (executar! cid pid
+    (fn []
+      (p/let [agora (.now js/Date) estado (store/resolver! cid pid true agora)
+              estado (garantir-atividade! estado agora)
+              r (store/operar! (:account-id estado) event-id
+                  (store/fingerprint ["incubator-grant" tipo]) "incubator-grant" (store/dia agora) agora
+                  (fn [a] (let [id (store/uuid)]
+                            [(update a :activity-state ovos/adicionar-incubadora-atividade
+                                     id tipo 3 (if (= tipo :especial) 25 0))
+                             {:incubator-id id}])))]
+        (:activity-state (:state r))))))
+
+(defn atividade-consultar! [cid pid]
+  (executar! cid pid
+    #(p/let [estado (store/resolver! cid pid false (.now js/Date))]
+       (when estado
+         (p/let [atual (garantir-atividade! estado (.now js/Date))
+                 recuperado (recuperar-atividade! atual (.now js/Date))]
+           (:activity-state recuperado))))))
+
+(defn atividade-ativar! [cid pid event-id]
+  (texto! event-id)
+  (executar! cid pid
+    (fn []
+      (p/let [agora (.now js/Date)
+              estado (store/resolver! cid pid true agora)
+              estado (garantir-atividade! estado agora)
+              estado (garantir-inicial! estado agora)
+              recuperado (recuperar-atividade! estado agora)]
+        (:activity-state recuperado)))))
+
+(defn atividade-incubar!
+  ([cid pid event-id egg-id] (atividade-incubar! cid pid event-id egg-id nil))
+  ([cid pid event-id egg-id incubator-id]
+   (texto! event-id) (texto! egg-id)
+   (executar! cid pid
+     (fn []
+       (p/let [agora (.now js/Date) estado (store/resolver! cid pid false agora)
+               _ (when-not estado (ovos/erro! :account-not-found "Conta sem ovos."))
+               estado (garantir-atividade! estado agora)
+               estado (recuperar-atividade! estado agora)
+               ;; Mesmo se a resposta do CAS de início se perder, esta conta
+               ;; será relida pelo worker; o prazo persistido continua autoridade.
+               _ (swap! vencimentos assoc (:account-id estado) {:cid cid :pid pid :due agora})
+               resultado (store/operar! (:account-id estado) event-id
+                           (store/fingerprint ["activity-incubate" egg-id incubator-id]) "activity-incubate"
+                           (store/dia agora) agora
+                           (fn [atual] (let [a (:activity-state atual)
+                                             id (or incubator-id
+                                                    (:incubator-id (first (filter (fn [i] (nil? (:active-egg-id i))) (:incubators a)))))]
+                                         [(assoc atual :activity-state (ovos/incubar-atividade a egg-id id agora))
+                                          {:egg-id egg-id :incubator-id id}])))
+               recuperado (recuperar-atividade! (:state resultado) agora)]
+         (:activity-state recuperado))))))
+
+(defn atividade-pontos! [cid pid event-id pontos]
+  (texto! event-id)
+  (executar! cid pid
+    #(p/let [agora (.now js/Date) estado (store/resolver! cid pid false agora)
+             _ (when-not estado (ovos/erro! :account-not-found "Conta sem ovos."))
+             estado (garantir-atividade! estado agora)
+             resultado (store/operar! (:account-id estado) event-id
+                         (store/fingerprint ["activity-points" pontos]) "activity-points"
+                         (store/dia agora) agora
+                         (fn [atual] [(assoc atual :activity-state
+                                                (ovos/aplicar-pontos-atividade (:activity-state atual) event-id pontos))
+                                      {:points pontos}]))]
+       (p/let [recuperado (recuperar-atividade! (:state resultado) agora)]
+         (:activity-state recuperado)))))
+
+(defn atividade-avancar-tempo! [cid pid agora]
+  (executar! cid pid
+    #(p/let [estado (store/resolver! cid pid false agora)
+             _ (when-not estado (ovos/erro! :account-not-found "Conta sem ovos."))
+             estado (garantir-atividade! estado agora)
+             novo (store/alterar! (:account-id estado)
+                                  (fn [a] (update a :activity-state ovos/avancar-tempo-atividade agora))
+                                  agora)]
+       (p/let [recuperado (recuperar-atividade! novo agora)]
+         (:activity-state recuperado)))))
 
 (defn criar-ovo!
   ([cid pid event-id categoria] (criar-ovo! cid pid event-id categoria catalog/distribuicao))
@@ -96,22 +384,15 @@
 (defn- categoria-evento [probabilidades]
   (categoria-recompensa (rand-int 100) probabilidades))
 
-(defn registrar-captura!
-  "Concede no máximo um ovo por captura concluída. O requestId da captura é
-  usado como recibo durável; falhas ficam explícitas para recuperação posterior."
-  [cid pid captura-id]
-  (if-not config/adventure-enabled?
-    (p/resolved nil)
-    (when-let [categoria (categoria-evento {:comum 10})]
-      (criar-ovo! cid pid (str "capture:" captura-id) categoria))))
+(defn registrar-captura! [cid pid captura-id]
+  (when config/adventure-enabled?
+    (executar! cid pid
+      (fn [] (aplicar-evento! cid pid (egg-rewards/evento (str "capture:" captura-id) :capture (.now js/Date)))))))
 
-(defn registrar-vitoria!
-  "Concede o ovo de vitória somente após a vitória já persistida pelo combate."
-  [cid pid partida-id]
-  (if-not config/adventure-enabled?
-    (p/resolved nil)
-    (let [categoria (if (< (rand-int 100) 3) 10 5)]
-      (criar-ovo! cid pid (str "pvp-win:" partida-id) categoria))))
+(defn registrar-vitoria! [cid pid partida-id]
+  (when config/adventure-enabled?
+    (executar! cid pid
+      (fn [] (aplicar-evento! cid pid (egg-rewards/evento (str "pvp-win:" partida-id) :pvp-win (.now js/Date)))))))
 
 (defn ativar! [cid pid] (criar-ovo! cid pid "welcome" 2))
 
@@ -147,7 +428,11 @@
   (executar! cid pid
     #(p/let [_ (armazenamento/recuperar-treinador! cid)
              estado (store/resolver! cid pid false (.now js/Date))]
-       (when estado (p/then (recuperar-estado! estado (.now js/Date)) ovos/consulta))) true))
+       (when estado
+         (if (:activity-state estado)
+           (p/let [recuperado (recuperar-atividade! estado (.now js/Date))]
+             (:activity-state recuperado))
+           (p/then (recuperar-estado! estado (.now js/Date)) ovos/consulta)))) true))
 
 (defn historico! [cid pid month & [cursor]]
   (when-not (and (string? month) (re-matches #"\d{4}-(0[1-9]|1[0-2])" month))
@@ -176,16 +461,25 @@
                           (fn [anterior estado]
                             (p/let [_ anterior]
                               (verificar)
-                              (when (or (seq (:history-pending estado))
+                              (when (or (:activity-state estado) (seq (:history-pending estado))
                                         (some #(not (:projected? %)) (:receipts estado))
                                         (some #(contains? #{"ready_to_hatch" "delivery_pending"} (:state %)) (:eggs estado)))
                                 (core/enfileirar-operacao-interna!
                                   (:chat-id estado)
                                   #(p/let [_ (armazenamento/recuperar-treinador! (:chat-id estado))]
-                                     (recuperar-estado! estado (.now js/Date))) true))))
+                                     (p/let [legado (recuperar-estado! estado (.now js/Date))]
+                                       (if (:activity-state legado)
+                                         (recuperar-atividade! legado (.now js/Date)) legado))) true))))
                           (p/resolved nil) states)]
                 (when next-page (pagina! next-page))))]
       (p/let [_ (armazenamento/validar-adventure-schema!)
-              _ (pagina! nil)]
+              _ (pagina! nil)
+              _ (reduce (fn [anterior cid]
+                          (p/let [_ anterior]
+                            (verificar)
+                            (core/enfileirar-operacao-interna! cid
+                              (fn [] (drenar-eventos! cid)) true)))
+                        (p/resolved nil)
+                        (sort (set (concat (keys @treinador/contas) (keys @loja/contas)))))]
         (verificar)
         (reset! pronto? true) (reset! aceitando? true) nil)))))

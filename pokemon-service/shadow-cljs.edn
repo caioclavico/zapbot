@@ -22,7 +22,15 @@
                      :eggsDistance pokemon-service.entry/eggs-distance
                      :eggsState pokemon-service.entry/eggs-state
                      :eggsRecover pokemon-service.entry/eggs-recover
-                     :eggsHistory pokemon-service.entry/eggs-history}
+                     :eggsHistory pokemon-service.entry/eggs-history
+                     :activityActivate pokemon-service.entry/activity-activate
+                     :activityIncubate pokemon-service.entry/activity-incubate
+                     :activityDrain pokemon-service.entry/activity-drain
+                     :activityGrantIncubator pokemon-service.entry/activity-grant-incubator
+                     :activityPoints pokemon-service.entry/activity-points
+                     :activityState pokemon-service.entry/activity-state
+                     :activityTime pokemon-service.entry/activity-time
+                     :activityTick pokemon-service.entry/activity-tick}
            :compiler-options {:optimizations :simple}}
   :benchmark {:target :node-library :output-to "target/benchmark.cjs"
               :exports {:render pokemon-benchmark/render

@@ -1,5 +1,7 @@
 (ns zapbot.pokemon.ovos)
 
+(declare erro! atualizar-ovo)
+
 (def limite-inventario 9)
 (def intervalo-ms 300000)
 (def janela-ms (* 7 24 60 60 1000))
@@ -36,15 +38,17 @@
         (dissoc :goal-mm :progress-mm))))
 
 (defn transicionar-legado
-  "Converte somente em memória um estado v1 de distância para v2.
-   A marca de versão torna a operação idempotente; nenhuma entrega é criada."
+  "Marca o legado para decisão explícita sem converter quilômetros em pontos.
+   O payload antigo permanece intacto e nenhuma entrega é criada."
   [estado]
   (if (>= (or (:mechanics-version estado) 1) atividade-schema-version)
     estado
-    (-> estado
-        (update :eggs #(mapv converter-ovo-legado %))
-        (assoc :mechanics-version atividade-schema-version
-               :transition-receipt "distance-to-activity-v2"))))
+    (assoc estado
+           :mechanics-version atividade-schema-version
+           :transition-receipt "legacy-distance-preserved"
+           :activity-migration (if (some #(= "incubating" (:state %)) (:eggs estado))
+                                 :approval-required
+                                 :not-needed))))
 
 (defn estado-atividade-inicial []
   {:eggs []
@@ -68,6 +72,8 @@
 
 (defn adicionar-incubadora-atividade [estado id kind usos bonus]
   (when (or (some #(= id (:incubator-id %)) (:incubators estado))
+            (not (contains? #{:extra :especial} kind))
+            (some #(= kind (:kind %)) (:incubators estado))
             (>= (count (:incubators estado)) max-incubadoras-atividade)
             (and (not= kind :permanente)
                  (>= (count (remove #(= :permanente (:kind %)) (:incubators estado)))
@@ -85,7 +91,7 @@
     (when (:active-egg-id incubadora) (erro! :incubator-busy "Incubadora ocupada."))
     (-> estado
         (atualizar-ovo egg-id #(assoc % :state :incubating :incubator-id incubator-id
-                                      :incubated-at agora))
+                                      :incubated-at agora :due-at (+ agora (:time-goal-ms %))))
         (update :incubators #(mapv (fn [i] (if (= incubator-id (:incubator-id i))
                                              (assoc i :active-egg-id egg-id) i)) %)))))
 
@@ -93,25 +99,29 @@
   (or (>= (:points ovo) (:points-goal ovo))
       (>= (:time-ms ovo) (:time-goal-ms ovo))))
 
-(defn aplicar-pontos-atividade [estado event-id pontos]
-  (when-not (and (string? event-id) (not (empty? event-id))
-                 (js/Number.isSafeInteger pontos) (pos? pontos))
-    (erro! :invalid-activity "Evento ou pontos inválidos."))
-  (if (contains? (:receipts estado) event-id) estado
-      (let [ativos (set (keep :active-egg-id (:incubators estado)))
-            recebido (fn [ovo]
-                       (if (and (contains? ativos (:egg-id ovo)) (= :incubating (:state ovo)))
-                         (let [inc (some #(when (= (:incubator-id ovo) (:incubator-id %)) (:bonus-points %)) (:incubators estado))
-                               pontos (+ pontos (js/Math.floor (* pontos (/ (or inc 0) 100))))
-                               atual (update ovo :points #(min (:points-goal ovo) (+ % pontos)))]
-                           (if (pronto-atividade? atual) (assoc atual :state :ready-to-hatch) atual)) ovo))]
-        (-> estado (update :eggs #(mapv recebido %)) (update :receipts conj event-id)))))
+(defn aplicar-pontos-atividade
+  ([estado event-id pontos] (aplicar-pontos-atividade estado event-id pontos nil))
+  ([estado event-id pontos ocorrido-em]
+   (when-not (and (string? event-id) (not (empty? event-id))
+                  (js/Number.isSafeInteger pontos) (pos? pontos))
+     (erro! :invalid-activity "Evento ou pontos inválidos."))
+   (if (contains? (:receipts estado) event-id) estado
+     (let [ativos (set (keep :active-egg-id (:incubators estado)))
+           recebido (fn [ovo]
+                      (if (and (contains? ativos (:egg-id ovo)) (= :incubating (:state ovo))
+                               (or (nil? ocorrido-em) (>= ocorrido-em (:incubated-at ovo))))
+                        (let [bonus (some #(when (= (:incubator-id ovo) (:incubator-id %))
+                                            (:bonus-points %)) (:incubators estado))
+                              ganho (* pontos (+ 1 (/ (or bonus 0) 100)))
+                              atual (update ovo :points #(min (:points-goal ovo) (+ % ganho)))]
+                          (if (pronto-atividade? atual) (assoc atual :state :ready-to-hatch) atual)) ovo))]
+       (-> estado (update :eggs #(mapv recebido %)) (update :receipts conj event-id))))))
 
 (defn avancar-tempo-atividade [estado agora]
   (when-not (js/Number.isSafeInteger agora) (erro! :invalid-time "Instante inválido."))
   (update estado :eggs #(mapv (fn [ovo]
                                 (if (= :incubating (:state ovo))
-                                  (let [atual (assoc ovo :time-ms (max 0 (- agora (:incubated-at ovo))))]
+                                  (let [atual (assoc ovo :time-ms (max (:time-ms ovo 0) 0 (- agora (:incubated-at ovo))))]
                                     (if (pronto-atividade? atual) (assoc atual :state :ready-to-hatch) atual)) ovo)) %)))
 
 (defn concluir-atividade [estado egg-id agora]

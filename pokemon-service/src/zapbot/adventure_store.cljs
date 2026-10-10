@@ -28,7 +28,20 @@
     (when-not (and (= 1 (.-schema_version row)) (= 1 (:schema-version estado))
                    (js/Number.isSafeInteger versao) (<= 0 versao))
       (ovos/erro! :schema-incompatible "Estado Adventure incompatível."))
-    (assoc estado :version versao)))
+    (when (and (:activity-state estado)
+               (not= ovos/atividade-schema-version (:activity-schema-version estado)))
+      (ovos/erro! :schema-incompatible "Versão de incubação por atividade incompatível."))
+    (cond-> (assoc estado :version versao)
+      (:activity-migration estado) (update :activity-migration keyword)
+      (:activity-state estado)
+      (update :activity-state
+              (fn [a]
+                (-> a
+                    (update :receipts set)
+                    (update :eggs (fn [xs] (mapv (fn [o] (-> o (update :state keyword) (update :category keyword))) xs)))
+                    (update :incubators (fn [xs] (mapv (fn [i] (update i :kind keyword)) xs))))))
+      (:hatch-notifications estado)
+      (update :hatch-notifications #(mapv (fn [n] (update n :category keyword)) %)))))
 
 (defn ler! [id]
   (p/let [^js resultado (consulta! :state-read [id])]

@@ -4,6 +4,7 @@ const {State} = require('./state.cjs');
 const metrics = require('./metrics.cjs');
 const mode = require('./mode.cjs');
 const {logError} = require('./errors.cjs');
+const cards = require('./egg-cards.cjs');
 const shutdown = require('./shutdown.cjs');
 const REQUESTS = 'pokemon-http-requests';
 const EVENTS = 'pokemon-http-events';
@@ -46,7 +47,18 @@ class PokemonService {
     this.assertWritable();
     if (raw == null) return [];
     if (typeof raw === 'string') return raw ? [{type:'text',text:raw}] : [];
-    const text = raw.texto || '';
+    const text = raw.texto || raw.text || '';
+    const cardType=raw.cardType||raw['card-type'];
+    if (cardType) {
+      try {
+        const buffer=await cards.render(cardType,raw.cardData||raw['card-data']||{});
+        const info=await this.media.put({mime:'image/png',buffer,filename:`pokemon-${cardType}.png`});
+        return [{type:'image',text,mentions:raw.mentions||[],...info}];
+      } catch (error) {
+        this.logger(JSON.stringify({event:'egg_card_render_failed',cardType,message:error.message}));
+        return text ? [{type:'text',text,mentions:raw.mentions||[]}] : [];
+      }
+    }
     const mentions = raw.mentions || [];
     const media = raw.media || raw.documento;
     if (raw.medias) {
@@ -66,10 +78,16 @@ class PokemonService {
   async enqueueEvent(chatId, raw, suppliedEffects) {
     this.assertWritable();
     const messages=await this.messages(raw);
-    const effects=suppliedEffects || this.domain.takeEffects(chatId) || [];
+    const stableId=raw?.['event-id'];
+    if(stableId !== undefined && !validString(stableId))throw new HttpError(400,'invalid_event','Evento inválido.');
+    const effects=suppliedEffects || (stableId ? [] : this.domain.takeEffects(chatId)) || [];
     if (!messages.length && !effects.length) return;
-    const event={id:randomUUID(),chatId,messages,effects,createdAt:Date.now()};
-    await this.state.update(EVENTS,events=>{events[event.id]=event;});
+    const event={id:stableId || randomUUID(),chatId,messages,effects,createdAt:Date.now(),...(stableId ? {durableKey:true} : {})};
+    await this.state.update(EVENTS,events=>{
+      const existing=events[event.id];
+      if(existing && existing.chatId!==chatId)throw new HttpError(409,'event_conflict','Grupo do evento divergente.');
+      if(!existing)events[event.id]=event;
+    });
     return event;
   }
   startTimers() {
@@ -77,12 +95,15 @@ class PokemonService {
     this.domain.startTimers((chatId,raw)=>this.enqueueEvent(chatId,raw));
   }
   pendingEvents(limit=20) {
-    return Object.values(this.state.read(EVENTS)).sort((a,b)=>a.createdAt-b.createdAt).slice(0,limit);
+    return Object.values(this.state.read(EVENTS)).filter(e=>!e.acknowledged).sort((a,b)=>a.createdAt-b.createdAt).slice(0,limit);
   }
   async ack(id) {
     this.assertWritable();
     if (!validString(id)) throw new HttpError(400,'invalid_event','Evento inválido.');
-    await this.state.update(EVENTS,events=>{delete events[id];});
+    await this.state.update(EVENTS,events=>{
+      if(events[id]?.durableKey)events[id]={id,chatId:events[id].chatId,durableKey:true,acknowledged:true};
+      else delete events[id];
+    });
     return {acknowledged:true};
   }
   async execute(input) {

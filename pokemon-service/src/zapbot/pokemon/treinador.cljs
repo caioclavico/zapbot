@@ -11,6 +11,8 @@
   mapa interno (chaves keyword) que o zapbot.pokemon.core usa durante a batalha."
   (:require [clojure.string :as str]
             [zapbot.pokemon.golpes :as golpes]
+            [zapbot.config :as config]
+            [zapbot.pokemon.egg-rewards :as egg-rewards]
             [zapbot.pokemon.loja :as loja]
             [zapbot.armazenamento :as armazenamento]))
 
@@ -76,6 +78,23 @@
 
 (defn- conta [cid pid]
   (get-in @contas [cid pid] conta-vazia))
+
+(defn eventos-atividade [cid]
+  (for [[pid conta] (get (armazenamento/obter "treinador") cid)
+        [_ evento] (get conta "adventure-eventos")]
+    [pid evento]))
+
+(defn registrar-evento-atividade! [cid pid evento]
+  (when (and config/adventure-enabled? evento)
+    (swap! contas update-in [cid pid]
+           (fn [c] (egg-rewards/guardar-evento (or c conta-vazia) evento)))
+    (persistir!)))
+
+(defn confirmar-evento-atividade! [cid pid event-id]
+  (armazenamento/alterar-treinador-confirmado!
+   cid (fn [jogadores]
+         {:valor (update-in jogadores [pid "adventure-eventos"] dissoc event-id)
+          :resultado true})))
 
 (defn inicial-disponivel?
   "Contas antigas também são reconhecidas pelo histórico de Pokémon."
@@ -533,10 +552,14 @@
       (swap! contas update-in [cid pid] #(unificar-colecao (or % conta-vazia)))
       (persistir!))))
 
-(defn receber-registro! [cid pid registro]
-  (swap! contas update-in [cid pid] guardar-registro registro)
-  (persistir!)
-  {:destino :equipe :indice (dec (count (equipe cid pid)))})
+(defn receber-registro!
+  ([cid pid registro] (receber-registro! cid pid registro nil))
+  ([cid pid registro evento]
+   (swap! contas update-in [cid pid]
+          (fn [c] (cond-> (guardar-registro c registro)
+                    evento (egg-rewards/guardar-evento evento))))
+   (persistir!)
+   {:destino :equipe :indice (dec (count (equipe cid pid)))}))
 
 (declare colecao-shiny!)
 
@@ -634,6 +657,9 @@
   na coleção do jogador. Retorna destino e índice."
   [cid pid pokemon hp-atual status]
   (receber-registro! cid pid (pokemon->registro pokemon hp-atual status)))
+
+(defn adicionar-pokemon-com-evento! [cid pid pokemon hp-atual status evento]
+  (receber-registro! cid pid (pokemon->registro pokemon hp-atual status) evento))
 
 (defn receber-nascimento! [cid pid hatch-id registro]
   (armazenamento/alterar-treinador-confirmado!
@@ -1141,11 +1167,13 @@
   (:nivel (progresso-treinador (xp-treinador cid pid))))
 
 (defn registrar-vitoria-treinador!
-  "Registra uma vitória real. O XP das insígnias não altera esse contador."
-  [cid pid]
-  (swap! contas update-in [cid pid]
-         (fn [c] (update (or c conta-vazia) "vitorias-treinador" (fnil inc 0))))
-  (persistir!))
+  "Registra vitória e intenção de ovos na mesma atualização persistida."
+  ([cid pid] (registrar-vitoria-treinador! cid pid nil))
+  ([cid pid evento]
+   (swap! contas update-in [cid pid]
+          (fn [c] (-> (cond-> (or c conta-vazia) evento (egg-rewards/guardar-evento evento))
+                      (update "vitorias-treinador" (fnil inc 0)))))
+   (persistir!)))
 
 (defn perfil-treinador
   "Inclui XP por vitórias, insígnias e missões resgatadas, sem repetir recompensas."

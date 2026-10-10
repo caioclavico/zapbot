@@ -18,6 +18,37 @@ function fakeDomain(data={}) {
   };
 }
 const request={requestId:'message-1',chatId:'existing-chat',playerId:'existing-player@lid',playerName:'Teste',command:'pk treinador'};
+test('egg notifications keep stable identity through lost response, ack and restart',async()=>{
+  const domain=fakeDomain();
+  const service=new PokemonService({domain,media:{},logger:()=>{}});
+  const raw={'event-id':'egg:hatch-1',texto:'Nasceu Bulbasaur!',mentions:['player@lid']};
+  const store=domain.store;
+  let lost=true;
+  domain.store=async function(k,v){await store.call(this,k,v);if(lost){lost=false;throw Error('lost response');}};
+  await assert.rejects(service.enqueueEvent('group',raw),/lost response/);
+  domain.store=store;
+  await service.enqueueEvent('group',raw);
+  assert.equal(service.pendingEvents().length,1);
+  assert.equal(service.pendingEvents()[0].id,'egg:hatch-1');
+  assert.deepEqual(service.pendingEvents()[0].messages[0].mentions,['player@lid']);
+  // Enquanto o WhatsApp não confirma, reinício mantém a mensagem disponível.
+  const restarted=new PokemonService({domain:fakeDomain(domain.data),media:{},logger:()=>{}});
+  assert.equal(restarted.pendingEvents().length,1);
+  await restarted.ack('egg:hatch-1');
+  await restarted.enqueueEvent('group',raw); // CAS de origem ainda não confirmou handoff.
+  assert.equal(restarted.pendingEvents().length,0);
+  const again=new PokemonService({domain:fakeDomain(restarted.domain.data),media:{},logger:()=>{}});
+  await again.enqueueEvent('group',raw);
+  assert.equal(again.pendingEvents().length,0);
+  await assert.rejects(again.enqueueEvent('other-group',raw),e=>e.code==='event_conflict');
+});
+test('egg notification persistence failure leaves no acknowledged success',async()=>{
+  const domain=fakeDomain();
+  const service=new PokemonService({domain,media:{},logger:()=>{}});
+  domain.store=async()=>{throw Error('storage unavailable');};
+  await assert.rejects(service.enqueueEvent('group',{'event-id':'egg:hatch',texto:'Nasceu!'}),/storage unavailable/);
+  assert.equal(service.pendingEvents().length,0);
+});
 async function fixture(t,domain=fakeDomain()) {
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'pokemon-api-'));
   const media=new MediaStore(dir);
