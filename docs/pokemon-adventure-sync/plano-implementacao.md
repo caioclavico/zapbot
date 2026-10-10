@@ -2,10 +2,9 @@
 
 Plano atualizado — 10/10/2026. A Fase 2 de persistência anterior está implementada
 localmente; a Etapa A da nova mecânica por tempo/pontos também está isolada.
-Os caminhos de fases futuras são propostas; autenticação, comandos e mobile
-ainda não existem. Não há autorização para deploy, DDL de produção, secrets ou reinícios.
-O app Flutter será um projeto novo, cuja localização/repositório ainda precisa
-ser escolhida; `adventure-sync-app/` abaixo é apenas nome proposto.
+Os caminhos de fases futuras são propostas; não haverá aplicativo móvel nem
+coleta de dados de saúde. Não há autorização para deploy, DDL de produção,
+secrets ou reinícios.
 
 Consultar [arquitetura](arquitetura.md), [modelo](modelo-dados.md),
 [contrato](api.md) e [riscos](riscos-e-seguranca.md) antes de cada fase.
@@ -29,12 +28,11 @@ Consultar [arquitetura](arquitetura.md), [modelo](modelo-dados.md),
 | 2 — Ovos e incubadoras | `feat(pokemon): implement egg incubation domain` |
 | 3 — Comandos WhatsApp | `feat(pokemon): add egg commands and notifications` |
 | 4 — API e vinculação | `feat(pokemon): implement secure step sync API` |
-| 5 — Aplicativo Flutter | `feat(mobile): add step tracking companion app` |
-| 6 — Sincronização | `feat(mobile): implement background step sync` |
+| 5 — Aplicativo Flutter | cancelada |
+| 6 — Sincronização móvel | cancelada |
 
 Os títulos não autorizam commit, push, deploy ou início da fase seguinte.
-HealthKit/Health Connect em primeiro plano integra a Fase 5; a Fase 6 trata
-background e recuperação eventual, preservando os critérios abaixo.
+Não há integração HealthKit/Health Connect ou sincronização móvel nesta versão.
 
 A documentação anterior chamava de Fase 2 os comandos. O escopo mais recente
 prevalece: esta entrega não inclui comandos, vínculo, API ou dados de saúde.
@@ -167,7 +165,10 @@ repositório preservando erros/timeout atuais; nada de retries de efeito incerto
 persistência incerta. TLS/regras de exposição exigem autorização separada
 antes de qualquer alteração de infraestrutura. Nem essa fase faz deploy.
 
-## Fase 5 — aplicativo Flutter e integração de saúde
+## Fase 5 — aplicativo Flutter e integração de saúde (cancelada; referência histórica)
+
+As subseções abaixo são mantidas apenas como histórico de análise. Não serão
+implementadas nem fazem parte do produto aprovado.
 
 ### Base Flutter, inicialmente com fontes simuladas
 
@@ -280,9 +281,6 @@ npm test
 npm run test:http
 npm run build
 
-# Projeto Flutter futuro
-flutter analyze
-flutter test
 ```
 
 São comandos de validação para entregas de código. Os resultados locais da
@@ -328,6 +326,13 @@ Pokémon. Recibos permanentes crescem e podem atingir 512 KiB, bloqueando novas
 operações em vez de perder dedupe. Não existe política móvel de fontes/revisões
 nesta fase; IDs distintos para a mesma caminhada são responsabilidade do futuro
 produtor. Não foram executados deploy, DDL de produção, commit ou push.
+
+## Decisão: sem aplicativo complementar
+
+O projeto não terá cliente Flutter, integração com HealthKit/Health Connect ou
+coleta automática de passos. O Adventure Sync permanece limitado aos comandos
+WhatsApp e às APIs internas autenticadas; qualquer progresso será produzido por
+eventos internos já validados pelo serviço.
 
 ## Liberação e rollback futuros
 
