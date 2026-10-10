@@ -16,6 +16,12 @@ tempo real e pontos de atividades. A integração com captura, PvP, comandos,
 notificações e Cassandra ainda não foi alterada e continua sujeita às mesmas
 barreiras de flag, CAS e único writer.
 
+A conversão será aditiva e determinística: não apaga ovos v1, não reinicia
+`incubated-at`, não ressorteia espécies e não dispara nascimento. A conta não
+poderá executar os dois mecanismos simultaneamente; a versão do state será a
+barreira de compatibilidade. A migração Cassandra continua desabilitada até
+confirmar schema e aplicar testes de concorrência/resultado incerto.
+
 O recurso fica desabilitado por padrão. Habilitá-lo futuramente exige instalar
 e verificar o schema aditivo, analisar RF/DC e concluir pendências antes de
 readiness. Não se executou nenhuma instalação/migração em produção.

@@ -12,6 +12,39 @@
    :epico {:tempo-ms (* 12 60 60 1000) :pontos 500}})
 (def max-incubadoras-atividade 3)
 (def max-temporarias-atividade 2)
+(def atividade-schema-version 2)
+
+(defn- categoria-legada [categoria]
+  (or (get {2 :comum 5 :raro 10 :epico "2" :comum "5" :raro "10" :epico} categoria)
+      (erro! :legacy-category "Categoria legada desconhecida.")))
+
+(defn- converter-ovo-legado [ovo]
+  (let [categoria (categoria-legada (:category ovo))
+        meta (get categorias-atividade categoria)
+        objetivo (max 1 (:goal-mm ovo))
+        progresso (min objetivo (max 0 (:progress-mm ovo)))
+        pontos (min (:pontos meta)
+                    (js/Math.floor (* (:pontos meta) (/ progresso objetivo))))]
+    (-> ovo
+        (assoc :category categoria
+               :points pontos
+               :points-goal (:pontos meta)
+               :time-ms 0
+               :time-goal-ms (:tempo-ms meta)
+               :legacy-progress-mm progresso
+               :legacy-goal-mm objetivo)
+        (dissoc :goal-mm :progress-mm))))
+
+(defn transicionar-legado
+  "Converte somente em memória um estado v1 de distância para v2.
+   A marca de versão torna a operação idempotente; nenhuma entrega é criada."
+  [estado]
+  (if (>= (or (:mechanics-version estado) 1) atividade-schema-version)
+    estado
+    (-> estado
+        (update :eggs #(mapv converter-ovo-legado %))
+        (assoc :mechanics-version atividade-schema-version
+               :transition-receipt "distance-to-activity-v2"))))
 
 (defn estado-atividade-inicial []
   {:eggs []

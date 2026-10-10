@@ -59,6 +59,37 @@
                      (ovos/concluir-atividade "ovo-3" 1))]
       (is (empty? (filter #(= "azul" (:incubator-id %)) (:incubators estado)))))))
 
+(deftest transicao-legado-preserva-identidade-e-progresso
+  (let [legado {:schema-version 1 :account-id "a" :chat-id "g" :player-id "p"
+                :eggs [{:egg-id "legacy-2" :category 2 :goal-mm 2000000
+                        :progress-mm 1000000 :state "incubating"
+                        :incubated-at 1000 :pool [{:species "eevee"}] :seed "s"}
+                       {:egg-id "legacy-5" :category 5 :goal-mm 5000000
+                        :progress-mm 0 :state "inventory" :pool [{:species "growlithe"}] :seed "t"}]
+                :incubators [{:incubator-id "permanente" :active-egg-id "legacy-2"}]
+                :receipts [{:event-id "old-event" :kind "distance"}]}
+        novo (ovos/transicionar-legado legado)
+        novamente (ovos/transicionar-legado novo)]
+    (is (= 2 (:mechanics-version novo)))
+    (is (= "distance-to-activity-v2" (:transition-receipt novo)))
+    (is (= ["legacy-2" "legacy-5"] (mapv :egg-id (:eggs novo))))
+    (is (= [:comum :raro] (mapv :category (:eggs novo))))
+    (is (= [50 0] (mapv :points (:eggs novo))))
+    (is (= [1000 nil] (mapv :incubated-at (:eggs novo))))
+    (is (= (:receipts legado) (:receipts novo)))
+    (is (= novo novamente))))
+
+(deftest transicao-legado-preserva-pronto-sem-nascimento
+  (let [legado {:schema-version 1 :eggs [{:egg-id "ready" :category 10
+                                          :goal-mm 10000000 :progress-mm 10000000
+                                          :state "ready_to_hatch"}]
+                :incubators [{:incubator-id "permanente" :active-egg-id "ready"}]}
+        novo (ovos/transicionar-legado legado)]
+    (is (= :epico (get-in novo [:eggs 0 :category])))
+    (is (= "ready_to_hatch" (get-in novo [:eggs 0 :state])))
+    (is (nil? (get-in novo [:eggs 0 :resultado])))
+    (is (= "ready" (get-in novo [:incubators 0 :active-egg-id])))))
+
 (deftest regras-puras-e-pesos-do-catalogo
   (doseq [categoria [2 5 10]]
     (let [pool (catalog/validar! catalog/distribuicao categoria)
