@@ -78,7 +78,33 @@
                             (store/fingerprint ["grant" categoria]) "grant" (store/dia agora) agora
                             (fn [atual] [(ovos/conceder atual ovo) {:egg-id (:egg-id ovo)}]))
                 estado (store/projetar! (:state resultado) agora)]
-          {:operation (get-in resultado [:receipt :result]) :state (ovos/consulta estado)})))))
+         {:operation (get-in resultado [:receipt :result]) :state (ovos/consulta estado)})))))
+
+(defn- categoria-evento [probabilidades]
+  (let [n (rand-int 100)]
+    (cond
+      (< n (:epico probabilidades 0)) 10
+      (< n (+ (:epico probabilidades 0) (:raro probabilidades 0))) 5
+      (< n (+ (:epico probabilidades 0) (:raro probabilidades 0)
+              (:comum probabilidades 0))) 2
+      :else nil)))
+
+(defn registrar-captura!
+  "Concede no máximo um ovo por captura concluída. O requestId da captura é
+  usado como recibo durável; falhas ficam explícitas para recuperação posterior."
+  [cid pid captura-id]
+  (if-not config/adventure-enabled?
+    (p/resolved nil)
+    (when-let [categoria (categoria-evento {:comum 10})]
+      (criar-ovo! cid pid (str "capture:" captura-id) categoria))))
+
+(defn registrar-vitoria!
+  "Concede o ovo de vitória somente após a vitória já persistida pelo combate."
+  [cid pid partida-id]
+  (if-not config/adventure-enabled?
+    (p/resolved nil)
+    (let [categoria (if (< (rand-int 100) 3) 10 5)]
+      (criar-ovo! cid pid (str "pvp-win:" partida-id) categoria))))
 
 (defn ativar! [cid pid] (criar-ovo! cid pid "welcome" 2))
 

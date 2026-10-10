@@ -331,6 +331,17 @@ produtor. Não foram executados deploy, DDL de produção, commit ou push.
 
 ## Liberação e rollback futuros
 
+## Preparação da Etapa C — recompensas duráveis
+
+O serviço agora expõe hooks internos `adventure/registrar-captura!` e
+`adventure/registrar-vitoria!`. Eles permanecem inertes enquanto
+`ADVENTURE_SYNC_ENABLED=false`; quando habilitados, usam IDs determinísticos
+(`capture:<id>` e `pvp-win:<id>`) como recibos Cassandra e reaproveitam o CAS e
+o catálogo já existente. A integração nos pontos de captura e conclusão de
+partida será feita em um commit separado, porque esses fluxos ainda são
+síncronos e não devem receber uma promessa de recompensa sem confirmação
+durável. Assim a Etapa C não muda o comportamento do jogo nesta revisão.
+
 Somente após autorização: schema aditivo, build assinado/versionado, API privada
 preservada, entrada HTTPS e flags desligadas; homologação completa; pilotos
 opt-in; habilitar somente contas aprovadas. Pokémon, Cassandra e sessão
