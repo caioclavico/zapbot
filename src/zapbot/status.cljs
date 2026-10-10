@@ -13,9 +13,10 @@
 
 ;; Ao mudar a versão, substitua todo o changelog pelas mudanças da nova versão.
 (def ^:private changelog-ultima-versao
-  ["Novo Recomeço: 3 vitórias contra selvagens dão 10 Pokébolas; 3 capturas dão 5 Grandes Bolas e 2 Reviver"
-   "Evento até 04/10 às 00h de São Paulo; consulte !pk eventos"
-   "Festival da Coleção encerrado: removido o bônus temporário de 300 vagas; Pokémon existentes preservados"])
+  ["PvP 1x1 com o Pokémon ativo: use !pk para abrir ou aceitar um desafio"
+   "Sem escolha de liga: diferença máxima de 3 níveis entre os Pokémon"
+   "Desafios aguardam adversário por até 5 minutos"
+   "Raids automáticas removidas; comandos de raids existentes preservados"])
 
 (defn- formatar-changelog []
   (str/join "\n" (map #(str "• " %) changelog-ultima-versao)))
