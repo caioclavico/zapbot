@@ -53,6 +53,8 @@ class RestrictedDeployTest(unittest.TestCase):
                          ["odisseu", "rollback", "/home/caiohclavico/zapbot"])
         self.assertEqual(entry.deployment_args("pokemon", ["activate-adventure"], {"ghcr_owner": "caioclavico"}),
                          ["pokemon", "activate-adventure", "/home/caiohclavico/pokemon-service"])
+        self.assertEqual(entry.deployment_args("odisseu", ["update-tmdb"], {"ghcr_owner": "caioclavico"}),
+                         ["odisseu", "update-tmdb", "/home/caiohclavico/zapbot"])
         invalid = ({"ghcr_owner": "owner/foreign"}, {"ghcr_owner": "owner; id"},
                    {"ghcr_owner": "owner", "app_dir": "/tmp"}, {"ghcr_owner": "Owner"})
         for config in invalid:

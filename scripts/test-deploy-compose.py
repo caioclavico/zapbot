@@ -29,6 +29,11 @@ class ComposeTest(unittest.TestCase):
     def test_nonempty_ipam_address_is_static(self):
         self.assertTrue(DEPLOY_MODULE.has_static_ipam({'IPAMConfig': {'IPv4Address': '10.0.0.7', 'IPv6Address': ''}}))
 
+    def test_private_env_reader_selects_only_requested_key(self):
+        env = self.app / '.env'
+        env.write_text('TMDB_API_KEY=secret-value\nCASSANDRA_CONTACT_POINTS=private\n')
+        self.assertEqual(DEPLOY_MODULE.read_private_env_value(env, 'TMDB_API_KEY'), 'secret-value')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)

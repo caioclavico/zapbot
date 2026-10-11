@@ -29,6 +29,14 @@ def has_static_ipam(network):
     ipam = network.get('IPAMConfig') or {}
     return bool(ipam.get('IPv4Address') or ipam.get('IPv6Address'))
 
+
+def read_private_env_value(path, key):
+    """Read one simple KEY=value entry without returning or logging other values."""
+    for raw in Path(path).read_text().splitlines():
+        if raw.startswith(key + '='):
+            return raw[len(key) + 1:].strip()
+    raise DeployError('Required private environment value is missing')
+
 SERVICES = {
     'odisseu': ('zapbot', '/home/caiohclavico/zapbot', 'zapbot'),
     'pokemon': ('zapbot-pokemon', '/home/caiohclavico/pokemon-service', 'zapbot-pokemon'),
@@ -235,6 +243,7 @@ class Deployment:
                 pass
         self.output = safe_output
         self.previous = self.new_id = self.original_state = self.lock = None
+        self.allowed_env_updates = set()
         self.stop_attempted = self.original_name_changed = False
         self.create_attempted = False
         self.transaction_name = str(time.time_ns())
@@ -409,7 +418,8 @@ class Deployment:
                 raise DeployError('Replacement changed an existing runtime setting')
         old_env = dict(item.split('=', 1) for item in original['Config'].get('Env', []) if '=' in item)
         new_env = dict(item.split('=', 1) for item in actual['Config'].get('Env', []) if '=' in item)
-        if any(new_env.get(key) != value for key, value in old_env.items()):
+        if any(key not in self.allowed_env_updates and new_env.get(key) != value
+               for key, value in old_env.items()):
             raise DeployError('Replacement changed existing effective environment')
         for key, value in original['HostConfig'].items():
             # Binds may gain explicit references to existing anonymous volumes.
@@ -766,7 +776,19 @@ class Deployment:
                 target = current_image
                 image = target['Id']
                 requested_revision = (current['Config'].get('Labels') or {}).get(REVISION_LABEL)
+                self.allowed_env_updates = {'ADVENTURE_SYNC_ENABLED'}
                 configuration, retained = self.clone(current, target, {'ADVENTURE_SYNC_ENABLED': 'true'}), None
+            elif action == 'update-tmdb':
+                if self.service != 'odisseu':
+                    raise DeployError('TMDB update is limited to Odisseu')
+                token = read_private_env_value(self.app_dir / '.env', 'TMDB_API_KEY')
+                if not token:
+                    raise DeployError('TMDB_API_KEY is empty')
+                target = current_image
+                image = target['Id']
+                requested_revision = (current['Config'].get('Labels') or {}).get(REVISION_LABEL)
+                self.allowed_env_updates = {'TMDB_API_KEY'}
+                configuration, retained = self.clone(current, target, {'TMDB_API_KEY': token}), None
             elif action == 'rollback':
                 if not self.original_state or not self.original_state.get('previous-container'):
                     raise DeployError('No retained rollback container is available')
@@ -878,7 +900,7 @@ def main(argv):
         argv = argv[:-1]
         if argv[:2] != ['odisseu', 'deploy']:
             raise DeployError('Legacy graceful stop is limited to an operator-requested Odisseu deployment')
-    if len(argv) < 2 or argv[0] not in SERVICES or argv[1] not in ('deploy', 'rollback', 'recover', 'activate-adventure'):
+    if len(argv) < 2 or argv[0] not in SERVICES or argv[1] not in ('deploy', 'rollback', 'recover', 'activate-adventure', 'update-tmdb'):
         raise DeployError('Usage: SERVICE deploy IMAGE [APP_DIR] | SERVICE rollback|recover [APP_DIR]')
     service, action = argv[:2]
     if len(argv) not in ((3, 4) if action == 'deploy' else (2, 3)):
