@@ -100,15 +100,15 @@
 (deftest estoque-inclui-joy-e-ginasios-e-bloqueia-antes-da-bola
   (async done
     (let [estado (atom {"chat" {"ash" {"equipe" (mapv registro (range 6))
-                                        "pc" (mapv registro (range 6 22))
-                                        "enfermaria" [{"pokemon" (registro 22)}]}}})
+                                        "pc" (mapv registro (range 6 26))
+                                        "enfermaria" [{"pokemon" (registro 26)}]}}})
           consumidas (atom 0)
           caca {:pid "ash" :aguardando-captura? true :tentativas-captura 0}]
       (with-redefs [treinador/contas estado loja/contas (atom {})
-                    ginasios/liderados (fn [_ _] [["pedra" {"time" (mapv registro [23 24 25])}]])
+                    ginasios/liderados (fn [_ _] [["pedra" {"time" (mapv registro [27 28 29])}]])
                     core/cacadas-selvagens (atom {"chat" caca})
                     loja/consumir-bola! (fn [_ _ _] (swap! consumidas inc) true)]
-        (is (= 26 (core/ocupacao-pokemon "chat" "ash")))
+        (is (= 30 (core/ocupacao-pokemon "chat" "ash")))
         (is (not (core/cabe-pokemon? "chat" "ash")))
         (-> (core/capturar-selvagem {:chat-id "chat" :player-id "ash"} ["pokebola"])
             (.then (fn [texto]
@@ -233,19 +233,19 @@
       (swap! treinador/contas assoc cid
              {"ash" {"equipe" [doado] "ativo" 0 "pc-migrado" true}
               "misty" {"equipe" (mapv registro (range 1 7))
-                       "pc" (mapv registro (range 7 27)) "ativo" 0 "pc-migrado" true}})
+                       "pc" (mapv registro (range 7 31)) "ativo" 0 "pc-migrado" true}})
       (-> (core/doar mensagem "1")
           (p/then (fn [texto]
                     (is (str/includes? texto "destinatário está sem espaço"))
                     (is (= [doado] (treinador/equipe cid "ash")))
-                    (is (= 26 (core/ocupacao-pokemon cid "misty")))
+                    (is (= 30 (core/ocupacao-pokemon cid "misty")))
                     (swap! treinador/contas update-in [cid "misty" "pc"] pop)
                     (core/doar mensagem "1")))
           (p/then (fn [texto]
                     (is (str/includes? texto "com sucesso"))
                     (is (empty? (treinador/equipe cid "ash")))
-                    (is (= 26 (count (treinador/equipe cid "misty"))))
-                    (is (= 26 (core/ocupacao-pokemon cid "misty")))
+                    (is (= 30 (count (treinador/equipe cid "misty"))))
+                    (is (= 30 (core/ocupacao-pokemon cid "misty")))
                     (is (= doado (last (treinador/equipe cid "misty"))))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally (fn []
