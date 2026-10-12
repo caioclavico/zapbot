@@ -97,3 +97,19 @@
         (is (= capacidade (loja/capacidade "g" "p"))))
       (is (= 175 (get-in @estado ["g" "p" "capacidade-mochila"])))
       (is (= 3 (get-in @estado ["g" "p" "expansoes-mochila-50"]))))))
+
+(deftest capacidade-atualiza-com-vitoria-pvp-e-pe-ginasio
+  (doseq [origem [:pvp :ginasio]]
+    (with-redefs [loja/contas (atom {})
+                  treinador/contas (atom {"g" {"p" {"vitorias-treinador" 31}}})
+                  treinador/xp-insignias (fn [& _] 0)
+                  loja/xp-missoes (fn [& _] 0)
+                  armazenamento/salvar! (fn [& _] nil)]
+      (is (= 4 (treinador/nivel-jogador "g" "p")))
+      (is (= 30 (loja/capacidade-pokemon "g" "p")))
+      (let [aviso (case origem
+                    :pvp (treinador/registrar-vitoria-treinador! "g" "p")
+                    :ginasio (treinador/ganhar-pe-ginasio! "g" "p" 1))]
+        (is (= 5 (treinador/nivel-jogador "g" "p")))
+        (is (= 80 (loja/capacidade-pokemon "g" "p")))
+        (is (str/includes? aviso "30 → 80"))))))
