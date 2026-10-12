@@ -34,17 +34,18 @@
          "Menus são individuais por jogador e por chat, e expiram após 5 minutos. " (comando "0") " ou " (comando "menu") " abre o menu principal.\n"
          "Um comando direto fecha o menu de consulta. Sem menu aberto, em combate, " (comando "1") " escolhe o golpe 1; na captura da caçada, escolhe a Pokébola.\n"
          "Se abriu um menu durante o combate, use " (comando "atacar 1") " para atacar diretamente e fechar o menu. Números sem prefixo não escolhem opções.\n"
-         "Na coleção por " (comando "meus") ", o número abre a ficha. Na mochila, consulta o efeito do item. Compras, uso de itens e transferências exigem seus comandos específicos.")
+         "Na coleção por " (comando "meus") ", o número abre a ficha. Na mochila, consulta o efeito do item. Na loja, compra uma unidade do item escolhido. Uso de itens e transferências continuam por comandos específicos.")
 
     :loja
     (str "🏪 *Ajuda da loja*\n\n"
          "• " config/prefix "loja ou " (comando "loja") ": catálogo e saldo.\n"
          "• " config/prefix "loja detalhes <item>: efeito e uso. Ex.: " config/prefix "loja detalhes atadura.\n"
-         "• " config/prefix "loja comprar <item>: compra uma unidade com suas moedas, se houver espaço na mochila.\n"
+         "• Na loja aberta, " (comando "<número>") " compra uma unidade do item exibido, usando suas moedas.\n"
+         "• " config/prefix "loja comprar <item>: compra direta de uma unidade, se houver espaço na mochila.\n"
          "Use o identificador exibido no catálogo. Bolas vêm de bônus, missões e recompensas; não são vendidas.\n"
          "Consulte seus itens com " (comando "mochila") ". Para usar: " (comando "curar") ", " (comando "pocao [número]") " ou " (comando "equipar <número> <item>") ".\n"
          "Expansões: " config/prefix "loja comprar mochila (+50 itens) e " (comando "espaco comprar") " (+50 Pokémon), por 200 moedas cada.\n"
-         "Consultar a loja não compra nem usa itens. O catálogo usa comandos diretos, sem seleção por número.")
+         "Abrir a loja não compra itens. Escolher um número compra uma unidade; o catálogo reaparece com o saldo atualizado. Menu individual válido por 5 minutos. " (comando "0") " volta ao menu. Compras são bloqueadas quando faltam moedas ou espaço.")
 
     :mochila
     (str "🎒 *Ajuda da mochila*\n\n"
@@ -232,6 +233,7 @@
          "• " (comando "favorito 2") ": marca o favorito, que é ativado quando volta saudável para a equipe.\n"
          "• " (comando "time salvar os fodoes 1,4,7") ": salva uma escalação nomeada sem reservar os Pokémon. Liste com " (comando "times") " e aplique com " (comando "time usar os fodoes ginasio") ". O PvP não usa escalações.\n"
          "• " (comando "pocao [número]") " recupera 40% do HP; " (comando "pocao-maxima [número]") " recupera tudo. Sem número, cura o ativo. " (comando "curar") " trata status.\n"
+         "• A opção Centro Pokémon do menu abre a Enfermeira Joy; acesso direto: " (comando "joy") ".\n"
          "• " (comando "joy 1,2") ": envia os Pokémon indicados à Enfermeira Joy por 30 minutos. Veja o tempo restante em " (comando "time") ".\n\n"
          "Começando agora? Use " (comando "inicial") ", escolha uma opção e consulte " (comando "ajuda cacadas") " para ampliar sua coleção.")
 

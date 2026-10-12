@@ -113,3 +113,13 @@
         (is (= 5 (treinador/nivel-jogador "g" "p")))
         (is (= 80 (loja/capacidade-pokemon "g" "p")))
         (is (str/includes? aviso "30 → 80"))))))
+
+(deftest numeros-do-catalogo-correspondem-aos-itens-compraveis
+  (let [ctx {:chat-id "catalogo-numerico" :player-id "ash"}
+        texto (loja/ver-loja ctx)
+        opcoes (loja/opcoes-compra)]
+    (doseq [[i [chave info]] (map-indexed vector (loja/catalogo-compravel))]
+      (is (str/includes? texto (str (inc i) ". " (:emoji info))))
+      (is (= (str "loja comprar " chave) (get opcoes (str (inc i))))))
+    (is (str/includes? texto "compra 1 unidade"))
+    (is (not (contains? opcoes "0")))))

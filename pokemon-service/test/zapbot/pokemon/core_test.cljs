@@ -9,6 +9,7 @@
             [zapbot.config :as config]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.pokemon.core :as core]
+            [zapbot.pokemon.navegacao :as navegacao]
             [zapbot.pokemon.ginasios :as ginasios]
             [zapbot.pokemon.loja :as loja]
             [zapbot.pokemon.mundo :as mundo]
@@ -1148,3 +1149,32 @@
         (core/navegar contexto "1")
         (is (= ["ash" "treinador"] (last @recebidos))))
       (finally (swap! core/cacadas-selvagens dissoc "nav-grupo")))))
+
+(deftest centro-do-menu-abre-joy
+  (let [ctx {:chat-id "menu-joy" :player-id "ash"}
+        recebidos (atom [])]
+    (try
+      (with-redefs [core/executar-comando (fn [_ comando] (swap! recebidos conj comando))]
+        (core/navegar ctx "0")
+        (core/navegar ctx "5")
+        (is (= ["joy"] @recebidos)))
+      (finally (navegacao/limpar! ["menu-joy" "ash"])))))
+
+(deftest compra-pelo-numero-preserva-menu-e-atualiza-saldo
+  (async done
+    (let [ctx {:chat-id "menu-loja" :player-id "ash"}
+          estado (atom {"menu-loja" {"ash" {"moedas" 1000 "inventario" {}}}})
+          [item info] (first (loja/catalogo-compravel))]
+      (with-redefs [loja/contas estado loja/persistir! (fn [] nil)
+                    loja/ver-loja-com-imagem (fn [_] (p/resolved {:texto "Catálogo"}))]
+        (core/navegar ctx "loja")
+        (-> (core/navegar ctx "1")
+            (p/then (fn [resposta]
+                      (is (str/includes? (:texto resposta) "Comprou"))
+                      (is (= (- 1000 (:preco info)) (get-in @estado ["menu-loja" "ash" "moedas"])))
+                      (is (= 1 (get-in @estado ["menu-loja" "ash" "inventario" item])))
+                      (is (= (str "loja comprar " item)
+                             (:comando (navegacao/resolver! ["menu-loja" "ash"] "1" nil (.now js/Date)))))
+                      (is (:erro (navegacao/resolver! ["menu-loja" "misty"] "1" nil (.now js/Date))))))
+            (p/catch (fn [erro] (is false (str erro))))
+            (p/finally (fn [] (navegacao/limpar! ["menu-loja" "ash"]) (done))))))))

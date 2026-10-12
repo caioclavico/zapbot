@@ -33,7 +33,7 @@
 
 (def opcoes-principais
   {"1" "treinador" "2" "meus" "3" "batalhas" "4" "mochila"
-   "5" "centro" "6" "loja" "7" "ajuda"})
+   "5" "joy" "6" "loja" "7" "ajuda"})
 
 (defn texto-menu [titulo linhas prefixo]
   (str titulo "\n\n" (str/join "\n" linhas)
