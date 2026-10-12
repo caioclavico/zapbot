@@ -1168,6 +1168,8 @@
   [cid pid]
   (:nivel (progresso-treinador (xp-treinador cid pid))))
 
+(reset! loja/nivel-treinador nivel-jogador)
+
 (defn registrar-vitoria-treinador!
   "Registra vitória e intenção de ovos na mesma atualização persistida."
   ([cid pid] (registrar-vitoria-treinador! cid pid nil))

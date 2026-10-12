@@ -51,6 +51,10 @@
 
 (def preco-reaprender 50)
 (declare conta)
+
+;; Resolved by treinador after loading, avoiding a circular namespace dependency.
+(defonce nivel-treinador (atom (fn [_ _] 1)))
+(defn nivel-atual [cid pid] (@nivel-treinador cid pid))
 (def ^:private vagas-por-expansao-pc 50)
 (def ^:private preco-fixo-expansao-pc 200)
 
@@ -63,7 +67,7 @@
   (get-in @contas [cid pid "expansoes-pc"] 0))
 
 (defn capacidade-permanente-pokemon
-  ([cid pid] (capacidade-permanente-pokemon cid pid (get (conta cid pid) "nivel" 1)))
+  ([cid pid] (capacidade-permanente-pokemon cid pid (nivel-atual cid pid)))
   ([cid pid nivel] (capacidade-por-nivel cid pid nivel)))
 
 (defn capacidade-pokemon [cid pid]
@@ -111,7 +115,7 @@
                  (do (vreset! resultado {:status :sem-moedas :preco preco}) c)
                  (do (vreset! resultado {:status :ok :preco preco
                                          :capacidade (armazenamento-regras/capacidade-pokemon
-                                                      (get c "nivel" 1) (inc n)
+                                                      (nivel-atual cid pid) (inc n)
                                                       (get c "capacidade-pokemon" 0))})
                      (-> c (update "moedas" - preco) (assoc "expansoes-pc" (inc n))))))))
     (persistir!)
@@ -250,7 +254,7 @@
   (get-in (conta cid pid) ["inventario" chave] 0))
 
 (defn capacidade
-  ([cid pid] (capacidade cid pid (get (conta cid pid) "nivel" 1)))
+  ([cid pid] (capacidade cid pid (nivel-atual cid pid)))
   ([cid pid nivel]
   (let [c (conta cid pid)]
     (armazenamento-regras/capacidade-mochila nivel
@@ -286,10 +290,10 @@
   (update (get c "recompensas-pendentes" {}) "pokebola"
           (fnil + 0) (get c "bolas-pendentes" 0)))
 
-(defn- guardar-recompensas [c recompensas]
+(defn- guardar-recompensas [c recompensas nivel]
   (let [c (or c {"moedas" 0 "inventario" {}})
         livres (max 0 (- (armazenamento-regras/capacidade-mochila
-                           (get c "nivel" 1)
+                           nivel
                            (get c "expansoes-mochila-50" 0)
                            (get c "capacidade-mochila" 50))
                          (reduce + 0 (vals (get c "inventario")))))
@@ -354,20 +358,20 @@
                        (if completo?
                          (-> novo
                              (assoc-in (conj caminho "premiados") (vec (conj premiados objetivo)))
-                             (guardar-recompensas (:recompensas missao)))
+                             (guardar-recompensas (:recompensas missao) (nivel-atual cid pid)))
                          novo))))))
         (when @aviso (persistir!))
         @aviso))))
 
 (defn premiar-bolas! [cid pid bola quantidade]
-  (swap! contas update-in [cid pid] guardar-recompensas {bola quantidade})
+  (swap! contas update-in [cid pid] guardar-recompensas {bola quantidade} (nivel-atual cid pid))
   (persistir!)
   (str "🎁 +" quantidade " " (:nome (dados-item bola)) " por nocaute(s) no PvP."
        (when (some pos? (vals (recompensas-pendentes (conta cid pid))))
          (str " Há recompensas pendentes: libere espaço e use " config/prefix "mochila resgatar."))))
 
 (defn premiar-item-evolucao! [cid pid item]
-  (swap! contas update-in [cid pid] guardar-recompensas {item 1})
+  (swap! contas update-in [cid pid] guardar-recompensas {item 1} (nivel-atual cid pid))
   (persistir!)
   (str "🎁 +1 " (:nome (dados-item item))
        (when (some pos? (vals (recompensas-pendentes (conta cid pid))))
@@ -406,7 +410,7 @@
             novo (-> c
                      (assoc "ultimo-bonus-diario" dia)
                      (assoc "sequencia-bonus-diario" sequencia)
-                     (guardar-recompensas recompensas))]
+                     (guardar-recompensas recompensas (nivel-atual cid pid)))]
         (swap! contas assoc-in [cid pid] novo)
         (persistir!)
         (str "🎁 *Bônus diário resgatado — sequência de " sequencia " dia(s):* "
@@ -424,7 +428,7 @@
       "🎒 Sem recompensas disponíveis para resgatar ou espaço insuficiente. Libere vagas ou compre uma expansão."
       :else
       (let [novo (guardar-recompensas (if kit? (assoc c "kit-inicial-resgatado" true)
-                                          (dissoc c "bolas-pendentes" "recompensas-pendentes")) recompensas)
+                                          (dissoc c "bolas-pendentes" "recompensas-pendentes")) recompensas (nivel-atual cid pid))
             recebidas (into {} (for [bola ordem-recompensas]
                                  [bola (- (get-in novo ["inventario" bola] 0)
                                           (get-in c ["inventario" bola] 0))]))]
@@ -481,7 +485,7 @@
             novo (-> c
                      (assoc "missoes-diarias" (update estado "resgatadas" into (map :id prontas)))
                      (update "xp-missoes" (fnil + 0) xp)
-                     (guardar-recompensas recompensas))]
+                     (guardar-recompensas recompensas (nivel-atual cid pid)))]
         ;; Sem espera assíncrona: XP, sorteio, mochila e marca de resgate
         ;; são persistidos juntos, inclusive quando a mochila está cheia.
         (swap! contas assoc-in [cid pid] novo)
@@ -718,7 +722,7 @@
                 (update (sortear-item-evolucao) (fnil inc 0)))]
     (when resgatar?
       ;; Progresso, marcação do resgate e saldo são persistidos juntos.
-      (swap! contas assoc-in [cid pid] (guardar-recompensas nova bolas))
+      (swap! contas assoc-in [cid pid] (guardar-recompensas nova bolas (nivel-atual cid pid)))
       (persistir!))
     (let [estado (missoes/estado-semanal (conta cid pid) semana)]
       (str "📅 *Missões semanais — semana de " semana "*\n"
@@ -756,7 +760,7 @@
                    (update-in [cid pid] #(-> %
                                             (missoes/registrar-evento dia "presentes" nivel)
                                             (missoes/registrar-semanal (missoes/semana-de dia) "presentes" [])))
-                   (update-in [cid alvo] #(guardar-recompensas (or % {"moedas" 0 "inventario" {}}) recompensa)))))
+                   (update-in [cid alvo] #(guardar-recompensas (or % {"moedas" 0 "inventario" {}}) recompensa (nivel-atual cid alvo))))))
       (persistir!)
       {:texto (str "🎁 Presente enviado para @" (first (str/split alvo #"@")) "!\n" (texto-recompensas recompensa)
                    "\nBolas sem espaço ficam pendentes em !mochila resgatar."

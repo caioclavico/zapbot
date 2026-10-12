@@ -21,5 +21,8 @@
        (+ capacidade-inicial-pokemon (bonus-por-nivel nivel :pokemon) (* 50 (max 0 (or expansoes 0))))))
 
 (defn capacidade-mochila [nivel expansoes capacidade-legada]
-  (max (or capacidade-legada 0)
-       (+ capacidade-inicial-mochila (bonus-por-nivel nivel :mochila) (* 50 (max 0 (or expansoes 0))))))
+  ;; Legacy value includes all old +25 purchases. New +50 purchases are
+  ;; stored separately and must always increase the effective capacity.
+  (+ (max capacidade-inicial-mochila (or capacidade-legada 0))
+     (bonus-por-nivel nivel :mochila)
+     (* 50 (max 0 (or expansoes 0)))))

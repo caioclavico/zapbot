@@ -2,7 +2,9 @@
   (:require [pokemon-service.regression-fixture :as fixture]
             [cljs.test :refer-macros [use-fixtures async deftest is testing]]
             [clojure.string :as str]
-            [zapbot.pokemon.loja :as loja]))
+            [zapbot.pokemon.loja :as loja]
+            [zapbot.pokemon.treinador :as treinador]
+            [zapbot.armazenamento :as armazenamento]))
 
 (use-fixtures :once {:before fixture/iniciar! :after fixture/parar!})
 
@@ -78,3 +80,20 @@
                            (not (:exclusivo-diario info))
                            (not (:evolucao info))))
              (str/includes? texto (str "(`" chave "`)"))) chave))))
+
+(deftest capacidades-usam-nivel-real
+  (with-redefs [loja/contas (atom {"g" {"p" {"nivel" 1}}})
+                treinador/contas (atom {})
+                treinador/progresso-treinador (fn [_] {:nivel 25})]
+    (is (= 180 (loja/capacidade-pokemon "g" "p")))
+    (is (= 150 (loja/capacidade "g" "p")))))
+
+(deftest compras-somam-cinquenta-ao-legado
+  (let [estado (atom {"g" {"p" {"moedas" 600 "capacidade-mochila" 175}}})]
+    (with-redefs [loja/contas estado treinador/contas (atom {})
+                  armazenamento/salvar! (fn [& _] nil)]
+      (doseq [capacidade [225 275 325]]
+        (loja/comprar {:chat-id "g" :player-id "p"} "mochila")
+        (is (= capacidade (loja/capacidade "g" "p"))))
+      (is (= 175 (get-in @estado ["g" "p" "capacidade-mochila"])))
+      (is (= 3 (get-in @estado ["g" "p" "expansoes-mochila-50"]))))))
