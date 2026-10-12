@@ -73,6 +73,8 @@
 (deftest loja-produz-texto-apenas-com-itens-compraveis
   (let [texto (loja/ver-loja {:chat-id "chat" :player-id "jogador"})]
     (is (str/includes? texto "Loja do tio"))
+    (is (not (str/includes? texto "Menu individual válido")))
+    (is (not (str/includes? texto "volta ao menu")))
     (is (str/includes? texto "loja comprar <item>"))
     (doseq [[chave info] loja/itens]
       (is (= (boolean (and (:preco info)

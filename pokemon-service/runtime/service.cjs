@@ -71,7 +71,9 @@ class PokemonService {
     if (!media) return text ? [{type:'text',text,mentions}] : [];
     const info=await this.media.put(media);
     if (raw.documento) return [...(text ? [{type:'text',text,mentions}] : []),{type:'document',text:'',mentions,...info}];
-    const long=text.length>900;
+    // The store catalogue is intentionally delivered as the image caption.
+    // Keep the existing split for other lengthy game messages.
+    const long=text.length>900 && info.filename!=='loja-pokemon.jpg';
     return [{type:'image',text:long ? (raw.legenda||'🖼️ *Imagem Pokémon*') : text,mentions,...info},
       ...(long ? [{type:'text',text,mentions}] : [])];
   }

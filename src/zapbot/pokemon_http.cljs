@@ -146,7 +146,8 @@
                                                (or texto "") substituicoes))) mensagens)))))))
 
 (defn- acoes-de-envio [mensagens]
-  ;; Separa documentos e legendas longas antes de marcar entregas. Uma falha
+  ;; Preserva o catálogo da loja na legenda; separa documentos e demais
+  ;; legendas longas antes de marcar entregas. Uma falha
   ;; posterior não repete o texto ou a imagem já confirmados no Cassandra.
   (vec
    (mapcat
@@ -158,7 +159,9 @@
           (cond-> [] (not (str/blank? texto)) (conj texto-acao)
             true (conj (assoc mensagem :text "")))
 
-          (and (= "image" (:type mensagem)) (> (count texto) 900))
+          (and (= "image" (:type mensagem))
+               (not= "loja-pokemon.jpg" (:filename mensagem))
+               (> (count texto) 900))
           [(assoc mensagem :text (or (:caption mensagem) "🖼️ *Imagem Pokémon*")) texto-acao]
 
           :else [mensagem]))) mensagens)))
