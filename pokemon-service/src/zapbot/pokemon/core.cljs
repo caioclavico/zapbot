@@ -11,6 +11,7 @@
             [clojure.string :as str]
             [cljs.reader :as reader]
             [zapbot.pokemon.golpes :as golpes]
+            [zapbot.pokemon.navegacao :as navegacao]
             [zapbot.pokemon.egg-rewards :as egg-rewards]
             [zapbot.pokemon.aventuras :as aventuras]
             [zapbot.pokemon.ginasios :as ginasios]
@@ -928,7 +929,7 @@
            "Vez do líder — ele responderá automaticamente."
            (str "Vez de " (get nomes vez)
                 (when-not ginasio (str " (@" (so-numero (get jogadores vez)) ")"))
-                " - escolha um golpe:\n"
+                " - escolha um golpe com " config/prefix "pk <número>:\n"
                 (menu-golpes meu (:tipos adversario) (:habilidade adversario))
                 "\n\n📖 Ações de batalha: " config/prefix "pk atacar ajuda")))))
 
@@ -2062,7 +2063,8 @@
   (get-in atalhos-subcomandos [contexto token] token))
 
 (defn- expandir-destino-time [token]
-  (get {"raide" "raid" "raides" "raid" "gin" "ginasio" "lig" "liga"} token token))
+  (get {"perfil" "treinador" "pokemons" "meus" "pokémon" "meus" "itens" "mochila" "?" "ajuda"
+   "raide" "raid" "raides" "raid" "gin" "ginasio" "lig" "liga"} token token))
 
 (defn- nome-time-pronto [partes]
   (-> (str/join " " partes) str/trim normalizar-texto))
@@ -2336,10 +2338,10 @@
        (str (cabecalho) "🚫 Essa caçada pertence a outro treinador.")
 
        (nil? jogo)
-       (str (cabecalho) "❓ Não tem batalha rolando. Digite " config/prefix "pokemon pra abrir uma.")
+       (str (cabecalho) "❓ Não tem batalha rolando. Digite " config/prefix "pk batalhar pra abrir uma.")
 
        (not (contains? (:jogadores jogo) :o))
-       (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pokemon pra entrar.")
+       (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pk batalhar pra entrar.")
 
        (not= pid (get-in jogo [:jogadores (:vez jogo)]))
        (com-mencao jogo (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo)))
@@ -2533,7 +2535,7 @@
         (p/resolved
          (cond
            (not (contains? (:jogadores jogo) :o))
-           (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pokemon pra entrar.")
+           (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pk batalhar pra entrar.")
 
            (not= pid (get-in jogo [:jogadores (:vez jogo)]))
            (com-mencao jogo (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo)))
@@ -2573,7 +2575,7 @@
         (p/resolved
          (cond
            (not (contains? (:jogadores jogo) :o))
-           (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pokemon pra entrar.")
+           (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pk batalhar pra entrar.")
 
            (not= pid (get-in jogo [:jogadores (:vez jogo)]))
            (com-mencao jogo (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo)))
@@ -3681,7 +3683,7 @@
          "👾 *" (:nome selvagem) "*" (emoji-status (get-in caca [:status :o])) " — "
          (texto-raridade selvagem) "\n"
          (barra-hp (get-in caca [:hp :o]) (:hp selvagem)) "\n\n"
-         "Escolha: " config/prefix "pokemon atacar <1-" (count (:golpes meu)) ">\n"
+         "Escolha: " config/prefix "pk <1-" (count (:golpes meu)) ">\n"
          (menu-golpes meu (:tipos selvagem) (:habilidade selvagem))
          "\n\n📖 Ações de batalha: " config/prefix "pk atacar ajuda.")))
 
@@ -3723,8 +3725,8 @@
 (defn- menu-captura [cid pid caca]
   (str "\n\n🎯 *Escolha a bola para capturar " (get-in caca [:pokemons :o :nome]) "!*\n"
        (str/join "\n"
-                 (for [bola loja/bolas :let [item (loja/dados-item bola)]]
-                   (str (:emoji item) " " (:nome item) " — "
+                 (for [[i bola] (map-indexed vector loja/bolas) :let [item (loja/dados-item bola)]]
+                   (str config/prefix "pk " (inc i) " — " (:emoji item) " " (:nome item) " — "
                         (loja/quantidade-item cid pid bola) " disponível(is) — "
                         (chance-com-bola (:chance-base-captura caca) bola) "% de chance")))
        "\n\nTentativas restantes: " (- 3 (get caca :tentativas-captura 0)) " de 3."
@@ -4077,10 +4079,10 @@
       (p/resolved
        (cond
          (nil? jogo)
-         (str (cabecalho) "❓ Não tem batalha rolando. Digite " config/prefix "pokemon pra abrir uma.")
+         (str (cabecalho) "❓ Não tem batalha rolando. Digite " config/prefix "pk batalhar pra abrir uma.")
 
          (not (contains? (:jogadores jogo) :o))
-         (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pokemon pra entrar.")
+         (str (cabecalho) "⏳ Ainda falta um adversário entrar. Digite " config/prefix "pk batalhar pra entrar.")
 
          (not= pid (get-in jogo [:jogadores (:vez jogo)]))
          (com-mencao jogo (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo)))
@@ -5264,7 +5266,8 @@
                                            (aprender-golpe-por-nivel! contexto cid jogador (:nivel subida) indice))))))]
             (select-keys resultado [:texto :mentions])))))))
 (def ^:private atalhos-comandos
-  {"raide" "raid" "raides" "raid" "gin" "ginasio" "lig" "liga" "evt" "eventos" "evo" "evoluir"
+  {"perfil" "treinador" "pokemons" "meus" "pokémon" "meus" "itens" "mochila" "?" "ajuda"
+   "raide" "raid" "raides" "raid" "gin" "ginasio" "lig" "liga" "evt" "eventos" "evo" "evoluir"
    "neg" "negociar" "tre" "treinador" "apr" "aprender"
    "reap" "reaprender" "rev" "reviver" "mch" "mochila"
    "mis" "missoes" "pre" "presente" "cap" "capturar"
@@ -5371,7 +5374,7 @@
       (p/resolved (menu-captura cid pid (get @cacadas-selvagens cid)))
       (and (str/blank? args) (:ginasio (get @jogos cid)))
       (p/resolved (mensagem-estado (get @jogos cid)))
-      (str/blank? args) (iniciar-ou-entrar contexto)
+      (or (str/blank? args) (contains? #{"batalhar" "abrir" "entrar"} cmd)) (iniciar-ou-entrar contexto)
       (= cmd "sair") (sair contexto)
       (contains? #{"liga" "ligas"} cmd) (p/resolved (pokemon-ajuda/resposta "ajuda pvp"))
       (contains? #{"ginasio" "ginásio" "ginasios" "ginásios"} cmd) (configurar-ginasio contexto resto)
@@ -5455,7 +5458,7 @@
             "• " config/prefix "pokemon eventos\n"
             "• " config/prefix "presente @amigo\n\n"
             "*Comandos*\n"
-            "• " config/prefix "pokemon — abrir ou aceitar PvP com seu Pokémon ativo\n"
+            "• " config/prefix "pk batalhar — abrir ou aceitar PvP com seu Pokémon ativo\n"
             "• " config/prefix "pokemon inicial\n"
             "• " config/prefix "pokemon cacar\n"
             "• " config/prefix "pokemon cacar <área> | clima\n"
@@ -5717,7 +5720,7 @@
                            :golpes [golpe-padrao]))]
     (treinador/pokemon->registro pokemon (:hp pokemon) nil)))
 
-(defn jogar [contexto args]
+(defn- executar-comando [contexto args]
   (let [[cmd & resto] (str/split (str/trim (str/lower-case (or args ""))) #"\s+")]
     ;; Registrar/consultar bugs não executa ações nem aplica dano na batalha.
     (cond
@@ -5726,16 +5729,76 @@
       (contains? #{"bug" "bugs"} cmd)
       (bugs/comando! contexto cmd resto)
       :else
-      (enfileirar-jogada (chat-id contexto)
-                        #(p/let [jogo (get @jogos (chat-id contexto))
+      (p/let [jogo (get @jogos (chat-id contexto))
                                  _ (when (pvp/expirado? jogo (.now js/Date))
                                      (expirar-batalha! (chat-id contexto) jogo))]
                            (jogar-rodada contexto
                              (if (and (:ginasio (get @jogos (chat-id contexto)))
                                       (contains? #{"gin" "ginasio" "ginásio"} cmd)
                                       (contains? #{"atacar" "atk"} (first resto)))
-                               (str "atacar " (second resto)) args)))
-                        (desempenho/contexto-de contexto)))))
+                               (str "atacar " (second resto)) args))))))
+
+(defn- abrir-menu! [contexto titulo opcoes linhas]
+  (navegacao/abrir! [(chat-id contexto) (jogador-id contexto)] opcoes (.now js/Date))
+  (p/resolved (navegacao/texto-menu titulo linhas config/prefix)))
+
+(defn- navegar [contexto args]
+  (let [cid (chat-id contexto) pid (jogador-id contexto)
+        jogo (get @jogos cid) caca (get @cacadas-selvagens cid)
+        propria-caca? (= pid (:pid caca))
+        raid (raids/atual cid)
+        batalha (cond
+                  propria-caca? (if (:aguardando-captura? caca) "capturar" "atacar")
+                  (some #{pid} (vals (:jogadores jogo))) "atacar"
+                  (and (raids/participando? cid pid) (= "combate" (get raid "fase"))) "raid atacar")
+        resultado (navegacao/resolver! [cid pid] args batalha (.now js/Date))
+        comando (expandir-atalho (:comando resultado))]
+    (cond
+      (:erro resultado) (p/resolved (:erro resultado))
+      (:menu? resultado)
+      (abrir-menu! contexto "🎮 *Pokémon Odisseu*" navegacao/opcoes-principais
+                   ["1 — Meu treinador" "2 — Meus Pokémon" "3 — Batalhar / explorar"
+                    "4 — Mochila" "5 — Centro Pokémon" "6 — Loja" "7 — Ajuda"])
+      (= comando "batalhas")
+      (abrir-menu! contexto "⚔️ *Batalhas e exploração*"
+                   {"1" "cacar" "2" "batalhar" "3" "ginasio" "4" "raid"}
+                   ["1 — Caçar Pokémon" "2 — Abrir / entrar em PvP" "3 — Ginásio" "4 — Raide"])
+      (= comando "meus")
+      (let [eq (treinador/equipe cid pid)]
+        (navegacao/abrir! [cid pid]
+          (into {} (map-indexed (fn [i _] [(str (inc i)) (str "pokedex " (inc i))]) eq)) (.now js/Date))
+        (p/let [texto (ver-time contexto "")]
+          (str texto "\n\nVeja a ficha com " config/prefix "pk <número>. Menu válido por 5 minutos. " config/prefix "pk 0 para voltar.")))
+      (= comando "loja") (p/resolved (loja/ver-loja contexto))
+      (= comando "mochila")
+      (let [itens (->> (get (loja/conta cid pid) "inventario")
+                       (filter (fn [[_ n]] (pos? n))) (sort-by first) vec)]
+        (navegacao/abrir! [cid pid]
+          (into {} (map-indexed (fn [i [item _]] [(str (inc i)) (str "detalhes " item)]) itens)) (.now js/Date))
+        (p/resolved
+          (str (loja/mochila contexto nil) "\n\n*Consultar item:*\n"
+               (str/join "\n" (map-indexed (fn [i [item n]]
+                       (str (inc i) " — " (:nome (loja/dados-item item)) " ×" n)) itens))
+               "\n" config/prefix "pk <número> mostra o efeito. Menu válido por 5 minutos. " config/prefix "pk 0 para voltar.")))
+      (str/starts-with? (or comando "") "detalhes ")
+      (p/resolved (loja/detalhes (subs comando 9)))
+      :else
+      (do
+        ;; Uma ação direta invalida menus de consulta antes de iniciar combate.
+        (navegacao/limpar! [cid pid])
+        (executar-comando contexto
+          (if (and (= batalha "capturar") (re-matches #"capturar [0-9]+" comando))
+            (if-let [bola (get loja/bolas (dec (js/parseInt (subs comando 9) 10)))]
+              (str "capturar " bola) "capturar") comando))))))
+
+(defn jogar [contexto args]
+  ;; Resolve contexto dentro da fila: comandos simultâneos veem o estado atual.
+  (let [[cmd & resto] (str/split (str/trim (str/lower-case (or args ""))) #"\s+")]
+    (cond
+      (contains? #{"bug" "bugs"} cmd) (bugs/comando! contexto cmd resto)
+      :else (enfileirar-jogada (chat-id contexto)
+                              #(navegar contexto args)
+                              (desempenho/contexto-de contexto)))))
 
 
 (defn- rearmar-remocoes! []
