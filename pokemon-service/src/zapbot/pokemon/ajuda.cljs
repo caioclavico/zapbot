@@ -152,7 +152,7 @@
          "Todos os seus Pokémon disponíveis ficam em " (comando "time") " (atalho !pk tm), com filtros e uma imagem de até 12 por página. " (comando "pc") " orienta sobre a coleção unificada.\n"
          "• " (comando "espaco comprar") ": +50 vagas por 200 moedas, preço fixo em todas as compras.\n"
          "Complete a missão do evento para liberar vagas temporárias. Consulte " (comando "eventos") " para o prazo. Ao terminar, os Pokémon são preservados; acima da capacidade, libere/compre vagas para novas aquisições.\n"
-         "Capacidade inicial: 26 Pokémon. Joy e defensores dos ginásios também contam. Compras anteriores continuam valendo; os Pokémon do antigo PC são incorporados ao carregar os dados, preservando os índices de batalha.\n"
+         "Capacidade inicial: 30 Pokémon. Joy e defensores dos ginásios também contam. Compras anteriores continuam valendo; os Pokémon do antigo PC são incorporados ao carregar os dados, preservando os índices de batalha.\n"
          "Pokémon antigos acima do limite são preservados e continuam utilizáveis. Sem vaga, novas caçadas, capturas e doações recebidas ficam bloqueadas. Retornos da Joy e dos ginásios nunca são descartados.\n"
          "Para liberar espaço, doe ou consulte " (comando "professor ajuda") ". A transferência ao professor é definitiva e dá 1 cartão de XP da família.\n"
          "Ginásios continuam usando três Pokémon da coleção. PvP usa somente o ativo.")
