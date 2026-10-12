@@ -640,15 +640,17 @@
   [contexto]
   (let [cid (:chat-id contexto)
         pid (:player-id contexto)
-        c   (conta cid pid)]
+        c   (conta cid pid)
+        catalogo (for [[chave info] itens
+                       :when (and (:preco info)
+                                  (not (:exclusivo-missoes info))
+                                  (not (:exclusivo-diario info))
+                                  (not (:evolucao info)))]
+                   (formatar-item chave info))]
     (str "🏪 *Loja do tio " config/bot-name "*\n\n"
          "💰 Suas moedas: " (get c "moedas") "\n\n"
          "*Catálogo de itens:*\n"
-         (str/join "\n" (map (fn [[chave info]] (formatar-item chave info))
-                             (filter (fn [[_ info]] (and (:preco info)
-                                                         (not (:exclusivo-missoes info))
-                                                         (not (:exclusivo-diario info))
-                                                         (not (:evolucao info)))) itens))
+         (str/join "\n" catalogo)
          "\n💻 +50 vagas Pokémon — " (preco-expansao-pc cid pid) " moedas: " config/prefix "pk espaco comprar."
          "\n📚 Reaprender golpe — " preco-reaprender " moedas. Use " config/prefix "pokemon reaprender."
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
@@ -656,7 +658,7 @@
          "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, cure status com " config/prefix
          "pokemon curar, recupere HP com " config/prefix "pokemon pocao [nº] ou "
          config/prefix "pokemon pocao-maxima [nº] e equipe itens com "
-         config/prefix "pokemon equipar <nº> <item>!"))))
+         config/prefix "pokemon equipar <nº> <item>!")))
 
 (defn ver-loja-com-imagem
   "Retorna o catálogo como legenda de uma imagem da loja; se o asset não puder

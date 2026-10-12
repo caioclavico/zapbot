@@ -44,8 +44,10 @@
         (is (nil? (loja/registrar-evento-recomeco! "chat" "ash" "selvagens")))
         (is (= antes @estado)))
       (dotimes [_ 3] (loja/registrar-missao! "chat" "ash" "capturas" 1))
-      (is (= 5 (get-in @estado ["chat" "ash" "recompensas-pendentes" "grande-bola"])))
-      (is (= 2 (get-in @estado ["chat" "ash" "recompensas-pendentes" "reviver"])))
+      (is (= 5 (loja/quantidade-item "chat" "ash" "grande-bola")))
+      (is (= 0 (get-in @estado ["chat" "ash" "recompensas-pendentes" "grande-bola"] 0)))
+      (is (= 2 (loja/quantidade-item "chat" "ash" "reviver")))
+      (is (= 0 (get-in @estado ["chat" "ash" "recompensas-pendentes" "reviver"] 0)))
       (is (= {} (:progresso (loja/progresso-evento-recomeco "outro" "ash"))))
       (is (= {} (:progresso (loja/progresso-evento-recomeco "chat" "misty"))))
       (is (= 30 (loja/capacidade-pokemon "chat" "ash")))
@@ -88,3 +90,17 @@
         (is (str/includes? texto "XP para Pikachu"))
         (is (= ["chat" "ash" 2 3] @xp))
         (is (= 1 (get-in (loja/progresso-evento-recomeco "chat" "ash") [:progresso "selvagens"])))))))
+
+(deftest mochila-realmente-cheia-preserva-recompensas-pendentes
+  (let [estado (atom {"chat" {"ash" {"capacidade-mochila" 50
+                                       "inventario" {"pocao" 49}}}})]
+    (with-redefs [loja/contas estado
+                  aventuras/evento-recomeco (fn [_] aventuras/novo-recomeco)
+                  armazenamento/salvar! (fn [& _] nil)]
+      (dotimes [_ 3] (loja/registrar-missao! "chat" "ash" "selvagens" 1))
+      (is (= 1 (loja/quantidade-item "chat" "ash" "pokebola")))
+      (is (= 9 (get-in @estado ["chat" "ash" "recompensas-pendentes" "pokebola"])))
+      (dotimes [_ 3] (loja/registrar-missao! "chat" "ash" "capturas" 1))
+      (is (= 0 (loja/quantidade-item "chat" "ash" "grande-bola")))
+      (is (= 5 (get-in @estado ["chat" "ash" "recompensas-pendentes" "grande-bola"])))
+      (is (= 2 (get-in @estado ["chat" "ash" "recompensas-pendentes" "reviver"]))))))

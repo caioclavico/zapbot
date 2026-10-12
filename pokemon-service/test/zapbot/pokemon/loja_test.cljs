@@ -67,3 +67,14 @@
           (.catch (fn [erro]
                     (is false (str "Não conseguiu carregar a imagem da loja: " erro))
                     (done)))))))
+
+(deftest loja-produz-texto-apenas-com-itens-compraveis
+  (let [texto (loja/ver-loja {:chat-id "chat" :player-id "jogador"})]
+    (is (str/includes? texto "Loja do tio"))
+    (is (str/includes? texto "loja comprar <item>"))
+    (doseq [[chave info] loja/itens]
+      (is (= (boolean (and (:preco info)
+                           (not (:exclusivo-missoes info))
+                           (not (:exclusivo-diario info))
+                           (not (:evolucao info))))
+             (str/includes? texto (str "(`" chave "`)"))) chave))))
