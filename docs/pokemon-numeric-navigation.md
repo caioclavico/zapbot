@@ -4,7 +4,7 @@
 
 As opções são individuais por chat e jogador e expiram após cinco minutos. Um menu expirado retorna orientação e não transforma a escolha em um ataque. Comandos diretos descartam o menu atual. Mensagens sem prefixo continuam fora dessa navegação.
 
-- Menu principal: treinador, coleção, batalhas, mochila, centro, loja e ajuda.
+- Menu principal: treinador, coleção, batalhas, mochila, Enfermeira Joy (Centro Pokémon), loja e ajuda.
 - `!pk meus` / `!pk pokemons`: coleção em texto; o número abre a ficha do Pokémon.
 - Mochila: o número consulta o efeito do item, sem consumir ou comprar.
 - Submenu de batalhas: caçada, PvP, ginásio e raide.
@@ -12,7 +12,7 @@ As opções são individuais por chat e jogador e expiram após cinco minutos. U
 - Na captura da caçada, os números representam Pokébola, Grande Bola e Ultra Bola.
 - Aliases novos: perfil, itens, pokemons e ?.
 
-As fichas, Centro e Loja continuam mostrando seus comandos específicos. Seleções de compra, transferência, cura e evolução não são confirmadas automaticamente por um número.
+Na loja (`!loja`, `!pk loja` ou opção 6), cada item tem um número: `!pk <número>` compra uma unidade e reapresenta o catálogo com o saldo atualizado. A lista ordenada é compartilhada entre exibição e seleção. Saldo, estoque e espaço seguem as validações das compras diretas. Transferência, cura e evolução continuam por comandos específicos. A opção 5 abre diretamente a Enfermeira Joy, com as regras e comandos existentes de atendimento.
 
 ## Validação
 

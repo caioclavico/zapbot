@@ -105,7 +105,7 @@
                ("ajuda" "help" "?") (p/resolved (ajuda/resposta "loja ajuda"))
                "comprar" (p/resolved (loja/comprar contexto (str/join " " (rest partes))))
                ("detalhes" "detalhe") (p/resolved (loja/detalhes (str/join " " (rest partes))))
-               (loja/ver-loja-com-imagem contexto))
+               (pokemon/jogar contexto "loja"))
       (p/rejected (ex-info "Comando fora do domínio Pokémon." {:status 400})))))
 
 (defn command [^js pedido emitir]

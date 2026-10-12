@@ -5757,7 +5757,7 @@
       (:menu? resultado)
       (abrir-menu! contexto "🎮 *Pokémon Odisseu*" navegacao/opcoes-principais
                    ["1 — Meu treinador" "2 — Meus Pokémon" "3 — Batalhar / explorar"
-                    "4 — Mochila" "5 — Centro Pokémon" "6 — Loja" "7 — Ajuda"])
+                    "4 — Mochila" "5 — Centro Pokémon / Enfermeira Joy" "6 — Loja" "7 — Ajuda"])
       (= comando "batalhas")
       (abrir-menu! contexto "⚔️ *Batalhas e exploração*"
                    {"1" "cacar" "2" "batalhar" "3" "ginasio" "4" "raid"}
@@ -5768,7 +5768,17 @@
           (into {} (map-indexed (fn [i _] [(str (inc i)) (str "pokedex " (inc i))]) eq)) (.now js/Date))
         (p/let [texto (ver-time contexto "")]
           (str texto "\n\nVeja a ficha com " config/prefix "pk <número>. Menu válido por 5 minutos. " config/prefix "pk 0 para voltar.")))
-      (= comando "loja") (p/resolved (loja/ver-loja contexto))
+      (= comando "loja")
+      (do (navegacao/abrir! [cid pid] (loja/opcoes-compra) (.now js/Date))
+          (loja/ver-loja-com-imagem contexto))
+      (str/starts-with? (or comando "") "loja comprar ")
+      (let [compra (loja/comprar contexto (subs comando 13))]
+        ;; Mantém os números da loja para novas compras, com saldo atualizado.
+        (navegacao/abrir! [cid pid] (loja/opcoes-compra) (.now js/Date))
+        (p/let [resposta (loja/ver-loja-com-imagem contexto)]
+          (if (map? resposta)
+            (update resposta :texto #(str compra "\n\n" %))
+            (str compra "\n\n" resposta))))
       (= comando "mochila")
       (let [itens (->> (get (loja/conta cid pid) "inventario")
                        (filter (fn [[_ n]] (pos? n))) (sort-by first) vec)]

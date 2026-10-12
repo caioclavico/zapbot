@@ -639,25 +639,39 @@
       (str "❓ Item \"" nome-item "\" não encontrado. Use " config/prefix
            "loja para ver os nomes e " config/prefix "loja detalhes <item> para consultar um efeito."))))
 
+(defn catalogo-compravel []
+  ;; A mesma lista ordenada gera o texto e os comandos do menu.
+  (->> itens
+       (filter (fn [[_ info]] (and (:preco info)
+                                   (not (:exclusivo-missoes info))
+                                   (not (:exclusivo-diario info))
+                                   (not (:evolucao info)))))
+       (sort-by first)
+       vec))
+
+(defn opcoes-compra []
+  (into {} (map-indexed (fn [i [chave _]]
+                         [(str (inc i)) (str "loja comprar " chave)])
+                       (catalogo-compravel))))
+
 (defn ver-loja
   "!loja - mostra o catálogo e o saldo de moedas de quem chamou nesse chat."
   [contexto]
   (let [cid (:chat-id contexto)
         pid (:player-id contexto)
         c   (conta cid pid)
-        catalogo (for [[chave info] itens
-                       :when (and (:preco info)
-                                  (not (:exclusivo-missoes info))
-                                  (not (:exclusivo-diario info))
-                                  (not (:evolucao info)))]
-                   (formatar-item chave info))]
+        catalogo (map-indexed (fn [i [chave info]]
+                                (str (inc i) ". " (formatar-item chave info)))
+                              (catalogo-compravel))]
     (str "🏪 *Loja do tio " config/bot-name "*\n\n"
          "💰 Suas moedas: " (get c "moedas") "\n\n"
          "*Catálogo de itens:*\n"
          (str/join "\n" catalogo)
-         "\n💻 +50 vagas Pokémon — " (preco-expansao-pc cid pid) " moedas: " config/prefix "pk espaco comprar."
+         "\n\n*Serviços por comando:*\n💻 +50 vagas Pokémon — " (preco-expansao-pc cid pid) " moedas: " config/prefix "pk espaco comprar."
          "\n📚 Reaprender golpe — " preco-reaprender " moedas. Use " config/prefix "pokemon reaprender."
-         "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
+         "\n\n🛒 " config/prefix "pk <número> compra 1 unidade do item escolhido.\n"
+         "Menu individual válido por 5 minutos. " config/prefix "pk 0 volta ao menu.\n"
+         "Use " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"
          "📖 Ajuda: " config/prefix "loja ajuda.")))
 
