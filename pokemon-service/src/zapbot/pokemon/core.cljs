@@ -3533,7 +3533,7 @@
      (reduce + 0 (map #(count (get (second %) "time")) (ginasios/liderados cid pid)))))
 
 (defn- cabe-pokemon? [cid pid]
-  (< (ocupacao-pokemon cid pid) (loja/capacidade-pokemon-no-nivel cid pid (treinador/nivel-jogador cid pid))))
+  (< (ocupacao-pokemon cid pid) (loja/capacidade-pokemon cid pid)))
 
 (defn- estoque-cheio []
   (str "💻 Estoque Pokémon cheio. Transfira ao professor, doe ou compre +50 vagas com "
@@ -3568,7 +3568,7 @@
         {:keys [pagina paginas valida? filtro total entradas]} (pagina-colecao banco args)
         comando-pagina (fn [n] (str config/prefix "pk tm " n (when (seq filtro) (str " " filtro))))
         quantidade (ocupacao-pokemon cid pid)
-        capacidade (loja/capacidade-pokemon-no-nivel cid pid (treinador/nivel-jogador cid pid))
+        capacidade (loja/capacidade-pokemon cid pid)
         texto (str "🎒 *Sua coleção Pokémon* • Página " pagina "/" paginas
                    "\nEstoque total: " quantidade "/" capacidade " (inclui Joy e ginásios)."
                    (when (> quantidade capacidade) "\n⚠️ Excedente preservado. Libere ou compre vagas para adquirir mais.")
@@ -3607,7 +3607,7 @@
           (str "✅ +50 vagas Pokémon por " preco " moedas! Capacidade total: " capacidade ".")
           (str "💰 Moedas insuficientes. A expansão custa " preco " moedas.")))
       (str "🎒 *Espaço Pokémon*\n"
-           "Ocupação: " (ocupacao-pokemon cid pid) "/" (loja/capacidade-pokemon-no-nivel cid pid (treinador/nivel-jogador cid pid))
+           "Ocupação: " (ocupacao-pokemon cid pid) "/" (loja/capacidade-pokemon cid pid)
            " (inclui Joy e ginásios)."
            "\nCapacidade permanente: " (loja/capacidade-permanente-pokemon cid pid (treinador/nivel-jogador cid pid))
            "\nVagas compradas: " (* 50 (loja/expansoes-pc cid pid))
@@ -5114,8 +5114,8 @@
                                            (get (treinador/equipe cid b) ib))
             (do (swap! propostas-troca dissoc chave)
                 "⚠️ Um Pokémon mudou ou a proposta expirou. Crie uma nova proposta.")
-            (if-not (and (<= (ocupacao-pokemon cid a) (loja/capacidade-pokemon-no-nivel cid a (treinador/nivel-jogador cid a)))
-                         (<= (ocupacao-pokemon cid b) (loja/capacidade-pokemon-no-nivel cid b (treinador/nivel-jogador cid b)))
+            (if-not (and (<= (ocupacao-pokemon cid a) (loja/capacidade-pokemon cid a))
+                         (<= (ocupacao-pokemon cid b) (loja/capacidade-pokemon cid b))
                          (treinador/trocar-registros! cid a ia registro-a b ib registro-b))
               "⚠️ Os Pokémon mudaram ou um treinador está acima da capacidade. Regularize o estoque e faça uma nova proposta."
               (do
