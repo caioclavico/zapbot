@@ -2,7 +2,9 @@
   (:require [pokemon-service.regression-fixture :as fixture]
             [cljs.test :refer-macros [use-fixtures async deftest is testing]]
             [clojure.string :as str]
-            [zapbot.pokemon.loja :as loja]))
+            [zapbot.pokemon.loja :as loja]
+            [zapbot.pokemon.treinador :as treinador]
+            [zapbot.armazenamento :as armazenamento]))
 
 (use-fixtures :once {:before fixture/iniciar! :after fixture/parar!})
 
@@ -67,3 +69,47 @@
           (.catch (fn [erro]
                     (is false (str "Não conseguiu carregar a imagem da loja: " erro))
                     (done)))))))
+
+(deftest loja-produz-texto-apenas-com-itens-compraveis
+  (let [texto (loja/ver-loja {:chat-id "chat" :player-id "jogador"})]
+    (is (str/includes? texto "Loja do tio"))
+    (is (str/includes? texto "loja comprar <item>"))
+    (doseq [[chave info] loja/itens]
+      (is (= (boolean (and (:preco info)
+                           (not (:exclusivo-missoes info))
+                           (not (:exclusivo-diario info))
+                           (not (:evolucao info))))
+             (str/includes? texto (str "(`" chave "`)"))) chave))))
+
+(deftest capacidades-usam-nivel-real
+  (with-redefs [loja/contas (atom {"g" {"p" {"nivel" 1}}})
+                treinador/contas (atom {})
+                treinador/progresso-treinador (fn [_] {:nivel 25})]
+    (is (= 180 (loja/capacidade-pokemon "g" "p")))
+    (is (= 150 (loja/capacidade "g" "p")))))
+
+(deftest compras-somam-cinquenta-ao-legado
+  (let [estado (atom {"g" {"p" {"moedas" 600 "capacidade-mochila" 175}}})]
+    (with-redefs [loja/contas estado treinador/contas (atom {})
+                  armazenamento/salvar! (fn [& _] nil)]
+      (doseq [capacidade [225 275 325]]
+        (loja/comprar {:chat-id "g" :player-id "p"} "mochila")
+        (is (= capacidade (loja/capacidade "g" "p"))))
+      (is (= 175 (get-in @estado ["g" "p" "capacidade-mochila"])))
+      (is (= 3 (get-in @estado ["g" "p" "expansoes-mochila-50"]))))))
+
+(deftest capacidade-atualiza-com-vitoria-pvp-e-pe-ginasio
+  (doseq [origem [:pvp :ginasio]]
+    (with-redefs [loja/contas (atom {})
+                  treinador/contas (atom {"g" {"p" {"vitorias-treinador" 31}}})
+                  treinador/xp-insignias (fn [& _] 0)
+                  loja/xp-missoes (fn [& _] 0)
+                  armazenamento/salvar! (fn [& _] nil)]
+      (is (= 4 (treinador/nivel-jogador "g" "p")))
+      (is (= 30 (loja/capacidade-pokemon "g" "p")))
+      (let [aviso (case origem
+                    :pvp (treinador/registrar-vitoria-treinador! "g" "p")
+                    :ginasio (treinador/ganhar-pe-ginasio! "g" "p" 1))]
+        (is (= 5 (treinador/nivel-jogador "g" "p")))
+        (is (= 80 (loja/capacidade-pokemon "g" "p")))
+        (is (str/includes? aviso "30 → 80"))))))

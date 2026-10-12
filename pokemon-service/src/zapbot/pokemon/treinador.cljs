@@ -1150,8 +1150,10 @@
      (get (conta cid pid) "pe-ginasios" 0) (get (conta cid pid) "pe-raids" 0)))
 
 (defn ganhar-pe-ginasio! [cid pid quantidade]
+  (let [nivel-anterior (nivel-jogador cid pid)]
   (swap! contas update-in [cid pid "pe-ginasios"] (fnil + 0) quantidade)
-  (persistir!))
+  (persistir!)
+  (loja/notificacao-capacidade cid pid nivel-anterior (nivel-jogador cid pid))))
 
 (defn progresso-treinador
   "Distribui o XP total entre níveis com custos de 5, 7, 9, 11... XP."
@@ -1166,14 +1168,18 @@
   [cid pid]
   (:nivel (progresso-treinador (xp-treinador cid pid))))
 
+(reset! loja/nivel-treinador nivel-jogador)
+
 (defn registrar-vitoria-treinador!
   "Registra vitória e intenção de ovos na mesma atualização persistida."
   ([cid pid] (registrar-vitoria-treinador! cid pid nil))
   ([cid pid evento]
+   (let [nivel-anterior (nivel-jogador cid pid)]
    (swap! contas update-in [cid pid]
           (fn [c] (-> (cond-> (or c conta-vazia) evento (egg-rewards/guardar-evento evento))
                       (update "vitorias-treinador" (fnil inc 0)))))
-   (persistir!)))
+   (persistir!)
+   (loja/notificacao-capacidade cid pid nivel-anterior (nivel-jogador cid pid)))))
 
 (defn perfil-treinador
   "Inclui XP por vitórias, insígnias e missões resgatadas, sem repetir recompensas."

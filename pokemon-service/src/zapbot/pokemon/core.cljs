@@ -1234,9 +1234,9 @@
         _ (swap! jogos assoc cid finalizando)
         vencedor-pid (get-in jogo [:jogadores vencedor-marca])
         _ (rank/pontuar! cid vencedor-pid (get-in jogo [:nomes vencedor-marca]) "pokemon")
-        _ (if-let [evento (evento-atividade jogo :pvp-win vencedor-pid)]
-            (treinador/registrar-vitoria-treinador! cid vencedor-pid evento)
-            (treinador/registrar-vitoria-treinador! cid vencedor-pid))
+        aviso-nivel (if-let [evento (evento-atividade jogo :pvp-win vencedor-pid)]
+                      (treinador/registrar-vitoria-treinador! cid vencedor-pid evento)
+                      (treinador/registrar-vitoria-treinador! cid vencedor-pid))
         _ (loja/registrar-semanal! cid vencedor-pid "pvp" [])
         ganho (loja/creditar! cid vencedor-pid)
         aviso-missao (loja/registrar-missao! cid vencedor-pid "vitorias" (treinador/nivel-jogador cid vencedor-pid))
@@ -1252,7 +1252,8 @@
                                     (if (= finalizando (get estado cid)) (dissoc estado cid) estado))))))
     (str "\n\n🏆 " (get-in jogo [:nomes vencedor-marca]) " venceu" motivo-extra "! (+" ganho
          " 💰 moedas, confira com " config/prefix "loja)"
-         (when-not (str/blank? premio-bolas) (str "\n" premio-bolas)) aviso-missao
+         (when-not (str/blank? premio-bolas) (str "\n" premio-bolas))
+         (when-not (str/blank? aviso-nivel) (str "\n" aviso-nivel)) aviso-missao
          "\n✨ *XP por Pokémon que participou:*"
          (apply str
                 (for [{:keys [pid nome nocautes xp subida]} recompensas]
@@ -2635,9 +2636,10 @@
                       pokemon (com-golpes pokemon)]
                 (if (treinador/receber-inicial! cid pid pokemon)
                   (enviar-imagem contexto (:imagem pokemon)
-                                 (str (cabecalho) "🎉 Você escolheu *" (:nome pokemon) "* como seu inicial!\n\n"
+                                      (str (cabecalho) "🎉 Você escolheu *" (:nome pokemon) "* como seu inicial!\n\n"
                                       (legenda-pokemon "Seu time" pokemon) "\n\nUse " config/prefix
-                                      "pokemon pra batalhar, ou " config/prefix "pokemon cacar pra capturar mais."))
+                                      "pokemon pra batalhar, ou " config/prefix "pokemon cacar pra capturar mais.\n"
+                                      "🎁 Seu kit inicial está disponível: use " config/prefix "pokemon mochila kit quando quiser resgatá-lo."))
                   (orientacao-equipe cid pid)))
               (p/catch (fn [err]
                          (js/console.error "Erro ao escolher inicial:" err)
@@ -3607,7 +3609,7 @@
       (str "🎒 *Espaço Pokémon*\n"
            "Ocupação: " (ocupacao-pokemon cid pid) "/" (loja/capacidade-pokemon cid pid)
            " (inclui Joy e ginásios)."
-           "\nCapacidade permanente: " (loja/capacidade-permanente-pokemon cid pid)
+           "\nCapacidade permanente: " (loja/capacidade-permanente-pokemon cid pid (treinador/nivel-jogador cid pid))
            "\nVagas compradas: " (* 50 (loja/expansoes-pc cid pid))
            " — compras do antigo PC já incluídas, sem nova cobrança."
            "\n+50 vagas por 200 moedas: " config/prefix "pk espaco comprar"
@@ -4604,7 +4606,7 @@
     (let [pid (get-in jogo [:jogadores :x])
           finalizando (assoc jogo :finalizando? true)
           _ (swap! jogos assoc cid finalizando)
-          _ (treinador/ganhar-pe-ginasio! cid pid 1)
+          aviso-capacidade (treinador/ganhar-pe-ginasio! cid pid 1)
           recompensas (conceder-xp-ginasio! cid pid jogo false nil)]
       (-> (p/all
            (for [{:keys [idx subida]} recompensas :when subida]
@@ -4615,6 +4617,7 @@
       (let [texto (str "\nO líder venceu. Recupere seu time e tente novamente! Suas insígnias foram mantidas."
            (texto-xp-ginasio recompensas)
            "\n⭐ +1 PE (Pontos de experiência) para o treinador."
+           (when-not (str/blank? aviso-capacidade) (str "\n" aviso-capacidade))
            (apply str (for [{:keys [subida]} recompensas :when subida]
                         (str "\n✨ " (:nome subida) " chegou ao nível " (:nivel subida) "!"
                              ))))]
@@ -4628,7 +4631,7 @@
           pedra? (or primeira? (and premio (< (rand-int 100) 25)))
           finalizando (assoc jogo :finalizando? true)
           _ (swap! jogos assoc cid finalizando)
-          _ (when premio
+          aviso-capacidade (when premio
               (loja/creditar-quantia! cid pid moedas)
               (treinador/registrar-vitoria-treinador! cid pid)
               (treinador/ganhar-pe-ginasio! cid pid (if primeira? 5 2)))
@@ -4661,6 +4664,7 @@
              (str (when primeira? "\nNova insígnia conquistada e próximo ginásio liberado!")
                   "\n💰 +" moedas " moedas."
                   "\n⭐ +" (if primeira? 6 3) " PE para o treinador."
+                  (when-not (str/blank? aviso-capacidade) (str "\n" aviso-capacidade))
                   (when texto-pedra (str "\n" texto-pedra))
                   (apply str (for [{:keys [subida]} recompensas :when subida]
                                (str "\n🌟 " (:nome subida) " chegou ao nível " (:nivel subida) "!"
@@ -5387,6 +5391,8 @@
       (= cmd "mt") (usar-mt contexto resto)
       (= cmd "reviver") (reviver-pokemon contexto resto)
       (= cmd "mochila") (p/resolved (loja/mochila contexto (first resto)))
+      (contains? #{"recompensas" "recompensa"} cmd)
+      (p/resolved (loja/recompensas cid pid))
       (and (contains? #{"missoes" "missões"} cmd) (= "semanais" (first resto)))
       (p/resolved (loja/ver-semanais cid pid (= "resgatar" (second resto))))
       (contains? #{"presente" "presentes"} cmd)

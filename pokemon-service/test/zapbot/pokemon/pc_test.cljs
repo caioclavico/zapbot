@@ -70,15 +70,15 @@
 (deftest expansao-debita-preco-fixo-e-nao-cobra-sem-saldo
   (let [estado (atom {"chat" {"ash" {"moedas" 600}}})]
     (with-redefs [loja/contas estado armazenamento/salvar! sem-gravacao]
-      (is (= 26 (loja/capacidade-pokemon "chat" "ash")))
-      (doseq [[preco capacidade] [[200 76] [200 126] [200 176]]]
+      (is (= 30 (loja/capacidade-pokemon "chat" "ash")))
+      (doseq [[preco capacidade] [[200 80] [200 130] [200 180]]]
         (is (= 200 (loja/preco-expansao-pc "chat" "ash")))
         (is (= {:status :ok :preco preco :capacidade capacidade}
                (loja/comprar-espaco-pc! "chat" "ash")))
         (is (= capacidade (loja/capacidade-pokemon "chat" "ash"))))
       (is (= 0 (loja/moedas "chat" "ash")))
       (is (= {:status :sem-moedas :preco 200} (loja/comprar-espaco-pc! "chat" "ash")))
-      (is (= 176 (loja/capacidade-pokemon "chat" "ash"))))))
+      (is (= 180 (loja/capacidade-pokemon "chat" "ash"))))))
 
 (deftest retornos-e-doacoes-vao-a-colecao-sem-cortar-excedentes
   (let [estado (atom {"chat" {"ash" {"equipe" (mapv registro (range 6))
@@ -100,15 +100,15 @@
 (deftest estoque-inclui-joy-e-ginasios-e-bloqueia-antes-da-bola
   (async done
     (let [estado (atom {"chat" {"ash" {"equipe" (mapv registro (range 6))
-                                        "pc" (mapv registro (range 6 22))
-                                        "enfermaria" [{"pokemon" (registro 22)}]}}})
+                                        "pc" (mapv registro (range 6 26))
+                                        "enfermaria" [{"pokemon" (registro 26)}]}}})
           consumidas (atom 0)
           caca {:pid "ash" :aguardando-captura? true :tentativas-captura 0}]
       (with-redefs [treinador/contas estado loja/contas (atom {})
-                    ginasios/liderados (fn [_ _] [["pedra" {"time" (mapv registro [23 24 25])}]])
+                    ginasios/liderados (fn [_ _] [["pedra" {"time" (mapv registro [27 28 29])}]])
                     core/cacadas-selvagens (atom {"chat" caca})
                     loja/consumir-bola! (fn [_ _ _] (swap! consumidas inc) true)]
-        (is (= 26 (core/ocupacao-pokemon "chat" "ash")))
+        (is (= 30 (core/ocupacao-pokemon "chat" "ash")))
         (is (not (core/cabe-pokemon? "chat" "ash")))
         (-> (core/capturar-selvagem {:chat-id "chat" :player-id "ash"} ["pokebola"])
             (.then (fn [texto]
@@ -216,13 +216,13 @@
     (with-redefs [loja/contas estado treinador/contas (atom {})
                   armazenamento/salvar! sem-gravacao ginasios/liderados (fn [_ _] [])]
       (let [antes @estado texto (core/comando-espaco {:chat-id "chat" :player-id "ash"} [])]
-        (is (= 176 (loja/capacidade-pokemon "chat" "ash")))
+        (is (= 180 (loja/capacidade-pokemon "chat" "ash")))
         (is (str/includes? texto "Vagas compradas: 150"))
         (is (= antes @estado)))
       (is (str/includes? (core/comando-espaco {:chat-id "chat" :player-id "ash"} ["comprar"])
-                         "Capacidade total: 226"))
+                         "Capacidade total: 230"))
       (is (= 0 (loja/moedas "chat" "ash")))
-      (is (= 226 (loja/capacidade-pokemon "chat" "ash"))))))
+      (is (= 230 (loja/capacidade-pokemon "chat" "ash"))))))
 
 (deftest doacao-revalida-capacidade-e-entrega-na-colecao
   (async done
@@ -233,19 +233,19 @@
       (swap! treinador/contas assoc cid
              {"ash" {"equipe" [doado] "ativo" 0 "pc-migrado" true}
               "misty" {"equipe" (mapv registro (range 1 7))
-                       "pc" (mapv registro (range 7 27)) "ativo" 0 "pc-migrado" true}})
+                       "pc" (mapv registro (range 7 31)) "ativo" 0 "pc-migrado" true}})
       (-> (core/doar mensagem "1")
           (p/then (fn [texto]
                     (is (str/includes? texto "destinatário está sem espaço"))
                     (is (= [doado] (treinador/equipe cid "ash")))
-                    (is (= 26 (core/ocupacao-pokemon cid "misty")))
+                    (is (= 30 (core/ocupacao-pokemon cid "misty")))
                     (swap! treinador/contas update-in [cid "misty" "pc"] pop)
                     (core/doar mensagem "1")))
           (p/then (fn [texto]
                     (is (str/includes? texto "com sucesso"))
                     (is (empty? (treinador/equipe cid "ash")))
-                    (is (= 26 (count (treinador/equipe cid "misty"))))
-                    (is (= 26 (core/ocupacao-pokemon cid "misty")))
+                    (is (= 30 (count (treinador/equipe cid "misty"))))
+                    (is (= 30 (core/ocupacao-pokemon cid "misty")))
                     (is (= doado (last (treinador/equipe cid "misty"))))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally (fn []
