@@ -1130,3 +1130,21 @@
                    (is (< (aget dados 0) 100)))
                  (done)))
         (.catch (fn [erro] (is false (str erro)) (done))))))
+
+(deftest navegacao-numerica-encaminha-acoes-sem-trocar-jogador
+  (let [contexto {:chat-id "nav-grupo" :player-id "ash"}
+        recebidos (atom [])]
+    (swap! core/cacadas-selvagens assoc "nav-grupo" {:pid "ash"})
+    (try
+      (with-redefs [core/executar-comando (fn [ctx comando]
+                                          (swap! recebidos conj [(:player-id ctx) comando]))]
+        (core/navegar contexto "1")
+        (core/navegar (assoc contexto :player-id "misty") "1")
+        (is (= [["ash" "atacar 1"]] @recebidos))
+        (swap! core/cacadas-selvagens assoc-in ["nav-grupo" :aguardando-captura?] true)
+        (core/navegar contexto "2")
+        (is (= ["ash" "capturar grande-bola"] (last @recebidos)))
+        (core/navegar contexto "0")
+        (core/navegar contexto "1")
+        (is (= ["ash" "treinador"] (last @recebidos))))
+      (finally (swap! core/cacadas-selvagens dissoc "nav-grupo")))))

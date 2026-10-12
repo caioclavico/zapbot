@@ -58,7 +58,7 @@
 
     :ataques
     (str "⚔️ *Como usar: atacar e ações de batalha*\n\n"
-         "Na sua vez, escolha um golpe pelo número mostrado na mensagem: " (comando "atacar 1") " ou " config/prefix "pk atk 1. Confira o tipo e a efetividade contra o adversário.\n"
+         "Na sua vez, escolha um golpe pelo número mostrado na mensagem: " (str config/prefix "pk 1") " ou " config/prefix "pk atk 1. Confira o tipo e a efetividade contra o adversário.\n"
          "• " (comando "defender") ": tenta esquivar e reduz o dano recebido.\n"
          "• " (comando "curar") ": usa uma cura da mochila para remover status.\n"
          "• " (comando "pocao [número]") ": recupera 40% do HP; " (comando "pocao-maxima [número]") " recupera todo o HP. Sem número, usa no Pokémon ativo. Compre itens na " config/prefix "loja.\n"
@@ -72,7 +72,7 @@
          "2. Envie " (comando "") " para abrir um desafio. Outro treinador envia o mesmo comando para aceitar com seu Pokémon ativo.\n"
          "A diferença máxima é de " pvp/diferenca-maxima-niveis " níveis para cima ou para baixo. A faixa aparece no anúncio; tentativas incompatíveis não cancelam o desafio.\n"
          "O desafio expira em " pvp/minutos-espera " minutos, sem penalidade. Há um desafio por grupo e você só pode participar de um combate por vez.\n"
-         "3. Na sua vez, use " (comando "atacar 1") " (golpes de 1 a 4), " (comando "defender") ", " (comando "pocao") ", " (comando "pocao-maxima") " ou " (comando "curar") ".\n\n"
+         "3. Na sua vez, use " (str config/prefix "pk 1") " (golpes de 1 a 4), " (comando "defender") ", " (comando "pocao") ", " (comando "pocao-maxima") " ou " (comando "curar") ".\n\n"
          "O PvP é 1 × 1, sem liga ou escalação obrigatória. Os níveis, atributos, tipos, habilidades e golpes reais são preservados. O nocaute encerra a partida e os participantes recebem o XP das regras existentes.\n"
          "Após começar, há 30 minutos por turno. " (comando "sair") " cancela seu desafio ou desiste; desistência não dá XP ou moedas e perde 1 ponto no rank.")
 
@@ -109,7 +109,7 @@
          "1. Veja líderes, níveis e desbloqueios com " (comando "ginasio") ".\n"
          "2. Monte e veja a foto dos três mais fortes aptos com " (comando "gin time") ". Para escolher manualmente: " (comando "ginasio time 1,2,3") ". Use os números da sua coleção.\n"
          "3. Veja o primeiro líder com " (comando "ginasio pedra") " e inicie com " (comando "ginasio desafiar pedra") ".\n"
-         "4. Use " (comando "atacar 1") " (ou o atalho " config/prefix "pk atk 1) e as demais ações de batalha. O líder responde automaticamente. Cada ataque mostra a foto dos Pokémon na arena.\n\n"
+         "4. Use " (str config/prefix "pk 1") " (ou o atalho " config/prefix "pk atk 1) e as demais ações de batalha. O líder responde automaticamente. Cada ataque mostra a foto dos Pokémon na arena.\n\n"
          "São combates 3 × 3, sem ajuste dos níveis. Vença os ginásios na ordem para liberar os próximos. A escalação de ginásio é independente do Pokémon ativo usado no PvP.\n"
          "✨ *XP dos Pokémon:* somente Pokémon que realmente entraram na batalha são participantes. Cada um recebe seu XP-base e +1 XP para cada defensor que ele próprio nocauteou:\n"
          "• Derrota: 3 XP-base. Exemplo: derrubou 2 defensores antes de perder = 5 XP.\n"
@@ -141,7 +141,7 @@
          "1. Escolha seu inicial com " (comando "inicial") ". Confira as bolas em " (comando "mochila") " e os itens em " config/prefix "loja.\n"
          "2. Use " (comando "time") " e " (comando "escolher 1") " para definir um Pokémon com HP.\n"
          "Com a bolsa cheia, você pode lutar nas caçadas, mas precisa de vaga para capturar. Se vencer sem espaço, o selvagem será liberado.\n3. Consulte clima e áreas com " (comando "clima") ". Três áreas ficam disponíveis por dia; escolha, por exemplo, com " (comando "cacar floresta") ". O clima aumenta os encontros de tipos favorecidos.\n"
-         "4. Derrote o selvagem usando " (comando "atacar 1") ". Depois escolha uma bola no menu: " (comando "capturar pokebola") ".\n\n"
+         "4. Derrote o selvagem usando " (str config/prefix "pk 1") ". Depois escolha uma bola no menu: " (comando "capturar pokebola") ".\n\n"
          "A captura exige uma bola da mochila e pode falhar. Há até três tentativas, mas o selvagem pode fugir antes. Capturar de primeira dá +1 XP extra. Veja as regras em " (comando "capturar ajuda") ".\n"
          "Cada encontro tem chance de 1 em 512 de ser ✨ Shiny: cores especiais, mesmos atributos. Avistamentos, maiores níveis e primeiros shiny ficam em " (comando "pokedex descobertas") ".\n"
          "Durante o combate, é permitida uma troca de Pokémon com " (comando "escolher <número>") "; ela gasta sua ação.\n"
