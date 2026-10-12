@@ -5,10 +5,14 @@
             [zapbot.pokemon.pvp :as pvp]))
 
 (defn- comando [texto]
-  (str config/prefix "pokemon" (when (seq texto) (str " " texto))))
+  (str config/prefix "pk" (when (seq texto) (str " " texto))))
 
 (def ^:private assuntos
-  {"batalha" :batalhas "batalhas" :batalhas "pvp" :batalhas
+  {"menu" :navegacao "navegacao" :navegacao
+   "loja" :loja "comprar" :loja "mochila" :mochila "itens" :mochila "mch" :mochila
+   "meus" :time "pokemons" :time "perfil" :treinador "treinador" :treinador
+   "ovos" :ovos "ovo" :ovos "incubadoras" :ovos "incubar" :ovos
+   "batalhar" :batalhas "batalha" :batalhas "batalhas" :batalhas "pvp" :batalhas
    "atacar" :ataques "ataque" :ataques "atk" :ataques
    "ginasio" :ginasios "ginasios" :ginasios "gin" :ginasios
    "cacar" :cacadas "cacada" :cacadas "cacadas" :cacadas "cac" :cacadas
@@ -23,9 +27,54 @@
 
 (defn- guia [assunto]
   (case assunto
+    :navegacao
+    (str "🎮 *Menus e comandos diretos*\n\n"
+         (comando "") " abre o menu principal. Responda com " (comando "<número>") " para escolher a opção exibida.\n"
+         "O menu é opcional: " (comando "cacar") ", " (comando "treinador") " e os demais comandos diretos continuam funcionando.\n"
+         "Menus são individuais por jogador e por chat, e expiram após 5 minutos. " (comando "0") " ou " (comando "menu") " abre o menu principal.\n"
+         "Um comando direto fecha o menu de consulta. Sem menu aberto, em combate, " (comando "1") " escolhe o golpe 1; na captura da caçada, escolhe a Pokébola.\n"
+         "Se abriu um menu durante o combate, use " (comando "atacar 1") " para atacar diretamente e fechar o menu. Números sem prefixo não escolhem opções.\n"
+         "Na coleção por " (comando "meus") ", o número abre a ficha. Na mochila, consulta o efeito do item. Compras, uso de itens e transferências exigem seus comandos específicos.")
+
+    :loja
+    (str "🏪 *Ajuda da loja*\n\n"
+         "• " config/prefix "loja ou " (comando "loja") ": catálogo e saldo.\n"
+         "• " config/prefix "loja detalhes <item>: efeito e uso. Ex.: " config/prefix "loja detalhes atadura.\n"
+         "• " config/prefix "loja comprar <item>: compra uma unidade com suas moedas, se houver espaço na mochila.\n"
+         "Use o identificador exibido no catálogo. Bolas vêm de bônus, missões e recompensas; não são vendidas.\n"
+         "Consulte seus itens com " (comando "mochila") ". Para usar: " (comando "curar") ", " (comando "pocao [número]") " ou " (comando "equipar <número> <item>") ".\n"
+         "Expansões: " config/prefix "loja comprar mochila (+50 itens) e " (comando "espaco comprar") " (+50 Pokémon), por 200 moedas cada.\n"
+         "Consultar a loja não compra nem usa itens. O catálogo usa comandos diretos, sem seleção por número.")
+
+    :mochila
+    (str "🎒 *Ajuda da mochila*\n\n"
+         (comando "mochila") " mostra os itens, a ocupação e as recompensas pendentes. " (comando "<número>") " consulta o efeito do item da lista; não o consome.\n"
+         "• " (comando "mochila kit") ": resgata o kit inicial, quando disponível.\n"
+         "• " (comando "mochila diario") ": recebe o bônus diário.\n"
+         "• " (comando "mochila resgatar") ": recolhe recompensas pendentes, conforme o espaço livre.\n"
+         "Cada unidade ocupa uma vaga; itens equipados não ocupam espaço. A capacidade cresce com o nível do treinador e com expansões.\n"
+         "Compra de expansão: " config/prefix "loja comprar mochila. Uso em combate: " (comando "ajuda ataque") ". " (comando "0") " volta ao menu.")
+
+    :treinador
+    (str "🧑‍🎓 *Ajuda do treinador*\n\n"
+         (comando "treinador") " ou " (comando "perfil") " mostra seu progresso. O nível real do treinador libera bônus de capacidade; PE do treinador e XP dos Pokémon são separados.\n"
+         "Coleção: " (comando "meus") ". Insígnias e recompensas: " (comando "ajuda ginasios") ". Missões: " (comando "missoes") ".")
+
+    :ovos
+    (str "🥚 *Ajuda de ovos e incubadoras*\n\n"
+         "• " (comando "ovos") ": inventário de ovos.\n"
+         "• " (comando "ovo") ": progresso dos ovos incubados.\n"
+         "• " (comando "incubadoras") ": vagas e usos disponíveis.\n"
+         "• " (comando "incubar 1") ": incuba o ovo 1 usando uma incubadora livre.\n"
+         "• " (comando "incubar 1 permanente|extra|especial") ": escolhe o tipo de incubadora.\n"
+         "Os números são da lista de ovos disponíveis e devem acompanhar incubar; " (comando "1") " sozinho não incuba. Guia completo: " (comando "ovo ajuda") ".")
+
     :atalhos
     (str "⚡ *Comandos Pokémon abreviados*\n\n"
-         "• `ajd` → esta lista de abreviações\n\n"
+         "• `ajd` → esta lista de abreviações\n"
+         "• " (comando "") " → menu · " (comando "0") " → voltar ao menu\n"
+         "• " (comando "1") " → opção exibida; sem menu aberto, golpe 1 em combate\n"
+         "• `perfil` → treinador · `pokemons` → meus · `itens` → mochila\n\n"
          "*Batalha*\n"
          "• `atk` → atacar · Ex.: " config/prefix "pk atk 1\n"
          "• `def` → defender · `cur` → curar\n"
@@ -58,18 +107,19 @@
 
     :ataques
     (str "⚔️ *Como usar: atacar e ações de batalha*\n\n"
-         "Na sua vez, escolha um golpe pelo número mostrado na mensagem: " (str config/prefix "pk 1") " ou " config/prefix "pk atk 1. Confira o tipo e a efetividade contra o adversário.\n"
+         "Sem menu de consulta aberto, na sua vez, escolha um golpe pelo número mostrado na mensagem: " (str config/prefix "pk 1") " ou " config/prefix "pk atk 1. Confira o tipo e a efetividade contra o adversário.\n"
          "• " (comando "defender") ": tenta esquivar e reduz o dano recebido.\n"
          "• " (comando "curar") ": usa uma cura da mochila para remover status.\n"
          "• " (comando "pocao [número]") ": recupera 40% do HP; " (comando "pocao-maxima [número]") " recupera todo o HP. Sem número, usa no Pokémon ativo. Compre itens na " config/prefix "loja.\n"
          "Essas ações consomem sua vez quando aceitas. No ginásio e na caçada, o adversário responde automaticamente.\n"
          "Na caçada, você pode trocar uma vez com " (comando "trocar <número>") ", como primeira ação; a troca gasta a vez. No PvP e no ginásio, não há troca manual durante a batalha.\n"
+         "Se estiver num menu de consulta, use " (comando "atacar 1") " para fechar o menu e atacar diretamente.\n"
          "Para desistir: " (comando "sair") ". Consultar esta ajuda não gasta turno.")
 
     :batalhas
     (str "⚔️ *Como jogar: PvP com Pokémon ativo*\n\n"
          "1. Escolha um Pokémon saudável com " (comando "escolher <número>") ".\n"
-         "2. Envie " (comando "") " para abrir um desafio. Outro treinador envia o mesmo comando para aceitar com seu Pokémon ativo.\n"
+         "2. Envie " (comando "batalhar") " para abrir um desafio. Outro treinador envia o mesmo comando para aceitar com seu Pokémon ativo.\n"
          "A diferença máxima é de " pvp/diferenca-maxima-niveis " níveis para cima ou para baixo. A faixa aparece no anúncio; tentativas incompatíveis não cancelam o desafio.\n"
          "O desafio expira em " pvp/minutos-espera " minutos, sem penalidade. Há um desafio por grupo e você só pode participar de um combate por vez.\n"
          "3. Na sua vez, use " (str config/prefix "pk 1") " (golpes de 1 a 4), " (comando "defender") ", " (comando "pocao") ", " (comando "pocao-maxima") " ou " (comando "curar") ".\n\n"
@@ -81,7 +131,7 @@
          "Raides não aparecem automaticamente. Em uma raide existente, os defensores ficam preservados e voltam ao terminar.\n"
          "Inscrições: 45 minutos, de 2 a 6 jogadores. Use " (comando "gin entrar 1") " com um Pokémon saudável da liga indicada.\n"
          "Escolha visual: " (comando "raide time") ". Escolha automática: " (comando "gin entrar") ".\n"
-         "Qualquer inscrito pode usar " (comando "gin iniciar") ". Combate: até 30 minutos, alternando " (comando "gin atacar 1") ".\n"
+         "Use " (comando "gin iniciar") ". Combate: até 30 minutos. Sem menu de consulta aberto, use " (comando "1") "; diretamente, use " (comando "raide atacar 1") ".\n"
          "Quem causar dano recebe 50 moedas, 6 PE e 6 XP para o Pokémon inscrito por vitória, mesmo se cair.\n"
          "Após vencer: " (comando "gin capturar pokebola") ". São 3 tentativas durante 30 minutos, usando suas bolas e uma vaga na coleção.\n"
          "Chance base: raro 35%, lendário 8%, mítico 4%; bolas melhores aumentam a chance. Capturado: nível 1 e atributos normais da espécie.\n"
@@ -126,22 +176,22 @@
 
     :captura
     (str "🎯 *Como jogar: captura*\n\n"
-         "Derrote o selvagem e escolha uma bola da mochila:\n"
+         "Derrote o selvagem. Sem menu de consulta aberto, escolha a bola exibida com " (comando "1") " (Pokébola), " (comando "2") " (Grande Bola) ou " (comando "3") " (Ultra Bola). Os comandos diretos também funcionam:\n"
          "• " (comando "capturar pokebola") "\n"
          "• " (comando "capturar grande-bola") "\n"
          "• " (comando "capturar ultra-bola") "\n\n"
          "O menu mostra o estoque e a chance de cada bola. Cada lançamento consome uma bola. São até três tentativas: o Pokémon pode fugir após uma falha e foge após a terceira.\n"
          "✨ Capturar na primeira tentativa dá +1 XP extra ao Pokémon ativo, além do XP de raridade e do bônus de sequência. Comando inválido ou falta de bola não conta como tentativa.\n"
          "Você tem 5 minutos para agir. Para desistir: " (comando "sair") ".\n"
-         "Sem bolas? Compre na " config/prefix "loja ou use " config/prefix "mochila kit, "
+         "Sem bolas? Use " config/prefix "mochila kit, "
          config/prefix "mochila diario e " config/prefix "mochila resgatar. Missões e nocautes no PvP também dão bolas.")
 
     :cacadas
     (str "🌿 *Como jogar: caçadas*\n\n"
          "1. Escolha seu inicial com " (comando "inicial") ". Confira as bolas em " (comando "mochila") " e os itens em " config/prefix "loja.\n"
-         "2. Use " (comando "time") " e " (comando "escolher 1") " para definir um Pokémon com HP.\n"
+         "2. Entre diretamente com " (comando "cacar") "; não é preciso passar pelo menu. Use " (comando "time") " e " (comando "escolher 1") " para definir um Pokémon com HP.\n"
          "Com a bolsa cheia, você pode lutar nas caçadas, mas precisa de vaga para capturar. Se vencer sem espaço, o selvagem será liberado.\n3. Consulte clima e áreas com " (comando "clima") ". Três áreas ficam disponíveis por dia; escolha, por exemplo, com " (comando "cacar floresta") ". O clima aumenta os encontros de tipos favorecidos.\n"
-         "4. Derrote o selvagem usando " (str config/prefix "pk 1") ". Depois escolha uma bola no menu: " (comando "capturar pokebola") ".\n\n"
+         "4. Sem menu de consulta aberto, derrote o selvagem usando " (str config/prefix "pk 1") ". Depois, o mesmo número escolhe a bola exibida; para captura direta: " (comando "capturar pokebola") ".\n\n"
          "A captura exige uma bola da mochila e pode falhar. Há até três tentativas, mas o selvagem pode fugir antes. Capturar de primeira dá +1 XP extra. Veja as regras em " (comando "capturar ajuda") ".\n"
          "Cada encontro tem chance de 1 em 512 de ser ✨ Shiny: cores especiais, mesmos atributos. Avistamentos, maiores níveis e primeiros shiny ficam em " (comando "pokedex descobertas") ".\n"
          "Durante o combate, é permitida uma troca de Pokémon com " (comando "escolher <número>") "; ela gasta sua ação.\n"
@@ -152,7 +202,7 @@
          "Todos os seus Pokémon disponíveis ficam em " (comando "time") " (atalho !pk tm), com filtros e uma imagem de até 12 por página. " (comando "pc") " orienta sobre a coleção unificada.\n"
          "• " (comando "espaco comprar") ": +50 vagas por 200 moedas, preço fixo em todas as compras.\n"
          "Complete a missão do evento para liberar vagas temporárias. Consulte " (comando "eventos") " para o prazo. Ao terminar, os Pokémon são preservados; acima da capacidade, libere/compre vagas para novas aquisições.\n"
-         "Capacidade inicial: 30 Pokémon. Joy e defensores dos ginásios também contam. Compras anteriores continuam valendo; os Pokémon do antigo PC são incorporados ao carregar os dados, preservando os índices de batalha.\n"
+         "Capacidade inicial: 30 Pokémon; o nível do treinador também libera bônus de vagas. Joy e defensores dos ginásios também contam. Compras anteriores continuam valendo; os Pokémon do antigo PC são incorporados ao carregar os dados, preservando os índices de batalha.\n"
          "Pokémon antigos acima do limite são preservados e continuam utilizáveis. Sem vaga, novas caçadas, capturas e doações recebidas ficam bloqueadas. Retornos da Joy e dos ginásios nunca são descartados.\n"
          "Para liberar espaço, doe ou consulte " (comando "professor ajuda") ". A transferência ao professor é definitiva e dá 1 cartão de XP da família.\n"
          "Ginásios continuam usando três Pokémon da coleção. PvP usa somente o ativo.")
@@ -170,8 +220,9 @@
 
     :time
     (str "🎒 *Como jogar: time e recuperação*\n\n"
+         "• " (comando "meus") " ou " (comando "pokemons") ": coleção em texto; " (comando "<número>") " abre a ficha.\n"
          "• " (comando "time") ": coleção completa, com uma imagem de até 12 Pokémon por página.\n"
-         "Use " (comando "time 2") " para a página seguinte, ou " (comando "time 2 fogo >") " para manter filtros. Um número no início indica página; para nível, use nivel N.\n"
+         "A lista visual não abre seleção contextual: use " (comando "pokedex <número>") " para a ficha. Use " (comando "time 2") " para a página seguinte, ou " (comando "time 2 fogo >") " para manter filtros. Um número no início indica página; para nível, use nivel N.\n"
          "Compre +50 vagas com " (comando "espaco comprar") ". Ginásios usam escalações de três Pokémon; PvP usa apenas o ativo.\n"
          "Envie repetidos ao professor para liberar vagas e ganhar cartões de XP: " (comando "professor ajuda") ".\n"
          "• " (comando "time txt") ": lista completa em texto; " (comando "time csv") ": planilha.\n"
@@ -199,11 +250,18 @@
 
     (str "📖 *Como jogar Pokémon*\n\n"
          "Comece com " (comando "inicial") ", escolha seu Pokémon e faça caçadas para capturar mais. Um Pokémon ativo saudável basta para o PvP. Com três, prepare seu time de ginásio.\n\n"
+         "🎮 " (comando "") " abre o menu; " (comando "<número>") " escolhe uma opção. " (comando "0") " volta ao menu. Menus individuais expiram em 5 minutos.\n"
+         "O menu é opcional. Entre diretamente com " (comando "cacar") " ou " (comando "batalhar") ". Em combate, sem menu aberto, use " (comando "1") " para o golpe 1.\n\n"
          "⚡ *Atalhos:* " config/prefix "pk atk 1, " config/prefix "pk def, " config/prefix "pk cur, "
          config/prefix "pk pot, " config/prefix "pk cac, " config/prefix "pk gin, "
          config/prefix "pk tm e " config/prefix "pk dex.\n\n"
          (str/join "\n" (map (fn [[nome titulo]] (str "• " (comando (str "ajuda " nome)) " — " titulo))
-                               [["ataque" "golpes, defesa, curas e poções"]
+                               [["menu" "navegação, números e comandos diretos"]
+                                ["loja" "compras e efeitos dos itens"]
+                                ["mochila" "itens, bônus e recompensas pendentes"]
+                                ["treinador" "nível e progresso"]
+                                ["ovos" "incubação e progresso"]
+                                ["ataque" "golpes, defesa, curas e poções"]
                                 ["batalhas" "turnos, golpes e vitória"]
                                 ["ginasios" "líderes, insígnias e recompensas"]
                                 ["cacadas" "selvagens e captura"]

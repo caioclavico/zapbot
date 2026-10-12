@@ -659,10 +659,7 @@
          "\n📚 Reaprender golpe — " preco-reaprender " moedas. Use " config/prefix "pokemon reaprender."
          "\n\nUse " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"
-         "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, cure status com " config/prefix
-         "pokemon curar, recupere HP com " config/prefix "pokemon pocao [nº] ou "
-         config/prefix "pokemon pocao-maxima [nº] e equipe itens com "
-         config/prefix "pokemon equipar <nº> <item>!")))
+         "📖 Ajuda: " config/prefix "loja ajuda.")))
 
 (defn ver-loja-com-imagem
   "Retorna o catálogo como legenda de uma imagem da loja; se o asset não puder
