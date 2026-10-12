@@ -654,7 +654,7 @@
          "Ganhe moedas vencendo batalhas de " config/prefix "pokemon, cure status com " config/prefix
          "pokemon curar, recupere HP com " config/prefix "pokemon pocao [nº] ou "
          config/prefix "pokemon pocao-maxima [nº] e equipe itens com "
-         config/prefix "pokemon equipar <nº> <item>!")))
+         config/prefix "pokemon equipar <nº> <item>!"))))
 
 (defn ver-loja-com-imagem
   "Retorna o catálogo como legenda de uma imagem da loja; se o asset não puder
