@@ -191,3 +191,20 @@ test('rank effect is retained when the rule fails after an intermediate mutation
   assert.deepEqual(f.service.pendingEvents()[0].effects,[effect]);
   await assert.rejects(()=>f.service.execute(request),e=>e.status===409);
 });
+
+
+test('store catalogue stays attached to the image for menus and purchase results', async () => {
+  const service = new PokemonService({domain:fakeDomain(),logger:()=>{},media:{
+    put:async media=>({mediaId:'shop-image',mimeType:media.mime,filename:media.filename})
+  }});
+  const catalogue='🏪 Loja\n'+ 'Item - 20 moedas\n'.repeat(90);
+  for (const text of [catalogue, '✅ Comprou Poção!\n\n'+catalogue]) {
+    const messages=await service.messages({texto:text,media:{mime:'image/jpeg',buffer:Buffer.from('fixture'),filename:'loja-pokemon.jpg'}});
+    assert.equal(messages.length,1);
+    assert.equal(messages[0].type,'image');
+    assert.equal(messages[0].text,text);
+  }
+  const other=await service.messages({texto:catalogue,media:{mime:'image/jpeg',buffer:Buffer.from('fixture'),filename:'treinador.jpg'}});
+  assert.deepEqual(other.map(message=>message.type),['image','text']);
+  assert.equal(other[1].text,catalogue);
+});

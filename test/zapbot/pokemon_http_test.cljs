@@ -193,3 +193,12 @@
                     (is (= [["Resultado da captura" ["treinador@lid"]]] @envios))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally done)))))
+
+
+(deftest catalogo-longo-da-loja-fica-na-legenda-no-whatsapp
+  (let [texto (apply str (repeat 1800 "x"))
+        mensagem {:type "image" :text texto :filename "loja-pokemon.jpg"
+                  :mediaId "loja" :mimeType "image/jpeg"}]
+    (is (= [mensagem] (http/acoes-de-envio [mensagem])))
+    (let [compra (assoc mensagem :text (str "✅ Comprou Poção!\n\n" texto))]
+      (is (= [compra] (http/acoes-de-envio [compra]))))))

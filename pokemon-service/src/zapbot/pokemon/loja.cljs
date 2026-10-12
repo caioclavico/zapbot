@@ -670,7 +670,6 @@
          "\n\n*Serviços por comando:*\n💻 +50 vagas Pokémon — " (preco-expansao-pc cid pid) " moedas: " config/prefix "pk espaco comprar."
          "\n📚 Reaprender golpe — " preco-reaprender " moedas. Use " config/prefix "pokemon reaprender."
          "\n\n🛒 " config/prefix "pk <número> compra 1 unidade do item escolhido.\n"
-         "Menu individual válido por 5 minutos. " config/prefix "pk 0 volta ao menu.\n"
          "Use " config/prefix "loja comprar <item> (ex.: " config/prefix "loja comprar atadura).\n"
          "Para saber o efeito, use " config/prefix "loja detalhes <item>.\n"
          "📖 Ajuda: " config/prefix "loja ajuda.")))
