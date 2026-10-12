@@ -66,9 +66,11 @@
   ([cid pid] (capacidade-permanente-pokemon cid pid (get (conta cid pid) "nivel" 1)))
   ([cid pid nivel] (capacidade-por-nivel cid pid nivel)))
 
-(defn capacidade-pokemon
-  ([cid pid] (capacidade-permanente-pokemon cid pid))
-  ([cid pid nivel] (capacidade-permanente-pokemon cid pid nivel)))
+(defn capacidade-pokemon [cid pid]
+  (capacidade-permanente-pokemon cid pid))
+
+(defn capacidade-pokemon-no-nivel [cid pid nivel]
+  (capacidade-permanente-pokemon cid pid nivel))
 
 (declare recompensas-pendentes texto-recompensas capacidade)
 
@@ -77,10 +79,10 @@
         linhas (for [[nivel bonus] marcos
                      :let [tipo (cond (:pokemon bonus) :pokemon :mochila :mochila)
                            antes (if (= tipo :pokemon)
-                                   (capacidade-pokemon cid pid (max 1 (dec nivel)))
+                                   (capacidade-pokemon-no-nivel cid pid (max 1 (dec nivel)))
                                    (capacidade cid pid (max 1 (dec nivel))))
                            depois (if (= tipo :pokemon)
-                                    (capacidade-pokemon cid pid nivel)
+                                    (capacidade-pokemon-no-nivel cid pid nivel)
                                     (capacidade cid pid nivel))]
                      :when (not= antes depois)]
                 (str "🎒 Nível " nivel ": +50 espaços de " (if (= tipo :pokemon) "Pokémon" "mochila")

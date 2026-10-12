@@ -23,9 +23,9 @@
                                                 "missoes-eventos" {"colecao-2026-09"
                                                                    {"selvagens" 3 "pvp" 3 "ginasios" 3 "professor" 3}}}}})
                 armazenamento/salvar! (fn [& _] nil)]
-    (is (= 126 (loja/capacidade-pokemon "chat" "ash")))
-    (is (= 176 (:capacidade (loja/comprar-espaco-pc! "chat" "ash"))))
-    (is (= 26 (loja/capacidade-pokemon "chat" "misty")))))
+    (is (= 130 (loja/capacidade-pokemon "chat" "ash")))
+    (is (= 180 (:capacidade (loja/comprar-espaco-pc! "chat" "ash"))))
+    (is (= 30 (loja/capacidade-pokemon "chat" "misty")))))
 
 (deftest recompensas-unicas-isoladas-persistidas-e-pendentes
   (let [estado (atom {"chat" {"ash" {"capacidade-mochila" 1}}})
@@ -35,8 +35,8 @@
                   aventuras/evento-recomeco (fn [_] @evento)
                   armazenamento/salvar! (fn [_ dados] (reset! salvo dados))]
       (dotimes [_ 3] (loja/registrar-missao! "chat" "ash" "selvagens" 1))
-      (is (= 1 (loja/quantidade-item "chat" "ash" "pokebola")))
-      (is (= 9 (get-in @estado ["chat" "ash" "recompensas-pendentes" "pokebola"])))
+      (is (= 10 (loja/quantidade-item "chat" "ash" "pokebola")))
+      (is (= 0 (get-in @estado ["chat" "ash" "recompensas-pendentes" "pokebola"] 0)))
       (is (= #{"selvagens"} (:premiados (loja/progresso-evento-recomeco "chat" "ash"))))
       (reset! estado (loja/migrar-chaves-antigas
                      (js->clj (js/JSON.parse (js/JSON.stringify (clj->js @salvo))))))
@@ -48,7 +48,7 @@
       (is (= 2 (get-in @estado ["chat" "ash" "recompensas-pendentes" "reviver"])))
       (is (= {} (:progresso (loja/progresso-evento-recomeco "outro" "ash"))))
       (is (= {} (:progresso (loja/progresso-evento-recomeco "chat" "misty"))))
-      (is (= 26 (loja/capacidade-pokemon "chat" "ash")))
+      (is (= 30 (loja/capacidade-pokemon "chat" "ash")))
       (reset! evento nil)
       (let [antes @estado]
         (is (nil? (loja/registrar-evento-recomeco! "chat" "misty" "capturas")))
