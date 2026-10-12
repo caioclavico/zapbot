@@ -12,7 +12,8 @@
             [zapbot.pokemon.adventure :as adventure]
             [zapbot.pokemon.egg-commands :as egg-commands]
             [zapbot.pokemon.pokedex :as pokedex]
-            [zapbot.pokemon.loja :as loja]))
+            [zapbot.pokemon.loja :as loja]
+            [zapbot.pokemon.ajuda :as ajuda]))
 
 (defn initialize []
   (pokemon/configurar-recompensa-ovo! adventure/drenar-eventos!)
@@ -97,8 +98,11 @@
       ("pokedex" "dex" "pdx") (pokedex/buscar contexto args)
       ("presente" "presentes") (pokemon/jogar contexto (str "presente " args))
       ("missoes" "missões") (pokemon/jogar contexto (str "missoes " args))
-      "mochila" (p/resolved (loja/mochila contexto (first partes)))
+      "mochila" (if (contains? #{"ajuda" "help" "?"} (some-> (first partes) str/lower-case))
+                   (p/resolved (ajuda/resposta "mochila ajuda"))
+                   (p/resolved (loja/mochila contexto (first partes))))
       "loja" (case (some-> (first partes) str/lower-case (str/replace #":" ""))
+               ("ajuda" "help" "?") (p/resolved (ajuda/resposta "loja ajuda"))
                "comprar" (p/resolved (loja/comprar contexto (str/join " " (rest partes))))
                ("detalhes" "detalhe") (p/resolved (loja/detalhes (str/join " " (rest partes))))
                (loja/ver-loja-com-imagem contexto))

@@ -2063,8 +2063,7 @@
   (get-in atalhos-subcomandos [contexto token] token))
 
 (defn- expandir-destino-time [token]
-  (get {"perfil" "treinador" "pokemons" "meus" "pokémon" "meus" "itens" "mochila" "?" "ajuda"
-   "raide" "raid" "raides" "raid" "gin" "ginasio" "lig" "liga"} token token))
+  (get {"raide" "raid" "raides" "raid" "gin" "ginasio" "lig" "liga"} token token))
 
 (defn- nome-time-pronto [partes]
   (-> (str/join " " partes) str/trim normalizar-texto))
@@ -2244,7 +2243,7 @@
                                        "✅ Pokémon compatível! Batalha iniciada! 💨 " (get-in jogo-novo [:nomes (:vez jogo-novo)])
                                        " vai atacar primeiro!\n\n" (mensagem-estado jogo-novo))))
                     (str (cabecalho) "⏳ O desafio expirou, mudou ou seu Pokémon ativo mudou durante a entrada. Digite "
-                         config/prefix "pokemon pra ver o que rolou ou abrir uma nova."))))
+                         config/prefix "pk batalhar para abrir ou entrar no PvP."))))
               (p/catch (fn [err]
                          (js/console.error "Erro ao entrar na batalha:" err)
                          (str (cabecalho) "❌ Deu algo errado ao entrar na batalha. Tente de novo."))))
@@ -2259,7 +2258,7 @@
                   (if (tentar-registrar! cid jogo-novo #(and (nil? %) (configuracao-valida?)))
                     (pvp/anuncio config/prefix nome pokemon jogo-novo)
                     (str (cabecalho) "⏳ A batalha ou sua escalação mudou enquanto preparávamos a partida. Digite "
-                         config/prefix "pokemon pra entrar nela."))))
+                         config/prefix "pk batalhar pra entrar nela."))))
               (p/catch (fn [err]
                          (js/console.error "Erro ao abrir batalha:" err)
                          (str (cabecalho) "❌ Deu algo errado ao abrir a batalha. Tente de novo.")))))))))
@@ -2640,7 +2639,7 @@
                   (enviar-imagem contexto (:imagem pokemon)
                                       (str (cabecalho) "🎉 Você escolheu *" (:nome pokemon) "* como seu inicial!\n\n"
                                       (legenda-pokemon "Seu time" pokemon) "\n\nUse " config/prefix
-                                      "pokemon pra batalhar, ou " config/prefix "pokemon cacar pra capturar mais.\n"
+                                      "pk batalhar pra batalhar, ou " config/prefix "pokemon cacar pra capturar mais.\n"
                                       "🎁 Seu kit inicial está disponível: use " config/prefix "pokemon mochila kit quando quiser resgatá-lo."))
                   (orientacao-equipe cid pid)))
               (p/catch (fn [err]
@@ -2758,7 +2757,7 @@
      (if (and (empty? eq) (empty? em-tratamento))
        (orientacao-equipe cid pid)
        (str (cabecalho) "🧑‍🎓 *Nível de treinador:* " (treinador/nivel-jogador cid pid)
-            " (sobe vencendo batalhas de " config/prefix "pokemon, calibra a força dos selvagens na caçada)\n\n"
+            " (sobe vencendo batalhas de " config/prefix "pk batalhar, calibra a força dos selvagens na caçada)\n\n"
             "🎒 *Seu time:*\n\n"
             (when-let [liderados (seq (ginasios/liderados cid pid))]
               (str "🏛️ " (* 3 (count liderados)) " Pokémon inativos nos ginásios: "

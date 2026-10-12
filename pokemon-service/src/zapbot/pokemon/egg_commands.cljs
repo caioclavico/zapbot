@@ -41,7 +41,7 @@
 (defn comando! [ctx cmd args]
   (if-not config/adventure-enabled?
     (p/resolved "🥚 O sistema de ovos está desativado.")
-    (if (and (= cmd "ovo") (= "ajuda" (first args))) (p/resolved ajuda)
+    (if (contains? #{"ajuda" "help" "?"} (first args)) (p/resolved ajuda)
       (-> (p/let [cid (:chat-id ctx) pid (:player-id ctx)
                   estado (adventure/atividade-ativar! cid pid "welcome")]
             (case cmd
