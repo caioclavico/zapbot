@@ -1178,3 +1178,54 @@
                       (is (:erro (navegacao/resolver! ["menu-loja" "misty"] "1" nil (.now js/Date))))))
             (p/catch (fn [erro] (is false (str erro))))
             (p/finally (fn [] (navegacao/limpar! ["menu-loja" "ash"]) (done))))))))
+
+
+(deftest texto-de-resposta-js-nao-depende-do-construtor-object
+  (let [texto "💤 Staryu está dormindo e não conseguiu atacar!"
+        construtor (fn [])
+        resposta #js {:constructor construtor :texto texto}]
+    (is (not (identical? js/Object (.-constructor resposta))))
+    (is (= texto (core/texto-resposta resposta)))
+    (is (= texto (core/texto-resposta #js {:constructor construtor :text texto})))
+    (is (= texto (core/texto-resposta {:texto resposta})))
+    (is (= "" (core/texto-resposta #js {:constructor construtor})))
+    (let [rodada (core/texto-rodada-ginasio "Hipnose! Staryu adormeceu!" {:texto resposta} nil)]
+      (is (str/includes? rodada "Staryu está dormindo"))
+      (is (not (str/includes? rodada "[object Object]"))))))
+
+(deftest hipnose-no-ginasio-preserva-texto-do-sono-e-resumo-da-batalha
+  (async done
+    (let [cid "teste-misty-hipnose"
+          jogo (jogo-de-ginasio :x)
+          investida (first (get-in jogo [:pokemons :x :golpes]))
+          hipnose {:nome-exibicao "Hipnose" :tipo "psychic" :classe :status
+                   :poder 0 :precisao 100 :status-causado :adormecido :chance-status 100}
+          imagem-original core/resposta-imagem-ginasio
+          status-original core/impedimento-status
+          jogo (-> jogo
+                   (assoc-in [:nomes :o] "Misty")
+                   (assoc-in [:pokemons :x :nome] "Exeggcute")
+                   (assoc-in [:pokemons :o :nome] "Staryu")
+                   (assoc-in [:pokemons :x :golpes] [investida investida investida hipnose]))]
+      (swap! core/jogos assoc cid jogo)
+      (set! core/resposta-imagem-ginasio (fn [_ texto _] (p/resolved texto)))
+      (set! core/impedimento-status
+            (fn [status] (when (= status :adormecido) {:impedido? true :texto "está dormindo"})))
+      (-> (core/jogar-rodada {:chat-id cid :player-id "ash"} "atacar 4")
+          (p/then (fn [texto]
+                    (let [novo (get @core/jogos cid)]
+                      (is (str/includes? texto "Hipnose"))
+                      (is (str/includes? texto "Staryu* adormeceu"))
+                      (is (str/includes? texto "está dormindo e não conseguiu atacar"))
+                      (is (str/includes? texto "Misty"))
+                      (is (str/includes? texto "escolha um golpe"))
+                      (is (not (str/includes? texto "[object Object]")))
+                      (is (= :x (:vez novo)))
+                      (is (= :adormecido (get-in novo [:status :o])))
+                      (is (= (get-in jogo [:hp :x]) (get-in novo [:hp :x]))))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! core/resposta-imagem-ginasio imagem-original)
+                       (set! core/impedimento-status status-original)
+                       (swap! core/jogos dissoc cid)
+                       (done)))))))
