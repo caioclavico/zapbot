@@ -5497,9 +5497,13 @@
   (cond
     (nil? resposta) ""
     (string? resposta) resposta
-    (map? resposta) (texto-resposta (:texto resposta))
-    (object? resposta) (texto-resposta (aget resposta "texto"))
-    :else (str resposta)))
+    (map? resposta) (texto-resposta (or (:texto resposta) (:text resposta)))
+    ;; object? só reconhece constructor === Object no ClojureScript compilado.
+    ;; Respostas JS com outro construtor também podem carregar o texto.
+    (some? (aget resposta "texto")) (texto-resposta (aget resposta "texto"))
+    (some? (aget resposta "text")) (texto-resposta (aget resposta "text"))
+    (or (number? resposta) (boolean? resposta) (keyword? resposta)) (str resposta)
+    :else ""))
 
 (defn- sem-estado-intermediario [texto]
   (first (str/split (or texto "") #"\n\n🐾 " 2)))
