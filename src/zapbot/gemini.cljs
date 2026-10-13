@@ -4,7 +4,8 @@
   Usa a chave no formato \"auth key\" (AQ....) do Google AI Studio, que precisa
   ir no header x-goog-api-key (não em ?key= na URL)."
   (:require [promesa.core :as p]
-            [zapbot.config :as config]))
+            [zapbot.config :as config]
+            [zapbot.ia-identidade :as identidade]))
 
 (defn- url []
   (str "https://generativelanguage.googleapis.com/v1beta/models/" config/gemini-model ":generateContent"))
@@ -16,9 +17,12 @@
 (defn- esperar [ms]
   (p/create (fn [resolve _] (js/setTimeout resolve ms))))
 
-(defn- chamar-uma-vez [prompt]
-  (let [corpo #js {:contents #js [#js {:parts #js [#js {:text prompt}]}]}]
-    (p/let [res  (js/fetch (url) #js {:method  "POST"
+(defn- requisitar! [url opcoes]
+  (js/fetch url opcoes))
+
+(defn- chamar-uma-vez [prompt requisitar]
+  (let [corpo (clj->js (identidade/pedido prompt))]
+    (p/let [res  (requisitar (url) #js {:method  "POST"
                                        :headers #js {"Content-Type"   "application/json"
                                                       "x-goog-api-key" config/gemini-api-key}
                                        :body    (js/JSON.stringify corpo)})
@@ -26,8 +30,8 @@
             data (js->clj data :keywordize-keys true)]
       {:ok? (.-ok res) :status (.-status res) :data data})))
 
-(defn- tentar [prompt tentativas-restantes]
-  (p/let [{:keys [ok? status data]} (chamar-uma-vez prompt)]
+(defn- tentar [prompt tentativas-restantes requisitar]
+  (p/let [{:keys [ok? status data]} (chamar-uma-vez prompt requisitar)]
     (cond
       ok?
       (or (get-in data [:candidates 0 :content :parts 0 :text])
@@ -40,7 +44,7 @@
       (do
         (js/console.warn "Gemini status" status "- tentando de novo em breve...")
         (-> (esperar 2000)
-            (p/then (fn [_] (tentar prompt (dec tentativas-restantes))))))
+            (p/then (fn [_] (tentar prompt (dec tentativas-restantes) requisitar)))))
 
       :else
       (do
@@ -48,9 +52,10 @@
         nil))))
 
 (defn gerar-texto
-  "Envia o prompt ao Gemini e retorna uma promise com o texto da resposta, ou
-  nil se não houver candidato (ex.: bloqueio de segurança) ou se todas as
+  "Envia o prompt ao Gemini e retorna uma promise com o texto da resposta.
+  Inclui a identidade Odisseu como instrução de sistema em todas as chamadas.
+  Retorna nil se não houver candidato (ex.: bloqueio de segurança) ou se todas as
   tentativas falharem. Re-tenta automaticamente (até 2x) em erros
   transitórios (429 cota excedida / 503 sobrecarga)."
   [prompt]
-  (tentar prompt 2))
+  (tentar prompt 2 requisitar!))
