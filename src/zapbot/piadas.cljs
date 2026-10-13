@@ -36,7 +36,7 @@
    "Por que a Terra terminou o namoro com o Sol? Porque ele precisava de espaço."])
 
 (defn- gerar-piada-ia []
-  (if (str/blank? config/gemini-api-key)
+  (if (not (gemini/disponivel?))
     (p/resolved nil)
     (-> (gemini/gerar-texto
          (str "Conte uma piada curta e engaçada em português do Brasil, original "
@@ -46,7 +46,7 @@
               "aspas ao redor, sem explicar a piada depois."))
         (p/then (fn [texto] (when-not (str/blank? texto) (str/trim texto))))
         (p/catch (fn [err]
-                   (js/console.error "Erro ao gerar piada via IA:" err)
+                   (js/console.error "Erro ao gerar piada via IA.")
                    nil)))))
 
 (defn piada-aleatoria

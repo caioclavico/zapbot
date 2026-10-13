@@ -51,17 +51,17 @@
       (p/then (fn [resumo]
                 (if resumo
                   (str "📝 *Resumão do tio " config/bot-name "*\n\n" resumo)
-                  "❌ Não consegui gerar o resumo agora.")))
+                  "⚠️ IA temporariamente indisponível. Tente novamente em instantes.")))
       (p/catch (fn [err]
-                 (js/console.error "Erro ao gerar resumo:" err)
-                 "❌ Não consegui gerar o resumo agora. Tente novamente mais tarde."))))
+                 (js/console.error "Erro ao gerar resumo.")
+                 "⚠️ IA temporariamente indisponível. Tente novamente em instantes."))))
 
 (defn resumir-chat
   "Resume o histórico disponível. Períodos aceitos: 30m, 8h, 2d, hoje e ontem."
   [message periodo]
-  (if (str/blank? config/gemini-api-key)
+  (if (not (gemini/disponivel?))
     (p/resolved
-     (str "⚠️ Comando indisponível: configure GEMINI_API_KEY no .env "
+     (str "⚠️ Comando indisponível: configure GEMINI_API_KEY ou GROQ_API_KEY no .env "
           "(chave gratuita em https://aistudio.google.com/apikey)."))
     (let [periodo-valido? (or (str/blank? (or periodo "")) (= "tudo" (str/lower-case (str/trim periodo))) (inicio-periodo periodo))
           transcricao (montar-transcricao (filtrar-periodo (historico/obter message) periodo))]
