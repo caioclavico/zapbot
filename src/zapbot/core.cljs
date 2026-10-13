@@ -1,6 +1,7 @@
 (ns zapbot.core
   "Ponto de entrada do bot: conecta ao WhatsApp Web e liga os eventos."
-  (:require [promesa.core :as p]
+  (:require [zapbot.whatsapp-reply :as whatsapp-reply]
+            [promesa.core :as p]
             [clojure.string :as str]
             ["whatsapp-web.js" :as wwjs]
             ["qrcode-terminal" :as qrcode]
@@ -89,6 +90,7 @@
                        #(enviar-texto-estruturado message texto mentions))))))))
 
 (defn- processar-mensagem [message ctx]
+  (whatsapp-reply/preparar! message)
   (when (permitido-pelo-ambiente? message)
     (adedonha/capturar-resposta! message)
     ;; Aguarda a fila do histórico: assim !pk bug sempre encontra exatamente
