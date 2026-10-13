@@ -111,7 +111,7 @@
     (cond
       (empty? candidatos) (p/resolved #{})
 
-      (str/blank? config/gemini-api-key) (p/resolved (aprovar-todos))
+      (not (gemini/disponivel?)) (p/resolved (aprovar-todos))
 
       :else
       (-> (gemini/gerar-texto (prompt-validacao letra candidatos))
@@ -123,11 +123,11 @@
                              (map (fn [[{:keys [categoria resposta]} _]] [categoria (normalizar resposta)]))
                              set)
                         (do (js/console.warn "IA respondeu em formato inesperado validando adedonha - "
-                                              "aceitando todo mundo que passou na letra dessa vez:" texto)
+                                              "aceitando todo mundo que passou na letra dessa vez.")
                             (aprovar-todos))))))
           (p/catch (fn [err]
                      (js/console.error "Erro consultando IA pra validar adedonha - aceitando todo "
-                                        "mundo que passou na letra dessa vez:" err)
+                                        "mundo que passou na letra dessa vez.")
                      (aprovar-todos)))))))
 
 (defn capturar-resposta!

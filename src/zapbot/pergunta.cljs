@@ -45,7 +45,7 @@
       (= "o que e a vida")))
 
 (defn- resposta-abujamra []
-  (if (str/blank? config/gemini-api-key)
+  (if (not (gemini/disponivel?))
     (p/resolved nil)
     (-> (gemini/gerar-texto
          (str "Escreva uma reflexão filosófica curta (2 a 4 frases), em português, "
@@ -75,9 +75,9 @@
     (pergunta-sobre-a-vida? pergunta)
     (responder-sobre-a-vida message)
 
-    (str/blank? config/gemini-api-key)
+    (not (gemini/disponivel?))
     (p/resolved
-     (str "⚠️ Comando indisponível: configure GEMINI_API_KEY no .env "
+     (str "⚠️ Comando indisponível: configure GEMINI_API_KEY ou GROQ_API_KEY no .env "
           "(chave gratuita em https://aistudio.google.com/apikey)."))
 
     (str/blank? pergunta)
@@ -91,7 +91,7 @@
         (p/then (fn [resposta]
                   (if resposta
                     (str "🤔 *Pergunta ao tio " config/bot-name "*\n\n" resposta)
-                    "❌ Não consegui pensar em uma resposta agora.")))
+                    "⚠️ IA temporariamente indisponível. Tente novamente em instantes.")))
         (p/catch (fn [err]
-                   (js/console.error "Erro ao responder pergunta:" err)
-                   "❌ Não consegui pensar em uma resposta agora. Tente novamente mais tarde.")))))
+                   (js/console.error "Erro ao responder pergunta.")
+                   "⚠️ IA temporariamente indisponível. Tente novamente em instantes.")))))

@@ -41,6 +41,8 @@
 ;; modelo "thinking" bem mais pesado/lotado do que o bot precisa) - fixe um
 ;; modelo leve e estável, ajustável sem precisar mexer no código
 (def gemini-model (env "GEMINI_MODEL" "gemini-3.5-flash-lite"))
+(def groq-api-key (env "GROQ_API_KEY"))
+(def groq-model (env "GROQ_MODEL" "llama-3.1-8b-instant"))
 ;; credenciais gratuitas em https://developer.spotify.com/dashboard (usadas pelo !musica)
 (def spotify-client-id (env "SPOTIFY_CLIENT_ID"))
 (def spotify-client-secret (env "SPOTIFY_CLIENT_SECRET"))
@@ -63,6 +65,9 @@
 (defn- inteiro-positivo [nome padrao]
   (let [valor (js/Number (env nome (str padrao)))]
     (if (and (js/Number.isSafeInteger valor) (pos? valor)) valor padrao)))
+(def ai-request-timeout-ms (inteiro-positivo "AI_REQUEST_TIMEOUT_MS" 8000))
+(def ai-total-timeout-ms (inteiro-positivo "AI_TOTAL_TIMEOUT_MS" 30000))
+(def ai-retry-base-ms (inteiro-positivo "AI_RETRY_BASE_MS" 1000))
 (def pokemon-connect-timeout-ms (inteiro-positivo "POKEMON_CONNECT_TIMEOUT_MS" 5000))
 (def pokemon-timeout-ms (inteiro-positivo "POKEMON_TIMEOUT_MS" 45000))
 (def pokemon-event-poll-ms (inteiro-positivo "POKEMON_EVENT_POLL_MS" 15000))

@@ -1,61 +1,26 @@
 (ns zapbot.gemini
-  "Wrapper fino para a API Gemini (generateContent), usado por !resuma e !pergunta.
-
-  Usa a chave no formato \"auth key\" (AQ....) do Google AI Studio, que precisa
-  ir no header x-goog-api-key (não em ?key= na URL)."
-  (:require [promesa.core :as p]
+  "Fachada compatível de IA: Gemini principal, Groq opcional como fallback."
+  (:require [clojure.string :as str]
             [zapbot.config :as config]
             [zapbot.ia-identidade :as identidade]))
 
-(defn- url []
-  (str "https://generativelanguage.googleapis.com/v1beta/models/" config/gemini-model ":generateContent"))
+(def ^:private transporte (js/require "../scripts/lib/ai-client.cjs"))
 
-;; 429 (cota do free tier) e 503 (modelo sobrecarregado) costumam ser
-;; transitórios - ver https://ai.google.dev/gemini-api/docs/rate-limits.
-(def ^:private status-transitorios #{429 503})
+(defn disponivel? []
+  (or (not (str/blank? config/gemini-api-key))
+      (not (str/blank? config/groq-api-key))))
 
-(defn- esperar [ms]
-  (p/create (fn [resolve _] (js/setTimeout resolve ms))))
-
-(defn- requisitar! [url opcoes]
-  (js/fetch url opcoes))
-
-(defn- chamar-uma-vez [prompt requisitar]
-  (let [corpo (clj->js (identidade/pedido prompt))]
-    (p/let [res  (requisitar (url) #js {:method  "POST"
-                                       :headers #js {"Content-Type"   "application/json"
-                                                      "x-goog-api-key" config/gemini-api-key}
-                                       :body    (js/JSON.stringify corpo)})
-            data (.json res)
-            data (js->clj data :keywordize-keys true)]
-      {:ok? (.-ok res) :status (.-status res) :data data})))
-
-(defn- tentar [prompt tentativas-restantes requisitar]
-  (p/let [{:keys [ok? status data]} (chamar-uma-vez prompt requisitar)]
-    (cond
-      ok?
-      (or (get-in data [:candidates 0 :content :parts 0 :text])
-          (do (js/console.warn "Gemini respondeu sem texto - finishReason:"
-                                (get-in data [:candidates 0 :finishReason])
-                                "promptFeedback:" (:promptFeedback data))
-              nil))
-
-      (and (status-transitorios status) (pos? tentativas-restantes))
-      (do
-        (js/console.warn "Gemini status" status "- tentando de novo em breve...")
-        (-> (esperar 2000)
-            (p/then (fn [_] (tentar prompt (dec tentativas-restantes) requisitar)))))
-
-      :else
-      (do
-        (js/console.error "Gemini falhou (status" status "):" (:error data))
-        nil))))
+(defn- requisitar! [url opcoes] (js/fetch url opcoes))
 
 (defn gerar-texto
-  "Envia o prompt ao Gemini e retorna uma promise com o texto da resposta.
-  Inclui a identidade Odisseu como instrução de sistema em todas as chamadas.
-  Retorna nil se não houver candidato (ex.: bloqueio de segurança) ou se todas as
-  tentativas falharem. Re-tenta automaticamente (até 2x) em erros
-  transitórios (429 cota excedida / 503 sobrecarga)."
+  "Mantém o contrato string/nil; todas as tarefas compartilham identidade,
+  fallback, tentativas limitadas e prazo total. Sem chave Groq, usa só Gemini."
   [prompt]
-  (tentar prompt 2 requisitar!))
+  (let [cliente (.createClient transporte
+                  #js {:geminiApiKey config/gemini-api-key :geminiModel config/gemini-model
+                       :groqApiKey config/groq-api-key :groqModel config/groq-model
+                       :systemPrompt identidade/instrucao-sistema :fetch requisitar!
+                       :requestTimeoutMs config/ai-request-timeout-ms
+                       :totalTimeoutMs config/ai-total-timeout-ms
+                       :retryBaseMs config/ai-retry-base-ms})]
+    (.generate cliente prompt)))

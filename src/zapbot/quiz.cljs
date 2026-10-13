@@ -163,12 +163,12 @@
     (catch :default _ nil)))
 
 (defn- gerar-pergunta-ia [cid]
-  (if (str/blank? config/gemini-api-key)
+  (if (not (gemini/disponivel?))
     (p/resolved nil)
     (-> (gemini/gerar-texto (prompt-pergunta (get @historico-perguntas cid)))
         (p/then parsear-pergunta-ia)
         (p/catch (fn [err]
-                   (js/console.error "Erro ao gerar pergunta de quiz via IA:" err)
+                   (js/console.error "Erro ao gerar pergunta de quiz via IA.")
                    nil)))))
 
 (defn- iniciar [message]

@@ -19,7 +19,7 @@
         espera (if (js/Number.isFinite espera)
                  (max 60000 (min 900000 espera)) 60000)]
     (when (<= @google-pausado-ate agora)
-      (js/console.warn "Google Translate respondeu HTTP 429; usando Gemini durante cooldown."))
+      (js/console.warn "Google Translate respondeu HTTP 429; usando IA durante cooldown."))
     (swap! google-pausado-ate max (+ agora espera))))
 
 (defn- traduzir-google [texto origem destino]
@@ -37,7 +37,7 @@
                (apply str)))))))
 
 (defn- traduzir-gemini [texto origem destino]
-  (when config/gemini-api-key
+  (when (gemini/disponivel?)
     (gemini/gerar-texto
      (str "Translate the following text from " origem " to " destino
           ". Return only the translated text, with no explanation or quotation marks:\n\n" texto))))
@@ -52,10 +52,10 @@
         (-> (traduzir-google texto origem destino)
             (p/catch (fn [err]
                        (when (<= @google-pausado-ate (js/Date.now))
-                         (js/console.warn "Google Translate falhou; tentando Gemini:" err))
+                         (js/console.warn "Google Translate falhou; tentando IA."))
                        (traduzir-gemini texto origem destino)))))
       (p/catch (fn [err]
-                 (js/console.error "Todos os provedores de tradução falharam:" err)
+                 (js/console.error "Todos os provedores de tradução falharam.")
                  nil))))
 
 (defn traduzir
