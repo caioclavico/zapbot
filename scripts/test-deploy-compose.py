@@ -227,7 +227,7 @@ class ComposeTest(unittest.TestCase):
         workflow = Path(__file__).parents[1] / '.github/workflows/deploy.yml'
         text = workflow.read_text()
         self.assertEqual(text.count("SSH_HOST: '35.238.24.225'"), 2)
-        self.assertEqual(text.count("SSH_USER: 'caiohclavico'"), 2)
+        self.assertEqual(text.count("SSH_USER: 'zapbot-deploy'"), 2)
         self.assertNotIn('129.148.52.187', text)
         self.assertIn("vars.AUTO_DEPLOY_ENABLED == 'true'", text)
         self.assertIn('refs/heads/master', text)
