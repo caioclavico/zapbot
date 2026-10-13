@@ -37,6 +37,63 @@ def read_private_env_value(path, key):
             return raw[len(key) + 1:].strip()
     raise DeployError('Required private environment value is missing')
 
+# Infrastructure and process identity remain authoritative in the current container.
+PROTECTED_ENV_KEYS = frozenset({
+    'HOST', 'PORT', 'APP_ENV', 'DEV_GROUP_ID', 'NODE_OPTIONS', 'NODE_ENV',
+    'PATH', 'HOME', 'USER', 'PWD', 'API_TOKEN', 'POKEMON_READ_ONLY',
+    'PUPPETEER_EXECUTABLE_PATH', 'CHROME_BIN', 'ADVENTURE_SYNC_ENABLED',
+})
+PROTECTED_ENV_PREFIXES = ('CASSANDRA_', 'POKEMON_', 'ZAPBOT_', 'DEPLOY_', 'DOCKER_')
+
+
+def production_env_updates(path, current_env):
+    """Parse private dotenv literally. Never evaluate shell or interpolate values."""
+    path = Path(path)
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    try:
+        fd = os.open(str(path), flags)
+        with os.fdopen(fd, 'r', encoding='utf-8') as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077
+                    or info.st_uid not in {0, path.parent.stat().st_uid}
+                    or info.st_size > 1024 * 1024):
+                raise DeployError('Production environment file has unsafe permissions or ownership')
+            contents = stream.read(1024 * 1024 + 1)
+    except (OSError, UnicodeError):
+        raise DeployError('Cannot safely read production environment file') from None
+    declared = {}
+    for line_number, raw in enumerate(contents.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        match = re.fullmatch(r'(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)', line)
+        if not match:
+            raise DeployError('Invalid production environment syntax at line ' + str(line_number))
+        key, value = match.groups()
+        if key in declared:
+            raise DeployError('Duplicate production environment variable at line ' + str(line_number))
+        if value.startswith(('"', "'")):
+            quote_char = value[0]
+            end = value.find(quote_char, 1)
+            if end < 0 or (value[end + 1:].strip() and not value[end + 1:].strip().startswith('#')):
+                raise DeployError('Invalid quoted environment value at line ' + str(line_number))
+            value = value[1:end]
+        else:
+            value = re.split(r'\s+#', value, maxsplit=1)[0].rstrip()
+            if any(char.isspace() for char in value):
+                raise DeployError('Unquoted whitespace in environment value at line ' + str(line_number))
+        if '\x00' in value or '$' in value or '`' in value:
+            raise DeployError('Environment interpolation is unsupported at line ' + str(line_number))
+        declared[key] = value
+    updates = {}
+    for key, value in declared.items():
+        if key in PROTECTED_ENV_KEYS or key.startswith(PROTECTED_ENV_PREFIXES):
+            if key not in current_env or current_env[key] != value:
+                raise DeployError('Production environment conflicts with protected infrastructure settings')
+        elif current_env.get(key) != value:
+            updates[key] = value
+    return updates
+
 SERVICES = {
     'odisseu': ('zapbot', '/home/caiohclavico/zapbot', 'zapbot'),
     'pokemon': ('zapbot-pokemon', '/home/caiohclavico/pokemon-service', 'zapbot-pokemon'),
@@ -244,6 +301,7 @@ class Deployment:
         self.output = safe_output
         self.previous = self.new_id = self.original_state = self.lock = None
         self.allowed_env_updates = set()
+        self.authorized_env_values = {}
         self.stop_attempted = self.original_name_changed = False
         self.create_attempted = False
         self.transaction_name = str(time.time_ns())
@@ -418,9 +476,11 @@ class Deployment:
                 raise DeployError('Replacement changed an existing runtime setting')
         old_env = dict(item.split('=', 1) for item in original['Config'].get('Env', []) if '=' in item)
         new_env = dict(item.split('=', 1) for item in actual['Config'].get('Env', []) if '=' in item)
-        if any(key not in self.allowed_env_updates and new_env.get(key) != value
-               for key, value in old_env.items()):
+        if any(key not in self.allowed_env_updates and new_env.get(key) != old_env.get(key)
+               for key in set(old_env) | set(new_env)):
             raise DeployError('Replacement changed existing effective environment')
+        if any(new_env.get(key) != value for key, value in self.authorized_env_values.items()):
+            raise DeployError('Replacement differs from authorized environment configuration')
         for key, value in original['HostConfig'].items():
             # Binds may gain explicit references to existing anonymous volumes.
             if key != 'Binds' and (actual['HostConfig'].get(key) or None) != (value or None):
@@ -769,7 +829,13 @@ class Deployment:
                         'requested_image_revision': safe_revision((target.get('Config', {}).get('Labels') or {}).get(REVISION_LABEL)),
                         'decision': 'reject-image'}, sort_keys=True))
                     raise DeployError('Requested image revision is missing or differs from commit SHA')
-                configuration, retained = self.clone(current, target), None
+                updates = {}
+                if self.service == 'odisseu':
+                    existing_env = dict(e.split('=', 1) for e in current['Config'].get('Env', []) if '=' in e)
+                    updates = production_env_updates(self.app_dir / '.env', existing_env)
+                    self.allowed_env_updates = set(updates)
+                    self.authorized_env_values = dict(updates)
+                configuration, retained = self.clone(current, target, updates), None
             elif action == 'activate-adventure':
                 if self.service != 'pokemon':
                     raise DeployError('Adventure Sync activation is limited to the Pokemon service')
@@ -805,7 +871,7 @@ class Deployment:
                 raise DeployError('Unknown deployment action')
             current_revision = (current['Config'].get('Labels') or {}).get(REVISION_LABEL)
             already_current = (action == 'deploy' and target['Id'] == current['Image']
-                               and current_revision == requested_revision)
+                               and current_revision == requested_revision and not self.allowed_env_updates)
             self.output(self.service + ': version decision ' + json.dumps({
                 'action': action, 'current_image_id': current['Image'], 'requested_image_id': target['Id'],
                 'current_revision': safe_revision(current_revision),

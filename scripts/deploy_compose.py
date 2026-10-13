@@ -65,8 +65,8 @@ class ProductionCompose:
                 (m.get('source'), m.get('target'), bool(m.get('read_only')))
                 for m in mounts} != expected:
             raise ComposeError('Production Compose persistence mounts differ from the existing container')
-        # The existing effective Env is authoritative, including the host tunnel
-        # and Pokemon URL. Reading the VM .env never overwrites it.
+        # configuration contains the validated merge prepared by deploy-service.
+        # Compose must not independently interpolate or re-read production .env.
         config, host = configuration, configuration['HostConfig']
         service.update(image=config['Image'], pull_policy='never', hostname=config['Hostname'],
                        environment=dict(e.split('=', 1) for e in config.get('Env', []) if '=' in e),

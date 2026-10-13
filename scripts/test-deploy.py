@@ -308,7 +308,7 @@ class DeployTest(unittest.TestCase):
         app, state, config = root / 'app', root / 'state', root / 'config'
         for directory in (app, state, config, app / 'data', app / '.wwebjs_auth'):
             directory.mkdir(mode=0o700)
-        (app / '.env').write_text('POKEMON_READ_ONLY=true\nAPI_TOKEN=' + SECRET + '\n')
+        (app / '.env').write_text('POKEMON_READ_ONLY=true\nAPI_TOKEN=' + SECRET + '\n' if service == 'pokemon' else '# private fixture\n')
         (app / '.env').chmod(0o600)
         (app / '.wwebjs_auth' / 'session').write_text('session-must-survive')
         (app / 'data' / 'persistent').write_text('data-must-survive')
@@ -334,8 +334,31 @@ class DeployTest(unittest.TestCase):
                     legacy_graceful_stop=legacy_graceful_stop)
         deployment.run(action, self.model.image if action == 'deploy' else None)
 
+    def test_sync_env_same_image_and_rollback(self):
+        model = self.fixture('odisseu')
+        model.target_id = OLD_IMAGE
+        (self.app / '.env').write_text('GROQ_API_KEY=' + SECRET + '\nGROQ_MODEL=test-model\n')
+        self.deploy()
+        active = model.container(model.name)
+        env = dict(e.split('=', 1) for e in active['Config']['Env'])
+        self.assertEqual(env['GROQ_API_KEY'], SECRET)
+        self.assertEqual(env['GROQ_MODEL'], 'test-model')
+        self.assertNotIn(SECRET, '\n'.join(self.output))
+        self.deploy('rollback')
+        self.assertEqual(model.container(model.name)['Config']['Env'], model.original['Config']['Env'])
+
+    def test_env_sync_unhealthy_candidate_restores_original_env(self):
+        model = self.fixture('odisseu')
+        model.scenario = 'timeout'
+        (self.app / '.env').write_text('GROQ_API_KEY=' + SECRET + '\n')
+        with self.assertRaises(DEPLOY.DeployError):
+            self.deploy()
+        self.assertEqual(model.container(model.name)['Config']['Env'], model.original['Config']['Env'])
+        self.assertNotIn(SECRET, '\n'.join(self.output))
+        self.assertTrue(any('rollback healthy' in line for line in self.output))
+
     def assert_preserved(self):
-        self.assertEqual((self.app / '.env').read_text(), 'POKEMON_READ_ONLY=true\nAPI_TOKEN=' + SECRET + '\n')
+        self.assertEqual((self.app / '.env').read_text(), 'POKEMON_READ_ONLY=true\nAPI_TOKEN=' + SECRET + '\n' if self.model.service == 'pokemon' else '# private fixture\n')
         self.assertEqual((self.app / '.wwebjs_auth' / 'session').read_text(), 'session-must-survive')
         self.assertEqual((self.app / 'data' / 'persistent').read_text(), 'data-must-survive')
         self.assertNotIn(SECRET, '\n'.join(self.output))
@@ -748,6 +771,46 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(failed[0].read_text(), 'candidate-auth-changes')
         self.assertTrue(list(self.state.glob('transaction.*.rolled-back.json')))
 
+
+class PrivateEnvironmentTest(unittest.TestCase):
+    def test_literal_merge_and_preservation(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / '.env'
+            path.write_text("GROQ_API_KEY=private-secret\nGROQ_MODEL='model name' # comment\nEMPTY=\n")
+            path.chmod(0o600)
+            old = {'GROQ_MODEL': 'old', 'KEEP': 'retained'}
+            updates = DEPLOY.production_env_updates(path, old)
+            self.assertEqual(updates, {'GROQ_API_KEY': 'private-secret', 'GROQ_MODEL': 'model name', 'EMPTY': ''})
+            self.assertEqual(dict(old, **updates)['KEEP'], 'retained')
+            self.assertEqual(DEPLOY.production_env_updates(path, dict(old, **updates)), {})
+
+    def test_invalid_and_protected_values_never_leak(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / '.env'
+            for value in ['BROKEN-private-secret', 'KEY=private-secret\nKEY=again',
+                          'KEY="private-secret', 'KEY=$(private-secret)',
+                          'CASSANDRA_CONTACT_POINTS=private-secret', 'POKEMON_SERVICE_URL=private-secret',
+                          'NODE_OPTIONS=private-secret']:
+                path.write_text(value)
+                path.chmod(0o600)
+                with self.assertRaises(DEPLOY.DeployError) as caught:
+                    DEPLOY.production_env_updates(path, {})
+                self.assertNotIn('private-secret', str(caught.exception))
+            path.write_text('CASSANDRA_CONTACT_POINTS=existing')
+            self.assertEqual(DEPLOY.production_env_updates(path, {'CASSANDRA_CONTACT_POINTS': 'existing'}), {})
+
+    def test_private_regular_file_required(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / '.env'
+            path.write_text('KEY=secret')
+            path.chmod(0o644)
+            with self.assertRaises(DEPLOY.DeployError):
+                DEPLOY.production_env_updates(path, {})
+            path.chmod(0o600)
+            link = Path(root) / 'link'
+            link.symlink_to(path)
+            with self.assertRaises(DEPLOY.DeployError):
+                DEPLOY.production_env_updates(link, {})
 
 if __name__ == '__main__':
     unittest.main()
