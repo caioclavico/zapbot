@@ -332,7 +332,7 @@ jobs:
           DEPLOY_SERVICE: odisseu
           DEPLOY_OPERATION: ${{ inputs.operation || 'deploy' }}
           SSH_HOST: '35.238.24.225'
-          SSH_USER: 'caiohclavico'
+          SSH_USER: 'zapbot-deploy'
           SSH_PORT: ${{ vars.ODISSEU_SSH_PORT || '22' }}
           SSH_KEY: ${{ secrets.ODISSEU_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.ODISSEU_KNOWN_HOSTS }}
@@ -408,7 +408,7 @@ jobs:
           DEPLOY_SERVICE: odisseu
           DEPLOY_OPERATION: check
           SSH_HOST: '35.238.24.225'
-          SSH_USER: 'caiohclavico'
+          SSH_USER: 'zapbot-deploy'
           SSH_PORT: ${{ vars.ODISSEU_SSH_PORT || '22' }}
           SSH_KEY: ${{ secrets.ODISSEU_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.ODISSEU_KNOWN_HOSTS }}
