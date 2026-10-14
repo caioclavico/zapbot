@@ -3,7 +3,8 @@
             [promesa.core :as p]
             [zapbot.armazenamento :as storage]
             [zapbot.pokemon.core :as core]
-            [zapbot.pokemon.recuperacao :as recuperacao]))
+            [zapbot.pokemon.recuperacao :as recuperacao]
+            [zapbot.pokemon.recuperacao-cartao :as cartao]))
 
 (def cid "123@g.us")
 (def pid "456@lid")
@@ -46,7 +47,7 @@
                     _ (is (not (re-find #"456|Pikachu" texto)))
                     _ (is (= [cid] @consultas))
                     bloqueado (core/jogar {:chat-id cid :player-id pid} "recuperar confirmar 999@lid")]
-              (is (re-find #"restauração não está disponível" bloqueado))
+              (is (re-find #"Comando inválido" bloqueado))
               (is (= [cid] @consultas)))
             (p/catch #(is false (str %)))
             (p/finally done)))))))
@@ -181,9 +182,12 @@
                     v2 (core/jogar {:chat-id cid :player-id pid} "recuperar 2")
                     comparacao (core/jogar {:chat-id cid :player-id pid} "recuperar comparar")
                     invalido (core/jogar {:chat-id cid :player-id pid} "recuperar confirmar 999@lid")]
-              (is (re-find #"Bulbasaur" v1))
-              (is (re-find #"Charmander" v2))
-              (is (re-find #"Eevee.*Enfermaria" v1))
+              (is (= "image/jpeg" (get-in v1 [:media :mime])))
+              (is (= "image/jpeg" (get-in v2 [:media :mime])))
+              (is (pos? (.-length (get-in v1 [:media :buffer]))))
+              (is (re-find #"Versão 1" (:texto v1)))
+              (is (re-find #"Versão 2" (:texto v2)))
+              (is (not (re-find #"restauração ainda não está disponível" (str (:texto v1) (:texto v2)))))
               (is (re-find #"UUIDs presentes nas duas: 2" comparacao))
               (is (re-find #"Exclusivos da versão 1: 1" comparacao))
               (is (re-find #"Exclusivos da versão 2: 1" comparacao))
@@ -247,31 +251,50 @@
       (-> pedidos
           (p/then
            (fn [[primeira segunda fora versao-b fora-b comparacao zero negativo fracao enorme extra intruso]]
-             (is (re-find #"Página 1 de 2" primeira))
-             (is (re-find #"Exibindo 1–15" primeira))
-             (is (re-find #"PokemonA-1 —" primeira))
-             (is (re-find #"PokemonA-15 —" primeira))
-             (is (not (re-find #"PokemonA-16 —" primeira)))
-             (is (re-find #"!pk recuperar 1 2" primeira))
-             (is (re-find #"Página 2 de 2" segunda))
-             (is (re-find #"Exibindo 16–19" segunda))
-             (is (re-find #"PokemonA-16 —" segunda))
-             (is (re-find #"PokemonA-19 —" segunda))
-             (is (re-find #"Enfermaria" segunda))
-             (is (not (re-find #"PokemonA-15 —" segunda)))
-             (is (re-find #"!pk recuperar 1 1" segunda))
-             (is (not (re-find #"!pk recuperar 1 3" segunda)))
+             (let [p1 (recuperacao/pagina-registros conta-a 1)
+                   p2 (recuperacao/pagina-registros conta-a 2)]
+               (is (= (mapv #(str "a-" %) (range 1 16))
+                      (mapv #(get-in % [:pokemon "id-pokemon"]) (:itens p1))))
+               (is (= ["a-16" "a-17" "a-18" "a-19"]
+                      (mapv #(get-in % [:pokemon "id-pokemon"]) (:itens p2))))
+               (is (= "Enfermaria" (:local (last (:itens p2)))))
+               (let [svg (cartao/svg-cartao (:itens p1) "Versão 1" "Página 1/2")]
+                 (is (re-find #"PokemonA-1" svg))
+                 (is (not (re-find #"PokemonA-16" svg)))))
+             (is (= "image/jpeg" (get-in primeira [:media :mime])))
+             (is (= "image/jpeg" (get-in segunda [:media :mime])))
+             (is (= "image/jpeg" (get-in versao-b [:media :mime])))
+             (is (re-find #"Página 1 de 2" (:texto primeira)))
+             (is (re-find #"Exibindo 1–15" (:texto primeira)))
+             (is (re-find #"!pk recuperar 1 2" (:texto primeira)))
+             (is (re-find #"Página 2 de 2" (:texto segunda)))
+             (is (re-find #"Exibindo 16–19" (:texto segunda)))
+             (is (re-find #"!pk recuperar 1 1" (:texto segunda)))
+             (is (not (re-find #"!pk recuperar 1 3" (:texto segunda))))
              (is (re-find #"Página inexistente" fora))
-             (is (re-find #"Página 1 de 1" versao-b))
-             (is (re-find #"PokemonB-1" versao-b))
+             (is (re-find #"Página 1 de 1" (:texto versao-b)))
              (is (re-find #"Página inexistente" fora-b))
              (is (re-find #"COMPARAÇÃO DOS SAVES" comparacao))
              (doseq [resposta [zero negativo fracao enorme extra]]
                (is (re-find #"Comando inválido" resposta)))
              (is (not (re-find #"SEGREDO|PokemonA|PokemonB" intruso)))
-             (is (not (re-find #"SEGREDO|999@lid" (str primeira segunda versao-b comparacao))))
+             (is (not (re-find #"SEGREDO|999@lid" (str (:texto primeira) (:texto segunda) (:texto versao-b) comparacao))))
              (is (= 7 (count @chamadas)))
              (is (every? #(= cid %) @chamadas))
              (is (empty? @gravacoes))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally done)))))
+
+(deftest cartao-legado-sanitiza-svg-e-origem
+  (let [svg (cartao/svg-cartao [{:local "PC" :indice 1
+                                 :pokemon {"nome" "<script>&danger</script>"
+                                           "nivel" 5 "id-pokemon" "id-1"}}]
+                               "Versão 1" "Página 1/1")]
+    (is (re-find #"&lt;script&gt;&amp;danger" svg))
+    (is (not (re-find #"<script>" svg)))
+    (is (re-find #"ID do Pokémon" svg)))
+  (is (true? (cartao/url-confiavel?
+              "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png")))
+  (doseq [url ["http://localhost:9042/secret" "https://example.com/sprite.png"
+               "https://raw.githubusercontent.com/evil/sprites/master/a.png"]]
+    (is (false? (cartao/url-confiavel? url)))))
