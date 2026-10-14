@@ -3,7 +3,8 @@
   (:require [promesa.core :as p]
             [clojure.string :as str]
             [clojure.set :as set]
-            [zapbot.armazenamento :as armazenamento]))
+            [zapbot.armazenamento :as armazenamento]
+            [zapbot.pokemon.recuperacao-cartao :as cartao]))
 
 (defn- objeto-json [valor]
   (when-not (and (string? valor) (<= (count valor) (* 8 1024 1024)))
@@ -108,6 +109,19 @@
            (contains? #{"1" "2"} (first args))
            (pagina-valida? (second args)))))
 
+(defn pagina-registros
+  "Página pura dos registros de UMA conta; não consulta outros jogadores."
+  [conta pagina]
+  (let [itens (registros conta)
+        total (count itens)
+        paginas (max 1 (js/Math.ceil (/ total tamanho-pagina)))]
+    (when (and (number? pagina) (js/Number.isSafeInteger pagina)
+               (<= 1 pagina paginas))
+      (let [inicio (* (dec pagina) tamanho-pagina)
+            fim (min total (+ inicio tamanho-pagina))]
+        {:pagina pagina :paginas paginas :total total :inicio inicio :fim fim
+         :itens (subvec itens inicio fim)}))))
+
 (defn- listar-versao [versoes indice pagina]
   (if-let [{:keys [conta origens]} (get versoes indice)]
     (if (conta-valida? conta)
@@ -136,6 +150,35 @@
                    (str "\n➡️ !pk recuperar " versao " " (inc pagina)))))))
       "⚠️ Esta versão tem formato inválido e não pode ser listada.")
     "Versão inexistente."))
+
+(defn- legenda-versao [origens indice {:keys [pagina paginas total inicio fim]}]
+  (let [versao (inc indice)]
+    (str "📦 *Save legado — Versão " versao "*"
+         "\n" (str/join " / " origens)
+         "\nPágina " pagina " de " paginas " • Total: " total " Pokémon"
+         (when (pos? total) (str " • Exibindo " (inc inicio) "–" fim))
+         (when (> pagina 1) (str "\n⬅️ !pk recuperar " versao " " (dec pagina)))
+         (when (< pagina paginas) (str "\n➡️ !pk recuperar " versao " " (inc pagina)))
+         "\n🔎 Consulta somente leitura.")))
+
+(defn- resposta-versao! [versoes indice pagina]
+  (let [fallback (str "🧬 ODISSEU — RECUPERAÇÃO DE POKÉMON\n\n"
+                      (listar-versao versoes indice pagina)
+                      "\n\n🔎 Consulta somente leitura.")
+        {:keys [conta origens]} (get versoes indice)
+        dados (when (conta-valida? conta) (pagina-registros conta pagina))]
+    (if (seq (:itens dados))
+      (-> (cartao/criar! (:itens dados)
+                         {:titulo (str "Save legado — Versão " (inc indice))
+                          :subtitulo (str (str/join " / " origens) " • Página " pagina "/" (:paginas dados)
+                                          " • " (:total dados) " Pokémon")
+                          :arquivo (str "save-legado-v" (inc indice) "-p" pagina ".jpg")})
+          (p/then (fn [media] {:media media :texto (legenda-versao origens indice dados)}))
+          (p/catch (fn [erro]
+                     (js/console.warn "[Recuperação] Card indisponível, exibindo lista em texto."
+                                      (.-message erro))
+                     fallback)))
+      (p/resolved fallback))))
 
 (defn- comparar-versoes [versoes]
   (if (not= 2 (count versoes))
@@ -193,7 +236,7 @@
 (defn consultar! [{:keys [chat-id player-id]} argumentos]
   (cond
     (not (argumentos-validos? (vec argumentos)))
-    (p/resolved "🔒 Comando inválido. Use !pk recuperar, !pk recuperar 1 [página], !pk recuperar 2 [página] ou !pk recuperar comparar. A restauração não está disponível.")
+    (p/resolved "🔒 Comando inválido. Use !pk recuperar, !pk recuperar 1 [página], !pk recuperar 2 [página] ou !pk recuperar comparar.")
     (nil? (identidade-exata {:chat-id chat-id :player-id player-id}))
     (p/resolved "🔎 Não foi possível validar a identidade desta consulta.")
     :else
@@ -205,28 +248,30 @@
                             [{:conta conta :origens ["Save antigo"]}]
                             versoes)
                   acao (first argumentos)
-                    pagina (if (second argumentos) (js/parseInt (second argumentos) 10) 1)]
-              (str "🧬 ODISSEU — RECUPERAÇÃO DE POKÉMON\n\n"
-                   (case status
-                     :encontrado
-                     (case acao
-                       "1" (listar-versao versoes 0 pagina)
-                       "2" "Não existe uma segunda versão deste save."
-                       "comparar" "Não existem duas versões diferentes para comparar."
-                       (str "📦 SAVE ANTIGO\n" (resumo conta)
-                            "\n\n⚡ SAVE ATUAL\n"
-                            (if (conta-valida? atual) (resumo atual) "Nenhum progresso atual disponível.")))
-                     :ambiguo
-                     (case acao
-                       "1" (listar-versao versoes 0 pagina)
-                       "2" (listar-versao versoes 1 pagina)
-                       "comparar" (comparar-versoes versoes)
-                       (str "Encontramos versões diferentes do seu save antigo.\n\n"
-                            (resumo-versoes versoes)
-                            "\n\nNenhuma versão foi selecionada automaticamente."))
-                     :invalido "O formato do save antigo não pôde ser validado com segurança."
-                     "Não encontramos um save antigo associado com segurança à sua conta.")
-                   "\n\n🔒 A restauração ainda não está disponível. Nenhum progresso foi alterado.")))
+                  pagina (if (second argumentos) (js/parseInt (second argumentos) 10) 1)
+                  indice (if (= acao "2") 1 0)]
+              (if (and (contains? #{:encontrado :ambiguo} status)
+                       (contains? #{"1" "2"} acao))
+                (if (and (= :encontrado status) (= acao "2"))
+                  "Não existe uma segunda versão deste save."
+                  (resposta-versao! versoes indice pagina))
+                (str "🧬 ODISSEU — RECUPERAÇÃO DE POKÉMON\n\n"
+                     (case status
+                       :encontrado
+                       (case acao
+                         "comparar" "Não existem duas versões diferentes para comparar."
+                         (str "📦 SAVE ANTIGO\n" (resumo conta)
+                              "\n\n⚡ SAVE ATUAL\n"
+                              (if (conta-valida? atual) (resumo atual) "Nenhum progresso atual disponível.")))
+                       :ambiguo
+                       (case acao
+                         "comparar" (comparar-versoes versoes)
+                         (str "Encontramos versões diferentes do seu save antigo.\n\n"
+                              (resumo-versoes versoes)
+                              "\n\nNenhuma versão foi selecionada automaticamente."))
+                       :invalido "O formato do save antigo não pôde ser validado com segurança."
+                       "Não encontramos um save antigo associado com segurança à sua conta.")
+                     "\n\n🔎 Consulta somente leitura. Nenhum progresso atual foi alterado."))))
           (p/catch (fn [_]
                      (js/console.error "[Recuperação] Consulta Cassandra indisponível; dados preservados.")
                      "Não foi possível consultar os saves antigos agora. Nenhum progresso foi alterado."))))))
