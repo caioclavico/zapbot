@@ -820,6 +820,19 @@ class Deployment:
                 requested_revision = (current['Config'].get('Labels') or {}).get(REVISION_LABEL)
                 self.allowed_env_updates = {'ADVENTURE_SYNC_ENABLED'}
                 configuration, retained = self.clone(current, target, {'ADVENTURE_SYNC_ENABLED': 'true'}), None
+            elif action == 'activate-restore':
+                if self.service != 'pokemon':
+                    raise DeployError('Restore activation is limited to the Pokemon service')
+                if not self.restore_protocol_policy():
+                    raise DeployError('Restore protocol protection is not activated on the host')
+                target = current_image
+                image = target['Id']
+                requested_revision = (current['Config'].get('Labels') or {}).get(REVISION_LABEL)
+                if (target.get('Config', {}).get('Labels') or {}).get(RESTORE_PROTOCOL_LABEL) != '1':
+                    raise DeployError('Active image does not support the restore protocol')
+                self.allowed_env_updates = {'POKEMON_RESTORE_ENABLED'}
+                configuration = self.clone(current, target, {'POKEMON_RESTORE_ENABLED': 'true'})
+                retained = None
             elif action == 'update-tmdb':
                 if self.service != 'odisseu':
                     raise DeployError('TMDB update is limited to Odisseu')
@@ -846,8 +859,11 @@ class Deployment:
             else:
                 raise DeployError('Unknown deployment action')
             current_revision = (current['Config'].get('Labels') or {}).get(REVISION_LABEL)
-            already_current = (action == 'deploy' and target['Id'] == current['Image']
-                               and current_revision == requested_revision)
+            current_env = dict(item.split('=', 1) for item in current['Config'].get('Env', []) if '=' in item)
+            already_current = ((action == 'deploy' and target['Id'] == current['Image']
+                                and current_revision == requested_revision)
+                               or (action == 'activate-restore' and
+                                   current_env.get('POKEMON_RESTORE_ENABLED') == 'true'))
             self.output(self.service + ': version decision ' + json.dumps({
                 'action': action, 'current_image_id': current['Image'], 'requested_image_id': target['Id'],
                 'current_revision': safe_revision(current_revision),
@@ -856,6 +872,8 @@ class Deployment:
                 'requested_image_revision': safe_revision((target.get('Config', {}).get('Labels') or {}).get(REVISION_LABEL)),
                 'decision': 'already-healthy' if already_current else 'replace'}, sort_keys=True))
             if already_current:
+                if action == 'activate-restore':
+                    self.wait_ready(current['Id'], stable_seconds=0, new_start=False)
                 self.output(self.service + ': requested image is already healthy; no restart')
                 return
             old_reference = (self.original_state['last-good-image']
@@ -942,7 +960,7 @@ def main(argv):
         argv = argv[:-1]
         if argv[:2] != ['odisseu', 'deploy']:
             raise DeployError('Legacy graceful stop is limited to an operator-requested Odisseu deployment')
-    if len(argv) < 2 or argv[0] not in SERVICES or argv[1] not in ('deploy', 'rollback', 'recover', 'activate-adventure', 'update-tmdb'):
+    if len(argv) < 2 or argv[0] not in SERVICES or argv[1] not in ('deploy', 'rollback', 'recover', 'activate-adventure', 'activate-restore', 'update-tmdb'):
         raise DeployError('Usage: SERVICE deploy IMAGE [APP_DIR] | SERVICE rollback|recover [APP_DIR]')
     service, action = argv[:2]
     if len(argv) not in ((3, 4) if action == 'deploy' else (2, 3)):

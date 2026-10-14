@@ -417,6 +417,25 @@ class DeployTest(unittest.TestCase):
         with self.assertRaisesRegex(DEPLOY.DeployError, 'activation records'):
             deployment.restore_protocol_policy()
 
+    def test_activate_restore_requires_host_policy_and_only_updates_flag(self):
+        self.fixture('pokemon')
+        deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
+                    state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
+                    process_guard=lambda auth: None)
+        self.assertFalse(deployment.restore_protocol_policy())
+        (self.config / 'restore-protocol-required').write_text('1\n')
+        (self.config / 'restore-protocol-required').chmod(0o600)
+        (self.config / DEPLOY.RESTORE_PROTOCOL_STATE).write_text(
+            '{"label":"1","required":true,"version":1}\n')
+        (self.config / DEPLOY.RESTORE_PROTOCOL_STATE).chmod(0o600)
+        image = self.engine.image(NEW_IMAGE)
+        image['Config']['Labels'][DEPLOY.RESTORE_PROTOCOL_LABEL] = '1'
+        configuration = deployment.clone(self.model.containers['old'], image,
+                                        {'POKEMON_RESTORE_ENABLED': 'true'})
+        env = dict(item.split('=', 1) for item in configuration['Env'])
+        self.assertEqual(env['POKEMON_RESTORE_ENABLED'], 'true')
+        self.assertEqual(env['API_TOKEN'], SECRET)
+
     def test_http_framing_preserves_complete_bodies_and_empty_responses(self):
         body = b'large Docker response\n' * 10000
         cases = ((True, False, 200, body), (False, False, 200, body),
