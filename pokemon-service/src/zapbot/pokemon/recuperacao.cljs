@@ -97,7 +97,7 @@
          (when (> (count itens) limite)
            (str "\n… mais " (- (count itens) limite) " registros não exibidos.")))))
 
-(def ^:private tamanho-pagina 15)
+(def ^:private tamanho-pagina 12)
 
 (defn- pagina-valida? [texto]
   (and (string? texto)

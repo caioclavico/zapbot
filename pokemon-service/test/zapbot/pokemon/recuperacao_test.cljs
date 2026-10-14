@@ -253,9 +253,9 @@
            (fn [[primeira segunda fora versao-b fora-b comparacao zero negativo fracao enorme extra intruso]]
              (let [p1 (recuperacao/pagina-registros conta-a 1)
                    p2 (recuperacao/pagina-registros conta-a 2)]
-               (is (= (mapv #(str "a-" %) (range 1 16))
+               (is (= (mapv #(str "a-" %) (range 1 13))
                       (mapv #(get-in % [:pokemon "id-pokemon"]) (:itens p1))))
-               (is (= ["a-16" "a-17" "a-18" "a-19"]
+               (is (= ["a-13" "a-14" "a-15" "a-16" "a-17" "a-18" "a-19"]
                       (mapv #(get-in % [:pokemon "id-pokemon"]) (:itens p2))))
                (is (= "Enfermaria" (:local (last (:itens p2)))))
                (let [svg (cartao/svg-cartao (:itens p1) "Versão 1" "Página 1/2")]
@@ -265,10 +265,10 @@
              (is (= "image/jpeg" (get-in segunda [:media :mime])))
              (is (= "image/jpeg" (get-in versao-b [:media :mime])))
              (is (re-find #"Página 1 de 2" (:texto primeira)))
-             (is (re-find #"Exibindo 1–15" (:texto primeira)))
+             (is (re-find #"Exibindo 1–12" (:texto primeira)))
              (is (re-find #"!pk recuperar 1 2" (:texto primeira)))
              (is (re-find #"Página 2 de 2" (:texto segunda)))
-             (is (re-find #"Exibindo 16–19" (:texto segunda)))
+             (is (re-find #"Exibindo 13–19" (:texto segunda)))
              (is (re-find #"!pk recuperar 1 1" (:texto segunda)))
              (is (not (re-find #"!pk recuperar 1 3" (:texto segunda))))
              (is (re-find #"Página inexistente" fora))
@@ -298,3 +298,27 @@
   (doseq [url ["http://localhost:9042/secret" "https://example.com/sprite.png"
                "https://raw.githubusercontent.com/evil/sprites/master/a.png"]]
     (is (false? (cartao/url-confiavel? url)))))
+
+(deftest pagina-registros-limite-e-preserva-ordem
+  (doseq [[total paginas] [[0 1] [1 1] [12 1] [13 2] [24 2] [25 3]]]
+    (let [conta {"equipe" (vec (map #(hash-map "id-pokemon" (str "p-" %)) (range total)))
+                 "pc" [] "enfermaria" []}
+          paginas-reais (map #(recuperacao/pagina-registros conta %)
+                             (range 1 (inc paginas)))
+          ids (mapcat (fn [pagina]
+                        (map (fn [item]
+                               (get-in item [:pokemon "id-pokemon"]))
+                             (:itens pagina)))
+                      paginas-reais)]
+      (is (= paginas (:paginas (recuperacao/pagina-registros conta 1))))
+      (is (= total (count ids)))
+      (is (= (map #(str "p-" %) (range total)) ids))
+      (is (nil? (recuperacao/pagina-registros conta (inc paginas)))))))
+
+(deftest renderizacao-nunca-excede-doze-entradas
+  (let [entradas (mapv #(hash-map :local "Equipe" :indice (inc %) :pokemon {"nome" (str "Poke-" %)
+                                                                                  "id-pokemon" (str "id-" %)})
+                        (range 25))
+        svg (cartao/svg-cartao entradas "Versão 1" "Página 1/3")]
+    (is (= 12 (count (re-seq #"Poke-" svg))))
+    (is (not (re-find #"Poke-12" svg)))))

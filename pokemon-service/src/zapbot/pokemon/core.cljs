@@ -6,7 +6,8 @@
   chance de crítico, status (paralisia/queimadura/veneno) e um punhado de
   habilidades icônicas. Batalhas e caçadas em andamento são espelhadas no
   Cassandra para poderem ser retomadas depois de um reinício do bot."
-  (:require [zapbot.pokemon.recuperacao :as recuperacao] [zapbot.http :as http]
+  (:require [zapbot.pokemon.recuperacao :as recuperacao]
+            [pokemon-service.restauracao :as restauracao] [zapbot.http :as http]
             [promesa.core :as p]
             [clojure.string :as str]
             [cljs.reader :as reader]
@@ -267,7 +268,19 @@
 (declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado
          parse-indice-golpe estado-cacada turno-selvagem escalar-nivel com-raridade expandir-atalho
          enviar-cartao-evento! enviar-cartao-evolucao! aplicar-sobreposicao-batalha escapar-xml baixar-buffer
-         evolucoes-pendentes expirar-batalha!)
+         evolucoes-pendentes expirar-batalha! jogador-na-batalha?)
+
+(defn restauracao-preflight [cid pid]
+  "Validação atômica do estado volátil antes de uma restauração.
+  Não encerra operações: qualquer atividade incompatível apenas bloqueia a
+  prévia. O writer compartilhado revalida o bloqueio antes do CAS."
+  (when (or (jogador-na-batalha? (get @jogos cid) pid)
+            (get @cacadas-selvagens cid)
+            (get @evolucoes-pendentes [cid pid])
+            (get @remocoes-pendentes [cid pid])
+            (raids/participando? cid pid)
+            (pvp/outro-combate? @jogos @cacadas-selvagens cid pid (.now js/Date)))
+    (throw (ex-info "Operação Pokémon externa pendente; aguarde sua conclusão." {:code :external-operation-pending}))))
 
 (defn- chat-id [contexto]
   (:chat-id contexto))
@@ -5809,6 +5822,10 @@
   (let [[cmd & resto] (str/split (str/trim (str/lower-case (or args ""))) #"\s+")]
     (cond
       (= cmd "recuperar") (recuperacao/consultar! contexto resto)
+      (= cmd "restaurar")
+      (if (recuperacao/identidade-exata contexto)
+        (restauracao/comando! (chat-id contexto) (jogador-id contexto) (vec resto))
+        (p/resolved "Identidade autenticada inválida; nenhuma conta foi modificada."))
       ;; Adventure operations own this same chat queue. Wrapping the handler
       ;; in another round would make it wait for its own unfinished promise.
       (and @comando-ovos (contains? #{"ovos" "ovo" "incubar" "incubadoras"} cmd))

@@ -24,6 +24,7 @@
 (defonce ^:private gravacoes-pendentes (atom 0))
 (defonce ^:private partes-bloqueadas (atom {}))
 (defonce ^:private geracoes-partes (atom {}))
+(defonce restauracao-bloqueios (atom {}))
 (defonce ^:private estatisticas
   (atom {:readQueries 0 :writeQueries 0 :blockedWrites 0
          :hydratedModules 0 :hydratedPartitions 0 :hydrated false}))
@@ -59,7 +60,10 @@
 
 (defn obter [chave] (get @cache chave))
 
+(declare exigir-restauracao-livre! instalar-parte-confirmada!)
+
 (defn exigir-parte-disponivel! [modulo particao]
+  (when (= modulo "treinador") (exigir-restauracao-livre! particao))
   (when (get @partes-bloqueadas [modulo particao])
     (throw (ex-info "Persistência incerta; recupere a operação antes de prosseguir."
                     {:code :result-unknown}))))
@@ -149,7 +153,8 @@
   (reduce (fn [dados [[m particao] geracao]]
             (if (and (= m modulo)
                      (or (not= geracao (get geracoes [m particao] 0))
-                         (get @partes-bloqueadas [m particao])))
+                         (get @partes-bloqueadas [m particao])
+                         (get @restauracao-bloqueios particao)))
               (if-let [atual (get-in @confirmados [modulo particao])]
                 (assoc dados particao atual)
                 (dissoc dados particao))
@@ -166,6 +171,14 @@
     (p/resolved nil)
     (do
       (exigir-escrita!)
+      (when (= chave "treinador")
+        (doseq [[cid _] @restauracao-bloqueios
+                :let [bruto (get-in @confirmados ["treinador" cid] {})
+                      transformar (second (get @registros "treinador"))
+                      esperado (if transformar (get (transformar {cid bruto}) cid) bruto)]
+                :when (not= (get valor cid) esperado)]
+          (instalar-parte-confirmada! "treinador" cid (get-in @confirmados ["treinador" cid] {}))
+          (throw (ex-info "Snapshot conflitante com restauração; gravação recusada." {:code :restore-pending}))))
       (verificar-modulo! chave)
       (swap! cache assoc chave valor)
       (let [geracoes @geracoes-partes
@@ -340,6 +353,78 @@
         (swap! cache assoc-in [modulo particao] atual)
         (swap! confirmados assoc-in [modulo particao] atual))
       aplicado?)))
+
+(defonce ^:private restauracao-writer (atom #{}))
+(defn bloquear-restauracao! [cid operacao]
+  (swap! restauracao-bloqueios assoc cid operacao)
+  (swap! geracoes-partes update ["treinador" cid] (fnil inc 0)))
+(defn liberar-restauracao! [cid operacao]
+  (when (= operacao (get @restauracao-bloqueios cid))
+    (swap! restauracao-bloqueios dissoc cid)))
+(defn exigir-restauracao-livre! [cid]
+  (when (get @restauracao-bloqueios cid)
+    (throw (ex-info "Restauração pendente; grupo protegido até reconciliação." {:code :restore-pending}))))
+(defn restauracao-ler-grupo! [cid]
+  (p/let [^js leitura (executar! @client
+                         (str "SELECT valor FROM " tabela " WHERE modulo = ? AND particao = ?")
+                         ["treinador" cid] {:consistency serial})]
+    (let [row (.first leitura)] (clj->js (if row (ler-json (.-valor row)) {})))))
+(defn restauracao-instalar! [cid valor]
+  (instalar-parte-confirmada! "treinador" cid (js->clj valor)))
+(defn restauracao-cas-grupo! [cid antes depois]
+  (exigir-escrita!)
+  (when-not (contains? @restauracao-writer cid)
+    (throw (js/Error. "Writer exclusivo de restauração obrigatório.")))
+  (p/let [^js leitura (executar! @client
+                         (str "SELECT valor FROM " tabela " WHERE modulo = ? AND particao = ?")
+                         ["treinador" cid] {:consistency serial})]
+    (let [row (.first leitura) bruto (when row (.-valor row))]
+      (if (not= (if bruto (ler-json bruto) {}) (js->clj antes)) false
+          (p/let [^js gravacao (executar! @client
+                                (if bruto
+                                  (str "UPDATE " tabela " SET valor = ? WHERE modulo = ? AND particao = ? IF valor = ?")
+                                  (str "INSERT INTO " tabela " (valor, modulo, particao) VALUES (?, ?, ?) IF NOT EXISTS"))
+                                (if bruto [(json (js->clj depois)) "treinador" cid bruto]
+                                    [(json (js->clj depois)) "treinador" cid])
+                                {:consistency quorum :serialConsistency serial})]
+            (.wasApplied gravacao))))))
+(defn com-writer-restauracao! [cid acao]
+  ;; One queue shared with salvar!/normal trainer LWT, never a second writer.
+  (let [anterior (get @filas-gravacao "treinador" (p/resolved nil))
+        trabalho (p/then anterior
+                   (fn [_]
+                     (when-let [erro (get @falhas-gravacao "treinador")] (throw erro))
+                     (swap! restauracao-writer conj cid)
+                     (when-not (get @restauracao-bloqueios cid)
+                       (swap! restauracao-bloqueios assoc cid "__writer__"))
+                     (swap! geracoes-partes update ["treinador" cid] (fnil inc 0))
+                     (-> (p/then (p/resolved nil) (fn [_] (acao)))
+                         (p/finally (fn []
+                                      (swap! restauracao-writer disj cid)
+                                      (when (= "__writer__" (get @restauracao-bloqueios cid))
+                                        (swap! restauracao-bloqueios dissoc cid)))))))
+        _ (swap! gravacoes-pendentes inc)
+        segura (p/finally (p/catch trabalho (fn [_] nil)) #(swap! gravacoes-pendentes dec))]
+    (swap! filas-gravacao assoc "treinador" segura)
+    trabalho))
+(defn restauracao-executar! [sql parametros opcoes]
+  (let [params (js->clj parametros)
+        modulo (first (filter #(and (string? %) (str/starts-with? % "pokemon-restauracao-")) params))]
+    (when-not (and (contains? #{"pokemon-restauracao-backups" "pokemon-restauracao-operacoes"
+                               "pokemon-restauracao-bloqueios" "pokemon-restauracao-controle"} modulo)
+                   (str/includes? sql tabela) (not (str/includes? sql ";"))
+                   (not (str/includes? sql "legacy_"))
+                   (re-find #"^(SELECT|INSERT|UPDATE) " sql))
+      (throw (js/Error. "Consulta de restauração não permitida.")))
+    (when-not (str/starts-with? sql "SELECT ")
+      (when (empty? @restauracao-writer)
+        (throw (js/Error. "Gravação de restauração exige writer exclusivo.")))
+      (when (and (= modulo "pokemon-restauracao-backups")
+                 (not (and (str/starts-with? sql "INSERT ") (str/includes? sql "IF NOT EXISTS"))))
+        (throw (js/Error. "Backup imutável não pode ser alterado."))))
+    (executar! @client sql params
+               (merge {:consistency quorum :serialConsistency serial}
+                      (when (= "SERIAL" (aget opcoes "consistency")) {:consistency serial})))))
 
 (defn- carregar-modulo! [c modulo]
   ;; O schema existente usa PK ((modulo,particao)): requer filtro no startup.

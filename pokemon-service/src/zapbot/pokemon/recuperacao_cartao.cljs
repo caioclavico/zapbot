@@ -63,7 +63,8 @@
 (defn svg-cartao
   "Molda cards nas mesmas proporções, cores e colunas da coleção Pokémon."
   [entradas titulo subtitulo]
-  (let [largura 1000
+  (let [entradas (vec (take 12 entradas))
+        largura 1000
         altura (+ 120 (* 205 (js/Math.ceil (/ (count entradas) 2))) 20)
         cartoes
         (apply str
@@ -108,7 +109,8 @@
 (defn criar!
   "Recebe exclusivamente os registros já isolados e paginados do jogador."
   [entradas {:keys [titulo subtitulo arquivo]}]
-  (p/let [sprites (p/all (map #(sprite! (:pokemon %)) entradas))
+  (let [entradas (vec (take 12 entradas))]
+    (p/let [sprites (p/all (map #(sprite! (:pokemon %)) entradas))
           overlays (clj->js
                     (map-indexed (fn [idx sprite]
                                    #js {:input sprite
@@ -117,4 +119,4 @@
                                  sprites))
           buffer (imagens/cartao! (svg-cartao entradas titulo subtitulo)
                                   overlays #js {:maxWidth 800})]
-    (boundary/midia "image/jpeg" buffer (or arquivo "save-legado.jpg"))))
+      (boundary/midia "image/jpeg" buffer (or arquivo "save-legado.jpg")))))

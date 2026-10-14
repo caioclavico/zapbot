@@ -346,6 +346,29 @@ class DeployTest(unittest.TestCase):
             self.assertNotIn('cassandra', path)
             self.assertNotIn('/delete', path)
 
+    def test_restore_protocol_marker_rejects_legacy_rollback_image(self):
+        self.fixture('pokemon')
+        marker = self.config / 'restore-protocol-required'
+        marker.write_text('1\n')
+        marker.chmod(0o600)
+        deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
+                    state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
+                    process_guard=lambda auth: None)
+        with self.assertRaisesRegex(DEPLOY.DeployError, 'restore protocol'):
+            deployment.compatibility(self.engine.image(OLD_IMAGE), legacy=True)
+
+    def test_restore_protocol_marker_accepts_compatible_image(self):
+        self.fixture('pokemon')
+        marker = self.config / 'restore-protocol-required'
+        marker.write_text('1\n')
+        marker.chmod(0o600)
+        image = self.engine.image(NEW_IMAGE)
+        image['Config']['Labels'][DEPLOY.RESTORE_PROTOCOL_LABEL] = '1'
+        deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
+                    state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
+                    process_guard=lambda auth: None)
+        deployment.compatibility(image)
+
     def test_http_framing_preserves_complete_bodies_and_empty_responses(self):
         body = b'large Docker response\n' * 10000
         cases = ((True, False, 200, body), (False, False, 200, body),
