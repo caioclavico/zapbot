@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test');const assert=require('node:assert/strict');
-const {RestoreProtocol,validate,hash}=require('../runtime/restore-protocol.cjs');
+const {RestoreProtocol,validate,prepare,hash}=require('../runtime/restore-protocol.cjs');
 const copy=x=>JSON.parse(JSON.stringify(x));
 const account=id=>({ativo:0,equipe:[{'id-pokemon':id,nivel:1,hp:10,'hp-atual':10,ataque:5,defesa:5,'atq-esp':5,'def-esp':5,veloc:5,'xp-desde-nivel':0,golpes:[],tipos:['normal']}],pc:[]});
 function fixture(){
@@ -23,6 +23,34 @@ test('backup failure cannot touch group',async()=>{const f=fixture(),before=copy
 test('lost CAS response is reconciled after restart, never repeated',async()=>{const f=fixture(),original=f.store.casGroup;f.store.casGroup=async(...x)=>{await original(...x);throw Error('lost');};const p=await f.controller.preview('g','p',account('new'),1);await assert.rejects(f.controller.confirm('g','p',p.token,async()=>account('new')));assert.ok(f.data.locks.p);const restarted=new RestoreProtocol(f.store,{gate:()=>true});assert.equal((await restarted.confirm('g','p',p.token,async()=>null)).status,'completed');assert.equal(f.events.filter(x=>x==='cas').length,1);assert.equal(f.data.locks.p,undefined);});
 test('source/target change and foreign code are rejected',async()=>{const f=fixture(),p=await f.controller.preview('g','p',account('new'),1);await assert.rejects(f.controller.confirm('g','other',p.token,async()=>account('new')),/invalid_code/);await assert.rejects(f.controller.confirm('g','p',p.token,async()=>account('changed')),/source_changed/);f.data.group.p=account('modified');await assert.rejects(f.controller.confirm('g','p',p.token,async()=>account('new')),/target_conflict/);});
 test('invalid identities/normalization are blocked',()=>{const a=account('x');a.pc=[copy(a.equipe[0])];assert.throws(()=>validate(a),/identity/);a.pc=[];a.equipe[0]['xp-desde-nivel']=10;assert.throws(()=>validate(a),/normalization/);});
+test('legacy XP and victories migrate with the domain 9-XP/3-percent rule',()=>{
+ const base=account('legacy');base.equipe[0].nivel=2;base.equipe[0]['xp-desde-nivel']=18;
+ const migrated=prepare(base),p=migrated.target.equipe[0];assert.equal(p.nivel,4);assert.equal(p['xp-desde-nivel'],0);assert.ok(migrated.transformations.some(x=>x.includes('nível 2 → 4')&&x.includes('HP')));
+ const victories=account('wins');delete victories.equipe[0]['xp-desde-nivel'];victories.equipe[0]['vitorias-desde-nivel']=3;assert.equal(prepare(victories).target.equipe[0]['xp-desde-nivel'],0);
+ const absent=account('absent');delete absent.equipe[0]['xp-desde-nivel'];assert.equal(prepare(absent).target.equipe[0]['xp-desde-nivel'],0);
+});
+test('legacy migration preserves zero HP, level 100, infirmary and identity',()=>{
+ const a=account('zero');a.equipe[0].nivel=99;a.equipe[0]['xp-desde-nivel']=18;a.equipe[0]['hp-atual']=0;
+ a.enfermaria=[{pokemon:{...a.equipe[0],'id-pokemon':'ward','nivel':1,'xp-desde-nivel':9},'pronto-em':1}];
+ const out=prepare(a).target;assert.equal(out.equipe[0].nivel,100);assert.equal(out.equipe[0]['hp-atual'],0);assert.equal(out.equipe[0]['id-pokemon'],'zero');
+});
+test('read-only diagnostic keeps every record and marks conversions independently',async()=>{
+ const f=fixture(),source=account('diagnostic');
+ source.equipe=Array.from({length:13},(_,i)=>({...source.equipe[0],'id-pokemon':`diag-${i}`}));
+ source.equipe[1]['xp-desde-nivel']=9;
+ source.equipe[2]['xp-desde-nivel']='bad';
+ source.equipe.push(null);
+ const out=await f.controller.diagnostic('g','p',source,2);
+ assert.equal(out.total,14);
+ assert.equal(out.version,2);
+ assert.equal(f.controller.previews.size,0);
+ assert.equal(out.entries.filter(x=>x.status==='converted').length,1);
+ assert.equal(out.entries.filter(x=>x.status==='invalid').length,2);
+ assert.deepEqual(out.entries.map(x=>x.index),Array.from({length:14},(_,i)=>i+1));
+ assert.equal(out.entries[1].original.nivel,1);
+ assert.equal(out.entries[1].pokemon.nivel,2);
+});
+test('ambiguous legacy XP fields remain blocked',()=>{const a=account('ambiguous');a.equipe[0]['xp-desde-nivel']=1;a.equipe[0]['vitorias-desde-nivel']=2;assert.throws(()=>prepare(a),/normalization/);const invalid=account('invalid');invalid.equipe[0]['xp-desde-nivel']=-1;assert.throws(()=>prepare(invalid),/normalization/);});
 test('expiry and simultaneous confirmations cannot create two CAS writes',async()=>{const f=fixture();let clock=0;const c=new RestoreProtocol(f.store,{gate:()=>true,now:()=>clock});const p=await c.preview('g','p',account('new'),1);clock=600001;await assert.rejects(c.confirm('g','p',p.token,async()=>account('new')),/invalid_code/);clock=0;const p2=await c.preview('g','p',account('new'),1);await Promise.allSettled([c.confirm('g','p',p2.token,async()=>account('new')),c.confirm('g','p',p2.token,async()=>account('new'))]);assert.equal(f.events.filter(x=>x==='cas').length,1);});
 test('CAS conflict stays blocked and preserves concurrent accounts',async()=>{const f=fixture();f.store.casGroup=async()=>{f.data.group.other=account('concurrent');return false;};const p=await f.controller.preview('g','p',account('new'),1);await assert.rejects(f.controller.confirm('g','p',p.token,async()=>account('new')),/cas_conflict/);assert.equal(f.data.group.p.equipe[0]['id-pokemon'],'old');assert.equal(f.data.group.other.equipe[0]['id-pokemon'],'concurrent');assert.ok(f.data.locks.p);});
 test('Cassandra backup is immutable and confirmed with SERIAL; no legacy writes',async()=>{const {RestoreStore}=require('../runtime/restore-store.cjs');const calls=[];let row=null;const s=new RestoreStore(async(sql,args,opts)=>{calls.push({sql,args,opts});if(sql.startsWith('INSERT'))row={valor:args[2]};return {first:()=>row,wasApplied:()=>true};},'zapbot');await s.insertImmutable('pokemon-restauracao-backups','id',{a:1});assert.equal(calls[0].sql.includes('IF NOT EXISTS'),true);assert.equal(calls[1].opts.consistency,'SERIAL');await assert.rejects(s.cas('pokemon-restauracao-backups','id',{},{}),/immutable/);await assert.rejects(s.readSerial('legacy_estado','id'),/invalid/);assert.equal(calls.some(c=>c.sql.includes('legacy_')),false);});
