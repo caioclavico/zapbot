@@ -77,6 +77,7 @@
                             "enfermaria" [] "sequencia-capturas" 0 "pokedex" {}})
 
 (defn- conta [cid pid]
+  (armazenamento/exigir-restauracao-livre! cid)
   (get-in @contas [cid pid] conta-vazia))
 
 (defn eventos-atividade [cid]

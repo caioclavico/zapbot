@@ -2,13 +2,14 @@
   (:require [cljs.test :refer-macros [deftest is async]]
             [promesa.core :as p]
             [pokemon-service.entry :as entry]
+            [pokemon-service.restauracao :as restore]
             [zapbot.armazenamento :as storage]))
 
 (deftest treinador-real-atravessa-http-com-cassandra-fake-e-jpeg-real
   (async done
     (let [http (js/require "node:http")
           runtime (js/require "../runtime/service.cjs")
-          destinos [storage/client storage/pronto storage/cache storage/confirmados
+          destinos [restore/reconciliado? storage/client storage/pronto storage/cache storage/confirmados
                     storage/filas-gravacao storage/falhas-gravacao storage/hidratando?]
           antes (mapv deref destinos)
           registros (mapv (fn [[_ [destino _]]] [destino @destino]) @storage/registros)
@@ -43,6 +44,8 @@
                               (p/resolved #js {:rows #js [] :wasApplied (fn [] true)
                                                :first (fn [] #js {})}))})
       (reset! storage/pronto true)
+      ;; This fixture bypasses initialize and explicitly completes its startup barrier.
+      (reset! restore/reconciliado? true)
       (reset! storage/filas-gravacao {})
       (reset! storage/falhas-gravacao {})
       (-> (p/let [_ (p/create (fn [resolve _] (.listen server 0 "127.0.0.1" resolve)))

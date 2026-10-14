@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [promesa.core :as p]
             [pokemon-service.shutdown :as shutdown-log]
+            [pokemon-service.restauracao :as restauracao]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.config :as config]
             [zapbot.desempenho :as desempenho]
@@ -16,13 +17,17 @@
             [zapbot.pokemon.ajuda :as ajuda]))
 
 (defn initialize []
+  (restauracao/configurar-fila! pokemon/enfileirar-operacao-interna!)
+  (restauracao/configurar-preflight! pokemon/restauracao-preflight)
   (pokemon/configurar-recompensa-ovo! adventure/drenar-eventos!)
   (pokemon/configurar-comando-ovos! egg-commands/comando!)
   (adventure/preparar-inicializacao!)
   ;; Preserva a criação síncrona do driver usada pelo bootstrap e pelos testes.
-  (p/then (armazenamento/iniciar!) (fn [_] (adventure/inicializar!))))
+  (p/then (armazenamento/iniciar!)
+          (fn [_] (p/let [_ (restauracao/reconciliar-inicializacao!)]
+                    (adventure/inicializar!)))))
 (defn diagnostics [] (clj->js (armazenamento/diagnostico)))
-(defn is-ready [] (boolean (and (armazenamento/pronto?) (adventure/disponivel?))))
+(defn is-ready [] (boolean (and (armazenamento/pronto?) @restauracao/reconciliado? (adventure/disponivel?))))
 (defn load-state [modulo] (clj->js (armazenamento/obter modulo)))
 (defn store-state [modulo valor] (armazenamento/salvar! modulo (js->clj valor)))
 (defn register-module [modulo] (armazenamento/registrar-modulo! modulo))
@@ -58,7 +63,7 @@
   (p/then (adventure/atividade-avancar-tempo! cid pid now) clj->js))
 (defn activity-tick [] (adventure/processar-vencidos!))
 (defn start-timers [emitir]
-  (when-not config/read-only?
+  (when (and (not config/read-only?) @restauracao/reconciliado?)
     (adventure/iniciar-notificacoes! (fn [cid resposta] (emitir cid (clj->js resposta))))
     (pokemon/iniciar! (fn [chat-id resposta] (emitir chat-id (clj->js resposta))))))
 (defn stop-timers [] (adventure/parar!) (pokemon/parar!))

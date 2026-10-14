@@ -1,0 +1,178 @@
+(ns pokemon-service.restore-adapter-test
+  (:require [cljs.test :refer-macros [deftest is async]]
+            [promesa.core :as p]
+            [zapbot.armazenamento :as storage]
+            [zapbot.pokemon.treinador :as treinador]
+            [zapbot.pokemon.core :as core]
+            [pokemon-service.restauracao :as restore]))
+(defn pokemon [id] {"id-pokemon" id "nivel" 1 "hp" 10 "hp-atual" 10 "ataque" 5 "defesa" 5
+                   "atq-esp" 5 "def-esp" 5 "veloc" 5 "xp-desde-nivel" 0 "tipos" ["normal"] "golpes" []})
+(defn conta [id] {"ativo" 0 "equipe" [(pokemon id)] "pc" [] "colecao-unificada" true})
+(defn json [x] (js/JSON.stringify (clj->js x)))
+(defn banco [f]
+  (let [atoms [storage/client storage/pronto storage/cache storage/confirmados storage/filas-gravacao
+               storage/falhas-gravacao storage/gravacoes-pendentes storage/partes-bloqueadas
+               storage/geracoes-partes storage/restauracao-bloqueios treinador/contas
+               restore/controlador restore/reconciliado? restore/fila-chat]
+        originals (mapv deref atoms)
+        initial {"p" (conta "old") "other" (conta "other")}
+        rows (atom {["treinador" "g"] (json initial)})
+        queries (atom [])
+        driver #js {:execute
+                    (fn [sql args _]
+                      (let [a (js->clj args) read? (.startsWith sql "SELECT")
+                            insert? (.startsWith sql "INSERT")
+                            value-first? (.includes sql "(valor, modulo, particao)")
+                            [module part] (if read? a (if (and insert? (not value-first?)) (take 2 a) (take 2 (rest a))))
+                            key [module part] old (get @rows key)
+                            value (if (and insert? (not value-first?)) (nth a 2) (first a))
+                            applied (or read? (if insert? (nil? old) (= old (nth a 3))))]
+                        (swap! queries conj sql)
+                        (when (and (not read?) applied) (swap! rows assoc key value))
+                        (p/resolved #js {:first (fn [] (when old #js {:valor old}))
+                                         :rows (if old #js [#js {:valor old}] #js [])
+                                         :wasApplied (fn [] applied)})))}]
+    (reset! storage/client driver) (reset! storage/pronto true)
+    (reset! storage/cache {"treinador" {"g" initial}})
+    (reset! storage/confirmados {"treinador" {"g" initial}})
+    (doseq [a [storage/filas-gravacao storage/falhas-gravacao storage/partes-bloqueadas
+               storage/geracoes-partes storage/restauracao-bloqueios]] (reset! a {}))
+    (reset! storage/gravacoes-pendentes 0) (reset! treinador/contas {"g" initial})
+    (restore/criar!)
+    (-> (p/then (p/resolved nil) (fn [_] (f {:rows rows :queries queries :initial initial})))
+        (p/finally (fn [] (doseq [[a v] (map vector atoms originals)] (reset! a v)))))))
+(defn concluir [work done] (-> work (p/catch #(is false (str %))) (p/finally done)))
+
+(deftest protocolo-real-sincroniza-atom-e-preserva-outros
+  (async done
+    (concluir (banco
+      (fn [{:keys [rows queries initial]}]
+        (let [{:keys [protocol store]} @restore/controlador]
+          ;; Enable only this synthetic instance, never the production gate.
+          (set! (.-gate protocol) (fn [] true))
+          (p/let [preview (.preview protocol "g" "p" (clj->js (conta "new")) 1)
+                  result (storage/com-writer-restauracao! "g"
+                           #(.confirm protocol "g" "p" (.-token preview)
+                                      (fn [_] (p/resolved (clj->js (conta "new"))))))
+                  backups (.listBackups store "g" "p")]
+            (is (= "completed" (.-status result)))
+            (is (= "new" (get-in @treinador/contas ["g" "p" "equipe" 0 "id-pokemon"])))
+            (is (= (get initial "other") (get-in @treinador/contas ["g" "other"])))
+            (is (empty? @storage/restauracao-bloqueios))
+            (is (= 1 (alength backups)))
+            (is (every? #(not (.includes % "legacy_")) @queries)))))) done)))
+
+(deftest bloqueio-recusa-snapshot-e-cas-fora-da-fila
+  (async done
+    (concluir (banco
+      (fn [{:keys [initial rows]}]
+        (storage/bloquear-restauracao! "g" "op")
+        (is (try (storage/exigir-parte-disponivel! "treinador" "g") false (catch :default _ true)))
+        (is (try (storage/restauracao-cas-grupo! "g" #js {} #js {}) false (catch :default _ true)))
+        (is (try (storage/salvar! "treinador" {"g" {"p" (conta "bad")}}) false (catch :default _ true)))
+        (is (= initial (get @treinador/contas "g")))
+        (is (= (json initial) (get @rows ["treinador" "g"])))
+        (p/resolved nil))) done)))
+
+(deftest startup-nao-ignora-journal-ausente-e-lock-duravel
+  (async done
+    (concluir (banco
+      (fn [{:keys [rows]}]
+        (swap! rows assoc ["pokemon-restauracao-controle" "registry"]
+               (json {:operations {"op" {:chat "g" :player "p"}}
+                      :locks {"id" {:chat "g" :player "p" :operation "op"}} :backups {}}))
+        (p/let [_ (restore/reconciliar-inicializacao!)]
+          (is (= "op" (get @storage/restauracao-bloqueios "g")))
+          (is (try (storage/exigir-restauracao-livre! "g") false (catch :default _ true)))
+          (is (nil? (storage/exigir-restauracao-livre! "other-group")))))) done)))
+
+(deftest writer-compartilhado-neutraliza-snapshot-antigo-enfileirado
+  (async done
+    (concluir (banco
+      (fn [{:keys [rows initial]}]
+        (let [stale {"g" initial}
+              desired (assoc initial "p" (conta "new"))
+              restore-work (storage/com-writer-restauracao! "g"
+                             #(p/let [before (storage/restauracao-ler-grupo! "g")
+                                      applied (storage/restauracao-cas-grupo! "g" before (clj->js desired))]
+                                (is (true? applied))
+                                (storage/restauracao-instalar! "g" (clj->js desired))))
+              stale-work (storage/salvar! "treinador" stale)]
+          (p/let [_ (p/all [restore-work stale-work])]
+            (is (= desired (js->clj (js/JSON.parse (get @rows ["treinador" "g"])))))
+            (is (= desired (get-in @storage/confirmados ["treinador" "g"])))
+            (is (= desired (get @treinador/contas "g"))))))) done)))
+
+(deftest startup-indisponivel-nao-libera-barreira
+  (async done
+    (concluir (banco
+      (fn [_]
+        (reset! storage/client #js {:execute (fn [& _] (p/rejected (js/Error. "unavailable")))})
+        (-> (restore/reconciliar-inicializacao!)
+            (p/then (fn [_] (is false "Startup não deve ignorar falha Cassandra")))
+            (p/catch (fn [_] (is (false? @restore/reconciliado?))))))) done)))
+
+(deftest comando-batalha-bloqueado-na-particao-incerta
+  (async done
+    (concluir (banco
+      (fn [_]
+        (storage/bloquear-restauracao! "g" "op")
+        ;; Same guard used before any command round in core/enfileirar-jogada.
+        (is (try (treinador/pokemon-ativo "g" "p") false (catch :default _ true)))
+        (is (nil? (storage/exigir-restauracao-livre! "outro")))
+        (p/let [resultados (p/all
+                            (for [cmd ["batalhar" "capturar pokebola"]]
+                              (-> (core/jogar {:chat-id "g" :player-id "p"} cmd)
+                                  (p/then (fn [_] false))
+                                  (p/catch (fn [_] true)))))]
+          (is (every? true? resultados))))) done)))
+
+(deftest startup-recupera-cas-aplicado-com-resposta-perdida-e-atom-antigo
+  (async done
+    (concluir (banco
+      (fn [_]
+        (let [{:keys [protocol store]} @restore/controlador
+              hooks (.-hooks store) original (.-casGroup hooks)]
+          (set! (.-gate protocol) (fn [] true))
+          (set! (.-casGroup hooks)
+                (fn [& args] (p/let [_ (.apply original nil (to-array args))]
+                               (throw (js/Error. "Resposta CAS perdida")))))
+          (p/let [preview (.preview protocol "g" "p" (clj->js (conta "new")) 1)
+                  _ (-> (storage/com-writer-restauracao! "g"
+                           #(.confirm protocol "g" "p" (.-token preview)
+                                      (fn [_] (p/resolved (clj->js (conta "new"))))))
+                        (p/then (fn [_] (is false "Resposta perdida não deve indicar sucesso")))
+                        (p/catch (fn [_] nil)))
+                  _ (is (some? (get @storage/restauracao-bloqueios "g")))
+                  _ (is (= "old" (get-in @treinador/contas ["g" "p" "equipe" 0 "id-pokemon"])))
+                  _ (restore/reconciliar-inicializacao!)]
+            (is (true? @restore/reconciliado?))
+            (is (empty? @storage/restauracao-bloqueios))
+            (is (= "new" (get-in @treinador/contas ["g" "p" "equipe" 0 "id-pokemon"]))))))) done)))
+
+(deftest confirmacoes-compartilham-fila-chat-e-nao-duplicam-backup
+  (async done
+    (concluir (banco
+      (fn [{:keys [rows]}]
+        (let [{:keys [protocol]} @restore/controlador]
+          (set! (.-gate protocol) (fn [] true))
+          (restore/configurar-fila! core/enfileirar-operacao-interna!)
+          (p/let [preview (.preview protocol "g" "p" (clj->js (conta "new")) 1)
+                  respostas (p/all (repeatedly 2 #(restore/confirmar-interno!
+                                                    "g" "p" (.-token preview)
+                                                    (fn [_] (p/resolved (clj->js (conta "new")))))))]
+            (is (every? #(= "completed" (.-status %)) respostas))
+            (is (= 1 (count (filter #(= "pokemon-restauracao-backups" (first %)) (keys @rows)))))
+            (is (= "new" (get-in @treinador/contas ["g" "p" "equipe" 0 "id-pokemon"]))))))) done)))
+
+(deftest previa-backup-pela-interface-nao-executa-confirmacao
+  (async done
+    (concluir (banco
+      (fn [_]
+        (p/let [resposta (restore/comando! "g" "p" ["confirmar" "codigo"])
+                desfazer (restore/comando! "g" "p" ["desfazer" "confirmar" "codigo"])
+                lista (restore/comando! "g" "p" ["backups"])]
+          (is (re-find #"desabilitada" resposta))
+          (is (re-find #"desabilitada" desfazer))
+          (is (re-find #"Nenhum backup" lista))
+          (is (= "old" (get-in @treinador/contas ["g" "p" "equipe" 0 "id-pokemon"])))))) done)))

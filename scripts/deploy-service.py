@@ -45,6 +45,7 @@ SERVICE_LABEL = 'io.zapbot.service'
 STORAGE_LABEL = 'io.zapbot.persistence-version'
 DEPLOYMENT_LABEL = 'io.zapbot.deployment-id'
 REVISION_LABEL = 'org.opencontainers.image.revision'
+RESTORE_PROTOCOL_LABEL = 'io.zapbot.restore-protocol'
 IMAGE_RE = re.compile(r'^ghcr\.io/[a-z0-9][a-z0-9._-]*/(zapbot(?:-pokemon)?):[0-9a-f]{40}$')
 POKEMON_HEALTH = """const h=require('node:http');
 const host=process.env.HOST==='::1'?'::1':'127.0.0.1';
@@ -321,6 +322,17 @@ class Deployment:
         version = labels.get(STORAGE_LABEL, baseline if legacy else None)
         if version != baseline:
             raise DeployError('Incompatible persistence version; controlled migration required')
+        # This marker is root-owned host state. It is absent until restoration
+        # is explicitly enabled, so normal deploys/rollbacks keep their old
+        # policy. Once present, an old image cannot be started by rollback.
+        marker = self.config_dir / 'restore-protocol-required'
+        if marker.exists():
+            try:
+                required = private_file(marker, self.owner_uid).strip()
+            except (OSError, ValueError):
+                raise DeployError('Restore protocol compatibility marker is unreadable') from None
+            if required != '1' or labels.get(RESTORE_PROTOCOL_LABEL) != '1':
+                raise DeployError('Image does not support the required restore protocol')
 
     def persistence(self, current, *, restoring_profile=False):
         config, host = current['Config'], current['HostConfig']
