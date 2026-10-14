@@ -18,7 +18,8 @@
                         :block storage/bloquear-restauracao!
                         :unblock storage/liberar-restauracao!
                         :preflight (fn [cid pid] (@preflight cid pid))})
-        protocol (new (.-RestoreProtocol protocol-module) store #js {:gate (fn [] false)})]
+        protocol (new (.-RestoreProtocol protocol-module) store
+                      #js {:gate (fn [] (and config/restore-enabled? @reconciliado?))})]
     (reset! controlador {:store store :protocol protocol})))
 (defn reconciliar-inicializacao! []
   (reset! reconciliado? false)
@@ -50,13 +51,21 @@
     (p/rejected (js/Error. "Reconciliação/fila ainda não disponível."))))
 
 (defn- origem! [cid pid numero]
-  (p/let [dados (storage/consultar-treinador-legado! cid)]
-    (let [valores (case numero "1" (:particionado dados) "2" (:antigo dados) nil)]
-      (when-not (= 1 (count valores)) (throw (js/Error. "source_unavailable")))
-      (let [dados (js->clj (js/JSON.parse (first valores)))
-            conta (if (= numero "1") (get dados pid) (get-in dados [cid pid]))]
-        (when-not (map? conta) (throw (js/Error. "source_unavailable")))
-        (clj->js conta)))))
+  (if (and (some? numero) (not (string? numero)))
+    (let [versao (if (map? numero) numero (js->clj numero :keywordize-keys true))
+          id (:backup versao)
+          store (:store @controlador)]
+      (p/let [backup (when id (.readBackupSerial store id))]
+        (when-not (and backup (= cid (.-chat backup)) (= pid (.-player backup)))
+          (throw (js/Error. "source_unavailable")))
+        (clj->js (.-account backup))))
+    (p/let [dados (storage/consultar-treinador-legado! cid)]
+      (let [valores (case numero "1" (:particionado dados) "2" (:antigo dados) nil)]
+        (when-not (= 1 (count valores)) (throw (js/Error. "source_unavailable")))
+        (let [dados (js->clj (js/JSON.parse (first valores)))
+              conta (if (= numero "1") (get dados pid) (get-in dados [cid pid]))]
+          (when-not (map? conta) (throw (js/Error. "source_unavailable")))
+          (clj->js conta))))))
 
 (defn comando! [cid pid args]
   ;; Entered before navigation, XP, Joy collection or automatic persistence.
@@ -69,7 +78,13 @@
             (if (zero? (alength items)) "📦 Nenhum backup desta conta."
                 (str "📦 Backups desta conta\n"
                      (apply str (map #(str "• " (.-id %) "\n") (array-seq items))))))
-          (and protocol (= 2 (count args)) (= "previa" (second args))
+          (and protocol (= 2 (count args)) (= "confirmar" (first args))
+               config/restore-enabled?)
+          (p/let [_ (confirmar-interno! cid pid (second args)
+                                        (fn [versao] (origem! cid pid versao)))]
+            "✅ Restauração confirmada e persistida com sucesso.")
+          (and protocol (or (= args ["1"]) (= args ["2"])
+                            (and (= 2 (count args)) (= "previa" (second args))))
                (contains? #{"1" "2"} (first args)))
           (p/let [source (origem! cid pid (first args))
                   preview (.preview protocol cid pid source (first args))]
@@ -77,7 +92,9 @@
                  "Equipe/PC serão unificados; enfermaria e atributos originais preservados.\n"
                  "Loja, moedas externas e ranking permanecem atuais.\n"
                  (apply str (map #(str "• " % "\n") (array-seq (.-transformations preview))))
-                 "🔒 Confirmação desabilitada; código não disponibilizado enquanto houver garantias pendentes."))
+                 (if config/restore-enabled?
+                   "⚠️ ATENÇÃO: esta operação substituirá seu treinador atual e todos os Pokémon. Não mescla contas. Um backup será criado antes da restauração. Use `!pk restaurar confirmar CODIGO` somente se tiver certeza."
+                   "🔒 Confirmação de restauração desabilitada; nenhum código foi disponibilizado.")))
           (and protocol (= 3 (count args)) (= "desfazer" (first args)) (= "previa" (last args)))
           (p/let [preview (previa-backup! cid pid (second args))]
             (str "📦 Prévia do backup validada: " (.-count preview) " Pokémon.\n🔒 Confirmação desabilitada."))
