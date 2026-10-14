@@ -46,6 +46,7 @@ STORAGE_LABEL = 'io.zapbot.persistence-version'
 DEPLOYMENT_LABEL = 'io.zapbot.deployment-id'
 REVISION_LABEL = 'org.opencontainers.image.revision'
 RESTORE_PROTOCOL_LABEL = 'io.zapbot.restore-protocol'
+RESTORE_PROTOCOL_STATE = 'restore-protocol-state.json'
 IMAGE_RE = re.compile(r'^ghcr\.io/[a-z0-9][a-z0-9._-]*/(zapbot(?:-pokemon)?):[0-9a-f]{40}$')
 POKEMON_HEALTH = """const h=require('node:http');
 const host=process.env.HOST==='::1'?'::1':'127.0.0.1';
@@ -310,6 +311,42 @@ class Deployment:
             atomic_private(self.state_dir / key, state.get(key, '') + '\n')
         atomic_private(self.state_dir / 'state.json', json.dumps(state, sort_keys=True) + '\n')
 
+    def restore_protocol_policy(self):
+        """Read the host-owned, persistent restore policy conservatively.
+
+        Before activation neither record exists.  Once either record exists,
+        both must be valid; a missing, replaced, or malformed record blocks
+        deployment instead of silently reverting to the legacy policy.
+        """
+        marker = self.config_dir / 'restore-protocol-required'
+        state = self.config_dir / RESTORE_PROTOCOL_STATE
+        if not marker.exists() and not state.exists():
+            return False
+        try:
+            required = private_file(marker, self.owner_uid).strip()
+            record = json.loads(private_file(state, self.owner_uid))
+        except (OSError, ValueError, TypeError):
+            raise DeployError('Restore protocol activation records are unreadable') from None
+        if required != '1' or record != {'required': True, 'version': 1, 'label': '1'}:
+            raise DeployError('Restore protocol activation records are inconsistent')
+        return True
+
+    def activate_restore_protocol(self, image):
+        """Persist activation after an already validated compatible image.
+
+        The state record is written first and the marker second.  A crash at
+        either point leaves an inconsistent pair, which the next deploy blocks.
+        """
+        labels = image.get('Config', {}).get('Labels') or {}
+        if labels.get(RESTORE_PROTOCOL_LABEL) != '1':
+            raise DeployError('Active image does not support the restore protocol')
+        if self.restore_protocol_policy():
+            return
+        atomic_private(self.config_dir / RESTORE_PROTOCOL_STATE,
+                       json.dumps({'required': True, 'version': 1, 'label': '1'}, sort_keys=True) + '\n')
+        atomic_private(self.config_dir / 'restore-protocol-required', '1\n')
+        self.restore_protocol_policy()
+
     def compatibility(self, image, *, legacy=False):
         if image.get('Os') != 'linux' or image.get('Architecture') != 'amd64':
             raise DeployError('Image must use linux/amd64')
@@ -322,17 +359,10 @@ class Deployment:
         version = labels.get(STORAGE_LABEL, baseline if legacy else None)
         if version != baseline:
             raise DeployError('Incompatible persistence version; controlled migration required')
-        # This marker is root-owned host state. It is absent until restoration
-        # is explicitly enabled, so normal deploys/rollbacks keep their old
-        # policy. Once present, an old image cannot be started by rollback.
-        marker = self.config_dir / 'restore-protocol-required'
-        if marker.exists():
-            try:
-                required = private_file(marker, self.owner_uid).strip()
-            except (OSError, ValueError):
-                raise DeployError('Restore protocol compatibility marker is unreadable') from None
-            if required != '1' or labels.get(RESTORE_PROTOCOL_LABEL) != '1':
-                raise DeployError('Image does not support the required restore protocol')
+        # Host policy is inactive only when both records are absent. Once
+        # activated, loss/corruption of either record fails closed.
+        if self.restore_protocol_policy() and labels.get(RESTORE_PROTOCOL_LABEL) != '1':
+            raise DeployError('Image does not support the required restore protocol')
 
     def persistence(self, current, *, restoring_profile=False):
         config, host = current['Config'], current['HostConfig']

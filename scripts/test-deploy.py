@@ -351,6 +351,9 @@ class DeployTest(unittest.TestCase):
         marker = self.config / 'restore-protocol-required'
         marker.write_text('1\n')
         marker.chmod(0o600)
+        (self.config / DEPLOY.RESTORE_PROTOCOL_STATE).write_text(
+            '{"label":"1","required":true,"version":1}\n')
+        (self.config / DEPLOY.RESTORE_PROTOCOL_STATE).chmod(0o600)
         deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
                     state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
                     process_guard=lambda auth: None)
@@ -362,12 +365,57 @@ class DeployTest(unittest.TestCase):
         marker = self.config / 'restore-protocol-required'
         marker.write_text('1\n')
         marker.chmod(0o600)
+        (self.config / DEPLOY.RESTORE_PROTOCOL_STATE).write_text(
+            '{"label":"1","required":true,"version":1}\n')
+        (self.config / DEPLOY.RESTORE_PROTOCOL_STATE).chmod(0o600)
         image = self.engine.image(NEW_IMAGE)
         image['Config']['Labels'][DEPLOY.RESTORE_PROTOCOL_LABEL] = '1'
         deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
                     state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
                     process_guard=lambda auth: None)
         deployment.compatibility(image)
+
+    def test_restore_protocol_absent_preserves_legacy_policy(self):
+        self.fixture('pokemon')
+        deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
+                    state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
+                    process_guard=lambda auth: None)
+        deployment.compatibility(self.engine.image(OLD_IMAGE), legacy=True)
+
+    def test_restore_protocol_missing_pair_fails_closed(self):
+        self.fixture('pokemon')
+        (self.config / DEPLOY.RESTORE_PROTOCOL_STATE).write_text(
+            '{"label":"1","required":true,"version":1}\n')
+        (self.config / DEPLOY.RESTORE_PROTOCOL_STATE).chmod(0o600)
+        deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
+                    state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
+                    process_guard=lambda auth: None)
+        with self.assertRaisesRegex(DEPLOY.DeployError, 'activation records'):
+            deployment.compatibility(self.engine.image(OLD_IMAGE), legacy=True)
+
+    def test_restore_protocol_activation_is_atomic_and_persistent(self):
+        self.fixture('pokemon')
+        image = self.engine.image(NEW_IMAGE)
+        image['Config']['Labels'][DEPLOY.RESTORE_PROTOCOL_LABEL] = '1'
+        deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
+                    state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
+                    process_guard=lambda auth: None)
+        deployment.activate_restore_protocol(image)
+        self.assertEqual(deployment.restore_protocol_policy(), True)
+        with self.assertRaisesRegex(DEPLOY.DeployError, 'restore protocol'):
+            deployment.compatibility(self.engine.image(OLD_IMAGE), legacy=True)
+
+    def test_restore_protocol_corrupt_record_fails_closed(self):
+        self.fixture('pokemon')
+        (self.config / 'restore-protocol-required').write_text('1\n')
+        (self.config / 'restore-protocol-required').chmod(0o600)
+        (self.config / DEPLOY.RESTORE_PROTOCOL_STATE).write_text('invalid\n')
+        (self.config / DEPLOY.RESTORE_PROTOCOL_STATE).chmod(0o600)
+        deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
+                    state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
+                    process_guard=lambda auth: None)
+        with self.assertRaisesRegex(DEPLOY.DeployError, 'activation records'):
+            deployment.restore_protocol_policy()
 
     def test_http_framing_preserves_complete_bodies_and_empty_responses(self):
         body = b'large Docker response\n' * 10000
