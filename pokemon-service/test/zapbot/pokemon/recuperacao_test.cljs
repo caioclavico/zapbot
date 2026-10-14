@@ -46,7 +46,7 @@
                     _ (is (not (re-find #"456|Pikachu" texto)))
                     _ (is (= [cid] @consultas))
                     bloqueado (core/jogar {:chat-id cid :player-id pid} "recuperar confirmar 999@lid")]
-              (is (re-find #"restauração ainda" bloqueado))
+              (is (re-find #"restauração não está disponível" bloqueado))
               (is (= [cid] @consultas)))
             (p/catch #(is false (str %)))
             (p/finally done)))))))
@@ -149,3 +149,58 @@
         resultado (recuperacao/localizar dados cid pid)]
     (is (= :encontrado (:status resultado)))
     (is (= conta (:conta resultado)))))
+
+(deftest comparacao-legado-sem-escrita-e-identidade
+  (async done
+    (let [a {"equipe" [{"id-pokemon" "comum" "nome" "Pikachu" "nivel" 4}
+                        {"id-pokemon" "so-a" "nome" "Bulbasaur"}
+                        {"nome" "SemUUID-A"}
+                        {"id-pokemon" "duplicado" "nome" "Duplicado-A1"}
+                        {"id-pokemon" "duplicado" "nome" "Duplicado-A2"}]
+             "pc" [] "enfermaria" [{"pokemon" {"id-pokemon" "joy" "nome" "Eevee"}}]}
+          b {"equipe" [{"id-pokemon" "comum" "nome" "Pikachu" "nivel" 5}
+                        {"id-pokemon" "so-b" "nome" "Charmander"}
+                        {"nome" "SemUUID-B"}
+                        {"id-pokemon" "duplicado" "nome" "Duplicado-B"}]
+             "pc" [] "enfermaria" [{"pokemon" {"id-pokemon" "joy" "nome" "Eevee"}}]}
+          chamadas (atom [])]
+      (let [original-consulta storage/consultar-treinador-legado!
+            original-obter storage/obter
+            original-salvar storage/salvar!
+            original-navegar core/navegar]
+        (set! storage/consultar-treinador-legado!
+                    (fn [chat]
+                      (swap! chamadas conj chat)
+                      (p/resolved {:grupo cid
+                                   :particionado [(json {pid a "999@lid" {"equipe" [{"nome" "SEGREDO"}]}})]
+                                   :antigo [(json {cid {pid b}})]})))
+        (set! storage/obter (fn [_] {}))
+        (set! storage/salvar! (fn [& _] (throw (js/Error. "Gravação indevida"))))
+        (set! core/navegar (fn [& _] (throw (js/Error. "Navegação indevida"))))
+        (-> (p/let [v1 (core/jogar {:chat-id cid :player-id pid} "recuperar 1")
+                    v2 (core/jogar {:chat-id cid :player-id pid} "recuperar 2")
+                    comparacao (core/jogar {:chat-id cid :player-id pid} "recuperar comparar")
+                    invalido (core/jogar {:chat-id cid :player-id pid} "recuperar confirmar 999@lid")]
+              (is (re-find #"Bulbasaur" v1))
+              (is (re-find #"Charmander" v2))
+              (is (re-find #"Eevee.*Enfermaria" v1))
+              (is (re-find #"UUIDs presentes nas duas: 2" comparacao))
+              (is (re-find #"Exclusivos da versão 1: 1" comparacao))
+              (is (re-find #"Exclusivos da versão 2: 1" comparacao))
+              (is (re-find #"UUIDs com registros diferentes: 1" comparacao))
+              (is (re-find #"Sem UUID na versão 1: 1" comparacao))
+              (is (re-find #"Sem UUID na versão 2: 1" comparacao))
+              (is (re-find #"UUIDs duplicados/ambíguos: 1" comparacao))
+              (is (re-find #"Registros com identidade ambígua na versão 1: 2" comparacao))
+              (is (re-find #"Registros com identidade ambígua na versão 2: 1" comparacao))
+              (is (not (re-find #"SEGREDO|999@lid" (str v1 v2 comparacao invalido))))
+              (is (re-find #"Comando inválido" invalido))
+              (is (= [cid cid cid] @chamadas)))
+            (p/catch #(is false (str %)))
+            (p/finally
+              (fn []
+                (set! storage/consultar-treinador-legado! original-consulta)
+                (set! storage/obter original-obter)
+                (set! storage/salvar! original-salvar)
+                (set! core/navegar original-navegar)
+                (done))))))))
