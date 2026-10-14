@@ -122,3 +122,30 @@
           (p/then #(is (re-find #"associado com segurança" %)))
           (p/catch #(is false (str %)))
           (p/finally done)))))
+
+(deftest versoes-divergentes-com-origem-test
+  (let [cid "123@g.us"
+        pid "456@lid"
+        conta-a {"equipe" [{"id" 1}] "pc" []}
+        conta-b {"equipe" [{"id" 1} {"id" 2}] "pc" []}
+        dados {:grupo cid
+               :particionado [(js/JSON.stringify (clj->js {pid conta-a}))]
+               :antigo [(js/JSON.stringify (clj->js {cid {pid conta-b}}))]}
+        resultado (recuperacao/localizar dados cid pid)]
+    (is (= :ambiguo (:status resultado)))
+    (is (= 2 (count (:versoes resultado))))
+    (is (= ["Particionado"] (get-in resultado [:versoes 0 :origens])))
+    (is (= ["Estado completo"] (get-in resultado [:versoes 1 :origens])))
+    (is (clojure.string/includes? (recuperacao/resumo-versoes (:versoes resultado))
+                       "Pokémon guardados: 2"))))
+
+(deftest versoes-identicas-nao-duplicadas-test
+  (let [cid "123@g.us"
+        pid "456@lid"
+        conta {"equipe" [{"id" 1}] "pc" []}
+        dados {:grupo cid
+               :particionado [(js/JSON.stringify (clj->js {pid conta}))]
+               :antigo [(js/JSON.stringify (clj->js {cid {pid conta}}))]}
+        resultado (recuperacao/localizar dados cid pid)]
+    (is (= :encontrado (:status resultado)))
+    (is (= conta (:conta resultado)))))
