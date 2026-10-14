@@ -23,6 +23,24 @@ permissão excessiva ou symlink de qualquer registro bloqueia deploy e rollback.
 Este procedimento não habilita `pk restaurar confirmar` e não altera Cassandra,
 contêineres, volumes ou saves. A confirmação real permanece bloqueada no serviço.
 
+## Instalação do executor e ativação posterior
+
+Na VM Pokémon, como `root`, instale os arquivos pelo instalador versionado:
+
+```sh
+sudo bash scripts/install-deploy.sh pokemon /caminho/absoluto/do/repositorio caioclavico
+```
+
+Depois que a imagem compatível e os dois registros root-owned forem validados,
+a operação explícita é:
+
+```sh
+ssh -i "$KEY" -o IdentitiesOnly=yes zapbot-deploy@HOST activate-restore
+```
+
+O comando é aceito somente pelo wrapper do serviço `pokemon`; o wrapper do Odisseu
+recusa a mesma operação. Não execute esse comando como parte de um deploy comum.
+
 ## Liberação global da confirmação
 
 O serviço lê `POKEMON_RESTORE_ENABLED` na inicialização. O padrão do projeto é

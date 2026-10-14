@@ -13,6 +13,8 @@ def arguments(service, original):
         return ["check"]
     if service == "pokemon" and original == "activate-adventure":
         return ["activate-adventure"]
+    if service == "pokemon" and original == "activate-restore":
+        return ["activate-restore"]
     if service == "odisseu" and original == "update-tmdb":
         return ["update-tmdb"]
     if re.fullmatch(r"deploy [0-9a-f]{40}", original):
@@ -31,7 +33,7 @@ def main():
         if service == "odisseu":
             allowed = "Only check, activate-adventure, update-tmdb, deploy <40-character SHA> or rollback is allowed."
         elif service == "pokemon":
-            allowed = "Only activate-adventure, deploy <40-character SHA> or rollback is allowed."
+            allowed = "Only activate-adventure, activate-restore, deploy <40-character SHA> or rollback is allowed."
         print(allowed, file=sys.stderr)
         return 2
     if args == ["check"]:
