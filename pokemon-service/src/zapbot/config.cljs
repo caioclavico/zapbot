@@ -20,6 +20,13 @@
     "false" false
     (throw (js/Error. "ADVENTURE_SYNC_ENABLED deve ser true ou false."))))
 
+(def restore-enabled?
+  "Global kill-switch for real legacy-save replacement. Safe by default."
+  (case (str/lower-case (env "POKEMON_RESTORE_ENABLED" "false"))
+    "true" true
+    "false" false
+    (throw (js/Error. "POKEMON_RESTORE_ENABLED deve ser true ou false."))))
+
 (def egg-probabilities
   (egg-rewards/validar-probabilidades!
    {:capture-common (js/Number (env "EGG_CAPTURE_COMMON_PERCENT" "10"))

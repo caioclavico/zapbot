@@ -23,6 +23,16 @@ permissão excessiva ou symlink de qualquer registro bloqueia deploy e rollback.
 Este procedimento não habilita `pk restaurar confirmar` e não altera Cassandra,
 contêineres, volumes ou saves. A confirmação real permanece bloqueada no serviço.
 
+## Liberação global da confirmação
+
+O serviço lê `POKEMON_RESTORE_ENABLED` na inicialização. O padrão do projeto é
+`false`; somente `true` habilita explicitamente a confirmação para jogadores
+autenticados. Qualquer outro valor é inválido e impede a inicialização. A variável não pode ser
+alterada por mensagem, endpoint ou comando WhatsApp. Após alterar a configuração,
+é necessário reiniciar o serviço de forma controlada e validar a saúde antes de
+aceitar confirmações. Para desativar em incidente, defina `false` e reinicie; isso
+não desfaz operações já confirmadas, que devem ser reconciliadas pelo journal.
+
 Um administrador root que remova deliberadamente os dois registros ainda pode
 desativar a âncora local; esta proteção não substitui controle de acesso, auditoria
 externa e backups da VM.
