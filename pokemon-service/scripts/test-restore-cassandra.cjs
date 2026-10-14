@@ -1,11 +1,17 @@
 'use strict';
 if(process.env.RESTORE_ISOLATED_TEST!=='true')throw Error('Requires disposable local Cassandra');
+if(process.env.RESTORE_CASSANDRA_DISPOSABLE!=='true')throw Error('Requires explicit disposable Cassandra marker');
 const assert=require('node:assert/strict');
 const cassandra=require('cassandra-driver');
 const {RestoreStore}=require('../runtime/restore-store.cjs');
 const {RestoreProtocol,hash}=require('../runtime/restore-protocol.cjs');
 const keyspace='restore_test_'+process.pid+'_'+Date.now();
-const client=new cassandra.Client({contactPoints:['127.0.0.1'],localDataCenter:'datacenter1'});
+const contactPoints=(process.env.RESTORE_CASSANDRA_CONTACT_POINTS||'').split(',').map(s=>s.trim()).filter(Boolean);
+if(!contactPoints.length)throw Error('RESTORE_CASSANDRA_CONTACT_POINTS is required');
+const forbidden=new Set(['144.22.248.79','172.17.0.1','cassandra','production']);
+if(contactPoints.some(point=>forbidden.has(point)||/prod/i.test(point)))
+  throw Error('Refusing non-disposable Cassandra contact point');
+const client=new cassandra.Client({contactPoints,localDataCenter:process.env.RESTORE_CASSANDRA_DATACENTER||'datacenter1',socketOptions:{connectTimeout:10000}});
 const account=id=>({ativo:0,'colecao-unificada':true,equipe:[{'id-pokemon':id,nivel:1,hp:10,'hp-atual':10,ataque:5,defesa:5,'atq-esp':5,'def-esp':5,veloc:5,'xp-desde-nivel':0,golpes:[],tipos:['normal']}],pc:[]});
 async function main(){
  await client.connect();
