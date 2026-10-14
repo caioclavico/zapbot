@@ -1,7 +1,9 @@
 (ns pokemon-service.restauracao
   (:require [promesa.core :as p]
+            [clojure.string :as str]
             [zapbot.config :as config]
-            [zapbot.armazenamento :as storage]))
+            [zapbot.armazenamento :as storage]
+            [zapbot.pokemon.recuperacao-cartao :as cartao]))
 (defonce controlador (atom nil))
 (defonce reconciliado? (atom false))
 (defonce fila-chat (atom nil))
@@ -67,6 +69,68 @@
           (when-not (map? conta) (throw (js/Error. "source_unavailable")))
           (clj->js conta))))))
 
+(def ^:private tamanho-pagina 12)
+
+(defn- pagina-diagnostico [registros pagina]
+  (let [registros (vec registros)
+        total (count registros)
+        paginas (max 1 (js/Math.ceil (/ total tamanho-pagina)))]
+    (when (and (number? pagina) (js/Number.isSafeInteger pagina)
+               (<= 1 pagina paginas))
+      (let [inicio (* (dec pagina) tamanho-pagina)
+            fim (min total (+ inicio tamanho-pagina))]
+        {:pagina pagina :paginas paginas :total total :inicio inicio :fim fim
+         :itens (subvec registros inicio fim)}))))
+
+(defn- registros-diagnostico [entries]
+  (mapv (fn [entry]
+          {:local (get entry "local")
+           :indice (get entry "index")
+           :pokemon (get entry "pokemon")
+           :original (get entry "original")
+           :status (get entry "status")
+           :detalhe (get entry "detail")})
+        (js->clj entries)))
+
+(defn- legenda-diagnostico [pid versao dados]
+  (str "🧬 *Prévia do save legado — treinador " pid "*"
+       "\nPágina " (:pagina dados) " de " (:paginas dados)
+       " • Total: " (:total dados) " Pokémon"
+       (when (pos? (:total dados)) (str " • Exibindo " (inc (:inicio dados)) "–" (:fim dados)))
+       (when (> (:pagina dados) 1) (str "\n⬅️ !pk restaurar " versao " previa " (dec (:pagina dados))))
+       (when (< (:pagina dados) (:paginas dados)) (str "\n➡️ !pk restaurar " versao " previa " (inc (:pagina dados))))
+       "\n🔎 Consulta somente leitura. Nenhuma alteração foi persistida."))
+
+(defn- resposta-diagnostico! [pid source pagina protocol cid versao]
+  (p/let [diagnostico (.diagnostic protocol cid pid source versao)
+          registros (registros-diagnostico (.-entries diagnostico))
+          dados (pagina-diagnostico registros pagina)]
+    (if-not dados
+      (str "Página inexistente. Escolha uma página de 1 a "
+           (max 1 (js/Math.ceil (/ (count registros) tamanho-pagina))) ".")
+      (let [fallback (str (legenda-diagnostico pid versao dados)
+                          "\n\n⚠️ A imagem não pôde ser gerada. Diagnóstico textual dos registros desta página:\n"
+                          (if (seq (:itens dados))
+                            (str/join "\n" (map (fn [{:keys [local indice pokemon status original]}]
+                                                  (str "• " local " #" indice " — "
+                                                       (or (get pokemon "nome") "registro inválido")
+                                                       ", status=" status
+                                                       ", nível " (or (get original "nivel") "?")
+                                                       " → " (or (get pokemon "nivel") "?")))
+                                                (:itens dados)))
+                            "Nenhum Pokémon."))]
+        (if (seq (:itens dados))
+          (-> (cartao/criar! (:itens dados)
+                             {:titulo (str "Save legado — " pid)
+                              :subtitulo (str "Versão " versao " • Página " (:pagina dados) "/" (:paginas dados)
+                                              " • " (:total dados) " Pokémon")
+                              :arquivo (str "save-restauracao-" versao "-p" (:pagina dados) ".jpg")})
+              (p/then (fn [media] {:media media :texto (legenda-diagnostico pid versao dados)}))
+              (p/catch (fn [erro]
+                         (js/console.warn "[Restauração] Card indisponível; diagnóstico textual." (.-message erro))
+                         fallback)))
+          (p/resolved (str (legenda-diagnostico pid versao dados) "\n\nNenhum Pokémon encontrado.")))))))
+
 (defn comando! [cid pid args]
   ;; Entered before navigation, XP, Joy collection or automatic persistence.
   ;; Confirmation stays closed until cross-module operational references have
@@ -83,18 +147,16 @@
           (p/let [_ (confirmar-interno! cid pid (second args)
                                         (fn [versao] (origem! cid pid versao)))]
             "✅ Restauração confirmada e persistida com sucesso.")
-          (and protocol (or (= args ["1"]) (= args ["2"])
-                            (and (= 2 (count args)) (= "previa" (second args))))
-               (contains? #{"1" "2"} (first args)))
+          (and protocol (contains? #{"1" "2"} (first args))
+               (or (= 1 (count args))
+                   (and (<= 2 (count args) 3)
+                        (= "previa" (second args))
+                        (or (= 2 (count args))
+                            (and (string? (nth args 2))
+                                 (re-matches #"[1-9][0-9]{0,5}" (nth args 2)))))))
           (p/let [source (origem! cid pid (first args))
-                  preview (.preview protocol cid pid source (first args))]
-            (str "📦 Pokémon: " (.-currentCount preview) " atuais → " (.-count preview) " no save.\n"
-                 "Equipe/PC serão unificados; enfermaria e atributos originais preservados.\n"
-                 "Loja, moedas externas e ranking permanecem atuais.\n"
-                 (apply str (map #(str "• " % "\n") (array-seq (.-transformations preview))))
-                 (if config/restore-enabled?
-                   "⚠️ ATENÇÃO: esta operação substituirá seu treinador atual e todos os Pokémon. Não mescla contas. Um backup será criado antes da restauração. Use `!pk restaurar confirmar CODIGO` somente se tiver certeza."
-                   "🔒 Confirmação de restauração desabilitada; nenhum código foi disponibilizado.")))
+                  pagina (if (= 3 (count args)) (js/parseInt (nth args 2) 10) 1)]
+            (resposta-diagnostico! pid source pagina protocol cid (first args)))
           (and protocol (= 3 (count args)) (= "desfazer" (first args)) (= "previa" (last args)))
           (p/let [preview (previa-backup! cid pid (second args))]
             (str "📦 Prévia do backup validada: " (.-count preview) " Pokémon.\n🔒 Confirmação desabilitada."))
