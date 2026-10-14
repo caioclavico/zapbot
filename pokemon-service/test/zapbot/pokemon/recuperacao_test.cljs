@@ -204,3 +204,74 @@
                 (set! storage/salvar! original-salvar)
                 (set! core/navegar original-navegar)
                 (done))))))))
+
+
+(deftest paginacao-legado-somente-leitura
+  (async done
+    (let [conta-a {"equipe" (vec (for [n (range 1 18)]
+                                     {"id-pokemon" (str "a-" n)
+                                      "nome" (str "PokemonA-" n)}))
+                   "pc" [{"id-pokemon" "a-18" "nome" "PokemonA-18"}]
+                   "enfermaria" [{"pokemon" {"id-pokemon" "a-19"
+                                              "nome" "PokemonA-19"}}]}
+          conta-b {"equipe" [{"id-pokemon" "b-1" "nome" "PokemonB-1"}]
+                   "pc" [] "enfermaria" []}
+          vazio {"equipe" [] "pc" [] "enfermaria" []}
+          chamadas (atom [])
+          gravacoes (atom [])
+          dados {:grupo cid
+                 :particionado [(json {pid conta-a "999@lid" {"equipe" [{"nome" "SEGREDO"}]}})]
+                 :antigo [(json {cid {pid conta-b}})]}
+          pedidos (with-redefs [storage/consultar-treinador-legado!
+                               (fn [chat]
+                                 (swap! chamadas conj chat)
+                                 (p/resolved dados))
+                               storage/obter (fn [_] {})
+                               storage/salvar! (fn [& args]
+                                                 (swap! gravacoes conj args)
+                                                 (throw (js/Error. "Gravação indevida")))]
+                    ;; Captura todas as Promises enquanto os mocks estão ativos.
+                    ;; Nenhum mock precisa permanecer instalado durante as asserções.
+                    (p/all [(recuperacao/consultar! {:chat-id cid :player-id pid} ["1"])
+                            (recuperacao/consultar! {:chat-id cid :player-id pid} ["1" "2"])
+                            (recuperacao/consultar! {:chat-id cid :player-id pid} ["1" "3"])
+                            (recuperacao/consultar! {:chat-id cid :player-id pid} ["2"])
+                            (recuperacao/consultar! {:chat-id cid :player-id pid} ["2" "2"])
+                            (recuperacao/consultar! {:chat-id cid :player-id pid} ["comparar"])
+                            (recuperacao/consultar! {:chat-id cid :player-id pid} ["1" "0"])
+                            (recuperacao/consultar! {:chat-id cid :player-id pid} ["1" "-1"])
+                            (recuperacao/consultar! {:chat-id cid :player-id pid} ["1" "1.5"])
+                            (recuperacao/consultar! {:chat-id cid :player-id pid} ["1" "1000000"])
+                            (recuperacao/consultar! {:chat-id cid :player-id pid} ["1" "2" "3"])
+                            (recuperacao/consultar! {:chat-id cid :player-id "888@lid"} ["1"])]))]
+      (-> pedidos
+          (p/then
+           (fn [[primeira segunda fora versao-b fora-b comparacao zero negativo fracao enorme extra intruso]]
+             (is (re-find #"Página 1 de 2" primeira))
+             (is (re-find #"Exibindo 1–15" primeira))
+             (is (re-find #"PokemonA-1 —" primeira))
+             (is (re-find #"PokemonA-15 —" primeira))
+             (is (not (re-find #"PokemonA-16 —" primeira)))
+             (is (re-find #"!pk recuperar 1 2" primeira))
+             (is (re-find #"Página 2 de 2" segunda))
+             (is (re-find #"Exibindo 16–19" segunda))
+             (is (re-find #"PokemonA-16 —" segunda))
+             (is (re-find #"PokemonA-19 —" segunda))
+             (is (re-find #"Enfermaria" segunda))
+             (is (not (re-find #"PokemonA-15 —" segunda)))
+             (is (re-find #"!pk recuperar 1 1" segunda))
+             (is (not (re-find #"!pk recuperar 1 3" segunda)))
+             (is (re-find #"Página inexistente" fora))
+             (is (re-find #"Página 1 de 1" versao-b))
+             (is (re-find #"PokemonB-1" versao-b))
+             (is (re-find #"Página inexistente" fora-b))
+             (is (re-find #"COMPARAÇÃO DOS SAVES" comparacao))
+             (doseq [resposta [zero negativo fracao enorme extra]]
+               (is (re-find #"Comando inválido" resposta)))
+             (is (not (re-find #"SEGREDO|PokemonA|PokemonB" intruso)))
+             (is (not (re-find #"SEGREDO|999@lid" (str primeira segunda versao-b comparacao))))
+             (is (= 7 (count @chamadas)))
+             (is (every? #(= cid %) @chamadas))
+             (is (empty? @gravacoes))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally done)))))

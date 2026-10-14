@@ -96,11 +96,44 @@
          (when (> (count itens) limite)
            (str "\n… mais " (- (count itens) limite) " registros não exibidos.")))))
 
-(defn- listar-versao [versoes indice]
+(def ^:private tamanho-pagina 15)
+
+(defn- pagina-valida? [texto]
+  (and (string? texto)
+       (boolean (re-matches #"[1-9][0-9]{0,5}" texto))))
+
+(defn- argumentos-validos? [args]
+  (or (contains? #{[] ["1"] ["2"] ["comparar"]} args)
+      (and (= 2 (count args))
+           (contains? #{"1" "2"} (first args))
+           (pagina-valida? (second args)))))
+
+(defn- listar-versao [versoes indice pagina]
   (if-let [{:keys [conta origens]} (get versoes indice)]
     (if (conta-valida? conta)
-      (str "📦 VERSÃO " (inc indice) " — " (str/join " / " origens)
-           "\n" (resumo conta) "\n\n" (lista-limitada (registros conta)))
+      (let [itens (registros conta)
+            total (count itens)
+            paginas (max 1 (js/Math.ceil (/ total tamanho-pagina)))
+            versao (inc indice)]
+        (if (> pagina paginas)
+          (str "Página inexistente para a versão " versao
+               ". Escolha uma página de 1 a " paginas ".")
+          (let [inicio (* (dec pagina) tamanho-pagina)
+                fim (min total (+ inicio tamanho-pagina))
+                exibidos (subvec itens inicio fim)]
+            (str "📦 VERSÃO " versao " — " (str/join " / " origens)
+                 "\n" (resumo conta)
+                 "\nPágina " pagina " de " paginas
+                 " • Total: " total " Pokémon"
+                 (when (pos? total) (str " • Exibindo " (inc inicio) "–" fim))
+                 "\n\n"
+                 (if (seq exibidos)
+                   (str/join "\n" (map descricao exibidos))
+                   "Nenhum registro.")
+                 (when (> pagina 1)
+                   (str "\n\n⬅️ !pk recuperar " versao " " (dec pagina)))
+                 (when (< pagina paginas)
+                   (str "\n➡️ !pk recuperar " versao " " (inc pagina)))))))
       "⚠️ Esta versão tem formato inválido e não pode ser listada.")
     "Versão inexistente."))
 
@@ -159,8 +192,8 @@
 
 (defn consultar! [{:keys [chat-id player-id]} argumentos]
   (cond
-    (not (contains? #{[] ["1"] ["2"] ["comparar"]} (vec argumentos)))
-    (p/resolved "🔒 Comando inválido. Use !pk recuperar, !pk recuperar 1, !pk recuperar 2 ou !pk recuperar comparar. A restauração não está disponível.")
+    (not (argumentos-validos? (vec argumentos)))
+    (p/resolved "🔒 Comando inválido. Use !pk recuperar, !pk recuperar 1 [página], !pk recuperar 2 [página] ou !pk recuperar comparar. A restauração não está disponível.")
     (nil? (identidade-exata {:chat-id chat-id :player-id player-id}))
     (p/resolved "🔎 Não foi possível validar a identidade desta consulta.")
     :else
@@ -171,12 +204,13 @@
                   versoes (if (= status :encontrado)
                             [{:conta conta :origens ["Save antigo"]}]
                             versoes)
-                  acao (first argumentos)]
+                  acao (first argumentos)
+                    pagina (if (second argumentos) (js/parseInt (second argumentos) 10) 1)]
               (str "🧬 ODISSEU — RECUPERAÇÃO DE POKÉMON\n\n"
                    (case status
                      :encontrado
                      (case acao
-                       "1" (listar-versao versoes 0)
+                       "1" (listar-versao versoes 0 pagina)
                        "2" "Não existe uma segunda versão deste save."
                        "comparar" "Não existem duas versões diferentes para comparar."
                        (str "📦 SAVE ANTIGO\n" (resumo conta)
@@ -184,8 +218,8 @@
                             (if (conta-valida? atual) (resumo atual) "Nenhum progresso atual disponível.")))
                      :ambiguo
                      (case acao
-                       "1" (listar-versao versoes 0)
-                       "2" (listar-versao versoes 1)
+                       "1" (listar-versao versoes 0 pagina)
+                       "2" (listar-versao versoes 1 pagina)
                        "comparar" (comparar-versoes versoes)
                        (str "Encontramos versões diferentes do seu save antigo.\n\n"
                             (resumo-versoes versoes)
