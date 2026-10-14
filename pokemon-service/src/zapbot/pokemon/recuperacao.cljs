@@ -29,7 +29,17 @@
       (cond
         (and (:grupo dados) (not= cid (:grupo dados))) {:status :ausente}
         (empty? encontrados) {:status :ausente}
-        (> (count encontrados) 1) {:status :ambiguo}
+        (> (count encontrados) 1)
+        {:status :ambiguo
+         :versoes (mapv (fn [conta]
+                          {:conta conta
+                           :origens (vec
+                                     (concat
+                                      (when (some #(= conta %) partes)
+                                        ["Particionado"])
+                                      (when (some #(= conta %) antigos)
+                                        ["Estado completo"])))})
+                        encontrados)}
         (not (conta-valida? (first encontrados))) {:status :invalido}
         :else {:status :encontrado :conta (first encontrados)}))
     (catch :default _ {:status :invalido})))
@@ -41,6 +51,19 @@
                                    (count (get conta "enfermaria" [])))
        (when (contains? conta "ginasios")
          (str "\n• Ginásios registrados: " (count (get conta "ginasios"))))))
+
+(defn resumo-versoes [versoes]
+  (str/join
+   "\n\n"
+   (map-indexed
+    (fn [indice {:keys [conta origens]}]
+      (str "📦 VERSÃO " (inc indice)
+           " — " (str/join " / " origens)
+           "\n"
+           (if (conta-valida? conta)
+             (resumo conta)
+             "⚠️ Formato inválido; versão indisponível.")))
+    versoes)))
 
 (defn identidade-exata [{:keys [chat-id player-id]}]
   ;; Future verified bindings belong here; command arguments are never identity.
@@ -58,13 +81,15 @@
     (let [pedido (armazenamento/consultar-treinador-legado! chat-id)
           atual (get-in (armazenamento/obter "treinador") [chat-id player-id])]
     (-> (p/let [dados pedido]
-          (let [{:keys [status conta]} (localizar dados chat-id player-id)]
+          (let [{:keys [status conta versoes]} (localizar dados chat-id player-id)]
             (str "🧬 ODISSEU — RECUPERAÇÃO DE POKÉMON\n\n"
                  (case status
                    :encontrado (str "📦 SAVE ANTIGO\n" (resumo conta)
                                     "\n\n⚡ SAVE ATUAL\n"
                                     (if (conta-valida? atual) (resumo atual) "Nenhum progresso atual disponível."))
-                   :ambiguo "Encontramos registros divergentes. Não é seguro selecionar um save automaticamente."
+                   :ambiguo (str "Encontramos versões diferentes do seu save antigo.\n\n"
+                                 (resumo-versoes versoes)
+                                 "\n\nNenhuma versão foi selecionada automaticamente.")
                    :invalido "O formato do save antigo não pôde ser validado com segurança."
                    "Não encontramos um save antigo associado com segurança à sua conta.")
                  "\n\n🔒 A restauração ainda não está disponível. Nenhum progresso foi alterado.")))
