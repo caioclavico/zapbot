@@ -60,7 +60,7 @@
     (is (= [[:pokemon "treinador"] [:pokemon "tre"] [:pokedex "25"]
             [:pokedex "pikachu"] [:pokedex "eevee"] [:pokemon "presente @ana"]
             [:pokemon "presente "] [:pokemon "missoes resgatar"] [:pokemon "missoes "]
-            [:mochila "diario"] [:comprar "atadura"] [:detalhes "pocao"] [:loja nil]]
+            [:mochila "diario"] [:comprar "atadura"] [:detalhes "pocao"] [:pokemon "loja"]]
            @chamadas))))
 
 (deftest pendencias-de-remocao-e-troca-sobrevivem-a-serializacao

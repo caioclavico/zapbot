@@ -6,7 +6,7 @@
   chance de crítico, status (paralisia/queimadura/veneno) e um punhado de
   habilidades icônicas. Batalhas e caçadas em andamento são espelhadas no
   Cassandra para poderem ser retomadas depois de um reinício do bot."
-  (:require [zapbot.http :as http]
+  (:require [zapbot.pokemon.recuperacao :as recuperacao] [zapbot.http :as http]
             [promesa.core :as p]
             [clojure.string :as str]
             [cljs.reader :as reader]
@@ -5804,6 +5804,11 @@
   ;; Resolve contexto dentro da fila: comandos simultâneos veem o estado atual.
   (let [[cmd & resto] (str/split (str/trim (str/lower-case (or args ""))) #"\s+")]
     (cond
+      (= cmd "recuperar") (recuperacao/consultar! contexto resto)
+      ;; Adventure operations own this same chat queue. Wrapping the handler
+      ;; in another round would make it wait for its own unfinished promise.
+      (and @comando-ovos (contains? #{"ovos" "ovo" "incubar" "incubadoras"} cmd))
+      (@comando-ovos contexto cmd resto)
       (contains? #{"bug" "bugs"} cmd) (bugs/comando! contexto cmd resto)
       :else (enfileirar-jogada (chat-id contexto)
                               #(navegar contexto args)

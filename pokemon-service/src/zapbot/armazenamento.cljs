@@ -90,6 +90,22 @@
      #(.execute c consulta (clj->js parametros)
                 (clj->js (merge {:prepare true} opcoes))))))
 
+(defn consultar-treinador-legado! [cid]
+  (let [c @client]
+  ;; Two keyed SELECTs only. Never register legacy tables with current writers.
+  (if-not c
+    (p/rejected (js/Error. "Consulta de recuperação indisponível."))
+    (p/let [particionado (executar! c
+                         (str "SELECT valor FROM " config/cassandra-keyspace
+                              ".legacy_estado_particionado WHERE modulo = ? AND particao = ?")
+                         ["treinador" cid] {:readTimeout 5000})
+            antigo (executar! c
+                    (str "SELECT valor FROM " config/cassandra-keyspace
+                         ".legacy_estado WHERE chave = ?")
+                    ["treinador"] {:readTimeout 5000})]
+      {:grupo cid :particionado (mapv #(.-valor %) (array-seq (.-rows particionado)))
+       :antigo (mapv #(.-valor %) (array-seq (.-rows antigo)))}))))
+
 (defn- consultar-paginas!
   ([c consulta parametros] (consultar-paginas! c consulta parametros nil []))
   ([c consulta parametros pagina linhas]

@@ -10,3 +10,6 @@ data/
 .clj-kondo/*
 !.clj-kondo/config.edn
 .lsp/
+
+# Private legacy-save validation inputs; never commit player data.
+.private-legacy-validation/

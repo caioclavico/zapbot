@@ -86,7 +86,7 @@
   (async done
     (concluir (com-pvp
       (fn [{:keys [agora timers]}]
-        (p/let [texto (core/jogar (contexto "ash") "")]
+        (p/let [texto (core/jogar (contexto "ash") "batalhar")]
           (let [jogo (get @core/jogos "pvp-test")]
             (is (str/includes? texto "Desafio Pokémon"))
             (is (str/includes? texto "25 a 31"))
@@ -103,8 +103,8 @@
   (async done
     (concluir (com-pvp
       (fn [{:keys [ativos imagens]}]
-        (p/let [_ (core/jogar (contexto "ash") "")
-                texto (core/jogar (contexto "misty") "")]
+        (p/let [_ (core/jogar (contexto "ash") "batalhar")
+                texto (core/jogar (contexto "misty") "batalhar")]
           (let [jogo (get @core/jogos "pvp-test")]
             (is (str/includes? (core/texto-resposta texto) "Batalha iniciada"))
             (is (= "misty" (get-in jogo [:jogadores :o])))
@@ -118,15 +118,15 @@
   (async done
     (concluir (com-pvp
       (fn [{:keys [ativos agora]}]
-        (p/let [_ (core/jogar (contexto "ash") "")]
+        (p/let [_ (core/jogar (contexto "ash") "batalhar")]
           (let [original (get @core/jogos "pvp-test")]
             (swap! agora + 20000)
             (swap! ativos assoc "misty" [(assoc charizard :nome "Dragonite" :nivel 24) 80 nil])
-            (p/let [baixo (core/jogar (contexto "misty") "")
+            (p/let [baixo (core/jogar (contexto "misty") "batalhar")
                     _ (is (str/includes? baixo "incompatível"))
                     _ (is (= original (get @core/jogos "pvp-test")))
                     _ (swap! ativos assoc "misty" [(assoc charizard :nome "Dragonite" :nivel 36) 80 nil])
-                    alto (core/jogar (contexto "misty") "")]
+                    alto (core/jogar (contexto "misty") "batalhar")]
               (is (str/includes? alto "25 e 31"))
               (is (str/includes? alto "Nível atual: 36"))
               (is (= original (get @core/jogos "pvp-test")))))))) done)))
@@ -135,9 +135,9 @@
   (async done
     (concluir (com-pvp
       (fn [_]
-        (p/let [_ (core/jogar (contexto "ash") "")]
+        (p/let [_ (core/jogar (contexto "ash") "batalhar")]
           (let [original (get @core/jogos "pvp-test")]
-            (p/let [proprio (core/jogar (contexto "ash") "")
+            (p/let [proprio (core/jogar (contexto "ash") "batalhar")
                     saida (core/sair (contexto "misty"))]
               (is (str/includes? proprio "próprio desafio"))
               (is (str/includes? saida "Só o desafiante"))
@@ -148,10 +148,10 @@
     (concluir (com-pvp
       (fn [{:keys [ativos]}]
         (swap! ativos dissoc "ash")
-        (p/let [sem (core/jogar (contexto "ash") "")
+        (p/let [sem (core/jogar (contexto "ash") "batalhar")
                 _ (is (str/includes? sem "não tem Pokémon ativo"))
                 _ (swap! ativos assoc "ash" [charizard 0 nil])
-                caido (core/jogar (contexto "ash") "")]
+                caido (core/jogar (contexto "ash") "batalhar")]
           (is (str/includes? (core/texto-resposta caido) "desmaiou"))
           (is (empty? @core/jogos))))) done)))
 
@@ -159,12 +159,12 @@
   (async done
     (concluir (com-pvp
       (fn [{:keys [ativos]}]
-        (p/let [_ (core/jogar (contexto "ash") "")
+        (p/let [_ (core/jogar (contexto "ash") "batalhar")
                 _ (swap! ativos assoc "misty" [(assoc charizard :nivel 36) 80 nil])
-                recusada (core/jogar (contexto "misty") "")
+                recusada (core/jogar (contexto "misty") "batalhar")
                 _ (is (str/includes? recusada "incompatível"))
                 _ (swap! ativos assoc "misty" [(assoc charizard :nivel 25) 80 nil])
-                aceita (core/jogar (contexto "misty") "")]
+                aceita (core/jogar (contexto "misty") "batalhar")]
           (is (str/includes? (core/texto-resposta aceita) "Batalha iniciada"))
           (is (= 25 (get-in @core/jogos ["pvp-test" :pokemons :o :nivel])))))) done)))
 
@@ -193,8 +193,8 @@
   (async done
     (concluir (com-pvp
       (fn [_]
-        (p/let [_ (core/jogar (contexto "ash") "")
-                _ (core/jogar (contexto "misty") "")]
+        (p/let [_ (core/jogar (contexto "ash") "batalhar")
+                _ (core/jogar (contexto "misty") "batalhar")]
           (let [jogo (assoc-in (get @core/jogos "pvp-test") [:hp :o] 0)
                 vencedor (atom nil)]
             (with-redefs [core/sincronizar-equipe! (fn [& _])
@@ -217,9 +217,9 @@
   (async done
     (concluir (com-pvp
       (fn [_]
-        (p/let [_ (core/jogar (contexto "ash") "")
-                _ (core/jogar (contexto "misty" "outro-grupo") "")
-                resposta (core/jogar (contexto "misty") "")]
+        (p/let [_ (core/jogar (contexto "ash") "batalhar")
+                _ (core/jogar (contexto "misty" "outro-grupo") "batalhar")
+                resposta (core/jogar (contexto "misty") "batalhar")]
           (is (str/includes? resposta "outro grupo"))
           (is (nil? (get-in @core/jogos ["pvp-test" :jogadores :o])))))) done)))
 
@@ -227,14 +227,14 @@
   (async done
     (concluir (com-pvp
       (fn [{:keys [timers agora avisos]}]
-        (p/let [_ (core/jogar (contexto "ash") "")]
+        (p/let [_ (core/jogar (contexto "ash") "batalhar")]
           (let [timer (last @timers)]
             (swap! agora + pvp/tempo-espera-ms)
             (p/let [_ ((:callback timer))
                     _ (is (empty? @core/jogos))
                     _ (is (= 1 (count @avisos)))
                     _ (is (str/includes? (first @avisos) "expirou após 5"))
-                    _ (core/jogar (contexto "brock") "")
+                    _ (core/jogar (contexto "brock") "batalhar")
                     _ ((:callback timer))]
               (is (= "brock" (get-in @core/jogos ["pvp-test" :jogadores :x])))
               (is (= 1 (count @avisos)))))))) done)))
@@ -243,7 +243,7 @@
   (async done
     (concluir (com-pvp
       (fn [{:keys [timers agora]}]
-        (p/let [_ (core/jogar (contexto "ash") "")]
+        (p/let [_ (core/jogar (contexto "ash") "batalhar")]
           (let [original (get @core/jogos "pvp-test")
                 registros (core/serializar-combates @core/jogos @agora)]
             (swap! agora + 60000)
@@ -298,8 +298,8 @@
                             :takeEffects (fn [_] #js [])
                             :command (fn [pedido emitir] (swap! chamadas inc) (entry/command pedido emitir))}
               ^js service (new (.-PokemonService runtime) #js {:domain dominio :media #js {} :logger (fn [& _])})
-              abrir #js {:requestId "pvp-open" :chatId "pvp-test" :playerId "ash" :playerName "ash" :command "pokemon"}
-              aceitar #js {:requestId "pvp-accept" :chatId "pvp-test" :playerId "misty" :playerName "misty" :command "pk"}]
+              abrir #js {:requestId "pvp-open" :chatId "pvp-test" :playerId "ash" :playerName "ash" :command "pokemon batalhar"}
+              aceitar #js {:requestId "pvp-accept" :chatId "pvp-test" :playerId "misty" :playerName "misty" :command "pk batalhar"}]
           (p/let [aberturas (p/all [(.execute service abrir) (.execute service abrir)])
                   entradas (p/all [(.execute service aceitar) (.execute service aceitar)])
                   repetida (.execute service aceitar)]
@@ -307,3 +307,23 @@
             (is (= (js->clj (first entradas)) (js->clj repetida)))
             (is (= 2 @chamadas)) (is (= 1 @imagens))
             (is (= "misty" (get-in @core/jogos ["pvp-test" :jogadores :o]))))))) done)))
+
+(deftest menu-vazio-nao-abre-combate-e-menu-numerico-permite-pvp
+  (async done
+    (concluir (com-pvp
+      (fn [{:keys [imagens]}]
+        (p/let [menu (core/jogar (contexto "ash") "")
+                _ (is (str/includes? menu "Pokémon Odisseu"))
+                _ (is (empty? @core/jogos))
+                submenu (core/jogar (contexto "ash") "3")
+                _ (is (str/includes? submenu "Abrir / entrar em PvP"))
+                aberto (core/jogar (contexto "ash") "2")
+                _ (is (str/includes? aberto "Desafio Pokémon"))
+                menu-outro (core/jogar (contexto "misty") "")
+                _ (is (str/includes? menu-outro "Pokémon Odisseu"))
+                _ (is (nil? (get-in @core/jogos ["pvp-test" :jogadores :o])))
+                _ (core/jogar (contexto "misty") "3")
+                aceito (core/jogar (contexto "misty") "2")]
+          (is (str/includes? (core/texto-resposta aceito) "Batalha iniciada"))
+          (is (= "misty" (get-in @core/jogos ["pvp-test" :jogadores :o])))
+          (is (= 1 @imagens))))) done)))
