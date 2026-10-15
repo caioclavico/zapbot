@@ -97,6 +97,18 @@
          "• XP compatível: " compat "\n"
          "• Conversão proposta: " convert "\n"
          "• Registros inválidos: " invalid
+         "\n\n⭐ *Comparação dos treinadores*\n"
+         (let [atual (js->clj (.-currentTrainer diagnostico) :keywordize-keys true)
+               antigo (js->clj (.-legacyTrainer diagnostico) :keywordize-keys true)
+               linha (fn [label chave]
+                       (str "• " label ": atual "
+                            (if (:available atual) (get atual chave) "indisponível")
+                            " | save antigo "
+                            (if (:available antigo) (get antigo chave) "indisponível") "\n"))]
+           (str (linha "Nível" :level)
+                (linha "XP total" :total)
+                (linha "XP no nível" :xpCurrent)
+                "• Pokémon: atual " (.-currentCount diagnostico) " | save antigo " (.-total diagnostico)))
          (if (seq bloqueios)
            (str "\n\n⚠️ *Confirmação bloqueada*\nOperações: " (str/join ", " bloqueios))
            "\n\n✅ Nenhuma operação pendente foi identificada.")

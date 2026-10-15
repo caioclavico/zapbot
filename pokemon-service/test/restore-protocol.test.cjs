@@ -67,6 +67,14 @@ test('league teams and hunt cooldown are historical metadata, not pending writer
  const preview=await f.controller.preview('g','p',account('legacy'),1);
  assert.equal(preview.count,1);
 });
+test('completed adventure events do not block, pending or malformed events do',async()=>{
+ const completed=fixture();completed.data.group.p['adventure-eventos']={e:{status:'concluido'}};
+ assert.equal((await completed.controller.diagnostic('g','p',account('legacy'),1)).confirmationBlocked,false);
+ const pending=fixture();pending.data.group.p['adventure-eventos']={e:{status:'pendente',pokemon:'x'}};
+ assert.deepEqual((await pending.controller.diagnostic('g','p',account('legacy'),1)).blockingOperations,['adventure-eventos']);
+ const malformed=fixture();malformed.data.group.p['adventure-eventos']={e:{foo:'bar'}};
+ assert.deepEqual((await malformed.controller.diagnostic('g','p',account('legacy'),1)).blockingOperations,['adventure-eventos']);
+});
 test('ambiguous legacy XP fields remain blocked',()=>{const a=account('ambiguous');a.equipe[0]['xp-desde-nivel']=1;a.equipe[0]['vitorias-desde-nivel']=2;assert.throws(()=>prepare(a),/normalization/);const invalid=account('invalid');invalid.equipe[0]['xp-desde-nivel']=-1;assert.throws(()=>prepare(invalid),/normalization/);});
 test('expiry and simultaneous confirmations cannot create two CAS writes',async()=>{const f=fixture();let clock=0;const c=new RestoreProtocol(f.store,{gate:()=>true,now:()=>clock});const p=await c.preview('g','p',account('new'),1);clock=600001;await assert.rejects(c.confirm('g','p',p.token,async()=>account('new')),/invalid_code/);clock=0;const p2=await c.preview('g','p',account('new'),1);await Promise.allSettled([c.confirm('g','p',p2.token,async()=>account('new')),c.confirm('g','p',p2.token,async()=>account('new'))]);assert.equal(f.events.filter(x=>x==='cas').length,1);});
 test('CAS conflict stays blocked and preserves concurrent accounts',async()=>{const f=fixture();f.store.casGroup=async()=>{f.data.group.other=account('concurrent');return false;};const p=await f.controller.preview('g','p',account('new'),1);await assert.rejects(f.controller.confirm('g','p',p.token,async()=>account('new')),/cas_conflict/);assert.equal(f.data.group.p.equipe[0]['id-pokemon'],'old');assert.equal(f.data.group.other.equipe[0]['id-pokemon'],'concurrent');assert.ok(f.data.locks.p);});
