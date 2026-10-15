@@ -5,6 +5,7 @@
             [zapbot.armazenamento :as storage]))
 (defonce controlador (atom nil))
 (defonce reconciliado? (atom false))
+(def ^:private saves-independentes-disponiveis? false)
 (defonce fila-chat (atom nil))
 (defonce preflight (atom (fn [_ _] nil)))
 (defn configurar-fila! [enfileirar] (reset! fila-chat enfileirar))
@@ -18,9 +19,10 @@
                         :install storage/restauracao-instalar!
                         :block storage/bloquear-restauracao!
                         :unblock storage/liberar-restauracao!
-                        :preflight (fn [cid pid] (@preflight cid pid))})
+                        :preflight (fn [cid pid] (clj->js (@preflight cid pid)))})
         protocol (new (.-RestoreProtocol protocol-module) store
-                      #js {:gate (fn [] (and config/restore-enabled? @reconciliado?))})]
+                      #js {:gate (fn [] (and saves-independentes-disponiveis?
+                                             config/restore-enabled? @reconciliado?))})]
     (reset! controlador {:store store :protocol protocol})))
 (defn reconciliar-inicializacao! []
   (reset! reconciliado? false)
@@ -39,7 +41,7 @@
   (if-let [store (:store @controlador)] (.listBackups store cid pid)
       (p/rejected (js/Error. "Reconciliação ainda não disponível."))))
 (defn previa-backup! [cid pid id]
-  (if-let [protocol (:protocol @controlador)] (.previewBackup protocol cid pid id)
+  (if-let [protocol (:protocol @controlador)] (.checkBackup protocol cid pid id)
       (p/rejected (js/Error. "Reconciliação ainda não disponível."))))
 
 (defn confirmar-interno! [cid pid codigo ler-origem]
@@ -78,6 +80,13 @@
            :detalhe (get entry "detail")})
         (js->clj entries)))
 
+(defn- formatar-riscos [riscos]
+  (->> (array-seq (or riscos #js []))
+       (map #(js->clj % :keywordize-keys true))
+       (map (fn [{:keys [field category state rule]}]
+              (str "• " field " — " state " [" (name (keyword (or category "unknown"))) "]: " rule)))
+       (str/join "\n")))
+
 (defn- resumo-diagnostico! [pid source protocol cid versao]
   (p/let [diagnostico (.diagnostic protocol cid pid source versao)
           registros (registros-diagnostico (.-entries diagnostico))
@@ -86,7 +95,9 @@
           convert (count (filter #(= "converted" (:status %)) registros))
           invalid (count (filter #(= "invalid" (:status %)) registros))
           bloqueios (vec (array-seq (or (.-blockingOperations diagnostico) #js [])))
-          bloqueios-origem (vec (array-seq (or (.-sourceBlockingOperations diagnostico) #js [])))]
+          bloqueios-origem (vec (array-seq (or (.-sourceBlockingOperations diagnostico) #js [])))
+          riscos-atual (formatar-riscos (.-currentRisks diagnostico))
+          riscos-origem (formatar-riscos (.-sourceRisks diagnostico))]
     (str "📦 *PRÉVIA DE RESTAURAÇÃO — VERSÃO " versao "*\n"
          "• Pokémon antigos: " (.-total diagnostico) "\n"
          "• Pokémon atuais: " (.-currentCount diagnostico) "\n\n"
@@ -112,25 +123,32 @@
                 "• Pokémon: atual " (.-currentCount diagnostico) " | save antigo " (.-total diagnostico)))
          (if (or (seq bloqueios) (seq bloqueios-origem))
            (str "\n\n⚠️ *Confirmação bloqueada*"
-                (when (seq bloqueios) (str "\nConta atual: " (str/join ", " bloqueios)))
-                (when (seq bloqueios-origem) (str "\nSave antigo: " (str/join ", " bloqueios-origem))))
-           (str "\n\n✅ *Prévia aprovada.* Para iniciar a confirmação segura, use: !pk restaurar "
-                versao " preparar"))
+                (when (seq bloqueios) (str "\nConta atual:\n" riscos-atual))
+                (when (seq bloqueios-origem) (str "\nSave antigo:\n" riscos-origem)))
+           (str "\n\n✅ *Prévia sem bloqueios conhecidos.* Para executar as validações finais, use: !pk restaurar "
+                versao " preparar. A confirmação continua bloqueada até haver saves independentes."))
          "\n\n⚠️ A restauração substituirá o treinador atual e não mesclará as coleções."
          "\n🔎 Consulta somente leitura; nenhum token foi gerado e nenhum save foi alterado.")))
 
 (defn- preparar! [pid source protocol cid versao]
-  ;; A diagnostic pass is intentionally performed first.  It is read-only and
-  ;; prevents a confirmation token from being created while an operational
-  ;; writer is still active.  The protocol preview then performs the strict,
-  ;; transactional validation and records hashes for the confirmation step.
+  ;; Validate the source and current account through the same protocol used by
+  ;; token preparation. Save switching is not yet implemented, so this command
+  ;; must never issue a destructive one-slot restore token.
   (p/let [diagnostico (.diagnostic protocol cid pid source versao)
-          bloqueios (vec (array-seq (or (.-blockingOperations diagnostico) #js [])))]
-    (when (seq bloqueios)
-      (let [erro (js/Error. "operational_review_required")]
-        (set! (.-code erro) "operational_review_required")
-        (throw erro)))
-    (p/let [preview (.preview protocol cid pid source versao)
+          bloqueios (concat (array-seq (or (.-blockingOperations diagnostico) #js []))
+                            (array-seq (or (.-sourceBlockingOperations diagnostico) #js [])))]
+    (if (seq bloqueios)
+      (do
+       (js/console.warn "[Restauração] Preparação bloqueada; campos/estados:",
+                        (str/join " | " (remove str/blank? [(formatar-riscos (.-currentRisks diagnostico))
+                                                             (formatar-riscos (.-sourceRisks diagnostico))])))
+       (str "⚠️ *Preparação bloqueada; nenhum código foi emitido.*\n"
+           (when (seq (.-blockingOperations diagnostico))
+             (str "Conta atual:\n" (formatar-riscos (.-currentRisks diagnostico)) "\n"))
+           (when (seq (.-sourceBlockingOperations diagnostico))
+             (str "Save antigo:\n" (formatar-riscos (.-sourceRisks diagnostico))))
+           "\nNenhuma conta foi modificada."))
+      (p/let [preview (.checkPreparation protocol cid pid source)
             atual (js->clj (.-currentTrainer diagnostico) :keywordize-keys true)
             antigo (js->clj (.-legacyTrainer diagnostico) :keywordize-keys true)
             linha (fn [label chave]
@@ -138,7 +156,7 @@
                          (if (:available atual) (get atual chave) "indisponível")
                          " | save antigo "
                          (if (:available antigo) (get antigo chave) "indisponível") "\n"))]
-      (str "✅ *Confirmação preparada com sucesso*\n"
+      (str "✅ *Validações da preparação concluídas*\n"
            "• Pokémon: atual " (.-currentCount preview) " | save antigo " (.-count preview) "\n"
            "• Save selecionado: versão " versao "\n"
            "\n⭐ *Treinadores*\n"
@@ -149,11 +167,9 @@
            (if (seq (.-transformations preview))
              (str/join "\n" (map #(str "• " %) (array-seq (.-transformations preview))))
              "• Nenhuma conversão adicional")
-           "\n\n🔐 Backup durável: ainda não criado. Ele será criado e confirmado antes da substituição.\n"
-           "⏳ Código válido até " (js/Date. (.-expires preview)) "\n"
-           "⚠️ A confirmação substituirá o save ativo; as coleções não serão mescladas.\n\n"
-           "📋 Copie este comando para confirmar:\n"
-           "!pk restaurar confirmar " (.-token preview)))))
+           "\n\n🔐 Nenhum backup foi criado; a operação foi somente de leitura.\n"
+           "⚠️ A troca destrutiva está bloqueada até haver saves independentes com persistência e recuperação transacionais."
+           " Nenhum código foi emitido e nenhum save foi alterado.")))))
 
 (defn comando! [cid pid args]
   ;; Entered before navigation, XP, Joy collection or automatic persistence.
@@ -166,11 +182,19 @@
             (if (zero? (alength items)) "📦 Nenhum backup desta conta."
                 (str "📦 Backups desta conta\n"
                      (apply str (map #(str "• " (.-id %) "\n") (array-seq items))))))
+          ;; The destructive one-slot restore stays closed until independent
+          ;; save slots and their cross-domain receipt semantics are implemented.
           (and protocol (= 2 (count args)) (= "confirmar" (first args))
-               config/restore-enabled?)
+               config/restore-enabled? saves-independentes-disponiveis?)
           (p/let [_ (confirmar-interno! cid pid (second args)
                                         (fn [versao] (origem! cid pid versao)))]
             "✅ Restauração confirmada e persistida com sucesso.")
+          (and (= 2 (count args)) (contains? #{"1" "2"} (first args))
+               (= "comparar" (second args)))
+          (p/resolved (str "Para comparar os dois saves históricos, use " config/prefix
+                           "pk recuperar comparar. Para navegar: " config/prefix
+                           "pk recuperar comparar 2, 3, etc. A prévia de restauração da versão "
+                           (first args) " não compara saves."))
           (and protocol (= 2 (count args))
                (contains? #{"1" "2"} (first args))
                (= "preparar" (second args)))
@@ -183,13 +207,22 @@
             (resumo-diagnostico! pid source protocol cid (first args)))
           (and protocol (= 3 (count args)) (= "desfazer" (first args)) (= "previa" (last args)))
           (p/let [preview (previa-backup! cid pid (second args))]
-            (str "📦 Prévia do backup validada: " (.-count preview) " Pokémon.\n🔒 Confirmação desabilitada."))
+            (str "📦 Prévia do backup validada: " (.-count preview) " Pokémon.\n🔎 Consulta sem código ou alterações.\n🔒 A troca continua bloqueada até haver saves independentes."))
           :else (p/resolved "🔒 Confirmação de restauração desabilitada. Consultas: !pk restaurar 1 previa, 2 previa; preparação: !pk restaurar 1 preparar; backups ou desfazer ID previa."))
         (p/catch (fn [erro]
-                   (str "⚠️ Prévia bloqueada: "
-                        (case (.-code erro)
-                          "normalization_review_required" "XP exige conversão que altera atributos; revisão necessária."
-                          "operational_review_required" "Há dados operacionais que exigem revisão."
-                          "invalid_pokemon_identity" "Identidades Pokémon ausentes ou duplicadas."
-                          "Save incompatível ou consulta indisponível.")
-                        " Nenhuma conta foi modificada."))))))
+                   (let [riscos (formatar-riscos (.-findings erro))]
+                     (js/console.warn "[Restauração] comando de consulta/preparação falhou; código:",
+                                      (if (string? (.-code erro)) (.-code erro) "erro_sem_codigo"))
+                     (when (seq riscos)
+                       (js/console.warn "[Restauração] Validação bloqueou; campos e regras:", riscos))
+                     (str "⚠️ Prévia bloqueada: "
+                          (case (.-code erro)
+                            "normalization_review_required" "XP exige conversão que altera atributos; revisão necessária."
+                            "operational_review_required" "Há dados operacionais que exigem revisão."
+                            "external_operation_pending" (str "Operações Pokémon ainda ativas: "
+                                                              (str/join ", " (array-seq (or (.-operations erro) #js []))) ". Aguarde sua conclusão.")
+                            "source_unavailable" "Não foi possível localizar unicamente esse save histórico para o jogador e grupo autenticados."
+                            "invalid_pokemon_identity" "Identidades Pokémon ausentes ou duplicadas."
+                            "Save incompatível ou consulta indisponível.")
+                          (when (seq riscos) (str "\n" riscos))
+                          " Nenhuma conta foi modificada.")))))))

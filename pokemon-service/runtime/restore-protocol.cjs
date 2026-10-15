@@ -8,17 +8,12 @@ function canonical(x){
   return x;
 }
 const hash=x=>createHash('sha256').update(JSON.stringify(canonical(x))).digest('hex');
-class RestoreError extends Error{constructor(code){super(code);this.code=code;}}
-const fail=code=>{throw new RestoreError(code)};
+class RestoreError extends Error{constructor(code,details={}){super(code);this.code=code;Object.assign(this,details);}}
+const fail=(code,details)=>{throw new RestoreError(code,details)};
 const SAFE_RECEIPTS=['adventure-entregas'];
 // These fields are historical configuration/cooldown markers, not in-flight
 // writers. They are deliberately not copied into the restored account.
 const SAFE_HISTORICAL_FIELDS=['times-liga','ultima-cacada'];
-function adventureEventPending(value){
-  if(!value || typeof value!=='object') return Boolean(value);
-  const state=String(value.status||value.estado||'').toLowerCase();
-  return !(value.consumido===true || value['consumido?']===true || ['concluido','concluida','completed','consumido','entregue'].includes(state));
-}
 function trainerProgress(account){
   const direct=Number.isFinite(account?.xp)?account.xp:null;
   const parts=['vitorias-treinador','pe-ginasios','pe-raids'];
@@ -30,28 +25,151 @@ function trainerProgress(account){
   return {available:true,total,level,xpCurrent:remaining,xpNeeded:needed};
 }
 const PENDING_FIELDS=['adventure-eventos','transferencia-professor','ofertas-golpes','ofertas','combate','batalha','cacada','raid','raide'];
-function operationalPolicy(account){
-  for(const key of PENDING_FIELDS){
-    const value=account?.[key];
-    if(value && (key==='adventure-eventos' ? Object.values(value).some(adventureEventPending) : ((Array.isArray(value)&&value.length) || (typeof value==='object'&&Object.keys(value).length)))) fail('operational_review_required');
+const RISK_RULES={
+  'adventure-eventos':'O runtime mantém cada entrada nesta fila até aplicar o evento e removê-lo com confirmação Cassandra.',
+  'adventure-entregas':'Recibos confirmam Pokémon já entregues; recibos válidos são unidos por ID para impedir reentrega.',
+  'times-liga':'Times guardam índices de Pokémon da equipe; a origem só é segura se todos os índices continuarem válidos.',
+  'ultima-cacada':'Cooldown é um timestamp; a troca conserva o maior timestamp válido entre origem e conta atual.',
+  'ofertas-golpes':'Ofertas de golpes ainda não decididas dependem do Pokémon e precisam ser resolvidas antes da troca.',
+  'transferencia-professor':'Transferência pendente pode consumir um Pokémon e precisa ser concluída ou cancelada.',
+  'default':'Campo operacional não reconhecido; requer revisão até que sua semântica e suas referências sejam verificadas.'
+};
+const LIVE_OPERATION_RULES={
+  'batalha':'Combate em andamento; aguarde a conclusão para evitar que o callback grave um snapshot anterior.',
+  'caçada/PvP':'Caçada ou PvP em andamento; aguarde a conclusão da operação volátil.',
+  'evolução':'Evolução assíncrona em andamento; aguarde o callback finalizar.',
+  'oferta de golpe':'Oferta de golpe pendente para um Pokémon da conta.',
+  'raid':'Participação em raid ainda ativa.',
+  'ginásio com time associado':'Ocupação de ginásio guarda uma cópia externa do time atual.',
+  'troca':'Proposta de troca pendente envolve esta conta.'
+};
+const LEAGUE_LEVELS={iniciante:[1,10],bronze:[11,25],prata:[26,40],ouro:[41,60],diamante:[61,100]};
+const isObject=value=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
+const nonEmpty=value=>Array.isArray(value)?value.length>0:(isObject(value)?Object.keys(value).length>0:Boolean(value));
+function receiptRecord(value){
+  if(value==null)return {ok:true,receipts:{}};
+  if(!isObject(value))return {ok:false,receipts:{}};
+  const receipts={};
+  for(const [id,pokemonId] of Object.entries(value)){
+    if(!id||typeof pokemonId!=='string'||!pokemonId.trim())return {ok:false,receipts:{}};
+    receipts[id]=pokemonId;
   }
-  return Object.fromEntries(SAFE_RECEIPTS.filter(k=>account?.[k]&&typeof account[k]==='object').map(k=>[k,copy(account[k])]));
+  return {ok:true,receipts};
 }
-function operationalIssues(account){
-  const issues=[];
-  for(const key of PENDING_FIELDS){
-    const value=account?.[key];
-    if(value && (key==='adventure-eventos' ? Object.values(value).some(adventureEventPending) : ((Array.isArray(value)&&value.length) || (typeof value==='object'&&Object.keys(value).length)))) issues.push(key);
+function classifyOperationalState(account){
+  const findings=[];
+  const add=(field,category,state,blocking)=>findings.push({field,category,state,rule:RISK_RULES[field]||RISK_RULES.default,blocking});
+  const events=account?.['adventure-eventos'];
+  if(events!==undefined){
+    if(!isObject(events))add('adventure-eventos','invalid_or_unknown','estrutura inválida',true);
+    else if(Object.keys(events).length===0)add('adventure-eventos','empty','nenhum evento aguardando confirmação',false);
+    else for(const [id,event] of Object.entries(events)){
+      // The production consumer treats every persisted event as work and only
+      // removes it after the activity state is durably updated. A status label
+      // alone is not an acknowledgement receipt.
+      const valid=isObject(event)&&event['event-id']===id&&typeof event.kind==='string'&&Number.isFinite(event.at);
+      add('adventure-eventos',valid?'operation_pending':'invalid_or_unknown',valid?'evento ainda registrado na fila':'evento malformado; não reconhecido como consumido',true);
+    }
   }
+  for(const field of PENDING_FIELDS.filter(k=>k!=='adventure-eventos')){
+    const value=account?.[field];
+    if(value!==undefined)add(field,nonEmpty(value)?'operation_pending':'empty',nonEmpty(value)?'registro pendente presente':'estrutura vazia',nonEmpty(value));
+  }
+  const receipts=receiptRecord(account?.['adventure-entregas']);
+  if(!receipts.ok)add('adventure-entregas','invalid_or_unknown','recibo inválido',true);
+  else if(Object.keys(receipts.receipts).length)add('adventure-entregas','delivered_reward','recibos válidos preserváveis',false);
+  else if(account?.['adventure-entregas']!==undefined)add('adventure-entregas','empty','nenhum recibo registrado',false);
+  if(account?.['ultima-cacada']!==undefined){
+    const valid=Number.isFinite(account['ultima-cacada'])&&account['ultima-cacada']>=0;
+    add('ultima-cacada',valid?'cooldown':'invalid_or_unknown',valid?'timestamp válido':'timestamp inválido',!valid);
+  }
+  if(account?.['times-liga']!==undefined){
+    const teams=account['times-liga'];let valid=isObject(teams);
+    if(valid)for(const [league,slots] of Object.entries(teams)){
+      const levels=LEAGUE_LEVELS[league];
+      if(!levels||!Array.isArray(slots)||slots.length!==3){valid=false;break;}
+      if(slots.some(index=>index!==null&&(!Number.isInteger(index)||index<0||index>=(account.equipe||[]).length))){valid=false;break;}
+      // A named team must map each non-empty slot to a distinct collection row.
+      const selected=slots.filter(index=>index!==null);
+      if(new Set(selected).size!==selected.length){valid=false;break;}
+      if(selected.some(index=>account.equipe[index].nivel<levels[0]||account.equipe[index].nivel>levels[1])){valid=false;break;}
+      if(typeof league!=='string'||!league){valid=false;break;}
+    }
+    add('times-liga',valid?'permanent_configuration':'incompatible_reference',valid?'configuração com índices válidos':'índice de equipe ausente ou incompatível',!valid);
+  }
+  if(Object.prototype.hasOwnProperty.call(account||{},'restore-receipt'))
+    add('restore-receipt','unknown_or_inconsistent','recibo interno de restauração na origem',true);
+  for(const [slot,list] of ['equipe','pc','enfermaria'].map(k=>[k,account?.[k]])){
+    if(!Array.isArray(list))continue;
+    list.forEach((row,index)=>{
+      const pokemon=slot==='enfermaria'?row?.pokemon:row;
+      if(nonEmpty(pokemon?.['ofertas-golpes']))
+        add('ofertas-golpes','operation_pending',`oferta associada a Pokémon em ${slot} #${index+1}`,true);
+    });
+  }
+  const known=new Set([...PENDING_FIELDS,...SAFE_RECEIPTS,...SAFE_HISTORICAL_FIELDS,'restore-receipt']);
   for(const key of Object.keys(account||{})){
-    if(/adventure|pendente|transferencia-professor|times|ofertas|raid|raide|combate|batalha|cacada/i.test(key) && key!=='adventure-entregas' && key!=='adventure-eventos' && !SAFE_HISTORICAL_FIELDS.includes(key) && !issues.includes(key)) issues.push(key);
+    if(!known.has(key)&&/adventure|activity|pendente|transferencia|times|time-ginasio|ofertas|raid|raide|combate|batalha|cacada|troca|trade|doacao|recibo|restore/i.test(key))
+      add(key,'unknown_field','valor não inspecionado; conteúdo ocultado',true);
   }
-  return issues;
+  return findings;
 }
-function receiptIssues(account){
-  const value=account?.['adventure-entregas'];
-  const nonEmpty=Array.isArray(value) ? value.length>0 : (value && typeof value==='object' ? Object.keys(value).length>0 : Boolean(value));
-  return nonEmpty ? ['adventure-entregas'] : [];
+function blockingFindings(account){return classifyOperationalState(account).filter(item=>item.blocking);}
+function assertOperationalSafe(account){
+  const findings=blockingFindings(account);
+  if(findings.length)fail('operational_review_required',{findings});
+  return findings;
+}
+function operationalAssessment(source,current){
+  const checkedCurrent=current?copy(current):{};
+  // The receipt belongs to the restore transaction protocol, not to the
+  // player's operational state being assessed.
+  delete checkedCurrent['restore-receipt'];
+  const sourceRisks=classifyOperationalState(source);
+  const currentRisks=classifyOperationalState(checkedCurrent);
+  if(receiptConflict(source,checkedCurrent))sourceRisks.push({field:'adventure-entregas',
+    category:'incompatible_reference',state:'IDs de entrega conflitantes entre a origem e a conta atual',
+    rule:RISK_RULES['adventure-entregas'],blocking:true});
+  return {sourceRisks,currentRisks,checkedCurrent,
+    blocking:[...sourceRisks,...currentRisks].filter(item=>item.blocking)};
+}
+function assertAssessmentSafe(assessment){
+  if(assessment.blocking.length)fail('operational_review_required',{findings:assessment.blocking});
+  return assessment;
+}
+function operationalPolicy(account){
+  assertOperationalSafe(account);
+  const policy={};
+  const receipts=receiptRecord(account?.['adventure-entregas']);
+  if(Object.keys(receipts.receipts).length)policy['adventure-entregas']=copy(receipts.receipts);
+  return policy;
+}
+async function liveOperations(store,chat,player){
+  if(typeof store.hooks?.preflight!=='function')return [];
+  const result=await store.hooks.preflight(chat,player);
+  return Array.isArray(result)?[...new Set(result.filter(x=>typeof x==='string'&&x))]:[];
+}
+function liveRisk(operation){
+  return {field:operation,category:'operation_pending',state:'operação ativa no runtime',
+    rule:LIVE_OPERATION_RULES[operation]||RISK_RULES.default,blocking:true};
+}
+function mergeOperationalPolicy(target,source,current){
+  const sourcePolicy=operationalPolicy(source),currentPolicy=operationalPolicy(current);
+  const merged={...target};
+  const receipts={...(sourcePolicy['adventure-entregas']||{})};
+  for(const [id,pokemonId] of Object.entries(currentPolicy['adventure-entregas']||{})){
+    if(receipts[id]&&receipts[id]!==pokemonId)fail('operational_review_required',{findings:[{field:'adventure-entregas',category:'incompatible_reference',state:'IDs de entrega conflitantes',rule:RISK_RULES['adventure-entregas'],blocking:true}]});
+    receipts[id]=pokemonId;
+  }
+  if(Object.keys(receipts).length)merged['adventure-entregas']=receipts;else delete merged['adventure-entregas'];
+  const cooldowns=[source?.['ultima-cacada'],current?.['ultima-cacada']].filter(n=>Number.isFinite(n)&&n>=0);
+  if(cooldowns.length)merged['ultima-cacada']=Math.max(...cooldowns);
+  return merged;
+}
+function receiptConflict(source,current){
+  const a=receiptRecord(source?.['adventure-entregas']),b=receiptRecord(current?.['adventure-entregas']);
+  if(!a.ok||!b.ok)return false;
+  return Object.entries(a.receipts).some(([id,pokemonId])=>b.receipts[id]&&b.receipts[id]!==pokemonId);
 }
 function validate(account){
   if(!account||typeof account!=='object'||Array.isArray(account))fail('invalid_account');
@@ -87,9 +205,7 @@ function validate(account){
   }
   if(count>1000||Buffer.byteLength(JSON.stringify(account))>8*1024*1024)fail('source_too_large');
   if(!Number.isInteger(account.ativo)||account.ativo<0||account.ativo>=Math.max(1,(account.equipe??[]).length))fail('invalid_active_index');
-  for(const key of Object.keys(account)){
-    if(/adventure|pendente|transferencia-professor|times|ofertas|raid|recibo|restore/i.test(key) && key!=='adventure-entregas' && !(key==='adventure-eventos' && !Object.values(account[key]||{}).some(adventureEventPending)) && !SAFE_HISTORICAL_FIELDS.includes(key))fail('operational_review_required');
-  }
+  assertOperationalSafe(account);
   return count;
 }
 // Kept equivalent to treinador/normalizar-xp-registro: nine XP per level and
@@ -160,12 +276,10 @@ function diagnosticEntries(source){
 }
 // Deliberately refuse XP conversions that would change original attributes.
 function prepare(source) {
+  assertOperationalSafe(source);
   const migrated=migrateLegacyAccount(source);
   validate(migrated.target);
-  if (receiptIssues(source).length) fail('operational_review_required');
-  operationalPolicy(source);
   const target = migrated.target;
-  for (const key of SAFE_RECEIPTS) delete target[key];
   const transformations = [...migrated.transformations];
   if ((target.pc ?? []).length) transformations.push('PC acrescentado ao fim da equipe; índices anteriores preservados.');
   target.equipe = [...(target.equipe ?? []), ...(target.pc ?? [])];
@@ -177,19 +291,38 @@ function prepare(source) {
 }
 class RestoreProtocol{
   constructor(store,{now=Date.now,gate=()=>false}={}){this.store=store;this.now=now;this.gate=gate;this.previews=new Map();}
-  async preview(chat,player,source,version){
-    const prepared=prepare(source);
-    if (typeof this.store.hooks?.preflight==='function') await this.store.hooks.preflight(chat,player);
+  async prepareCandidate(chat,player,source){
+    const active=await liveOperations(this.store,chat,player);
+    if(active.length)fail('external_operation_pending',{operations:active});
     const group=await this.store.readGroupSerial(chat);
     const current=group[player]??null;
-    let currentReceipts={};
-    if(current){const checked=copy(current);delete checked['restore-receipt'];validate(checked);currentReceipts=operationalPolicy(checked);}
-    Object.assign(prepared.target,currentReceipts);
+    const assessment=assertAssessmentSafe(operationalAssessment(source,current));
+    const checked=assessment.checkedCurrent;
+    const prepared=prepare(source);
+    if(current)validate(checked);
+    const target=mergeOperationalPolicy(prepared.target,source,checked);
+    validate(target);
+    return {target,current,transformations:prepared.transformations,count:validate(target),
+      currentCount:current?['equipe','pc','enfermaria'].reduce((n,k)=>n+(current[k]??[]).length,0):0};
+  }
+  async checkPreparation(chat,player,source){
+    const checked=await this.prepareCandidate(chat,player,source);
+    return {count:checked.count,currentCount:checked.currentCount,transformations:checked.transformations,
+      tokenIssued:false,sourceHash:hash(source),currentHash:hash(checked.current)};
+  }
+  async checkBackup(chat,player,id){
+    const backup=await this.store.readBackupSerial(id);
+    if(!backup||backup.chat!==chat||backup.player!==player||backup.id!==id||hash(backup.account)!==backup.hash)fail('invalid_backup');
+    const source=copy(backup.account);delete source['restore-receipt'];
+    return this.checkPreparation(chat,player,source);
+  }
+  async preview(chat,player,source,version){
+    const prepared=await this.prepareCandidate(chat,player,source);
     for(const [key,value] of this.previews) if(value.expires<=this.now()) this.previews.delete(key);
     if(this.previews.size>=1000) fail('preview_capacity');
     const token=randomBytes(24).toString('hex');
-    this.previews.set(hash(token),{chat,player,version,source:prepared.target,sourceHash:hash(source),targetHash:hash(prepared.target),currentHash:hash(current),expires:this.now()+600000});
-    return {token,expires:this.now()+600000,count:validate(prepared.target),currentCount:current?['equipe','pc','enfermaria'].reduce((n,k)=>n+(current[k]??[]).length,0):0,transformations:prepared.transformations};
+    this.previews.set(hash(token),{chat,player,version,source:prepared.target,sourceHash:hash(source),targetHash:hash(prepared.target),currentHash:hash(prepared.current),expires:this.now()+600000});
+    return {token,expires:this.now()+600000,count:prepared.count,currentCount:prepared.currentCount,transformations:prepared.transformations};
   }
   async previewBackup(chat,player,id){
     const backup=await this.store.readBackupSerial(id);
@@ -198,7 +331,7 @@ class RestoreProtocol{
     return this.preview(chat,player,source,{backup:id});
   }
   async diagnostic(chat,player,source,version){
-    if (typeof this.store.hooks?.preflight==='function') await this.store.hooks.preflight(chat,player);
+    const active=await liveOperations(this.store,chat,player);
     const group=await this.store.readGroupSerial(chat);
     const current=group[player]??null;
     // Diagnostics must remain readable while the current account has active
@@ -206,10 +339,26 @@ class RestoreProtocol{
     // Only bounded, read-only metadata is inspected here.
     if(current && Buffer.byteLength(JSON.stringify(current))>8*1024*1024) fail('source_too_large');
     const entries=diagnosticEntries(source);
-    const blocked=operationalIssues(current);
-    const sourceBlocked=receiptIssues(source);
+    const assessment=operationalAssessment(source,current);
+    const {checkedCurrent,currentRisks,sourceRisks}=assessment;
+    currentRisks.push(...active.map(liveRisk));
+    const classifyValidation=(account,side)=>{
+      try{validate(side==='source'?migrateLegacyAccount(account).target:account);return null;}
+      catch(error){
+        if(Array.isArray(error.findings))return null;
+        return {field:'save',category:'invalid_or_unknown',state:error.code||'registro incompatível',
+          rule:'A validação estrutural transacional não aceitou os dados; consulte os Pokémon inválidos na prévia.',blocking:true};
+      }
+    };
+    const sourceValidation=classifyValidation(source,'source');
+    const currentValidation=current?classifyValidation(checkedCurrent,'current'):null;
+    if(sourceValidation)sourceRisks.push(sourceValidation);
+    if(currentValidation)currentRisks.push(currentValidation);
+    const blocked=currentRisks.filter(item=>item.blocking);
+    const sourceBlocked=sourceRisks.filter(item=>item.blocking);
     return {entries,total:entries.length,currentCount:current ? ['equipe','pc','enfermaria'].reduce((n,k)=>n+(current[k]??[]).length,0) : 0,version,
-      confirmationBlocked:Boolean(blocked.length||sourceBlocked.length),blockingOperations:blocked,sourceBlockingOperations:sourceBlocked,
+      confirmationBlocked:Boolean(blocked.length||sourceBlocked.length),blockingOperations:blocked.map(item=>item.field),sourceBlockingOperations:sourceBlocked.map(item=>item.field),
+      currentRisks,sourceRisks,
       currentTrainer:trainerProgress(current||{}),legacyTrainer:trainerProgress(source)};
   }
   async confirm(chat,player,token,readSource){
@@ -240,8 +389,10 @@ class RestoreProtocol{
     if(hash(await this.store.readBackupSerial(op.backupId))!==hash(backup))fail('backup_unconfirmed');
     await this.store.indexBackup(op.chat,op.player,op.backupId,key);
     await this.store.transitionOperation(key,'prepared','cas_pending');
-    const target=copy(op.source);
-    Object.assign(target,operationalPolicy(current));
+    const checkedCurrent=current?copy(current):{};
+    delete checkedCurrent['restore-receipt'];
+    const target=mergeOperationalPolicy(copy(op.source),op.source,checkedCurrent);
+    validate(target);
     target['restore-receipt']={operation:key,sourceHash:op.sourceHash,backup:op.backupId};
     const next={...group,[op.player]:target};
     // Exactly one CAS attempt; any exception leaves the durable lock intact.

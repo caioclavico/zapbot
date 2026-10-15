@@ -268,19 +268,24 @@
 (declare finalizar-ginasio enviar-imagem enviar-imagem-ginasio enviar-aviso-temporizado
          parse-indice-golpe estado-cacada turno-selvagem escalar-nivel com-raridade expandir-atalho
          enviar-cartao-evento! enviar-cartao-evolucao! aplicar-sobreposicao-batalha escapar-xml baixar-buffer
-         evolucoes-pendentes expirar-batalha! jogador-na-batalha?)
+         evolucoes-pendentes expirar-batalha! jogador-na-batalha? propostas-troca)
 
 (defn restauracao-preflight [cid pid]
   "Validação atômica do estado volátil antes de uma restauração.
   Não encerra operações: qualquer atividade incompatível apenas bloqueia a
   prévia. O writer compartilhado revalida o bloqueio antes do CAS."
-  (when (or (jogador-na-batalha? (get @jogos cid) pid)
-            (get @cacadas-selvagens cid)
-            (get @evolucoes-pendentes [cid pid])
-            (get @remocoes-pendentes [cid pid])
-            (raids/participando? cid pid)
-            (pvp/outro-combate? @jogos @cacadas-selvagens cid pid (.now js/Date)))
-    (throw (ex-info "Operação Pokémon externa pendente; aguarde sua conclusão." {:code :external-operation-pending}))))
+  (let [troca? (some (fn [[[chat _] proposta]]
+                       (and (= chat cid) (contains? #{(:a proposta) (:b proposta)} pid)))
+                     @propostas-troca)
+        operacoes (cond-> []
+                    (jogador-na-batalha? (get @jogos cid) pid) (conj "batalha")
+                    (pvp/outro-combate? @jogos @cacadas-selvagens cid pid (.now js/Date)) (conj "caçada/PvP")
+                    (get @evolucoes-pendentes [cid pid]) (conj "evolução")
+                    (get @remocoes-pendentes [cid pid]) (conj "oferta de golpe")
+                    (raids/participando? cid pid) (conj "raid")
+                    (seq (ginasios/liderados cid pid)) (conj "ginásio com time associado")
+                    troca? (conj "troca"))]
+    operacoes))
 
 (defn- chat-id [contexto]
   (:chat-id contexto))
