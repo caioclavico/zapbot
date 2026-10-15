@@ -13,7 +13,9 @@
    "flying" "#7986cb" "normal" "#b0bec5"})
 
 (def ^:private cores-status
-  {"compatible" "#4ade80" "converted" "#fbbf24" "invalid" "#f87171"})
+  {"compatible" "#4ade80" "changed" "#fbbf24" "converted" "#fbbf24"
+   "exclusive-v1" "#60a5fa" "exclusive-v2" "#c084fc" "missing-id" "#fb923c"
+   "duplicate-id" "#f97316" "invalid" "#f87171"})
 
 (defn url-confiavel?
   "Um save antigo não pode instruir o servidor a baixar URLs arbitrárias."
@@ -65,8 +67,10 @@
 
 (defn svg-cartao
   "Molda cards nas mesmas proporções, cores e colunas da coleção Pokémon."
-  [entradas titulo subtitulo]
-  (let [entradas (vec (take 12 entradas))
+  ([entradas titulo subtitulo] (svg-cartao entradas titulo subtitulo nil))
+  ([entradas titulo subtitulo {:keys [modo]}]
+   (let [comparacao? (= modo :comparacao)
+        entradas (vec (take 12 entradas))
         largura 1000
         altura (+ 120 (* 225 (js/Math.ceil (/ (count entradas) 2))) 20)
         cartoes
@@ -84,12 +88,13 @@
                         status-cor (get cores-status status "#94a3b8")
                         nivel (get pokemon "nivel")
                         nivel-original (get original "nivel")
-                        nivel-texto (if (and (= status "converted") (not= nivel nivel-original))
+                        convertido? (contains? #{"converted" "changed"} status)
+                        nivel-texto (if (and convertido? (not= nivel nivel-original))
                                       (str nivel-original " → " nivel) nivel)
                         hp-atual (get pokemon "hp-atual" "?")
                         hp-max (get pokemon "hp" "?")
                         hp-original (get original "hp")
-                        hp (if (and (= status "converted") (not= hp-max hp-original))
+                        hp (if (and convertido? (not= hp-max hp-original))
                              (str hp-original " → " hp-max) (str hp-atual "/" hp-max))
                         golpes (get pokemon "golpes" [])
                         golpes-texto (if (seq golpes)
@@ -97,7 +102,7 @@
                                       "Golpes: não informados")
                         xp (get pokemon "xp-desde-nivel")
                         xp-original (get original "xp-desde-nivel")
-                        xp-texto (if (and (= status "converted") (not= xp xp-original))
+                        xp-texto (if (and convertido? (not= xp xp-original))
                                    (str "XP " (or xp-original "?") "/9 → " (or xp "?") "/9")
                                    (str "XP " (or xp "?") "/9"))
                         attr-nomes [["ataque" "ATK"] ["defesa" "DEF"] ["atq-esp" "A-ESP"]
@@ -106,10 +111,18 @@
                                                          (let [antes (get original chave)
                                                                depois (get pokemon chave)]
                                                            (str rotulo " "
-                                                                (if (and (= status "converted") (not= antes depois))
+                                                                (if (and convertido? (not= antes depois))
                                                                   (str antes "→" depois) (or depois "?")))))
                                                        attr-nomes))
-                        status-texto (case status "converted" "Conversão proposta • atributos +3%/nível" "invalid" "Registro inválido" "Compatível")
+                        status-texto (case status
+                                       "converted" "Conversão proposta"
+                                       "changed" "Atributos alterados"
+                                       "exclusive-v1" "Exclusivo da V1"
+                                       "exclusive-v2" "Exclusivo da V2"
+                                       "missing-id" "Sem UUID"
+                                       "duplicate-id" "UUID duplicado"
+                                       "invalid" "Registro inválido"
+                                       "Compatível")
                         id (get pokemon "id-pokemon")
                         id (if (and (string? id) (not (str/blank? id))) id "sem UUID")]
                     (str "<g><rect x='" x "' y='" y
@@ -132,17 +145,19 @@
                          "<text x='" (+ x 165) "' y='" (+ y 140)
                          "' font-size='10.5' font-family='Arial,sans-serif' fill='#cbd5e1'>"
                          (xml (abreviar atributos 43)) "</text>"
-                         "<text x='" (+ x 165) "' y='" (+ y 153)
+                         (when-not comparacao?
+                           (str "<text x='" (+ x 165) "' y='" (+ y 153)
                          "' font-size='11.5' font-family='Arial,sans-serif' fill='#cbd5e1'>"
-                         (xml (abreviar golpes-texto 34)) "</text>"
+                         (xml (abreviar golpes-texto 34)) "</text>"))
                          "<text x='" (+ x 165) "' y='" (+ y 165)
                          "' font-size='15' font-family='Arial,sans-serif' fill='#e2e8f0'>"
                          (xml local) " #" indice "</text>"
-                         "<text x='" (+ x 165) "' y='" (+ y 169)
+                         (when-not comparacao?
+                           (str "<text x='" (+ x 165) "' y='" (+ y 169)
                          "' font-size='15' font-family='Arial,sans-serif' fill='#94a3b8'>ID do Pokémon</text>"
                          "<text x='" (+ x 165) "' y='" (+ y 183)
                          "' font-size='12.5' font-family='monospace' fill='#cbd5e1'>"
-                         (xml (abreviar id 36)) "</text></g>")))
+                         (xml (abreviar id 36)) "</text>")) "</g>")))
                 entradas))]
     (str "<svg xmlns='http://www.w3.org/2000/svg' width='" largura "' height='" altura "'>"
          "<rect width='100%' height='100%' fill='#0f172a'/>"
@@ -151,11 +166,11 @@
          (xml (abreviar titulo 44)) "</text>"
          "<text x='35' y='76' font-size='18' font-family='Arial,sans-serif' fill='#cbd5e1'>"
          (xml (abreviar subtitulo 85)) "</text>"
-         cartoes "</svg>")))
+         cartoes "</svg>"))))
 
 (defn criar!
   "Recebe exclusivamente os registros já isolados e paginados do jogador."
-  [entradas {:keys [titulo subtitulo arquivo]}]
+  [entradas {:keys [titulo subtitulo arquivo modo]}]
   (let [entradas (vec (take 12 entradas))]
     (p/let [sprites (p/all (map #(sprite! (:pokemon %)) entradas))
           overlays (clj->js
@@ -164,6 +179,6 @@
                                         :left (+ 28 (* (mod idx 2) 480))
                                         :top (+ 140 (* (quot idx 2) 225))})
                                  sprites))
-          buffer (imagens/cartao! (svg-cartao entradas titulo subtitulo)
+          buffer (imagens/cartao! (svg-cartao entradas titulo subtitulo {:modo modo})
                                   overlays #js {:maxWidth 800})]
       (boundary/midia "image/jpeg" buffer (or arquivo "save-legado.jpg")))))

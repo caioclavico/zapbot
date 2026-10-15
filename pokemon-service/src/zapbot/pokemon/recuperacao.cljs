@@ -262,10 +262,10 @@
              (concat
               (map #(assoc %
                            :local (str "V1 — " (:local %))
-                           :status "invalid") xs)
+                           :status "duplicate-id") xs)
               (map #(assoc %
                            :local (str "V2 — " (:local %))
-                           :status "invalid") ys))
+                           :status "duplicate-id") ys))
 
              (and x y)
              [(assoc y
@@ -273,15 +273,15 @@
                      :original (:pokemon x)
                      :status (if (= (:pokemon x) (:pokemon y))
                                "compatible"
-                               "converted"))]
+                               "changed"))]
 
              x
              [(assoc x :local (str "V1 — " (:local x))
-                     :status "invalid")]
+                     :status "exclusive-v1")]
 
              y
              [(assoc y :local (str "V2 — " (:local y))
-                     :status "invalid")]
+                     :status "exclusive-v2")]
 
              :else
              [])))
@@ -289,7 +289,7 @@
       (map (fn [item]
              (assoc item
                     :local (str "Sem UUID — " (:local item))
-                    :status "invalid"))
+                    :status "missing-id"))
            sem-id)))))
 
 (defn- resumo-comparacao [versoes]
@@ -329,7 +329,8 @@
           (-> (cartao/criar! exibidos
                              {:titulo "Comparação de saves"
                               :subtitulo (str resumo " • Página " pagina "/" paginas)
-                              :arquivo (str "comparacao-saves-p" pagina ".jpg")})
+                              :arquivo (str "comparacao-saves-p" pagina ".jpg")
+                              :modo :comparacao})
               (p/then (fn [media] {:media media :texto legenda}))
               (p/catch (fn [_] fallback)))
           (p/resolved fallback))))))
