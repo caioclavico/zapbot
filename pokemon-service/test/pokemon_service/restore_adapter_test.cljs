@@ -176,3 +176,52 @@
           (is (re-find #"desabilitada" desfazer))
           (is (re-find #"Nenhum backup" lista))
           (is (= "old" (get-in @treinador/contas ["g" "p" "equipe" 0 "id-pokemon"])))))) done)))
+
+(deftest preparar-aceita-versoes-1-e-2-sem-emitir-token-e-comparar-orienta
+  (async done
+    (let [original @restore/controlador
+          original-consulta storage/consultar-treinador-legado!
+          source (conta "legacy")
+          diagnostic (fn [_ _ _ version]
+                       (p/resolved #js {:blockingOperations #js [] :sourceBlockingOperations #js []
+                                        :currentRisks #js [] :sourceRisks #js []
+                                        :entries #js [] :total 1 :currentCount 1 :version version
+                                        :currentTrainer #js {:available true :level 4 :total 29 :xpCurrent 8}
+                                        :legacyTrainer #js {:available true :level 10 :total 127 :xpCurrent 10}}))
+          check (fn [_ _ _]
+                  (p/resolved #js {:tokenIssued false :count 1 :currentCount 1 :transformations #js []}))
+          protocol #js {:diagnostic diagnostic :checkPreparation check}]
+      (reset! restore/controlador {:protocol protocol})
+          (set! storage/consultar-treinador-legado!
+                (fn [_] (p/resolved {:particionado [(json {"p" source})]
+                                     :antigo [(json {"g" {"p" source}})]})))
+      (-> (p/all [(restore/comando! "g" "p" ["1" "preparar"])
+                  (restore/comando! "g" "p" ["2" "preparar"])
+                  (restore/comando! "g" "p" ["3" "preparar"])
+                  (restore/comando! "g" "p" ["1" "preparar" "extra"])
+                  (restore/comando! "g" "p" ["1" "comparar"])
+                  (restore/comando! "g" "p" ["2" "comparar"])
+                  (restore/comando! "g" "p" ["1" "previa"])
+                  (restore/comando! "g" "p" ["2" "previa"])])
+          (p/then (fn [respostas]
+                    (doseq [texto (take 2 respostas)]
+                      (is (re-find #"Validações da preparação concluídas" texto))
+                      (is (re-find #"Nenhum código foi emitido" texto))
+                      (is (not (re-find #"pk restaurar confirmar" texto))))
+                    (doseq [texto (take 2 (drop 2 respostas))]
+                      (is (re-find #"Confirmação de restauração desabilitada" texto)))
+                    (doseq [texto (drop 4 respostas)]
+                      (when (re-find #"Para comparar os Pokémon" texto)
+                        (is (re-find #"comparar os Pokémon entre V1 e V2" texto))
+                        (is (re-find #"pk recuperar comparar 2" texto))
+                        (is (re-find #"consultar a V" texto))
+                        (is (re-find #"pk restaurar [12] previa" texto)))
+                      (when (re-find #"PRÉVIA DE RESTAURAÇÃO" texto)
+                        (is (re-find #"consulta mostra o save V[12]" texto))
+                        (is (re-find #"compara os totais com o treinador atual" texto))
+                        (is (re-find #"não compara Pokémon individuais" texto))))))
+          (p/catch #(is false (str %)))
+          (p/finally (fn []
+                       (set! storage/consultar-treinador-legado! original-consulta)
+                       (reset! restore/controlador original)
+                       (done)))))))

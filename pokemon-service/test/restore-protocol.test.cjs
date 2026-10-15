@@ -52,25 +52,27 @@ test('read-only diagnostic keeps every record and marks conversions independentl
 });
 test('diagnostic remains available with active current operations while confirmation stays blocked',async()=>{
  const f=fixture();
- Object.assign(f.data.group.p,{'times-liga':{active:true},raid:{id:'r'},'adventure-eventos':{event:true},ofertas:{move:true},batalha:{id:'b'}});
+ Object.assign(f.data.group.p,{'times-liga':{iniciante:[0,null,null]},raid:{id:'r'},'adventure-eventos':{event:true},ofertas:{move:true},batalha:{id:'b'}});
  const out=await f.controller.diagnostic('g','p',account('legacy'),1);
  assert.equal(out.total,1);
  assert.equal(out.confirmationBlocked,true);
  assert.deepEqual(new Set(out.blockingOperations),new Set(['adventure-eventos','ofertas','batalha','raid']));
+ assert.equal(out.currentRisks.find(x=>x.field==='adventure-eventos').state,'evento malformado; não reconhecido como consumido');
+ assert.equal(out.sourceRisks.length,0);
  await assert.rejects(f.controller.preview('g','p',account('legacy'),1),/operational_review/);
 });
 test('league teams and hunt cooldown are historical metadata, not pending writers',async()=>{
  const f=fixture();
- Object.assign(f.data.group.p,{'times-liga':{bronze:[0,1,2]},'ultima-cacada':Date.now()-1000});
+ Object.assign(f.data.group.p,{'times-liga':{iniciante:[0,null,null]},'ultima-cacada':Date.now()-1000});
  const out=await f.controller.diagnostic('g','p',account('legacy'),1);
  assert.equal(out.confirmationBlocked,false);
  const preview=await f.controller.preview('g','p',account('legacy'),1);
  assert.equal(preview.count,1);
 });
-test('completed adventure events do not block, pending or malformed events do',async()=>{
- const completed=fixture();completed.data.group.p['adventure-eventos']={e:{status:'concluido'}};
+test('drained adventure events are absent; every stored event blocks until durable acknowledgement',async()=>{
+ const completed=fixture();completed.data.group.p['adventure-eventos']={};
  assert.equal((await completed.controller.diagnostic('g','p',account('legacy'),1)).confirmationBlocked,false);
- const pending=fixture();pending.data.group.p['adventure-eventos']={e:{status:'pendente',pokemon:'x'}};
+ const pending=fixture();pending.data.group.p['adventure-eventos']={e:{'event-id':'e',kind:'capture',at:123,status:'concluido'}};
  assert.deepEqual((await pending.controller.diagnostic('g','p',account('legacy'),1)).blockingOperations,['adventure-eventos']);
  const malformed=fixture();malformed.data.group.p['adventure-eventos']={e:{foo:'bar'}};
  assert.deepEqual((await malformed.controller.diagnostic('g','p',account('legacy'),1)).blockingOperations,['adventure-eventos']);
@@ -86,10 +88,94 @@ test('undo requires new preview and new immutable backup; old backups never chan
 test('index failure keeps immutable backup and durable lock without a CAS attempt',async()=>{const f=fixture();f.store.indexBackup=async()=>{throw Error('index_failed');};const p=await f.controller.preview('g','p',account('new'),1);await assert.rejects(f.controller.confirm('g','p',p.token,async()=>account('new')));assert.equal(Object.keys(f.data.backups).length,1);assert.ok(f.data.locks.p);assert.equal(f.events.filter(x=>x==='cas').length,0);assert.equal(f.data.group.p.equipe[0]['id-pokemon'],'old');});
 test('PC unification preserves records, original team indices and trainer fields',async()=>{const f=fixture(),source=account('team');source.pc=account('pc').equipe;source.moedas=123;source.pokedex={original:true};const p=await f.controller.preview('g','p',source,1);assert.equal(p.transformations.length,1);await f.controller.confirm('g','p',p.token,async()=>source);assert.deepEqual(f.data.group.p.equipe,[...source.equipe,...source.pc]);assert.deepEqual(f.data.group.p.pc,[]);assert.equal(f.data.group.p.moedas,123);assert.deepEqual(f.data.group.p.pokedex,source.pokedex);});
 test('supervised diagnosis without receipt never unlocks or retries CAS',async()=>{const f=fixture();f.store.casGroup=async()=>false;const p=await f.controller.preview('g','p',account('new'),1);await assert.rejects(f.controller.confirm('g','p',p.token,async()=>account('new')));const before=copy(f.data);const d=await f.controller.diagnose(hash(p.token));assert.equal(d.receiptConfirmed,false);assert.equal(d.releaseAllowed,false);assert.deepEqual(f.data,before);});
-test('current delivery receipts are not discarded by replacing trainer',async()=>{const f=fixture();f.data.group.p['adventure-entregas']={egg:true};const preview=await f.controller.preview('g','p',account('new'),1);assert.equal(preview.count,1);assert.equal(Object.keys(f.data.ops).length,0);});
+test('current delivery receipts are carried into prepared target without persistence',async()=>{const f=fixture();f.data.group.p['adventure-entregas']={egg:'pokemon-id'};const preview=await f.controller.preview('g','p',account('new'),1);assert.equal(preview.count,1);assert.deepEqual(f.controller.previews.get(hash(preview.token)).source['adventure-entregas'],{egg:'pokemon-id'});assert.equal(Object.keys(f.data.ops).length,0);});
 test('pending adventure callback blocks preview',async()=>{const f=fixture();f.data.group.p['adventure-eventos']={event:true};await assert.rejects(f.controller.preview('g','p',account('new'),1),/operational_review/);assert.equal(Object.keys(f.data.ops).length,0);});
-test('current delivery receipts are preserved while pending callbacks block',async()=>{const f=fixture();f.data.group.p['adventure-entregas']={egg:'receipt'};const p=await f.controller.preview('g','p',account('new'),1);assert.equal(p.count,1);await f.controller.confirm('g','p',p.token,async()=>account('new')).catch(()=>{});assert.equal(f.data.group.p['adventure-entregas'].egg,'receipt');});
+test('current delivery receipts are preserved while pending callbacks block',async()=>{const f=fixture();f.data.group.p['adventure-entregas']={egg:'pokemon-id'};f.data.group.p['adventure-eventos']={event:true};const before=copy(f.data.group.p['adventure-entregas']);await assert.rejects(f.controller.preview('g','p',account('new'),1),/operational_review/);assert.deepEqual(f.data.group.p['adventure-entregas'],before);});
 test('empty historical delivery receipt does not diverge diagnostic and preparation',async()=>{const f=fixture(),source=account('legacy');source['adventure-entregas']={};const d=await f.controller.diagnostic('g','p',source,1);assert.equal(d.confirmationBlocked,false);assert.deepEqual(d.sourceBlockingOperations,[]);const p=await f.controller.preview('g','p',source,1);assert.equal(p.count,1);assert.equal(Object.prototype.hasOwnProperty.call(p,'token'),true);});
-test('non-empty source delivery receipt is reported separately and blocks preparation',async()=>{const f=fixture(),source=account('legacy');source['adventure-entregas']={egg:'historical'};const d=await f.controller.diagnostic('g','p',source,1);assert.equal(d.confirmationBlocked,true);assert.deepEqual(d.blockingOperations,[]);assert.deepEqual(d.sourceBlockingOperations,['adventure-entregas']);await assert.rejects(f.controller.preview('g','p',source,1),/operational_review/);});
+test('historical and current delivery receipts are validated and unioned to prevent duplicate rewards',async()=>{const f=fixture(),source=account('legacy');source['adventure-entregas']={oldHatch:'oldPokemon'};f.data.group.p['adventure-entregas']={newHatch:'newPokemon'};const d=await f.controller.diagnostic('g','p',source,1);assert.equal(d.confirmationBlocked,false);assert.equal(d.sourceRisks.find(x=>x.field==='adventure-entregas').category,'delivered_reward');const p=await f.controller.preview('g','p',source,1);await f.controller.confirm('g','p',p.token,async()=>source);assert.deepEqual(f.data.group.p['adventure-entregas'],{oldHatch:'oldPokemon',newHatch:'newPokemon'});});
+test('conflicting receipt identities, malformed receipts and times-liga references block with field diagnostics',async()=>{const f=fixture(),source=account('legacy');source['adventure-entregas']={same:'oldPokemon'};f.data.group.p['adventure-entregas']={same:'otherPokemon'};const conflict=await f.controller.diagnostic('g','p',source,1);assert.equal(conflict.sourceRisks.some(x=>x.field==='adventure-entregas'&&x.category==='delivered_reward'),true);await assert.rejects(f.controller.preview('g','p',source,1),/operational_review/);const malformed=fixture();malformed.data.group.p['adventure-entregas']={egg:true};assert.equal((await malformed.controller.diagnostic('g','p',account('legacy'),1)).currentRisks.some(x=>x.field==='adventure-entregas'&&x.category==='invalid_or_unknown'),true);const badTeam=account('team');badTeam['times-liga']={bronze:[99,null,null]};const d=await fixture().controller.diagnostic('g','p',badTeam,1);assert.equal(d.sourceRisks.some(x=>x.field==='times-liga'&&x.category==='incompatible_reference'&&x.blocking),true);});
+test('diagnostic and read-only preparation share exact source/current operational blockers',async()=>{
+ const cases=[
+  {side:'source',field:'adventure-eventos',apply:a=>{a['adventure-eventos']={evt:{'event-id':'evt',kind:'capture',at:123,status:'pendente'}};}},
+  {side:'current',field:'adventure-eventos',apply:a=>{a['adventure-eventos']={evt:{'event-id':'evt',kind:'capture',at:123,status:'concluido'}};}},
+  {side:'source',field:'restore-receipt',apply:a=>{a['restore-receipt']={operation:'legacy-op'};}},
+  {side:'source',field:'adventure-entregas',apply:a=>{a['adventure-entregas']={evt:{pokemon:'id'}};}},
+  {side:'current',field:'adventure-entregas',apply:a=>{a['adventure-entregas']={evt:{pokemon:'id'}};}},
+  {side:'source',field:'adventure-reference-legacy',apply:a=>{a['adventure-reference-legacy']={privateValue:'hidden'};}}
+ ];
+ for(const testCase of cases){
+  const f=fixture(),source=account('legacy');
+  testCase.apply(testCase.side==='source'?source:f.data.group.p);
+  const before=copy(f.data),diagnostic=await f.controller.diagnostic('g','p',source,1);
+  const risks=testCase.side==='source'?diagnostic.sourceRisks:diagnostic.currentRisks;
+  const finding=risks.find(item=>item.field===testCase.field&&item.blocking);
+  assert.ok(finding,`${testCase.side} ${testCase.field} must be shown as blocking`);
+  assert.equal(diagnostic.confirmationBlocked,true);
+  await assert.rejects(f.controller.checkPreparation('g','p',source),error=>
+   error.code==='operational_review_required'&&error.findings.some(item=>
+    item.field===testCase.field&&item.category===finding.category&&item.state===finding.state&&item.rule===finding.rule));
+  assert.equal(f.controller.previews.size,0);
+  assert.deepEqual(f.data,before);
+ }
+ const internal=fixture();internal.data.group.p['restore-receipt']={operation:'confirmed-op'};
+ const internalDiagnostic=await internal.controller.diagnostic('g','p',account('legacy'),1);
+ assert.equal(internalDiagnostic.currentRisks.some(x=>x.field==='restore-receipt'),false);
+ assert.equal(internalDiagnostic.confirmationBlocked,false);
+ assert.equal((await internal.controller.checkPreparation('g','p',account('legacy'))).tokenIssued,false);
+});
+test('safe historical settings and validated receipts pass both diagnostic and read-only preparation',async()=>{
+ const f=fixture(),source=account('legacy');
+ source['times-liga']={iniciante:[0,null,null]};source['ultima-cacada']=123;
+ source['adventure-entregas']={oldReward:'pokemon-old'};
+ f.data.group.p['adventure-entregas']={currentReward:'pokemon-current'};
+ const before=copy(f.data),diagnostic=await f.controller.diagnostic('g','p',source,1);
+ assert.equal(diagnostic.confirmationBlocked,false);
+ const checked=await f.controller.checkPreparation('g','p',source);
+ assert.equal(checked.tokenIssued,false);assert.equal(f.controller.previews.size,0);
+ assert.deepEqual(f.data,before);
+});
+test('legacy delivery receipt and current operational fields produce identical preview/preparation decision',async()=>{
+ const f=fixture(),source=account('legacy');
+ source['adventure-entregas']={oldHatch:'legacy-pokemon'};
+ Object.assign(f.data.group.p,{
+  'times-liga':{iniciante:[0,null,null]},
+  'ultima-cacada':123,
+  raid:{id:'pending-raid'},
+  ofertas:{move:'pending-move'}
+ });
+ const diagnostic=await f.controller.diagnostic('g','p',source,1);
+ assert.equal(diagnostic.confirmationBlocked,true);
+ assert.equal(diagnostic.sourceRisks.some(x=>x.field==='adventure-entregas'&&x.category==='delivered_reward'&&!x.blocking),true);
+ assert.equal(diagnostic.currentRisks.some(x=>x.field==='times-liga'&&x.category==='permanent_configuration'&&!x.blocking),true);
+ assert.equal(diagnostic.currentRisks.some(x=>x.field==='ultima-cacada'&&x.category==='cooldown'&&!x.blocking),true);
+ const pendingFields=diagnostic.currentRisks.filter(x=>x.blocking).map(x=>x.field).sort();
+ assert.deepEqual(pendingFields,['ofertas','raid']);
+ await assert.rejects(f.controller.checkPreparation('g','p',source),error=>
+  error.code==='operational_review_required'&&
+  error.findings.map(x=>x.field).sort().join(',')===pendingFields.join(','));
+ assert.equal(f.controller.previews.size,0);
+ // Once the actual pending records are absent, the same receipt and historical
+ // settings remain safe and are preserved by the prepared candidate.
+ delete f.data.group.p.raid;delete f.data.group.p.ofertas;
+ const clear=await f.controller.diagnostic('g','p',source,1);
+ assert.equal(clear.confirmationBlocked,false);
+ const checked=await f.controller.checkPreparation('g','p',source);
+ assert.equal(checked.tokenIssued,false);
+ assert.equal(checked.count,1);
+});
+test('a newly visible blocker between diagnostic and preparation is reported without a token',async()=>{
+ const f=fixture(),source=account('legacy');
+ const diagnostic=await f.controller.diagnostic('g','p',source,1);
+ assert.equal(diagnostic.confirmationBlocked,false);
+ f.data.group.p['adventure-eventos']={evt:{'event-id':'evt',kind:'capture',at:123}};
+ await assert.rejects(f.controller.checkPreparation('g','p',source),error=>
+  error.code==='operational_review_required'&&error.findings.some(item=>item.field==='adventure-eventos'));
+ assert.equal(f.controller.previews.size,0);
+});
+test('read-only preparation validation emits no token, writes, journal or lock',async()=>{const f=fixture(),before=copy(f.data);const checked=await f.controller.checkPreparation('g','p',account('candidate'));assert.equal(checked.tokenIssued,false);assert.equal(f.controller.previews.size,0);assert.deepEqual(f.data,before);});
+test('backup comparison is read-only and does not mint an undo confirmation token',async()=>{const f=fixture(),saved=account('backup');const b={id:'backup-1',chat:'g',player:'p',account:saved};b.hash=hash(saved);f.data.backups[b.id]=b;const before=copy(f.data);const result=await f.controller.checkBackup('g','p',b.id);assert.equal(result.tokenIssued,false);assert.equal(result.count,1);assert.equal(f.controller.previews.size,0);assert.deepEqual(f.data,before);await assert.rejects(f.controller.checkBackup('g','other',b.id),/invalid_backup/);});
+test('119 legacy records, seven XP conversions and shiny identity remain intact in candidate',async()=>{const f=fixture();f.data.group.p=account('current');f.data.group.p.equipe=Array.from({length:26},(_,i)=>({...account(`current-${i}`).equipe[0]}));const source=account('legacy-0');source.equipe=Array.from({length:119},(_,i)=>({...account(`legacy-${i}`).equipe[0],nome:i===17?'Voltorb':'Pokémon'}));source.equipe[17].shiny=true;for(let i=0;i<7;i++)source.equipe[i]['xp-desde-nivel']=9;const original=copy(source);const preview=await f.controller.preview('g','p',source,1);assert.equal(preview.currentCount,26);assert.equal(preview.count,119);assert.equal(preview.transformations.filter(t=>t.includes('XP ')).length,7);const candidate=f.controller.previews.get(hash(preview.token)).source;assert.equal(candidate.equipe.length,119);assert.equal(candidate.equipe[17].shiny,true);assert.deepEqual(source,original);assert.equal(f.data.group.p.equipe.length,26);});
+test('preparation failure leaves no token and diagnostics redact saved values',async()=>{const f=fixture();f.store.hooks={preflight:async()=>{throw Error('persistence unavailable');}};await assert.rejects(f.controller.checkPreparation('g','p',account('source')),/unavailable/);assert.equal(f.controller.previews.size,0);const source=account('safe');source['adventure-secret']={value:'PLAYER_PRIVATE_DATA'};const d=await fixture().controller.diagnostic('g','p',source,1);assert.equal(d.confirmationBlocked,true);assert.equal(JSON.stringify(d).includes('PLAYER_PRIVATE_DATA'),false);assert.equal(d.sourceRisks.some(x=>x.field==='adventure-secret'&&x.state==='valor não inspecionado; conteúdo ocultado'),true);});
+test('volatile battle, raid, trade and gym operations appear in diagnostic and block preparation',async()=>{const f=fixture();f.store.hooks={preflight:async()=>['batalha','raid','troca','ginásio com time associado']};const d=await f.controller.diagnostic('g','p',account('safe'),1);assert.equal(d.confirmationBlocked,true);assert.deepEqual(d.blockingOperations,['batalha','raid','troca','ginásio com time associado']);await assert.rejects(f.controller.checkPreparation('g','p',account('safe')),error=>error.code==='external_operation_pending'&&error.operations.length===4);assert.equal(f.controller.previews.size,0);});
 test('infirmary, shiny, rarity, equipped items and trainer progress are preserved',async()=>{const f=fixture(),source=account('team');source.enfermaria=[{pokemon:{...account('joy').equipe[0],shiny:true,raridade:'raro',item:'restos'},'pronto-em':123456}];source.ginasios={agua:{vitorias:2}};source['vitorias-treinador']=12;const p=await f.controller.preview('g','p',source,1);await f.controller.confirm('g','p',p.token,async()=>source);assert.deepEqual(f.data.group.p.enfermaria,source.enfermaria);assert.deepEqual(f.data.group.p.ginasios,source.ginasios);assert.equal(f.data.group.p['vitorias-treinador'],12);});
 test('invalid moves, shiny and infirmary timestamps block preview without writes',async()=>{for(const change of [a=>a.equipe[0].golpes=['unknown'],a=>a.equipe[0].shiny='true',a=>a.enfermaria=[{pokemon:account('joy').equipe[0]}]]){const f=fixture(),source=account('x');change(source);await assert.rejects(f.controller.preview('g','p',source,1));assert.equal(Object.keys(f.data.ops).length,0);}});
