@@ -270,7 +270,7 @@
                       (is (re-find #"Próximo passo seguro" texto))
                       (is (not (re-find #"adventure-entregas|ultima-cacada|times-liga" texto)))
                       (is (re-find #"nenhum (código foi emitido|token foi gerado)" texto))
-                      (is (re-find #"nenhum save foi alterado" texto)))))
+                      (is (re-find #"Nenhuma conta foi modificada" texto)))))
           (p/catch #(is false (str %)))
           (p/finally (fn []
                        (set! storage/consultar-treinador-legado! original-consulta)
