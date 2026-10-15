@@ -200,7 +200,9 @@
                   (restore/comando! "g" "p" ["3" "preparar"])
                   (restore/comando! "g" "p" ["1" "preparar" "extra"])
                   (restore/comando! "g" "p" ["1" "comparar"])
-                  (restore/comando! "g" "p" ["2" "comparar"])])
+                  (restore/comando! "g" "p" ["2" "comparar"])
+                  (restore/comando! "g" "p" ["1" "previa"])
+                  (restore/comando! "g" "p" ["2" "previa"])])
           (p/then (fn [respostas]
                     (doseq [texto (take 2 respostas)]
                       (is (re-find #"Validações da preparação concluídas" texto))
@@ -209,7 +211,15 @@
                     (doseq [texto (take 2 (drop 2 respostas))]
                       (is (re-find #"Confirmação de restauração desabilitada" texto)))
                     (doseq [texto (drop 4 respostas)]
-                      (is (re-find #"pk recuperar comparar" texto)))))
+                      (when (re-find #"Para comparar os Pokémon" texto)
+                        (is (re-find #"comparar os Pokémon entre V1 e V2" texto))
+                        (is (re-find #"pk recuperar comparar 2" texto))
+                        (is (re-find #"consultar a V" texto))
+                        (is (re-find #"pk restaurar [12] previa" texto)))
+                      (when (re-find #"PRÉVIA DE RESTAURAÇÃO" texto)
+                        (is (re-find #"consulta mostra o save V[12]" texto))
+                        (is (re-find #"compara os totais com o treinador atual" texto))
+                        (is (re-find #"não compara Pokémon individuais" texto))))))
           (p/catch #(is false (str %)))
           (p/finally (fn []
                        (set! storage/consultar-treinador-legado! original-consulta)

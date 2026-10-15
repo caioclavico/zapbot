@@ -98,6 +98,7 @@ test('diagnostic and read-only preparation share exact source/current operationa
  const cases=[
   {side:'source',field:'adventure-eventos',apply:a=>{a['adventure-eventos']={evt:{'event-id':'evt',kind:'capture',at:123,status:'pendente'}};}},
   {side:'current',field:'adventure-eventos',apply:a=>{a['adventure-eventos']={evt:{'event-id':'evt',kind:'capture',at:123,status:'concluido'}};}},
+  {side:'source',field:'restore-receipt',apply:a=>{a['restore-receipt']={operation:'legacy-op'};}},
   {side:'source',field:'adventure-entregas',apply:a=>{a['adventure-entregas']={evt:{pokemon:'id'}};}},
   {side:'current',field:'adventure-entregas',apply:a=>{a['adventure-entregas']={evt:{pokemon:'id'}};}},
   {side:'source',field:'adventure-reference-legacy',apply:a=>{a['adventure-reference-legacy']={privateValue:'hidden'};}}
@@ -116,6 +117,11 @@ test('diagnostic and read-only preparation share exact source/current operationa
   assert.equal(f.controller.previews.size,0);
   assert.deepEqual(f.data,before);
  }
+ const internal=fixture();internal.data.group.p['restore-receipt']={operation:'confirmed-op'};
+ const internalDiagnostic=await internal.controller.diagnostic('g','p',account('legacy'),1);
+ assert.equal(internalDiagnostic.currentRisks.some(x=>x.field==='restore-receipt'),false);
+ assert.equal(internalDiagnostic.confirmationBlocked,false);
+ assert.equal((await internal.controller.checkPreparation('g','p',account('legacy'))).tokenIssued,false);
 });
 test('safe historical settings and validated receipts pass both diagnostic and read-only preparation',async()=>{
  const f=fixture(),source=account('legacy');
@@ -127,6 +133,35 @@ test('safe historical settings and validated receipts pass both diagnostic and r
  const checked=await f.controller.checkPreparation('g','p',source);
  assert.equal(checked.tokenIssued,false);assert.equal(f.controller.previews.size,0);
  assert.deepEqual(f.data,before);
+});
+test('legacy delivery receipt and current operational fields produce identical preview/preparation decision',async()=>{
+ const f=fixture(),source=account('legacy');
+ source['adventure-entregas']={oldHatch:'legacy-pokemon'};
+ Object.assign(f.data.group.p,{
+  'times-liga':{iniciante:[0,null,null]},
+  'ultima-cacada':123,
+  raid:{id:'pending-raid'},
+  ofertas:{move:'pending-move'}
+ });
+ const diagnostic=await f.controller.diagnostic('g','p',source,1);
+ assert.equal(diagnostic.confirmationBlocked,true);
+ assert.equal(diagnostic.sourceRisks.some(x=>x.field==='adventure-entregas'&&x.category==='delivered_reward'&&!x.blocking),true);
+ assert.equal(diagnostic.currentRisks.some(x=>x.field==='times-liga'&&x.category==='permanent_configuration'&&!x.blocking),true);
+ assert.equal(diagnostic.currentRisks.some(x=>x.field==='ultima-cacada'&&x.category==='cooldown'&&!x.blocking),true);
+ const pendingFields=diagnostic.currentRisks.filter(x=>x.blocking).map(x=>x.field).sort();
+ assert.deepEqual(pendingFields,['ofertas','raid']);
+ await assert.rejects(f.controller.checkPreparation('g','p',source),error=>
+  error.code==='operational_review_required'&&
+  error.findings.map(x=>x.field).sort().join(',')===pendingFields.join(','));
+ assert.equal(f.controller.previews.size,0);
+ // Once the actual pending records are absent, the same receipt and historical
+ // settings remain safe and are preserved by the prepared candidate.
+ delete f.data.group.p.raid;delete f.data.group.p.ofertas;
+ const clear=await f.controller.diagnostic('g','p',source,1);
+ assert.equal(clear.confirmationBlocked,false);
+ const checked=await f.controller.checkPreparation('g','p',source);
+ assert.equal(checked.tokenIssued,false);
+ assert.equal(checked.count,1);
 });
 test('a newly visible blocker between diagnostic and preparation is reported without a token',async()=>{
  const f=fixture(),source=account('legacy');

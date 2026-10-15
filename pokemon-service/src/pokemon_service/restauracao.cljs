@@ -125,8 +125,9 @@
            (str "\n\n⚠️ *Confirmação bloqueada*"
                 (when (seq bloqueios) (str "\nConta atual:\n" riscos-atual))
                 (when (seq bloqueios-origem) (str "\nSave antigo:\n" riscos-origem)))
-           (str "\n\n✅ *Prévia sem bloqueios conhecidos.* Para executar as validações finais, use: !pk restaurar "
-                versao " preparar. A confirmação continua bloqueada até haver saves independentes."))
+           (str "\n\n✅ *Prévia sem bloqueios conhecidos.* Esta consulta mostra o save V" versao
+                " e compara os totais com o treinador atual; não compara Pokémon individuais. Para executar as validações finais, use: "
+                config/prefix "pk restaurar " versao " preparar. A confirmação continua bloqueada até haver saves independentes."))
          "\n\n⚠️ A restauração substituirá o treinador atual e não mesclará as coleções."
          "\n🔎 Consulta somente leitura; nenhum token foi gerado e nenhum save foi alterado.")))
 
@@ -191,10 +192,11 @@
             "✅ Restauração confirmada e persistida com sucesso.")
           (and (= 2 (count args)) (contains? #{"1" "2"} (first args))
                (= "comparar" (second args)))
-          (p/resolved (str "Para comparar os dois saves históricos, use " config/prefix
-                           "pk recuperar comparar. Para navegar: " config/prefix
-                           "pk recuperar comparar 2, 3, etc. A prévia de restauração da versão "
-                           (first args) " não compara saves."))
+          (p/resolved (str "Para comparar os Pokémon entre V1 e V2, use " config/prefix
+                           "pk recuperar comparar (páginas: " config/prefix
+                           "pk recuperar comparar 2, " config/prefix "pk recuperar comparar 3...).\n"
+                           "Para consultar a V" (first args) " e comparar apenas os totais com o treinador atual, use "
+                           config/prefix "pk restaurar " (first args) " previa."))
           (and protocol (= 2 (count args))
                (contains? #{"1" "2"} (first args))
                (= "preparar" (second args)))
