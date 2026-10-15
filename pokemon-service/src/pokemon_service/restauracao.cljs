@@ -168,7 +168,7 @@
           (p/let [_ (confirmar-interno! cid pid (second args)
                                         (fn [versao] (origem! cid pid versao)))]
             "✅ Restauração confirmada e persistida com sucesso.")
-          (and protocol (= 3 (count args))
+          (and protocol (= 2 (count args))
                (contains? #{"1" "2"} (first args))
                (= "preparar" (second args)))
           (p/let [source (origem! cid pid (first args))]
