@@ -148,14 +148,18 @@ test('pending raid XP blocks on source or current account, including orphaned re
 });
 test('active gym occupancy is reported with safe resolution and never removed by restore checks',async()=>{
  const f=fixture(),occupancy={gym:'persisted-external-gym',pid:'p',time:['copied-a','copied-b','copied-c']};
- f.store.hooks={preflight:async()=>occupancy.pid==='p'?['ginásio com time associado']:[]};
+ const detailed=['ginásio ocupado: pedra (2 defensores: Pikachu, Eevee)',
+                 'ginásio ocupado: água (1 defensores: Pikachu)'];
+ f.store.hooks={preflight:async(_chat,player)=>player==='p'?detailed:[]};
  const before=copy(f.data),d=await f.controller.diagnostic('g','p',account('legacy'),1);
- const finding=d.currentRisks.find(x=>x.field==='ginásio com time associado');
+ const finding=d.currentRisks.find(x=>x.field===detailed[0]);
  assert.equal(d.confirmationBlocked,true);
- assert.match(finding.rule,/não remove nem cancela/);
+ assert.match(finding.rule,/não há encerramento transacional/i);
  assert.match(finding.action,/Aguarde/);
  await assert.rejects(f.controller.checkPreparation('g','p',account('legacy')),error=>
-   error.code==='external_operation_pending'&&error.operations.includes('ginásio com time associado'));
+   error.code==='external_operation_pending'&&detailed.every(gym=>error.operations.includes(gym)));
+ assert.equal(f.controller.previews.size,0,'ocupação ativa nunca gera código de confirmação');
+ assert.equal(await f.store.readAccountLock('g','p'),null,'checagem não bloqueia nem muta a conta');
  assert.deepEqual(f.data,before);
 });
 test('gym occupancy beginning after diagnostic blocks preparation; concurrent raid marker change conflicts at confirm',async()=>{
