@@ -85,7 +85,8 @@
           compat (count (filter #(= "compatible" (:status %)) registros))
           convert (count (filter #(= "converted" (:status %)) registros))
           invalid (count (filter #(= "invalid" (:status %)) registros))
-          bloqueios (vec (array-seq (or (.-blockingOperations diagnostico) #js [])))]
+          bloqueios (vec (array-seq (or (.-blockingOperations diagnostico) #js [])))
+          bloqueios-origem (vec (array-seq (or (.-sourceBlockingOperations diagnostico) #js [])))]
     (str "📦 *PRÉVIA DE RESTAURAÇÃO — VERSÃO " versao "*\n"
          "• Pokémon antigos: " (.-total diagnostico) "\n"
          "• Pokémon atuais: " (.-currentCount diagnostico) "\n\n"
@@ -109,8 +110,10 @@
                 (linha "XP total" :total)
                 (linha "XP no nível" :xpCurrent)
                 "• Pokémon: atual " (.-currentCount diagnostico) " | save antigo " (.-total diagnostico)))
-         (if (seq bloqueios)
-           (str "\n\n⚠️ *Confirmação bloqueada*\nOperações: " (str/join ", " bloqueios))
+         (if (or (seq bloqueios) (seq bloqueios-origem))
+           (str "\n\n⚠️ *Confirmação bloqueada*"
+                (when (seq bloqueios) (str "\nConta atual: " (str/join ", " bloqueios)))
+                (when (seq bloqueios-origem) (str "\nSave antigo: " (str/join ", " bloqueios-origem))))
            (str "\n\n✅ *Prévia aprovada.* Para iniciar a confirmação segura, use: !pk restaurar "
                 versao " preparar"))
          "\n\n⚠️ A restauração substituirá o treinador atual e não mesclará as coleções."
