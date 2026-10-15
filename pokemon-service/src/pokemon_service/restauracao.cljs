@@ -80,9 +80,25 @@
            :detalhe (get entry "detail")})
         (js->clj entries)))
 
+(defn- mapas-de-risco [riscos]
+  (mapv #(js->clj % :keywordize-keys true) (array-seq (or riscos #js []))))
+
+(defn- riscos-bloqueantes [riscos]
+  (filterv #(true? (:blocking %)) (mapas-de-risco riscos)))
+
+(defn- campo-de-risco-para-log [field]
+  (if (and (string? field) (str/starts-with? field "ginásio ocupado:"))
+    "ginásio ocupado"
+    field))
+
+(defn- riscos-para-log [lado riscos]
+  (mapv (fn [{:keys [field category state rule action blocking]}]
+          {:side lado :field (campo-de-risco-para-log field) :category category
+           :state state :rule rule :action action :blocking blocking})
+        (mapas-de-risco riscos)))
+
 (defn- formatar-riscos [riscos]
-  (->> (array-seq (or riscos #js []))
-       (map #(js->clj % :keywordize-keys true))
+  (->> (riscos-bloqueantes riscos)
        (map (fn [{:keys [field category state rule action]}]
               (str "• " field " — " state " [" (name (keyword (or category "unknown"))) "]: " rule
                    (when (seq action) (str " Próximo passo seguro: " action)))))
@@ -141,9 +157,11 @@
                             (array-seq (or (.-sourceBlockingOperations diagnostico) #js [])))]
     (if (seq bloqueios)
       (do
-       (js/console.warn "[Restauração] Preparação bloqueada; campos/estados:",
-                        (str/join " | " (remove str/blank? [(formatar-riscos (.-currentRisks diagnostico))
-                                                             (formatar-riscos (.-sourceRisks diagnostico))])))
+       (js/console.warn "[Restauração] diagnóstico estruturado de preparação bloqueada:",
+                        (js/JSON.stringify
+                         (clj->js {:event "restore_preparation_blocked"
+                                   :risks (into (riscos-para-log "current" (.-currentRisks diagnostico))
+                                                (riscos-para-log "source" (.-sourceRisks diagnostico)))})))
        (str "⚠️ *Preparação bloqueada; nenhum código foi emitido.*\n"
            (when (seq (.-blockingOperations diagnostico))
              (str "Conta atual:\n" (formatar-riscos (.-currentRisks diagnostico)) "\n"))
@@ -158,18 +176,14 @@
                          (if (:available atual) (get atual chave) "indisponível")
                          " | save antigo "
                          (if (:available antigo) (get antigo chave) "indisponível") "\n"))]
-      (str "✅ *Validações da preparação concluídas*\n"
+      (str "✅ *Validações aprovadas — resumo da preparação*\n"
            "• Pokémon: atual " (.-currentCount preview) " | save antigo " (.-count preview) "\n"
            "• Save selecionado: versão " versao "\n"
            "\n⭐ *Treinadores*\n"
            (linha "Nível" :level)
            (linha "XP total" :total)
            (linha "XP no nível" :xpCurrent)
-           "\n🧪 *Alterações previstas*\n"
-           (if (seq (.-transformations preview))
-             (str/join "\n" (map #(str "• " %) (array-seq (.-transformations preview))))
-             "• Nenhuma conversão adicional")
-           "\n\n🔐 Nenhum backup foi criado; a operação foi somente de leitura.\n"
+           "\n\n🔐 Validações concluídas. Nenhum backup foi criado nesta etapa.\n"
            "⚠️ A troca destrutiva está bloqueada até haver saves independentes com persistência e recuperação transacionais."
            " Nenhum código foi emitido e nenhum save foi alterado.")))))
 
