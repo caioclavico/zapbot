@@ -205,7 +205,7 @@
                   (restore/comando! "g" "p" ["2" "previa"])])
           (p/then (fn [respostas]
                     (doseq [texto (take 2 respostas)]
-                      (is (re-find #"Validações da preparação concluídas" texto))
+                      (is (re-find #"Validações aprovadas — resumo da preparação" texto))
                       (is (re-find #"Nenhum código foi emitido" texto))
                       (is (not (re-find #"pk restaurar confirmar" texto))))
                     (doseq [texto (take 2 (drop 2 respostas))]
@@ -220,6 +220,57 @@
                         (is (re-find #"consulta mostra o save V[12]" texto))
                         (is (re-find #"compara os totais com o treinador atual" texto))
                         (is (re-find #"não compara Pokémon individuais" texto))))))
+          (p/catch #(is false (str %)))
+          (p/finally (fn []
+                       (set! storage/consultar-treinador-legado! original-consulta)
+                       (reset! restore/controlador original)
+                       (done)))))))
+
+(deftest mensagens-de-restauracao-mostram-apenas-bloqueios-efetivos
+  (async done
+    (let [original @restore/controlador
+          original-consulta storage/consultar-treinador-legado!
+          source (conta "legacy")
+          riscos #js [#js {:field "adventure-entregas" :category "delivered_reward"
+                           :state "recibos válidos preserváveis" :rule "recibos preserváveis"
+                           :blocking false}
+                      #js {:field "ultima-cacada" :category "cooldown"
+                           :state "timestamp válido" :rule "cooldown conservado" :blocking false}
+                      #js {:field "times-liga" :category "permanent_configuration"
+                           :state "configuração válida" :rule "configuração preservada" :blocking false}
+                      #js {:field "ginásio ocupado: pedra (2 defensores: Pikachu, Eevee)"
+                           :category "operation_pending" :state "ocupação ativa com defensores externos"
+                           :rule "encerramento transacional não disponível"
+                           :action "Aguarde outro treinador vencer normalmente." :blocking true}]
+          diagnostico (fn [_ _ _ versao]
+                        (p/resolved #js {:blockingOperations #js ["ginásio ocupado: pedra"]
+                                         :sourceBlockingOperations #js ["xp-raids-pendente"]
+                                         :currentRisks riscos
+                                         :sourceRisks #js [#js {:field "xp-raids-pendente"
+                                                                :category "operation_pending"
+                                                                :state "XP pendente"
+                                                                :rule "resolva pelo fluxo normal"
+                                                                :action "Consuma o XP pelo fluxo normal."
+                                                                :blocking true}]
+                                         :entries #js [] :total 1 :currentCount 1 :version versao
+                                         :currentTrainer #js {:available true :level 4 :total 29 :xpCurrent 8}
+                                         :legacyTrainer #js {:available true :level 10 :total 127 :xpCurrent 10}}))
+          protocol #js {:diagnostic diagnostico
+                        :checkPreparation (fn [& _] (throw (js/Error. "não deve preparar com bloqueios")))}]
+      (reset! restore/controlador {:protocol protocol})
+      (set! storage/consultar-treinador-legado!
+            (fn [_] (p/resolved {:particionado [(json {"p" source})]
+                                 :antigo [(json {"g" {"p" source}})]})))
+      (-> (p/all [(restore/comando! "g" "p" ["1" "preparar"])
+                  (restore/comando! "g" "p" ["1" "previa"])])
+          (p/then (fn [respostas]
+                    (doseq [texto respostas]
+                      (is (re-find #"ginásio ocupado: pedra \(2 defensores: Pikachu, Eevee\)" texto))
+                      (is (re-find #"xp-raids-pendente" texto))
+                      (is (re-find #"Próximo passo seguro" texto))
+                      (is (not (re-find #"adventure-entregas|ultima-cacada|times-liga" texto)))
+                      (is (re-find #"nenhum (código foi emitido|token foi gerado)" texto))
+                      (is (re-find #"nenhum save foi alterado" texto))))
           (p/catch #(is false (str %)))
           (p/finally (fn []
                        (set! storage/consultar-treinador-legado! original-consulta)
