@@ -2,8 +2,7 @@
   (:require [promesa.core :as p]
             [clojure.string :as str]
             [zapbot.config :as config]
-            [zapbot.armazenamento :as storage]
-            [zapbot.pokemon.recuperacao-cartao :as cartao]))
+            [zapbot.armazenamento :as storage]))
 (defonce controlador (atom nil))
 (defonce reconciliado? (atom false))
 (defonce fila-chat (atom nil))
@@ -69,19 +68,6 @@
           (when-not (map? conta) (throw (js/Error. "source_unavailable")))
           (clj->js conta))))))
 
-(def ^:private tamanho-pagina 12)
-
-(defn- pagina-diagnostico [registros pagina]
-  (let [registros (vec registros)
-        total (count registros)
-        paginas (max 1 (js/Math.ceil (/ total tamanho-pagina)))]
-    (when (and (number? pagina) (js/Number.isSafeInteger pagina)
-               (<= 1 pagina paginas))
-      (let [inicio (* (dec pagina) tamanho-pagina)
-            fim (min total (+ inicio tamanho-pagina))]
-        {:pagina pagina :paginas paginas :total total :inicio inicio :fim fim
-         :itens (subvec registros inicio fim)}))))
-
 (defn- registros-diagnostico [entries]
   (mapv (fn [entry]
           {:local (get entry "local")
@@ -92,49 +78,30 @@
            :detalhe (get entry "detail")})
         (js->clj entries)))
 
-(defn- legenda-diagnostico [pid versao dados bloqueio]
-  (str "🧬 *Prévia do save legado — treinador " pid "*"
-       "\nPágina " (:pagina dados) " de " (:paginas dados)
-       " • Total: " (:total dados) " Pokémon"
-       (when (pos? (:total dados)) (str " • Exibindo " (inc (:inicio dados)) "–" (:fim dados)))
-       (when (> (:pagina dados) 1) (str "\n⬅️ !pk restaurar " versao " previa " (dec (:pagina dados))))
-       (when (< (:pagina dados) (:paginas dados)) (str "\n➡️ !pk restaurar " versao " previa " (inc (:pagina dados))))
-       (when (:bloqueada? bloqueio)
-         (str "\n⚠️ Confirmação bloqueada por operações ativas: "
-              (str/join ", " (:operacoes bloqueio))))
-       "\n🔎 Consulta somente leitura. Nenhuma alteração foi persistida."))
-
-(defn- resposta-diagnostico! [pid source pagina protocol cid versao]
+(defn- resumo-diagnostico! [pid source protocol cid versao]
   (p/let [diagnostico (.diagnostic protocol cid pid source versao)
           registros (registros-diagnostico (.-entries diagnostico))
-          dados (pagina-diagnostico registros pagina)
-          bloqueio {:bloqueada? (boolean (.-confirmationBlocked diagnostico))
-                    :operacoes (vec (array-seq (or (.-blockingOperations diagnostico) #js [])))}]
-    (if-not dados
-      (str "Página inexistente. Escolha uma página de 1 a "
-           (max 1 (js/Math.ceil (/ (count registros) tamanho-pagina))) ".")
-      (let [fallback (str (legenda-diagnostico pid versao dados bloqueio)
-                          "\n\n⚠️ A imagem não pôde ser gerada. Diagnóstico textual dos registros desta página:\n"
-                          (if (seq (:itens dados))
-                            (str/join "\n" (map (fn [{:keys [local indice pokemon status original]}]
-                                                  (str "• " local " #" indice " — "
-                                                       (or (get pokemon "nome") "registro inválido")
-                                                       ", status=" status
-                                                       ", nível " (or (get original "nivel") "?")
-                                                       " → " (or (get pokemon "nivel") "?")))
-                                                (:itens dados)))
-                            "Nenhum Pokémon."))]
-        (if (seq (:itens dados))
-          (-> (cartao/criar! (:itens dados)
-                             {:titulo (str "Save legado — " pid)
-                              :subtitulo (str "Versão " versao " • Página " (:pagina dados) "/" (:paginas dados)
-                                              " • " (:total dados) " Pokémon")
-                              :arquivo (str "save-restauracao-" versao "-p" (:pagina dados) ".jpg")})
-              (p/then (fn [media] {:media media :texto (legenda-diagnostico pid versao dados bloqueio)}))
-              (p/catch (fn [erro]
-                         (js/console.warn "[Restauração] Card indisponível; diagnóstico textual." (.-message erro))
-                         fallback)))
-          (p/resolved (str (legenda-diagnostico pid versao dados bloqueio) "\n\nNenhum Pokémon encontrado.")))))))
+          por-local (fn [local] (count (filter #(= local (:local %)) registros)))
+          compat (count (filter #(= "compatible" (:status %)) registros))
+          convert (count (filter #(= "converted" (:status %)) registros))
+          invalid (count (filter #(= "invalid" (:status %)) registros))
+          bloqueios (vec (array-seq (or (.-blockingOperations diagnostico) #js [])))]
+    (str "📦 *PRÉVIA DE RESTAURAÇÃO — VERSÃO " versao "*\n"
+         "• Pokémon antigos: " (.-total diagnostico) "\n"
+         "• Pokémon atuais: " (.-currentCount diagnostico) "\n\n"
+         "📋 *Distribuição do save antigo*\n"
+         "• Equipe: " (por-local "Equipe") "\n"
+         "• PC: " (por-local "PC") "\n"
+         "• Enfermaria: " (por-local "Enfermaria") "\n\n"
+         "🧪 *Validação*\n"
+         "• XP compatível: " compat "\n"
+         "• Conversão proposta: " convert "\n"
+         "• Registros inválidos: " invalid
+         (if (seq bloqueios)
+           (str "\n\n⚠️ *Confirmação bloqueada*\nOperações: " (str/join ", " bloqueios))
+           "\n\n✅ Nenhuma operação pendente foi identificada.")
+         "\n\n⚠️ A restauração substituirá o treinador atual e não mesclará as coleções."
+         "\n🔎 Consulta somente leitura; nenhum token foi gerado e nenhum save foi alterado.")))
 
 (defn comando! [cid pid args]
   ;; Entered before navigation, XP, Joy collection or automatic persistence.
@@ -154,14 +121,9 @@
             "✅ Restauração confirmada e persistida com sucesso.")
           (and protocol (contains? #{"1" "2"} (first args))
                (or (= 1 (count args))
-                   (and (<= 2 (count args) 3)
-                        (= "previa" (second args))
-                        (or (= 2 (count args))
-                            (and (string? (nth args 2))
-                                 (re-matches #"[1-9][0-9]{0,5}" (nth args 2)))))))
-          (p/let [source (origem! cid pid (first args))
-                  pagina (if (= 3 (count args)) (js/parseInt (nth args 2) 10) 1)]
-            (resposta-diagnostico! pid source pagina protocol cid (first args)))
+                   (and (= 2 (count args)) (= "previa" (second args)))))
+          (p/let [source (origem! cid pid (first args))]
+            (resumo-diagnostico! pid source protocol cid (first args)))
           (and protocol (= 3 (count args)) (= "desfazer" (first args)) (= "previa" (last args)))
           (p/let [preview (previa-backup! cid pid (second args))]
             (str "📦 Prévia do backup validada: " (.-count preview) " Pokémon.\n🔒 Confirmação desabilitada."))

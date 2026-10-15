@@ -56,8 +56,16 @@ test('diagnostic remains available with active current operations while confirma
  const out=await f.controller.diagnostic('g','p',account('legacy'),1);
  assert.equal(out.total,1);
  assert.equal(out.confirmationBlocked,true);
- assert.deepEqual(new Set(out.blockingOperations),new Set(['adventure-eventos','ofertas','batalha','raid','times-liga']));
+ assert.deepEqual(new Set(out.blockingOperations),new Set(['adventure-eventos','ofertas','batalha','raid']));
  await assert.rejects(f.controller.preview('g','p',account('legacy'),1),/operational_review/);
+});
+test('league teams and hunt cooldown are historical metadata, not pending writers',async()=>{
+ const f=fixture();
+ Object.assign(f.data.group.p,{'times-liga':{bronze:[0,1,2]},'ultima-cacada':Date.now()-1000});
+ const out=await f.controller.diagnostic('g','p',account('legacy'),1);
+ assert.equal(out.confirmationBlocked,false);
+ const preview=await f.controller.preview('g','p',account('legacy'),1);
+ assert.equal(preview.count,1);
 });
 test('ambiguous legacy XP fields remain blocked',()=>{const a=account('ambiguous');a.equipe[0]['xp-desde-nivel']=1;a.equipe[0]['vitorias-desde-nivel']=2;assert.throws(()=>prepare(a),/normalization/);const invalid=account('invalid');invalid.equipe[0]['xp-desde-nivel']=-1;assert.throws(()=>prepare(invalid),/normalization/);});
 test('expiry and simultaneous confirmations cannot create two CAS writes',async()=>{const f=fixture();let clock=0;const c=new RestoreProtocol(f.store,{gate:()=>true,now:()=>clock});const p=await c.preview('g','p',account('new'),1);clock=600001;await assert.rejects(c.confirm('g','p',p.token,async()=>account('new')),/invalid_code/);clock=0;const p2=await c.preview('g','p',account('new'),1);await Promise.allSettled([c.confirm('g','p',p2.token,async()=>account('new')),c.confirm('g','p',p2.token,async()=>account('new'))]);assert.equal(f.events.filter(x=>x==='cas').length,1);});
