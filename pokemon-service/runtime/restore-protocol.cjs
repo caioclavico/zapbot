@@ -11,6 +11,9 @@ const hash=x=>createHash('sha256').update(JSON.stringify(canonical(x))).digest('
 class RestoreError extends Error{constructor(code){super(code);this.code=code;}}
 const fail=code=>{throw new RestoreError(code)};
 const SAFE_RECEIPTS=['adventure-entregas'];
+// These fields are historical configuration/cooldown markers, not in-flight
+// writers. They are deliberately not copied into the restored account.
+const SAFE_HISTORICAL_FIELDS=['times-liga','ultima-cacada'];
 const PENDING_FIELDS=['adventure-eventos','transferencia-professor','ofertas-golpes','ofertas','combate','batalha','cacada','raid','raide'];
 function operationalPolicy(account){
   for(const key of PENDING_FIELDS){
@@ -26,7 +29,7 @@ function operationalIssues(account){
     if(value && ((Array.isArray(value)&&value.length) || (typeof value==='object'&&Object.keys(value).length))) issues.push(key);
   }
   for(const key of Object.keys(account||{})){
-    if(/adventure|pendente|transferencia-professor|times|ofertas|raid|raide|combate|batalha|cacada/i.test(key) && key!=='adventure-entregas' && !issues.includes(key)) issues.push(key);
+    if(/adventure|pendente|transferencia-professor|times|ofertas|raid|raide|combate|batalha|cacada/i.test(key) && key!=='adventure-entregas' && !SAFE_HISTORICAL_FIELDS.includes(key) && !issues.includes(key)) issues.push(key);
   }
   return issues;
 }
@@ -65,7 +68,7 @@ function validate(account){
   if(count>1000||Buffer.byteLength(JSON.stringify(account))>8*1024*1024)fail('source_too_large');
   if(!Number.isInteger(account.ativo)||account.ativo<0||account.ativo>=Math.max(1,(account.equipe??[]).length))fail('invalid_active_index');
   for(const key of Object.keys(account)){
-    if(/adventure|pendente|transferencia-professor|times|ofertas|raid|recibo|restore/i.test(key) && key!=='adventure-entregas')fail('operational_review_required');
+    if(/adventure|pendente|transferencia-professor|times|ofertas|raid|recibo|restore/i.test(key) && key!=='adventure-entregas' && !SAFE_HISTORICAL_FIELDS.includes(key))fail('operational_review_required');
   }
   return count;
 }
