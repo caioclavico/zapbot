@@ -49,8 +49,8 @@
 (defn resumo [conta]
   ;; Count stored Pokémon, not capture-history or inferred trainer levels.
   (str "• Pokémon guardados: " (+ (count (get conta "equipe" []))
-                                   (count (get conta "pc" []))
-                                   (count (get conta "enfermaria" [])))
+                                  (count (get conta "pc" []))
+                                  (count (get conta "enfermaria" [])))
        (when (contains? conta "ginasios")
          (str "\n• Ginásios registrados: " (count (get conta "ginasios"))))))
 
@@ -105,6 +105,7 @@
 
 (defn- argumentos-validos? [args]
   (or (contains? #{[] ["1"] ["2"] ["comparar"]} args)
+      (and (= 2 (count args)) (= "comparar" (first args)) (pagina-valida? (second args)))
       (and (= 2 (count args))
            (contains? #{"1" "2"} (first args))
            (pagina-valida? (second args)))))
@@ -227,6 +228,112 @@
                "Registros sem UUID ou com UUID duplicado não foram classificados como exclusivos."
                "\nUUIDs iguais com registros diferentes podem indicar evolução, alteração de atributos ou mudança de local."))))))
 
+(defn- comparar-registros [versoes]
+  (let [[a b] (map :conta versoes)
+        ra (registros a)
+        rb (registros b)
+        por-id (fn [rs] (group-by #(id-pokemon (:pokemon %)) rs))
+        ia (por-id ra)
+        ib (por-id rb)
+        duplicados (set/union
+                    (set (for [[id xs] ia
+                               :when (and id (> (count xs) 1))]
+                           id))
+                    (set (for [[id xs] ib
+                               :when (and id (> (count xs) 1))]
+                           id)))
+        ids (distinct
+             (concat
+              (keep #(id-pokemon (:pokemon %)) ra)
+              (keep #(id-pokemon (:pokemon %)) rb)))
+        sem-id (concat
+                (filter #(nil? (id-pokemon (:pokemon %))) ra)
+                (filter #(nil? (id-pokemon (:pokemon %))) rb))]
+    (vec
+     (concat
+      (mapcat
+       (fn [id]
+         (let [xs (get ia id)
+               ys (get ib id)
+               x (first xs)
+               y (first ys)]
+           (cond
+             (contains? duplicados id)
+             (concat
+              (map #(assoc %
+                           :local (str "V1 — " (:local %))
+                           :status "invalid") xs)
+              (map #(assoc %
+                           :local (str "V2 — " (:local %))
+                           :status "invalid") ys))
+
+             (and x y)
+             [(assoc y
+                     :local (str "V1/V2 — " (:local y))
+                     :original (:pokemon x)
+                     :status (if (= (:pokemon x) (:pokemon y))
+                               "compatible"
+                               "converted"))]
+
+             x
+             [(assoc x :local (str "V1 — " (:local x))
+                     :status "invalid")]
+
+             y
+             [(assoc y :local (str "V2 — " (:local y))
+                     :status "invalid")]
+
+             :else
+             [])))
+       ids)
+      (map (fn [item]
+             (assoc item
+                    :local (str "Sem UUID — " (:local item))
+                    :status "invalid"))
+           sem-id)))))
+
+(defn- resumo-comparacao [versoes]
+  (let [[a b] (map :conta versoes)
+        ra (registros a) rb (registros b)
+        ids (fn [rs] (set (keep #(id-pokemon (:pokemon %)) rs)))
+        duplicados (fn [rs]
+                     (set (for [[id xs] (group-by #(id-pokemon (:pokemon %)) rs)
+                                :when (and id (> (count xs) 1))] id)))
+        ambiguos (set/union (duplicados ra) (duplicados rb))
+        ia (set/difference (ids ra) ambiguos)
+        ib (set/difference (ids rb) ambiguos)]
+    (str "V1: " (count ra) " • V2: " (count rb)
+         " • Em comum: " (count (set/intersection ia ib))
+         " • Exclusivos V1: " (count (set/difference ia ib))
+         " • Exclusivos V2: " (count (set/difference ib ia)))))
+
+(defn- resposta-comparacao! [versoes pagina]
+  (let [itens (comparar-registros versoes)
+        total (count itens)
+        paginas (max 1 (js/Math.ceil (/ total tamanho-pagina)))
+        resumo (resumo-comparacao versoes)]
+    (if (or (< pagina 1) (> pagina paginas))
+      (p/resolved (str "Página inexistente. Escolha uma página de 1 a " paginas "."))
+      (let [inicio (* (dec pagina) tamanho-pagina)
+            fim (min total (+ inicio tamanho-pagina))
+            exibidos (subvec (vec itens) inicio fim)
+            legenda (str "🔍 *COMPARAÇÃO DOS SAVES*\n" resumo
+                         "\nPágina " pagina " de " paginas " • Total: " total " Pokémon"
+                         (when (> pagina 1) (str "\n⬅️ !pk recuperar comparar " (dec pagina)))
+                         (when (< pagina paginas) (str "\n➡️ !pk recuperar comparar " (inc pagina)))
+                         "\n🔎 Consulta somente leitura.")
+            fallback (str legenda "\n\n" (if (seq exibidos)
+                                           (str/join "\n" (map descricao exibidos))
+                                           "Nenhum Pokémon para comparar."))]
+        (if (seq exibidos)
+          (-> (cartao/criar! exibidos
+                             {:titulo "Comparação de saves"
+                              :subtitulo (str resumo " • Página " pagina "/" paginas)
+                              :arquivo (str "comparacao-saves-p" pagina ".jpg")})
+              (p/then (fn [media] {:media media :texto legenda}))
+              (p/catch (fn [_] fallback)))
+          (p/resolved fallback))))))
+
 (defn identidade-exata [{:keys [chat-id player-id]}]
   ;; Future verified bindings belong here; command arguments are never identity.
   (when (and (string? chat-id) (re-matches #"[0-9-]+@g\.us" chat-id)
@@ -250,28 +357,28 @@
                   acao (first argumentos)
                   pagina (if (second argumentos) (js/parseInt (second argumentos) 10) 1)
                   indice (if (= acao "2") 1 0)]
-              (if (and (contains? #{:encontrado :ambiguo} status)
+              (if (and (= :ambiguo status) (= "comparar" acao))
+                (resposta-comparacao! versoes pagina)
+                (if (and (contains? #{:encontrado :ambiguo} status)
                        (contains? #{"1" "2"} acao))
-                (if (and (= :encontrado status) (= acao "2"))
-                  "Não existe uma segunda versão deste save."
-                  (resposta-versao! versoes indice pagina))
-                (str "🧬 ODISSEU — RECUPERAÇÃO DE POKÉMON\n\n"
-                     (case status
-                       :encontrado
-                       (case acao
-                         "comparar" "Não existem duas versões diferentes para comparar."
-                         (str "📦 SAVE ANTIGO\n" (resumo conta)
-                              "\n\n⚡ SAVE ATUAL\n"
-                              (if (conta-valida? atual) (resumo atual) "Nenhum progresso atual disponível.")))
-                       :ambiguo
-                       (case acao
-                         "comparar" (comparar-versoes versoes)
+                  (if (and (= :encontrado status) (= acao "2"))
+                    "Não existe uma segunda versão deste save."
+                    (resposta-versao! versoes indice pagina))
+                  (str "🧬 ODISSEU — RECUPERAÇÃO DE POKÉMON\n\n"
+                       (case status
+                         :encontrado
+                         (case acao
+                           "comparar" "Não existem duas versões diferentes para comparar."
+                           (str "📦 SAVE ANTIGO\n" (resumo conta)
+                                "\n\n⚡ SAVE ATUAL\n"
+                                (if (conta-valida? atual) (resumo atual) "Nenhum progresso atual disponível.")))
+                         :ambiguo
                          (str "Encontramos versões diferentes do seu save antigo.\n\n"
                               (resumo-versoes versoes)
-                              "\n\nNenhuma versão foi selecionada automaticamente."))
-                       :invalido "O formato do save antigo não pôde ser validado com segurança."
-                       "Não encontramos um save antigo associado com segurança à sua conta.")
-                     "\n\n🔎 Consulta somente leitura. Nenhum progresso atual foi alterado."))))
+                              "\n\nNenhuma versão foi selecionada automaticamente.")
+                         :invalido "O formato do save antigo não pôde ser validado com segurança."
+                         "Não encontramos um save antigo associado com segurança à sua conta.")
+                       "\n\n🔎 Consulta somente leitura. Nenhum progresso atual foi alterado.")))))
           (p/catch (fn [_]
                      (js/console.error "[Recuperação] Consulta Cassandra indisponível; dados preservados.")
                      "Não foi possível consultar os saves antigos agora. Nenhum progresso foi alterado."))))))
