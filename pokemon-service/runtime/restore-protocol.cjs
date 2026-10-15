@@ -14,11 +14,26 @@ const SAFE_RECEIPTS=['adventure-entregas'];
 // These fields are historical configuration/cooldown markers, not in-flight
 // writers. They are deliberately not copied into the restored account.
 const SAFE_HISTORICAL_FIELDS=['times-liga','ultima-cacada'];
+function adventureEventPending(value){
+  if(!value || typeof value!=='object') return Boolean(value);
+  const state=String(value.status||value.estado||'').toLowerCase();
+  return !(value.consumido===true || value['consumido?']===true || ['concluido','concluida','completed','consumido','entregue'].includes(state));
+}
+function trainerProgress(account){
+  const direct=Number.isFinite(account?.xp)?account.xp:null;
+  const parts=['vitorias-treinador','pe-ginasios','pe-raids'];
+  const derived=parts.some(k=>Number.isFinite(account?.[k])) ? parts.reduce((n,k)=>n+(Number.isFinite(account?.[k])?account[k]:0),0) : null;
+  const total=direct!==null?direct:derived;
+  if(total===null) return {available:false};
+  let level=1,remaining=Math.max(0,total),needed=5;
+  while(remaining>=needed){remaining-=needed;level++;needed+=2;}
+  return {available:true,total,level,xpCurrent:remaining,xpNeeded:needed};
+}
 const PENDING_FIELDS=['adventure-eventos','transferencia-professor','ofertas-golpes','ofertas','combate','batalha','cacada','raid','raide'];
 function operationalPolicy(account){
   for(const key of PENDING_FIELDS){
     const value=account?.[key];
-    if(value && ((Array.isArray(value)&&value.length) || (typeof value==='object'&&Object.keys(value).length))) fail('operational_review_required');
+    if(value && (key==='adventure-eventos' ? Object.values(value).some(adventureEventPending) : ((Array.isArray(value)&&value.length) || (typeof value==='object'&&Object.keys(value).length)))) fail('operational_review_required');
   }
   return Object.fromEntries(SAFE_RECEIPTS.filter(k=>account?.[k]&&typeof account[k]==='object').map(k=>[k,copy(account[k])]));
 }
@@ -26,10 +41,10 @@ function operationalIssues(account){
   const issues=[];
   for(const key of PENDING_FIELDS){
     const value=account?.[key];
-    if(value && ((Array.isArray(value)&&value.length) || (typeof value==='object'&&Object.keys(value).length))) issues.push(key);
+    if(value && (key==='adventure-eventos' ? Object.values(value).some(adventureEventPending) : ((Array.isArray(value)&&value.length) || (typeof value==='object'&&Object.keys(value).length)))) issues.push(key);
   }
   for(const key of Object.keys(account||{})){
-    if(/adventure|pendente|transferencia-professor|times|ofertas|raid|raide|combate|batalha|cacada/i.test(key) && key!=='adventure-entregas' && !SAFE_HISTORICAL_FIELDS.includes(key) && !issues.includes(key)) issues.push(key);
+    if(/adventure|pendente|transferencia-professor|times|ofertas|raid|raide|combate|batalha|cacada/i.test(key) && key!=='adventure-entregas' && key!=='adventure-eventos' && !SAFE_HISTORICAL_FIELDS.includes(key) && !issues.includes(key)) issues.push(key);
   }
   return issues;
 }
@@ -68,7 +83,7 @@ function validate(account){
   if(count>1000||Buffer.byteLength(JSON.stringify(account))>8*1024*1024)fail('source_too_large');
   if(!Number.isInteger(account.ativo)||account.ativo<0||account.ativo>=Math.max(1,(account.equipe??[]).length))fail('invalid_active_index');
   for(const key of Object.keys(account)){
-    if(/adventure|pendente|transferencia-professor|times|ofertas|raid|recibo|restore/i.test(key) && key!=='adventure-entregas' && !SAFE_HISTORICAL_FIELDS.includes(key))fail('operational_review_required');
+    if(/adventure|pendente|transferencia-professor|times|ofertas|raid|recibo|restore/i.test(key) && key!=='adventure-entregas' && !(key==='adventure-eventos' && !Object.values(account[key]||{}).some(adventureEventPending)) && !SAFE_HISTORICAL_FIELDS.includes(key))fail('operational_review_required');
   }
   return count;
 }
@@ -187,7 +202,7 @@ class RestoreProtocol{
     const entries=diagnosticEntries(source);
     const blocked=operationalIssues(current);
     return {entries,total:entries.length,currentCount:current ? ['equipe','pc','enfermaria'].reduce((n,k)=>n+(current[k]??[]).length,0) : 0,version,
-      confirmationBlocked:Boolean(blocked.length),blockingOperations:blocked};
+      confirmationBlocked:Boolean(blocked.length),blockingOperations:blocked,currentTrainer:trainerProgress(current||{}),legacyTrainer:trainerProgress(source)};
   }
   async confirm(chat,player,token,readSource){
     // gate must include readiness, writer exclusion and startup reconciliation.
