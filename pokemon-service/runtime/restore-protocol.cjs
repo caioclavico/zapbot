@@ -48,6 +48,11 @@ function operationalIssues(account){
   }
   return issues;
 }
+function receiptIssues(account){
+  const value=account?.['adventure-entregas'];
+  const nonEmpty=Array.isArray(value) ? value.length>0 : (value && typeof value==='object' ? Object.keys(value).length>0 : Boolean(value));
+  return nonEmpty ? ['adventure-entregas'] : [];
+}
 function validate(account){
   if(!account||typeof account!=='object'||Array.isArray(account))fail('invalid_account');
   const slots=['equipe','pc','enfermaria'];const ids=new Set();
@@ -157,9 +162,10 @@ function diagnosticEntries(source){
 function prepare(source) {
   const migrated=migrateLegacyAccount(source);
   validate(migrated.target);
-  if (SAFE_RECEIPTS.some(k=>Object.prototype.hasOwnProperty.call(source,k))) fail('operational_review_required');
+  if (receiptIssues(source).length) fail('operational_review_required');
   operationalPolicy(source);
   const target = migrated.target;
+  for (const key of SAFE_RECEIPTS) delete target[key];
   const transformations = [...migrated.transformations];
   if ((target.pc ?? []).length) transformations.push('PC acrescentado ao fim da equipe; índices anteriores preservados.');
   target.equipe = [...(target.equipe ?? []), ...(target.pc ?? [])];
@@ -201,8 +207,10 @@ class RestoreProtocol{
     if(current && Buffer.byteLength(JSON.stringify(current))>8*1024*1024) fail('source_too_large');
     const entries=diagnosticEntries(source);
     const blocked=operationalIssues(current);
+    const sourceBlocked=receiptIssues(source);
     return {entries,total:entries.length,currentCount:current ? ['equipe','pc','enfermaria'].reduce((n,k)=>n+(current[k]??[]).length,0) : 0,version,
-      confirmationBlocked:Boolean(blocked.length),blockingOperations:blocked,currentTrainer:trainerProgress(current||{}),legacyTrainer:trainerProgress(source)};
+      confirmationBlocked:Boolean(blocked.length||sourceBlocked.length),blockingOperations:blocked,sourceBlockingOperations:sourceBlocked,
+      currentTrainer:trainerProgress(current||{}),legacyTrainer:trainerProgress(source)};
   }
   async confirm(chat,player,token,readSource){
     // gate must include readiness, writer exclusion and startup reconciliation.
