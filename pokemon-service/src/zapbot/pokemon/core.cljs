@@ -283,6 +283,7 @@
                     (get @evolucoes-pendentes [cid pid]) (conj "evolução")
                     (get @remocoes-pendentes [cid pid]) (conj "oferta de golpe")
                     (raids/participando? cid pid) (conj "raid")
+                    (raids/captura-pendente cid pid (.now js/Date)) (conj "captura de raide pendente")
                     (seq (ginasios/liderados cid pid)) (conj "ginásio com time associado")
                     troca? (conj "troca"))]
     operacoes))

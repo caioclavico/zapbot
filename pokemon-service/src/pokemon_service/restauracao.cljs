@@ -83,8 +83,9 @@
 (defn- formatar-riscos [riscos]
   (->> (array-seq (or riscos #js []))
        (map #(js->clj % :keywordize-keys true))
-       (map (fn [{:keys [field category state rule]}]
-              (str "• " field " — " state " [" (name (keyword (or category "unknown"))) "]: " rule)))
+       (map (fn [{:keys [field category state rule action]}]
+              (str "• " field " — " state " [" (name (keyword (or category "unknown"))) "]: " rule
+                   (when (seq action) (str " Próximo passo seguro: " action)))))
        (str/join "\n")))
 
 (defn- resumo-diagnostico! [pid source protocol cid versao]

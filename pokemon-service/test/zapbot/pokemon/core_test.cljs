@@ -1229,3 +1229,22 @@
                        (set! core/impedimento-status status-original)
                        (swap! core/jogos dissoc cid)
                        (done)))))))
+
+(deftest restauracao-preflight-detecta-ocupacao-persistida-de-ginasio-e-captura-pos-raide
+  (let [ocupacoes (atom [["pedra" {"pid" "ash" "time" [{"id-pokemon" "external-1"}]}]])]
+    (with-redefs [core/jogos (atom {})
+                  core/cacadas-selvagens (atom {})
+                  core/evolucoes-pendentes (atom #{})
+                  core/remocoes-pendentes (atom {})
+                  core/propostas-troca (atom {})
+                  ginasios/liderados (fn [_ pid]
+                                       (filter (fn [[_ ocupacao]] (= pid (get ocupacao "pid"))) @ocupacoes))
+                  raids/participando? (fn [_ _] false)
+                  raids/captura-pendente (fn [_ pid _] (when (= pid "ash") :captura-pendente))]
+      (is (= ["captura de raide pendente" "ginásio com time associado"]
+             (core/restauracao-preflight "grupo" "ash")))
+      ;; Preflight is read-only: it does not release the externally persisted
+      ;; occupation or consume the post-victory capture opportunity.
+      (is (= "ash" (get-in (first @ocupacoes) [1 "pid"])))
+      (is (= ["captura de raide pendente" "ginásio com time associado"]
+             (core/restauracao-preflight "grupo" "ash"))))))

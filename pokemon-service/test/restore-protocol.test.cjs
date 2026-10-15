@@ -69,6 +69,122 @@ test('league teams and hunt cooldown are historical metadata, not pending writer
  const preview=await f.controller.preview('g','p',account('legacy'),1);
  assert.equal(preview.count,1);
 });
+test('validated gym and named-team configurations are preserved without blocking; malformed references block',async()=>{
+ const source=account('legacy');
+ source.equipe=[0,1,2].map(i=>({...source.equipe[0],'id-pokemon':`legacy-${i}`}));
+ source['time-ginasio']=[0,null,2];
+ source['times-prontos']={"time salvo":{"nome":"time salvo","pokemons":["legacy-0","legacy-1","legacy-2"]}};
+ const f=fixture(),diagnostic=await f.controller.diagnostic('g','p',source,1);
+ assert.equal(diagnostic.confirmationBlocked,false);
+ for(const field of ['time-ginasio','times-prontos'])
+   assert.equal(diagnostic.sourceRisks.find(x=>x.field===field).category,'permanent_configuration');
+ const preview=await f.controller.preview('g','p',source,1);
+ assert.deepEqual(f.controller.previews.get(hash(preview.token)).source['time-ginasio'],source['time-ginasio']);
+ assert.deepEqual(f.controller.previews.get(hash(preview.token)).source['times-prontos'],source['times-prontos']);
+
+ for(const [field,mutate] of [
+   ['time-ginasio',a=>{a['time-ginasio']=[0,1,99];}],
+   ['times-prontos',a=>{a['times-prontos']={invalido:{pokemons:['legacy-0','missing','legacy-2']}};}]
+ ]){
+   const blocked=fixture(),bad=copy(source);mutate(bad);
+   const d=await blocked.controller.diagnostic('g','p',bad,1);
+   const finding=d.sourceRisks.find(item=>item.field===field&&item.blocking);
+   assert.ok(finding,`${field} invalid reference is visible`);
+   assert.equal(typeof finding.action,'string');
+   await assert.rejects(blocked.controller.checkPreparation('g','p',bad),error=>
+     error.code==='operational_review_required'&&error.findings.some(item=>item.field===field&&item.rule===finding.rule));
+ }
+});
+test('raid points are cumulative and retained by max; raid idempotency markers must match',async()=>{
+ const source=account('legacy');source['pe-raids']=8;source['raid-progresso-dia']='raid-shared';
+ const f=fixture();f.data.group.p['pe-raids']=14;f.data.group.p['raid-progresso-dia']='raid-shared';
+ const d=await f.controller.diagnostic('g','p',source,1);
+ assert.equal(d.confirmationBlocked,false);
+ assert.equal(d.sourceRisks.find(x=>x.field==='pe-raids').category,'cumulative_progress');
+ assert.equal(d.currentRisks.find(x=>x.field==='raid-progresso-dia').category,'idempotency_marker');
+ const checked=await f.controller.checkPreparation('g','p',source);
+ assert.equal(checked.tokenIssued,false);
+ const preview=await f.controller.preview('g','p',source,1);
+ assert.equal(f.controller.previews.get(hash(preview.token)).source['pe-raids'],14);
+ assert.equal(f.controller.previews.get(hash(preview.token)).source['raid-progresso-dia'],'raid-shared');
+
+ const conflict=fixture();conflict.data.group.p['raid-progresso-dia']='raid-current';
+ const conflictDiagnostic=await conflict.controller.diagnostic('g','p',source,1);
+ const finding=conflictDiagnostic.sourceRisks.find(x=>x.field==='raid-progresso-dia'&&x.blocking);
+ assert.equal(finding.category,'incompatible_idempotency_marker');
+ assert.equal(typeof finding.action,'string');
+ await assert.rejects(conflict.controller.checkPreparation('g','p',source),error=>
+   error.code==='operational_review_required'&&error.findings.some(x=>x.field==='raid-progresso-dia'&&x.category===finding.category));
+});
+test('invalid raid markers and points block without exposing values',async()=>{
+ for(const [field,value] of [['raid-progresso-dia',''],['pe-raids',-1],['pe-raids','six']]){
+   const f=fixture(),source=account('legacy');source[field]=value;
+   const d=await f.controller.diagnostic('g','p',source,1);
+   assert.equal(d.confirmationBlocked,true);
+   if(value!=='')assert.equal(d.sourceRisks.find(x=>x.field===field).state.includes(String(value)),false);
+   await assert.rejects(f.controller.checkPreparation('g','p',source),error=>
+     error.code==='operational_review_required'&&error.findings.some(x=>x.field===field));
+ }
+});
+test('pending raid XP blocks on source or current account, including orphaned references',async()=>{
+ for(const side of ['source','current']){
+   for(const [reference,expected] of side==='source'?[['legacy','operation_pending'],['missing-pokemon','incompatible_reference']]:[['old','operation_pending'],['missing-pokemon','incompatible_reference']]){
+     const f=fixture(),source=account('legacy');
+     const target=side==='source'?source:f.data.group.p;
+     target['xp-raids-pendente']={[reference]:6};
+     const d=await f.controller.diagnostic('g','p',source,1);
+     const risks=side==='source'?d.sourceRisks:d.currentRisks;
+     const finding=risks.find(x=>x.field==='xp-raids-pendente'&&x.blocking);
+     assert.ok(finding,`${side} pending XP is visible`);
+     assert.equal(finding.category,expected);
+     assert.equal(typeof finding.action,'string');
+     await assert.rejects(f.controller.checkPreparation('g','p',source),error=>
+       error.code==='operational_review_required'&&error.findings.some(x=>x.field==='xp-raids-pendente'&&x.category===finding.category));
+     assert.equal(f.controller.previews.size,0);
+   }
+ }
+ const empty=fixture();empty.data.group.p['xp-raids-pendente']={};
+ assert.equal((await empty.controller.diagnostic('g','p',account('legacy'),1)).confirmationBlocked,false);
+});
+test('active gym occupancy is reported with safe resolution and never removed by restore checks',async()=>{
+ const f=fixture(),occupancy={gym:'persisted-external-gym',pid:'p',time:['copied-a','copied-b','copied-c']};
+ f.store.hooks={preflight:async()=>occupancy.pid==='p'?['ginásio com time associado']:[]};
+ const before=copy(f.data),d=await f.controller.diagnostic('g','p',account('legacy'),1);
+ const finding=d.currentRisks.find(x=>x.field==='ginásio com time associado');
+ assert.equal(d.confirmationBlocked,true);
+ assert.match(finding.rule,/não remove nem cancela/);
+ assert.match(finding.action,/Aguarde/);
+ await assert.rejects(f.controller.checkPreparation('g','p',account('legacy')),error=>
+   error.code==='external_operation_pending'&&error.operations.includes('ginásio com time associado'));
+ assert.deepEqual(f.data,before);
+});
+test('gym occupancy beginning after diagnostic blocks preparation; concurrent raid marker change conflicts at confirm',async()=>{
+ const f=fixture();let occupied=false;
+ f.store.hooks={preflight:async()=>occupied?['ginásio com time associado']:[]};
+ assert.equal((await f.controller.diagnostic('g','p',account('legacy'),1)).confirmationBlocked,false);
+ occupied=true;
+ await assert.rejects(f.controller.checkPreparation('g','p',account('legacy')),error=>
+   error.code==='external_operation_pending'&&error.operations.includes('ginásio com time associado'));
+ occupied=false;
+ const source=account('legacy');source['raid-progresso-dia']='raid-legacy';
+ const preview=await f.controller.preview('g','p',source,1);
+ f.data.group.p['raid-progresso-dia']='raid-concurrent';
+ await assert.rejects(f.controller.confirm('g','p',preview.token,async()=>source),/target_conflict/);
+ assert.equal(f.events.filter(event=>event==='cas').length,0);
+ assert.ok(f.data.locks.p);
+});
+test('external gym occupation appearing after preview is rechecked under durable lock before backup or CAS',async()=>{
+ const f=fixture();let occupied=false;
+ f.store.hooks={preflight:async()=>occupied?['ginásio com time associado']:[]};
+ const preview=await f.controller.preview('g','p',account('legacy'),1);
+ occupied=true;
+ await assert.rejects(f.controller.confirm('g','p',preview.token,async()=>account('legacy')),error=>
+   error.code==='external_operation_pending'&&error.operations.includes('ginásio com time associado'));
+ assert.ok(f.data.locks.p);
+ assert.equal(Object.keys(f.data.backups).length,0);
+ assert.equal(f.events.filter(event=>event==='cas').length,0);
+ assert.equal(Object.values(f.data.ops)[0].state,'prepared');
+});
 test('drained adventure events are absent; every stored event blocks until durable acknowledgement',async()=>{
  const completed=fixture();completed.data.group.p['adventure-eventos']={};
  assert.equal((await completed.controller.diagnostic('g','p',account('legacy'),1)).confirmationBlocked,false);
