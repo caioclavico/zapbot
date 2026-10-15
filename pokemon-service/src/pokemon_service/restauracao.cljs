@@ -111,9 +111,46 @@
                 "• Pokémon: atual " (.-currentCount diagnostico) " | save antigo " (.-total diagnostico)))
          (if (seq bloqueios)
            (str "\n\n⚠️ *Confirmação bloqueada*\nOperações: " (str/join ", " bloqueios))
-           "\n\n✅ Nenhuma operação pendente foi identificada.")
+           (str "\n\n✅ *Prévia aprovada.* Para iniciar a confirmação segura, use: !pk restaurar "
+                versao " preparar"))
          "\n\n⚠️ A restauração substituirá o treinador atual e não mesclará as coleções."
          "\n🔎 Consulta somente leitura; nenhum token foi gerado e nenhum save foi alterado.")))
+
+(defn- preparar! [pid source protocol cid versao]
+  ;; A diagnostic pass is intentionally performed first.  It is read-only and
+  ;; prevents a confirmation token from being created while an operational
+  ;; writer is still active.  The protocol preview then performs the strict,
+  ;; transactional validation and records hashes for the confirmation step.
+  (p/let [diagnostico (.diagnostic protocol cid pid source versao)
+          bloqueios (vec (array-seq (or (.-blockingOperations diagnostico) #js [])))]
+    (when (seq bloqueios)
+      (let [erro (js/Error. "operational_review_required")]
+        (set! (.-code erro) "operational_review_required")
+        (throw erro)))
+    (p/let [preview (.preview protocol cid pid source versao)
+            atual (js->clj (.-currentTrainer diagnostico) :keywordize-keys true)
+            antigo (js->clj (.-legacyTrainer diagnostico) :keywordize-keys true)
+            linha (fn [label chave]
+                    (str "• " label ": atual "
+                         (if (:available atual) (get atual chave) "indisponível")
+                         " | save antigo "
+                         (if (:available antigo) (get antigo chave) "indisponível") "\n"))]
+      (str "✅ *Confirmação preparada com sucesso*\n"
+           "• Pokémon: atual " (.-currentCount preview) " | save antigo " (.-count preview) "\n"
+           "• Save selecionado: versão " versao "\n"
+           "\n⭐ *Treinadores*\n"
+           (linha "Nível" :level)
+           (linha "XP total" :total)
+           (linha "XP no nível" :xpCurrent)
+           "\n🧪 *Alterações previstas*\n"
+           (if (seq (.-transformations preview))
+             (str/join "\n" (map #(str "• " %) (array-seq (.-transformations preview))))
+             "• Nenhuma conversão adicional")
+           "\n\n🔐 Backup durável: ainda não criado. Ele será criado e confirmado antes da substituição.\n"
+           "⏳ Código válido até " (js/Date. (.-expires preview)) "\n"
+           "⚠️ A confirmação substituirá o save ativo; as coleções não serão mescladas.\n\n"
+           "📋 Copie este comando para confirmar:\n"
+           "!pk restaurar confirmar " (.-token preview)))))
 
 (defn comando! [cid pid args]
   ;; Entered before navigation, XP, Joy collection or automatic persistence.
@@ -131,6 +168,11 @@
           (p/let [_ (confirmar-interno! cid pid (second args)
                                         (fn [versao] (origem! cid pid versao)))]
             "✅ Restauração confirmada e persistida com sucesso.")
+          (and protocol (= 3 (count args))
+               (contains? #{"1" "2"} (first args))
+               (= "preparar" (second args)))
+          (p/let [source (origem! cid pid (first args))]
+            (preparar! pid source protocol cid (first args)))
           (and protocol (contains? #{"1" "2"} (first args))
                (or (= 1 (count args))
                    (and (= 2 (count args)) (= "previa" (second args)))))
@@ -139,7 +181,7 @@
           (and protocol (= 3 (count args)) (= "desfazer" (first args)) (= "previa" (last args)))
           (p/let [preview (previa-backup! cid pid (second args))]
             (str "📦 Prévia do backup validada: " (.-count preview) " Pokémon.\n🔒 Confirmação desabilitada."))
-          :else (p/resolved "🔒 Confirmação de restauração desabilitada. Consultas: !pk restaurar 1 previa, 2 previa, backups ou desfazer ID previa."))
+          :else (p/resolved "🔒 Confirmação de restauração desabilitada. Consultas: !pk restaurar 1 previa, 2 previa; preparação: !pk restaurar 1 preparar; backups ou desfazer ID previa."))
         (p/catch (fn [erro]
                    (str "⚠️ Prévia bloqueada: "
                         (case (.-code erro)
