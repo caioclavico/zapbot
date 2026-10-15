@@ -271,7 +271,7 @@
                       (is (not (re-find #"adventure-entregas|ultima-cacada|times-liga" texto)))
                       (is (re-find #"nenhum (código foi emitido|token foi gerado)" texto))
                       (is (or (re-find #"Nenhuma conta foi modificada" texto)
-                              (re-find #"nenhum save foi alterado" texto)))))
+                              (re-find #"nenhum save foi alterado" texto))))))
           (p/catch #(is false (str %)))
           (p/finally (fn []
                        (set! storage/consultar-treinador-legado! original-consulta)
