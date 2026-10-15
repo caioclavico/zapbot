@@ -274,7 +274,19 @@
   "Validação atômica do estado volátil antes de uma restauração.
   Não encerra operações: qualquer atividade incompatível apenas bloqueia a
   prévia. O writer compartilhado revalida o bloqueio antes do CAS."
-  (let [troca? (some (fn [[[chat _] proposta]]
+  (let [ocupacoes (vec (ginasios/liderados cid pid))
+        descrever-ocupacao
+        (fn [[id ocupacao]]
+          (let [defensores (->> (get ocupacao "time")
+                                (map #(let [nome (get % "nome")]
+                                        (if (and (string? nome) (not (str/blank? nome))) nome
+                                            "Pokémon sem nome válido")))
+                                (str/join ", "))]
+            (str "ginásio ocupado: "
+                 (if (and (string? id) (not (str/blank? id))) id "ginásio sem identificador válido")
+                 " (" (count (get ocupacao "time")) " defensores: "
+                 (if (str/blank? defensores) "nenhum identificável" defensores) ")")))
+        troca? (some (fn [[[chat _] proposta]]
                        (and (= chat cid) (contains? #{(:a proposta) (:b proposta)} pid)))
                      @propostas-troca)
         operacoes (cond-> []
@@ -284,9 +296,11 @@
                     (get @remocoes-pendentes [cid pid]) (conj "oferta de golpe")
                     (raids/participando? cid pid) (conj "raid")
                     (raids/captura-pendente cid pid (.now js/Date)) (conj "captura de raide pendente")
-                    (seq (ginasios/liderados cid pid)) (conj "ginásio com time associado")
                     troca? (conj "troca"))]
-    operacoes))
+    ;; Report the precise occupied gyms and copied defenders for the private
+    ;; preparation response. This is diagnostic only: no occupancy, reward,
+    ;; ranking, or trainer state is changed here.
+    (into operacoes (map descrever-ocupacao ocupacoes))))
 
 (defn- chat-id [contexto]
   (:chat-id contexto))

@@ -47,7 +47,7 @@ const LIVE_OPERATION_RULES={
   'oferta de golpe':'Oferta de golpe pendente para um Pokémon da conta.',
   'raid':'Participação em raid ainda ativa.',
   'captura de raide pendente':'Vitória de raid ainda permite capturas; aguarde o prazo/consumo das tentativas antes de trocar a conta.',
-  'ginásio com time associado':'Este treinador ainda ocupa um ginásio, cujo estado guarda uma cópia externa dos defensores. Aguarde a liberação normal do ginásio; a restauração não remove nem cancela a ocupação.',
+  'ginásio com time associado':'Este treinador ainda ocupa um ginásio, cujo estado guarda uma cópia externa dos defensores. Não há encerramento transacional de ocupações integrado à restauração; a atividade deve terminar pelo fluxo normal do ginásio.',
   'troca':'Proposta de troca pendente envolve esta conta.'
 };
 const SAFE_ACTIONS={
@@ -56,7 +56,7 @@ const SAFE_ACTIONS={
   'pe-raids':'Não prossiga até revisar manualmente o total inválido; não some nem zere pontos para liberar a restauração.',
   'raid-progresso-dia':'Se os IDs de raide diferirem entre os saves, solicite reconciliação do histórico antes de preparar; não altere nem descarte o marcador.',
   'xp-raids-pendente':'Consuma o XP pelo fluxo normal quando o Pokémon estiver na equipe; se o registro não puder ser resgatado, solicite reconciliação sem apagar o pendente.',
-  'ginásio com time associado':'Aguarde o encerramento normal da ocupação do ginásio. A restauração não desocupa nem cancela a atividade.',
+  'ginásio com time associado':'Aguarde outro treinador vencer normalmente a ocupação no ginásio e execute uma nova prévia. Não remova nem altere manualmente o registro; a restauração não desocupa nem cancela a atividade.',
   'captura de raide pendente':'Use apenas as tentativas normais da captura pendente ou aguarde a expiração; a restauração não consome nem cancela a recompensa.'
 };
 const LEAGUE_LEVELS={iniciante:[1,10],bronze:[11,25],prata:[26,40],ouro:[41,60],diamante:[61,100]};
@@ -244,9 +244,11 @@ async function liveOperations(store,chat,player){
   return Array.isArray(result)?[...new Set(result.filter(x=>typeof x==='string'&&x))]:[];
 }
 function liveRisk(operation){
-  return {field:operation,category:'operation_pending',state:'operação ativa no runtime',
-    rule:LIVE_OPERATION_RULES[operation]||RISK_RULES.default,
-    ...(SAFE_ACTIONS[operation]?{action:SAFE_ACTIONS[operation]}:{}),blocking:true};
+  const gymOccupancy=operation.startsWith('ginásio ocupado:');
+  const key=gymOccupancy?'ginásio com time associado':operation;
+  return {field:operation,category:'operation_pending',state:gymOccupancy?'ocupação ativa com defensores externos':'operação ativa no runtime',
+    rule:LIVE_OPERATION_RULES[key]||RISK_RULES.default,
+    ...(SAFE_ACTIONS[key]?{action:SAFE_ACTIONS[key]}:{}),blocking:true};
 }
 function mergeOperationalPolicy(target,source,current){
   const sourcePolicy=operationalPolicy(source),currentPolicy=operationalPolicy(current);

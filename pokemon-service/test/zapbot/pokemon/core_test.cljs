@@ -1231,7 +1231,9 @@
                        (done)))))))
 
 (deftest restauracao-preflight-detecta-ocupacao-persistida-de-ginasio-e-captura-pos-raide
-  (let [ocupacoes (atom [["pedra" {"pid" "ash" "time" [{"id-pokemon" "external-1"}]}]])]
+  (let [ocupacoes (atom [["pedra" {"pid" "ash" "time" [{"id-pokemon" "external-1" "nome" "Pikachu"}
+                                                               {"id-pokemon" "external-2" "nome" "Eevee"}]}]
+                         ["agua" {"pid" "ash" "time" [{"id-pokemon" "external-1" "nome" "Pikachu"}]}]])]
     (with-redefs [core/jogos (atom {})
                   core/cacadas-selvagens (atom {})
                   core/evolucoes-pendentes (atom #{})
@@ -1241,10 +1243,16 @@
                                        (filter (fn [[_ ocupacao]] (= pid (get ocupacao "pid"))) @ocupacoes))
                   raids/participando? (fn [_ _] false)
                   raids/captura-pendente (fn [_ pid _] (when (= pid "ash") :captura-pendente))]
-      (is (= ["captura de raide pendente" "ginásio com time associado"]
-             (core/restauracao-preflight "grupo" "ash")))
+      (let [preflight (core/restauracao-preflight "grupo" "ash")]
+        (is (= 3 (count preflight)))
+        (is (= "captura de raide pendente" (first preflight)))
+        (is (some #(and (str/includes? % "ginásio ocupado: pedra")
+                        (str/includes? % "Pikachu, Eevee")) preflight))
+        (is (some #(and (str/includes? % "ginásio ocupado: agua")
+                        (str/includes? % "Pikachu")) preflight))
+        (is (not-any? #(str/includes? % "external-") preflight)))
       ;; Preflight is read-only: it does not release the externally persisted
       ;; occupation or consume the post-victory capture opportunity.
       (is (= "ash" (get-in (first @ocupacoes) [1 "pid"])))
-      (is (= ["captura de raide pendente" "ginásio com time associado"]
-             (core/restauracao-preflight "grupo" "ash"))))))
+      (is (= 3 (count (core/restauracao-preflight "grupo" "ash"))))
+      (is (empty? (core/restauracao-preflight "grupo" "misty"))))))
