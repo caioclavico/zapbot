@@ -11,9 +11,10 @@ const hash=x=>createHash('sha256').update(JSON.stringify(canonical(x))).digest('
 class RestoreError extends Error{constructor(code,details={}){super(code);this.code=code;Object.assign(this,details);}}
 const fail=(code,details)=>{throw new RestoreError(code,details)};
 const SAFE_RECEIPTS=['adventure-entregas'];
-// These fields are historical configuration/cooldown markers, not in-flight
-// writers. They are deliberately not copied into the restored account.
-const SAFE_HISTORICAL_FIELDS=['times-liga','ultima-cacada'];
+// Valid configuration and cumulative markers are not in-flight operations.
+// Their references are validated below; monotonic account markers are merged
+// by mergeOperationalPolicy rather than copied blindly.
+const SAFE_HISTORICAL_FIELDS=['times-liga','ultima-cacada','time-ginasio','times-prontos','pe-raids','raid-progresso-dia'];
 function trainerProgress(account){
   const direct=Number.isFinite(account?.xp)?account.xp:null;
   const parts=['vitorias-treinador','pe-ginasios','pe-raids'];
@@ -30,6 +31,11 @@ const RISK_RULES={
   'adventure-entregas':'Recibos confirmam Pokémon já entregues; recibos válidos são unidos por ID para impedir reentrega.',
   'times-liga':'Times guardam índices de Pokémon da equipe; a origem só é segura se todos os índices continuarem válidos.',
   'ultima-cacada':'Cooldown é um timestamp; a troca conserva o maior timestamp válido entre origem e conta atual.',
+  'time-ginasio':'Escalação salva por índices da equipe; a origem só é segura se os índices forem válidos. A ocupação real é verificada separadamente no estado dos ginásios.',
+  'times-prontos':'Escalações nomeadas guardam IDs de Pokémon da equipe; todos os IDs precisam apontar para registros únicos do mesmo save.',
+  'pe-raids':'Pontos de raide já concedidos são progresso cumulativo, sem operação externa pendente; a restauração conserva o maior total entre os dois estados.',
+  'raid-progresso-dia':'Chave de idempotência do último progresso de raide (ID da raide, ou data local em estados antigos); dois valores diferentes não podem ser unidos com segurança pelo schema atual.',
+  'xp-raids-pendente':'XP de raide ainda aguarda aplicação a um Pokémon identificado. Resolva pelo fluxo normal antes de preparar; não descarte o recibo pendente.',
   'ofertas-golpes':'Ofertas de golpes ainda não decididas dependem do Pokémon e precisam ser resolvidas antes da troca.',
   'transferencia-professor':'Transferência pendente pode consumir um Pokémon e precisa ser concluída ou cancelada.',
   'default':'Campo operacional não reconhecido; requer revisão até que sua semântica e suas referências sejam verificadas.'
@@ -40,8 +46,18 @@ const LIVE_OPERATION_RULES={
   'evolução':'Evolução assíncrona em andamento; aguarde o callback finalizar.',
   'oferta de golpe':'Oferta de golpe pendente para um Pokémon da conta.',
   'raid':'Participação em raid ainda ativa.',
-  'ginásio com time associado':'Ocupação de ginásio guarda uma cópia externa do time atual.',
+  'captura de raide pendente':'Vitória de raid ainda permite capturas; aguarde o prazo/consumo das tentativas antes de trocar a conta.',
+  'ginásio com time associado':'Este treinador ainda ocupa um ginásio, cujo estado guarda uma cópia externa dos defensores. Aguarde a liberação normal do ginásio; a restauração não remove nem cancela a ocupação.',
   'troca':'Proposta de troca pendente envolve esta conta.'
+};
+const SAFE_ACTIONS={
+  'time-ginasio':'Revise a escalação no save correspondente e gere uma nova prévia; não altere nem remova Pokémon automaticamente.',
+  'times-prontos':'Corrija ou exclua a escalação inválida pelo fluxo normal do jogo e gere uma nova prévia.',
+  'pe-raids':'Não prossiga até revisar manualmente o total inválido; não some nem zere pontos para liberar a restauração.',
+  'raid-progresso-dia':'Se os IDs de raide diferirem entre os saves, solicite reconciliação do histórico antes de preparar; não altere nem descarte o marcador.',
+  'xp-raids-pendente':'Consuma o XP pelo fluxo normal quando o Pokémon estiver na equipe; se o registro não puder ser resgatado, solicite reconciliação sem apagar o pendente.',
+  'ginásio com time associado':'Aguarde o encerramento normal da ocupação do ginásio. A restauração não desocupa nem cancela a atividade.',
+  'captura de raide pendente':'Use apenas as tentativas normais da captura pendente ou aguarde a expiração; a restauração não consome nem cancela a recompensa.'
 };
 const LEAGUE_LEVELS={iniciante:[1,10],bronze:[11,25],prata:[26,40],ouro:[41,60],diamante:[61,100]};
 const isObject=value=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
@@ -56,9 +72,51 @@ function receiptRecord(value){
   }
   return {ok:true,receipts};
 }
+function validRaidProgressMarker(value){
+  // The runtime stores the raid ID here (falling back to the local date for
+  // legacy records), so this is an opaque idempotency key, not always a date.
+  return typeof value==='string'&&value.trim().length>0&&value.length<=200;
+}
+function teamPokemonIdCounts(account){
+  const counts=new Map();
+  // PC is appended to equipe by the existing collection migration before
+  // named teams are used at runtime, so legacy PC references remain valid.
+  for(const pokemon of [...(Array.isArray(account?.equipe)?account.equipe:[]),...(Array.isArray(account?.pc)?account.pc:[])]){
+    const id=pokemon?.['id-pokemon'];
+    if(typeof id==='string'&&id)counts.set(id,(counts.get(id)||0)+1);
+  }
+  return counts;
+}
+function accountPokemonIdCounts(account){
+  const counts=new Map();
+  for(const slot of ['equipe','pc','enfermaria'])for(const row of Array.isArray(account?.[slot])?account[slot]:[]){
+    const pokemon=slot==='enfermaria'?row?.pokemon:row;
+    const id=pokemon?.['id-pokemon'];
+    if(typeof id==='string'&&id)counts.set(id,(counts.get(id)||0)+1);
+  }
+  return counts;
+}
+function validGymTeamConfiguration(account){
+  const slots=account?.['time-ginasio'];
+  return slots===undefined||(Array.isArray(slots)&&(slots.length===0||(
+    slots.length===3&&slots.every(index=>index===null||(Number.isInteger(index)&&index>=0&&index<(account.equipe||[]).length))&&
+    new Set(slots.filter(index=>index!==null)).size===slots.filter(index=>index!==null).length)));
+}
+function validSavedTeams(account){
+  const teams=account?.['times-prontos'];
+  if(teams===undefined)return true;
+  if(!isObject(teams))return false;
+  const counts=teamPokemonIdCounts(account);
+  return Object.entries(teams).every(([name,team])=>{
+    const ids=team?.pokemons;
+    return Boolean(name)&&isObject(team)&&Array.isArray(ids)&&ids.length<=3&&
+      ids.every(id=>typeof id==='string'&&id&&counts.get(id)===1)&&new Set(ids).size===ids.length;
+  });
+}
 function classifyOperationalState(account){
   const findings=[];
-  const add=(field,category,state,blocking)=>findings.push({field,category,state,rule:RISK_RULES[field]||RISK_RULES.default,blocking});
+  const add=(field,category,state,blocking)=>findings.push({field,category,state,rule:RISK_RULES[field]||RISK_RULES.default,
+    ...(blocking&&SAFE_ACTIONS[field]?{action:SAFE_ACTIONS[field]}:{}),blocking});
   const events=account?.['adventure-eventos'];
   if(events!==undefined){
     if(!isObject(events))add('adventure-eventos','invalid_or_unknown','estrutura inválida',true);
@@ -97,6 +155,34 @@ function classifyOperationalState(account){
     }
     add('times-liga',valid?'permanent_configuration':'incompatible_reference',valid?'configuração com índices válidos':'índice de equipe ausente ou incompatível',!valid);
   }
+  if(account?.['time-ginasio']!==undefined){
+    const valid=validGymTeamConfiguration(account);
+    add('time-ginasio',valid?'permanent_configuration':'incompatible_reference',valid?'configuração de índices válida':'índices da escalação de ginásio inválidos',!valid);
+  }
+  if(account?.['times-prontos']!==undefined){
+    const valid=validSavedTeams(account);
+    add('times-prontos',valid?'permanent_configuration':'incompatible_reference',valid?'IDs da escalação apontam para Pokémon únicos da equipe':'escalação contém Pokémon ausente, duplicado ou inválido',!valid);
+  }
+  if(account?.['pe-raids']!==undefined){
+    const valid=Number.isSafeInteger(account['pe-raids'])&&account['pe-raids']>=0;
+    add('pe-raids',valid?'cumulative_progress':'invalid_or_unknown',valid?'pontos de raide já concedidos':'total de pontos de raide inválido',!valid);
+  }
+  if(account?.['raid-progresso-dia']!==undefined){
+    const valid=validRaidProgressMarker(account['raid-progresso-dia']);
+    add('raid-progresso-dia',valid?'idempotency_marker':'invalid_or_unknown',valid?'marcador de raide válido':'marcador de raide inválido',!valid);
+  }
+  if(account?.['xp-raids-pendente']!==undefined){
+    const pending=account['xp-raids-pendente'];
+    const valid=isObject(pending)&&Object.entries(pending).every(([id,xp])=>Boolean(id)&&Number.isSafeInteger(xp)&&xp>0);
+    if(!valid)add('xp-raids-pendente','invalid_or_unknown','estrutura de XP pendente inválida',true);
+    else if(Object.keys(pending).length){
+      const counts=accountPokemonIdCounts(account);
+      const refsValid=Object.keys(pending).every(id=>counts.get(id)===1);
+      add('xp-raids-pendente',refsValid?'operation_pending':'incompatible_reference',
+        refsValid?'XP ainda aguarda aplicação a Pokémon referenciado':'XP pendente aponta para Pokémon ausente ou ambíguo',true);
+    }
+    else add('xp-raids-pendente','empty','nenhum XP de raide pendente',false);
+  }
   if(Object.prototype.hasOwnProperty.call(account||{},'restore-receipt'))
     add('restore-receipt','unknown_or_inconsistent','recibo interno de restauração na origem',true);
   for(const [slot,list] of ['equipe','pc','enfermaria'].map(k=>[k,account?.[k]])){
@@ -107,7 +193,7 @@ function classifyOperationalState(account){
         add('ofertas-golpes','operation_pending',`oferta associada a Pokémon em ${slot} #${index+1}`,true);
     });
   }
-  const known=new Set([...PENDING_FIELDS,...SAFE_RECEIPTS,...SAFE_HISTORICAL_FIELDS,'restore-receipt']);
+  const known=new Set([...PENDING_FIELDS,...SAFE_RECEIPTS,...SAFE_HISTORICAL_FIELDS,'xp-raids-pendente','restore-receipt']);
   for(const key of Object.keys(account||{})){
     if(!known.has(key)&&/adventure|activity|pendente|transferencia|times|time-ginasio|ofertas|raid|raide|combate|batalha|cacada|troca|trade|doacao|recibo|restore/i.test(key))
       add(key,'unknown_field','valor não inspecionado; conteúdo ocultado',true);
@@ -130,6 +216,12 @@ function operationalAssessment(source,current){
   if(receiptConflict(source,checkedCurrent))sourceRisks.push({field:'adventure-entregas',
     category:'incompatible_reference',state:'IDs de entrega conflitantes entre a origem e a conta atual',
     rule:RISK_RULES['adventure-entregas'],blocking:true});
+  const sourceRaidMarker=source?.['raid-progresso-dia'];
+  const currentRaidMarker=checkedCurrent?.['raid-progresso-dia'];
+  if(validRaidProgressMarker(sourceRaidMarker)&&validRaidProgressMarker(currentRaidMarker)&&sourceRaidMarker!==currentRaidMarker)
+    sourceRisks.push({field:'raid-progresso-dia',category:'incompatible_idempotency_marker',
+      state:'marcadores de raide diferentes entre a origem e a conta atual',rule:RISK_RULES['raid-progresso-dia'],
+      action:SAFE_ACTIONS['raid-progresso-dia'],blocking:true});
   return {sourceRisks,currentRisks,checkedCurrent,
     blocking:[...sourceRisks,...currentRisks].filter(item=>item.blocking)};
 }
@@ -142,6 +234,8 @@ function operationalPolicy(account){
   const policy={};
   const receipts=receiptRecord(account?.['adventure-entregas']);
   if(Object.keys(receipts.receipts).length)policy['adventure-entregas']=copy(receipts.receipts);
+  if(Number.isSafeInteger(account?.['pe-raids'])&&account['pe-raids']>=0)policy['pe-raids']=account['pe-raids'];
+  if(validRaidProgressMarker(account?.['raid-progresso-dia']))policy['raid-progresso-dia']=account['raid-progresso-dia'];
   return policy;
 }
 async function liveOperations(store,chat,player){
@@ -151,7 +245,8 @@ async function liveOperations(store,chat,player){
 }
 function liveRisk(operation){
   return {field:operation,category:'operation_pending',state:'operação ativa no runtime',
-    rule:LIVE_OPERATION_RULES[operation]||RISK_RULES.default,blocking:true};
+    rule:LIVE_OPERATION_RULES[operation]||RISK_RULES.default,
+    ...(SAFE_ACTIONS[operation]?{action:SAFE_ACTIONS[operation]}:{}),blocking:true};
 }
 function mergeOperationalPolicy(target,source,current){
   const sourcePolicy=operationalPolicy(source),currentPolicy=operationalPolicy(current);
@@ -164,6 +259,10 @@ function mergeOperationalPolicy(target,source,current){
   if(Object.keys(receipts).length)merged['adventure-entregas']=receipts;else delete merged['adventure-entregas'];
   const cooldowns=[source?.['ultima-cacada'],current?.['ultima-cacada']].filter(n=>Number.isFinite(n)&&n>=0);
   if(cooldowns.length)merged['ultima-cacada']=Math.max(...cooldowns);
+  const raidPoints=[source?.['pe-raids'],current?.['pe-raids']].filter(n=>Number.isSafeInteger(n)&&n>=0);
+  if(raidPoints.length)merged['pe-raids']=Math.max(...raidPoints);
+  const raidMarkers=[source?.['raid-progresso-dia'],current?.['raid-progresso-dia']].filter(validRaidProgressMarker);
+  if(raidMarkers.length)merged['raid-progresso-dia']=raidMarkers[0];
   return merged;
 }
 function receiptConflict(source,current){
@@ -384,6 +483,12 @@ class RestoreProtocol{
     const op=await this.store.readOperationSerial(key);
     const group=await this.store.readGroupSerial(op.chat);const current=group[op.player]??null;
     if(hash(current)!==op.currentHash)fail('target_conflict');
+    // Volatile operations live outside the treinador partition hash. Recheck
+    // after the durable account lock is claimed and before backup/CAS, so a
+    // gym occupation or raid capture that appeared after preview cannot leave
+    // an external reference pointing at a replaced team.
+    const active=await liveOperations(this.store,op.chat,op.player);
+    if(active.length)fail('external_operation_pending',{operations:active});
     const backup={id:op.backupId,operation:key,chat:op.chat,player:op.player,createdAt:op.createdAt,account:copy(current),hash:op.currentHash};
     await this.store.insertBackupImmutable(op.backupId,backup);
     if(hash(await this.store.readBackupSerial(op.backupId))!==hash(backup))fail('backup_unconfirmed');
