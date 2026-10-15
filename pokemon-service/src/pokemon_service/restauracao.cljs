@@ -92,23 +92,28 @@
            :detalhe (get entry "detail")})
         (js->clj entries)))
 
-(defn- legenda-diagnostico [pid versao dados]
+(defn- legenda-diagnostico [pid versao dados bloqueio]
   (str "🧬 *Prévia do save legado — treinador " pid "*"
        "\nPágina " (:pagina dados) " de " (:paginas dados)
        " • Total: " (:total dados) " Pokémon"
        (when (pos? (:total dados)) (str " • Exibindo " (inc (:inicio dados)) "–" (:fim dados)))
        (when (> (:pagina dados) 1) (str "\n⬅️ !pk restaurar " versao " previa " (dec (:pagina dados))))
        (when (< (:pagina dados) (:paginas dados)) (str "\n➡️ !pk restaurar " versao " previa " (inc (:pagina dados))))
+       (when (:bloqueada? bloqueio)
+         (str "\n⚠️ Confirmação bloqueada por operações ativas: "
+              (str/join ", " (:operacoes bloqueio))))
        "\n🔎 Consulta somente leitura. Nenhuma alteração foi persistida."))
 
 (defn- resposta-diagnostico! [pid source pagina protocol cid versao]
   (p/let [diagnostico (.diagnostic protocol cid pid source versao)
           registros (registros-diagnostico (.-entries diagnostico))
-          dados (pagina-diagnostico registros pagina)]
+          dados (pagina-diagnostico registros pagina)
+          bloqueio {:bloqueada? (boolean (.-confirmationBlocked diagnostico))
+                    :operacoes (vec (array-seq (or (.-blockingOperations diagnostico) #js [])))}]
     (if-not dados
       (str "Página inexistente. Escolha uma página de 1 a "
            (max 1 (js/Math.ceil (/ (count registros) tamanho-pagina))) ".")
-      (let [fallback (str (legenda-diagnostico pid versao dados)
+      (let [fallback (str (legenda-diagnostico pid versao dados bloqueio)
                           "\n\n⚠️ A imagem não pôde ser gerada. Diagnóstico textual dos registros desta página:\n"
                           (if (seq (:itens dados))
                             (str/join "\n" (map (fn [{:keys [local indice pokemon status original]}]
@@ -125,11 +130,11 @@
                               :subtitulo (str "Versão " versao " • Página " (:pagina dados) "/" (:paginas dados)
                                               " • " (:total dados) " Pokémon")
                               :arquivo (str "save-restauracao-" versao "-p" (:pagina dados) ".jpg")})
-              (p/then (fn [media] {:media media :texto (legenda-diagnostico pid versao dados)}))
+              (p/then (fn [media] {:media media :texto (legenda-diagnostico pid versao dados bloqueio)}))
               (p/catch (fn [erro]
                          (js/console.warn "[Restauração] Card indisponível; diagnóstico textual." (.-message erro))
                          fallback)))
-          (p/resolved (str (legenda-diagnostico pid versao dados) "\n\nNenhum Pokémon encontrado.")))))))
+          (p/resolved (str (legenda-diagnostico pid versao dados bloqueio) "\n\nNenhum Pokémon encontrado.")))))))
 
 (defn comando! [cid pid args]
   ;; Entered before navigation, XP, Joy collection or automatic persistence.

@@ -50,6 +50,15 @@ test('read-only diagnostic keeps every record and marks conversions independentl
  assert.equal(out.entries[1].original.nivel,1);
  assert.equal(out.entries[1].pokemon.nivel,2);
 });
+test('diagnostic remains available with active current operations while confirmation stays blocked',async()=>{
+ const f=fixture();
+ Object.assign(f.data.group.p,{'times-liga':{active:true},raid:{id:'r'},'adventure-eventos':{event:true},ofertas:{move:true},batalha:{id:'b'}});
+ const out=await f.controller.diagnostic('g','p',account('legacy'),1);
+ assert.equal(out.total,1);
+ assert.equal(out.confirmationBlocked,true);
+ assert.deepEqual(new Set(out.blockingOperations),new Set(['adventure-eventos','ofertas','batalha','raid','times-liga']));
+ await assert.rejects(f.controller.preview('g','p',account('legacy'),1),/operational_review/);
+});
 test('ambiguous legacy XP fields remain blocked',()=>{const a=account('ambiguous');a.equipe[0]['xp-desde-nivel']=1;a.equipe[0]['vitorias-desde-nivel']=2;assert.throws(()=>prepare(a),/normalization/);const invalid=account('invalid');invalid.equipe[0]['xp-desde-nivel']=-1;assert.throws(()=>prepare(invalid),/normalization/);});
 test('expiry and simultaneous confirmations cannot create two CAS writes',async()=>{const f=fixture();let clock=0;const c=new RestoreProtocol(f.store,{gate:()=>true,now:()=>clock});const p=await c.preview('g','p',account('new'),1);clock=600001;await assert.rejects(c.confirm('g','p',p.token,async()=>account('new')),/invalid_code/);clock=0;const p2=await c.preview('g','p',account('new'),1);await Promise.allSettled([c.confirm('g','p',p2.token,async()=>account('new')),c.confirm('g','p',p2.token,async()=>account('new'))]);assert.equal(f.events.filter(x=>x==='cas').length,1);});
 test('CAS conflict stays blocked and preserves concurrent accounts',async()=>{const f=fixture();f.store.casGroup=async()=>{f.data.group.other=account('concurrent');return false;};const p=await f.controller.preview('g','p',account('new'),1);await assert.rejects(f.controller.confirm('g','p',p.token,async()=>account('new')),/cas_conflict/);assert.equal(f.data.group.p.equipe[0]['id-pokemon'],'old');assert.equal(f.data.group.other.equipe[0]['id-pokemon'],'concurrent');assert.ok(f.data.locks.p);});

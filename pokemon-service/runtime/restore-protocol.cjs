@@ -19,6 +19,17 @@ function operationalPolicy(account){
   }
   return Object.fromEntries(SAFE_RECEIPTS.filter(k=>account?.[k]&&typeof account[k]==='object').map(k=>[k,copy(account[k])]));
 }
+function operationalIssues(account){
+  const issues=[];
+  for(const key of PENDING_FIELDS){
+    const value=account?.[key];
+    if(value && ((Array.isArray(value)&&value.length) || (typeof value==='object'&&Object.keys(value).length))) issues.push(key);
+  }
+  for(const key of Object.keys(account||{})){
+    if(/adventure|pendente|transferencia-professor|times|ofertas|raid|raide|combate|batalha|cacada/i.test(key) && key!=='adventure-entregas' && !issues.includes(key)) issues.push(key);
+  }
+  return issues;
+}
 function validate(account){
   if(!account||typeof account!=='object'||Array.isArray(account))fail('invalid_account');
   const slots=['equipe','pc','enfermaria'];const ids=new Set();
@@ -166,9 +177,14 @@ class RestoreProtocol{
     if (typeof this.store.hooks?.preflight==='function') await this.store.hooks.preflight(chat,player);
     const group=await this.store.readGroupSerial(chat);
     const current=group[player]??null;
-    if(current){const checked=copy(current);delete checked['restore-receipt'];validate(checked);operationalPolicy(checked);}
+    // Diagnostics must remain readable while the current account has active
+    // game work. Strict validation is intentionally reserved for confirmation.
+    // Only bounded, read-only metadata is inspected here.
+    if(current && Buffer.byteLength(JSON.stringify(current))>8*1024*1024) fail('source_too_large');
     const entries=diagnosticEntries(source);
-    return {entries,total:entries.length,currentCount:current ? ['equipe','pc','enfermaria'].reduce((n,k)=>n+(current[k]??[]).length,0) : 0,version};
+    const blocked=operationalIssues(current);
+    return {entries,total:entries.length,currentCount:current ? ['equipe','pc','enfermaria'].reduce((n,k)=>n+(current[k]??[]).length,0) : 0,version,
+      confirmationBlocked:Boolean(blocked.length),blockingOperations:blocked};
   }
   async confirm(chat,player,token,readSource){
     // gate must include readiness, writer exclusion and startup reconciliation.
