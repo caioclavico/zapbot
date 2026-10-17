@@ -1,9 +1,9 @@
 # Arquitetura — monólito modular + Datomic Local
 
-**Status:** planejamento (aguardando aprovação)  
+**Status:** M0 aprovado; M1 em execução (scaffold + smoke, sem migração)  
 **Branch:** `refactor/modular-monolith-datomic`  
 **Data:** 2026-10-17  
-**Escopo desta etapa:** documento e plano incremental apenas. Sem migração, sem rewrite de módulos, sem flags, sem commit/push/deploy.
+**Escopo M1:** scaffold + `deps.edn` + smoke Datomic Local. Sem migração Cassandra, sem rewrite de domínio, sem flags, sem commit/push/deploy (a menos que solicitado). Ver `docs/m1-datomic-local-smoke.md`.
 
 ---
 

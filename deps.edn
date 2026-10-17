@@ -1,0 +1,20 @@
+{:paths ["apps/odisseu/src"
+         "shared/persistence/src"
+         "shared/config/src"
+         "shared/observability/src"]
+
+ ;; Núcleo Clojure/JVM — desenvolvimento apenas (M1).
+ ;; Não ligado ao runtime WhatsApp/Node nem ao deploy atual.
+ :deps {org.clojure/clojure {:mvn/version "1.12.1"}
+        ;; Datomic Local: Client API embutida, Apache-2.0, Maven Central.
+        ;; Docs: https://docs.datomic.com/datomic-local.html
+        com.datomic/local {:mvn/version "1.0.301"}}
+
+ :aliases
+ {;; Smoke isolado: JVM só (sem Chromium, sem Cassandra, sem Node).
+  :smoke-datomic
+  {:main-opts ["-m" "odisseu.smoke.datomic-local"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}}}

@@ -13,3 +13,8 @@ data/
 
 # Private legacy-save validation inputs; never commit player data.
 .private-legacy-validation/
+
+# Clojure/JVM + Datomic Local (dev only — M1)
+.cpcache/
+.datomic-local/
+.tools/
