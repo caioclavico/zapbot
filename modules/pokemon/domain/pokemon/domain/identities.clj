@@ -54,6 +54,15 @@
   [raid-id player-id]
   (str raid-id "|cap|" player-id))
 
+(defn adventure-account-key
+  "Estado Adventure por jogador (global ao pid, não ao save)."
+  [chat-id player-id]
+  (player-key chat-id player-id))
+
+(defn enfermaria-bed-key
+  [save-key* bed-id]
+  (str save-key* "|bed|" bed-id))
+
 (defn parse-player-key
   [key]
   (let [parts (str/split key #"\|" 2)]

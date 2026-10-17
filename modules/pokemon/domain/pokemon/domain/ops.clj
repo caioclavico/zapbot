@@ -118,5 +118,28 @@
    (cond-> {:raid-id raid-id :bola bola}
      (some? roll) (assoc :roll (long roll)))))
 
+(defn egg-grant-payload
+  [{:keys [egg-id category species]}]
+  (reward/canonicalize
+   {:egg-id egg-id :category (name category) :species species}))
+
+(defn egg-incubate-payload
+  [{:keys [egg-id incubator-id]}]
+  (reward/canonicalize
+   {:egg-id egg-id :incubator-id incubator-id}))
+
+(defn egg-hatch-payload
+  [{:keys [egg-id hatch-id]}]
+  (reward/canonicalize
+   {:egg-id egg-id :hatch-id hatch-id}))
+
+(defn joy-send-payload
+  [{:keys [idx]}]
+  (reward/canonicalize {:idx (long idx)}))
+
+(defn joy-collect-payload
+  [{:keys [agora]}]
+  (reward/canonicalize {:action "joy-collect" :agora (long agora)}))
+
 (def payload-hash reward/payload-hash)
 (def assert-receipt-payload! reward/assert-receipt-payload!)

@@ -76,4 +76,12 @@
    :jvm-opts ["-Xms64m"
               "-Xmx256m"
               "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
+  ;; Testes M3.7 — Adventure/ovos/Joy + regressões
+  :test-m3-adventure
+  {:main-opts ["-m" "odisseu.smoke.m3-adventure"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}}}

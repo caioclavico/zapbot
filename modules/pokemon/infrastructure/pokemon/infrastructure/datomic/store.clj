@@ -17,6 +17,7 @@
             [pokemon.domain.raid :as raid-domain]
             [pokemon.domain.reward :as reward]
             [pokemon.domain.xp :as xp]
+            [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
             [pokemon.infrastructure.datomic.gym-store :as gym-store]
             [pokemon.infrastructure.datomic.raid-store :as raid-store]
             [pokemon.infrastructure.datomic.schema :as schema]))
@@ -553,6 +554,37 @@
                       (map (fn [[pid t c]]
                              [pid {:tentativas t :capturou c}])))]
         (raid-store/raid->map e parts caps edn-read present?)))))
+
+(defn- load-eggs-for-account
+  [db account-key]
+  (->> (d/q '[:find (pull ?e [*])
+              :in $ ?ak
+              :where [?e :egg/account-key ?ak]]
+            db account-key)
+       (map (comp #(adventure-store/egg-entity->map % edn-read present?) first))
+       (filter some?)
+       vec))
+
+(defn- load-adventure
+  [db chat-id player-id]
+  (let [ak (id/adventure-account-key chat-id player-id)
+        e (d/pull db '[*] [:adventure-account/key ak])]
+    (when (present? e)
+      (adventure-store/merge-estado
+       (adventure-store/account-shell e edn-read present?)
+       (load-eggs-for-account db ak)))))
+
+(defn- load-enfermaria
+  [db save-key*]
+  (->> (d/q '[:find (pull ?b [*])
+              :in $ ?sk
+              :where [?b :enfermaria-bed/save-key ?sk]]
+            db save-key*)
+       (map (fn [[e]]
+              {:bed-id (:enfermaria-bed/bed-id e)
+               :pokemon (edn-read (:enfermaria-bed/pokemon-edn e))
+               :pronto-em (:enfermaria-bed/pronto-em e)}))
+       vec))
 
 (defrecord DatomicTrainerStore [conn]
   ports/TrainerStore
@@ -1374,6 +1406,161 @@
                    :raid raid :colecao colecao
                    :pokemon-entity-map pokemon-entity-map
                    :inventory-adjust-tx inventory-adjust-tx}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (ensure-adventure-account! [_ chat-id player-id]
+    (let [ak (id/adventure-account-key chat-id player-id)
+          e (d/pull (d/db conn) '[*] [:adventure-account/key ak])]
+      (if (present? e)
+        (load-adventure (d/db conn) chat-id player-id)
+        (do
+          (d/transact conn {:tx-data (:tx (adventure-store/build-ensure-account-tx
+                                           chat-id player-id))})
+          (load-adventure (d/db conn) chat-id player-id)))))
+
+  (get-adventure-account [_ chat-id player-id]
+    (load-adventure (d/db conn) chat-id player-id))
+
+  (get-egg [_ egg-id]
+    (adventure-store/egg-entity->map
+     (d/pull (d/db conn) '[*] [:egg/id egg-id]) edn-read present?))
+
+  (grant-egg! [_ writer-ctx request]
+    (let [payload (ops/egg-grant-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db _save]
+               (let [ak (id/adventure-account-key (:chat-id writer-ctx)
+                                                  (:player-id writer-ctx))
+                     e (d/pull db '[*] [:adventure-account/key ak])
+                     _ (when-not (present? e)
+                         (throw (err/error :adventure_account_missing {})))
+                     shell (adventure-store/account-shell e edn-read present?)
+                     eggs (load-eggs-for-account db ak)]
+                 (adventure-store/build-grant-tx
+                  {:writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :account-shell shell :egg-maps eggs}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (incubate-egg! [_ writer-ctx request]
+    (let [payload (ops/egg-incubate-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db _save]
+               (let [ak (id/adventure-account-key (:chat-id writer-ctx)
+                                                  (:player-id writer-ctx))
+                     e (d/pull db '[*] [:adventure-account/key ak])
+                     shell (adventure-store/account-shell e edn-read present?)
+                     eggs (load-eggs-for-account db ak)]
+                 (adventure-store/build-incubate-tx
+                  {:writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :account-shell shell :egg-maps eggs}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (hatch-egg! [_ writer-ctx request]
+    (let [payload (ops/egg-hatch-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [ak (id/adventure-account-key (:chat-id writer-ctx)
+                                                  (:player-id writer-ctx))
+                     e (d/pull db '[*] [:adventure-account/key ak])
+                     shell (adventure-store/account-shell e edn-read present?)
+                     eggs (load-eggs-for-account db ak)
+                     sk (id/save-key (:chat-id writer-ctx)
+                                     (:player-id writer-ctx)
+                                     (:save-id writer-ctx))
+                     colecao (query-collection db sk)]
+                 (adventure-store/build-hatch-tx
+                  {:db db :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :account-shell shell :egg-maps eggs
+                   :save save :colecao colecao
+                   :pokemon-entity-map pokemon-entity-map}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (list-enfermaria [_ chat-id player-id save-id]
+    (load-enfermaria (d/db conn) (id/save-key chat-id player-id save-id)))
+
+  (joy-send! [_ writer-ctx request]
+    (let [payload (ops/joy-send-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [sk (id/save-key (:chat-id writer-ctx)
+                                     (:player-id writer-ctx)
+                                     (:save-id writer-ctx))]
+                 (adventure-store/build-joy-send-tx
+                  {:writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :save save
+                   :colecao (query-collection db sk)
+                   :enfermaria (load-enfermaria db sk)
+                   :pokemon-entity-map pokemon-entity-map}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (joy-collect! [_ writer-ctx request]
+    (let [payload (ops/joy-collect-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [sk (id/save-key (:chat-id writer-ctx)
+                                     (:player-id writer-ctx)
+                                     (:save-id writer-ctx))]
+                 (adventure-store/build-joy-collect-tx
+                  {:writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :save save
+                   :colecao (query-collection db sk)
+                   :enfermaria (load-enfermaria db sk)
+                   :pokemon-entity-map pokemon-entity-map}))))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)

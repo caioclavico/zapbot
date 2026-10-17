@@ -117,6 +117,33 @@
   (raid-capture! [this writer-ctx request]
     "Tentativa de captura pós-vitória (bola + roll).")
 
+  (ensure-adventure-account! [this chat-id player-id]
+    "Garante conta Adventure Sync do jogador (global ao pid).")
+
+  (get-adventure-account [this chat-id player-id]
+    "Estado Adventure (incubadoras + ovos) ou nil.")
+
+  (get-egg [this egg-id]
+    "Snapshot do ovo ou nil.")
+
+  (grant-egg! [this writer-ctx request]
+    "Concede ovo ao inventário Adventure (fence do writer ativo).")
+
+  (incubate-egg! [this writer-ctx request]
+    "Incuba e carimba save-id+fence no ovo; grava due-at durável.")
+
+  (hatch-egg! [this writer-ctx request]
+    "Nascimento idempotente no save carimbado; A≠B → egg_save_mismatch.")
+
+  (list-enfermaria [this chat-id player-id save-id]
+    "Leitos Joy do save.")
+
+  (joy-send! [this writer-ctx request]
+    "Envia ferido ao Centro (30 min); remove da coleção do save.")
+
+  (joy-collect! [this writer-ctx request]
+    "Recolhe curados com pronto-em vencido.")
+
   (ensure-group! [this chat-id label]
     "Garante entidade de grupo separada dos saves.")
 

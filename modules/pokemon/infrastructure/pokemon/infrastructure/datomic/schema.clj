@@ -11,7 +11,8 @@
    "migrations/pokemon/004-capture-moves-evolution.edn"
    "migrations/pokemon/005-battle-engine.edn"
    "migrations/pokemon/006-gyms.edn"
-   "migrations/pokemon/007-raids.edn"])
+   "migrations/pokemon/007-raids.edn"
+   "migrations/pokemon/008-adventure-joy.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id
