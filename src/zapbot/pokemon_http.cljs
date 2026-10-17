@@ -12,21 +12,33 @@
             [zapbot.bloqueio :as bloqueio]))
 
 (def ^:private transport (js/require "../scripts/lib/pokemon-http-client.cjs"))
+(def ^:private jvm-transport (js/require "../scripts/lib/pokemon-jvm-client.cjs"))
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 (def ^:private versao-bot (.-version (js/require "../package.json")))
 (def ^:private chave-entregas "pokemon-http-deliveries")
 (defonce ^:private entregas (atom (or (armazenamento/obter chave-entregas) {})))
 (armazenamento/registrar! chave-entregas entregas)
 (defonce ^:private cliente-http (atom nil))
+(defonce ^:private cliente-jvm (atom nil))
 (defonce ^:private cliente-whatsapp (atom nil))
 (defonce ^:private relogio-eventos (atom nil))
 (defonce ^:private consultando-eventos? (atom false))
 (defonce ^:private filas (atom {}))
 (declare erro-contrato)
 
+;; Leituras cobertas pela bridge JVM (M4.1). Demais comandos: legado ou recusa.
+(def ^:private leituras-jvm
+  #{"treinador" "perfil" "tre" "meus" "pokemons" "colecao" "coleção"
+    "save" "ativo" "saves"})
+
 (defn- configurado? []
   (and (not (str/blank? config/pokemon-service-url))
        (not (str/blank? config/pokemon-service-token))))
+
+(defn- jvm-configurado? []
+  (and config/pokemon-jvm-enabled?
+       (not (str/blank? config/pokemon-jvm-url))
+       (not (str/blank? config/pokemon-jvm-token))))
 
 (defn- cliente! []
   (or @cliente-http
@@ -38,6 +50,50 @@
                             :maxMediaBytes config/pokemon-max-media-bytes})]
         (reset! cliente-http cliente)
         cliente)))
+
+(defn- cliente-jvm! []
+  (or @cliente-jvm
+      (let [cliente (.createClient jvm-transport
+                       #js {:baseUrl config/pokemon-jvm-url
+                            :token config/pokemon-jvm-token
+                            :connectTimeoutMs config/pokemon-jvm-connect-timeout-ms
+                            :timeoutMs config/pokemon-jvm-timeout-ms})]
+        (reset! cliente-jvm cliente)
+        cliente)))
+
+(defn- subcomando-leitura [argumentos]
+  (let [tok (first (str/split (str/trim (str/lower-case (or argumentos ""))) #"\s+"))]
+    (when (contains? leituras-jvm tok) tok)))
+
+(defn- texto-leitura-jvm [sub data]
+  (case sub
+    ("treinador" "perfil" "tre")
+    (str "🧑‍🎓 *Treinador (JVM)*\n"
+         "Save ativo: " (or (:activeSaveId data) "?") "\n"
+         "Fence: " (or (:fenceGeneration data) 0))
+    ("meus" "pokemons" "colecao" "coleção")
+    (let [itens (or (:collection data) [])
+          linhas (map (fn [p]
+                        (str (or (:collectionIndex p) "?") ". "
+                             (or (:species p) (:nome p) "?")
+                             " Nv" (or (:nivel p) "?")))
+                      (take 20 itens))]
+      (str "📦 *Coleção (JVM)* save=" (or (:saveId data) "?")
+           " (" (or (:count data) 0) ")\n"
+           (if (seq linhas) (str/join "\n" linhas) "(vazia)")))
+    ("save" "ativo" "saves")
+    (let [save (:save data)]
+      (str "💾 *Save ativo (JVM)*\n"
+           "Slot: " (or (:activeSaveId data) (:slotId save) "?") "\n"
+           "Moedas: " (or (:coins save) 0) "\n"
+           "Nível treinador: " (or (:trainerLevel save) 1) "\n"
+           "Party: " (count (or (:party data) []))))
+    (str "📖 Leitura JVM: " (pr-str data))))
+
+(defn- envelope-texto [texto]
+  {:requestId nil ;; preenchido pelo caller
+   :messages [{:type "text" :text texto}]
+   :effects []})
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -210,30 +266,77 @@
     "⏳ O serviço Pokémon demorou para responder. O comando pode ter sido processado; confira o estado antes de repetir uma compra, troca ou captura."
     "CONFIG" "⚠️ O serviço Pokémon ainda não está configurado. Os outros comandos continuam disponíveis."
     "LIMIT" "⚠️ A resposta Pokémon excedeu o limite de tamanho. Tente consultar a coleção em texto: !pk time txt."
+    ("PLAYER_NOT_FOUND" "NO_ACTIVE_SAVE" "SAVE_NOT_FOUND")
+    (str "⚠️ " (or (.-message erro) "Dados não encontrados na bridge JVM."))
     "⚠️ Não consegui concluir a resposta do Pokémon. O comando pode ter sido processado; confira o estado antes de repetir uma ação. Os outros comandos continuam disponíveis."))
+
+(defn- executar-jvm-leitura! [message ctx pedido sub]
+  (p/let [jvm (cliente-jvm!)
+          chat-id (:chatId pedido)
+          player-id (:playerId pedido)
+          data (desempenho/medir! ctx "pokemon_jvm_read"
+                 #(case sub
+                    ("treinador" "perfil" "tre")
+                    (.getTrainer jvm #js {:chatId chat-id :playerId player-id})
+                    ("meus" "pokemons" "colecao" "coleção")
+                    (.getCollection jvm #js {:chatId chat-id :playerId player-id})
+                    ("save" "ativo" "saves")
+                    (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                    (throw (erro-contrato "Leitura JVM não mapeada."))))
+          data (js->clj data :keywordize-keys true)
+          resposta (assoc (envelope-texto (texto-leitura-jvm sub data))
+                          :requestId (:requestId pedido))
+          ;; Entrega só texto; sem media/ack do serviço legado.
+          _ (entregar! nil (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
+                       ctx (str "jvm:" (:requestId pedido)) resposta)]
+    nil))
+
+(defn- recusa-escrita-jvm [pedido]
+  (assoc (envelope-texto
+          (str "🚧 *Adaptador JVM (dev)* — M4.1 só expõe leituras "
+               "(`treinador`, `meus`, `save`). "
+               "Escritas continuam no adaptador legado (`POKEMON_ADAPTER=legacy`). "
+               "Não há fallback automático para Cassandra."))
+         :requestId (:requestId pedido)))
 
 (defn executar [message comando argumentos]
   (let [ctx (desempenho/contexto-de message)
         argumentos (or argumentos "")]
     (enfileirar!
      (chat-id message)
-     (fn [] (-> (p/let [pedido (contexto-pedido message comando argumentos)
-                  http (cliente!)
-                  resposta (desempenho/medir! ctx "pokemon_http"
-                             #(.command http (clj->js pedido)))
-                  resposta (js->clj resposta :keywordize-keys true)
-                  _ (when-not (= (:requestId pedido) (:requestId resposta))
-                      (throw (erro-contrato "requestId Pokémon divergente.")))
-                  _ (when-let [tempos (:timings resposta)]
-                      (js/console.log "[PokemonHTTP]" (js/JSON.stringify
-                         (clj->js {:requestId (:requestId pedido) :timings tempos}))))
-                  _ (entregar! http (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
-                               ctx (str "command:" (:requestId pedido)) resposta)]
-            nil)
-          (p/catch (fn [erro]
-                     (js/console.warn "[PokemonHTTP] Falha:" (or (.-code erro) "DELIVERY") (or (.-status erro) "")
-                                      (when (= "INVALID_RESPONSE" (.-code erro)) (.-message erro)))
-                     (mensagem-falha erro)))))
+     (fn []
+       (if (jvm-configurado?)
+         ;; Adaptador JVM: leituras via bridge; escritas recusadas (sem fallback legado).
+         (-> (p/let [pedido (contexto-pedido message comando argumentos)
+                     sub (subcomando-leitura argumentos)
+                     _ (if sub
+                         (executar-jvm-leitura! message ctx pedido sub)
+                         (let [resposta (recusa-escrita-jvm pedido)]
+                           (entregar! nil (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
+                                      ctx (str "jvm-deny:" (:requestId pedido)) resposta)))]
+               nil)
+             (p/catch (fn [erro]
+                        (js/console.warn "[PokemonJVM] Falha:" (or (.-code erro) "DELIVERY")
+                                         (or (.-status erro) "") (.-message erro))
+                        (mensagem-falha erro))))
+         ;; Adaptador legado (default / produção).
+         (-> (p/let [pedido (contexto-pedido message comando argumentos)
+                     http (cliente!)
+                     resposta (desempenho/medir! ctx "pokemon_http"
+                                #(.command http (clj->js pedido)))
+                     resposta (js->clj resposta :keywordize-keys true)
+                     _ (when-not (= (:requestId pedido) (:requestId resposta))
+                         (throw (erro-contrato "requestId Pokémon divergente.")))
+                     _ (when-let [tempos (:timings resposta)]
+                         (js/console.log "[PokemonHTTP]" (js/JSON.stringify
+                            (clj->js {:requestId (:requestId pedido) :timings tempos}))))
+                     _ (entregar! http (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
+                                  ctx (str "command:" (:requestId pedido)) resposta)]
+               nil)
+             (p/catch (fn [erro]
+                        (js/console.warn "[PokemonHTTP] Falha:" (or (.-code erro) "DELIVERY") (or (.-status erro) "")
+                                         (when (= "INVALID_RESPONSE" (.-code erro)) (.-message erro)))
+                        (mensagem-falha erro))))))
      ctx)))
 
 (defn jogar [message argumentos]
