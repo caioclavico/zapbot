@@ -28,4 +28,12 @@
    :jvm-opts ["-Xms64m"
               "-Xmx256m"
               "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
+  ;; Testes M3.1 — coleção/HP/XP + regressão M2
+  :test-m3-collection
+  {:main-opts ["-m" "odisseu.smoke.m3-collection"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}}}

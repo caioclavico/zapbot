@@ -1,0 +1,31 @@
+;; Fixtures de equivalência com zapbot.pokemon.treinador (CLJS).
+;; Valores esperados calculados pelas mesmas constantes:
+;; xp-por-nivel=9, fator=1.03, progresso-treinador custos 5,7,9,11…
+
+{:pokemon-xp-cases
+ [{:label "9 XP sobe 1 nível a partir do 1"
+   :registro {:nome "Magikarp" :nivel 1 :xp-desde-nivel 0
+              :hp 100 :hp-atual 80 :ataque 50 :defesa 50
+              :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70}
+   :quantidade 9
+   :expect {:nivel 2 :xp-desde-nivel 0 :subidas 1
+            :hp 103 :hp-atual 83}}
+  {:label "8 XP não sobe"
+   :registro {:nome "Magikarp" :nivel 1 :xp-desde-nivel 0
+              :hp 100 :hp-atual 100 :ataque 50 :defesa 50
+              :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70}
+   :quantidade 8
+   :expect {:nivel 1 :xp-desde-nivel 8 :subidas 0 :hp 100 :hp-atual 100}}
+  {:label "desmaiado não recupera HP ao subir"
+   :registro {:nome "Geodude" :nivel 1 :xp-desde-nivel 0
+              :hp 100 :hp-atual 0 :ataque 40 :defesa 80
+              :atq-esp 30 :def-esp 30 :veloc 20 :amizade 70}
+   :quantidade 9
+   :expect {:nivel 2 :xp-desde-nivel 0 :subidas 1 :hp 103 :hp-atual 0}}]
+
+ :trainer-progress-cases
+ [{:xp 0 :nivel 1 :xp-atual 0 :xp-necessario 5}
+  {:xp 4 :nivel 1 :xp-atual 4 :xp-necessario 5}
+  {:xp 5 :nivel 2 :xp-atual 0 :xp-necessario 7}
+  {:xp 12 :nivel 3 :xp-atual 0 :xp-necessario 9}
+  {:xp 21 :nivel 4 :xp-atual 0 :xp-necessario 11}]}

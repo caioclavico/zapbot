@@ -1,9 +1,9 @@
 # Arquitetura — monólito modular + Datomic Local
 
-**Status:** M0–M1 feitos; M2 núcleo treinador/saves Datomic implementado (dev)  
+**Status:** M0–M2 feitos; M3.1 coleção/HP/XP no JVM (dev)  
 **Branch:** `refactor/modular-monolith-datomic`  
 **Data:** 2026-10-17  
-**Escopo M2:** schema versionado + API aplicação + testes fictícios. Sem migração Cassandra, sem WhatsApp/deploy/flags. Ver `docs/m2-pokemon-datomic.md`.
+**Escopo M3.1:** regras de coleção/HP/XP/moedas no save ativo com writer fence. Sem Cassandra/WhatsApp/deploy. Ver `docs/m3-1-collection-jvm.md`.
 
 ---
 

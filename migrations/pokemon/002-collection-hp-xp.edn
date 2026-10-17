@@ -1,0 +1,90 @@
+;; M3.1 — coleção, HP/status, XP de Pokémon e componentes de XP do treinador.
+[
+ {:db/ident       :save/ativo-index
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Índice 0-based do Pokémon ativo na coleção (legado: conta.ativo)"}
+
+ {:db/ident       :save/vitorias-treinador
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Componente de XP do treinador (legado: vitorias-treinador)"}
+
+ {:db/ident       :save/pe-ginasios
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :save/pe-raids
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :save/xp-insignias
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Cache do XP de insígnias (legado deriva do catálogo; M3.1 armazena total)"}
+
+ {:db/ident       :save/xp-missoes
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/id-pokemon
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "id-pokemon estável do registro legado"}
+
+ {:db/ident       :pokemon/collection-index
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Posição na coleção unificada (equipe+pc legado)"}
+
+ {:db/ident       :pokemon/hp
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/hp-atual
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/status
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Status persistido como string (ex.: \"queimado\"); ausente = nil"}
+
+ {:db/ident       :pokemon/xp-desde-nivel
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/amizade
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/ataque
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/defesa
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/atq-esp
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/def-esp
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/veloc
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/tipos
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/many
+  :db/doc         "Tipos da espécie (strings, ex.: \"fire\")"}
+
+ {:db/ident       :pokemon/raridade
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+]

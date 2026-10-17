@@ -4,9 +4,11 @@
   (:require [clojure.edn :as edn]
             [datomic.client.api :as d]
             [pokemon.application.ports :as ports]
+            [pokemon.domain.collection :as coll]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]
+            [pokemon.domain.xp :as xp]
             [pokemon.infrastructure.datomic.schema :as schema]))
 
 (def ^:private max-cas-attempts 12)
@@ -39,22 +41,56 @@
 (defn- ->save
   [e]
   (when (present? e)
-    {:save-key (:save/key e)
-     :slot-id (:save/slot-id e)
-     :coins (:save/coins e)
-     :trainer-xp (:save/trainer-xp e)
-     :trainer-level (:save/trainer-level e)
-     :revision (:save/revision e)}))
+    (let [base {:save-key (:save/key e)
+                :slot-id (:save/slot-id e)
+                :coins (:save/coins e 0)
+                :revision (:save/revision e 0)
+                :ativo-index (:save/ativo-index e 0)
+                :vitorias-treinador (:save/vitorias-treinador e 0)
+                :pe-ginasios (:save/pe-ginasios e 0)
+                :pe-raids (:save/pe-raids e 0)
+                :xp-insignias (:save/xp-insignias e 0)
+                :xp-missoes (:save/xp-missoes e 0)}
+          computed (xp/xp-treinador-total base)
+          ;; M3.1: componentes são a fonte. M2 apply-reward ainda grava
+          ;; :save/trainer-xp|level direto quando não há vitórias/PE.
+          stored-xp (long (:save/trainer-xp e 0))
+          stored-level (long (:save/trainer-level e 1))
+          xp (if (pos? computed) computed stored-xp)
+          perfil (xp/progresso-treinador xp)
+          nivel (if (pos? computed) (:nivel perfil) stored-level)]
+      (assoc base
+             :trainer-xp xp
+             :trainer-level nivel
+             :xp-atual (:xp-atual perfil)
+             :xp-necessario (:xp-necessario perfil)))))
 
 (defn- ->pokemon
   [e]
-  {:pokemon-key (:pokemon/key e)
-   :species (:pokemon/species e)
-   :nickname (:pokemon/nickname e)
-   :shiny (boolean (:pokemon/shiny e))
-   :xp (:pokemon/xp e)
-   :level (:pokemon/level e)
-   :in-party (boolean (:pokemon/in-party e))})
+  (when (present? e)
+    {:pokemon-key (:pokemon/key e)
+     :id-pokemon (:pokemon/id-pokemon e)
+     :species (:pokemon/species e)
+     :nome (or (:pokemon/nickname e) (:pokemon/species e))
+     :nickname (:pokemon/nickname e)
+     :shiny (boolean (:pokemon/shiny e))
+     :xp (:pokemon/xp e)
+     :level (:pokemon/level e)
+     :nivel (:pokemon/level e)
+     :in-party (boolean (:pokemon/in-party e))
+     :collection-index (:pokemon/collection-index e)
+     :hp (:pokemon/hp e)
+     :hp-atual (:pokemon/hp-atual e)
+     :status (:pokemon/status e)
+     :xp-desde-nivel (:pokemon/xp-desde-nivel e 0)
+     :amizade (:pokemon/amizade e 70)
+     :ataque (:pokemon/ataque e 0)
+     :defesa (:pokemon/defesa e 0)
+     :atq-esp (:pokemon/atq-esp e 0)
+     :def-esp (:pokemon/def-esp e 0)
+     :veloc (:pokemon/veloc e 0)
+     :tipos (vec (:pokemon/tipos e))
+     :raridade (:pokemon/raridade e "comum")}))
 
 (defn- ->item
   [e]
@@ -71,7 +107,65 @@
               [?p :pokemon/in-party true]]
             db save-key*)
        (map (comp ->pokemon first))
+       (sort-by :collection-index)
        vec))
+
+(defn- query-collection
+  [db save-key*]
+  (->> (d/q '[:find (pull ?p [*])
+              :in $ ?sk
+              :where
+              [?s :save/key ?sk]
+              [?p :pokemon/save ?s]
+              [?p :pokemon/collection-index]]
+            db save-key*)
+       (map (comp ->pokemon first))
+       (sort-by :collection-index)
+       vec))
+
+(defn- writer-fence-tx
+  "CAS que exige save ativo + fence congelados (operações iniciadas em A
+  falham após alternância para B)."
+  [chat-id player-id writer-ctx]
+  (let [pk (id/player-key chat-id player-id)]
+    [[:db/cas [:player/key pk] :player/fence-generation
+      (:fence-generation writer-ctx) (:fence-generation writer-ctx)]
+     [:db/cas [:player/key pk] :player/active-save-id
+      (:save-id writer-ctx) (:save-id writer-ctx)]]))
+
+(defn- transact-with-writer!
+  [conn writer-ctx build-tx]
+  (let [{:keys [chat-id player-id save-id]} writer-ctx]
+    (loop [attempt 0]
+      (let [db (d/db conn)
+            player (player-entity db chat-id player-id)
+            save (save-entity db chat-id player-id save-id)]
+        (when-not (present? player)
+          (throw (err/error :player_not_found {:chat-id chat-id :player-id player-id})))
+        (when-not (present? save)
+          (throw (err/error :save_not_found {:save-id save-id})))
+        (when (or (not= (:player/active-save-id player) save-id)
+                  (not= (:player/fence-generation player) (:fence-generation writer-ctx)))
+          (throw (err/error :stale_writer_fence
+                            {:expected writer-ctx
+                             :active (:player/active-save-id player)
+                             :fence (:player/fence-generation player)})))
+        (let [built (build-tx db save)
+              tx (into (writer-fence-tx chat-id player-id writer-ctx) (:tx built))
+              result (try
+                       (d/transact conn {:tx-data tx})
+                       {:ok true :value (:result built)}
+                       (catch Exception ex
+                         {:ok false :ex ex}))]
+          (if (:ok result)
+            (:value result)
+            (let [ex (:ex result)]
+              (if (and (anomaly-conflict? ex) (< attempt max-cas-attempts))
+                (recur (inc attempt))
+                (throw (err/error :writer_fence_conflict
+                                  {:cause (ex-message ex)
+                                   :attempt attempt
+                                   :writer writer-ctx}))))))))))
 
 (defn- query-inventory
   [db save-key*]
@@ -287,7 +381,13 @@
                                    :save/coins (:coins init)
                                    :save/trainer-xp (:trainer-xp init)
                                    :save/trainer-level (:trainer-level init)
-                                   :save/revision (:revision init)}]})
+                                   :save/revision (:revision init)
+                                   :save/ativo-index 0
+                                   :save/vitorias-treinador 0
+                                   :save/pe-ginasios 0
+                                   :save/pe-raids 0
+                                   :save/xp-insignias 0
+                                   :save/xp-missoes 0}]})
       (->save (save-entity (d/db conn) chat-id player-id save-id))))
 
   (get-player [_ chat-id player-id]
@@ -298,6 +398,9 @@
 
   (list-party [_ chat-id player-id save-id]
     (query-party (d/db conn) (id/save-key chat-id player-id save-id)))
+
+  (list-collection [_ chat-id player-id save-id]
+    (query-collection (d/db conn) (id/save-key chat-id player-id save-id)))
 
   (list-inventory [_ chat-id player-id save-id]
     (query-inventory (d/db conn) (id/save-key chat-id player-id save-id)))
@@ -310,6 +413,174 @@
 
   (apply-reward! [_ request]
     (apply-reward!* conn request))
+
+  (add-to-collection! [_ writer-ctx registro]
+    (transact-with-writer!
+     conn writer-ctx
+     (fn [db save]
+       (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+             colecao (query-collection db sk)
+             idx (coll/next-index colecao)
+             id-poke (:id-pokemon registro)
+             poke-key (or id-poke (str sk "|poke|" idx))
+             entity {:pokemon/key poke-key
+                     :pokemon/id-pokemon id-poke
+                     :pokemon/save [:save/key sk]
+                     :pokemon/species (or (:species registro) (:nome registro))
+                     :pokemon/nickname (:nome registro)
+                     :pokemon/shiny (boolean (:shiny registro))
+                     :pokemon/xp (long (:xp-desde-nivel registro 0))
+                     :pokemon/level (long (:nivel registro 1))
+                     :pokemon/in-party true
+                     :pokemon/collection-index idx
+                     :pokemon/hp (long (:hp registro 0))
+                     :pokemon/hp-atual (long (:hp-atual registro 0))
+                     :pokemon/xp-desde-nivel (long (:xp-desde-nivel registro 0))
+                     :pokemon/amizade (long (:amizade registro 70))
+                     :pokemon/ataque (long (:ataque registro 0))
+                     :pokemon/defesa (long (:defesa registro 0))
+                     :pokemon/atq-esp (long (:atq-esp registro 0))
+                     :pokemon/def-esp (long (:def-esp registro 0))
+                     :pokemon/veloc (long (:veloc registro 0))
+                     :pokemon/raridade (or (:raridade registro) "comum")}
+             entity (cond-> entity
+                      (seq (:tipos registro)) (assoc :pokemon/tipos (vec (:tipos registro)))
+                      (:status registro) (assoc :pokemon/status (:status registro)))
+             rev (long (:save/revision save 0))]
+         {:tx [entity
+               [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
+          :result {:destino :equipe
+                   :indice idx
+                   :id-pokemon id-poke
+                   :registro (assoc registro :collection-index idx)}}))))
+
+  (update-hp-status! [_ writer-ctx idx hp-atual status]
+    (transact-with-writer!
+     conn writer-ctx
+     (fn [db save]
+       (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+             colecao (query-collection db sk)
+             _ (coll/validate-index! idx (count colecao))
+             poke (nth colecao idx)
+             status-str (xp/status->str status)
+             lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+             rev (long (:save/revision save 0))
+             tx (cond-> [[:db/add lookup :pokemon/hp-atual (long hp-atual)]
+                         [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
+                  status-str (conj [:db/add lookup :pokemon/status status-str])
+                  (and (nil? status-str) (:status poke))
+                  (conj [:db/retract lookup :pokemon/status (:status poke)]))]
+         {:tx tx
+          :result {:ok true :idx idx :hp-atual (long hp-atual) :status status-str}}))))
+
+  (grant-pokemon-xp! [_ writer-ctx idx quantidade]
+    (transact-with-writer!
+     conn writer-ctx
+     (fn [db save]
+       (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+             colecao (query-collection db sk)
+             _ (coll/validate-index! idx (count colecao))
+             poke (nth colecao idx)
+             applied (xp/aplicar-xp-pokemon poke quantidade)
+             r (:registro applied)
+             lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+             rev (long (:save/revision save 0))
+             tx [[:db/add lookup :pokemon/level (long (:nivel r))]
+                 [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
+                 [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
+                 [:db/add lookup :pokemon/hp (long (:hp r))]
+                 [:db/add lookup :pokemon/hp-atual (long (:hp-atual r))]
+                 [:db/add lookup :pokemon/ataque (long (:ataque r))]
+                 [:db/add lookup :pokemon/defesa (long (:defesa r))]
+                 [:db/add lookup :pokemon/atq-esp (long (:atq-esp r))]
+                 [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
+                 [:db/add lookup :pokemon/veloc (long (:veloc r))]
+                 [:db/add lookup :pokemon/amizade (long (:amizade r))]
+                 [:db/cas [:save/key sk] :save/revision rev (inc rev)]]]
+         {:tx tx
+          :result (when (pos? (:subidas applied))
+                    {:nome (:nome applied)
+                     :nivel (:nivel-final applied)
+                     :niveis-subidos (:subidas applied)})}))))
+
+  (register-trainer-victory! [_ writer-ctx]
+    (transact-with-writer!
+     conn writer-ctx
+     (fn [db save]
+       (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+             v (long (:save/vitorias-treinador save 0))
+             rev (long (:save/revision save 0))]
+         {:tx [[:db/add [:save/key sk] :save/vitorias-treinador (inc v)]
+               [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
+          :result {:vitorias (inc v)}}))))
+
+  (credit-coins-on-active! [_ writer-ctx amount operation-id]
+    (let [existing (receipt-entity (d/db conn) operation-id)]
+      (if (present? existing)
+        (->receipt existing)
+        (try
+          (transact-with-writer!
+           conn writer-ctx
+           (fn [db save]
+             (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                   coins (long (:save/coins save 0))
+                   rev (long (:save/revision save 0))
+                   delta (long amount)
+                   next (model/apply-coin-delta coins delta)
+                   pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))]
+               {:tx [{:operation-receipt/id operation-id
+                      :operation-receipt/kind "credit-coins"
+                      :operation-receipt/player-key pk
+                      :operation-receipt/save-id (:save-id writer-ctx)
+                      :operation-receipt/summary (pr-str {:coins-delta delta})}
+                     [:db/cas [:save/key sk] :save/coins coins next]
+                     [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
+                :result {:operation-id operation-id
+                         :duplicate false
+                         :coins next
+                         :delta delta}})))
+          (catch Exception ex
+            (let [dup (receipt-entity (d/db conn) operation-id)]
+              (if (present? dup)
+                (->receipt dup)
+                (throw ex))))))))
+
+  (adjust-inventory-on-active! [_ writer-ctx item-id delta operation-id]
+    (let [existing (receipt-entity (d/db conn) operation-id)]
+      (if (present? existing)
+        (->receipt existing)
+        (try
+          (transact-with-writer!
+           conn writer-ctx
+           (fn [db save]
+             (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                   ik (id/inventory-item-key sk item-id)
+                   cur (d/pull db '[:inventory-item/qty] [:inventory-item/key ik])
+                   old-qty (long (:inventory-item/qty cur 0))
+                   next-qty (+ old-qty (long delta))
+                   _ (when (neg? next-qty)
+                       (throw (err/error :insufficient_item {:item-id item-id :qty old-qty})))
+                   rev (long (:save/revision save 0))
+                   pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))]
+               {:tx [{:operation-receipt/id operation-id
+                      :operation-receipt/kind "inventory"
+                      :operation-receipt/player-key pk
+                      :operation-receipt/save-id (:save-id writer-ctx)
+                      :operation-receipt/summary (pr-str {:item-id item-id :delta delta})}
+                     {:inventory-item/key ik
+                      :inventory-item/save [:save/key sk]
+                      :inventory-item/item-id item-id
+                      :inventory-item/qty next-qty}
+                     [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
+                :result {:operation-id operation-id
+                         :duplicate false
+                         :item-id item-id
+                         :qty next-qty}})))
+          (catch Exception ex
+            (let [dup (receipt-entity (d/db conn) operation-id)]
+              (if (present? dup)
+                (->receipt dup)
+                (throw ex))))))))
 
   (ensure-group! [_ chat-id label]
     (let [db (d/db conn)
