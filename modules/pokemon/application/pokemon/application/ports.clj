@@ -56,6 +56,16 @@
   (register-trainer-victory! [this writer-ctx]
     "Incrementa vitorias-treinador no save ativo (CAS fence).")
 
+  (attempt-capture! [this writer-ctx request]
+    "Captura: consome bola, resolve chance, adiciona Pokémon se sucesso.
+     CAS ativo+fence; recibo operation-id + payload-hash.")
+
+  (evolve-pokemon! [this writer-ctx request]
+    "Evolui Pokémon no índice; consome item se :item-id; fence + recibo.")
+
+  (learn-move! [this writer-ctx request]
+    "Aprende/substitui golpe no índice; fence + recibo.")
+
   (ensure-group! [this chat-id label]
     "Garante entidade de grupo separada dos saves.")
 

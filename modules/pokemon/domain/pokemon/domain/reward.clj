@@ -8,7 +8,7 @@
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]))
 
-(defn- canonicalize
+(defn canonicalize
   "Mapa ordenado recursivo para hashing estável."
   [x]
   (cond

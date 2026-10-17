@@ -1,0 +1,52 @@
+;; M3.3 — golpes, capacidade de coleção e sequência de capturas.
+[
+ {:db/ident       :pokemon/golpes-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "EDN dos golpes [{slug nome-exibicao tipo poder classe …}]"}
+
+ {:db/ident       :pokemon/golpes-removidos-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/historico-golpes-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/ofertas-golpes-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/habilidade
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/imagem
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/imagem-shiny
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/ivs-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Opcional; legado atual não usa IVs (reserva para import futuro)"}
+
+ {:db/ident       :save/sequencia-capturas
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :save/maior-sequencia-capturas
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :save/expansoes-pokemon-50
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :save/capacidade-pokemon-legada
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+]

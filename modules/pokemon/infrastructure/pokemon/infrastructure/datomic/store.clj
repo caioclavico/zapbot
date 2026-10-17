@@ -4,10 +4,15 @@
   (:require [clojure.edn :as edn]
             [datomic.client.api :as d]
             [pokemon.application.ports :as ports]
+            [pokemon.domain.capacity :as capacity]
+            [pokemon.domain.capture :as capture]
             [pokemon.domain.collection :as coll]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.evolution :as evo]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]
+            [pokemon.domain.moves :as moves]
+            [pokemon.domain.ops :as ops]
             [pokemon.domain.reward :as reward]
             [pokemon.domain.xp :as xp]
             [pokemon.infrastructure.datomic.schema :as schema]))
@@ -64,34 +69,124 @@
              :trainer-xp xp
              :trainer-level nivel
              :xp-atual (:xp-atual perfil)
-             :xp-necessario (:xp-necessario perfil)))))
+             :xp-necessario (:xp-necessario perfil)
+             :sequencia-capturas (long (:save/sequencia-capturas e 0))
+             :maior-sequencia-capturas (long (:save/maior-sequencia-capturas e 0))
+             :expansoes-pokemon-50 (long (:save/expansoes-pokemon-50 e 0))
+             :capacidade-pokemon-legada (long (:save/capacidade-pokemon-legada e 0))))))
+
+(defn- edn-read
+  [s]
+  (when (and s (not (empty? s)))
+    (edn/read-string s)))
 
 (defn- ->pokemon
   [e]
   (when (present? e)
-    {:pokemon-key (:pokemon/key e)
-     :id-pokemon (:pokemon/id-pokemon e)
-     :species (:pokemon/species e)
-     :nome (or (:pokemon/nickname e) (:pokemon/species e))
-     :nickname (:pokemon/nickname e)
-     :shiny (boolean (:pokemon/shiny e))
-     :xp (:pokemon/xp e)
-     :level (:pokemon/level e)
-     :nivel (:pokemon/level e)
-     :in-party (boolean (:pokemon/in-party e))
-     :collection-index (:pokemon/collection-index e)
-     :hp (:pokemon/hp e)
-     :hp-atual (:pokemon/hp-atual e)
-     :status (:pokemon/status e)
-     :xp-desde-nivel (:pokemon/xp-desde-nivel e 0)
-     :amizade (:pokemon/amizade e 70)
-     :ataque (:pokemon/ataque e 0)
-     :defesa (:pokemon/defesa e 0)
-     :atq-esp (:pokemon/atq-esp e 0)
-     :def-esp (:pokemon/def-esp e 0)
-     :veloc (:pokemon/veloc e 0)
-     :tipos (vec (:pokemon/tipos e))
-     :raridade (:pokemon/raridade e "comum")}))
+    (cond-> {:pokemon-key (:pokemon/key e)
+             :id-pokemon (:pokemon/id-pokemon e)
+             :species (:pokemon/species e)
+             :nome (or (:pokemon/nickname e) (:pokemon/species e))
+             :nickname (:pokemon/nickname e)
+             :shiny (boolean (:pokemon/shiny e))
+             :xp (:pokemon/xp e)
+             :level (:pokemon/level e)
+             :nivel (:pokemon/level e)
+             :in-party (boolean (:pokemon/in-party e))
+             :collection-index (:pokemon/collection-index e)
+             :hp (:pokemon/hp e)
+             :hp-atual (:pokemon/hp-atual e)
+             :status (:pokemon/status e)
+             :xp-desde-nivel (:pokemon/xp-desde-nivel e 0)
+             :amizade (:pokemon/amizade e 70)
+             :ataque (:pokemon/ataque e 0)
+             :defesa (:pokemon/defesa e 0)
+             :atq-esp (:pokemon/atq-esp e 0)
+             :def-esp (:pokemon/def-esp e 0)
+             :veloc (:pokemon/veloc e 0)
+             :tipos (vec (:pokemon/tipos e))
+             :raridade (:pokemon/raridade e "comum")
+             :golpes (vec (or (edn-read (:pokemon/golpes-edn e)) []))
+             :golpes-removidos (vec (or (edn-read (:pokemon/golpes-removidos-edn e)) []))
+             :historico-golpes (or (edn-read (:pokemon/historico-golpes-edn e)) {})}
+      (:pokemon/habilidade e) (assoc :habilidade (:pokemon/habilidade e))
+      (:pokemon/imagem e) (assoc :imagem (:pokemon/imagem e))
+      (:pokemon/imagem-shiny e) (assoc :imagem-shiny (:pokemon/imagem-shiny e))
+      (:pokemon/ivs-edn e) (assoc :ivs (edn-read (:pokemon/ivs-edn e))))))
+
+(defn- pokemon-entity-map
+  "Mapa de atributos Datomic a partir do registro de domínio."
+  [sk registro idx]
+  (let [id-poke (:id-pokemon registro)
+        poke-key (or id-poke (str sk "|poke|" idx))]
+    (cond-> {:pokemon/key poke-key
+             :pokemon/id-pokemon id-poke
+             :pokemon/save [:save/key sk]
+             :pokemon/species (or (:species registro) (:nome registro))
+             :pokemon/nickname (:nome registro)
+             :pokemon/shiny (boolean (:shiny registro))
+             :pokemon/xp (long (:xp-desde-nivel registro 0))
+             :pokemon/level (long (:nivel registro 1))
+             :pokemon/in-party true
+             :pokemon/collection-index idx
+             :pokemon/hp (long (:hp registro 0))
+             :pokemon/hp-atual (long (:hp-atual registro 0))
+             :pokemon/xp-desde-nivel (long (:xp-desde-nivel registro 0))
+             :pokemon/amizade (long (:amizade registro 70))
+             :pokemon/ataque (long (:ataque registro 0))
+             :pokemon/defesa (long (:defesa registro 0))
+             :pokemon/atq-esp (long (:atq-esp registro 0))
+             :pokemon/def-esp (long (:def-esp registro 0))
+             :pokemon/veloc (long (:veloc registro 0))
+             :pokemon/raridade (or (:raridade registro) "comum")
+             :pokemon/golpes-edn (pr-str (or (:golpes registro) []))}
+      (seq (:tipos registro)) (assoc :pokemon/tipos (vec (:tipos registro)))
+      (:status registro) (assoc :pokemon/status (:status registro))
+      (:habilidade registro) (assoc :pokemon/habilidade (:habilidade registro))
+      (:imagem registro) (assoc :pokemon/imagem (:imagem registro))
+      (:imagem-shiny registro) (assoc :pokemon/imagem-shiny (:imagem-shiny registro))
+      (seq (:golpes-removidos registro))
+      (assoc :pokemon/golpes-removidos-edn (pr-str (:golpes-removidos registro)))
+      (seq (:historico-golpes registro))
+      (assoc :pokemon/historico-golpes-edn (pr-str (:historico-golpes registro)))
+      (:ivs registro) (assoc :pokemon/ivs-edn (pr-str (:ivs registro))))))
+
+(defn- inventory-adjust-tx
+  "Retorna tx-data para delta de item; lança se qty ficaria negativa."
+  [db sk item-id delta]
+  (let [ik (id/inventory-item-key sk item-id)
+        cur (d/pull db '[:inventory-item/qty] [:inventory-item/key ik])
+        old-qty (long (:inventory-item/qty cur 0))
+        next-qty (+ old-qty (long delta))]
+    (when (neg? next-qty)
+      (throw (err/error :insufficient_item
+                        {:item-id item-id :qty old-qty :delta delta})))
+    [{:inventory-item/key ik
+      :inventory-item/save [:save/key sk]
+      :inventory-item/item-id item-id
+      :inventory-item/qty next-qty}]))
+
+(defn- apply-pokemon-xp-tx
+  "TX fragments para conceder XP a um Pokémon (por id-pokemon)."
+  [poke quantidade]
+  (let [applied (xp/aplicar-xp-pokemon poke quantidade)
+        r (:registro applied)
+        lookup [:pokemon/id-pokemon (:id-pokemon poke)]]
+    {:tx [[:db/add lookup :pokemon/level (long (:nivel r))]
+          [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
+          [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
+          [:db/add lookup :pokemon/hp (long (:hp r))]
+          [:db/add lookup :pokemon/hp-atual (long (:hp-atual r))]
+          [:db/add lookup :pokemon/ataque (long (:ataque r))]
+          [:db/add lookup :pokemon/defesa (long (:defesa r))]
+          [:db/add lookup :pokemon/atq-esp (long (:atq-esp r))]
+          [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
+          [:db/add lookup :pokemon/veloc (long (:veloc r))]
+          [:db/add lookup :pokemon/amizade (long (:amizade r))]]
+     :subida (when (pos? (:subidas applied))
+               {:nome (:nome applied)
+                :nivel (:nivel-final applied)
+                :niveis-subidos (:subidas applied)})}))
 
 (defn- ->item
   [e]
@@ -479,37 +574,13 @@
        (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
              colecao (query-collection db sk)
              idx (coll/next-index colecao)
-             id-poke (:id-pokemon registro)
-             poke-key (or id-poke (str sk "|poke|" idx))
-             entity {:pokemon/key poke-key
-                     :pokemon/id-pokemon id-poke
-                     :pokemon/save [:save/key sk]
-                     :pokemon/species (or (:species registro) (:nome registro))
-                     :pokemon/nickname (:nome registro)
-                     :pokemon/shiny (boolean (:shiny registro))
-                     :pokemon/xp (long (:xp-desde-nivel registro 0))
-                     :pokemon/level (long (:nivel registro 1))
-                     :pokemon/in-party true
-                     :pokemon/collection-index idx
-                     :pokemon/hp (long (:hp registro 0))
-                     :pokemon/hp-atual (long (:hp-atual registro 0))
-                     :pokemon/xp-desde-nivel (long (:xp-desde-nivel registro 0))
-                     :pokemon/amizade (long (:amizade registro 70))
-                     :pokemon/ataque (long (:ataque registro 0))
-                     :pokemon/defesa (long (:defesa registro 0))
-                     :pokemon/atq-esp (long (:atq-esp registro 0))
-                     :pokemon/def-esp (long (:def-esp registro 0))
-                     :pokemon/veloc (long (:veloc registro 0))
-                     :pokemon/raridade (or (:raridade registro) "comum")}
-             entity (cond-> entity
-                      (seq (:tipos registro)) (assoc :pokemon/tipos (vec (:tipos registro)))
-                      (:status registro) (assoc :pokemon/status (:status registro)))
+             entity (pokemon-entity-map sk registro idx)
              rev (long (:save/revision save 0))]
          {:tx [entity
                [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
           :result {:destino :equipe
                    :indice idx
-                   :id-pokemon id-poke
+                   :id-pokemon (:id-pokemon registro)
                    :registro (assoc registro :collection-index idx)}}))))
 
   (update-hp-status! [_ writer-ctx idx hp-atual status]
@@ -571,6 +642,258 @@
          {:tx [[:db/add [:save/key sk] :save/vitorias-treinador (inc v)]
                [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
           :result {:vitorias (inc v)}}))))
+
+  (attempt-capture! [_ writer-ctx request]
+    (let [payload (ops/capture-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                     save-m (->save save)
+                     colecao (query-collection db sk)
+                     bola (:bola request)
+                     pokemon (:pokemon request)
+                     _ (when-not (capacity/cabe-pokemon? (count colecao) save-m)
+                         (throw (err/error :collection_full
+                                           {:count (count colecao)
+                                            :nivel (:trainer-level save-m)})))
+                     ball-tx (inventory-adjust-tx db sk bola -1)
+                     attempt (capture/attempt-capture
+                              {:pokemon pokemon
+                               :status (:status request)
+                               :sequencia-capturas (:sequencia-capturas save-m 0)
+                               :bola bola
+                               :tentativas-anteriores (:tentativas-anteriores request 0)
+                               :roll (:roll request)
+                               :fuga-roll (:fuga-roll request)})
+                     rev (long (:save/revision save 0))
+                     seq-atual (long (:sequencia-capturas save-m 0))
+                     maior (long (:maior-sequencia-capturas save-m 0))
+                     coins (long (:save/coins save 0))
+                     pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                     base-tx (into ball-tx
+                                   [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                                    {:operation-receipt/id operation-id
+                                     :operation-receipt/kind "capture"
+                                     :operation-receipt/channel "gameplay"
+                                     :operation-receipt/payload-hash phash
+                                     :operation-receipt/player-key pk
+                                     :operation-receipt/save-id (:save-id writer-ctx)
+                                     :operation-receipt/summary
+                                     (pr-str {:capturou? (:capturou? attempt)
+                                              :fugiu? (:fugiu? attempt)
+                                              :bola bola
+                                              :chance (:chance attempt)})}])
+                     resultado
+                     (cond
+                       (:capturou? attempt)
+                       (let [registro (coll/pokemon->registro pokemon
+                                                              (or (:hp pokemon) (:hp-atual pokemon) 0)
+                                                              nil)
+                             idx (coll/next-index colecao)
+                             entity (pokemon-entity-map sk registro idx)
+                             seq-nova (inc seq-atual)
+                             rew (capture/recompensa-pos-captura
+                                  {:raridade (or (:raridade pokemon) "comum")
+                                   :sequencia-nova seq-nova
+                                   :primeira-tentativa? (zero? (long (:tentativas-anteriores request 0)))
+                                   :capturou? true})
+                             ativo-idx (min (long (:ativo-index save-m 0))
+                                            (max 0 (dec (count colecao))))
+                             ativo (when (seq colecao) (nth colecao ativo-idx))
+                             xp-part (when (and ativo (pos? (:xp rew)))
+                                       (apply-pokemon-xp-tx ativo (:xp rew)))
+                             tx (cond-> (into base-tx
+                                              [entity
+                                               [:db/add [:save/key sk] :save/sequencia-capturas seq-nova]
+                                               [:db/add [:save/key sk] :save/maior-sequencia-capturas
+                                                (max maior seq-nova)]
+                                               [:db/cas [:save/key sk] :save/coins coins
+                                                (model/apply-coin-delta coins (:moedas rew))]
+                                               {:pokedex-entry/key (id/pokedex-entry-key sk (:species registro))
+                                                :pokedex-entry/save [:save/key sk]
+                                                :pokedex-entry/species (:species registro)
+                                                :pokedex-entry/seen true
+                                                :pokedex-entry/caught true}])
+                                  xp-part (into (:tx xp-part)))]
+                         {:tx tx
+                          :result {:operation-id operation-id
+                                   :duplicate false
+                                   :channel "gameplay"
+                                   :payload-hash phash
+                                   :capturou? true
+                                   :fugiu? false
+                                   :chance (:chance attempt)
+                                   :indice idx
+                                   :id-pokemon (:id-pokemon registro)
+                                   :recompensa rew
+                                   :subida (:subida xp-part)
+                                   :registro (assoc registro :collection-index idx)}})
+
+                       (:fugiu? attempt)
+                       (let [rew (capture/recompensa-pos-captura
+                                  {:raridade (or (:raridade pokemon) "comum")
+                                   :sequencia-nova 0
+                                   :primeira-tentativa? false
+                                   :capturou? false})
+                             ativo-idx (min (long (:ativo-index save-m 0))
+                                            (max 0 (dec (count colecao))))
+                             ativo (when (seq colecao) (nth colecao ativo-idx))
+                             xp-part (when (and ativo (pos? (:xp rew)))
+                                       (apply-pokemon-xp-tx ativo (:xp rew)))
+                             tx (cond-> (into base-tx
+                                              [[:db/add [:save/key sk] :save/maior-sequencia-capturas
+                                                (max maior seq-atual)]
+                                               [:db/add [:save/key sk] :save/sequencia-capturas 0]])
+                                  xp-part (into (:tx xp-part)))]
+                         {:tx tx
+                          :result {:operation-id operation-id
+                                   :duplicate false
+                                   :channel "gameplay"
+                                   :payload-hash phash
+                                   :capturou? false
+                                   :fugiu? true
+                                   :chance (:chance attempt)
+                                   :recompensa rew
+                                   :subida (:subida xp-part)}})
+
+                       :else
+                       {:tx base-tx
+                        :result {:operation-id operation-id
+                                 :duplicate false
+                                 :channel "gameplay"
+                                 :payload-hash phash
+                                 :capturou? false
+                                 :fugiu? false
+                                 :chance (:chance attempt)
+                                 :tentativa (:tentativa attempt)}})]
+                 resultado)))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (evolve-pokemon! [_ writer-ctx request]
+    (let [payload (ops/evolve-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                     colecao (query-collection db sk)
+                     idx (long (:idx request))
+                     _ (coll/validate-index! idx (count colecao))
+                     poke (nth colecao idx)
+                     evoluido (evo/aplicar-evolucao poke (:dados request))
+                     rev (long (:save/revision save 0))
+                     pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                     lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+                     item-tx (when-let [item-id (:item-id request)]
+                               (inventory-adjust-tx db sk item-id -1))
+                     old-tipos (set (:tipos poke))
+                     new-tipos (set (:tipos evoluido))
+                     tipo-tx (concat
+                              (map (fn [t] [:db/retract lookup :pokemon/tipos t])
+                                   (remove new-tipos old-tipos))
+                              (map (fn [t] [:db/add lookup :pokemon/tipos t])
+                                   (remove old-tipos new-tipos)))
+                     tx (into (or item-tx [])
+                              (concat
+                               tipo-tx
+                               [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                                [:db/add lookup :pokemon/species (:species evoluido)]
+                                [:db/add lookup :pokemon/nickname (:nome evoluido)]
+                                [:db/add lookup :pokemon/hp (long (:hp evoluido))]
+                                [:db/add lookup :pokemon/hp-atual (long (:hp-atual evoluido))]
+                                [:db/add lookup :pokemon/ataque (long (:ataque evoluido))]
+                                [:db/add lookup :pokemon/defesa (long (:defesa evoluido))]
+                                [:db/add lookup :pokemon/atq-esp (long (:atq-esp evoluido))]
+                                [:db/add lookup :pokemon/def-esp (long (:def-esp evoluido))]
+                                [:db/add lookup :pokemon/veloc (long (:veloc evoluido))]
+                                [:db/add lookup :pokemon/golpes-edn (pr-str (:golpes evoluido))]
+                                {:operation-receipt/id operation-id
+                                 :operation-receipt/kind "evolve"
+                                 :operation-receipt/channel "gameplay"
+                                 :operation-receipt/payload-hash phash
+                                 :operation-receipt/player-key pk
+                                 :operation-receipt/save-id (:save-id writer-ctx)
+                                 :operation-receipt/summary
+                                 (pr-str {:idx idx :nome-novo (:nome evoluido)})}]))
+                     tx (cond-> tx
+                          (:habilidade evoluido)
+                          (conj [:db/add lookup :pokemon/habilidade (:habilidade evoluido)])
+                          (:imagem evoluido)
+                          (conj [:db/add lookup :pokemon/imagem (:imagem evoluido)])
+                          (:imagem-shiny evoluido)
+                          (conj [:db/add lookup :pokemon/imagem-shiny (:imagem-shiny evoluido)]))]
+                 {:tx tx
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :idx idx
+                           :registro evoluido}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (learn-move! [_ writer-ctx request]
+    (let [payload (ops/learn-move-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                     colecao (query-collection db sk)
+                     idx (long (:idx request))
+                     _ (coll/validate-index! idx (count colecao))
+                     poke (nth colecao idx)
+                     atualizado (moves/preparar-aprendizado poke (:golpe request) (:slot request))
+                     rev (long (:save/revision save 0))
+                     pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                     lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+                     tx [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                         [:db/add lookup :pokemon/golpes-edn (pr-str (:golpes atualizado))]
+                         [:db/add lookup :pokemon/historico-golpes-edn
+                          (pr-str (:historico-golpes atualizado))]
+                         [:db/add lookup :pokemon/golpes-removidos-edn
+                          (pr-str (:golpes-removidos atualizado))]
+                         {:operation-receipt/id operation-id
+                          :operation-receipt/kind "learn-move"
+                          :operation-receipt/channel "gameplay"
+                          :operation-receipt/payload-hash phash
+                          :operation-receipt/player-key pk
+                          :operation-receipt/save-id (:save-id writer-ctx)
+                          :operation-receipt/summary
+                          (pr-str {:idx idx :slug (moves/chave (:golpe request))})}]]
+                 {:tx tx
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :idx idx
+                           :registro atualizado}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
 
   (ensure-group! [_ chat-id label]
     (let [db (d/db conn)

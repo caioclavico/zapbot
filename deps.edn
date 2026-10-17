@@ -44,4 +44,12 @@
    :jvm-opts ["-Xms64m"
               "-Xmx256m"
               "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
+  ;; Testes M3.3 — captura/evolução/golpes + regressões
+  :test-m3-capture
+  {:main-opts ["-m" "odisseu.smoke.m3-capture"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}}}
