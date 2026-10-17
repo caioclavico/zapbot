@@ -1,9 +1,9 @@
 # Arquitetura — monólito modular + Datomic Local
 
-**Status:** M0 aprovado; M1 em execução (scaffold + smoke, sem migração)  
+**Status:** M0–M1 feitos; M2 núcleo treinador/saves Datomic implementado (dev)  
 **Branch:** `refactor/modular-monolith-datomic`  
 **Data:** 2026-10-17  
-**Escopo M1:** scaffold + `deps.edn` + smoke Datomic Local. Sem migração Cassandra, sem rewrite de domínio, sem flags, sem commit/push/deploy (a menos que solicitado). Ver `docs/m1-datomic-local-smoke.md`.
+**Escopo M2:** schema versionado + API aplicação + testes fictícios. Sem migração Cassandra, sem WhatsApp/deploy/flags. Ver `docs/m2-pokemon-datomic.md`.
 
 ---
 

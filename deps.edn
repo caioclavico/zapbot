@@ -1,19 +1,30 @@
 {:paths ["apps/odisseu/src"
          "shared/persistence/src"
          "shared/config/src"
-         "shared/observability/src"]
+         "shared/observability/src"
+         "modules/pokemon/domain"
+         "modules/pokemon/application"
+         "modules/pokemon/infrastructure"
+         "modules/pokemon/tests"]
 
- ;; Núcleo Clojure/JVM — desenvolvimento apenas (M1).
+ ;; Núcleo Clojure/JVM — desenvolvimento (M1+).
  ;; Não ligado ao runtime WhatsApp/Node nem ao deploy atual.
  :deps {org.clojure/clojure {:mvn/version "1.12.1"}
         ;; Datomic Local: Client API embutida, Apache-2.0, Maven Central.
-        ;; Docs: https://docs.datomic.com/datomic-local.html
         com.datomic/local {:mvn/version "1.0.301"}}
 
  :aliases
- {;; Smoke isolado: JVM só (sem Chromium, sem Cassandra, sem Node).
+ {;; Smoke M1 isolado
   :smoke-datomic
   {:main-opts ["-m" "odisseu.smoke.datomic-local"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
+  ;; Testes M2 — núcleo treinador/saves
+  :test-m2-trainer
+  {:main-opts ["-m" "odisseu.smoke.m2-trainer"]
    :jvm-opts ["-Xms64m"
               "-Xmx256m"
               "-XX:+UseG1GC"
