@@ -2,6 +2,8 @@
   (:require [pokemon-service.regression-fixture :as fixture]
             [cljs.test :refer-macros [use-fixtures async deftest is testing]]
             [clojure.string :as str]
+            [promesa.core :as p]
+            [zapbot.config :as config]
             [zapbot.pokemon.loja :as loja]
             [zapbot.pokemon.treinador :as treinador]
             [zapbot.armazenamento :as armazenamento]))
@@ -125,3 +127,14 @@
       (is (= (str "loja comprar " chave) (get opcoes (str (inc i))))))
     (is (str/includes? texto "compra 1 unidade"))
     (is (not (contains? opcoes "0")))))
+
+(deftest legado-plano-permanece-com-flags-desligadas
+  (let [estado (atom {"g" {"p" {"moedas" 100 "inventario" {}}}})]
+    (with-redefs [loja/contas estado
+                  armazenamento/salvar! (fn [& _] nil)
+                  config/save-transitions-enabled? false
+                  config/canonical-trainer-enabled? false]
+      (loja/comprar {:chat-id "g" :player-id "p"} "fruta")
+      (is (= 90 (get-in @estado ["g" "p" "moedas"])))
+      (is (= 1 (get-in @estado ["g" "p" "inventario" "fruta"])))
+      (is (nil? (get-in @estado ["g" "p" "schema-version-loja"]))))))

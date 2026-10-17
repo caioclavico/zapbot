@@ -77,8 +77,12 @@
                                   (sort-by (comp last key) >) (take 20) (mapv val)) false))
                    :trainer-read (result (when-let [valor (get-in @db [:legacy (vec args)])] [{:valor valor}]) false)
                    :trainer-cas
-                   (let [[valor modulo cid expected] args old (get-in @db [:legacy [modulo cid]])
-                         applied (if (str/starts-with? sql "UPDATE") (= expected old) (nil? old))]
+                   (let [insert? (str/starts-with? sql "INSERT")
+                         [modulo cid valor expected] (if insert?
+                                                        [(nth args 0) (nth args 1) (nth args 2) nil]
+                                                        [(nth args 1) (nth args 2) (nth args 0) (nth args 3)])
+                         old (get-in @db [:legacy [modulo cid]])
+                         applied (if insert? (nil? old) (= expected old))]
                      (when applied (swap! db assoc-in [:legacy [modulo cid]] valor))
                      (when-let [f @after-cas] (reset! after-cas nil) (f))
                      (result [] applied))
@@ -93,7 +97,12 @@
 (defn com-banco [f]
   (let [atoms [storage/client storage/pronto storage/cache storage/confirmados storage/filas-gravacao
                storage/falhas-gravacao storage/gravacoes-pendentes storage/partes-bloqueadas storage/geracoes-partes
-               treinador/contas core/jogos core/cacadas-selvagens core/filas-jogadas
+               storage/contas-bloqueadas-hidratacao storage/playable-activation-test
+               storage/save-activity-eligibility storage/save-activity-adventure-reader
+               storage/save-transition-coordinator
+               treinador/contas loja/contas loja/vinculos-save
+               loja/vinculos-duraveis loja/filas-vinculo
+               core/jogos core/cacadas-selvagens core/filas-jogadas
                core/registrar-recompensa-ovo core/comando-ovos]
         lifecycle [adventure/aceitando? adventure/pronto? adventure/geracao
                    adventure/vencimentos adventure/emissor adventure/processando?]

@@ -35,7 +35,28 @@
 (defn preparar-inicializacao! []
   (swap! geracao inc)
   (reset! vencimentos {})
+  (armazenamento/configurar-leitor-aventura-elegibilidade!
+   (fn [cid pid]
+     (if-not config/adventure-enabled?
+       (p/resolved nil)
+       (p/then (store/resolver! cid pid false (.now js/Date))
+               (fn [estado]
+                 (if-not estado
+                   nil
+                   (let [ovos-ativos (or (get-in estado [:activity-state :eggs]) [])
+                         eggs (mapv (fn [o]
+                                      {"egg-id" (or (:egg-id o) (:eggId o))
+                                       "state" (name (or (:state o) ""))})
+                                    ovos-ativos)
+                         entregas (into []
+                                        (keep (fn [o]
+                                                (when (= "delivery_pending"
+                                                         (name (or (:state o) "")))
+                                                  (or (:egg-id o) (:eggId o))))
+                                              ovos-ativos))]
+                     (clj->js {:eggs eggs :pendingDeliveries entregas}))))))))
   (when config/adventure-enabled? (reset! pronto? false) (reset! aceitando? false)))
+
 (defn parar! []
   (swap! geracao inc) (reset! aceitando? false) (reset! emissor nil)
   (when-let [timer @relogio] (js/clearInterval timer))
@@ -50,36 +71,151 @@
   (when-not config/adventure-enabled? (ovos/erro! :disabled "Adventure Sync desabilitado."))
   (when-not (and @aceitando? @pronto?) (ovos/erro! :not-ready "Adventure Sync inicializando ou encerrando."))
   (armazenamento/exigir-escrita!)
-  (core/enfileirar-operacao-interna! cid acao recuperacao?))
+  ;; Comando novo captura o fence do save atual (selo na incubação).
+  ;; Recuperação/tick não recaptura; entrega reinstala o selo persistido.
+  (core/enfileirar-operacao-interna! cid acao recuperacao? (not recuperacao?) pid))
+
+(defn- codigo-erro [erro]
+  (let [bruto (or (some-> erro .-code)
+                  (:code (ex-data erro))
+                  (some-> erro .-cause .-code)
+                  (:code (ex-data (.-cause erro)))
+                  (when (string? (some-> erro .-message))
+                    (let [msg (.-message erro)]
+                      (cond
+                        (str/includes? msg "canonical_trainer_fence_conflict") "canonical_trainer_fence_conflict"
+                        (str/includes? msg "save_bound_fence_conflict") "save_bound_fence_conflict"
+                        (str/includes? msg "adventure_hatch_resume_save_mismatch") "adventure_hatch_resume_save_mismatch"
+                        (str/includes? msg "canonical_trainer_transition_reserved") "canonical_trainer_transition_reserved"
+                        :else nil))))]
+    (when bruto
+      (-> (if (keyword? bruto) (name bruto) (str bruto))
+          (str/replace "-" "_")))))
+
+(defn- fence-entrega-adiavel? [codigo]
+  (contains? #{"canonical_trainer_fence_conflict" "save_bound_fence_conflict"
+               "save_bound_fence_missing" "canonical_trainer_transition_reserved"
+               "adventure_hatch_resume_save_mismatch" "adventure_hatch_resume_unavailable"
+               :canonical_trainer_fence_conflict :save_bound_fence_conflict
+               :save-bound-fence-missing :canonical-trainer-transition-reserved
+               :adventure-hatch-resume-unavailable :adventure-hatch-origin-unproven}
+             codigo))
+
+(defn- entregar-via-treino! [cid pid hatch-id registro]
+  (treinador/receber-nascimento! cid pid hatch-id registro))
+
+(defn- marcar-entregue! [cid pid egg-id]
+  (p/then (armazenamento/marcar-nascimento-entregue! cid pid egg-id)
+          (fn [_] :entregue)))
+
+(defn- retomar-se-origem-ativa! [cid pid egg-id hatch-id selo entregar-fn]
+  (p/let [ativa? (armazenamento/origem-save-ativa? cid pid selo)]
+    (if-not ativa?
+      (do (js/console.warn "[Ovos] entrega adiada: save de origem inativo ou reservado.")
+          :adiado)
+      (-> (armazenamento/recuperar-nascimento! cid pid egg-id hatch-id entregar-fn)
+          (p/then (fn [_] :entregue))
+          (p/catch
+           (fn [erro-retoma]
+             (if (fence-entrega-adiavel? (codigo-erro erro-retoma))
+               (do (js/console.warn "[Ovos] retomada adiada:" (codigo-erro erro-retoma))
+                   :adiado)
+               (throw erro-retoma))))))))
+
+(defn- entregar-com-fence-incubacao! [cid pid egg-id hatch-id pokemon-id registro selo]
+  (let [entregar-fn (fn [_] (entregar-via-treino! cid pid hatch-id registro))]
+    (p/let [_ (armazenamento/registrar-nascimento-pendente!
+               cid pid egg-id hatch-id pokemon-id selo)]
+      (-> (armazenamento/executar-com-selo-save!
+           cid pid selo #(entregar-via-treino! cid pid hatch-id registro))
+          (p/then (fn [_] (marcar-entregue! cid pid egg-id)))
+          (p/catch
+           (fn [erro]
+             (cond
+               (treinador/recibo-nascimento cid pid hatch-id)
+               (marcar-entregue! cid pid egg-id)
+
+               (not (fence-entrega-adiavel? (codigo-erro erro)))
+               (throw erro)
+
+               :else
+               (retomar-se-origem-ativa! cid pid egg-id hatch-id selo entregar-fn))))))))
+
+(defn- entregar-nascimento-protegido!
+  "Entrega com fence de incubação; se a geração mudou e o save de origem
+  voltou a estar ativo, retoma via AdventureHatchResume sem reescrever o selo.
+  Retorna :entregue | :adiado. Não entrega o Pokémon de A enquanto B está ativo."
+  [cid pid egg-id ovo]
+  (let [resultado (:resultado ovo)
+        hatch-id (:hatch-id resultado)
+        pokemon-id (:pokemon-id resultado)
+        registro (:registro resultado)
+        selo (or (:save-fence resultado) (:save-fence ovo))]
+    (cond
+      (treinador/recibo-nascimento cid pid hatch-id)
+      (marcar-entregue! cid pid egg-id)
+
+      (not (core/pode-receber-nascimento? cid pid))
+      (p/resolved :adiado)
+
+      (not config/canonical-trainer-enabled?)
+      (p/then (entregar-via-treino! cid pid hatch-id registro) (fn [_] :entregue))
+
+      (nil? selo)
+      ;; Sem fence persistido não há prova de origem; bloqueia em vez de
+      ;; recapturar a geração vigente.
+      (do (js/console.warn "[Ovos] nascimento sem save-fence; entrega bloqueada no modo canônico.")
+          (p/resolved :adiado))
+
+      :else
+      (entregar-com-fence-incubacao! cid pid egg-id hatch-id pokemon-id registro selo))))
 
 (defn- recuperar-estado! [estado agora]
   (p/let [estado (store/ler! (:account-id estado))]
     (-> (reduce
           (fn [anterior egg-id]
-            (p/let [atual anterior ovo (ovos/ovo atual egg-id)]
-              (if-not (contains? #{"ready_to_hatch" "delivery_pending"} (:state ovo)) atual
-                (let [preparado (if (:resultado ovo) atual
-                                   (let [nome (catalog/sortear (:pool ovo) (:seed ovo))
-                                         resultado {:hatch-id (store/uuid) :pokemon-id (store/uuid) :species nome}
-                                         registro (core/preparar-registro-nascimento
-                                                    (catalog/especie nome) (:pokemon-id resultado))]
-                                     (assoc-in (ovos/preparar-nascimento atual egg-id
-                                                 (assoc resultado :registro registro)) [:version] (:version atual))))]
-                  (p/let [fixado (store/alterar! (:account-id atual)
-                                  #(if (:resultado (ovos/ovo % egg-id)) %
-                                       (ovos/preparar-nascimento % egg-id (:resultado (ovos/ovo preparado egg-id)))) agora)
+            (p/let [atual anterior
+                    ovo (ovos/ovo atual egg-id)]
+              (if-not (contains? #{"ready_to_hatch" "delivery_pending"} (:state ovo))
+                atual
+                (let [preparado (if (:resultado ovo)
+                                  atual
+                                  (let [nome (catalog/sortear (:pool ovo) (:seed ovo))
+                                        resultado {:hatch-id (store/uuid)
+                                                   :pokemon-id (store/uuid)
+                                                   :species nome
+                                                   :save-fence (:save-fence ovo)}
+                                        registro (core/preparar-registro-nascimento
+                                                   (catalog/especie nome) (:pokemon-id resultado))]
+                                    (assoc-in (ovos/preparar-nascimento atual egg-id
+                                                (assoc resultado :registro registro))
+                                              [:version] (:version atual))))]
+                  (p/let [fixado (store/alterar!
+                                  (:account-id atual)
+                                  #(if (:resultado (ovos/ovo % egg-id))
+                                     %
+                                     (ovos/preparar-nascimento % egg-id
+                                                               (:resultado (ovos/ovo preparado egg-id))))
+                                  agora)
                           ovo (ovos/ovo fixado egg-id)
                           resultado (:resultado ovo)]
-                    (if-not (or (treinador/recibo-nascimento (:chat-id fixado) (:player-id fixado) (:hatch-id resultado))
+                    (if-not (or (treinador/recibo-nascimento (:chat-id fixado) (:player-id fixado)
+                                                             (:hatch-id resultado))
                                 (core/pode-receber-nascimento? (:chat-id fixado) (:player-id fixado)))
                       fixado
                       ;; Pokémon e recibo compartilham o CAS da partição treinador.
-             ;; Se a confirmação do ovo falhar, o recibo impede nova entrega.
-             (p/let [_ (treinador/receber-nascimento! (:chat-id fixado) (:player-id fixado)
-                                  (:hatch-id resultado) (:registro resultado))]
-                        (store/alterar! (:account-id fixado)
-                          #(if (= "delivery_pending" (:state (ovos/ovo % egg-id)))
-                             (ovos/concluir-nascimento % egg-id agora) %) agora))))))))
+                      ;; Fence de incubação primeiro; retomada só se o save de origem
+                      ;; voltar a ficar ativo. Recibo impede nova entrega.
+                      (p/let [status (entregar-nascimento-protegido!
+                                      (:chat-id fixado) (:player-id fixado) egg-id ovo)]
+                        (if-not (= :entregue status)
+                          fixado
+                          (store/alterar!
+                           (:account-id fixado)
+                           #(if (= "delivery_pending" (:state (ovos/ovo % egg-id)))
+                              (ovos/concluir-nascimento % egg-id agora)
+                              %)
+                           agora)))))))))
           (p/resolved estado)
           (map :egg-id (:eggs estado)))
         (p/then #(store/projetar! % agora)))))
@@ -106,45 +242,69 @@
   [estado agora]
   (acompanhar! estado)
   (p/let [estado (store/alterar! (:account-id estado)
-                    (fn [atual] (update atual :activity-state ovos/avancar-tempo-atividade agora)) agora)]
-    (p/then (reduce
-     (fn [anterior egg-id]
-       (p/let [atual anterior
-               ;; Antes de tocar a coleção, os IDs e o registro ficam duráveis.
-               fixado (store/alterar! (:account-id atual)
+                    (fn [atual] (update atual :activity-state ovos/avancar-tempo-atividade agora))
+                    agora)]
+    (p/then
+     (reduce
+      (fn [anterior egg-id]
+        (p/let [atual anterior
+                ;; Antes de tocar a coleção, os IDs e o registro ficam duráveis.
+                fixado (store/alterar!
+                        (:account-id atual)
                         (fn [a]
                           (let [ovo (ovos/ovo (:activity-state a) egg-id)]
-                            (if (or (:resultado ovo) (not= :ready-to-hatch (:state ovo))) a
+                            (if (or (:resultado ovo) (not= :ready-to-hatch (:state ovo)))
+                              a
                               (let [nome (or (:species ovo)
-                                             (ovos/erro! :species-unresolved "Ovo sem espécie fixada; preservar para recuperação explícita."))
+                                             (ovos/erro! :species-unresolved
+                                                         "Ovo sem espécie fixada; preservar para recuperação explícita."))
                                     id (store/uuid)
-                                    resultado {:hatch-id (store/uuid) :pokemon-id id :species nome
-                                               :registro (core/preparar-registro-nascimento (catalog/especie nome) id)}]
+                                    resultado {:hatch-id (store/uuid)
+                                               :pokemon-id id
+                                               :species nome
+                                               :save-fence (:save-fence ovo)
+                                               :registro (core/preparar-registro-nascimento
+                                                          (catalog/especie nome) id)}]
                                 (update a :activity-state ovos/atualizar-ovo egg-id
-                                        (fn [o] (assoc o :resultado resultado))))))) agora)
-               ovo (ovos/ovo (:activity-state fixado) egg-id)
-               resultado (:resultado ovo)]
-         (if (or (not= :ready-to-hatch (:state ovo)) (nil? resultado)) fixado
-           (if-not (or (treinador/recibo-nascimento (:chat-id fixado) (:player-id fixado) (:hatch-id resultado))
-                       (core/pode-receber-nascimento? (:chat-id fixado) (:player-id fixado))) fixado
-             (p/let [_ (treinador/receber-nascimento! (:chat-id fixado) (:player-id fixado)
-                              (:hatch-id resultado) (:registro resultado))]
-               (store/alterar! (:account-id fixado)
-                 (fn [a]
-                   (if (= :hatched (:state (ovos/ovo (:activity-state a) egg-id))) a
-                     (-> a
-                         (update :activity-state ovos/concluir-atividade egg-id agora)
-                         (update :history-pending conj
-                                 (merge resultado {:egg-id egg-id :category (:category ovo)
-                                                    :seq (:next-hatch-seq a) :hatched-at agora}))
-                         ;; Mesmo CAS que confirma a conclusão, somente após
-                         ;; entrega+recibo duráveis na coleção.
-                         (update :hatch-notifications (fnil conj [])
-                                 {:hatch-id (:hatch-id resultado) :species (:species resultado)
-                                  :category (:category ovo) :at agora})
-                         (update :next-hatch-seq inc)))) agora))))))
-     (p/resolved estado) (map :egg-id (get-in estado [:activity-state :eggs])))
-      (fn [a] (p/then (store/projetar! a agora) acompanhar!)))))
+                                        (fn [o] (assoc o :resultado resultado)))))))
+                        agora)
+                ovo (ovos/ovo (:activity-state fixado) egg-id)
+                resultado (:resultado ovo)]
+          (if (or (not= :ready-to-hatch (:state ovo)) (nil? resultado))
+            fixado
+            (if-not (or (treinador/recibo-nascimento (:chat-id fixado) (:player-id fixado)
+                                                     (:hatch-id resultado))
+                        (core/pode-receber-nascimento? (:chat-id fixado) (:player-id fixado)))
+              fixado
+              (p/let [status (entregar-nascimento-protegido!
+                              (:chat-id fixado) (:player-id fixado) egg-id
+                              (assoc ovo :resultado resultado))]
+                (if-not (= :entregue status)
+                  fixado
+                  (store/alterar!
+                   (:account-id fixado)
+                   (fn [a]
+                     (if (= :hatched (:state (ovos/ovo (:activity-state a) egg-id)))
+                       a
+                       (-> a
+                           (update :activity-state ovos/concluir-atividade egg-id agora)
+                           (update :history-pending conj
+                                   (merge resultado {:egg-id egg-id
+                                                     :category (:category ovo)
+                                                     :seq (:next-hatch-seq a)
+                                                     :hatched-at agora}))
+                           ;; Mesmo CAS que confirma a conclusão, somente após
+                           ;; entrega+recibo duráveis na coleção.
+                           (update :hatch-notifications (fnil conj [])
+                                   {:hatch-id (:hatch-id resultado)
+                                    :species (:species resultado)
+                                    :category (:category ovo)
+                                    :at agora})
+                           (update :next-hatch-seq inc))))
+                   agora)))))))
+      (p/resolved estado)
+      (map :egg-id (get-in estado [:activity-state :eggs])))
+     (fn [a] (p/then (store/projetar! a agora) acompanhar!)))))
 
 (defn- enviar-notificacoes! [estado]
   (reduce
@@ -184,7 +344,8 @@
                              enviado (enviar-notificacoes! recuperado)]
                        (acompanhar! enviado)
                        (when (get @vencimentos id)
-                         (swap! vencimentos update-in [id :due] #(max % (+ (.now js/Date) 60000)))))) true)
+                         (swap! vencimentos update-in [id :due] #(max % (+ (.now js/Date) 60000))))))
+                   true false pid)
                      (p/catch (fn [_]
                                 (when (get @vencimentos id)
                                   (swap! vencimentos assoc-in [id :due] (+ (.now js/Date) 60000)))
@@ -285,12 +446,15 @@
         (:activity-state (:state r))))))
 
 (defn atividade-consultar! [cid pid]
+  ;; Consulta reconcilia entregas adiadas; não recaptura o fence vigente —
+  ;; selo de incubação / resume instalam o contexto correto.
   (executar! cid pid
     #(p/let [estado (store/resolver! cid pid false (.now js/Date))]
        (when estado
          (p/let [atual (garantir-atividade! estado (.now js/Date))
                  recuperado (recuperar-atividade! atual (.now js/Date))]
-           (:activity-state recuperado))))))
+           (:activity-state recuperado))))
+    true))
 
 (defn atividade-ativar! [cid pid event-id]
   (texto! event-id)
@@ -316,13 +480,18 @@
                ;; Mesmo se a resposta do CAS de início se perder, esta conta
                ;; será relida pelo worker; o prazo persistido continua autoridade.
                _ (swap! vencimentos assoc (:account-id estado) {:cid cid :pid pid :due agora})
+               selo (armazenamento/selo-save-atual pid)
                resultado (store/operar! (:account-id estado) event-id
                            (store/fingerprint ["activity-incubate" egg-id incubator-id]) "activity-incubate"
                            (store/dia agora) agora
                            (fn [atual] (let [a (:activity-state atual)
                                              id (or incubator-id
-                                                    (:incubator-id (first (filter (fn [i] (nil? (:active-egg-id i))) (:incubators a)))))]
-                                         [(assoc atual :activity-state (ovos/incubar-atividade a egg-id id agora))
+                                                    (:incubator-id (first (filter (fn [i] (nil? (:active-egg-id i))) (:incubators a)))))
+                                             incubado (ovos/incubar-atividade a egg-id id agora)]
+                                         [(assoc atual :activity-state
+                                                 (if selo
+                                                   (ovos/atualizar-ovo incubado egg-id (fn [ovo] (assoc ovo :save-fence selo)))
+                                                   incubado))
                                           {:egg-id egg-id :incubator-id id}])))
                recuperado (recuperar-atividade! (:state resultado) agora)]
          (:activity-state recuperado))))))
@@ -343,6 +512,8 @@
          (:activity-state recuperado)))))
 
 (defn atividade-avancar-tempo! [cid pid agora]
+  ;; Avanço de prazo é recuperação: entrega com fence persistido/resume, sem
+  ;; herdar um writer context novo que conflite com o selo de incubação.
   (executar! cid pid
     #(p/let [estado (store/resolver! cid pid false agora)
              _ (when-not estado (ovos/erro! :account-not-found "Conta sem ovos."))
@@ -351,7 +522,8 @@
                                   (fn [a] (update a :activity-state ovos/avancar-tempo-atividade agora))
                                   agora)]
        (p/let [recuperado (recuperar-atividade! novo agora)]
-         (:activity-state recuperado)))))
+         (:activity-state recuperado)))
+    true))
 
 (defn criar-ovo!
   ([cid pid event-id categoria] (criar-ovo! cid pid event-id categoria catalog/distribuicao))
@@ -403,9 +575,14 @@
        (p/let [estado (store/resolver! cid pid false agora)
                _ (when-not estado (ovos/erro! :egg-not-found "Conta sem ovos."))
                estado (recuperar-estado! estado agora)
+               selo (armazenamento/selo-save-atual pid)
                resultado (store/operar! (:account-id estado) event-id
                            (store/fingerprint ["incubate" egg-id]) "incubate" (store/dia agora) agora
-                           (fn [atual] [(ovos/incubar atual egg-id agora) {:egg-id egg-id}]))
+                           (fn [atual] [(let [incubado (ovos/incubar atual egg-id agora)]
+                                          (if selo
+                                            (ovos/atualizar-ovo incubado egg-id (fn [ovo] (assoc ovo :save-fence selo)))
+                                            incubado))
+                                        {:egg-id egg-id}]))
                estado (store/projetar! (:state resultado) agora)]
          {:operation (get-in resultado [:receipt :result]) :state (ovos/consulta estado)}))))
 
@@ -478,7 +655,7 @@
                           (p/let [_ anterior]
                             (verificar)
                             (core/enfileirar-operacao-interna! cid
-                              (fn [] (drenar-eventos! cid)) true)))
+                              (fn [] (drenar-eventos! cid)) true true)))
                         (p/resolved nil)
                         (sort (set (concat (keys @treinador/contas) (keys @loja/contas)))))]
         (verificar)

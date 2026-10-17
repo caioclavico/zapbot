@@ -162,7 +162,9 @@
                                            (reader/read-string estado-edn))
                            combate       (when combate (pvp/restaurar-espera combate atualizado-em))
                            combate       (cond-> combate
-                                           (:ginasio combate) (assoc :resultado-derrota (atom nil)))]
+                                           (:ginasio combate) (assoc :resultado-derrota (atom nil)
+                                                                     :operation-id (or (:operation-id combate)
+                                                                                       (.randomUUID (js/require "crypto")))))]
                        (when (combate-retomavel? combate) [cid combate]))
                      (catch :default erro
                        (js/console.warn "Combate temporário inválido ignorado:" cid (.-message erro))
@@ -295,7 +297,9 @@
                     (get @evolucoes-pendentes [cid pid]) (conj "evolução")
                     (get @remocoes-pendentes [cid pid]) (conj "oferta de golpe")
                     (raids/participando? cid pid) (conj "raid")
-                    (raids/captura-pendente cid pid (.now js/Date)) (conj "captura de raide pendente")
+                    (and (not (raids/participando? cid pid))
+                         (raids/bloqueia-transicao-save? cid pid (.now js/Date)))
+                    (conj "captura de raide pendente")
                     troca? (conj "troca"))]
     ;; Report the precise occupied gyms and copied defenders for the private
     ;; preparation response. This is diagnostic only: no occupancy, reward,
@@ -1135,9 +1139,14 @@
 ;; do respectivo dono - chamar sempre que `jogo` mudar, senão dano/cura/status
 ;; não sobrevivem entre batalhas (o objetivo inteiro de ter equipe persistida)
 (defn- sincronizar-equipe! [cid jogo]
-  (doseq [marca (if (:ginasio jogo) [:x] [:x :o])]
-    (when-let [pid (get-in jogo [:jogadores marca])]
-      (treinador/atualizar-ativo! cid pid (get-in jogo [:hp marca]) (get-in jogo [:status marca])))))
+  ;; In canonical-gym mode a gym result must be committed through the durable
+  ;; battle journal.  Persisting a turn snapshot here would let an old callback
+  ;; bypass that journal. Public gym battles remain blocked until every effect
+  ;; is coordinated; this guard prepares the HP slice without enabling it.
+  (when-not (and (:ginasio jogo) config/canonical-gyms-enabled?)
+    (doseq [marca (if (:ginasio jogo) [:x] [:x :o])]
+      (when-let [pid (get-in jogo [:jogadores marca])]
+        (treinador/atualizar-ativo! cid pid (get-in jogo [:hp marca]) (get-in jogo [:status marca]))))))
 
 (defn- verificar-evolucao! ([contexto cid pid] (verificar-evolucao! contexto cid pid (treinador/indice-ativo cid pid)))
   ([contexto cid pid idx]
@@ -1426,6 +1435,7 @@
   ;; `:contexto` fica guardada só pra o limite de tempo ter onde avisar a fuga
   ;; quando ninguém jogar (nenhuma jogada chega pra responder nessa hora).
   {:contexto contexto
+   :operation-id (.randomUUID (js/require "crypto"))
    :pokemons {:x pokemon}
    :jogadores {:x id}
    :nomes {:x nome}
@@ -3444,15 +3454,20 @@
                  restantes (->> golpes (keep-indexed (fn [i g] (when-not (= i indice) (:nome-exibicao g))))
                                 (str/join ", "))
                  pronto-em (+ (.now js/Date) (* 1000 segundos-para-remover-golpe))
+                 selo     (try (armazenamento/selo-save-atual pid) (catch :default _ nil))
                  timer    (js/setTimeout
-                           #(-> (enfileirar-jogada cid
-                                   (fn [] (aplicar-remocao-golpe! contexto cid pid token)) nil)
-                                (p/catch (fn [erro] (js/console.error "Falha na remoção de golpe:" erro))))
+                           (fn []
+                             (-> (enfileirar-jogada cid
+                                    (fn [] (armazenamento/executar-com-selo-save!
+                                            cid pid selo
+                                            (fn [] (aplicar-remocao-golpe! contexto cid pid token)))) nil)
+                                 (p/catch (fn [erro] (js/console.error "Falha na remoção de golpe:" erro)))))
                            (* 1000 segundos-para-remover-golpe))]
              (swap! remocoes-pendentes assoc [cid pid]
                     {:token token :timer timer :pronto-em pronto-em :indice-golpe indice
                      :indice-pokemon (treinador/indice-ativo cid pid)
-                     :nome-golpe (:nome-exibicao golpe) :nome-pokemon (:nome pokemon)})
+                     :nome-golpe (:nome-exibicao golpe) :nome-pokemon (:nome pokemon)
+                     :save-fence selo})
              (str (cabecalho) "⚠️ Removendo " (emoji-golpe golpe) " *" (:nome-exibicao golpe) "* de *"
                   (:nome pokemon) "* em " segundos-para-remover-golpe " segundos.\n"
                   "🎯 Vão sobrar " (dec (count golpes)) ": " restantes ".\n\n"
@@ -3636,7 +3651,7 @@
   (let [cid (chat-id contexto) pid (jogador-id contexto)]
     (treinador/migrar-colecao! cid pid)
     (if (= "comprar" (first args))
-      (let [{:keys [status preco capacidade]} (loja/comprar-espaco-pc! cid pid)]
+      (p/let [{:keys [status preco capacidade]} (loja/comprar-espaco-pc! cid pid)]
         (if (= status :ok)
           (str "✅ +50 vagas Pokémon por " preco " moedas! Capacidade total: " capacidade ".")
           (str "💰 Moedas insuficientes. A expansão custa " preco " moedas.")))
@@ -4286,6 +4301,7 @@
   [cid alvo estado minutos ao-estourar]
   (cancelar-limite-turno! cid)
   (let [token (str (js/Date.now) "-" (rand-int 100000))
+        selo (try (armazenamento/selo-save-atual nil) (catch :default _ nil))
         timer (js/setTimeout
                (fn []
                  (-> (enfileirar-jogada
@@ -4293,13 +4309,17 @@
                       (fn []
                         (when (and (= token (:token (get @limites-turno cid)))
                                    (identical? estado (get @alvo cid)))
-                          (swap! limites-turno dissoc cid)
-                          (ao-estourar cid estado))) nil)
+                          (let [fence (:save-fence (get @limites-turno cid))]
+                            (swap! limites-turno dissoc cid)
+                            (if (and config/canonical-trainer-enabled? (nil? fence))
+                              (js/console.warn "[Pokemon] timer de combate sem fence persistido; efeito bloqueado.")
+                              (armazenamento/executar-com-selo-save!
+                               cid nil fence (fn [] (ao-estourar cid estado))))))) nil)
                      (p/catch #(js/console.error "Falha ao concluir turno expirado:" %))))
                (if (pvp/aguardando? estado)
                  (max 0 (- (:desafio-expira-em estado) (.now js/Date)))
                  (* 60 1000 minutos)))]
-    (swap! limites-turno assoc cid {:token token :timer timer})))
+    (swap! limites-turno assoc cid {:token token :timer timer :save-fence selo})))
 
 (defn- enviar-aviso-temporizado [cid contexto texto mentions]
   ;; Uma chamada em andamento mantém a ordem de suas respostas. Ao encerrar,
@@ -4628,11 +4648,8 @@
                      (when (pos? nocautes)
                        (str " (" nocautes " nocaute" (when (> nocautes 1) "s") ")")))))))
 
-(defn- finalizar-ginasio [contexto cid jogo vencedor]
+(defn- finalizar-ginasio-aplicar-efeitos [contexto cid jogo vencedor]
   (registrar-batalha-atividade! cid jogo (get-in jogo [:jogadores :x]) (= vencedor :x))
-  (ginasios/registrar-resultado! cid (get-in jogo [:ginasio :id]) (:lider-anterior jogo)
-                                (get-in jogo [:jogadores :x]) (:nome-desafiante jogo)
-                                (= vencedor :x) (.now js/Date))
   (when (= vencedor :x)
     (loja/registrar-semanal! cid (get-in jogo [:jogadores :x]) "ginasios" [(get-in jogo [:ginasio :id])]))
   (sincronizar-equipe! cid jogo)
@@ -4705,6 +4722,13 @@
                                     ))))
              "\nVocê já recebeu a recompensa diária deste ginásio; o XP de combate continua valendo.")
            (texto-xp-ginasio recompensas)))))
+
+(defn- finalizar-ginasio [contexto cid jogo vencedor]
+  (p/then
+   (ginasios/registrar-resultado! cid (get-in jogo [:ginasio :id]) (:lider-anterior jogo)
+                                 (get-in jogo [:jogadores :x]) (:nome-desafiante jogo)
+                                 (= vencedor :x) (.now js/Date) (:operation-id jogo))
+   (fn [_] (finalizar-ginasio-aplicar-efeitos contexto cid jogo vencedor))))
 
 (defn- descricao-lider
   ([cid g] (descricao-lider cid g true))
@@ -4839,6 +4863,10 @@
                          (str "🎒 Você não possui essa fruta. Veja " config/prefix "mochila diario ou " config/prefix "loja."))))))
       (and (= acao "time") (= id "pagina"))
       (mostrar-escalacao contexto :ginasio numero)
+      (and config/canonical-gyms-enabled?
+           (not config/canonical-gym-battle-effects-verified?)
+           (= acao "desafiar"))
+      (p/resolved "🚫 Batalhas de ginásio estão temporariamente bloqueadas: os efeitos de treinador, recompensas e estatísticas ainda não possuem reconciliação transacional certificada.")
       (= acao "time")
       (if (aprendizado-bloqueado? cid pid)
         (p/resolved "🚫 Termine a batalha e as alterações pendentes antes de escalar.")
@@ -5717,9 +5745,11 @@
 (defonce ^:private operacoes-pendentes (atom 0))
 (defonce ^:private contextos-filas (atom {}))
 
-(defn- enfileirar-jogada [cid acao & [ctx recuperacao?]]
+(defn- enfileirar-jogada [cid acao & [ctx recuperacao? capturar? pid]]
   ;; A ação e toda a resposta automática formam uma rodada indivisível.
   ;; O próximo comando lê o estado apenas depois que a rodada anterior termina.
+  ;; capturar? só vale para operação nova do save atual (ex.: dreno de eventos
+  ;; já hidratado). Timers e ticks antigos não recapturam a geração vigente.
   (let [anterior (get @filas-jogadas cid (p/resolved nil))
         _ (desempenho/dependencia! ctx (get @contextos-filas cid))
         atual (-> (desempenho/medir! ctx "fila_pokemon" #(identity anterior))
@@ -5728,7 +5758,9 @@
                             (when-not recuperacao?
                               (armazenamento/exigir-parte-disponivel! "treinador" cid))
                             (desempenho/dependencia! ctx nil)
-                            (desempenho/medir! ctx "rodada_pokemon" acao))))]
+                            (armazenamento/com-contexto-writer-treinador!
+                             cid #(desempenho/medir! ctx "rodada_pokemon" acao)
+                             (true? capturar?) pid))))]
     (swap! operacoes-pendentes inc)
     (swap! filas-jogadas assoc cid atual)
     (when ctx (swap! contextos-filas assoc cid ctx))
@@ -5739,8 +5771,8 @@
                    (swap! filas-jogadas dissoc cid)
                    (when ctx (swap! contextos-filas dissoc cid)))))))
 
-(defn enfileirar-operacao-interna! [cid acao & [recuperacao?]]
-  (enfileirar-jogada cid acao nil recuperacao?))
+(defn enfileirar-operacao-interna! [cid acao & [recuperacao? capturar? pid]]
+  (enfileirar-jogada cid acao nil recuperacao? capturar? pid))
 
 (defn pode-receber-nascimento? [cid pid]
   (and (not (ocupado-pc? cid pid))
@@ -5765,14 +5797,19 @@
       (contains? #{"bug" "bugs"} cmd)
       (bugs/comando! contexto cmd resto)
       :else
-      (p/let [jogo (get @jogos (chat-id contexto))
-                                 _ (when (pvp/expirado? jogo (.now js/Date))
-                                     (expirar-batalha! (chat-id contexto) jogo))]
-                           (jogar-rodada contexto
-                             (if (and (:ginasio (get @jogos (chat-id contexto)))
-                                      (contains? #{"gin" "ginasio" "ginásio"} cmd)
-                                      (contains? #{"atacar" "atk"} (first resto)))
-                               (str "atacar " (second resto)) args))))))
+      (p/let [jogo (get @jogos (chat-id contexto))]
+        (if (and config/canonical-gyms-enabled?
+                 (not config/canonical-gym-battle-effects-verified?)
+                 (:ginasio jogo))
+          "🚫 Batalha de ginásio bloqueada até que os efeitos de treinador, recompensas e estatísticas tenham reconciliação transacional certificada."
+          (do
+            (when (pvp/expirado? jogo (.now js/Date))
+              (expirar-batalha! (chat-id contexto) jogo))
+            (jogar-rodada contexto
+                          (if (and (:ginasio (get @jogos (chat-id contexto)))
+                                   (contains? #{"gin" "ginasio" "ginásio"} cmd)
+                                   (contains? #{"atacar" "atk"} (first resto)))
+                            (str "atacar " (second resto)) args))))))))
 
 (defn- abrir-menu! [contexto titulo opcoes linhas]
   (navegacao/abrir! [(chat-id contexto) (jogador-id contexto)] opcoes (.now js/Date))
@@ -5809,13 +5846,13 @@
       (do (navegacao/abrir! [cid pid] (loja/opcoes-compra) (.now js/Date))
           (loja/ver-loja-com-imagem contexto))
       (str/starts-with? (or comando "") "loja comprar ")
-      (let [compra (loja/comprar contexto (subs comando 13))]
-        ;; Mantém os números da loja para novas compras, com saldo atualizado.
-        (navegacao/abrir! [cid pid] (loja/opcoes-compra) (.now js/Date))
-        (p/let [resposta (loja/ver-loja-com-imagem contexto)]
-          (if (map? resposta)
-            (update resposta :texto #(str compra "\n\n" %))
-            (str compra "\n\n" resposta))))
+      (p/let [compra (loja/comprar contexto (subs comando 13))
+              ;; Mantém os números da loja para novas compras, com saldo atualizado.
+              _ (navegacao/abrir! [cid pid] (loja/opcoes-compra) (.now js/Date))
+              resposta (loja/ver-loja-com-imagem contexto)]
+        (if (map? resposta)
+          (update resposta :texto #(str compra "\n\n" %))
+          (str compra "\n\n" resposta))))
       (= comando "mochila")
       (let [itens (->> (get (loja/conta cid pid) "inventario")
                        (filter (fn [[_ n]] (pos? n))) (sort-by first) vec)]
@@ -5864,9 +5901,15 @@
                     :emit! (fn [resposta] (emitir cid resposta))}
           atraso (max 0 (- (or (:pronto-em pendente) (.now js/Date)) (.now js/Date)))
           timer (js/setTimeout
-                 #(-> (enfileirar-jogada cid
-                         (fn [] (aplicar-remocao-golpe! contexto cid pid (:token pendente))) nil)
-                      (p/catch (fn [erro] (js/console.error "Falha na remoção restaurada:" erro))))
+                 (fn []
+                   (-> (enfileirar-jogada cid
+                          (fn []
+                            (if (and config/canonical-trainer-enabled? (nil? (:save-fence pendente)))
+                              (js/console.warn "[Pokemon] remoção restaurada sem fence persistido; efeito bloqueado.")
+                              (armazenamento/executar-com-selo-save!
+                               cid pid (:save-fence pendente)
+                               (fn [] (aplicar-remocao-golpe! contexto cid pid (:token pendente)))))) nil)
+                       (p/catch (fn [erro] (js/console.error "Falha na remoção restaurada:" erro)))))
                  atraso)]
       (swap! remocoes-pendentes assoc-in [[cid pid] :timer] timer))))
 

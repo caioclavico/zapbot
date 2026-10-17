@@ -268,6 +268,7 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            io.zapbot.canonical-trainer-protocol=${{ matrix.service == 'pokemon' && '1' || 'not-applicable' }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
       - name: Load previously published immutable image
@@ -288,6 +289,8 @@ jobs:
           [[ "$architecture" == linux/amd64 ]]
           revision=$(docker image inspect "$fixture_image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
           [[ "$revision" == "$GITHUB_SHA" ]] || { echo 'Image revision differs from requested commit; publication/deploy blocked.' >&2; exit 1; }
+          canonical=$(docker image inspect "$fixture_image" --format '{{index .Config.Labels "io.zapbot.canonical-trainer-protocol"}}')
+          [[ "$SERVICE" != pokemon || "$canonical" == 1 ]] || { echo 'Pokemon image lacks canonical trainer protocol capability; publication/deploy blocked.' >&2; exit 1; }
           python3 scripts/test-deploy-docker.py --service "$SERVICE" --base-image "$fixture_image"
       - name: Publish the exact tested image without rebuilding
         if: steps.existing.outputs.exists != 'true'

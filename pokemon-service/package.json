@@ -10,6 +10,12 @@
     "build": "shadow-cljs release domain",
     "test": "node --test test/*.test.cjs",
     "test:domain": "shadow-cljs compile test && node target/test.js",
+    "test:save-slots:cassandra": "bash scripts/test-save-slots-cassandra.sh",
+    "test:adventure-fence:cassandra": "bash scripts/test-adventure-fence-cassandra.sh",
+    "test:adventure-birth:cassandra": "bash scripts/test-adventure-birth-cassandra.sh",
+    "test:loja-save-binding:cassandra": "bash scripts/test-loja-save-binding-cassandra.sh",
+    "test:lateral-intent:cassandra": "bash scripts/test-lateral-intent-cassandra.sh",
+    "test:loja-intent:cassandra": "bash scripts/test-loja-intent-cassandra.sh",
     "start": "node runtime/main.cjs"
   },
   "dependencies": {

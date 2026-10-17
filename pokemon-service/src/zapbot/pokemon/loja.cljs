@@ -29,15 +29,27 @@
              {}
              (or inventario {})))
 
+(defn- migrar-economia [conta]
+  (let [c (update (or conta {}) "inventario" migrar-inventario)]
+    (if (contains? c "capacidade-mochila") c
+        (assoc c "capacidade-mochila"
+               (max 50 (reduce + 0 (vals (get c "inventario"))))))))
+
+(defn- migrar-registro-jogador [conta]
+  (if (and (map? conta)
+           (= "save-bound-v1" (get conta "schema-version-loja"))
+           (map? (get conta "saves")))
+    (update conta "saves"
+            (fn [saves]
+              (reduce-kv (fn [acc sid eco] (assoc acc sid (migrar-economia eco)))
+                         {} saves)))
+    (migrar-economia conta)))
+
 (defn- migrar-chaves-antigas [dados]
   (reduce-kv (fn [acc cid contas-chat]
                (assoc acc cid
                       (reduce-kv (fn [acc2 pid conta]
-                                   (assoc acc2 pid
-                                          (let [c (update conta "inventario" migrar-inventario)]
-                                            (if (contains? c "capacidade-mochila") c
-                                                (assoc c "capacidade-mochila"
-                                                       (max 50 (reduce + 0 (vals (get c "inventario")))))))))
+                                   (assoc acc2 pid (migrar-registro-jogador conta)))
                                  {}
                                  contas-chat)))
              {}
@@ -48,6 +60,303 @@
 
 (defn- persistir! []
   (armazenamento/salvar! "loja" @contas))
+
+(def ^:private schema-loja-save "save-bound-v1")
+(defonce ^:private vinculos-save (atom {}))
+;; Fila por jogador: migração e gate de transição não correm em paralelo.
+(defonce ^:private filas-vinculo (atom {}))
+;; Recibos locais de vínculo já confirmados neste processo (além do atom/Cassandra).
+(defonce ^:private vinculos-duraveis (atom {}))
+
+(defn- loja-vinculada-a-save? []
+  (boolean (or config/save-transitions-enabled? config/canonical-trainer-enabled?)))
+
+(defn- registro-vinculado? [reg]
+  (and (map? reg)
+       (= schema-loja-save (get reg "schema-version-loja"))
+       (map? (get reg "saves"))))
+
+(defn- economia-vazia []
+  {"moedas" 0 "inventario" {}})
+
+(defn- legado-plano? [reg]
+  (and (map? reg) (not (registro-vinculado? reg))))
+
+(defn- legado-com-conteudo? [reg]
+  (and (legado-plano? reg)
+       (or (pos? (get reg "moedas" 0))
+           (seq (get reg "inventario"))
+           (seq (get reg "missoes-diarias"))
+           (seq (get reg "missoes-eventos"))
+           (seq (get reg "adventure-eventos"))
+           (pos? (get reg "expansoes-pc" 0))
+           (pos? (get reg "expansoes-mochila-50" 0))
+           (seq (dissoc reg "moedas" "inventario")))))
+
+(defn- encapsular-legado [economia save-id fence-gen]
+  (let [eco (-> (or economia {})
+                (dissoc "schema-version-loja" "saves" "legacy-claim")
+                (cond-> fence-gen (assoc "save-fence-generation" fence-gen)))]
+    {"schema-version-loja" schema-loja-save
+     "legacy-claim" {"save-id" save-id
+                     "status" "confirmed"
+                     "fence-generation" fence-gen}
+     "saves" {save-id eco}}))
+
+(defn- save-ctx-jogador [pid]
+  (armazenamento/contexto-writer-jogador pid))
+
+(defn- vinculo-ativo [cid pid]
+  (get @vinculos-save [cid pid]))
+
+(defn- registro-loja [cid pid]
+  (get-in @contas [cid pid]))
+
+(defn- registro-loja-confirmado [cid pid]
+  (get-in (armazenamento/estado-confirmado "loja") [cid pid]))
+
+(defn- save-presente-no-registro? [reg save-id]
+  (and (registro-vinculado? reg) (contains? (get reg "saves") save-id)))
+
+(defn vinculo-duravel? [cid pid save-id]
+  "True quando o envelope confirmado contém o save e há recibo local.
+  Após reinício o recibo é recriado ao reobservar o envelope já no Cassandra."
+  (boolean
+   (and (string? save-id) (not (str/blank? save-id))
+        (save-presente-no-registro? (registro-loja-confirmado cid pid) save-id)
+        (save-presente-no-registro? (registro-loja cid pid) save-id)
+        (= save-id (get-in @vinculos-duraveis [[cid pid] :save-id])))))
+
+(declare garantir-vinculo-duravel!)
+
+(defn- exigir-vinculo-operacao! [cid pid]
+  (when-let [ctx (save-ctx-jogador pid)]
+    (when (and (string? (:transition-owner ctx))
+               (not (str/blank? (:transition-owner ctx))))
+      (throw (ex-info "Loja bloqueada durante reserva de transição."
+                      {:code :loja-transition-reserved}))))
+  (let [ctx (save-ctx-jogador pid)
+        ;; Operações síncronas exigem vínculo em memória; a migração durável
+        ;; roda no gate de hidratação/ativação (promise), não aqui.
+        vinculo (or (vinculo-ativo cid pid)
+                    (when (and ctx (vinculo-duravel? cid pid (:save-id ctx)))
+                      (let [v {:save-id (:save-id ctx)
+                               :fence-generation (:fence-generation ctx)}]
+                        (swap! vinculos-save assoc [cid pid] v)
+                        v)))]
+    (when-not (and vinculo (string? (:save-id vinculo)) (not (str/blank? (:save-id vinculo))))
+      (throw (ex-info "Loja sem vínculo de save ativo; operação bloqueada."
+                      {:code :loja-save-binding-required})))
+    (when (and ctx (not= (:save-id ctx) (:save-id vinculo)))
+      (throw (ex-info "Callback de loja de outro save; efeito bloqueado."
+                      {:code :loja-save-fence-conflict})))
+    (when (and ctx (:fence-generation vinculo)
+               (not= (:fence-generation ctx) (:fence-generation vinculo)))
+      (throw (ex-info "Callback de loja com fence obsoleto; efeito bloqueado."
+                      {:code :loja-save-fence-conflict})))
+    vinculo))
+
+(defn- planejar-envelope [reg save-id fence-gen]
+  "Decide o próximo envelope. Não reivindica legado ambíguo (fence>1 com plano)."
+  (cond
+    (registro-vinculado? reg)
+    (if (contains? (get reg "saves") save-id)
+      {:reg reg :changed? false :claimed? false}
+      {:reg (assoc-in reg ["saves" save-id] (economia-vazia))
+       :changed? true :claimed? false})
+
+    (legado-com-conteudo? reg)
+    (let [claim-save (get-in reg ["legacy-claim" "save-id"])]
+      (cond
+        (and claim-save (not= claim-save save-id))
+        (throw (ex-info "Estado legado de loja pertence a outro save; vínculo recusado."
+                        {:code :loja-save-ambiguous :claimed claim-save :active save-id}))
+        ;; Troca já avançou o fence sem envelope durável: dono do plano é incerto.
+        (and (number? fence-gen) (> fence-gen 1))
+        (throw (ex-info "Estado legado de loja ambíguo após transição; vínculo recusado."
+                        {:code :loja-save-ambiguous :active save-id :fence fence-gen}))
+        :else
+        {:reg (encapsular-legado reg save-id fence-gen)
+         :changed? true :claimed? true}))
+
+    :else
+    {:reg (encapsular-legado (or reg (economia-vazia)) save-id fence-gen)
+     :changed? (not (registro-vinculado? reg))
+     :claimed? true}))
+
+(defn- enfileirar-vinculo! [cid pid trabalho]
+  (let [chave [cid pid]
+        anterior (get @filas-vinculo chave (p/resolved nil))
+        atual (p/then anterior (fn [_] (trabalho)))]
+    (swap! filas-vinculo assoc chave (p/catch atual (fn [_] nil)))
+    atual))
+
+(defn- marcar-recibo-local! [cid pid save-id fence-gen]
+  (swap! vinculos-duraveis assoc [cid pid]
+         {:save-id save-id :fence-generation fence-gen}))
+
+(defn- fingerprint-economia [economia]
+  (let [h (.-hash (js/require "../runtime/restore-protocol.cjs"))]
+    (h (clj->js (or economia {})))))
+
+(defn- fingerprint-confirmado [cid pid save-id]
+  (fingerprint-economia
+   (get-in (armazenamento/estado-confirmado "loja") [cid pid "saves" save-id])))
+
+(defn garantir-vinculo-duravel!
+  "Migra legado→envelope (idempotente), persiste e só então marca o vínculo.
+  Recibo local exige save presente em estado-confirmado (não só no atom).
+  Retorna promise. Com flags off é no-op resolvido."
+  [cid pid save-id fence-gen]
+  (if-not (and (loja-vinculada-a-save?)
+               (string? save-id) (not (str/blank? save-id)))
+    (p/resolved {:ready false :disabled true})
+    (do
+      ;; Ponteiro em memória imediato; mutação do envelope só dentro da fila.
+      (swap! vinculos-save assoc [cid pid] {:save-id save-id
+                                            :fence-generation fence-gen})
+      (enfileirar-vinculo!
+       cid pid
+       (fn []
+         (let [antes (registro-loja cid pid)
+               {:keys [reg changed?]} (planejar-envelope antes save-id fence-gen)]
+           (when changed?
+             (swap! contas assoc-in [cid pid] reg))
+           (cond
+             (vinculo-duravel? cid pid save-id)
+             (p/resolved {:ready true :idempotent true :activeSlotId save-id :durable true})
+
+             ;; Reinício: envelope já no snapshot confirmado (hidratação) —
+             ;; recria recibo local sem depender de compra nem de nova gravação.
+             (and (save-presente-no-registro? (registro-loja-confirmado cid pid) save-id)
+                  (save-presente-no-registro? (registro-loja cid pid) save-id))
+             (do (marcar-recibo-local! cid pid save-id fence-gen)
+                 (p/resolved {:ready true :idempotent true :activeSlotId save-id
+                              :durable true :reobserved true}))
+
+             :else
+             ;; Sem prova durável: grava (com LateralIntent se o store canônico
+             ;; estiver ativo) e só confirma com estado-confirmado.
+             (let [persistir-vinculo!
+                   (fn []
+                     (p/let [_ (persistir!)
+                             _ (armazenamento/aguardar-todas!)]
+                       (let [atual (registro-loja cid pid)
+                             confirmado (registro-loja-confirmado cid pid)]
+                         (when-not (and (save-presente-no-registro? confirmado save-id)
+                                        (save-presente-no-registro? atual save-id))
+                           (throw (ex-info "Vínculo de loja não confirmado no Cassandra."
+                                           {:code :loja-save-binding-unconfirmed
+                                            :save-id save-id})))
+                         (fingerprint-economia
+                          (get-in confirmado ["saves" save-id])))))]
+               (p/let [_ (if (armazenamento/loja-lateral-disponivel?)
+                           (armazenamento/gravar-loja-com-intent!
+                            cid pid "loja_bind"
+                            {:saveId save-id :fence fence-gen :kind "bind"
+                             :changed changed?}
+                            persistir-vinculo!)
+                           (persistir-vinculo!))]
+                 (marcar-recibo-local! cid pid save-id fence-gen)
+                 {:ready true
+                  :idempotent (not changed?)
+                  :activeSlotId save-id
+                  :durable true}))))))))))
+
+(defn vincular-save-ativo!
+  "Compat: atualiza memória e dispara vínculo durável. Prefira aguardar a promise."
+  [cid pid save-id fence-gen]
+  (garantir-vinculo-duravel! cid pid save-id fence-gen))
+
+(armazenamento/configurar-binder-loja-save! garantir-vinculo-duravel!)
+
+(defn- economia-do-registro [reg save-id]
+  (cond
+    (registro-vinculado? reg)
+    (or (get-in reg ["saves" save-id]) (economia-vazia))
+    (and (map? reg) (loja-vinculada-a-save?))
+    (throw (ex-info "Registro de loja legado ambíguo; vincule o save ativo antes."
+                    {:code :loja-save-ambiguous}))
+    :else (or reg (economia-vazia))))
+
+(defn- gravar-economia [reg save-id fence-gen economia]
+  (let [base (if (registro-vinculado? reg)
+               reg
+               (encapsular-legado (or reg (economia-vazia)) save-id fence-gen))
+        eco (-> economia
+                (dissoc "schema-version-loja" "saves")
+                (cond-> fence-gen (assoc "save-fence-generation" fence-gen)))]
+    (assoc-in base ["saves" save-id] eco)))
+
+(defn- economia-legado-visivel
+  "Com flags off, um único save encapsulado ainda é a economia efetiva."
+  [reg]
+  (cond
+    (not (registro-vinculado? reg)) (or reg (economia-vazia))
+    (= 1 (count (get reg "saves"))) (val (first (get reg "saves")))
+    :else (throw (ex-info "Registro de loja com vários saves sem modo canônico."
+                          {:code :loja-save-ambiguous}))))
+
+(defn- alterar-economia-local! [cid pid f]
+  (if-not (loja-vinculada-a-save?)
+    (swap! contas update-in [cid pid]
+           (fn [reg]
+             (if (registro-vinculado? reg)
+               (let [saves (get reg "saves")]
+                 (when-not (= 1 (count saves))
+                   (throw (ex-info "Registro de loja com vários saves sem modo canônico."
+                                   {:code :loja-save-ambiguous})))
+                 (let [[sid eco] (first saves)]
+                   (assoc-in reg ["saves" sid] (f (or eco (economia-vazia))))))
+               (f (or reg (economia-vazia))))))
+    (let [{:keys [save-id fence-generation]} (exigir-vinculo-operacao! cid pid)]
+      (swap! contas update-in [cid pid]
+             (fn [reg]
+               (let [eco (economia-do-registro reg save-id)
+                     novo (f eco)]
+                 (gravar-economia reg save-id fence-generation (or novo (economia-vazia)))))))))
+
+(defn- alterar-conta-com-intent!
+  "Begin LateralIntent → mutar atom → persistir → evidência em confirmados →
+  confirm/reconcile. Bloqueia A→B enquanto o intent estiver ativo/incerto."
+  [cid pid f]
+  (let [{:keys [save-id fence-generation]} (exigir-vinculo-operacao! cid pid)
+        reg (registro-loja cid pid)
+        antes (economia-do-registro reg save-id)
+        depois (or (f antes) (economia-vazia))
+        esperado (fingerprint-economia depois)
+        payload {:saveId save-id
+                 :fence fence-generation
+                 :beforeHash (fingerprint-economia antes)
+                 :afterHash esperado}]
+    (armazenamento/gravar-loja-com-intent!
+     cid pid "loja_mut" payload
+     (fn []
+       (swap! contas update-in [cid pid]
+              (fn [atual]
+                (gravar-economia atual save-id fence-generation depois)))
+       (p/let [_ (persistir!)
+               _ (armazenamento/aguardar-todas!)]
+         (let [fp (fingerprint-confirmado cid pid save-id)]
+           (when-not (= fp esperado)
+             (throw (ex-info "Efeito de loja ausente no snapshot confirmado."
+                             {:code :loja-lateral-effect-absent
+                              :save-id save-id})))
+           fp))))))
+
+(defn- alterar-conta! [cid pid f]
+  (cond
+    (not (loja-vinculada-a-save?))
+    (do (alterar-economia-local! cid pid f) (persistir!))
+
+    (armazenamento/loja-lateral-disponivel?)
+    (alterar-conta-com-intent! cid pid f)
+
+    :else
+    (do (alterar-economia-local! cid pid f) (persistir!))))
+
+(defn- trocar-conta! [cid pid nova]
+  (alterar-conta! cid pid (fn [_] nova)))
 
 (def preco-reaprender 50)
 (declare conta)
@@ -64,7 +373,7 @@
                                              (get c "capacidade-pokemon" 0))))
 
 (defn expansoes-pc [cid pid]
-  (get-in @contas [cid pid "expansoes-pc"] 0))
+  (get (conta cid pid) "expansoes-pc" 0))
 
 (defn capacidade-permanente-pokemon
   ([cid pid] (capacidade-permanente-pokemon cid pid (nivel-atual cid pid)))
@@ -106,25 +415,24 @@
 (defn comprar-espaco-pc! [cid pid]
   ;; Saldo e expansão pertencem ao mesmo registro persistido.
   (let [resultado (volatile! nil)]
-    (swap! contas update-in [cid pid]
-           (fn [c]
-             (let [c (or c {"moedas" 0 "inventario" {}})
-                   n (get c "expansoes-pc" 0)
-                   preco preco-fixo-expansao-pc]
-               (if (< (get c "moedas" 0) preco)
-                 (do (vreset! resultado {:status :sem-moedas :preco preco}) c)
-                 (do (vreset! resultado {:status :ok :preco preco
-                                         :capacidade (armazenamento-regras/capacidade-pokemon
-                                                      (nivel-atual cid pid) (inc n)
-                                                      (get c "capacidade-pokemon" 0))})
-                     (-> c (update "moedas" - preco) (assoc "expansoes-pc" (inc n))))))))
-    (persistir!)
-    @resultado))
+    (p/then (alterar-conta! cid pid
+                            (fn [c]
+                              (let [c (or c {"moedas" 0 "inventario" {}})
+                                    n (get c "expansoes-pc" 0)
+                                    preco preco-fixo-expansao-pc]
+                                (if (< (get c "moedas" 0) preco)
+                                  (do (vreset! resultado {:status :sem-moedas :preco preco}) c)
+                                  (do (vreset! resultado {:status :ok :preco preco
+                                                          :capacidade (armazenamento-regras/capacidade-pokemon
+                                                                       (nivel-atual cid pid) (inc n)
+                                                                       (get c "capacidade-pokemon" 0))})
+                                      (-> c (update "moedas" - preco) (assoc "expansoes-pc" (inc n))))))))
+            (fn [_] @resultado))))
 
 (defn pagar-reaprendizado! [cid pid]
-  (when (>= (get-in @contas [cid pid "moedas"] 0) preco-reaprender)
-    (swap! contas update-in [cid pid "moedas"] - preco-reaprender)
-    (persistir!) true))
+  (when (>= (get (conta cid pid) "moedas" 0) preco-reaprender)
+    (alterar-conta! cid pid #(update % "moedas" - preco-reaprender))
+    true))
 
 (defn- remover-acentos [s]
   (-> s (.normalize "NFD") (str/replace #"[\u0300-\u036f]" "")))
@@ -220,22 +528,39 @@
   "Remove uma unidade de um item equipável do inventário."
   [cid pid chave]
   (when (and (item-equipavel? chave) (pos? (get-in (conta cid pid) ["inventario" chave] 0)))
-    (swap! contas update-in [cid pid "inventario" chave] dec)
-    (persistir!)
+    (alterar-conta! cid pid #(update-in % ["inventario" chave] dec))
     true))
 
 (defn devolver-item!
   "Devolve um item equipável ao inventário (ao trocar/desequipar)."
   [cid pid chave]
   (when (item-equipavel? chave)
-    (swap! contas update-in [cid pid]
+    (alterar-conta! cid pid
            (fn [c] (update-in (or c {"moedas" 0 "inventario" {}})
                               ["inventario" chave] (fnil inc 0))))
-    (persistir!)
     true))
 
 (defn- conta [cid pid]
-  (get-in @contas [cid pid] {"moedas" 0 "inventario" {}}))
+  (if-not (loja-vinculada-a-save?)
+    (economia-legado-visivel (get-in @contas [cid pid]))
+    (let [vinculo (or (vinculo-ativo cid pid)
+                      (when-let [ctx (save-ctx-jogador pid)]
+                        (vincular-save-ativo! cid pid (:save-id ctx) (:fence-generation ctx))
+                        (vinculo-ativo cid pid)))]
+      (if-not vinculo
+        (throw (ex-info "Loja sem vínculo de save ativo; leitura bloqueada."
+                        {:code :loja-save-binding-required}))
+        (do
+          ;; Leitura sob writer context também respeita o fence vivo.
+          (when-let [ctx (save-ctx-jogador pid)]
+            (when (not= (:save-id ctx) (:save-id vinculo))
+              (throw (ex-info "Callback de loja de outro save; efeito bloqueado."
+                              {:code :loja-save-fence-conflict})))
+            (when (and (:fence-generation vinculo)
+                       (not= (:fence-generation ctx) (:fence-generation vinculo)))
+              (throw (ex-info "Callback de loja com fence obsoleto; efeito bloqueado."
+                              {:code :loja-save-fence-conflict}))))
+          (economia-do-registro (get-in @contas [cid pid]) (:save-id vinculo)))))))
 
 (def bolas ["pokebola" "grande-bola" "ultra-bola"])
 (def ^:private ordem-recompensas
@@ -269,20 +594,17 @@
 
 (defn consumir-bola! [cid pid chave]
   (when (and (some #{chave} bolas) (pos? (quantidade-item cid pid chave)))
-    (swap! contas update-in [cid pid "inventario" chave] dec)
-    (persistir!)
+    (alterar-conta! cid pid #(update-in % ["inventario" chave] dec))
     true))
 
 (defn consumir-reviver! [cid pid]
   (when (pos? (quantidade-item cid pid "reviver"))
-    (swap! contas update-in [cid pid "inventario" "reviver"] dec)
-    (persistir!)
+    (alterar-conta! cid pid #(update-in % ["inventario" "reviver"] dec))
     true))
 
 (defn consumir-catalisador! [cid pid]
   (when (pos? (quantidade-item cid pid "catalisador-evolutivo"))
-    (swap! contas update-in [cid pid "inventario" "catalisador-evolutivo"] dec)
-    (persistir!)
+    (alterar-conta! cid pid #(update-in % ["inventario" "catalisador-evolutivo"] dec))
     true))
 
 (defn- recompensas-pendentes [c]
@@ -315,7 +637,7 @@
 
 (defn progresso-evento-recomeco [cid pid]
   (when-let [evento (aventuras/evento-recomeco (.now js/Date))]
-    (let [salvo (get-in @contas [cid pid "missoes-eventos" (:id evento)] {})]
+    (let [salvo (get-in (conta cid pid) ["missoes-eventos" (:id evento)] {})]
       (assoc evento :progresso (get salvo "progresso" {})
              :premiados (set (get salvo "premiados" []))))))
 
@@ -340,7 +662,7 @@
       (let [aviso (volatile! nil)
             caminho ["missoes-eventos" (:id evento)]]
         ;; Progresso, marcador de entrega e inventário mudam no mesmo registro.
-        (swap! contas update-in [cid pid]
+        (alterar-economia-local! cid pid
                (fn [c]
                  (let [c (or c {})
                        antes (get-in c (conj caminho "progresso" objetivo) 0)
@@ -364,23 +686,20 @@
         @aviso))))
 
 (defn premiar-bolas! [cid pid bola quantidade]
-  (swap! contas update-in [cid pid] guardar-recompensas {bola quantidade} (nivel-atual cid pid))
-  (persistir!)
+  (alterar-conta! cid pid #(guardar-recompensas % {bola quantidade} (nivel-atual cid pid)))
   (str "🎁 +" quantidade " " (:nome (dados-item bola)) " por nocaute(s) no PvP."
        (when (some pos? (vals (recompensas-pendentes (conta cid pid))))
          (str " Há recompensas pendentes: libere espaço e use " config/prefix "mochila resgatar."))))
 
 (defn premiar-item-evolucao! [cid pid item]
-  (swap! contas update-in [cid pid] guardar-recompensas {item 1} (nivel-atual cid pid))
-  (persistir!)
+  (alterar-conta! cid pid #(guardar-recompensas % {item 1} (nivel-atual cid pid)))
   (str "🎁 +1 " (:nome (dados-item item))
        (when (some pos? (vals (recompensas-pendentes (conta cid pid))))
          ". Mochila cheia: use !mochila resgatar após liberar espaço.")))
 
 (defn consumir-pedra! [cid pid item]
   (when (and (contains? aventuras/pedras item) (pos? (quantidade-item cid pid item)))
-    (swap! contas update-in [cid pid "inventario" item] dec)
-    (persistir!)
+    (alterar-conta! cid pid #(update-in % ["inventario" item] dec))
     true))
 
 (defn- sortear-bola-diaria []
@@ -411,8 +730,7 @@
                      (assoc "ultimo-bonus-diario" dia)
                      (assoc "sequencia-bonus-diario" sequencia)
                      (guardar-recompensas recompensas (nivel-atual cid pid)))]
-        (swap! contas assoc-in [cid pid] novo)
-        (persistir!)
+        (trocar-conta! cid pid novo)
         (str "🎁 *Bônus diário resgatado — sequência de " sequencia " dia(s):* "
              (texto-recompensas recompensas) "!"
              (when (zero? (mod sequencia 7)) " 🌟 Você ganhou uma Fruta Frambo Dourada!")
@@ -432,21 +750,25 @@
             recebidas (into {} (for [bola ordem-recompensas]
                                  [bola (- (get-in novo ["inventario" bola] 0)
                                           (get-in c ["inventario" bola] 0))]))]
-        (swap! contas assoc-in [cid pid] novo)
-        (persistir!)
+        (trocar-conta! cid pid novo)
         (str "🎁 Você recebeu " (texto-recompensas recebidas) "!")))))
 
 (defn xp-missoes [cid pid]
   (get (conta cid pid) "xp-missoes" 0))
 
+(defn- economias-visiveis [reg]
+  (if (registro-vinculado? reg)
+    (vals (get reg "saves"))
+    [(or reg {})]))
+
 (defn eventos-atividade [cid]
-  (for [[pid conta] (get (armazenamento/obter "loja") cid)
-        [_ evento] (get conta "adventure-eventos")]
+  (for [[pid reg] (get (armazenamento/obter "loja") cid)
+        eco (economias-visiveis reg)
+        [_ evento] (get eco "adventure-eventos")]
     [pid evento]))
 
 (defn confirmar-evento-atividade! [cid pid event-id]
-  (swap! contas update-in [cid pid "adventure-eventos"] dissoc event-id)
-  (persistir!))
+  (alterar-conta! cid pid #(update % "adventure-eventos" dissoc event-id)))
 
 (defn registrar-missao! [cid pid evento nivel]
   (let [dia (missoes/dia-atual)
@@ -460,8 +782,7 @@
         novo (if (and config/adventure-enabled? completou?)
                (egg-rewards/guardar-evento novo
                  (egg-rewards/evento (str "daily:" dia ":" evento) :daily-mission (.now js/Date))) novo)]
-    (swap! contas assoc-in [cid pid] novo)
-    (persistir!)
+    (trocar-conta! cid pid novo)
     (str
       (when (> (count (missoes/disponiveis (missoes/estado-do-dia novo dia nivel))) antes)
         (str "\n📋 Missão diária concluída! Resgate com " config/prefix "missoes diarias resgatar."))
@@ -488,8 +809,7 @@
                      (guardar-recompensas recompensas (nivel-atual cid pid)))]
         ;; Sem espera assíncrona: XP, sorteio, mochila e marca de resgate
         ;; são persistidos juntos, inclusive quando a mochila está cheia.
-        (swap! contas assoc-in [cid pid] novo)
-        (persistir!)
+        (trocar-conta! cid pid novo)
         (str "✅ " (count prontas) " missão(ões) resgatada(s)!\n✨ +" xp " PE do treinador"
              "\n🎁 " (texto-recompensas recompensas)
              (when (some pos? (vals (recompensas-pendentes novo)))
@@ -503,8 +823,7 @@
     ;; O primeiro acesso ou evento do dia fixa a faixa, sem mudar metas
     ;; depois de resgatar XP e subir de nível no mesmo dia.
     (when (not= estado (get (conta cid pid) "missoes-diarias"))
-      (swap! contas update-in [cid pid] #(assoc (or % {"moedas" 0 "inventario" {}}) "missoes-diarias" estado))
-      (persistir!))
+      (alterar-conta! cid pid #(assoc (or % {"moedas" 0 "inventario" {}}) "missoes-diarias" estado)))
     (if (= "resgatar" (normalizar-item acao))
       (resgatar-missoes! cid pid nivel)
       (str "📋 *Missões diárias — " dia "*\nNível de referência hoje: " (get estado "nivel" 1) "\n"
@@ -532,19 +851,17 @@
   "Credita as moedas de vitória pro pid nesse chat (chamado ao fechar uma
   batalha de !pokemon). Retorna a quantidade creditada."
   [cid pid]
-  (swap! contas update-in [cid pid]
+  (alterar-conta! cid pid
          (fn [c] (-> (or c {"moedas" 0 "inventario" {}})
                      (update "moedas" + moedas-por-vitoria))))
-  (persistir!)
   moedas-por-vitoria)
 
 (defn creditar-quantia!
   "Credita uma recompensa variável e retorna a quantidade adicionada."
   [cid pid quantidade]
-  (swap! contas update-in [cid pid]
+  (alterar-conta! cid pid
          (fn [c] (-> (or c {"moedas" 0 "inventario" {}})
                      (update "moedas" + quantidade))))
-  (persistir!)
   quantidade)
 
 (defn- item-por-status [status]
@@ -556,8 +873,7 @@
   [cid pid status]
   (if-let [chave (item-por-status status)]
     (if (pos? (get-in (conta cid pid) ["inventario" chave] 0))
-      (do (swap! contas update-in [cid pid "inventario" chave] dec)
-          (persistir!)
+      (do (alterar-conta! cid pid #(update-in % ["inventario" chave] dec))
           true)
       false)
     false))
@@ -567,8 +883,7 @@
 
 (defn consumir-mt! [cid pid]
   (when (tem-mt? cid pid)
-    (swap! contas update-in [cid pid "inventario" "mt"] dec)
-    (persistir!)
+    (alterar-conta! cid pid #(update-in % ["inventario" "mt"] dec))
     true))
 
 (defn usar-pocao!
@@ -579,8 +894,7 @@
   ([cid pid chave]
    (when (and (contains? #{"pocao" "pocao-maxima"} chave)
               (pos? (get-in (conta cid pid) ["inventario" chave] 0)))
-     (swap! contas update-in [cid pid "inventario" chave] dec)
-     (persistir!)
+     (alterar-conta! cid pid #(update-in % ["inventario" chave] dec))
      (:cura-hp (get itens chave)))))
 
 (defn usar-fruta!
@@ -588,8 +902,7 @@
   [cid pid chave]
   (when (and (contains? #{"fruta" "fruta-dourada"} chave)
              (pos? (quantidade-item cid pid chave)))
-    (swap! contas update-in [cid pid "inventario" chave] dec)
-    (persistir!)
+    (alterar-conta! cid pid #(update-in % ["inventario" chave] dec))
     (:motivacao (get itens chave))))
 
 (defn- formatar-item [chave {:keys [nome emoji preco evolucao exclusivo-diario]}]
@@ -708,22 +1021,21 @@
           (and (not (:expansao item)) (not (cabe? cid pid 1)))
           (str "🎒 Mochila cheia! Use itens ou compre mais 50 vagas com " config/prefix "loja comprar mochila (200 moedas).")
           (>= saldo (:preco item))
-          (do (swap! contas update-in [cid pid]
-                     (fn [c] (cond-> (update (or c {"moedas" 0 "inventario" {}})
-                                             "moedas" - (:preco item))
-                               (:expansao item) (update "expansoes-mochila-50" (fnil inc 0))
-                               (not (:expansao item)) (update-in ["inventario" chave] (fnil inc 0)))))
-              (persistir!)
-              (str "✅ Comprou " (:emoji item) " *" (:nome item) "*! Saldo: "
-                   (- saldo (:preco item)) " moedas."))
+          (let [msg (str "✅ Comprou " (:emoji item) " *" (:nome item) "*! Saldo: "
+                         (- saldo (:preco item)) " moedas.")]
+            (p/then (alterar-conta! cid pid
+                                    (fn [c] (cond-> (update (or c {"moedas" 0 "inventario" {}})
+                                                            "moedas" - (:preco item))
+                                              (:expansao item) (update "expansoes-mochila-50" (fnil inc 0))
+                                              (not (:expansao item)) (update-in ["inventario" chave] (fnil inc 0)))))
+                    (fn [_] msg)))
           :else
           (str "❌ Moedas insuficientes! Você tem " saldo ", " (:nome item) " custa " (:preco item) ".")))
       (str "❓ Item \"" nome-item "\" não encontrado. Use " config/prefix "loja pra ver o catálogo."))))
 
 (defn registrar-semanal! [cid pid evento valores]
-  (swap! contas update-in [cid pid]
-         #(missoes/registrar-semanal (or % {}) (missoes/semana-de (missoes/dia-atual)) evento valores))
-  (persistir!))
+  (alterar-conta! cid pid
+         #(missoes/registrar-semanal (or % {}) (missoes/semana-de (missoes/dia-atual)) evento valores)))
 
 (defn ver-semanais [cid pid resgatar?]
   (let [semana (missoes/semana-de (missoes/dia-atual))
@@ -732,8 +1044,7 @@
                 (update (sortear-item-evolucao) (fnil inc 0)))]
     (when resgatar?
       ;; Progresso, marcação do resgate e saldo são persistidos juntos.
-      (swap! contas assoc-in [cid pid] (guardar-recompensas nova bolas (nivel-atual cid pid)))
-      (persistir!))
+      (trocar-conta! cid pid (guardar-recompensas nova bolas (nivel-atual cid pid))))
     (let [estado (missoes/estado-semanal (conta cid pid) semana)]
       (str "📅 *Missões semanais — semana de " semana "*\n"
            (when resgatar? (str "💰 " moedas " moedas resgatadas.\n🎁 " (texto-recompensas bolas) "\n"))
@@ -746,10 +1057,9 @@
 
 (defn premiar-raid! [cid pid dia]
   ;; Uma recompensa por identificador de raide, gravada junto com as moedas.
-  (when (not= dia (get-in @contas [cid pid "raid-premiada-dia"]))
-    (swap! contas update-in [cid pid]
+  (when (not= dia (get (conta cid pid) "raid-premiada-dia"))
+    (alterar-conta! cid pid
            #(-> (or % {}) (assoc "raid-premiada-dia" dia) (update "moedas" (fnil + 0) 50)))
-    (persistir!)
     50))
 
 (defn enviar-presente! [cid pid alvo nivel]
@@ -763,16 +1073,19 @@
                            (< sorteio 35) {"grande-bola" 2}
                            :else {"pokebola" 3})
           dia (missoes/dia-atual)]
-      (swap! contas
-             (fn [estado]
-               (-> estado
-                   (update-in [cid pid "inventario" "cartao-presente"] dec)
-                   (update-in [cid pid] #(-> %
-                                            (missoes/registrar-evento dia "presentes" nivel)
-                                            (missoes/registrar-semanal (missoes/semana-de dia) "presentes" [])))
-                   (update-in [cid alvo] #(guardar-recompensas (or % {"moedas" 0 "inventario" {}}) recompensa (nivel-atual cid alvo))))))
-      (persistir!)
-      {:texto (str "🎁 Presente enviado para @" (first (str/split alvo #"@")) "!\n" (texto-recompensas recompensa)
-                   "\nBolas sem espaço ficam pendentes em !mochila resgatar."
-                   "\n📋 Envio registrado nas missões diárias e semanais.")
-       :mentions [alvo]})))
+      (let [texto {:texto (str "🎁 Presente enviado para @" (first (str/split alvo #"@")) "!\n"
+                               (texto-recompensas recompensa)
+                               "\nBolas sem espaço ficam pendentes em !mochila resgatar."
+                               "\n📋 Envio registrado nas missões diárias e semanais.")
+                   :mentions [alvo]}]
+        (p/let [_ (alterar-conta! cid pid
+                                  (fn [c]
+                                    (-> c
+                                        (update-in ["inventario" "cartao-presente"] dec)
+                                        (#(-> %
+                                              (missoes/registrar-evento dia "presentes" nivel)
+                                              (missoes/registrar-semanal (missoes/semana-de dia) "presentes" []))))))
+                _ (alterar-conta! cid alvo
+                                  #(guardar-recompensas (or % {"moedas" 0 "inventario" {}})
+                                                        recompensa (nivel-atual cid alvo)))]
+          texto)))))

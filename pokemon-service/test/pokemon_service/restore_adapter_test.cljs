@@ -1,6 +1,7 @@
 (ns pokemon-service.restore-adapter-test
   (:require [cljs.test :refer-macros [deftest is async]]
             [promesa.core :as p]
+            [zapbot.config :as config]
             [zapbot.armazenamento :as storage]
             [zapbot.pokemon.treinador :as treinador]
             [zapbot.pokemon.core :as core]
@@ -86,6 +87,25 @@
           (is (try (storage/exigir-restauracao-livre! "g") false (catch :default _ true)))
           (is (nil? (storage/exigir-restauracao-livre! "other-group")))))) done)))
 
+(deftest executor-de-slots-aceita-somente-leituras-e-cas-nos-modulos-aditivos
+  (async done
+    (concluir (banco
+      (fn [{:keys [queries]}]
+        (let [select (str "SELECT valor FROM " config/cassandra-keyspace
+                          ".estado_particionado WHERE modulo = ? AND particao = ?")]
+          (p/let [_ (storage/save-slot-executar! select
+                         #js ["pokemon-save-slot-index" "identity-hash"]
+                         #js {:consistency "SERIAL"})]
+            (is (= select (last @queries)))
+            (is (try
+                  (storage/save-slot-executar! "DELETE FROM zapbot.estado_particionado WHERE modulo = ? AND particao = ?"
+                                               #js ["pokemon-save-slots" "id"] #js {})
+                  false (catch :default _ true)))
+            (is (try
+                  (storage/restauracao-executar! select #js ["pokemon-save-slots" "id"] #js {})
+                  false (catch :default _ true)))))
+        (p/resolved nil))) done)))
+
 (deftest writer-compartilhado-neutraliza-snapshot-antigo-enfileirado
   (async done
     (concluir (banco
@@ -102,6 +122,40 @@
             (is (= desired (js->clj (js/JSON.parse (get @rows ["treinador" "g"])))))
             (is (= desired (get-in @storage/confirmados ["treinador" "g"])))
             (is (= desired (get @treinador/contas "g"))))))) done)))
+
+(deftest treinador-cas-aplica-delta-sem-apagar-outro-jogador-do-grupo
+  (async done
+    (concluir (banco
+      (fn [{:keys [rows initial]}]
+        (let [externo (assoc initial "other" (conta "updated-elsewhere"))
+              desejado (assoc initial "p" (conta "new"))]
+          ;; Outra instância já confirmou uma alteração de outro jogador após
+          ;; a hidratação local. A atualização local só pode alterar p.
+          (swap! rows assoc ["treinador" "g"] (json externo))
+          (p/let [_ (storage/salvar! "treinador" {"g" desejado})
+                  persistido (js->clj (js/JSON.parse (get @rows ["treinador" "g"])))
+                  confirmado (get-in @storage/confirmados ["treinador" "g"])]
+            (is (= (conta "new") (get persistido "p")))
+            (is (= (conta "updated-elsewhere") (get persistido "other")))
+            (is (= persistido confirmado)))))) done)))
+
+(deftest treinador-cas-recusa-lock-duravel-e-preserva-a-particao
+  (async done
+    (concluir (banco
+      (fn [{:keys [rows initial]}]
+        (let [protocol (js/require "../runtime/restore-protocol.cjs")
+              lock-key (.hash protocol (clj->js ["g" "account" "p"]))
+              resource-hash (.hash protocol (clj->js {"type" "account" "id" "p"}))
+              row-before (json initial)
+              desired (assoc initial "p" (conta "must-not-write"))]
+          (swap! rows assoc ["pokemon-save-transition-locks" lock-key]
+                 (json {"schemaVersion" 1 "generation" 4 "owner" "pending-op"
+                        "resourceHash" resource-hash}))
+          (-> (storage/salvar! "treinador" {"g" desired})
+              (p/then (fn [_] (is false "Writer precisa respeitar lock durável.")))
+              (p/catch (fn [erro]
+                         (is (= :save-transition-pending (:code (ex-data erro))))
+                         (is (= row-before (get @rows ["treinador" "g"]))))))))) done)))
 
 (deftest startup-indisponivel-nao-libera-barreira
   (async done

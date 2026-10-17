@@ -1242,7 +1242,7 @@
                   ginasios/liderados (fn [_ pid]
                                        (filter (fn [[_ ocupacao]] (= pid (get ocupacao "pid"))) @ocupacoes))
                   raids/participando? (fn [_ _] false)
-                  raids/captura-pendente (fn [_ pid _] (when (= pid "ash") :captura-pendente))]
+                  raids/bloqueia-transicao-save? (fn [_ pid _] (= pid "ash"))]
       (let [preflight (core/restauracao-preflight "grupo" "ash")]
         (is (= 3 (count preflight)))
         (is (= "captura de raide pendente" (first preflight)))

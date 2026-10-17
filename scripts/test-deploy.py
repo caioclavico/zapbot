@@ -417,6 +417,47 @@ class DeployTest(unittest.TestCase):
         with self.assertRaisesRegex(DEPLOY.DeployError, 'activation records'):
             deployment.restore_protocol_policy()
 
+    def test_canonical_trainer_policy_blocks_rollback_to_legacy_image(self):
+        self.fixture('pokemon')
+        (self.config / 'canonical-trainer-required').write_text('1\n')
+        (self.config / 'canonical-trainer-required').chmod(0o600)
+        (self.config / DEPLOY.CANONICAL_TRAINER_STATE).write_text(
+            json.dumps({'required': True, 'version': 1, 'label': '1', 'legacyWritersRevoked': True}) + '\n')
+        (self.config / DEPLOY.CANONICAL_TRAINER_STATE).chmod(0o600)
+        deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
+                    state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
+                    process_guard=lambda auth: None)
+        with self.assertRaisesRegex(DEPLOY.DeployError, 'canonical trainer'):
+            deployment.compatibility(self.engine.image(OLD_IMAGE), legacy=True)
+
+    def test_canonical_trainer_policy_accepts_only_marked_capable_image(self):
+        self.fixture('pokemon')
+        (self.config / 'canonical-trainer-required').write_text('1\n')
+        (self.config / 'canonical-trainer-required').chmod(0o600)
+        (self.config / DEPLOY.CANONICAL_TRAINER_STATE).write_text(
+            json.dumps({'required': True, 'version': 1, 'label': '1', 'legacyWritersRevoked': True}) + '\n')
+        (self.config / DEPLOY.CANONICAL_TRAINER_STATE).chmod(0o600)
+        image = self.engine.image(NEW_IMAGE)
+        image['Config']['Labels'][DEPLOY.CANONICAL_TRAINER_LABEL] = '1'
+        deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
+                    state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
+                    process_guard=lambda auth: None)
+        deployment.compatibility(image)
+        clone = deployment.clone(self.engine.inspect('old'), image)
+        self.assertEqual(clone['Labels'][DEPLOY.CANONICAL_TRAINER_LABEL], '1')
+
+    def test_canonical_trainer_policy_corruption_fails_closed(self):
+        self.fixture('pokemon')
+        (self.config / 'canonical-trainer-required').write_text('1\n')
+        (self.config / 'canonical-trainer-required').chmod(0o600)
+        (self.config / DEPLOY.CANONICAL_TRAINER_STATE).write_text('{bad\n')
+        (self.config / DEPLOY.CANONICAL_TRAINER_STATE).chmod(0o600)
+        deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,
+                    state_dir=self.state, config_dir=self.config, owner_uid=os.getuid(),
+                    process_guard=lambda auth: None)
+        with self.assertRaisesRegex(DEPLOY.DeployError, 'activation records'):
+            deployment.compatibility(self.engine.image(OLD_IMAGE), legacy=True)
+
     def test_activate_restore_requires_host_policy_and_only_updates_flag(self):
         self.fixture('pokemon')
         deployment = DEPLOY.Deployment('pokemon', self.engine, app_dir=self.app,

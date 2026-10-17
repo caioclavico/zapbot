@@ -30,7 +30,12 @@
                      :activityPoints pokemon-service.entry/activity-points
                      :activityState pokemon-service.entry/activity-state
                      :activityTime pokemon-service.entry/activity-time
-                     :activityTick pokemon-service.entry/activity-tick}
+                     :activityTick pokemon-service.entry/activity-tick
+                     :saveSlotsImport pokemon-service.entry/save-slots-import
+                     :saveSlotsList pokemon-service.entry/save-slots-list
+                     :saveSlotMetadata pokemon-service.entry/save-slot-metadata
+                     :saveActivate pokemon-service.entry/save-activate
+                     :saveHydratePlayer pokemon-service.entry/save-hydrate-player}
            :compiler-options {:optimizations :simple}}
   :benchmark {:target :node-library :output-to "target/benchmark.cjs"
               :exports {:render pokemon-benchmark/render
