@@ -8,7 +8,10 @@
   ["migrations/pokemon/001-trainer-saves.edn"
    "migrations/pokemon/002-collection-hp-xp.edn"
    "migrations/pokemon/003-reward-payload-hash.edn"
-   "migrations/pokemon/004-capture-moves-evolution.edn"])
+   "migrations/pokemon/004-capture-moves-evolution.edn"
+   "migrations/pokemon/005-battle-engine.edn"
+   "migrations/pokemon/006-gyms.edn"
+   "migrations/pokemon/007-raids.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id

@@ -1,0 +1,41 @@
+;; Equivalência de dano/tipos vs legado (core.cljs).
+;; dano_base = max(1, round(0.22 * poder * atk/def) + variance)
+;; Com variance fixa, resultado determinístico.
+[
+ {:id "neutro-tackle"
+  :poder 40 :ataque 100 :defesa 100 :variance 0
+  ;; round(0.22*40*1)=round(8.8)=9 + 0 = 9
+  :dano-esperado 9}
+
+ {:id "super-efetivo-agua-fogo"
+  :tipo-golpe "water" :tipos-defesa ["fire"]
+  :multiplicador 2.0}
+
+ {:id "imune-ground-flying"
+  :tipo-golpe "ground" :tipos-defesa ["flying"]
+  :multiplicador 0.0}
+
+ {:id "levitate-anula-ground"
+  :tipo-golpe "ground" :tipos-defesa ["psychic"] :habilidade "levitate"
+  :multiplicador 0.0}
+
+ {:id "duplo-tipo-fire-rock"
+  :tipo-golpe "water" :tipos-defesa ["fire" "rock"]
+  ;; 2 * 2 = 4
+  :multiplicador 4.0}
+
+ {:id "crit-x15"
+  ;; fator crítico isolado (documentação)
+  :crit-multiplier 1.5
+  :chance-critico 10}
+
+ {:id "dot-queimadura"
+  :status :queimado :hp-max 80
+  ;; max(1, quot 80 16) = 5
+  :dot 5}
+
+ {:id "dot-veneno"
+  :status :envenenado :hp-max 80
+  ;; max(1, quot 80 8) = 10
+  :dot 10}
+]

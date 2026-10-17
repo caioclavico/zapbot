@@ -42,6 +42,18 @@
   [save-key* species]
   (str save-key* "|" species))
 
+(defn gym-occupation-key
+  [chat-id gym-id]
+  (str chat-id "|" gym-id))
+
+(defn raid-participant-key
+  [raid-id player-id]
+  (str raid-id "|" player-id))
+
+(defn raid-capture-key
+  [raid-id player-id]
+  (str raid-id "|cap|" player-id))
+
 (defn parse-player-key
   [key]
   (let [parts (str/split key #"\|" 2)]

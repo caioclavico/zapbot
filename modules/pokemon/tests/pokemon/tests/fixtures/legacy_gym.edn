@@ -1,0 +1,44 @@
+;; Equivalência ginásio vs legado (aventuras + ginasios + core).
+{:catalog
+ [{:id "pedra" :nivel 10 :item "pedra-lua"}
+  {:id "agua" :nivel 20 :item "pedra-agua"}
+  {:id "eletrico" :nivel 30 :item "pedra-trovao"}
+  {:id "planta" :nivel 40 :item "pedra-folha"}
+  {:id "fogo" :nivel 50 :item "pedra-fogo"}]
+
+ :unlock
+ [{:insignias #{} :gym "pedra" :ok true}
+  {:insignias #{} :gym "agua" :ok false}
+  {:insignias #{"pedra"} :gym "agua" :ok true}
+  {:insignias #{"pedra" "agua"} :gym "eletrico" :ok true}]
+
+ :xp-participante
+ [{:venceu? false :premio nil :nocautes 2 :xp 5}
+  {:venceu? true :premio :primeira :nocautes 0 :xp 7}
+  {:venceu? true :premio :revanche :nocautes 1 :xp 5}
+  {:venceu? true :premio nil :nocautes 0 :xp 2}]
+
+ :recompensa-vitoria
+ [{:premio :primeira :pedra-roll 99 :moedas 100 :pe 5 :pedra? true}
+  {:premio :revanche :pedra-roll 10 :moedas 25 :pe 2 :pedra? true}
+  {:premio :revanche :pedra-roll 50 :moedas 25 :pe 2 :pedra? false}]
+
+ :motivacao
+ [{:base [100 100 100] :horas 0 :expect [100 100 100]}
+  ;; 10h * 5 = 50 → 50; mínimo 20
+  {:base [100 100 100] :horas 10 :expect [50 50 50]}
+  {:base [100 100 100] :horas 20 :expect [20 20 20]}
+  {:base [40 40 40] :defesa true :expect [28 28 28]}]
+
+ :fator-stats
+ [{:motivacao 100 :fator 1.0}
+  {:motivacao 20 :fator 0.6}]
+
+ :permanencia
+ [{:ms 0 :moedas 0 :xp 0}
+  {:ms 1 :moedas 0 :xp 1}
+  {:ms 1800000 :moedas 0 :xp 1}   ;; 30 min
+  {:ms 21600000 :moedas 0 :xp 12} ;; 6h exatamente — moedas exigem >6h
+  {:ms 21600001 :moedas 50 :xp 12}
+  {:ms 43200000 :moedas 50 :xp 24}] ;; 12h → XP cap 24
+}

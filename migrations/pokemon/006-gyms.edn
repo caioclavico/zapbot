@@ -1,0 +1,67 @@
+;; M3.5 — ginásios: ocupação compartilhada do grupo + badges no save.
+[
+ {:db/ident       :gym-occupation/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "\"{chat-id}|{gym-id}\""}
+
+ {:db/ident       :gym-occupation/chat-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :gym-occupation/gym-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :gym-occupation/player-key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Dono do time defensor"}
+
+ {:db/ident       :gym-occupation/save-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Save de origem explícito — impede atribuir defensor A a B"}
+
+ {:db/ident       :gym-occupation/nome
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :gym-occupation/desde
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :gym-occupation/motivacao-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :gym-occupation/motivacao-em
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :gym-occupation/team-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Cópia dos 3 registros defensores"}
+
+ {:db/ident       :gym-occupation/revision
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "CAS de ocupação concorrente"}
+
+ {:db/ident       :save/ginasios-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Mapa {gym-id → dia YYYY-MM-DD} (insígnias + daily)"}
+
+ {:db/ident       :save/time-ginasio-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Índices [i j k] da escalação de desafio"}
+
+ {:db/ident       :player/gym-defense-count
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Quantos ginásios o save ativo ocupa; >0 bloqueia switch"}
+]

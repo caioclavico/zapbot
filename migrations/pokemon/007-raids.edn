@@ -1,0 +1,163 @@
+;; M3.6 — raids cooperativas (estado por chat + participantes carimbados).
+[
+ {:db/ident       :raid/id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity}
+
+ {:db/ident       :raid/chat-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/ginasio
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/nome-ginasio
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/nivel-ginasio
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/liga
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/fase
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/expira
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/captura-expira
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/proxima
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/hp-chefe
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/hp-max
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/defesa
+  :db/valueType   :db.type/double
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/def-esp
+  :db/valueType   :db.type/double
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/vez
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/ordem-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/chefe-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/criador
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/turn-index
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "CAS de turno — impede dano duplicado em retry"}
+
+ {:db/ident       :raid/revision
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/rewards-paid?
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-participant/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "\"{raid-id}|{player-id}\""}
+
+ {:db/ident       :raid-participant/raid-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-participant/player-key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-participant/save-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Save carimbado na inscrição"}
+
+ {:db/ident       :raid-participant/fence-generation
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Fence na inscrição — callback stale falha"}
+
+ {:db/ident       :raid-participant/nome
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-participant/pokemon-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-participant/hp
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-participant/dano
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-participant/collection-index
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-capture/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity}
+
+ {:db/ident       :raid-capture/raid-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-capture/player-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-capture/tentativas
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-capture/capturou
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :chat-active-raid/chat-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Ponteiro do raid ativo do chat (1 por vez)"}
+
+ {:db/ident       :chat-active-raid/raid-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+]

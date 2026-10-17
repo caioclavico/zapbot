@@ -4,6 +4,7 @@
   (:require [clojure.edn :as edn]
             [datomic.client.api :as d]
             [pokemon.application.ports :as ports]
+            [pokemon.domain.battle :as battle]
             [pokemon.domain.capacity :as capacity]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.collection :as coll]
@@ -13,8 +14,11 @@
             [pokemon.domain.model :as model]
             [pokemon.domain.moves :as moves]
             [pokemon.domain.ops :as ops]
+            [pokemon.domain.raid :as raid-domain]
             [pokemon.domain.reward :as reward]
             [pokemon.domain.xp :as xp]
+            [pokemon.infrastructure.datomic.gym-store :as gym-store]
+            [pokemon.infrastructure.datomic.raid-store :as raid-store]
             [pokemon.infrastructure.datomic.schema :as schema]))
 
 (def ^:private max-cas-attempts 12)
@@ -35,6 +39,11 @@
   [entity]
   (boolean (:db/id entity)))
 
+(defn- edn-read
+  [s]
+  (when (and s (not (empty? s)))
+    (edn/read-string s)))
+
 (defn- ->player
   [e]
   (when (present? e)
@@ -42,7 +51,17 @@
      :player-id (:player/player-id e)
      :player-key (:player/key e)
      :active-save-id (:player/active-save-id e)
-     :fence-generation (:player/fence-generation e)}))
+     :fence-generation (:player/fence-generation e)
+     :active-battle-id (:player/active-battle-id e)
+     :gym-defense-count (long (:player/gym-defense-count e 0))}))
+
+(defn- battle-entity
+  [db battle-id]
+  (d/pull db '[*] [:battle/id battle-id]))
+
+(defn- active-battle-id-for
+  [db chat-id player-id]
+  (:player/active-battle-id (player-entity db chat-id player-id)))
 
 (defn- ->save
   [e]
@@ -73,12 +92,21 @@
              :sequencia-capturas (long (:save/sequencia-capturas e 0))
              :maior-sequencia-capturas (long (:save/maior-sequencia-capturas e 0))
              :expansoes-pokemon-50 (long (:save/expansoes-pokemon-50 e 0))
-             :capacidade-pokemon-legada (long (:save/capacidade-pokemon-legada e 0))))))
+             :capacidade-pokemon-legada (long (:save/capacidade-pokemon-legada e 0))
+             :ginasios (or (edn-read (:save/ginasios-edn e)) {})
+             :time-ginasio (or (edn-read (:save/time-ginasio-edn e)) [])))))
 
-(defn- edn-read
-  [s]
-  (when (and s (not (empty? s)))
-    (edn/read-string s)))
+(defn- ->battle
+  [e]
+  (when (present? e)
+    (merge (or (edn-read (:battle/state-edn e)) {})
+           {:battle-id (:battle/id e)
+            :kind (keyword (:battle/kind e "wild"))
+            :active? (boolean (:battle/active? e))
+            :turn-index (long (:battle/turn-index e 0))
+            :phase (keyword (:battle/phase e "active"))
+            :save-id (:battle/save-id e)
+            :collection-index (:battle/collection-index e 0)})))
 
 (defn- ->pokemon
   [e]
@@ -312,6 +340,19 @@
                 (throw (err/error :player_not_found {:chat-id chat-id :player-id player-id})))
             _ (when-not (present? save)
                 (throw (err/error :save_not_found {:save-id save-id})))
+            active-bid (:player/active-battle-id player)
+            _ (when (and active-bid
+                         (not= (:player/active-save-id player) save-id))
+                (let [b (battle-entity db active-bid)]
+                  (when (and (present? b) (:battle/active? b))
+                    (throw (err/error :battle_pending
+                                      {:battle-id active-bid
+                                       :save-id (:battle/save-id b)})))))
+            _ (when (and (pos? (long (:player/gym-defense-count player 0)))
+                         (not= (:player/active-save-id player) save-id))
+                (throw (err/error :gym_defense_pending
+                                  {:count (:player/gym-defense-count player)
+                                   :active-save (:player/active-save-id player)})))
             decision (model/assert-activate
                       {:active-save-id (:player/active-save-id player)
                        :fence-generation (:player/fence-generation player)}
@@ -489,6 +530,30 @@
                 (resolve-receipt dup phash operation-id)
                 (throw ex))))))))
 
+(defn- load-raid
+  [db raid-id]
+  (let [e (d/pull db '[*] [:raid/id raid-id])]
+    (when (present? e)
+      (let [parts (->> (d/q '[:find (pull ?p [*])
+                              :in $ ?rid
+                              :where [?p :raid-participant/raid-id ?rid]]
+                            db raid-id)
+                       (map (comp #(raid-store/participant->map % edn-read present?)
+                                  first))
+                       (filter some?)
+                       vec)
+            caps (->> (d/q '[:find ?pid ?t ?c
+                             :in $ ?rid
+                             :where
+                             [?x :raid-capture/raid-id ?rid]
+                             [?x :raid-capture/player-id ?pid]
+                             [?x :raid-capture/tentativas ?t]
+                             [?x :raid-capture/capturou ?c]]
+                           db raid-id)
+                      (map (fn [[pid t c]]
+                             [pid {:tentativas t :capturou c}])))]
+        (raid-store/raid->map e parts caps edn-read present?)))))
+
 (defrecord DatomicTrainerStore [conn]
   ports/TrainerStore
 
@@ -505,7 +570,8 @@
           (d/transact conn {:tx-data [{:player/key pk
                                        :player/chat-id chat-id
                                        :player/player-id player-id
-                                       :player/fence-generation 0}]})
+                                       :player/fence-generation 0
+                                       :player/gym-defense-count 0}]})
           (->player (player-entity (d/db conn) chat-id player-id))))))
 
   (create-save! [_ chat-id player-id save-id]
@@ -889,6 +955,425 @@
                            :payload-hash phash
                            :idx idx
                            :registro atualizado}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (start-wild-battle! [_ writer-ctx request]
+    (let [payload (ops/start-battle-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          battle-id (or (:battle-id request) operation-id)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                     sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                     prev (active-battle-id-for db (:chat-id writer-ctx) (:player-id writer-ctx))
+                     _ (when prev
+                         (let [b (battle-entity db prev)]
+                           (when (and (present? b) (:battle/active? b))
+                             (throw (err/error :battle_already_active {:battle-id prev})))))
+                     state (battle/create-wild-battle
+                            (merge request
+                                   {:battle-id battle-id
+                                    :chat-id (:chat-id writer-ctx)
+                                    :player-id (:player-id writer-ctx)
+                                    :save-id (:save-id writer-ctx)
+                                    :fence-generation (:fence-generation writer-ctx)}))
+                     rev (long (:save/revision save 0))]
+                 {:tx [{:battle/id battle-id
+                        :battle/save [:save/key sk]
+                        :battle/player-key pk
+                        :battle/save-id (:save-id writer-ctx)
+                        :battle/kind "wild"
+                        :battle/active? true
+                        :battle/turn-index 0
+                        :battle/phase "active"
+                        :battle/collection-index (long (:collection-index state 0))
+                        :battle/state-edn (pr-str state)}
+                       [:db/add [:player/key pk] :player/active-battle-id battle-id]
+                       [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                       {:operation-receipt/id operation-id
+                        :operation-receipt/kind "start-battle"
+                        :operation-receipt/channel "gameplay"
+                        :operation-receipt/payload-hash phash
+                        :operation-receipt/player-key pk
+                        :operation-receipt/save-id (:save-id writer-ctx)
+                        :operation-receipt/summary (pr-str {:battle-id battle-id})}]
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :battle state}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (confirm-battle-turn! [_ writer-ctx request]
+    (let [payload (ops/battle-turn-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [battle-id (:battle-id request)
+                     be (battle-entity db battle-id)
+                     _ (when-not (present? be)
+                         (throw (err/error :battle_not_found {:battle-id battle-id})))
+                     _ (when-not (= (:battle/save-id be) (:save-id writer-ctx))
+                         (throw (err/error :battle_save_mismatch
+                                           {:battle (:battle/save-id be)
+                                            :writer (:save-id writer-ctx)})))
+                     state (->battle be)
+                     expected (long (:expected-turn-index request (:turn-index state)))
+                     _ (when-not (= expected (long (:turn-index state)))
+                         (throw (err/error :stale_turn_index
+                                           {:expected expected
+                                            :actual (:turn-index state)})))
+                     action (keyword (:action request))
+                     next-state (battle/apply-player-turn
+                                 state
+                                 {:action action :move-index (:move-index request)}
+                                 (:rng request))
+                     pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                     sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                     rev (long (:save/revision save 0))
+                     colecao (query-collection db sk)
+                     idx (long (:collection-index next-state 0))
+                     poke (when (and (seq colecao) (< idx (count colecao)))
+                            (nth colecao idx))
+                     rew (battle/reward-for-outcome (:outcome next-state))
+                     xp-qty (long (:pokemon-xp rew 0))
+                     xp-part (when (and poke (pos? xp-qty) (not (:active? next-state)))
+                               (apply-pokemon-xp-tx
+                                (assoc poke :hp-atual (get-in next-state [:hp :x]))
+                                xp-qty))
+                     hp-sync (when poke
+                               (let [lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+                                     hp-x (get-in next-state [:hp :x])
+                                     st (get-in next-state [:status :x])
+                                     st-str (xp/status->str st)]
+                                 (cond-> [[:db/add lookup :pokemon/hp-atual (long hp-x)]]
+                                   st-str (conj [:db/add lookup :pokemon/status st-str])
+                                   (and (nil? st-str) (:status poke))
+                                   (conj [:db/retract lookup :pokemon/status (:status poke)]))))
+                     clear-active (when-not (:active? next-state)
+                                    [[:db/retract [:player/key pk] :player/active-battle-id battle-id]])
+                     tx (into [[:db/cas [:battle/id battle-id] :battle/turn-index
+                                expected (long (:turn-index next-state))]
+                               [:db/add [:battle/id battle-id] :battle/active?
+                                (boolean (:active? next-state))]
+                               [:db/add [:battle/id battle-id] :battle/phase
+                                (name (:phase next-state))]
+                               [:db/add [:battle/id battle-id] :battle/state-edn
+                                (pr-str next-state)]
+                               [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                               {:operation-receipt/id operation-id
+                                :operation-receipt/kind "battle-turn"
+                                :operation-receipt/channel "gameplay"
+                                :operation-receipt/payload-hash phash
+                                :operation-receipt/player-key pk
+                                :operation-receipt/save-id (:save-id writer-ctx)
+                                :operation-receipt/summary
+                                (pr-str {:battle-id battle-id
+                                         :turn (:turn-index next-state)
+                                         :outcome (:outcome next-state)})}]
+                              (concat (or hp-sync [])
+                                      (or clear-active [])
+                                      (or (:tx xp-part) [])))]
+                 {:tx tx
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :battle next-state
+                           :subida (:subida xp-part)
+                           :reward rew}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (get-battle [_ battle-id]
+    (->battle (battle-entity (d/db conn) battle-id)))
+
+  (active-battle [_ chat-id player-id]
+    (when-let [bid (active-battle-id-for (d/db conn) chat-id player-id)]
+      (let [b (->battle (battle-entity (d/db conn) bid))]
+        (when (:active? b) b))))
+
+  (get-gym-occupation [_ chat-id gym-id]
+    (let [e (d/pull (d/db conn) '[*] [:gym-occupation/key (id/gym-occupation-key chat-id gym-id)])]
+      (gym-store/occupation->map e edn-read present?)))
+
+  (list-gym-occupations-for-player [_ chat-id player-id]
+    (let [pk (id/player-key chat-id player-id)
+          rows (d/q '[:find (pull ?g [*])
+                      :in $ ?pk
+                      :where [?g :gym-occupation/player-key ?pk]]
+                    (d/db conn) pk)]
+      (mapv (fn [[e]] (gym-store/occupation->map e edn-read present?)) rows)))
+
+  (set-gym-team! [_ writer-ctx indices]
+    (transact-with-writer!
+     conn writer-ctx
+     (fn [db save]
+       (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+             idxs (mapv long indices)
+             _ (when-not (and (= 3 (count idxs)) (= 3 (count (set idxs))))
+                 (throw (err/error :invalid_gym_team {:indices idxs})))
+             colecao (query-collection db sk)
+             _ (doseq [i idxs] (coll/validate-index! i (count colecao)))
+             rev (long (:save/revision save 0))]
+         {:tx [[:db/add [:save/key sk] :save/time-ginasio-edn (pr-str idxs)]
+               [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
+          :result {:time-ginasio idxs}}))))
+
+  (resolve-gym-challenge! [_ writer-ctx request]
+    (let [payload (ops/gym-resolve-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          gym-id (:gym-id request)
+          chat-id (:chat-id writer-ctx)
+          gk (id/gym-occupation-key chat-id gym-id)
+          ;; Stub rev=0 para CAS na primeira ocupação (corrida segura).
+          _ (let [e (d/pull (d/db conn) '[*] [:gym-occupation/key gk])]
+              (when-not (present? e)
+                (try
+                  (d/transact conn {:tx-data [{:gym-occupation/key gk
+                                              :gym-occupation/chat-id chat-id
+                                              :gym-occupation/gym-id gym-id
+                                              :gym-occupation/revision 0}]})
+                  (catch Exception _))))
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [sk (id/save-key chat-id (:player-id writer-ctx) (:save-id writer-ctx))
+                     save-m (->save save)
+                     slot (d/pull db '[*] [:gym-occupation/key gk])
+                     ocup (gym-store/occupation->map slot edn-read present?)
+                     slot-rev (long (:gym-occupation/revision slot 0))
+                     colecao (query-collection db sk)]
+                 (gym-store/build-resolve-tx
+                  {:db db :save save :writer-ctx writer-ctx
+                   :request (assoc request
+                                   :ginasios (:ginasios save-m {})
+                                   :payload-hash phash)
+                   :ocupacao ocup :colecao colecao
+                   :slot-revision slot-rev
+                   :query-collection query-collection
+                   :save-entity save-entity
+                   :player-entity player-entity
+                   :pokemon-entity-map pokemon-entity-map
+                   :apply-pokemon-xp-tx apply-pokemon-xp-tx
+                   :inventory-adjust-tx inventory-adjust-tx}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (heal-gym-motivation! [_ writer-ctx request]
+    (let [payload (reward/canonicalize
+                   {:gym-id (:gym-id request)
+                    :indice (long (:indice request))
+                    :item-id (:item-id request)
+                    :pontos (long (:pontos request))})
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [ocup (let [e (d/pull db '[*] [:gym-occupation/key
+                                                   (id/gym-occupation-key (:chat-id writer-ctx)
+                                                                          (:gym-id request))])]
+                            (gym-store/occupation->map e edn-read present?))]
+                 (gym-store/build-heal-tx
+                  {:db db :save save :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :ocupacao ocup
+                   :inventory-adjust-tx inventory-adjust-tx}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (get-raid [_ raid-id]
+    (load-raid (d/db conn) raid-id))
+
+  (active-raid [_ chat-id]
+    (let [ptr (d/pull (d/db conn) '[*] [:chat-active-raid/chat-id chat-id])]
+      (when (present? ptr)
+        (let [r (load-raid (d/db conn) (:chat-active-raid/raid-id ptr))
+              agora (System/currentTimeMillis)]
+          (when (and r (or (raid-domain/ativa? r agora)
+                           (= "vitoria" (str (:fase r)))))
+            r)))))
+
+  (open-raid! [_ writer-ctx request]
+    (let [payload (ops/raid-open-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [_db _save]
+               (raid-store/build-open-tx
+                {:request (assoc request
+                                 :chat-id (:chat-id writer-ctx)
+                                 :payload-hash phash
+                                 :agora (or (:agora request)
+                                            (System/currentTimeMillis)))})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (join-raid! [_ writer-ctx request]
+    (let [payload (ops/raid-join-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [raid (or (load-raid db (:raid-id request))
+                              (throw (err/error :raid_not_found
+                                                {:raid-id (:raid-id request)})))
+                     sk (id/save-key (:chat-id writer-ctx)
+                                     (:player-id writer-ctx)
+                                     (:save-id writer-ctx))
+                     colecao (query-collection db sk)]
+                 (raid-store/build-join-tx
+                  {:db db :save save :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :raid raid :colecao colecao}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (leave-raid! [_ writer-ctx request]
+    (let [payload (ops/raid-join-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [raid (or (load-raid db (:raid-id request))
+                              (throw (err/error :raid_not_found
+                                                {:raid-id (:raid-id request)})))]
+                 (raid-store/build-leave-tx
+                  {:save save :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :raid raid}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (start-raid! [_ writer-ctx request]
+    (let [payload (reward/canonicalize
+                   {:raid-id (:raid-id request) :action "start"})
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [raid (or (load-raid db (:raid-id request))
+                              (throw (err/error :raid_not_found
+                                                {:raid-id (:raid-id request)})))]
+                 (raid-store/build-start-tx
+                  {:save save :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :raid raid}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (raid-attack! [_ writer-ctx request]
+    (let [payload (ops/raid-attack-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [raid (or (load-raid db (:raid-id request))
+                              (throw (err/error :raid_not_found
+                                                {:raid-id (:raid-id request)})))]
+                 (raid-store/build-attack-tx
+                  {:db db :save save :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :raid raid
+                   :apply-pokemon-xp-tx apply-pokemon-xp-tx
+                   :save-entity save-entity
+                   :query-collection query-collection}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (raid-capture! [_ writer-ctx request]
+    (let [payload (ops/raid-capture-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [raid (or (load-raid db (:raid-id request))
+                              (throw (err/error :raid_not_found
+                                                {:raid-id (:raid-id request)})))
+                     sk (id/save-key (:chat-id writer-ctx)
+                                     (:player-id writer-ctx)
+                                     (:save-id writer-ctx))
+                     colecao (query-collection db sk)]
+                 (raid-store/build-capture-tx
+                  {:db db :save save :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :raid raid :colecao colecao
+                   :pokemon-entity-map pokemon-entity-map
+                   :inventory-adjust-tx inventory-adjust-tx}))))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)

@@ -1,0 +1,52 @@
+;; M3.4 — batalhas selvagens (estado + vínculo ao save/jogador).
+[
+ {:db/ident       :battle/id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Identificador da batalha (operation-id de criação ou UUID)"}
+
+ {:db/ident       :battle/save
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Save de origem — callbacks de outro save falham via fence"}
+
+ {:db/ident       :battle/player-key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle/save-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle/kind
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "\"wild\" nesta etapa"}
+
+ {:db/ident       :battle/active?
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle/turn-index
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle/phase
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle/state-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Snapshot EDN do estado de combate"}
+
+ {:db/ident       :battle/collection-index
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :player/active-battle-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Batalha ativa do jogador; bloqueia alternância de save"}
+]

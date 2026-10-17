@@ -66,6 +66,57 @@
   (learn-move! [this writer-ctx request]
     "Aprende/substitui golpe no índice; fence + recibo.")
 
+  (start-wild-battle! [this writer-ctx request]
+    "Inicia batalha selvagem no save ativo; bloqueia se já houver ativa.")
+
+  (confirm-battle-turn! [this writer-ctx request]
+    "Persiste turno confirmado (CAS turn-index + fence); recompensas via M3.2.")
+
+  (get-battle [this battle-id]
+    "Snapshot da batalha ou nil.")
+
+  (active-battle [this chat-id player-id]
+    "Batalha ativa do jogador ou nil.")
+
+  (get-gym-occupation [this chat-id gym-id]
+    "Ocupação atual do ginásio no grupo ou nil (NPC).")
+
+  (list-gym-occupations-for-player [this chat-id player-id]
+    "Ginásios que o jogador ocupa (qualquer save).")
+
+  (set-gym-team! [this writer-ctx indices]
+    "Salva escalação de 3 índices no save ativo.")
+
+  (resolve-gym-challenge! [this writer-ctx request]
+    "Aplica derrota/vitória: PE/XP/moedas/insígnia/ocupação com fence+recibo.")
+
+  (heal-gym-motivation! [this writer-ctx request]
+    "Recupera motivação do defensor (líder do save ativo); consome item.")
+
+  (get-raid [this raid-id]
+    "Snapshot da raid ou nil.")
+
+  (active-raid [this chat-id]
+    "Raid ativa (inscrições/combate e não expirada) do chat ou nil.")
+
+  (open-raid! [this writer-ctx request]
+    "Abre inscrições de raid no chat (criação manual/harness).")
+
+  (join-raid! [this writer-ctx request]
+    "Inscreve com save-id+fence carimbados; snapshot do Pokémon.")
+
+  (leave-raid! [this writer-ctx request]
+    "Sai durante inscrições.")
+
+  (start-raid! [this writer-ctx request]
+    "Inicia combate (≥2); define HP compartilhado.")
+
+  (raid-attack! [this writer-ctx request]
+    "Turno de ataque com CAS turn-index; recompensas na transição vitória.")
+
+  (raid-capture! [this writer-ctx request]
+    "Tentativa de captura pós-vitória (bola + roll).")
+
   (ensure-group! [this chat-id label]
     "Garante entidade de grupo separada dos saves.")
 

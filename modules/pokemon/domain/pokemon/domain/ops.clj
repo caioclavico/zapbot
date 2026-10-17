@@ -48,5 +48,75 @@
                     (select-keys golpe [:slug :nome-exibicao :tipo :poder :classe]))}
      (some? slot) (assoc :slot (long slot)))))
 
+(defn start-battle-payload
+  [{:keys [battle-id kind pokemon-x pokemon-o collection-index]}]
+  (reward/canonicalize
+   {:battle-id battle-id
+    :kind (name (or kind :wild))
+    :collection-index (long (or collection-index 0))
+    :pokemon-x (reward/canonicalize
+                (select-keys pokemon-x
+                             [:nome :species :id-pokemon :hp :ataque :defesa
+                              :atq-esp :def-esp :veloc :tipos :habilidade :item
+                              :golpes :nivel :raridade :shiny]))
+    :pokemon-o (reward/canonicalize
+                (select-keys pokemon-o
+                             [:nome :species :hp :ataque :defesa :atq-esp :def-esp
+                              :veloc :tipos :habilidade :item :golpes :nivel :raridade]))}))
+
+(defn battle-turn-payload
+  [{:keys [battle-id expected-turn-index action move-index rng]}]
+  (reward/canonicalize
+   (cond-> {:battle-id battle-id
+            :expected-turn-index (long expected-turn-index)
+            :action (name action)}
+     (some? move-index) (assoc :move-index (long move-index))
+     (map? rng) (assoc :rng (reward/canonicalize rng)))))
+
+(defn gym-resolve-payload
+  [{:keys [gym-id venceu? participacao dia pedra-roll indices]}]
+  (reward/canonicalize
+   (cond-> {:gym-id gym-id
+            :venceu? (boolean venceu?)
+            :dia dia
+            :participacao (reward/canonicalize (or participacao {}))}
+     (some? pedra-roll) (assoc :pedra-roll (long pedra-roll))
+     (seq indices) (assoc :indices (mapv long indices)))))
+
+(defn gym-occupy-payload
+  [{:keys [gym-id indices expected-revision]}]
+  (reward/canonicalize
+   {:gym-id gym-id
+    :indices (mapv long indices)
+    :expected-revision (long (or expected-revision 0))}))
+
+(defn raid-open-payload
+  [{:keys [raid-id ginasio liga]}]
+  (reward/canonicalize
+   {:raid-id raid-id :ginasio ginasio :liga (or liga "iniciante")}))
+
+(defn raid-join-payload
+  [{:keys [raid-id collection-index]}]
+  (reward/canonicalize
+   {:raid-id raid-id :collection-index (long collection-index)}))
+
+(defn raid-attack-payload
+  [{:keys [raid-id expected-turn-index move-index]}]
+  (reward/canonicalize
+   {:raid-id raid-id
+    :expected-turn-index (long expected-turn-index)
+    :move-index (long move-index)}))
+
+(defn raid-reward-payload
+  [{:keys [raid-id player-id]}]
+  (reward/canonicalize
+   {:raid-id raid-id :player-id player-id :kind "raid-victory"}))
+
+(defn raid-capture-payload
+  [{:keys [raid-id bola roll]}]
+  (reward/canonicalize
+   (cond-> {:raid-id raid-id :bola bola}
+     (some? roll) (assoc :roll (long roll)))))
+
 (def payload-hash reward/payload-hash)
 (def assert-receipt-payload! reward/assert-receipt-payload!)

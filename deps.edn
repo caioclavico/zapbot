@@ -52,4 +52,28 @@
    :jvm-opts ["-Xms64m"
               "-Xmx256m"
               "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
+  ;; Testes M3.4 — motor de batalha + regressões
+  :test-m3-battle
+  {:main-opts ["-m" "odisseu.smoke.m3-battle"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
+  ;; Testes M3.5 — ginásios + regressões
+  :test-m3-gym
+  {:main-opts ["-m" "odisseu.smoke.m3-gym"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
+  ;; Testes M3.6 — concorrência ginásio + raids + regressões
+  :test-m3-raid
+  {:main-opts ["-m" "odisseu.smoke.m3-raid"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}}}
