@@ -8,6 +8,7 @@
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]
+            [pokemon.domain.reward :as reward]
             [pokemon.domain.xp :as xp]
             [pokemon.infrastructure.datomic.schema :as schema]))
 
@@ -187,11 +188,21 @@
   (when (present? e)
     {:operation-id (:operation-receipt/id e)
      :kind (:operation-receipt/kind e)
+     :channel (:operation-receipt/channel e)
+     :payload-hash (:operation-receipt/payload-hash e)
      :player-key (:operation-receipt/player-key e)
      :save-id (:operation-receipt/save-id e)
      :summary (when-let [s (:operation-receipt/summary e)]
                 (edn/read-string s))
      :duplicate true}))
+
+(defn- resolve-receipt
+  "Idempotência: mesmo hash → duplicate; hash diferente → erro."
+  [e expected-hash operation-id]
+  (when (present? e)
+    (reward/assert-receipt-payload!
+     (:operation-receipt/payload-hash e) expected-hash operation-id)
+    (->receipt e)))
 
 (defn- activate-save!*
   [conn chat-id player-id save-id]
@@ -244,7 +255,7 @@
                                      :target save-id})))))))))))
 
 (defn- reward-tx-data
-  [db request save]
+  [db request save channel payload-hash]
   (let [{:keys [operation-id chat-id player-id save-id
                 coins-delta pokemon item]} request
         pk (id/player-key chat-id player-id)
@@ -271,6 +282,8 @@
                   :item-qty item-qty})
         base [{:operation-receipt/id operation-id
                :operation-receipt/kind "reward"
+               :operation-receipt/channel channel
+               :operation-receipt/payload-hash payload-hash
                :operation-receipt/player-key pk
                :operation-receipt/save-id save-id
                :operation-receipt/summary (pr-str summary)}
@@ -294,57 +307,92 @@
                            :pokedex-entry/species (:species poke)
                            :pokedex-entry/seen true
                            :pokedex-entry/caught true}))
-        with-item (if-not (and item-id (pos? item-qty))
+        with-item (if-not (and item-id (not (zero? item-qty)))
                     with-poke
                     (let [ik (id/inventory-item-key sk item-id)
                           cur (d/pull db '[:inventory-item/qty] [:inventory-item/key ik])
-                          old-qty (long (:inventory-item/qty cur 0))]
+                          old-qty (long (:inventory-item/qty cur 0))
+                          next-qty (+ old-qty item-qty)]
+                      (when (neg? next-qty)
+                        (throw (err/error :insufficient_item
+                                          {:item-id item-id :qty old-qty :delta item-qty})))
                       (conj with-poke
                             {:inventory-item/key ik
                              :inventory-item/save [:save/key sk]
                              :inventory-item/item-id item-id
-                             :inventory-item/qty (+ old-qty item-qty)})))]
+                             :inventory-item/qty next-qty})))]
     {:tx with-item :summary summary}))
 
-(defn- apply-reward!*
+(defn- admin-seed-reward!*
+  "Seed/harness: sem fence; com payload-hash."
   [conn request]
-  (let [{:keys [operation-id chat-id player-id save-id]} request
+  (let [payload (reward/reward-payload request)
+        phash (reward/payload-hash payload)
+        {:keys [operation-id chat-id player-id save-id]} request
         existing (receipt-entity (d/db conn) operation-id)]
-    (if (present? existing)
-      (->receipt existing)
-      (loop [attempt 0]
-        (let [db (d/db conn)
-              again (receipt-entity db operation-id)]
-          (if (present? again)
-            (->receipt again)
-            (let [save (save-entity db chat-id player-id save-id)
-                  _ (when-not (present? save)
-                      (throw (err/error :save_not_found {:save-id save-id})))
-                  {:keys [tx summary]} (reward-tx-data db request save)
-                  result (try
-                           (d/transact conn {:tx-data tx})
-                           {:ok true
-                            :value {:operation-id operation-id
-                                    :duplicate false
-                                    :summary summary
-                                    :save (->save (save-entity (d/db conn) chat-id player-id save-id))}}
-                           (catch Exception ex
-                             {:ok false :ex ex}))]
-              (if (:ok result)
-                (:value result)
-                (let [ex (:ex result)
-                      dup (receipt-entity (d/db conn) operation-id)]
-                  (cond
-                    (present? dup)
-                    (->receipt dup)
+    (or (resolve-receipt existing phash operation-id)
+        (loop [attempt 0]
+          (let [db (d/db conn)
+                again (receipt-entity db operation-id)]
+            (or (resolve-receipt again phash operation-id)
+                (let [save (save-entity db chat-id player-id save-id)
+                      _ (when-not (present? save)
+                          (throw (err/error :save_not_found {:save-id save-id})))
+                      {:keys [tx summary]} (reward-tx-data db request save "admin" phash)
+                      result (try
+                               (d/transact conn {:tx-data tx})
+                               {:ok true
+                                :value {:operation-id operation-id
+                                        :duplicate false
+                                        :channel "admin"
+                                        :payload-hash phash
+                                        :summary summary
+                                        :save (->save (save-entity (d/db conn) chat-id player-id save-id))}}
+                               (catch Exception ex
+                                 {:ok false :ex ex}))]
+                  (if (:ok result)
+                    (:value result)
+                    (let [ex (:ex result)
+                          dup (receipt-entity (d/db conn) operation-id)]
+                      (cond
+                        (present? dup)
+                        (resolve-receipt dup phash operation-id)
 
-                    (and (anomaly-conflict? ex) (< attempt max-cas-attempts))
-                    (recur (inc attempt))
+                        (and (anomaly-conflict? ex) (< attempt max-cas-attempts))
+                        (recur (inc attempt))
 
-                    :else
-                    (throw (err/error :reward_conflict
-                                      {:cause (ex-message ex)
-                                       :operation-id operation-id}))))))))))))
+                        :else
+                        (throw (err/error :reward_conflict
+                                          {:cause (ex-message ex)
+                                           :operation-id operation-id}))))))))))))
+
+(defn- apply-gameplay-reward!*
+  "Gameplay: fence+ativo na mesma TX; payload-hash no recibo."
+  [conn writer-ctx request]
+  (let [full (merge request
+                    (select-keys writer-ctx
+                                 [:chat-id :player-id :save-id :fence-generation]))
+        payload (reward/reward-payload full)
+        phash (reward/payload-hash payload)
+        operation-id (:operation-id full)
+        existing (receipt-entity (d/db conn) operation-id)]
+    (or (resolve-receipt existing phash operation-id)
+        (try
+          (transact-with-writer!
+           conn writer-ctx
+           (fn [db save]
+             (let [{:keys [tx summary]} (reward-tx-data db full save "gameplay" phash)]
+               {:tx tx
+                :result {:operation-id operation-id
+                         :duplicate false
+                         :channel "gameplay"
+                         :payload-hash phash
+                         :summary summary}})))
+          (catch Exception ex
+            (let [dup (receipt-entity (d/db conn) operation-id)]
+              (if (present? dup)
+                (resolve-receipt dup phash operation-id)
+                (throw ex))))))))
 
 (defrecord DatomicTrainerStore [conn]
   ports/TrainerStore
@@ -411,8 +459,18 @@
   (activate-save! [_ chat-id player-id save-id]
     (activate-save!* conn chat-id player-id save-id))
 
-  (apply-reward! [_ request]
-    (apply-reward!* conn request))
+  (apply-gameplay-reward! [_ writer-ctx request]
+    (let [result (apply-gameplay-reward!* conn writer-ctx request)]
+      (if (:duplicate result)
+        result
+        (assoc result
+               :save (->save (save-entity (d/db conn)
+                                          (:chat-id writer-ctx)
+                                          (:player-id writer-ctx)
+                                          (:save-id writer-ctx)))))))
+
+  (admin-seed-reward! [_ request]
+    (admin-seed-reward!* conn request))
 
   (add-to-collection! [_ writer-ctx registro]
     (transact-with-writer!
@@ -513,74 +571,6 @@
          {:tx [[:db/add [:save/key sk] :save/vitorias-treinador (inc v)]
                [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
           :result {:vitorias (inc v)}}))))
-
-  (credit-coins-on-active! [_ writer-ctx amount operation-id]
-    (let [existing (receipt-entity (d/db conn) operation-id)]
-      (if (present? existing)
-        (->receipt existing)
-        (try
-          (transact-with-writer!
-           conn writer-ctx
-           (fn [db save]
-             (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
-                   coins (long (:save/coins save 0))
-                   rev (long (:save/revision save 0))
-                   delta (long amount)
-                   next (model/apply-coin-delta coins delta)
-                   pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))]
-               {:tx [{:operation-receipt/id operation-id
-                      :operation-receipt/kind "credit-coins"
-                      :operation-receipt/player-key pk
-                      :operation-receipt/save-id (:save-id writer-ctx)
-                      :operation-receipt/summary (pr-str {:coins-delta delta})}
-                     [:db/cas [:save/key sk] :save/coins coins next]
-                     [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
-                :result {:operation-id operation-id
-                         :duplicate false
-                         :coins next
-                         :delta delta}})))
-          (catch Exception ex
-            (let [dup (receipt-entity (d/db conn) operation-id)]
-              (if (present? dup)
-                (->receipt dup)
-                (throw ex))))))))
-
-  (adjust-inventory-on-active! [_ writer-ctx item-id delta operation-id]
-    (let [existing (receipt-entity (d/db conn) operation-id)]
-      (if (present? existing)
-        (->receipt existing)
-        (try
-          (transact-with-writer!
-           conn writer-ctx
-           (fn [db save]
-             (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
-                   ik (id/inventory-item-key sk item-id)
-                   cur (d/pull db '[:inventory-item/qty] [:inventory-item/key ik])
-                   old-qty (long (:inventory-item/qty cur 0))
-                   next-qty (+ old-qty (long delta))
-                   _ (when (neg? next-qty)
-                       (throw (err/error :insufficient_item {:item-id item-id :qty old-qty})))
-                   rev (long (:save/revision save 0))
-                   pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))]
-               {:tx [{:operation-receipt/id operation-id
-                      :operation-receipt/kind "inventory"
-                      :operation-receipt/player-key pk
-                      :operation-receipt/save-id (:save-id writer-ctx)
-                      :operation-receipt/summary (pr-str {:item-id item-id :delta delta})}
-                     {:inventory-item/key ik
-                      :inventory-item/save [:save/key sk]
-                      :inventory-item/item-id item-id
-                      :inventory-item/qty next-qty}
-                     [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
-                :result {:operation-id operation-id
-                         :duplicate false
-                         :item-id item-id
-                         :qty next-qty}})))
-          (catch Exception ex
-            (let [dup (receipt-entity (d/db conn) operation-id)]
-              (if (present? dup)
-                (->receipt dup)
-                (throw ex))))))))
 
   (ensure-group! [_ chat-id label]
     (let [db (d/db conn)

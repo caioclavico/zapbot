@@ -1,9 +1,9 @@
 # Arquitetura — monólito modular + Datomic Local
 
-**Status:** M0–M2 feitos; M3.1 coleção/HP/XP no JVM (dev)  
+**Status:** M0–M3.2 feitos (dev)  
 **Branch:** `refactor/modular-monolith-datomic`  
 **Data:** 2026-10-17  
-**Escopo M3.1:** regras de coleção/HP/XP/moedas no save ativo com writer fence. Sem Cassandra/WhatsApp/deploy. Ver `docs/m3-1-collection-jvm.md`.
+**Escopo M3.2:** recompensas de gameplay com fence+payload-hash; admin-seed explícito. Ver `docs/m3-2-reward-security.md`.
 
 ---
 

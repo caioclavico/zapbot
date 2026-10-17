@@ -2,7 +2,7 @@
   "Ports da aplicação — domínio não depende de Datomic.")
 
 (defprotocol TrainerStore
-  "Persistência do núcleo treinador/saves + coleção (M3.1).
+  "Persistência do núcleo treinador/saves + coleção + recompensas (M3.2).
 
   Implementações (ex.: Datomic Local) vivem em infrastructure."
 
@@ -36,9 +36,13 @@
   (activate-save! [this chat-id player-id save-id]
     "Alterna ponteiro A↔B com CAS de fence. Não sobrescreve o outro save.")
 
-  (apply-reward! [this request]
-    "Aplica recompensa idempotente no save indicado (operation-id único).
-     Harness/M2: pode mirar save inativo. Gameplay M3.1 usa APIs com writer fence.")
+  (apply-gameplay-reward! [this writer-ctx request]
+    "Recompensa de gameplay: CAS save ativo+fence na mesma TX;
+     recibo com payload-hash; canal \"gameplay\".")
+
+  (admin-seed-reward! [this request]
+    "EXPLÍCITO: seed/harness/migração sem fence. Canal \"admin\".
+     Não usar em comandos comuns.")
 
   (add-to-collection! [this writer-ctx registro]
     "Acrescenta Pokémon à coleção do save congelado no writer-ctx (CAS ativo+fence).")
@@ -51,12 +55,6 @@
 
   (register-trainer-victory! [this writer-ctx]
     "Incrementa vitorias-treinador no save ativo (CAS fence).")
-
-  (credit-coins-on-active! [this writer-ctx amount operation-id]
-    "Credita moedas no save ativo com recibo idempotente + CAS fence.")
-
-  (adjust-inventory-on-active! [this writer-ctx item-id delta operation-id]
-    "Ajusta inventário no save ativo com recibo + CAS fence.")
 
   (ensure-group! [this chat-id label]
     "Garante entidade de grupo separada dos saves.")

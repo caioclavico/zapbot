@@ -2,6 +2,7 @@
   "Casos de uso do núcleo treinador/saves.
   Orquestra ports; regras puras em pokemon.domain.*"
   (:require [pokemon.application.ports :as ports]
+            [pokemon.application.reward :as reward-app]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]))
@@ -55,15 +56,18 @@
   (active-save store chat-id player-id))
 
 (defn grant-reward!
-  "Recompensa idempotente no save alvo (não precisa ser o ativo).
-  request: {:operation-id :chat-id :player-id :save-id
-            :coins-delta :pokemon {...} :item {...}}"
-  [store {:keys [operation-id chat-id player-id save-id] :as request}]
-  (when (or (nil? operation-id) (empty? (str operation-id)))
-    (throw (err/error :missing_operation_id {})))
-  (when-not (ports/get-save store chat-id player-id save-id)
-    (throw (err/error :save_not_found {:save-id save-id})))
-  (ports/apply-reward! store request))
+  "Removido o bypass silencioso (M3.2).
+  Use `pokemon.application.reward/apply-gameplay-reward!` (comandos)
+  ou `admin-seed-reward!` (harness/migração)."
+  [& _args]
+  (throw (err/error :use_explicit_reward_api
+                    {:gameplay 'pokemon.application.reward/apply-gameplay-reward!
+                     :admin 'pokemon.application.reward/admin-seed-reward!})))
+
+(defn admin-seed-reward!
+  "Delegação explícita ao caminho admin (sem fence)."
+  [store request]
+  (reward-app/admin-seed-reward! store request))
 
 (defn snapshot-save
   [store chat-id player-id save-id]

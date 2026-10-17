@@ -36,4 +36,12 @@
    :jvm-opts ["-Xms64m"
               "-Xmx256m"
               "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
+  ;; Testes M3.2 — recompensas com fence + regressões
+  :test-m3-reward
+  {:main-opts ["-m" "odisseu.smoke.m3-reward"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}}}

@@ -6,7 +6,8 @@
 
 (def migration-files
   ["migrations/pokemon/001-trainer-saves.edn"
-   "migrations/pokemon/002-collection-hp-xp.edn"])
+   "migrations/pokemon/002-collection-hp-xp.edn"
+   "migrations/pokemon/003-reward-payload-hash.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id

@@ -24,7 +24,7 @@ Toda mutação de gameplay M3.1 congela `{save-id, fence-generation}` e CAS-a am
 - Ginásios, raids, Adventure, PvP  
 - Insígnias derivadas do catálogo (M3.1 usa cache `xp-insignias`)  
 - Capacidade PC/mochila e loja completa  
-- `apply-reward!` (M2) ainda pode mirar save por id sem fence — harness; gameplay usa APIs com fence
+- Recompensas: ver M3.2 — gameplay com fence; admin-seed explícito; `grant-reward!` bloqueado
 
 ## Como rodar
 
@@ -37,7 +37,7 @@ git diff --check
 
 1. **Insígnias/missões:** legado recalcula XP de insígnias do catálogo; JVM soma campos persistidos (`xp-insignias` / `xp-missoes`), default 0 até import.
 2. **Golpes e raridade API:** não migrados; registro JVM guarda stats/tipos/shiny/HP necessários ao recorte.
-3. **`apply-reward!`:** continua permitindo escrita em save nomeado (M2); não usar para gameplay pós-alternância — preferir `collection/*`.
+3. **Recompensas (atualizado em M3.2):** gameplay unificado com fence; seed admin explícito; sem bypass silencioso.
 
 ## Resultados (2026-10-17)
 

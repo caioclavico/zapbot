@@ -43,14 +43,14 @@
         player "player-misty"]
     (trainer/create-trainer! s {:chat-id chat :player-id player})
     ;; Shiny só no save A
-    (trainer/grant-reward!
+    (trainer/admin-seed-reward!
      s {:operation-id "op-shiny-a"
         :chat-id chat :player-id player :save-id "a"
         :coins-delta 50
         :pokemon {:species "Magikarp" :shiny true :level 5 :xp 100}
         :item {:item-id "poke-ball" :qty 3}})
-    ;; Progresso diferente em B
-    (trainer/grant-reward!
+    ;; Progresso diferente em B (seed admin explícito — sem fence)
+    (trainer/admin-seed-reward!
      s {:operation-id "op-progress-b"
         :chat-id chat :player-id player :save-id "b"
         :coins-delta 200
@@ -76,11 +76,11 @@
         chat "chat-ficticio-3"
         player "player-brock"]
     (trainer/create-trainer! s {:chat-id chat :player-id player})
-    (trainer/grant-reward!
+    (trainer/admin-seed-reward!
      s {:operation-id "op-a-coins" :chat-id chat :player-id player :save-id "a"
         :coins-delta 10
         :pokemon {:species "Onix" :shiny false}})
-    (trainer/grant-reward!
+    (trainer/admin-seed-reward!
      s {:operation-id "op-b-coins" :chat-id chat :player-id player :save-id "b"
         :coins-delta 99})
     (let [to-b (trainer/switch-save! s chat player "b")
@@ -104,8 +104,8 @@
              :coins-delta 100
              :pokemon {:species "Eevee" :shiny false}}]
     (trainer/create-trainer! s {:chat-id chat :player-id player})
-    (let [r1 (trainer/grant-reward! s req)
-          r2 (trainer/grant-reward! s req)
+    (let [r1 (trainer/admin-seed-reward! s req)
+          r2 (trainer/admin-seed-reward! s req)
           snap (trainer/snapshot-save s chat player "a")]
       (is (false? (:duplicate r1)))
       (is (true? (:duplicate r2)))
@@ -128,7 +128,7 @@
           rewards (doall
                    (for [i (range 10)]
                      (future
-                       (trainer/grant-reward!
+                       (trainer/admin-seed-reward!
                         s {:operation-id (str "op-coin-" i)
                            :chat-id chat :player-id player :save-id "a"
                            :coins-delta 1}))))
@@ -148,7 +148,7 @@
         player "player-leaf"]
     (let [s (boot! db-name)]
       (trainer/create-trainer! s {:chat-id chat :player-id player})
-      (trainer/grant-reward!
+      (trainer/admin-seed-reward!
        s {:operation-id "op-persist"
           :chat-id chat :player-id player :save-id "a"
           :coins-delta 77
@@ -168,10 +168,10 @@
         chat "chat-ficticio-7"]
     (trainer/create-trainer! s {:chat-id chat :player-id "p1"})
     (trainer/create-trainer! s {:chat-id chat :player-id "p2"})
-    (trainer/grant-reward!
+    (trainer/admin-seed-reward!
      s {:operation-id "op-p1" :chat-id chat :player-id "p1" :save-id "a"
         :coins-delta 5 :pokemon {:species "Pikachu"}})
-    (trainer/grant-reward!
+    (trainer/admin-seed-reward!
      s {:operation-id "op-p2" :chat-id chat :player-id "p2" :save-id "a"
         :coins-delta 8})
     (ports/ensure-group! s chat "raid-ficticia")
