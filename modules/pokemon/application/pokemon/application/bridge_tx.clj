@@ -1,10 +1,13 @@
 (ns pokemon.application.bridge-tx
-  "Casos de uso M4.2 da bridge: ensure, saves, activate, mutação pequena.
+  "Casos de uso M4.2/M4.4 da bridge: ensure, saves, activate, encontro/captura.
   Sem seed admin; save-id + fence + operation-id explícitos nas escritas."
   (:require [clojure.string :as str]
+            [pokemon.application.battle :as battle-app]
+            [pokemon.application.capture :as capture-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.reward :as reward-app]
             [pokemon.application.trainer :as trainer]
+            [pokemon.domain.capture :as capture]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]))
@@ -119,3 +122,158 @@
         (throw (err/error :operation_forbidden
                           {:operation-id operation-id})))
       (assoc receipt :persisted true))))
+
+(defn- keywordize-keys
+  [x]
+  (cond
+    (map? x)
+    (into {}
+          (map (fn [[k v]]
+                 [(cond
+                    (keyword? k) k
+                    (string? k) (keyword k)
+                    :else k)
+                  (keywordize-keys v)])
+               x))
+    (vector? x) (mapv keywordize-keys x)
+    (sequential? x) (mapv keywordize-keys x)
+    :else x))
+
+(defn- normalize-ball
+  [raw]
+  (let [chave (-> (or raw "")
+                  str/trim
+                  str/lower-case
+                  (str/replace #"\s+" "-"))
+        mapped (get {"1" "pokebola" "normal" "pokebola" "poke" "pokebola"
+                     "pokebola" "pokebola" "pokébola" "pokebola"
+                     "2" "grande-bola" "grande" "grande-bola"
+                     "grande-bola" "grande-bola"
+                     "3" "ultra-bola" "ultra" "ultra-bola"
+                     "ultra-bola" "ultra-bola"}
+                    chave)]
+    (or mapped
+        (when (contains? capture/bolas chave) chave))))
+
+(defn- merge-capture-receipt
+  "Idempotência: recibo duplicado → campos de captura a partir do summary."
+  [result]
+  (if (and (:duplicate result) (map? (:summary result)))
+    (merge result (:summary result) {:duplicate true})
+    result))
+
+(defn attempt-encounter-capture!
+  "POST captura no encontro ativo. Exige save-id + fence + operation-id."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 bola battle-id roll fuga-roll]
+          :as req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [ball (normalize-ball bola)]
+    (when-not ball
+      (throw (err/error :unknown_ball {:bola bola})))
+    (let [writer-ctx {:chat-id chat-id
+                      :player-id player-id
+                      :save-id save-id
+                      :fence-generation (long fence-generation)}
+          raw (capture-app/attempt-encounter-capture!
+               store writer-ctx
+               (cond-> {:operation-id (str operation-id)
+                        :bola ball}
+                 battle-id (assoc :battle-id battle-id)
+                 (some? roll) (assoc :roll (long roll))
+                 (some? fuga-roll) (assoc :fuga-roll (long fuga-roll))))
+          result (merge-capture-receipt raw)
+          save (ports/get-save store chat-id player-id save-id)
+          inv (ports/list-inventory store chat-id player-id save-id)]
+      ;; Chaves sem `?` — o encoder JSON camelCase preservaria o sufixo.
+      {:operation-id (:operation-id result)
+       :duplicate (boolean (:duplicate result))
+       :channel (:channel result "gameplay")
+       :payload-hash (:payload-hash result)
+       :save-id save-id
+       :fence-generation (long fence-generation)
+       :battle-id (:battle-id result)
+       :capturou (boolean (:capturou? result))
+       :fugiu (boolean (:fugiu? result))
+       :chance (:chance result)
+       :chance-base (:chance-base result)
+       :tentativa (:tentativa result)
+       :bola (:bola result ball)
+       :indice (:indice result)
+       :id-pokemon (:id-pokemon result)
+       :recompensa (:recompensa result)
+       :subida (:subida result)
+       :registro (:registro result)
+       :coins (:coins save 0)
+       :sequencia-capturas (:sequencia-capturas save 0)
+       :collection-count (count (ports/list-collection store chat-id player-id save-id))
+       :inventory inv
+       :encounter (when-let [enc (:encounter result)]
+                    {:battle-id (:battle-id enc)
+                     :aguardando-captura (boolean (:aguardando-captura? enc))
+                     :phase (:phase enc)
+                     :tentativas-captura (:tentativas-captura enc 0)
+                     :pokemon-o (select-keys (get-in enc [:pokemons :o] {})
+                                             [:nome :species :raridade :hp])})})))
+
+(defn start-wild-battle!
+  "Harness/e2e: inicia batalha selvagem no save congelado (dev)."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id]
+          :as req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        normalized (-> (dissoc req :fence-generation)
+                       (update :pokemon-x keywordize-keys)
+                       (update :pokemon-o keywordize-keys)
+                       (assoc :operation-id (str operation-id)))
+        result (battle-app/start-wild-battle! store writer-ctx normalized)]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :battle (:battle result)
+     :battle-id (get-in result [:battle :battle-id])
+     :save-id save-id
+     :fence-generation (long fence-generation)}))
+
+(defn confirm-battle-turn!
+  "Harness/e2e: confirma turno (injeta rng para testes)."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id]
+          :as req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        normalized (-> (dissoc req :fence-generation)
+                       (update :rng keywordize-keys)
+                       (assoc :operation-id (str operation-id))
+                       (cond-> (string? (:action req))
+                         (update :action keyword)))
+        result (battle-app/confirm-turn! store writer-ctx normalized)
+        battle (:battle result)]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :battle battle
+     :battle-id (:battle-id battle)
+     :aguardando-captura (boolean (:aguardando-captura? battle))
+     :outcome (:outcome battle)
+     :chance-base-captura (:chance-base-captura battle)
+     :save-id save-id
+     :fence-generation (long fence-generation)}))

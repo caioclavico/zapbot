@@ -60,6 +60,10 @@
     "Captura: consome bola, resolve chance, adiciona Pokémon se sucesso.
      CAS ativo+fence; recibo operation-id + payload-hash.")
 
+  (attempt-encounter-capture! [this writer-ctx request]
+    "Tentativa de captura no encontro ativo (aguardando-captura?).
+     Consome bola + atualiza/encerra batalha na mesma TX; fence + recibo.")
+
   (evolve-pokemon! [this writer-ctx request]
     "Evolui Pokémon no índice; consome item se :item-id; fence + recibo.")
 

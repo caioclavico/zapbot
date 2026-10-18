@@ -223,6 +223,11 @@ function createClient(config = {}) {
     creditCoins: (body) => mutateOnce('/v1/rewards/coins', body),
     getOperation: ({ operationId, chatId, playerId }) =>
       request('GET', `/v1/operations/${idPath(operationId)}${q({ chatId, playerId })}`),
+    getEncounter: ({ chatId, playerId }) =>
+      request('GET', `/v1/encounter${q({ chatId, playerId })}`),
+    attemptEncounterCapture: (body) => mutateOnce('/v1/encounter/capture', body),
+    startBattle: (body) => mutateOnce('/v1/battles/start', body),
+    confirmBattleTurn: (body) => mutateOnce('/v1/battles/turn', body),
     close: () => agent.destroy()
   };
 }

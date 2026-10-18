@@ -30,6 +30,16 @@
      (some? roll) (assoc :roll (long roll))
      (some? fuga-roll) (assoc :fuga-roll (long fuga-roll)))))
 
+(defn encounter-capture-payload
+  "Payload canônico da tentativa sobre encontro já persistido (M4.4).
+  Tentativas/chance-base vêm do estado da batalha — não do cliente."
+  [{:keys [battle-id bola roll fuga-roll]}]
+  (reward/canonicalize
+   (cond-> {:battle-id (str battle-id)
+            :bola bola}
+     (some? roll) (assoc :roll (long roll))
+     (some? fuga-roll) (assoc :fuga-roll (long fuga-roll)))))
+
 (defn evolve-payload
   [{:keys [idx dados item-id]}]
   (reward/canonicalize

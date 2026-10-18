@@ -309,6 +309,30 @@
                                           :playerId player-id}))]
                     (.formatReceipt jvm-present data)))
 
+                "cacar"
+                (.formatHuntBlocked jvm-present)
+
+                "capturar"
+                (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
+                               #(.getEncounter jvm #js {:chatId chat-id :playerId player-id}))]
+                  (if (empty? resto)
+                    (.formatCaptureMenu jvm-present enc (str config/prefix "pk"))
+                    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            op-id (.stableOperationId jvm-transport
+                                                      (:requestId pedido)
+                                                      (str "encounter-capture:"
+                                                           (str/join "-" resto)))
+                            data (desempenho/medir! ctx "pokemon_jvm_capture"
+                                   #(.attemptEncounterCapture jvm
+                                      #js {:chatId chat-id
+                                           :playerId player-id
+                                           :saveId (.-activeSaveId ativo)
+                                           :fenceGeneration (.-fenceGeneration ativo)
+                                           :operationId op-id
+                                           :bola (str/join " " resto)
+                                           :battleId (some-> (.-encounter enc) .-battleId)}))]
+                      (.formatCaptureResult jvm-present data (str config/prefix "pk")))))
+
                 (.formatUnavailable jvm-present (str/join " " args)))]
         (entregar-envelope-jvm!
          message ctx pedido

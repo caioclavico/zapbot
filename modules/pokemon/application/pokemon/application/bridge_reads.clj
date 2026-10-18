@@ -100,3 +100,46 @@
      :save (save-profile save)
      :party (mapv pokemon-dto (:party snap))
      :inventory (:inventory snap)}))
+
+(defn- encounter-pokemon-dto
+  [p]
+  (when p
+    (select-keys p [:nome :species :nickname :shiny :nivel :hp :hp-atual
+                    :raridade :tipos :ataque :defesa :atq-esp :def-esp :veloc
+                    :imagem :imagem-shiny])))
+
+(defn active-encounter
+  "Encontro ativo (batalha em curso ou aguardando captura)."
+  [store chat-id player-id]
+  (require-player! store chat-id player-id)
+  (let [player (ports/get-player store chat-id player-id)
+        battle (ports/active-battle store chat-id player-id)
+        inv (when-let [slot (:active-save-id player)]
+              (ports/list-inventory store chat-id player-id slot))]
+    (if-not battle
+      {:chat-id chat-id
+       :player-id player-id
+       :active-save-id (:active-save-id player)
+       :fence-generation (:fence-generation player)
+       :encounter nil}
+      (let [chance-base (:chance-base-captura battle)
+            aguardando? (boolean (:aguardando-captura? battle))]
+        {:chat-id chat-id
+         :player-id player-id
+         :active-save-id (:active-save-id player)
+         :fence-generation (:fence-generation player)
+         :encounter
+         {:battle-id (:battle-id battle)
+          :save-id (:save-id battle)
+          :active (boolean (:active? battle))
+          :aguardando-captura aguardando?
+          :phase (:phase battle)
+          :outcome (:outcome battle)
+          :turn-index (:turn-index battle 0)
+          :tentativas-captura (long (:tentativas-captura battle 0))
+          :chance-base-captura chance-base
+          :hp (:hp battle)
+          :status (:status battle)
+          :pokemon-x (encounter-pokemon-dto (get-in battle [:pokemons :x]))
+          :pokemon-o (encounter-pokemon-dto (get-in battle [:pokemons :o]))
+          :inventory (or inv [])}}))))

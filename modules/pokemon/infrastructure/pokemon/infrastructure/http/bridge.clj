@@ -60,14 +60,18 @@
 (defn- business-status
   [code]
   (case code
-    (:player_not_found :no_active_save :save_not_found :operation_not_found) 404
+    (:player_not_found :no_active_save :save_not_found :operation_not_found
+     :encounter_not_found :battle_not_found) 404
     (:invalid_query :missing_operation_id :missing_reward_identity
      :missing_writer_context :missing_fence_generation :invalid_coins_delta
-     :invalid_save_slot :invalid_slot_id :invalid_identity) 400
+     :invalid_save_slot :invalid_slot_id :invalid_identity :unknown_ball) 400
     (:stale_writer_fence :writer_fence_conflict :activate_conflict
      :receipt_payload_mismatch :reward_conflict :reward_save_mismatch
-     :operation_forbidden) 409
+     :operation_forbidden :battle_pending :battle_already_active
+     :battle_save_mismatch :encounter_owner_mismatch :encounter_not_ready
+     :stale_turn_index) 409
     :operation_pending 409
+    (:insufficient_item :collection_full) 422
     :unauthorized 401
     :method_not_allowed 405
     422))
@@ -158,7 +162,9 @@
                        :readsOnly false
                        :capabilities ["trainer-read" "collection-read" "active-save-read"
                                       "trainer-ensure" "saves-list" "save-activate"
-                                      "reward-coins" "operation-get"]}))
+                                      "reward-coins" "operation-get"
+                                      "encounter-read" "encounter-capture"
+                                      "battle-start" "battle-turn"]}))
 
             (or (str/starts-with? path "/admin")
                 (str/starts-with? path "/v1/admin")
@@ -269,6 +275,118 @@
                         (throw (err/error :invalid_query
                                           {:required ["chatId" "playerId"]})))
                       (ok! ex (tx/get-operation store op-id chat-id player-id))))
+
+                (= path "/v1/encounter")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (reads/active-encounter store chat-id player-id))))
+
+                (= path "/v1/encounter/capture")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          save-id (g body "saveId" "save-id")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId" "operation-id")
+                          bola (g body "bola" "ball")
+                          battle-id (g body "battleId" "battle-id")
+                          roll (long-or-nil (g body "roll"))
+                          fuga-roll (long-or-nil (g body "fugaRoll" "fuga-roll"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (str/blank? operation-id)
+                                (nil? fence) (str/blank? bola))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "bola"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/attempt-encounter-capture!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :bola bola}
+                                          battle-id (assoc :battle-id battle-id)
+                                          (some? roll) (assoc :roll roll)
+                                          (some? fuga-roll) (assoc :fuga-roll fuga-roll)))))))
+
+                (= path "/v1/battles/start")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          save-id (g body "saveId" "save-id")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId" "operation-id")
+                          battle-id (g body "battleId" "battle-id")
+                          pokemon-x (or (g body "pokemonX" "pokemon-x") {})
+                          pokemon-o (or (g body "pokemonO" "pokemon-o") {})
+                          hp-x (long-or-nil (g body "hpX" "hp-x"))
+                          hp-o (long-or-nil (g body "hpO" "hp-o"))
+                          collection-index (long-or-nil (g body "collectionIndex"
+                                                           "collection-index"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (str/blank? operation-id)
+                                (nil? fence))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/start-wild-battle!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :pokemon-x pokemon-x
+                                                 :pokemon-o pokemon-o}
+                                          battle-id (assoc :battle-id battle-id)
+                                          (some? hp-x) (assoc :hp-x hp-x)
+                                          (some? hp-o) (assoc :hp-o hp-o)
+                                          (some? collection-index)
+                                          (assoc :collection-index collection-index)))))))
+
+                (= path "/v1/battles/turn")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          save-id (g body "saveId" "save-id")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId" "operation-id")
+                          battle-id (g body "battleId" "battle-id")
+                          expected (long-or-nil (g body "expectedTurnIndex"
+                                                   "expected-turn-index"))
+                          action (g body "action")
+                          move-index (long-or-nil (g body "moveIndex" "move-index"))
+                          rng (or (g body "rng") {})]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (str/blank? operation-id)
+                                (nil? fence) (str/blank? battle-id)
+                                (nil? expected) (str/blank? action))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "battleId" "expectedTurnIndex"
+                                                      "action"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/confirm-battle-turn!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :battle-id battle-id
+                                                 :expected-turn-index expected
+                                                 :action (keyword action)
+                                                 :rng rng}
+                                          (some? move-index)
+                                          (assoc :move-index move-index)))))))
 
                 :else
                 (send-json! ex 404

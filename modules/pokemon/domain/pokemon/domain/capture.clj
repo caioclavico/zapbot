@@ -90,11 +90,14 @@
 
 (defn attempt-capture
   "Resolve uma tentativa. `roll` / `fuga-roll` são 0–99 (injetáveis).
-  Espelha capturar-selvagem: bola já deve ter sido consumida pelo caller."
-  [{:keys [pokemon status sequencia-capturas bola tentativas-anteriores roll fuga-roll]}]
+  Espelha capturar-selvagem: bola já deve ter sido consumida pelo caller.
+  Se `:chance-base` vier carimbada no encontro, usa esse valor (legado)."
+  [{:keys [pokemon status sequencia-capturas bola tentativas-anteriores
+           roll fuga-roll chance-base]}]
   (when-not (contains? bolas bola)
     (throw (err/error :unknown_ball {:bola bola})))
-  (let [chance-base (chance-base-pos-batalha pokemon status sequencia-capturas)
+  (let [chance-base (long (or chance-base
+                              (chance-base-pos-batalha pokemon status sequencia-capturas)))
         chance (chance-com-bola chance-base bola)
         roll (long (or roll (rand-int 100)))
         capturou? (< roll chance)

@@ -344,11 +344,13 @@
             active-bid (:player/active-battle-id player)
             _ (when (and active-bid
                          (not= (:player/active-save-id player) save-id))
-                (let [b (battle-entity db active-bid)]
-                  (when (and (present? b) (:battle/active? b))
+                (let [b (battle-entity db active-bid)
+                      state (when (present? b) (->battle b))]
+                  (when (and state (or (:active? state) (:aguardando-captura? state)))
                     (throw (err/error :battle_pending
                                       {:battle-id active-bid
-                                       :save-id (:battle/save-id b)})))))
+                                       :save-id (:battle/save-id b)
+                                       :aguardando-captura? (boolean (:aguardando-captura? state))})))))
             _ (when (and (pos? (long (:player/gym-defense-count player 0)))
                          (not= (:player/active-save-id player) save-id))
                 (throw (err/error :gym_defense_pending
@@ -877,6 +879,215 @@
                   (resolve-receipt dup phash operation-id)
                   (throw ex))))))))
 
+  (attempt-encounter-capture! [_ writer-ctx request]
+    (let [payload (ops/encounter-capture-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [chat-id (:chat-id writer-ctx)
+                     player-id (:player-id writer-ctx)
+                     sk (id/save-key chat-id player-id (:save-id writer-ctx))
+                     pk (id/player-key chat-id player-id)
+                     battle-id (or (:battle-id request)
+                                   (active-battle-id-for db chat-id player-id))
+                     _ (when-not battle-id
+                         (throw (err/error :encounter_not_found
+                                           {:chat-id chat-id :player-id player-id})))
+                     be (battle-entity db battle-id)
+                     _ (when-not (present? be)
+                         (throw (err/error :encounter_not_found {:battle-id battle-id})))
+                     _ (when-not (= (:battle/save-id be) (:save-id writer-ctx))
+                         (throw (err/error :battle_save_mismatch
+                                           {:battle (:battle/save-id be)
+                                            :writer (:save-id writer-ctx)})))
+                     state (->battle be)
+                     _ (when-not (= player-id (:player-id state))
+                         (throw (err/error :encounter_owner_mismatch
+                                           {:owner (:player-id state)
+                                            :player-id player-id})))
+                     _ (when-not (:aguardando-captura? state)
+                         (throw (err/error :encounter_not_ready
+                                           {:battle-id battle-id
+                                            :phase (:phase state)
+                                            :active? (:active? state)})))
+                     save-m (->save save)
+                     colecao (query-collection db sk)
+                     bola (:bola request)
+                     pokemon (get-in state [:pokemons :o])
+                     _ (when-not (capacity/cabe-pokemon? (count colecao) save-m)
+                         (throw (err/error :collection_full
+                                           {:count (count colecao)
+                                            :nivel (:trainer-level save-m)})))
+                     ball-tx (inventory-adjust-tx db sk bola -1)
+                     tentativas-ant (long (:tentativas-captura state 0))
+                     chance-base (or (:chance-base-captura state)
+                                     (capture/chance-base-pos-batalha
+                                      pokemon
+                                      (get-in state [:status :o])
+                                      (:sequencia-capturas save-m 0)))
+                     attempt (capture/attempt-capture
+                              {:pokemon pokemon
+                               :status (get-in state [:status :o])
+                               :sequencia-capturas (:sequencia-capturas save-m 0)
+                               :chance-base chance-base
+                               :bola bola
+                               :tentativas-anteriores tentativas-ant
+                               :roll (:roll request)
+                               :fuga-roll (:fuga-roll request)})
+                     rev (long (:save/revision save 0))
+                     seq-atual (long (:sequencia-capturas save-m 0))
+                     maior (long (:maior-sequencia-capturas save-m 0))
+                     coins (long (:save/coins save 0))
+                     encerrado? (or (:capturou? attempt) (:fugiu? attempt))
+                     turn-now (long (:turn-index state 0))
+                     next-state (cond-> (assoc state
+                                               :tentativas-captura (:tentativa attempt)
+                                               :chance-base-captura chance-base
+                                               :turn-index (inc turn-now))
+                                  encerrado? (assoc :aguardando-captura? false
+                                                    :phase :finished
+                                                    :active? false
+                                                    :capture-outcome
+                                                    (cond
+                                                      (:capturou? attempt) :caught
+                                                      (:fugiu? attempt) :fled)))
+                     ;; CAS serializa tentativas concorrentes (espelha turn-index da batalha).
+                     battle-tx [[:db/cas [:battle/id battle-id] :battle/turn-index
+                                 turn-now (inc turn-now)]
+                                [:db/add [:battle/id battle-id] :battle/active?
+                                 (boolean (:active? next-state))]
+                                [:db/add [:battle/id battle-id] :battle/phase
+                                 (name (:phase next-state))]
+                                [:db/add [:battle/id battle-id] :battle/state-edn
+                                 (pr-str next-state)]]
+                     clear-active (when encerrado?
+                                    [[:db/retract [:player/key pk] :player/active-battle-id battle-id]])
+                     base-tx (into (into ball-tx battle-tx)
+                                   (concat
+                                    (or clear-active [])
+                                    [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                                     {:operation-receipt/id operation-id
+                                      :operation-receipt/kind "encounter-capture"
+                                      :operation-receipt/channel "gameplay"
+                                      :operation-receipt/payload-hash phash
+                                      :operation-receipt/player-key pk
+                                      :operation-receipt/save-id (:save-id writer-ctx)
+                                      :operation-receipt/summary
+                                      (pr-str {:capturou? (:capturou? attempt)
+                                               :fugiu? (:fugiu? attempt)
+                                               :bola bola
+                                               :chance (:chance attempt)
+                                               :battle-id battle-id
+                                               :tentativa (:tentativa attempt)})}]))
+                     resultado
+                     (cond
+                       (:capturou? attempt)
+                       (let [registro (coll/pokemon->registro pokemon
+                                                              (or (:hp pokemon) (:hp-atual pokemon) 0)
+                                                              nil)
+                             idx (coll/next-index colecao)
+                             entity (pokemon-entity-map sk registro idx)
+                             seq-nova (inc seq-atual)
+                             rew (capture/recompensa-pos-captura
+                                  {:raridade (or (:raridade pokemon) "comum")
+                                   :sequencia-nova seq-nova
+                                   :primeira-tentativa? (zero? tentativas-ant)
+                                   :capturou? true})
+                             ativo-idx (min (long (:ativo-index save-m 0))
+                                            (max 0 (dec (count colecao))))
+                             ativo (when (seq colecao) (nth colecao ativo-idx))
+                             xp-part (when (and ativo (pos? (:xp rew)))
+                                       (apply-pokemon-xp-tx ativo (:xp rew)))
+                             tx (cond-> (into base-tx
+                                              [entity
+                                               [:db/add [:save/key sk] :save/sequencia-capturas seq-nova]
+                                               [:db/add [:save/key sk] :save/maior-sequencia-capturas
+                                                (max maior seq-nova)]
+                                               [:db/cas [:save/key sk] :save/coins coins
+                                                (model/apply-coin-delta coins (:moedas rew))]
+                                               {:pokedex-entry/key (id/pokedex-entry-key sk (:species registro))
+                                                :pokedex-entry/save [:save/key sk]
+                                                :pokedex-entry/species (:species registro)
+                                                :pokedex-entry/seen true
+                                                :pokedex-entry/caught true}])
+                                  xp-part (into (:tx xp-part)))]
+                         {:tx tx
+                          :result {:operation-id operation-id
+                                   :duplicate false
+                                   :channel "gameplay"
+                                   :payload-hash phash
+                                   :battle-id battle-id
+                                   :capturou? true
+                                   :fugiu? false
+                                   :chance (:chance attempt)
+                                   :chance-base chance-base
+                                   :tentativa (:tentativa attempt)
+                                   :bola bola
+                                   :indice idx
+                                   :id-pokemon (:id-pokemon registro)
+                                   :recompensa rew
+                                   :subida (:subida xp-part)
+                                   :registro (assoc registro :collection-index idx)
+                                   :encounter next-state}})
+
+                       (:fugiu? attempt)
+                       (let [rew (capture/recompensa-pos-captura
+                                  {:raridade (or (:raridade pokemon) "comum")
+                                   :sequencia-nova 0
+                                   :primeira-tentativa? false
+                                   :capturou? false})
+                             ativo-idx (min (long (:ativo-index save-m 0))
+                                            (max 0 (dec (count colecao))))
+                             ativo (when (seq colecao) (nth colecao ativo-idx))
+                             xp-part (when (and ativo (pos? (:xp rew)))
+                                       (apply-pokemon-xp-tx ativo (:xp rew)))
+                             tx (cond-> (into base-tx
+                                              [[:db/add [:save/key sk] :save/maior-sequencia-capturas
+                                                (max maior seq-atual)]
+                                               [:db/add [:save/key sk] :save/sequencia-capturas 0]])
+                                  xp-part (into (:tx xp-part)))]
+                         {:tx tx
+                          :result {:operation-id operation-id
+                                   :duplicate false
+                                   :channel "gameplay"
+                                   :payload-hash phash
+                                   :battle-id battle-id
+                                   :capturou? false
+                                   :fugiu? true
+                                   :chance (:chance attempt)
+                                   :chance-base chance-base
+                                   :tentativa (:tentativa attempt)
+                                   :bola bola
+                                   :recompensa rew
+                                   :subida (:subida xp-part)
+                                   :encounter next-state}})
+
+                       :else
+                       {:tx base-tx
+                        :result {:operation-id operation-id
+                                 :duplicate false
+                                 :channel "gameplay"
+                                 :payload-hash phash
+                                 :battle-id battle-id
+                                 :capturou? false
+                                 :fugiu? false
+                                 :chance (:chance attempt)
+                                 :chance-base chance-base
+                                 :tentativa (:tentativa attempt)
+                                 :bola bola
+                                 :encounter next-state}})]
+                 resultado)))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
   (evolve-pokemon! [_ writer-ctx request]
     (let [payload (ops/evolve-payload request)
           phash (ops/payload-hash payload)
@@ -1008,8 +1219,9 @@
                      sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
                      prev (active-battle-id-for db (:chat-id writer-ctx) (:player-id writer-ctx))
                      _ (when prev
-                         (let [b (battle-entity db prev)]
-                           (when (and (present? b) (:battle/active? b))
+                         (let [b (battle-entity db prev)
+                               st (when (present? b) (->battle b))]
+                           (when (and st (or (:active? st) (:aguardando-captura? st)))
                              (throw (err/error :battle_already_active {:battle-id prev})))))
                      state (battle/create-wild-battle
                             (merge request
@@ -1085,9 +1297,21 @@
                      idx (long (:collection-index next-state 0))
                      poke (when (and (seq colecao) (< idx (count colecao)))
                             (nth colecao idx))
+                     save-m (->save save)
+                     ;; Vitória: carimba chance-base + tentativas (legado preparar-captura-pos-batalha).
+                     next-state (if (:aguardando-captura? next-state)
+                                  (assoc next-state
+                                         :tentativas-captura 0
+                                         :chance-base-captura
+                                         (capture/chance-base-pos-batalha
+                                          (get-in next-state [:pokemons :o])
+                                          (get-in next-state [:status :o])
+                                          (:sequencia-capturas save-m 0)))
+                                  next-state)
                      rew (battle/reward-for-outcome (:outcome next-state))
                      xp-qty (long (:pokemon-xp rew 0))
-                     xp-part (when (and poke (pos? xp-qty) (not (:active? next-state)))
+                     xp-part (when (and poke (pos? xp-qty) (not (:active? next-state))
+                                        (not (:aguardando-captura? next-state)))
                                (apply-pokemon-xp-tx
                                 (assoc poke :hp-atual (get-in next-state [:hp :x]))
                                 xp-qty))
@@ -1100,7 +1324,9 @@
                                    st-str (conj [:db/add lookup :pokemon/status st-str])
                                    (and (nil? st-str) (:status poke))
                                    (conj [:db/retract lookup :pokemon/status (:status poke)]))))
-                     clear-active (when-not (:active? next-state)
+                     ;; Mantém ponteiro enquanto aguarda captura (legado cacadas-selvagens).
+                     clear-active (when (and (not (:active? next-state))
+                                             (not (:aguardando-captura? next-state)))
                                     [[:db/retract [:player/key pk] :player/active-battle-id battle-id]])
                      tx (into [[:db/cas [:battle/id battle-id] :battle/turn-index
                                 expected (long (:turn-index next-state))]
@@ -1144,7 +1370,8 @@
   (active-battle [_ chat-id player-id]
     (when-let [bid (active-battle-id-for (d/db conn) chat-id player-id)]
       (let [b (->battle (battle-entity (d/db conn) bid))]
-        (when (:active? b) b))))
+        (when (or (:active? b) (:aguardando-captura? b))
+          b))))
 
   (get-gym-occupation [_ chat-id gym-id]
     (let [e (d/pull (d/db conn) '[*] [:gym-occupation/key (id/gym-occupation-key chat-id gym-id)])]

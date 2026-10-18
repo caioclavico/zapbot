@@ -82,6 +82,30 @@ function dispatch(client, message, argsTokens) {
         const data = await client.ensureTrainer(identity);
         return present.envelope(identity.requestId, present.formatEnsure(data));
       }
+      case 'cacar':
+        return present.envelope(identity.requestId, present.formatHuntBlocked());
+      case 'capturar': {
+        const enc = await client.getEncounter(identity);
+        if (argsTokens.length < 2) {
+          return present.envelope(
+            identity.requestId,
+            present.formatCaptureMenu(enc, '!pk')
+          );
+        }
+        const ativo = await client.getActiveSave(identity);
+        const { stableOperationId } = require('../scripts/lib/pokemon-jvm-client.cjs');
+        const data = await client.attemptEncounterCapture({
+          ...identity,
+          saveId: ativo.activeSaveId,
+          fenceGeneration: ativo.fenceGeneration,
+          operationId: stableOperationId(identity.requestId, 'encounter-capture'),
+          bola: argsTokens.slice(1).join(' ')
+        });
+        return present.envelope(
+          identity.requestId,
+          present.formatCaptureResult(data, '!pk')
+        );
+      }
       default:
         return present.envelope(identity.requestId, present.formatUnavailable(cmd));
     }
@@ -189,7 +213,7 @@ test('A→B→A por comando com isolamento de jogador na identidade', async () =
   });
 });
 
-test('escrita não integrada e JVM indisponível', async () => {
+test('escrita não integrada, cacar bloqueado e JVM indisponível', async () => {
   const msg = fakeMessage({
     chatId: 'g@g.us', playerId: 'p', requestId: 'r-x', args: 'batalhar'
   });
@@ -199,6 +223,9 @@ test('escrita não integrada e JVM indisponível', async () => {
     ['batalhar']
   );
   assert.match(denied.messages[0].text, /não integrado/);
+
+  const hunt = await dispatch({}, msg, ['cacar']);
+  assert.match(hunt.messages[0].text, /não disponível|não migrado/i);
 
   const dead = createClient({
     baseUrl: 'http://127.0.0.1:1',

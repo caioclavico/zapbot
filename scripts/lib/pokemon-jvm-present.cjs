@@ -248,6 +248,14 @@ function formatError(err) {
     OPERATION_NOT_FOUND:
       '⚠️ Recibo não encontrado (operação não persistida ou id inválido).',
     OPERATION_FORBIDDEN: '⚠️ Recibo de outro jogador — consulta negada.',
+    ENCOUNTER_NOT_FOUND: '❓ Não há caçada/encontro em andamento.',
+    ENCOUNTER_NOT_READY: '⚔️ Derrote o Pokémon selvagem antes de capturar.',
+    ENCOUNTER_OWNER_MISMATCH: '🚫 Essa caçada pertence a outro treinador.',
+    UNKNOWN_BALL: '❓ Bola desconhecida. Use !pk capturar para ver o menu.',
+    INSUFFICIENT_ITEM: '🎒 Você não tem essa bola. Escolha outra ou compre na loja (legado).',
+    COLLECTION_FULL: '🎒 Bolsa cheia: libere espaço antes de capturar.',
+    BATTLE_PENDING: '⚠️ Há batalha/encontro em andamento neste save — não dá para alternar A↔B agora.',
+    BATTLE_SAVE_MISMATCH: '⚠️ Encontro pertence a outro save — callback antigo rejeitado.',
     TIMEOUT: '⏳ Bridge JVM demorou. Se foi escrita, confira com !pk recibo <id> antes de repetir.',
     CONNECT_TIMEOUT: '⚠️ Não conectou na bridge JVM. Nenhuma escrita foi ao Cassandra.',
     NETWORK: '⚠️ Bridge JVM indisponível. Nenhuma escrita foi ao Cassandra.',
@@ -260,9 +268,119 @@ function formatUnavailable(commandHint) {
   return [
     '🚧 *Comando ainda não integrado no adaptador JVM*',
     commandHint ? `Pedido: \`${commandHint}\`` : null,
-    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `recibo <id>`.',
+    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `capturar`/`cap`, `recibo <id>`.',
+    '`!pk cacar` bloqueado: spawn (bioma/clima/PokeAPI) ainda não migrado — sem regra substituta.',
     'Sem fallback automático para Cassandra. Use `POKEMON_ADAPTER=legacy` para o restante.'
   ].filter(Boolean).join('\n');
+}
+
+function formatHuntBlocked() {
+  return [
+    '🚧 *Caçada (!pk cacar) ainda não disponível no adaptador JVM*',
+    'O spawn depende de bioma, clima, PokeAPI, shiny e eventos — ainda não migrados.',
+    'Não inventamos encontro substituto nesta milestone.',
+    'Captura pós-vitória: `!pk capturar <bola>` quando houver encontro em `aguardando-captura`.',
+    'Use `POKEMON_ADAPTER=legacy` para caçar no serviço Cassandra.'
+  ].join('\n');
+}
+
+const BOLA_LABEL = {
+  pokebola: { nome: 'Pokébola', emoji: '🔴' },
+  'grande-bola': { nome: 'Grande Bola', emoji: '🔵' },
+  'ultra-bola': { nome: 'Ultra Bola', emoji: '🟡' }
+};
+
+function qtyBall(inv, id) {
+  const row = (inv || []).find(i => i.itemId === id);
+  return row ? Number(row.qty) || 0 : 0;
+}
+
+function chanceComBola(chanceBase, bolaId) {
+  const limits = { pokebola: [1, 75], 'grande-bola': [1.5, 88], 'ultra-bola': [2, 95] };
+  const [mult, lim] = limits[bolaId] || [1, 75];
+  return Math.min(lim, Math.round(Number(chanceBase || 0) * mult));
+}
+
+function formatCaptureMenu(encounterData, prefix = '!pk') {
+  const enc = encounterData && encounterData.encounter;
+  if (!enc) return '❓ Não há caçada/encontro em andamento.';
+  if (!enc.aguardandoCaptura) {
+    return '⚔️ Derrote o Pokémon selvagem antes de capturar.';
+  }
+  const nome = (enc.pokemonO && (enc.pokemonO.nome || enc.pokemonO.species)) || 'selvagem';
+  const inv = enc.inventory || [];
+  const base = enc.chanceBaseCaptura;
+  const tent = Number(enc.tentativasCaptura) || 0;
+  const linhas = ['pokebola', 'grande-bola', 'ultra-bola'].map((id, i) => {
+    const meta = BOLA_LABEL[id];
+    return `${prefix} capturar ${i + 1} — ${meta.emoji} ${meta.nome} — ${qtyBall(inv, id)} disponível(is) — ${chanceComBola(base, id)}% de chance`;
+  });
+  return [
+    `🎯 *Escolha a bola para capturar ${nome}!*`,
+    ...linhas,
+    '',
+    `Tentativas restantes: ${3 - tent} de 3.`,
+    `📖 Como capturar: ${prefix} capturar <bola>`
+  ].join('\n');
+}
+
+function formatCaptureResult(data, prefix = '!pk') {
+  if (data && data.reconciled && data.summary && typeof data.capturou === 'undefined') {
+    const s = data.summary;
+    data = {
+      ...data,
+      capturou: s.capturou,
+      fugiu: s.fugiu,
+      chance: s.chance,
+      bola: s.bola,
+      tentativa: s.tentativa
+    };
+  }
+  const bolaId = data.bola || 'pokebola';
+  const meta = BOLA_LABEL[bolaId] || { nome: bolaId, emoji: '⚪' };
+  const chance = data.chance != null ? data.chance : '?';
+  const selvagem = (data.encounter && data.encounter.pokemonO
+    && (data.encounter.pokemonO.nome || data.encounter.pokemonO.species))
+    || (data.registro && (data.registro.nome || data.registro.species))
+    || 'Pokémon';
+
+  if (data.capturou) {
+    const rew = data.recompensa || {};
+    const idx = data.indice != null ? data.indice + 1 : '?';
+    const linhas = [
+      `✅ ${meta.nome} lançada: captura concluída! (${chance}% de chance)`,
+      `📚 Registrado na Pokédex e adicionado à coleção como nº ${idx}.`,
+      `🔥 Sequência de capturas: ${rew.sequencia != null ? rew.sequencia : data.sequenciaCapturas || 0}`,
+      `✨ +${rew.xp || 0} XP • +${rew.moedas || 0} moedas`,
+      data.subida
+        ? `🌟 *${data.subida.nome}* subiu para o nível ${data.subida.nivel}!`
+        : null,
+      data.duplicate ? '_idempotente: mesma operação já persistida_' : null
+    ];
+    return linhas.filter(Boolean).join('\n');
+  }
+
+  if (data.fugiu) {
+    return [
+      `💨 A ${meta.nome} falhou e *${selvagem}* fugiu! (${chance}% de chance)`,
+      (data.tentativa || 0) >= 3 ? 'As três tentativas de captura acabaram.' : null,
+      '💔 A sequência de capturas foi encerrada.',
+      '✨ +1 XP pela batalha.'
+    ].filter(Boolean).join('\n');
+  }
+
+  return [
+    `💥 A ${meta.nome} falhou, mas *${selvagem}* continua aqui! (${chance}% de chance)`,
+    formatCaptureMenu({
+      encounter: {
+        aguardandoCaptura: true,
+        pokemonO: data.encounter && data.encounter.pokemonO,
+        chanceBaseCaptura: data.chanceBase,
+        tentativasCaptura: data.tentativa || 0,
+        inventory: data.inventory || []
+      }
+    }, prefix)
+  ].join('\n');
 }
 
 /** Aliases alinhados ao legado (ajuda.cljs / core). */
@@ -274,6 +392,8 @@ const ALIASES = {
   saves: 'saves', 'saves-list': 'saves',
   iniciar: 'iniciar', criar: 'iniciar',
   ativar: 'ativar',
+  capturar: 'capturar', cap: 'capturar',
+  cacar: 'cacar', caçar: 'cacar', hunt: 'cacar',
   recibo: 'recibo', op: 'recibo', operation: 'recibo'
 };
 
@@ -294,6 +414,9 @@ module.exports = {
   formatReceipt,
   formatError,
   formatUnavailable,
+  formatHuntBlocked,
+  formatCaptureMenu,
+  formatCaptureResult,
   resolveCommand,
   filtrarColecao,
   interpretarFiltros

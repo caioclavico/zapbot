@@ -15,6 +15,7 @@ Requer `APP_ENV=development` e `POKEMON_ADAPTER=jvm`.
 | `!pk iniciar` | `criar` | Ensure treinador+saves |
 | `!pk ativar a\|b` | — | Alterna save com fence esperado |
 | `!pk recibo <id>` | `op` | Recibo persistido (autorizado ao jogador) |
+| `!pk capturar` | `cap` | **M4.4** — captura no encontro `aguardando-captura` |
 
 ### Exemplos de resposta (texto)
 
@@ -66,7 +67,7 @@ Fence: 2 · moedas: 0
 
 ## Ainda no legado (bloqueados no JVM, sem fallback)
 
-`cacar`, `batalhar`, `capturar`, `gin*`, `raid*`, `adventure`/ovos, `loja`, `joy`, `evoluir`, trocas, mídia/eventos, bugs.
+`cacar` (spawn não migrado — ver M4.4), `batalhar`, `gin*`, `raid*`, `adventure`/ovos, `loja`, `joy`, `evoluir`, trocas, mídia/eventos, bugs.
 
 ## Testes
 
