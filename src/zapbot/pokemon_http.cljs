@@ -26,10 +26,12 @@
 (defonce ^:private filas (atom {}))
 (declare erro-contrato)
 
-;; Leituras cobertas pela bridge JVM (M4.1). Demais comandos: legado ou recusa.
+;; Comandos cobertos pela bridge JVM (M4.1 leituras + M4.2 tx mínima).
 (def ^:private leituras-jvm
   #{"treinador" "perfil" "tre" "meus" "pokemons" "colecao" "coleção"
-    "save" "ativo" "saves"})
+    "save" "ativo" "saves" "saves-list"})
+(def ^:private escritas-jvm
+  #{"iniciar" "criar" "ativar" "moedas"})
 
 (defn- configurado? []
   (and (not (str/blank? config/pokemon-service-url))
@@ -61,9 +63,11 @@
         (reset! cliente-jvm cliente)
         cliente)))
 
-(defn- subcomando-leitura [argumentos]
-  (let [tok (first (str/split (str/trim (str/lower-case (or argumentos ""))) #"\s+"))]
-    (when (contains? leituras-jvm tok) tok)))
+(defn- tokens-args [argumentos]
+  (vec (remove str/blank? (str/split (str/trim (str/lower-case (or argumentos ""))) #"\s+"))))
+
+(defn- subcomando-jvm [argumentos]
+  (first (tokens-args argumentos)))
 
 (defn- texto-leitura-jvm [sub data]
   (case sub
@@ -88,6 +92,15 @@
            "Moedas: " (or (:coins save) 0) "\n"
            "Nível treinador: " (or (:trainerLevel save) 1) "\n"
            "Party: " (count (or (:party data) []))))
+    "saves-list"
+    (str "💾 *Saves A/B (JVM)* ativo=" (or (:activeSaveId data) "?")
+         " fence=" (or (:fenceGeneration data) 0) "\n"
+         (str/join "\n"
+                   (map (fn [s]
+                          (str "• " (:saveId s) ": "
+                               (or (:coins s) 0) " moedas, "
+                               (or (:collectionCount s) 0) " na coleção"))
+                        (or (:saves data) []))))
     (str "📖 Leitura JVM: " (pr-str data))))
 
 (defn- envelope-texto [texto]
@@ -264,11 +277,22 @@
   (case (.-code erro)
     ("TIMEOUT" "CONNECT_TIMEOUT")
     "⏳ O serviço Pokémon demorou para responder. O comando pode ter sido processado; confira o estado antes de repetir uma compra, troca ou captura."
+    ("NETWORK" "ECONNREFUSED")
+    "⚠️ Bridge JVM indisponível. Nenhuma escrita foi enviada ao Cassandra."
     "CONFIG" "⚠️ O serviço Pokémon ainda não está configurado. Os outros comandos continuam disponíveis."
     "LIMIT" "⚠️ A resposta Pokémon excedeu o limite de tamanho. Tente consultar a coleção em texto: !pk time txt."
-    ("PLAYER_NOT_FOUND" "NO_ACTIVE_SAVE" "SAVE_NOT_FOUND")
+    ("PLAYER_NOT_FOUND" "NO_ACTIVE_SAVE" "SAVE_NOT_FOUND" "OPERATION_NOT_FOUND")
     (str "⚠️ " (or (.-message erro) "Dados não encontrados na bridge JVM."))
+    ("STALE_WRITER_FENCE" "WRITER_FENCE_CONFLICT" "ACTIVATE_CONFLICT"
+     "RECEIPT_PAYLOAD_MISMATCH" "OPERATION_PENDING")
+    (str "⚠️ Conflito JVM (" (.-code erro) "): "
+         (or (.-message erro) "save/fence/operação incompatível."))
     "⚠️ Não consegui concluir a resposta do Pokémon. O comando pode ter sido processado; confira o estado antes de repetir uma ação. Os outros comandos continuam disponíveis."))
+
+(defn- entregar-texto-jvm! [message ctx pedido texto]
+  (let [resposta (assoc (envelope-texto texto) :requestId (:requestId pedido))]
+    (entregar! nil (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
+               ctx (str "jvm:" (:requestId pedido)) resposta)))
 
 (defn- executar-jvm-leitura! [message ctx pedido sub]
   (p/let [jvm (cliente-jvm!)
@@ -282,21 +306,76 @@
                     (.getCollection jvm #js {:chatId chat-id :playerId player-id})
                     ("save" "ativo" "saves")
                     (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                    "saves-list"
+                    (.listSaves jvm #js {:chatId chat-id :playerId player-id})
                     (throw (erro-contrato "Leitura JVM não mapeada."))))
-          data (js->clj data :keywordize-keys true)
-          resposta (assoc (envelope-texto (texto-leitura-jvm sub data))
-                          :requestId (:requestId pedido))
-          ;; Entrega só texto; sem media/ack do serviço legado.
-          _ (entregar! nil (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
-                       ctx (str "jvm:" (:requestId pedido)) resposta)]
-    nil))
+          data (js->clj data :keywordize-keys true)]
+    (entregar-texto-jvm! message ctx pedido (texto-leitura-jvm sub data))))
 
-(defn- recusa-escrita-jvm [pedido]
+(defn- executar-jvm-escrita! [message ctx pedido sub args]
+  ;; chatId/playerId vêm só do contexto WhatsApp (pedido), nunca do texto digitado.
+  (p/let [jvm (cliente-jvm!)
+          chat-id (:chatId pedido)
+          player-id (:playerId pedido)
+          texto
+          (case sub
+            ("iniciar" "criar")
+            (p/let [data (desempenho/medir! ctx "pokemon_jvm_ensure"
+                            #(.ensureTrainer jvm #js {:chatId chat-id :playerId player-id}))
+                    data (js->clj data :keywordize-keys true)]
+              (str (if (:created data) "✅ Treinador criado" "ℹ️ Treinador já existia")
+                   " (JVM)\nSave ativo: " (:activeSaveId data)
+                   " · fence " (:fenceGeneration data)))
+
+            "ativar"
+            (let [slot (second args)]
+              (when-not (contains? #{"a" "b"} slot)
+                (throw (erro-contrato "Use: !pk ativar a|b")))
+              (p/let [antes (js->clj (.listSaves jvm #js {:chatId chat-id :playerId player-id})
+                                     :keywordize-keys true)
+                      data (desempenho/medir! ctx "pokemon_jvm_activate"
+                             #(.activateSave jvm
+                                #js {:chatId chat-id
+                                     :playerId player-id
+                                     :saveId slot
+                                     :expectedFenceGeneration (:fenceGeneration antes)}))
+                      data (js->clj data :keywordize-keys true)]
+                (str "✅ Save *" (:activeSaveId data) "* ativo (JVM)\n"
+                     "Fence: " (:fenceGeneration data)
+                     " · moedas: " (get-in data [:save :coins] 0))))
+
+            "moedas"
+            (let [delta (js/Number (second args))]
+              (when-not (js/Number.isSafeInteger delta)
+                (throw (erro-contrato "Use: !pk moedas <inteiro>")))
+              (p/let [snap (js->clj (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                                    :keywordize-keys true)
+                      op-id (.stableOperationId jvm-transport
+                                                (:requestId pedido) (str "coins:" delta))
+                      data (desempenho/medir! ctx "pokemon_jvm_coins"
+                             #(.creditCoins jvm
+                                #js {:chatId chat-id
+                                     :playerId player-id
+                                     :saveId (:activeSaveId snap)
+                                     :fenceGeneration (:fenceGeneration snap)
+                                     :operationId op-id
+                                     :coinsDelta delta}))
+                      data (js->clj data :keywordize-keys true)]
+                (str (if (:duplicate data) "ℹ️ Idempotente" "✅ Creditado")
+                     " (JVM) +" delta " → " (:coins data) " moedas\n"
+                     "op=" (:operationId data)
+                     (when (:reconciled data) " · reconciliado"))))
+
+            (throw (erro-contrato "Escrita JVM não mapeada.")))]
+    (entregar-texto-jvm! message ctx pedido texto)))
+
+(defn- recusa-jvm [pedido]
   (assoc (envelope-texto
-          (str "🚧 *Adaptador JVM (dev)* — M4.1 só expõe leituras "
-               "(`treinador`, `meus`, `save`). "
-               "Escritas continuam no adaptador legado (`POKEMON_ADAPTER=legacy`). "
-               "Não há fallback automático para Cassandra."))
+          (str "🚧 *Adaptador JVM (dev)* — M4.2 cobre: "
+               "`iniciar`, `ativar a|b`, `moedas N`, "
+               "`treinador`, `meus`, `save`, `saves-list`. "
+               "Sem fallback automático para Cassandra. "
+               "Demais fluxos: `POKEMON_ADAPTER=legacy`."))
          :requestId (:requestId pedido)))
 
 (defn executar [message comando argumentos]
@@ -306,14 +385,21 @@
      (chat-id message)
      (fn []
        (if (jvm-configurado?)
-         ;; Adaptador JVM: leituras via bridge; escritas recusadas (sem fallback legado).
+         ;; Adaptador JVM: fail-closed; sem fallback Cassandra/legado em falha.
          (-> (p/let [pedido (contexto-pedido message comando argumentos)
-                     sub (subcomando-leitura argumentos)
-                     _ (if sub
+                     args (tokens-args argumentos)
+                     sub (first args)
+                     _ (cond
+                         (contains? leituras-jvm sub)
                          (executar-jvm-leitura! message ctx pedido sub)
-                         (let [resposta (recusa-escrita-jvm pedido)]
-                           (entregar! nil (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
-                                      ctx (str "jvm-deny:" (:requestId pedido)) resposta)))]
+
+                         (contains? escritas-jvm sub)
+                         (executar-jvm-escrita! message ctx pedido sub args)
+
+                         :else
+                         (entregar! nil (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
+                                    ctx (str "jvm-deny:" (:requestId pedido))
+                                    (recusa-jvm pedido)))]
                nil)
              (p/catch (fn [erro]
                         (js/console.warn "[PokemonJVM] Falha:" (or (.-code erro) "DELIVERY")

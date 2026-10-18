@@ -1580,7 +1580,12 @@
   (get-group [_ chat-id]
     (let [e (d/pull (d/db conn) '[*] [:group/chat-id chat-id])]
       (when (present? e)
-        {:chat-id (:group/chat-id e) :label (:group/label e)}))))
+        {:chat-id (:group/chat-id e) :label (:group/label e)})))
+
+  (get-receipt [_ operation-id]
+    (let [e (receipt-entity (d/db conn) operation-id)]
+      (when (present? e)
+        (dissoc (->receipt e) :duplicate)))))
 
 (defn make-store
   "Constrói store a partir de uma conexão Datomic já aberta."

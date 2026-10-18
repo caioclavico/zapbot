@@ -1,9 +1,10 @@
 'use strict';
 
-// Cliente HTTP da bridge JVM (M4.1): somente leituras em loopback.
-// Sem acesso a Datomic, sem escritas, sem retries de mutação.
+// Cliente HTTP da bridge JVM (M4.1 leituras + M4.2 escritas explícitas).
+// Loopback only. Sem Datomic. Sem retry automático de escrita com novo operationId.
 const http = require('node:http');
 const https = require('node:https');
+const crypto = require('node:crypto');
 
 function failure(code, message, status, details) {
   return Object.assign(new Error(message), { code, status, details });
@@ -18,6 +19,34 @@ function assertLoopback(base) {
   if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
     throw failure('CONFIG', 'POKEMON_JVM_URL deve apontar para loopback (127.0.0.1/localhost).');
   }
+}
+
+/**
+ * Identidade confiável a partir do contexto do adaptador Node (WhatsApp/message).
+ * Nunca aceita playerId/chatId vindos do texto digitado pelo usuário.
+ */
+function trustedIdentityFromMessage(message = {}) {
+  const chatId = message.fromMe ? message.to : message.from;
+  const playerId = message.author || message.from;
+  const rawId = message.id;
+  const requestId = typeof rawId === 'string'
+    ? rawId
+    : (rawId && (rawId._serialized || rawId.$1)) || null;
+  if (typeof chatId !== 'string' || !chatId.trim()) {
+    throw failure('IDENTITY', 'chatId confiável ausente no contexto da mensagem.');
+  }
+  if (typeof playerId !== 'string' || !playerId.trim()) {
+    throw failure('IDENTITY', 'playerId confiável ausente no contexto da mensagem.');
+  }
+  return { chatId: chatId.trim(), playerId: playerId.trim(), requestId };
+}
+
+/** operationId estável — o caller deve reutilizar o mesmo valor em retry. */
+function stableOperationId(requestId, action) {
+  if (typeof requestId === 'string' && requestId.trim() && typeof action === 'string') {
+    return `${requestId.trim()}:${action}`;
+  }
+  return crypto.randomUUID();
 }
 
 function createClient(config = {}) {
@@ -39,8 +68,13 @@ function createClient(config = {}) {
   const maxJsonBytes = positive(config.maxJsonBytes, 1024 * 1024);
   const prefix = base.pathname.replace(/\/$/, '');
 
-  function request(path) {
+  function request(method, path, payload) {
     return new Promise((resolve, reject) => {
+      const body = payload === undefined ? null : Buffer.from(JSON.stringify(payload));
+      if (body && body.length > maxJsonBytes) {
+        reject(failure('LIMIT', 'Requisição da bridge JVM excedeu o limite.'));
+        return;
+      }
       let finished = false;
       let connectionTimer;
       let totalTimer;
@@ -53,10 +87,11 @@ function createClient(config = {}) {
       };
       const req = transport.request({
         protocol: base.protocol, hostname: base.hostname, port: base.port || undefined,
-        path: prefix + path, method: 'GET', agent,
+        path: prefix + path, method, agent,
         headers: {
           Authorization: `Bearer ${config.token}`,
-          Accept: 'application/json'
+          Accept: 'application/json',
+          ...(body ? { 'Content-Type': 'application/json', 'Content-Length': body.length } : {})
         }
       }, res => {
         if (finished) { res.destroy(); return; }
@@ -78,26 +113,26 @@ function createClient(config = {}) {
         res.on('end', () => {
           if (finished) return;
           const buffer = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, size);
-          let body;
-          try { body = JSON.parse(buffer.toString('utf8')); }
+          let parsed;
+          try { parsed = JSON.parse(buffer.toString('utf8')); }
           catch (_) {
             finish(failure('INVALID_RESPONSE', 'Resposta da bridge JVM não contém JSON válido.', res.statusCode));
             return;
           }
           if (res.statusCode < 200 || res.statusCode >= 300) {
-            const errCode = body && body.error && body.error.code
-              ? String(body.error.code).toUpperCase()
+            const errCode = parsed && parsed.error && parsed.error.code
+              ? String(parsed.error.code).toUpperCase()
               : 'HTTP';
-            const message = (body && body.error && body.error.message)
+            const message = (parsed && parsed.error && parsed.error.message)
               || `Bridge JVM respondeu HTTP ${res.statusCode}.`;
-            finish(failure(errCode, message, res.statusCode, body && body.error && body.error.details));
+            finish(failure(errCode, message, res.statusCode, parsed && parsed.error && parsed.error.details));
             return;
           }
-          if (!body || body.ok !== true || body.data === undefined) {
-            finish(failure('INVALID_RESPONSE', 'Envelope de leitura JVM inválido.', res.statusCode));
+          if (!parsed || parsed.ok !== true || parsed.data === undefined) {
+            finish(failure('INVALID_RESPONSE', 'Envelope JVM inválido.', res.statusCode));
             return;
           }
-          finish(null, body.data);
+          finish(null, parsed.data);
         });
       });
       req.on('socket', socket => {
@@ -113,29 +148,83 @@ function createClient(config = {}) {
         finish(error); req.destroy(error);
       }, timeoutMs);
       req.on('error', error => finish(failure(error.code || 'NETWORK', 'Bridge JVM indisponível.')));
-      req.end();
+      req.end(body);
     });
   }
 
   function q(params) {
     const sp = new URLSearchParams();
-    for (const [k, v] of Object.entries(params)) {
+    for (const [k, v] of Object.entries(params || {})) {
       if (v !== undefined && v !== null && v !== '') sp.set(k, String(v));
     }
     const s = sp.toString();
     return s ? `?${s}` : '';
   }
 
+  function idPath(id) {
+    if (typeof id !== 'string' || !id.trim() || id.includes('/')) {
+      throw failure('INVALID_RESPONSE', 'Identificador de operação inválido.');
+    }
+    return encodeURIComponent(id.trim());
+  }
+
+  /**
+   * Reconcilia após TIMEOUT: consulta recibo; se existir, retorna; senão reenvia
+   * o MESMO body (mesmo operationId). Nunca gera operationId novo.
+   */
+  async function mutateOnce(path, body) {
+    try {
+      return await request('POST', path, body);
+    } catch (err) {
+      if (err.code !== 'TIMEOUT' && err.code !== 'CONNECT_TIMEOUT') throw err;
+      if (!body || !body.operationId) throw err;
+      try {
+        const receipt = await request('GET', `/v1/operations/${idPath(body.operationId)}`);
+        return {
+          operationId: receipt.operationId,
+          duplicate: true,
+          reconciled: true,
+          channel: receipt.channel,
+          payloadHash: receipt.payloadHash,
+          saveId: receipt.saveId,
+          summary: receipt.summary
+        };
+      } catch (lookupErr) {
+        if (lookupErr.code === 'OPERATION_NOT_FOUND') {
+          // Commit pode não ter ocorrido — reenvia o mesmo operationId (idempotente).
+          return request('POST', path, body);
+        }
+        throw err;
+      }
+    }
+  }
+
   return {
-    health: () => request('/health'),
+    health: () => request('GET', '/health'),
     getTrainer: ({ chatId, playerId }) =>
-      request(`/v1/trainer${q({ chatId, playerId })}`),
+      request('GET', `/v1/trainer${q({ chatId, playerId })}`),
     getCollection: ({ chatId, playerId, saveId }) =>
-      request(`/v1/collection${q({ chatId, playerId, saveId })}`),
+      request('GET', `/v1/collection${q({ chatId, playerId, saveId })}`),
     getActiveSave: ({ chatId, playerId }) =>
-      request(`/v1/active-save${q({ chatId, playerId })}`),
+      request('GET', `/v1/active-save${q({ chatId, playerId })}`),
+    listSaves: ({ chatId, playerId }) =>
+      request('GET', `/v1/saves${q({ chatId, playerId })}`),
+    ensureTrainer: ({ chatId, playerId }) =>
+      request('POST', '/v1/trainer/ensure', { chatId, playerId }),
+    activateSave: ({ chatId, playerId, saveId, expectedFenceGeneration }) =>
+      request('POST', '/v1/saves/activate', {
+        chatId, playerId, saveId,
+        ...(expectedFenceGeneration === undefined ? {} : { expectedFenceGeneration })
+      }),
+    creditCoins: (body) => mutateOnce('/v1/rewards/coins', body),
+    getOperation: (operationId) =>
+      request('GET', `/v1/operations/${idPath(operationId)}`),
     close: () => agent.destroy()
   };
 }
 
-module.exports = { createClient };
+module.exports = {
+  createClient,
+  trustedIdentityFromMessage,
+  stableOperationId
+};

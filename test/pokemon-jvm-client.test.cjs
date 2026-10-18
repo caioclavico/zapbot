@@ -2,7 +2,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { createClient } = require('../scripts/lib/pokemon-jvm-client.cjs');
+const {
+  createClient,
+  trustedIdentityFromMessage,
+  stableOperationId
+} = require('../scripts/lib/pokemon-jvm-client.cjs');
 
 async function fixture(handler, config = {}) {
   const server = http.createServer(handler);
@@ -25,49 +29,68 @@ async function fixture(handler, config = {}) {
   };
 }
 
-test('leituras autenticadas usam GET e envelope {ok,data}', async () => {
+test('leituras e escritas autenticadas com envelope {ok,data}', async () => {
   const received = [];
   const f = await fixture((req, res) => {
-    received.push({ method: req.method, path: req.url, auth: req.headers.authorization });
-    res.setHeader('Content-Type', 'application/json');
-    if (req.url.startsWith('/v1/trainer')) {
-      return res.end(JSON.stringify({ ok: true, data: { chatId: 'c', playerId: 'p', activeSaveId: 'a' } }));
-    }
-    if (req.url.startsWith('/v1/collection')) {
-      return res.end(JSON.stringify({ ok: true, data: { count: 0, collection: [] } }));
-    }
-    if (req.url.startsWith('/v1/active-save')) {
-      return res.end(JSON.stringify({ ok: true, data: { activeSaveId: 'a', save: { coins: 1 } } }));
-    }
-    res.end(JSON.stringify({ ok: true, data: { status: 'up' } }));
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => {
+      received.push({
+        method: req.method,
+        path: req.url,
+        auth: req.headers.authorization,
+        body: Buffer.concat(chunks).toString()
+      });
+      res.setHeader('Content-Type', 'application/json');
+      if (req.url === '/v1/trainer/ensure') {
+        return res.end(JSON.stringify({ ok: true, data: { created: true, activeSaveId: 'a', fenceGeneration: 0 } }));
+      }
+      if (req.url === '/v1/rewards/coins') {
+        return res.end(JSON.stringify({ ok: true, data: { duplicate: false, coins: 10, operationId: 'op-1' } }));
+      }
+      if (req.url.startsWith('/v1/saves') && req.method === 'GET') {
+        return res.end(JSON.stringify({ ok: true, data: { activeSaveId: 'a', fenceGeneration: 0, saves: [] } }));
+      }
+      if (req.url === '/v1/saves/activate') {
+        return res.end(JSON.stringify({ ok: true, data: { activeSaveId: 'b', fenceGeneration: 1 } }));
+      }
+      res.end(JSON.stringify({ ok: true, data: { status: 'up' } }));
+    });
   });
   try {
     assert.equal((await f.client.health()).status, 'up');
-    assert.equal((await f.client.getTrainer({ chatId: 'c', playerId: 'p' })).activeSaveId, 'a');
-    assert.equal((await f.client.getCollection({ chatId: 'c', playerId: 'p' })).count, 0);
-    assert.equal((await f.client.getActiveSave({ chatId: 'c', playerId: 'p' })).save.coins, 1);
+    assert.equal((await f.client.ensureTrainer({ chatId: 'c', playerId: 'p' })).created, true);
+    assert.equal((await f.client.listSaves({ chatId: 'c', playerId: 'p' })).activeSaveId, 'a');
+    assert.equal((await f.client.activateSave({ chatId: 'c', playerId: 'p', saveId: 'b' })).activeSaveId, 'b');
+    assert.equal((await f.client.creditCoins({
+      chatId: 'c', playerId: 'p', saveId: 'a', fenceGeneration: 0,
+      operationId: 'op-1', coinsDelta: 10
+    })).coins, 10);
     assert.ok(received.every(r => r.auth === 'Bearer test-token'));
-    assert.ok(received.every(r => r.method === 'GET'));
+    assert.deepEqual(received.map(r => r.method), ['GET', 'POST', 'GET', 'POST', 'POST']);
   } finally {
     await f.close();
   }
 });
 
-test('erro de negócio estruturado preserva code/status sem retry', async () => {
+test('erro de negócio estruturado sem retry com novo operationId', async () => {
   let calls = 0;
   const f = await fixture((req, res) => {
     calls += 1;
-    res.statusCode = 404;
+    res.statusCode = 409;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({
       ok: false,
-      error: { code: 'player_not_found', message: 'ausente', details: { chatId: 'c' } }
+      error: { code: 'stale_writer_fence', message: 'fence', details: { fence: 2 } }
     }));
   });
   try {
     await assert.rejects(
-      () => f.client.getTrainer({ chatId: 'c', playerId: 'p' }),
-      err => err.code === 'PLAYER_NOT_FOUND' && err.status === 404
+      () => f.client.creditCoins({
+        chatId: 'c', playerId: 'p', saveId: 'a', fenceGeneration: 0,
+        operationId: 'op-x', coinsDelta: 1
+      }),
+      err => err.code === 'STALE_WRITER_FENCE' && err.status === 409
     );
     assert.equal(calls, 1);
   } finally {
@@ -75,15 +98,47 @@ test('erro de negócio estruturado preserva code/status sem retry', async () => 
   }
 });
 
-test('timeout não repete a chamada', async () => {
-  let calls = 0;
-  const f = await fixture(() => { calls += 1; }, { timeoutMs: 40 });
+test('timeout em escrita tenta reconciliar com o mesmo operationId', async () => {
+  let posts = 0;
+  let gets = 0;
+  const f = await fixture((req, res) => {
+    if (req.method === 'POST') {
+      posts += 1;
+      return; // hang → TIMEOUT no cliente
+    }
+    gets += 1;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      ok: true,
+      data: { operationId: 'op-reconcile', channel: 'gameplay', payloadHash: 'abc', saveId: 'a' }
+    }));
+  }, { timeoutMs: 40 });
   try {
-    await assert.rejects(() => f.client.health(), { code: 'TIMEOUT' });
-    assert.equal(calls, 1);
+    const data = await f.client.creditCoins({
+      chatId: 'c', playerId: 'p', saveId: 'a', fenceGeneration: 0,
+      operationId: 'op-reconcile', coinsDelta: 1
+    });
+    assert.equal(data.reconciled, true);
+    assert.equal(data.duplicate, true);
+    assert.equal(posts, 1);
+    assert.equal(gets, 1);
   } finally {
     await f.close();
   }
+});
+
+test('identidade confiável ignora texto do usuário', () => {
+  const id = trustedIdentityFromMessage({
+    fromMe: false,
+    from: 'group@g.us',
+    author: 'user@c.us',
+    id: { _serialized: 'true-id' },
+    body: '!pk moedas 99 chatId=evil playerId=evil'
+  });
+  assert.equal(id.chatId, 'group@g.us');
+  assert.equal(id.playerId, 'user@c.us');
+  assert.equal(id.requestId, 'true-id');
+  assert.equal(stableOperationId(id.requestId, 'coins:1'), 'true-id:coins:1');
 });
 
 test('recusa URL fora de loopback', () => {

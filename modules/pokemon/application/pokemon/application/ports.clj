@@ -148,4 +148,7 @@
     "Garante entidade de grupo separada dos saves.")
 
   (get-group [this chat-id]
-    "Estado mínimo do grupo ou nil."))
+    "Estado mínimo do grupo ou nil.")
+
+  (get-receipt [this operation-id]
+    "Recibo de operação por id ou nil (reconciliação M4.2)."))
