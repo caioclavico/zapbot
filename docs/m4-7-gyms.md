@@ -26,11 +26,11 @@
 | Consulta menu / detalhe / ocupação / insígnias | **Habilitado** |
 | Ver / salvar time de ginásio | **Habilitado** |
 | Poção / fruta (motivação) | **Habilitado** (pontos derivados do item no servidor) |
-| `desafiar` + turnos 3×3 | **Bloqueado** — exigiria motor 3×3 no JVM ou aceitar `:venceu?` do Node |
+| `desafiar` + turnos 3×3 | Ver **M4.8** (`docs/m4-8-gym-battle.md`) |
 | Ranking / histórico | **Bloqueado** — não persistidos no Datomic M3.5 |
 | Raids | **Fora** |
 
-Não expor `resolve-challenge` no caminho WhatsApp até o combate ser validado no núcleo.
+`resolve-challenge` com `:venceu?` do cliente permanece fora do WhatsApp; no M4.8 o resultado sai do motor no TX do turno final.
 
 ## Contratos HTTP
 

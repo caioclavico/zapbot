@@ -232,12 +232,26 @@ async function fetchImageBase64(url) {
   }
 }
 
+/**
+ * Time NPC do ginásio (slugs do catálogo). Escalação de nível no JVM.
+ */
+async function buildGymNpcTeam(speciesNames) {
+  const names = Array.isArray(speciesNames) ? speciesNames : [];
+  if (names.length !== 3) {
+    const err = new Error('Time NPC de ginásio precisa de 3 espécies.');
+    err.code = 'INVALID_GYM_NPC_TEAM';
+    throw err;
+  }
+  return Promise.all(names.map((n) => fetchPokemonByName(n)));
+}
+
 module.exports = {
   TOTAL,
   suavizarStat,
   fetchPokemonById,
   fetchPokemonByName,
   buildHuntCandidates,
+  buildGymNpcTeam,
   fetchImageBase64,
   pokemonDeDados,
   finalizeWild

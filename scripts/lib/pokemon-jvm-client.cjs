@@ -239,6 +239,7 @@ function createClient(config = {}) {
       request('GET', `/v1/gyms/team${q({ chatId, playerId })}`),
     setGymTeam: (body) => mutateOnce('/v1/gyms/team', body),
     healGym: (body) => mutateOnce('/v1/gyms/heal', body),
+    startGymChallenge: (body) => mutateOnce('/v1/gyms/challenge', body),
     close: () => agent.destroy()
   };
 }

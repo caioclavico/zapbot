@@ -355,10 +355,15 @@
         result (battle-app/confirm-turn! store writer-ctx normalized)
         battle (:battle result)
         px (get-in battle [:pokemons :x])
-        po (get-in battle [:pokemons :o])]
+        po (get-in battle [:pokemons :o])
+        gym-res (:gym-resolve result)]
     {:operation-id (:operation-id result)
      :duplicate (boolean (:duplicate result))
      :battle {:battle-id (:battle-id battle)
+              :kind (name (:kind battle :wild))
+              :gym-id (:gym-id battle)
+              :gym-nome (:gym-nome battle)
+              :lider-nome (:lider-nome battle)
               :active (boolean (:active? battle))
               :hp (:hp battle)
               :status (:status battle)
@@ -371,6 +376,9 @@
                       (hunt/area-dto a))
               :aguardando-captura (boolean (:aguardando-captura? battle))
               :last-action (:last-action battle)
+              :last-switch (:last-switch battle)
+              :reservas-x (count (get-in battle [:reservas :x] []))
+              :reservas-o (count (get-in battle [:reservas :o] []))
               :pokemon-x (when px
                            (select-keys px [:nome :species :hp :nivel :imagem
                                             :imagem-shiny :altura :tipos :golpes
@@ -378,13 +386,19 @@
               :pokemon-o (when po
                            (select-keys po [:nome :species :raridade :hp :imagem
                                             :imagem-shiny :altura :tipos :golpes
-                                            :status :shiny :shiny?]))
-              ;; forma legada aninhada (compatível com present.formatBattleTurn)
+                                            :status :shiny :shiny?
+                                            :motivacao-ginasio]))
               :pokemons {:x px :o po}}
      :battle-id (:battle-id battle)
      :aguardando-captura (boolean (:aguardando-captura? battle))
      :outcome (:outcome battle)
      :chance-base-captura (:chance-base-captura battle)
+     :gym-resolve (when gym-res
+                    {:venceu (boolean (:venceu? gym-res))
+                     :premio (when-let [p (:premio gym-res)] (name p))
+                     :occupied (boolean (:occupied? gym-res))
+                     :pe-delta (:pe-delta gym-res)
+                     :reward (:reward gym-res)})
      :save-id save-id
      :fence-generation (long fence-generation)}))
 
@@ -412,6 +426,63 @@
      :fence-generation (long fence-generation)
      :indices (:time-ginasio result idxs)
      :time-ginasio (:time-ginasio result idxs)}))
+
+(defn start-gym-challenge!
+  "Inicia desafio 3×3. NPC: candidates da PokeAPI; ocupado: time do slot."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 gym-id candidates nome agora-ms dia battle-id]
+          :as _req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (when (str/blank? (str gym-id))
+    (throw (err/error :invalid_query {:required ["gymId"]})))
+  (let [writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        cands (mapv keywordize-keys (or candidates []))
+        result (gym-app/start-challenge!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :gym-id (str gym-id)
+                         :candidates cands
+                         :nome (or nome player-id)}
+                  battle-id (assoc :battle-id battle-id)
+                  (some? agora-ms) (assoc :agora agora-ms)
+                  (some? dia) (assoc :dia dia)))
+        battle (:battle result)
+        px (get-in battle [:pokemons :x])
+        po (get-in battle [:pokemons :o])]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle-id (:battle-id result)
+     :gym-id (:gym-id result)
+     :battle {:battle-id (:battle-id battle)
+              :kind "gym"
+              :gym-id (:gym-id battle)
+              :gym-nome (:gym-nome battle)
+              :lider-nome (:lider-nome battle)
+              :active (boolean (:active? battle))
+              :hp (:hp battle)
+              :phase (:phase battle)
+              :turn-index (:turn-index battle 0)
+              :reservas-x (count (get-in battle [:reservas :x] []))
+              :reservas-o (count (get-in battle [:reservas :o] []))
+              :pokemon-x (when px
+                           (select-keys px [:nome :species :hp :nivel :imagem
+                                            :imagem-shiny :altura :tipos :golpes
+                                            :status :shiny :shiny?]))
+              :pokemon-o (when po
+                           (select-keys po [:nome :species :hp :nivel :imagem
+                                            :imagem-shiny :altura :tipos :golpes
+                                            :status :shiny :shiny?
+                                            :motivacao-ginasio]))}}))
 
 (defn heal-gym-motivation!
   "Recupera motivação do líder. `item` → pontos no servidor."

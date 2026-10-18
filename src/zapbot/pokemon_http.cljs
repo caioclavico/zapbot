@@ -370,7 +370,54 @@
                                         (.formatGymsOverview jvm-present data
                                                              (str config/prefix "pk"))))))
 
-                    (contains? #{"desafiar" "ranking" "historico"} sub)
+                    (= "desafiar" sub)
+                    (let [gym-id (str/lower-case
+                                  (-> (str (or (first args-gin) ""))
+                                      (str/replace #"elétrico" "eletrico")))]
+                      (when-not (contains? #{"pedra" "agua" "eletrico" "planta" "fogo"} gym-id)
+                        (throw (erro-contrato
+                                "❓ Use !pk gin desafiar <pedra|agua|eletrico|planta|fogo>")))
+                      (p/let [detail (desempenho/medir! ctx "pokemon_jvm_gym_detail"
+                                       #(.getGym jvm #js {:chatId chat-id
+                                                          :playerId player-id
+                                                          :gymId gym-id}))
+                              gym (.-gym detail)
+                              _ (when-not (.-desbloqueado gym)
+                                  (throw (erro-contrato "🔒 Vença os ginásios anteriores primeiro.")))
+                              ocup (.-ocupacao gym)
+                              cands (if ocup
+                                      #js []
+                                      (desempenho/medir! ctx "pokemon_jvm_gym_npc"
+                                        #(.buildGymNpcTeam pokeapi (.-timeNpc gym))))
+                              ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                              op-id (.stableOperationId jvm-transport
+                                                        (:requestId pedido)
+                                                        (str "gym-challenge:" gym-id))
+                              data (desempenho/medir! ctx "pokemon_jvm_gym_challenge"
+                                     #(.startGymChallenge jvm
+                                        #js {:chatId chat-id
+                                             :playerId player-id
+                                             :saveId (.-activeSaveId ativo)
+                                             :fenceGeneration (.-fenceGeneration ativo)
+                                             :operationId op-id
+                                             :gymId gym-id
+                                             :candidates cands
+                                             :nome player-name}))
+                              texto (.formatGymChallengeStart jvm-present data
+                                                              (str config/prefix "pk"))
+                              battle (.-battle data)
+                              img (render-seguro! ctx "pokemon_jvm_media_gym"
+                                    #(.renderHuntArena jvm-media
+                                        #js {:area nil
+                                             :pokemonX (some-> battle .-pokemonX)
+                                             :pokemonO (some-> battle .-pokemonO)
+                                             :fugiu false
+                                             :aguardandoCaptura false
+                                             :caption texto
+                                             :mostrarEntrada true}))]
+                        (envelope-jvm pedido texto img)))
+
+                    (contains? #{"ranking" "historico"} sub)
                     (envelope-jvm pedido (.formatGymBlocked jvm-present sub))
 
                     (contains? #{"entrar" "iniciar" "sair" "cancelar"} sub)
@@ -543,7 +590,7 @@
                         encontro (.-encounter enc)]
                   (cond
                     (nil? encontro)
-                    (envelope-jvm pedido "❓ Não há caçada/encontro em andamento.")
+                    (envelope-jvm pedido "❓ Não há caçada/encontro ou desafio de ginásio em andamento.")
 
                     (.-aguardandoCaptura encontro)
                     (envelope-jvm pedido
@@ -551,7 +598,7 @@
                                        config/prefix "pk capturar."))
 
                     (not (.-active encontro))
-                    (envelope-jvm pedido "❓ Este encontro não está em batalha ativa.")
+                    (envelope-jvm pedido "❓ Esta batalha não está ativa.")
 
                     :else
                     (let [idx (js/parseInt (or (first resto) "1") 10)

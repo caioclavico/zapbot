@@ -47,11 +47,11 @@
         player "ash"]
     (boot! s chat player)
     (let [ov (reads/gyms-overview s chat player {})]
-      (is (false? (:desafio-habilitado ov)))
+      ;; M4.8 habilitou o desafio; M4.7 cobria leituras/time/heal.
+      (is (true? (:desafio-habilitado ov)))
       (is (= 5 (count (:gyms ov))))
       (is (true? (:desbloqueado (first (:gyms ov)))))
-      (is (false? (:desbloqueado (second (:gyms ov)))))
-      (is (string? (:desafio-bloqueio ov))))))
+      (is (false? (:desbloqueado (second (:gyms ov))))))))
 
 (deftest set-team-e-leitura
   (let [s (fresh-store! "g47-tm")

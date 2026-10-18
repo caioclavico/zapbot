@@ -57,8 +57,9 @@
             ov (get! http base token
                      (str "/v1/gyms?chatId=" chat "&playerId=" player))]
         (assert! (= 200 (:status ov)) (str "gyms " ov))
-        (assert! (false? (get-in ov [:body "data" "desafioHabilitado"]))
-                 "desafio deve estar desligado")
+        ;; M4.8 habilitou o desafio; smoke M4.7 ainda valida leitura/time.
+        (assert! (true? (get-in ov [:body "data" "desafioHabilitado"]))
+                 "desafio habilitado desde M4.8")
         (let [fence (long (:fence-generation
                            (pokemon.application.ports/get-player s chat player) 0))]
           (tx/set-gym-team!

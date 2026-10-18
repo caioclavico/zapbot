@@ -53,10 +53,12 @@
 
 (defn build-resolve-tx
   "Retorna {:tx :result} para resolve-gym-challenge!.
-  slot-revision: revisão atual do stub/ocupação (0 se vazio)."
+  slot-revision: revisão atual do stub/ocupação (0 se vazio).
+  omit-receipt?: quando true (fim de batalha 3×3), o recibo já veio do turno."
   [{:keys [db save writer-ctx request ocupacao colecao slot-revision
            query-collection save-entity player-entity
-           pokemon-entity-map apply-pokemon-xp-tx inventory-adjust-tx]}]
+           pokemon-entity-map apply-pokemon-xp-tx inventory-adjust-tx
+           omit-receipt? omit-revision-cas?]}]
   (let [chat-id (:chat-id writer-ctx)
         player-id (:player-id writer-ctx)
         save-id (:save-id writer-ctx)
@@ -106,16 +108,20 @@
                             (gym/xp-ginasio-participante venceu? premio nocautes))))))
                 participacao)
         insignias' (if premio (assoc insignias gym-id dia) insignias)
-        base-tx (cond-> [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
-                         [:db/add [:save/key sk] :save/pe-ginasios (+ pe pe-delta)]
-                         {:operation-receipt/id operation-id
-                          :operation-receipt/kind "gym-resolve"
-                          :operation-receipt/channel "gameplay"
-                          :operation-receipt/payload-hash phash
-                          :operation-receipt/player-key pk
-                          :operation-receipt/save-id save-id
-                          :operation-receipt/summary
-                          (pr-str {:gym-id gym-id :venceu? venceu? :premio premio})}]
+        base-tx (cond-> (cond-> []
+                          (not omit-revision-cas?)
+                          (conj [:db/cas [:save/key sk] :save/revision rev (inc rev)])
+                          true
+                          (conj [:db/add [:save/key sk] :save/pe-ginasios (+ pe pe-delta)]))
+                  (not omit-receipt?)
+                  (conj {:operation-receipt/id operation-id
+                         :operation-receipt/kind "gym-resolve"
+                         :operation-receipt/channel "gameplay"
+                         :operation-receipt/payload-hash phash
+                         :operation-receipt/player-key pk
+                         :operation-receipt/save-id save-id
+                         :operation-receipt/summary
+                         (pr-str {:gym-id gym-id :venceu? venceu? :premio premio})})
                   premio (conj [:db/add [:save/key sk] :save/ginasios-edn (pr-str insignias')])
                   (pos? coins-delta)
                   (conj [:db/cas [:save/key sk] :save/coins coins

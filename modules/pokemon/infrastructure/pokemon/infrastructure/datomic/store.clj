@@ -10,14 +10,17 @@
             [pokemon.domain.collection :as coll]
             [pokemon.domain.errors :as err]
             [pokemon.domain.evolution :as evo]
+            [pokemon.domain.gym :as gym]
             [pokemon.domain.hunt :as hunt]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]
             [pokemon.domain.moves :as moves]
+            [pokemon.domain.mundo :as mundo]
             [pokemon.domain.ops :as ops]
             [pokemon.domain.raid :as raid-domain]
             [pokemon.domain.reward :as reward]
             [pokemon.domain.xp :as xp]
+            [pokemon.domain.status :as status]
             [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
             [pokemon.infrastructure.datomic.gym-store :as gym-store]
             [pokemon.infrastructure.datomic.raid-store :as raid-store]
@@ -218,6 +221,52 @@
                {:nome (:nome applied)
                 :nivel (:nivel-final applied)
                 :niveis-subidos (:subidas applied)})}))
+
+(defn- pokemon-hp-status-tx
+  [poke hp-atual st]
+  (when poke
+    (let [lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+          st-str (xp/status->str st)]
+      (cond-> [[:db/add lookup :pokemon/hp-atual (long hp-atual)]]
+        st-str (conj [:db/add lookup :pokemon/status st-str])
+        (and (nil? st-str) (:status poke))
+        (conj [:db/retract lookup :pokemon/status (:status poke)])))))
+
+(defn- sync-colecao-from-gym-battle
+  "Atualiza HP/status em memória a partir do estado 3×3 (antes do occupy)."
+  [colecao battle]
+  (let [fainted (set (map long (or (:fainted-x battle) #{})))
+        active-idx (when-let [i (get-in battle [:indices-ativos :x])] (long i))
+        hp-x (long (get-in battle [:hp :x] 0))
+        st-x (get-in battle [:status :x])]
+    (mapv (fn [poke]
+            (let [idx (long (:collection-index poke))]
+              (cond
+                (contains? fainted idx)
+                (assoc poke :hp-atual 0 :status nil)
+                (= idx active-idx)
+                (assoc poke :hp-atual hp-x :status (status/->kw st-x))
+                :else poke)))
+          colecao)))
+
+(defn- gym-battle-hp-txs
+  [colecao battle]
+  (let [synced (sync-colecao-from-gym-battle colecao battle)]
+    (mapcat (fn [before after]
+              (when (not= (:hp-atual before) (:hp-atual after))
+                (pokemon-hp-status-tx after (:hp-atual after) (:status after))))
+            colecao
+            synced)))
+
+(defn- scale-npc-team
+  [candidates gym]
+  (mapv (fn [raw]
+          (let [base (-> raw
+                         (update :golpes #(or % []))
+                         (assoc :status nil))
+                scaled (gym/escalar-nivel base (:nivel gym))]
+            (assoc scaled :hp-atual (:hp scaled))))
+        candidates))
 
 (defn- ->item
   [e]
@@ -1446,11 +1495,13 @@
                      sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
                      rev (long (:save/revision save 0))
                      colecao (query-collection db sk)
-                     idx (long (:collection-index next-state 0))
+                     gym? (= :gym (:kind next-state))
+                     gym-finished? (and gym? (not (:active? next-state)))
+                     idx (long (or (get-in next-state [:indices-ativos :x])
+                                   (:collection-index next-state 0)))
                      poke (when (and (seq colecao) (< idx (count colecao)))
                             (nth colecao idx))
                      save-m (->save save)
-                     ;; Vitória: carimba chance-base + tentativas (legado preparar-captura-pos-batalha).
                      next-state (if (:aguardando-captura? next-state)
                                   (assoc next-state
                                          :tentativas-captura 0
@@ -1461,48 +1512,90 @@
                                           (:sequencia-capturas save-m 0)))
                                   next-state)
                      rew (battle/reward-for-outcome (:outcome next-state))
-                     xp-qty (long (:pokemon-xp rew 0))
-                     xp-part (when (and poke (pos? xp-qty) (not (:active? next-state))
+                     xp-part (when (and (not gym?) poke (pos? (long (:pokemon-xp rew 0)))
+                                        (not (:active? next-state))
                                         (not (:aguardando-captura? next-state)))
                                (apply-pokemon-xp-tx
                                 (assoc poke :hp-atual (get-in next-state [:hp :x]))
-                                xp-qty))
-                     hp-sync (when poke
-                               (let [lookup [:pokemon/id-pokemon (:id-pokemon poke)]
-                                     hp-x (get-in next-state [:hp :x])
-                                     st (get-in next-state [:status :x])
-                                     st-str (xp/status->str st)]
-                                 (cond-> [[:db/add lookup :pokemon/hp-atual (long hp-x)]]
-                                   st-str (conj [:db/add lookup :pokemon/status st-str])
-                                   (and (nil? st-str) (:status poke))
-                                   (conj [:db/retract lookup :pokemon/status (:status poke)]))))
-                     ;; Mantém ponteiro enquanto aguarda captura (legado cacadas-selvagens).
+                                (long (:pokemon-xp rew 0))))
+                     hp-sync (if gym?
+                               (gym-battle-hp-txs colecao next-state)
+                               (pokemon-hp-status-tx
+                                poke (get-in next-state [:hp :x])
+                                (get-in next-state [:status :x])))
                      clear-active (when (and (not (:active? next-state))
                                              (not (:aguardando-captura? next-state)))
                                     (into [[:db/retract [:player/key pk] :player/active-battle-id battle-id]]
                                           (or (clear-chat-wild-tx db (:chat-id writer-ctx) battle-id) [])))
-                     tx (into [[:db/cas [:battle/id battle-id] :battle/turn-index
-                                expected (long (:turn-index next-state))]
-                               [:db/add [:battle/id battle-id] :battle/active?
-                                (boolean (:active? next-state))]
-                               [:db/add [:battle/id battle-id] :battle/phase
-                                (name (:phase next-state))]
-                               [:db/add [:battle/id battle-id] :battle/state-edn
-                                (pr-str next-state)]
-                               [:db/cas [:save/key sk] :save/revision rev (inc rev)]
-                               {:operation-receipt/id operation-id
-                                :operation-receipt/kind "battle-turn"
-                                :operation-receipt/channel "gameplay"
-                                :operation-receipt/payload-hash phash
-                                :operation-receipt/player-key pk
-                                :operation-receipt/save-id (:save-id writer-ctx)
-                                :operation-receipt/summary
-                                (pr-str {:battle-id battle-id
-                                         :turn (:turn-index next-state)
-                                         :outcome (:outcome next-state)})}]
+                     colecao' (if gym-finished?
+                                (sync-colecao-from-gym-battle colecao next-state)
+                                colecao)
+                     venceu? (= :win (:outcome next-state))
+                     agora (long (or (:agora request) (System/currentTimeMillis)))
+                     dia (or (:dia request)
+                             (mundo/dia-atual (java.time.Instant/ofEpochMilli agora)))
+                     pedra-roll (or (:pedra-roll request)
+                                    (get-in request [:rng :pedra])
+                                    (rand-int 100))
+                     gk (when gym-finished?
+                          (id/gym-occupation-key (:chat-id writer-ctx) (:gym-id next-state)))
+                     slot (when gym-finished?
+                            (d/pull db '[*] [:gym-occupation/key gk]))
+                     ocup (when gym-finished?
+                            (gym-store/occupation->map slot edn-read present?))
+                     resolve-part
+                     (when gym-finished?
+                       (gym-store/build-resolve-tx
+                        {:db db :save save :writer-ctx writer-ctx
+                         :omit-receipt? true
+                         :request {:operation-id operation-id
+                                   :payload-hash phash
+                                   :gym-id (:gym-id next-state)
+                                   :venceu? venceu?
+                                   :dia dia
+                                   :agora agora
+                                   :pedra-roll pedra-roll
+                                   :nome (:desafiante-nome next-state)
+                                   :participacao (or (get-in next-state [:participacao :x]) {})
+                                   :ginasios (:ginasios save-m {})
+                                   :indices (when venceu? (:team-x-indices next-state))
+                                   :expected-revision (:expected-revision next-state 0)}
+                         :ocupacao ocup :colecao colecao'
+                         :slot-revision (long (or (:gym-occupation/revision slot) 0))
+                         :query-collection query-collection
+                         :save-entity save-entity
+                         :player-entity player-entity
+                         :pokemon-entity-map pokemon-entity-map
+                         :apply-pokemon-xp-tx apply-pokemon-xp-tx
+                         :inventory-adjust-tx inventory-adjust-tx}))
+                     battle-core [[:db/cas [:battle/id battle-id] :battle/turn-index
+                                   expected (long (:turn-index next-state))]
+                                  [:db/add [:battle/id battle-id] :battle/active?
+                                   (boolean (:active? next-state))]
+                                  [:db/add [:battle/id battle-id] :battle/phase
+                                   (name (:phase next-state))]
+                                  [:db/add [:battle/id battle-id] :battle/state-edn
+                                   (pr-str next-state)]
+                                  {:operation-receipt/id operation-id
+                                   :operation-receipt/kind "battle-turn"
+                                   :operation-receipt/channel "gameplay"
+                                   :operation-receipt/payload-hash phash
+                                   :operation-receipt/player-key pk
+                                   :operation-receipt/save-id (:save-id writer-ctx)
+                                   :operation-receipt/summary
+                                   (pr-str {:battle-id battle-id
+                                            :turn (:turn-index next-state)
+                                            :outcome (:outcome next-state)
+                                            :kind (:kind next-state)
+                                            :gym-id (:gym-id next-state)})}]
+                     ;; Ginásio finalizado: revision CAS vem do resolve.
+                     rev-tx (when-not gym-finished?
+                              [[:db/cas [:save/key sk] :save/revision rev (inc rev)]])
+                     tx (into (into battle-core (or rev-tx []))
                               (concat (or hp-sync [])
                                       (or clear-active [])
-                                      (or (:tx xp-part) [])))]
+                                      (or (:tx xp-part) [])
+                                      (or (:tx resolve-part) [])))]
                  {:tx tx
                   :result {:operation-id operation-id
                            :duplicate false
@@ -1510,7 +1603,8 @@
                            :payload-hash phash
                            :battle next-state
                            :subida (:subida xp-part)
-                           :reward rew}})))
+                           :reward (if gym-finished? (:reward (:result resolve-part)) rew)
+                           :gym-resolve (when gym-finished? (:result resolve-part))}})))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)
@@ -1552,6 +1646,125 @@
          {:tx [[:db/add [:save/key sk] :save/time-ginasio-edn (pr-str idxs)]
                [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
           :result {:time-ginasio idxs}}))))
+
+  (start-gym-challenge! [_ writer-ctx request]
+    (let [payload (ops/gym-challenge-start-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          gym-id (str (:gym-id request))
+          chat-id (:chat-id writer-ctx)
+          gk (id/gym-occupation-key chat-id gym-id)
+          _ (let [e (d/pull (d/db conn) '[*] [:gym-occupation/key gk])]
+              (when-not (present? e)
+                (try
+                  (d/transact conn {:tx-data [{:gym-occupation/key gk
+                                              :gym-occupation/chat-id chat-id
+                                              :gym-occupation/gym-id gym-id
+                                              :gym-occupation/revision 0}]})
+                  (catch Exception _))))
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [g (or (gym/obter-ginasio gym-id)
+                           (throw (err/error :unknown_gym {:gym-id gym-id})))
+                     player-id (:player-id writer-ctx)
+                     save-id (:save-id writer-ctx)
+                     pk (id/player-key chat-id player-id)
+                     sk (id/save-key chat-id player-id save-id)
+                     save-m (->save save)
+                     insignias (:ginasios save-m {})
+                     agora (long (or (:agora request) (System/currentTimeMillis)))
+                     dia (or (:dia request)
+                             (mundo/dia-atual (java.time.Instant/ofEpochMilli agora)))
+                     _ (when-not (gym/desbloqueado? insignias gym-id)
+                         (throw (err/error :gym_locked {:gym-id gym-id})))
+                     prev (active-battle-id-for db chat-id player-id)
+                     _ (when prev
+                         (let [st (->battle (battle-entity db prev))]
+                           (when (and st (or (:active? st) (:aguardando-captura? st)))
+                             (throw (err/error :battle_already_active {:battle-id prev})))))
+                     slot (d/pull db '[*] [:gym-occupation/key gk])
+                     ocup (gym-store/occupation->map slot edn-read present?)
+                     _ (when (and ocup (= (:player-key ocup) pk)
+                                  (= (:save-id ocup) save-id))
+                         (throw (err/error :cannot_challenge_own_gym
+                                           {:gym-id gym-id :save-id save-id})))
+                     _ (when (and (nil? ocup)
+                                  (= dia (get insignias gym-id)))
+                         (throw (err/error :gym_daily_limit
+                                           {:gym-id gym-id :dia dia})))
+                     idxs (vec (or (:time-ginasio save-m) []))
+                     colecao (query-collection db sk)
+                     _ (when-not (and (= 3 (count idxs)) (= 3 (count (set idxs))))
+                         (throw (err/error :invalid_gym_team {:indices idxs})))
+                     team-regs (mapv (fn [i]
+                                       (coll/validate-index! i (count colecao))
+                                       (nth colecao i))
+                                     idxs)
+                     _ (when-not (every? #(pos? (long (:hp-atual % 0))) team-regs)
+                         (throw (err/error :gym_team_unhealthy {:indices idxs})))
+                     team-x (mapv (fn [i poke]
+                                    (assoc poke :collection-index (long i)))
+                                  idxs team-regs)
+                     team-o (if ocup
+                              (gym/time-defensor ocup agora)
+                              (let [cands (or (:candidates request) [])]
+                                (when-not (= 3 (count cands))
+                                  (throw (err/error :invalid_gym_npc_team
+                                                    {:count (count cands)
+                                                     :expected (:time g)})))
+                                (scale-npc-team cands g)))
+                     expected-rev (long (:gym-occupation/revision slot 0))
+                     battle-id (or (:battle-id request) operation-id)
+                     state (battle/create-gym-battle
+                            {:battle-id battle-id
+                             :chat-id chat-id
+                             :player-id player-id
+                             :save-id save-id
+                             :fence-generation (:fence-generation writer-ctx)
+                             :gym-id gym-id
+                             :gym-nome (:nome g)
+                             :lider-nome (or (:nome ocup) (:lider g))
+                             :desafiante-nome (or (:nome request) player-id)
+                             :team-x team-x
+                             :team-o team-o
+                             :expected-revision expected-rev})
+                     rev (long (:save/revision save 0))]
+                 {:tx [{:battle/id battle-id
+                        :battle/save [:save/key sk]
+                        :battle/player-key pk
+                        :battle/save-id save-id
+                        :battle/kind "gym"
+                        :battle/active? true
+                        :battle/turn-index 0
+                        :battle/phase "active"
+                        :battle/collection-index (long (first idxs))
+                        :battle/state-edn (pr-str state)}
+                       [:db/add [:player/key pk] :player/active-battle-id battle-id]
+                       [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                       {:operation-receipt/id operation-id
+                        :operation-receipt/kind "gym-challenge-start"
+                        :operation-receipt/channel "gameplay"
+                        :operation-receipt/payload-hash phash
+                        :operation-receipt/player-key pk
+                        :operation-receipt/save-id save-id
+                        :operation-receipt/summary
+                        (pr-str {:battle-id battle-id :gym-id gym-id})}]
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :battle-id battle-id
+                           :battle state
+                           :gym-id gym-id}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
 
   (resolve-gym-challenge! [_ writer-ctx request]
     (let [payload (ops/gym-resolve-payload request)

@@ -94,8 +94,12 @@
   (set-gym-team! [this writer-ctx indices]
     "Salva escalação de 3 índices no save ativo.")
 
+  (start-gym-challenge! [this writer-ctx request]
+    "Inicia combate 3×3; resultado só via turnos + resolve interno.")
+
   (resolve-gym-challenge! [this writer-ctx request]
-    "Aplica derrota/vitória: PE/XP/moedas/insígnia/ocupação com fence+recibo.")
+    "Aplica derrota/vitória: PE/XP/moedas/insígnia/ocupação com fence+recibo.
+     Não expor no WhatsApp — só harness/teste ou fim de batalha no store.")
 
   (heal-gym-motivation! [this writer-ctx request]
     "Recupera motivação do defensor (líder do save ativo); consome item.")

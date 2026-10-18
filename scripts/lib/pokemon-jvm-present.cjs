@@ -257,6 +257,7 @@ function formatError(err) {
     COLLECTION_FULL: '🎒 Bolsa cheia: libere espaço antes de capturar.',
     BATTLE_PENDING: '⚠️ Há batalha/encontro em andamento neste save — não dá para alternar A↔B agora.',
     BATTLE_SAVE_MISMATCH: '⚠️ Encontro pertence a outro save — callback antigo rejeitado.',
+    BATTLE_ALREADY_ACTIVE: '⚔️ Já existe uma batalha/encontro seu em andamento.',
     AREA_UNAVAILABLE: '🗺️ Essa área não está disponível hoje.',
     HUNT_COOLDOWN: '⏳ Ainda em cooldown de caça. Aguarde e tente de novo.',
     CHAT_HUNT_BUSY: '⚔️ Já existe uma caçada em andamento neste chat.',
@@ -265,6 +266,13 @@ function formatError(err) {
     HUNT_NO_CANDIDATES: '❌ Não consegui buscar um pokémon selvagem agora. Tente de novo.',
     POKEAPI_HTTP: '❌ A PokeAPI falhou ao buscar espécies. Tente de novo.',
     POKEAPI_EMPTY: '❌ Não consegui buscar um pokémon selvagem agora. Tente de novo.',
+    GYM_LOCKED: '🔒 Vença os ginásios anteriores primeiro.',
+    GYM_DAILY_LIMIT: '⏳ Você já venceu este ginásio hoje. A revanche abre à meia-noite de São Paulo.',
+    CANNOT_CHALLENGE_OWN_GYM: '🏛️ Você já lidera este ginásio.',
+    INVALID_GYM_TEAM: '❓ Escale três Pokémon saudáveis: !pk gin time auto ou !pk gin time 1,2,3.',
+    GYM_TEAM_UNHEALTHY: '❓ Escale três Pokémon saudáveis: !pk gin time auto ou !pk gin time 1,2,3.',
+    INVALID_GYM_NPC_TEAM: '❌ Não consegui montar o time do líder. Tente de novo.',
+    UNKNOWN_GYM: '❓ Ginásio desconhecido. Use pedra, agua, eletrico, planta ou fogo.',
     TIMEOUT: '⏳ Bridge JVM demorou. Se foi escrita, confira com !pk recibo <id> antes de repetir.',
     CONNECT_TIMEOUT: '⚠️ Não conectou na bridge JVM. Nenhuma escrita foi ao Cassandra.',
     NETWORK: '⚠️ Bridge JVM indisponível. Nenhuma escrita foi ao Cassandra.',
@@ -341,13 +349,58 @@ function golpesLinha(p) {
   }).join(' · ');
 }
 
+function formatGymResolve(gymResolve, battle) {
+  if (!gymResolve) return null;
+  const nome = (battle && battle.gymNome) || 'ginásio';
+  if (gymResolve.venceu) {
+    const rew = gymResolve.reward || {};
+    return [
+      `🏅 Você venceu o ginásio *${nome}*!`,
+      gymResolve.premio === 'primeira'
+        ? 'Nova insígnia conquistada e próximo ginásio liberado!'
+        : (gymResolve.premio === 'revanche'
+          ? 'Revanche diária concluída.'
+          : 'Você já recebeu a recompensa diária; o XP de combate continua valendo.'),
+      rew.moedas != null ? `💰 +${rew.moedas} moedas.` : null,
+      gymResolve.peDelta != null ? `⭐ +${gymResolve.peDelta} PE.` : null,
+      gymResolve.occupied ? '🏛️ Você é o novo líder — time reservado no ginásio.' : null
+    ].filter(Boolean).join('\n');
+  }
+  if ((battle && battle.outcome) === 'draw') {
+    return `⚖️ Empate no ginásio *${nome}*. Sem ocupação nem recompensa diária.`;
+  }
+  return [
+    `💀 O líder venceu no ginásio *${nome}*.`,
+    'Recupere seu time e tente novamente! Suas insígnias foram mantidas.',
+    gymResolve.peDelta != null ? `⭐ +${gymResolve.peDelta} PE.` : null
+  ].filter(Boolean).join('\n');
+}
+
+function formatGymChallengeStart(data, prefix = '!pk') {
+  const b = (data && data.battle) || {};
+  const x = b.pokemonX || {};
+  const o = b.pokemonO || {};
+  return [
+    `🏛️ Desafio contra *${b.liderNome || 'líder'}*!`,
+    `*${x.nome || 'Você'}* vs *${o.nome || 'defensor'}*`,
+    `HP: ${b.hp && b.hp.x != null ? b.hp.x : '?'} · ${b.hp && b.hp.o != null ? b.hp.o : '?'}`,
+    `Reservas: você ${b.reservasX != null ? b.reservasX : 2} · líder ${b.reservasO != null ? b.reservasO : 2}`,
+    golpesLinha(x) ? `Seus golpes: ${golpesLinha(x)}` : null,
+    `Ataque: ${prefix} atacar <1-4>`
+  ].filter(Boolean).join('\n');
+}
+
 function formatBattleTurn(data, prefix = '!pk') {
   const b = (data && data.battle) || {};
   const hp = b.hp || {};
   const o = b.pokemonO || (b.pokemons && b.pokemons.o) || {};
   const x = b.pokemonX || (b.pokemons && b.pokemons.x) || {};
-  const nome = o.nome || o.species || 'selvagem';
+  const nome = o.nome || o.species || 'adversário';
   const area = b.area || {};
+  const gym = b.kind === 'gym' || Boolean(b.gymId);
+  if (data.gymResolve || (!b.active && gym && b.outcome)) {
+    return formatGymResolve(data.gymResolve || { venceu: b.outcome === 'win' }, b);
+  }
   if (data.aguardandoCaptura || b.aguardandoCaptura) {
     return [
       `🏁 *${nome}* foi derrotado!`,
@@ -360,18 +413,29 @@ function formatBattleTurn(data, prefix = '!pk') {
     ].filter(Boolean).join('\n');
   }
   if (b.outcome === 'lose' || data.outcome === 'lose') {
-    return `💀 Seu Pokémon desmaiou. A caçada acabou.`;
+    return gym
+      ? formatGymResolve({ venceu: false, peDelta: 1 }, b)
+      : '💀 Seu Pokémon desmaiou. A caçada acabou.';
   }
   if (b.outcome === 'flee' || data.outcome === 'flee') {
     return `💨 *${nome}* fugiu durante a batalha!`;
   }
   const la = b.lastAction || {};
   const dano = la.dano != null ? `Último golpe: ${la.dano} de dano.` : null;
+  const switchLine = b.lastSwitch && b.lastSwitch.nome
+    ? `🔁 Entra *${b.lastSwitch.nome}*!`
+    : null;
   return [
-    area.nome ? `${area.emoji || '🗺️'} *${area.nome}*` : null,
+    gym
+      ? `🏛️ *${b.gymNome || b.gymId || 'Ginásio'}* — vs ${b.liderNome || 'líder'}`
+      : (area.nome ? `${area.emoji || '🗺️'} *${area.nome}*` : null),
+    switchLine,
     `⚔️ Turno ${b.turnIndex != null ? b.turnIndex : '?'}`,
     `HP *${x.nome || 'você'}*: ${hp.x != null ? hp.x : '?'} · *${nome}*: ${hp.o != null ? hp.o : '?'}`,
-    (o.tipos && o.tipos.length) ? `Tipos selvagem: ${o.tipos.join(', ')}` : null,
+    gym && (b.reservasX != null || b.reservasO != null)
+      ? `Reservas: você ${b.reservasX != null ? b.reservasX : '?'} · líder ${b.reservasO != null ? b.reservasO : '?'}`
+      : null,
+    (!gym && o.tipos && o.tipos.length) ? `Tipos selvagem: ${o.tipos.join(', ')}` : null,
     dano,
     golpesLinha(x) ? `Seus golpes: ${golpesLinha(x)}` : null,
     `Continue: ${prefix} atacar <1-4>`
@@ -496,7 +560,7 @@ function formatGymsOverview(data, prefix = '!pk') {
     '🏛️ *Ginásios do Odisseu*',
     data.desafioHabilitado === false
       ? `🚧 Desafio 3×3 ainda bloqueado no adaptador JVM. ${data.desafioBloqueio || ''}`.trim()
-      : null,
+      : `Desafiar: ${prefix} gin desafiar <id>`,
     ''
   ];
   for (const g of data.gyms || []) {
@@ -551,7 +615,7 @@ function formatGymTeam(data, prefix = '!pk') {
   const nomes = (data.membros || []).map(p => `*${p.nome || '?'}*`).join(', ');
   return [
     `✅ Time de ginásio: ${nomes}`,
-    '🚧 Desafiar ainda não está disponível no adaptador JVM (combate 3×3).'
+    `Desafiar: ${prefix} gin desafiar <pedra|agua|eletrico|planta|fogo>`
   ].join('\n');
 }
 
@@ -560,7 +624,7 @@ function formatGymTeamSaved(data, prefix = '!pk') {
   return [
     `✅ Time de ginásio salvo (índices coleção: ${idxs || '?'}).`,
     `Consulte: ${prefix} gin time`,
-    '🚧 Desafiar bloqueado até o motor 3×3 no JVM.'
+    `Desafiar: ${prefix} gin desafiar <id>`
   ].join('\n');
 }
 
@@ -575,10 +639,9 @@ function formatGymHeal(data) {
 
 function formatGymBlocked(action) {
   const map = {
-    desafiar: '🚧 Desafio de ginásio ainda não integrado: o combate 3×3 precisa ser validado no núcleo JVM (não aceitamos vitória enviada pelo cliente).',
     ranking: '🚧 Ranking de ginásio ainda não persistido no Datomic.',
     historico: '🚧 Histórico de ginásio ainda não persistido no Datomic.',
-    raid: '🚧 Raides ficam fora do M4.7.'
+    raid: '🚧 Raides ficam fora do M4.7/M4.8.'
   };
   return map[action] || formatUnavailable(`ginasio ${action || ''}`.trim());
 }
@@ -631,6 +694,8 @@ module.exports = {
   formatGymTeamSaved,
   formatGymHeal,
   formatGymBlocked,
+  formatGymChallengeStart,
+  formatGymResolve,
   filtrarColecao,
   interpretarFiltros,
   golpesLinha

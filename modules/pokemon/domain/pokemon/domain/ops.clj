@@ -103,6 +103,23 @@
      (some? move-index) (assoc :move-index (long move-index))
      (map? rng) (assoc :rng (reward/canonicalize rng)))))
 
+(defn gym-challenge-start-payload
+  "Início de desafio 3×3. Candidatos NPC entram no hash (idempotência);
+  time do desafiante e ocupação vêm do save/slot no servidor."
+  [{:keys [gym-id candidates expected-revision]}]
+  (reward/canonicalize
+   (cond-> {:gym-id (str gym-id)
+            :candidates
+            (mapv (fn [p]
+                    (reward/canonicalize
+                     (select-keys p [:nome :species :slug-especie :tipos :hp
+                                     :ataque :defesa :atq-esp :def-esp :veloc
+                                     :nivel :habilidade :golpes :imagem
+                                     :imagem-shiny :status])))
+                  (or candidates []))}
+     (some? expected-revision)
+     (assoc :expected-revision (long expected-revision)))))
+
 (defn gym-resolve-payload
   [{:keys [gym-id venceu? participacao dia pedra-roll indices]}]
   (reward/canonicalize

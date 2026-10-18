@@ -156,6 +156,10 @@
          :encounter
          {:battle-id (:battle-id battle)
           :save-id (:save-id battle)
+          :kind (name (:kind battle :wild))
+          :gym-id (:gym-id battle)
+          :gym-nome (:gym-nome battle)
+          :lider-nome (:lider-nome battle)
           :active (boolean (:active? battle))
           :aguardando-captura aguardando?
           :phase (:phase battle)
@@ -169,6 +173,9 @@
           :clima (:clima battle)
           :area (area-visual (:bioma battle))
           :somente-batalha (boolean (:somente-batalha? battle))
+          :last-switch (:last-switch battle)
+          :reservas-x (count (get-in battle [:reservas :x] []))
+          :reservas-o (count (get-in battle [:reservas :o] []))
           :pokemon-x (encounter-pokemon-dto (get-in battle [:pokemons :x]))
           :pokemon-o (encounter-pokemon-dto (get-in battle [:pokemons :o]))
           :inventory (or inv [])}}))))
@@ -222,8 +229,8 @@
      :fence-generation (:fence-generation player 0)
      :gym-defense-count (:gym-defense-count player 0)
      :insignias insignias
-     :desafio-habilitado false
-     :desafio-bloqueio "Combate 3×3 ainda não validado no núcleo JVM (M4.7)."
+     :desafio-habilitado true
+     :desafio-bloqueio nil
      :gyms rows}))
 
 (defn gym-detail
