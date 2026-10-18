@@ -1,10 +1,12 @@
 (ns pokemon.application.bridge-reads
   "Leituras expostas pela bridge HTTP (M4.1/M4.3/M4.5).
   Sem escritas; sem operações administrativas; DTOs neutros (sem WhatsApp)."
-  (:require [pokemon.application.hunt :as hunt-app]
+  (:require [pokemon.application.gym :as gym-app]
+            [pokemon.application.hunt :as hunt-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.gym :as gym]
             [pokemon.domain.hunt :as hunt]
             [pokemon.domain.mundo :as mundo]
             [pokemon.domain.xp :as xp]))
@@ -170,3 +172,91 @@
           :pokemon-x (encounter-pokemon-dto (get-in battle [:pokemons :x]))
           :pokemon-o (encounter-pokemon-dto (get-in battle [:pokemons :o]))
           :inventory (or inv [])}}))))
+
+(defn- occupation-dto
+  [ocup agora]
+  (when ocup
+    (let [mots (gym/motivacoes ocup agora)
+          time (gym/time-defensor ocup agora)]
+      {:gym-id (:gym-id ocup)
+       :player-id (:pid ocup)
+       :save-id (:save-id ocup)
+       :nome (:nome ocup)
+       :desde (:desde ocup)
+       :revision (:revision ocup 0)
+       :motivacao mots
+       :motivacao-em (:motivacao-em ocup)
+       :time (mapv #(-> (encounter-pokemon-dto %)
+                        (assoc :motivacao-ginasio (:motivacao-ginasio %)))
+                   time)})))
+
+(defn- gym-catalog-row
+  [g insignias ocup agora]
+  (let [id (:id g)
+        unlocked? (gym/desbloqueado? insignias id)]
+    {:id id
+     :nome (:nome g)
+     :lider-npc (:lider g)
+     :nivel (:nivel g)
+     :item (:item g)
+     :time-npc (:time g)
+     :desbloqueado unlocked?
+     :insignia (get insignias id)
+     :ocupacao (when ocup (occupation-dto ocup agora))}))
+
+(defn gyms-overview
+  "Menu de ginásios: catálogo + unlock + ocupações do chat."
+  [store chat-id player-id {:keys [agora-ms]}]
+  (let [player (require-player! store chat-id player-id)
+        slot (:active-save-id player)
+        save (when slot (ports/get-save store chat-id player-id slot))
+        insignias (or (:ginasios save) {})
+        agora (long (or agora-ms (System/currentTimeMillis)))
+        rows (mapv (fn [g]
+                     (let [ocup (gym-app/get-occupation store chat-id (:id g))]
+                       (gym-catalog-row g insignias ocup agora)))
+                   gym/ginasios)]
+    {:chat-id chat-id
+     :player-id player-id
+     :active-save-id slot
+     :fence-generation (:fence-generation player 0)
+     :gym-defense-count (:gym-defense-count player 0)
+     :insignias insignias
+     :desafio-habilitado false
+     :desafio-bloqueio "Combate 3×3 ainda não validado no núcleo JVM (M4.7)."
+     :gyms rows}))
+
+(defn gym-detail
+  "Detalhe de um ginásio + time defensor com motivação."
+  [store chat-id player-id gym-id {:keys [agora-ms]}]
+  (let [g (or (gym/obter-ginasio (str gym-id))
+              (throw (err/error :unknown_gym {:gym-id gym-id})))
+        overview (gyms-overview store chat-id player-id {:agora-ms agora-ms})
+        row (some #(when (= (:id g) (:id %)) %) (:gyms overview))]
+    (merge (select-keys overview [:chat-id :player-id :active-save-id
+                                  :fence-generation :gym-defense-count
+                                  :insignias :desafio-habilitado :desafio-bloqueio])
+           {:gym row})))
+
+(defn gym-team
+  "Escalação de ginásio do save ativo (índices + Pokémon)."
+  [store chat-id player-id]
+  (let [player (require-player! store chat-id player-id)
+        slot (:active-save-id player)
+        save (when slot (ports/get-save store chat-id player-id slot))
+        idxs (vec (or (:time-ginasio save) []))
+        colecao (when slot (ports/list-collection store chat-id player-id slot))
+        membros (mapv (fn [i]
+                        (when (and colecao (<= 0 i (dec (count colecao))))
+                          (assoc (pokemon-dto (nth colecao i))
+                                 :collection-index i)))
+                      idxs)]
+    {:chat-id chat-id
+     :player-id player-id
+     :active-save-id slot
+     :fence-generation (:fence-generation player 0)
+     :indices idxs
+     :membros (vec (remove nil? membros))
+     :completo? (and (= 3 (count idxs))
+                     (= 3 (count (set idxs)))
+                     (= 3 (count (remove nil? membros))))}))

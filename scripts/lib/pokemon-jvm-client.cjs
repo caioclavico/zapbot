@@ -231,6 +231,14 @@ function createClient(config = {}) {
     getHuntPlan: ({ chatId, playerId, areaId, agoraMs, rollTipos, rollSurto }) =>
       request('GET', `/v1/hunt/plan${q({ chatId, playerId, areaId, agoraMs, rollTipos, rollSurto })}`),
     startHunt: (body) => mutateOnce('/v1/hunt/start', body),
+    listGyms: ({ chatId, playerId, agoraMs }) =>
+      request('GET', `/v1/gyms${q({ chatId, playerId, agoraMs })}`),
+    getGym: ({ chatId, playerId, gymId, agoraMs }) =>
+      request('GET', `/v1/gyms/${encodeURIComponent(gymId)}${q({ chatId, playerId, agoraMs })}`),
+    getGymTeam: ({ chatId, playerId }) =>
+      request('GET', `/v1/gyms/team${q({ chatId, playerId })}`),
+    setGymTeam: (body) => mutateOnce('/v1/gyms/team', body),
+    healGym: (body) => mutateOnce('/v1/gyms/heal', body),
     close: () => agent.destroy()
   };
 }

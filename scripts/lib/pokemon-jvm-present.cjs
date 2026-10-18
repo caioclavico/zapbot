@@ -277,7 +277,7 @@ function formatUnavailable(commandHint) {
   return [
     '🚧 *Comando ainda não integrado no adaptador JVM*',
     commandHint ? `Pedido: \`${commandHint}\`` : null,
-    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `cacar`, `capturar`/`cap`, `recibo <id>`.',
+    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `cacar`, `capturar`/`cap`, `ginasio`/`gin`, `recibo <id>`.',
     'Sem fallback automático para Cassandra. Use `POKEMON_ADAPTER=legacy` para o restante.'
   ].filter(Boolean).join('\n');
 }
@@ -477,6 +477,112 @@ function formatCaptureResult(data, prefix = '!pk') {
   ].join('\n');
 }
 
+const GYM_SUB = {
+  des: 'desafiar', dsf: 'desafiar', desafiar: 'desafiar',
+  tm: 'time', time: 'time',
+  pot: 'pocao', pocao: 'pocao', 'poção': 'pocao',
+  fru: 'fruta', fruta: 'fruta', 'fruta-dourada': 'fruta-dourada', dourada: 'fruta-dourada',
+  ran: 'ranking', ranking: 'ranking',
+  hist: 'historico', historico: 'historico', 'histórico': 'historico'
+};
+
+function resolveGymSubcommand(token) {
+  const raw = String(token || '').toLowerCase();
+  return GYM_SUB[raw] || raw || null;
+}
+
+function formatGymsOverview(data, prefix = '!pk') {
+  const lines = [
+    '🏛️ *Ginásios do Odisseu*',
+    data.desafioHabilitado === false
+      ? `🚧 Desafio 3×3 ainda bloqueado no adaptador JVM. ${data.desafioBloqueio || ''}`.trim()
+      : null,
+    ''
+  ];
+  for (const g of data.gyms || []) {
+    const lock = g.desbloqueado ? '✅' : '🔒';
+    const lider = g.ocupacao
+      ? `líder *${g.ocupacao.nome || g.ocupacao.playerId}*`
+      : `NPC *${g.liderNpc}*`;
+    const badge = g.insignia ? ` · insígnia ${g.insignia}` : '';
+    lines.push(`${lock} ${g.nome} (nv.${g.nivel}) — ${lider}${badge}`);
+  }
+  lines.push('');
+  lines.push(`Detalhe: ${prefix} gin <pedra|agua|eletrico|planta|fogo>`);
+  lines.push(`Time: ${prefix} gin time · Recuperar: ${prefix} gin pocao <id> <1-3>`);
+  return lines.filter(v => v !== null).join('\n');
+}
+
+function formatGymDetail(data, prefix = '!pk') {
+  const g = data.gym || {};
+  if (!g.id) return '❓ Ginásio desconhecido. Use pedra, agua, eletrico, planta ou fogo.';
+  const ocup = g.ocupacao;
+  const lines = [
+    `${g.nome} — Nv.${g.nivel}`,
+    g.desbloqueado ? null : '🔒 Vença os ginásios anteriores primeiro.',
+    ocup
+      ? `Líder: *${ocup.nome || ocup.playerId}* (save ${ocup.saveId})`
+      : `Líder NPC: *${g.liderNpc}* · equipe ${((g.timeNpc) || []).join(', ')}`,
+    `Recompensa: ${g.item}`,
+    data.desafioHabilitado === false
+      ? `🚧 Desafiar bloqueado: ${data.desafioBloqueio || 'combate 3×3 pendente no JVM.'}`
+      : `Desafiar: ${prefix} gin desafiar ${g.id}`
+  ];
+  if (ocup && Array.isArray(ocup.time) && ocup.time.length) {
+    lines.push('');
+    lines.push('*Defensores*');
+    ocup.time.forEach((p, i) => {
+      const mot = (ocup.motivacao && ocup.motivacao[i] != null)
+        ? ocup.motivacao[i]
+        : (p.motivacaoGinasio != null ? p.motivacaoGinasio : '?');
+      lines.push(`${i + 1}. ${p.nome || '?'} · motivação ${mot}%`);
+    });
+  }
+  return lines.filter(Boolean).join('\n');
+}
+
+function formatGymTeam(data, prefix = '!pk') {
+  if (!data.completo) {
+    return [
+      '❓ Time de ginásio incompleto.',
+      `Use ${prefix} gin time auto ou ${prefix} gin time 1,2,3 (números da coleção).`
+    ].join('\n');
+  }
+  const nomes = (data.membros || []).map(p => `*${p.nome || '?'}*`).join(', ');
+  return [
+    `✅ Time de ginásio: ${nomes}`,
+    '🚧 Desafiar ainda não está disponível no adaptador JVM (combate 3×3).'
+  ].join('\n');
+}
+
+function formatGymTeamSaved(data, prefix = '!pk') {
+  const idxs = (data.indices || data.timeGinasio || []).map(i => Number(i) + 1).join(', ');
+  return [
+    `✅ Time de ginásio salvo (índices coleção: ${idxs || '?'}).`,
+    `Consulte: ${prefix} gin time`,
+    '🚧 Desafiar bloqueado até o motor 3×3 no JVM.'
+  ].join('\n');
+}
+
+function formatGymHeal(data) {
+  return [
+    `🧪 Defensor ${Number(data.indice) + 1} recuperou motivação no ginásio *${data.gymId}*:`,
+    `${data.antes}% → ${data.depois}%`,
+    `${data.label || data.item} consumida.`,
+    data.duplicate ? '_idempotente: mesma operação já persistida_' : null
+  ].filter(Boolean).join('\n');
+}
+
+function formatGymBlocked(action) {
+  const map = {
+    desafiar: '🚧 Desafio de ginásio ainda não integrado: o combate 3×3 precisa ser validado no núcleo JVM (não aceitamos vitória enviada pelo cliente).',
+    ranking: '🚧 Ranking de ginásio ainda não persistido no Datomic.',
+    historico: '🚧 Histórico de ginásio ainda não persistido no Datomic.',
+    raid: '🚧 Raides ficam fora do M4.7.'
+  };
+  return map[action] || formatUnavailable(`ginasio ${action || ''}`.trim());
+}
+
 /** Aliases alinhados ao legado (ajuda.cljs / core). */
 const ALIASES = {
   treinador: 'treinador', perfil: 'treinador', tre: 'treinador',
@@ -489,6 +595,8 @@ const ALIASES = {
   capturar: 'capturar', cap: 'capturar',
   cacar: 'cacar', caçar: 'cacar', cac: 'cacar', hunt: 'cacar',
   atacar: 'atacar', ataque: 'atacar', atk: 'atacar',
+  ginasio: 'ginasio', ginásio: 'ginasio', ginasios: 'ginasio', ginásios: 'ginasio',
+  gin: 'ginasio',
   recibo: 'recibo', op: 'recibo', operation: 'recibo'
 };
 
@@ -516,6 +624,13 @@ module.exports = {
   formatCaptureMenu,
   formatCaptureResult,
   resolveCommand,
+  resolveGymSubcommand,
+  formatGymsOverview,
+  formatGymDetail,
+  formatGymTeam,
+  formatGymTeamSaved,
+  formatGymHeal,
+  formatGymBlocked,
   filtrarColecao,
   interpretarFiltros,
   golpesLinha

@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [pokemon.application.battle :as battle-app]
             [pokemon.application.capture :as capture-app]
+            [pokemon.application.gym :as gym-app]
             [pokemon.application.hunt :as hunt-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.reward :as reward-app]
@@ -386,3 +387,68 @@
      :chance-base-captura (:chance-base-captura battle)
      :save-id save-id
      :fence-generation (long fence-generation)}))
+
+(def ^:private heal-by-item
+  "Pontos de motivação derivados do item — nunca do cliente."
+  {"pocao" {:item-id "pocao" :pontos 40 :label "Poção de Vida"}
+   "fruta" {:item-id "fruta" :pontos 20 :label "Fruta Frambo"}
+   "fruta-dourada" {:item-id "fruta-dourada" :pontos 100 :label "Fruta Dourada"}})
+
+(defn set-gym-team!
+  "Salva escalação 3 índices no save congelado."
+  [store {:keys [chat-id player-id save-id fence-generation indices]
+          :as _req}]
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [idxs (mapv long (or indices []))
+        writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        result (gym-app/set-gym-team! store writer-ctx idxs)]
+    {:save-id save-id
+     :fence-generation (long fence-generation)
+     :indices (:time-ginasio result idxs)
+     :time-ginasio (:time-ginasio result idxs)}))
+
+(defn heal-gym-motivation!
+  "Recupera motivação do líder. `item` → pontos no servidor."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 gym-id indice item agora-ms]
+          :as _req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [spec (get heal-by-item (str/lower-case (str (or item ""))))]
+    (when-not spec
+      (throw (err/error :unknown_heal_item
+                        {:item item :allowed (keys heal-by-item)})))
+    (when-not (and (integer? indice) (<= 0 (long indice) 2))
+      (throw (err/error :invalid_motivation_index {:idx indice})))
+    (let [writer-ctx {:chat-id chat-id
+                      :player-id player-id
+                      :save-id save-id
+                      :fence-generation (long fence-generation)}
+          result (gym-app/heal-motivation!
+                  store writer-ctx
+                  {:operation-id (str operation-id)
+                   :gym-id (str gym-id)
+                   :indice (long indice)
+                   :item-id (:item-id spec)
+                   :pontos (:pontos spec)
+                   :agora (or agora-ms (System/currentTimeMillis))})]
+      {:operation-id (:operation-id result)
+       :duplicate (boolean (:duplicate result))
+       :save-id save-id
+       :fence-generation (long fence-generation)
+       :gym-id (str gym-id)
+       :indice (long indice)
+       :item (:item-id spec)
+       :label (:label spec)
+       :antes (:antes result)
+       :depois (:depois result)})))

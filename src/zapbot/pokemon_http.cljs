@@ -344,6 +344,127 @@
                                           :playerId player-id}))]
                     (envelope-jvm pedido (.formatReceipt jvm-present data))))
 
+                "ginasio"
+                (let [sub (.resolveGymSubcommand jvm-present (or (first resto) ""))
+                      args-gin (vec (rest resto))]
+                  (cond
+                    (or (nil? sub) (str/blank? (str sub))
+                        (contains? #{"pedra" "agua" "eletrico" "elétrico" "planta" "fogo"}
+                                   (str/lower-case (str (or (first resto) "")))))
+                    (let [gym-id (when (seq resto)
+                                   (str/lower-case
+                                    (-> (str/join " " resto)
+                                        (str/replace #"elétrico" "eletrico"))))]
+                      (if (and gym-id (contains? #{"pedra" "agua" "eletrico" "planta" "fogo"} gym-id))
+                        (p/let [data (desempenho/medir! ctx "pokemon_jvm_gym_detail"
+                                       #(.getGym jvm #js {:chatId chat-id
+                                                          :playerId player-id
+                                                          :gymId gym-id}))]
+                          (envelope-jvm pedido
+                                        (.formatGymDetail jvm-present data
+                                                          (str config/prefix "pk"))))
+                        (p/let [data (desempenho/medir! ctx "pokemon_jvm_gyms"
+                                       #(.listGyms jvm #js {:chatId chat-id
+                                                            :playerId player-id}))]
+                          (envelope-jvm pedido
+                                        (.formatGymsOverview jvm-present data
+                                                             (str config/prefix "pk"))))))
+
+                    (contains? #{"desafiar" "ranking" "historico"} sub)
+                    (envelope-jvm pedido (.formatGymBlocked jvm-present sub))
+
+                    (contains? #{"entrar" "iniciar" "sair" "cancelar"} sub)
+                    (envelope-jvm pedido (.formatGymBlocked jvm-present "raid"))
+
+                    (= "time" sub)
+                    (let [raw (str/trim (str/join " " args-gin))]
+                      (cond
+                        (str/blank? raw)
+                        (p/let [data (desempenho/medir! ctx "pokemon_jvm_gym_team"
+                                       #(.getGymTeam jvm #js {:chatId chat-id
+                                                              :playerId player-id}))]
+                          (envelope-jvm pedido
+                                        (.formatGymTeam jvm-present data
+                                                         (str config/prefix "pk"))))
+
+                        (= "auto" (str/lower-case raw))
+                        (p/let [col (.getCollection jvm #js {:chatId chat-id :playerId player-id})
+                                items (vec (js->clj (.-collection col) :keywordize-keys true))
+                                saudaveis (->> items
+                                               (filter #(pos? (long (or (:hp-atual %)
+                                                                        (:hpAtual %) 0))))
+                                               (take 3)
+                                               (mapv #(long (or (:collection-index %)
+                                                                (:collectionIndex %) 0))))
+                                ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                                _ (when-not (= 3 (count saudaveis))
+                                    (throw (erro-contrato
+                                            "❓ Precisa de 3 Pokémon saudáveis: !pk gin time 1,2,3")))
+                                data (desempenho/medir! ctx "pokemon_jvm_gym_team_set"
+                                       #(.setGymTeam jvm
+                                          #js {:chatId chat-id
+                                               :playerId player-id
+                                               :saveId (.-activeSaveId ativo)
+                                               :fenceGeneration (.-fenceGeneration ativo)
+                                               :indices (clj->js saudaveis)}))]
+                          (envelope-jvm pedido
+                                        (.formatGymTeamSaved jvm-present data
+                                                             (str config/prefix "pk"))))
+
+                        :else
+                        (let [nums (->> (str/split raw #"[,\s]+")
+                                        (remove str/blank?)
+                                        (mapv #(js/parseInt % 10))
+                                        (mapv #(dec %)))]
+                          (when-not (and (= 3 (count nums))
+                                         (every? #(and (integer? %) (not (js/isNaN %)) (>= % 0))
+                                                 nums))
+                            (throw (erro-contrato
+                                    "❓ Use !pk gin time auto ou !pk gin time 1,2,3")))
+                          (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id
+                                                                :playerId player-id})
+                                  data (desempenho/medir! ctx "pokemon_jvm_gym_team_set"
+                                         #(.setGymTeam jvm
+                                            #js {:chatId chat-id
+                                                 :playerId player-id
+                                                 :saveId (.-activeSaveId ativo)
+                                                 :fenceGeneration (.-fenceGeneration ativo)
+                                                 :indices (clj->js nums)}))]
+                            (envelope-jvm pedido
+                                          (.formatGymTeamSaved jvm-present data
+                                                               (str config/prefix "pk")))))))
+
+                    (contains? #{"pocao" "fruta" "fruta-dourada"} sub)
+                    (let [gym-id (str/lower-case (str (or (first args-gin) "")))
+                          n-str (second args-gin)
+                          indice (when (and n-str (re-matches #"[1-3]" n-str))
+                                   (dec (js/parseInt n-str 10)))]
+                      (when-not (contains? #{"pedra" "agua" "eletrico" "planta" "fogo"} gym-id)
+                        (throw (erro-contrato "❓ Ginásio: pedra, agua, eletrico, planta ou fogo.")))
+                      (when (nil? indice)
+                        (throw (erro-contrato
+                                (str "❓ Use !pk gin " sub " " gym-id " <1-3>"))))
+                      (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                              op-id (.stableOperationId jvm-transport
+                                                        (:requestId pedido)
+                                                        (str "gym-heal:" gym-id ":" indice ":" sub))
+                              data (desempenho/medir! ctx "pokemon_jvm_gym_heal"
+                                     #(.healGym jvm
+                                        #js {:chatId chat-id
+                                             :playerId player-id
+                                             :saveId (.-activeSaveId ativo)
+                                             :fenceGeneration (.-fenceGeneration ativo)
+                                             :operationId op-id
+                                             :gymId gym-id
+                                             :indice indice
+                                             :item sub}))]
+                        (envelope-jvm pedido (.formatGymHeal jvm-present data))))
+
+                    :else
+                    (envelope-jvm pedido
+                                  (.formatUnavailable jvm-present
+                                                      (str "ginasio " (str/join " " resto))))))
+
                 "cacar"
                 (p/let [plano (desempenho/medir! ctx "pokemon_jvm_hunt_plan"
                                  #(.getHuntPlan jvm

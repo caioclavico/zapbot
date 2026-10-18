@@ -65,15 +65,19 @@
     (:invalid_query :missing_operation_id :missing_reward_identity
      :missing_writer_context :missing_fence_generation :invalid_coins_delta
      :invalid_save_slot :invalid_slot_id :invalid_identity :unknown_ball
-     :area_unavailable :invalid_wild_pokemon :hunt_no_candidates) 400
+     :area_unavailable :invalid_wild_pokemon :hunt_no_candidates
+     :unknown_gym :unknown_heal_item :invalid_gym_team
+     :invalid_motivation_index) 400
     (:stale_writer_fence :writer_fence_conflict :activate_conflict
      :receipt_payload_mismatch :reward_conflict :reward_save_mismatch
      :operation_forbidden :battle_pending :battle_already_active
      :battle_save_mismatch :encounter_owner_mismatch :encounter_not_ready
-     :stale_turn_index :chat_hunt_busy :hunt_cooldown) 409
+     :stale_turn_index :chat_hunt_busy :hunt_cooldown
+     :gym_cas_conflict :not_gym_leader :gym_defense_pending
+     :cannot_challenge_own_gym) 409
     :operation_pending 409
     (:insufficient_item :collection_full :active_pokemon_fainted
-     :no_active_pokemon) 422
+     :no_active_pokemon :motivation_full :gym_empty) 422
     :unauthorized 401
     :method_not_allowed 405
     422))
@@ -168,7 +172,8 @@
                                       "reward-coins" "operation-get"
                                       "encounter-read" "encounter-capture"
                                       "battle-start" "battle-turn"
-                                      "hunt-plan" "hunt-start"]}))
+                                      "hunt-plan" "hunt-start"
+                                      "gyms-read" "gym-team" "gym-heal"]}))
 
             (or (str/starts-with? path "/admin")
                 (str/starts-with? path "/v1/admin")
@@ -452,6 +457,93 @@
                                                  :rng rng}
                                           (some? move-index)
                                           (assoc :move-index move-index)))))))
+
+                (= path "/v1/gyms")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")
+                          agora (long-or-nil (g qs "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (reads/gyms-overview store chat-id player-id
+                                                   {:agora-ms agora}))))
+
+                (= path "/v1/gyms/team")
+                (cond
+                  (= method "GET")
+                  (let [chat-id (g qs "chatId")
+                        player-id (g qs "playerId")]
+                    (when (or (str/blank? chat-id) (str/blank? player-id))
+                      (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                    (ok! ex (reads/gym-team store chat-id player-id)))
+
+                  (= method "POST")
+                  (let [body (read-body ex)
+                        chat-id (g body "chatId")
+                        player-id (g body "playerId")
+                        save-id (g body "saveId")
+                        fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                        indices (or (g body "indices") [])]
+                    (when (or (str/blank? chat-id) (str/blank? player-id)
+                              (str/blank? save-id) (nil? fence))
+                      (throw (err/error :invalid_query
+                                        {:required ["chatId" "playerId" "saveId"
+                                                    "fenceGeneration" "indices"]})))
+                    (ok! ex (tx/set-gym-team!
+                             store {:chat-id chat-id
+                                    :player-id player-id
+                                    :save-id save-id
+                                    :fence-generation fence
+                                    :indices indices})))
+
+                  :else
+                  (throw (err/error :method_not_allowed {:method method})))
+
+                (= path "/v1/gyms/heal")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          gym-id (g body "gymId" "gym-id")
+                          indice (long-or-nil (g body "indice" "index"))
+                          item (g body "item" "itemId")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (str/blank? gym-id)
+                                (nil? indice) (str/blank? (str item)))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "gymId" "indice" "item"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/heal-gym-motivation!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :gym-id gym-id
+                                                 :indice indice
+                                                 :item item}
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (str/starts-with? path "/v1/gyms/")
+                (do (require-method! ex #{"GET"})
+                    (let [gym-id (subs path (count "/v1/gyms/"))
+                          chat-id (g qs "chatId")
+                          player-id (g qs "playerId")
+                          agora (long-or-nil (g qs "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? gym-id)
+                                (#{"team" "heal"} gym-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "gymId"]})))
+                      (ok! ex (reads/gym-detail store chat-id player-id gym-id
+                                                {:agora-ms agora}))))
 
                 :else
                 (send-json! ex 404
