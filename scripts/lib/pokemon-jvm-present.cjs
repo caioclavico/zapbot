@@ -299,6 +299,15 @@ function formatError(err) {
     EGG_NOT_READY: '⏳ O ovo ainda não está pronto para nascer.',
     EGG_SAVE_MISMATCH: '⚠️ Esse ovo foi incubado em outro save — volte ao save de origem.',
     ADVENTURE_ACCOUNT_MISSING: '❓ Conta Adventure Sync ainda não criada. Use !pk ovos.',
+    INSUFFICIENT_COINS: '❌ Moedas insuficientes para essa compra.',
+    BAG_FULL: '🎒 Mochila cheia! Use itens ou compre expansão: !loja comprar mochila.',
+    UNKNOWN_SHOP_ITEM: '❓ Item não encontrado. Use !loja para ver o catálogo.',
+    ITEM_NOT_FOR_SALE: '🎁 Esse item não está à venda (missões, diário ou ginásio).',
+    ITEM_USE_UNSUPPORTED: '🚧 Uso desse item ainda não está no adaptador JVM.',
+    WRONG_STATUS_ITEM: '❓ Essa cura não corresponde ao status atual do Pokémon.',
+    POKEMON_FULL_HP: '✨ Esse Pokémon já está com HP cheio.',
+    NO_STATUS_TO_CURE: '✨ Não há status para curar no Pokémon alvo.',
+    MISSING_ITEM_ID: '❓ Informe o item: !loja comprar <item> ou !pk pocao.',
     TIMEOUT: '⏳ Bridge JVM demorou. Se foi escrita, confira com !pk recibo <id> antes de repetir.',
     CONNECT_TIMEOUT: '⚠️ Não conectou na bridge JVM. Nenhuma escrita foi ao Cassandra.',
     NETWORK: '⚠️ Bridge JVM indisponível. Nenhuma escrita foi ao Cassandra.',
@@ -311,7 +320,7 @@ function formatUnavailable(commandHint) {
   return [
     '🚧 *Comando ainda não integrado no adaptador JVM*',
     commandHint ? `Pedido: \`${commandHint}\`` : null,
-    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `cacar`, `capturar`/`cap`, `ginasio`/`gin`, `raide`/`raid`, `joy`, `ovos`/`incubar`, `recibo <id>`.',
+    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `cacar`, `capturar`/`cap`, `ginasio`/`gin`, `raide`/`raid`, `joy`, `ovos`/`incubar`, `loja`/`mochila`, `curar`/`pocao`, `recibo <id>`.',
     'Sem fallback automático para Cassandra. Use `POKEMON_ADAPTER=legacy` para o restante.'
   ].filter(Boolean).join('\n');
 }
@@ -909,6 +918,78 @@ function resolveEggIndex(data, oneBased) {
   return eggs[n - 1];
 }
 
+function formatShop(data, prefix = '!loja') {
+  const itens = (data && data.itens) || [];
+  const lines = [
+    '🏪 *Loja Pokémon*',
+    `💰 Saldo: ${data.coins != null ? data.coins : 0} moedas`,
+    `🎒 Mochila: ${data.ocupacaoMochila || 0}/${data.capacidadeMochila || '?'} (${data.livres != null ? data.livres : '?'} livres)`,
+    ''
+  ];
+  for (const it of itens) {
+    lines.push(`${it.emoji || '•'} *${it.nome}* — ${it.preco} moedas (\`${it.itemId}\`)`);
+  }
+  lines.push('', `Comprar: ${prefix} comprar <item>`, `Detalhes: ${prefix} detalhes <item>`, 'Inventário: !mochila');
+  return lines.join('\n');
+}
+
+function formatShopBuy(data) {
+  const nome = (data && (data.nome || data.itemId)) || 'item';
+  const emoji = (data && data.emoji) || '✅';
+  if (data && data.expansao) {
+    return `${emoji} Comprou expansão de mochila! Expansões: ${data.expansoesMochila50 || '?'}. Saldo: ${data.coins} moedas.`;
+  }
+  return `${emoji} Comprou *${nome}*! Saldo: ${data.coins} moedas.`;
+}
+
+function formatShopDetails(item, prefix = '!loja') {
+  if (!item) return `❓ Item não encontrado. Use ${prefix}.`;
+  return [
+    `${item.emoji || '•'} *${item.nome}* (\`${item.itemId}\`)`,
+    item.preco != null ? `💰 Preço: ${item.preco} moedas` : '🎁 Não está à venda',
+    item.descricao || ''
+  ].filter(Boolean).join('\n');
+}
+
+function formatInventory(data, prefix = '!mochila') {
+  const itens = (data && data.itens) || [];
+  const lines = [
+    '🎒 *Mochila*',
+    `💰 ${data.coins != null ? data.coins : 0} moedas · ${data.ocupacaoMochila || 0}/${data.capacidadeMochila || '?'} slots`,
+    ''
+  ];
+  if (!itens.length) {
+    lines.push('Vazia. Compre em !loja.');
+  } else {
+    for (const it of itens) {
+      lines.push(`${it.emoji || '•'} ${it.nome || it.itemId} ×${it.qty}`);
+    }
+  }
+  lines.push(
+    '',
+    `⚠️ Kit/diário/resgatar ainda bloqueados no JVM. Expansão: !loja comprar mochila.`,
+    `${prefix}`
+  );
+  return lines.join('\n');
+}
+
+function formatItemUse(data, prefix = '!pk') {
+  const poke = (data && data.pokemon) || {};
+  const nome = poke.nome || poke.species || 'Pokémon';
+  if (data && data.kind === 'status') {
+    return `✨ Status removido de *${nome}* com \`${data.itemId}\`. ${prefix} time`;
+  }
+  if (data && data.kind === 'pocao') {
+    return `🧪 *${nome}* HP ${data.hpAntes}→${data.hpDepois}/${data.hpMax}. ${prefix} time`;
+  }
+  return `✅ Item usado em *${nome}*.`;
+}
+
+function findShopItem(data, rawId) {
+  const id = String(rawId || '').toLowerCase();
+  return ((data && data.itens) || []).find((it) => it.itemId === id) || null;
+}
+
 function formatRaidEligible(data, prefix = '!pk') {
   const aptos = (data && data.aptos) || [];
   if (!aptos.length) {
@@ -944,6 +1025,11 @@ const ALIASES = {
   ovos: 'ovos', ovo: 'ovos',
   incubar: 'incubar',
   incubadoras: 'incubadoras',
+  loja: 'loja', shop: 'loja',
+  mochila: 'mochila', mch: 'mochila', inventario: 'mochila', inventário: 'mochila',
+  curar: 'curar', cura: 'curar', cur: 'curar',
+  pocao: 'pocao', 'poção': 'pocao', pot: 'pocao', vida: 'pocao',
+  'pocao-maxima': 'pocao-maxima', maxima: 'pocao-maxima', pmax: 'pocao-maxima',
   recibo: 'recibo', op: 'recibo', operation: 'recibo'
 };
 
@@ -995,6 +1081,12 @@ module.exports = {
   formatEggIncubate,
   formatEggHatch,
   resolveEggIndex,
+  formatShop,
+  formatShopBuy,
+  formatShopDetails,
+  formatInventory,
+  formatItemUse,
+  findShopItem,
   filtrarColecao,
   interpretarFiltros,
   golpesLinha

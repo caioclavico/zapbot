@@ -259,6 +259,12 @@ function createClient(config = {}) {
     grantEgg: (body) => mutateOnce('/v1/adventure/eggs/grant', body),
     incubateEgg: (body) => mutateOnce('/v1/adventure/eggs/incubate', body),
     hatchEgg: (body) => mutateOnce('/v1/adventure/eggs/hatch', body),
+    getShop: ({ chatId, playerId }) =>
+      request('GET', `/v1/shop${q({ chatId, playerId })}`),
+    getInventory: ({ chatId, playerId }) =>
+      request('GET', `/v1/inventory${q({ chatId, playerId })}`),
+    buyItem: (body) => mutateOnce('/v1/shop/buy', body),
+    useItem: (body) => mutateOnce('/v1/items/use', body),
     close: () => agent.destroy()
   };
 }

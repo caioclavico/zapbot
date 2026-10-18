@@ -24,6 +24,7 @@
             [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
             [pokemon.infrastructure.datomic.gym-store :as gym-store]
             [pokemon.infrastructure.datomic.raid-store :as raid-store]
+            [pokemon.infrastructure.datomic.shop-store :as shop-store]
             [pokemon.infrastructure.datomic.schema :as schema]))
 
 (def ^:private max-cas-attempts 12)
@@ -98,6 +99,8 @@
              :maior-sequencia-capturas (long (:save/maior-sequencia-capturas e 0))
              :expansoes-pokemon-50 (long (:save/expansoes-pokemon-50 e 0))
              :capacidade-pokemon-legada (long (:save/capacidade-pokemon-legada e 0))
+             :expansoes-mochila-50 (long (:save/expansoes-mochila-50 e 0))
+             :capacidade-mochila-legada (long (:save/capacidade-mochila-legada e 50))
              :ultima-cacada-at (long (:save/ultima-cacada-at e 0))
              :ginasios (or (edn-read (:save/ginasios-edn e)) {})
              :time-ginasio (or (edn-read (:save/time-ginasio-edn e)) [])))))
@@ -2152,6 +2155,58 @@
                    :colecao (query-collection db sk)
                    :enfermaria (load-enfermaria db sk)
                    :pokemon-entity-map pokemon-entity-map}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (buy-item! [_ writer-ctx request]
+    (let [payload (ops/shop-buy-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [sk (id/save-key (:chat-id writer-ctx)
+                                     (:player-id writer-ctx)
+                                     (:save-id writer-ctx))]
+                 (shop-store/build-buy-tx
+                  {:db db
+                   :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :save save
+                   :inventory (query-inventory db sk)
+                   :inventory-adjust-tx inventory-adjust-tx}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (use-item! [_ writer-ctx request]
+    (let [payload (ops/shop-use-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [sk (id/save-key (:chat-id writer-ctx)
+                                     (:player-id writer-ctx)
+                                     (:save-id writer-ctx))]
+                 (shop-store/build-use-tx
+                  {:db db
+                   :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :save save
+                   :colecao (query-collection db sk)
+                   :inventory-adjust-tx inventory-adjust-tx}))))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)

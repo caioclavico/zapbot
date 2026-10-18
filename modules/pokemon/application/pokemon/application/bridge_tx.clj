@@ -11,7 +11,9 @@
             [pokemon.application.ports :as ports]
             [pokemon.application.raid :as raid-app]
             [pokemon.application.reward :as reward-app]
+            [pokemon.application.shop :as shop-app]
             [pokemon.application.trainer :as trainer]
+            [pokemon.domain.shop :as shop-domain]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.errors :as err]
             [pokemon.domain.hunt :as hunt]
@@ -831,3 +833,63 @@
      :egg (egg-summary (:egg result))
      :registro (select-keys (or (:registro result) {})
                             [:nome :species :nivel :hp :hp-atual])}))
+
+(defn buy-item!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 item-id qty]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        id (shop-domain/normalizar-item item-id)
+        result (shop-app/buy!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :item-id id
+                 :qty (long (or qty 1))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :item-id (:item-id result)
+     :nome (:nome result)
+     :emoji (:emoji result)
+     :preco (:preco result)
+     :coins (:coins-depois result)
+     :expansao (boolean (:expansao? result))
+     :expansoes-mochila-50 (:expansoes-mochila-50 result)}))
+
+(defn use-item!
+  "Usa poção/cura. Se item-id vazio e kind=curar, resolve pelo status do alvo."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 item-id idx kind]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        colecao (ports/list-collection store chat-id player-id save-id)
+        save (ports/get-save store chat-id player-id save-id)
+        idx* (long (or idx (:ativo-index save 0)))
+        poke (when (and (seq colecao) (<= 0 idx* (dec (count colecao))))
+               (nth colecao idx*))
+        id (cond
+             (and (seq (str item-id)) (not= "auto" (str item-id)))
+             (shop-domain/normalizar-item item-id)
+
+             (or (= "curar" (str kind)) (= "cura" (str kind)))
+             (or (shop-domain/cura-status-item (:status poke))
+                 (throw (err/error :no_status_to_cure
+                                   {:idx idx* :status (:status poke)})))
+
+             :else
+             (throw (err/error :missing_item_id {})))
+        result (shop-app/use-item!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :item-id id
+                 :idx idx*})]
+    (merge {:operation-id (:operation-id result)
+            :duplicate (boolean (:duplicate result))
+            :save-id save-id
+            :fence-generation (long fence-generation)
+            :item-id (:item-id result)
+            :kind (:kind result)
+            :idx (:idx result)
+            :pokemon (:pokemon result)}
+           (select-keys result [:hp-antes :hp-depois :hp-max :status-antes]))))

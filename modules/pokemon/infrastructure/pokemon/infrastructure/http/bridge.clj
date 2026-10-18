@@ -64,6 +64,9 @@
      :encounter_not_found :battle_not_found) 404
     (:invalid_query :missing_operation_id :missing_reward_identity
      :missing_writer_context :missing_fence_generation :invalid_coins_delta
+     :unknown_shop_item :item_not_for_sale :item_use_unsupported
+     :wrong_status_item :no_status_to_cure :missing_item_id
+     :invalid_buy_qty :invalid_collection_index
      :invalid_save_slot :invalid_slot_id :invalid_identity :unknown_ball
      :area_unavailable :invalid_wild_pokemon :hunt_no_candidates
      :unknown_gym :unknown_heal_item :invalid_gym_team
@@ -81,7 +84,8 @@
      :raid_not_your_turn :raid_save_mismatch :raid_liga_mismatch
      :raid_capture_unavailable) 409
     :operation_pending 409
-    (:insufficient_item :collection_full :active_pokemon_fainted
+    (:insufficient_item :insufficient_coins :bag_full :collection_full
+     :pokemon_full_hp :active_pokemon_fainted
      :no_active_pokemon :motivation_full :gym_empty :gym_team_unhealthy) 422
     :unauthorized 401
     :method_not_allowed 405
@@ -183,7 +187,9 @@
                                       "raid-read" "raid-join" "raid-leave"
                                       "raid-start" "raid-attack" "raid-capture"
                                       "joy-read" "joy-send" "joy-collect"
-                                      "adventure-read" "egg-incubate" "egg-hatch"]}))
+                                      "adventure-read" "egg-incubate" "egg-hatch"
+                                      "shop-read" "shop-buy" "inventory-read"
+                                      "item-use"]}))
 
             (or (str/starts-with? path "/admin")
                 (str/starts-with? path "/v1/admin")
@@ -958,6 +964,77 @@
                                                  :egg-id egg-id}
                                           hatch-id (assoc :hatch-id hatch-id)
                                           (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/shop")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (reads/shop-catalog store chat-id player-id))))
+
+                (= path "/v1/inventory")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (reads/inventory-bag store chat-id player-id))))
+
+                (= path "/v1/shop/buy")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          item-id (g body "itemId" "item-id" "item")
+                          qty (long-or-nil (g body "qty" "quantity"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (str/blank? (str item-id)))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "itemId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/buy-item!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :item-id item-id}
+                                          (some? qty) (assoc :qty qty)))))))
+
+                (= path "/v1/items/use")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          item-id (g body "itemId" "item-id" "item")
+                          kind (g body "kind" "mode")
+                          idx (long-or-nil (g body "collectionIndex" "idx" "index"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/use-item!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id}
+                                          item-id (assoc :item-id item-id)
+                                          kind (assoc :kind kind)
+                                          (some? idx) (assoc :idx idx)))))))
 
                 :else
                 (send-json! ex 404

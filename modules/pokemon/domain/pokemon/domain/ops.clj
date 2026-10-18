@@ -188,5 +188,18 @@
   [{:keys [agora]}]
   (reward/canonicalize {:action "joy-collect" :agora (long agora)}))
 
+(defn shop-buy-payload
+  [{:keys [item-id qty]}]
+  (reward/canonicalize
+   {:item-id (str item-id)
+    :qty (long (or qty 1))}))
+
+(defn shop-use-payload
+  [{:keys [item-id idx kind]}]
+  (reward/canonicalize
+   (cond-> {:item-id (str item-id)
+            :kind (str (or kind "use"))}
+     (some? idx) (assoc :idx (long idx)))))
+
 (def payload-hash reward/payload-hash)
 (def assert-receipt-payload! reward/assert-receipt-payload!)

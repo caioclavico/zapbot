@@ -155,6 +155,12 @@
   (joy-collect! [this writer-ctx request]
     "Recolhe curados com pronto-em vencido.")
 
+  (buy-item! [this writer-ctx request]
+    "Compra 1 item do catálogo: debita moedas + credita inventário (ou expansão).")
+
+  (use-item! [this writer-ctx request]
+    "Usa cura de status ou poção no índice da coleção; consome 1 item.")
+
   (ensure-group! [this chat-id label]
     "Garante entidade de grupo separada dos saves.")
 

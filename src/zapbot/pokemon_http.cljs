@@ -62,6 +62,15 @@
 (defn- tokens-args [argumentos]
   (vec (remove str/blank? (str/split (str/trim (str/lower-case (or argumentos ""))) #"\s+"))))
 
+(defn- tokens-para-jvm
+  "Top-level !loja/!mochila entram como comando; !pk * já traz o subcomando nos args."
+  [comando argumentos]
+  (let [args (tokens-args argumentos)
+        cmd (str/lower-case (str comando))]
+    (if (contains? #{"loja" "mochila" "presente" "presentes" "missoes" "missões"} cmd)
+      (into [cmd] args)
+      args)))
+
 (defn- envelope-texto [texto]
   (js->clj (.envelope jvm-present nil texto) :keywordize-keys true))
 
@@ -965,6 +974,95 @@
                 (executar-ovos-jvm! jvm ctx pedido chat-id player-id
                                     "incubadoras" resto)
 
+                "loja"
+                (let [sub (str/lower-case (str (or (first resto) "")))
+                      item-raw (str/join " " (rest resto))]
+                  (cond
+                    (or (str/blank? sub) (= "ver" sub) (= "catalogo" sub) (= "catálogo" sub))
+                    (p/let [data (desempenho/medir! ctx "pokemon_jvm_shop"
+                                     #(.getShop jvm #js {:chatId chat-id :playerId player-id}))]
+                      (envelope-jvm pedido (.formatShop jvm-present data "!loja")))
+
+                    (or (= "detalhes" sub) (= "detalhe" sub) (= "info" sub))
+                    (p/let [data (desempenho/medir! ctx "pokemon_jvm_shop"
+                                     #(.getShop jvm #js {:chatId chat-id :playerId player-id}))
+                            it (.findShopItem jvm-present data item-raw)]
+                      (envelope-jvm pedido (.formatShopDetails jvm-present it "!loja")))
+
+                    (= "comprar" sub)
+                    (do
+                      (when (str/blank? item-raw)
+                        (throw (erro-contrato "❓ Use !loja comprar <item>")))
+                      (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                              op-id (.stableOperationId jvm-transport
+                                                        (:requestId pedido)
+                                                        (str "shop-buy:" item-raw))
+                              data (desempenho/medir! ctx "pokemon_jvm_shop_buy"
+                                     #(.buyItem jvm
+                                        #js {:chatId chat-id
+                                             :playerId player-id
+                                             :saveId (.-activeSaveId ativo)
+                                             :fenceGeneration (.-fenceGeneration ativo)
+                                             :operationId op-id
+                                             :itemId item-raw}))]
+                        (envelope-jvm pedido (.formatShopBuy jvm-present data))))
+
+                    :else
+                    (envelope-jvm pedido
+                                  (.formatUnavailable jvm-present
+                                                      (str "loja " (str/join " " resto))))))
+
+                "mochila"
+                (let [sub (str/lower-case (str (or (first resto) "")))]
+                  (if (contains? #{"kit" "diario" "diário" "resgatar"} sub)
+                    (envelope-jvm pedido
+                                  (str "🚧 `" sub "` ainda não está no adaptador JVM "
+                                       "(kit/diário/resgatar). Use !mochila para ver o inventário."))
+                    (p/let [data (desempenho/medir! ctx "pokemon_jvm_inventory"
+                                     #(.getInventory jvm #js {:chatId chat-id :playerId player-id}))]
+                      (envelope-jvm pedido (.formatInventory jvm-present data "!mochila")))))
+
+                "curar"
+                (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                        n-str (first resto)
+                        idx (when-not (str/blank? (str n-str))
+                              (let [n (js/parseInt n-str 10)]
+                                (when-not (js/isNaN n) (dec n))))
+                        op-id (.stableOperationId jvm-transport
+                                                  (:requestId pedido)
+                                                  (str "item-curar:" (or idx "ativo")))
+                        data (desempenho/medir! ctx "pokemon_jvm_item_use"
+                               #(.useItem jvm
+                                  (clj->js (cond-> {:chatId chat-id
+                                                    :playerId player-id
+                                                    :saveId (.-activeSaveId ativo)
+                                                    :fenceGeneration (.-fenceGeneration ativo)
+                                                    :operationId op-id
+                                                    :kind "curar"}
+                                             (some? idx) (assoc :collectionIndex idx)))))]
+                  (envelope-jvm pedido (.formatItemUse jvm-present data (str config/prefix "pk"))))
+
+                ("pocao" "pocao-maxima")
+                (let [item-id (if (= cmd "pocao-maxima") "pocao-maxima" "pocao")
+                      n-str (first resto)
+                      idx (when-not (str/blank? (str n-str))
+                            (let [n (js/parseInt n-str 10)]
+                              (when-not (js/isNaN n) (dec n))))]
+                  (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                          op-id (.stableOperationId jvm-transport
+                                                    (:requestId pedido)
+                                                    (str "item-use:" item-id ":" (or idx "ativo")))
+                          data (desempenho/medir! ctx "pokemon_jvm_item_use"
+                                 #(.useItem jvm
+                                    (clj->js (cond-> {:chatId chat-id
+                                                      :playerId player-id
+                                                      :saveId (.-activeSaveId ativo)
+                                                      :fenceGeneration (.-fenceGeneration ativo)
+                                                      :operationId op-id
+                                                      :itemId item-id}
+                                               (some? idx) (assoc :collectionIndex idx)))))]
+                    (envelope-jvm pedido (.formatItemUse jvm-present data (str config/prefix "pk")))))
+
                 (envelope-jvm pedido
                               (.formatUnavailable jvm-present (str/join " " args))))]
         (entregar-envelope-jvm! message ctx pedido envelope)))))
@@ -978,7 +1076,7 @@
        (if (jvm-configurado?)
          ;; Adaptador JVM: fail-closed; sem fallback Cassandra/legado em falha.
          (-> (p/let [pedido (contexto-pedido message comando argumentos)
-                     args (tokens-args argumentos)
+                     args (tokens-para-jvm comando argumentos)
                      _ (executar-jvm! message ctx pedido args)]
                nil)
              (p/catch (fn [erro]

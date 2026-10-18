@@ -7,6 +7,7 @@
             [pokemon.application.joy :as joy-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.raid :as raid-app]
+            [pokemon.application.shop :as shop-app]
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.eggs :as eggs]
             [pokemon.domain.errors :as err]
@@ -15,6 +16,7 @@
             [pokemon.domain.joy :as joy]
             [pokemon.domain.mundo :as mundo]
             [pokemon.domain.raid :as raid]
+            [pokemon.domain.shop :as shop]
             [pokemon.domain.xp :as xp]))
 
 (defn- require-player!
@@ -473,3 +475,56 @@
                               [(name k) {:tempo-ms (:tempo-ms v)
                                          :pontos (:pontos v)}])
                             eggs/categorias))}))
+
+(defn shop-catalog
+  "Catálogo à venda (preços canônicos) + saldo do save ativo."
+  [store chat-id player-id]
+  (let [player (require-player! store chat-id player-id)
+        slot (:active-save-id player)
+        save (when slot (ports/get-save store chat-id player-id slot))
+        inv (when slot (ports/list-inventory store chat-id player-id slot))
+        cap (when save (shop/capacidade-mochila-save save))
+        occ (shop/ocupacao-mochila (or inv []))]
+    {:chat-id chat-id
+     :player-id player-id
+     :active-save-id slot
+     :fence-generation (:fence-generation player 0)
+     :coins (long (:coins save 0))
+     :capacidade-mochila cap
+     :ocupacao-mochila occ
+     :livres (when cap (max 0 (- (long cap) occ)))
+     :itens (mapv (fn [it]
+                    {:item-id (:item-id it)
+                     :nome (:nome it)
+                     :emoji (:emoji it)
+                     :preco (:preco it)
+                     :descricao (:descricao it)
+                     :expansao (boolean (:expansao? it))})
+                  (shop-app/catalog))}))
+
+(defn inventory-bag
+  "Inventário do save ativo + capacidade da mochila."
+  [store chat-id player-id]
+  (let [player (require-player! store chat-id player-id)
+        slot (:active-save-id player)
+        save (when slot (ports/get-save store chat-id player-id slot))
+        inv (when slot (ports/list-inventory store chat-id player-id slot))
+        cap (when save (shop/capacidade-mochila-save save))
+        occ (shop/ocupacao-mochila (or inv []))
+        linhas (mapv (fn [{:keys [item-id qty]}]
+                       (let [meta (or (shop/item item-id) {})]
+                         {:item-id item-id
+                          :qty (long qty)
+                          :nome (:nome meta item-id)
+                          :emoji (:emoji meta "📦")}))
+                     (filter #(pos? (long (:qty % 0))) (or inv [])))]
+    {:chat-id chat-id
+     :player-id player-id
+     :active-save-id slot
+     :fence-generation (:fence-generation player 0)
+     :coins (long (:coins save 0))
+     :capacidade-mochila cap
+     :ocupacao-mochila occ
+     :livres (when cap (max 0 (- (long cap) occ)))
+     :expansoes-mochila-50 (long (:expansoes-mochila-50 save 0))
+     :itens linhas}))
