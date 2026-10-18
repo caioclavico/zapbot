@@ -14,6 +14,26 @@
 (def recompensa-pe 6)
 (def recompensa-xp-pokemon 6)
 
+(def ligas
+  "Faixas de nível por liga (espelho treinador.cljs)."
+  [{:id "iniciante" :nome "Iniciante" :min 1 :max 10}
+   {:id "bronze" :nome "Bronze" :min 11 :max 25}
+   {:id "prata" :nome "Prata" :min 26 :max 40}
+   {:id "ouro" :nome "Ouro" :min 41 :max 60}
+   {:id "diamante" :nome "Diamante" :min 61 :max 100}])
+
+(defn obter-liga
+  [id]
+  (some #(when (= (str id) (:id %)) %) ligas))
+
+(defn pokemon-elegivel-liga?
+  "Pokémon elegível para a liga da raid (nível na faixa)."
+  [liga-id pokemon]
+  (let [liga (obter-liga liga-id)
+        nivel (long (or (:nivel pokemon) (get pokemon "nivel")
+                        (:level pokemon) 1))]
+    (boolean (and liga pokemon (<= (:min liga) nivel (:max liga))))))
+
 (defn ativa?
   [raid agora]
   (and (contains? #{"inscricoes" "combate"} (str (:fase raid)))
@@ -107,6 +127,10 @@
   (let [hp (long (or (:hp-atual pokemon) (:hp pokemon) 0))]
     (when-not (and pokemon (pos? hp) (some golpe-dano? (or (:golpes pokemon) [])))
       (throw (err/error :invalid_raid_pokemon {:player-id player-id})))
+    (when-not (pokemon-elegivel-liga? (:liga raid) pokemon)
+      (throw (err/error :raid_liga_mismatch
+                        {:liga (:liga raid)
+                         :nivel (or (:nivel pokemon) (get pokemon "nivel"))})))
     (-> raid
         (update :ordem conj player-id)
         (assoc-in [:participantes player-id]

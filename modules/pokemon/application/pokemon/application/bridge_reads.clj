@@ -4,11 +4,13 @@
   (:require [pokemon.application.gym :as gym-app]
             [pokemon.application.hunt :as hunt-app]
             [pokemon.application.ports :as ports]
+            [pokemon.application.raid :as raid-app]
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.hunt :as hunt]
             [pokemon.domain.mundo :as mundo]
+            [pokemon.domain.raid :as raid]
             [pokemon.domain.xp :as xp]))
 
 (defn- require-player!
@@ -267,3 +269,113 @@
      :completo? (and (= 3 (count idxs))
                      (= 3 (count (set idxs)))
                      (= 3 (count (remove nil? membros))))}))
+
+(defn- raid-participant-dto
+  [pid p viewer-id]
+  (cond-> {:player-id pid
+           :nome (:nome p)
+           :hp (:hp p)
+           :dano (:dano p 0)
+           :collection-index (:collection-index p)
+           :pokemon (encounter-pokemon-dto (:pokemon p))
+           :voce? (= pid viewer-id)}
+    (= pid viewer-id)
+    (assoc :save-id (:save-id p)
+           :fence-generation (:fence-generation p))))
+
+(defn- raid-dto
+  [raid player-id agora]
+  (when raid
+    (let [fase (str (:fase raid))
+          ativa (or (raid/ativa? raid agora) (= "vitoria" fase))
+          parts (:participantes raid {})
+          viewer (get parts player-id)
+          cap (get-in raid [:capturas player-id])]
+      {:raid-id (:raid-id raid)
+       :chat-id (:chat-id raid)
+       :ginasio (:ginasio raid)
+       :nome-ginasio (:nome-ginasio raid)
+       :nivel-ginasio (:nivel-ginasio raid)
+       :liga (:liga raid)
+       :fase fase
+       :ativa ativa
+       :expira (:expira raid)
+       :captura-expira (:captura-expira raid)
+       :hp-chefe (:hp-chefe raid)
+       :hp-max (:hp-max raid)
+       :vez (:vez raid)
+       :sua-vez? (= player-id (:vez raid))
+       :turn-index (:turn-index raid 0)
+       :ordem (:ordem raid [])
+       :n-participantes (count (:ordem raid []))
+       :inscrito? (boolean viewer)
+       :chefe (encounter-pokemon-dto (:chefe raid))
+       :participantes
+       (mapv (fn [pid]
+               (raid-participant-dto pid (get parts pid) player-id))
+             (:ordem raid []))
+       :captura-pendente
+       (boolean (and player-id (raid/captura-pendente? raid player-id agora)))
+       :captura (when cap
+                  {:tentativas (:tentativas cap 0)
+                   :capturou (boolean (:capturou cap))})
+       :rewards-paid (boolean (:rewards-paid? raid))})))
+
+(defn- raid-visivel?
+  "Inscrições/combate não expirados, ou vitória ainda na janela de captura."
+  [raid agora]
+  (when raid
+    (let [fase (str (:fase raid))]
+      (or (raid/ativa? raid agora)
+          (and (= "vitoria" fase)
+               (some-> (:captura-expira raid)
+                       (as-> t (< (long agora) (long t)))))))))
+
+(defn active-raid
+  "Raid ativa (inscrições/combate) ou janela de captura pós-vitória."
+  [store chat-id player-id {:keys [agora-ms]}]
+  (let [player (require-player! store chat-id player-id)
+        agora (long (or agora-ms (System/currentTimeMillis)))
+        raid0 (raid-app/active-raid store chat-id)
+        raid (when (raid-visivel? raid0 agora) raid0)
+        inv (when-let [slot (:active-save-id player)]
+              (ports/list-inventory store chat-id player-id slot))]
+    {:chat-id chat-id
+     :player-id player-id
+     :active-save-id (:active-save-id player)
+     :fence-generation (:fence-generation player 0)
+     :agora agora
+     :raid (raid-dto raid player-id agora)
+     :inventory (or inv [])}))
+
+(defn raid-eligible-pokemon
+  "Índices da coleção aptos para a liga da raid ativa (texto !pk raide time)."
+  ([store chat-id player-id]
+   (raid-eligible-pokemon store chat-id player-id {}))
+  ([store chat-id player-id {:keys [agora-ms]}]
+   (let [player (require-player! store chat-id player-id)
+         slot (:active-save-id player)
+         agora (long (or agora-ms (System/currentTimeMillis)))
+         raid0 (raid-app/active-raid store chat-id)
+         raid (when (raid-visivel? raid0 agora) raid0)
+         _ (when-not (and raid (= "inscricoes" (str (:fase raid))))
+             (throw (err/error :raid_not_open {:fase (:fase raid)})))
+         colecao (when slot (ports/list-collection store chat-id player-id slot))
+         aptos (filterv
+                (fn [p]
+                  (and (pos? (long (:hp-atual p 0)))
+                       (raid/pokemon-elegivel-liga? (:liga raid) p)
+                       (some (fn [g]
+                               (let [c (or (:classe g) (get g "classe"))
+                                     poder (or (:poder g) (get g "poder") 0)]
+                                 (and (contains? #{"fisico" "especial" :fisico :especial} c)
+                                      (pos? (long poder)))))
+                             (or (:golpes p) []))))
+                (or colecao []))]
+     {:chat-id chat-id
+      :player-id player-id
+      :liga (:liga raid)
+      :raid-id (:raid-id raid)
+      :aptos (mapv #(assoc (pokemon-dto %)
+                           :collection-index (:collection-index %))
+                   aptos)})))

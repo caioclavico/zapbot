@@ -126,6 +126,11 @@
         idx (long (:collection-index request))
         poke (when (< idx (count colecao)) (nth colecao idx))
         _ (when-not poke (throw (err/error :pokemon_not_found {:idx idx})))
+        _ (when-not (raid/pokemon-elegivel-liga? (:liga raid) poke)
+            (throw (err/error :raid_liga_mismatch
+                              {:liga (:liga raid)
+                               :nivel (:nivel poke)
+                               :idx idx})))
         agora (long (or (:agora request) (System/currentTimeMillis)))
         nome (or (:nome request) player-id)
         raid' (raid/entrar raid

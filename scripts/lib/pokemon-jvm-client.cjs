@@ -240,6 +240,16 @@ function createClient(config = {}) {
     setGymTeam: (body) => mutateOnce('/v1/gyms/team', body),
     healGym: (body) => mutateOnce('/v1/gyms/heal', body),
     startGymChallenge: (body) => mutateOnce('/v1/gyms/challenge', body),
+    getActiveRaid: ({ chatId, playerId, agoraMs }) =>
+      request('GET', `/v1/raids/active${q({ chatId, playerId, agoraMs })}`),
+    getRaidEligible: ({ chatId, playerId }) =>
+      request('GET', `/v1/raids/eligible${q({ chatId, playerId })}`),
+    openRaid: (body) => mutateOnce('/v1/raids/open', body),
+    joinRaid: (body) => mutateOnce('/v1/raids/join', body),
+    leaveRaid: (body) => mutateOnce('/v1/raids/leave', body),
+    startRaid: (body) => mutateOnce('/v1/raids/start', body),
+    raidAttack: (body) => mutateOnce('/v1/raids/attack', body),
+    raidCapture: (body) => mutateOnce('/v1/raids/capture', body),
     close: () => agent.destroy()
   };
 }

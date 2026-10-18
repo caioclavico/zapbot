@@ -1846,13 +1846,11 @@
     (load-raid (d/db conn) raid-id))
 
   (active-raid [_ chat-id]
+    ;; Retorna o ponteiro do chat; expiração/visibilidade ficam na bridge
+    ;; com o agora do request (testes usam timestamps sintéticos).
     (let [ptr (d/pull (d/db conn) '[*] [:chat-active-raid/chat-id chat-id])]
       (when (present? ptr)
-        (let [r (load-raid (d/db conn) (:chat-active-raid/raid-id ptr))
-              agora (System/currentTimeMillis)]
-          (when (and r (or (raid-domain/ativa? r agora)
-                           (= "vitoria" (str (:fase r)))))
-            r)))))
+        (load-raid (d/db conn) (:chat-active-raid/raid-id ptr)))))
 
   (open-raid! [_ writer-ctx request]
     (let [payload (ops/raid-open-payload request)

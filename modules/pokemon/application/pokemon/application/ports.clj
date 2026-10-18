@@ -108,7 +108,7 @@
     "Snapshot da raid ou nil.")
 
   (active-raid [this chat-id]
-    "Raid ativa (inscrições/combate e não expirada) do chat ou nil.")
+    "Raid apontada pelo chat (ponteiro), ou nil. Expiração fica na bridge.")
 
   (open-raid! [this writer-ctx request]
     "Abre inscrições de raid no chat (criação manual/harness).")

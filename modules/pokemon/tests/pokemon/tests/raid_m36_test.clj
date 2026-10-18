@@ -59,7 +59,8 @@
    s chat "ash"
    {:operation-id (str "open-" rid)
     :raid-id rid :ginasio "pedra" :nome-ginasio "Pedra"
-    :nivel-ginasio 10 :liga "iniciante" :chefe chefe
+    ;; mon de teste é nv.20 → liga bronze (11–25)
+    :nivel-ginasio 10 :liga "bronze" :chefe chefe
     :agora 1000})
   (raid-app/join-raid!
    s chat "ash"
@@ -247,7 +248,7 @@
     (raid-app/open-raid!
      s chat "ash"
      {:operation-id "open-jr" :raid-id rid :ginasio "pedra"
-      :liga "iniciante" :chefe chefe :agora 1})
+      :liga "bronze" :chefe chefe :agora 1})
     (doseq [p ["ash" "misty"]]
       (.start
        (Thread.

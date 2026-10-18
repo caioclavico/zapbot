@@ -273,6 +273,21 @@ function formatError(err) {
     GYM_TEAM_UNHEALTHY: '❓ Escale três Pokémon saudáveis: !pk gin time auto ou !pk gin time 1,2,3.',
     INVALID_GYM_NPC_TEAM: '❌ Não consegui montar o time do líder. Tente de novo.',
     UNKNOWN_GYM: '❓ Ginásio desconhecido. Use pedra, agua, eletrico, planta ou fogo.',
+    RAID_NOT_FOUND: '❓ Nenhuma raide ativa neste chat.',
+    RAID_NOT_OPEN: '❓ As inscrições desta raide não estão abertas.',
+    ALREADY_IN_RAID: '⚔️ Você já está inscrito nesta raide.',
+    RAID_FULL: '🚫 A raide já está cheia (máx. 6).',
+    RAID_CANNOT_LEAVE: '🚫 Só é possível sair durante as inscrições.',
+    RAID_NEED_PLAYERS: '❓ Precisa de pelo menos 2 inscritos para iniciar.',
+    RAID_NOT_IN_COMBAT: '❓ A raide não está em combate.',
+    RAID_NOT_YOUR_TURN: '⏳ Não é a sua vez de atacar.',
+    RAID_SAVE_MISMATCH: '⚠️ Você mudou de save após entrar — reentre na próxima raide.',
+    RAID_LIGA_MISMATCH: '❓ Esse Pokémon não está na faixa de nível da liga da raide.',
+    INVALID_RAID_POKEMON: '❓ Escolha um Pokémon saudável com golpe ofensivo: !pk raide time.',
+    INVALID_RAID_MOVE: '❓ Use !pk raide atacar <1-4> com um golpe ofensivo.',
+    RAID_CAPTURE_UNAVAILABLE: '❓ Captura indisponível (sem dano, janela expirada ou já capturou).',
+    RAID_NOT_CREATOR: '🚫 Só quem abriu a raide pode iniciar (quando há criador).',
+    NOT_IN_RAID: '❓ Você não está nesta raide.',
     TIMEOUT: '⏳ Bridge JVM demorou. Se foi escrita, confira com !pk recibo <id> antes de repetir.',
     CONNECT_TIMEOUT: '⚠️ Não conectou na bridge JVM. Nenhuma escrita foi ao Cassandra.',
     NETWORK: '⚠️ Bridge JVM indisponível. Nenhuma escrita foi ao Cassandra.',
@@ -285,7 +300,7 @@ function formatUnavailable(commandHint) {
   return [
     '🚧 *Comando ainda não integrado no adaptador JVM*',
     commandHint ? `Pedido: \`${commandHint}\`` : null,
-    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `cacar`, `capturar`/`cap`, `ginasio`/`gin`, `recibo <id>`.',
+    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `cacar`, `capturar`/`cap`, `ginasio`/`gin`, `raide`/`raid`, `recibo <id>`.',
     'Sem fallback automático para Cassandra. Use `POKEMON_ADAPTER=legacy` para o restante.'
   ].filter(Boolean).join('\n');
 }
@@ -641,9 +656,142 @@ function formatGymBlocked(action) {
   const map = {
     ranking: '🚧 Ranking de ginásio ainda não persistido no Datomic.',
     historico: '🚧 Histórico de ginásio ainda não persistido no Datomic.',
-    raid: '🚧 Raides ficam fora do M4.7/M4.8.'
+    cancelar: '🚧 Cancelar raide ainda não está no núcleo JVM.',
+    abrir: '🚧 A aparição automática de raides foi removida; abertura admin não está no WhatsApp.'
   };
   return map[action] || formatUnavailable(`ginasio ${action || ''}`.trim());
+}
+
+const RAID_SUB = {
+  ent: 'entrar', entrar: 'entrar',
+  sai: 'sair', sair: 'sair',
+  ini: 'iniciar', iniciar: 'iniciar',
+  atk: 'atacar', atacar: 'atacar',
+  cap: 'capturar', capturar: 'capturar',
+  tm: 'time', time: 'time',
+  abr: 'abrir', abrir: 'abrir',
+  can: 'cancelar', cancelar: 'cancelar'
+};
+
+function resolveRaidSubcommand(token) {
+  const raw = String(token || '').toLowerCase();
+  return RAID_SUB[raw] || raw || null;
+}
+
+function formatRaidStatus(data, prefix = '!pk') {
+  const r = data && data.raid;
+  if (!r) {
+    return [
+      '🏛️ Nenhuma raide ativa neste chat.',
+      `Ajuda: ${prefix} raide ajuda`
+    ].join('\n');
+  }
+  const chefe = r.chefe || {};
+  const lines = [
+    `⚔️ *Raide — ${chefe.nome || 'Chefe'}* / ${r.liga || '?'}`,
+    `🏛️ ${r.nomeGinasio || r.ginasio || 'Ginásio'} · fase *${r.fase}*`,
+    r.fase === 'combate' || r.fase === 'vitoria'
+      ? `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`
+      : `Inscritos: ${r.nParticipantes || 0}/6`,
+    r.vez ? `Vez: ${r.suaVez ? '*você*' : r.vez}` : null,
+    r.capturaPendente
+      ? `🎯 Captura aberta: ${prefix} raide capturar <bola>`
+      : null,
+    '',
+    r.fase === 'inscricoes'
+      ? `${prefix} raide entrar auto · ${prefix} raide iniciar · ${prefix} raide sair`
+      : (r.fase === 'combate'
+        ? `${prefix} raide atacar <1-4>`
+        : null)
+  ];
+  if (Array.isArray(r.participantes) && r.participantes.length) {
+    lines.push('', '*Participantes*');
+    for (const p of r.participantes) {
+      lines.push(
+        `• ${p.voce ? '👉 ' : ''}${p.nome || p.playerId}`
+        + (p.hp != null ? ` · HP ${p.hp}` : '')
+        + (p.dano ? ` · dano ${p.dano}` : '')
+      );
+    }
+  }
+  return lines.filter(v => v !== null).join('\n');
+}
+
+function formatRaidJoin(data, prefix = '!pk') {
+  const r = (data && data.raid) || {};
+  return [
+    `✅ Você entrou na raide de *${r.nomeGinasio || r.ginasio || 'ginásio'}*!`,
+    `Inscritos: ${r.nParticipantes || '?'}/6 · liga ${r.liga || '?'}`,
+    data.collectionIndex != null
+      ? `Pokémon nº ${Number(data.collectionIndex) + 1} da coleção.`
+      : null,
+    `Quando houver ≥2: ${prefix} raide iniciar`
+  ].filter(Boolean).join('\n');
+}
+
+function formatRaidLeave() {
+  return '👋 Você saiu das inscrições da raide.';
+}
+
+function formatRaidStart(data, prefix = '!pk') {
+  const r = (data && data.raid) || {};
+  return [
+    `🔥 Combate iniciado! Chefe com ${r.hpChefe || r.hpMax || '?'} HP.`,
+    `Vez: ${r.vez || '?'}`,
+    `Ataque: ${prefix} raide atacar <1-4>`
+  ].join('\n');
+}
+
+function formatRaidAttack(data, prefix = '!pk') {
+  const r = (data && data.raid) || {};
+  if (data.venceu) {
+    return [
+      `🏅 *Vitória!* O chefe caiu (${data.dano || 0} de dano no golpe final).`,
+      'Recompensas creditadas a quem causou dano (>0).',
+      `Captura: ${prefix} raide capturar <bola>`
+    ].join('\n');
+  }
+  if (data.derrota) {
+    return '💀 A raide foi derrotada. Sem recompensas.';
+  }
+  return [
+    `💥 Dano ${data.dano != null ? data.dano : '?'} · revide ${data.revide != null ? data.revide : 0}`,
+    `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`,
+    r.vez ? `Próxima vez: ${r.vez}` : null,
+    data.duplicate ? '_idempotente: mesmo operationId_' : null,
+    `Continue: ${prefix} raide atacar <1-4>`
+  ].filter(Boolean).join('\n');
+}
+
+function formatRaidCapture(data, prefix = '!pk') {
+  const bola = data.bola || 'pokebola';
+  if (data.capturou) {
+    return [
+      `✅ Captura concluída com ${bola}! (${data.chance != null ? data.chance : '?'}%)`,
+      'O chefe entrou na sua coleção (nv.1).'
+    ].join('\n');
+  }
+  return [
+    `💥 A ${bola} falhou (${data.chance != null ? data.chance : '?'}%).`,
+    `Tentativas: ${data.tentativas || '?'}/3`,
+    `Tente de novo: ${prefix} raide capturar <bola>`
+  ].join('\n');
+}
+
+function formatRaidEligible(data, prefix = '!pk') {
+  const aptos = (data && data.aptos) || [];
+  if (!aptos.length) {
+    return `❓ Nenhum Pokémon apto para a liga *${data.liga || '?'}*. Cure e confira o nível.`;
+  }
+  const linhas = aptos.slice(0, 12).map((p, i) => {
+    const n = (p.collectionIndex != null ? p.collectionIndex : i) + 1;
+    return `${n}. ${p.nome || '?'} Nv.${p.nivel || '?'}`;
+  });
+  return [
+    `⚔️ *Aptos para a raide* (liga ${data.liga || '?'})`,
+    ...linhas,
+    `${prefix} raide entrar <n> · ${prefix} raide entrar auto`
+  ].join('\n');
 }
 
 /** Aliases alinhados ao legado (ajuda.cljs / core). */
@@ -660,6 +808,7 @@ const ALIASES = {
   atacar: 'atacar', ataque: 'atacar', atk: 'atacar',
   ginasio: 'ginasio', ginásio: 'ginasio', ginasios: 'ginasio', ginásios: 'ginasio',
   gin: 'ginasio',
+  raid: 'raid', raide: 'raid', raides: 'raid', raids: 'raid',
   recibo: 'recibo', op: 'recibo', operation: 'recibo'
 };
 
@@ -696,6 +845,14 @@ module.exports = {
   formatGymBlocked,
   formatGymChallengeStart,
   formatGymResolve,
+  resolveRaidSubcommand,
+  formatRaidStatus,
+  formatRaidJoin,
+  formatRaidLeave,
+  formatRaidStart,
+  formatRaidAttack,
+  formatRaidCapture,
+  formatRaidEligible,
   filtrarColecao,
   interpretarFiltros,
   golpesLinha

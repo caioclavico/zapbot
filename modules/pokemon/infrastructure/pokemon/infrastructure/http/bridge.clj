@@ -67,14 +67,19 @@
      :invalid_save_slot :invalid_slot_id :invalid_identity :unknown_ball
      :area_unavailable :invalid_wild_pokemon :hunt_no_candidates
      :unknown_gym :unknown_heal_item :invalid_gym_team
-     :invalid_gym_npc_team :invalid_motivation_index) 400
+     :invalid_gym_npc_team :invalid_motivation_index
+     :invalid_raid_pokemon :invalid_raid_move :raid_not_found) 400
     (:stale_writer_fence :writer_fence_conflict :activate_conflict
      :receipt_payload_mismatch :reward_conflict :reward_save_mismatch
      :operation_forbidden :battle_pending :battle_already_active
      :battle_save_mismatch :encounter_owner_mismatch :encounter_not_ready
      :stale_turn_index :chat_hunt_busy :hunt_cooldown
      :gym_cas_conflict :not_gym_leader :gym_defense_pending
-     :cannot_challenge_own_gym :gym_locked :gym_daily_limit) 409
+     :cannot_challenge_own_gym :gym_locked :gym_daily_limit
+     :raid_not_open :already_in_raid :raid_full :raid_cannot_leave
+     :raid_not_creator :not_in_raid :raid_need_players :raid_not_in_combat
+     :raid_not_your_turn :raid_save_mismatch :raid_liga_mismatch
+     :raid_capture_unavailable) 409
     :operation_pending 409
     (:insufficient_item :collection_full :active_pokemon_fainted
      :no_active_pokemon :motivation_full :gym_empty :gym_team_unhealthy) 422
@@ -174,7 +179,9 @@
                                       "battle-start" "battle-turn"
                                       "hunt-plan" "hunt-start"
                                       "gyms-read" "gym-team" "gym-heal"
-                                      "gym-challenge"]}))
+                                      "gym-challenge"
+                                      "raid-read" "raid-join" "raid-leave"
+                                      "raid-start" "raid-attack" "raid-capture"]}))
 
             (or (str/starts-with? path "/admin")
                 (str/starts-with? path "/v1/admin")
@@ -580,6 +587,213 @@
                                           {:required ["chatId" "playerId" "gymId"]})))
                       (ok! ex (reads/gym-detail store chat-id player-id gym-id
                                                 {:agora-ms agora}))))
+
+                (= path "/v1/raids/active")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")
+                          agora (long-or-nil (g qs "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (reads/active-raid store chat-id player-id
+                                                 {:agora-ms agora}))))
+
+                (= path "/v1/raids/eligible")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (reads/raid-eligible-pokemon store chat-id player-id))))
+
+                (= path "/v1/raids/open")
+                (do (require-method! ex #{"POST"})
+                    (when-not allow-test-rng?
+                      (throw (err/error :operation_forbidden
+                                        {:reason "raid-open-harness-only"})))
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          raid-id (g body "raidId" "raid-id")
+                          ginasio (g body "ginasio" "gymId")
+                          liga (g body "liga")
+                          chefe (or (g body "chefe" "boss") {})
+                          nivel (long-or-nil (g body "nivelGinasio" "nivel-ginasio"))
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (str/blank? ginasio))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "ginasio"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/open-raid!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :ginasio ginasio
+                                                 :chefe chefe}
+                                          raid-id (assoc :raid-id raid-id)
+                                          liga (assoc :liga liga)
+                                          nivel (assoc :nivel-ginasio nivel)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/raids/join")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          raid-id (g body "raidId" "raid-id")
+                          idx (long-or-nil (g body "collectionIndex" "collection-index"))
+                          auto? (boolean (or (g body "auto") (= "auto" (str (g body "mode")))))
+                          nome (g body "nome" "name")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id)
+                                (and (not auto?) (nil? idx)))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "collectionIndex|auto"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/join-raid!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :auto? auto?}
+                                          raid-id (assoc :raid-id raid-id)
+                                          (some? idx) (assoc :collection-index idx)
+                                          nome (assoc :nome nome)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/raids/leave")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          raid-id (g body "raidId" "raid-id")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/leave-raid!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id}
+                                          raid-id (assoc :raid-id raid-id)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/raids/start")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          raid-id (g body "raidId" "raid-id")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/start-raid!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id}
+                                          raid-id (assoc :raid-id raid-id)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/raids/attack")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          raid-id (g body "raidId" "raid-id")
+                          expected (long-or-nil (g body "expectedTurnIndex"
+                                                   "expected-turn-index"))
+                          move-index (long-or-nil (g body "moveIndex" "move-index"))
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (nil? expected)
+                                (nil? move-index))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "expectedTurnIndex" "moveIndex"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/raid-attack!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :expected-turn-index expected
+                                                 :move-index move-index}
+                                          raid-id (assoc :raid-id raid-id)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/raids/capture")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          raid-id (g body "raidId" "raid-id")
+                          bola (g body "bola" "ball")
+                          roll (long-or-nil (g body "roll"))
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (str/blank? (str bola)))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "bola"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/raid-capture!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :bola bola}
+                                          raid-id (assoc :raid-id raid-id)
+                                          (and allow-test-rng? (some? roll))
+                                          (assoc :roll roll)
+                                          (some? agora) (assoc :agora-ms agora)))))))
 
                 :else
                 (send-json! ex 404

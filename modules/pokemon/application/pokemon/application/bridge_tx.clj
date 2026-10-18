@@ -7,6 +7,7 @@
             [pokemon.application.gym :as gym-app]
             [pokemon.application.hunt :as hunt-app]
             [pokemon.application.ports :as ports]
+            [pokemon.application.raid :as raid-app]
             [pokemon.application.reward :as reward-app]
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.capture :as capture]
@@ -14,7 +15,8 @@
             [pokemon.domain.hunt :as hunt]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]
-            [pokemon.domain.mundo :as mundo]))
+            [pokemon.domain.mundo :as mundo]
+            [pokemon.domain.raid :as raid-domain]))
 
 (defn- save-summary
   [store chat-id player-id slot]
@@ -523,3 +525,197 @@
        :label (:label spec)
        :antes (:antes result)
        :depois (:depois result)})))
+
+(defn- raid-summary
+  [raid]
+  (when raid
+    {:raid-id (:raid-id raid)
+     :fase (:fase raid)
+     :ginasio (:ginasio raid)
+     :nome-ginasio (:nome-ginasio raid)
+     :liga (:liga raid)
+     :hp-chefe (:hp-chefe raid)
+     :hp-max (:hp-max raid)
+     :vez (:vez raid)
+     :turn-index (:turn-index raid 0)
+     :ordem (:ordem raid [])
+     :n-participantes (count (:ordem raid []))
+     :chefe (select-keys (or (:chefe raid) {})
+                         [:nome :species :raridade :hp :tipos :imagem
+                          :imagem-shiny :nivel])
+     :expira (:expira raid)
+     :captura-expira (:captura-expira raid)
+     :rewards-paid (boolean (:rewards-paid? raid))}))
+
+(defn- require-writer!
+  [{:keys [chat-id player-id save-id fence-generation operation-id]}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  {:chat-id chat-id
+   :player-id player-id
+   :save-id save-id
+   :fence-generation (long fence-generation)})
+
+(defn open-raid!
+  "Harness/teste: abre inscrições. Nunca pelo WhatsApp."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id ginasio nome-ginasio nivel-ginasio liga chefe agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        chefe-m (keywordize-keys (or chefe {}))
+        result (raid-app/open-raid!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :raid-id (or raid-id (str operation-id))
+                         :ginasio (str ginasio)
+                         :nome-ginasio (or nome-ginasio ginasio)
+                         :nivel-ginasio (long (or nivel-ginasio 1))
+                         :liga (or liga "iniciante")
+                         :chefe chefe-m
+                         :agora (or agora-ms (System/currentTimeMillis))}
+                  true identity))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :raid (raid-summary (:raid result))}))
+
+(defn join-raid!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id collection-index nome agora-ms auto?]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {:raid-id raid-id})))
+        colecao (ports/list-collection store chat-id player-id save-id)
+        idx (if auto?
+              (let [score (fn [p]
+                            (reduce + 0 (map #(long (or (get p %) 0))
+                                             [:hp-atual :ataque :defesa
+                                              :atq-esp :def-esp :veloc])))
+                    aptos (keep
+                           (fn [p]
+                             (when (and (pos? (long (:hp-atual p 0)))
+                                        (raid-domain/pokemon-elegivel-liga?
+                                         (:liga raid) p)
+                                        (some (fn [g]
+                                                (let [c (or (:classe g) (get g "classe"))
+                                                      poder (long (or (:poder g) (get g "poder") 0))]
+                                                  (and (contains? #{:fisico :especial "fisico" "especial"} c)
+                                                       (pos? poder))))
+                                              (or (:golpes p) [])))
+                               p))
+                           colecao)]
+                (if (seq aptos)
+                  (long (:collection-index (apply max-key score aptos)))
+                  (throw (err/error :invalid_raid_pokemon {:auto? true}))))
+              (long collection-index))
+        result (raid-app/join-raid!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :collection-index (long idx)
+                 :nome (or nome player-id)
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :raid (raid-summary (:raid result))
+     :collection-index (long idx)
+     :participant (select-keys (:participant result)
+                               [:nome :hp :dano :collection-index])}))
+
+(defn leave-raid!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        result (raid-app/leave-raid!
+                store writer-ctx
+                ;; payload-hash de leave reusa raid-join (índice irrelevante).
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :collection-index 0
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :raid (raid-summary (:raid result))}))
+
+(defn start-raid!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        result (raid-app/start-raid!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :raid (raid-summary (:raid result))}))
+
+(defn raid-attack!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id expected-turn-index move-index agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        result (raid-app/attack!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :expected-turn-index (long (or expected-turn-index
+                                                (:turn-index raid 0)))
+                 :move-index (long (or move-index 0))
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :dano (:dano result)
+     :revide (:revide result)
+     :venceu (boolean (:venceu? result))
+     :derrota (boolean (:derrota? result))
+     :rewards (:rewards result)
+     :raid (raid-summary (:raid result))}))
+
+(defn raid-capture!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id bola roll agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        bola-id (or (normalize-ball bola)
+                    (throw (err/error :unknown_ball {:bola bola})))
+        result (raid-app/capture!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :raid-id (:raid-id raid)
+                         :bola bola-id
+                         :agora (or agora-ms (System/currentTimeMillis))}
+                  (some? roll) (assoc :roll (long roll))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :capturou (boolean (:sucesso? result))
+     :chance (:chance result)
+     :roll (:roll result)
+     :tentativas (:tentativas result)
+     :bola bola-id
+     :raid-id (:raid-id raid)
+     :save-id save-id
+     :fence-generation (long fence-generation)}))
