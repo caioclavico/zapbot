@@ -330,14 +330,28 @@ function formatHuntStart(plan, result, prefix = '!pk') {
   ].filter(Boolean).join('\n');
 }
 
+function golpesLinha(p) {
+  const gs = (p && p.golpes) || [];
+  if (!gs.length) return null;
+  return gs.map((g, i) => {
+    const nome = g.nomeExibicao || g['nome-exibicao'] || g.nome || g.slug || '?';
+    const poder = g.poder != null ? g.poder : '?';
+    const tipo = g.tipo || '?';
+    return `${i + 1}. ${nome} (${tipo}/${poder})`;
+  }).join(' · ');
+}
+
 function formatBattleTurn(data, prefix = '!pk') {
   const b = (data && data.battle) || {};
   const hp = b.hp || {};
-  const o = (b.pokemons && b.pokemons.o) || (data.battle && data.battle.pokemonO) || {};
+  const o = b.pokemonO || (b.pokemons && b.pokemons.o) || {};
+  const x = b.pokemonX || (b.pokemons && b.pokemons.x) || {};
   const nome = o.nome || o.species || 'selvagem';
+  const area = b.area || {};
   if (data.aguardandoCaptura || b.aguardandoCaptura) {
     return [
       `🏁 *${nome}* foi derrotado!`,
+      area.nome ? `${area.emoji || '🗺️'} ${area.nome}` : null,
       'Agora você pode capturar:',
       `${prefix} capturar`,
       data.chanceBaseCaptura != null
@@ -351,11 +365,17 @@ function formatBattleTurn(data, prefix = '!pk') {
   if (b.outcome === 'flee' || data.outcome === 'flee') {
     return `💨 *${nome}* fugiu durante a batalha!`;
   }
+  const la = b.lastAction || {};
+  const dano = la.dano != null ? `Último golpe: ${la.dano} de dano.` : null;
   return [
+    area.nome ? `${area.emoji || '🗺️'} *${area.nome}*` : null,
     `⚔️ Turno ${b.turnIndex != null ? b.turnIndex : '?'}`,
-    `HP você: ${hp.x != null ? hp.x : '?'} · selvagem: ${hp.o != null ? hp.o : '?'}`,
+    `HP *${x.nome || 'você'}*: ${hp.x != null ? hp.x : '?'} · *${nome}*: ${hp.o != null ? hp.o : '?'}`,
+    (o.tipos && o.tipos.length) ? `Tipos selvagem: ${o.tipos.join(', ')}` : null,
+    dano,
+    golpesLinha(x) ? `Seus golpes: ${golpesLinha(x)}` : null,
     `Continue: ${prefix} atacar <1-4>`
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 const BOLA_LABEL = {
@@ -497,5 +517,6 @@ module.exports = {
   formatCaptureResult,
   resolveCommand,
   filtrarColecao,
-  interpretarFiltros
+  interpretarFiltros,
+  golpesLinha
 };

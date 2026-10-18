@@ -14,6 +14,7 @@
 (def ^:private transport (js/require "../scripts/lib/pokemon-http-client.cjs"))
 (def ^:private jvm-transport (js/require "../scripts/lib/pokemon-jvm-client.cjs"))
 (def ^:private jvm-present (js/require "../scripts/lib/pokemon-jvm-present.cjs"))
+(def ^:private jvm-media (js/require "../scripts/lib/pokemon-jvm-media.cjs"))
 (def ^:private pokeapi (js/require "../scripts/lib/pokemon-pokeapi.cjs"))
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 (def ^:private versao-bot (.-version (js/require "../package.json")))
@@ -252,8 +253,26 @@
     (entregar! nil (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
                ctx (str "jvm:" (:requestId pedido)) resposta)))
 
+(defn- envelope-jvm
+  "Texto obrigatório; imagem opcional. Efeitos ficam vazios (não são TX Datomic)."
+  ([pedido texto] (envelope-jvm pedido texto nil))
+  ([pedido texto imagem]
+   (if imagem
+     (.envelope jvm-present (:requestId pedido) texto
+                #js {:image imagem :caption texto :effects #js []})
+     (.envelope jvm-present (:requestId pedido) texto #js {:effects #js []}))))
+
+(defn- render-seguro!
+  "Render de mídia pós-TX. Qualquer falha → nil (nunca reexecuta gameplay)."
+  [ctx metrica f]
+  (-> (desempenho/medir! ctx metrica f)
+      (p/catch (fn [err]
+                 (js/console.error (str "mídia JVM (" metrica "):") err)
+                 nil))))
+
 (defn- executar-jvm! [message ctx pedido args]
-  ;; Identidade só do contexto WhatsApp (pedido); formatação só no present Node.
+  ;; Identidade só do contexto WhatsApp; formatação/mídia só no Node.
+  ;; Gameplay (JVM) completa antes de qualquer composição de imagem.
   (let [jvm (cliente-jvm!)
         chat-id (:chatId pedido)
         player-id (:playerId pedido)
@@ -263,34 +282,43 @@
     (if-not cmd
       (entregar-envelope-jvm!
        message ctx pedido
-       (.envelope jvm-present (:requestId pedido)
-                  (.formatUnavailable jvm-present (str/join " " args))))
-      (p/let [texto
+       (envelope-jvm pedido (.formatUnavailable jvm-present (str/join " " args))))
+      (p/let [envelope
               (case cmd
                 "treinador"
                 (p/let [data (desempenho/medir! ctx "pokemon_jvm_trainer"
-                                #(.getTrainer jvm #js {:chatId chat-id :playerId player-id}))]
-                  (.formatTrainer jvm-present data player-name))
+                                #(.getTrainer jvm #js {:chatId chat-id :playerId player-id}))
+                        texto (.formatTrainer jvm-present data player-name)
+                        ativo (.-ativo data)
+                        img (when ativo
+                              (render-seguro! ctx "pokemon_jvm_media_trainer"
+                                #(.renderSpriteCard jvm-media ativo
+                                                    #js {:filename "treinador-ativo.png"
+                                                         :size 280})))]
+                  (envelope-jvm pedido texto img))
 
                 "time"
                 (p/let [data (desempenho/medir! ctx "pokemon_jvm_collection"
                                 #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))]
-                  (.formatCollection jvm-present data (clj->js resto) (str config/prefix "pk")))
+                  ;; Grade de 12 sprites ainda acoplada ao legado; só texto no M4.6.
+                  (envelope-jvm pedido
+                                (.formatCollection jvm-present data (clj->js resto)
+                                                   (str config/prefix "pk"))))
 
                 "save"
                 (p/let [data (desempenho/medir! ctx "pokemon_jvm_active"
                                 #(.getActiveSave jvm #js {:chatId chat-id :playerId player-id}))]
-                  (.formatActiveSave jvm-present data))
+                  (envelope-jvm pedido (.formatActiveSave jvm-present data)))
 
                 "saves"
                 (p/let [data (desempenho/medir! ctx "pokemon_jvm_saves"
                                 #(.listSaves jvm #js {:chatId chat-id :playerId player-id}))]
-                  (.formatSavesList jvm-present data))
+                  (envelope-jvm pedido (.formatSavesList jvm-present data)))
 
                 "iniciar"
                 (p/let [data (desempenho/medir! ctx "pokemon_jvm_ensure"
                                 #(.ensureTrainer jvm #js {:chatId chat-id :playerId player-id}))]
-                  (.formatEnsure jvm-present data))
+                  (envelope-jvm pedido (.formatEnsure jvm-present data)))
 
                 "ativar"
                 (let [slot (first resto)]
@@ -303,7 +331,7 @@
                                          :playerId player-id
                                          :saveId slot
                                          :expectedFenceGeneration (.-fenceGeneration antes)}))]
-                    (.formatActivate jvm-present data)))
+                    (envelope-jvm pedido (.formatActivate jvm-present data))))
 
                 "recibo"
                 (let [op-id (first resto)]
@@ -314,7 +342,7 @@
                                      #js {:operationId op-id
                                           :chatId chat-id
                                           :playerId player-id}))]
-                    (.formatReceipt jvm-present data)))
+                    (envelope-jvm pedido (.formatReceipt jvm-present data))))
 
                 "cacar"
                 (p/let [plano (desempenho/medir! ctx "pokemon_jvm_hunt_plan"
@@ -324,11 +352,12 @@
                                          :areaId (not-empty (str/join " " resto))}))
                         bloqueio (.formatHuntEligibility jvm-present plano)]
                   (if bloqueio
-                    bloqueio
+                    (envelope-jvm pedido bloqueio)
                     (p/let [cands (desempenho/medir! ctx "pokemon_jvm_pokeapi"
                                      #(.buildHuntCandidates pokeapi plano))
                             op-id (.stableOperationId jvm-transport
                                                       (:requestId pedido) "hunt-start")
+                            ;; TX primeiro — falha de mídia não reexecuta start.
                             data (desempenho/medir! ctx "pokemon_jvm_hunt_start"
                                    #(.startHunt jvm
                                       #js {:chatId chat-id
@@ -344,20 +373,26 @@
                                            :candidates cands}))
                             texto (.formatHuntStart jvm-present plano data
                                                     (str config/prefix "pk"))
-                            img-url (some-> data .-selvagem .-imagem)
-                            img (when img-url
-                                  (desempenho/medir! ctx "pokemon_jvm_sprite"
-                                    #(.fetchImageBase64 pokeapi img-url)))]
-                      (if img
-                        (.envelope jvm-present (:requestId pedido) texto
-                                   #js {:image img :caption texto})
-                        texto))))
+                            battle (.-battle data)
+                            img (render-seguro! ctx "pokemon_jvm_media_hunt"
+                                  #(.renderHuntArena jvm-media
+                                      #js {:area (or (.-area data) (.-area plano))
+                                           :pokemonX (some-> battle .-pokemonX)
+                                           :pokemonO (or (.-selvagem data)
+                                                         (some-> battle .-pokemonO))
+                                           :fugiu false
+                                           :aguardandoCaptura false
+                                           :caption texto
+                                           :mostrarEntrada true}))]
+                      (envelope-jvm pedido texto img))))
 
                 "capturar"
                 (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
                                #(.getEncounter jvm #js {:chatId chat-id :playerId player-id}))]
                   (if (empty? resto)
-                    (.formatCaptureMenu jvm-present enc (str config/prefix "pk"))
+                    (envelope-jvm pedido
+                                  (.formatCaptureMenu jvm-present enc
+                                                      (str config/prefix "pk")))
                     (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
                             op-id (.stableOperationId jvm-transport
                                                       (:requestId pedido)
@@ -371,8 +406,15 @@
                                            :fenceGeneration (.-fenceGeneration ativo)
                                            :operationId op-id
                                            :bola (str/join " " resto)
-                                           :battleId (some-> (.-encounter enc) .-battleId)}))]
-                      (.formatCaptureResult jvm-present data (str config/prefix "pk")))))
+                                           :battleId (some-> (.-encounter enc) .-battleId)}))
+                            texto (.formatCaptureResult jvm-present data
+                                                        (str config/prefix "pk"))
+                            img (render-seguro! ctx "pokemon_jvm_media_capture"
+                                  #(.renderCaptureBall jvm-media
+                                      #js {:bola (or (.-bola data) "pokebola")
+                                           :capturou (boolean (.-capturou data))
+                                           :fugiu (boolean (.-fugiu data))}))]
+                      (envelope-jvm pedido texto img))))
 
                 "atacar"
                 (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
@@ -380,14 +422,15 @@
                         encontro (.-encounter enc)]
                   (cond
                     (nil? encontro)
-                    "❓ Não há caçada/encontro em andamento."
+                    (envelope-jvm pedido "❓ Não há caçada/encontro em andamento.")
 
                     (.-aguardandoCaptura encontro)
-                    (str "🎯 O selvagem já está pronto para captura. Use "
-                         config/prefix "pk capturar.")
+                    (envelope-jvm pedido
+                                  (str "🎯 O selvagem já está pronto para captura. Use "
+                                       config/prefix "pk capturar."))
 
                     (not (.-active encontro))
-                    "❓ Este encontro não está em batalha ativa."
+                    (envelope-jvm pedido "❓ Este encontro não está em batalha ativa.")
 
                     :else
                     (let [idx (js/parseInt (or (first resto) "1") 10)
@@ -409,15 +452,31 @@
                                              :battleId (.-battleId encontro)
                                              :expectedTurnIndex (.-turnIndex encontro)
                                              :action "attack"
-                                             :moveIndex move-idx}))]
-                        (.formatBattleTurn jvm-present data (str config/prefix "pk"))))))
+                                             :moveIndex move-idx}))
+                              texto (.formatBattleTurn jvm-present data
+                                                       (str config/prefix "pk"))
+                              b (.-battle data)
+                              fugiu? (= "flee" (or (.-outcome data) (some-> b .-outcome)))
+                              img (render-seguro! ctx "pokemon_jvm_media_turn"
+                                    #(.renderHuntArena jvm-media
+                                        #js {:area (or (some-> b .-area)
+                                                       (.-area encontro))
+                                             :pokemonX (or (some-> b .-pokemonX)
+                                                           (.-pokemonX encontro))
+                                             :pokemonO (or (some-> b .-pokemonO)
+                                                           (.-pokemonO encontro))
+                                             :fugiu fugiu?
+                                             :aguardandoCaptura
+                                             (boolean (or (.-aguardandoCaptura data)
+                                                          (some-> b .-aguardandoCaptura)))
+                                             :caption texto
+                                             :efeito (.efeitoDeTurno jvm-media data)
+                                             :mostrarEntrada false}))]
+                        (envelope-jvm pedido texto img)))))
 
-                (.formatUnavailable jvm-present (str/join " " args)))]
-        (entregar-envelope-jvm!
-         message ctx pedido
-         (if (.-messages texto)
-           texto
-           (.envelope jvm-present (:requestId pedido) texto)))))))
+                (envelope-jvm pedido
+                              (.formatUnavailable jvm-present (str/join " " args))))]
+        (entregar-envelope-jvm! message ctx pedido envelope)))))
 
 (defn executar [message comando argumentos]
   (let [ctx (desempenho/contexto-de message)

@@ -9,17 +9,17 @@
 
 (def areas
   [{:id "floresta" :nome "Floresta Verde" :emoji "🌳"
-    :tipos #{"grass" "bug" "flying" "normal"}}
+    :tipos #{"grass" "bug" "flying" "normal"} :ceu "#86efac" :chao "#166534"}
    {:id "praia" :nome "Praia Azul" :emoji "🏖️"
-    :tipos #{"water" "ice" "flying" "electric"}}
+    :tipos #{"water" "ice" "flying" "electric"} :ceu "#7dd3fc" :chao "#eab308"}
    {:id "caverna" :nome "Caverna Rochosa" :emoji "🪨"
-    :tipos #{"rock" "ground" "dark" "poison"}}
+    :tipos #{"rock" "ground" "dark" "poison"} :ceu "#475569" :chao "#1e293b"}
    {:id "cidade" :nome "Cidade Pokémon" :emoji "🏙️"
-    :tipos #{"normal" "electric" "steel" "fighting"}}
+    :tipos #{"normal" "electric" "steel" "fighting"} :ceu "#94a3b8" :chao "#334155"}
    {:id "lago" :nome "Lago Encantado" :emoji "🌊"
-    :tipos #{"water" "fairy" "psychic" "grass"}}
+    :tipos #{"water" "fairy" "psychic" "grass"} :ceu "#a5f3fc" :chao "#0f766e"}
    {:id "vulcao" :nome "Vulcão Rubro" :emoji "🌋"
-    :tipos #{"fire" "rock" "ground" "dragon"}}])
+    :tipos #{"fire" "rock" "ground" "dragon"} :ceu "#fb923c" :chao "#7f1d1d"}])
 
 (def climas
   [{:id "ensolarado" :nome "Ensolarado" :emoji "☀️" :tipos #{"fire" "grass" "ground"}}

@@ -120,6 +120,8 @@ function pokemonDeDados(data) {
       || data.sprites?.front_shiny || null,
     imagem: data.sprites?.other?.['official-artwork']?.front_default
       || data.sprites?.front_default || null,
+    // PokeAPI height em decímetros → metros (legado core/altura)
+    altura: data.height != null ? data.height / 10.0 : 1.0,
     tipos,
     habilidade: (data.abilities || []).find(a => !a.is_hidden)?.ability?.name
       || data.abilities?.[0]?.ability?.name || null,

@@ -158,7 +158,7 @@
   [area]
   (when area
     (-> area
-        (select-keys [:id :nome :emoji])
+        (select-keys [:id :nome :emoji :ceu :chao])
         (assoc :tipos (vec (sort (:tipos area)))))))
 
 (defn clima-dto

@@ -5,6 +5,8 @@
             [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.hunt :as hunt]
+            [pokemon.domain.mundo :as mundo]
             [pokemon.domain.xp :as xp]))
 
 (defn- require-player!
@@ -29,7 +31,8 @@
   (select-keys p [:collection-index :id-pokemon :species :nome :nickname
                   :shiny :nivel :hp :hp-atual :status :in-party :tipos
                   :raridade :xp-desde-nivel :ataque :defesa :atq-esp :def-esp
-                  :veloc :amizade]))
+                  :veloc :amizade :imagem :imagem-shiny :altura :golpes
+                  :habilidade]))
 
 (defn- save-profile
   [save]
@@ -105,9 +108,16 @@
 (defn- encounter-pokemon-dto
   [p]
   (when p
-    (select-keys p [:nome :species :nickname :shiny :nivel :hp :hp-atual
-                    :raridade :tipos :ataque :defesa :atq-esp :def-esp :veloc
-                    :imagem :imagem-shiny])))
+    (-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp :hp-atual
+                        :raridade :tipos :ataque :defesa :atq-esp :def-esp :veloc
+                        :imagem :imagem-shiny :altura :golpes :status :habilidade])
+        (cond-> (:shiny? p) (assoc :shiny true)))))
+
+(defn- area-visual
+  "Cores/emoji do bioma para composição de arena no Node (sem Cassandra)."
+  [area-id]
+  (when-let [a (mundo/obter-area (str area-id))]
+    (hunt/area-dto a)))
 
 (defn hunt-plan
   "Plano de caça + elegibilidade (RNG tipos/surto no servidor)."
@@ -153,6 +163,10 @@
           :chance-base-captura chance-base
           :hp (:hp battle)
           :status (:status battle)
+          :bioma (:bioma battle)
+          :clima (:clima battle)
+          :area (area-visual (:bioma battle))
+          :somente-batalha (boolean (:somente-batalha? battle))
           :pokemon-x (encounter-pokemon-dto (get-in battle [:pokemons :x]))
           :pokemon-o (encounter-pokemon-dto (get-in battle [:pokemons :o]))
           :inventory (or inv [])}}))))

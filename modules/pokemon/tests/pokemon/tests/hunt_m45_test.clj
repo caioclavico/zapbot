@@ -66,10 +66,13 @@
   (let [dia "2026-10-17"
         c1 (mundo/clima-do-dia dia)
         c2 (mundo/clima-do-dia dia)
-        areas (mundo/areas-do-dia dia)]
+        areas (mundo/areas-do-dia dia)
+        praia (mundo/obter-area "praia")]
     (is (= (:id c1) (:id c2)))
     (is (= 3 (count areas)))
-    (is (nil? (mundo/area-disponivel "area-inexistente" dia)))))
+    (is (nil? (mundo/area-disponivel "area-inexistente" dia)))
+    (is (= "#7dd3fc" (:ceu praia)))
+    (is (= "#eab308" (:chao praia)))))
 
 (deftest formulas-poder-e-raridade
   (is (= 320 (hunt/poder-alvo-caca 1)))
