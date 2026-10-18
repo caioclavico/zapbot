@@ -1,5 +1,5 @@
 (ns pokemon.migration.fixtures
-  "Fixtures Cassandra sintéticas para M5.0 — nunca dados reais/produção."
+  "Fixtures Cassandra sintéticas para M5.x — nunca dados reais/produção."
   (:require [pokemon.domain.reward :as reward])
   (:import [java.util UUID]))
 
@@ -7,6 +7,8 @@
 (def player-id "player-ash-syn@c.us")
 (def player-orphan-loja "player-loja-orfao@c.us")
 (def group-label "Grupo sintético M5.0")
+
+(def ^:private voltorb-hist-id "hist-voltorb-shiny-001")
 
 (def species-pool
   ["Bulbasaur" "Ivysaur" "Venusaur" "Charmander" "Charmeleon" "Charizard"
@@ -23,8 +25,8 @@
    "Tentacruel" "Geodude" "Graveler" "Golem" "Ponyta" "Rapidash" "Slowpoke"
    "Slowbro" "Magnemite" "Magneton" "Farfetch'd" "Doduo" "Dodrio" "Seel"
    "Dewgong" "Grimer" "Muk" "Shellder" "Cloyster" "Gastly" "Haunter"
-   "Gengar" "Onix" "Drowzee" "Hypno" "Krabby" "Kingler" "Voltorb"
-   "Electrode" "Exeggcute" "Exeggutor" "Cubone" "Marowak" "Hitmonlee"
+   "Gengar" "Onix" "Drowzee" "Hypno" "Krabby" "Kingler" "Electrode"
+   "Exeggcute" "Exeggutor" "Cubone" "Marowak" "Hitmonlee"
    "Hitmonchan" "Lickitung" "Koffing" "Weezing" "Rhyhorn" "Rhydon"
    "Chansey" "Tangela" "Kangaskhan" "Horsea" "Seadra" "Goldeen" "Seaking"
    "Staryu" "Starmie" "Mr. Mime" "Scyther" "Jynx" "Electabuzz" "Magmar"
@@ -40,11 +42,11 @@
                                                                 "UTF-8"))) 0 8)))
 
 (defn- make-pokemon
-  [{:keys [prefix idx species shiny nivel xp-desde-nivel hp]}]
+  [{:keys [prefix idx species shiny nivel xp-desde-nivel hp id-pokemon]}]
   (let [nivel (long (or nivel (+ 5 (mod idx 40))))
         hp (long (or hp (+ 40 (* nivel 2))))
         species (or species (nth species-pool (mod idx (count species-pool))))]
-    {"id-pokemon" (poke-id prefix idx)
+    {"id-pokemon" (or id-pokemon (poke-id prefix idx))
      "nome" species
      "especie" species
      "shiny" (boolean shiny)
@@ -64,42 +66,57 @@
                {"nome" "Choque do Trovão" "tipo" "electric" "poder" 40}]}))
 
 (defn active-team-26
-  "Save atual: 26 Pokémon, inclui Voltorb shiny."
+  "Save atual: 26 Pokémon na equipe, inclui Voltorb shiny (id act-*)."
   []
   (vec
    (for [i (range 26)]
      (cond
        (= i 0) (make-pokemon {:prefix "act" :idx i :species "Pikachu" :nivel 25 :shiny false})
-       (= i 7) (make-pokemon {:prefix "act" :idx i :species "Voltorb" :nivel 18 :shiny true})
+       (= i 7) (make-pokemon {:prefix "act" :idx i :species "Voltorb" :nivel 18 :shiny true
+                              :id-pokemon "act-voltorb-shiny-007"})
        (= i 15) (make-pokemon {:prefix "act" :idx i :species "Gyarados" :nivel 42 :shiny true})
        :else (make-pokemon {:prefix "act" :idx i})))))
 
 (defn historical-team-119
-  "Histórico independente: 119 Pokémon (não mesclar com o atual)."
+  "Histórico independente: 100 equipe + 19 PC = 119.
+   Voltorb shiny com id estável hist-voltorb-shiny-001 (critério de matching)."
   []
-  (vec
-   (for [i (range 119)]
-     (cond
-       (= i 3) (make-pokemon {:prefix "hist" :idx i :species "Voltorb" :nivel 12 :shiny true})
-       (= i 50) (make-pokemon {:prefix "hist" :idx i :species "Dragonite" :nivel 55 :shiny true})
-       :else (make-pokemon {:prefix "hist" :idx i})))))
+  (let [equipe
+        (vec
+         (for [i (range 100)]
+           (cond
+             (= i 0) (make-pokemon {:prefix "hist" :idx i :species "Pikachu" :nivel 30})
+             (= i 3) (make-pokemon {:prefix "hist" :idx i :species "Voltorb" :nivel 12 :shiny true
+                                    :id-pokemon voltorb-hist-id})
+             (= i 50) (make-pokemon {:prefix "hist" :idx i :species "Dragonite" :nivel 55 :shiny true})
+             :else (make-pokemon {:prefix "hist" :idx i}))))
+        pc (vec
+            (for [i (range 100 119)]
+              (make-pokemon {:prefix "hist-pc" :idx i})))]
+    {:equipe equipe :pc pc}))
 
 (defn- treinador-conta
-  [equipe extras]
-  (merge
-   {"equipe" equipe
-    "ativo" 0
-    "vitorias-treinador" 12
-    "pe-ginasios" 3
-    "pe-raids" 2
-    "xp-insignias" 150
-    "xp-missoes" 40
-    "ginasios" {"pedra" "2024-01-10" "agua" "2024-02-01"}
-    "sequencia-capturas" 4
-    "maior-sequencia-capturas" 9
-    "ultima-cacada" 1700000000000
-    "enfermaria" []}
-   extras))
+  [equipe-or-map extras]
+  (let [base (if (map? equipe-or-map)
+               {"equipe" (vec (:equipe equipe-or-map))
+                "pc" (vec (:pc equipe-or-map []))
+                "enfermaria" (vec (:enfermaria equipe-or-map []))}
+               {"equipe" (vec equipe-or-map)
+                "pc" []
+                "enfermaria" []})]
+    (merge
+     base
+     {"ativo" 0
+      "vitorias-treinador" 12
+      "pe-ginasios" 3
+      "pe-raids" 2
+      "xp-insignias" 150
+      "xp-missoes" 40
+      "ginasios" {"pedra" "2024-01-10" "agua" "2024-02-01"}
+      "sequencia-capturas" 4
+      "maior-sequencia-capturas" 9
+      "ultima-cacada" 1700000000000}
+     extras)))
 
 (defn- loja-conta
   [extras]
@@ -112,41 +129,81 @@
     "kit-inicial?" true}
    extras))
 
-(defn build-cassandra-dump
-  "Dump sintético no formato estado_particionado + envelopes históricos explícitos.
+(defn- save-slot-envelope
+  "Envelope no formato próximo ao SaveSlotStore (Etapa 1), sintético."
+  [{:keys [slot-id account source-kind source-version created-at]}]
+  (let [meta {:source source-kind
+              :sourceVersion source-version
+              :sourceHash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              :contentHash "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              :createdAt (or created-at "2024-06-01T12:00:00.000Z")
+              :format "json-account-v1"
+              :pokemonCount (->> [(:equipe account) (:pc account) (:enfermaria account)
+                                  (get account "equipe") (get account "pc") (get account "enfermaria")]
+                                 (filter sequential?)
+                                 (map count)
+                                 (reduce + 0))
+              :globalReceiptCount 0
+              :globalReceiptHash "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]
+    {:schemaVersion 1
+     :identityHash "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+     :slotId slot-id
+     :metadata meta
+     :account account
+     :globalReceipts {:module "pokemon-save-global-receipts"
+                      :partition "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                      :snapshotHash (:globalReceiptHash meta)
+                      :snapshot []}
+     :integrityHash "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}))
 
-  Proveniência dos dois saves NÃO usa sourceVersion V1/V2 como identidade:
-  cada snapshot carrega :provenance com snapshot-id e kind explícitos."
+(defn build-cassandra-dump
+  "Dump sintético: treinador vivo (26) + envelope save-slot (119) + overlays."
   []
   (let [equipe-a (active-team-26)
-        equipe-b (historical-team-119)
+        hist (historical-team-119)
+        hist-account (treinador-conta hist {"nota-fixture" "historico-independente"
+                                            "moedas" 900
+                                            "inventario" {"great-ball" 4 "pocao-maxima" 1}})
+        hist-loja (loja-conta {"moedas" 900 "inventario" {"great-ball" 4 "pocao-maxima" 1}})
         treinador-ativo {player-id (treinador-conta equipe-a {})}
         loja-ativo {player-id (loja-conta {})
-                    ;; loja sem treinador → quarentena
                     player-orphan-loja {"moedas" 99 "inventario" {"pocao" 1}}}
-        ginasios {chat-id {"pedra" {"lider" player-id "motivacao" 80}}}
-        hist-account (treinador-conta equipe-b {"nota-fixture" "historico-independente"})
-        hist-loja (loja-conta {"moedas" 900 "inventario" {"great-ball" 4 "pocao-maxima" 1}})
+        slot-partition "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd:historico-119"
+        envelope (save-slot-envelope
+                  {:slot-id "historico-119"
+                   :account hist-account
+                   ;; sourceVersion deliberadamente NÃO identifica o histórico
+                   :source-kind "legacy_estado_particionado"
+                   :source-version "1"
+                   :created-at "2024-03-15T08:30:00.000Z"})
         hist-envelope {:snapshot-id "syn-hist-independente-001"
                        :kind :historical-independent
                        :chat-id chat-id
                        :player-id player-id
                        :target-slot "b"
                        :label "historico-independente-119"
-                       :source {:module "fixture/historical-envelope"
-                                :partition (str "syn|" chat-id "|" player-id)
-                                ;; sourceVersion deliberadamente ruidoso / não canônico
-                                :sourceVersion "IGNORE-ME-NOT-IDENTITY"
-                                :note "sourceVersion NÃO identifica o histórico; usar snapshot-id"}
+                       :created-at "2024-03-15T08:30:00.000Z"
+                       :source {:module "pokemon-save-slots"
+                                :partition slot-partition
+                                :sourceVersion "1"
+                                :note "sourceVersion NÃO identifica; usar snapshot-id + count + Voltorb"}
                        :treinador hist-account
                        :loja hist-loja}
         rows [{:modulo "treinador" :particao chat-id :valor treinador-ativo}
               {:modulo "loja" :particao chat-id :valor loja-ativo}
-              {:modulo "ginasios" :particao chat-id :valor (get ginasios chat-id)}
+              {:modulo "ginasios" :particao chat-id :valor {"pedra" {"lider" player-id "motivacao" 80}}}
               {:modulo "pokemon-descobertas" :particao "Voltorb"
-               :valor {"descobridor" player-id "chat" chat-id}}]]
+               :valor {"descobridor" player-id "chat" chat-id}}
+              {:modulo "pokemon-save-slots" :particao slot-partition :valor envelope}
+              {:modulo "pokemon-save-slot-index"
+               :particao "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+               :valor {:schemaVersion 1
+                       :slots {"historico-119"
+                               {:contentHash (get-in envelope [:metadata :contentHash])
+                                :createdAt (get-in envelope [:metadata :createdAt])}}}}]]
     {:meta {:synthetic true
-            :milestone "M5.0"
+            :offline-dump true
+            :milestone "M5.1"
             :warning "Fixtures apenas — proibido conectar produção"}
      :estado_particionado rows
      :historical_snapshots [hist-envelope]
@@ -159,7 +216,11 @@
                          :source {:module "treinador"
                                   :partition chat-id
                                   :note "Conta viva em treinador+loja"}}
-     :group {:chat-id chat-id :label group-label}}))
+     :group {:chat-id chat-id :label group-label}
+     :fingerprints {:active-voltorb-shiny-id "act-voltorb-shiny-007"
+                    :historical-voltorb-shiny-id voltorb-hist-id
+                    :historical-pokemon-count 119
+                    :active-pokemon-count 26}}))
 
 (defn content-hash
   [x]

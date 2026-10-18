@@ -5,7 +5,8 @@
             [datomic.client.api :as d]
             [pokemon.application.ports :as ports]
             [pokemon.domain.errors :as err]
-            [pokemon.domain.identities :as id]))
+            [pokemon.domain.identities :as id]
+            [pokemon.migration.gates :as gates]))
 
 (defn- receipt-id
   [import-batch-id save-key*]
@@ -168,9 +169,11 @@
 
 (defn import-ir!
   "Importa IR completa. Recusa se houver quarentena bloqueante sem :allow-quarantine?
-   Ativa o slot marcado como canonical-active ao final."
-  [store ir {:keys [import-batch-id allow-quarantine?]
-             :or {allow-quarantine? false}}]
+   Ativa o slot marcado como canonical-active ao final.
+   Com `:require-match-resolved? true`, exige matching resolvido via gates."
+  [store ir {:keys [import-batch-id allow-quarantine? match-report require-match-resolved?]
+             :or {allow-quarantine? false
+                  require-match-resolved? false}}]
   (when (str/blank? import-batch-id)
     (throw (err/error :missing_import_batch_id {})))
   (let [;; Avisos (loja órfã, sourceVersion) vão ao relatório; só bloqueios duros abortam
@@ -182,6 +185,8 @@
     (when (and (seq hard-block) (not allow-quarantine?))
       (throw (err/error :import_blocked_by_quarantine
                         {:quarantine hard-block})))
+    (when require-match-resolved?
+      (gates/assert-importable! ir match-report))
     (let [chat (:chat-id ir)
           player (:player-id ir)
           conn (:conn store)

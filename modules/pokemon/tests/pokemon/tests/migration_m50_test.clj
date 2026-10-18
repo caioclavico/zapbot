@@ -29,11 +29,15 @@
 
 (deftest fixtures-tamanhos-e-shiny-voltorb
   (let [a (fix/active-team-26)
-        b (fix/historical-team-119)]
+        hist (fix/historical-team-119)
+        b (concat (:equipe hist) (:pc hist))]
     (is (= 26 (count a)))
     (is (= 119 (count b)))
     (is (some #(and (= "Voltorb" (get % "nome")) (true? (get % "shiny"))) a))
-    (is (some #(and (= "Voltorb" (get % "nome")) (true? (get % "shiny"))) b))
+    (is (some #(and (= "Voltorb" (get % "nome"))
+                    (true? (get % "shiny"))
+                    (= "hist-voltorb-shiny-001" (get % "id-pokemon")))
+              b))
     (is (empty? (set/intersection
                  (set (map #(get % "id-pokemon") a))
                  (set (map #(get % "id-pokemon") b)))))))

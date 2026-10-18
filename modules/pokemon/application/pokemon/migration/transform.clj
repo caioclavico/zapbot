@@ -56,7 +56,10 @@
   [{:keys [chat-id player-id slot provenance treinador loja]}]
   (let [t (str-keys->kw treinador)
         l (str-keys->kw (or loja {}))
-        equipe (vec (or (:equipe t) []))
+        ;; Alinhado ao restore-protocol: equipe + pc + enfermaria
+        equipe (vec (concat (or (:equipe t) [])
+                            (or (:pc t) [])
+                            (or (:enfermaria t) [])))
         pokemon (mapv normalize-pokemon (range) equipe)
         ambiguous-flags (cond-> []
                           (nil? loja) (conj :loja-ausente-moedas-zero)
