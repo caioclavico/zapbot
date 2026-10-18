@@ -204,11 +204,19 @@
         (swap! results conj :race))
 
       ;; 6) reconcile via GET operation + admin blocked + reopen
-      (let [op (http client base token "GET" "/v1/operations/op-m42-coins-1")
+      (let [op (http client base token "GET"
+                     (str "/v1/operations/op-m42-coins-1?chatId=" chat "&playerId=" player))
+            forbidden (http client base token "GET"
+                            (str "/v1/operations/op-m42-coins-1?chatId=" chat
+                                 "&playerId=outro-player"))
+            bare (http client base token "GET" "/v1/operations/op-m42-coins-1")
             admin (http client base token "GET" "/admin/seed")
             admin2 (http client base token "POST" "/v1/admin/seed" {})]
         (assert! (= 200 (:status op)) "get op")
         (assert! (= "op-m42-coins-1" (get-in op [:body "data" "operationId"])) "op id")
+        (assert! (true? (get-in op [:body "data" "persisted"])) "persisted")
+        (assert! (= 409 (:status forbidden)) "op forbidden")
+        (assert! (= 400 (:status bare)) "op requires identity")
         (assert! (= 404 (:status admin)) "admin get")
         (assert! (= 404 (:status admin2)) "admin post")
         (swap! results conj :reconcile-admin))

@@ -172,8 +172,19 @@ async function main() {
     assert(byId.a.coins === 25 && byId.b.coins === 9, 'A/B independent');
     results.checks.push('a-b-a');
 
-    const receipt = await client.getOperation(op1);
+    const receipt = await client.getOperation({
+      operationId: op1, chatId: identity.chatId, playerId: identity.playerId
+    });
     assert(receipt.operationId === op1, 'reconcile get');
+    assert(receipt.persisted === true, 'persisted flag');
+    try {
+      await client.getOperation({
+        operationId: op1, chatId: identity.chatId, playerId: 'outro@c.us'
+      });
+      throw new Error('foreign receipt should fail');
+    } catch (err) {
+      assert(err.code === 'OPERATION_FORBIDDEN' || err.status === 409, 'forbidden');
+    }
     results.checks.push('reconcile');
 
     // Timeout reconcile path: operation already committed → getOperation works

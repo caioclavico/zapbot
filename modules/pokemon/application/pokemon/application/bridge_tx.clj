@@ -1,10 +1,12 @@
 (ns pokemon.application.bridge-tx
   "Casos de uso M4.2 da bridge: ensure, saves, activate, mutação pequena.
   Sem seed admin; save-id + fence + operation-id explícitos nas escritas."
-  (:require [pokemon.application.ports :as ports]
+  (:require [clojure.string :as str]
+            [pokemon.application.ports :as ports]
             [pokemon.application.reward :as reward-app]
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]))
 
 (defn- save-summary
@@ -102,9 +104,18 @@
      :summary (:summary result)}))
 
 (defn get-operation
-  "Reconciliação pós-timeout: recibo ou nil."
-  [store operation-id]
+  "Reconciliação pós-timeout. Exige chat-id+player-id do contexto confiável
+  e só devolve recibo do mesmo jogador (M4.3)."
+  [store operation-id chat-id player-id]
   (when (or (nil? operation-id) (empty? (str operation-id)))
     (throw (err/error :missing_operation_id {})))
-  (or (ports/get-receipt store (str operation-id))
-      (throw (err/error :operation_not_found {:operation-id operation-id}))))
+  (when (or (str/blank? (str chat-id)) (str/blank? (str player-id)))
+    (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+  (let [receipt (ports/get-receipt store (str operation-id))]
+    (when-not receipt
+      (throw (err/error :operation_not_found {:operation-id operation-id})))
+    (let [expected (id/player-key chat-id player-id)]
+      (when-not (= expected (:player-key receipt))
+        (throw (err/error :operation_forbidden
+                          {:operation-id operation-id})))
+      (assoc receipt :persisted true))))

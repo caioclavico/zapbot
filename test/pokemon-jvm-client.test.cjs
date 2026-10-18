@@ -107,10 +107,15 @@ test('timeout em escrita tenta reconciliar com o mesmo operationId', async () =>
       return; // hang → TIMEOUT no cliente
     }
     gets += 1;
+    assert.match(req.url, /chatId=c/);
+    assert.match(req.url, /playerId=p/);
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({
       ok: true,
-      data: { operationId: 'op-reconcile', channel: 'gameplay', payloadHash: 'abc', saveId: 'a' }
+      data: {
+        operationId: 'op-reconcile', channel: 'gameplay', payloadHash: 'abc',
+        saveId: 'a', persisted: true
+      }
     }));
   }, { timeoutMs: 40 });
   try {
@@ -120,6 +125,7 @@ test('timeout em escrita tenta reconciliar com o mesmo operationId', async () =>
     });
     assert.equal(data.reconciled, true);
     assert.equal(data.duplicate, true);
+    assert.equal(data.persisted, true);
     assert.equal(posts, 1);
     assert.equal(gets, 1);
   } finally {

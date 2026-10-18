@@ -65,7 +65,8 @@
      :missing_writer_context :missing_fence_generation :invalid_coins_delta
      :invalid_save_slot :invalid_slot_id :invalid_identity) 400
     (:stale_writer_fence :writer_fence_conflict :activate_conflict
-     :receipt_payload_mismatch :reward_conflict :reward_save_mismatch) 409
+     :receipt_payload_mismatch :reward_conflict :reward_save_mismatch
+     :operation_forbidden) 409
     :operation_pending 409
     :unauthorized 401
     :method_not_allowed 405
@@ -259,10 +260,15 @@
                 (do (require-method! ex #{"GET"})
                     (let [op-id (URLDecoder/decode
                                  (.substring path (count "/v1/operations/"))
-                                 StandardCharsets/UTF_8)]
+                                 StandardCharsets/UTF_8)
+                          chat-id (g qs "chatId")
+                          player-id (g qs "playerId")]
                       (when (or (str/blank? op-id) (str/includes? op-id "/"))
                         (throw (err/error :invalid_query {:required ["operationId"]})))
-                      (ok! ex (tx/get-operation store op-id))))
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId"]})))
+                      (ok! ex (tx/get-operation store op-id chat-id player-id))))
 
                 :else
                 (send-json! ex 404

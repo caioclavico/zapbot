@@ -177,13 +177,17 @@ function createClient(config = {}) {
       return await request('POST', path, body);
     } catch (err) {
       if (err.code !== 'TIMEOUT' && err.code !== 'CONNECT_TIMEOUT') throw err;
-      if (!body || !body.operationId) throw err;
+      if (!body || !body.operationId || !body.chatId || !body.playerId) throw err;
       try {
-        const receipt = await request('GET', `/v1/operations/${idPath(body.operationId)}`);
+        const receipt = await request(
+          'GET',
+          `/v1/operations/${idPath(body.operationId)}${q({ chatId: body.chatId, playerId: body.playerId })}`
+        );
         return {
           operationId: receipt.operationId,
           duplicate: true,
           reconciled: true,
+          persisted: true,
           channel: receipt.channel,
           payloadHash: receipt.payloadHash,
           saveId: receipt.saveId,
@@ -217,8 +221,8 @@ function createClient(config = {}) {
         ...(expectedFenceGeneration === undefined ? {} : { expectedFenceGeneration })
       }),
     creditCoins: (body) => mutateOnce('/v1/rewards/coins', body),
-    getOperation: (operationId) =>
-      request('GET', `/v1/operations/${idPath(operationId)}`),
+    getOperation: ({ operationId, chatId, playerId }) =>
+      request('GET', `/v1/operations/${idPath(operationId)}${q({ chatId, playerId })}`),
     close: () => agent.destroy()
   };
 }

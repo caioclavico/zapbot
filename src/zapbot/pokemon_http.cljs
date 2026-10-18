@@ -13,6 +13,7 @@
 
 (def ^:private transport (js/require "../scripts/lib/pokemon-http-client.cjs"))
 (def ^:private jvm-transport (js/require "../scripts/lib/pokemon-jvm-client.cjs"))
+(def ^:private jvm-present (js/require "../scripts/lib/pokemon-jvm-present.cjs"))
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 (def ^:private versao-bot (.-version (js/require "../package.json")))
 (def ^:private chave-entregas "pokemon-http-deliveries")
@@ -25,13 +26,6 @@
 (defonce ^:private consultando-eventos? (atom false))
 (defonce ^:private filas (atom {}))
 (declare erro-contrato)
-
-;; Comandos cobertos pela bridge JVM (M4.1 leituras + M4.2 tx mínima).
-(def ^:private leituras-jvm
-  #{"treinador" "perfil" "tre" "meus" "pokemons" "colecao" "coleção"
-    "save" "ativo" "saves" "saves-list"})
-(def ^:private escritas-jvm
-  #{"iniciar" "criar" "ativar" "moedas"})
 
 (defn- configurado? []
   (and (not (str/blank? config/pokemon-service-url))
@@ -66,47 +60,8 @@
 (defn- tokens-args [argumentos]
   (vec (remove str/blank? (str/split (str/trim (str/lower-case (or argumentos ""))) #"\s+"))))
 
-(defn- subcomando-jvm [argumentos]
-  (first (tokens-args argumentos)))
-
-(defn- texto-leitura-jvm [sub data]
-  (case sub
-    ("treinador" "perfil" "tre")
-    (str "🧑‍🎓 *Treinador (JVM)*\n"
-         "Save ativo: " (or (:activeSaveId data) "?") "\n"
-         "Fence: " (or (:fenceGeneration data) 0))
-    ("meus" "pokemons" "colecao" "coleção")
-    (let [itens (or (:collection data) [])
-          linhas (map (fn [p]
-                        (str (or (:collectionIndex p) "?") ". "
-                             (or (:species p) (:nome p) "?")
-                             " Nv" (or (:nivel p) "?")))
-                      (take 20 itens))]
-      (str "📦 *Coleção (JVM)* save=" (or (:saveId data) "?")
-           " (" (or (:count data) 0) ")\n"
-           (if (seq linhas) (str/join "\n" linhas) "(vazia)")))
-    ("save" "ativo" "saves")
-    (let [save (:save data)]
-      (str "💾 *Save ativo (JVM)*\n"
-           "Slot: " (or (:activeSaveId data) (:slotId save) "?") "\n"
-           "Moedas: " (or (:coins save) 0) "\n"
-           "Nível treinador: " (or (:trainerLevel save) 1) "\n"
-           "Party: " (count (or (:party data) []))))
-    "saves-list"
-    (str "💾 *Saves A/B (JVM)* ativo=" (or (:activeSaveId data) "?")
-         " fence=" (or (:fenceGeneration data) 0) "\n"
-         (str/join "\n"
-                   (map (fn [s]
-                          (str "• " (:saveId s) ": "
-                               (or (:coins s) 0) " moedas, "
-                               (or (:collectionCount s) 0) " na coleção"))
-                        (or (:saves data) []))))
-    (str "📖 Leitura JVM: " (pr-str data))))
-
 (defn- envelope-texto [texto]
-  {:requestId nil ;; preenchido pelo caller
-   :messages [{:type "text" :text texto}]
-   :effects []})
+  (js->clj (.envelope jvm-present nil texto) :keywordize-keys true))
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -274,109 +229,90 @@
      (p/resolved nil) (map-indexed vector (acoes-de-envio (:messages resposta))))))
 
 (defn- mensagem-falha [erro]
-  (case (.-code erro)
-    ("TIMEOUT" "CONNECT_TIMEOUT")
-    "⏳ O serviço Pokémon demorou para responder. O comando pode ter sido processado; confira o estado antes de repetir uma compra, troca ou captura."
-    ("NETWORK" "ECONNREFUSED")
-    "⚠️ Bridge JVM indisponível. Nenhuma escrita foi enviada ao Cassandra."
-    "CONFIG" "⚠️ O serviço Pokémon ainda não está configurado. Os outros comandos continuam disponíveis."
-    "LIMIT" "⚠️ A resposta Pokémon excedeu o limite de tamanho. Tente consultar a coleção em texto: !pk time txt."
-    ("PLAYER_NOT_FOUND" "NO_ACTIVE_SAVE" "SAVE_NOT_FOUND" "OPERATION_NOT_FOUND")
-    (str "⚠️ " (or (.-message erro) "Dados não encontrados na bridge JVM."))
-    ("STALE_WRITER_FENCE" "WRITER_FENCE_CONFLICT" "ACTIVATE_CONFLICT"
-     "RECEIPT_PAYLOAD_MISMATCH" "OPERATION_PENDING")
-    (str "⚠️ Conflito JVM (" (.-code erro) "): "
-         (or (.-message erro) "save/fence/operação incompatível."))
-    "⚠️ Não consegui concluir a resposta do Pokémon. O comando pode ter sido processado; confira o estado antes de repetir uma ação. Os outros comandos continuam disponíveis."))
+  ;; Legado HTTP e JVM compartilham códigos; JVM usa present.formatError.
+  (if (jvm-configurado?)
+    (.formatError jvm-present erro)
+    (case (.-code erro)
+      ("TIMEOUT" "CONNECT_TIMEOUT")
+      "⏳ O serviço Pokémon demorou para responder. O comando pode ter sido processado; confira o estado antes de repetir uma compra, troca ou captura."
+      "CONFIG" "⚠️ O serviço Pokémon ainda não está configurado. Os outros comandos continuam disponíveis."
+      "LIMIT" "⚠️ A resposta Pokémon excedeu o limite de tamanho. Tente consultar a coleção em texto: !pk time txt."
+      "⚠️ Não consegui concluir a resposta do Pokémon. O comando pode ter sido processado; confira o estado antes de repetir uma ação. Os outros comandos continuam disponíveis.")))
 
-(defn- entregar-texto-jvm! [message ctx pedido texto]
-  (let [resposta (assoc (envelope-texto texto) :requestId (:requestId pedido))]
+(defn- entregar-envelope-jvm! [message ctx pedido envelope]
+  (let [resposta (assoc (js->clj envelope :keywordize-keys true)
+                        :requestId (:requestId pedido))]
     (entregar! nil (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
                ctx (str "jvm:" (:requestId pedido)) resposta)))
 
-(defn- executar-jvm-leitura! [message ctx pedido sub]
-  (p/let [jvm (cliente-jvm!)
-          chat-id (:chatId pedido)
-          player-id (:playerId pedido)
-          data (desempenho/medir! ctx "pokemon_jvm_read"
-                 #(case sub
-                    ("treinador" "perfil" "tre")
-                    (.getTrainer jvm #js {:chatId chat-id :playerId player-id})
-                    ("meus" "pokemons" "colecao" "coleção")
-                    (.getCollection jvm #js {:chatId chat-id :playerId player-id})
-                    ("save" "ativo" "saves")
-                    (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                    "saves-list"
-                    (.listSaves jvm #js {:chatId chat-id :playerId player-id})
-                    (throw (erro-contrato "Leitura JVM não mapeada."))))
-          data (js->clj data :keywordize-keys true)]
-    (entregar-texto-jvm! message ctx pedido (texto-leitura-jvm sub data))))
+(defn- executar-jvm! [message ctx pedido args]
+  ;; Identidade só do contexto WhatsApp (pedido); formatação só no present Node.
+  (let [jvm (cliente-jvm!)
+        chat-id (:chatId pedido)
+        player-id (:playerId pedido)
+        player-name (:playerName pedido)
+        cmd (.resolveCommand jvm-present (clj->js args))
+        resto (vec (rest args))]
+    (if-not cmd
+      (entregar-envelope-jvm!
+       message ctx pedido
+       (.envelope jvm-present (:requestId pedido)
+                  (.formatUnavailable jvm-present (str/join " " args))))
+      (p/let [texto
+              (case cmd
+                "treinador"
+                (p/let [data (desempenho/medir! ctx "pokemon_jvm_trainer"
+                                #(.getTrainer jvm #js {:chatId chat-id :playerId player-id}))]
+                  (.formatTrainer jvm-present data player-name))
 
-(defn- executar-jvm-escrita! [message ctx pedido sub args]
-  ;; chatId/playerId vêm só do contexto WhatsApp (pedido), nunca do texto digitado.
-  (p/let [jvm (cliente-jvm!)
-          chat-id (:chatId pedido)
-          player-id (:playerId pedido)
-          texto
-          (case sub
-            ("iniciar" "criar")
-            (p/let [data (desempenho/medir! ctx "pokemon_jvm_ensure"
-                            #(.ensureTrainer jvm #js {:chatId chat-id :playerId player-id}))
-                    data (js->clj data :keywordize-keys true)]
-              (str (if (:created data) "✅ Treinador criado" "ℹ️ Treinador já existia")
-                   " (JVM)\nSave ativo: " (:activeSaveId data)
-                   " · fence " (:fenceGeneration data)))
+                "time"
+                (p/let [data (desempenho/medir! ctx "pokemon_jvm_collection"
+                                #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))]
+                  (.formatCollection jvm-present data (clj->js resto) (str config/prefix "pk")))
 
-            "ativar"
-            (let [slot (second args)]
-              (when-not (contains? #{"a" "b"} slot)
-                (throw (erro-contrato "Use: !pk ativar a|b")))
-              (p/let [antes (js->clj (.listSaves jvm #js {:chatId chat-id :playerId player-id})
-                                     :keywordize-keys true)
-                      data (desempenho/medir! ctx "pokemon_jvm_activate"
-                             #(.activateSave jvm
-                                #js {:chatId chat-id
-                                     :playerId player-id
-                                     :saveId slot
-                                     :expectedFenceGeneration (:fenceGeneration antes)}))
-                      data (js->clj data :keywordize-keys true)]
-                (str "✅ Save *" (:activeSaveId data) "* ativo (JVM)\n"
-                     "Fence: " (:fenceGeneration data)
-                     " · moedas: " (get-in data [:save :coins] 0))))
+                "save"
+                (p/let [data (desempenho/medir! ctx "pokemon_jvm_active"
+                                #(.getActiveSave jvm #js {:chatId chat-id :playerId player-id}))]
+                  (.formatActiveSave jvm-present data))
 
-            "moedas"
-            (let [delta (js/Number (second args))]
-              (when-not (js/Number.isSafeInteger delta)
-                (throw (erro-contrato "Use: !pk moedas <inteiro>")))
-              (p/let [snap (js->clj (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                                    :keywordize-keys true)
-                      op-id (.stableOperationId jvm-transport
-                                                (:requestId pedido) (str "coins:" delta))
-                      data (desempenho/medir! ctx "pokemon_jvm_coins"
-                             #(.creditCoins jvm
-                                #js {:chatId chat-id
-                                     :playerId player-id
-                                     :saveId (:activeSaveId snap)
-                                     :fenceGeneration (:fenceGeneration snap)
-                                     :operationId op-id
-                                     :coinsDelta delta}))
-                      data (js->clj data :keywordize-keys true)]
-                (str (if (:duplicate data) "ℹ️ Idempotente" "✅ Creditado")
-                     " (JVM) +" delta " → " (:coins data) " moedas\n"
-                     "op=" (:operationId data)
-                     (when (:reconciled data) " · reconciliado"))))
+                "saves"
+                (p/let [data (desempenho/medir! ctx "pokemon_jvm_saves"
+                                #(.listSaves jvm #js {:chatId chat-id :playerId player-id}))]
+                  (.formatSavesList jvm-present data))
 
-            (throw (erro-contrato "Escrita JVM não mapeada.")))]
-    (entregar-texto-jvm! message ctx pedido texto)))
+                "iniciar"
+                (p/let [data (desempenho/medir! ctx "pokemon_jvm_ensure"
+                                #(.ensureTrainer jvm #js {:chatId chat-id :playerId player-id}))]
+                  (.formatEnsure jvm-present data))
 
-(defn- recusa-jvm [pedido]
-  (assoc (envelope-texto
-          (str "🚧 *Adaptador JVM (dev)* — M4.2 cobre: "
-               "`iniciar`, `ativar a|b`, `moedas N`, "
-               "`treinador`, `meus`, `save`, `saves-list`. "
-               "Sem fallback automático para Cassandra. "
-               "Demais fluxos: `POKEMON_ADAPTER=legacy`."))
-         :requestId (:requestId pedido)))
+                "ativar"
+                (let [slot (first resto)]
+                  (when-not (contains? #{"a" "b"} slot)
+                    (throw (erro-contrato "Use: !pk ativar a|b")))
+                  (p/let [antes (.listSaves jvm #js {:chatId chat-id :playerId player-id})
+                          data (desempenho/medir! ctx "pokemon_jvm_activate"
+                                 #(.activateSave jvm
+                                    #js {:chatId chat-id
+                                         :playerId player-id
+                                         :saveId slot
+                                         :expectedFenceGeneration (.-fenceGeneration antes)}))]
+                    (.formatActivate jvm-present data)))
+
+                "recibo"
+                (let [op-id (first resto)]
+                  (when (str/blank? op-id)
+                    (throw (erro-contrato "Use: !pk recibo <operationId>")))
+                  (p/let [data (desempenho/medir! ctx "pokemon_jvm_receipt"
+                                  #(.getOperation jvm
+                                     #js {:operationId op-id
+                                          :chatId chat-id
+                                          :playerId player-id}))]
+                    (.formatReceipt jvm-present data)))
+
+                (.formatUnavailable jvm-present (str/join " " args)))]
+        (entregar-envelope-jvm!
+         message ctx pedido
+         (.envelope jvm-present (:requestId pedido) texto))))))
 
 (defn executar [message comando argumentos]
   (let [ctx (desempenho/contexto-de message)
@@ -388,23 +324,13 @@
          ;; Adaptador JVM: fail-closed; sem fallback Cassandra/legado em falha.
          (-> (p/let [pedido (contexto-pedido message comando argumentos)
                      args (tokens-args argumentos)
-                     sub (first args)
-                     _ (cond
-                         (contains? leituras-jvm sub)
-                         (executar-jvm-leitura! message ctx pedido sub)
-
-                         (contains? escritas-jvm sub)
-                         (executar-jvm-escrita! message ctx pedido sub args)
-
-                         :else
-                         (entregar! nil (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
-                                    ctx (str "jvm-deny:" (:requestId pedido))
-                                    (recusa-jvm pedido)))]
+                     _ (executar-jvm! message ctx pedido args)]
                nil)
              (p/catch (fn [erro]
                         (js/console.warn "[PokemonJVM] Falha:" (or (.-code erro) "DELIVERY")
                                          (or (.-status erro) "") (.-message erro))
-                        (mensagem-falha erro))))
+                        (let [texto (mensagem-falha erro)]
+                          (.reply message texto)))))
          ;; Adaptador legado (default / produção).
          (-> (p/let [pedido (contexto-pedido message comando argumentos)
                      http (cliente!)
@@ -422,7 +348,7 @@
              (p/catch (fn [erro]
                         (js/console.warn "[PokemonHTTP] Falha:" (or (.-code erro) "DELIVERY") (or (.-status erro) "")
                                          (when (= "INVALID_RESPONSE" (.-code erro)) (.-message erro)))
-                        (mensagem-falha erro))))))
+                        (.reply message (mensagem-falha erro)))))))
      ctx)))
 
 (defn jogar [message argumentos]
