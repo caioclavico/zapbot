@@ -2,10 +2,12 @@
   "Casos de uso M4.2/M4.4/M4.5 da bridge: ensure, saves, activate, encontro/caça.
   Sem seed admin; save-id + fence + operation-id explícitos nas escritas."
   (:require [clojure.string :as str]
+            [pokemon.application.adventure :as adv]
             [pokemon.application.battle :as battle-app]
             [pokemon.application.capture :as capture-app]
             [pokemon.application.gym :as gym-app]
             [pokemon.application.hunt :as hunt-app]
+            [pokemon.application.joy :as joy-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.raid :as raid-app]
             [pokemon.application.reward :as reward-app]
@@ -719,3 +721,113 @@
      :raid-id (:raid-id raid)
      :save-id save-id
      :fence-generation (long fence-generation)}))
+
+(defn- egg-summary
+  [egg]
+  (when egg
+    {:egg-id (:egg-id egg)
+     :category (name (or (:category egg) :comum))
+     :state (name (or (:state egg) :inventory))
+     :species (:species egg)
+     :due-at (:due-at egg)
+     :save-id (:save-id egg)
+     :fence-generation (:fence-generation egg)
+     :incubator-id (:incubator-id egg)
+     :points (:points egg 0)
+     :points-goal (:points-goal egg 0)}))
+
+(defn joy-send!
+  "Envia um ferido (índice 0-based da coleção) à enfermaria."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (joy-app/send!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :idx (long idx)
+                 :agora (or agora-ms (System/currentTimeMillis))})
+        entrada (:entrada result)]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :pronto-em (:pronto-em result)
+     :bed-id (:bed-id entrada)
+     :pokemon (select-keys (or (:pokemon entrada) {})
+                           [:nome :species :nivel :hp :hp-atual :status
+                            :collection-index])}))
+
+(defn joy-collect!
+  "Recolhe todos os leitos prontos do save ativo."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (joy-app/collect!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :n (long (:n result 0))
+     :curados (mapv #(select-keys % [:nome :species :nivel :hp :hp-atual :status])
+                    (or (:curados result) []))}))
+
+(defn grant-egg!
+  "Harness/teste: concede ovo. Nunca pelo WhatsApp."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 egg-id category species agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        _ (adv/ensure-account! store chat-id player-id)
+        result (adv/grant-egg!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :egg-id (or egg-id (str operation-id))
+                 :category (or category :comum)
+                 :species (or species "Magikarp")
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :egg (egg-summary (:egg result))}))
+
+(defn incubate-egg!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 egg-id incubator-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        _ (adv/ensure-account! store chat-id player-id)
+        result (adv/incubate!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :egg-id (str egg-id)
+                 :incubator-id (or incubator-id "permanente")
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :egg (egg-summary (:egg result))}))
+
+(defn hatch-egg!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 egg-id hatch-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (adv/hatch!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :egg-id (str egg-id)
+                         :agora (or agora-ms (System/currentTimeMillis))}
+                  hatch-id (assoc :hatch-id (str hatch-id))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :pokemon-id (:pokemon-id result)
+     :egg (egg-summary (:egg result))
+     :registro (select-keys (or (:registro result) {})
+                            [:nome :species :nivel :hp :hp-atual])}))

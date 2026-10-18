@@ -142,6 +142,14 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}
 
+  ;; M4.10 — Joy + ovos no adaptador JVM + regressão M3.7
+  :test-m4-joy-eggs
+  {:main-opts ["-m" "odisseu.smoke.m4-joy-eggs"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
   ;; Bridge HTTP longa (dev local). Bind 127.0.0.1.
   :bridge-http
   {:main-opts ["-m" "odisseu.bridge.http-server"]

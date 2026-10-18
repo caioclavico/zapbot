@@ -181,7 +181,9 @@
                                       "gyms-read" "gym-team" "gym-heal"
                                       "gym-challenge"
                                       "raid-read" "raid-join" "raid-leave"
-                                      "raid-start" "raid-attack" "raid-capture"]}))
+                                      "raid-start" "raid-attack" "raid-capture"
+                                      "joy-read" "joy-send" "joy-collect"
+                                      "adventure-read" "egg-incubate" "egg-hatch"]}))
 
             (or (str/starts-with? path "/admin")
                 (str/starts-with? path "/v1/admin")
@@ -793,6 +795,168 @@
                                           raid-id (assoc :raid-id raid-id)
                                           (and allow-test-rng? (some? roll))
                                           (assoc :roll roll)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/joy")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")
+                          agora (long-or-nil (g qs "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (reads/joy-status store chat-id player-id
+                                                {:agora-ms agora}))))
+
+                (= path "/v1/joy/send")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          idx (long-or-nil (g body "collectionIndex" "idx" "index"))
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (nil? idx))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "collectionIndex"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/joy-send!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :idx idx}
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/joy/collect")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/joy-collect!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id}
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/adventure")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")
+                          agora (long-or-nil (g qs "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (reads/adventure-status store chat-id player-id
+                                                      {:agora-ms agora}))))
+
+                (= path "/v1/adventure/eggs/grant")
+                (do (require-method! ex #{"POST"})
+                    (when-not allow-test-rng?
+                      (throw (err/error :operation_forbidden
+                                        {:reason "egg-grant-harness-only"})))
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          egg-id (g body "eggId" "egg-id")
+                          category (g body "category" "categoria")
+                          species (g body "species" "especie")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/grant-egg!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id}
+                                          egg-id (assoc :egg-id egg-id)
+                                          category (assoc :category category)
+                                          species (assoc :species species)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/adventure/eggs/incubate")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          egg-id (g body "eggId" "egg-id")
+                          incubator-id (g body "incubatorId" "incubator-id")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (str/blank? (str egg-id)))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "eggId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/incubate-egg!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :egg-id egg-id}
+                                          incubator-id (assoc :incubator-id incubator-id)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/adventure/eggs/hatch")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          egg-id (g body "eggId" "egg-id")
+                          hatch-id (g body "hatchId" "hatch-id")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (str/blank? (str egg-id)))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "eggId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/hatch-egg!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :egg-id egg-id}
+                                          hatch-id (assoc :hatch-id hatch-id)
                                           (some? agora) (assoc :agora-ms agora)))))))
 
                 :else

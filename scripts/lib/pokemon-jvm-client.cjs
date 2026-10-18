@@ -250,6 +250,15 @@ function createClient(config = {}) {
     startRaid: (body) => mutateOnce('/v1/raids/start', body),
     raidAttack: (body) => mutateOnce('/v1/raids/attack', body),
     raidCapture: (body) => mutateOnce('/v1/raids/capture', body),
+    getJoyStatus: ({ chatId, playerId, agoraMs }) =>
+      request('GET', `/v1/joy${q({ chatId, playerId, agoraMs })}`),
+    joySend: (body) => mutateOnce('/v1/joy/send', body),
+    joyCollect: (body) => mutateOnce('/v1/joy/collect', body),
+    getAdventure: ({ chatId, playerId, agoraMs }) =>
+      request('GET', `/v1/adventure${q({ chatId, playerId, agoraMs })}`),
+    grantEgg: (body) => mutateOnce('/v1/adventure/eggs/grant', body),
+    incubateEgg: (body) => mutateOnce('/v1/adventure/eggs/incubate', body),
+    hatchEgg: (body) => mutateOnce('/v1/adventure/eggs/hatch', body),
     close: () => agent.destroy()
   };
 }

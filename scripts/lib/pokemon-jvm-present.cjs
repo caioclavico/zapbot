@@ -288,6 +288,17 @@ function formatError(err) {
     RAID_CAPTURE_UNAVAILABLE: '❓ Captura indisponível (sem dano, janela expirada ou já capturou).',
     RAID_NOT_CREATOR: '🚫 Só quem abriu a raide pode iniciar (quando há criador).',
     NOT_IN_RAID: '❓ Você não está nesta raide.',
+    INVALID_JOY_INDEX: '❓ Índice inválido. Use !pk joy para ver os feridos.',
+    POKEMON_HEALTHY: '✨ Esse Pokémon já está saudável.',
+    JOY_NOTHING_READY: '⏳ Ainda não há Pokémon prontos na enfermaria.',
+    EGG_NOT_FOUND: '❓ Ovo não encontrado.',
+    EGG_INVENTORY_FULL: '🥚 Inventário de ovos cheio (máx. 9).',
+    INVALID_INCUBATION: '❓ Esse ovo não pode ser incubado agora.',
+    INCUBATOR_BUSY: '⏳ Essa incubadora já está em uso.',
+    INCUBATOR_NOT_FOUND: '❓ Incubadora não encontrada.',
+    EGG_NOT_READY: '⏳ O ovo ainda não está pronto para nascer.',
+    EGG_SAVE_MISMATCH: '⚠️ Esse ovo foi incubado em outro save — volte ao save de origem.',
+    ADVENTURE_ACCOUNT_MISSING: '❓ Conta Adventure Sync ainda não criada. Use !pk ovos.',
     TIMEOUT: '⏳ Bridge JVM demorou. Se foi escrita, confira com !pk recibo <id> antes de repetir.',
     CONNECT_TIMEOUT: '⚠️ Não conectou na bridge JVM. Nenhuma escrita foi ao Cassandra.',
     NETWORK: '⚠️ Bridge JVM indisponível. Nenhuma escrita foi ao Cassandra.',
@@ -300,7 +311,7 @@ function formatUnavailable(commandHint) {
   return [
     '🚧 *Comando ainda não integrado no adaptador JVM*',
     commandHint ? `Pedido: \`${commandHint}\`` : null,
-    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `cacar`, `capturar`/`cap`, `ginasio`/`gin`, `raide`/`raid`, `recibo <id>`.',
+    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `cacar`, `capturar`/`cap`, `ginasio`/`gin`, `raide`/`raid`, `joy`, `ovos`/`incubar`, `recibo <id>`.',
     'Sem fallback automático para Cassandra. Use `POKEMON_ADAPTER=legacy` para o restante.'
   ].filter(Boolean).join('\n');
 }
@@ -778,6 +789,126 @@ function formatRaidCapture(data, prefix = '!pk') {
   ].join('\n');
 }
 
+function formatJoyStatus(data, prefix = '!pk') {
+  const beds = (data && data.enfermaria) || [];
+  const feridos = (data && data.feridos) || [];
+  const mins = (data && data.tempoTratamentoMinutos) || 30;
+  const lines = ['🏥 *Centro Pokémon — Enfermeira Joy*'];
+  if (beds.length) {
+    lines.push(`Leitos: ${beds.length} (${data.prontos || 0} pronto(s))`);
+    for (const b of beds) {
+      const nome = (b.pokemon && (b.pokemon.nome || b.pokemon.species)) || '?';
+      const rest = b.pronto
+        ? 'pronto — use o comando de novo para recolher'
+        : `~${Math.ceil((b.restanteMs || 0) / 60000)} min`;
+      lines.push(`• ${nome} — ${rest}`);
+    }
+  } else {
+    lines.push('Nenhum Pokémon na enfermaria.');
+  }
+  if (feridos.length) {
+    lines.push('', '*Feridos na coleção* (índice 1-based):');
+    for (const p of feridos) {
+      const idx = (p.collectionIndex != null ? p.collectionIndex : 0) + 1;
+      const hp = `${p.hpAtual != null ? p.hpAtual : '?'}/${p.hp != null ? p.hp : '?'}`;
+      const st = p.status ? ` [${p.status}]` : '';
+      lines.push(`${idx}. ${p.nome || p.species || '?'} HP ${hp}${st}`);
+    }
+    lines.push(`Envie: ${prefix} joy 1,2`);
+  } else if (!beds.length) {
+    lines.push('✨ Seu time/coleção já está saudável.');
+  }
+  lines.push(`Cura: ${mins} min · ${prefix} joy <números>`);
+  return lines.join('\n');
+}
+
+function formatJoySend(data, prefix = '!pk') {
+  const nome = (data && data.pokemon && (data.pokemon.nome || data.pokemon.species)) || 'Pokémon';
+  return [
+    `🏥 A Enfermeira Joy recebeu *${nome}*.`,
+    'Eles voltarão com HP cheio em 30 minutos.',
+    `Acompanhe: ${prefix} joy · ${prefix} time`
+  ].join('\n');
+}
+
+function formatJoyCollect(data, prefix = '!pk') {
+  const n = (data && data.n) || 0;
+  const nomes = ((data && data.curados) || [])
+    .map((p) => p.nome || p.species || '?')
+    .join(', ');
+  if (n <= 0) {
+    return `⏳ Ainda não há Pokémon prontos. ${prefix} joy`;
+  }
+  return [
+    `✨ A Joy devolveu ${n} Pokémon curado(s)!`,
+    nomes ? `• ${nomes}` : null,
+    `${prefix} time`
+  ].filter(Boolean).join('\n');
+}
+
+function formatAdventureStatus(data, prefix = '!pk') {
+  const eggs = (data && data.eggs) || [];
+  const incu = (data && data.incubators) || [];
+  const inv = eggs.filter((e) => e.state !== 'hatched');
+  const lines = [
+    '🥚 *Adventure Sync — Ovos*',
+    `Inventário: ${data.inventarioCount || inv.length}/${data.limiteInventario || 9}`
+  ];
+  if (!inv.length) {
+    lines.push('Nenhum ovo no inventário.');
+  } else {
+    inv.forEach((e, i) => {
+      const n = i + 1;
+      const cat = e.category || '?';
+      if (e.state === 'inventory') {
+        lines.push(`${n}. ${cat} (${e.species || '?'}) — disponível · ${prefix} incubar ${n}`);
+      } else if (e.state === 'incubating') {
+        const min = Math.ceil((e.restanteMs || 0) / 60000);
+        lines.push(`${n}. ${cat} — incubando (~${min} min) save ${e.saveId || '?'}`);
+      } else if (e.state === 'ready-to-hatch' || e.state === 'delivery-pending') {
+        lines.push(`${n}. ${cat} — *pronto!* ${prefix} ovo nascer ${n}`);
+      } else {
+        lines.push(`${n}. ${cat} — ${e.state}`);
+      }
+    });
+  }
+  lines.push('', '*Incubadoras*');
+  for (const i of incu) {
+    const livre = i.livre ? 'livre' : `ovo ${i.activeEggId || '?'}`;
+    lines.push(`• ${i.incubatorId} (${i.kind}) — ${livre}`);
+  }
+  lines.push(
+    '',
+    `Comandos: ${prefix} incubar <n> · ${prefix} ovo · ${prefix} incubadoras`,
+    '⚠️ Nascimento sob demanda (sem notificação automática neste adaptador).'
+  );
+  return lines.join('\n');
+}
+
+function formatEggIncubate(data, prefix = '!pk') {
+  const e = (data && data.egg) || {};
+  return [
+    `🥚 Incubando *${e.category || 'ovo'}* (${e.species || '?'}) em ${e.incubatorId || 'permanente'}.`,
+    `Save carimbado: ${e.saveId || '?'} · ${prefix} ovos`
+  ].join('\n');
+}
+
+function formatEggHatch(data, prefix = '!pk') {
+  const reg = (data && data.registro) || {};
+  const nome = reg.nome || reg.species || 'Pokémon';
+  return [
+    `🎉 O ovo eclodiu! *${nome}* nv.${reg.nivel || 1} entrou na coleção.`,
+    `${prefix} time · ${prefix} ovos`
+  ].join('\n');
+}
+
+function resolveEggIndex(data, oneBased) {
+  const eggs = ((data && data.eggs) || []).filter((e) => e.state !== 'hatched');
+  const n = Number(oneBased);
+  if (!Number.isFinite(n) || n < 1 || n > eggs.length) return null;
+  return eggs[n - 1];
+}
+
 function formatRaidEligible(data, prefix = '!pk') {
   const aptos = (data && data.aptos) || [];
   if (!aptos.length) {
@@ -809,6 +940,10 @@ const ALIASES = {
   ginasio: 'ginasio', ginásio: 'ginasio', ginasios: 'ginasio', ginásios: 'ginasio',
   gin: 'ginasio',
   raid: 'raid', raide: 'raid', raides: 'raid', raids: 'raid',
+  joy: 'joy', enfermeira: 'joy', enfermaria: 'joy', hospital: 'joy',
+  ovos: 'ovos', ovo: 'ovos',
+  incubar: 'incubar',
+  incubadoras: 'incubadoras',
   recibo: 'recibo', op: 'recibo', operation: 'recibo'
 };
 
@@ -853,6 +988,13 @@ module.exports = {
   formatRaidAttack,
   formatRaidCapture,
   formatRaidEligible,
+  formatJoyStatus,
+  formatJoySend,
+  formatJoyCollect,
+  formatAdventureStatus,
+  formatEggIncubate,
+  formatEggHatch,
+  resolveEggIndex,
   filtrarColecao,
   interpretarFiltros,
   golpesLinha

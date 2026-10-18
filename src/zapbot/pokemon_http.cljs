@@ -270,6 +270,150 @@
                  (js/console.error (str "mídia JVM (" metrica "):") err)
                  nil))))
 
+(defn- try-joy-collect!
+  "Lazy collect como o legado: ignora joy_nothing_ready."
+  [jvm ctx pedido chat-id player-id]
+  (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+          op-id (.stableOperationId jvm-transport
+                                    (:requestId pedido) "joy-collect")
+          data (-> (desempenho/medir! ctx "pokemon_jvm_joy_collect"
+                     #(.joyCollect jvm
+                        #js {:chatId chat-id
+                             :playerId player-id
+                             :saveId (.-activeSaveId ativo)
+                             :fenceGeneration (.-fenceGeneration ativo)
+                             :operationId op-id}))
+                   (p/catch (fn [err]
+                              (when-not (= "JOY_NOTHING_READY"
+                                           (str/upper-case (str (or (.-code err) ""))))
+                                (throw err))
+                              nil)))]
+    data))
+
+(defn- executar-joy-jvm!
+  "Fluxo !pk joy / enfermeira / hospital."
+  [jvm ctx pedido chat-id player-id args-joy]
+  (let [prefix (str config/prefix "pk")
+        raw (str/trim (str/join " " args-joy))]
+    (if (str/blank? raw)
+      (p/let [coletados (try-joy-collect! jvm ctx pedido chat-id player-id)
+              data (desempenho/medir! ctx "pokemon_jvm_joy"
+                     #(.getJoyStatus jvm #js {:chatId chat-id :playerId player-id}))
+              texto (if (and coletados (pos? (or (.-n coletados) 0)))
+                      (str (.formatJoyCollect jvm-present coletados prefix)
+                           "\n\n"
+                           (.formatJoyStatus jvm-present data prefix))
+                      (.formatJoyStatus jvm-present data prefix))]
+        (envelope-jvm pedido texto))
+      (let [nums (->> (str/split raw #"[,\s]+")
+                      (map #(js/parseInt % 10))
+                      (filter #(and (not (js/isNaN %)) (pos? %)))
+                      (map dec)
+                      (sort >)
+                      vec)]
+        (when (empty? nums)
+          (throw (erro-contrato (str "❓ Use " prefix " joy 1,2 (índices da coleção)"))))
+        (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                enviados
+                (reduce
+                 (fn [chain idx]
+                   (p/then chain
+                           (fn [acc]
+                             (let [op-id (.stableOperationId jvm-transport
+                                                             (:requestId pedido)
+                                                             (str "joy-send:" idx))]
+                               (p/then (desempenho/medir! ctx "pokemon_jvm_joy_send"
+                                          #(.joySend jvm
+                                             #js {:chatId chat-id
+                                                  :playerId player-id
+                                                  :saveId (.-activeSaveId ativo)
+                                                  :fenceGeneration (.-fenceGeneration ativo)
+                                                  :operationId op-id
+                                                  :collectionIndex idx}))
+                                       (fn [data] (conj acc data)))))))
+                 (js/Promise.resolve [])
+                 nums)
+                nomes (->> enviados
+                           (map #(some-> % .-pokemon .-nome))
+                           (filter some?)
+                           (str/join ", "))
+                texto (str "🏥 A Enfermeira Joy recebeu"
+                           (if (str/blank? nomes) " seus Pokémon" (str " *" nomes "*"))
+                           ".\nEles voltarão em 30 minutos.\n"
+                           prefix " joy · " prefix " time")]
+          (envelope-jvm pedido texto))))))
+
+(defn- executar-ovos-jvm!
+  "Fluxo !pk ovos / ovo / incubar / incubadoras — sob demanda (sem push)."
+  [jvm ctx pedido chat-id player-id sub args]
+  (let [prefix (str config/prefix "pk")
+        sub (str/lower-case (str (or sub "")))]
+    (cond
+      (or (= "incubadoras" sub) (= "incubadora" sub))
+      (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
+                       #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))]
+        (envelope-jvm pedido (.formatAdventureStatus jvm-present data prefix)))
+
+      (= "incubar" sub)
+      (let [n-str (first args)
+            kind (str/lower-case (str (or (second args) "permanente")))
+            incubator (case kind
+                        ("extra" "especial" "temporaria" "temporária") kind
+                        "permanente")]
+        (when (str/blank? (str n-str))
+          (throw (erro-contrato (str "❓ Use " prefix " incubar <n> [permanente]"))))
+        (p/let [adv (.getAdventure jvm #js {:chatId chat-id :playerId player-id})
+                egg (.resolveEggIndex jvm-present adv n-str)
+                _ (when-not egg
+                    (throw (erro-contrato "❓ Índice de ovo inválido. Use !pk ovos.")))
+                _ (when-not (= "inventory" (str (.-state egg)))
+                    (throw (erro-contrato "❓ Esse ovo não está disponível para incubar.")))
+                ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                op-id (.stableOperationId jvm-transport
+                                          (:requestId pedido)
+                                          (str "egg-inc:" (.-eggId egg)))
+                data (desempenho/medir! ctx "pokemon_jvm_egg_incubate"
+                       #(.incubateEgg jvm
+                          #js {:chatId chat-id
+                               :playerId player-id
+                               :saveId (.-activeSaveId ativo)
+                               :fenceGeneration (.-fenceGeneration ativo)
+                               :operationId op-id
+                               :eggId (.-eggId egg)
+                               :incubatorId (if (= incubator "permanente")
+                                              "permanente"
+                                              incubator)}))]
+          (envelope-jvm pedido (.formatEggIncubate jvm-present data prefix))))
+
+      (or (= "nascer" sub) (= "hatch" sub) (= "chocar" sub))
+      (let [n-str (first args)]
+        (when (str/blank? (str n-str))
+          (throw (erro-contrato (str "❓ Use " prefix " ovo nascer <n>"))))
+        (p/let [adv (.getAdventure jvm #js {:chatId chat-id :playerId player-id})
+                egg (.resolveEggIndex jvm-present adv n-str)
+                _ (when-not egg
+                    (throw (erro-contrato "❓ Índice de ovo inválido.")))
+                ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                op-id (.stableOperationId jvm-transport
+                                          (:requestId pedido)
+                                          (str "egg-hatch:" (.-eggId egg)))
+                data (desempenho/medir! ctx "pokemon_jvm_egg_hatch"
+                       #(.hatchEgg jvm
+                          #js {:chatId chat-id
+                               :playerId player-id
+                               :saveId (.-activeSaveId ativo)
+                               :fenceGeneration (.-fenceGeneration ativo)
+                               :operationId op-id
+                               :eggId (.-eggId egg)
+                               :hatchId (str "hatch:" (.-eggId egg))}))]
+          (envelope-jvm pedido (.formatEggHatch jvm-present data prefix))))
+
+      :else
+      ;; ovos / ovo / ajuda → status
+      (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
+                       #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))]
+        (envelope-jvm pedido (.formatAdventureStatus jvm-present data prefix))))))
+
 (defn- executar-raid-jvm!
   "Fluxo !pk raide / gin entrar|iniciar|atacar|… — gameplay JVM antes de mídia."
   [jvm ctx pedido chat-id player-id player-name args-raid]
@@ -805,6 +949,21 @@
 
                 "raid"
                 (executar-raid-jvm! jvm ctx pedido chat-id player-id player-name resto)
+
+                "joy"
+                (executar-joy-jvm! jvm ctx pedido chat-id player-id resto)
+
+                "ovos"
+                (executar-ovos-jvm! jvm ctx pedido chat-id player-id
+                                    (or (first resto) "ovos") (vec (rest resto)))
+
+                "incubar"
+                (executar-ovos-jvm! jvm ctx pedido chat-id player-id
+                                    "incubar" resto)
+
+                "incubadoras"
+                (executar-ovos-jvm! jvm ctx pedido chat-id player-id
+                                    "incubadoras" resto)
 
                 (envelope-jvm pedido
                               (.formatUnavailable jvm-present (str/join " " args))))]

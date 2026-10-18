@@ -1,14 +1,18 @@
 (ns pokemon.application.bridge-reads
   "Leituras expostas pela bridge HTTP (M4.1/M4.3/M4.5).
   Sem escritas; sem operações administrativas; DTOs neutros (sem WhatsApp)."
-  (:require [pokemon.application.gym :as gym-app]
+  (:require             [pokemon.application.adventure :as adv]
+            [pokemon.application.gym :as gym-app]
             [pokemon.application.hunt :as hunt-app]
+            [pokemon.application.joy :as joy-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.raid :as raid-app]
             [pokemon.application.trainer :as trainer]
+            [pokemon.domain.eggs :as eggs]
             [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.hunt :as hunt]
+            [pokemon.domain.joy :as joy]
             [pokemon.domain.mundo :as mundo]
             [pokemon.domain.raid :as raid]
             [pokemon.domain.xp :as xp]))
@@ -379,3 +383,93 @@
       :aptos (mapv #(assoc (pokemon-dto %)
                            :collection-index (:collection-index %))
                    aptos)})))
+
+(defn- bed-dto
+  [bed agora]
+  (let [pronto? (<= (long (:pronto-em bed 0)) (long agora))
+        poke (:pokemon bed)]
+    {:bed-id (:bed-id bed)
+     :pronto-em (:pronto-em bed)
+     :pronto pronto?
+     :restante-ms (max 0 (- (long (:pronto-em bed 0)) (long agora)))
+     :pokemon (pokemon-dto poke)}))
+
+(defn joy-status
+  "Enfermaria do save ativo + feridos na coleção (1-based na apresentação Node)."
+  [store chat-id player-id {:keys [agora-ms]}]
+  (let [player (require-player! store chat-id player-id)
+        slot (:active-save-id player)
+        agora (long (or agora-ms (System/currentTimeMillis)))
+        beds (when slot (joy-app/list-beds store chat-id player-id slot))
+        colecao (when slot (ports/list-collection store chat-id player-id slot))
+        feridos (filterv #(joy/ferido? %) (or colecao []))]
+    {:chat-id chat-id
+     :player-id player-id
+     :active-save-id slot
+     :fence-generation (:fence-generation player 0)
+     :agora agora
+     :tempo-tratamento-minutos joy/tempo-tratamento-minutos
+     :enfermaria (mapv #(bed-dto % agora) (or beds []))
+     :prontos (count (filter #(<= (long (:pronto-em % 0)) agora) (or beds [])))
+     :em-tratamento (count (filter #(> (long (:pronto-em % 0)) agora) (or beds [])))
+     :feridos (mapv #(assoc (pokemon-dto %)
+                            :collection-index (:collection-index %))
+                    feridos)}))
+
+(defn- egg-dto
+  [o agora]
+  (let [cat (name (or (:category o) :comum))
+        state (name (or (:state o) :inventory))
+        due (:due-at o)
+        restante (when (and due (= "incubating" state))
+                   (max 0 (- (long due) (long agora))))]
+    {:egg-id (:egg-id o)
+     :category cat
+     :state state
+     :species (:species o)
+     :points (:points o 0)
+     :points-goal (:points-goal o 0)
+     :time-ms (:time-ms o 0)
+     :time-goal-ms (:time-goal-ms o 0)
+     :due-at due
+     :restante-ms restante
+     :incubator-id (:incubator-id o)
+     :save-id (:save-id o)
+     :fence-generation (:fence-generation o)
+     :pronto (eggs/pronto? o)}))
+
+(defn- incubator-dto
+  [i]
+  {:incubator-id (:incubator-id i)
+   :kind (name (or (:kind i) :permanente))
+   :uses (:uses i)
+   :bonus-points (:bonus-points i 0)
+   :active-egg-id (:active-egg-id i)
+   :livre (nil? (:active-egg-id i))})
+
+(defn adventure-status
+  "Conta Adventure Sync (ovos/incubadoras). Tempo avançado só no DTO (lazy)."
+  [store chat-id player-id {:keys [agora-ms]}]
+  (let [player (require-player! store chat-id player-id)
+        agora (long (or agora-ms (System/currentTimeMillis)))
+        _ (adv/ensure-account! store chat-id player-id)
+        acc (or (adv/get-account store chat-id player-id) (eggs/estado-inicial))
+        estado (eggs/avancar-tempo acc agora)
+        eggs-l (:eggs estado [])]
+    {:chat-id chat-id
+     :player-id player-id
+     :active-save-id (:active-save-id player)
+     :fence-generation (:fence-generation player 0)
+     :agora agora
+     :limite-inventario eggs/limite-inventario
+     :inventario-count (eggs/inventariados-count estado)
+     :eggs (mapv #(egg-dto % agora) eggs-l)
+     :incubators (mapv incubator-dto (:incubators estado []))
+     :prontos (count (filter #(contains? #{:ready-to-hatch :delivery-pending}
+                                         (:state %))
+                             eggs-l))
+     :categorias (into {}
+                       (map (fn [[k v]]
+                              [(name k) {:tempo-ms (:tempo-ms v)
+                                         :pontos (:pontos v)}])
+                            eggs/categorias))}))
