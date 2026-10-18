@@ -64,6 +64,9 @@
     "Tentativa de captura no encontro ativo (aguardando-captura?).
      Consome bola + atualiza/encerra batalha na mesma TX; fence + recibo.")
 
+  (start-hunt! [this writer-ctx request]
+    "Inicia caça: seleciona selvagem validado, cria batalha, cooldown + trava de chat.")
+
   (evolve-pokemon! [this writer-ctx request]
     "Evolui Pokémon no índice; consome item se :item-id; fence + recibo.")
 

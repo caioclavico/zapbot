@@ -1,7 +1,8 @@
 (ns pokemon.application.bridge-reads
-  "Leituras expostas pela bridge HTTP (M4.1/M4.3).
+  "Leituras expostas pela bridge HTTP (M4.1/M4.3/M4.5).
   Sem escritas; sem operações administrativas; DTOs neutros (sem WhatsApp)."
-  (:require [pokemon.application.ports :as ports]
+  (:require [pokemon.application.hunt :as hunt-app]
+            [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.errors :as err]
             [pokemon.domain.xp :as xp]))
@@ -107,6 +108,18 @@
     (select-keys p [:nome :species :nickname :shiny :nivel :hp :hp-atual
                     :raridade :tipos :ataque :defesa :atq-esp :def-esp :veloc
                     :imagem :imagem-shiny])))
+
+(defn hunt-plan
+  "Plano de caça + elegibilidade (RNG tipos/surto no servidor)."
+  [store chat-id player-id opts]
+  (require-player! store chat-id player-id)
+  (let [plano (hunt-app/plan store chat-id player-id opts)]
+    ;; API sem `?` nas chaves (encoder camelCase).
+    (-> plano
+        (dissoc :surto? :roll-tipos :roll-surto)
+        (assoc :surto (boolean (:surto? plano))
+               :roll-tipos (:roll-tipos plano)
+               :roll-surto (:roll-surto plano)))))
 
 (defn active-encounter
   "Encontro ativo (batalha em curso ou aguardando captura)."

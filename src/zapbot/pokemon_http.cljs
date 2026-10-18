@@ -14,6 +14,7 @@
 (def ^:private transport (js/require "../scripts/lib/pokemon-http-client.cjs"))
 (def ^:private jvm-transport (js/require "../scripts/lib/pokemon-jvm-client.cjs"))
 (def ^:private jvm-present (js/require "../scripts/lib/pokemon-jvm-present.cjs"))
+(def ^:private pokeapi (js/require "../scripts/lib/pokemon-pokeapi.cjs"))
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 (def ^:private versao-bot (.-version (js/require "../package.json")))
 (def ^:private chave-entregas "pokemon-http-deliveries")
@@ -146,8 +147,10 @@
                    (or (nil? (:mentions mensagem))
                        (and (vector? (:mentions mensagem)) (every? string? (:mentions mensagem))))
                    (or (= "text" (:type mensagem))
-                       (and (string? (:mediaId mensagem)) (string? (:mimeType mensagem))
-                            (string? (:filename mensagem)))))
+                       (and (string? (:mimeType mensagem))
+                            (string? (:filename mensagem))
+                            (or (string? (:mediaId mensagem))
+                                (string? (:base64 mensagem))))))
       (throw (erro-contrato "Mensagem Pokémon inválida."))))
   resposta)
 
@@ -190,14 +193,18 @@
 
           :else [mensagem]))) mensagens)))
 
-(defn- enviar-acao! [http enviar ctx {:keys [type text mentions mediaId mimeType filename] :as acao}]
+(defn- enviar-acao! [http enviar ctx {:keys [type text mentions mediaId base64 mimeType filename] :as acao}]
   (let [opcoes #js {:mentions (clj->js (or mentions []))}
         enviar-texto #(when-not (str/blank? text)
                         (desempenho/medir! ctx "pokemon_envio_whatsapp" (fn [] (enviar text opcoes))))]
     (if (= "text" type)
       (p/resolved (enviar-texto))
-      (-> (p/let [buffer (desempenho/medir! ctx "pokemon_transferencia_midia" #(.media http mediaId))
-                  media (MessageMedia. mimeType (desempenho/codificar-base64! ctx buffer) filename)
+      (-> (p/let [b64 (if (and (string? base64) (not (str/blank? base64)))
+                       base64
+                       (desempenho/codificar-base64!
+                        ctx
+                        (desempenho/medir! ctx "pokemon_transferencia_midia" #(.media http mediaId))))
+                  media (MessageMedia. mimeType b64 filename)
                   _ (desempenho/medir! ctx "pokemon_envio_whatsapp"
                       #(enviar media
                                (js/Object.assign #js {} opcoes
@@ -310,7 +317,41 @@
                     (.formatReceipt jvm-present data)))
 
                 "cacar"
-                (.formatHuntBlocked jvm-present)
+                (p/let [plano (desempenho/medir! ctx "pokemon_jvm_hunt_plan"
+                                 #(.getHuntPlan jvm
+                                    #js {:chatId chat-id
+                                         :playerId player-id
+                                         :areaId (not-empty (str/join " " resto))}))
+                        bloqueio (.formatHuntEligibility jvm-present plano)]
+                  (if bloqueio
+                    bloqueio
+                    (p/let [cands (desempenho/medir! ctx "pokemon_jvm_pokeapi"
+                                     #(.buildHuntCandidates pokeapi plano))
+                            op-id (.stableOperationId jvm-transport
+                                                      (:requestId pedido) "hunt-start")
+                            data (desempenho/medir! ctx "pokemon_jvm_hunt_start"
+                                   #(.startHunt jvm
+                                      #js {:chatId chat-id
+                                           :playerId player-id
+                                           :saveId (.-activeSaveId plano)
+                                           :fenceGeneration (.-fenceGeneration plano)
+                                           :operationId op-id
+                                           :areaId (.-id (.-area plano))
+                                           :climaId (.-id (.-clima plano))
+                                           :tiposEncontro (.-tiposEncontro plano)
+                                           :surto (.-surto plano)
+                                           :poderAlvo (.-poderAlvo plano)
+                                           :candidates cands}))
+                            texto (.formatHuntStart jvm-present plano data
+                                                    (str config/prefix "pk"))
+                            img-url (some-> data .-selvagem .-imagem)
+                            img (when img-url
+                                  (desempenho/medir! ctx "pokemon_jvm_sprite"
+                                    #(.fetchImageBase64 pokeapi img-url)))]
+                      (if img
+                        (.envelope jvm-present (:requestId pedido) texto
+                                   #js {:image img :caption texto})
+                        texto))))
 
                 "capturar"
                 (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
@@ -333,10 +374,50 @@
                                            :battleId (some-> (.-encounter enc) .-battleId)}))]
                       (.formatCaptureResult jvm-present data (str config/prefix "pk")))))
 
+                "atacar"
+                (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
+                               #(.getEncounter jvm #js {:chatId chat-id :playerId player-id}))
+                        encontro (.-encounter enc)]
+                  (cond
+                    (nil? encontro)
+                    "❓ Não há caçada/encontro em andamento."
+
+                    (.-aguardandoCaptura encontro)
+                    (str "🎯 O selvagem já está pronto para captura. Use "
+                         config/prefix "pk capturar.")
+
+                    (not (.-active encontro))
+                    "❓ Este encontro não está em batalha ativa."
+
+                    :else
+                    (let [idx (js/parseInt (or (first resto) "1") 10)
+                          move-idx (if (js/isNaN idx) 0 (max 0 (dec idx)))]
+                      (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                              op-id (.stableOperationId jvm-transport
+                                                        (:requestId pedido)
+                                                        (str "battle-turn:"
+                                                             (.-battleId encontro) ":"
+                                                             (.-turnIndex encontro) ":"
+                                                             move-idx))
+                              data (desempenho/medir! ctx "pokemon_jvm_battle_turn"
+                                     #(.confirmBattleTurn jvm
+                                        #js {:chatId chat-id
+                                             :playerId player-id
+                                             :saveId (.-activeSaveId ativo)
+                                             :fenceGeneration (.-fenceGeneration ativo)
+                                             :operationId op-id
+                                             :battleId (.-battleId encontro)
+                                             :expectedTurnIndex (.-turnIndex encontro)
+                                             :action "attack"
+                                             :moveIndex move-idx}))]
+                        (.formatBattleTurn jvm-present data (str config/prefix "pk"))))))
+
                 (.formatUnavailable jvm-present (str/join " " args)))]
         (entregar-envelope-jvm!
          message ctx pedido
-         (.envelope jvm-present (:requestId pedido) texto))))))
+         (if (.-messages texto)
+           texto
+           (.envelope jvm-present (:requestId pedido) texto)))))))
 
 (defn executar [message comando argumentos]
   (let [ctx (desempenho/contexto-de message)

@@ -1,9 +1,10 @@
 (ns pokemon.application.bridge-tx
-  "Casos de uso M4.2/M4.4 da bridge: ensure, saves, activate, encontro/captura.
+  "Casos de uso M4.2/M4.4/M4.5 da bridge: ensure, saves, activate, encontro/caça.
   Sem seed admin; save-id + fence + operation-id explícitos nas escritas."
   (:require [clojure.string :as str]
             [pokemon.application.battle :as battle-app]
             [pokemon.application.capture :as capture-app]
+            [pokemon.application.hunt :as hunt-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.reward :as reward-app]
             [pokemon.application.trainer :as trainer]
@@ -123,7 +124,15 @@
                           {:operation-id operation-id})))
       (assoc receipt :persisted true))))
 
+(defn- camel->kebab
+  [s]
+  (-> (str s)
+      (str/replace #"\?" "")
+      (str/replace #"([a-z0-9])([A-Z])" "$1-$2")
+      str/lower-case))
+
 (defn- keywordize-keys
+  "JSON string keys → keywords kebab (atqEsp / atq-esp → :atq-esp)."
   [x]
   (cond
     (map? x)
@@ -131,7 +140,7 @@
           (map (fn [[k v]]
                  [(cond
                     (keyword? k) k
-                    (string? k) (keyword k)
+                    (string? k) (keyword (camel->kebab k))
                     :else k)
                   (keywordize-keys v)])
                x))
@@ -246,6 +255,66 @@
      :battle-id (get-in result [:battle :battle-id])
      :save-id save-id
      :fence-generation (long fence-generation)}))
+
+(defn start-hunt!
+  "Inicia caça com candidatos já buscados na PokeAPI (Node).
+  `allow-test-rng` controla se shinyRoll do body é honrado."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 area-id tipos-encontro surto? poder-alvo candidates
+                 shiny-roll clima-id agora-ms allow-test-rng battle-id]
+          :as req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (when (or (str/blank? (str area-id)) (empty? tipos-encontro) (nil? poder-alvo))
+    (throw (err/error :invalid_query
+                      {:required ["areaId" "tiposEncontro" "poderAlvo" "candidates"]})))
+  (when (empty? candidates)
+    (throw (err/error :hunt_no_candidates {})))
+  (let [cands (mapv keywordize-keys candidates)
+        writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        result (hunt-app/start-hunt!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :area-id (str area-id)
+                         :tipos-encontro tipos-encontro
+                         :surto? (boolean surto?)
+                         :poder-alvo (long poder-alvo)
+                         :candidates cands
+                         :clima-id clima-id
+                         :agora-ms agora-ms}
+                  battle-id (assoc :battle-id battle-id)
+                  (and allow-test-rng (some? shiny-roll))
+                  (assoc :shiny-roll (long shiny-roll))))
+        battle (:battle result)
+        selvagem (:selvagem result)]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :battle-id (:battle-id result)
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :somente-batalha (boolean (:somente-batalha? result))
+     :surto (boolean (:surto? result))
+     :area-id (:area-id result)
+     :selvagem (when selvagem
+                 (select-keys selvagem [:nome :species :slug-especie :raridade
+                                        :shiny :shiny? :tipos :hp :nivel
+                                        :imagem :imagem-shiny :golpes]))
+     :battle (when battle
+               {:battle-id (:battle-id battle)
+                :active (boolean (:active? battle))
+                :hp (:hp battle)
+                :phase (:phase battle)
+                :pokemon-o (select-keys (get-in battle [:pokemons :o] {})
+                                        [:nome :raridade :shiny? :hp :tipos])
+                :pokemon-x (select-keys (get-in battle [:pokemons :x] {})
+                                        [:nome :hp :nivel])})}))
 
 (defn confirm-battle-turn!
   "Harness/e2e: confirma turno (injeta rng para testes)."

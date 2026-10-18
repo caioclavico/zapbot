@@ -64,14 +64,16 @@
      :encounter_not_found :battle_not_found) 404
     (:invalid_query :missing_operation_id :missing_reward_identity
      :missing_writer_context :missing_fence_generation :invalid_coins_delta
-     :invalid_save_slot :invalid_slot_id :invalid_identity :unknown_ball) 400
+     :invalid_save_slot :invalid_slot_id :invalid_identity :unknown_ball
+     :area_unavailable :invalid_wild_pokemon :hunt_no_candidates) 400
     (:stale_writer_fence :writer_fence_conflict :activate_conflict
      :receipt_payload_mismatch :reward_conflict :reward_save_mismatch
      :operation_forbidden :battle_pending :battle_already_active
      :battle_save_mismatch :encounter_owner_mismatch :encounter_not_ready
-     :stale_turn_index) 409
+     :stale_turn_index :chat_hunt_busy :hunt_cooldown) 409
     :operation_pending 409
-    (:insufficient_item :collection_full) 422
+    (:insufficient_item :collection_full :active_pokemon_fainted
+     :no_active_pokemon) 422
     :unauthorized 401
     :method_not_allowed 405
     422))
@@ -146,7 +148,7 @@
     :else nil))
 
 (defn- make-handler
-  [store token]
+  [store token allow-test-rng?]
   (reify HttpHandler
     (handle [_ ex]
       (try
@@ -160,11 +162,13 @@
               (ok! ex {:status "up"
                        :role "pokemon-jvm-bridge"
                        :readsOnly false
+                       :allowTestRng (boolean allow-test-rng?)
                        :capabilities ["trainer-read" "collection-read" "active-save-read"
                                       "trainer-ensure" "saves-list" "save-activate"
                                       "reward-coins" "operation-get"
                                       "encounter-read" "encounter-capture"
-                                      "battle-start" "battle-turn"]}))
+                                      "battle-start" "battle-turn"
+                                      "hunt-plan" "hunt-start"]}))
 
             (or (str/starts-with? path "/admin")
                 (str/starts-with? path "/v1/admin")
@@ -284,6 +288,67 @@
                         (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
                       (ok! ex (reads/active-encounter store chat-id player-id))))
 
+                (= path "/v1/hunt/plan")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")
+                          area-id (not-empty (g qs "areaId"))
+                          agora (long-or-nil (g qs "agoraMs"))
+                          roll-tipos (long-or-nil (g qs "rollTipos"))
+                          roll-surto (long-or-nil (g qs "rollSurto"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (reads/hunt-plan
+                               store chat-id player-id
+                               (cond-> {:area-id area-id}
+                                 (some? agora) (assoc :agora-ms agora)
+                                 (and allow-test-rng? (some? roll-tipos))
+                                 (assoc :roll-tipos roll-tipos)
+                                 (and allow-test-rng? (some? roll-surto))
+                                 (assoc :roll-surto roll-surto))))))
+
+                (= path "/v1/hunt/start")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          save-id (g body "saveId" "save-id")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId" "operation-id")
+                          area-id (g body "areaId" "area-id")
+                          tipos (or (g body "tiposEncontro" "tipos-encontro") [])
+                          surto? (boolean (g body "surto" "surto?"))
+                          poder (long-or-nil (g body "poderAlvo" "poder-alvo"))
+                          candidates (or (g body "candidates") [])
+                          shiny-roll (long-or-nil (g body "shinyRoll" "shiny-roll"))
+                          clima-id (g body "climaId" "clima-id")
+                          agora (long-or-nil (g body "agoraMs" "agora-ms"))
+                          battle-id (g body "battleId" "battle-id")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (str/blank? operation-id)
+                                (nil? fence))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/start-hunt!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :area-id area-id
+                                                 :tipos-encontro tipos
+                                                 :surto? surto?
+                                                 :poder-alvo poder
+                                                 :candidates candidates
+                                                 :clima-id clima-id
+                                                 :allow-test-rng allow-test-rng?}
+                                          battle-id (assoc :battle-id battle-id)
+                                          (some? agora) (assoc :agora-ms agora)
+                                          (and allow-test-rng? (some? shiny-roll))
+                                          (assoc :shiny-roll shiny-roll)))))))
+
                 (= path "/v1/encounter/capture")
                 (do (require-method! ex #{"POST"})
                     (let [body (read-body ex)
@@ -396,8 +461,10 @@
           (handle-error! ex t))))))
 
 (defn start!
-  "Sobe HttpServer em loopback. Retorna {:server … :port … :host …}."
-  [{:keys [host port token store] :or {host "127.0.0.1" port 18090}}]
+  "Sobe HttpServer em loopback. Retorna {:server … :port … :host …}.
+  `:allow-test-rng true` só para smoke/dev — nunca no caminho WhatsApp."
+  [{:keys [host port token store allow-test-rng]
+    :or {host "127.0.0.1" port 18090 allow-test-rng false}}]
   (when-not (contains? allowed-hosts host)
     (throw (ex-info "bridge_host_forbidden"
                     {:host host
@@ -409,7 +476,7 @@
     (throw (ex-info "bridge_store_required" {})))
   (let [addr (InetSocketAddress. ^String host (int port))
         server (HttpServer/create addr 0)
-        handler (make-handler store token)]
+        handler (make-handler store token (boolean allow-test-rng))]
     (.createContext server "/" handler)
     (.setExecutor server (Executors/newFixedThreadPool 8))
     (.start server)
@@ -418,6 +485,7 @@
        :host host
        :port bound
        :base-url (str "http://" host ":" bound)
+       :allow-test-rng (boolean allow-test-rng)
        :stop! (fn [] (.stop server 0))})))
 
 (defn stop!

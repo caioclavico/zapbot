@@ -82,8 +82,20 @@ function dispatch(client, message, argsTokens) {
         const data = await client.ensureTrainer(identity);
         return present.envelope(identity.requestId, present.formatEnsure(data));
       }
-      case 'cacar':
-        return present.envelope(identity.requestId, present.formatHuntBlocked());
+      case 'cacar': {
+        const plan = await client.getHuntPlan(identity);
+        const block = present.formatHuntEligibility(plan);
+        if (block) {
+          return present.envelope(identity.requestId, block);
+        }
+        return present.envelope(
+          identity.requestId,
+          present.formatHuntStart(plan, {
+            selvagem: { nome: 'Magikarp', raridade: 'comum' },
+            somenteBatalha: false
+          })
+        );
+      }
       case 'capturar': {
         const enc = await client.getEncounter(identity);
         if (argsTokens.length < 2) {
@@ -213,7 +225,7 @@ test('A→B→A por comando com isolamento de jogador na identidade', async () =
   });
 });
 
-test('escrita não integrada, cacar bloqueado e JVM indisponível', async () => {
+test('escrita não integrada, cacar elegível e JVM indisponível', async () => {
   const msg = fakeMessage({
     chatId: 'g@g.us', playerId: 'p', requestId: 'r-x', args: 'batalhar'
   });
@@ -224,8 +236,28 @@ test('escrita não integrada, cacar bloqueado e JVM indisponível', async () => 
   );
   assert.match(denied.messages[0].text, /não integrado/);
 
-  const hunt = await dispatch({}, msg, ['cacar']);
-  assert.match(hunt.messages[0].text, /não disponível|não migrado/i);
+  await withJvm((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url.startsWith('/v1/hunt/plan')) {
+      return res.end(JSON.stringify({
+        ok: true,
+        data: {
+          area: { id: 'praia', nome: 'Praia Azul', emoji: '🏖️' },
+          clima: { id: 'chuvoso', nome: 'Chuvoso', emoji: '🌧️', tipos: ['water'] },
+          eligibilidade: {
+            temTreinador: true, temPokemon: true, ativoVivo: true,
+            cooldownOk: true, semBatalhaPropria: true, chatLivre: true
+          }
+        }
+      }));
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ ok: false, error: { code: 'not_found' } }));
+  }, async client => {
+    const hunt = await dispatch(client, msg, ['cacar']);
+    assert.match(hunt.messages[0].text, /Praia Azul/);
+    assert.match(hunt.messages[0].text, /Magikarp/);
+  });
 
   const dead = createClient({
     baseUrl: 'http://127.0.0.1:1',

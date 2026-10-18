@@ -228,6 +228,9 @@ function createClient(config = {}) {
     attemptEncounterCapture: (body) => mutateOnce('/v1/encounter/capture', body),
     startBattle: (body) => mutateOnce('/v1/battles/start', body),
     confirmBattleTurn: (body) => mutateOnce('/v1/battles/turn', body),
+    getHuntPlan: ({ chatId, playerId, areaId, agoraMs, rollTipos, rollSurto }) =>
+      request('GET', `/v1/hunt/plan${q({ chatId, playerId, areaId, agoraMs, rollTipos, rollSurto })}`),
+    startHunt: (body) => mutateOnce('/v1/hunt/start', body),
     close: () => agent.destroy()
   };
 }

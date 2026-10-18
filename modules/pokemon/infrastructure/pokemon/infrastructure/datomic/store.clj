@@ -10,6 +10,7 @@
             [pokemon.domain.collection :as coll]
             [pokemon.domain.errors :as err]
             [pokemon.domain.evolution :as evo]
+            [pokemon.domain.hunt :as hunt]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]
             [pokemon.domain.moves :as moves]
@@ -94,6 +95,7 @@
              :maior-sequencia-capturas (long (:save/maior-sequencia-capturas e 0))
              :expansoes-pokemon-50 (long (:save/expansoes-pokemon-50 e 0))
              :capacidade-pokemon-legada (long (:save/capacidade-pokemon-legada e 0))
+             :ultima-cacada-at (long (:save/ultima-cacada-at e 0))
              :ginasios (or (edn-read (:save/ginasios-edn e)) {})
              :time-ginasio (or (edn-read (:save/time-ginasio-edn e)) [])))))
 
@@ -588,6 +590,18 @@
                :pronto-em (:enfermaria-bed/pronto-em e)}))
        vec))
 
+(defn- clear-chat-wild-tx
+  "Remove trava de caça do chat se ainda apontar para esta batalha."
+  [db chat-id battle-id]
+  (let [g (d/pull db '[*] [:group/chat-id chat-id])]
+    (when (and (present? g) (= battle-id (:group/active-wild-battle-id g)))
+      (cond-> []
+        (:group/active-wild-battle-id g)
+        (conj [:db/retract [:group/chat-id chat-id] :group/active-wild-battle-id battle-id])
+        (:group/active-wild-player-id g)
+        (conj [:db/retract [:group/chat-id chat-id] :group/active-wild-player-id
+               (:group/active-wild-player-id g)])))))
+
 (defrecord DatomicTrainerStore [conn]
   ports/TrainerStore
 
@@ -966,7 +980,8 @@
                                 [:db/add [:battle/id battle-id] :battle/state-edn
                                  (pr-str next-state)]]
                      clear-active (when encerrado?
-                                    [[:db/retract [:player/key pk] :player/active-battle-id battle-id]])
+                                    (into [[:db/retract [:player/key pk] :player/active-battle-id battle-id]]
+                                          (or (clear-chat-wild-tx db chat-id battle-id) [])))
                      base-tx (into (into ball-tx battle-tx)
                                    (concat
                                     (or clear-active [])
@@ -1082,6 +1097,143 @@
                                  :bola bola
                                  :encounter next-state}})]
                  resultado)))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (start-hunt! [_ writer-ctx request]
+    (let [payload (ops/hunt-start-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [chat-id (:chat-id writer-ctx)
+                     player-id (:player-id writer-ctx)
+                     sk (id/save-key chat-id player-id (:save-id writer-ctx))
+                     pk (id/player-key chat-id player-id)
+                     save-m (->save save)
+                     agora (long (or (:agora-ms request) (System/currentTimeMillis)))
+                     _ (when-not (hunt/pode-cacar? (:ultima-cacada-at save-m 0) agora)
+                         (throw (err/error :hunt_cooldown
+                                           {:restante-ms (hunt/cooldown-restante-ms
+                                                          (:ultima-cacada-at save-m 0) agora)})))
+                     prev (active-battle-id-for db chat-id player-id)
+                     _ (when prev
+                         (let [st (->battle (battle-entity db prev))]
+                           (when (and st (or (:active? st) (:aguardando-captura? st)))
+                             (throw (err/error :battle_already_active {:battle-id prev})))))
+                     group-e (d/pull db '[*] [:group/chat-id chat-id])
+                     _ (when (and (present? group-e)
+                                  (:group/active-wild-battle-id group-e)
+                                  (not= player-id (:group/active-wild-player-id group-e)))
+                         (throw (err/error :chat_hunt_busy
+                                           {:battle-id (:group/active-wild-battle-id group-e)
+                                            :owner (:group/active-wild-player-id group-e)})))
+                     colecao (query-collection db sk)
+                     _ (when (empty? colecao)
+                         (throw (err/error :no_active_pokemon {})))
+                     ativo-idx (long (:ativo-index save-m 0))
+                     pokemon-x (nth colecao (min ativo-idx (dec (count colecao))))
+                     _ (when-not (pos? (long (:hp-atual pokemon-x 0)))
+                         (throw (err/error :active_pokemon_fainted
+                                           {:idx ativo-idx})))
+                     candidates (mapv hunt/validar-candidato-basico!
+                                      (or (:candidates request) []))
+                     tipos (set (:tipos-encontro request))
+                     surto? (boolean (:surto? request))
+                     selvagem
+                     (if surto?
+                       (let [c (first candidates)]
+                         (when-not c
+                           (throw (err/error :hunt_no_candidates {:surto? true})))
+                         c)
+                       (hunt/selecionar-selvagem
+                        candidates
+                        (long (:poder-alvo request (hunt/poder-alvo-caca
+                                                   (:trainer-level save-m 1))))
+                        tipos))
+                     selvagem (-> selvagem
+                                  hunt/com-raridade
+                                  (hunt/sortear-shiny (:shiny-roll request))
+                                  (update :golpes #(moves/garantir-ataque-do-tipo
+                                                    (or % []) (:tipos selvagem))))
+                     somente-batalha? (not (capacity/cabe-pokemon? (count colecao) save-m))
+                     battle-id (or (:battle-id request) operation-id)
+                     state (battle/create-wild-battle
+                            {:battle-id battle-id
+                             :chat-id chat-id
+                             :player-id player-id
+                             :save-id (:save-id writer-ctx)
+                             :fence-generation (:fence-generation writer-ctx)
+                             :pokemon-x pokemon-x
+                             :pokemon-o selvagem
+                             :hp-x (:hp-atual pokemon-x)
+                             :hp-o (:hp selvagem)
+                             :status-x (:status pokemon-x)
+                             :collection-index ativo-idx})
+                     state (assoc state
+                                  :bioma (:area-id request)
+                                  :clima (:clima-id request)
+                                  :surto? surto?
+                                  :somente-batalha? somente-batalha?
+                                  :tipos-encontro (vec tipos))
+                     rev (long (:save/revision save 0))
+                     species (or (:species selvagem) (:slug-especie selvagem)
+                                 (:nome selvagem))
+                     group-tx (if (present? group-e)
+                                [[:db/add [:group/chat-id chat-id] :group/active-wild-battle-id battle-id]
+                                 [:db/add [:group/chat-id chat-id] :group/active-wild-player-id player-id]]
+                                [{:group/chat-id chat-id
+                                  :group/label "grupo"
+                                  :group/active-wild-battle-id battle-id
+                                  :group/active-wild-player-id player-id}])
+                     tx (into group-tx
+                              [{:battle/id battle-id
+                                :battle/save [:save/key sk]
+                                :battle/player-key pk
+                                :battle/save-id (:save-id writer-ctx)
+                                :battle/kind "wild"
+                                :battle/active? true
+                                :battle/turn-index 0
+                                :battle/phase "active"
+                                :battle/collection-index (long ativo-idx)
+                                :battle/state-edn (pr-str state)}
+                               [:db/add [:player/key pk] :player/active-battle-id battle-id]
+                               [:db/add [:save/key sk] :save/ultima-cacada-at agora]
+                               [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                               {:pokedex-entry/key (id/pokedex-entry-key sk species)
+                                :pokedex-entry/save [:save/key sk]
+                                :pokedex-entry/species species
+                                :pokedex-entry/seen true}
+                               {:operation-receipt/id operation-id
+                                :operation-receipt/kind "hunt-start"
+                                :operation-receipt/channel "gameplay"
+                                :operation-receipt/payload-hash phash
+                                :operation-receipt/player-key pk
+                                :operation-receipt/save-id (:save-id writer-ctx)
+                                :operation-receipt/summary
+                                (pr-str {:battle-id battle-id
+                                         :species species
+                                         :raridade (:raridade selvagem)
+                                         :shiny? (boolean (:shiny? selvagem))
+                                         :somente-batalha? somente-batalha?})}])]
+                 {:tx tx
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :battle-id battle-id
+                           :battle state
+                           :selvagem selvagem
+                           :somente-batalha? somente-batalha?
+                           :area-id (:area-id request)
+                           :surto? surto?}})))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)
@@ -1327,7 +1479,8 @@
                      ;; Mantém ponteiro enquanto aguarda captura (legado cacadas-selvagens).
                      clear-active (when (and (not (:active? next-state))
                                              (not (:aguardando-captura? next-state)))
-                                    [[:db/retract [:player/key pk] :player/active-battle-id battle-id]])
+                                    (into [[:db/retract [:player/key pk] :player/active-battle-id battle-id]]
+                                          (or (clear-chat-wild-tx db (:chat-id writer-ctx) battle-id) [])))
                      tx (into [[:db/cas [:battle/id battle-id] :battle/turn-index
                                 expected (long (:turn-index next-state))]
                                [:db/add [:battle/id battle-id] :battle/active?
@@ -1807,7 +1960,10 @@
   (get-group [_ chat-id]
     (let [e (d/pull (d/db conn) '[*] [:group/chat-id chat-id])]
       (when (present? e)
-        {:chat-id (:group/chat-id e) :label (:group/label e)})))
+        {:chat-id (:group/chat-id e)
+         :label (:group/label e)
+         :active-wild-battle-id (:group/active-wild-battle-id e)
+         :active-wild-player-id (:group/active-wild-player-id e)})))
 
   (get-receipt [_ operation-id]
     (let [e (receipt-entity (d/db conn) operation-id)]

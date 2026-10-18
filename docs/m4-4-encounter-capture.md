@@ -2,13 +2,11 @@
 
 Integra `!pk capturar` ao fluxo Node → bridge loopback → Datomic, reutilizando as fórmulas M3.3 sem duplicar regras no Node.
 
-## Bloqueio: `!pk cacar`
+## Caça (`!pk cacar`)
 
-O spawn de caça no legado depende de **bioma, clima, PokeAPI, shiny e eventos** — ainda não migrados para o JVM.
+Spawn completo migrado no **M4.5** (ver `docs/m4-5-hunt-encounters.md`). M4.4 cobre a captura pós-vitória.
 
-Nesta milestone **não** inventamos encontro substituto. `!pk cacar` / `caçar` responde com bloqueio explícito no adaptador JVM (sem fallback Cassandra).
-
-## Recorte seguro
+## Recorte seguro (captura)
 
 | Passo legado | JVM M4.4 |
 | --- | --- |
@@ -26,8 +24,8 @@ Requer `APP_ENV=development` e `POKEMON_ADAPTER=jvm`.
 | Comando | Status |
 | --- | --- |
 | `!pk capturar` / `cap` `[bola\|1\|2\|3]` | **Integrado** — menu sem args; tentativa com bola |
-| `!pk cacar` | **Bloqueado** (spawn não migrado) |
-| Demais (batalhar, gin*, raid*, loja, …) | Continua indisponível no adaptador |
+| `!pk cacar` | Ver M4.5 |
+| Demais (batalhar PvP, gin*, raid*, loja, …) | Continua indisponível no adaptador |
 
 Harness HTTP (dev/e2e, não WhatsApp): `POST /v1/battles/start`, `POST /v1/battles/turn`, `GET /v1/encounter`.
 

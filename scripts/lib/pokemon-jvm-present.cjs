@@ -9,13 +9,14 @@ const PAGE_SIZE = 12;
 
 function envelope(requestId, text, extras = {}) {
   const messages = [];
-  if (extras.image && extras.image.mediaId) {
+  if (extras.image && (extras.image.mediaId || extras.image.base64)) {
     messages.push({
       type: 'image',
       text: extras.caption || text,
-      mediaId: extras.image.mediaId,
-      mimeType: extras.image.mimeType || 'image/jpeg',
-      filename: extras.image.filename || 'pokemon-jvm.jpg'
+      mediaId: extras.image.mediaId || null,
+      base64: extras.image.base64 || null,
+      mimeType: extras.image.mimeType || 'image/png',
+      filename: extras.image.filename || 'pokemon-jvm.png'
     });
     if (text && extras.caption && text !== extras.caption && text.length > 900) {
       messages.push({ type: 'text', text });
@@ -256,6 +257,14 @@ function formatError(err) {
     COLLECTION_FULL: '🎒 Bolsa cheia: libere espaço antes de capturar.',
     BATTLE_PENDING: '⚠️ Há batalha/encontro em andamento neste save — não dá para alternar A↔B agora.',
     BATTLE_SAVE_MISMATCH: '⚠️ Encontro pertence a outro save — callback antigo rejeitado.',
+    AREA_UNAVAILABLE: '🗺️ Essa área não está disponível hoje.',
+    HUNT_COOLDOWN: '⏳ Ainda em cooldown de caça. Aguarde e tente de novo.',
+    CHAT_HUNT_BUSY: '⚔️ Já existe uma caçada em andamento neste chat.',
+    ACTIVE_POKEMON_FAINTED: '😵 Seu Pokémon ativo está desmaiado. Cure-o antes de caçar.',
+    NO_ACTIVE_POKEMON: '❓ Você precisa de um Pokémon na equipe para caçar.',
+    HUNT_NO_CANDIDATES: '❌ Não consegui buscar um pokémon selvagem agora. Tente de novo.',
+    POKEAPI_HTTP: '❌ A PokeAPI falhou ao buscar espécies. Tente de novo.',
+    POKEAPI_EMPTY: '❌ Não consegui buscar um pokémon selvagem agora. Tente de novo.',
     TIMEOUT: '⏳ Bridge JVM demorou. Se foi escrita, confira com !pk recibo <id> antes de repetir.',
     CONNECT_TIMEOUT: '⚠️ Não conectou na bridge JVM. Nenhuma escrita foi ao Cassandra.',
     NETWORK: '⚠️ Bridge JVM indisponível. Nenhuma escrita foi ao Cassandra.',
@@ -268,19 +277,84 @@ function formatUnavailable(commandHint) {
   return [
     '🚧 *Comando ainda não integrado no adaptador JVM*',
     commandHint ? `Pedido: \`${commandHint}\`` : null,
-    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `capturar`/`cap`, `recibo <id>`.',
-    '`!pk cacar` bloqueado: spawn (bioma/clima/PokeAPI) ainda não migrado — sem regra substituta.',
+    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `cacar`, `capturar`/`cap`, `recibo <id>`.',
     'Sem fallback automático para Cassandra. Use `POKEMON_ADAPTER=legacy` para o restante.'
   ].filter(Boolean).join('\n');
 }
 
-function formatHuntBlocked() {
+const RARIDADE = {
+  comum: { nome: 'Comum', emoji: '⚪' },
+  incomum: { nome: 'Incomum', emoji: '🟢' },
+  raro: { nome: 'Raro', emoji: '🔵' },
+  epico: { nome: 'Épico', emoji: '🟣' },
+  lendario: { nome: 'Lendário', emoji: '🟡' },
+  mitico: { nome: 'Mítico', emoji: '🔴' }
+};
+
+function textoRaridade(p) {
+  const r = RARIDADE[(p && p.raridade) || 'comum'] || RARIDADE.comum;
+  const shiny = p && (p.shiny || p.shiny === true) ? ' ✨ Shiny' : '';
+  return `${r.emoji} ${r.nome}${shiny}`;
+}
+
+function formatHuntEligibility(plan) {
+  const e = (plan && plan.eligibilidade) || {};
+  if (!e.temTreinador) return '⚠️ Treinador não encontrado. Use !pk iniciar.';
+  if (!e.temPokemon) return '❓ Você precisa de um Pokémon na equipe para caçar. Use !pk iniciar.';
+  if (!e.ativoVivo) return '😵 Seu Pokémon ativo está desmaiado. Cure-o antes de caçar.';
+  if (!e.cooldownOk) {
+    return `⏳ Calma aí! Você pode caçar de novo em ${e.cooldownRestanteS || '?'}s.`;
+  }
+  if (!e.semBatalhaPropria) return '⚔️ Já existe uma batalha/encontro seu em andamento.';
+  if (!e.chatLivre) return '⚔️ Já existe uma caçada em andamento neste chat.';
+  return null;
+}
+
+function formatHuntStart(plan, result, prefix = '!pk') {
+  const area = plan.area || {};
+  const clima = plan.clima || {};
+  const selvagem = (result && result.selvagem) || {};
+  const somente = result && result.somenteBatalha;
+  const surto = result && result.surto;
   return [
-    '🚧 *Caçada (!pk cacar) ainda não disponível no adaptador JVM*',
-    'O spawn depende de bioma, clima, PokeAPI, shiny e eventos — ainda não migrados.',
-    'Não inventamos encontro substituto nesta milestone.',
-    'Captura pós-vitória: `!pk capturar <bola>` quando houver encontro em `aguardando-captura`.',
-    'Use `POKEMON_ADAPTER=legacy` para caçar no serviço Cassandra.'
+    `${area.emoji || '🗺️'} Você entrou em *${area.nome || area.id || '?'}*!`,
+    `${clima.emoji || '☁️'} Clima *${clima.nome || '?'}*: tipos ${(clima.tipos || []).join(', ') || '?'} aparecem mais.`,
+    surto && plan.evento ? `🎉 ${plan.evento.nome} — encontro do evento!` : null,
+    `Um ${textoRaridade(selvagem)} *${selvagem.nome || '?'}* apareceu.`,
+    somente
+      ? 'Bolsa cheia: esta caçada vale batalha e XP, sem captura.'
+      : 'Derrote-o antes de tentar capturar!',
+    '',
+    `Batalha: ${prefix} atacar <golpe>`,
+    `Captura: ${prefix} capturar <bola> após a vitória.`
+  ].filter(Boolean).join('\n');
+}
+
+function formatBattleTurn(data, prefix = '!pk') {
+  const b = (data && data.battle) || {};
+  const hp = b.hp || {};
+  const o = (b.pokemons && b.pokemons.o) || (data.battle && data.battle.pokemonO) || {};
+  const nome = o.nome || o.species || 'selvagem';
+  if (data.aguardandoCaptura || b.aguardandoCaptura) {
+    return [
+      `🏁 *${nome}* foi derrotado!`,
+      'Agora você pode capturar:',
+      `${prefix} capturar`,
+      data.chanceBaseCaptura != null
+        ? `Chance-base carimbada: ${data.chanceBaseCaptura}%`
+        : null
+    ].filter(Boolean).join('\n');
+  }
+  if (b.outcome === 'lose' || data.outcome === 'lose') {
+    return `💀 Seu Pokémon desmaiou. A caçada acabou.`;
+  }
+  if (b.outcome === 'flee' || data.outcome === 'flee') {
+    return `💨 *${nome}* fugiu durante a batalha!`;
+  }
+  return [
+    `⚔️ Turno ${b.turnIndex != null ? b.turnIndex : '?'}`,
+    `HP você: ${hp.x != null ? hp.x : '?'} · selvagem: ${hp.o != null ? hp.o : '?'}`,
+    `Continue: ${prefix} atacar <1-4>`
   ].join('\n');
 }
 
@@ -393,7 +467,8 @@ const ALIASES = {
   iniciar: 'iniciar', criar: 'iniciar',
   ativar: 'ativar',
   capturar: 'capturar', cap: 'capturar',
-  cacar: 'cacar', caçar: 'cacar', hunt: 'cacar',
+  cacar: 'cacar', caçar: 'cacar', cac: 'cacar', hunt: 'cacar',
+  atacar: 'atacar', ataque: 'atacar', atk: 'atacar',
   recibo: 'recibo', op: 'recibo', operation: 'recibo'
 };
 
@@ -414,7 +489,10 @@ module.exports = {
   formatReceipt,
   formatError,
   formatUnavailable,
-  formatHuntBlocked,
+  formatHuntEligibility,
+  formatHuntStart,
+  formatBattleTurn,
+  textoRaridade,
   formatCaptureMenu,
   formatCaptureResult,
   resolveCommand,

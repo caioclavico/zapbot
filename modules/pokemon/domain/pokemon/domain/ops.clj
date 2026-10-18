@@ -40,6 +40,26 @@
      (some? roll) (assoc :roll (long roll))
      (some? fuga-roll) (assoc :fuga-roll (long fuga-roll)))))
 
+(defn hunt-start-payload
+  "Payload canônico do início de caça (M4.5). Candidatos entram no hash
+  para idempotência; rolls de shiny/tipos ficam no plano validado."
+  [{:keys [area-id tipos-encontro surto? poder-alvo candidates shiny-roll]}]
+  (reward/canonicalize
+   (cond-> {:area-id (str area-id)
+            :tipos-encontro (vec (sort (map str tipos-encontro)))
+            :surto? (boolean surto?)
+            :poder-alvo (long poder-alvo)
+            :candidates
+            (mapv (fn [p]
+                    (reward/canonicalize
+                     (select-keys p [:nome :species :slug-especie :tipos :hp
+                                     :ataque :defesa :atq-esp :def-esp :veloc
+                                     :nivel :habilidade :taxa-captura
+                                     :lendario-api? :mitico-api? :paradox-api?
+                                     :golpes :imagem :imagem-shiny])))
+                  (or candidates []))}
+     (some? shiny-roll) (assoc :shiny-roll (long shiny-roll)))))
+
 (defn evolve-payload
   [{:keys [idx dados item-id]}]
   (reward/canonicalize

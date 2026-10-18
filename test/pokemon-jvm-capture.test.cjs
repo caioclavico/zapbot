@@ -42,9 +42,6 @@ function fakeMessage({ chatId, playerId, requestId }) {
 async function dispatchCapture(client, message, tokens) {
   const identity = trustedIdentityFromMessage(message);
   const cmd = present.resolveCommand(tokens);
-  if (cmd === 'cacar') {
-    return present.envelope(identity.requestId, present.formatHuntBlocked());
-  }
   if (cmd !== 'capturar') {
     return present.envelope(
       identity.requestId,
@@ -78,11 +75,11 @@ async function dispatchCapture(client, message, tokens) {
   );
 }
 
-test('aliases capturar/cap e cacar bloqueado', () => {
+test('aliases capturar/cap e cacar habilitado', () => {
   assert.equal(present.resolveCommand(['capturar']), 'capturar');
   assert.equal(present.resolveCommand(['cap']), 'capturar');
   assert.equal(present.resolveCommand(['cacar']), 'cacar');
-  assert.match(present.formatHuntBlocked(), /bioma|PokeAPI|não migrado/i);
+  assert.match(present.formatUnavailable('batalhar'), /cacar/);
 });
 
 test('menu e captura bem-sucedida via roteador simulado', async () => {
@@ -155,8 +152,8 @@ test('menu e captura bem-sucedida via roteador simulado', async () => {
     assert.match(ok.messages[0].text, /nº 2/);
     assert.equal(captureCalls, 1);
 
-    const blocked = await dispatchCapture(client, msg, ['cacar']);
-    assert.match(blocked.messages[0].text, /não disponível/);
+    const other = await dispatchCapture(client, msg, ['batalhar']);
+    assert.match(other.messages[0].text, /não integrado/);
   });
 });
 
