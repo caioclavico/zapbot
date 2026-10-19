@@ -164,7 +164,8 @@
       (:pokemon/origin-edn e) (assoc :origin-edn (:pokemon/origin-edn e)))))
 
 (defn- pokemon-entity-map
-  "Mapa de atributos Datomic a partir do registro de domínio."
+  "Mapa de atributos Datomic a partir do registro de domínio.
+   Joy collect / readmit: location=equipe; não copia pronto-em."
   [sk registro idx]
   (let [id-poke (:id-pokemon registro)
         poke-key (or id-poke (str sk "|poke|" idx))]
@@ -172,11 +173,13 @@
              :pokemon/id-pokemon id-poke
              :pokemon/save [:save/key sk]
              :pokemon/species (or (:species registro) (:nome registro))
-             :pokemon/nickname (:nome registro)
+             :pokemon/nickname (or (:nome registro) (:nickname registro)
+                                   (:species registro))
              :pokemon/shiny (boolean (:shiny registro))
              :pokemon/xp (long (:xp-desde-nivel registro 0))
-             :pokemon/level (long (:nivel registro 1))
+             :pokemon/level (long (or (:nivel registro) (:level registro) 1))
              :pokemon/in-party true
+             :pokemon/location "equipe"
              :pokemon/collection-index idx
              :pokemon/hp (long (:hp registro 0))
              :pokemon/hp-atual (long (:hp-atual registro 0))
@@ -198,7 +201,15 @@
       (assoc :pokemon/golpes-removidos-edn (pr-str (:golpes-removidos registro)))
       (seq (:historico-golpes registro))
       (assoc :pokemon/historico-golpes-edn (pr-str (:historico-golpes registro)))
-      (:ivs registro) (assoc :pokemon/ivs-edn (pr-str (:ivs registro))))))
+      (:ivs registro) (assoc :pokemon/ivs-edn (pr-str (:ivs registro)))
+      (:origin-edn registro) (assoc :pokemon/origin-edn (:origin-edn registro))
+      (seq (:legado registro)) (assoc :pokemon/legado-edn (pr-str (:legado registro)))
+      (number? (:altura registro)) (assoc :pokemon/altura (double (:altura registro)))
+      (number? (:peso registro)) (assoc :pokemon/peso (double (:peso registro)))
+      (number? (:taxa-captura registro))
+      (assoc :pokemon/taxa-captura (long (:taxa-captura registro)))
+      (and (contains? registro :item) (some? (:item registro)))
+      (assoc :pokemon/item (str (:item registro))))))
 
 (defn- inventory-adjust-tx
   "Retorna tx-data para delta de item; lança se qty ficaria negativa."
@@ -649,9 +660,15 @@
               :where [?b :enfermaria-bed/save-key ?sk]]
             db save-key*)
        (map (fn [[e]]
-              {:bed-id (:enfermaria-bed/bed-id e)
-               :pokemon (edn-read (:enfermaria-bed/pokemon-edn e))
-               :pronto-em (:enfermaria-bed/pronto-em e)}))
+              (let [poke (or (edn-read (:enfermaria-bed/pokemon-edn e)) {})
+                    poke (cond-> poke
+                           (:enfermaria-bed/origin-edn e)
+                           (assoc :origin-edn (:enfermaria-bed/origin-edn e))
+                           (:enfermaria-bed/legado-edn e)
+                           (assoc :legado (edn-read (:enfermaria-bed/legado-edn e))))]
+                {:bed-id (:enfermaria-bed/bed-id e)
+                 :pokemon poke
+                 :pronto-em (:enfermaria-bed/pronto-em e)})))
        vec))
 
 (defn- clear-chat-wild-tx

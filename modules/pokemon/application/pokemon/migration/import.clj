@@ -1,7 +1,12 @@
 (ns pokemon.migration.import
   "Importa IR → Datomic Local descartável.
-  Não chama ensure-trainer! — cria player/saves só no caminho de importação."
-  (:require [clojure.string :as str]
+  Não chama ensure-trainer! — cria player/saves só no caminho de importação.
+
+  Joy (M5.5): pokemon com location=enfermaria viram :enfermaria-bed/*
+  (fonte operacional). Não ficam na coleção ativa; pronto-em/UUID preservados.
+  Reimport do mesmo batch é idempotente; leito conflitante aborta."
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [datomic.client.api :as d]
             [pokemon.application.ports :as ports]
             [pokemon.domain.errors :as err]
@@ -30,8 +35,106 @@
   (let [loc (or (:location poke) :equipe)]
     (name (if (keyword? loc) loc (keyword (str loc))))))
 
+(defn- enfermaria?
+  [poke]
+  (= "enfermaria" (location-str poke)))
+
+(defn- import-bed-id
+  "Bed-id determinístico = UUID do Pokémon (sem agora; reimport estável)."
+  [id-pokemon]
+  (str id-pokemon))
+
+(defn- bed-registro
+  "Payload enxuto de :enfermaria-bed/pokemon-edn (limite Datomic Local ~4096).
+   origin/legado vão em attrs dedicados do leito."
+  [poke]
+  (cond-> {:id-pokemon (:id-pokemon poke)
+           :species (or (:species poke) (:nome poke))
+           :nome (or (:nome poke) (:species poke))
+           :shiny (boolean (:shiny poke))
+           :nivel (long (or (:nivel poke) 1))
+           :xp-desde-nivel (long (or (:xp-desde-nivel poke) 0))
+           :hp (long (:hp poke 0))
+           :hp-atual (long (:hp-atual poke 0))
+           :amizade (long (:amizade poke 70))
+           :ataque (long (:ataque poke 0))
+           :defesa (long (:defesa poke 0))
+           :atq-esp (long (:atq-esp poke 0))
+           :def-esp (long (:def-esp poke 0))
+           :veloc (long (:veloc poke 0))
+           :raridade (or (:raridade poke) "comum")
+           :golpes (vec (or (:golpes poke) []))
+           :tipos (vec (or (:tipos poke) []))
+           :golpes-removidos (vec (or (:golpes-removidos poke) []))
+           :collection-index (long (or (:collection-index poke) -1))}
+    (:status poke) (assoc :status (:status poke))
+    (:habilidade poke) (assoc :habilidade (:habilidade poke))
+    (:imagem poke) (assoc :imagem (:imagem poke))
+    (:imagem-shiny poke) (assoc :imagem-shiny (:imagem-shiny poke))
+    (:item poke) (assoc :item (:item poke))
+    (number? (:altura poke)) (assoc :altura (:altura poke))
+    (number? (:peso poke)) (assoc :peso (:peso poke))
+    (number? (:taxa-captura poke)) (assoc :taxa-captura (:taxa-captura poke))
+    (seq (:historico-golpes poke)) (assoc :historico-golpes (:historico-golpes poke))
+    (or (seq (:golpes-oferecidos poke)) (seq (:ofertas-golpes poke)))
+    (assoc :golpes-oferecidos (or (:golpes-oferecidos poke) (:ofertas-golpes poke)))
+    (:ivs poke) (assoc :ivs (:ivs poke))))
+
+(defn- assert-joy-bed-compatible!
+  "Se o leito já existe, exige mesmo id-pokemon e pronto-em; senão :import_joy_bed_conflict."
+  [db sk poke]
+  (let [id-poke (:id-pokemon poke)
+        bed-id (import-bed-id id-poke)
+        k (id/enfermaria-bed-key sk bed-id)
+        e (d/pull db '[*] [:enfermaria-bed/key k])]
+    (when (:db/id e)
+      (let [stored-pronto (long (:enfermaria-bed/pronto-em e 0))
+            stored-poke (try
+                          (edn/read-string {:readers *data-readers*}
+                                           (:enfermaria-bed/pokemon-edn e))
+                          (catch Exception _ {}))
+            stored-id (:id-pokemon stored-poke)
+            want-pronto (long (:pronto-em poke))]
+        (when (or (not= stored-pronto want-pronto)
+                  (not= (str stored-id) (str id-poke)))
+          (throw (err/error :import_joy_bed_conflict
+                            {:save-key sk
+                             :bed-id bed-id
+                             :expected {:id-pokemon id-poke :pronto-em want-pronto}
+                             :actual {:id-pokemon stored-id :pronto-em stored-pronto}})))))))
+
+(defn- enfermaria-bed-entity
+  "Materializa leito Joy a partir do IR. Não regenera UUID nem recalcula pronto-em.
+   origin/legado em attrs separados (limite de string do Datomic Local)."
+  [sk poke]
+  (let [id-poke (:id-pokemon poke)
+        idx (:collection-index poke)
+        _ (when (str/blank? (str id-poke))
+            (throw (err/error :import_missing_id_pokemon
+                              {:collection-index idx :species (:species poke)})))
+        _ (when-not (some? (:pronto-em poke))
+            (throw (err/error :import_joy_missing_pronto_em
+                              {:id-pokemon id-poke :species (:species poke)})))
+        bed-id (import-bed-id id-poke)
+        pronto (long (:pronto-em poke))
+        origin (or (:origin-edn poke)
+                   (when (:origin poke) (pr-str (:origin poke))))
+        legado (when (seq (:legado poke)) (pr-str (:legado poke)))
+        edn-str (pr-str (bed-registro poke))
+        _ (when (> (count edn-str) 4000)
+            (throw (err/error :import_joy_bed_payload_too_large
+                              {:id-pokemon id-poke :bytes (count edn-str)})))]
+    (cond-> {:enfermaria-bed/key (id/enfermaria-bed-key sk bed-id)
+             :enfermaria-bed/save-key sk
+             :enfermaria-bed/bed-id bed-id
+             :enfermaria-bed/pokemon-edn edn-str
+             :enfermaria-bed/pronto-em pronto}
+      origin (assoc :enfermaria-bed/origin-edn origin)
+      legado (assoc :enfermaria-bed/legado-edn legado))))
+
 (defn- pokemon->entity
-  "Persiste attrs suportados + location/pronto-em/legado/origin.
+  "Persiste attrs suportados + location/legado/origin (equipe/pc).
+   Enfermaria não usa este caminho — ver enfermaria-bed-entity.
    Não inventa valores ausentes; não regenera UUID; não limita equipe/coleção."
   [sk poke]
   (let [idx (long (:collection-index poke))
@@ -40,6 +143,10 @@
             (throw (err/error :import_missing_id_pokemon
                               {:collection-index idx :species (:species poke)})))
         loc (location-str poke)
+        _ (when (= "enfermaria" loc)
+            (throw (err/error :import_enfermaria_must_be_bed
+                              {:id-pokemon id-poke
+                               :hint "Use enfermaria-bed-entity no import."})))
         in-party? (= "equipe" loc)
         poke-key id-poke]
     (cond-> {:pokemon/key poke-key
@@ -77,7 +184,6 @@
       (assoc :pokemon/ofertas-golpes-edn
              (pr-str (or (:golpes-oferecidos poke) (:ofertas-golpes poke))))
       (:ivs poke) (assoc :pokemon/ivs-edn (pr-str (:ivs poke)))
-      (some? (:pronto-em poke)) (assoc :pokemon/pronto-em (long (:pronto-em poke)))
       (and (contains? poke :item) (some? (:item poke)))
       (assoc :pokemon/item (str (:item poke)))
       (number? (:altura poke)) (assoc :pokemon/altura (double (:altura poke)))
@@ -149,21 +255,34 @@
                                    [?s :save/key ?sk]
                                    [?p :pokemon/save ?s]]
                                  db sk))
-            poke-count (or (ffirst already-pokes) 0)]
-        (when (pos? poke-count)
+            already-beds (d/q '[:find (count ?b)
+                                :in $ ?sk
+                                :where [?b :enfermaria-bed/save-key ?sk]]
+                              db sk)
+            poke-count (or (ffirst already-pokes) 0)
+            bed-count (or (ffirst already-beds) 0)
+            all-pokes (:pokemon save-ir)
+            active-pokes (filterv (complement enfermaria?) all-pokes)
+            joy-pokes (filterv enfermaria? all-pokes)]
+        (when (or (pos? poke-count) (pos? bed-count))
           (throw (err/error :import_save_not_empty
                             {:save-key sk
                              :pokemon-count poke-count
+                             :joy-bed-count bed-count
                              :hint "Reimporte só com mesmo import-batch-id ou base limpa."})))
+        (doseq [jp joy-pokes]
+          (assert-joy-bed-compatible! db sk jp))
         (when-not (ports/get-player store chat-id player-id)
           (ports/create-player! store chat-id player-id))
         (when-not (ports/get-save store chat-id player-id slot-id)
           (ports/create-save! store chat-id player-id slot-id))
-        (let [poke-entities (mapv #(pokemon->entity sk %) (:pokemon save-ir))
+        (let [poke-entities (mapv #(pokemon->entity sk %) active-pokes)
+              bed-entities (mapv #(enfermaria-bed-entity sk %) joy-pokes)
               inv (inventory-tx sk (:inventory save-ir))
-              dex (pokedex-tx sk (:pokemon save-ir))
+              dex (pokedex-tx sk all-pokes)
               ;; Datomic Local: batches grandes ok; chunk se necessário
               chunks (partition-all 40 poke-entities)
+              bed-chunks (partition-all 40 bed-entities)
               base-tx [{:operation-receipt/id op-id
                         :operation-receipt/kind "migration-import"
                         :operation-receipt/channel "m5.0"
@@ -174,6 +293,7 @@
                         (pr-str {:snapshot-id (get-in save-ir [:provenance :snapshot-id])
                                  :kind (get-in save-ir [:provenance :kind])
                                  :pokemon-count (:pokemon-count save-ir)
+                                 :joy-bed-count (count joy-pokes)
                                  :coins (:coins save-ir)})}
                        [:db/add [:save/key sk] :save/coins (long (:coins save-ir))]
                        [:db/add [:save/key sk] :save/ativo-index (long (:ativo-index save-ir))]
@@ -195,11 +315,15 @@
           (d/transact conn {:tx-data (into base-tx (concat inv dex))})
           (doseq [chunk chunks]
             (d/transact conn {:tx-data (vec chunk)}))
+          (doseq [chunk bed-chunks]
+            (d/transact conn {:tx-data (vec chunk)}))
           {:status :imported
            :slot-id slot-id
            :operation-id op-id
            :content-hash phash
-           :pokemon-count (:pokemon-count save-ir)})))))
+           :pokemon-count (:pokemon-count save-ir)
+           :collection-count (count active-pokes)
+           :joy-bed-count (count joy-pokes)})))))
 
 (defn import-ir!
   "Importa IR completa. Recusa se houver quarentena bloqueante sem :allow-quarantine?

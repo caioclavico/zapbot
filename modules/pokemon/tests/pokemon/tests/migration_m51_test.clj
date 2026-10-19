@@ -147,7 +147,8 @@
                                      :require-match-resolved? true
                                      :match-report m})]
     (is (= "a" (:active-save-id result)))
-    (is (= 26 (count (ports/list-collection s fix/chat-id fix/player-id "a"))))
+    (is (= 19 (count (ports/list-collection s fix/chat-id fix/player-id "a"))))
+    (is (= 7 (count (ports/list-enfermaria s fix/chat-id fix/player-id "a"))))
     (is (= 119 (count (ports/list-collection s fix/chat-id fix/player-id "b"))))
     (is (some #(and (= "Voltorb" (:species %))
                     (= "hist-voltorb-shiny-001" (:id-pokemon %)))

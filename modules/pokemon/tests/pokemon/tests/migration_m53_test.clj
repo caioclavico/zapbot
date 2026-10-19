@@ -52,6 +52,7 @@
     (is (every? :origin-edn (:pokemon save-b)))))
 
 (deftest import-fixture-preserva-location-e-joy
+  "M5.5: Joy vira enfermaria-bed; coleção ativa = equipe/pc apenas."
   (let [s (boot! "m53-gate")
         dump (fix/build-cassandra-dump)
         ir (transform/transform-export (export/from-fixture-dump dump))
@@ -62,15 +63,16 @@
                                      :match-report m})
         col-a (ports/list-collection s fix/chat-id fix/player-id "a")
         col-b (ports/list-collection s fix/chat-id fix/player-id "b")
-        joy (filter #(= "enfermaria" (:location %)) col-a)
+        beds (ports/list-enfermaria s fix/chat-id fix/player-id "a")
         eqv (eq/compare-ir s ir)
         reimp (mig/reimport-same-batch! s ir "m53-gate-batch")]
     (is (= "a" (:active-save-id result)))
-    (is (= 26 (count col-a)))
+    (is (= 19 (count col-a)))
     (is (= 119 (count col-b)))
-    (is (= 19 (count (filter #(= "equipe" (:location %)) col-a))))
-    (is (= 7 (count joy)))
-    (is (every? #(some? (:pronto-em %)) joy))
+    (is (= 7 (count beds)))
+    (is (every? #(= "equipe" (:location %)) col-a))
+    (is (every? #(some? (:pronto-em %)) beds))
+    (is (every? #(string? (:id-pokemon (:pokemon %))) beds))
     (is (every? #(string? (:origin-edn %)) col-a))
     (is (some #(and (= "Voltorb" (:species %))
                     (= "hist-voltorb-shiny-001" (:id-pokemon %))

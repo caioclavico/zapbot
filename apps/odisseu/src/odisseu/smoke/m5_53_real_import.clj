@@ -40,28 +40,45 @@
    "enfermaria" (count (filter #(= "enfermaria" (:location %)) col))
    "total" (count col)})
 
+(defn- total-ids
+  [store chat player slot]
+  (let [col (ports/list-collection store chat player slot)
+        beds (ports/list-enfermaria store chat player slot)
+        bed-ids (map #(get-in % [:pokemon :id-pokemon]) beds)]
+    (set (concat (map :id-pokemon col) bed-ids))))
+
 (defn- validate! [store ir]
   (let [chat (:chat-id ir)
         player (:player-id ir)
         col-a (ports/list-collection store chat player "a")
         col-b (ports/list-collection store chat player "b")
-        ids-a (set (map :id-pokemon col-a))
-        ids-b (set (map :id-pokemon col-b))
-        joy (filter #(= "enfermaria" (:location %)) col-a)
+        beds-a (ports/list-enfermaria store chat player "a")
+        beds-b (ports/list-enfermaria store chat player "b")
+        ids-a (total-ids store chat player "a")
+        ids-b (total-ids store chat player "b")
         save-a (ports/get-save store chat player "a")
         save-b (ports/get-save store chat player "b")
         eqv (eq/compare-ir store ir)
-        voltorb (filter #(and (= "Voltorb" (:species %)) (:shiny %)) col-b)]
-    {:counts {:a (count col-a) :b (count col-b)}
-     :buckets {:a (bucket-counts col-a) :b (bucket-counts col-b)}
-     :ids-unique {:a (= 26 (count ids-a) (count col-a))
-                  :b (= 119 (count ids-b) (count col-b))}
+        voltorb (filter #(and (= "Voltorb" (:species %)) (:shiny %)) col-b)
+        buckets-a {"equipe" (count col-a)
+                   "pc" 0
+                   "enfermaria" (count beds-a)
+                   "total" (+ (count col-a) (count beds-a))}
+        buckets-b {"equipe" (count col-b)
+                   "pc" 0
+                   "enfermaria" (count beds-b)
+                   "total" (+ (count col-b) (count beds-b))}]
+    {:counts {:a (+ (count col-a) (count beds-a)) :b (count col-b)
+              :collection-a (count col-a) :beds-a (count beds-a)}
+     :buckets {:a buckets-a :b buckets-b}
+     :ids-unique {:a (= 26 (count ids-a))
+                  :b (= 119 (count ids-b))}
      :id-intersection (count (set/intersection ids-a ids-b))
      :coins {:a (:coins save-a) :b (:coins save-b)}
-     :joy {:n (count joy)
-           :all-have-pronto-em (every? some? (map :pronto-em joy))
-           :species (mapv :species joy)
-           :ids-redacted (mapv #(redact (:id-pokemon %)) joy)}
+     :joy {:n (count beds-a)
+           :all-have-pronto-em (every? some? (map :pronto-em beds-a))
+           :species (mapv #(get-in % [:pokemon :species]) beds-a)
+           :ids-redacted (mapv #(redact (get-in % [:pokemon :id-pokemon])) beds-a)}
      :voltorb-shiny-b {:n (count voltorb)
                        :id-redacted (redact (:id-pokemon (first voltorb)))}
      :equivalence {:ok? (:ok? eqv)
@@ -70,32 +87,39 @@
                                                  :expected-buckets :actual-buckets :diffs])
                                 (:saves eqv))}
      :active (ports/active-save-id store chat player)
-     :ok? (and (= 26 (count col-a))
+     :ok? (and (= 19 (count col-a))
+               (= 7 (count beds-a))
                (= 119 (count col-b))
+               (= 0 (count beds-b))
                (= 26 (count ids-a))
                (= 119 (count ids-b))
                (zero? (count (set/intersection ids-a ids-b)))
                (= 198 (:coins save-a))
                (= 437 (:coins save-b))
-               (= 19 (get (bucket-counts col-a) "equipe"))
-               (= 7 (get (bucket-counts col-a) "enfermaria"))
-               (= 119 (get (bucket-counts col-b) "equipe"))
-               (= 7 (count joy))
-               (every? some? (map :pronto-em joy))
+               (= 19 (get buckets-a "equipe"))
+               (= 7 (get buckets-a "enfermaria"))
+               (= 119 (get buckets-b "equipe"))
+               (every? some? (map :pronto-em beds-a))
                (= 1 (count voltorb))
                (:ok? eqv))}))
 
 (defn- switch-ab-a! [store chat player]
-  (let [before-a (set (map :id-pokemon (ports/list-collection store chat player "a")))
-        before-b (set (map :id-pokemon (ports/list-collection store chat player "b")))
+  (let [before-a (total-ids store chat player "a")
+        before-b (total-ids store chat player "b")
+        before-beds (set (map :bed-id (ports/list-enfermaria store chat player "a")))
         _ (trainer/switch-save! store chat player "b")
         mid (ports/active-save-id store chat player)
+        mid-beds-b (count (ports/list-enfermaria store chat player "b"))
         _ (trainer/switch-save! store chat player "a")
-        after-a (set (map :id-pokemon (ports/list-collection store chat player "a")))
-        after-b (set (map :id-pokemon (ports/list-collection store chat player "b")))]
+        after-a (total-ids store chat player "a")
+        after-b (total-ids store chat player "b")
+        after-beds (set (map :bed-id (ports/list-enfermaria store chat player "a")))]
     {:active-mid mid
      :active-final (ports/active-save-id store chat player)
-     :preserved? (and (= before-a after-a) (= before-b after-b))}))
+     :mid-beds-on-b mid-beds-b
+     :preserved? (and (= before-a after-a) (= before-b after-b)
+                      (= before-beds after-beds)
+                      (zero? mid-beds-b))}))
 
 (defn -main
   [& _]

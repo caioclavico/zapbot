@@ -35,27 +35,34 @@
     (trainer/bootstrap! s)
     s))
 
+(defn- owned-ids
+  "UUIDs na coleção ativa + leitos Joy (total histórico do save)."
+  [store chat player slot]
+  (set (concat (map :id-pokemon (ports/list-collection store chat player slot))
+               (map #(get-in % [:pokemon :id-pokemon])
+                    (ports/list-enfermaria store chat player slot)))))
+
 (defn- switch-roundtrip!
   [store chat player]
-  (let [before-a (ports/list-collection store chat player "a")
-        before-b (ports/list-collection store chat player "b")
+  (let [before-a (owned-ids store chat player "a")
+        before-b (owned-ids store chat player "b")
         to-b (trainer/switch-save! store chat player "b")
-        mid-a (ports/list-collection store chat player "a")
-        mid-b (ports/list-collection store chat player "b")
+        mid-a (owned-ids store chat player "a")
+        mid-b (owned-ids store chat player "b")
         to-a (trainer/switch-save! store chat player "a")
-        after-a (ports/list-collection store chat player "a")
-        after-b (ports/list-collection store chat player "b")]
+        after-a (owned-ids store chat player "a")
+        after-b (owned-ids store chat player "b")]
     {:active-after (get-in to-a [:player :active-save-id])
      :fence (get-in to-a [:player :fence-generation])
      :counts {:a-before (count before-a) :b-before (count before-b)
               :a-mid (count mid-a) :b-mid (count mid-b)
-              :a-after (count after-a) :b-after (count after-b)}
-     :merged? (or (not= (count before-a) (count after-a))
-                  (not= (count before-b) (count after-b))
-                  (not= (set (map :id-pokemon before-a))
-                        (set (map :id-pokemon after-a)))
-                  (not= (set (map :id-pokemon before-b))
-                        (set (map :id-pokemon after-b))))
+              :a-after (count after-a) :b-after (count after-b)
+              :collection-a (count (ports/list-collection store chat player "a"))
+              :joy-beds-a (count (ports/list-enfermaria store chat player "a"))}
+     :merged? (or (not= before-a after-a)
+                  (not= before-b after-b)
+                  (not= before-a mid-a)
+                  (not= before-b mid-b))
      :switched-via-b (get-in to-b [:player :active-save-id])}))
 
 (defn run-pipeline!

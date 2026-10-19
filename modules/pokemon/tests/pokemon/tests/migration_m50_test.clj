@@ -76,16 +76,19 @@
         result (mig/import-ir! s ir {:import-batch-id batch})
         eqr (eq/compare-ir s ir)
         col-a (ports/list-collection s fix/chat-id fix/player-id "a")
+        beds-a (ports/list-enfermaria s fix/chat-id fix/player-id "a")
         col-b (ports/list-collection s fix/chat-id fix/player-id "b")]
     (is (= "a" (:active-save-id result)))
     (is (:ok? eqr) (pr-str eqr))
-    (is (= 26 (count col-a)))
+    (is (= 19 (count col-a)))
+    (is (= 7 (count beds-a)))
     (is (= 119 (count col-b)))
     (is (some #(and (= "Voltorb" (:species %)) (:shiny %)) col-a))
     (let [sw (trainer/switch-save! s fix/chat-id fix/player-id "b")
           sw2 (trainer/switch-save! s fix/chat-id fix/player-id "a")]
       (is (= "a" (get-in sw2 [:player :active-save-id])))
-      (is (= 26 (count (ports/list-collection s fix/chat-id fix/player-id "a"))))
+      (is (= 19 (count (ports/list-collection s fix/chat-id fix/player-id "a"))))
+      (is (= 7 (count (ports/list-enfermaria s fix/chat-id fix/player-id "a"))))
       (is (= 119 (count (ports/list-collection s fix/chat-id fix/player-id "b"))))
       (is (not= (set (map :id-pokemon col-a))
                 (set (map :id-pokemon
