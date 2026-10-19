@@ -17,15 +17,49 @@
 
 (deftest historical-119-tem-voltorb-shiny-estavel
   (let [hist (fix/historical-team-119)
-        all (concat (:equipe hist) (:pc hist))
+        all (concat (:equipe hist) (:pc hist) (:enfermaria hist))
         voltorb (->> all
                      (filter #(and (= "Voltorb" (get % "nome"))
                                    (true? (get % "shiny")))))]
     (is (= 119 (count all)))
-    (is (= 100 (count (:equipe hist))))
-    (is (= 19 (count (:pc hist))))
+    (is (= 119 (count (:equipe hist))))
+    (is (= 0 (count (:pc hist))))
     (is (= 1 (count voltorb)))
     (is (= "hist-voltorb-shiny-001" (get (first voltorb) "id-pokemon")))))
+
+(deftest enfermaria-envelope-desembrulha-id
+  (let [account {"equipe" [{"id-pokemon" "eq-1" "nome" "Pikachu" "nivel" 5}]
+                 "pc" []
+                 "enfermaria" [{"pronto-em" 1791929455454
+                                "pokemon" {"id-pokemon" "enf-uuid-1"
+                                           "nome" "Glimmora"
+                                           "nivel" 1
+                                           "shiny" false}}]
+                 "vitorias-treinador" 0 "pe-ginasios" 0 "pe-raids" 0
+                 "xp-insignias" 0 "xp-missoes" 0}
+        inv (inv/inventory-dump
+             {:meta {:synthetic true}
+              :estado_particionado
+              [{:modulo "treinador" :particao "c1" :valor {"p1" account}}
+               {:modulo "loja" :particao "c1" :valor {"p1" {"moedas" 1 "inventario" {}}}}]})
+        cand (first (:candidates inv))
+        ir-save (first (:saves (transform/transform-export
+                                {:meta {:synthetic true}
+                                 :modules {"treinador" {"c1" {"p1" account}}
+                                           "loja" {"c1" {"p1" {"moedas" 1 "inventario" {}}}}}
+                                 :active_provenance {:kind :canonical-active
+                                                     :snapshot-id "t"
+                                                     :target-slot "a"
+                                                     :chat-id "c1"
+                                                     :player-id "p1"}
+                                 :historical_snapshots []})))]
+    (is (= 2 (:pokemon-count cand)))
+    (is (= 0 (:missing-id-count cand)))
+    (is (= #{"eq-1" "enf-uuid-1"} (set (:ids cand))))
+    (is (= 2 (:pokemon-count ir-save)))
+    (is (= :enfermaria (:location (second (:pokemon ir-save)))))
+    (is (= "enf-uuid-1" (:id-pokemon (second (:pokemon ir-save)))))
+    (is (= 1791929455454 (:pronto-em (second (:pokemon ir-save)))))))
 
 (deftest inventory-e-match-resolvem-sem-autoselect
   (let [dump (fix/build-cassandra-dump)

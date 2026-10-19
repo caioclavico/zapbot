@@ -5,6 +5,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [pokemon.domain.reward :as reward]
+            [pokemon.migration.account-shape :as shape]
             [pokemon.migration.export :as export]
             [pokemon.migration.profiles :as profiles]))
 
@@ -23,17 +24,10 @@
   dump)
 
 (defn- pokemon-list
-  "Contagem canônica alinhada ao restore-protocol: equipe + pc + enfermaria."
+  "Contagem canônica alinhada ao restore-protocol: equipe + pc + enfermaria.
+   Desembrulha envelopes de enfermaria {pokemon, pronto-em}."
   [account]
-  (let [a (if (map? account) account {})
-        getv (fn [k]
-               (or (get a k)
-                   (get a (name k))
-                   (get a (keyword k))
-                   []))]
-    (vec (concat (or (getv :equipe) (getv "equipe") [])
-                 (or (getv :pc) (getv "pc") [])
-                 (or (getv :enfermaria) (getv "enfermaria") [])))))
+  (shape/flat-pokemon-list account))
 
 (defn- poke-field
   [p k]
@@ -99,8 +93,14 @@
            source source-version content-hash account loja]}]
   (let [pokes (pokemon-list account)
         poke-sum (summarize-pokemon pokes)
+        buckets (shape/location-counts account)
         progress (account-progress account)
-        shop (loja-summary loja)]
+        shop (loja-summary loja)
+        xp-total (+ (:vitorias-treinador progress)
+                    (:pe-ginasios progress)
+                    (:pe-raids progress)
+                    (:xp-insignias progress)
+                    (:xp-missoes progress))]
     (merge
      {:candidate-id (or snapshot-id
                         (str origin "|" (or slot-id "live") "|" chat-id "|" player-id))
@@ -117,7 +117,9 @@
                          {:ids (:ids poke-sum)
                           :shiny (:shiny-ids poke-sum)
                           :coins (:moedas shop)}))
-      :sourceVersion-not-identity true}
+      :sourceVersion-not-identity true
+      :buckets buckets
+      :xp-total xp-total}
      poke-sum
      progress
      shop)))

@@ -65,35 +65,47 @@
      "golpes" [{"nome" "Investida" "tipo" "normal" "poder" 40}
                {"nome" "Choque do Trovão" "tipo" "electric" "poder" 40}]}))
 
+(defn- joy-envelope
+  [poke pronto-em]
+  {"pokemon" poke "pronto-em" pronto-em})
+
 (defn active-team-26
-  "Save atual: 26 Pokémon na equipe, inclui Voltorb shiny (id act-*)."
+  "Save atual representativo M5.3: 19 equipe + 7 enfermaria (envelope Joy).
+   Voltorb shiny opcional na equipe (não exigido pelo matching)."
   []
-  (vec
-   (for [i (range 26)]
-     (cond
-       (= i 0) (make-pokemon {:prefix "act" :idx i :species "Pikachu" :nivel 25 :shiny false})
-       (= i 7) (make-pokemon {:prefix "act" :idx i :species "Voltorb" :nivel 18 :shiny true
-                              :id-pokemon "act-voltorb-shiny-007"})
-       (= i 15) (make-pokemon {:prefix "act" :idx i :species "Gyarados" :nivel 42 :shiny true})
-       :else (make-pokemon {:prefix "act" :idx i})))))
+  (let [equipe
+        (vec
+         (for [i (range 19)]
+           (cond
+             (= i 0) (make-pokemon {:prefix "act" :idx i :species "Pikachu" :nivel 25 :shiny false})
+             (= i 7) (make-pokemon {:prefix "act" :idx i :species "Voltorb" :nivel 18 :shiny true
+                                    :id-pokemon "act-voltorb-shiny-007"})
+             (= i 15) (make-pokemon {:prefix "act" :idx i :species "Gyarados" :nivel 42 :shiny true})
+             :else (make-pokemon {:prefix "act" :idx i}))))
+        enfermaria
+        (vec
+         (for [i (range 19 26)]
+           (joy-envelope
+            (make-pokemon {:prefix "act-joy" :idx i
+                           :species (str "JoyMon" i)
+                           :nivel (inc (mod i 8))})
+            (+ 1791929455454 (- i 19)))))]
+    {:equipe equipe :pc [] :enfermaria enfermaria}))
 
 (defn historical-team-119
-  "Histórico independente: 100 equipe + 19 PC = 119.
+  "Histórico independente: 119 na equipe (como o save real M5.2).
    Voltorb shiny com id estável hist-voltorb-shiny-001 (critério de matching)."
   []
   (let [equipe
         (vec
-         (for [i (range 100)]
+         (for [i (range 119)]
            (cond
              (= i 0) (make-pokemon {:prefix "hist" :idx i :species "Pikachu" :nivel 30})
              (= i 3) (make-pokemon {:prefix "hist" :idx i :species "Voltorb" :nivel 12 :shiny true
                                     :id-pokemon voltorb-hist-id})
              (= i 50) (make-pokemon {:prefix "hist" :idx i :species "Dragonite" :nivel 55 :shiny true})
-             :else (make-pokemon {:prefix "hist" :idx i}))))
-        pc (vec
-            (for [i (range 100 119)]
-              (make-pokemon {:prefix "hist-pc" :idx i})))]
-    {:equipe equipe :pc pc}))
+             :else (make-pokemon {:prefix "hist" :idx i}))))]
+    {:equipe equipe :pc [] :enfermaria []}))
 
 (defn- treinador-conta
   [equipe-or-map extras]
@@ -106,12 +118,13 @@
                 "enfermaria" []})]
     (merge
      base
+     ;; Defaults alinhados ao save atual real (XP 29). Histórico sobrescreve via extras.
      {"ativo" 0
-      "vitorias-treinador" 12
-      "pe-ginasios" 3
-      "pe-raids" 2
-      "xp-insignias" 150
-      "xp-missoes" 40
+      "vitorias-treinador" 3
+      "pe-ginasios" 26
+      "pe-raids" 0
+      "xp-insignias" 0
+      "xp-missoes" 0
       "ginasios" {"pedra" "2024-01-10" "agua" "2024-02-01"}
       "sequencia-capturas" 4
       "maior-sequencia-capturas" 9
@@ -131,7 +144,7 @@
 
 (defn- save-slot-envelope
   "Envelope no formato próximo ao SaveSlotStore (Etapa 1), sintético."
-  [{:keys [slot-id account source-kind source-version created-at]}]
+  [{:keys [slot-id account loja source-kind source-version created-at]}]
   (let [meta {:source source-kind
               :sourceVersion source-version
               :sourceHash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -144,12 +157,15 @@
                                  (map count)
                                  (reduce + 0))
               :globalReceiptCount 0
-              :globalReceiptHash "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]
+              :globalReceiptHash "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
+        ;; Embute loja no account para o scanner de slots (mesmo saldo do overlay)
+        account+loja (cond-> account
+                       loja (assoc "loja" loja))]
     {:schemaVersion 1
      :identityHash "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
      :slotId slot-id
      :metadata meta
-     :account account
+     :account account+loja
      :globalReceipts {:module "pokemon-save-global-receipts"
                       :partition "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
                       :snapshotHash (:globalReceiptHash meta)
@@ -162,16 +178,22 @@
   (let [equipe-a (active-team-26)
         hist (historical-team-119)
         hist-account (treinador-conta hist {"nota-fixture" "historico-independente"
-                                            "moedas" 900
-                                            "inventario" {"great-ball" 4 "pocao-maxima" 1}})
-        hist-loja (loja-conta {"moedas" 900 "inventario" {"great-ball" 4 "pocao-maxima" 1}})
+                                            ;; XP 127 = nível 10 (critério M5.2/M5.3)
+                                            "vitorias-treinador" 31
+                                            "pe-ginasios" 90
+                                            "pe-raids" 6
+                                            "xp-insignias" 0
+                                            "xp-missoes" 0})
+        ;; Moedas só na loja (evita ambiguidade live vs envelope com saldos diferentes)
+        hist-loja (loja-conta {"moedas" 437 "inventario" {"great-ball" 4 "pocao-maxima" 1}})
         treinador-ativo {player-id (treinador-conta equipe-a {})}
-        loja-ativo {player-id (loja-conta {})
+        loja-ativo {player-id (loja-conta {"moedas" 198})
                     player-orphan-loja {"moedas" 99 "inventario" {"pocao" 1}}}
         slot-partition "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd:historico-119"
         envelope (save-slot-envelope
                   {:slot-id "historico-119"
                    :account hist-account
+                   :loja hist-loja
                    ;; sourceVersion deliberadamente NÃO identifica o histórico
                    :source-kind "legacy_estado_particionado"
                    :source-version "1"

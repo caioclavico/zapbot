@@ -16,8 +16,11 @@
         prefix-ok? (if id-prefix
                      (some #(and % (str/starts-with? (str %) id-prefix))
                            (:shiny-ids candidate))
-                     true)]
-    (and count-ok? shiny-ok? prefix-ok?)))
+                     true)
+        xp-req (:require-xp-total profile)
+        xp-ok? (or (nil? xp-req)
+                   (= (long xp-req) (long (or (:xp-total candidate) -1))))]
+    (and count-ok? shiny-ok? prefix-ok? xp-ok?)))
 
 (defn- score-reasons
   [candidate profile]
@@ -30,16 +33,19 @@
     (let [p (:require-shiny-id-prefix profile)]
       (or (nil? p)
           (some #(and % (str/starts-with? (str %) p)) (:shiny-ids candidate))))
-    (conj :shiny-id-prefix)))
+    (conj :shiny-id-prefix)
+    (let [xp-req (:require-xp-total profile)]
+      (and xp-req (= (long xp-req) (long (or (:xp-total candidate) -1)))))
+    (conj :xp-total)))
 
 (defn- dedupe-by-fingerprint
-  "Evita ambiuidade artificial quando live + overlay descrevem o mesmo save."
+  "Evita ambiuidade artificial quando live + overlay descrevem o mesmo save.
+   Agrupa por contagem + IDs (moedas podem divergir entre trenador/loja embutida)."
   [candidates]
   (->> candidates
        (group-by (fn [c]
                    [(:pokemon-count c)
                     (:shiny-ids c)
-                    (:moedas c)
                     (set (:ids c))]))
        vals
        (mapv (fn [group]

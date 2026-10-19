@@ -130,6 +130,9 @@
              :level (:pokemon/level e)
              :nivel (:pokemon/level e)
              :in-party (boolean (:pokemon/in-party e))
+             :location (or (:pokemon/location e)
+                           (when (:pokemon/in-party e) "equipe")
+                           "equipe")
              :collection-index (:pokemon/collection-index e)
              :hp (:pokemon/hp e)
              :hp-atual (:pokemon/hp-atual e)
@@ -149,7 +152,16 @@
       (:pokemon/habilidade e) (assoc :habilidade (:pokemon/habilidade e))
       (:pokemon/imagem e) (assoc :imagem (:pokemon/imagem e))
       (:pokemon/imagem-shiny e) (assoc :imagem-shiny (:pokemon/imagem-shiny e))
-      (:pokemon/ivs-edn e) (assoc :ivs (edn-read (:pokemon/ivs-edn e))))))
+      (:pokemon/ivs-edn e) (assoc :ivs (edn-read (:pokemon/ivs-edn e)))
+      (:pokemon/ofertas-golpes-edn e)
+      (assoc :golpes-oferecidos (edn-read (:pokemon/ofertas-golpes-edn e)))
+      (some? (:pokemon/pronto-em e)) (assoc :pronto-em (:pokemon/pronto-em e))
+      (:pokemon/item e) (assoc :item (:pokemon/item e))
+      (some? (:pokemon/altura e)) (assoc :altura (:pokemon/altura e))
+      (some? (:pokemon/peso e)) (assoc :peso (:pokemon/peso e))
+      (some? (:pokemon/taxa-captura e)) (assoc :taxa-captura (:pokemon/taxa-captura e))
+      (:pokemon/legado-edn e) (assoc :legado (edn-read (:pokemon/legado-edn e)))
+      (:pokemon/origin-edn e) (assoc :origin-edn (:pokemon/origin-edn e)))))
 
 (defn- pokemon-entity-map
   "Mapa de atributos Datomic a partir do registro de domínio."

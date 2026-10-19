@@ -25,20 +25,33 @@
                        :player-id player-id
                        :hint "Não chame ensure-trainer! antes do import; use só o harness."}))))
 
+(defn- location-str
+  [poke]
+  (let [loc (or (:location poke) :equipe)]
+    (name (if (keyword? loc) loc (keyword (str loc))))))
+
 (defn- pokemon->entity
+  "Persiste attrs suportados + location/pronto-em/legado/origin.
+   Não inventa valores ausentes; não regenera UUID; não limita equipe/coleção."
   [sk poke]
   (let [idx (long (:collection-index poke))
         id-poke (:id-pokemon poke)
+        _ (when (str/blank? (str id-poke))
+            (throw (err/error :import_missing_id_pokemon
+                              {:collection-index idx :species (:species poke)})))
+        loc (location-str poke)
+        in-party? (= "equipe" loc)
         poke-key id-poke]
     (cond-> {:pokemon/key poke-key
              :pokemon/id-pokemon id-poke
              :pokemon/save [:save/key sk]
              :pokemon/species (:species poke)
-             :pokemon/nickname (:nome poke)
+             :pokemon/nickname (or (:nome poke) (:species poke))
              :pokemon/shiny (boolean (:shiny poke))
              :pokemon/xp (long (:xp-desde-nivel poke 0))
              :pokemon/level (long (:nivel poke 1))
-             :pokemon/in-party true
+             :pokemon/in-party in-party?
+             :pokemon/location loc
              :pokemon/collection-index idx
              :pokemon/hp (long (:hp poke 0))
              :pokemon/hp-atual (long (:hp-atual poke 0))
@@ -52,7 +65,28 @@
              :pokemon/raridade (or (:raridade poke) "comum")
              :pokemon/golpes-edn (pr-str (or (:golpes poke) []))}
       (seq (:tipos poke)) (assoc :pokemon/tipos (vec (:tipos poke)))
-      (:status poke) (assoc :pokemon/status (:status poke)))))
+      (contains? poke :status) (assoc :pokemon/status (:status poke))
+      (:habilidade poke) (assoc :pokemon/habilidade (:habilidade poke))
+      (:imagem poke) (assoc :pokemon/imagem (:imagem poke))
+      (:imagem-shiny poke) (assoc :pokemon/imagem-shiny (:imagem-shiny poke))
+      (seq (:golpes-removidos poke))
+      (assoc :pokemon/golpes-removidos-edn (pr-str (:golpes-removidos poke)))
+      (seq (:historico-golpes poke))
+      (assoc :pokemon/historico-golpes-edn (pr-str (:historico-golpes poke)))
+      (or (seq (:golpes-oferecidos poke)) (seq (:ofertas-golpes poke)))
+      (assoc :pokemon/ofertas-golpes-edn
+             (pr-str (or (:golpes-oferecidos poke) (:ofertas-golpes poke))))
+      (:ivs poke) (assoc :pokemon/ivs-edn (pr-str (:ivs poke)))
+      (some? (:pronto-em poke)) (assoc :pokemon/pronto-em (long (:pronto-em poke)))
+      (and (contains? poke :item) (some? (:item poke)))
+      (assoc :pokemon/item (str (:item poke)))
+      (number? (:altura poke)) (assoc :pokemon/altura (double (:altura poke)))
+      (number? (:peso poke)) (assoc :pokemon/peso (double (:peso poke)))
+      (number? (:taxa-captura poke)) (assoc :pokemon/taxa-captura (long (:taxa-captura poke)))
+      (seq (:legado poke)) (assoc :pokemon/legado-edn (pr-str (:legado poke)))
+      (:origin-edn poke) (assoc :pokemon/origin-edn (:origin-edn poke))
+      (and (nil? (:origin-edn poke)) (:origin poke))
+      (assoc :pokemon/origin-edn (pr-str (:origin poke))))))
 
 (defn- inventory-tx
   [sk items]

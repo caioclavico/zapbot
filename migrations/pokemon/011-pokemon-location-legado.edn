@@ -1,0 +1,39 @@
+;; M5.3B — localização, Joy (pronto-em) e atributos legados sem perda.
+[
+ {:db/ident       :pokemon/location
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "equipe | pc | enfermaria (origem legado; import não impõe limites)"}
+
+ {:db/ident       :pokemon/pronto-em
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Epoch ms de liberação da Enfermeira Joy (envelope enfermaria)"}
+
+ {:db/ident       :pokemon/item
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Item segurado; ausente se nil na origem (não inventar)"}
+
+ {:db/ident       :pokemon/altura
+  :db/valueType   :db.type/double
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/peso
+  :db/valueType   :db.type/double
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/taxa-captura
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/legado-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Campos legados sem attr individual (versao-*, flags api, etc.)"}
+
+ {:db/ident       :pokemon/origin-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Snapshot integral verificável do mapa Pokémon de origem (pós-unwrap)"}
+]

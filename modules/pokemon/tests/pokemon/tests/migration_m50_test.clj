@@ -30,16 +30,21 @@
 (deftest fixtures-tamanhos-e-shiny-voltorb
   (let [a (fix/active-team-26)
         hist (fix/historical-team-119)
-        b (concat (:equipe hist) (:pc hist))]
-    (is (= 26 (count a)))
+        a-flat (mapv #(or (get % "pokemon") %)
+                     (concat (:equipe a) (:pc a) (:enfermaria a)))
+        b (concat (:equipe hist) (:pc hist) (:enfermaria hist))]
+    (is (= 26 (count a-flat)))
+    (is (= 19 (count (:equipe a))))
+    (is (= 7 (count (:enfermaria a))))
     (is (= 119 (count b)))
-    (is (some #(and (= "Voltorb" (get % "nome")) (true? (get % "shiny"))) a))
+    (is (= 119 (count (:equipe hist))))
+    (is (some #(and (= "Voltorb" (get % "nome")) (true? (get % "shiny"))) a-flat))
     (is (some #(and (= "Voltorb" (get % "nome"))
                     (true? (get % "shiny"))
                     (= "hist-voltorb-shiny-001" (get % "id-pokemon")))
               b))
     (is (empty? (set/intersection
-                 (set (map #(get % "id-pokemon") a))
+                 (set (map #(get % "id-pokemon") a-flat))
                  (set (map #(get % "id-pokemon") b)))))))
 
 (deftest transform-proveniencia-explicita-e-quarentena

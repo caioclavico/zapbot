@@ -2,7 +2,8 @@
   "Transforma export Cassandra → IR intermediária auditável.
   Proveniência explícita por snapshot; sourceVersion NÃO identifica saves."
   (:require [pokemon.domain.identities :as id]
-            [pokemon.domain.reward :as reward]))
+            [pokemon.domain.reward :as reward]
+            [pokemon.migration.account-shape :as shape]))
 
 (defn- str-keys->kw
   "Converte chaves string de JSON Cassandra para keywords onde útil."
@@ -15,12 +16,25 @@
     (vector? m) (mapv str-keys->kw m)
     :else m))
 
+(def ^:private known-poke-keys
+  #{:id-pokemon :nome :especie :species :shiny :shiny? :nivel :level :xp :xp-desde-nivel
+    :hp :hp-atual :amizade :ataque :defesa :atq-esp :def-esp :veloc :tipos :raridade
+    :golpes :golpes-removidos :historico-golpes :golpes-oferecidos :ofertas-golpes
+    :habilidade :imagem :imagem-shiny :status :item :altura :peso :taxa-captura :ivs
+    :pronto-em :location :_location})
+
 (defn- normalize-pokemon
-  [idx raw]
-  (let [p (str-keys->kw raw)
+  "Normaliza um Pokémon já desembrulhado. Nunca inventa id-pokemon."
+  [idx {:keys [pokemon location pronto-em]}]
+  (let [p (str-keys->kw pokemon)
         species (or (:nome p) (:especie p) (:species p))
-        id-poke (or (:id-pokemon p)
-                    (when species (str "missing-id|" species "|" idx)))]
+        id-poke (:id-pokemon p)
+        loc (or location :equipe)
+        legado (into {} (remove (fn [[k _]] (known-poke-keys k)) p))
+        ;; Snapshot integral verificável (mapa de origem pós-unwrap, sem inventar campos)
+        origin-edn (pr-str (cond-> (into {} p)
+                             (some? pronto-em) (assoc :pronto-em pronto-em)
+                             true (assoc :location (name loc))))]
     (cond-> {:collection-index (long idx)
              :id-pokemon id-poke
              :species species
@@ -39,9 +53,25 @@
              :veloc (long (or (:veloc p) 0))
              :tipos (vec (or (:tipos p) []))
              :raridade (or (:raridade p) "comum")
-             :golpes (vec (or (:golpes p) []))}
-      (nil? (:id-pokemon p)) (assoc :quarantine-flag :missing-id-pokemon)
-      (:status p) (assoc :status (:status p)))))
+             :golpes (vec (or (:golpes p) []))
+             :golpes-removidos (vec (or (:golpes-removidos p) []))
+             :historico-golpes (or (:historico-golpes p) {})
+             :location loc
+             :in-party (= loc :equipe)
+             :origin-edn origin-edn}
+      (nil? id-poke) (assoc :quarantine-flag :missing-id-pokemon)
+      (some? (:status p)) (assoc :status (:status p))
+      (:habilidade p) (assoc :habilidade (:habilidade p))
+      (:imagem p) (assoc :imagem (:imagem p))
+      (:imagem-shiny p) (assoc :imagem-shiny (:imagem-shiny p))
+      (some? (:item p)) (assoc :item (:item p))
+      (number? (:altura p)) (assoc :altura (:altura p))
+      (number? (:peso p)) (assoc :peso (:peso p))
+      (number? (:taxa-captura p)) (assoc :taxa-captura (:taxa-captura p))
+      (or (:golpes-oferecidos p) (:ofertas-golpes p))
+      (assoc :golpes-oferecidos (or (:golpes-oferecidos p) (:ofertas-golpes p)))
+      (some? pronto-em) (assoc :pronto-em pronto-em)
+      (seq legado) (assoc :legado legado))))
 
 (defn- normalize-inventory
   [inv]
@@ -56,11 +86,9 @@
   [{:keys [chat-id player-id slot provenance treinador loja]}]
   (let [t (str-keys->kw treinador)
         l (str-keys->kw (or loja {}))
-        ;; Alinhado ao restore-protocol: equipe + pc + enfermaria
-        equipe (vec (concat (or (:equipe t) [])
-                            (or (:pc t) [])
-                            (or (:enfermaria t) [])))
-        pokemon (mapv normalize-pokemon (range) equipe)
+        located (shape/pokemon-in-location t)
+        buckets (shape/location-counts t)
+        pokemon (mapv normalize-pokemon (range) located)
         ambiguous-flags (cond-> []
                           (nil? loja) (conj :loja-ausente-moedas-zero)
                           (some :quarantine-flag pokemon) (conj :pokemon-sem-id))]
@@ -84,16 +112,18 @@
      :ginasios (or (:ginasios t) {})
      :sequencia-capturas (long (or (:sequencia-capturas t) 0))
      :maior-sequencia-capturas (long (or (:maior-sequencia-capturas t) 0))
+     :buckets buckets
      :pokemon pokemon
      :pokemon-count (count pokemon)
-     :shiny-ids (->> pokemon (filter :shiny) (map :id-pokemon) sort vec)
+     :shiny-ids (->> pokemon (filter :shiny) (map :id-pokemon) (remove nil?) sort vec)
      :content-hash (reward/payload-hash
                     {:slot slot
                      :coins (or (:moedas l) 0)
                      :inv (:inventario l)
                      :ids (mapv :id-pokemon pokemon)
                      :levels (mapv :nivel pokemon)
-                     :shiny (mapv :shiny pokemon)})
+                     :shiny (mapv :shiny pokemon)
+                     :locations (mapv :location pokemon)})
      :flags ambiguous-flags}))
 
 (defn- quarantine-entry
