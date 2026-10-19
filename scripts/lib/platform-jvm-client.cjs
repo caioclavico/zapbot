@@ -1,6 +1,6 @@
 'use strict';
 
-// Cliente HTTP da bridge JVM para bloqueio/admins/enquetes (M7.1/M7.2).
+// Cliente HTTP da bridge JVM para bloqueio/admins/enquetes/quiz (M7.1–M7.3).
 // Fail-closed: sem fallback Cassandra. Staging pode usar host privado Docker.
 const http = require('node:http');
 const https = require('node:https');
@@ -227,6 +227,26 @@ function createClient(config = {}) {
           poll: pollEntry(data.poll),
           polls: pollsToMap(data.polls)
         }));
+    },
+    getQuizHistories() {
+      return request('GET', '/v1/platform/quiz-history').then((data) => {
+        const out = {};
+        for (const e of data.histories || []) {
+          if (e && typeof e.chatId === 'string') out[e.chatId] = e.questions || [];
+        }
+        return { histories: out };
+      });
+    },
+    appendQuizQuestion(chatId, question, operationId) {
+      return request('POST', '/v1/platform/quiz-history/append', {
+        chatId, question, operationId
+      }).then((data) => {
+        const out = {};
+        for (const e of data.histories || []) {
+          if (e && typeof e.chatId === 'string') out[e.chatId] = e.questions || [];
+        }
+        return Object.assign({}, data, { histories: out });
+      });
     },
     newOperationId(prefix) {
       return `${prefix || 'op'}:${crypto.randomUUID()}`;

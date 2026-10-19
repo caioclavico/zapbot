@@ -23,3 +23,9 @@
   (create-poll! [this chat-id poll operation-id])
   (cast-vote! [this chat-id voter-id choice operation-id])
   (close-poll! [this chat-id operation-id]))
+
+(defprotocol QuizHistoryStore
+  (get-quiz-history-state [this])
+  (put-quiz-history-state! [this estado])
+  (get-chat-quiz-history [this chat-id])
+  (append-quiz-question! [this chat-id question operation-id]))

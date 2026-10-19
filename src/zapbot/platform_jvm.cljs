@@ -1,5 +1,5 @@
 (ns zapbot.platform-jvm
-  "Cliente da bridge JVM para bloqueio/admins/enquetes (M7.1/M7.2).
+  "Cliente da bridge JVM para bloqueio/admins/enquetes/quiz (M7.1–M7.3).
    Só staging/dev. Fail-closed: sem fallback Cassandra."
   (:require [promesa.core :as p]
             [zapbot.config :as config]))
@@ -85,4 +85,18 @@
   (p/then (fetch-polls)
           (fn [polls]
             (reset! atom-polls (transformar (or polls {})))
+            true)))
+
+(defn fetch-quiz-histories []
+  (p/then (.getQuizHistories (client!))
+          (fn [data] (js->clj (.-histories data) :keywordize-keys false))))
+
+(defn append-quiz-question! [chat-id question operation-id]
+  (.appendQuizQuestion (client!) chat-id question operation-id))
+
+(defn hydrate-quiz-history!
+  [atom-hist]
+  (p/then (fetch-quiz-histories)
+          (fn [histories]
+            (reset! atom-hist (or histories {}))
             true)))

@@ -1,12 +1,14 @@
 (ns zapbot.quiz
   "Comando !quiz - perguntas de múltipla escolha no chat.
-  O histórico anti-repetição é persistido via zapbot.armazenamento (sobrevive
-  a reinícios/deploys); a pergunta pendente de cada chat fica só em memória."
+  O histórico anti-repetição é persistido (Cassandra em produção; Datomic em
+  staging via PLATFORM_ADAPTER). A pergunta pendente de cada chat fica só em
+  memória. Rank continua Cassandra (não migrado em M7.3)."
   (:require [promesa.core :as p]
             [clojure.string :as str]
             [zapbot.config :as config]
             [zapbot.gemini :as gemini]
             [zapbot.armazenamento :as armazenamento]
+            [zapbot.platform-jvm :as platform]
             [zapbot.rank :as rank]))
 
 (def ^:private perguntas
@@ -87,9 +89,19 @@
 
 ;; últimas perguntas por chat, só pra pedir à IA (e evitar no banco estático)
 ;; que não repita - persistido, sobrevive a reinício/deploy do bot
-(defonce ^:private historico-perguntas (atom (or (armazenamento/obter "quiz-historico") {})))
-(armazenamento/registrar! "quiz-historico" historico-perguntas)
+(defonce ^:private historico-perguntas
+  (atom (or (when-not (platform/enabled?)
+              (armazenamento/obter "quiz-historico"))
+            {})))
+(when-not (platform/enabled?)
+  (armazenamento/registrar! "quiz-historico" historico-perguntas))
 (def ^:private historico-max 12)
+
+(defn hidratar-datomic!
+  "Staging: carrega histórico da bridge antes de aceitar rodadas."
+  []
+  (when (platform/enabled?)
+    (platform/hydrate-quiz-history! historico-perguntas)))
 
 (def ^:private letras ["a" "b" "c" "d"])
 
@@ -120,10 +132,32 @@
        (str/join "\n" (map #(str (str/upper-case %1) ") " %2) letras opcoes))
        "\n\n✏️ Responda com " config/prefix "quiz <letra>"))
 
-(defn- registrar-historico! [cid pergunta-texto]
+(defn- aplicar-historico-wire!
+  "Atualiza cache só com estado já commitado na bridge."
+  [histories]
+  (when histories
+    (reset! historico-perguntas (js->clj histories :keywordize-keys false))))
+
+(defn- registrar-historico-cassandra! [cid pergunta-texto]
   (swap! historico-perguntas update cid
          (fn [hist] (vec (take-last historico-max (conj (vec hist) pergunta-texto)))))
-  (armazenamento/salvar! "quiz-historico" @historico-perguntas))
+  (armazenamento/salvar! "quiz-historico" @historico-perguntas)
+  (p/resolved true))
+
+(defn- registrar-historico-datomic! [cid pergunta-texto]
+  (let [op (platform/op-id (str "quiz-hist:" cid))]
+    (-> (platform/append-quiz-question! cid pergunta-texto op)
+        (p/then (fn [data]
+                  (aplicar-historico-wire! (.-histories data))
+                  true))
+        (p/catch (fn [err]
+                   (js/console.error "quiz(datomic): falha ao registrar histórico (fail-closed):" err)
+                   (p/rejected err))))))
+
+(defn- registrar-historico! [cid pergunta-texto]
+  (if (platform/enabled?)
+    (registrar-historico-datomic! cid pergunta-texto)
+    (registrar-historico-cassandra! cid pergunta-texto)))
 
 (defn- pergunta-estatica-nao-repetida [cid]
   (let [ja-usadas (set (get @historico-perguntas cid))
@@ -174,9 +208,10 @@
 (defn- iniciar [message]
   (let [cid (chat-id message)]
     (p/let [pergunta-ia (gerar-pergunta-ia cid)
-            pergunta    (or pergunta-ia (pergunta-estatica-nao-repetida cid))]
+            pergunta    (or pergunta-ia (pergunta-estatica-nao-repetida cid))
+            ;; Persistência antes de confirmar a rodada / responder ao usuário.
+            _ (registrar-historico! cid (:pergunta pergunta))]
       (swap! quizzes assoc cid pergunta)
-      (registrar-historico! cid (:pergunta pergunta))
       (str (cabecalho) (mensagem-pergunta pergunta)
            (when-not pergunta-ia
              (str "\n\n_(banco local - configure GEMINI_API_KEY pra perguntas sempre "

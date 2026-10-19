@@ -1,0 +1,14 @@
+;; M7.3 — schema Datomic Local para quiz-historico (sintético / staging).
+;; Shape legado: chat → [texto-pergunta] (últimas 12). Rodada ativa fica só em memória no Node.
+[
+ {:db/ident       :platform.quiz.history/chat
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Histórico anti-repetição do quiz → chat (no máximo um por chat)."}
+
+ {:db/ident       :platform.quiz.history/questions
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Perguntas como EDN vector (ordem cronológica; take-last 12 no append)."}
+]

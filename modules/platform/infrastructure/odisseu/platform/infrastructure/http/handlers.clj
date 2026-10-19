@@ -240,5 +240,46 @@
                            (poll->wire cid p))
                   "polls" (state-polls->wire (:state res))}}))
 
+      (= path "/v1/platform/quiz-history")
+      (do
+        (when (not= "GET" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (not-empty (g qs "chatId"))
+              st (ports/get-quiz-history-state platform-store)]
+          {:status 200
+           :data (if cid
+                   {"chatId" cid
+                    "questions" (vec (ports/get-chat-quiz-history platform-store cid))}
+                   {"histories"
+                    (->> st
+                         (map (fn [[c qs]]
+                                {"chatId" (str c) "questions" (vec qs)}))
+                         (sort-by #(get % "chatId"))
+                         vec)})}))
+
+      (= path "/v1/platform/quiz-history/append")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (require-str! (g body "chatId" :chatId) "chatId")
+              q (require-str! (g body "question" :question) "question")
+              op (require-op! body)
+              res (try
+                    (ports/append-quiz-question! platform-store cid q op)
+                    (catch clojure.lang.ExceptionInfo e
+                      (if (= "quiz_history_invalid" (ex-message e))
+                        (throw (err/error :invalid_query (ex-data e)))
+                        (throw e))))]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "chatId" cid
+                  "questions" (vec (:history res))
+                  "histories"
+                  (->> (:state res)
+                       (map (fn [[c qs]]
+                              {"chatId" (str c) "questions" (vec qs)}))
+                       (sort-by #(get % "chatId"))
+                       vec)}}))
+
       :else
       (throw (err/error :operation_not_found {:path path})))))

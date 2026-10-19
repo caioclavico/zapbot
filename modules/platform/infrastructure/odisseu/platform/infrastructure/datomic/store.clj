@@ -1,5 +1,5 @@
 (ns odisseu.platform.infrastructure.datomic.store
-  "Store Datomic Local para bloqueio + admins + enquetes (M7.0/M7.2).
+  "Store Datomic Local para bloqueio + admins + enquetes + quiz-historico (M7.0–M7.3).
    Não substitui zapbot.armazenamento Cassandra no runtime Node."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
@@ -10,6 +10,7 @@
             [odisseu.platform.domain.admins :as admins]
             [odisseu.platform.domain.bloqueio :as bloqueio]
             [odisseu.platform.domain.enquetes :as enquetes]
+            [odisseu.platform.domain.quiz-historico :as quiz-hist]
             [odisseu.persistence.datomic :as persistence])
   (:import [java.security MessageDigest]))
 
@@ -21,7 +22,8 @@
 (defn- ensure-schema!
   [conn]
   (doseq [path ["migrations/platform/001-bloqueio-admins.edn"
-                "migrations/platform/002-enquetes.edn"]]
+                "migrations/platform/002-enquetes.edn"
+                "migrations/platform/003-quiz-historico.edn"]]
     (let [f (io/file (persistence/project-root) path)
           tx (edn/read-string (slurp f))]
       (d/transact conn {:tx-data tx})))
@@ -136,6 +138,39 @@
         :platform.poll.vote/poll "poll"
         :platform.poll.vote/voter (str voter)
         :platform.poll.vote/choice (long choice)}))))
+
+(defn- load-quiz-history
+  [db]
+  (->> (d/q '[:find ?cid ?qs
+              :where
+              [?h :platform.quiz.history/chat ?c]
+              [?c :platform.chat/id ?cid]
+              [?h :platform.quiz.history/questions ?qs]]
+            db)
+       (reduce (fn [acc [cid qs]]
+                 (assoc acc (str cid) (quiz-hist/edn->questions qs)))
+               {})))
+
+(defn- quiz-history-eid
+  [db chat-id]
+  (ffirst (d/q '[:find ?h
+                 :in $ ?cid
+                 :where
+                 [?c :platform.chat/id ?cid]
+                 [?h :platform.quiz.history/chat ?c]]
+               db (str chat-id))))
+
+(defn- quiz-history-put-tx
+  "Atualiza questions se a entidade já existe; senão cria (evita unique-conflict no reimport)."
+  [db chat-id questions]
+  (let [cid (str chat-id)
+        qs (quiz-hist/normalize-entry questions)
+        edn (quiz-hist/questions->edn qs)]
+    (if-let [eid (quiz-history-eid db cid)]
+      [[:db/add eid :platform.quiz.history/questions edn]]
+      [{:db/id "chat" :platform.chat/id cid}
+       {:platform.quiz.history/chat "chat"
+        :platform.quiz.history/questions edn}])))
 
 (defn- load-blocks
   [db]
@@ -427,7 +462,53 @@
           {:duplicate false
            :closed true
            :poll poll
-           :state (ports/get-poll-state this)})))))
+           :state (ports/get-poll-state this)}))))
+
+  ports/QuizHistoryStore
+  (get-quiz-history-state [_]
+    (load-quiz-history (d/db conn)))
+  (put-quiz-history-state! [this estado]
+    (doseq [[cid qs] (quiz-hist/normalize-state estado)]
+      (ensure-chat! conn cid)
+      (let [db (d/db conn)]
+        (if (seq qs)
+          (d/transact conn {:tx-data (quiz-history-put-tx db cid qs)})
+          (when-let [eid (quiz-history-eid db cid)]
+            (d/transact conn {:tx-data [[:db/retractEntity eid]]})))))
+    (ports/get-quiz-history-state this))
+  (get-chat-quiz-history [this chat-id]
+    (get (ports/get-quiz-history-state this) (str chat-id) []))
+  (append-quiz-question! [this chat-id question operation-id]
+    (let [cid (str chat-id)
+          q (str question)
+          db (d/db conn)
+          payload (str "quiz-append|" cid "|" q)
+          hash (sha256-hex payload)
+          dup (assert-receipt! db operation-id "quiz-historico" hash)]
+      (cond
+        (str/blank? q)
+        (throw (ex-info "quiz_history_invalid" {:chat-id cid}))
+
+        (receipt-dup? dup)
+        {:duplicate true
+         :history (or (when-let [s (:snapshot dup)]
+                        (quiz-hist/normalize-entry s))
+                      (ports/get-chat-quiz-history this cid))
+         :state (ports/get-quiz-history-state this)}
+
+        :else
+        (let [cur (ports/get-chat-quiz-history this cid)
+              nxt (quiz-hist/append cur q)
+              db2 (d/db conn)]
+          (d/transact conn {:tx-data (concat
+                                      (quiz-history-put-tx db2 cid nxt)
+                                      [{:platform.op/id operation-id
+                                        :platform.op/domain "quiz-historico"
+                                        :platform.op/payload-hash hash
+                                        :platform.op/snapshot (pr-str nxt)}])})
+          {:duplicate false
+           :history (ports/get-chat-quiz-history this cid)
+           :state (ports/get-quiz-history-state this)})))))
 
 (defn make-store
   [conn]

@@ -37,6 +37,15 @@
                        "prefix" (str (or (get info "prefix") (:prefix info) "!"))}])))
         (or m {})))
 
+(defn normalize-quiz-historico
+  "Omite chats com histórico vazio (equivalente a ausente)."
+  [m]
+  (into (sorted-map)
+        (keep (fn [[cid qs]]
+                (let [v (mapv str (or qs []))]
+                  (when (seq v) [cid v])))
+              (or m {}))))
+
 (defn diff-maps
   "Retorna {:only-left :only-right :changed} comparando mapas normalizados."
   [left right]

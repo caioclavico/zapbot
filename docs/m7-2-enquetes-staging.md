@@ -45,6 +45,7 @@ Atom local só atualiza **depois** do commit Datomic. Boot staging hidrata enque
 ./scripts/staging-sim.sh
 ```
 
-## Próximo (M7.3 sugerido)
+## Próximo (M7.3)
 
-**Quiz-histórico** ou **rank** (rank exige dedupe de efeitos HTTP — maior risco).
+**Quiz-histórico** → ver `docs/m7-3-quiz-historico-staging.md`.  
+M7.4 sugerido: **rank** (dedupe HTTP) ou **lembretes**.
