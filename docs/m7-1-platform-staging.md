@@ -63,4 +63,5 @@ PLATFORM_JVM_TOKEN=<mesmo ODISSEU_BRIDGE_TOKEN>
 - Cutover produção  
 - Dual-write  
 - Migração de dados reais  
-- Enquetes/rank/lembretes (próximo M7.2 sugerido: **enquetes**)
+- Enquetes → ver M7.2 (`docs/m7-2-enquetes-staging.md`)
+- Rank/lembretes/quiz (próximo M7.3 sugerido: **quiz-histórico**)

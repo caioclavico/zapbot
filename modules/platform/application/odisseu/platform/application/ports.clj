@@ -15,3 +15,11 @@
   (remember-admin! [this chat-id player-id operation-id])
   (forget-admin! [this chat-id player-id operation-id])
   (known-admin? [this chat-id player-ids]))
+
+(defprotocol PollStore
+  (get-poll-state [this])
+  (put-poll-state! [this estado])
+  (get-chat-poll [this chat-id])
+  (create-poll! [this chat-id poll operation-id])
+  (cast-vote! [this chat-id voter-id choice operation-id])
+  (close-poll! [this chat-id operation-id]))

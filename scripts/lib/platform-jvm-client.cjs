@@ -1,6 +1,6 @@
 'use strict';
 
-// Cliente HTTP da bridge JVM para bloqueio/admins (M7.1).
+// Cliente HTTP da bridge JVM para bloqueio/admins/enquetes (M7.1/M7.2).
 // Fail-closed: sem fallback Cassandra. Staging pode usar host privado Docker.
 const http = require('node:http');
 const https = require('node:https');
@@ -129,6 +129,31 @@ function createClient(config = {}) {
     return out;
   }
 
+  function pollsToMap(entries) {
+    const out = {};
+    for (const e of entries || []) {
+      if (e && typeof e.chatId === 'string') {
+        out[e.chatId] = {
+          pergunta: e.pergunta || '',
+          opcoes: e.opcoes || [],
+          votos: e.votos || {},
+          prefix: e.prefix || '!'
+        };
+      }
+    }
+    return out;
+  }
+
+  function pollEntry(poll) {
+    if (!poll || typeof poll.chatId !== 'string') return null;
+    return {
+      pergunta: poll.pergunta || '',
+      opcoes: poll.opcoes || [],
+      votos: poll.votos || {},
+      prefix: poll.prefix || '!'
+    };
+  }
+
   return {
     getBlocks() {
       return request('GET', '/v1/platform/blocks').then((data) => ({
@@ -164,6 +189,44 @@ function createClient(config = {}) {
     },
     knownAdmin(chatId, playerIds) {
       return request('POST', '/v1/platform/admins/known', { chatId, playerIds });
+    },
+    getPolls() {
+      return request('GET', '/v1/platform/polls').then((data) => ({
+        polls: pollsToMap(data.polls)
+      }));
+    },
+    getPoll(chatId) {
+      const q = encodeURIComponent(chatId);
+      return request('GET', `/v1/platform/polls?chatId=${q}`).then((data) => ({
+        poll: pollEntry(data.poll)
+      }));
+    },
+    createPoll(chatId, poll, operationId) {
+      return request('POST', '/v1/platform/polls/create', {
+        chatId,
+        pergunta: poll.pergunta,
+        opcoes: poll.opcoes || [],
+        prefix: poll.prefix || '!',
+        operationId
+      }).then((data) => Object.assign({}, data, {
+        poll: pollEntry(data.poll),
+        polls: pollsToMap(data.polls)
+      }));
+    },
+    castVote(chatId, voterId, choice, operationId) {
+      return request('POST', '/v1/platform/polls/vote', {
+        chatId, voterId, choice, operationId
+      }).then((data) => Object.assign({}, data, {
+        poll: pollEntry(data.poll),
+        polls: pollsToMap(data.polls)
+      }));
+    },
+    closePoll(chatId, operationId) {
+      return request('POST', '/v1/platform/polls/close', { chatId, operationId })
+        .then((data) => Object.assign({}, data, {
+          poll: pollEntry(data.poll),
+          polls: pollsToMap(data.polls)
+        }));
     },
     newOperationId(prefix) {
       return `${prefix || 'op'}:${crypto.randomUUID()}`;

@@ -96,6 +96,7 @@
     (is (contains? (set (:inventory-keys ir)) "rank"))
     (is (true? (get-in report [:bloqueio :equivalent?])) report)
     (is (true? (get-in report [:admins :equivalent?])) report)
+    (is (true? (get-in report [:enquetes :equivalent?])) report)
     ;; chat C com lista vazia de admins: normalize remove ou mantém?
     (is (bloqueio/comando-bloqueado?
          (bloqueio/normalize-state (:bloqueio ir))

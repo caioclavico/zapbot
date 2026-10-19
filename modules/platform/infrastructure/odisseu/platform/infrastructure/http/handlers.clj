@@ -1,8 +1,9 @@
 (ns odisseu.platform.infrastructure.http.handlers
-  "Rotas HTTP /v1/platform/* — bloqueio e admins (sem domínio Pokémon)."
+  "Rotas HTTP /v1/platform/* — bloqueio, admins e enquetes (sem domínio Pokémon)."
   (:require [clojure.string :as str]
             [odisseu.platform.application.ports :as ports]
             [odisseu.platform.domain.bloqueio :as bloqueio]
+            [odisseu.platform.domain.enquetes :as enquetes]
             [pokemon.domain.errors :as err]))
 
 (defn- g [m & ks]
@@ -37,6 +38,44 @@
                "playerIds" (vec (sort (map str ids)))}))
        (sort-by #(get % "chatId"))
        vec))
+
+(defn- poll->wire
+  [cid {:keys [pergunta opcoes votos prefix]}]
+  (when (and cid pergunta)
+    {"chatId" (str cid)
+     "pergunta" (str pergunta)
+     "opcoes" (mapv str (or opcoes []))
+     "votos" (into {}
+                   (map (fn [[k v]] [(str k) (long v)])
+                        (or votos {})))
+     "prefix" (str (or prefix "!"))}))
+
+(defn- state-polls->wire
+  [st]
+  (->> st
+       (map (fn [[cid poll]] (poll->wire cid poll)))
+       (sort-by #(get % "chatId"))
+       vec))
+
+(defn- poll-from-body
+  [body]
+  {:pergunta (g body "pergunta" :pergunta)
+   :opcoes (vec (or (g body "opcoes" :opcoes) []))
+   :votos (or (g body "votos" :votos) {})
+   :prefix (or (g body "prefix" :prefix) "!")})
+
+(defn- wrap-poll-ex
+  [f]
+  (try
+    (f)
+    (catch clojure.lang.ExceptionInfo e
+      (let [msg (ex-message e)]
+        (case msg
+          "poll_already_open" (throw (err/error :operation_forbidden (ex-data e)))
+          "poll_not_found" (throw (err/error :operation_not_found (ex-data e)))
+          "poll_invalid" (throw (err/error :invalid_query (ex-data e)))
+          "poll_invalid_choice" (throw (err/error :invalid_query (ex-data e)))
+          (throw e))))))
 
 (defn handle
   "Retorna mapa :status + :data ou lança err/error.
@@ -141,6 +180,65 @@
               known? (ports/known-admin? platform-store cid ids)]
           {:status 200
            :data {"chatId" cid "known" (boolean known?)}}))
+
+      (= path "/v1/platform/polls")
+      (do
+        (when (not= "GET" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (not-empty (g qs "chatId"))
+              st (ports/get-poll-state platform-store)]
+          {:status 200
+           :data (if cid
+                   {"poll" (poll->wire cid (ports/get-chat-poll platform-store cid))}
+                   {"polls" (state-polls->wire st)})}))
+
+      (= path "/v1/platform/polls/create")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (require-str! (g body "chatId" :chatId) "chatId")
+              op (require-op! body)
+              poll (poll-from-body body)
+              _ (when-not (enquetes/valid-create? (enquetes/normalize-entry poll))
+                  (throw (err/error :invalid_query {:required ["pergunta" "opcoes"]})))
+              res (wrap-poll-ex
+                   #(ports/create-poll! platform-store cid poll op))]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "poll" (poll->wire cid (:poll res))
+                  "polls" (state-polls->wire (:state res))}}))
+
+      (= path "/v1/platform/polls/vote")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (require-str! (g body "chatId" :chatId) "chatId")
+              vid (require-str! (g body "voterId" :voterId) "voterId")
+              choice (g body "choice" :choice)
+              op (require-op! body)
+              _ (when-not (number? choice)
+                  (throw (err/error :invalid_query {:required ["choice"]})))
+              res (wrap-poll-ex
+                   #(ports/cast-vote! platform-store cid vid (long choice) op))]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "poll" (poll->wire cid (:poll res))
+                  "polls" (state-polls->wire (:state res))}}))
+
+      (= path "/v1/platform/polls/close")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (require-str! (g body "chatId" :chatId) "chatId")
+              op (require-op! body)
+              res (wrap-poll-ex
+                   #(ports/close-poll! platform-store cid op))]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "closed" (boolean (:closed res))
+                  "poll" (when-let [p (:poll res)]
+                           (poll->wire cid p))
+                  "polls" (state-polls->wire (:state res))}}))
 
       :else
       (throw (err/error :operation_not_found {:path path})))))

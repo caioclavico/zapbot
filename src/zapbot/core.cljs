@@ -17,6 +17,7 @@
             [zapbot.pokemon-http :as pokemon]
             [zapbot.bloqueio :as bloqueio]
             [zapbot.admins :as admins]
+            [zapbot.enquetes :as enquetes]
             [zapbot.platform-jvm :as platform]
             [zapbot.router :as router]))
 
@@ -244,9 +245,10 @@
           (p/then (fn [_]
                     (if (platform/enabled?)
                       (-> (p/all [(bloqueio/hidratar-datomic!)
-                                  (admins/hidratar-datomic!)])
+                                  (admins/hidratar-datomic!)
+                                  (enquetes/hidratar-datomic!)])
                           (p/then (fn [_]
-                                    (js/console.log "[platform] bloqueio/admins hidratados via Datomic")
+                                    (js/console.log "[platform] bloqueio/admins/enquetes hidratados via Datomic")
                                     true))
                           (p/catch (fn [err]
                                      (js/console.error "[platform] Datomic indisponível (fail-closed):" err)

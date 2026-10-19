@@ -21,6 +21,22 @@
                   (when (seq v) [cid v])))
               (or m {}))))
 
+(defn normalize-enquetes
+  "Cassandra-shape → mapa ordenado comparável campo a campo."
+  [m]
+  (into (sorted-map)
+        (map (fn [[cid info]]
+               (let [info (or info {})
+                     votos (or (get info "votos") (:votos info) {})]
+                 [cid {"pergunta" (str (or (get info "pergunta") (:pergunta info) ""))
+                       "opcoes" (mapv str (or (get info "opcoes") (:opcoes info) []))
+                       "votos" (into (sorted-map)
+                                     (map (fn [[k v]]
+                                            [(str k) (long (if (number? v) v (Long/parseLong (str v))))])
+                                          votos))
+                       "prefix" (str (or (get info "prefix") (:prefix info) "!"))}])))
+        (or m {})))
+
 (defn diff-maps
   "Retorna {:only-left :only-right :changed} comparando mapas normalizados."
   [left right]

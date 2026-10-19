@@ -1,11 +1,12 @@
 (ns odisseu.platform.infrastructure.migration.pipeline
-  "Export/import offline sintético Cassandra-shape → Datomic platform (M7.0).
+  "Export/import offline sintético Cassandra-shape → Datomic platform (M7.0/M7.2).
    Sem dados reais; sem dual-write; sem produção."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [odisseu.platform.application.ports :as ports]
             [odisseu.platform.domain.admins :as admins]
             [odisseu.platform.domain.bloqueio :as bloqueio]
+            [odisseu.platform.domain.enquetes :as enquetes]
             [odisseu.platform.infrastructure.datomic.store :as store]
             [odisseu.platform.infrastructure.migration.compare :as compare]
             [odisseu.persistence.datomic :as persistence]))
@@ -20,33 +21,39 @@
     dump))
 
 (defn export-modules
-  "Normaliza módulos bloqueio/admins do dump para IR auditável."
+  "Normaliza módulos bloqueio/admins/enquetes do dump para IR auditável."
   [dump]
   (let [mods (:modules dump {})]
     {:meta (:meta dump)
      :bloqueio (compare/normalize-bloqueio (get mods "bloqueio" {}))
      :admins (compare/normalize-admins (get mods "admins-conhecidos" {}))
+     :enquetes (compare/normalize-enquetes (get mods "enquetes" {}))
      :inventory-keys (sort (keys mods))}))
 
 (defn import-ir!
-  "Importa IR bloqueio/admins em store Datomic (bulk put)."
+  "Importa IR bloqueio/admins/enquetes em store Datomic (bulk put)."
   [platform-store ir]
   (ports/put-block-state! platform-store
                           (bloqueio/normalize-state (:bloqueio ir)))
   (ports/put-admin-state! platform-store
                           (admins/normalize-state (:admins ir)))
+  (ports/put-poll-state! platform-store
+                         (enquetes/normalize-state (:enquetes ir)))
   {:bloqueio (compare/normalize-bloqueio
               (bloqueio/state->persistivel (ports/get-block-state platform-store)))
    :admins (compare/normalize-admins
-            (admins/state->persistivel (ports/get-admin-state platform-store)))})
+            (admins/state->persistivel (ports/get-admin-state platform-store)))
+   :enquetes (compare/normalize-enquetes
+              (enquetes/state->persistivel (ports/get-poll-state platform-store)))})
 
 (defn equivalence-report
   [ir imported]
   {:bloqueio {:equivalent? (compare/equivalent? (:bloqueio ir) (:bloqueio imported))
               :diff (compare/diff-maps (:bloqueio ir) (:bloqueio imported))}
    :admins {:equivalent? (compare/equivalent? (:admins ir) (:admins imported))
-            :diff (compare/diff-maps (:admins ir) (:admins imported))}})
-
+            :diff (compare/diff-maps (:admins ir) (:admins imported))}
+   :enquetes {:equivalent? (compare/equivalent? (:enquetes ir) (:enquetes imported))
+              :diff (compare/diff-maps (:enquetes ir) (:enquetes imported))}})
 (defn open-disposable-store!
   [storage-rel system db-name]
   (when (re-find #"m53-real-offline|m55-real-offline|prod" (str storage-rel))

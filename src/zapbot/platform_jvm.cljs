@@ -1,6 +1,6 @@
 (ns zapbot.platform-jvm
-  "Cliente da bridge JVM para bloqueio/admins (M7.1). Só staging/dev.
-   Fail-closed: sem fallback Cassandra."
+  "Cliente da bridge JVM para bloqueio/admins/enquetes (M7.1/M7.2).
+   Só staging/dev. Fail-closed: sem fallback Cassandra."
   (:require [promesa.core :as p]
             [zapbot.config :as config]))
 
@@ -65,4 +65,24 @@
   (p/then (fetch-admins)
           (fn [admins]
             (reset! atom-admins (transformar (or admins {})))
+            true)))
+
+(defn fetch-polls []
+  (p/then (.getPolls (client!))
+          (fn [data] (js->clj (.-polls data) :keywordize-keys false))))
+
+(defn create-poll! [chat-id poll operation-id]
+  (.createPoll (client!) chat-id (clj->js poll) operation-id))
+
+(defn cast-vote! [chat-id voter-id choice operation-id]
+  (.castVote (client!) chat-id voter-id choice operation-id))
+
+(defn close-poll! [chat-id operation-id]
+  (.closePoll (client!) chat-id operation-id))
+
+(defn hydrate-polls!
+  [atom-polls transformar]
+  (p/then (fetch-polls)
+          (fn [polls]
+            (reset! atom-polls (transformar (or polls {})))
             true)))
