@@ -148,3 +148,29 @@
            (str "Lab pode provar journal-recon. "
                 "rollback-recon-available exige journal em produção + limites aceitos. "
                 "cutover-ready exige também WhatsApp staging."))))
+
+(defn evaluate-m84-gates
+  "Gates M8.4 — endurecimento do protocolo. NÃO promove rollback-recon só com
+   proof sintético. cutover-ready permanece false."
+  [{:keys [protocol-crash-proven?
+           stores-wired?
+           production-journal-deployed?
+           independent-failure-domain?
+           whatsapp-staging-validated?]}]
+  (let [recon-ok? (boolean (and protocol-crash-proven?
+                                stores-wired?
+                                production-journal-deployed?
+                                independent-failure-domain?))]
+    {:protocol-crash-proven? (boolean protocol-crash-proven?)
+     :stores-wired? (boolean stores-wired?)
+     :production-journal-deployed? (boolean production-journal-deployed?)
+     :independent-failure-domain? (boolean independent-failure-domain?)
+     :whatsapp-staging-validated? (boolean whatsapp-staging-validated?)
+     :rollback-recon-available? recon-ok?
+     :cutover-ready? false
+     :exactly-once-claimed? false
+     :rpo-zero-claimed? false
+     :nota
+     (str "Protocolo sintético ≠ integração nos stores. "
+          "rollback-recon exige journal operacional em domínio de falha distinto "
+          "+ stores wired. cutover-ready exige também WhatsApp staging.")}))
