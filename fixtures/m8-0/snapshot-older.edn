@@ -1,0 +1,129 @@
+;; Snapshot sintético antigo (evidência 14/10) — NUNCA dados reais.
+;; Tratamento: evidência histórica; nunca overwrite automático do estado atual.
+{:meta {:synthetic true
+        :milestone "M8.0"
+        :label "m8-older-evidence-2024-10-14"
+        :snapshot-date "2024-10-14"
+        :role :historical-evidence
+        :source "fixtures/m8-0"
+        :nota "Evidência apenas — não substitui snapshot mais recente."}
+
+ :active_provenance
+ {:snapshot-id "m8-active-older-001"
+  :kind :canonical-active
+  :chat-id "chat-m80-a@g.us"
+  :player-id "551180000001@c.us"
+  :target-slot "a"
+  :label "save-a-older"}
+
+ :historical_snapshots
+ [{:snapshot-id "m8-hist-b-independent-001"
+   :kind :historical-independent
+   :chat-id "chat-m80-a@g.us"
+   :player-id "551180000001@c.us"
+   :target-slot "b"
+   :label "save-b-historico"
+   :created-at "2024-03-15T08:30:00.000Z"
+   :treinador {"equipe" [{"id-pokemon" "hist-poke-001" "nome" "Pikachu" "nivel" 20
+                          "hp" 80 "hp-atual" 80}]
+               "pc" []
+               "enfermaria" []
+               "vitorias-treinador" 10
+               "pe-ginasios" 5}
+   :loja {"moedas" 100 "inventario" {"poke-ball" 3}}}]
+
+ :modules
+ {"bloqueio"
+  {"chat-m80-a@g.us" {"bot?" false "comandos" ["naval"]}
+   "chat-m80-b@g.us" {"bot?" true "comandos" []}}
+
+  "admins-conhecidos"
+  {"chat-m80-a@g.us" ["551180000001@c.us"]
+   "chat-m80-b@g.us" ["551180000099@c.us"]}
+
+  "enquetes"
+  {"chat-m80-a@g.us"
+   {"pergunta" "Café ou chá?"
+    "opcoes" ["Café" "Chá"]
+    "votos" {"551180000001@c.us" 0}
+    "prefix" "!"}}
+
+  "quiz-historico"
+  {"chat-m80-a@g.us" ["Capital do Brasil?"]}
+
+  "rank"
+  {"chat-m80-a@g.us"
+   {"551180000001@c.us"
+    {"nome" "Ash" "pontos" 5
+     "jogos" {"velha" 2 "quiz" 1}
+     "efeitos-pokemon-http" {"evt-score-001" {"tipo" "vitoria" "em" 1728000000000}}}}}
+
+  "lembretes"
+  {"rem-m80-pending" {"id" "rem-m80-pending"
+                      "chat" "chat-m80-a@g.us"
+                      "texto" "caçar"
+                      "criador" "551180000001@c.us"
+                      "em" 1893456000000
+                      "status" "pending"}
+   "rem-m80-sent" {"id" "rem-m80-sent"
+                   "chat" "chat-m80-a@g.us"
+                   "texto" "já enviado"
+                   "criador" "551180000001@c.us"
+                   "em" 1700000000000
+                   "status" "completed"}
+   "rem-m80-cancel" {"id" "rem-m80-cancel"
+                     "chat" "chat-m80-b@g.us"
+                     "texto" "cancelado"
+                     "criador" "551180000099@c.us"
+                     "em" 1800000000000
+                     "status" "cancelled"}}
+
+  "bugs"
+  {"1" {"id" "1"
+        "versao" "0.0.0-syn"
+        "chat" "chat-m80-a@g.us"
+        "reportado-por" "551180000001@c.us"
+        "autor-mensagem" "551180000002@c.us"
+        "mensagem" "bug sintético antigo"
+        "mensagem-em" 1700000000000
+        "origem" "citada"
+        "reportado-em" 1700000001000
+        "status" "aberto"}}
+
+  "participantes"
+  {"chat-m80-a@g.us"
+   {"551180000001@c.us" "Ash"
+    "551180000002@c.us" "Misty"}
+   "chat-m80-b@g.us"
+   {"551180000099@c.us" "Brock"}}
+
+  "treinador"
+  {"551180000001@c.us"
+   {"equipe" [{"id-pokemon" "act-poke-001" "nome" "Bulbasaur" "nivel" 12
+               "hp" 60 "hp-atual" 55 "xp-desde-nivel" 10}]
+    "pc" []
+    "enfermaria" [{"pokemon" {"id-pokemon" "act-joy-001" "nome" "Charmander" "nivel" 8
+                              "hp" 40 "hp-atual" 5}
+                   "pronto-em" 1728900000000}]
+    "vitorias-treinador" 3
+    "pe-ginasios" 2
+    "pe-raids" 0
+    "xp-insignias" 0
+    "xp-missoes" 0}}
+
+  "loja"
+  {"551180000001@c.us"
+   {"moedas" 200
+    "inventario" {"poke-ball" 5 "pocao" 2}}}
+
+  "ginasios"
+  {"chat-m80-a@g.us" {"pedra" {"lider" "551180000001@c.us" "motivacao" 50}}}
+
+  "raids"
+  {"chat-m80-a@g.us" {"ativo?" false}}
+
+  "pokemon-batalhas-ativas" {}
+  "pokemon-cacadas-ativas" {}
+  "pokedex-cache" {"Bulbasaur" {"cached-at" 1700000000000}}
+  "pokemon-http-deliveries" {"d1" {"status" "ephemeral"}}
+  "pokemon-restauracao-journals" {"j1" {"nota" "decision-required"}}}}
