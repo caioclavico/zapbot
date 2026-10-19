@@ -121,12 +121,27 @@
       (import-platform! platform-store dump opts)
       (import-platform! platform-store dump (assoc opts :force? false)))))
 
-(defn open-pokemon-store!
-  [storage-rel system db-name]
+(defn- assert-disposable-pokemon-storage!
+  [storage-rel]
   (when (re-find #"(?i)prod|oracle|live|m53-real|m55-real" (str storage-rel))
-    (throw (ex-info "forbidden_pokemon_storage" {:storage storage-rel})))
+    (throw (ex-info "forbidden_pokemon_storage" {:storage storage-rel}))))
+
+(defn open-pokemon-store!
+  "Abre store descartável (apaga db). Recusa m53/m55-real e produção."
+  [storage-rel system db-name]
+  (assert-disposable-pokemon-storage! storage-rel)
   (let [client (persistence/client {:system system :storage-dir storage-rel})
         _ (persistence/delete-db! client db-name)
+        conn (persistence/ensure-db! client db-name)
+        s (poke-store/make-store conn)]
+    (trainer/bootstrap! s)
+    s))
+
+(defn reopen-pokemon-store!
+  "Reabre JVM/store existente sem delete (simula restart)."
+  [storage-rel system db-name]
+  (assert-disposable-pokemon-storage! storage-rel)
+  (let [client (persistence/client {:system system :storage-dir storage-rel})
         conn (persistence/ensure-db! client db-name)
         s (poke-store/make-store conn)]
     (trainer/bootstrap! s)

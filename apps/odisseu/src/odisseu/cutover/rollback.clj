@@ -55,7 +55,7 @@
                  :at (str (java.time.Instant/now))
                  :synthetic true
                  :nota "Somente harness — não altera flags de produção"}]
-    (.mkdirs (.getParentFile f))
+    (.mkdirs (io/file (str out-dir)))
     (spit f (pr-str payload))
     payload))
 
@@ -67,6 +67,7 @@
                  :reason (str reason)
                  :datomic-writer-activated? false
                  :at (str (java.time.Instant/now))}]
+    (.mkdirs (io/file (str out-dir)))
     (spit f (pr-str payload))
     payload))
 

@@ -298,6 +298,14 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=512"]}
 
+  ;; M8.1 — ensaio offline ponta a ponta (dump autorizado + platform sintético)
+  :test-m8-1-rehearsal
+  {:main-opts ["-m" "odisseu.smoke.m8-1-rehearsal"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx768m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=768"]}
+
   ;; Bridge HTTP longa (dev local). Bind 127.0.0.1.
   :bridge-http
   {:main-opts ["-m" "odisseu.bridge.http-server"]
