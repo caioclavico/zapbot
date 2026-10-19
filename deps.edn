@@ -5,7 +5,11 @@
          "modules/pokemon/domain"
          "modules/pokemon/application"
          "modules/pokemon/infrastructure"
-         "modules/pokemon/tests"]
+         "modules/pokemon/tests"
+         "modules/platform/domain"
+         "modules/platform/application"
+         "modules/platform/infrastructure"
+         "modules/platform/tests"]
 
  ;; Núcleo Clojure/JVM — desenvolvimento (M1+).
  ;; Não ligado ao runtime WhatsApp/Node nem ao deploy atual.
@@ -217,6 +221,14 @@
   ;; M6.2 — resiliência (falhas, backup/restore, cutover descartável)
   :m6-2-resilience
   {:main-opts ["-m" "odisseu.smoke.m6-2-resilience"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx512m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=512"]}
+
+  ;; M7.0 — harness plataforma (bloqueio/admins) Cassandra→Datomic sintético
+  :test-m7-0-platform
+  {:main-opts ["-m" "odisseu.smoke.m7-0-platform"]
    :jvm-opts ["-Xms64m"
               "-Xmx512m"
               "-XX:+UseG1GC"
