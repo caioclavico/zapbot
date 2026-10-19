@@ -65,13 +65,37 @@
 (def staging-allowed-users
   (set (env-list "STAGING_ALLOWED_USERS" [])))
 
+(defn- env-flag-on? [k]
+  (contains? #{"1" "true" "yes" "on"}
+             (str/lower-case (str/trim (env k "false")))))
+
+;; M6.3C — bootstrap só para descobrir DEV_GROUP_ID (sem processar mensagens).
+;; STAGING_BOOTSTRAP_GROUP=1 permite boot sem DEV_GROUP_ID; nunca responde chats.
+(def staging-bootstrap-group?
+  (and (= "staging" app-env)
+       (env-flag-on? "STAGING_BOOTSTRAP_GROUP")))
+
+;; Após preencher DEV_GROUP_ID, exige confirmação explícita antes do bot normal.
+(def staging-group-confirmed?
+  (env-flag-on? "STAGING_GROUP_CONFIRMED"))
+
+;; Permite QR na conta de TESTE (primeira autenticação / re-pareamento).
+(def staging-allow-qr?
+  (env-flag-on? "STAGING_ALLOW_QR"))
+
+(def staging-group-discovery-path
+  (env "STAGING_GROUP_DISCOVERY_PATH"))
+
 (defn chat-autorizado?
-  "Em staging-like, só o DEV_GROUP_ID. Fora disso, qualquer chat."
+  "Em staging-like, só o DEV_GROUP_ID. Fora disso, qualquer chat.
+   Bootstrap de grupo: nunca autoriza (não processa mensagens)."
   [cid]
-  (or (not staging-like?)
-      (and (string? dev-group-id)
-           (not (str/blank? dev-group-id))
-           (= cid dev-group-id))))
+  (cond
+    staging-bootstrap-group? false
+    (not staging-like?) true
+    :else (and (string? dev-group-id)
+               (not (str/blank? dev-group-id))
+               (= cid dev-group-id))))
 
 (defn usuario-autorizado?
   "Allowlist opcional de remitentes em staging-like. Vazia = liberado."

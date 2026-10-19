@@ -1,8 +1,9 @@
 # M6.3 — Staging integrado com WhatsApp de teste
 
-**Status:** preparado; Chromium READY **bloqueado** sem conta/sessão de teste fornecida.  
+**Status:** M6.3C em andamento — bootstrap de QR + descoberta de `DEV_GROUP_ID`.  
 **Branch:** `refactor/modular-monolith-datomic`  
-**Checkpoint base:** `5280e94`
+**Checkpoint base:** `d977789`  
+**Ver também:** `docs/m6-3c-staging-auth.md`
 
 ---
 

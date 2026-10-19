@@ -93,6 +93,8 @@ elif [[ ! -d "${SESSION_DIR}" && "${STAGING_ALLOW_QR:-}" != "1" ]]; then
   BLOCK_REASON="sem_sessao_teste"
 elif [[ -z "${DEV_GROUP_ID:-}" ]]; then
   BLOCK_REASON="DEV_GROUP_ID_vazio"
+elif [[ "${STAGING_GROUP_CONFIRMED:-}" != "1" ]]; then
+  BLOCK_REASON="STAGING_GROUP_CONFIRMED_ausente"
 fi
 
 if [[ -n "${BLOCK_REASON}" ]]; then

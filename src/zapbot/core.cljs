@@ -5,6 +5,9 @@
             [clojure.string :as str]
             ["whatsapp-web.js" :as wwjs]
             ["qrcode-terminal" :as qrcode]
+            ["fs" :as fs]
+            ["os" :as os]
+            ["path" :as path]
             [zapbot.config :as config]
             [zapbot.desempenho :as desempenho]
             [zapbot.recursos :as recursos]
@@ -45,13 +48,65 @@
 
 (defn- on-qr [qr]
   (js/console.log "📱 Escaneie o QR code abaixo com o WhatsApp (Aparelhos conectados > Conectar aparelho):")
+  (when config/staging-bootstrap-group?
+    (js/console.log "[bootstrap] Use SOMENTE a conta WhatsApp Business de TESTE — nunca o número principal.")
+    (try
+      (let [out (path/join (path/dirname (discovery-path)) "qr-payload.txt")]
+        (fs/mkdirSync (path/dirname out) #js {:recursive true})
+        (fs/writeFileSync out (str qr) "utf8")
+        (js/console.log "[bootstrap] Payload QR em" out "(para ferramentas externas; prefira o ASCII abaixo)."))
+      (catch :default _ nil)))
   (.generate qrcode qr #js {:small true}))
+
+(defn- discovery-path []
+  (or (when (and (string? config/staging-group-discovery-path)
+                 (not (str/blank? config/staging-group-discovery-path)))
+        config/staging-group-discovery-path)
+      (path/join (os/homedir) "odisseu-recovery" "m6-3c-private" "groups.json")))
+
+(defn- descobrir-grupos!
+  "Lista apenas grupos (id + nome). Não lê mensagens privadas nem responde."
+  [^js client]
+  (-> (.getChats client)
+      (p/then
+       (fn [chats]
+         (let [grupos (->> (array-seq chats)
+                           (filter #(true? (.-isGroup %)))
+                           (map (fn [^js c]
+                                  {"id" (or (some-> c .-id .-_serialized)
+                                            (str (.-id c)))
+                                   "name" (or (.-name c) "")}))
+                           vec)
+               out (discovery-path)
+               payload (clj->js {"generatedAt" (.toISOString (js/Date.))
+                                 "connectedUser" (str "+" (.. client -info -wid -user))
+                                 "groups" grupos
+                                 "note" (str "Preencha DEV_GROUP_ID no .env.staging com o id do "
+                                             "grupo de teste, defina STAGING_GROUP_CONFIRMED=1 e "
+                                             "reinicie SEM STAGING_BOOTSTRAP_GROUP.")})]
+           (fs/mkdirSync (path/dirname out) #js {:recursive true})
+           (fs/writeFileSync out (js/JSON.stringify payload nil 2) "utf8")
+           (js/console.log "[bootstrap] Grupos encontrados:" (count grupos))
+           (doseq [g grupos]
+             (js/console.log (str "  - " (get g "name") " => " (get g "id"))))
+           (js/console.log "[bootstrap] Lista escrita em" out)
+           (js/console.log "[bootstrap] Nenhuma mensagem será processada neste modo.")
+           grupos)))
+      (p/catch
+       (fn [err]
+         (js/console.error "[bootstrap] Falha ao listar grupos:" err)
+         nil))))
 
 (defn- on-ready [client]
   (js/console.log (str "✅ " config/bot-name " conectado e pronto para uso!"))
   (js/console.log (str "📞 Número conectado: +" (.. client -info -wid -user)))
-  (pokemon/iniciar! client)
-  (lembretes/iniciar! client))
+  (if config/staging-bootstrap-group?
+    (do
+      (js/console.log "[bootstrap] Modo descoberta de grupo — sem comandos/notificações.")
+      (descobrir-grupos! client))
+    (do
+      (pokemon/iniciar! client)
+      (lembretes/iniciar! client))))
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -210,10 +265,20 @@
 (defn main [& _args]
   ;; Um único cliente/browser por processo; só a injeção pode ser repetida.
   (when (and config/staging-like?
+             (not config/staging-bootstrap-group?)
              (or (nil? config/dev-group-id) (str/blank? config/dev-group-id)))
     (js/console.error "APP_ENV=" config/app-env
                       "exige DEV_GROUP_ID (chat de teste). Abortando.")
+    (js/console.error "Para só descobrir o ID do grupo: STAGING_BOOTSTRAP_GROUP=1")
     (js/process.exit 2))
+  (when (and (= "staging" config/app-env)
+             (not config/staging-bootstrap-group?)
+             (string? config/dev-group-id)
+             (not (str/blank? config/dev-group-id))
+             (not config/staging-group-confirmed?))
+    (js/console.error "Staging exige STAGING_GROUP_CONFIRMED=1 após validar DEV_GROUP_ID.")
+    (js/console.error "DEV_GROUP_ID está definido, mas o grupo ainda não foi confirmado.")
+    (js/process.exit 7))
   (when (and (= "staging" config/app-env)
              (or (= config/wwebjs-data-path ".wwebjs_auth")
                  (str/ends-with? config/wwebjs-data-path "/.wwebjs_auth")))
@@ -225,32 +290,50 @@
           client (Client. #js {:authStrategy (LocalAuth. (local-auth-opts))
                                :puppeteer (clj->js puppeteer-opts)})
           diagnostico (saude/criar)
+          ;; STAGING_ALLOW_QR / bootstrap: restoreOnly false — senão QR em
+          ;; pasta parcial dispara AUTH_TRANSITION e fecha o Chromium.
           recovery (.installStartupRecovery startup client
-                     #js {:onState (fn [estado]
-                                     (when (#{"recovering" "error"} estado)
-                                       (saude/atualizar! diagnostico
-                                                        (if (= estado "error") "ERROR" "RECOVERING")
-                                                        "Estado de inicialização atualizado; sessão preservada.")))})
+                     (clj->js
+                      (cond-> {:onState (fn [estado]
+                                          (when (#{"recovering" "error"} estado)
+                                            (saude/atualizar! diagnostico
+                                                             (if (= estado "error") "ERROR" "RECOVERING")
+                                                             "Estado de inicialização atualizado; sessão preservada.")))}
+                        (or config/staging-bootstrap-group?
+                            config/staging-allow-qr?)
+                        (assoc :restoreOnly false))))
           server (saude/servir! diagnostico client)]
+      (when config/staging-bootstrap-group?
+        (js/console.log "[bootstrap] STAGING_BOOTSTRAP_GROUP=1 — sem comandos, sem replies, sem notificações."))
       (configurar-envio-seguro! client)
       (saude/acompanhar! diagnostico client)
-      (recursos/iniciar! client)
+      (when-not config/staging-bootstrap-group?
+        (recursos/iniciar! client))
       (encerrar-com-sessao! recovery diagnostico server)
       (.on client "qr" (fn [qr] (when (.acceptingQR recovery) (on-qr qr))))
       (.on client "ready" (fn [] (when (.acceptingReady recovery) (on-ready client))))
-      (.on client "disconnected" (fn [& _] (pokemon/parar!)))
-      (.on client "auth_failure" (fn [& _] (pokemon/parar!)))
-      ;; Preserva o fluxo de mensagens e os inicializadores dos jogos.
-      (.on client "message_create" on-message)
-      (.on client "group_admin_changed" on-group-admin-changed)
-      (-> (armazenamento/iniciar!)
+      (.on client "disconnected" (fn [& _]
+                                  (when-not config/staging-bootstrap-group?
+                                    (pokemon/parar!))))
+      (.on client "auth_failure" (fn [& _]
+                                  (when-not config/staging-bootstrap-group?
+                                    (pokemon/parar!))))
+      ;; Bootstrap: não processa mensagens nem eventos de admin.
+      (when-not config/staging-bootstrap-group?
+        (.on client "message_create" on-message)
+        (.on client "group_admin_changed" on-group-admin-changed))
+      (-> (if config/staging-bootstrap-group?
+            (p/resolved true)
+            (armazenamento/iniciar!))
           (p/then (fn [_]
-                    (when (and (platform/enabled?) config/pokemon-jvm-enabled?)
+                    (when (and (not config/staging-bootstrap-group?)
+                               (platform/enabled?)
+                               config/pokemon-jvm-enabled?)
                       (js/console.log "[boot] staging Datomic+JVM: Cassandra"
                                       (if (armazenamento/cliente-construido?)
                                         "FOI instanciado (inesperado)"
                                         "não instanciado")))
-                    (if (platform/enabled?)
+                    (if (and (not config/staging-bootstrap-group?) (platform/enabled?))
                       (-> (p/all [(bloqueio/hidratar-datomic!)
                                   (admins/hidratar-datomic!)
                                   (enquetes/hidratar-datomic!)
