@@ -1,15 +1,19 @@
 (ns odisseu.bridge.http-server
   "Entrypoint da bridge HTTP JVM (dev/staging).
    Default: loopback. Rede privada Docker só com ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND=true.
-   Nunca usa storages M5.3B/M5.5 de referência. Sem seed destrutivo sem RESET."
-  (:require [clojure.string :as str]
+   Nunca usa storages M5.3B/M5.5 de referência. Sem seed destrutivo sem RESET.
+   Um único writer por storage via FileLock em <storage>/.odisseu-writer.lock."
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.collection :as coll-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
             [pokemon.infrastructure.datomic.store :as store]
             [pokemon.infrastructure.http.bridge :as bridge])
-  (:import [java.lang.management ManagementFactory]))
+  (:import [java.lang.management ManagementFactory]
+           [java.nio.channels FileChannel FileLock]
+           [java.nio.file StandardOpenOption]))
 
 (defn- env
   ([k] (env k nil))
@@ -51,6 +55,33 @@
                       {:storage s
                        :hint "Use .datomic-local/m61-staging (ou volume staging dedicado)."})))))
 
+(defn- acquire-writer-lock!
+  "Garante um único processo escritor por diretório Datomic Local."
+  [storage]
+  (let [dir (io/file (persistence/resolve-storage-dir storage))
+        _ (.mkdirs dir)
+        lock-file (io/file dir ".odisseu-writer.lock")
+        ch (FileChannel/open
+            (.toPath lock-file)
+            (into-array StandardOpenOption
+                        [StandardOpenOption/CREATE
+                         StandardOpenOption/WRITE]))
+        lock (.tryLock ch)]
+    (when-not lock
+      (.close ch)
+      (throw (ex-info "writer_lock_held"
+                      {:storage (.getAbsolutePath dir)
+                       :lock-file (.getAbsolutePath lock-file)
+                       :hint "Outra bridge já usa este storage. Um writer por vez."})))
+    {:channel ch :lock lock :path (.getAbsolutePath lock-file)}))
+
+(defn- release-writer-lock!
+  [{:keys [^FileChannel channel ^FileLock lock]}]
+  (when lock
+    (try (.release lock) (catch Exception _)))
+  (when channel
+    (try (.close channel) (catch Exception _))))
+
 (defn- seed-demo!
   "Dados sintéticos in-process — nunca exposto como rota HTTP."
   [s]
@@ -89,6 +120,7 @@
         _ (when (and (= "0.0.0.0" host) (not private-bind?))
             (throw (ex-info "private_bind_required"
                             {:hint "Defina ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND=true para 0.0.0.0."})))
+        writer-lock (acquire-writer-lock! storage)
         client (persistence/client {:system system :storage-dir storage})
         _ (when reset?
             (println "[odisseu-bridge] RESET — apagando db" db-name)
@@ -105,7 +137,8 @@
         stopped (atom false)
         stop! (fn []
                 (when (compare-and-set! stopped false true)
-                  (bridge/stop! http)
+                  (try (bridge/stop! http) (catch Exception _))
+                  (release-writer-lock! writer-lock)
                   (println "[odisseu-bridge] stopped")))]
     (println "[odisseu-bridge] up"
              (:base-url http)
@@ -114,6 +147,7 @@
              "storage=" storage
              "system=" system
              "db=" db-name
+             "writer-lock=" (:path writer-lock)
              (when demo (str "seed=" (pr-str demo))))
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable stop!))
     @(promise)))

@@ -1,6 +1,7 @@
-# Staging isolado M6.1 — Node + JVM + Datomic Local.
+# Staging isolado M6.1/M6.2 — Node + JVM + Datomic Local.
 # NÃO é produção. NÃO publica a bridge JVM em interface pública.
 # Pokémon gameplay: somente JVM (sem Cassandra no caminho Pokémon).
+# Um writer por volume: FileLock em /data/datomic-local/.odisseu-writer.lock
 #
 # Uso:
 #   cp .env.staging.example .env.staging   # preencha tokens
@@ -8,6 +9,10 @@
 #
 # Opcional Cassandra (módulos Node não-Pokémon):
 #   docker compose -f docker-compose.staging.yml --env-file .env.staging --profile with-cassandra up -d
+#
+# Backup consistente: stop odisseu-jvm → scripts/staging-backup.sh (host) ou
+# docker run --rm -v odisseu-staging-datomic:/data -v "$PWD/.datomic-local:/out" alpine
+#   cp -a /data /out/m62-compose-bak
 
 name: odisseu-staging
 
@@ -45,6 +50,8 @@ services:
       retries: 8
       start_period: 90s
     mem_limit: 512m
+    cpus: 1.0
+    # rede staging-internal: Node alcança JVM pelo nome; host só via 127.0.0.1:18090
 
   odisseu-node:
     build:
@@ -78,6 +85,7 @@ services:
       - staging-internal
     mem_limit: 2560m
     memswap_limit: 4g
+    cpus: 2.0
     logging:
       driver: json-file
       options:
