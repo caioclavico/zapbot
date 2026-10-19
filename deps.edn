@@ -274,6 +274,14 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=512"]}
 
+  ;; M7.6 — bugs/participantes + inventário platform completo
+  :test-m7-6-platform
+  {:main-opts ["-m" "odisseu.smoke.m7-6-platform-complete"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx512m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=512"]}
+
   ;; Bridge HTTP longa (dev local). Bind 127.0.0.1.
   :bridge-http
   {:main-opts ["-m" "odisseu.bridge.http-server"]

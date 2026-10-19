@@ -329,6 +329,53 @@ function createClient(config = {}) {
     failReminder(id, claimant, fence, error) {
       return request('POST', '/v1/platform/reminders/fail', { id, claimant, fence, error });
     },
+    getBugs(version) {
+      const qs = version ? `?version=${encodeURIComponent(version)}` : '';
+      return request('GET', `/v1/platform/bugs${qs}`).then((data) => ({
+        bugs: data.bugs || []
+      }));
+    },
+    getBug(id) {
+      return request('GET', `/v1/platform/bugs?id=${encodeURIComponent(id)}`)
+        .then((data) => ({ bug: data.bug || null }));
+    },
+    createBug(bug, operationId) {
+      return request('POST', '/v1/platform/bugs/create', Object.assign({}, bug, { operationId }));
+    },
+    resolveBug(id, operationId, resolvedAt) {
+      return request('POST', '/v1/platform/bugs/resolve', {
+        id, operationId, resolvedAt
+      });
+    },
+    getParticipants(chatId) {
+      const path = chatId
+        ? `/v1/platform/participants?chatId=${encodeURIComponent(chatId)}`
+        : '/v1/platform/participants';
+      return request('GET', path).then((data) => {
+        if (chatId) {
+          const players = {};
+          for (const p of data.players || []) {
+            if (p && typeof p.playerId === 'string') players[p.playerId] = p.name;
+          }
+          return { chatId: data.chatId, players };
+        }
+        const chats = {};
+        for (const c of data.chats || []) {
+          if (!c || typeof c.chatId !== 'string') continue;
+          const players = {};
+          for (const p of c.players || []) {
+            if (p && typeof p.playerId === 'string') players[p.playerId] = p.name;
+          }
+          chats[c.chatId] = players;
+        }
+        return { chats };
+      });
+    },
+    upsertParticipant(chatId, playerId, name, operationId) {
+      return request('POST', '/v1/platform/participants/upsert', {
+        chatId, playerId, name, operationId
+      });
+    },
     newOperationId(prefix) {
       return `${prefix || 'op'}:${crypto.randomUUID()}`;
     }

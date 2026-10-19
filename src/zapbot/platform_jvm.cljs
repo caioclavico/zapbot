@@ -163,3 +163,45 @@
                           (or rows []))]
               (reset! atom-lembretes (transformar m))
               true))))
+
+(defn fetch-bugs
+  ([] (fetch-bugs nil))
+  ([version]
+   (p/then (.getBugs (client!) version)
+           (fn [data] (js->clj (.-bugs data) :keywordize-keys false)))))
+
+(defn create-bug! [bug operation-id]
+  (.createBug (client!) (clj->js bug) operation-id))
+
+(defn resolve-bug! [id operation-id]
+  (.resolveBug (client!) id operation-id))
+
+(defn hydrate-bugs!
+  [atom-bugs]
+  (p/then (fetch-bugs)
+          (fn [rows]
+            (let [m (into {}
+                          (map (fn [r]
+                                 [(str (get r "id")) r]))
+                          (or rows []))]
+              (reset! atom-bugs m)
+              true))))
+
+(defn fetch-participants
+  ([] (fetch-participants nil))
+  ([chat-id]
+   (p/then (.getParticipants (client!) chat-id)
+           (fn [data]
+             (if chat-id
+               (js->clj (.-players data) :keywordize-keys false)
+               (js->clj (.-chats data) :keywordize-keys false))))))
+
+(defn upsert-participant! [chat-id player-id name operation-id]
+  (.upsertParticipant (client!) chat-id player-id name operation-id))
+
+(defn hydrate-participants!
+  [atom-parts]
+  (p/then (fetch-participants)
+          (fn [chats]
+            (reset! atom-parts (or chats {}))
+            true)))

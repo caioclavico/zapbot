@@ -10,6 +10,8 @@
             [odisseu.platform.domain.quiz-historico :as quiz-hist]
             [odisseu.platform.domain.rank :as rank]
             [odisseu.platform.domain.lembretes :as lembretes]
+            [odisseu.platform.domain.bugs :as bugs]
+            [odisseu.platform.domain.participantes :as parts]
             [odisseu.platform.infrastructure.datomic.store :as store]
             [odisseu.platform.infrastructure.migration.compare :as compare]
             [odisseu.persistence.datomic :as persistence]))
@@ -34,10 +36,12 @@
      :quiz-historico (compare/normalize-quiz-historico (get mods "quiz-historico" {}))
      :rank (compare/normalize-rank (get mods "rank" {}))
      :lembretes (compare/normalize-lembretes (get mods "lembretes" {}))
+     :bugs (compare/normalize-bugs (get mods "bugs" {}))
+     :participantes (compare/normalize-participantes (get mods "participantes" {}))
      :inventory-keys (sort (keys mods))}))
 
 (defn import-ir!
-  "Importa IR platform (incl. lembretes) em store Datomic (bulk put).
+  "Importa IR platform (incl. bugs/participantes) em store Datomic (bulk put).
    Importação NÃO dispara poller/execução automática."
   [platform-store ir]
   (ports/put-block-state! platform-store
@@ -52,6 +56,10 @@
                          (rank/normalize-state (:rank ir)))
   (ports/put-reminder-state! platform-store
                              (lembretes/normalize-state (:lembretes ir)))
+  (ports/put-bug-state! platform-store
+                        (bugs/normalize-state (:bugs ir)))
+  (ports/put-participant-state! platform-store
+                                (parts/normalize-state (:participantes ir)))
   {:bloqueio (compare/normalize-bloqueio
               (bloqueio/state->persistivel (ports/get-block-state platform-store)))
    :admins (compare/normalize-admins
@@ -65,7 +73,12 @@
           (rank/state->persistivel (ports/get-rank-state platform-store)))
    :lembretes (compare/normalize-lembretes
                (lembretes/state->persistivel
-                (ports/get-reminder-state platform-store)))})
+                (ports/get-reminder-state platform-store)))
+   :bugs (compare/normalize-bugs
+          (bugs/state->persistivel (ports/get-bug-state platform-store)))
+   :participantes (compare/normalize-participantes
+                   (parts/state->persistivel
+                    (ports/get-participant-state platform-store)))})
 
 (defn equivalence-report
   [ir imported]
@@ -82,7 +95,13 @@
    :rank {:equivalent? (compare/equivalent? (:rank ir) (:rank imported))
           :diff (compare/diff-maps (:rank ir) (:rank imported))}
    :lembretes {:equivalent? (compare/equivalent? (:lembretes ir) (:lembretes imported))
-               :diff (compare/diff-maps (:lembretes ir) (:lembretes imported))}})
+               :diff (compare/diff-maps (:lembretes ir) (:lembretes imported))}
+   :bugs {:equivalent? (compare/equivalent? (:bugs ir) (:bugs imported))
+          :diff (compare/diff-maps (:bugs ir) (:bugs imported))}
+   :participantes {:equivalent? (compare/equivalent? (:participantes ir)
+                                                      (:participantes imported))
+                   :diff (compare/diff-maps (:participantes ir)
+                                            (:participantes imported))}})
 (defn open-disposable-store!
   [storage-rel system db-name]
   (when (re-find #"m53-real-offline|m55-real-offline|prod" (str storage-rel))

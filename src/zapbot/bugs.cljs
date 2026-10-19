@@ -1,18 +1,25 @@
 (ns zapbot.bugs
-  "Relatórios de bugs enviados pelos jogadores e persistidos no Cassandra."
+  "Relatórios de bugs. Produção: Cassandra. Staging (PLATFORM_ADAPTER=datomic):
+   Datomic via bridge (fail-closed, sem dual-write)."
   (:require [promesa.core :as p]
             [clojure.string :as str]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.bloqueio :as bloqueio]
-            [zapbot.historico :as historico]))
+            [zapbot.historico :as historico]
+            [zapbot.platform-jvm :as platform]))
 
 (def ^:private versao-app
   (try
     (.-version (js/require "../package.json"))
     (catch :default _ "desconhecida")))
 
-(defonce ^:private relatorios (atom (or (armazenamento/obter "bugs") {})))
-(armazenamento/registrar! "bugs" relatorios)
+(defonce ^:private relatorios
+  (atom (or (when-not (platform/enabled?)
+              (armazenamento/obter "bugs"))
+            {})))
+
+(when-not (platform/enabled?)
+  (armazenamento/registrar! "bugs" relatorios))
 
 (defn- jogador-id [message]
   (or (.-author message) (.-from message)))
@@ -39,9 +46,12 @@
                      (anterior))))
       (p/resolved (anterior)))))
 
-(defn registrar!
-  "Persiste a mensagem citada ou, sem citação, a imediatamente anterior."
-  [message]
+(defn hidratar-datomic!
+  []
+  (when (platform/enabled?)
+    (platform/hydrate-bugs! relatorios)))
+
+(defn- registrar-cassandra! [message]
   (p/let [alvo (mensagem-alvo message)]
     (if-let [{:keys [autor corpo em origem]} alvo]
       (let [id (str (proximo-id))
@@ -66,6 +76,42 @@
                        (js/console.error "Erro ao persistir relatório de bug:" erro)
                        "❌ Não consegui salvar o bug no Cassandra. Tente novamente."))))
       "❓ Não encontrei uma mensagem anterior ou citada para registrar como bug.")))
+
+(defn- registrar-datomic! [message]
+  (p/let [alvo (mensagem-alvo message)]
+    (if-let [{:keys [autor corpo em origem]} alvo]
+      (let [id (str (proximo-id))
+            item {"id" id
+                  "versao" versao-app
+                  "chat" (bloqueio/chat-id message)
+                  "reportado-por" (jogador-id message)
+                  "autor-mensagem" autor
+                  "mensagem" corpo
+                  "mensagem-em" em
+                  "origem" origem
+                  "reportado-em" (.now js/Date)
+                  "status" "aberto"}
+            ;; operationId estável por chat+reportado+mensagem+origem (retry seguro)
+            op (platform/op-id (str "bug-create:" id))]
+        (-> (platform/create-bug! item op)
+            (p/then (fn [data]
+                      (let [bug (js->clj (.-bug data) :keywordize-keys false)
+                            bid (str (get bug "id" id))]
+                        (swap! relatorios assoc bid bug)
+                        (str "🐛 Bug registrado com o número *#" bid "* na versão *"
+                             versao-app "*.\nMensagem " (if (= origem "citada") "citada" "anterior")
+                             " salva: “" corpo "”"))))
+            (p/catch (fn [err]
+                       (js/console.error "bugs(datomic): falha ao criar (fail-closed):" err)
+                       (p/rejected err)))))
+      "❓ Não encontrei uma mensagem anterior ou citada para registrar como bug.")))
+
+(defn registrar!
+  "Persiste a mensagem citada ou, sem citação, a imediatamente anterior."
+  [message]
+  (if (platform/enabled?)
+    (registrar-datomic! message)
+    (registrar-cassandra! message)))
 
 (defn- formatar-data [ms]
   (if (number? ms) (.toLocaleString (js/Date. ms) "pt-BR") "data desconhecida"))
@@ -99,7 +145,7 @@
          "*Mensagem registrada:*\n" (get item "mensagem"))
     (str "❓ Bug #" id " não encontrado.")))
 
-(defn- resolver! [id]
+(defn- resolver-cassandra! [id]
   (if-let [item (get @relatorios id)]
     (let [anterior @relatorios]
       (swap! relatorios assoc id (assoc item "status" "resolvido" "resolvido-em" (.now js/Date)))
@@ -110,6 +156,27 @@
                      (js/console.error "Erro ao resolver relatório de bug:" erro)
                      "❌ Não consegui atualizar o bug no Cassandra."))))
     (p/resolved (str "❓ Bug #" id " não encontrado."))))
+
+(defn- resolver-datomic! [id]
+  (if (get @relatorios id)
+    (let [op (platform/op-id (str "bug-resolve:" id))]
+      (-> (platform/resolve-bug! id op)
+          (p/then (fn [data]
+                    (let [bug (js->clj (.-bug data) :keywordize-keys false)]
+                      (swap! relatorios assoc id bug)
+                      (str "✅ Bug #" id " marcado como resolvido."))))
+          (p/catch (fn [err]
+                     (let [code (.-code err)]
+                       (if (= code "operation_not_found")
+                         (str "❓ Bug #" id " não encontrado.")
+                         (do (js/console.error "bugs(datomic): falha ao resolver (fail-closed):" err)
+                             (p/rejected err))))))))
+    (p/resolved (str "❓ Bug #" id " não encontrado."))))
+
+(defn- resolver! [id]
+  (if (platform/enabled?)
+    (resolver-datomic! id)
+    (resolver-cassandra! id)))
 
 (defn- somente-admin [message acao]
   (p/let [autorizado? (bloqueio/autorizado? message)]

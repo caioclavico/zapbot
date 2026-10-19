@@ -49,3 +49,17 @@
   (claim-reminder! [this reminder-id claimant lease-ms now-ms])
   (complete-reminder! [this reminder-id claimant fence])
   (fail-reminder! [this reminder-id claimant fence error-msg]))
+
+(defprotocol BugStore
+  (get-bug-state [this])
+  (put-bug-state! [this estado])
+  (get-bug [this bug-id])
+  (list-bugs [this version])
+  (create-bug! [this bug operation-id])
+  (resolve-bug! [this bug-id resolved-at operation-id]))
+
+(defprotocol ParticipantStore
+  (get-participant-state [this])
+  (put-participant-state! [this estado])
+  (get-chat-participants [this chat-id])
+  (upsert-participant! [this chat-id player-id name operation-id]))

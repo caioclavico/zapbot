@@ -60,6 +60,40 @@
                    "em" (long (or (get info "em") 0))}])))
         (or m {})))
 
+(defn normalize-bugs
+  "id → campos canônicos do relatório."
+  [m]
+  (into (sorted-map)
+        (map (fn [[id info]]
+               (let [info (or info {})
+                     bid (str (or (get info "id") id))]
+                 [bid
+                  (cond-> {"id" bid
+                           "versao" (str (or (get info "versao") ""))
+                           "chat" (str (or (get info "chat") ""))
+                           "reportado-por" (str (or (get info "reportado-por") ""))
+                           "autor-mensagem" (str (or (get info "autor-mensagem") ""))
+                           "mensagem" (str (or (get info "mensagem") ""))
+                           "origem" (str (or (get info "origem") "anterior"))
+                           "reportado-em" (long (or (get info "reportado-em") 0))
+                           "status" (str (or (get info "status") "aberto"))}
+                    (get info "mensagem-em")
+                    (assoc "mensagem-em" (long (get info "mensagem-em")))
+                    (get info "resolvido-em")
+                    (assoc "resolvido-em" (long (get info "resolvido-em"))))])))
+        (or m {})))
+
+(defn normalize-participantes
+  "chat → {player → nome}."
+  [m]
+  (into (sorted-map)
+        (map (fn [[cid names]]
+               [(str cid)
+                (into (sorted-map)
+                      (map (fn [[pid nome]] [(str pid) (str nome)]))
+                      (or names {}))]))
+        (or m {})))
+
 (defn normalize-rank
   "chat → player → info; jogos/efeitos ordenados para comparação estável."
   [m]

@@ -13,6 +13,8 @@
             [odisseu.platform.domain.quiz-historico :as quiz-hist]
             [odisseu.platform.domain.rank :as rank]
             [odisseu.platform.domain.lembretes :as lembretes]
+            [odisseu.platform.domain.bugs :as bugs]
+            [odisseu.platform.domain.participantes :as parts]
             [odisseu.persistence.datomic :as persistence])
   (:import [java.security MessageDigest]))
 
@@ -27,7 +29,8 @@
                 "migrations/platform/002-enquetes.edn"
                 "migrations/platform/003-quiz-historico.edn"
                 "migrations/platform/004-rank.edn"
-                "migrations/platform/005-lembretes.edn"]]
+                "migrations/platform/005-lembretes.edn"
+                "migrations/platform/006-bugs-participantes.edn"]]
     (let [f (io/file (persistence/project-root) path)
           tx (edn/read-string (slurp f))]
       (d/transact conn {:tx-data tx})))
@@ -324,6 +327,88 @@
     (or (str/includes? msg ":db.error/cas-failed")
         (str/includes? msg "cas-failed")
         (str/includes? (str (ex-data e)) "cas-failed"))))
+
+(defn- bug-eid
+  [db bug-id]
+  (ffirst (d/q '[:find ?e
+                 :in $ ?id
+                 :where [?e :platform.bug/id ?id]]
+               db (str bug-id))))
+
+(defn- pull->bug
+  [ent]
+  (when ent
+    (bugs/normalize-entry
+     {:id (:platform.bug/id ent)
+      :versao (:platform.bug/version ent)
+      :chat (:platform.bug/chat ent)
+      :reportado-por (:platform.bug/reported-by ent)
+      :autor-mensagem (:platform.bug/message-author ent)
+      :mensagem (:platform.bug/message ent)
+      :mensagem-em (:platform.bug/message-at ent)
+      :origem (:platform.bug/origin ent)
+      :reportado-em (:platform.bug/reported-at ent)
+      :status (:platform.bug/status ent)
+      :resolvido-em (:platform.bug/resolved-at ent)})))
+
+(defn- load-bugs
+  [db]
+  (->> (d/q '[:find ?e :where [?e :platform.bug/id _]] db)
+       (reduce (fn [acc [eid]]
+                 (let [b (pull->bug (d/pull db '[*] eid))]
+                   (assoc acc (:id b) b)))
+               {})))
+
+(defn- bug-put-tx
+  [db b]
+  (let [b (bugs/normalize-entry b)
+        eid (bug-eid db (:id b))
+        base {:platform.bug/id (:id b)
+              :platform.bug/version (:versao b)
+              :platform.bug/chat (:chat b)
+              :platform.bug/reported-by (:reportado-por b)
+              :platform.bug/message-author (:autor-mensagem b)
+              :platform.bug/message (:mensagem b)
+              :platform.bug/origin (:origem b)
+              :platform.bug/reported-at (long (:reportado-em b))
+              :platform.bug/status (:status b)}
+        base (if (:mensagem-em b)
+               (assoc base :platform.bug/message-at (long (:mensagem-em b)))
+               base)
+        base (if (:resolvido-em b)
+               (assoc base :platform.bug/resolved-at (long (:resolvido-em b)))
+               base)
+        retracts (when eid
+                   (cond-> []
+                     (nil? (:mensagem-em b))
+                     (conj [:db/retract eid :platform.bug/message-at])
+                     (nil? (:resolvido-em b))
+                     (conj [:db/retract eid :platform.bug/resolved-at])))]
+    (concat retracts [base])))
+
+(defn- load-participants
+  [db]
+  (->> (d/q '[:find ?cid ?pid ?nome
+              :where
+              [?e :platform.participant/key _]
+              [?e :platform.participant/chat ?c]
+              [?c :platform.chat/id ?cid]
+              [?e :platform.participant/player-id ?pid]
+              [?e :platform.participant/name ?nome]]
+            db)
+       (reduce (fn [acc [cid pid nome]]
+                 (assoc-in acc [(str cid) (str pid)] (str nome)))
+               {})))
+
+(defn- participant-put-tx
+  [chat-id player-id name]
+  (let [cid (str chat-id)
+        pid (str player-id)]
+    [{:db/id "chat" :platform.chat/id cid}
+     {:platform.participant/key (parts/participant-key cid pid)
+      :platform.participant/chat "chat"
+      :platform.participant/player-id pid
+      :platform.participant/name (str name)}]))
 
 (defn- load-blocks
   [db]
@@ -1025,7 +1110,148 @@
                                         :platform.reminder/last-error err}]
                                       (reminder-clear-claim-tx eid))})
           {:failed true
-           :reminder (ports/get-reminder this rid)})))))
+           :reminder (ports/get-reminder this rid)}))))
+
+  ports/BugStore
+  (get-bug-state [_]
+    (load-bugs (d/db conn)))
+  (put-bug-state! [this estado]
+    (doseq [[_ b] (bugs/normalize-state estado)]
+      (d/transact conn {:tx-data (bug-put-tx (d/db conn) b)}))
+    (ports/get-bug-state this))
+  (get-bug [this bug-id]
+    (get (ports/get-bug-state this) (str bug-id)))
+  (list-bugs [this version]
+    (let [v (when-not (str/blank? (str version)) (str version))]
+      (->> (ports/get-bug-state this)
+           vals
+           (filter #(or (nil? v) (= v (:versao %))))
+           (sort-by #(try (Long/parseLong (:id %))
+                          (catch Exception _ 0))
+                    >)
+           (take 20)
+           vec)))
+  (create-bug! [this bug operation-id]
+    (let [op (str operation-id)
+          db (d/db conn)
+          draft (bugs/normalize-entry (assoc bug :status (or (:status bug) (get bug "status") "aberto")))
+          ;; Hash estável no conteúdo (sem id auto); retry com mesmo op não gera id novo.
+          payload (str "bug-create|" (or (:id draft) "") "|" (:chat draft) "|"
+                       (:reportado-por draft) "|" (:mensagem draft) "|"
+                       (:reportado-em draft) "|" (:origem draft) "|" (:versao draft))
+          hash (sha256-hex payload)
+          dup (assert-receipt! db op "bugs" hash)]
+      (cond
+        (not (bugs/valid-create? draft))
+        (throw (ex-info "bug_invalid" {:bug draft}))
+
+        (str/blank? op)
+        (throw (ex-info "bug_missing_operation_id" {}))
+
+        (receipt-dup? dup)
+        (let [snap (when-let [s (:snapshot dup)] (bugs/normalize-entry s))
+              bid (or (:id snap) (:id draft))]
+          {:duplicate true
+           :bug (or (when bid (ports/get-bug this bid)) snap)
+           :state (ports/get-bug-state this)})
+
+        :else
+        (let [id (if (str/blank? (:id draft))
+                   (bugs/next-id (ports/get-bug-state this))
+                   (:id draft))
+              b (assoc draft :id id)]
+          (when (ports/get-bug this id)
+            (throw (ex-info "bug_already_exists" {:id id})))
+          (d/transact conn {:tx-data (concat
+                                      (bug-put-tx (d/db conn) b)
+                                      [{:platform.op/id op
+                                        :platform.op/domain "bugs"
+                                        :platform.op/payload-hash hash
+                                        :platform.op/snapshot
+                                        (pr-str (bugs/->persistivel b))}])})
+          {:duplicate false
+           :bug (ports/get-bug this id)
+           :state (ports/get-bug-state this)}))))
+  (resolve-bug! [this bug-id resolved-at operation-id]
+    (let [bid (str bug-id)
+          op (str operation-id)
+          at (long (or resolved-at (System/currentTimeMillis)))
+          db (d/db conn)
+          ;; Payload sem timestamp: retry idempotente com mesmo operationId.
+          payload (str "bug-resolve|" bid)
+          hash (sha256-hex payload)
+          dup (assert-receipt! db op "bugs" hash)
+          cur (ports/get-bug this bid)]
+      (cond
+        (str/blank? op)
+        (throw (ex-info "bug_missing_operation_id" {:id bid}))
+
+        (receipt-dup? dup)
+        {:duplicate true
+         :bug (or (ports/get-bug this bid)
+                  (when-let [s (:snapshot dup)]
+                    (bugs/normalize-entry s)))
+         :state (ports/get-bug-state this)}
+
+        (nil? cur)
+        (throw (ex-info "bug_not_found" {:id bid}))
+
+        :else
+        (let [nxt (assoc cur :status "resolvido" :resolvido-em at)]
+          (d/transact conn {:tx-data (concat
+                                      (bug-put-tx (d/db conn) nxt)
+                                      [{:platform.op/id op
+                                        :platform.op/domain "bugs"
+                                        :platform.op/payload-hash hash
+                                        :platform.op/snapshot
+                                        (pr-str (bugs/->persistivel nxt))}])})
+          {:duplicate false
+           :bug (ports/get-bug this bid)
+           :state (ports/get-bug-state this)}))))
+
+  ports/ParticipantStore
+  (get-participant-state [_]
+    (load-participants (d/db conn)))
+  (put-participant-state! [this estado]
+    (doseq [[cid names] (parts/normalize-state estado)
+            [pid nome] names]
+      (ensure-chat! conn cid)
+      (d/transact conn {:tx-data (participant-put-tx cid pid nome)}))
+    (ports/get-participant-state this))
+  (get-chat-participants [this chat-id]
+    (get (ports/get-participant-state this) (str chat-id) {}))
+  (upsert-participant! [this chat-id player-id name operation-id]
+    (let [cid (str chat-id)
+          pid (str player-id)
+          nome (str name)
+          op (str operation-id)
+          db (d/db conn)
+          payload (str "participant|" cid "|" pid "|" nome)
+          hash (sha256-hex payload)
+          dup (assert-receipt! db op "participantes" hash)]
+      (cond
+        (not (parts/valid-upsert? cid pid nome))
+        (throw (ex-info "participant_invalid" {:chat-id cid :player-id pid}))
+
+        (str/blank? op)
+        (throw (ex-info "participant_missing_operation_id" {:chat-id cid}))
+
+        (receipt-dup? dup)
+        {:duplicate true
+         :name (get (ports/get-chat-participants this cid) pid)
+         :state (ports/get-participant-state this)}
+
+        :else
+        (do
+          (ensure-chat! conn cid)
+          (d/transact conn {:tx-data (concat
+                                      (participant-put-tx cid pid nome)
+                                      [{:platform.op/id op
+                                        :platform.op/domain "participantes"
+                                        :platform.op/payload-hash hash}])})
+          {:duplicate false
+           :name nome
+           :state (ports/get-participant-state this)})))))
 
 (defn make-store
   [conn]

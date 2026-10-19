@@ -14,9 +14,9 @@
             [zapbot.adedonha :as adedonha]
             [zapbot.lembretes :as lembretes]
             [zapbot.admins :as admins]
+            [zapbot.bugs :as bugs]
             [zapbot.pokemon-http :as pokemon]
             [zapbot.bloqueio :as bloqueio]
-            [zapbot.admins :as admins]
             [zapbot.enquetes :as enquetes]
             [zapbot.quiz :as quiz]
             [zapbot.rank :as rank]
@@ -251,9 +251,11 @@
                                   (enquetes/hidratar-datomic!)
                                   (quiz/hidratar-datomic!)
                                   (rank/hidratar-datomic!)
-                                  (lembretes/hidratar-datomic!)])
+                                  (lembretes/hidratar-datomic!)
+                                  (bugs/hidratar-datomic!)
+                                  (historico/hidratar-datomic!)])
                           (p/then (fn [_]
-                                    (js/console.log "[platform] bloqueio/admins/enquetes/quiz/rank/lembretes hidratados via Datomic")
+                                    (js/console.log "[platform] bloqueio/admins/enquetes/quiz/rank/lembretes/bugs/participantes hidratados via Datomic")
                                     true))
                           (p/catch (fn [err]
                                      (js/console.error "[platform] Datomic indisponível (fail-closed):" err)

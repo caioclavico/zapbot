@@ -6,6 +6,8 @@
             [odisseu.platform.domain.enquetes :as enquetes]
             [odisseu.platform.domain.rank :as rank]
             [odisseu.platform.domain.lembretes :as lembretes]
+            [odisseu.platform.domain.bugs :as bugs]
+            [odisseu.platform.domain.participantes :as parts]
             [pokemon.domain.errors :as err]))
 
 (defn- g [m & ks]
@@ -505,6 +507,115 @@
                   "reason" (:reason res)
                   "reminder" (when-let [r (:reminder res)]
                                (lembretes/->wire r))}}))
+
+      (= path "/v1/platform/bugs")
+      (do
+        (when (not= "GET" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [bid (not-empty (g qs "id"))
+              ver (or (g qs "version") "")]
+          {:status 200
+           :data (if bid
+                   {"bug" (when-let [b (ports/get-bug platform-store bid)]
+                            (bugs/->wire b))}
+                   {"bugs" (mapv bugs/->wire
+                                 (ports/list-bugs platform-store ver))})}))
+
+      (= path "/v1/platform/bugs/create")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [op (require-op! body)
+              bug {:id (g body "id" :id)
+                   :versao (g body "versao" :versao "version" :version)
+                   :chat (g body "chat" :chat "chatId" :chatId)
+                   :reportado-por (g body "reportado-por" :reportado-por
+                                     "reportadoPor" :reportadoPor
+                                     "reportedBy" :reportedBy)
+                   :autor-mensagem (g body "autor-mensagem" :autor-mensagem
+                                      "autorMensagem" :autorMensagem
+                                      "messageAuthor" :messageAuthor)
+                   :mensagem (g body "mensagem" :mensagem "message" :message)
+                   :mensagem-em (g body "mensagem-em" :mensagem-em
+                                   "mensagemEm" :mensagemEm
+                                   "messageAt" :messageAt)
+                   :origem (g body "origem" :origem "origin" :origin)
+                   :reportado-em (or (g body "reportado-em" :reportado-em
+                                        "reportadoEm" :reportadoEm
+                                        "reportedAt" :reportedAt)
+                                     (System/currentTimeMillis))
+                   :status (or (g body "status" :status) "aberto")}
+              res (try
+                    (ports/create-bug! platform-store bug op)
+                    (catch clojure.lang.ExceptionInfo e
+                      (case (ex-message e)
+                        "bug_invalid"
+                        (throw (err/error :invalid_query (ex-data e)))
+                        "bug_already_exists"
+                        (throw (err/error :operation_forbidden (ex-data e)))
+                        "bug_missing_operation_id"
+                        (throw (err/error :missing_operation_id (ex-data e)))
+                        (throw e))))]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "bug" (bugs/->wire (:bug res))}}))
+
+      (= path "/v1/platform/bugs/resolve")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [bid (require-str! (g body "id" :id) "id")
+              op (require-op! body)
+              at (or (g body "resolvedAt" :resolvedAt "resolvido-em" :resolvido-em)
+                     (System/currentTimeMillis))
+              res (try
+                    (ports/resolve-bug! platform-store bid at op)
+                    (catch clojure.lang.ExceptionInfo e
+                      (case (ex-message e)
+                        "bug_not_found"
+                        (throw (err/error :operation_not_found (ex-data e)))
+                        (throw e))))]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "bug" (bugs/->wire (:bug res))}}))
+
+      (= path "/v1/platform/participants")
+      (do
+        (when (not= "GET" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (not-empty (g qs "chatId"))
+              st (ports/get-participant-state platform-store)]
+          {:status 200
+           :data (if cid
+                   (parts/->wire-chat cid (ports/get-chat-participants platform-store cid))
+                   {"chats"
+                    (->> st
+                         (map (fn [[c names]] (parts/->wire-chat c names)))
+                         (sort-by #(get % "chatId"))
+                         vec)})}))
+
+      (= path "/v1/platform/participants/upsert")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (require-str! (g body "chatId" :chatId) "chatId")
+              pid (require-str! (g body "playerId" :playerId) "playerId")
+              nome (require-str! (g body "name" :name) "name")
+              op (require-op! body)
+              res (try
+                    (ports/upsert-participant! platform-store cid pid nome op)
+                    (catch clojure.lang.ExceptionInfo e
+                      (case (ex-message e)
+                        "participant_invalid"
+                        (throw (err/error :invalid_query (ex-data e)))
+                        "participant_missing_operation_id"
+                        (throw (err/error :missing_operation_id (ex-data e)))
+                        (throw e))))]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "chatId" cid
+                  "playerId" pid
+                  "name" (:name res)}}))
 
       :else
       (throw (err/error :operation_not_found {:path path})))))
