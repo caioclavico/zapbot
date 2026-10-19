@@ -56,6 +56,34 @@
 (def app-env (env "APP_ENV" "production"))
 (def dev-group-id (env "DEV_GROUP_ID"))
 
+;; development|staging: só DEV_GROUP_ID (+ allowlist opcional de remitentes).
+(def staging-like?
+  (contains? #{"development" "staging"} app-env))
+
+;; Números/JIDs autorizados no chat de teste (vazio = qualquer membro do grupo).
+;; Ex.: STAGING_ALLOWED_USERS=5511999999999,5511888888888
+(def staging-allowed-users
+  (set (env-list "STAGING_ALLOWED_USERS" [])))
+
+(defn chat-autorizado?
+  "Em staging-like, só o DEV_GROUP_ID. Fora disso, qualquer chat."
+  [cid]
+  (or (not staging-like?)
+      (and (string? dev-group-id)
+           (not (str/blank? dev-group-id))
+           (= cid dev-group-id))))
+
+(defn usuario-autorizado?
+  "Allowlist opcional de remitentes em staging-like. Vazia = liberado."
+  [uid]
+  (or (not staging-like?)
+      (empty? staging-allowed-users)
+      (and (string? uid)
+           (or (contains? staging-allowed-users uid)
+               ;; aceita forma serializada sem sufixo @c.us
+               (contains? staging-allowed-users
+                          (first (str/split (str uid) #"@")))))))
+
 ;; Sessão WhatsApp (LocalAuth). Staging NUNCA deve usar o path de produção.
 ;; Produção/default: .wwebjs_auth + clientId nil → session/
 ;; Staging: WWEBJS_DATA_PATH=.wwebjs_auth_staging WWEBJS_CLIENT_ID=staging

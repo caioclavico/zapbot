@@ -50,11 +50,14 @@
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
 
-;; em development|staging, só processa mensagens do chat de teste (DEV_GROUP_ID)
-;; — evita responder duplicado nos grupos reais ao lado da produção
+;; em development|staging: só DEV_GROUP_ID (+ STAGING_ALLOWED_USERS se definido)
+(defn- remetente-id [message]
+  (or (.-author message)
+      (when-not (.-fromMe message) (.-from message))))
+
 (defn- permitido-pelo-ambiente? [message]
-  (or (not (contains? #{"development" "staging"} config/app-env))
-      (= (chat-id message) config/dev-group-id)))
+  (and (config/chat-autorizado? (chat-id message))
+       (config/usuario-autorizado? (remetente-id message))))
 
 (def ^:private limite-legenda-midia 900)
 
@@ -166,7 +169,8 @@
 ;; vivo (ver zapbot.bloqueio), então funciona mesmo em grupos onde aquele
 ;; falha persistentemente.
 (defn- on-group-admin-changed [notification]
-  (admins/processar-evento-promocao! notification))
+  (when (config/chat-autorizado? (.-chatId notification))
+    (admins/processar-evento-promocao! notification)))
 
 (defonce ^:private iniciado? (atom false))
 
@@ -199,6 +203,17 @@
 
 (defn main [& _args]
   ;; Um único cliente/browser por processo; só a injeção pode ser repetida.
+  (when (and config/staging-like?
+             (or (nil? config/dev-group-id) (str/blank? config/dev-group-id)))
+    (js/console.error "APP_ENV=" config/app-env
+                      "exige DEV_GROUP_ID (chat de teste). Abortando.")
+    (js/process.exit 2))
+  (when (and (= "staging" config/app-env)
+             (or (= config/wwebjs-data-path ".wwebjs_auth")
+                 (str/ends-with? config/wwebjs-data-path "/.wwebjs_auth")))
+    (js/console.error "Staging recusou WWEBJS_DATA_PATH de produção:"
+                      config/wwebjs-data-path)
+    (js/process.exit 3))
   (when (compare-and-set! iniciado? false true)
     (let [puppeteer-opts (opcoes-puppeteer)
           client (Client. #js {:authStrategy (LocalAuth. (local-auth-opts))

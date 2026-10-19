@@ -1118,8 +1118,7 @@
              (p/then anterior
                      (fn [_]
                        (when (and @cliente-whatsapp
-                                  (or (not (contains? #{"development" "staging"} config/app-env))
-                                      (= (:chatId evento) config/dev-group-id)))
+                                  (config/chat-autorizado? (:chatId evento)))
                          (enfileirar!
                           (:chatId evento)
                           #(when-let [whatsapp @cliente-whatsapp]

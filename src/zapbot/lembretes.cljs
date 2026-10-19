@@ -2,7 +2,8 @@
   "Lembretes agendados, persistidos por chat no Cassandra."
   (:require [clojure.string :as str]
             [promesa.core :as p]
-            [zapbot.armazenamento :as armazenamento]))
+            [zapbot.armazenamento :as armazenamento]
+            [zapbot.config :as config]))
 
 (defn- normalizar-lembretes [dados]
   (into {}
@@ -85,7 +86,10 @@
 
 (defn- verificar! [client]
   (doseq [[id item] @lembretes
-          :when (and (<= (:em item) (.now js/Date)) (not (contains? @enviando id)))]
+          :when (and (<= (:em item) (.now js/Date))
+                     (not (contains? @enviando id))
+                     ;; staging/dev: nunca notificar chats fora do DEV_GROUP_ID
+                     (config/chat-autorizado? (:chat item)))]
     (swap! enviando conj id)
     (let [criador (:criador item)
           texto (str "⏰ *Lembrete do tio Odisseu*\n"
