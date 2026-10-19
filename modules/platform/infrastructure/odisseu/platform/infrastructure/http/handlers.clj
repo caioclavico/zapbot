@@ -5,6 +5,7 @@
             [odisseu.platform.domain.bloqueio :as bloqueio]
             [odisseu.platform.domain.enquetes :as enquetes]
             [odisseu.platform.domain.rank :as rank]
+            [odisseu.platform.domain.lembretes :as lembretes]
             [pokemon.domain.errors :as err]))
 
 (defn- g [m & ks]
@@ -364,6 +365,146 @@
           {:status 200
            :data {"duplicate" (boolean (:duplicate res))
                   "resultado" (boolean (:resultado res))}}))
+
+      (= path "/v1/platform/reminders")
+      (do
+        (when (not= "GET" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (not-empty (g qs "chatId"))
+              rid (not-empty (g qs "id"))
+              st (ports/get-reminder-state platform-store)]
+          {:status 200
+           :data (cond
+                   rid
+                   {"reminder" (when-let [r (ports/get-reminder platform-store rid)]
+                                 (lembretes/->wire r))}
+
+                   cid
+                   {"chatId" cid
+                    "reminders" (mapv lembretes/->wire
+                                      (ports/list-reminders platform-store cid))}
+
+                   :else
+                   {"reminders"
+                    (->> st vals
+                         (map lembretes/->wire)
+                         (sort-by #(get % "id"))
+                         vec)})}))
+
+      (= path "/v1/platform/reminders/create")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [op (require-op! body)
+              rem {:id (g body "id" :id)
+                   :chat (g body "chatId" :chatId "chat" :chat)
+                   :texto (g body "texto" :texto "text" :text)
+                   :criador (g body "criador" :criador "creator" :creator)
+                   :em (or (g body "em" :em "dueAt" :dueAt) 0)}
+              res (try
+                    (ports/create-reminder! platform-store rem op)
+                    (catch clojure.lang.ExceptionInfo e
+                      (case (ex-message e)
+                        "reminder_invalid"
+                        (throw (err/error :invalid_query (ex-data e)))
+                        "reminder_already_exists"
+                        (throw (err/error :operation_forbidden (ex-data e)))
+                        "reminder_missing_operation_id"
+                        (throw (err/error :missing_operation_id (ex-data e)))
+                        (throw e))))]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "reminder" (lembretes/->wire (:reminder res))}}))
+
+      (= path "/v1/platform/reminders/cancel")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [rid (require-str! (g body "id" :id) "id")
+              cid (require-str! (g body "chatId" :chatId) "chatId")
+              op (require-op! body)
+              res (try
+                    (ports/cancel-reminder! platform-store rid cid op)
+                    (catch clojure.lang.ExceptionInfo e
+                      (case (ex-message e)
+                        "reminder_not_found"
+                        (throw (err/error :operation_not_found (ex-data e)))
+                        "reminder_wrong_chat"
+                        (throw (err/error :operation_forbidden (ex-data e)))
+                        "reminder_already_sent"
+                        (throw (err/error :operation_forbidden (ex-data e)))
+                        (throw e))))]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "cancelled" (boolean (:cancelled res))
+                  "reminder" (when-let [r (:reminder res)]
+                               (lembretes/->wire r))}}))
+
+      (= path "/v1/platform/reminders/due")
+      (do
+        (when (not= "GET" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [now (long (or (some-> (g qs "now") parse-long)
+                            (System/currentTimeMillis)))
+              lim (long (or (some-> (g qs "limit") parse-long) 50))]
+          {:status 200
+           :data {"now" now
+                  "reminders" (mapv lembretes/->wire
+                                    (ports/due-reminders platform-store now lim))}}))
+
+      (= path "/v1/platform/reminders/claim")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [rid (require-str! (g body "id" :id) "id")
+              who (require-str! (g body "claimant" :claimant) "claimant")
+              lease (long (or (g body "leaseMs" :leaseMs) lembretes/default-lease-ms))
+              now (long (or (g body "now" :now) (System/currentTimeMillis)))
+              res (try
+                    (ports/claim-reminder! platform-store rid who lease now)
+                    (catch clojure.lang.ExceptionInfo e
+                      (case (ex-message e)
+                        "reminder_not_found"
+                        (throw (err/error :operation_not_found (ex-data e)))
+                        (throw e))))]
+          {:status 200
+           :data {"claimed" (boolean (:claimed res))
+                  "reason" (:reason res)
+                  "fence" (:fence res)
+                  "leaseUntil" (:lease-until res)
+                  "claimant" (:claimant res)
+                  "reminder" (when-let [r (:reminder res)]
+                               (lembretes/->wire r))}}))
+
+      (= path "/v1/platform/reminders/complete")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [rid (require-str! (g body "id" :id) "id")
+              who (require-str! (g body "claimant" :claimant) "claimant")
+              fence (long (or (g body "fence" :fence) -1))
+              res (ports/complete-reminder! platform-store rid who fence)]
+          {:status 200
+           :data {"completed" (boolean (:completed res))
+                  "duplicate" (boolean (:duplicate res))
+                  "reason" (:reason res)
+                  "reminder" (when-let [r (:reminder res)]
+                               (lembretes/->wire r))}}))
+
+      (= path "/v1/platform/reminders/fail")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [rid (require-str! (g body "id" :id) "id")
+              who (require-str! (g body "claimant" :claimant) "claimant")
+              fence (long (or (g body "fence" :fence) -1))
+              err (str (or (g body "error" :error) "send_failed"))
+              res (ports/fail-reminder! platform-store rid who fence err)]
+          {:status 200
+           :data {"failed" (boolean (:failed res))
+                  "reason" (:reason res)
+                  "reminder" (when-let [r (:reminder res)]
+                               (lembretes/->wire r))}}))
 
       :else
       (throw (err/error :operation_not_found {:path path})))))

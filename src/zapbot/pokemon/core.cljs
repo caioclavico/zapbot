@@ -1211,8 +1211,13 @@
   (let [finalizando (assoc jogo :finalizando? true)
         _ (swap! jogos assoc cid finalizando)
         vencedor-pid (get-in jogo [:jogadores vencedor-marca])
-        _ (rank/pontuar! cid vencedor-pid (get-in jogo [:nomes vencedor-marca]) "pokemon"
-                         (str "rank:pokemon-win:" (or (:batalha-id jogo) "unknown")))
+        ;; M7.5: pontuar! é promise em Datomic; não bloqueia o fluxo PvP legado,
+        ;; mas erros não devem sumir em silêncio.
+        _ (do (-> (rank/pontuar! cid vencedor-pid (get-in jogo [:nomes vencedor-marca]) "pokemon"
+                                 (str "rank:pokemon-win:" (or (:batalha-id jogo) "unknown")))
+                  (p/catch (fn [err]
+                             (js/console.error "pokemon: falha ao pontuar rank (não bloqueia vitória):" err))))
+              nil)
         _ (treinador/registrar-vitoria-treinador! cid vencedor-pid)
         _ (loja/registrar-semanal! cid vencedor-pid "pvp" [])
         ganho (loja/creditar! cid vencedor-pid)

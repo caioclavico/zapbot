@@ -1,0 +1,57 @@
+;; M7.5 — schema Datomic Local para lembretes (sintético / staging).
+;; Shape legado: id → {id, chat, texto, criador, em}. Sem recorrência.
+;; Estados: pending | claimed | completed | cancelled | failed.
+[
+ {:db/ident       :platform.reminder/id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "ID do lembrete (ex.: L-xxxx-yyy)."}
+
+ {:db/ident       :platform.reminder/chat
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "JID do chat."}
+
+ {:db/ident       :platform.reminder/text
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.reminder/creator
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "JID do criador (menção)."}
+
+ {:db/ident       :platform.reminder/due-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Deadline epoch ms (não recalcular na importação)."}
+
+ {:db/ident       :platform.reminder/status
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "pending|claimed|completed|cancelled|failed"}
+
+ {:db/ident       :platform.reminder/claimant
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Worker que reivindica o envio."}
+
+ {:db/ident       :platform.reminder/lease-until
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Epoch ms do fim do lease."}
+
+ {:db/ident       :platform.reminder/fence
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Geração do claim; complete/fail deve coincidir."}
+
+ {:db/ident       :platform.reminder/fail-count
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.reminder/last-error
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+]

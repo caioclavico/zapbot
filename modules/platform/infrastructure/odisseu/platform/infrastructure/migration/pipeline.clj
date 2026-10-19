@@ -9,6 +9,7 @@
             [odisseu.platform.domain.enquetes :as enquetes]
             [odisseu.platform.domain.quiz-historico :as quiz-hist]
             [odisseu.platform.domain.rank :as rank]
+            [odisseu.platform.domain.lembretes :as lembretes]
             [odisseu.platform.infrastructure.datomic.store :as store]
             [odisseu.platform.infrastructure.migration.compare :as compare]
             [odisseu.persistence.datomic :as persistence]))
@@ -32,10 +33,12 @@
      :enquetes (compare/normalize-enquetes (get mods "enquetes" {}))
      :quiz-historico (compare/normalize-quiz-historico (get mods "quiz-historico" {}))
      :rank (compare/normalize-rank (get mods "rank" {}))
+     :lembretes (compare/normalize-lembretes (get mods "lembretes" {}))
      :inventory-keys (sort (keys mods))}))
 
 (defn import-ir!
-  "Importa IR platform (incl. rank) em store Datomic (bulk put)."
+  "Importa IR platform (incl. lembretes) em store Datomic (bulk put).
+   Importação NÃO dispara poller/execução automática."
   [platform-store ir]
   (ports/put-block-state! platform-store
                           (bloqueio/normalize-state (:bloqueio ir)))
@@ -47,6 +50,8 @@
                                  (quiz-hist/normalize-state (:quiz-historico ir)))
   (ports/put-rank-state! platform-store
                          (rank/normalize-state (:rank ir)))
+  (ports/put-reminder-state! platform-store
+                             (lembretes/normalize-state (:lembretes ir)))
   {:bloqueio (compare/normalize-bloqueio
               (bloqueio/state->persistivel (ports/get-block-state platform-store)))
    :admins (compare/normalize-admins
@@ -57,7 +62,10 @@
                     (quiz-hist/state->persistivel
                      (ports/get-quiz-history-state platform-store)))
    :rank (compare/normalize-rank
-          (rank/state->persistivel (ports/get-rank-state platform-store)))})
+          (rank/state->persistivel (ports/get-rank-state platform-store)))
+   :lembretes (compare/normalize-lembretes
+               (lembretes/state->persistivel
+                (ports/get-reminder-state platform-store)))})
 
 (defn equivalence-report
   [ir imported]
@@ -72,7 +80,9 @@
                     :diff (compare/diff-maps (:quiz-historico ir)
                                              (:quiz-historico imported))}
    :rank {:equivalent? (compare/equivalent? (:rank ir) (:rank imported))
-          :diff (compare/diff-maps (:rank ir) (:rank imported))}})
+          :diff (compare/diff-maps (:rank ir) (:rank imported))}
+   :lembretes {:equivalent? (compare/equivalent? (:lembretes ir) (:lembretes imported))
+               :diff (compare/diff-maps (:lembretes ir) (:lembretes imported))}})
 (defn open-disposable-store!
   [storage-rel system db-name]
   (when (re-find #"m53-real-offline|m55-real-offline|prod" (str storage-rel))

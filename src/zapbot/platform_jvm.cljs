@@ -125,3 +125,41 @@
             ;; chats: {chatId -> {playerId -> info}}
             (reset! atom-placares (or chats {}))
             true)))
+
+(defn fetch-reminders
+  ([] (fetch-reminders nil))
+  ([chat-id]
+   (p/then (.getReminders (client!) chat-id)
+           (fn [data] (js->clj (.-reminders data) :keywordize-keys false)))))
+
+(defn create-reminder! [reminder operation-id]
+  (.createReminder (client!) (clj->js reminder) operation-id))
+
+(defn cancel-reminder! [id chat-id operation-id]
+  (.cancelReminder (client!) id chat-id operation-id))
+
+(defn due-reminders [now limit]
+  (p/then (.dueReminders (client!) now limit)
+          (fn [data] (js->clj (.-reminders data) :keywordize-keys false))))
+
+(defn claim-reminder! [id claimant lease-ms now]
+  (.claimReminder (client!) id claimant lease-ms now))
+
+(defn complete-reminder! [id claimant fence]
+  (.completeReminder (client!) id claimant fence))
+
+(defn fail-reminder! [id claimant fence error]
+  (.failReminder (client!) id claimant fence error))
+
+(defn hydrate-reminders!
+  "Carrega lembretes ativos da bridge → atom {id → entry}."
+  [atom-lembretes transformar]
+  (p/then (fetch-reminders)
+          (fn [rows]
+            (let [m (into {}
+                          (map (fn [r]
+                                 (let [id (str (or (get r "id") (.-id r)))]
+                                   [id r])))
+                          (or rows []))]
+              (reset! atom-lembretes (transformar m))
+              true))))

@@ -37,3 +37,15 @@
   (score-point! [this chat-id player-id name game operation-id])
   (penalize-point! [this chat-id player-id operation-id])
   (apply-rank-effect! [this effect]))
+
+(defprotocol ReminderStore
+  (get-reminder-state [this])
+  (put-reminder-state! [this estado])
+  (get-reminder [this reminder-id])
+  (list-reminders [this chat-id])
+  (create-reminder! [this reminder operation-id])
+  (cancel-reminder! [this reminder-id chat-id operation-id])
+  (due-reminders [this now-ms limit])
+  (claim-reminder! [this reminder-id claimant lease-ms now-ms])
+  (complete-reminder! [this reminder-id claimant fence])
+  (fail-reminder! [this reminder-id claimant fence error-msg]))

@@ -286,6 +286,49 @@ function createClient(config = {}) {
     rankEffect(effect) {
       return request('POST', '/v1/platform/rank/effect', effect);
     },
+    getReminders(chatId) {
+      const path = chatId
+        ? `/v1/platform/reminders?chatId=${encodeURIComponent(chatId)}`
+        : '/v1/platform/reminders';
+      return request('GET', path).then((data) => ({
+        reminders: data.reminders || [],
+        chatId: data.chatId
+      }));
+    },
+    getReminder(id) {
+      return request('GET', `/v1/platform/reminders?id=${encodeURIComponent(id)}`)
+        .then((data) => ({ reminder: data.reminder || null }));
+    },
+    createReminder(reminder, operationId) {
+      return request('POST', '/v1/platform/reminders/create', Object.assign({}, reminder, {
+        operationId
+      }));
+    },
+    cancelReminder(id, chatId, operationId) {
+      return request('POST', '/v1/platform/reminders/cancel', { id, chatId, operationId });
+    },
+    dueReminders(now, limit) {
+      const q = new URLSearchParams();
+      if (now != null) q.set('now', String(now));
+      if (limit != null) q.set('limit', String(limit));
+      const qs = q.toString();
+      return request('GET', `/v1/platform/reminders/due${qs ? `?${qs}` : ''}`)
+        .then((data) => ({
+          now: data.now,
+          reminders: data.reminders || []
+        }));
+    },
+    claimReminder(id, claimant, leaseMs, now) {
+      return request('POST', '/v1/platform/reminders/claim', {
+        id, claimant, leaseMs, now
+      });
+    },
+    completeReminder(id, claimant, fence) {
+      return request('POST', '/v1/platform/reminders/complete', { id, claimant, fence });
+    },
+    failReminder(id, claimant, fence, error) {
+      return request('POST', '/v1/platform/reminders/fail', { id, claimant, fence, error });
+    },
     newOperationId(prefix) {
       return `${prefix || 'op'}:${crypto.randomUUID()}`;
     }

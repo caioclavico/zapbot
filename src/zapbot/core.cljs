@@ -250,9 +250,10 @@
                                   (admins/hidratar-datomic!)
                                   (enquetes/hidratar-datomic!)
                                   (quiz/hidratar-datomic!)
-                                  (rank/hidratar-datomic!)])
+                                  (rank/hidratar-datomic!)
+                                  (lembretes/hidratar-datomic!)])
                           (p/then (fn [_]
-                                    (js/console.log "[platform] bloqueio/admins/enquetes/quiz/rank hidratados via Datomic")
+                                    (js/console.log "[platform] bloqueio/admins/enquetes/quiz/rank/lembretes hidratados via Datomic")
                                     true))
                           (p/catch (fn [err]
                                      (js/console.error "[platform] Datomic indisponível (fail-closed):" err)

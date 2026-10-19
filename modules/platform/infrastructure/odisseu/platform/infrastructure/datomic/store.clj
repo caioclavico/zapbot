@@ -12,6 +12,7 @@
             [odisseu.platform.domain.enquetes :as enquetes]
             [odisseu.platform.domain.quiz-historico :as quiz-hist]
             [odisseu.platform.domain.rank :as rank]
+            [odisseu.platform.domain.lembretes :as lembretes]
             [odisseu.persistence.datomic :as persistence])
   (:import [java.security MessageDigest]))
 
@@ -25,7 +26,8 @@
   (doseq [path ["migrations/platform/001-bloqueio-admins.edn"
                 "migrations/platform/002-enquetes.edn"
                 "migrations/platform/003-quiz-historico.edn"
-                "migrations/platform/004-rank.edn"]]
+                "migrations/platform/004-rank.edn"
+                "migrations/platform/005-lembretes.edn"]]
     (let [f (io/file (persistence/project-root) path)
           tx (edn/read-string (slurp f))]
       (d/transact conn {:tx-data tx})))
@@ -238,6 +240,90 @@
                              (d/pull db '[:platform.rank.player/http-only?] eid)))
                    [[:db/retract eid :platform.rank.player/http-only? true]])]
     (concat retracts asserts)))
+
+(defn- reminder-eid
+  [db reminder-id]
+  (ffirst (d/q '[:find ?e
+                 :in $ ?id
+                 :where [?e :platform.reminder/id ?id]]
+               db (str reminder-id))))
+
+(defn- pull->reminder
+  [ent]
+  (when ent
+    (lembretes/normalize-entry
+     {:id (:platform.reminder/id ent)
+      :chat (:platform.reminder/chat ent)
+      :texto (:platform.reminder/text ent)
+      :criador (:platform.reminder/creator ent)
+      :em (:platform.reminder/due-at ent)
+      :status (:platform.reminder/status ent)
+      :claimant (:platform.reminder/claimant ent)
+      :lease-until (:platform.reminder/lease-until ent)
+      :fence (:platform.reminder/fence ent 0)
+      :fail-count (:platform.reminder/fail-count ent 0)
+      :last-error (:platform.reminder/last-error ent)})))
+
+(defn- load-reminders
+  [db]
+  (->> (d/q '[:find ?e
+              :where [?e :platform.reminder/id _]]
+            db)
+       (reduce (fn [acc [eid]]
+                 (let [ent (d/pull db '[*] eid)
+                       r (pull->reminder ent)]
+                   (assoc acc (:id r) r)))
+               {})))
+
+(defn- reminder-put-tx
+  "Upsert por :platform.reminder/id. Preserva due-at original.
+   Retracts claim/error attrs quando ausentes no mapa normalizado."
+  [db r]
+  (let [r (lembretes/normalize-entry r)
+        eid (reminder-eid db (:id r))
+        base {:platform.reminder/id (:id r)
+              :platform.reminder/chat (:chat r)
+              :platform.reminder/text (:texto r)
+              :platform.reminder/due-at (long (:em r))
+              :platform.reminder/status (str (or (:status r) "pending"))
+              :platform.reminder/fence (long (or (:fence r) 0))
+              :platform.reminder/fail-count (long (or (:fail-count r) 0))}
+        base (if (:criador r)
+               (assoc base :platform.reminder/creator (:criador r))
+               base)
+        base (if (:claimant r)
+               (assoc base :platform.reminder/claimant (:claimant r))
+               base)
+        base (if (:lease-until r)
+               (assoc base :platform.reminder/lease-until (long (:lease-until r)))
+               base)
+        base (if (:last-error r)
+               (assoc base :platform.reminder/last-error (:last-error r))
+               base)
+        retracts (when eid
+                   (cond-> []
+                     (nil? (:claimant r))
+                     (conj [:db/retract eid :platform.reminder/claimant])
+                     (nil? (:lease-until r))
+                     (conj [:db/retract eid :platform.reminder/lease-until])
+                     (nil? (:last-error r))
+                     (conj [:db/retract eid :platform.reminder/last-error])
+                     (nil? (:criador r))
+                     (conj [:db/retract eid :platform.reminder/creator])))]
+    (concat retracts [base])))
+
+(defn- reminder-clear-claim-tx
+  [eid]
+  (when eid
+    [[:db/retract eid :platform.reminder/claimant]
+     [:db/retract eid :platform.reminder/lease-until]]))
+
+(defn- cas-fail?
+  [e]
+  (let [msg (or (ex-message e) "")]
+    (or (str/includes? msg ":db.error/cas-failed")
+        (str/includes? msg "cas-failed")
+        (str/includes? (str (ex-data e)) "cas-failed"))))
 
 (defn- load-blocks
   [db]
@@ -717,7 +803,229 @@
                                         (pr-str {"resultado" resultado})}])})
           {:duplicate false
            :resultado (boolean resultado)
-           :state (ports/get-rank-state this)})))))
+           :state (ports/get-rank-state this)}))))
+
+  ports/ReminderStore
+  (get-reminder-state [_]
+    (load-reminders (d/db conn)))
+  (put-reminder-state! [this estado]
+    (doseq [[_ r] (lembretes/normalize-state estado)]
+      (d/transact conn {:tx-data (reminder-put-tx (d/db conn) r)}))
+    (ports/get-reminder-state this))
+  (get-reminder [this reminder-id]
+    (get (ports/get-reminder-state this) (str reminder-id)))
+  (list-reminders [this chat-id]
+    (->> (ports/get-reminder-state this)
+         vals
+         (filter #(and (= (str chat-id) (:chat %))
+                       (lembretes/active-for-list? %)))
+         (sort-by :em)
+         vec))
+  (create-reminder! [this reminder operation-id]
+    (let [r (lembretes/normalize-entry (assoc reminder :status "pending"
+                                             :fence 0 :fail-count 0))
+          op (str operation-id)
+          db (d/db conn)
+          payload (str "create|" (:id r) "|" (:chat r) "|" (:texto r) "|"
+                       (:em r) "|" (:criador r))
+          hash (sha256-hex payload)
+          dup (assert-receipt! db op "lembretes" hash)]
+      (cond
+        (or (str/blank? (:id r)) (str/blank? (:chat r)) (str/blank? (:texto r))
+            (not (pos? (long (:em r)))))
+        (throw (ex-info "reminder_invalid" {:reminder r}))
+
+        (str/blank? op)
+        (throw (ex-info "reminder_missing_operation_id" {:id (:id r)}))
+
+        (receipt-dup? dup)
+        {:duplicate true
+         :reminder (or (ports/get-reminder this (:id r))
+                       (when-let [s (:snapshot dup)]
+                         (lembretes/normalize-entry s)))
+         :state (ports/get-reminder-state this)}
+
+        (ports/get-reminder this (:id r))
+        (throw (ex-info "reminder_already_exists" {:id (:id r)}))
+
+        :else
+        (do
+          (d/transact conn {:tx-data (concat
+                                      (reminder-put-tx (d/db conn) r)
+                                      [{:platform.op/id op
+                                        :platform.op/domain "lembretes"
+                                        :platform.op/payload-hash hash
+                                        :platform.op/snapshot
+                                        (pr-str (lembretes/->persistivel r))}])})
+          {:duplicate false
+           :reminder (ports/get-reminder this (:id r))
+           :state (ports/get-reminder-state this)}))))
+  (cancel-reminder! [this reminder-id chat-id operation-id]
+    (let [rid (str reminder-id)
+          cid (str chat-id)
+          op (str operation-id)
+          db (d/db conn)
+          payload (str "cancel|" rid "|" cid)
+          hash (sha256-hex payload)
+          dup (assert-receipt! db op "lembretes" hash)
+          cur (ports/get-reminder this rid)]
+      (cond
+        (str/blank? op)
+        (throw (ex-info "reminder_missing_operation_id" {:id rid}))
+
+        (receipt-dup? dup)
+        {:duplicate true
+         :cancelled true
+         :reminder (or (ports/get-reminder this rid)
+                       (when-let [s (:snapshot dup)]
+                         (lembretes/normalize-entry s)))
+         :state (ports/get-reminder-state this)}
+
+        (nil? cur)
+        (throw (ex-info "reminder_not_found" {:id rid}))
+
+        (not= cid (:chat cur))
+        (throw (ex-info "reminder_wrong_chat" {:id rid :chat cid}))
+
+        (= "completed" (:status cur))
+        (throw (ex-info "reminder_already_sent" {:id rid}))
+
+        (= "cancelled" (:status cur))
+        {:duplicate false
+         :cancelled true
+         :reminder cur
+         :state (ports/get-reminder-state this)}
+
+        :else
+        (let [eid (reminder-eid (d/db conn) rid)]
+          (d/transact conn {:tx-data (concat
+                                      [{:db/id eid
+                                        :platform.reminder/status "cancelled"}]
+                                      (reminder-clear-claim-tx eid)
+                                      [{:platform.op/id op
+                                        :platform.op/domain "lembretes"
+                                        :platform.op/payload-hash hash
+                                        :platform.op/snapshot
+                                        (pr-str (lembretes/->persistivel cur))}])})
+          {:duplicate false
+           :cancelled true
+           :reminder (ports/get-reminder this rid)
+           :state (ports/get-reminder-state this)}))))
+  (due-reminders [this now-ms limit]
+    (let [now (long now-ms)
+          lim (long (or limit 50))]
+      (->> (ports/get-reminder-state this)
+           vals
+           (filter #(lembretes/claimable? % now))
+           (sort-by :em)
+           (take lim)
+           vec)))
+  (claim-reminder! [this reminder-id claimant lease-ms now-ms]
+    (let [rid (str reminder-id)
+          who (str claimant)
+          now (long now-ms)
+          lease (long (or lease-ms lembretes/default-lease-ms))
+          until (+ now lease)
+          db (d/db conn)
+          eid (reminder-eid db rid)
+          cur (when eid (pull->reminder (d/pull db '[*] eid)))]
+      (cond
+        (nil? cur)
+        (throw (ex-info "reminder_not_found" {:id rid}))
+
+        (not (lembretes/claimable? cur now))
+        {:claimed false
+         :reason "not_claimable"
+         :reminder cur}
+
+        :else
+        (let [old-status (:status cur)
+              old-fence (long (:fence cur 0))
+              new-fence (inc old-fence)
+              tx (concat
+                  [[:db/cas eid :platform.reminder/status old-status "claimed"]
+                   [:db/cas eid :platform.reminder/fence old-fence new-fence]
+                   {:db/id eid
+                    :platform.reminder/claimant who
+                    :platform.reminder/lease-until until}])]
+          (try
+            (d/transact conn {:tx-data tx})
+            {:claimed true
+             :fence new-fence
+             :lease-until until
+             :claimant who
+             :reminder (ports/get-reminder this rid)}
+            (catch Exception e
+              (if (cas-fail? e)
+                {:claimed false
+                 :reason "cas_conflict"
+                 :reminder (ports/get-reminder this rid)}
+                (throw e))))))))
+  (complete-reminder! [this reminder-id claimant fence]
+    (let [rid (str reminder-id)
+          who (str claimant)
+          fence* (long fence)
+          db (d/db conn)
+          eid (reminder-eid db rid)
+          cur (when eid (pull->reminder (d/pull db '[*] eid)))]
+      (cond
+        (nil? cur)
+        (throw (ex-info "reminder_not_found" {:id rid}))
+
+        (= "completed" (:status cur))
+        ;; Claimant é limpo após complete; fence permanece como geração do claim.
+        (if (= fence* (long (:fence cur 0)))
+          {:completed true :duplicate true :reminder cur}
+          {:completed false :reason "fence_mismatch" :reminder cur})
+
+        (not= "claimed" (:status cur))
+        {:completed false :reason "not_claimed" :reminder cur}
+
+        (or (not= who (:claimant cur)) (not= fence* (long (:fence cur 0))))
+        {:completed false :reason "fence_mismatch" :reminder cur}
+
+        :else
+        (do
+          (d/transact conn {:tx-data (concat
+                                      [{:db/id eid
+                                        :platform.reminder/status "completed"}]
+                                      (reminder-clear-claim-tx eid))})
+          {:completed true
+           :duplicate false
+           :reminder (ports/get-reminder this rid)}))))
+  (fail-reminder! [this reminder-id claimant fence error-msg]
+    (let [rid (str reminder-id)
+          who (str claimant)
+          fence* (long fence)
+          err (str (or error-msg "send_failed"))
+          db (d/db conn)
+          eid (reminder-eid db rid)
+          cur (when eid (pull->reminder (d/pull db '[*] eid)))]
+      (cond
+        (nil? cur)
+        (throw (ex-info "reminder_not_found" {:id rid}))
+
+        (= "completed" (:status cur))
+        {:failed false :reason "already_completed" :reminder cur}
+
+        (= "cancelled" (:status cur))
+        {:failed false :reason "cancelled" :reminder cur}
+
+        (or (not= "claimed" (:status cur))
+            (not= who (:claimant cur))
+            (not= fence* (long (:fence cur 0))))
+        {:failed false :reason "fence_mismatch" :reminder cur}
+
+        :else
+        (let [fc (inc (long (:fail-count cur 0)))]
+          (d/transact conn {:tx-data (concat
+                                      [{:db/id eid
+                                        :platform.reminder/status "failed"
+                                        :platform.reminder/fail-count fc
+                                        :platform.reminder/last-error err}]
+                                      (reminder-clear-claim-tx eid))})
+          {:failed true
+           :reminder (ports/get-reminder this rid)})))))
 
 (defn make-store
   [conn]

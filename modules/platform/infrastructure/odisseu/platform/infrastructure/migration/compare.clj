@@ -46,6 +46,20 @@
                   (when (seq v) [cid v])))
               (or m {}))))
 
+(defn normalize-lembretes
+  "id → {id,chat,texto,criador,em}; omite vazios."
+  [m]
+  (into (sorted-map)
+        (map (fn [[id info]]
+               (let [info (or info {})]
+                 [(str (or (get info "id") id))
+                  {"id" (str (or (get info "id") id))
+                   "chat" (str (or (get info "chat") ""))
+                   "texto" (str (or (get info "texto") ""))
+                   "criador" (str (or (get info "criador") ""))
+                   "em" (long (or (get info "em") 0))}])))
+        (or m {})))
+
 (defn normalize-rank
   "chat → player → info; jogos/efeitos ordenados para comparação estável."
   [m]
