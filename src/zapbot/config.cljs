@@ -56,6 +56,22 @@
 (def app-env (env "APP_ENV" "production"))
 (def dev-group-id (env "DEV_GROUP_ID"))
 
+;; Sessão WhatsApp (LocalAuth). Staging NUNCA deve usar o path de produção.
+;; Produção/default: .wwebjs_auth + clientId nil → session/
+;; Staging: WWEBJS_DATA_PATH=.wwebjs_auth_staging WWEBJS_CLIENT_ID=staging
+(def wwebjs-data-path
+  (let [raw (env "WWEBJS_DATA_PATH")]
+    (cond
+      (and raw (not (str/blank? raw))) raw
+      (= "staging" app-env) ".wwebjs_auth_staging"
+      :else ".wwebjs_auth")))
+(def wwebjs-client-id
+  (let [raw (env "WWEBJS_CLIENT_ID")]
+    (cond
+      (and raw (not (str/blank? raw))) raw
+      (= "staging" app-env) "staging"
+      :else nil)))
+
 ;; Renovação das missões por data local, independente do fuso do servidor.
 (def missoes-timezone (env "MISSOES_TIMEZONE" "America/Sao_Paulo"))
 

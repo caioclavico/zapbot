@@ -1,10 +1,14 @@
-# Staging isolado M6.1/M6.2 — Node + JVM + Datomic Local.
+# Staging isolado M6.1–M6.3 — Node + JVM + Datomic Local.
 # NÃO é produção. NÃO publica a bridge JVM em interface pública.
 # Pokémon gameplay: somente JVM (sem Cassandra no caminho Pokémon).
 # Um writer por volume: FileLock em /data/datomic-local/.odisseu-writer.lock
+# Sessão WhatsApp: bind ./ .wwebjs_auth_staging (NUNCA .wwebjs_auth de produção).
 #
 # Uso:
-#   cp .env.staging.example .env.staging   # preencha tokens
+#   cp .env.staging.example .env.staging   # preencha tokens + DEV_GROUP_ID
+#   # Com sessão de TESTE em .wwebjs_auth_staging/session-staging:
+#   STAGING_WHATSAPP_CONFIRM=1 ./scripts/staging-integrated.sh
+#   # Ou Compose (Node só sobe se você montar sessão de teste):
 #   docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build
 #
 # Opcional Cassandra (módulos Node não-Pokémon):
@@ -76,16 +80,24 @@ services:
       NODE_OPTIONS: --max-old-space-size=384
       CHROMIUM_DISABLE_GPU: "true"
       CHROMIUM_LOW_RESOURCE_MODE: "true"
+      # Dentro do container o path montado é /app/.wwebjs_auth, mas clientId
+      # staging isola o perfil (session-staging). Host: .wwebjs_auth_staging/
+      WWEBJS_DATA_PATH: /app/.wwebjs_auth
+      WWEBJS_CLIENT_ID: staging
     volumes:
-      - odisseu-staging-wwebjs:/app/.wwebjs_auth
+      # Bind exclusivo de staging — NÃO monte .wwebjs_auth de produção aqui.
+      - ./.wwebjs_auth_staging:/app/.wwebjs_auth
       - odisseu-staging-data:/app/data
-    # Health Node exige WhatsApp READY — em staging sem sessão fica degraded.
-    # Não falha o compose; use scripts/staging-smoke para JVM.
+    # Health Node exige WhatsApp READY — sem sessão de teste fica degraded.
+    # scripts/staging-integrated.sh bloqueia QR automático.
     networks:
       - staging-internal
     mem_limit: 2560m
     memswap_limit: 4g
     cpus: 2.0
+    ports:
+      # Health do Node só em loopback (nunca público).
+      - "127.0.0.1:3001:3001"
     logging:
       driver: json-file
       options:
@@ -122,6 +134,5 @@ networks:
 
 volumes:
   odisseu-staging-datomic:
-  odisseu-staging-wwebjs:
   odisseu-staging-data:
   odisseu-staging-cassandra:

@@ -189,11 +189,19 @@
                               (saude/log! (str "Erro ao encerrar: " (.-message err)))
                               (js/process.exit 1))))))))))
 
+(defn- local-auth-opts
+  "LocalAuth com path/clientId configuráveis — staging isolado da produção."
+  []
+  (let [opts #js {:dataPath config/wwebjs-data-path}]
+    (when config/wwebjs-client-id
+      (unchecked-set opts "clientId" config/wwebjs-client-id))
+    opts))
+
 (defn main [& _args]
   ;; Um único cliente/browser por processo; só a injeção pode ser repetida.
   (when (compare-and-set! iniciado? false true)
     (let [puppeteer-opts (opcoes-puppeteer)
-          client (Client. #js {:authStrategy (LocalAuth.)
+          client (Client. #js {:authStrategy (LocalAuth. (local-auth-opts))
                                :puppeteer (clj->js puppeteer-opts)})
           diagnostico (saude/criar)
           recovery (.installStartupRecovery startup client

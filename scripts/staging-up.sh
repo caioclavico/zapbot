@@ -28,6 +28,7 @@ case "${MODE}" in
   jvm)
     export CLJ_CONFIG="${CLJ_CONFIG:-${ROOT}/.tools/clj-config}"
     export GITLIBS="${GITLIBS:-${ROOT}/.tools/gitlibs}"
+    # Defaults de staging — não herdar exports soltos de shells anteriores.
     export ODISSEU_BRIDGE_HOST="${ODISSEU_BRIDGE_HOST:-127.0.0.1}"
     export ODISSEU_BRIDGE_PORT="${ODISSEU_BRIDGE_PORT:-18090}"
     export ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND="${ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND:-false}"
@@ -36,6 +37,11 @@ case "${MODE}" in
     export ODISSEU_BRIDGE_DB="${ODISSEU_BRIDGE_DB:-staging}"
     export ODISSEU_BRIDGE_SEED="${ODISSEU_BRIDGE_SEED:-true}"
     export ODISSEU_BRIDGE_ALLOW_TEST_RNG="${ODISSEU_BRIDGE_ALLOW_TEST_RNG:-true}"
+    # Evita apontar storage de smoke/lock por acidente se .env não fixar.
+    if echo "${ODISSEU_BRIDGE_STORAGE}" | grep -Eqi 'm62-lock|m53-real|m55-real|prod'; then
+      echo "Storage recusado: ${ODISSEU_BRIDGE_STORAGE}" >&2
+      exit 3
+    fi
     if [[ -z "${ODISSEU_BRIDGE_TOKEN:-}" ]]; then
       echo "ODISSEU_BRIDGE_TOKEN ausente em ${ENV_FILE}" >&2
       exit 2
@@ -48,17 +54,40 @@ case "${MODE}" in
     exec docker compose -f docker-compose.staging.yml --env-file "${ENV_FILE}" up -d --build
     ;;
   node)
-    echo "==> Node staging (requer JVM no ar; sessão WhatsApp opcional)"
+    echo "==> Node staging (requer JVM no ar + sessão WhatsApp de TESTE)"
     export APP_ENV=staging
     export POKEMON_ADAPTER=jvm
     export POKEMON_JVM_URL="${POKEMON_JVM_URL:-http://127.0.0.1:18090}"
     export POKEMON_JVM_TOKEN="${ODISSEU_BRIDGE_TOKEN}"
     export POKEMON_SERVICE_URL=""
     export POKEMON_SERVICE_TOKEN=""
+    export WWEBJS_DATA_PATH="${WWEBJS_DATA_PATH:-.wwebjs_auth_staging}"
+    export WWEBJS_CLIENT_ID="${WWEBJS_CLIENT_ID:-staging}"
+    if [[ "${WWEBJS_DATA_PATH}" == ".wwebjs_auth" || "${WWEBJS_DATA_PATH}" == *"/.wwebjs_auth" ]]; then
+      echo "Recusado: WWEBJS_DATA_PATH não pode ser o path de produção (.wwebjs_auth)." >&2
+      exit 3
+    fi
+    if [[ "${STAGING_WHATSAPP_CONFIRM:-}" != "1" ]]; then
+      echo "Recusado: defina STAGING_WHATSAPP_CONFIRM=1 após fornecer conta/sessão de TESTE." >&2
+      echo "  Não inicia QR automaticamente. Ver docs/m6-3-whatsapp-staging.md" >&2
+      exit 4
+    fi
+    SESSION_DIR="${WWEBJS_DATA_PATH}/session-${WWEBJS_CLIENT_ID}"
+    if [[ ! -d "${SESSION_DIR}" && "${STAGING_ALLOW_QR:-}" != "1" ]]; then
+      echo "Bloqueio M6.3: sem sessão de teste em ${SESSION_DIR}" >&2
+      echo "  Forneça sessão de TESTE isolada OU (somente conta de teste) STAGING_ALLOW_QR=1" >&2
+      exit 5
+    fi
+    if [[ -z "${DEV_GROUP_ID:-}" ]]; then
+      echo "DEV_GROUP_ID obrigatório em staging com WhatsApp." >&2
+      exit 6
+    fi
+    mkdir -p "${WWEBJS_DATA_PATH}"
     if [[ ! -f target/main.js ]]; then
       echo "Compile primeiro: npm run build" >&2
       exit 2
     fi
+    echo "==> WWEBJS_DATA_PATH=${WWEBJS_DATA_PATH} clientId=${WWEBJS_CLIENT_ID}"
     exec node target/main.js
     ;;
   *)

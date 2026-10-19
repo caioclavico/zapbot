@@ -2,6 +2,7 @@ node_modules/
 target/
 .shadow-cljs/
 .wwebjs_auth/
+.wwebjs_auth_staging/
 .wwebjs_cache/
 data/
 .env
