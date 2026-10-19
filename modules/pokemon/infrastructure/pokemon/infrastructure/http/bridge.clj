@@ -86,6 +86,7 @@
      :raid_not_your_turn :raid_save_mismatch :raid_liga_mismatch
      :raid_capture_unavailable) 409
     :operation_pending 409
+    (:durability_compromised :durability_maintenance) 503
     (:insufficient_item :insufficient_coins :bag_full :collection_full
      :pokemon_full_hp :active_pokemon_fainted
      :no_active_pokemon :motivation_full :gym_empty :gym_team_unhealthy) 422
@@ -163,7 +164,11 @@
     :else nil))
 
 (defn- make-handler
-  [store token allow-test-rng? platform-store]
+  "opts opcionais:
+   :credit-coins! (fn [store req]) — M8.5 durable-op; default tx/credit-coins!"
+  [store token allow-test-rng? platform-store
+   & [{:keys [credit-coins!]
+       :or {credit-coins! tx/credit-coins!}}]]
   (reify HttpHandler
     (handle [_ ex]
       (try
@@ -294,7 +299,7 @@
                                                       "fenceGeneration" "operationId"
                                                       "coinsDelta"]})))
                       (ok! ex (with-operation! operation-id
-                                #(tx/credit-coins!
+                                #(credit-coins!
                                   store {:chat-id chat-id
                                          :player-id player-id
                                          :save-id save-id
@@ -1063,7 +1068,8 @@
   `:allow-private-bind true` permite host 0.0.0.0 (rede privada de containers);
   a porta NÃO deve ser publicada publicamente no Compose.
   `:allow-test-rng true` só para smoke/dev — nunca no caminho WhatsApp."
-  [{:keys [host port token store platform-store allow-test-rng allow-private-bind]
+  [{:keys [host port token store platform-store allow-test-rng allow-private-bind
+           credit-coins!]
     :or {host "127.0.0.1" port 18090 allow-test-rng false allow-private-bind false}}]
   (let [allowed (cond-> loopback-hosts
                   allow-private-bind (conj "0.0.0.0"))]
@@ -1078,7 +1084,9 @@
       (throw (ex-info "bridge_store_required" {})))
     (let [addr (InetSocketAddress. ^String host (int port))
           server (HttpServer/create addr 0)
-          handler (make-handler store token (boolean allow-test-rng) platform-store)]
+          handler (make-handler store token (boolean allow-test-rng) platform-store
+                                (cond-> {}
+                                  credit-coins! (assoc :credit-coins! credit-coins!)))]
       (.createContext server "/" handler)
       (.setExecutor server (Executors/newFixedThreadPool 8))
       (.start server)
@@ -1092,6 +1100,7 @@
          :allow-test-rng (boolean allow-test-rng)
          :allow-private-bind (boolean allow-private-bind)
          :platform-enabled (boolean platform-store)
+         :durable-coins? (boolean credit-coins!)
          :stop! (fn [] (.stop server 1))}))))
 
 (defn stop!

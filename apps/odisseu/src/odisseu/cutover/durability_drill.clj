@@ -345,7 +345,8 @@
     {:name :intent-without-datomic
      :intent-phase (:phase intent)
      :datomic-confirmed? (:datomic-confirmed? intent)
-     :ok? (and (= :intent (:phase intent))
+     ;; M8.4 renomeou :intent → :prepared (mesma semântica: pré-Datomic)
+     :ok? (and (contains? #{:prepared :intent} (:phase intent))
                (false? (:datomic-confirmed? intent)))}))
 
 (defn- scenario-concurrency-order!

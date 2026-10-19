@@ -20,8 +20,10 @@
    :client-success-requires #{:journal-durable}})
 
 (def domain-coverage
-  "Inventário honesto: o que PRECISARIA do protocolo vs o que o harness cobre."
+  "Inventário honesto: o que PRECISARIA do protocolo vs o que o harness cobre.
+   wired-in-stores? = false enquanto proteção global incompleta (M8.5: só coins)."
   {:wired-in-stores? false
+   :coins-delta-wired-externally? true
    :synthetic-harness-kinds #{:coins-delta :score-point :block-commands :remember-admin}
    :pokemon-needed
    [:capture :hp :xp :coins :evolution :battle :save-switch :joy-collect :shop-buy :shop-use]
@@ -29,7 +31,7 @@
    [:rank-score :bloqueio :admins :enquetes-vote :quiz-historico :lembretes
     :bugs :participantes]
    :nota
-   "Não declarar cobertura completa: stores/bridge ainda não chamam durable-op."})
+   "Ver odisseu.cutover.coins-durable/coverage para coins-delta real."})
 
 (defn- scope-ok?
   [scope]

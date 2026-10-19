@@ -174,3 +174,32 @@
      (str "Protocolo sintético ≠ integração nos stores. "
           "rollback-recon exige journal operacional em domínio de falha distinto "
           "+ stores wired. cutover-ready exige também WhatsApp staging.")}))
+
+(defn evaluate-m85-gates
+  "Gates M8.5 — coins-delta real. Proteção global NÃO concluída.
+   rollback-recon / cutover permanecem false."
+  [{:keys [synthetic-protocol-ok?
+           coins-delta-store-ok?
+           coins-delta-recovery-ok?
+           bridge-http-ok?
+           other-mutations-wired?
+           independent-failure-domain?
+           production-journal-deployed?
+           whatsapp-staging-validated?]}]
+  {:synthetic-protocol-ok? (boolean synthetic-protocol-ok?)
+   :coins-delta-store-ok? (boolean coins-delta-store-ok?)
+   :coins-delta-recovery-ok? (boolean coins-delta-recovery-ok?)
+   :bridge-http-ok? (boolean bridge-http-ok?)
+   :other-mutations-wired? (boolean other-mutations-wired?)
+   :independent-failure-domain? (boolean independent-failure-domain?)
+   :production-journal-deployed? (boolean production-journal-deployed?)
+   :whatsapp-staging-validated? (boolean whatsapp-staging-validated?)
+   :global-protection-complete? false
+   :rollback-recon-available? false
+   :cutover-ready? false
+   :exactly-once-claimed? false
+   :rpo-zero-claimed? false
+   :nota
+   (str "Coins-delta wired ≠ proteção global. "
+        "rollback-recon exige domínio de falha independente + journal operacional "
+        "+ mais mutações. cutover-ready exige WhatsApp staging.")})
