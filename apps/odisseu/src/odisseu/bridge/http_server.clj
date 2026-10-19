@@ -6,6 +6,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [odisseu.persistence.datomic :as persistence]
+            [odisseu.platform.infrastructure.datomic.store :as platform-store]
             [pokemon.application.collection :as coll-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
@@ -112,6 +113,8 @@
         system (env "ODISSEU_BRIDGE_SYSTEM" "odisseu-m61-staging")
         storage (env "ODISSEU_BRIDGE_STORAGE" ".datomic-local/m61-staging")
         db-name (env "ODISSEU_BRIDGE_DB" "staging")
+        platform-db (env "ODISSEU_PLATFORM_DB" "platform")
+        platform-enabled? (env-bool "ODISSEU_PLATFORM_ENABLED" true)
         seed? (env-bool "ODISSEU_BRIDGE_SEED" false)
         reset? (env-bool "ODISSEU_BRIDGE_RESET" false)
         private-bind? (env-bool "ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND" false)
@@ -123,15 +126,20 @@
         writer-lock (acquire-writer-lock! storage)
         client (persistence/client {:system system :storage-dir storage})
         _ (when reset?
-            (println "[odisseu-bridge] RESET — apagando db" db-name)
-            (persistence/delete-db! client db-name))
+            (println "[odisseu-bridge] RESET — apagando db" db-name platform-db)
+            (persistence/delete-db! client db-name)
+            (persistence/delete-db! client platform-db))
         conn (persistence/ensure-db! client db-name)
         s (doto (store/make-store conn) trainer/bootstrap!)
+        platform (when platform-enabled?
+                   (platform-store/make-store
+                    (persistence/ensure-db! client platform-db)))
         demo (when seed? (seed-demo! s))
         http (bridge/start! {:host host
                              :port port
                              :token token
                              :store s
+                             :platform-store platform
                              :allow-test-rng allow-rng?
                              :allow-private-bind private-bind?})
         stopped (atom false)
@@ -147,6 +155,7 @@
              "storage=" storage
              "system=" system
              "db=" db-name
+             "platform-db=" (when platform platform-db)
              "writer-lock=" (:path writer-lock)
              (when demo (str "seed=" (pr-str demo))))
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable stop!))

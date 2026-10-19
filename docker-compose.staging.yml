@@ -77,6 +77,10 @@ services:
       # Pokémon não usa Cassandra; URL do serviço legado vazia evita segundo writer.
       POKEMON_SERVICE_URL: ""
       POKEMON_SERVICE_TOKEN: ""
+      PLATFORM_ADAPTER: datomic
+      PLATFORM_JVM_URL: http://odisseu-jvm:18090
+      PLATFORM_JVM_TOKEN: ${ODISSEU_BRIDGE_TOKEN:?Defina ODISSEU_BRIDGE_TOKEN}
+      PLATFORM_JVM_ALLOW_PRIVATE_HOST: "true"
       NODE_OPTIONS: --max-old-space-size=384
       CHROMIUM_DISABLE_GPU: "true"
       CHROMIUM_LOW_RESOURCE_MODE: "true"

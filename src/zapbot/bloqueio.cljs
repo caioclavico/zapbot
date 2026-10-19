@@ -9,7 +9,8 @@
             [clojure.set :as set]
             [zapbot.config :as config]
             [zapbot.armazenamento :as armazenamento]
-            [zapbot.admins :as admins]))
+            [zapbot.admins :as admins]
+            [zapbot.platform-jvm :as platform]))
 
 ;; nunca podem ser bloqueados, pra nunca travar o chat sem saída
 (def ^:private protegidos #{"bloquear" "desbloquear"})
@@ -31,11 +32,29 @@
                      "comandos" (vec (:comandos info))}]))
         estado))
 
-(defonce ^:private estado (atom (transformar-estado (armazenamento/obter "bloqueio"))))
-(armazenamento/registrar! "bloqueio" estado transformar-estado)
+(defonce ^:private estado
+  (atom (transformar-estado
+         (when-not (platform/enabled?)
+           (armazenamento/obter "bloqueio")))))
+
+(when-not (platform/enabled?)
+  (armazenamento/registrar! "bloqueio" estado transformar-estado))
+
+(defn- apply-blocks-wire!
+  "Atualiza atom a partir do mapa wire {chat {bot? comandos}} retornado pela bridge."
+  [blocks]
+  (when blocks
+    (reset! estado (transformar-estado (js->clj blocks :keywordize-keys false)))))
 
 (defn- persistir! []
-  (armazenamento/salvar! "bloqueio" (estado->persistivel @estado)))
+  (when-not (platform/enabled?)
+    (armazenamento/salvar! "bloqueio" (estado->persistivel @estado))))
+
+(defn hidratar-datomic!
+  "Staging: carrega bloqueios da bridge. Fail-closed se a bridge estiver fora."
+  []
+  (when (platform/enabled?)
+    (platform/hydrate-blocks! estado transformar-estado)))
 
 (defn chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -116,8 +135,9 @@
             ok?)
           (p/catch (fn [err]
                      (js/console.error "bloqueio: erro ao verificar admin do grupo (usando cadastro conhecido como último recurso):" err)
-                     (p/let [ids (ids-da-pessoa message)]
-                       (admins/admin-conhecido? cid ids))))))))
+                     (p/let [ids (ids-da-pessoa message)
+                             conhecido? (admins/admin-conhecido? cid ids)]
+                       conhecido?)))))))
 
 (defn bot-bloqueado? [cid]
   (boolean (get-in @estado [cid :bot?])))
@@ -133,7 +153,7 @@
                                     (str/join ", " (map #(str config/prefix %) comandos))
                                     "nenhum"))))
 
-(defn- bloquear! [cid alvo]
+(defn- bloquear-cassandra! [cid alvo]
   (cond
     (= alvo "tudo")
     (do (swap! estado assoc-in [cid :bot?] true)
@@ -150,7 +170,7 @@
         (persistir!)
         (str "🔇 " config/prefix alvo " bloqueado nesse chat."))))
 
-(defn- desbloquear! [cid alvo]
+(defn- desbloquear-cassandra! [cid alvo]
   (cond
     (= alvo "tudo")
     (do (swap! estado assoc-in [cid :bot?] false)
@@ -167,26 +187,74 @@
         (persistir!)
         (str "🔊 " config/prefix alvo " liberado nesse chat."))))
 
+(defn- bloquear-datomic! [cid alvo]
+  (let [op (platform/op-id (str "block:" cid ":" alvo))]
+    (p/let [data (cond
+                   (= alvo "tudo")
+                   (platform/set-bot! cid true op)
+
+                   (= alvo "jogos")
+                   (platform/block-commands! cid (vec jogos-comandos) op)
+
+                   :else
+                   (platform/block-commands! cid [alvo] op))]
+      (apply-blocks-wire! (.-blocks data))
+      (cond
+        (= alvo "tudo")
+        (str "🔇 Bot bloqueado nesse chat. Use " config/prefix "desbloquear para reativar.")
+        (= alvo "jogos")
+        "🔇 Todos os jogos foram bloqueados nesse chat."
+        :else
+        (str "🔇 " config/prefix alvo " bloqueado nesse chat.")))))
+
+(defn- desbloquear-datomic! [cid alvo]
+  (let [op (platform/op-id (str "unblock:" cid ":" alvo))]
+    (p/let [data (cond
+                   (= alvo "tudo")
+                   (platform/set-bot! cid false op)
+
+                   (= alvo "jogos")
+                   (platform/unblock-commands! cid (vec jogos-comandos) op)
+
+                   :else
+                   (platform/unblock-commands! cid [alvo] op))]
+      (apply-blocks-wire! (.-blocks data))
+      (cond
+        (= alvo "tudo") "🔊 Bot reativado nesse chat."
+        (= alvo "jogos") "🔊 Todos os jogos foram liberados nesse chat."
+        :else (str "🔊 " config/prefix alvo " liberado nesse chat.")))))
+
+(defn- bloquear! [cid alvo]
+  (if (platform/enabled?)
+    (bloquear-datomic! cid alvo)
+    (p/resolved (bloquear-cassandra! cid alvo))))
+
+(defn- desbloquear! [cid alvo]
+  (if (platform/enabled?)
+    (desbloquear-datomic! cid alvo)
+    (p/resolved (desbloquear-cassandra! cid alvo))))
+
 (defn processar-comando
   "cmd é \"bloquear\" ou \"desbloquear\"; args é o resto do texto (vazio ou
   \"tudo\" = bot inteiro, \"jogos\" = todos os jogos de uma vez, \"listar\" =
   mostra o status, ou o nome de um comando)."
   [message cmd args]
-  (p/let [ok? (autorizado? message)]
-    (let [cid (chat-id message)
-          arg (let [a (-> args str/trim str/lower-case)] (if (str/blank? a) "tudo" a))]
-      (cond
-        (not ok?)
-        "🚫 Você precisa ser administrador do grupo para usar esse comando."
+  (p/let [ok? (autorizado? message)
+          cid (chat-id message)
+          arg (let [a (-> args str/trim str/lower-case)] (if (str/blank? a) "tudo" a))
+          texto (cond
+                  (not ok?)
+                  "🚫 Você precisa ser administrador do grupo para usar esse comando."
 
-        (= arg "listar")
-        (formatar-lista cid)
+                  (= arg "listar")
+                  (formatar-lista cid)
 
-        (contains? protegidos arg)
-        (str "🚫 " config/prefix arg " não pode ser bloqueado.")
+                  (contains? protegidos arg)
+                  (str "🚫 " config/prefix arg " não pode ser bloqueado.")
 
-        (= cmd "bloquear")
-        (bloquear! cid arg)
+                  (= cmd "bloquear")
+                  (bloquear! cid arg)
 
-        :else
-        (desbloquear! cid arg)))))
+                  :else
+                  (desbloquear! cid arg))]
+    texto))

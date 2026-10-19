@@ -134,6 +134,25 @@
 (def pokemon-jvm-enabled?
   (= "jvm" pokemon-adapter))
 
+;; M7.1 — bloqueio/admins via Datomic só em development|staging.
+;; PLATFORM_ADAPTER=cassandra|datomic (default cassandra). Produção força cassandra.
+;; Sem dual-write: se datomic e bridge cair, falha explícita (não grava Cassandra).
+(def platform-jvm-url (env "PLATFORM_JVM_URL" pokemon-jvm-url))
+(def platform-jvm-token (env "PLATFORM_JVM_TOKEN" pokemon-jvm-token))
+(def platform-jvm-connect-timeout-ms (inteiro-positivo "PLATFORM_JVM_CONNECT_TIMEOUT_MS" 3000))
+(def platform-jvm-timeout-ms (inteiro-positivo "PLATFORM_JVM_TIMEOUT_MS" 8000))
+(def platform-jvm-allow-private-host?
+  (= "true" (str/lower-case (env "PLATFORM_JVM_ALLOW_PRIVATE_HOST" "false"))))
+(def ^:private platform-adapter-raw
+  (str/lower-case (str/trim (env "PLATFORM_ADAPTER" "cassandra"))))
+(def platform-adapter
+  (cond
+    (and (= "datomic" platform-adapter-raw) (contains? jvm-adapter-envs app-env)) "datomic"
+    (= "datomic" platform-adapter-raw) "cassandra"
+    :else "cassandra"))
+(def platform-datomic-enabled?
+  (= "datomic" platform-adapter))
+
 ;; Diagnóstico passivo do processo e navegador; false elimina o coletor/timers.
 (def odisseu-resource-metrics-enabled
   (= "true" (str/lower-case (env "ODISSEU_RESOURCE_METRICS_ENABLED" "true"))))

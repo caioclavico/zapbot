@@ -3,6 +3,7 @@
   Bind forçado em loopback; Bearer obrigatório nas rotas de domínio;
   sem rotas administrativas nem endpoint genérico de mutação."
   (:require [clojure.string :as str]
+            [odisseu.platform.infrastructure.http.handlers :as platform-http]
             [pokemon.application.bridge-reads :as reads]
             [pokemon.application.bridge-tx :as tx]
             [pokemon.domain.errors :as err]
@@ -162,7 +163,7 @@
     :else nil))
 
 (defn- make-handler
-  [store token allow-test-rng?]
+  [store token allow-test-rng? platform-store]
   (reify HttpHandler
     (handle [_ ex]
       (try
@@ -177,20 +178,23 @@
                        :role "pokemon-jvm-bridge"
                        :readsOnly false
                        :allowTestRng (boolean allow-test-rng?)
-                       :capabilities ["trainer-read" "collection-read" "active-save-read"
-                                      "trainer-ensure" "saves-list" "save-activate"
-                                      "reward-coins" "operation-get"
-                                      "encounter-read" "encounter-capture"
-                                      "battle-start" "battle-turn"
-                                      "hunt-plan" "hunt-start"
-                                      "gyms-read" "gym-team" "gym-heal"
-                                      "gym-challenge"
-                                      "raid-read" "raid-join" "raid-leave"
-                                      "raid-start" "raid-attack" "raid-capture"
-                                      "joy-read" "joy-send" "joy-collect"
-                                      "adventure-read" "egg-incubate" "egg-hatch"
-                                      "shop-read" "shop-buy" "inventory-read"
-                                      "item-use"]}))
+                       :platformEnabled (boolean platform-store)
+                       :capabilities (cond-> ["trainer-read" "collection-read" "active-save-read"
+                                              "trainer-ensure" "saves-list" "save-activate"
+                                              "reward-coins" "operation-get"
+                                              "encounter-read" "encounter-capture"
+                                              "battle-start" "battle-turn"
+                                              "hunt-plan" "hunt-start"
+                                              "gyms-read" "gym-team" "gym-heal"
+                                              "gym-challenge"
+                                              "raid-read" "raid-join" "raid-leave"
+                                              "raid-start" "raid-attack" "raid-capture"
+                                              "joy-read" "joy-send" "joy-collect"
+                                              "adventure-read" "egg-incubate" "egg-hatch"
+                                              "shop-read" "shop-buy" "inventory-read"
+                                              "item-use"]
+                                       platform-store
+                                       (into ["platform-blocks" "platform-admins"]))}))
 
             (or (str/starts-with? path "/admin")
                 (str/starts-with? path "/v1/admin")
@@ -204,6 +208,16 @@
             (do
               (require-auth! token ex)
               (cond
+                (str/starts-with? path "/v1/platform")
+                (if-not platform-store
+                  (send-json! ex 503
+                              {:ok false
+                               :error {:code "platform_unavailable"
+                                       :message "Bridge sem store de platform (bloqueio/admins)."}})
+                  (let [body (when (#{"POST" "PUT" "PATCH"} method) (read-body ex))
+                        res (platform-http/handle platform-store method path qs body)]
+                    (ok! ex (:data res))))
+
                 (= path "/v1/trainer")
                 (do (require-method! ex #{"GET"})
                     (let [chat-id (g qs "chatId")
@@ -1049,7 +1063,7 @@
   `:allow-private-bind true` permite host 0.0.0.0 (rede privada de containers);
   a porta NÃO deve ser publicada publicamente no Compose.
   `:allow-test-rng true` só para smoke/dev — nunca no caminho WhatsApp."
-  [{:keys [host port token store allow-test-rng allow-private-bind]
+  [{:keys [host port token store platform-store allow-test-rng allow-private-bind]
     :or {host "127.0.0.1" port 18090 allow-test-rng false allow-private-bind false}}]
   (let [allowed (cond-> loopback-hosts
                   allow-private-bind (conj "0.0.0.0"))]
@@ -1064,7 +1078,7 @@
       (throw (ex-info "bridge_store_required" {})))
     (let [addr (InetSocketAddress. ^String host (int port))
           server (HttpServer/create addr 0)
-          handler (make-handler store token (boolean allow-test-rng))]
+          handler (make-handler store token (boolean allow-test-rng) platform-store)]
       (.createContext server "/" handler)
       (.setExecutor server (Executors/newFixedThreadPool 8))
       (.start server)
@@ -1077,6 +1091,7 @@
          :base-url (str "http://" url-host ":" bound)
          :allow-test-rng (boolean allow-test-rng)
          :allow-private-bind (boolean allow-private-bind)
+         :platform-enabled (boolean platform-store)
          :stop! (fn [] (.stop server 1))}))))
 
 (defn stop!

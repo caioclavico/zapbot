@@ -15,6 +15,9 @@
             [zapbot.lembretes :as lembretes]
             [zapbot.admins :as admins]
             [zapbot.pokemon-http :as pokemon]
+            [zapbot.bloqueio :as bloqueio]
+            [zapbot.admins :as admins]
+            [zapbot.platform-jvm :as platform]
             [zapbot.router :as router]))
 
 (def ^:private Client (.-Client wwjs))
@@ -238,6 +241,17 @@
       (.on client "message_create" on-message)
       (.on client "group_admin_changed" on-group-admin-changed)
       (-> (armazenamento/iniciar!)
+          (p/then (fn [_]
+                    (if (platform/enabled?)
+                      (-> (p/all [(bloqueio/hidratar-datomic!)
+                                  (admins/hidratar-datomic!)])
+                          (p/then (fn [_]
+                                    (js/console.log "[platform] bloqueio/admins hidratados via Datomic")
+                                    true))
+                          (p/catch (fn [err]
+                                     (js/console.error "[platform] Datomic indisponível (fail-closed):" err)
+                                     (p/rejected err))))
+                      (p/resolved true))))
           (p/then (fn [_]
                     (saude/iniciar-avisos! diagnostico)
                     (.initialize recovery)))

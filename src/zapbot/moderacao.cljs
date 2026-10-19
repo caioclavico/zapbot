@@ -98,7 +98,8 @@
                     "✅ Pessoa removida do grupo.")))))))
       (p/catch (fn [err]
                  (js/console.error "Erro ao banir:" err)
-                 (p/let [ids (ids-da-pessoa message)]
-                   (if (admins/admin-conhecido? (chat-id message) ids)
+                 (p/let [ids (ids-da-pessoa message)
+                         conhecido? (admins/admin-conhecido? (chat-id message) ids)]
+                   (if conhecido?
                      "⚠️ Você é um admin conhecido, mas não consegui acessar os dados do grupo agora pra remover a pessoa. Tente de novo em instantes."
                      "❌ Não consegui remover a pessoa. Verifique se sou administrador do grupo."))))))
