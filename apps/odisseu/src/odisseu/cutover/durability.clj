@@ -203,3 +203,33 @@
    (str "Coins-delta wired ≠ proteção global. "
         "rollback-recon exige domínio de falha independente + journal operacional "
         "+ mais mutações. cutover-ready exige WhatsApp staging.")})
+
+(defn evaluate-m86-gates
+  "Gates M8.6 — coins + rank score. Proteção global ainda incompleta."
+  [{:keys [coins-delta-ok?
+           rank-score-ok?
+           rank-recovery-ok?
+           bridge-rank-ok?
+           required-strict-policy-ok?
+           other-mutations-wired?
+           independent-failure-domain?
+           production-journal-deployed?
+           whatsapp-staging-validated?]}]
+  {:coins-delta-ok? (boolean coins-delta-ok?)
+   :rank-score-ok? (boolean rank-score-ok?)
+   :rank-recovery-ok? (boolean rank-recovery-ok?)
+   :bridge-rank-ok? (boolean bridge-rank-ok?)
+   :required-strict-policy-ok? (boolean required-strict-policy-ok?)
+   :other-mutations-wired? (boolean other-mutations-wired?)
+   :independent-failure-domain? (boolean independent-failure-domain?)
+   :production-journal-deployed? (boolean production-journal-deployed?)
+   :whatsapp-staging-validated? (boolean whatsapp-staging-validated?)
+   :global-protection-complete? false
+   :rollback-recon-available? false
+   :cutover-ready? false
+   :exactly-once-claimed? false
+   :rpo-zero-claimed? false
+   :nota
+   (str "Coins + rank score wired ≠ proteção global. "
+        "bloqueio/admins/enquetes/quiz/lembretes/bugs/participantes e demais "
+        "Pokémon ainda descobertos. Domínio de falha independente pendente.")})

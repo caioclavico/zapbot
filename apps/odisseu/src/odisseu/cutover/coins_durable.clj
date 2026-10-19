@@ -2,10 +2,9 @@
   "M8.5 — durable-op no caminho real de coins-delta (store Datomic + receipts).
    Não cria implementação paralela de moedas: delega a bridge-tx/credit-coins!.
    Demais mutações permanecem sem journal."
-  (:require [clojure.string :as str]
-            [odisseu.cutover.durable-op :as dop]
+  (:require [odisseu.cutover.durable-op :as dop]
+            [odisseu.cutover.durability-policy :as policy]
             [odisseu.cutover.op-journal :as journal]
-            [odisseu.cutover.recovery :as recovery]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.bridge-tx :as tx]
             [pokemon.application.ports :as ports]
@@ -16,30 +15,29 @@
 
 (def coverage
   {:coins-delta-wired? true
+   :rank-score-wired? true
    :bridge-hook? true
    :other-mutations-wired? false
    :independent-failure-domain-configured? false
-   :wired-kinds #{:coins-delta}
+   :wired-kinds #{:coins-delta :score-point}
    :uncovered-pokemon
    [:capture :hp :xp :evolution :battle :save-switch :joy-collect :shop-buy :shop-use]
    :uncovered-platform
-   [:rank-score :bloqueio :admins :enquetes-vote :quiz-historico :lembretes
-    :bugs :participantes]
+   [:bloqueio :admins :enquetes-vote :quiz-historico :lembretes :bugs :participantes
+    :rank-penalize :rank-effect]
    :nota
-   "Somente coins-delta no protocolo. Não declarar proteção global."})
+   "Coins + rank score no protocolo. Não declarar proteção global."})
 
 (defn- assert-disposable-journal! [p]
   (when (re-find #"(?i)prod|oracle|live|m53-real|m55-real" (str p))
     (throw (ex-info "m85_journal_path_blocked" {:path p}))))
 
-(defn maintenance?
-  [maint-dir]
-  (boolean (:maintenance? (recovery/maintenance-status maint-dir))))
+(def maintenance? policy/maintenance?)
 
 (defn assert-writable!
   "Bloqueia novas mutações coins enquanto manutenção de durabilidade ativa."
   [maint-dir]
-  (when (and maint-dir (maintenance? maint-dir))
+  (when (and maint-dir (policy/maintenance? maint-dir))
     (throw (err/error :durability_maintenance
                       {:maint-dir maint-dir
                        :hint "Reconciliar uncertain antes de novas escritas."}))))
@@ -59,22 +57,20 @@
   ([store req]
    (tx/credit-coins! store req))
   ([store durable req]
-   (let [{:keys [journal-dir maint-dir policy hooks]
-          :or {policy :strict hooks {}}} durable]
-     (if (str/blank? (str journal-dir))
+   (let [cfg (policy/assert-ready! durable)]
+     (if-not (policy/journal-configured? cfg)
        (tx/credit-coins! store req)
        (do
-         (assert-disposable-journal! journal-dir)
-         (assert-writable! maint-dir)
+         (assert-disposable-journal! (:journal-dir cfg))
          (let [delta (long (:coins-delta req))
                payload (coins-payload delta)
                op-id (str (:operation-id req))
                exec
                (dop/execute!
-                {:policy policy
-                 :journal-dir journal-dir
-                 :maint-dir maint-dir
-                 :hooks hooks
+                {:policy (:policy cfg)
+                 :journal-dir (:journal-dir cfg)
+                 :maint-dir (:maint-dir cfg)
+                 :hooks (:hooks cfg)
                  :datomic-fn #(tx/credit-coins! store req)
                  :op {:operation-id op-id
                       :domain :pokemon

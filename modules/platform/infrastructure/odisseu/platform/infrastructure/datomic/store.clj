@@ -1256,3 +1256,21 @@
 (defn make-store
   [conn]
   (->PlatformStore (ensure-schema! conn)))
+
+(defn get-op-receipt
+  "Lookup de recibo :platform.op/* por operation-id (reconciliação M8.6)."
+  [{:keys [conn]} operation-id]
+  (let [op (str operation-id)
+        e (d/pull (d/db conn) '[*] [:platform.op/id op])]
+    (when (:db/id e)
+      {:operation-id (:platform.op/id e)
+       :domain (:platform.op/domain e)
+       :payload-hash (:platform.op/payload-hash e)
+       :snapshot (when-let [s (:platform.op/snapshot e)]
+                   (edn/read-string s))})))
+
+(defn score-payload-hash
+  "Hash canônico idêntico ao usado em score-point! (M7.4)."
+  [chat-id player-id name game]
+  (sha256-hex (str "score|" (str chat-id) "|" (str player-id) "|"
+                   (str game) "|" name)))

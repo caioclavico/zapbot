@@ -86,7 +86,8 @@
      :raid_not_your_turn :raid_save_mismatch :raid_liga_mismatch
      :raid_capture_unavailable) 409
     :operation_pending 409
-    (:durability_compromised :durability_maintenance) 503
+    (:durability_compromised :durability_maintenance
+     :durability_journal_required) 503
     (:insufficient_item :insufficient_coins :bag_full :collection_full
      :pokemon_full_hp :active_pokemon_fainted
      :no_active_pokemon :motivation_full :gym_empty :gym_team_unhealthy) 422
@@ -165,9 +166,10 @@
 
 (defn- make-handler
   "opts opcionais:
-   :credit-coins! (fn [store req]) — M8.5 durable-op; default tx/credit-coins!"
+   :credit-coins! (fn [store req]) — M8.5 durable-op; default tx/credit-coins!
+   :score-point! (fn [store cid pid nome jogo op]) — M8.6 rank durable-op"
   [store token allow-test-rng? platform-store
-   & [{:keys [credit-coins!]
+   & [{:keys [credit-coins! score-point!]
        :or {credit-coins! tx/credit-coins!}}]]
   (reify HttpHandler
     (handle [_ ex]
@@ -220,7 +222,10 @@
                                :error {:code "platform_unavailable"
                                        :message "Bridge sem store de platform (bloqueio/admins)."}})
                   (let [body (when (#{"POST" "PUT" "PATCH"} method) (read-body ex))
-                        res (platform-http/handle platform-store method path qs body)]
+                        popts (cond-> {}
+                                score-point! (assoc :score-point! score-point!))
+                        res (platform-http/handle platform-store method path qs body
+                                                  popts)]
                     (ok! ex (:data res))))
 
                 (= path "/v1/trainer")
@@ -1069,7 +1074,7 @@
   a porta NÃO deve ser publicada publicamente no Compose.
   `:allow-test-rng true` só para smoke/dev — nunca no caminho WhatsApp."
   [{:keys [host port token store platform-store allow-test-rng allow-private-bind
-           credit-coins!]
+           credit-coins! score-point!]
     :or {host "127.0.0.1" port 18090 allow-test-rng false allow-private-bind false}}]
   (let [allowed (cond-> loopback-hosts
                   allow-private-bind (conj "0.0.0.0"))]
@@ -1086,7 +1091,8 @@
           server (HttpServer/create addr 0)
           handler (make-handler store token (boolean allow-test-rng) platform-store
                                 (cond-> {}
-                                  credit-coins! (assoc :credit-coins! credit-coins!)))]
+                                  credit-coins! (assoc :credit-coins! credit-coins!)
+                                  score-point! (assoc :score-point! score-point!)))]
       (.createContext server "/" handler)
       (.setExecutor server (Executors/newFixedThreadPool 8))
       (.start server)
@@ -1101,6 +1107,7 @@
          :allow-private-bind (boolean allow-private-bind)
          :platform-enabled (boolean platform-store)
          :durable-coins? (boolean credit-coins!)
+         :durable-rank? (boolean score-point!)
          :stop! (fn [] (.stop server 1))}))))
 
 (defn stop!

@@ -83,8 +83,14 @@
 
 (defn handle
   "Retorna mapa :status + :data ou lança err/error.
-   nil se o path não for de platform (caller continua)."
-  [platform-store method path qs body]
+   nil se o path não for de platform (caller continua).
+   opts opcional: :score-point! (fn [store cid pid nome jogo op]) — M8.6 durable-op."
+  ([platform-store method path qs body]
+   (handle platform-store method path qs body nil))
+  ([platform-store method path qs body
+    {:keys [score-point!]
+     :or {score-point! (fn [store cid pid nome jogo op]
+                         (ports/score-point! store cid pid nome jogo op))}}]
   (when (and platform-store (str/starts-with? path "/v1/platform"))
     (cond
       (= path "/v1/platform/blocks")
@@ -325,12 +331,16 @@
               jogo (require-str! (g body "game" :game) "game")
               op (require-op! body)
               res (try
-                    (ports/score-point! platform-store cid pid nome jogo op)
+                    (score-point! platform-store cid pid nome jogo op)
                     (catch clojure.lang.ExceptionInfo e
                       (case (ex-message e)
                         "rank_missing_operation_id"
                         (throw (err/error :missing_operation_id (ex-data e)))
-                        (throw e))))]
+                        (case (err/error-code e)
+                          (:durability_compromised :durability_maintenance
+                           :durability_journal_required)
+                          (throw e)
+                          (throw e)))))]
           {:status 200
            :data {"duplicate" (boolean (:duplicate res))
                   "player" (assoc (:player res) "playerId" pid)
@@ -618,4 +628,4 @@
                   "name" (:name res)}}))
 
       :else
-      (throw (err/error :operation_not_found {:path path})))))
+      (throw (err/error :operation_not_found {:path path}))))))
