@@ -1274,3 +1274,25 @@
   [chat-id player-id name game]
   (sha256-hex (str "score|" (str chat-id) "|" (str player-id) "|"
                    (str game) "|" name)))
+
+(defn bot-payload-hash
+  [chat-id blocked?]
+  (sha256-hex (str "bot|" chat-id "|" blocked?)))
+
+(defn block-commands-payload-hash
+  [chat-id commands]
+  (let [cmds (vec (sort (map str commands)))]
+    (sha256-hex (str "block|" chat-id "|" (pr-str cmds)))))
+
+(defn unblock-commands-payload-hash
+  [chat-id commands]
+  (let [cmds (set (map str commands))]
+    (sha256-hex (str "unblock|" chat-id "|" (pr-str (sort cmds))))))
+
+(defn remember-admin-payload-hash
+  [chat-id player-id]
+  (sha256-hex (str "promote|" (str chat-id) "|" (str player-id))))
+
+(defn forget-admin-payload-hash
+  [chat-id player-id]
+  (sha256-hex (str "demote|" (str chat-id) "|" (str player-id))))

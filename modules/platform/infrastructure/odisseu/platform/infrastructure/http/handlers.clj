@@ -88,9 +88,20 @@
   ([platform-store method path qs body]
    (handle platform-store method path qs body nil))
   ([platform-store method path qs body
-    {:keys [score-point!]
+    {:keys [score-point! set-bot-blocked! block-commands! unblock-commands!
+            remember-admin! forget-admin!]
      :or {score-point! (fn [store cid pid nome jogo op]
-                         (ports/score-point! store cid pid nome jogo op))}}]
+                         (ports/score-point! store cid pid nome jogo op))
+          set-bot-blocked! (fn [store cid blocked? op]
+                             (ports/set-bot-blocked! store cid blocked? op))
+          block-commands! (fn [store cid cmds op]
+                            (ports/block-commands! store cid cmds op))
+          unblock-commands! (fn [store cid cmds op]
+                              (ports/unblock-commands! store cid cmds op))
+          remember-admin! (fn [store cid pid op]
+                            (ports/remember-admin! store cid pid op))
+          forget-admin! (fn [store cid pid op]
+                          (ports/forget-admin! store cid pid op))}}]
   (when (and platform-store (str/starts-with? path "/v1/platform"))
     (cond
       (= path "/v1/platform/blocks")
@@ -111,7 +122,7 @@
         (let [cid (require-str! (g body "chatId" :chatId) "chatId")
               blocked? (boolean (g body "blocked" :blocked))
               op (require-op! body)
-              res (ports/set-bot-blocked! platform-store cid blocked? op)]
+              res (set-bot-blocked! platform-store cid blocked? op)]
           {:status 200
            :data {"duplicate" (boolean (:duplicate res))
                   "blocks" (state-blocks->wire (:state res))
@@ -135,8 +146,8 @@
               _ (when (seq protegidos)
                   (throw (err/error :operation_forbidden {:commands protegidos})))
               res (if (= "block" action)
-                    (ports/block-commands! platform-store cid cmds* op)
-                    (ports/unblock-commands! platform-store cid cmds* op))]
+                    (block-commands! platform-store cid cmds* op)
+                    (unblock-commands! platform-store cid cmds* op))]
           {:status 200
            :data {"duplicate" (boolean (:duplicate res))
                   "blocks" (state-blocks->wire (:state res))
@@ -162,7 +173,7 @@
         (let [cid (require-str! (g body "chatId" :chatId) "chatId")
               pid (require-str! (g body "playerId" :playerId) "playerId")
               op (require-op! body)
-              res (ports/remember-admin! platform-store cid pid op)]
+              res (remember-admin! platform-store cid pid op)]
           {:status 200
            :data {"duplicate" (boolean (:duplicate res))
                   "admins" (state-admins->wire (:state res))}}))
@@ -174,7 +185,7 @@
         (let [cid (require-str! (g body "chatId" :chatId) "chatId")
               pid (require-str! (g body "playerId" :playerId) "playerId")
               op (require-op! body)
-              res (ports/forget-admin! platform-store cid pid op)]
+              res (forget-admin! platform-store cid pid op)]
           {:status 200
            :data {"duplicate" (boolean (:duplicate res))
                   "admins" (state-admins->wire (:state res))}}))

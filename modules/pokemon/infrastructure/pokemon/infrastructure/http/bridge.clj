@@ -167,10 +167,12 @@
 (defn- make-handler
   "opts opcionais:
    :credit-coins! (fn [store req]) — M8.5 durable-op; default tx/credit-coins!
-   :score-point! (fn [store cid pid nome jogo op]) — M8.6 rank durable-op"
+   :score-point! (fn [store cid pid nome jogo op]) — M8.6 rank durable-op
+   :platform-hooks mapa M8.7 (set-bot-blocked! / block-commands! / …)"
   [store token allow-test-rng? platform-store
-   & [{:keys [credit-coins! score-point!]
-       :or {credit-coins! tx/credit-coins!}}]]
+   & [{:keys [credit-coins! score-point! platform-hooks]
+       :or {credit-coins! tx/credit-coins!
+            platform-hooks {}}}]]
   (reify HttpHandler
     (handle [_ ex]
       (try
@@ -222,7 +224,7 @@
                                :error {:code "platform_unavailable"
                                        :message "Bridge sem store de platform (bloqueio/admins)."}})
                   (let [body (when (#{"POST" "PUT" "PATCH"} method) (read-body ex))
-                        popts (cond-> {}
+                        popts (cond-> (or platform-hooks {})
                                 score-point! (assoc :score-point! score-point!))
                         res (platform-http/handle platform-store method path qs body
                                                   popts)]
@@ -1074,7 +1076,7 @@
   a porta NÃO deve ser publicada publicamente no Compose.
   `:allow-test-rng true` só para smoke/dev — nunca no caminho WhatsApp."
   [{:keys [host port token store platform-store allow-test-rng allow-private-bind
-           credit-coins! score-point!]
+           credit-coins! score-point! platform-hooks]
     :or {host "127.0.0.1" port 18090 allow-test-rng false allow-private-bind false}}]
   (let [allowed (cond-> loopback-hosts
                   allow-private-bind (conj "0.0.0.0"))]
@@ -1092,7 +1094,8 @@
           handler (make-handler store token (boolean allow-test-rng) platform-store
                                 (cond-> {}
                                   credit-coins! (assoc :credit-coins! credit-coins!)
-                                  score-point! (assoc :score-point! score-point!)))]
+                                  score-point! (assoc :score-point! score-point!)
+                                  (seq platform-hooks) (assoc :platform-hooks platform-hooks)))]
       (.createContext server "/" handler)
       (.setExecutor server (Executors/newFixedThreadPool 8))
       (.start server)
@@ -1108,6 +1111,7 @@
          :platform-enabled (boolean platform-store)
          :durable-coins? (boolean credit-coins!)
          :durable-rank? (boolean score-point!)
+         :durable-blocks-admins? (boolean (seq platform-hooks))
          :stop! (fn [] (.stop server 1))}))))
 
 (defn stop!

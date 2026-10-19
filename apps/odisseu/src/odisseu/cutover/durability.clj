@@ -233,3 +233,34 @@
    (str "Coins + rank score wired ≠ proteção global. "
         "bloqueio/admins/enquetes/quiz/lembretes/bugs/participantes e demais "
         "Pokémon ainda descobertos. Domínio de falha independente pendente.")})
+
+(defn evaluate-m87-gates
+  "Gates M8.7 — coins + rank + blocks/admins. Proteção global incompleta."
+  [{:keys [coins-delta-ok?
+           rank-score-ok?
+           blocks-admins-ok?
+           blocks-admins-recovery-ok?
+           opposing-ops-order-ok?
+           bridge-blocks-ok?
+           other-mutations-wired?
+           independent-failure-domain?
+           production-journal-deployed?
+           whatsapp-staging-validated?]}]
+  {:coins-delta-ok? (boolean coins-delta-ok?)
+   :rank-score-ok? (boolean rank-score-ok?)
+   :blocks-admins-ok? (boolean blocks-admins-ok?)
+   :blocks-admins-recovery-ok? (boolean blocks-admins-recovery-ok?)
+   :opposing-ops-order-ok? (boolean opposing-ops-order-ok?)
+   :bridge-blocks-ok? (boolean bridge-blocks-ok?)
+   :other-mutations-wired? (boolean other-mutations-wired?)
+   :independent-failure-domain? (boolean independent-failure-domain?)
+   :production-journal-deployed? (boolean production-journal-deployed?)
+   :whatsapp-staging-validated? (boolean whatsapp-staging-validated?)
+   :global-protection-complete? false
+   :rollback-recon-available? false
+   :cutover-ready? false
+   :exactly-once-claimed? false
+   :rpo-zero-claimed? false
+   :nota
+   (str "Cobertura parcial (coins/rank/blocks/admins). "
+        "Enquetes/quiz/lembretes/bugs/participantes e resto Pokémon descobertos.")})

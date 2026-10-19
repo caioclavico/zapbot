@@ -346,6 +346,14 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=512"]}
 
+  ;; M8.7 — bloqueio/admins + camada durable-mutation (sem cutover)
+  :test-m8-7-blocks-admins
+  {:main-opts ["-m" "odisseu.smoke.m8-7-blocks-admins"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx512m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=512"]}
+
   ;; Bridge HTTP longa (dev local). Bind 127.0.0.1.
   :bridge-http
   {:main-opts ["-m" "odisseu.bridge.http-server"]
