@@ -11,6 +11,7 @@
             [odisseu.platform.domain.bloqueio :as bloqueio]
             [odisseu.platform.domain.enquetes :as enquetes]
             [odisseu.platform.domain.quiz-historico :as quiz-hist]
+            [odisseu.platform.domain.rank :as rank]
             [odisseu.persistence.datomic :as persistence])
   (:import [java.security MessageDigest]))
 
@@ -23,7 +24,8 @@
   [conn]
   (doseq [path ["migrations/platform/001-bloqueio-admins.edn"
                 "migrations/platform/002-enquetes.edn"
-                "migrations/platform/003-quiz-historico.edn"]]
+                "migrations/platform/003-quiz-historico.edn"
+                "migrations/platform/004-rank.edn"]]
     (let [f (io/file (persistence/project-root) path)
           tx (edn/read-string (slurp f))]
       (d/transact conn {:tx-data tx})))
@@ -171,6 +173,71 @@
       [{:db/id "chat" :platform.chat/id cid}
        {:platform.quiz.history/chat "chat"
         :platform.quiz.history/questions edn}])))
+
+(defn- rank-player-eid
+  [db chat-id player-id]
+  (ffirst (d/q '[:find ?e
+                 :in $ ?k
+                 :where [?e :platform.rank.player/key ?k]]
+               db (rank/player-key chat-id player-id))))
+
+(defn- load-rank
+  [db]
+  (->> (d/q '[:find ?e ?cid ?pid
+              :where
+              [?e :platform.rank.player/key _]
+              [?e :platform.rank.player/chat ?c]
+              [?c :platform.chat/id ?cid]
+              [?e :platform.rank.player/player-id ?pid]]
+            db)
+       (reduce (fn [acc [eid cid pid]]
+                 (let [ent (d/pull db '[:platform.rank.player/name
+                                        :platform.rank.player/points
+                                        :platform.rank.player/games
+                                        :platform.rank.player/http-only?
+                                        :platform.rank.player/effects]
+                                   eid)
+                       efeitos (rank/edn->effects
+                                (or (:platform.rank.player/effects ent) "{}"))]
+                   (assoc-in acc [(str cid) (str pid)]
+                             (cond-> {"nome" (str (:platform.rank.player/name ent))
+                                      "pontos" (long (:platform.rank.player/points ent 0))
+                                      "jogos" (rank/edn->games
+                                               (:platform.rank.player/games ent))}
+                               (:platform.rank.player/http-only? ent)
+                               (assoc "somente-efeitos-http" true)
+                               (seq efeitos)
+                               (assoc "efeitos-pokemon-http" efeitos)))))
+               {})))
+
+(defn- rank-player-tx
+  "Upsert por :platform.rank.player/key (unique identity)."
+  [db chat-id player-id info]
+  (let [cid (str chat-id)
+        pid (str player-id)
+        info (rank/normalize-player info)
+        key (rank/player-key cid pid)
+        eid (rank-player-eid db cid pid)
+        http? (boolean (get info "somente-efeitos-http"))
+        asserts [{:db/id "chat" :platform.chat/id cid}
+                 {:platform.rank.player/key key
+                  :platform.rank.player/chat "chat"
+                  :platform.rank.player/player-id pid
+                  :platform.rank.player/name (get info "nome")
+                  :platform.rank.player/points (long (get info "pontos" 0))
+                  :platform.rank.player/games (rank/games->edn (get info "jogos"))
+                  :platform.rank.player/effects
+                  (rank/effects->edn (get info "efeitos-pokemon-http" {}))}]
+        asserts (if http?
+                  (concat asserts
+                          [{:platform.rank.player/key key
+                            :platform.rank.player/http-only? true}])
+                  asserts)
+        retracts (when (and eid (not http?)
+                            (:platform.rank.player/http-only?
+                             (d/pull db '[:platform.rank.player/http-only?] eid)))
+                   [[:db/retract eid :platform.rank.player/http-only? true]])]
+    (concat retracts asserts)))
 
 (defn- load-blocks
   [db]
@@ -508,7 +575,149 @@
                                         :platform.op/snapshot (pr-str nxt)}])})
           {:duplicate false
            :history (ports/get-chat-quiz-history this cid)
-           :state (ports/get-quiz-history-state this)})))))
+           :state (ports/get-quiz-history-state this)}))))
+
+  ports/RankStore
+  (get-rank-state [_]
+    (load-rank (d/db conn)))
+  (put-rank-state! [this estado]
+    (doseq [[cid players] (rank/normalize-state estado)
+            [pid info] players]
+      (ensure-chat! conn cid)
+      (d/transact conn {:tx-data (rank-player-tx (d/db conn) cid pid info)}))
+    (ports/get-rank-state this))
+  (get-chat-rank [this chat-id]
+    (get (ports/get-rank-state this) (str chat-id) {}))
+  (score-point! [this chat-id player-id name game operation-id]
+    (let [cid (str chat-id)
+          pid (str player-id)
+          jogo (str game)
+          op (str operation-id)
+          db (d/db conn)
+          payload (str "score|" cid "|" pid "|" jogo "|" name)
+          hash (sha256-hex payload)
+          dup (assert-receipt! db op "rank" hash)]
+      (cond
+        (str/blank? op)
+        (throw (ex-info "rank_missing_operation_id" {:chat-id cid}))
+
+        (receipt-dup? dup)
+        {:duplicate true
+         :penalized nil
+         :player (get (ports/get-chat-rank this cid) pid)
+         :state (ports/get-rank-state this)}
+
+        :else
+        (let [cur (get (ports/get-chat-rank this cid) pid)
+              nxt (rank/apply-score cur name jogo)
+              db2 (d/db conn)]
+          (d/transact conn {:tx-data (concat
+                                      (rank-player-tx db2 cid pid nxt)
+                                      [{:platform.op/id op
+                                        :platform.op/domain "rank"
+                                        :platform.op/payload-hash hash
+                                        :platform.op/snapshot (pr-str nxt)}])})
+          {:duplicate false
+           :player (get (ports/get-chat-rank this cid) pid)
+           :state (ports/get-rank-state this)}))))
+  (penalize-point! [this chat-id player-id operation-id]
+    (let [cid (str chat-id)
+          pid (str player-id)
+          op (str operation-id)
+          db (d/db conn)
+          payload (str "penalize|" cid "|" pid)
+          hash (sha256-hex payload)
+          dup (assert-receipt! db op "rank" hash)]
+      (cond
+        (str/blank? op)
+        (throw (ex-info "rank_missing_operation_id" {:chat-id cid}))
+
+        (receipt-dup? dup)
+        (let [snap (:snapshot dup)]
+          {:duplicate true
+           :penalized (boolean (get snap "penalized"))
+           :player (get (ports/get-chat-rank this cid) pid)
+           :state (ports/get-rank-state this)})
+
+        :else
+        (let [cur (or (get (ports/get-chat-rank this cid) pid)
+                      {"nome" "Alguém" "pontos" 0 "jogos" {}})
+              [nxt penalizado?] (rank/apply-penalize cur)
+              db2 (d/db conn)]
+          (d/transact conn {:tx-data (concat
+                                      (when penalizado?
+                                        (rank-player-tx db2 cid pid nxt))
+                                      [{:platform.op/id op
+                                        :platform.op/domain "rank"
+                                        :platform.op/payload-hash hash
+                                        :platform.op/snapshot
+                                        (pr-str {"penalized" penalizado?
+                                                 "player" (if penalizado? nxt cur)})}])})
+          {:duplicate false
+           :penalized penalizado?
+           :player (get (ports/get-chat-rank this cid) pid cur)
+           :state (ports/get-rank-state this)}))))
+  (apply-rank-effect! [this effect]
+    (let [id (str (or (get effect "id") (:id effect) ""))
+          typ (str (or (get effect "type") (:type effect) ""))
+          cid (str (or (get effect "chatId") (:chatId effect) ""))
+          pid (str (or (get effect "playerId") (:playerId effect) ""))
+          nome (str (or (get effect "playerName") (:playerName effect)
+                        (get effect "name") (:name effect) "Alguém"))
+          jogo (str (or (get effect "game") (:game effect) "pokemon"))
+          op (str "rank-effect:" id)
+          db (d/db conn)
+          payload (str "effect|" id "|" typ "|" cid "|" pid "|" jogo "|" nome)
+          hash (sha256-hex payload)
+          dup (assert-receipt! db op "rank" hash)]
+      (cond
+        (or (str/blank? id) (str/blank? cid) (str/blank? pid)
+            (not (#{"rank.increment" "rank.decrement"} typ))
+            (and (= "rank.increment" typ) (not= "pokemon" jogo)))
+        (throw (ex-info "rank_effect_invalid" {:effect effect}))
+
+        (receipt-dup? dup)
+        (let [snap (:snapshot dup)]
+          {:duplicate true
+           :resultado (boolean (get snap "resultado"))
+           :state (ports/get-rank-state this)})
+
+        :else
+        (let [cur (get (ports/get-chat-rank this cid) pid)
+              salvo (get-in cur ["efeitos-pokemon-http" id])
+              identidade {"tipo" typ "nome" nome "jogo" jogo}
+              resultado (if salvo
+                          (get salvo "resultado")
+                          (or (= "rank.increment" typ)
+                              (pos? (long (get cur "pontos" 0)))))
+              _ (when (and salvo (not= identidade (dissoc salvo "resultado")))
+                  (throw (ex-info "rank_effect_payload_mismatch" {:id id})))
+              nxt (if salvo
+                    cur
+                    (let [base (or cur {"nome" nome "pontos" 0 "jogos" {}
+                                        "somente-efeitos-http" true})
+                          nova (case typ
+                                 "rank.increment"
+                                 (-> base
+                                     (assoc "nome" nome)
+                                     (dissoc "somente-efeitos-http")
+                                     (update "pontos" (fnil inc 0))
+                                     (update-in ["jogos" jogo] (fnil inc 0)))
+                                 "rank.decrement"
+                                 (if resultado (update base "pontos" dec) base))]
+                      (assoc-in nova ["efeitos-pokemon-http" id]
+                                (assoc identidade "resultado" resultado))))
+              db2 (d/db conn)]
+          (d/transact conn {:tx-data (concat
+                                      (rank-player-tx db2 cid pid nxt)
+                                      [{:platform.op/id op
+                                        :platform.op/domain "rank"
+                                        :platform.op/payload-hash hash
+                                        :platform.op/snapshot
+                                        (pr-str {"resultado" resultado})}])})
+          {:duplicate false
+           :resultado (boolean resultado)
+           :state (ports/get-rank-state this)})))))
 
 (defn make-store
   [conn]

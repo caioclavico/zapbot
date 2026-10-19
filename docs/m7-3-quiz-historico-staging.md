@@ -48,6 +48,7 @@ Schema: `migrations/platform/003-quiz-historico.edn`.
 - `rank` (pontuação no acerto)
 - (não usa `participantes`)
 
-## Próximo (M7.4 sugerido)
+## Próximo (M7.4)
 
-**Rank** — ou **lembretes** se priorizar timers/single-poller.
+**Rank** → ver `docs/m7-4-rank-staging.md`.  
+M7.5 sugerido: **lembretes**.

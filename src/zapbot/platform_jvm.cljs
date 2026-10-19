@@ -100,3 +100,28 @@
           (fn [histories]
             (reset! atom-hist (or histories {}))
             true)))
+
+(defn fetch-rank []
+  (p/then (.getRank (client!))
+          (fn [data] (js->clj (.-chats data) :keywordize-keys false))))
+
+(defn fetch-rank-chat [chat-id]
+  (p/then (.getRankChat (client!) chat-id)
+          (fn [data] (.-players data))))
+
+(defn rank-score! [chat-id player-id name game operation-id]
+  (.rankScore (client!) chat-id player-id name game operation-id))
+
+(defn rank-penalize! [chat-id player-id operation-id]
+  (.rankPenalize (client!) chat-id player-id operation-id))
+
+(defn rank-effect! [efeito]
+  (.rankEffect (client!) efeito))
+
+(defn hydrate-rank!
+  [atom-placares]
+  (p/then (fetch-rank)
+          (fn [chats]
+            ;; chats: {chatId -> {playerId -> info}}
+            (reset! atom-placares (or chats {}))
+            true)))

@@ -8,6 +8,7 @@
             [odisseu.platform.domain.bloqueio :as bloqueio]
             [odisseu.platform.domain.enquetes :as enquetes]
             [odisseu.platform.domain.quiz-historico :as quiz-hist]
+            [odisseu.platform.domain.rank :as rank]
             [odisseu.platform.infrastructure.datomic.store :as store]
             [odisseu.platform.infrastructure.migration.compare :as compare]
             [odisseu.persistence.datomic :as persistence]))
@@ -30,10 +31,11 @@
      :admins (compare/normalize-admins (get mods "admins-conhecidos" {}))
      :enquetes (compare/normalize-enquetes (get mods "enquetes" {}))
      :quiz-historico (compare/normalize-quiz-historico (get mods "quiz-historico" {}))
+     :rank (compare/normalize-rank (get mods "rank" {}))
      :inventory-keys (sort (keys mods))}))
 
 (defn import-ir!
-  "Importa IR bloqueio/admins/enquetes/quiz-historico em store Datomic (bulk put)."
+  "Importa IR platform (incl. rank) em store Datomic (bulk put)."
   [platform-store ir]
   (ports/put-block-state! platform-store
                           (bloqueio/normalize-state (:bloqueio ir)))
@@ -43,6 +45,8 @@
                          (enquetes/normalize-state (:enquetes ir)))
   (ports/put-quiz-history-state! platform-store
                                  (quiz-hist/normalize-state (:quiz-historico ir)))
+  (ports/put-rank-state! platform-store
+                         (rank/normalize-state (:rank ir)))
   {:bloqueio (compare/normalize-bloqueio
               (bloqueio/state->persistivel (ports/get-block-state platform-store)))
    :admins (compare/normalize-admins
@@ -51,7 +55,9 @@
               (enquetes/state->persistivel (ports/get-poll-state platform-store)))
    :quiz-historico (compare/normalize-quiz-historico
                     (quiz-hist/state->persistivel
-                     (ports/get-quiz-history-state platform-store)))})
+                     (ports/get-quiz-history-state platform-store)))
+   :rank (compare/normalize-rank
+          (rank/state->persistivel (ports/get-rank-state platform-store)))})
 
 (defn equivalence-report
   [ir imported]
@@ -64,7 +70,9 @@
    :quiz-historico {:equivalent? (compare/equivalent? (:quiz-historico ir)
                                                        (:quiz-historico imported))
                     :diff (compare/diff-maps (:quiz-historico ir)
-                                             (:quiz-historico imported))}})
+                                             (:quiz-historico imported))}
+   :rank {:equivalent? (compare/equivalent? (:rank ir) (:rank imported))
+          :diff (compare/diff-maps (:rank ir) (:rank imported))}})
 (defn open-disposable-store!
   [storage-rel system db-name]
   (when (re-find #"m53-real-offline|m55-real-offline|prod" (str storage-rel))

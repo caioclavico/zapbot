@@ -1211,7 +1211,8 @@
   (let [finalizando (assoc jogo :finalizando? true)
         _ (swap! jogos assoc cid finalizando)
         vencedor-pid (get-in jogo [:jogadores vencedor-marca])
-        _ (rank/pontuar! cid vencedor-pid (get-in jogo [:nomes vencedor-marca]) "pokemon")
+        _ (rank/pontuar! cid vencedor-pid (get-in jogo [:nomes vencedor-marca]) "pokemon"
+                         (str "rank:pokemon-win:" (or (:batalha-id jogo) "unknown")))
         _ (treinador/registrar-vitoria-treinador! cid vencedor-pid)
         _ (loja/registrar-semanal! cid vencedor-pid "pvp" [])
         ganho (loja/creditar! cid vencedor-pid)
@@ -1363,7 +1364,9 @@
 (defn- criar-jogo [message id nome pokemon hp-atual status]
   ;; `:message` fica guardada só pra o limite de tempo ter onde avisar a fuga
   ;; quando ninguém jogar (nenhuma jogada chega pra responder nessa hora).
+  ;; `:batalha-id` é estável pela vida da partida (operação de rank).
   {:message message
+   :batalha-id (str (random-uuid))
    :pokemons {:x pokemon}
    :jogadores {:x id}
    :nomes {:x nome}
@@ -2380,17 +2383,22 @@
 
       :else
       (let [marca-saiu (some #(when (= pid (get-in jogo [:jogadores %])) %) [:x :o])]
-        (p/resolved
-         (if (nil? marca-saiu)
-           (str (cabecalho) "❓ Você não faz parte dessa batalha (só quem está jogando pode sair dela).")
-           (if (tentar-encerrar-por-desistencia! cid jogo)
-             (let [perdeu-ponto? (rank/penalizar! cid pid)]
-               (str (cabecalho) "🚪 *" (get-in jogo [:nomes marca-saiu]) "* fugiu da batalha."
-                    "\n\n⚖️ Desistências não concedem XP nem moedas. "
-                    (if perdeu-ponto?
-                      "Você perdeu 1 ponto no rank."
-                      "Seu rank já estava em zero, então nenhum ponto foi descontado.")))
-             (str (cabecalho) "⏳ Essa batalha já foi encerrada."))))))))
+        (cond
+          (nil? marca-saiu)
+          (p/resolved (str (cabecalho) "❓ Você não faz parte dessa batalha (só quem está jogando pode sair dela)."))
+
+          (tentar-encerrar-por-desistencia! cid jogo)
+          (p/then (rank/penalizar! cid pid
+                                  (rank/operation-id-from-message message "pokemon-flee"))
+                  (fn [perdeu-ponto?]
+                    (str (cabecalho) "🚪 *" (get-in jogo [:nomes marca-saiu]) "* fugiu da batalha."
+                         "\n\n⚖️ Desistências não concedem XP nem moedas. "
+                         (if perdeu-ponto?
+                           "Você perdeu 1 ponto no rank."
+                           "Seu rank já estava em zero, então nenhum ponto foi descontado."))))
+
+          :else
+          (p/resolved (str (cabecalho) "⏳ Essa batalha já foi encerrada.")))))))
 
 (defn- defender-turno [message]
   (let [cid  (chat-id message)
@@ -4410,7 +4418,11 @@
               nil))
           (if (tentar-encerrar-por-desistencia! cid jogo)
             (p/let [_ (aguardar-gravacoes-combates!)
-                    perdeu-ponto? (when-not (:ginasio jogo) (rank/penalizar! cid pid))
+                    perdeu-ponto? (when-not (:ginasio jogo)
+                                    (rank/penalizar!
+                                     cid pid
+                                     (str "rank:pokemon-timeout:"
+                                          (or (:batalha-id jogo) "unknown") ":" pid)))
                     _ (armazenamento/aguardar-todas!)
                     _ (enviar-aviso-temporizado
                        cid message

@@ -237,9 +237,10 @@
                         (mensagem-pergunta quiz)))
 
       (= resposta (:correta quiz))
-      (p/let [nome (nome-de message)]
-        (swap! quizzes dissoc cid)
-        (rank/pontuar! cid (jogador-id message) nome "quiz")
+      (p/let [nome (nome-de message)
+              _ (do (swap! quizzes dissoc cid) nil)
+              _ (rank/pontuar! cid (jogador-id message) nome "quiz"
+                               (rank/operation-id-from-message message "quiz"))]
         (str (cabecalho) "✅ *Certíssimo, " nome "!* A resposta era *"
              (str/upper-case (nth letras (:correta quiz))) ") " (nth (:opcoes quiz) (:correta quiz)) "*\n\n"
              "Quer outra? Manda " config/prefix "quiz de novo."))

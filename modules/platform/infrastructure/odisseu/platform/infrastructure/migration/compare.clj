@@ -46,6 +46,32 @@
                   (when (seq v) [cid v])))
               (or m {}))))
 
+(defn normalize-rank
+  "chat → player → info; jogos/efeitos ordenados para comparação estável."
+  [m]
+  (into (sorted-map)
+        (map (fn [[cid players]]
+               [cid
+                (into (sorted-map)
+                      (map (fn [[pid info]]
+                             (let [info (or info {})
+                                   jogos (or (get info "jogos") {})
+                                   efeitos (or (get info "efeitos-pokemon-http") {})]
+                               [pid
+                                (cond-> {"nome" (str (or (get info "nome") ""))
+                                         "pontos" (long (or (get info "pontos") 0))
+                                         "jogos" (into (sorted-map)
+                                                       (map (fn [[k v]] [(str k) (long v)])
+                                                            jogos))}
+                                  (get info "somente-efeitos-http")
+                                  (assoc "somente-efeitos-http" true)
+                                  (seq efeitos)
+                                  (assoc "efeitos-pokemon-http"
+                                         (into (sorted-map)
+                                               (map (fn [[k v]] [(str k) v]) efeitos))))]))
+                            (or players {})))]))
+        (or m {})))
+
 (defn diff-maps
   "Retorna {:only-left :only-right :changed} comparando mapas normalizados."
   [left right]

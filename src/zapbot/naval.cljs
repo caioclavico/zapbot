@@ -190,34 +190,37 @@
   (let [cid  (chat-id message)
         pid  (jogador-id message)
         jogo (get @jogos cid)]
-    (p/resolved
-     (cond
-       (nil? jogo)
-       (str (cabecalho) "❓ Não tem partida rolando. Digite " config/prefix "naval pra abrir uma.")
+    (cond
+      (nil? jogo)
+      (p/resolved (str (cabecalho) "❓ Não tem partida rolando. Digite " config/prefix "naval pra abrir uma."))
 
-       (not (contains? (:jogadores jogo) :o))
-       (str (cabecalho) "⏳ Ainda falta alguém entrar de ⭕. Digite " config/prefix "naval pra entrar.")
+      (not (contains? (:jogadores jogo) :o))
+      (p/resolved (str (cabecalho) "⏳ Ainda falta alguém entrar de ⭕. Digite " config/prefix "naval pra entrar."))
 
-       (not= pid (get-in jogo [:jogadores (:vez jogo)]))
-       (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo))
+      (not= pid (get-in jogo [:jogadores (:vez jogo)]))
+      (p/resolved (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo)))
 
-       :else
-       (let [atacante (:vez jogo)
-             alvo     (outro atacante)
-             {:keys [tabuleiro resultado navio-nome]} (atacar-tabuleiro (get-in jogo [:tabuleiros alvo]) indice)]
-         (cond
-           (= resultado :repetido)
-           (str (cabecalho) "🚫 Essa posição já foi atacada.\n\n" (mensagem-estado jogo))
+      :else
+      (let [atacante (:vez jogo)
+            alvo     (outro atacante)
+            {:keys [tabuleiro resultado navio-nome]} (atacar-tabuleiro (get-in jogo [:tabuleiros alvo]) indice)]
+        (cond
+          (= resultado :repetido)
+          (p/resolved (str (cabecalho) "🚫 Essa posição já foi atacada.\n\n" (mensagem-estado jogo)))
 
-           (and (= resultado :afundou) (every? :afundado? (:navios tabuleiro)))
-           (do (swap! jogos dissoc cid)
-               (rank/pontuar! cid (get-in jogo [:jogadores atacante]) (get-in jogo [:nomes atacante]) "naval")
-               (str (cabecalho) (desenhar-tabuleiro tabuleiro) "\n\n🏆 "
-                    (get-in jogo [:nomes atacante]) " afundou a frota inteira e venceu!"))
+          (and (= resultado :afundou) (every? :afundado? (:navios tabuleiro)))
+          (do (swap! jogos dissoc cid)
+              (p/then (rank/pontuar! cid (get-in jogo [:jogadores atacante])
+                                    (get-in jogo [:nomes atacante]) "naval"
+                                    (rank/operation-id-from-message message "naval"))
+                      (fn [_]
+                        (str (cabecalho) (desenhar-tabuleiro tabuleiro) "\n\n🏆 "
+                             (get-in jogo [:nomes atacante]) " afundou a frota inteira e venceu!"))))
 
-           :else
-           (let [jogo-novo (-> jogo (assoc-in [:tabuleiros alvo] tabuleiro) (assoc :vez alvo))]
-             (swap! jogos assoc cid jogo-novo)
+          :else
+          (let [jogo-novo (-> jogo (assoc-in [:tabuleiros alvo] tabuleiro) (assoc :vez alvo))]
+            (swap! jogos assoc cid jogo-novo)
+            (p/resolved
              (str (cabecalho)
                   (case resultado
                     :acerto  "🎯 Tiro certeiro!\n\n"

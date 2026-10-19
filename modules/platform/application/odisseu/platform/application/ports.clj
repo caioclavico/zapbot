@@ -29,3 +29,11 @@
   (put-quiz-history-state! [this estado])
   (get-chat-quiz-history [this chat-id])
   (append-quiz-question! [this chat-id question operation-id]))
+
+(defprotocol RankStore
+  (get-rank-state [this])
+  (put-rank-state! [this estado])
+  (get-chat-rank [this chat-id])
+  (score-point! [this chat-id player-id name game operation-id])
+  (penalize-point! [this chat-id player-id operation-id])
+  (apply-rank-effect! [this effect]))

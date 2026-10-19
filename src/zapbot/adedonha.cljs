@@ -22,8 +22,8 @@
 
 (def ^:private duracao-ms (* 90 1000))
 
-;; cid -> {:letra "A" :respostas {pid {:nome "..." :texto "..."}}} - texto é
-;; a última mensagem (crua) de cada participante antes do fim da rodada.
+;; cid -> {:id "uuid-da-rodada" :letra "A" :respostas {pid {:nome ... :texto ...}}}
+;; :id é gerado uma vez no início (não a cada retry) para operation-id do rank.
 (defonce ^:private rodadas (atom {}))
 
 (defn- chat-id [message]
@@ -216,13 +216,17 @@
 (defn- premiar-vencedores!
   "Dá 1 ponto no !rank pra quem tirou a maior pontuação da rodada (todo
   mundo empatado no topo, se for o caso). Ninguém é premiado se o maior
-  placar for 0 (rodada em que ninguém acertou nada de verdade)."
-  [cid totais]
-  (when (seq totais)
+  placar for 0 (rodada em que ninguém acertou nada de verdade).
+  operation-id = rank:adedonha:{rodada-id}:{pid} (estável em retries)."
+  [cid rodada-id totais]
+  (if-not (seq totais)
+    (p/resolved nil)
     (let [melhor (apply max (map :pontos totais))]
-      (when (pos? melhor)
-        (doseq [{:keys [pid nome pontos]} totais :when (= pontos melhor)]
-          (rank/pontuar! cid pid nome "adedonha"))))))
+      (if-not (pos? melhor)
+        (p/resolved nil)
+        (p/all (for [{:keys [pid nome pontos]} totais :when (= pontos melhor)]
+                 (rank/pontuar! cid pid nome "adedonha"
+                                (str "rank:adedonha:" rodada-id ":" pid))))))))
 
 (defn- finalizar-rodada!
   "Se ainda houver, nesse chat, uma rodada ativa com essa letra específica
@@ -233,12 +237,13 @@
   (encerrada por outro caminho antes)."
   [cid letra]
   (when (= letra (:letra (get @rodadas cid)))
-    (let [respostas (get-in @rodadas [cid :respostas])]
+    (let [rodada (:id (get @rodadas cid))
+          respostas (get-in @rodadas [cid :respostas])]
       (swap! rodadas dissoc cid)
       (p/then (calcular-resultado letra respostas)
               (fn [resultado]
-                (premiar-vencedores! cid (:totais resultado))
-                (formatar-resultado resultado))))))
+                (p/then (premiar-vencedores! cid rodada (:totais resultado))
+                        (fn [_] (formatar-resultado resultado))))))))
 
 (defn- anunciar-fim! [message letra]
   (let [cid (chat-id message)]
@@ -250,8 +255,10 @@
 
 (defn- iniciar [message]
   (let [cid   (chat-id message)
-        letra (rand-nth letras)]
-    (swap! rodadas assoc cid {:letra letra :respostas {}})
+        letra (rand-nth letras)
+        ;; UUID uma vez por rodada — não regenerado em retry de pontuação.
+        rid   (str (random-uuid))]
+    (swap! rodadas assoc cid {:id rid :letra letra :respostas {}})
     (js/setTimeout #(anunciar-fim! message letra) duracao-ms)
     (p/resolved
      (str "🔤 *Adedonha do tio " config/bot-name "*\n\n"

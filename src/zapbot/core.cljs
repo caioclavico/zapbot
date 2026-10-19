@@ -19,6 +19,7 @@
             [zapbot.admins :as admins]
             [zapbot.enquetes :as enquetes]
             [zapbot.quiz :as quiz]
+            [zapbot.rank :as rank]
             [zapbot.platform-jvm :as platform]
             [zapbot.router :as router]))
 
@@ -248,9 +249,10 @@
                       (-> (p/all [(bloqueio/hidratar-datomic!)
                                   (admins/hidratar-datomic!)
                                   (enquetes/hidratar-datomic!)
-                                  (quiz/hidratar-datomic!)])
+                                  (quiz/hidratar-datomic!)
+                                  (rank/hidratar-datomic!)])
                           (p/then (fn [_]
-                                    (js/console.log "[platform] bloqueio/admins/enquetes/quiz hidratados via Datomic")
+                                    (js/console.log "[platform] bloqueio/admins/enquetes/quiz/rank hidratados via Datomic")
                                     true))
                           (p/catch (fn [err]
                                      (js/console.error "[platform] Datomic indisponível (fail-closed):" err)

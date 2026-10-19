@@ -4,6 +4,7 @@
             [odisseu.platform.application.ports :as ports]
             [odisseu.platform.domain.bloqueio :as bloqueio]
             [odisseu.platform.domain.enquetes :as enquetes]
+            [odisseu.platform.domain.rank :as rank]
             [pokemon.domain.errors :as err]))
 
 (defn- g [m & ks]
@@ -280,6 +281,89 @@
                               {"chatId" (str c) "questions" (vec qs)}))
                        (sort-by #(get % "chatId"))
                        vec)}}))
+
+      (= path "/v1/platform/rank")
+      (do
+        (when (not= "GET" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (not-empty (g qs "chatId"))
+              st (ports/get-rank-state platform-store)]
+          {:status 200
+           :data (if cid
+                   {"chatId" cid
+                    "players"
+                    (->> (ports/get-chat-rank platform-store cid)
+                         (map (fn [[pid info]]
+                                (assoc info "playerId" (str pid))))
+                         (sort-by #(str (get % "playerId")))
+                         vec)
+                    "top" (rank/top-players
+                           (ports/get-chat-rank platform-store cid) 10)}
+                   {"chats"
+                    (->> st
+                         (map (fn [[c players]]
+                                {"chatId" (str c)
+                                 "players"
+                                 (->> players
+                                      (map (fn [[pid info]]
+                                             (assoc info "playerId" (str pid))))
+                                      (sort-by #(str (get % "playerId")))
+                                      vec)}))
+                         (sort-by #(get % "chatId"))
+                         vec)})}))
+
+      (= path "/v1/platform/rank/score")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (require-str! (g body "chatId" :chatId) "chatId")
+              pid (require-str! (g body "playerId" :playerId) "playerId")
+              nome (require-str! (g body "name" :name) "name")
+              jogo (require-str! (g body "game" :game) "game")
+              op (require-op! body)
+              res (try
+                    (ports/score-point! platform-store cid pid nome jogo op)
+                    (catch clojure.lang.ExceptionInfo e
+                      (case (ex-message e)
+                        "rank_missing_operation_id"
+                        (throw (err/error :missing_operation_id (ex-data e)))
+                        (throw e))))]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "player" (assoc (:player res) "playerId" pid)
+                  "top" (rank/top-players
+                         (get (:state res) cid {}) 10)}}))
+
+      (= path "/v1/platform/rank/penalize")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [cid (require-str! (g body "chatId" :chatId) "chatId")
+              pid (require-str! (g body "playerId" :playerId) "playerId")
+              op (require-op! body)
+              res (ports/penalize-point! platform-store cid pid op)]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "penalized" (boolean (:penalized res))
+                  "player" (when-let [p (:player res)]
+                             (assoc p "playerId" pid))}}))
+
+      (= path "/v1/platform/rank/effect")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [res (try
+                    (ports/apply-rank-effect! platform-store body)
+                    (catch clojure.lang.ExceptionInfo e
+                      (case (ex-message e)
+                        "rank_effect_invalid"
+                        (throw (err/error :invalid_query (ex-data e)))
+                        "rank_effect_payload_mismatch"
+                        (throw (err/error :receipt_payload_mismatch (ex-data e)))
+                        (throw e))))]
+          {:status 200
+           :data {"duplicate" (boolean (:duplicate res))
+                  "resultado" (boolean (:resultado res))}}))
 
       :else
       (throw (err/error :operation_not_found {:path path})))))

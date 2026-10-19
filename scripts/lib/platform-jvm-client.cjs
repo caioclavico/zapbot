@@ -248,6 +248,44 @@ function createClient(config = {}) {
         return Object.assign({}, data, { histories: out });
       });
     },
+    getRank() {
+      return request('GET', '/v1/platform/rank').then((data) => {
+        const chats = {};
+        for (const c of data.chats || []) {
+          if (!c || typeof c.chatId !== 'string') continue;
+          const players = {};
+          for (const p of c.players || []) {
+            if (p && typeof p.playerId === 'string') {
+              const copy = Object.assign({}, p);
+              delete copy.playerId;
+              players[p.playerId] = copy;
+            }
+          }
+          chats[c.chatId] = players;
+        }
+        return { chats };
+      });
+    },
+    getRankChat(chatId) {
+      const q = encodeURIComponent(chatId);
+      return request('GET', `/v1/platform/rank?chatId=${q}`).then((data) => ({
+        players: data.players || [],
+        top: data.top || []
+      }));
+    },
+    rankScore(chatId, playerId, name, game, operationId) {
+      return request('POST', '/v1/platform/rank/score', {
+        chatId, playerId, name, game, operationId
+      });
+    },
+    rankPenalize(chatId, playerId, operationId) {
+      return request('POST', '/v1/platform/rank/penalize', {
+        chatId, playerId, operationId
+      });
+    },
+    rankEffect(effect) {
+      return request('POST', '/v1/platform/rank/effect', effect);
+    },
     newOperationId(prefix) {
       return `${prefix || 'op'}:${crypto.randomUUID()}`;
     }
