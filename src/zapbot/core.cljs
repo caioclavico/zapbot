@@ -50,11 +50,10 @@
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
 
-;; em desenvolvimento (APP_ENV=development), só processa mensagens do chat de
-;; teste (DEV_GROUP_ID) - evita responder duplicado nos grupos reais enquanto
-;; uma instância local roda ao lado da de produção
+;; em development|staging, só processa mensagens do chat de teste (DEV_GROUP_ID)
+;; — evita responder duplicado nos grupos reais ao lado da produção
 (defn- permitido-pelo-ambiente? [message]
-  (or (not= config/app-env "development")
+  (or (not (contains? #{"development" "staging"} config/app-env))
       (= (chat-id message) config/dev-group-id)))
 
 (def ^:private limite-legenda-midia 900)

@@ -1,0 +1,39 @@
+# Bridge JVM + Datomic Local (staging). Sem porta pública — publish só 127.0.0.1 no Compose.
+FROM eclipse-temurin:21-jdk-jammy
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates rlwrap \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL -o /tmp/linux-install.sh https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh \
+    && chmod +x /tmp/linux-install.sh \
+    && /tmp/linux-install.sh \
+    && rm /tmp/linux-install.sh
+
+WORKDIR /app
+
+# Prefetch deps (cache de layer)
+COPY deps.edn ./
+RUN clojure -P -M:bridge-http || true
+
+COPY apps ./apps
+COPY shared ./shared
+COPY modules ./modules
+COPY migrations ./migrations
+
+ENV ODISSEU_BRIDGE_HOST=0.0.0.0 \
+    ODISSEU_BRIDGE_PORT=18090 \
+    ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND=true \
+    ODISSEU_BRIDGE_SYSTEM=odisseu-m61-staging \
+    ODISSEU_BRIDGE_STORAGE=/data/datomic-local \
+    ODISSEU_BRIDGE_DB=staging \
+    ODISSEU_BRIDGE_SEED=false \
+    ODISSEU_BRIDGE_RESET=false \
+    ODISSEU_BRIDGE_ALLOW_TEST_RNG=true
+
+VOLUME ["/data/datomic-local"]
+EXPOSE 18090
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
+  CMD curl -fsS http://127.0.0.1:18090/health || exit 1
+
+CMD ["clojure", "-M:bridge-http"]

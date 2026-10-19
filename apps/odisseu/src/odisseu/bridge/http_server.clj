@@ -1,9 +1,11 @@
 (ns odisseu.bridge.http-server
-  "Entrypoint da bridge HTTP JVM (dev). Somente loopback; leituras.
-  Seed opcional in-process via ODISSEU_BRIDGE_SEED=true (não é rota HTTP)."
+  "Entrypoint da bridge HTTP JVM (dev/staging).
+   Default: loopback. Rede privada Docker só com ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND=true.
+   Nunca usa storages M5.3B/M5.5 de referência. Sem seed destrutivo sem RESET."
   (:require [clojure.string :as str]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.collection :as coll-app]
+            [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
             [pokemon.infrastructure.datomic.store :as store]
             [pokemon.infrastructure.http.bridge :as bridge])
@@ -21,6 +23,11 @@
     (Long/parseLong (env k (str default)))
     (catch Exception _ default)))
 
+(defn- env-bool
+  [k default]
+  (let [v (str/lower-case (env k (str default)))]
+    (#{"1" "true" "yes" "on"} v)))
+
 (defn- rss-mb
   []
   (try
@@ -34,44 +41,79 @@
         (long (/ (Long/parseLong out) 1024))))
     (catch Exception _ nil)))
 
+(defn- assert-storage-safe!
+  "Recusa storages de referência M5.3B/M5.5 e paths de produção."
+  [storage]
+  (let [s (str storage)]
+    (when (re-find #"(?i)m53-real-offline|m55-real-offline|m53-real-offline-bak|prod|oracle|odisseu-live"
+                   s)
+      (throw (ex-info "bridge_storage_forbidden"
+                      {:storage s
+                       :hint "Use .datomic-local/m61-staging (ou volume staging dedicado)."})))))
+
 (defn- seed-demo!
-  "Dados fictícios in-process — nunca exposto como rota HTTP."
+  "Dados sintéticos in-process — nunca exposto como rota HTTP."
   [s]
-  (let [chat "chat-m41-ficticio"
-        player "player-m41"]
-    (trainer/create-trainer! s {:chat-id chat :player-id player})
-    (coll-app/adicionar-pokemon!
-     s chat player
-     {:species "Bulbasaur" :nome "Bulbasaur" :shiny false :nivel 12
-      :hp 45 :ataque 49 :defesa 49 :atq-esp 65 :def-esp 65 :veloc 45
-      :tipos ["grama"] :golpes [] :raridade "comum"}
-     45 nil)
-    (coll-app/creditar-moedas! s chat player 120 "m41-seed-coins")
-    (coll-app/ajustar-inventario! s chat player "poke-ball" 5 "m41-seed-item")
-    {:chat-id chat :player-id player}))
+  (let [chat "chat-m61-staging"
+        player "player-m61"]
+    (when-not (ports/get-player s chat player)
+      (trainer/create-trainer! s {:chat-id chat :player-id player})
+      (coll-app/adicionar-pokemon!
+       s chat player
+       {:species "Bulbasaur" :nome "Bulbasaur" :shiny false :nivel 12
+        :hp 45 :ataque 49 :defesa 49 :atq-esp 65 :def-esp 65 :veloc 45
+        :tipos ["grama"]
+        :golpes [{:nome-exibicao "Investida" :tipo "normal" :poder 40 :classe :fisico}]
+        :raridade "comum"}
+       45 nil)
+      (coll-app/creditar-moedas! s chat player 120 "m61-seed|coins")
+      (coll-app/ajustar-inventario! s chat player "poke-ball" 5 "m61-seed|poke-ball")
+      (coll-app/ajustar-inventario! s chat player "great-ball" 2 "m61-seed|great-ball"))
+    {:chat-id chat :player-id player :seeded true}))
 
 (defn -main
   [& _]
   (let [host (env "ODISSEU_BRIDGE_HOST" "127.0.0.1")
         port (env-int "ODISSEU_BRIDGE_PORT" 18090)
-        token (env "ODISSEU_BRIDGE_TOKEN" "dev-bridge-token")
-        system (env "ODISSEU_BRIDGE_SYSTEM" "odisseu-m41-bridge")
-        storage (env "ODISSEU_BRIDGE_STORAGE" ".datomic-local/m41-bridge")
-        db-name (env "ODISSEU_BRIDGE_DB" "bridge")
-        seed? (= "true" (str/lower-case (env "ODISSEU_BRIDGE_SEED" "false")))
+        token (env "ODISSEU_BRIDGE_TOKEN")
+        _ (when (str/blank? token)
+            (throw (ex-info "ODISSEU_BRIDGE_TOKEN obrigatório (não use default em staging)." {})))
+        system (env "ODISSEU_BRIDGE_SYSTEM" "odisseu-m61-staging")
+        storage (env "ODISSEU_BRIDGE_STORAGE" ".datomic-local/m61-staging")
+        db-name (env "ODISSEU_BRIDGE_DB" "staging")
+        seed? (env-bool "ODISSEU_BRIDGE_SEED" false)
+        reset? (env-bool "ODISSEU_BRIDGE_RESET" false)
+        private-bind? (env-bool "ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND" false)
+        allow-rng? (env-bool "ODISSEU_BRIDGE_ALLOW_TEST_RNG" false)
+        _ (assert-storage-safe! storage)
+        _ (when (and (= "0.0.0.0" host) (not private-bind?))
+            (throw (ex-info "private_bind_required"
+                            {:hint "Defina ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND=true para 0.0.0.0."})))
         client (persistence/client {:system system :storage-dir storage})
-        _ (when seed? (persistence/delete-db! client db-name))
+        _ (when reset?
+            (println "[odisseu-bridge] RESET — apagando db" db-name)
+            (persistence/delete-db! client db-name))
         conn (persistence/ensure-db! client db-name)
         s (doto (store/make-store conn) trainer/bootstrap!)
         demo (when seed? (seed-demo! s))
-        http (bridge/start! {:host host :port port :token token :store s})]
+        http (bridge/start! {:host host
+                             :port port
+                             :token token
+                             :store s
+                             :allow-test-rng allow-rng?
+                             :allow-private-bind private-bind?})
+        stopped (atom false)
+        stop! (fn []
+                (when (compare-and-set! stopped false true)
+                  (bridge/stop! http)
+                  (println "[odisseu-bridge] stopped")))]
     (println "[odisseu-bridge] up"
              (:base-url http)
+             "host=" host
              "rss-mb=" (rss-mb)
+             "storage=" storage
+             "system=" system
+             "db=" db-name
              (when demo (str "seed=" (pr-str demo))))
-    (.addShutdownHook
-     (Runtime/getRuntime)
-     (Thread. #(do (bridge/stop! http)
-                   (println "[odisseu-bridge] stopped"))))
-    ;; Mantém o processo vivo até SIGINT/SIGTERM.
+    (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable stop!))
     @(promise)))

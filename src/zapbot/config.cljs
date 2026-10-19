@@ -73,7 +73,7 @@
 (def pokemon-event-poll-ms (inteiro-positivo "POKEMON_EVENT_POLL_MS" 15000))
 (def pokemon-max-media-bytes (inteiro-positivo "POKEMON_MAX_MEDIA_BYTES" (* 10 1024 1024)))
 
-;; M4.1 — bridge JVM somente em development. Produção ignora e usa legado.
+;; M4.1/M6.1 — bridge JVM em development|staging. Produção sempre força legado.
 ;; POKEMON_ADAPTER=legacy|jvm (default legacy). Sem fallback de escrita.
 (def pokemon-jvm-url (env "POKEMON_JVM_URL" "http://127.0.0.1:18090"))
 (def pokemon-jvm-token (env "POKEMON_JVM_TOKEN"))
@@ -81,10 +81,11 @@
 (def pokemon-jvm-timeout-ms (inteiro-positivo "POKEMON_JVM_TIMEOUT_MS" 8000))
 (def ^:private pokemon-adapter-raw
   (str/lower-case (str/trim (env "POKEMON_ADAPTER" "legacy"))))
+(def ^:private jvm-adapter-envs #{"development" "staging"})
 (def pokemon-adapter
   (cond
-    (and (= "jvm" pokemon-adapter-raw) (= "development" app-env)) "jvm"
-    (= "jvm" pokemon-adapter-raw) "legacy" ;; produção/staging: forçar legado
+    (and (= "jvm" pokemon-adapter-raw) (contains? jvm-adapter-envs app-env)) "jvm"
+    (= "jvm" pokemon-adapter-raw) "legacy" ;; production e demais: forçar legado
     :else "legacy"))
 (def pokemon-jvm-enabled?
   (= "jvm" pokemon-adapter))

@@ -5,6 +5,8 @@ target/
 .wwebjs_cache/
 data/
 .env
+.env.staging
+.env.*.local
 *.log
 .nrepl-port
 .clj-kondo/*

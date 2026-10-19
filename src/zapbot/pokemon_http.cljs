@@ -1118,7 +1118,7 @@
              (p/then anterior
                      (fn [_]
                        (when (and @cliente-whatsapp
-                                  (or (not= config/app-env "development")
+                                  (or (not (contains? #{"development" "staging"} config/app-env))
                                       (= (:chatId evento) config/dev-group-id)))
                          (enfileirar!
                           (:chatId evento)

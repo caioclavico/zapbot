@@ -12,7 +12,8 @@
            [java.nio.charset StandardCharsets]
            [java.util.concurrent Executors]))
 
-(def ^:private allowed-hosts #{"127.0.0.1" "localhost" "::1"})
+(def ^:private loopback-hosts #{"127.0.0.1" "localhost" "::1"})
+;; 0.0.0.0 só com flag explícita (rede privada Docker). Nunca publicar a porta.
 
 ;; operation-id em voo → :operation_pending (sem inventar novo id no cliente).
 (def ^:private inflight (atom #{}))
@@ -1044,32 +1045,39 @@
           (handle-error! ex t))))))
 
 (defn start!
-  "Sobe HttpServer em loopback. Retorna {:server … :port … :host …}.
+  "Sobe HttpServer. Default: loopback.
+  `:allow-private-bind true` permite host 0.0.0.0 (rede privada de containers);
+  a porta NÃO deve ser publicada publicamente no Compose.
   `:allow-test-rng true` só para smoke/dev — nunca no caminho WhatsApp."
-  [{:keys [host port token store allow-test-rng]
-    :or {host "127.0.0.1" port 18090 allow-test-rng false}}]
-  (when-not (contains? allowed-hosts host)
-    (throw (ex-info "bridge_host_forbidden"
-                    {:host host
-                     :allowed allowed-hosts
-                     :message "Bridge só pode bindar em loopback."})))
-  (when (or (nil? token) (str/blank? token))
-    (throw (ex-info "bridge_token_required" {})))
-  (when (nil? store)
-    (throw (ex-info "bridge_store_required" {})))
-  (let [addr (InetSocketAddress. ^String host (int port))
-        server (HttpServer/create addr 0)
-        handler (make-handler store token (boolean allow-test-rng))]
-    (.createContext server "/" handler)
-    (.setExecutor server (Executors/newFixedThreadPool 8))
-    (.start server)
-    (let [bound (.getPort (.getAddress server))]
-      {:server server
-       :host host
-       :port bound
-       :base-url (str "http://" host ":" bound)
-       :allow-test-rng (boolean allow-test-rng)
-       :stop! (fn [] (.stop server 0))})))
+  [{:keys [host port token store allow-test-rng allow-private-bind]
+    :or {host "127.0.0.1" port 18090 allow-test-rng false allow-private-bind false}}]
+  (let [allowed (cond-> loopback-hosts
+                  allow-private-bind (conj "0.0.0.0"))]
+    (when-not (contains? allowed host)
+      (throw (ex-info "bridge_host_forbidden"
+                      {:host host
+                       :allowed allowed
+                       :message "Bridge só binda em loopback (ou 0.0.0.0 com allow-private-bind)."})))
+    (when (or (nil? token) (str/blank? token))
+      (throw (ex-info "bridge_token_required" {})))
+    (when (nil? store)
+      (throw (ex-info "bridge_store_required" {})))
+    (let [addr (InetSocketAddress. ^String host (int port))
+          server (HttpServer/create addr 0)
+          handler (make-handler store token (boolean allow-test-rng))]
+      (.createContext server "/" handler)
+      (.setExecutor server (Executors/newFixedThreadPool 8))
+      (.start server)
+      (let [bound (.getPort (.getAddress server))
+            ;; URL interna: em 0.0.0.0 use 127.0.0.1 para health local
+            url-host (if (= "0.0.0.0" host) "127.0.0.1" host)]
+        {:server server
+         :host host
+         :port bound
+         :base-url (str "http://" url-host ":" bound)
+         :allow-test-rng (boolean allow-test-rng)
+         :allow-private-bind (boolean allow-private-bind)
+         :stop! (fn [] (.stop server 1))}))))
 
 (defn stop!
   [{:keys [stop!]}]
