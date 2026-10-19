@@ -153,6 +153,11 @@
 (def platform-datomic-enabled?
   (= "datomic" platform-adapter))
 
+;; M7.7 — staging/dev com Platform Datomic + Pokémon JVM: sem boot Cassandra.
+;; Produção nunca entra aqui (adapters forçados a cassandra/legacy).
+(def cassandra-boot-enabled?
+  (not (and platform-datomic-enabled? pokemon-jvm-enabled?)))
+
 ;; Diagnóstico passivo do processo e navegador; false elimina o coletor/timers.
 (def odisseu-resource-metrics-enabled
   (= "true" (str/lower-case (env "ODISSEU_RESOURCE_METRICS_ENABLED" "true"))))

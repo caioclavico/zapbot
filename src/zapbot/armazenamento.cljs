@@ -5,24 +5,36 @@
   inicialização desta versão, cada JSON antigo é dividido automaticamente em
   linhas na tabela `estado_particionado`. Um marcador só é gravado depois que
   todas as linhas do módulo forem copiadas, permitindo repetir com segurança
-  uma migração interrompida."
+  uma migração interrompida.
+
+  M7.7: em staging/dev com PLATFORM_ADAPTER=datomic e POKEMON_ADAPTER=jvm,
+  `iniciar!` NÃO cria cliente Cassandra (fail-closed via bridge JVM/Datomic)."
   (:require [promesa.core :as p]
-            ["cassandra-driver" :as cassandra]
             [zapbot.config :as config]))
 
-(def ^:private Client (.-Client cassandra))
 (def ^:private tabela-antiga (str config/cassandra-keyspace ".estado"))
 (def ^:private tabela (str config/cassandra-keyspace ".estado_particionado"))
 (def ^:private marcador-migracao "__migrado__")
 (def ^:private particao-valor "__valor__")
 
 (defonce ^:private client (atom nil))
+(defonce ^:private client-constructed? (atom false))
 (defonce ^:private cache (atom {}))
 (defonce ^:private confirmados (atom {}))
 (defonce ^:private registros (atom {}))
 ;; Serializa gravações do mesmo módulo para uma atualização antiga nunca
 ;; terminar depois de uma nova e restaurar dados removidos.
 (defonce ^:private filas-gravacao (atom {}))
+
+(defn cliente-construido?
+  "True se algum Client Cassandra foi instanciado nesta execução."
+  []
+  (boolean @client-constructed?))
+
+(defn cliente-ativo?
+  "True se há conexão Cassandra viva (client atom)."
+  []
+  (some? @client))
 
 (defn- esperar [ms]
   (p/create (fn [resolve _] (js/setTimeout resolve ms))))
@@ -64,6 +76,13 @@
     (get partes-modulo particao-valor)
     partes-modulo))
 
+(defn- make-cassandra-client [opts]
+  "Lazy-require: só carrega cassandra-driver quando o boot Cassandra está ativo."
+  (let [cassandra (js/require "cassandra-driver")
+        Client (.-Client cassandra)]
+    (reset! client-constructed? true)
+    (Client. opts)))
+
 (defn- gravar-parte! [c modulo particao valor]
   (.execute c (str "INSERT INTO " tabela " (modulo, particao, valor) VALUES (?, ?, ?)")
             #js [modulo (str particao) (json valor)] #js {:prepare true}))
@@ -86,7 +105,8 @@
   Retorna uma promise que termina quando esta gravação entra em ordem e conclui.
   O diff usa somente o último snapshot confirmado: uma falha parcial será
   repetida de forma idempotente pela próxima gravação, em vez de desaparecer
-  atrás do cache otimista."
+  atrás do cache otimista.
+  Sem cliente Cassandra (staging Datomic/JVM ou falha de boot): só memória."
   [chave valor]
   (do
     (swap! cache assoc chave valor)
@@ -115,10 +135,19 @@
       (p/resolved nil))))
 
 (defn salvar-confirmado!
-  "Usado por recibos HTTP: ausência de Cassandra nunca confirma entrega/efeito."
+  "Usado por recibos HTTP: ausência de Cassandra nunca confirma entrega/efeito
+  em modo legado. Em staging Datomic+JVM confirma só em memória (sem C*)."
   [chave valor]
-  (if @client
+  (cond
+    (not config/cassandra-boot-enabled?)
+    (do (swap! cache assoc chave valor)
+        (swap! confirmados assoc chave valor)
+        (p/resolved true))
+
+    @client
     (salvar! chave valor)
+
+    :else
     (p/rejected (js/Error. "Cassandra indisponível; persistência não confirmada."))))
 
 (defn aguardar-todas!
@@ -184,35 +213,44 @@
 
 (defn iniciar!
   "Cria a estrutura nova, migra dados legados de modo retomável e hidrata os
-  módulos registrados. Se o Cassandra falhar, o bot continua sem persistência."
+  módulos registrados. Se o Cassandra falhar, o bot continua sem persistência.
+
+  M7.7 staging (datomic+jvm): não instancia Client, não conecta, não roda CQL."
   []
-  (let [c (Client. #js {:contactPoints (clj->js config/cassandra-contact-points)
-                        :localDataCenter config/cassandra-datacenter})]
-    (reset! client c)
-    (-> (p/let [_ (conectar-com-retry c tentativas-conexao)
-                _ (.execute c (str "CREATE KEYSPACE IF NOT EXISTS " config/cassandra-keyspace
-                                   " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"))
-                _ (.execute c (str "CREATE TABLE IF NOT EXISTS " tabela-antiga
-                                   " (chave text PRIMARY KEY, valor text)"))
-                _ (.execute c (str "CREATE TABLE IF NOT EXISTS " tabela
-                                   " (modulo text, particao text, valor text, PRIMARY KEY ((modulo, particao)))"))
-                [novas antigas] (carregar-registrados! c)]
-          (let [{:keys [dados migrados]} (linhas->modulos novas)
-                legados (into {} (map (fn [row] [(.-chave row) (ler-json (.-valor row))])
-                                      antigas))
-                pendentes (remove (fn [[modulo _]] (contains? migrados modulo)) legados)]
-            ;; Durante esta inicialização, módulos ainda não marcados usam o
-            ;; JSON legado completo. A próxima inicialização já lerá as partes.
-            (let [carregados
-                  (merge (into {} (map (fn [[modulo ps]] [modulo (reconstruir ps)]) dados))
-                         (into {} pendentes))]
-              (reset! cache carregados)
-              (reset! confirmados carregados))
-            (doseq [[chave [atom-chamador transformar]] @registros]
-              (when (contains? @cache chave)
-                (reset! atom-chamador (transformar (get @cache chave)))))
-            (p/let [_ (p/all (map (fn [[modulo valor]] (migrar-modulo! c modulo valor)) pendentes))]
-              (js/console.log "✅ Conectado ao Cassandra; estado particionado carregado."))))
-        (p/catch (fn [err]
-                   (js/console.error "❌ Não consegui conectar/preparar o Cassandra - seguindo sem persistência nessa execução:" err)
-                   (reset! client nil))))))
+  (if-not config/cassandra-boot-enabled?
+    (do
+      (reset! client nil)
+      ;; Não zera client-constructed?: se algo já construiu, a prova negativa falha.
+      (js/console.log "[armazenamento] Cassandra desligado (APP_ENV staging/dev + PLATFORM_ADAPTER=datomic + POKEMON_ADAPTER=jvm). Persistência via bridge JVM/Datomic.")
+      (p/resolved {:mode "datomic-jvm" :cassandra false}))
+    (let [c (make-cassandra-client
+             #js {:contactPoints (clj->js config/cassandra-contact-points)
+                  :localDataCenter config/cassandra-datacenter})]
+      (reset! client c)
+      (-> (p/let [_ (conectar-com-retry c tentativas-conexao)
+                  _ (.execute c (str "CREATE KEYSPACE IF NOT EXISTS " config/cassandra-keyspace
+                                     " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"))
+                  _ (.execute c (str "CREATE TABLE IF NOT EXISTS " tabela-antiga
+                                     " (chave text PRIMARY KEY, valor text)"))
+                  _ (.execute c (str "CREATE TABLE IF NOT EXISTS " tabela
+                                     " (modulo text, particao text, valor text, PRIMARY KEY ((modulo, particao)))"))
+                  [novas antigas] (carregar-registrados! c)]
+            (let [{:keys [dados migrados]} (linhas->modulos novas)
+                  legados (into {} (map (fn [row] [(.-chave row) (ler-json (.-valor row))])
+                                        antigas))
+                  pendentes (remove (fn [[modulo _]] (contains? migrados modulo)) legados)]
+              ;; Durante esta inicialização, módulos ainda não marcados usam o
+              ;; JSON legado completo. A próxima inicialização já lerá as partes.
+              (let [carregados
+                    (merge (into {} (map (fn [[modulo ps]] [modulo (reconstruir ps)]) dados))
+                           (into {} pendentes))]
+                (reset! cache carregados)
+                (reset! confirmados carregados))
+              (doseq [[chave [atom-chamador transformar]] @registros]
+                (when (contains? @cache chave)
+                  (reset! atom-chamador (transformar (get @cache chave)))))
+              (p/let [_ (p/all (map (fn [[modulo valor]] (migrar-modulo! c modulo valor)) pendentes))]
+                (js/console.log "✅ Conectado ao Cassandra; estado particionado carregado."))))
+          (p/catch (fn [err]
+                     (js/console.error "❌ Não consegui conectar/preparar o Cassandra - seguindo sem persistência nessa execução:" err)
+                     (reset! client nil)))))))

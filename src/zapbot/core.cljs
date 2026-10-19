@@ -245,6 +245,11 @@
       (.on client "group_admin_changed" on-group-admin-changed)
       (-> (armazenamento/iniciar!)
           (p/then (fn [_]
+                    (when (and (platform/enabled?) config/pokemon-jvm-enabled?)
+                      (js/console.log "[boot] staging Datomic+JVM: Cassandra"
+                                      (if (armazenamento/cliente-construido?)
+                                        "FOI instanciado (inesperado)"
+                                        "não instanciado")))
                     (if (platform/enabled?)
                       (-> (p/all [(bloqueio/hidratar-datomic!)
                                   (admins/hidratar-datomic!)

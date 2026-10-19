@@ -46,3 +46,26 @@
           (p/then (fn [_] (is false "Confirmação não pode depender apenas da memória.")))
           (p/catch (fn [erro] (is (str/includes? (.-message erro) "indisponível"))))
           (p/finally (fn [] (reset! armazenamento/client anterior) (done)))))))
+
+(deftest staging-datomic-jvm-nao-constroi-cliente-cassandra
+  "M7.7 prova negativa: com cassandra-boot desligado, iniciar! não instancia Client."
+  (async done
+    (let [antes-construido (armazenamento/cliente-construido?)
+          antes-client @armazenamento/client]
+      (with-redefs [zapbot.config/cassandra-boot-enabled? false]
+        (reset! armazenamento/client nil)
+        (-> (armazenamento/iniciar!)
+            (p/then (fn [res]
+                      (is (= false (:cassandra res)))
+                      (is (false? (armazenamento/cliente-ativo?)))
+                      ;; Não pode ter construído Client nesta chamada.
+                      (is (= antes-construido (armazenamento/cliente-construido?)))
+                      (-> (armazenamento/salvar-confirmado! "pokemon-http-deliveries" {"x" 1})
+                          (p/then (fn [_]
+                                    (is (= {"x" 1} (armazenamento/obter "pokemon-http-deliveries")))
+                                    (done))))))
+            (p/catch (fn [erro]
+                       (is false (str erro))
+                       (done)))
+            (p/finally (fn []
+                         (reset! armazenamento/client antes-client))))))))
