@@ -648,11 +648,38 @@ function formatBattleState(battle, prefix = '!pk', opts = {}) {
     barraHp(hpO.atual, hpO.max),
     reservas,
     '',
-    `Escolha: ${prefix} atacar <1-${nGolpes}> ou ${prefix} <1-${nGolpes}>`,
+    `Escolha: ${prefix} atacar <1-${nGolpes}> · ${prefix} <1-${nGolpes}> · ${prefix} defender · ${prefix} pocao`,
     golpes,
     '',
-    `📖 Ações de batalha: ${prefix} atacar ajuda.`
+    `📖 Ações: ${prefix} atacar ajuda · ${prefix} defender · ${prefix} pocao`
   ].filter(v => v !== null).join('\n');
+}
+
+/** Clima / áreas do dia — plano de caça (mundo), sem TX. */
+function formatWorldInfo(plan, prefix = '!pk') {
+  const mundo = (plan && plan.mundo) || {};
+  const clima = (plan && plan.clima) || mundo.clima || {};
+  const disponiveis = mundo.areasDisponiveis || mundo['areas-disponiveis'] || [];
+  const padrao = mundo.areaPadrao || mundo['area-padrao'] || (plan && plan.area) || {};
+  const indisponiveis = mundo.areasIndisponiveis || mundo['areas-indisponiveis'] || [];
+  const linhasDisp = disponiveis.length
+    ? disponiveis.map(a => `${a.emoji || '🗺️'} *${a.nome || a.id}* (${(a.tipos || []).join(', ') || '?'})`).join('\n')
+    : 'Nenhuma área listada.';
+  const linhasInd = indisponiveis.length
+    ? `\n🔒 Indisponíveis hoje:\n${indisponiveis.map(a => `${a.emoji || '·'} ${a.nome || a.id}`).join('\n')}`
+    : '';
+  return [
+    `${clima.emoji || '☁️'} Clima de hoje: *${clima.nome || '?'}*`,
+    `Tipos favorecidos: ${(clima.tipos || []).join(', ') || '?'}`,
+    '',
+    `📍 Área padrão agora: ${padrao.emoji || '🗺️'} *${padrao.nome || padrao.id || '?'}*`,
+    '',
+    '🗺️ Áreas disponíveis:',
+    linhasDisp,
+    linhasInd,
+    '',
+    `Caçar: ${prefix} cacar [área] · Ex.: ${prefix} cacar ${padrao.id || 'praia'}`
+  ].join('\n');
 }
 
 function formatHuntStart(plan, result, prefix = '!pk') {
@@ -783,14 +810,31 @@ function formatBattleTurn(data, prefix = '!pk') {
     return `💨 *${nome}* fugiu durante a batalha!`;
   }
   const la = b.lastAction || {};
-  const dano = la.dano != null ? `Último golpe: ${la.dano} de dano.` : null;
   const switchLine = b.lastSwitch && b.lastSwitch.nome
     ? `🔁 Entra *${b.lastSwitch.nome}*!`
     : null;
+  let acaoLinha = null;
+  if (la.action === 'defend' || la.action === ':defend') {
+    acaoLinha = la.impedido
+      ? '🛡️ Tentou defender, mas ficou impedido pelo status.'
+      : '🛡️ Entrou em posição defensiva (esquiva / metade do dano).';
+  } else if (la.action === 'item' || la.action === ':item') {
+    if (la.hpDepois != null) {
+      acaoLinha = `🧪 Usou *${la.itemId || 'poção'}* e recuperou HP (${la.hpAntes}→${la.hpDepois}/${la.hpMax}).`;
+    } else if (la.statusCleared) {
+      acaoLinha = `💊 Curou status *${la.statusCleared}* com \`${la.itemId}\`.`;
+    } else if (la.impedido) {
+      acaoLinha = '🧪 Tentou usar item, mas ficou impedido pelo status.';
+    } else {
+      acaoLinha = `🧪 Usou item \`${la.itemId || '?'}\`.`;
+    }
+  } else if (la.dano != null) {
+    acaoLinha = `Último golpe: ${la.dano} de dano.`;
+  }
   const cabeçalhoTurno = [
     switchLine,
     `⚔️ Turno ${b.turnIndex != null ? b.turnIndex : '?'}`,
-    dano
+    acaoLinha
   ].filter(Boolean).join('\n');
   const estado = formatBattleState(b, prefix);
   if (estado.startsWith('❌')) return estado;
@@ -1340,6 +1384,8 @@ const ALIASES = {
   capturar: 'capturar', cap: 'capturar',
   cacar: 'cacar', caçar: 'cacar', cac: 'cacar', hunt: 'cacar',
   atacar: 'atacar', ataque: 'atacar', atk: 'atacar',
+  defender: 'defender', defesa: 'defender', def: 'defender',
+  esquivar: 'defender', evasiva: 'defender',
   ginasio: 'ginasio', ginásio: 'ginasio', ginasios: 'ginasio', ginásios: 'ginasio',
   gin: 'ginasio',
   raid: 'raid', raide: 'raid', raides: 'raid', raids: 'raid',
@@ -1352,6 +1398,7 @@ const ALIASES = {
   curar: 'curar', cura: 'curar', cur: 'curar',
   pocao: 'pocao', 'poção': 'pocao', pot: 'pocao', vida: 'pocao',
   'pocao-maxima': 'pocao-maxima', maxima: 'pocao-maxima', pmax: 'pocao-maxima',
+  clima: 'clima', areas: 'clima', áreas: 'clima', mapa: 'clima',
   recibo: 'recibo', op: 'recibo', operation: 'recibo'
 };
 
@@ -1383,6 +1430,7 @@ module.exports = {
   formatHuntStart,
   formatBattleState,
   formatBattleTurn,
+  formatWorldInfo,
   barraHp,
   menuGolpes,
   textoRaridade,

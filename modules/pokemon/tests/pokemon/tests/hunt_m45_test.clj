@@ -257,6 +257,76 @@
                :ok
                (catch Exception ex (err/error-code ex))))))))
 
+(def ^:private rng-safe
+  {:damage-var 0 :crit 99 :flee 99 :accuracy 0
+   :contagio 99 :status-golpe 99 :wild-move 0 :impede-para 99
+   :cura-sono 99 :cura-gelo 99 :cura-confusao 99 :auto-confusao 99})
+
+(deftest defender-e-pocao-mid-caca-a1
+  "A1: !pk defender e !pk pocao durante caçada (turno + inventário)."
+  (let [s (fresh-store! "hunt-a1")
+        chat "chat-a1"
+        player "ash"
+        agora 1700000500000]
+    (boot! s chat player)
+    (reward-app/admin-seed-reward!
+     s {:operation-id "seed-pocao-a1"
+        :chat-id chat :player-id player :save-id "a"
+        :item {:item-id "pocao" :qty 2}})
+    (let [start (hunt-app/start-hunt!
+                 s chat player
+                 {:operation-id "hunt-a1"
+                  :area-id "praia"
+                  :tipos-encontro ["water"]
+                  :surto? false
+                  :poder-alvo 320
+                  :candidates [geodude-cand]
+                  :agora-ms agora
+                  :shiny-roll 1})
+          bid (:battle-id start)
+          def1 (battle-app/confirm-turn!
+                s chat player
+                {:operation-id "def-1"
+                 :battle-id bid
+                 :expected-turn-index 0
+                 :action :defend
+                 :rng rng-safe})
+          def2 (battle-app/confirm-turn!
+                s chat player
+                {:operation-id "def-1"
+                 :battle-id bid
+                 :expected-turn-index 0
+                 :action :defend
+                 :rng rng-safe})
+          pot (battle-app/confirm-turn!
+               s chat player
+               {:operation-id "pot-1"
+                :battle-id bid
+                :expected-turn-index 1
+                :action :item
+                :item-id "pocao"
+                :rng rng-safe})
+          pot2 (battle-app/confirm-turn!
+                s chat player
+                {:operation-id "pot-1"
+                 :battle-id bid
+                 :expected-turn-index 1
+                 :action :item
+                 :item-id "pocao"
+                 :rng rng-safe})
+          la (:last-action (:battle pot))
+          inv (ports/list-inventory s chat player "a")
+          qty-pocao (:qty (first (filter #(= "pocao" (:item-id %)) inv)) 0)]
+      (is (= :defend (get-in def1 [:battle :last-action :action])))
+      (is (true? (:active? (:battle def1))))
+      (is (true? (:duplicate def2)))
+      (is (= :item (:action la)))
+      (is (= "pocao" (:item-id la)))
+      (is (pos? (- (long (:hp-depois la 0)) (long (:hp-antes la 0))))
+          "cura da poção registrada no last-action (antes do revide)")
+      (is (true? (:duplicate pot2)))
+      (is (= 1 qty-pocao) "uma poção consumida; retry idempotente não consome de novo"))))
+
 (deftest isolamento-chat-e-cooldown
   (let [s (fresh-store! "hunt-iso")
         chat "chat-iso"

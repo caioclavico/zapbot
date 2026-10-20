@@ -48,6 +48,60 @@ test('resolveCommand mapeia !pk 1–4 para atacar', () => {
   assert.equal(present.resolveCommand(['0']), null);
 });
 
+test('A1 aliases defender / clima e formatBattleTurn item/defend', () => {
+  assert.equal(present.resolveCommand(['defender']), 'defender');
+  assert.equal(present.resolveCommand(['def']), 'defender');
+  assert.equal(present.resolveCommand(['esquivar']), 'defender');
+  assert.equal(present.resolveCommand(['clima']), 'clima');
+  assert.equal(present.resolveCommand(['areas']), 'clima');
+  assert.equal(present.resolveCommand(['mapa']), 'clima');
+
+  const defText = present.formatBattleTurn({
+    battle: {
+      active: true,
+      turnIndex: 1,
+      area: praia,
+      hp: { x: 90, o: 70 },
+      pokemonX: { ...squirtle, hpAtual: 90 },
+      pokemonO: { ...magikarp, hpAtual: 70 },
+      lastAction: { action: 'defend' }
+    }
+  }, '!pk');
+  assert.match(defText, /defensiv/);
+  assert.match(defText, /defender/);
+
+  const potText = present.formatBattleTurn({
+    battle: {
+      active: true,
+      turnIndex: 2,
+      area: praia,
+      hp: { x: 100, o: 70 },
+      pokemonX: { ...squirtle, hpAtual: 100 },
+      pokemonO: { ...magikarp, hpAtual: 70 },
+      lastAction: { action: 'item', itemId: 'pocao', hpAntes: 60, hpDepois: 100, hpMax: 100 }
+    }
+  }, '!pk');
+  assert.match(potText, /pocao|poção|HP/i);
+  assert.match(potText, /60→100/);
+});
+
+test('formatWorldInfo lista clima e áreas', () => {
+  const text = present.formatWorldInfo({
+    clima: { id: 'chuvoso', nome: 'Chuvoso', emoji: '🌧️', tipos: ['water'] },
+    mundo: {
+      clima: { id: 'chuvoso', nome: 'Chuvoso', emoji: '🌧️', tipos: ['water'] },
+      areaPadrao: { id: 'praia', nome: 'Praia Azul', emoji: '🏖️' },
+      areasDisponiveis: [
+        { id: 'praia', nome: 'Praia Azul', emoji: '🏖️', tipos: ['water'] }
+      ],
+      areasIndisponiveis: []
+    }
+  }, '!pk');
+  assert.match(text, /Chuvoso/);
+  assert.match(text, /Praia Azul/);
+  assert.match(text, /cacar/);
+});
+
 test('barraHp proporcional (10 segmentos) e HP zero', () => {
   assert.equal(present.barraHp(50, 100), '[█████░░░░░] 50/100');
   assert.equal(present.barraHp(0, 100), '[░░░░░░░░░░] 0/100');

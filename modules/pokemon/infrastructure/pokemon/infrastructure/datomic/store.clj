@@ -20,6 +20,7 @@
             [pokemon.domain.ops :as ops]
             [pokemon.domain.raid :as raid-domain]
             [pokemon.domain.reward :as reward]
+            [pokemon.domain.shop :as shop]
             [pokemon.domain.xp :as xp]
             [pokemon.domain.status :as status]
             [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
@@ -1527,9 +1528,20 @@
                                            {:expected expected
                                             :actual (:turn-index state)})))
                      action (keyword (:action request))
+                     item-id (when (= :item action)
+                               (shop/normalizar-item (str (:item-id request))))
+                     ;; Poção/cura mid-caça: valida inventário antes do turno (legado).
+                     inv-tx (when (= :item action)
+                              (inventory-adjust-tx db
+                                                   (id/save-key (:chat-id writer-ctx)
+                                                                (:player-id writer-ctx)
+                                                                (:save-id writer-ctx))
+                                                   item-id -1))
                      next-state (battle/apply-player-turn
                                  state
-                                 {:action action :move-index (:move-index request)}
+                                 {:action action
+                                  :move-index (:move-index request)
+                                  :item-id item-id}
                                  (:rng request))
                      pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
                      sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
@@ -1632,7 +1644,8 @@
                      rev-tx (when-not gym-finished?
                               [[:db/cas [:save/key sk] :save/revision rev (inc rev)]])
                      tx (into (into battle-core (or rev-tx []))
-                              (concat (or hp-sync [])
+                              (concat (or inv-tx [])
+                                      (or hp-sync [])
                                       (or clear-active [])
                                       (or (:tx xp-part) [])
                                       (or (:tx resolve-part) [])))]

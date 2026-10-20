@@ -95,12 +95,13 @@
                               :veloc :tipos :habilidade :item :golpes :nivel :raridade]))}))
 
 (defn battle-turn-payload
-  [{:keys [battle-id expected-turn-index action move-index rng]}]
+  [{:keys [battle-id expected-turn-index action move-index item-id rng]}]
   (reward/canonicalize
    (cond-> {:battle-id battle-id
             :expected-turn-index (long expected-turn-index)
             :action (name action)}
      (some? move-index) (assoc :move-index (long move-index))
+     (some? item-id) (assoc :item-id (str item-id))
      (map? rng) (assoc :rng (reward/canonicalize rng)))))
 
 (defn gym-challenge-start-payload

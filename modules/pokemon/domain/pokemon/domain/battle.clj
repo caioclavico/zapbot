@@ -5,6 +5,7 @@
             [pokemon.domain.damage :as dmg]
             [pokemon.domain.errors :as err]
             [pokemon.domain.rng :as rng]
+            [pokemon.domain.shop :as shop]
             [pokemon.domain.status :as status]))
 
 (def golpe-padrao
@@ -316,10 +317,47 @@
             (zero? (get-in b [:hp :o])) (resolve-faint b :o)
             :else b))))))
 
+(defn- apply-item-heal
+  "Poção mid-batalha (legado pocao-na-cacada). Inventário é consumido no store."
+  [battle item-id]
+  (let [id (shop/normalizar-item (str item-id))
+        meta (shop/item id)
+        fracao (:cura-hp meta)]
+    (when-not fracao
+      (throw (err/error :item_use_unsupported
+                        {:item-id id :allowed ["pocao" "pocao-maxima"]})))
+    (let [px (get-in battle [:pokemons :x])
+          heal (shop/aplicar-pocao
+                {:hp (:hp px)
+                 :hp-atual (get-in battle [:hp :x])}
+                fracao)]
+      (-> battle
+          (assoc-in [:hp :x] (long (:hp-depois heal)))
+          (assoc :last-item {:item-id id
+                             :hp-antes (:hp-antes heal)
+                             :hp-depois (:hp-depois heal)
+                             :hp-max (:hp-max heal)})))))
+
+(defn- apply-item-status-cure
+  "Cura de status mid-batalha (legado curar-na-cacada)."
+  [battle item-id]
+  (let [id (shop/normalizar-item (str item-id))
+        st (get-in battle [:status :x])
+        esperado (shop/cura-status-item (when st (name st)))]
+    (when-not st
+      (throw (err/error :no_status_to_cure {})))
+    (when-not (= id esperado)
+      (throw (err/error :wrong_status_item
+                        {:item-id id :status (name st) :expected esperado})))
+    (-> battle
+        (assoc-in [:status :x] nil)
+        (assoc :last-item {:item-id id :status-cleared (name st)}))))
+
 (defn apply-player-turn
-  "Aplica :attack | :defend do jogador e a resposta do selvagem.
-  Incrementa turn-index. Exige phase=:active."
-  [battle {:keys [action move-index]} rng]
+  "Aplica :attack | :defend | :item do jogador e a resposta do selvagem.
+  Incrementa turn-index. Exige phase=:active.
+  `:item` exige `:item-id` (pocao / pocao-maxima / cura de status); consumo no store."
+  [battle {:keys [action move-index item-id]} rng]
   (when-not (and (= :active (:phase battle)) (:active? battle))
     (throw (err/error :battle_not_active {:phase (:phase battle)})))
   (let [rng (or rng {})
@@ -336,6 +374,28 @@
                 b (wild-response (:battle fim) true rng)]
             (-> b (update :turn-index inc)
                 (assoc :last-action {:action :defend})))))
+
+      :item
+      (let [id (shop/normalizar-item (str item-id))
+            meta (shop/item id)
+            gate (resolve-status-gate battle :x rng)]
+        (if (:impedido? gate)
+          (let [b (wild-response (:battle gate) false rng)]
+            (-> b (update :turn-index inc)
+                (assoc :last-action {:action :item :item-id id :impedido? true})))
+          (let [b (cond
+                    (:cura-hp meta) (apply-item-heal (:battle gate) id)
+                    (contains? shop/status-cura id) (apply-item-status-cure (:battle gate) id)
+                    :else (throw (err/error :item_use_unsupported
+                                            {:item-id id
+                                             :allowed ["pocao" "pocao-maxima" "status-cura"]})))
+                last-item (:last-item b)
+                b (dissoc b :last-item)
+                fim (aplicar-fim-de-turno b :x)
+                b (wild-response (:battle fim) false rng)]
+            (-> b
+                (update :turn-index inc)
+                (assoc :last-action (merge {:action :item :item-id id} last-item))))))
 
       :attack
       (let [golpes (vec (or (get-in battle [:pokemons :x :golpes]) []))

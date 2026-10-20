@@ -539,6 +539,7 @@
                                                    "expected-turn-index"))
                           action (g body "action")
                           move-index (long-or-nil (g body "moveIndex" "move-index"))
+                          item-id (g body "itemId" "item-id")
                           rng (or (g body "rng") {})]
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? save-id) (str/blank? operation-id)
@@ -561,7 +562,9 @@
                                                  :action (keyword action)
                                                  :rng rng}
                                           (some? move-index)
-                                          (assoc :move-index move-index)))))))
+                                          (assoc :move-index move-index)
+                                          (not (str/blank? item-id))
+                                          (assoc :item-id item-id)))))))
 
                 (= path "/v1/gyms")
                 (do (require-method! ex #{"GET"})
