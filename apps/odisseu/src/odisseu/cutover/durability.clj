@@ -264,3 +264,36 @@
    :nota
    (str "Cobertura parcial (coins/rank/blocks/admins). "
         "Enquetes/quiz/lembretes/bugs/participantes e resto Pokémon descobertos.")})
+
+(defn evaluate-m90-gates
+  "Gates M9.0 — preparação de implantação na VM odisseu-core.
+   Não promove cutover; produção odisseu-zapbot permanece intocada."
+  [{:keys [compose-ready?
+           volumes-isolated?
+           bridge-loopback-only?
+           session-path-isolated?
+           journal-volume-planned?
+           backup-scripts-ready?
+           whatsapp-test-isolation-documented?
+           memory-budget-documented?
+           remote-deploy-executed?
+           production-vm-touched?]}]
+  {:compose-ready? (boolean compose-ready?)
+   :volumes-isolated? (boolean volumes-isolated?)
+   :bridge-loopback-only? (boolean bridge-loopback-only?)
+   :session-path-isolated? (boolean session-path-isolated?)
+   :journal-volume-planned? (boolean journal-volume-planned?)
+   :backup-scripts-ready? (boolean backup-scripts-ready?)
+   :whatsapp-test-isolation-documented? (boolean whatsapp-test-isolation-documented?)
+   :memory-budget-documented? (boolean memory-budget-documented?)
+   :remote-deploy-executed? (boolean remote-deploy-executed?)
+   :production-vm-touched? (boolean production-vm-touched?)
+   :global-protection-complete? false
+   :rollback-recon-available? false
+   :cutover-ready? false
+   :exactly-once-claimed? false
+   :rpo-zero-claimed? false
+   :nota
+   (str "M9.0 prepara odisseu-core (Compose/volumes/backups/docs). "
+        "Deploy remoto e WhatsApp READY na VM exigem autorização explícita. "
+        "cutover-ready? permanece false.")})

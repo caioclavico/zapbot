@@ -3,10 +3,12 @@ target/
 .shadow-cljs/
 .wwebjs_auth/
 .wwebjs_auth_staging/
+.wwebjs_auth_core/
 .wwebjs_cache/
 data/
 .env
 .env.staging
+.env.odisseu-core
 .env.*.local
 *.log
 .nrepl-port
