@@ -29,6 +29,7 @@
 (def ^:private Client (.-Client wwjs))
 (def ^:private LocalAuth (.-LocalAuth wwjs))
 (def ^:private startup (js/require "../scripts/lib/whatsapp-startup.cjs"))
+(def ^:private group-discovery (js/require "../scripts/lib/bootstrap-group-discovery.cjs"))
 
 (defn configurar-envio-seguro!
   "Desativa o sendSeen quebrado do WhatsApp Web antes de qualquer envio.
@@ -75,93 +76,97 @@
         safe (if (> (count msg) 120) (str (subs msg 0 117) "...") msg)]
     {:name name :message safe}))
 
-(defn- chats->grupos [chats]
-  (->> (array-seq chats)
-       (filter #(true? (.-isGroup %)))
-       (map (fn [^js c]
-              {"id" (or (some-> c .-id .-_serialized)
-                        (str (.-id c)))
-               "name" (or (.-name c) "")}))
+(def ^:private bootstrap-client (atom nil))
+(def ^:private discovery-inflight? (atom false))
+(def ^:private discovery-retry-timers (atom []))
+
+;; Retries leves pós-READY (sem reiniciar Chromium) se a coleção ainda sincroniza.
+(def ^:private bootstrap-tentativas 8)
+(def ^:private bootstrap-backoff-ms [2000 3000 5000 8000 12000 15000 20000 30000])
+(def ^:private rediscovery-delays-ms [15000 45000 90000 180000])
+
+(defn- cancelar-rediscovery! []
+  (doseq [t @discovery-retry-timers]
+    (try (js/clearTimeout t) (catch :default _ nil)))
+  (reset! discovery-retry-timers []))
+
+(defn- js->diag-map [raw]
+  (when raw
+    (js->clj raw :keywordize-keys true)))
+
+(defn- grupos-do-resultado [raw]
+  (->> (or (some-> raw .-groups) #js [])
+       array-seq
+       (map (fn [g]
+              {"id" (or (aget g "id") "")
+               "name" (or (aget g "name") "")
+               "hasGroupMetadata" (boolean (aget g "hasGroupMetadata"))}))
+       (filter #(not (str/blank? (get % "id"))))
        vec))
 
-(def ^:private js-wwebjs-pronta
-  "() => !!(window.WWebJS && typeof window.WWebJS.getChats === 'function')")
-
-;; Só id + nome de grupos — sem histórico, sem mensagens privadas.
-(def ^:private js-listar-grupos-store
-  (str "async () => {"
-       "  const mapChat = (c) => ({"
-       "    id: (c.id && c.id._serialized) || String(c.id),"
-       "    name: c.name || c.formattedTitle || ''"
-       "  });"
-       "  if (window.WWebJS && typeof window.WWebJS.getChats === 'function') {"
-       "    const chats = await window.WWebJS.getChats();"
-       "    return chats.filter((c) => c.isGroup).map(mapChat);"
-       "  }"
-       "  const Chat = window.Store && window.Store.Chat;"
-       "  if (!Chat) return { __error: 'store_unavailable' };"
-       "  const models = Chat.getModelsArray"
-       "    ? Chat.getModelsArray()"
-       "    : (Chat.models || []);"
-       "  return models"
-       "    .filter((m) => m.isGroup || m.groupMetadata)"
-       "    .map(mapChat);"
-       "}"))
-
-(defn- wwebjs-store-pronta?
-  "READY do Client ≠ inject WWebJS pronto. Evita getChats prematuro (ex.: 'r: r')."
-  [^js client]
-  (let [^js page (.-pupPage client)]
-    (if-not page
-      (p/resolved false)
-      (-> (.evaluate page js-wwebjs-pronta)
-          (p/then (fn [ok] (boolean ok)))
-          (p/catch (fn [_] false))))))
-
-(defn- listar-grupos-via-store
-  "Fallback seguro: page.evaluate só retorna id+nome de grupos."
+(defn- descoberta-leve
+  "page.evaluate com WAWebCollections — sem getChatModel / sem msgs privadas."
   [^js client]
   (let [^js page (.-pupPage client)]
     (if-not page
       (p/rejected (js/Error. "pupPage_indisponivel"))
-      (-> (.evaluate page js-listar-grupos-store)
+      (-> (.evaluate page (.-discoverGroupsInPage group-discovery))
           (p/then
            (fn [raw]
-             (if (and raw (aget raw "__error"))
-               (p/rejected (js/Error. (str "store_fallback:" (aget raw "__error"))))
-               (->> (array-seq (or raw #js []))
-                    (map (fn [g]
-                           {"id" (or (aget g "id") "")
-                            "name" (or (aget g "name") "")}))
-                    vec))))))))
+             (let [diag (or (js->diag-map (some-> raw .-diagnostics)) {})
+                   grupos (grupos-do-resultado raw)]
+               (js/console.log "[bootstrap] diagnóstico"
+                               (clj->js {:collectionSource (:collectionSource diag)
+                                         :chatCount (:chatCount diag)
+                                         :groupCount (:groupCount diag)
+                                         :chatsWithGroupMetadata (:chatsWithGroupMetadata diag)
+                                         :idServerCounts (:idServerCounts diag)
+                                         :helpers (:helpers diag)}))
+               {:ok? true
+                :via (str "light:" (or (:collectionSource diag) "none"))
+                :grupos grupos
+                :diagnostics diag})))
+          (p/catch
+           (fn [err]
+             (js/console.warn "[bootstrap] descoberta leve falhou"
+                              (clj->js (err-diag err)))
+             {:ok? false :err err}))))))
 
-(def ^:private bootstrap-tentativas 6)
-(def ^:private bootstrap-backoff-ms [1500 2500 4000 6000 8000 10000])
-
-(defn- tentar-get-chats
-  [^js client tentativa]
+(defn- tentar-get-chats-opcional
+  "Client.getChats ainda pode falhar (r:r via getChatModel). Só informativo."
+  [^js client]
   (-> (.getChats client)
       (p/then (fn [chats]
-                {:ok? true :via "getChats" :grupos (chats->grupos chats)}))
+                (let [n (alength chats)
+                      g (->> (array-seq chats)
+                             (filter #(true? (.-isGroup %)))
+                             count)]
+                  (js/console.log "[bootstrap] getChats OK (opcional)"
+                                  (str "chats=" n " groups=" g))
+                  {:ok? true})))
       (p/catch
        (fn [err]
-         (js/console.warn "[bootstrap] getChats falhou"
-                          (str "tentativa=" tentativa "/" bootstrap-tentativas)
+         (js/console.warn "[bootstrap] getChats falhou (esperado se metadata atrasar)"
                           (clj->js (err-diag err)))
          {:ok? false :err err}))))
 
 (defn- gravar-grupos-descobertos!
-  [out grupos via]
+  [out grupos via diagnostics]
   (let [payload (clj->js
                  {"generatedAt" (.toISOString (js/Date.))
                   "discoveryVia" via
                   "connectedUser" "redacted"
                   "groupCount" (count grupos)
-                  "groups" grupos
+                  "groups" (mapv #(select-keys % ["id" "name"]) grupos)
+                  "diagnostics" (or diagnostics {})
+                  "stagingGroupConfirmed" false
+                  "devGroupIdInvented" false
                   "note"
                   (str "Preencha DEV_GROUP_ID no .env com o id do grupo de teste, "
                        "defina STAGING_GROUP_CONFIRMED=1 e reinicie "
-                       "SEM STAGING_BOOTSTRAP_GROUP.")})]
+                       "SEM STAGING_BOOTSTRAP_GROUP. "
+                       "Re-descobrir sem reiniciar: "
+                       "curl -sS -X POST http://127.0.0.1:3001/bootstrap/discover-groups")})]
     (fs/mkdirSync (path/dirname out) #js {:recursive true})
     (fs/writeFileSync out (js/JSON.stringify payload nil 2) "utf8")
     (js/console.log "[bootstrap] Grupos encontrados:" (count grupos) "(via" via ")")
@@ -169,57 +174,102 @@
       (js/console.log (str "  - " (get g "name") " => " (get g "id"))))
     (js/console.log "[bootstrap] Lista escrita em" out)
     (js/console.log "[bootstrap] Nenhuma mensagem será processada neste modo.")
+    (when (empty? grupos)
+      (js/console.log "[bootstrap] zero grupos — coleção pode ainda sincronizar;"
+                      "use POST /bootstrap/discover-groups ou aguarde retries automáticos."))
     grupos))
 
-(defn- fallback-store-descoberta
-  [^js client out]
-  (-> (listar-grupos-via-store client)
-      (p/then (fn [grupos]
-                (js/console.log "[bootstrap] Fallback Store OK")
-                (gravar-grupos-descobertos! out grupos "store-evaluate")))
-      (p/catch
-       (fn [err]
-         (js/console.error "[bootstrap] Store fallback falhou"
-                           (clj->js (err-diag err)))
-         (js/console.error
-          "[bootstrap] Descoberta abortada — sessão preservada;"
-          "reinicie o Node após alguns segundos ou defina DEV_GROUP_ID"
-          "manualmente se já souber o id @g.us.")
-         nil))))
+(defn- agendar-rediscovery!
+  "Retries automáticos sem reiniciar Chromium enquanto groups=[]."
+  [^js client]
+  (cancelar-rediscovery!)
+  (reset! discovery-retry-timers
+          (mapv (fn [ms]
+                  (js/setTimeout
+                   (fn []
+                     (js/console.log "[bootstrap] re-descoberta automática após"
+                                     (str (/ ms 1000) "s"))
+                     (descobrir-grupos! client {:reason "auto-retry"}))
+                   ms))
+                rediscovery-delays-ms)))
+
+(defn- aplicar-resultado-descoberta!
+  [out {:keys [ok? via grupos diagnostics]} {:keys [schedule-retry?]}]
+  (if-not ok?
+    (do
+      (js/console.warn "[bootstrap] rodada sem resultado utilizável")
+      false)
+    (do
+      (gravar-grupos-descobertos! out (or grupos []) via diagnostics)
+      (if (seq grupos)
+        (do (cancelar-rediscovery!) true)
+        (do
+          (when schedule-retry?
+            (js/console.log "[bootstrap] zero grupos — agendando re-descoberta sem reiniciar Chromium")
+            (agendar-rediscovery! @bootstrap-client))
+          false)))))
 
 (defn- tentativa-descoberta
-  "Uma tentativa: espera Store se preciso, getChats, ou agenda a próxima."
+  "Loop com backoff após READY. Agenda rediscovery só ao esgotar."
   [^js client out n]
   (if (> n bootstrap-tentativas)
-    (fallback-store-descoberta client out)
-    (let [espera (nth bootstrap-backoff-ms (dec n) 10000)]
-      (-> (wwebjs-store-pronta? client)
+    (do
+      (js/console.error "[bootstrap] esgotaram tentativas leves — sessão preservada.")
+      (agendar-rediscovery! client)
+      (p/resolved nil))
+    (let [espera (nth bootstrap-backoff-ms (dec n) 30000)]
+      (-> (descoberta-leve client)
           (p/then
-           (fn [pronta?]
-             (when-not pronta?
-               (js/console.log "[bootstrap] WWebJS/Store ainda não pronta;"
-                               "aguardando antes de getChats"
-                               (str "(tentativa " n ")")))
-             (if pronta? (p/resolved nil) (sleep-ms espera))))
-          (p/then (fn [_] (tentar-get-chats client n)))
-          (p/then
-           (fn [{:keys [ok? via grupos]}]
-             (if ok?
-               (gravar-grupos-descobertos! out grupos via)
-               (-> (sleep-ms espera)
-                   (p/then (fn [_] (tentativa-descoberta client out (inc n))))))))))))
+           (fn [resultado]
+             (if (and (:ok? resultado) (seq (:grupos resultado)))
+               (aplicar-resultado-descoberta! out resultado {:schedule-retry? false})
+               (do
+                 (when (:ok? resultado)
+                   (gravar-grupos-descobertos!
+                    out [] (:via resultado) (:diagnostics resultado))
+                   (js/console.log "[bootstrap] ainda sem grupos;"
+                                   "nova tentativa em" (str espera "ms")
+                                   (str "(" n "/" bootstrap-tentativas ")")))
+                 (-> (sleep-ms espera)
+                     (p/then (fn [_] (tentativa-descoberta client out (inc n)))))))))))))
 
-(defn- descobrir-grupos!
-  "Lista apenas grupos (id + nome). Retries + fallback Store. Sem msgs privadas."
-  [^js client]
-  (let [out (discovery-path)]
-    (-> (sleep-ms 2000)
-        (p/then (fn [_] (tentativa-descoberta client out 1)))
-        (p/catch
-         (fn [err]
-           (js/console.error "[bootstrap] Falha inesperada na descoberta:"
-                             (clj->js (err-diag err)))
-           nil)))))
+(defn descobrir-grupos!
+  "Lista só id+nome de grupos. Sem msgs privadas. Idempotente sob inflight."
+  ([client] (descobrir-grupos! client {:reason "ready"}))
+  ([^js client {:keys [reason]}]
+   (if-not (compare-and-set! discovery-inflight? false true)
+     (do
+       (js/console.log "[bootstrap] descoberta já em andamento — ignore"
+                       (str "(" (or reason "manual") ")"))
+       (p/resolved {:busy true}))
+     (let [out (discovery-path)
+           ready? (= reason "ready")]
+       (js/console.log "[bootstrap] iniciando descoberta"
+                       (str "(" (or reason "manual") ")"))
+       (-> (sleep-ms (if ready? 3000 500))
+           (p/then
+            (fn [_]
+              (if ready?
+                (do
+                  (tentar-get-chats-opcional client)
+                  (tentativa-descoberta client out 1))
+                ;; HTTP / auto-retry: uma rodada (timers já agendados no esgotamento).
+                (-> (descoberta-leve client)
+                    (p/then
+                     (fn [resultado]
+                       (aplicar-resultado-descoberta!
+                        out resultado {:schedule-retry? false})))))))
+           (p/catch
+            (fn [err]
+              (js/console.error "[bootstrap] Falha inesperada na descoberta:"
+                                (clj->js (err-diag err)))
+              nil))
+           (p/then (fn [resultado]
+                     (reset! discovery-inflight? false)
+                     resultado))
+           (p/catch (fn [err]
+                      (reset! discovery-inflight? false)
+                      (p/rejected err))))))))
 
 (defn- on-ready [client]
   (js/console.log (str "✅ " config/bot-name " conectado e pronto para uso!"))
@@ -227,8 +277,10 @@
   (js/console.log "📞 Conta autenticada (número omitido).")
   (if config/staging-bootstrap-group?
     (do
+      (reset! bootstrap-client client)
       (js/console.log "[bootstrap] Modo descoberta de grupo — sem comandos/notificações.")
-      (descobrir-grupos! client))
+      (js/console.log "[bootstrap] Re-descobrir: POST http://127.0.0.1:3001/bootstrap/discover-groups")
+      (descobrir-grupos! client {:reason "ready"}))
     (do
       (pokemon/iniciar! client)
       (lembretes/iniciar! client))))
@@ -428,9 +480,17 @@
                         (or config/staging-bootstrap-group?
                             config/staging-allow-qr?)
                         (assoc :restoreOnly false))))
-          server (saude/servir! diagnostico client)]
+          server (saude/servir!
+                  diagnostico client
+                  (when config/staging-bootstrap-group?
+                    {:on-discover-groups
+                     (fn []
+                       (if-let [c @bootstrap-client]
+                         (descobrir-grupos! c {:reason "http"})
+                         (js/console.warn "[bootstrap] READY ainda não chegou — discover ignorado.")))}))]
       (when config/staging-bootstrap-group?
-        (js/console.log "[bootstrap] STAGING_BOOTSTRAP_GROUP=1 — sem comandos, sem replies, sem notificações."))
+        (js/console.log "[bootstrap] STAGING_BOOTSTRAP_GROUP=1 — sem comandos, sem replies, sem notificações.")
+        (js/console.log "[bootstrap] Endpoint: POST/GET http://127.0.0.1:3001/bootstrap/discover-groups"))
       (configurar-envio-seguro! client)
       (saude/acompanhar! diagnostico client)
       (when-not config/staging-bootstrap-group?

@@ -368,3 +368,32 @@
    :nota
    (str "M9.4: retries/backoff getChats + fallback Store; Compose usa "
         "/app/.wwebjs_auth_core. cutover-ready?=false.")})
+
+(defn evaluate-m95-gates
+  "Gates M9.5 — descoberta leve via WAWebCollections + re-descoberta HTTP."
+  [{:keys [light-discovery-implemented?
+           avoids-getchatmodel?
+           rediscover-endpoint?
+           diagnostics-safe?
+           no-dev-group-invented?
+           no-auto-group-confirmed?
+           session-preserved?
+           remote-deploy-executed?
+           production-vm-touched?]}]
+  {:light-discovery-implemented? (boolean light-discovery-implemented?)
+   :avoids-getchatmodel? (boolean avoids-getchatmodel?)
+   :rediscover-endpoint? (boolean rediscover-endpoint?)
+   :diagnostics-safe? (boolean diagnostics-safe?)
+   :no-dev-group-invented? (boolean no-dev-group-invented?)
+   :no-auto-group-confirmed? (boolean no-auto-group-confirmed?)
+   :session-preserved? (boolean session-preserved?)
+   :remote-deploy-executed? (boolean remote-deploy-executed?)
+   :production-vm-touched? (boolean production-vm-touched?)
+   :global-protection-complete? false
+   :rollback-recon-available? false
+   :cutover-ready? false
+   :exactly-once-claimed? false
+   :rpo-zero-claimed? false
+   :nota
+   (str "M9.5: descoberta leve (@g.us / WAWebCollections) sem getChatModel; "
+        "POST /bootstrap/discover-groups. cutover-ready?=false.")})

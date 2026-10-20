@@ -47,16 +47,14 @@
         "retries limitados presentes")
     (is (str/includes? src "bootstrap-backoff-ms")
         "backoff presente")
-    (is (str/includes? src "js-listar-grupos-store")
-        "fallback Store evaluate presente")
-    (is (str/includes? src "js-wwebjs-pronta")
-        "espera WWebJS/Store antes de getChats")
+    ;; M9.5: caminho leve (WAWebCollections) substitui Store/getChatModel.
+    (is (or (str/includes? src "bootstrap-group-discovery")
+            (str/includes? src "js-listar-grupos-store"))
+        "descoberta via evaluate presente")
     (is (str/includes? src "connectedUser\" \"redacted\"")
         "não grava número no JSON de descoberta")
     (is (str/includes? src "número omitido")
-        "não loga telefone no READY")
-    (is (str/includes? src "listar-grupos-via-store")
-        "função de fallback nomeada")))
+        "não loga telefone no READY")))
 
 (deftest artefatos-m94-presentes
   (doseq [p ["docs/m9-4-bootstrap-group-discovery.md"
@@ -91,7 +89,8 @@
         g (dur/evaluate-m94-gates
            {:compose-session-path-ok? compose-ok?
             :getchats-retry-implemented? (str/includes? src "bootstrap-tentativas")
-            :store-fallback-implemented? (str/includes? src "js-listar-grupos-store")
+            :store-fallback-implemented? (or (str/includes? src "bootstrap-group-discovery")
+                                             (str/includes? src "js-listar-grupos-store"))
             :phone-redacted? (str/includes? src "redacted")
             :bootstrap-no-commands? true
             :session-preserved? true

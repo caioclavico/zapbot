@@ -1,6 +1,7 @@
 (ns zapbot.whatsapp-saude
   "Diagnóstico passivo: nunca reinicia o cliente nem acessa credenciais."
   (:require ["node:http" :as http]
+            [clojure.string :as str]
             [zapbot.recursos :as recursos]
             [zapbot.desempenho :as desempenho]))
 
@@ -73,24 +74,53 @@
     {:status (if pronto? "ok" "degraded")
      :whatsapp estado :chromium chromium?}))
 
-(defn atender! [saude ^js client ^js req ^js res]
-  (cond
-    (and (= "GET" (.-method req)) (= "/diagnostics" (.-url req)))
-    (let [amostra (recursos/amostra)
-          dados (cond-> {:operacoes (desempenho/pendentes)}
-                  amostra (assoc :recursos amostra))]
-      (.writeHead res 200 #js {"Content-Type" "application/json" "Cache-Control" "no-store"})
-      (.end res (js/JSON.stringify (clj->js dados))))
-    (and (= "GET" (.-method req)) (= "/health" (.-url req)))
-    (let [dados (resposta saude client)]
-      (.writeHead res (if (= "ok" (:status dados)) 200 503)
-                  #js {"Content-Type" "application/json" "Cache-Control" "no-store"})
-      (.end res (js/JSON.stringify (clj->js dados))))
-    :else (do (.writeHead res 404) (.end res))))
+(defn- url-path [^js req]
+  (let [u (str (or (.-url req) ""))]
+    (if-let [i (str/index-of u "?")]
+      (subs u 0 i)
+      u)))
 
-(defn servir! [saude ^js client]
-  ;; Loopback dentro do container: nenhuma porta publicada na VM.
-  (let [server (.createServer http #(atender! saude client %1 %2))]
-    (.on server "error" #(log! (str "Healthcheck indisponível: " (.-message %))))
-    (.listen server 3001 "127.0.0.1")
-    server))
+(defn atender!
+  ([saude client req res] (atender! saude client req res nil))
+  ([saude ^js client ^js req ^js res opts]
+   (let [method (.-method req)
+         path (url-path req)
+         on-discover (:on-discover-groups opts)]
+     (cond
+       (and (= "GET" method) (= "/diagnostics" path))
+       (let [amostra (recursos/amostra)
+             dados (cond-> {:operacoes (desempenho/pendentes)}
+                     amostra (assoc :recursos amostra))]
+         (.writeHead res 200 #js {"Content-Type" "application/json" "Cache-Control" "no-store"})
+         (.end res (js/JSON.stringify (clj->js dados))))
+
+       (and (= "GET" method) (= "/health" path))
+       (let [dados (resposta saude client)]
+         (.writeHead res (if (= "ok" (:status dados)) 200 503)
+                     #js {"Content-Type" "application/json" "Cache-Control" "no-store"})
+         (.end res (js/JSON.stringify (clj->js dados))))
+
+       ;; Bootstrap only: re-descobre grupos sem reiniciar Chromium / sem comandos.
+       (and on-discover
+            (#{"GET" "POST"} method)
+            (= "/bootstrap/discover-groups" path))
+       (do
+         (.writeHead res 202 #js {"Content-Type" "application/json" "Cache-Control" "no-store"})
+         (.end res (js/JSON.stringify
+                    #js {:accepted true
+                         :note "Descoberta agendada; veja logs [bootstrap] e groups.json. Sem mensagens/comandos."}))
+         (try
+           (on-discover)
+           (catch :default err
+             (log! (str "bootstrap discover erro: " (or (.-message err) "falha"))))))
+
+       :else (do (.writeHead res 404) (.end res))))))
+
+(defn servir!
+  ([saude client] (servir! saude client nil))
+  ([saude ^js client opts]
+   ;; Loopback dentro do container: nenhuma porta publicada na VM.
+   (let [server (.createServer http #(atender! saude client %1 %2 opts))]
+     (.on server "error" #(log! (str "Healthcheck indisponível: " (.-message %))))
+     (.listen server 3001 "127.0.0.1")
+     server)))

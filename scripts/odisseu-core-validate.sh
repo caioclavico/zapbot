@@ -57,10 +57,17 @@ else
 fi
 
 if grep -q 'bootstrap-tentativas' src/zapbot/core.cljs \
-   && grep -q 'js-listar-grupos-store' src/zapbot/core.cljs; then
-  ok "bootstrap getChats retry + Store fallback (M9.4)"
+   && grep -q 'bootstrap-group-discovery' src/zapbot/core.cljs \
+   && grep -q 'WAWebCollections' scripts/lib/bootstrap-group-discovery.cjs; then
+  ok "bootstrap descoberta leve WAWebCollections (M9.5)"
 else
-  bad "descoberta de grupos M9.4 incompleta"
+  bad "descoberta de grupos M9.5 incompleta"
+fi
+
+if grep -q '/bootstrap/discover-groups' src/zapbot/whatsapp_saude.cljs; then
+  ok "endpoint re-descoberta bootstrap (M9.5)"
+else
+  bad "faltando /bootstrap/discover-groups"
 fi
 
 TMPENV=$(mktemp)
