@@ -149,7 +149,7 @@ A aventura começou. Próximos passos:
 ## 9. Riscos / ainda não portado
 
 - PvP, doação, evolução por pedra, missões/presentes, títulos, pokedex filtrada avançada, times prontos, etc. (mensagem amigável via `formatUnavailable`).
-- Imagem dos 3 starters no `iniciar` renderiza o **primeiro** (Bulbasaur) como cartão; lista completa é textual (evita 3 midias por mensagem).
+- Cartão visual dos 3 starters: ver **M9.6.1** (`docs/m9-6-1-starters-card.md`) — uma imagem com Bulbasaur/Charmander/Squirtle.
 - Starter em save B vazio ainda é permitido (playthrough B); **kit** não.
 
 ---

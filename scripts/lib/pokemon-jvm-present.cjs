@@ -254,11 +254,22 @@ function formatMainMenu(onboarding, prefix = '!pk') {
   ].join('\n');
 }
 
+const TIPO_PT_LABEL = {
+  grass: 'Planta', poison: 'Veneno', fire: 'Fogo', water: 'Água'
+};
+
+function tiposStarterPt(tipos) {
+  return (tipos || [])
+    .map((t) => TIPO_PT_LABEL[String(t).toLowerCase()] || String(t))
+    .filter(Boolean)
+    .join('/');
+}
+
 function formatStartersMenu(onboarding, prefix = '!pk') {
   const starters = (onboarding && onboarding.starters) || [];
   const linhas = starters.map((s) => {
-    const tipos = (s.tipos || []).join('/');
-    return `${s.index}. ${s.emoji || ''} *${s.nome}* (${tipos})\n   ${s.descricao || ''}`;
+    const tipos = tiposStarterPt(s.tipos) || (s.tipos || []).join('/');
+    return `${s.index}. ${s.emoji || ''} *${s.nome}* — ${tipos}`;
   });
   return [
     '🌟 *Escolha seu Pokémon inicial:*',

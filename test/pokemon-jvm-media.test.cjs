@@ -99,6 +99,37 @@ test('falha de download de sprite não quebra (placeholder)', async () => {
   assert.equal(img.mimeType, 'image/png');
 });
 
+test('cartão dos 3 iniciais (M9.6.1) — layout e fallback', async () => {
+  assert.equal(media.tiposPt(['grass', 'poison']), 'Planta/Veneno');
+  assert.equal(media.tiposPt(['fire']), 'Fogo');
+  assert.equal(media.tiposPt(['water']), 'Água');
+
+  const starters = [
+    {
+      index: 1, nome: 'Bulbasaur', species: 'bulbasaur', tipos: ['grass', 'poison'],
+      imagem: 'http://127.0.0.1:1/bulba.png'
+    },
+    {
+      index: 2, nome: 'Charmander', species: 'charmander', tipos: ['fire'],
+      imagem: 'http://127.0.0.1:1/char.png'
+    },
+    {
+      index: 3, nome: 'Squirtle', species: 'squirtle', tipos: ['water'],
+      imagem: 'http://127.0.0.1:1/squirt.png'
+    }
+  ];
+  const img = await media.renderStartersCard(starters);
+  assert.ok(img);
+  assert.equal(img.mimeType, 'image/png');
+  assert.equal(img.filename, 'iniciais.png');
+  const png = Buffer.from(img.base64, 'base64');
+  assert.ok(png.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])));
+  assert.ok(png.length > 4000, 'cartão composto deve ter tamanho razoável');
+
+  const vazio = await media.renderStartersCard([]);
+  assert.equal(vazio, null);
+});
+
 test('envelope de mídia não mistura efeitos com TX', () => {
   const env = present.envelope('req-media', 'legenda', {
     image: { base64: 'aaaa', mimeType: 'image/png', filename: 'x.png' },

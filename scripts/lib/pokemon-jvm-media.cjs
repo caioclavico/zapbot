@@ -10,6 +10,16 @@ const sharp = require('sharp');
 
 const SPRITE_CACADA = 320;
 const TIMEOUT_MS = 6000;
+/** Cache em memória de sprites baixados (URLs PokeAPI/CDN). Limite evita crescimento na VM. */
+const SPRITE_CACHE_MAX = 48;
+const spriteCache = new Map();
+
+const TIPO_PT = {
+  normal: 'Normal', fire: 'Fogo', water: 'Água', grass: 'Planta', electric: 'Elétrico',
+  ice: 'Gelo', fighting: 'Lutador', poison: 'Veneno', ground: 'Terra', flying: 'Voador',
+  psychic: 'Psíquico', bug: 'Inseto', rock: 'Pedra', ghost: 'Fantasma', dragon: 'Dragão',
+  dark: 'Sombrio', steel: 'Aço', fairy: 'Fada'
+};
 
 const CORES_BOLA = {
   pokebola: '#dc2626',
@@ -29,8 +39,27 @@ function candidatosUrl(url) {
   return [...new Set([urlCdn(url), url].filter(Boolean))];
 }
 
+function cacheGet(key) {
+  const hit = spriteCache.get(key);
+  if (!hit) return null;
+  spriteCache.delete(key);
+  spriteCache.set(key, hit);
+  return hit;
+}
+
+function cacheSet(key, value) {
+  if (spriteCache.has(key)) spriteCache.delete(key);
+  spriteCache.set(key, value);
+  while (spriteCache.size > SPRITE_CACHE_MAX) {
+    const oldest = spriteCache.keys().next().value;
+    spriteCache.delete(oldest);
+  }
+}
+
 async function baixarBuffer(url) {
   if (!url) return null;
+  const cached = cacheGet(url);
+  if (cached) return cached;
   let lastErr = null;
   for (const u of candidatosUrl(url)) {
     try {
@@ -39,7 +68,9 @@ async function baixarBuffer(url) {
         lastErr = new Error(`HTTP ${res.status}`);
         continue;
       }
-      return Buffer.from(await res.arrayBuffer());
+      const buf = Buffer.from(await res.arrayBuffer());
+      cacheSet(url, buf);
+      return buf;
     } catch (err) {
       lastErr = err;
     }
@@ -49,6 +80,21 @@ async function baixarBuffer(url) {
     console.warn('[pokemon-jvm-media] sprite indisponível:', url, lastErr.message || lastErr);
   }
   return null;
+}
+
+function tiposPt(tipos) {
+  return (tipos || [])
+    .map((t) => TIPO_PT[String(t).toLowerCase()] || String(t))
+    .filter(Boolean)
+    .join('/');
+}
+
+function escapeXml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 function svgPlaceholder(tamanho) {
@@ -388,6 +434,87 @@ async function renderSpriteCard(pokemon, { filename = 'pokemon.png', size = 320 
   }
 }
 
+/**
+ * Cartão único dos 3 iniciais (M9.6.1) — horizontal, labels 1–3 + tipo PT.
+ * Sem gameplay: só download/render. Sprite ausente → placeholder. Falha → null.
+ */
+async function renderStartersCard(starters, {
+  filename = 'iniciais.png',
+  width = 960,
+  height = 540
+} = {}) {
+  try {
+    const list = (Array.isArray(starters) ? starters : []).slice(0, 3);
+    if (!list.length) return null;
+
+    const colW = Math.floor(width / list.length);
+    const panelTop = 56;
+    const panelH = height - panelTop - 16;
+    const spriteMax = 220;
+    const spriteTop = panelTop + 56;
+    const labelY = panelTop + panelH - 78;
+    const typeY = panelTop + panelH - 40;
+    const numY = panelTop + 32;
+
+    const rendered = await Promise.all(list.map(async (s, i) => {
+      const poke = {
+        nome: s.nome || s.species || `Opção ${i + 1}`,
+        imagem: s.imagem,
+        tipos: s.tipos,
+        altura: 0.7
+      };
+      const { buffer, tamanho } = await spriteProporcional(poke, spriteMax);
+      return { buffer, tamanho, i };
+    }));
+
+    const panels = list.map((s, i) => {
+      const idx = s.index != null ? s.index : i + 1;
+      const nome = escapeXml(s.nome || s.species || `Opção ${idx}`);
+      const tipos = escapeXml(tiposPt(s.tipos));
+      const cx = i * colW + colW / 2;
+      return `<g>`
+        + `<rect x="${i * colW + 14}" y="${panelTop}" width="${colW - 28}" height="${panelH}" `
+        + `rx="28" fill="#1e293b" stroke="#334155" stroke-width="3"/>`
+        + `<circle cx="${cx}" cy="${numY}" r="22" fill="#fbbf24" stroke="#92400e" stroke-width="3"/>`
+        + `<text x="${cx}" y="${numY + 8}" text-anchor="middle" font-family="sans-serif" `
+        + `font-size="26" font-weight="700" fill="#111827">${idx}</text>`
+        + `<text x="${cx}" y="${labelY}" text-anchor="middle" font-family="sans-serif" `
+        + `font-size="28" font-weight="700" fill="#f8fafc">${nome}</text>`
+        + `<text x="${cx}" y="${typeY}" text-anchor="middle" font-family="sans-serif" `
+        + `font-size="20" fill="#94a3b8">${tipos}</text>`
+        + `</g>`;
+    }).join('');
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">`
+      + `<rect width="${width}" height="${height}" fill="#0f172a"/>`
+      + `<text x="${width / 2}" y="36" text-anchor="middle" font-family="sans-serif" `
+      + `font-size="22" font-weight="700" fill="#e2e8f0">Escolha seu Pokémon inicial</text>`
+      + panels
+      + `</svg>`;
+
+    const layers = rendered.map(({ buffer, tamanho, i }) => ({
+      input: buffer,
+      left: i * colW + Math.floor((colW - tamanho) / 2),
+      top: spriteTop + Math.floor((spriteMax - tamanho) / 2)
+    }));
+
+    const buf = await sharp(Buffer.from(svg))
+      .composite(layers)
+      .png()
+      .toBuffer();
+
+    return {
+      base64: buf.toString('base64'),
+      mimeType: 'image/png',
+      filename
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] starters:', err.message || err);
+    return null;
+  }
+}
+
 function efeitoDeTurno(data) {
   const la = (data && data.battle && data.battle.lastAction) || (data && data.lastAction);
   if (!la || !la.dano) return null;
@@ -403,11 +530,13 @@ module.exports = {
   renderHuntArena,
   renderCaptureBall,
   renderSpriteCard,
+  renderStartersCard,
   efeitoDeTurno,
   tamanhoVisual,
   idCenario,
   svgArenaCacada,
   svgBolaCaptura,
   candidatosUrl,
-  baixarBuffer
+  baixarBuffer,
+  tiposPt
 };

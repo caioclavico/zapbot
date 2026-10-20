@@ -52,6 +52,11 @@ test('formatMainMenu e jornada sem jargão técnico', () => {
   }, '!pk');
   assert.match(start, /10 Pokébolas/);
   assert.match(start, /Bulbasaur/);
+  assert.match(start, /Planta\/Veneno/);
+  assert.match(start, /Charmander/);
+  assert.match(start, /Fogo/);
+  assert.match(start, /Squirtle/);
+  assert.match(start, /Água/);
   assert.match(start, /inicial <número>/);
 
   const chosen = present.formatStarterChosen({
