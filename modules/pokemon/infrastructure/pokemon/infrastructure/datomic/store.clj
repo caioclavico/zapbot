@@ -122,6 +122,15 @@
             :save-id (:battle/save-id e)
             :collection-index (:battle/collection-index e 0)})))
 
+(defn- assert-no-busy-battle!
+  "Bloqueia mutações de time/golpes/evolução com caça ou batalha ativa."
+  [db chat-id player-id]
+  (when-let [bid (active-battle-id-for db chat-id player-id)]
+    (let [b (battle-entity db bid)
+          st (when (present? b) (->battle b))]
+      (when (and st (or (:active? st) (:aguardando-captura? st)))
+        (throw (err/error :battle_busy {:battle-id bid}))))))
+
 (defn- ->pokemon
   [e]
   (when (present? e)
@@ -159,7 +168,8 @@
       (:pokemon/imagem-shiny e) (assoc :imagem-shiny (:pokemon/imagem-shiny e))
       (:pokemon/ivs-edn e) (assoc :ivs (edn-read (:pokemon/ivs-edn e)))
       (:pokemon/ofertas-golpes-edn e)
-      (assoc :golpes-oferecidos (edn-read (:pokemon/ofertas-golpes-edn e)))
+      (assoc :golpes-oferecidos (edn-read (:pokemon/ofertas-golpes-edn e))
+             :ofertas-golpes (edn-read (:pokemon/ofertas-golpes-edn e)))
       (some? (:pokemon/pronto-em e)) (assoc :pronto-em (:pokemon/pronto-em e))
       (:pokemon/item e) (assoc :item (:pokemon/item e))
       (some? (:pokemon/altura e)) (assoc :altura (:pokemon/altura e))
@@ -1340,6 +1350,7 @@
             (transact-with-writer!
              conn writer-ctx
              (fn [db save]
+               (assert-no-busy-battle! db (:chat-id writer-ctx) (:player-id writer-ctx))
                (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
                      colecao (query-collection db sk)
                      idx (long (:idx request))
@@ -1410,12 +1421,110 @@
             (transact-with-writer!
              conn writer-ctx
              (fn [db save]
+               (assert-no-busy-battle! db (:chat-id writer-ctx) (:player-id writer-ctx))
                (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
                      colecao (query-collection db sk)
                      idx (long (:idx request))
                      _ (coll/validate-index! idx (count colecao))
                      poke (nth colecao idx)
-                     atualizado (moves/preparar-aprendizado poke (:golpe request) (:slot request))
+                     oferta? (boolean (:oferta? request))
+                     atualizado (moves/aplicar-aprendizado
+                                 poke (:golpe request) (:slot request) oferta?)
+                     rev (long (:save/revision save 0))
+                     pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                     lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+                     tx (cond-> [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                                 [:db/add lookup :pokemon/golpes-edn (pr-str (:golpes atualizado))]
+                                 [:db/add lookup :pokemon/historico-golpes-edn
+                                  (pr-str (:historico-golpes atualizado))]
+                                 [:db/add lookup :pokemon/golpes-removidos-edn
+                                  (pr-str (:golpes-removidos atualizado))]
+                                 {:operation-receipt/id operation-id
+                                  :operation-receipt/kind "learn-move"
+                                  :operation-receipt/channel "gameplay"
+                                  :operation-receipt/payload-hash phash
+                                  :operation-receipt/player-key pk
+                                  :operation-receipt/save-id (:save-id writer-ctx)
+                                  :operation-receipt/summary
+                                  (pr-str {:idx idx :slug (moves/chave (:golpe request))})}]
+                           oferta?
+                           (conj [:db/add lookup :pokemon/ofertas-golpes-edn
+                                  (pr-str (or (:ofertas-golpes atualizado)
+                                              (:golpes-oferecidos atualizado) []))]))]
+                 {:tx tx
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :idx idx
+                           :registro atualizado}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (set-active-pokemon! [_ writer-ctx request]
+    (let [payload (ops/set-active-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (assert-no-busy-battle! db (:chat-id writer-ctx) (:player-id writer-ctx))
+               (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                     colecao (query-collection db sk)
+                     idx (long (:idx request))
+                     _ (coll/validate-index! idx (count colecao))
+                     poke (nth colecao idx)
+                     rev (long (:save/revision save 0))
+                     pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                     tx [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                         [:db/add [:save/key sk] :save/ativo-index idx]
+                         {:operation-receipt/id operation-id
+                          :operation-receipt/kind "set-active"
+                          :operation-receipt/channel "gameplay"
+                          :operation-receipt/payload-hash phash
+                          :operation-receipt/player-key pk
+                          :operation-receipt/save-id (:save-id writer-ctx)
+                          :operation-receipt/summary
+                          (pr-str {:idx idx :nome (:nome poke)})}]]
+                 {:tx tx
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :idx idx
+                           :ativo-index idx
+                           :pokemon poke}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (forget-move! [_ writer-ctx request]
+    (let [payload (ops/forget-move-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (assert-no-busy-battle! db (:chat-id writer-ctx) (:player-id writer-ctx))
+               (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                     colecao (query-collection db sk)
+                     idx (long (:idx request))
+                     _ (coll/validate-index! idx (count colecao))
+                     poke (nth colecao idx)
+                     atualizado (moves/remover-golpe poke (:slot request))
+                     removido (nth (mapv moves/registro->golpe (:golpes poke))
+                                   (long (:slot request)))
                      rev (long (:save/revision save 0))
                      pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
                      lookup [:pokemon/id-pokemon (:id-pokemon poke)]
@@ -1426,19 +1535,177 @@
                          [:db/add lookup :pokemon/golpes-removidos-edn
                           (pr-str (:golpes-removidos atualizado))]
                          {:operation-receipt/id operation-id
-                          :operation-receipt/kind "learn-move"
+                          :operation-receipt/kind "forget-move"
                           :operation-receipt/channel "gameplay"
                           :operation-receipt/payload-hash phash
                           :operation-receipt/player-key pk
                           :operation-receipt/save-id (:save-id writer-ctx)
                           :operation-receipt/summary
-                          (pr-str {:idx idx :slug (moves/chave (:golpe request))})}]]
+                          (pr-str {:idx idx :slug (moves/chave removido)})}]]
                  {:tx tx
                   :result {:operation-id operation-id
                            :duplicate false
                            :channel "gameplay"
                            :payload-hash phash
                            :idx idx
+                           :removido removido
+                           :registro atualizado}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (offer-move! [_ writer-ctx request]
+    (let [payload (ops/offer-move-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (assert-no-busy-battle! db (:chat-id writer-ctx) (:player-id writer-ctx))
+               (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                     colecao (query-collection db sk)
+                     idx (long (:idx request))
+                     _ (coll/validate-index! idx (count colecao))
+                     poke (nth colecao idx)
+                     offered (moves/oferecer-golpe poke (:golpe request))
+                     atualizado (:registro offered)
+                     rev (long (:save/revision save 0))
+                     pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                     lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+                     tx [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                         [:db/add lookup :pokemon/golpes-edn (pr-str (:golpes atualizado))]
+                         [:db/add lookup :pokemon/historico-golpes-edn
+                          (pr-str (:historico-golpes atualizado))]
+                         [:db/add lookup :pokemon/golpes-removidos-edn
+                          (pr-str (or (:golpes-removidos atualizado) []))]
+                         [:db/add lookup :pokemon/ofertas-golpes-edn
+                          (pr-str (or (:ofertas-golpes atualizado)
+                                      (:golpes-oferecidos atualizado) []))]
+                         {:operation-receipt/id operation-id
+                          :operation-receipt/kind "offer-move"
+                          :operation-receipt/channel "gameplay"
+                          :operation-receipt/payload-hash phash
+                          :operation-receipt/player-key pk
+                          :operation-receipt/save-id (:save-id writer-ctx)
+                          :operation-receipt/summary
+                          (pr-str {:idx idx
+                                   :resultado (:resultado offered)
+                                   :slug (moves/chave (:golpe request))})}]]
+                 {:tx tx
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :idx idx
+                           :resultado (:resultado offered)
+                           :registro atualizado}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (refuse-offer! [_ writer-ctx request]
+    (let [payload (ops/refuse-offer-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (assert-no-busy-battle! db (:chat-id writer-ctx) (:player-id writer-ctx))
+               (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                     colecao (query-collection db sk)
+                     idx (long (:idx request))
+                     _ (coll/validate-index! idx (count colecao))
+                     poke (nth colecao idx)
+                     atualizado (moves/recusar-oferta poke)
+                     rev (long (:save/revision save 0))
+                     pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                     lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+                     tx [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                         [:db/add lookup :pokemon/ofertas-golpes-edn
+                          (pr-str (or (:ofertas-golpes atualizado) []))]
+                         {:operation-receipt/id operation-id
+                          :operation-receipt/kind "refuse-offer"
+                          :operation-receipt/channel "gameplay"
+                          :operation-receipt/payload-hash phash
+                          :operation-receipt/player-key pk
+                          :operation-receipt/save-id (:save-id writer-ctx)
+                          :operation-receipt/summary
+                          (pr-str {:idx idx})}]]
+                 {:tx tx
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :idx idx
+                           :registro atualizado}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (relearn-move! [_ writer-ctx request]
+    (let [payload (ops/relearn-move-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (assert-no-busy-battle! db (:chat-id writer-ctx) (:player-id writer-ctx))
+               (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                     colecao (query-collection db sk)
+                     idx (long (:idx request))
+                     _ (coll/validate-index! idx (count colecao))
+                     poke (nth colecao idx)
+                     slug (str (:slug request))
+                     golpe (or (moves/golpe-do-historico poke slug)
+                               (throw (err/error :move_not_in_history {:slug slug})))
+                     atualizado (moves/preparar-aprendizado poke golpe (:slot request))
+                     coins (long (:save/coins save 0))
+                     preco (long moves/preco-reaprender)
+                     _ (when (< coins preco)
+                         (throw (err/error :insufficient_coins
+                                           {:coins coins :need preco})))
+                     rev (long (:save/revision save 0))
+                     pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                     lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+                     tx [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                         [:db/cas [:save/key sk] :save/coins coins (- coins preco)]
+                         [:db/add lookup :pokemon/golpes-edn (pr-str (:golpes atualizado))]
+                         [:db/add lookup :pokemon/historico-golpes-edn
+                          (pr-str (:historico-golpes atualizado))]
+                         [:db/add lookup :pokemon/golpes-removidos-edn
+                          (pr-str (:golpes-removidos atualizado))]
+                         {:operation-receipt/id operation-id
+                          :operation-receipt/kind "relearn-move"
+                          :operation-receipt/channel "gameplay"
+                          :operation-receipt/payload-hash phash
+                          :operation-receipt/player-key pk
+                          :operation-receipt/save-id (:save-id writer-ctx)
+                          :operation-receipt/summary
+                          (pr-str {:idx idx :slug slug :coins (- preco)})}]]
+                 {:tx tx
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :idx idx
+                           :slug slug
+                           :preco preco
+                           :coins-depois (- coins preco)
                            :registro atualizado}})))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]

@@ -27,7 +27,17 @@
 (defonce ^:private relogio-eventos (atom nil))
 (defonce ^:private consultando-eventos? (atom false))
 (defonce ^:private filas (atom {}))
+;; Remoção de golpe com janela de cancelamento (espelha master; estado só no Node).
+(defonce ^:private remocoes-pendentes (atom {}))
+(def ^:private segundos-remover-golpe 30)
 (declare erro-contrato)
+
+(defn- parse-indice-1based
+  "Converte texto 1-based em índice 0-based, ou nil se inválido."
+  [texto total]
+  (when (and (pos? (long total)) (re-matches #"[1-9][0-9]*" (str texto)))
+    (let [n (js/parseInt (str texto) 10)]
+      (when (and (<= 1 n) (<= n total)) (dec n)))))
 
 (defn- configurado? []
   (and (not (str/blank? config/pokemon-service-url))
@@ -1211,6 +1221,264 @@
                           (envelope-jvm pedido
                                         (.formatItemUse jvm-present data
                                                         (str config/prefix "pk"))))))))
+
+                "escolher"
+                (p/let [col (desempenho/medir! ctx "pokemon_jvm_collection"
+                               #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))
+                        total (or (.-count col) 0)
+                        idx (parse-indice-1based (first resto) total)
+                        prefix (str config/prefix "pk")]
+                  (cond
+                    (zero? total)
+                    (envelope-jvm pedido (str "❓ Coleção vazia. Use " prefix " iniciar."))
+                    (nil? idx)
+                    (envelope-jvm pedido
+                                  (str "❓ Escolha um número válido: " prefix " escolher <1-"
+                                       total "> (veja com " prefix " time)."))
+                    :else
+                    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            op-id (.stableOperationId jvm-transport
+                                                      (:requestId pedido)
+                                                      (str "set-active:" idx))
+                            data (desempenho/medir! ctx "pokemon_jvm_set_active"
+                                   #(.setActivePokemon jvm
+                                      #js {:chatId chat-id
+                                           :playerId player-id
+                                           :saveId (.-activeSaveId ativo)
+                                           :fenceGeneration (.-fenceGeneration ativo)
+                                           :operationId op-id
+                                           :collectionIndex idx}))]
+                      (envelope-jvm pedido (.formatSetActive jvm-present data prefix)))))
+
+                "evoluir"
+                (let [prefix (str config/prefix "pk")
+                      idx-txt (first resto)
+                      item-raw (second resto)]
+                  (p/let [col (desempenho/medir! ctx "pokemon_jvm_collection"
+                                 #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))
+                          items (vec (or (.-collection col) #js []))
+                          idx (parse-indice-1based idx-txt (count items))
+                          poke (when (some? idx) (nth items idx nil))
+                          slug (some-> poke .-species str/lower-case)
+                          item-id (when item-raw (.normalizarItem pokeapi item-raw))
+                          destino (when (and slug item-id)
+                                    (.destinoPedra pokeapi item-id slug))]
+                    (cond
+                      (or (nil? poke) (nil? destino))
+                      (envelope-jvm pedido
+                                    (str "❓ Use " prefix " evoluir <número> <pedra>."
+                                         "\nPedras compatíveis: "
+                                         (or (not-empty
+                                              (str/join ", "
+                                                        (js->clj (.pedrasCompativeis pokeapi
+                                                                                    (or slug "")))))
+                                             "nenhuma nesta versão")
+                                         "\nGanhe pedras nos ginásios."))
+                      :else
+                      (p/let [evoluido (.fetchPokemonByName pokeapi destino)
+                              nivel (or (.-nivel poke) 1)
+                              escalado (.escalarNivel pokeapi evoluido nivel)
+                              dados (.dadosEvolucao pokeapi escalado)
+                              ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                              op-id (.stableOperationId jvm-transport
+                                                        (:requestId pedido)
+                                                        (str "evolve:" idx ":" item-id))
+                              data (desempenho/medir! ctx "pokemon_jvm_evolve"
+                                     #(.evolvePokemon jvm
+                                        (clj->js {:chatId chat-id
+                                                  :playerId player-id
+                                                  :saveId (.-activeSaveId ativo)
+                                                  :fenceGeneration (.-fenceGeneration ativo)
+                                                  :operationId op-id
+                                                  :collectionIndex idx
+                                                  :itemId item-id
+                                                  :dados dados})))]
+                        (envelope-jvm pedido (.formatEvolve jvm-present data prefix))))))
+
+                "aprender"
+                (let [prefix (str config/prefix "pk")
+                      acao (str/lower-case (str (or (first resto) "")))]
+                  (p/let [treinador (.getTrainer jvm #js {:chatId chat-id :playerId player-id})
+                          idx (or (.-ativoIndex treinador) 0)
+                          col (.getCollection jvm #js {:chatId chat-id :playerId player-id})
+                          items (vec (or (.-collection col) #js []))
+                          poke (when (seq items) (nth items idx nil))
+                          ofertas (when poke
+                                    (or (.-ofertasGolpes poke) (.-golpesOferecidos poke) #js []))
+                          oferta (when (and ofertas (pos? (alength ofertas))) (aget ofertas 0))]
+                    (cond
+                      (nil? poke)
+                      (envelope-jvm pedido (str "❓ Sem Pokémon ativo. " prefix " time"))
+
+                      (and (str/blank? acao) (nil? oferta))
+                      (envelope-jvm pedido (.formatMoveOfferMenu jvm-present poke prefix))
+
+                      (and (str/blank? acao) oferta)
+                      (envelope-jvm pedido (.formatMoveOfferMenu jvm-present poke prefix))
+
+                      (= acao "recusar")
+                      (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                              op-id (.stableOperationId jvm-transport
+                                                        (:requestId pedido)
+                                                        (str "refuse-offer:" idx))
+                              data (.refuseOffer jvm
+                                     #js {:chatId chat-id
+                                          :playerId player-id
+                                          :saveId (.-activeSaveId ativo)
+                                          :fenceGeneration (.-fenceGeneration ativo)
+                                          :operationId op-id
+                                          :collectionIndex idx})]
+                        (envelope-jvm pedido (.formatRefuseOffer jvm-present data prefix)))
+
+                      (or (= acao "aceitar") (re-matches #"[1-4]" acao))
+                      (if-not oferta
+                        (envelope-jvm pedido (.formatMoveOfferMenu jvm-present poke prefix))
+                        (let [slot (when (re-matches #"[1-4]" acao)
+                                     (dec (js/parseInt acao 10)))
+                              golpe (js->clj oferta :keywordize-keys true)]
+                          (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                                  op-id (.stableOperationId jvm-transport
+                                                            (:requestId pedido)
+                                                            (str "learn-offer:" idx ":"
+                                                                 (or slot "open")))
+                                  data (.learnMove jvm
+                                         (clj->js (cond-> {:chatId chat-id
+                                                           :playerId player-id
+                                                           :saveId (.-activeSaveId ativo)
+                                                           :fenceGeneration (.-fenceGeneration ativo)
+                                                           :operationId op-id
+                                                           :collectionIndex idx
+                                                           :golpe golpe
+                                                           :oferta true}
+                                                    (some? slot) (assoc :slot slot))))]
+                            (envelope-jvm pedido (.formatLearnMove jvm-present data prefix)))))
+
+                      :else
+                      (envelope-jvm pedido
+                                    (str "❓ Use " prefix " aprender, "
+                                         prefix " aprender <1-4>, aceitar ou recusar.")))))
+
+                "reaprender"
+                (let [prefix (str config/prefix "pk")]
+                  (p/let [treinador (.getTrainer jvm #js {:chatId chat-id :playerId player-id})
+                          idx (or (.-ativoIndex treinador) 0)
+                          col (.getCollection jvm #js {:chatId chat-id :playerId player-id})
+                          items (vec (or (.-collection col) #js []))
+                          poke (when (seq items) (nth items idx nil))
+                          hist (when poke (or (.-historicoGolpes poke) #js {}))
+                          removidos (when poke (vec (or (.-golpesRemovidos poke) #js [])))
+                          conhecidos (set (map #(or (.-slug %) (get % "slug"))
+                                               (vec (or (some-> poke .-golpes) #js []))))
+                          opcoes (->> (concat (js->clj (js/Object.keys (or hist #js {})))
+                                             removidos)
+                                      distinct
+                                      (remove #(contains? conhecidos %))
+                                      sort
+                                      vec)
+                          escolha (when (re-matches #"[1-9][0-9]*" (str (or (first resto) "")))
+                                    (dec (js/parseInt (first resto) 10)))
+                          slug (when (and escolha (<= 0 escolha) (< escolha (count opcoes)))
+                                 (nth opcoes escolha))
+                          slot-txt (second resto)
+                          slot (when (re-matches #"[1-4]" (str slot-txt))
+                                 (dec (js/parseInt slot-txt 10)))]
+                    (cond
+                      (nil? poke)
+                      (envelope-jvm pedido (str "❓ Sem Pokémon ativo. " prefix " time"))
+                      (empty? resto)
+                      (envelope-jvm pedido
+                                    (.formatRelearnMenu jvm-present poke (clj->js opcoes) prefix))
+                      (nil? slug)
+                      (envelope-jvm pedido
+                                    (str "❓ Consulte " prefix " reaprender e use números válidos."))
+                      :else
+                      (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                              op-id (.stableOperationId jvm-transport
+                                                        (:requestId pedido)
+                                                        (str "relearn:" idx ":" slug))
+                              data (.relearnMove jvm
+                                     (clj->js (cond-> {:chatId chat-id
+                                                       :playerId player-id
+                                                       :saveId (.-activeSaveId ativo)
+                                                       :fenceGeneration (.-fenceGeneration ativo)
+                                                       :operationId op-id
+                                                       :collectionIndex idx
+                                                       :slug slug}
+                                                (some? slot) (assoc :slot slot))))]
+                        (envelope-jvm pedido (.formatRelearnMove jvm-present data prefix))))))
+
+                "removergolpe"
+                (let [prefix (str config/prefix "pk")
+                      chave [chat-id player-id]]
+                  (p/let [treinador (.getTrainer jvm #js {:chatId chat-id :playerId player-id})
+                          idx (or (.-ativoIndex treinador) 0)
+                          col (.getCollection jvm #js {:chatId chat-id :playerId player-id})
+                          items (vec (or (.-collection col) #js []))
+                          poke (when (seq items) (nth items idx nil))
+                          golpes (vec (or (some-> poke .-golpes) #js []))
+                          slot (parse-indice-1based (first resto) (count golpes))]
+                    (cond
+                      (nil? poke)
+                      (envelope-jvm pedido (str "❓ Sem Pokémon ativo. " prefix " time"))
+                      (get @remocoes-pendentes chave)
+                      (envelope-jvm pedido
+                                    (str "⏳ Já há remoção marcada. Aguarde ou "
+                                         prefix " cancelar."))
+                      (< (count golpes) 2)
+                      (envelope-jvm pedido
+                                    (str "🚫 *" (.-nome poke) "* precisa manter ao menos um golpe."))
+                      (nil? slot)
+                      (envelope-jvm pedido
+                                    (str "❓ Use " prefix " removergolpe <1-" (count golpes) ">."))
+                      :else
+                      (let [golpe (nth golpes slot)
+                            nome-g (or (.-nomeExibicao golpe) (.-slug golpe) "golpe")
+                            token (str (js/Date.now) "-" (rand-int 100000))
+                            timer (js/setTimeout
+                                   (fn []
+                                     (when (= token (:token (get @remocoes-pendentes chave)))
+                                       (swap! remocoes-pendentes dissoc chave)
+                                       (-> (p/let [ativo (.getActiveSave jvm
+                                                             #js {:chatId chat-id
+                                                                  :playerId player-id})
+                                                   op-id (.stableOperationId
+                                                          jvm-transport
+                                                          (str "rmg-" token)
+                                                          (str "forget:" idx ":" slot))
+                                                   _ (.forgetMove jvm
+                                                        #js {:chatId chat-id
+                                                             :playerId player-id
+                                                             :saveId (.-activeSaveId ativo)
+                                                             :fenceGeneration (.-fenceGeneration ativo)
+                                                             :operationId op-id
+                                                             :collectionIndex idx
+                                                             :slot slot})]
+                                             nil)
+                                           (p/catch (fn [err]
+                                                      (js/console.warn "[PokemonJVM] forget:"
+                                                                       (.-message err)))))))
+                                   (* 1000 segundos-remover-golpe))]
+                        (swap! remocoes-pendentes assoc chave
+                               {:token token :timer timer :slot slot
+                                :nome-golpe nome-g :nome-pokemon (.-nome poke)})
+                        (envelope-jvm pedido
+                                      (str "⚠️ Removendo *" nome-g "* de *" (.-nome poke)
+                                           "* em " segundos-remover-golpe "s.\n"
+                                           "Mudou de ideia? " prefix " cancelar"))))))
+
+                "cancelar"
+                (let [chave [chat-id player-id]
+                      pendente (get @remocoes-pendentes chave)
+                      prefix (str config/prefix "pk")]
+                  (if pendente
+                    (do (js/clearTimeout (:timer pendente))
+                        (swap! remocoes-pendentes dissoc chave)
+                        (envelope-jvm pedido
+                                      (str "✅ Beleza, *" (:nome-golpe pendente)
+                                           "* continua com *" (:nome-pokemon pendente) "*.")))
+                    (envelope-jvm pedido
+                                  (str "❓ Nenhuma remoção marcada. Use " prefix
+                                       " removergolpe <número>."))))
 
                 (envelope-jvm pedido
                               (.formatUnavailable jvm-present (str/join " " args))))]

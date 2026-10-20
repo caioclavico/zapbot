@@ -22,6 +22,8 @@
   (-> (or nome "")
       str/trim
       str/lower-case
+      (java.text.Normalizer/normalize java.text.Normalizer$Form/NFD)
+      (str/replace #"\p{M}" "")
       (str/replace #"[ _]+" "-")
       (str/replace #"[^a-z0-9\-]" "")))
 
@@ -90,6 +92,21 @@
                :classe classe})
         golpes))))
 
+(def preco-reaprender 50)
+
+(defn ofertas
+  "Fila de ofertas pendentes (mapas de golpe)."
+  [registro]
+  (mapv registro->golpe
+        (or (:ofertas-golpes registro) (:golpes-oferecidos registro) [])))
+
+(defn- ids-ja-oferecidos
+  "Ids que não devem ser reofertados por nível (conhecidos + fila + removidos)."
+  [registro]
+  (set (concat
+        (map chave (mapv registro->golpe (or (:golpes registro) [])))
+        (map chave (ofertas registro))
+        (map identificador (or (:golpes-removidos registro) [])))))
 (defn preparar-aprendizado
   "Valida troca sem I/O. slot nil = vaga livre; inteiro = substitui.
   Nunca elimina o último ataque do próprio tipo. Lança em falha."
@@ -117,3 +134,90 @@
                      :golpes-removidos (vec (remove #{id} removidos)))
         antigo (assoc-in [:historico-golpes (chave antigo)] (golpe->registro antigo))
         antigo (update :golpes-removidos #(vec (distinct (conj (vec %) (chave antigo)))))))))
+
+(defn aplicar-aprendizado
+  "Aplica preparar-aprendizado; se oferta?, consome a primeira oferta (deve casar)."
+  [registro golpe slot oferta?]
+  (let [fila (ofertas registro)
+        id (chave golpe)]
+    (when (and oferta?
+               (or (empty? fila) (not= id (chave (first fila)))))
+      (throw (err/error :no_move_offer {:expected id
+                                        :have (some-> (first fila) chave)})))
+    (let [novo (preparar-aprendizado registro golpe slot)]
+      (cond-> novo
+        oferta? (assoc :ofertas-golpes (mapv golpe->registro (vec (rest fila)))
+                       :golpes-oferecidos (mapv golpe->registro (vec (rest fila))))))))
+
+(defn oferecer-golpe
+  "Espelha treinador/oferecer-golpe!: auto-aprende se houver vaga; senão enfileira.
+  Retorna {:resultado :aprendido|:pendente :registro ...}."
+  [registro golpe]
+  (let [id (chave golpe)
+        atuais (mapv registro->golpe (or (:golpes registro) []))]
+    (when (contains? (ids-ja-oferecidos registro) id)
+      (throw (err/error :move_already_known {:slug id})))
+    (when (some #(= id (chave %)) atuais)
+      (throw (err/error :move_already_known {:slug id})))
+    (if (< (count atuais) maximo-golpes)
+      (let [aprendido (preparar-aprendizado registro golpe nil)]
+        {:resultado :aprendido
+         :registro aprendido})
+      (let [salvo (golpe->registro golpe)
+            fila (conj (mapv golpe->registro (ofertas registro)) salvo)
+            hist (assoc (or (:historico-golpes registro) {}) id salvo)]
+        {:resultado :pendente
+         :registro (-> registro
+                       (assoc :ofertas-golpes fila
+                              :golpes-oferecidos fila
+                              :historico-golpes hist))}))))
+
+(defn recusar-oferta
+  "Remove a primeira oferta da fila."
+  [registro]
+  (let [fila (ofertas registro)]
+    (when (empty? fila)
+      (throw (err/error :no_move_offer {})))
+    (let [restante (mapv golpe->registro (vec (rest fila)))]
+      (assoc registro
+             :ofertas-golpes restante
+             :golpes-oferecidos restante))))
+
+(defn remover-golpe
+  "Remove golpe no slot (0-based); exige ≥2 golpes e preserva STAB."
+  [registro slot]
+  (let [atuais (mapv registro->golpe (or (:golpes registro) []))
+        tipos (or (:tipos registro) [])]
+    (when (< (count atuais) 2)
+      (throw (err/error :cannot_forget_last_move {:count (count atuais)})))
+    (when-not (and (integer? slot) (<= 0 slot) (< slot (count atuais)))
+      (throw (err/error :invalid_move_slot {:slot slot :count (count atuais)})))
+    (let [golpe (nth atuais slot)
+          restantes (vec (concat (subvec atuais 0 slot) (subvec atuais (inc slot))))]
+      (when-not (some #(ataque-do-tipo? % tipos) restantes)
+        (throw (err/error :must_keep_stab_move {:tipos tipos})))
+      (-> registro
+          (assoc :golpes (mapv golpe->registro restantes))
+          (assoc-in [:historico-golpes (chave golpe)] (golpe->registro golpe))
+          (update :golpes-removidos
+                  #(vec (distinct (conj (vec (or % [])) (chave golpe)))))))))
+
+(defn opcoes-reaprender
+  "Slugs reaprendíveis: histórico + removidos − conhecidos − pendentes."
+  [registro]
+  (let [conhecidos (set (map chave (mapv registro->golpe (or (:golpes registro) []))))
+        pendentes (set (map chave (ofertas registro)))
+        hist-keys (map identificador (keys (or (:historico-golpes registro) {})))
+        rem (map identificador (or (:golpes-removidos registro) []))]
+    (->> (concat hist-keys rem)
+         distinct
+         (remove #(or (contains? conhecidos %) (contains? pendentes %)))
+         sort
+         vec)))
+
+(defn golpe-do-historico
+  [registro slug]
+  (let [id (identificador slug)
+        raw (get (or (:historico-golpes registro) {}) id
+                 (get (or (:historico-golpes registro) {}) slug))]
+    (when raw (registro->golpe raw))))

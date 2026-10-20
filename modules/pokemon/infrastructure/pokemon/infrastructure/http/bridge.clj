@@ -74,11 +74,14 @@
      :unknown_gym :unknown_heal_item :invalid_gym_team
      :invalid_gym_npc_team :invalid_motivation_index
      :invalid_raid_pokemon :invalid_raid_move :raid_not_found
-     :invalid_starter) 400
+     :invalid_starter :invalid_move_slot :move_already_known
+     :must_keep_stab_move :no_move_offer :move_not_in_history
+     :cannot_forget_last_move :pokemon_not_found) 400
     (:stale_writer_fence :writer_fence_conflict :activate_conflict
      :receipt_payload_mismatch :reward_conflict :reward_save_mismatch
      :operation_forbidden :battle_pending :battle_already_active
-     :battle_save_mismatch :encounter_owner_mismatch :encounter_not_ready
+     :battle_busy :battle_save_mismatch :encounter_owner_mismatch
+     :encounter_not_ready
      :stale_turn_index :chat_hunt_busy :hunt_cooldown
      :gym_cas_conflict :not_gym_leader :gym_defense_pending
      :cannot_challenge_own_gym :gym_locked :gym_daily_limit
@@ -204,6 +207,10 @@
                                               "adventure-read" "egg-incubate" "egg-hatch"
                                               "shop-read" "shop-buy" "inventory-read"
                                               "item-use"
+                                              "pokemon-set-active" "pokemon-evolve"
+                                              "pokemon-learn-move" "pokemon-forget-move"
+                                              "pokemon-offer-move" "pokemon-refuse-offer"
+                                              "pokemon-relearn-move"
                                               "onboarding-read" "onboarding-start"
                                               "onboarding-kit" "onboarding-starter"]
                                        platform-store
@@ -1127,6 +1134,203 @@
                                           item-id (assoc :item-id item-id)
                                           kind (assoc :kind kind)
                                           (some? idx) (assoc :idx idx)))))))
+
+                (= path "/v1/pokemon/active")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          idx (long-or-nil (g body "collectionIndex" "idx" "index"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (nil? idx))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "collectionIndex"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/set-active-pokemon!
+                                  store {:chat-id chat-id
+                                         :player-id player-id
+                                         :save-id save-id
+                                         :fence-generation fence
+                                         :operation-id operation-id
+                                         :idx idx})))))
+
+                (= path "/v1/pokemon/evolve")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          idx (long-or-nil (g body "collectionIndex" "idx" "index"))
+                          item-id (g body "itemId" "item-id" "item")
+                          dados (or (g body "dados") (g body "species") {})]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (nil? idx)
+                                (empty? dados))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "collectionIndex" "dados"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/evolve-pokemon!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :idx idx
+                                                 :dados dados}
+                                          item-id (assoc :item-id item-id)))))))
+
+                (= path "/v1/pokemon/learn-move")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          idx (long-or-nil (g body "collectionIndex" "idx" "index"))
+                          golpe (or (g body "golpe") (g body "move") {})
+                          slot (long-or-nil (g body "slot" "moveIndex"))
+                          oferta? (boolean (g body "oferta" "oferta?" "fromOffer"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (nil? idx)
+                                (empty? golpe))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "collectionIndex" "golpe"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/learn-move!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :idx idx
+                                                 :golpe golpe
+                                                 :oferta? oferta?}
+                                          (some? slot) (assoc :slot slot)))))))
+
+                (= path "/v1/pokemon/forget-move")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          idx (long-or-nil (g body "collectionIndex" "idx" "index"))
+                          slot (long-or-nil (g body "slot" "moveIndex"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (nil? idx) (nil? slot))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "collectionIndex" "slot"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/forget-move!
+                                  store {:chat-id chat-id
+                                         :player-id player-id
+                                         :save-id save-id
+                                         :fence-generation fence
+                                         :operation-id operation-id
+                                         :idx idx
+                                         :slot slot})))))
+
+                (= path "/v1/pokemon/offer-move")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          idx (long-or-nil (g body "collectionIndex" "idx" "index"))
+                          golpe (or (g body "golpe") (g body "move") {})]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (nil? idx)
+                                (empty? golpe))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "collectionIndex" "golpe"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/offer-move!
+                                  store {:chat-id chat-id
+                                         :player-id player-id
+                                         :save-id save-id
+                                         :fence-generation fence
+                                         :operation-id operation-id
+                                         :idx idx
+                                         :golpe golpe})))))
+
+                (= path "/v1/pokemon/refuse-offer")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          idx (long-or-nil (g body "collectionIndex" "idx" "index"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (nil? idx))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "collectionIndex"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/refuse-offer!
+                                  store {:chat-id chat-id
+                                         :player-id player-id
+                                         :save-id save-id
+                                         :fence-generation fence
+                                         :operation-id operation-id
+                                         :idx idx})))))
+
+                (= path "/v1/pokemon/relearn-move")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          idx (long-or-nil (g body "collectionIndex" "idx" "index"))
+                          slug (g body "slug" "moveId" "id")
+                          slot (long-or-nil (g body "slot" "moveIndex"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (nil? idx)
+                                (str/blank? (str slug)))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "collectionIndex" "slug"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/relearn-move!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :idx idx
+                                                 :slug slug}
+                                          (some? slot) (assoc :slot slot)))))))
 
                 :else
                 (send-json! ex 404

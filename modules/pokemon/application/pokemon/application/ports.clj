@@ -73,6 +73,20 @@
   (learn-move! [this writer-ctx request]
     "Aprende/substitui golpe no índice; fence + recibo.")
 
+  (set-active-pokemon! [this writer-ctx request]
+    "Define o índice ativo do save; bloqueia com batalha/caça ativa.")
+
+  (forget-move! [this writer-ctx request]
+    "Remove golpe no slot do Pokémon; fence + recibo.")
+
+  (offer-move! [this writer-ctx request]
+    "Oferece golpe (auto-aprende se houver vaga; senão enfileira).")
+
+  (refuse-offer! [this writer-ctx request]
+    "Recusa a primeira oferta de golpe pendente.")
+
+  (relearn-move! [this writer-ctx request]
+    "Reaprende golpe do histórico cobrando moedas; fence + recibo.")
   (start-wild-battle! [this writer-ctx request]
     "Inicia batalha selvagem no save ativo; bloqueia se já houver ativa.")
 

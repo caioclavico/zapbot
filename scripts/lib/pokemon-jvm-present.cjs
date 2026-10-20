@@ -302,7 +302,108 @@ function formatCollection(data, tokens, prefix = '!pk') {
     '',
     page > 1 ? `⬅️ Anterior: ${prefix} time ${page - 1}` : null,
     page < pages ? `➡️ Próxima: ${prefix} time ${page + 1}` : null,
-    `Use ${prefix} escolher <número> no legado; no JVM o ativo é o índice do save.`
+    `Use ${prefix} escolher <número> para trocar o ativo (👉).`
+  ].filter(Boolean).join('\n');
+}
+
+function formatSetActive(data, prefix = '!pk') {
+  const p = (data && data.pokemon) || {};
+  const n = (data && data.ativoIndex != null) ? Number(data.ativoIndex) + 1 : '?';
+  return `✅ *${p.nome || '?'}* agora é seu Pokémon ativo! (#${n})\n${prefix} time · ${prefix} cacar`;
+}
+
+function formatEvolve(data, prefix = '!pk') {
+  const p = (data && data.pokemon) || {};
+  const item = data && data.itemId;
+  return [
+    `✨ Evoluiu para *${p.nome || '?'}*!`,
+    item ? `Uma pedra (\`${item}\`) foi consumida.` : null,
+    'Nível, XP e item equipado foram preservados.',
+    `${prefix} time · ${prefix} escolher`
+  ].filter(Boolean).join('\n');
+}
+
+function formatLearnMove(data, prefix = '!pk') {
+  const p = (data && data.pokemon) || {};
+  const golpes = p.golpes || [];
+  const lista = golpes.map((g, i) => {
+    const nome = g.nomeExibicao || g['nome-exibicao'] || g.slug || '?';
+    return `${i + 1}. ${nome}`;
+  }).join('\n');
+  return [
+    `✅ *${p.nome || 'Pokémon'}* atualizou os golpes!`,
+    lista || '(sem golpes)',
+    `${prefix} aprender · ${prefix} reaprender`
+  ].join('\n');
+}
+
+function formatForgetMove(data, prefix = '!pk') {
+  const rem = (data && data.removido) || {};
+  const nome = rem.nomeExibicao || rem['nome-exibicao'] || rem.slug || 'golpe';
+  const p = (data && data.pokemon) || {};
+  return `🗑️ *${nome}* removido de *${p.nome || '?'}*.\n${prefix} aprender · ${prefix} reaprender`;
+}
+
+function formatOfferMove(data, prefix = '!pk') {
+  const p = (data && data.pokemon) || {};
+  if ((data && data.resultado) === 'aprendido') {
+    return `📘 *${p.nome || '?'}* aprendeu o golpe automaticamente (havia vaga).\n${prefix} time`;
+  }
+  const ofertas = p.ofertasGolpes || p['ofertas-golpes'] || p.golpesOferecidos || [];
+  const oferta = ofertas[0] || {};
+  const nome = oferta.nomeExibicao || oferta['nome-exibicao'] || oferta.slug || 'golpe';
+  return [
+    `📘 *${p.nome || '?'}* pode aprender *${nome}*!`,
+    menuGolpes(p, [], null),
+    `Use ${prefix} aprender <1-4> para substituir, ou ${prefix} aprender aceitar (vaga livre).`,
+    `Recusar: ${prefix} aprender recusar.`
+  ].join('\n');
+}
+
+function formatRefuseOffer(data, prefix = '!pk') {
+  return `📘 Oferta recusada. Golpes inalterados.\nReaprender: ${prefix} reaprender (50 moedas).`;
+}
+
+function formatRelearnMove(data, prefix = '!pk') {
+  const p = (data && data.pokemon) || {};
+  const preco = (data && data.preco) || 50;
+  return `✅ *${p.nome || '?'}* reaprendeu o golpe! −${preco} moedas.\n${prefix} time`;
+}
+
+function formatMoveOfferMenu(pokemon, prefix = '!pk') {
+  const p = pokemon || {};
+  const ofertas = p.ofertasGolpes || p['ofertas-golpes'] || p.golpesOferecidos || [];
+  const oferta = ofertas[0];
+  if (!oferta) {
+    return [
+      `📘 *${p.nome || '?'}* — sem oferta pendente.`,
+      menuGolpes(p, [], null),
+      `Use ${prefix} aprender após subir de nível, ou ${prefix} reaprender.`
+    ].join('\n');
+  }
+  const nome = oferta.nomeExibicao || oferta['nome-exibicao'] || oferta.slug || 'golpe';
+  const vagas = (p.golpes || []).length < 4;
+  return [
+    `📘 *${p.nome || '?'}* pode aprender *${nome}*!`,
+    menuGolpes(p, [], null),
+    `Use ${prefix} aprender <número do golpe a substituir>`
+      + (vagas ? ` ou ${prefix} aprender aceitar` : '')
+      + '.',
+    `Recusar: ${prefix} aprender recusar.`
+  ].join('\n');
+}
+
+function formatRelearnMenu(pokemon, opcoes, prefix = '!pk') {
+  const p = pokemon || {};
+  const lista = (opcoes || []).map((slug, i) => `${i + 1}. ${slug}`).join('\n');
+  return [
+    `📚 *Reaprender — ${p.nome || '?'}*`,
+    '💰 50 moedas por golpe.',
+    '',
+    lista || 'Nenhum golpe esquecido ou recusado disponível.',
+    lista
+      ? `\nUse ${prefix} reaprender <número> [golpe a substituir 1-4].`
+      : null
   ].filter(Boolean).join('\n');
 }
 
@@ -509,6 +610,14 @@ function formatError(err) {
     BATTLE_PENDING: '⚠️ Há batalha/encontro em andamento neste save — não dá para alternar A↔B agora.',
     BATTLE_SAVE_MISMATCH: '⚠️ Encontro pertence a outro save — callback antigo rejeitado.',
     BATTLE_ALREADY_ACTIVE: '⚔️ Já existe uma batalha/encontro seu em andamento.',
+    BATTLE_BUSY: '🚫 Termine a batalha/caça antes de trocar o ativo, evoluir ou alterar golpes.',
+    INVALID_COLLECTION_INDEX: '❓ Número de Pokémon inválido. Veja com !pk time.',
+    INVALID_MOVE_SLOT: '❓ Informe um golpe válido (1-4) para substituir ou liberar vaga.',
+    MOVE_ALREADY_KNOWN: '❓ Esse golpe já é conhecido (ou já foi oferecido/removido).',
+    MUST_KEEP_STAB_MOVE: '🚫 Mantenha pelo menos um ataque ofensivo do próprio tipo.',
+    NO_MOVE_OFFER: '❓ Não há oferta de golpe pendente. Use !pk aprender após subir de nível.',
+    MOVE_NOT_IN_HISTORY: '❓ Esse golpe não está no histórico para reaprender.',
+    CANNOT_FORGET_LAST_MOVE: '🚫 Remover deixaria o Pokémon sem golpes suficientes.',
     AREA_UNAVAILABLE: '🗺️ Essa área não está disponível hoje.',
     HUNT_COOLDOWN: '⏳ Ainda em cooldown de caça. Aguarde e tente de novo.',
     CHAT_HUNT_BUSY: '⚔️ Já existe uma caçada em andamento neste chat.',
@@ -573,7 +682,7 @@ function formatUnavailable(commandHint) {
   return [
     '❓ Esse comando ainda não está disponível por aqui.',
     commandHint ? `Você pediu: \`${commandHint}\`` : null,
-    'Tente: `treinador`, `meus`, `iniciar`, `inicial <1-3>`, `cacar`, `capturar`, `ginasio`, `raide`, `joy`, `ovos`, `loja`, `mochila`, `saves`.'
+    'Tente: `treinador`, `meus`, `escolher`, `evoluir`, `aprender`, `cacar`, `capturar`, `ginasio`, `raide`, `joy`, `ovos`, `loja`, `mochila`, `saves`.'
   ].filter(Boolean).join('\n');
 }
 
@@ -1399,7 +1508,13 @@ const ALIASES = {
   pocao: 'pocao', 'poção': 'pocao', pot: 'pocao', vida: 'pocao',
   'pocao-maxima': 'pocao-maxima', maxima: 'pocao-maxima', pmax: 'pocao-maxima',
   clima: 'clima', areas: 'clima', áreas: 'clima', mapa: 'clima',
-  recibo: 'recibo', op: 'recibo', operation: 'recibo'
+  recibo: 'recibo', op: 'recibo', operation: 'recibo',
+  escolher: 'escolher', esc: 'escolher', trocar: 'escolher', troca: 'escolher',
+  evoluir: 'evoluir', evo: 'evoluir', evolucao: 'evoluir', evolução: 'evoluir',
+  aprender: 'aprender', apr: 'aprender',
+  reaprender: 'reaprender', reap: 'reaprender',
+  removergolpe: 'removergolpe', rmg: 'removergolpe',
+  cancelar: 'cancelar', can: 'cancelar'
 };
 
 function resolveCommand(tokens) {
@@ -1469,5 +1584,14 @@ module.exports = {
   findShopItem,
   filtrarColecao,
   interpretarFiltros,
-  golpesLinha
+  golpesLinha,
+  formatSetActive,
+  formatEvolve,
+  formatLearnMove,
+  formatForgetMove,
+  formatOfferMove,
+  formatRefuseOffer,
+  formatRelearnMove,
+  formatMoveOfferMenu,
+  formatRelearnMenu
 };

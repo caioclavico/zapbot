@@ -42,7 +42,8 @@
                   :shiny :nivel :hp :hp-atual :status :in-party :tipos
                   :raridade :xp-desde-nivel :ataque :defesa :atq-esp :def-esp
                   :veloc :amizade :imagem :imagem-shiny :altura :golpes
-                  :habilidade]))
+                  :habilidade :ofertas-golpes :golpes-oferecidos
+                  :historico-golpes :golpes-removidos]))
 
 (defn- save-profile
   [save]

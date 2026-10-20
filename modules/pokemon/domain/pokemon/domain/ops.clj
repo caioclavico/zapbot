@@ -71,13 +71,38 @@
      item-id (assoc :item-id item-id))))
 
 (defn learn-move-payload
-  [{:keys [idx golpe slot]}]
+  [{:keys [idx golpe slot oferta?]}]
   (reward/canonicalize
    (cond-> {:idx (long idx)
             :golpe (reward/canonicalize
-                    (select-keys golpe [:slug :nome-exibicao :tipo :poder :classe]))}
+                    (select-keys golpe [:slug :nome-exibicao :tipo :poder :classe]))
+            :oferta? (boolean oferta?)}
      (some? slot) (assoc :slot (long slot)))))
 
+(defn set-active-payload
+  [{:keys [idx]}]
+  (reward/canonicalize {:idx (long idx)}))
+
+(defn forget-move-payload
+  [{:keys [idx slot]}]
+  (reward/canonicalize {:idx (long idx) :slot (long slot)}))
+
+(defn offer-move-payload
+  [{:keys [idx golpe]}]
+  (reward/canonicalize
+   {:idx (long idx)
+    :golpe (reward/canonicalize
+            (select-keys golpe [:slug :nome-exibicao :tipo :poder :classe]))}))
+
+(defn refuse-offer-payload
+  [{:keys [idx]}]
+  (reward/canonicalize {:idx (long idx)}))
+
+(defn relearn-move-payload
+  [{:keys [idx slug slot]}]
+  (reward/canonicalize
+   (cond-> {:idx (long idx) :slug (str slug)}
+     (some? slot) (assoc :slot (long slot)))))
 (defn start-battle-payload
   [{:keys [battle-id kind pokemon-x pokemon-o collection-index]}]
   (reward/canonicalize

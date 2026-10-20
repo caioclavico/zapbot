@@ -8,6 +8,7 @@
 const MEDIA = 75;
 const FATOR = 0.5;
 const TOTAL = 1025;
+const FATOR_CRESCIMENTO = 1.03;
 const GOLPE_PADRAO = {
   slug: 'tackle',
   nomeExibicao: 'Investida',
@@ -15,6 +16,106 @@ const GOLPE_PADRAO = {
   poder: 40,
   classe: 'fisico'
 };
+
+/** Pedras de evolução — espelha zapbot.pokemon.aventuras/pedras (master). */
+const PEDRAS = {
+  'pedra-agua': {
+    nome: 'Pedra da Água', emoji: '💧',
+    evolucoes: {
+      poliwhirl: 'poliwrath', shellder: 'cloyster', staryu: 'starmie',
+      eevee: 'vaporeon', lombre: 'ludicolo', panpour: 'simipour'
+    }
+  },
+  'pedra-trovao': {
+    nome: 'Pedra do Trovão', emoji: '⚡',
+    evolucoes: {
+      pikachu: 'raichu', eevee: 'jolteon', eelektrik: 'eelektross',
+      charjabug: 'vikavolt', tadbulb: 'bellibolt'
+    }
+  },
+  'pedra-fogo': {
+    nome: 'Pedra do Fogo', emoji: '🔥',
+    evolucoes: {
+      vulpix: 'ninetales', growlithe: 'arcanine', eevee: 'flareon',
+      pansear: 'simisear', capsakid: 'scovillain'
+    }
+  },
+  'pedra-folha': {
+    nome: 'Pedra da Folha', emoji: '🍃',
+    evolucoes: {
+      gloom: 'vileplume', weepinbell: 'victreebel', exeggcute: 'exeggutor',
+      nuzleaf: 'shiftry', pansage: 'simisage', eevee: 'leafeon'
+    }
+  },
+  'pedra-solar': {
+    nome: 'Pedra Solar', emoji: '☀️',
+    evolucoes: {
+      gloom: 'bellossom', sunkern: 'sunflora', cottonee: 'whimsicott',
+      petilil: 'lilligant', helioptile: 'heliolisk'
+    }
+  },
+  'pedra-lua': {
+    nome: 'Pedra da Lua', emoji: '🌙',
+    evolucoes: {
+      nidorina: 'nidoqueen', nidorino: 'nidoking', clefairy: 'clefable',
+      jigglypuff: 'wigglytuff', skitty: 'delcatty', munna: 'musharna'
+    }
+  }
+};
+
+function normalizarItem(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '-');
+}
+
+function destinoPedra(itemId, speciesSlug) {
+  const pedra = PEDRAS[normalizarItem(itemId)];
+  if (!pedra) return null;
+  const slug = String(speciesSlug || '').toLowerCase();
+  return pedra.evolucoes[slug] || null;
+}
+
+function pedrasCompativeis(speciesSlug) {
+  const slug = String(speciesSlug || '').toLowerCase();
+  return Object.keys(PEDRAS).filter(id => PEDRAS[id].evolucoes[slug]);
+}
+
+function escalarNivel(pokemon, nivel) {
+  const n = Math.max(1, Number(nivel) || 1);
+  const fator = Math.pow(FATOR_CRESCIMENTO, n - 1);
+  const scale = (v) => Math.round((Number(v) || 0) * fator);
+  return {
+    ...pokemon,
+    nivel: n,
+    hp: scale(pokemon.hp),
+    ataque: scale(pokemon.ataque),
+    defesa: scale(pokemon.defesa),
+    atqEsp: scale(pokemon.atqEsp != null ? pokemon.atqEsp : pokemon['atq-esp']),
+    defEsp: scale(pokemon.defEsp != null ? pokemon.defEsp : pokemon['def-esp']),
+    veloc: scale(pokemon.veloc)
+  };
+}
+
+/** Dados canônicos para POST /v1/pokemon/evolve. */
+function dadosEvolucao(evoluido) {
+  return {
+    nomeNovo: evoluido.nome,
+    imagem: evoluido.imagem || null,
+    imagemShiny: evoluido.imagemShiny || evoluido['imagem-shiny'] || null,
+    tipos: evoluido.tipos || [],
+    habilidade: evoluido.habilidade || null,
+    hp: evoluido.hp,
+    ataque: evoluido.ataque,
+    defesa: evoluido.defesa,
+    atqEsp: evoluido.atqEsp != null ? evoluido.atqEsp : evoluido['atq-esp'],
+    defEsp: evoluido.defEsp != null ? evoluido.defEsp : evoluido['def-esp'],
+    veloc: evoluido.veloc
+  };
+}
 
 function suavizarStat(valor) {
   return Math.round(MEDIA + FATOR * ((Number(valor) || 0) - MEDIA));
@@ -255,12 +356,21 @@ async function buildGymNpcTeam(speciesNames) {
 
 module.exports = {
   TOTAL,
+  PEDRAS,
+  FATOR_CRESCIMENTO,
   suavizarStat,
+  normalizarItem,
+  destinoPedra,
+  pedrasCompativeis,
+  escalarNivel,
+  dadosEvolucao,
   fetchPokemonById,
   fetchPokemonByName,
   buildHuntCandidates,
   buildGymNpcTeam,
   fetchImageBase64,
   pokemonDeDados,
-  finalizeWild
+  finalizeWild,
+  carregarGolpe,
+  nivelAprendizado
 };

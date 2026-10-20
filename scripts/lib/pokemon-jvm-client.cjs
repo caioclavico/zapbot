@@ -291,6 +291,13 @@ function createClient(config = {}) {
       request('GET', `/v1/inventory${q({ chatId, playerId })}`),
     buyItem: (body) => mutateOnce('/v1/shop/buy', body),
     useItem: (body) => mutateOnce('/v1/items/use', body),
+    setActivePokemon: (body) => mutateOnce('/v1/pokemon/active', body),
+    evolvePokemon: (body) => mutateOnce('/v1/pokemon/evolve', body),
+    learnMove: (body) => mutateOnce('/v1/pokemon/learn-move', body),
+    forgetMove: (body) => mutateOnce('/v1/pokemon/forget-move', body),
+    offerMove: (body) => mutateOnce('/v1/pokemon/offer-move', body),
+    refuseOffer: (body) => mutateOnce('/v1/pokemon/refuse-offer', body),
+    relearnMove: (body) => mutateOnce('/v1/pokemon/relearn-move', body),
     close: () => agent.destroy()
   };
 }

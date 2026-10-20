@@ -2,12 +2,15 @@
   "Casos de uso M4.2/M4.4/M4.5 da bridge: ensure, saves, activate, encontro/caça.
   Sem seed admin; save-id + fence + operation-id explícitos nas escritas."
   (:require [clojure.string :as str]
+            [pokemon.application.active :as active-app]
             [pokemon.application.adventure :as adv]
             [pokemon.application.battle :as battle-app]
             [pokemon.application.capture :as capture-app]
+            [pokemon.application.evolution :as evo-app]
             [pokemon.application.gym :as gym-app]
             [pokemon.application.hunt :as hunt-app]
             [pokemon.application.joy :as joy-app]
+            [pokemon.application.moves :as moves-app]
             [pokemon.application.onboarding :as onboard-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.raid :as raid-app]
@@ -20,6 +23,7 @@
             [pokemon.domain.hunt :as hunt]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]
+            [pokemon.domain.moves :as moves]
             [pokemon.domain.mundo :as mundo]
             [pokemon.domain.raid :as raid-domain]))
 
@@ -915,3 +919,140 @@
             :idx (:idx result)
             :pokemon (:pokemon result)}
            (select-keys result [:hp-antes :hp-depois :hp-max :status-antes]))))
+
+(defn- pokemon-summary
+  [p]
+  (when p
+    (select-keys p [:id-pokemon :nome :species :nivel :hp :hp-atual :tipos
+                    :golpes :ofertas-golpes :golpes-oferecidos :historico-golpes
+                    :golpes-removidos :imagem :imagem-shiny :shiny :raridade
+                    :habilidade :ataque :defesa :atq-esp :def-esp :veloc])))
+
+(defn set-active-pokemon!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id idx]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (active-app/set-active!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :idx (long idx)})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :ativo-index (:ativo-index result idx)
+     :pokemon (pokemon-summary (:pokemon result))}))
+
+(defn evolve-pokemon!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx item-id dados]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        dados* (keywordize-keys (or dados {}))
+        result (evo-app/evolve!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :idx (long idx)
+                         :dados dados*}
+                  item-id (assoc :item-id (str item-id))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :item-id item-id
+     :pokemon (pokemon-summary (:registro result))}))
+
+(defn learn-move!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx golpe slot oferta?]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        golpe* (keywordize-keys (or golpe {}))
+        result (moves-app/learn-move!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :idx (long idx)
+                         :golpe golpe*
+                         :oferta? (boolean oferta?)}
+                  (some? slot) (assoc :slot (long slot))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :pokemon (pokemon-summary (:registro result))}))
+
+(defn forget-move!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx slot]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (moves-app/forget-move!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :idx (long idx)
+                 :slot (long slot)})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :removido (:removido result)
+     :pokemon (pokemon-summary (:registro result))}))
+
+(defn offer-move!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx golpe]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        golpe* (keywordize-keys (or golpe {}))
+        result (moves-app/offer-move!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :idx (long idx)
+                 :golpe golpe*})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :resultado (:resultado result)
+     :pokemon (pokemon-summary (:registro result))}))
+
+(defn refuse-offer!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id idx]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (moves-app/refuse-offer!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :idx (long idx)})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :pokemon (pokemon-summary (:registro result))}))
+
+(defn relearn-move!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx slug slot]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (moves-app/relearn-move!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :idx (long idx)
+                         :slug (str slug)}
+                  (some? slot) (assoc :slot (long slot))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :slug (:slug result)
+     :preco (:preco result moves/preco-reaprender)
+     :coins-depois (:coins-depois result)
+     :pokemon (pokemon-summary (:registro result))}))
