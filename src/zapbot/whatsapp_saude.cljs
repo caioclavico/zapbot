@@ -80,41 +80,66 @@
       (subs u 0 i)
       u)))
 
+(defn- json-res! [^js res status-code body]
+  (try
+    (when-not (.-headersSent res)
+      (.writeHead res status-code
+                  #js {"Content-Type" "application/json"
+                       "Cache-Control" "no-store"
+                       "Connection" "close"})
+      (.end res (js/JSON.stringify (clj->js body))))
+    (catch :default err
+      (log! (str "falha ao responder HTTP: " (or (.-message err) "erro")))
+      (try
+        (when-not (.-writableEnded res)
+          (.end res))
+        (catch :default _ nil)))))
+
 (defn atender!
   ([saude client req res] (atender! saude client req res nil))
   ([saude ^js client ^js req ^js res opts]
+   ;; Evita ECONNRESET se o cliente abortar no meio do evaluate.
+   (.on req "aborted" #(log! "cliente HTTP abortou a requisição"))
+   (.on res "error" #(log! (str "erro no socket HTTP: "
+                                (or (some-> % .-message) "desconhecido"))))
    (let [method (.-method req)
          path (url-path req)
          on-discover (:on-discover-groups opts)]
-     (cond
-       (and (= "GET" method) (= "/diagnostics" path))
-       (let [amostra (recursos/amostra)
-             dados (cond-> {:operacoes (desempenho/pendentes)}
-                     amostra (assoc :recursos amostra))]
-         (.writeHead res 200 #js {"Content-Type" "application/json" "Cache-Control" "no-store"})
-         (.end res (js/JSON.stringify (clj->js dados))))
+     (try
+       (cond
+         (and (= "GET" method) (= "/diagnostics" path))
+         (let [amostra (recursos/amostra)
+               dados (cond-> {:operacoes (desempenho/pendentes)}
+                       amostra (assoc :recursos amostra))]
+           (json-res! res 200 dados))
 
-       (and (= "GET" method) (= "/health" path))
-       (let [dados (resposta saude client)]
-         (.writeHead res (if (= "ok" (:status dados)) 200 503)
-                     #js {"Content-Type" "application/json" "Cache-Control" "no-store"})
-         (.end res (js/JSON.stringify (clj->js dados))))
+         (and (= "GET" method) (= "/health" path))
+         (let [dados (resposta saude client)]
+           (json-res! res (if (= "ok" (:status dados)) 200 503) dados))
 
-       ;; Bootstrap only: re-descobre grupos sem reiniciar Chromium / sem comandos.
-       (and on-discover
-            (#{"GET" "POST"} method)
-            (= "/bootstrap/discover-groups" path))
-       (do
-         (.writeHead res 202 #js {"Content-Type" "application/json" "Cache-Control" "no-store"})
-         (.end res (js/JSON.stringify
-                    #js {:accepted true
-                         :note "Descoberta agendada; veja logs [bootstrap] e groups.json. Sem mensagens/comandos."}))
-         (try
-           (on-discover)
-           (catch :default err
-             (log! (str "bootstrap discover erro: " (or (.-message err) "falha"))))))
+         ;; Bootstrap: responde JSON primeiro; trabalho assíncrono fica no callback.
+         (and on-discover
+              (#{"GET" "POST"} method)
+              (= "/bootstrap/discover-groups" path))
+         (let [result (try
+                        (on-discover)
+                        (catch :default err
+                          (log! (str "bootstrap discover erro: "
+                                     (or (.-message err) "falha")))
+                          {:status "error" :http 500
+                           :note "Falha ao agendar descoberta (ver logs)."}))
+               code (or (:http result) 202)
+               body (cond-> {:status (or (:status result) "accepted")
+                             :note (or (:note result) "")
+                             :commandsProcessed false}
+                      (contains? result :accepted)
+                      (assoc :accepted (:accepted result)))]
+           (json-res! res code body))
 
-       :else (do (.writeHead res 404) (.end res))))))
+         :else (json-res! res 404 {:status "not_found"}))
+       (catch :default err
+         (log! (str "handler HTTP falhou: " (or (.-message err) "erro")))
+         (json-res! res 500 {:status "error" :note "handler_exception"}))))))
 
 (defn servir!
   ([saude client] (servir! saude client nil))

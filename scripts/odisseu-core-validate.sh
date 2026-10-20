@@ -70,6 +70,14 @@ else
   bad "faltando /bootstrap/discover-groups"
 fi
 
+if grep -q 'function helpersDisponiveis' scripts/lib/bootstrap-group-discovery.cjs \
+   && grep -q 'autossuficiente' scripts/lib/bootstrap-group-discovery.cjs \
+   && grep -q 'agendar-descoberta-http!' src/zapbot/core.cljs; then
+  ok "M9.5.1 evaluate autossuficiente + HTTP defer"
+else
+  bad "M9.5.1 incompleto (helpers aninhados / HTTP)"
+fi
+
 TMPENV=$(mktemp)
 trap 'rm -f "$TMPENV"' EXIT
 cp .env.odisseu-core.example "$TMPENV"

@@ -15,7 +15,9 @@
 (deftest artefatos-m95
   (doseq [p ["scripts/lib/bootstrap-group-discovery.cjs"
              "test/bootstrap-group-discovery.test.cjs"
+             "test/bootstrap-discover-http.test.cjs"
              "docs/m9-5-group-discovery.md"
+             "docs/m9-5-1-group-discovery-evaluate.md"
              "src/zapbot/core.cljs"
              "src/zapbot/whatsapp_saude.cljs"]]
     (is (exists? p) p)))
@@ -28,16 +30,25 @@
         "coleção moderna do WhatsApp Web")
     (is (str/includes? js "@g.us")
         "detecção por sufixo de grupo")
-    (is (str/includes? js "NÃO usa WWebJS.getChats")
-        "documenta que evita getChatModel")
-    (is (not (str/includes? js "getChatModel("))
+    (is (str/includes? js "autossuficiente")
+        "documenta autossuficiência no evaluate")
+    (is (str/includes? js "function helpersDisponiveis")
+        "helpers aninhados dentro de discoverGroupsInPage")
+    (is (str/includes? js "runDiscoverInIsolatedContext")
+        "harness de teste estilo page.evaluate")
+    ;; getChatModel só em comentários / flags de diagnóstico, não como chamada.
+    (is (not (re-find #"\.getChatModel\s*\(" js))
         "implementação leve não chama getChatModel")
     (is (str/includes? core "bootstrap-group-discovery")
         "core usa o módulo leve")
-    (is (str/includes? core "discover-groups")
-        "endpoint de re-descoberta referenciado")
+    (is (str/includes? core "agendar-descoberta-http!")
+        "HTTP agenda após resposta")
+    (is (str/includes? core "staleGroupsPreserved")
+        "não apaga groups.json bom em silêncio")
     (is (str/includes? saude "/bootstrap/discover-groups")
         "rota HTTP de re-descoberta")
+    (is (str/includes? saude "json-res!")
+        "resposta JSON segura")
     (is (str/includes? core "devGroupIdInvented\" false")
         "não inventa DEV_GROUP_ID")
     (is (str/includes? core "stagingGroupConfirmed\" false")
@@ -63,7 +74,8 @@
         core (slurp-if "src/zapbot/core.cljs")
         saude (slurp-if "src/zapbot/whatsapp_saude.cljs")
         light? (and js (str/includes? js "WAWebCollections")
-                    (not (str/includes? js "getChatModel(")))
+                    (str/includes? js "function helpersDisponiveis")
+                    (not (re-find #"\.getChatModel\s*\(" js)))
         g (dur/evaluate-m95-gates
            {:light-discovery-implemented? light?
             :avoids-getchatmodel? light?

@@ -150,15 +150,35 @@
                           (clj->js (err-diag err)))
          {:ok? false :err err}))))
 
+(defn- ler-groups-json
+  "Lê groups.json anterior (só id/name agregados). Nil se ausente/inválido."
+  [out]
+  (try
+    (when (fs/existsSync out)
+      (let [prev (js->clj (js/JSON.parse (fs/readFileSync out "utf8")))]
+        {:groups (vec (or (get prev "groups") []))
+         :groupCount (or (get prev "groupCount") 0)}))
+    (catch :default _ nil)))
+
 (defn- gravar-grupos-descobertos!
+  "Grava resultado. Não substitui grupos bons por [] sem marcar incomplete."
   [out grupos via diagnostics]
-  (let [payload (clj->js
+  (let [prev (when (empty? grupos) (ler-groups-json out))
+        prev-grupos (when (and prev (seq (:groups prev))) (:groups prev))
+        preserved? (boolean (and (empty? grupos) (seq prev-grupos)))
+        grupos-out (if preserved? prev-grupos (mapv #(select-keys % ["id" "name"]) grupos))
+        incomplete? (or (empty? grupos) preserved?)
+        payload (clj->js
                  {"generatedAt" (.toISOString (js/Date.))
                   "discoveryVia" via
                   "connectedUser" "redacted"
-                  "groupCount" (count grupos)
-                  "groups" (mapv #(select-keys % ["id" "name"]) grupos)
+                  "groupCount" (count grupos-out)
+                  "groups" grupos-out
                   "diagnostics" (or diagnostics {})
+                  "incomplete" incomplete?
+                  "staleGroupsPreserved" preserved?
+                  "lastAttemptGroupCount" (count grupos)
+                  "awaitingSync" (boolean (empty? grupos))
                   "stagingGroupConfirmed" false
                   "devGroupIdInvented" false
                   "note"
@@ -169,15 +189,18 @@
                        "curl -sS -X POST http://127.0.0.1:3001/bootstrap/discover-groups")})]
     (fs/mkdirSync (path/dirname out) #js {:recursive true})
     (fs/writeFileSync out (js/JSON.stringify payload nil 2) "utf8")
-    (js/console.log "[bootstrap] Grupos encontrados:" (count grupos) "(via" via ")")
-    (doseq [g grupos]
+    (js/console.log "[bootstrap] Grupos no arquivo:" (count grupos-out)
+                    "(via" via ")"
+                    (if preserved? "[preservados — tentativa vazia]" ""))
+    (doseq [g grupos-out]
       (js/console.log (str "  - " (get g "name") " => " (get g "id"))))
-    (js/console.log "[bootstrap] Lista escrita em" out)
+    (js/console.log "[bootstrap] Lista escrita em" out
+                    (str "incomplete=" incomplete?))
     (js/console.log "[bootstrap] Nenhuma mensagem será processada neste modo.")
     (when (empty? grupos)
-      (js/console.log "[bootstrap] zero grupos — coleção pode ainda sincronizar;"
-                      "use POST /bootstrap/discover-groups ou aguarde retries automáticos."))
-    grupos))
+      (js/console.log "[bootstrap] zero grupos na tentativa — coleção pode sincronizar;"
+                      "use POST /bootstrap/discover-groups ou aguarde retries."))
+    grupos-out))
 
 (defn- agendar-rediscovery!
   "Retries automáticos sem reiniciar Chromium enquanto groups=[]."
@@ -233,6 +256,22 @@
                  (-> (sleep-ms espera)
                      (p/then (fn [_] (tentativa-descoberta client out (inc n)))))))))))))
 
+(defn bootstrap-discover-status
+  "Status síncrono para o endpoint HTTP (sem side-effect)."
+  []
+  (cond
+    (nil? @bootstrap-client)
+    {:status "not_ready" :http 503
+     :note "WhatsApp ainda não emitiu READY no modo bootstrap."}
+
+    @discovery-inflight?
+    {:status "busy" :http 409
+     :note "Descoberta já em andamento — aguarde logs [bootstrap]."}
+
+    :else
+    {:status "ready" :http 202
+     :note "Pode agendar descoberta."}))
+
 (defn descobrir-grupos!
   "Lista só id+nome de grupos. Sem msgs privadas. Idempotente sob inflight."
   ([client] (descobrir-grupos! client {:reason "ready"}))
@@ -270,6 +309,25 @@
            (p/catch (fn [err]
                       (reset! discovery-inflight? false)
                       (p/rejected err))))))))
+
+(defn agendar-descoberta-http!
+  "Agenda descoberta após flush da resposta HTTP. Nunca bloqueia o handler."
+  []
+  (let [st (bootstrap-discover-status)]
+    (if (not= "ready" (:status st))
+      st
+      (let [client @bootstrap-client]
+        ;; setTimeout(0): resposta HTTP termina antes do evaluate no Chromium.
+        (js/setTimeout
+         (fn []
+           (try
+             (descobrir-grupos! client {:reason "http"})
+             (catch :default err
+               (js/console.error "[bootstrap] agendar http falhou"
+                                 (clj->js (err-diag err))))))
+         0)
+        (assoc st :accepted true
+               :note "Descoberta agendada; veja logs [bootstrap] e groups.json.")))))
 
 (defn- on-ready [client]
   (js/console.log (str "✅ " config/bot-name " conectado e pronto para uso!"))
@@ -485,9 +543,8 @@
                   (when config/staging-bootstrap-group?
                     {:on-discover-groups
                      (fn []
-                       (if-let [c @bootstrap-client]
-                         (descobrir-grupos! c {:reason "http"})
-                         (js/console.warn "[bootstrap] READY ainda não chegou — discover ignorado.")))}))]
+                       ;; Síncrono + setTimeout(0): HTTP responde antes do evaluate.
+                       (agendar-descoberta-http!))}))]
       (when config/staging-bootstrap-group?
         (js/console.log "[bootstrap] STAGING_BOOTSTRAP_GROUP=1 — sem comandos, sem replies, sem notificações.")
         (js/console.log "[bootstrap] Endpoint: POST/GET http://127.0.0.1:3001/bootstrap/discover-groups"))
