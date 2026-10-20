@@ -157,6 +157,10 @@
 (def pokemon-jvm-token (env "POKEMON_JVM_TOKEN"))
 (def pokemon-jvm-connect-timeout-ms (inteiro-positivo "POKEMON_JVM_CONNECT_TIMEOUT_MS" 3000))
 (def pokemon-jvm-timeout-ms (inteiro-positivo "POKEMON_JVM_TIMEOUT_MS" 8000))
+;; Staging Compose: permite só http://odisseu-jvm:18090 (desligado por padrão).
+(def pokemon-jvm-allow-docker-host?
+  (and (= "staging" app-env)
+       (= "true" (str/lower-case (env "POKEMON_JVM_ALLOW_DOCKER_HOST" "false")))))
 (def ^:private pokemon-adapter-raw
   (str/lower-case (str/trim (env "POKEMON_ADAPTER" "legacy"))))
 (def ^:private jvm-adapter-envs #{"development" "staging"})
@@ -175,8 +179,10 @@
 (def platform-jvm-token (env "PLATFORM_JVM_TOKEN" pokemon-jvm-token))
 (def platform-jvm-connect-timeout-ms (inteiro-positivo "PLATFORM_JVM_CONNECT_TIMEOUT_MS" 3000))
 (def platform-jvm-timeout-ms (inteiro-positivo "PLATFORM_JVM_TIMEOUT_MS" 8000))
+;; Mesma allowlist Docker que o Pokémon — só efetiva em staging.
 (def platform-jvm-allow-private-host?
-  (= "true" (str/lower-case (env "PLATFORM_JVM_ALLOW_PRIVATE_HOST" "false"))))
+  (and (= "staging" app-env)
+       (= "true" (str/lower-case (env "PLATFORM_JVM_ALLOW_PRIVATE_HOST" "false")))))
 (def ^:private platform-adapter-raw
   (str/lower-case (str/trim (env "PLATFORM_ADAPTER" "cassandra"))))
 (def platform-adapter

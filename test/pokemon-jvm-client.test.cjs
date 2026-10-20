@@ -153,3 +153,42 @@ test('recusa URL fora de loopback', () => {
     { code: 'CONFIG' }
   );
 });
+
+test('aceita loopback sem flag Docker', () => {
+  const c = createClient({ baseUrl: 'http://127.0.0.1:18090', token: 'x' });
+  assert.equal(typeof c.close, 'function');
+  c.close();
+});
+
+test('aceita odisseu-jvm:18090 só com allowDockerJvmHost', () => {
+  assert.throws(
+    () => createClient({ baseUrl: 'http://odisseu-jvm:18090', token: 'x' }),
+    { code: 'CONFIG' }
+  );
+  const c = createClient({
+    baseUrl: 'http://odisseu-jvm:18090',
+    token: 'x',
+    allowDockerJvmHost: true
+  });
+  assert.equal(typeof c.close, 'function');
+  c.close();
+});
+
+test('recusa hostnames/IPs/portas fora da allowlist Docker', () => {
+  const bad = [
+    'http://odisseu-jvm:18091',
+    'https://odisseu-jvm:18090',
+    'http://jvm:18090',
+    'http://10.0.0.5:18090',
+    'http://192.168.1.10:18090',
+    'http://bridge.internal:18090',
+    'http://odisseu-jvm.example.com:18090'
+  ];
+  for (const baseUrl of bad) {
+    assert.throws(
+      () => createClient({ baseUrl, token: 'x', allowDockerJvmHost: true }),
+      { code: 'CONFIG' },
+      baseUrl
+    );
+  }
+});

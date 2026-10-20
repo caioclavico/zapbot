@@ -78,6 +78,14 @@ else
   bad "M9.5.1 incompleto (helpers aninhados / HTTP)"
 fi
 
+if grep -q 'POKEMON_JVM_ALLOW_DOCKER_HOST: "true"' docker-compose.odisseu-core.yml \
+   && grep -q 'odisseu-jvm' scripts/lib/pokemon-jvm-client.cjs \
+   && grep -q 'allowDockerJvmHost' src/zapbot/pokemon_http.cljs; then
+  ok "M9.5.2 Docker JVM URL allowlist"
+else
+  bad "M9.5.2 POKEMON_JVM_ALLOW_DOCKER_HOST incompleto"
+fi
+
 TMPENV=$(mktemp)
 trap 'rm -f "$TMPENV"' EXIT
 cp .env.odisseu-core.example "$TMPENV"

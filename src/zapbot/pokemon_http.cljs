@@ -55,7 +55,8 @@
                        #js {:baseUrl config/pokemon-jvm-url
                             :token config/pokemon-jvm-token
                             :connectTimeoutMs config/pokemon-jvm-connect-timeout-ms
-                            :timeoutMs config/pokemon-jvm-timeout-ms})]
+                            :timeoutMs config/pokemon-jvm-timeout-ms
+                            :allowDockerJvmHost config/pokemon-jvm-allow-docker-host?})]
         (reset! cliente-jvm cliente)
         cliente)))
 

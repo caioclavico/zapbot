@@ -14,11 +14,32 @@ function positive(value, fallback) {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
-function assertLoopback(base) {
+/**
+ * Host permitido:
+ * - loopback (sempre);
+ * - hostname exato `odisseu-jvm` na porta 18090 via HTTP, só com
+ *   allowDockerJvmHost=true (staging Compose; desligado por padrão).
+ * Não aceita IPs privados, outros hostnames nem HTTPS nesse modo Docker.
+ */
+function assertJvmUrl(base, { allowDockerJvmHost = false } = {}) {
   const host = (base.hostname || '').toLowerCase();
-  if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
-    throw failure('CONFIG', 'POKEMON_JVM_URL deve apontar para loopback (127.0.0.1/localhost).');
+  if (['127.0.0.1', 'localhost', '::1'].includes(host)) return;
+  const port = String(base.port || (base.protocol === 'https:' ? '443' : '80'));
+  if (
+    allowDockerJvmHost === true &&
+    host === 'odisseu-jvm' &&
+    port === '18090' &&
+    base.protocol === 'http:'
+  ) {
+    return;
   }
+  throw failure(
+    'CONFIG',
+    'POKEMON_JVM_URL deve apontar para loopback (127.0.0.1/localhost)' +
+      (allowDockerJvmHost
+        ? ' ou http://odisseu-jvm:18090 (Docker staging).'
+        : '.')
+  );
 }
 
 /**
@@ -57,7 +78,7 @@ function createClient(config = {}) {
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
     throw failure('CONFIG', 'POKEMON_JVM_URL deve conter apenas a origem HTTP(S).');
   }
-  assertLoopback(base);
+  assertJvmUrl(base, { allowDockerJvmHost: !!config.allowDockerJvmHost });
   if (typeof config.token !== 'string' || !config.token.trim()) {
     throw failure('CONFIG', 'POKEMON_JVM_TOKEN não configurado.');
   }
@@ -272,5 +293,6 @@ function createClient(config = {}) {
 module.exports = {
   createClient,
   trustedIdentityFromMessage,
-  stableOperationId
+  stableOperationId,
+  assertJvmUrl
 };
