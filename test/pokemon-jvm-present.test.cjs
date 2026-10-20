@@ -4,15 +4,61 @@ const assert = require('node:assert/strict');
 const present = require('../scripts/lib/pokemon-jvm-present.cjs');
 
 test('resolveCommand mapeia aliases do legado', () => {
+  assert.equal(present.resolveCommand([]), 'menu');
   assert.equal(present.resolveCommand(['perfil']), 'treinador');
   assert.equal(present.resolveCommand(['tm']), 'time');
   assert.equal(present.resolveCommand(['meus']), 'time');
   assert.equal(present.resolveCommand(['equipe']), 'time');
   assert.equal(present.resolveCommand(['ativar']), 'ativar');
+  assert.equal(present.resolveCommand(['iniciar']), 'iniciar');
+  assert.equal(present.resolveCommand(['inicial']), 'inicial');
+  assert.equal(present.resolveCommand(['ini']), 'inicial');
   assert.equal(present.resolveCommand(['capturar']), 'capturar');
   assert.equal(present.resolveCommand(['cap']), 'capturar');
   assert.equal(present.resolveCommand(['cacar']), 'cacar');
   assert.equal(present.resolveCommand(['batalhar']), null);
+});
+
+test('formatMainMenu e jornada sem jargão técnico', () => {
+  const novo = present.formatMainMenu({ hasTrainer: false, status: 'not_started' }, '!pk');
+  assert.match(novo, /Bem-vindo/);
+  assert.match(novo, /!pk iniciar/);
+  assert.doesNotMatch(novo, /JVM|Cassandra|POKEMON_ADAPTER/);
+
+  const pendente = present.formatMainMenu({
+    hasTrainer: true, status: 'awaiting_starter'
+  }, '!pk');
+  assert.match(pendente, /inicial/);
+
+  const completo = present.formatMainMenu({
+    hasTrainer: true, status: 'completed'
+  }, '!pk');
+  assert.match(completo, /treinador/);
+  assert.match(completo, /cacar/);
+
+  const start = present.formatStartJourney({
+    created: true,
+    alreadyComplete: false,
+    kit: { qty: 10, kitAlreadyClaimed: false },
+    onboarding: {
+      status: 'awaiting_starter',
+      starterAvailable: true,
+      starters: [
+        { index: 1, nome: 'Bulbasaur', emoji: '🌱', tipos: ['grass', 'poison'], descricao: 'x' },
+        { index: 2, nome: 'Charmander', emoji: '🔥', tipos: ['fire'], descricao: 'y' },
+        { index: 3, nome: 'Squirtle', emoji: '💧', tipos: ['water'], descricao: 'z' }
+      ]
+    }
+  }, '!pk');
+  assert.match(start, /10 Pokébolas/);
+  assert.match(start, /Bulbasaur/);
+  assert.match(start, /inicial <número>/);
+
+  const chosen = present.formatStarterChosen({
+    nome: 'Charmander', emoji: '🔥', species: 'charmander'
+  }, '!pk');
+  assert.match(chosen, /Charmander/);
+  assert.match(chosen, /cacar/);
 });
 
 test('formatTrainer produz envelope texto compatível', () => {
@@ -59,12 +105,14 @@ test('formatError distingue pending local de recibo ausente', () => {
   assert.match(present.formatError({ code: 'OPERATION_PENDING' }), /neste processo JVM/);
   assert.match(present.formatError({ code: 'OPERATION_NOT_FOUND' }), /não persistida/);
   assert.match(present.formatError({ code: 'STALE_WRITER_FENCE' }), /obsoleto/);
-  assert.match(present.formatError({ code: 'ECONNREFUSED' }), /Cassandra/);
+  assert.match(present.formatError({ code: 'ECONNREFUSED' }), /indisponível/);
+  assert.doesNotMatch(present.formatError({ code: 'ECONNREFUSED' }), /Cassandra/);
+  assert.match(present.formatError({ code: 'INVALID_STARTER' }), /1, 2 ou 3/);
 });
 
-test('formatUnavailable bloqueia gameplay não integrado', () => {
+test('formatUnavailable amigável sem jargão de infra', () => {
   const text = present.formatUnavailable('batalhar');
-  assert.match(text, /não integrado/);
+  assert.match(text, /não está disponível/);
   assert.match(text, /batalhar/);
-  assert.doesNotMatch(text, /Cassandra legado/);
+  assert.doesNotMatch(text, /Cassandra|POKEMON_ADAPTER|JVM/);
 });

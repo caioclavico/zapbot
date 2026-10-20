@@ -382,6 +382,14 @@
               "-Xmx256m"
               "-XX:+UseG1GC"]}
 
+  ;; M9.6 — onboarding Pokémon (kit + starters + bridge)
+  :test-m9-6-onboarding
+  {:main-opts ["-m" "odisseu.smoke.m9-6-onboarding"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
   ;; Bridge HTTP longa (dev local). Bind 127.0.0.1.
   :bridge-http
   {:main-opts ["-m" "odisseu.bridge.http-server"]

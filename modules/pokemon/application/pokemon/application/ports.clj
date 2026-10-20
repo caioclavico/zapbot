@@ -168,4 +168,10 @@
     "Estado mínimo do grupo ou nil.")
 
   (get-receipt [this operation-id]
-    "Recibo de operação por id ou nil (reconciliação M4.2)."))
+    "Recibo de operação por id ou nil (reconciliação M4.2).")
+
+  (claim-starter-kit! [this writer-ctx request]
+    "Concede 10 Pokébolas do kit inicial uma vez por save (fence + recibo).")
+
+  (choose-starter! [this writer-ctx request]
+    "Concede Bulbasaur/Charmander/Squirtle e marca inicial-escolhido (fence + recibo)."))

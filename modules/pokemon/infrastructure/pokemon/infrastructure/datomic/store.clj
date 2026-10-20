@@ -16,6 +16,7 @@
             [pokemon.domain.model :as model]
             [pokemon.domain.moves :as moves]
             [pokemon.domain.mundo :as mundo]
+            [pokemon.domain.onboarding :as onboard]
             [pokemon.domain.ops :as ops]
             [pokemon.domain.raid :as raid-domain]
             [pokemon.domain.reward :as reward]
@@ -23,6 +24,7 @@
             [pokemon.domain.status :as status]
             [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
             [pokemon.infrastructure.datomic.gym-store :as gym-store]
+            [pokemon.infrastructure.datomic.onboarding-store :as onboarding-store]
             [pokemon.infrastructure.datomic.raid-store :as raid-store]
             [pokemon.infrastructure.datomic.shop-store :as shop-store]
             [pokemon.infrastructure.datomic.schema :as schema]))
@@ -102,6 +104,8 @@
              :expansoes-mochila-50 (long (:save/expansoes-mochila-50 e 0))
              :capacidade-mochila-legada (long (:save/capacidade-mochila-legada e 50))
              :ultima-cacada-at (long (:save/ultima-cacada-at e 0))
+             :kit-inicial-resgatado (boolean (:save/kit-inicial-resgatado e))
+             :inicial-escolhido (boolean (:save/inicial-escolhido e))
              :ginasios (or (edn-read (:save/ginasios-edn e)) {})
              :time-ginasio (or (edn-read (:save/time-ginasio-edn e)) [])))))
 
@@ -2263,7 +2267,72 @@
   (get-receipt [_ operation-id]
     (let [e (receipt-entity (d/db conn) operation-id)]
       (when (present? e)
-        (dissoc (->receipt e) :duplicate)))))
+        (dissoc (->receipt e) :duplicate))))
+
+  (claim-starter-kit! [_ writer-ctx request]
+    (let [operation-id (:operation-id request)
+          payload (reward/reward-payload
+                   {:item {:item-id "pokebola" :qty 10}})
+          phash (reward/payload-hash payload)
+          existing (receipt-entity (d/db conn) operation-id)
+          chat-id (:chat-id writer-ctx)
+          player-id (:player-id writer-ctx)
+          kit-any? (boolean
+                    (some (fn [slot]
+                            (:kit-inicial-resgatado
+                             (->save (save-entity (d/db conn) chat-id player-id slot))))
+                          model/default-slots))]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (onboarding-store/build-claim-kit-tx
+                {:db db :writer-ctx writer-ctx :request request :save save
+                 :kit-claimed-any? kit-any?
+                 :inventory-adjust-tx inventory-adjust-tx})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (choose-starter! [_ writer-ctx request]
+    (let [operation-id (:operation-id request)
+          starter (onboard/resolve-starter (:choice request))
+          payload (reward/reward-payload
+                   {:pokemon {:key (str operation-id ":starter")
+                              :species (:species starter)
+                              :nickname (:nome starter)
+                              :shiny false :xp 0 :level 1 :in-party true}})
+          phash (reward/payload-hash payload)
+          existing (receipt-entity (d/db conn) operation-id)
+          chat-id (:chat-id writer-ctx)
+          player-id (:player-id writer-ctx)
+          kit-any? (boolean
+                    (some (fn [slot]
+                            (:kit-inicial-resgatado
+                             (->save (save-entity (d/db conn) chat-id player-id slot))))
+                          model/default-slots))]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [sk (id/save-key chat-id player-id (:save-id writer-ctx))
+                     colecao (query-collection db sk)]
+                 (onboarding-store/build-choose-starter-tx
+                  {:db db :writer-ctx writer-ctx
+                   :request (assoc request :kit-claimed-any? kit-any?)
+                   :save save
+                   :colecao colecao
+                   :pokemon-entity-map pokemon-entity-map
+                   :inventory-adjust-tx inventory-adjust-tx}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex)))))))))
 
 (defn make-store
   "Constrói store a partir de uma conexão Datomic já aberta."

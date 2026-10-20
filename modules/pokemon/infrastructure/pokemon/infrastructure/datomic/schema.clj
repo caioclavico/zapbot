@@ -16,7 +16,8 @@
    "migrations/pokemon/009-hunt-encounters.edn"
    "migrations/pokemon/010-shop.edn"
    "migrations/pokemon/011-pokemon-location-legado.edn"
-   "migrations/pokemon/012-enfermaria-bed-origin.edn"])
+   "migrations/pokemon/012-enfermaria-bed-origin.edn"
+   "migrations/pokemon/013-onboarding.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id

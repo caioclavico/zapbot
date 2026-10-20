@@ -601,10 +601,73 @@
                                 #(.listSaves jvm #js {:chatId chat-id :playerId player-id}))]
                   (envelope-jvm pedido (.formatSavesList jvm-present data)))
 
+                "menu"
+                (p/let [data (desempenho/medir! ctx "pokemon_jvm_onboarding"
+                                #(.getOnboarding jvm #js {:chatId chat-id :playerId player-id}))]
+                  (envelope-jvm pedido
+                                (.formatMainMenu jvm-present data (str config/prefix "pk"))))
+
                 "iniciar"
-                (p/let [data (desempenho/medir! ctx "pokemon_jvm_ensure"
-                                #(.ensureTrainer jvm #js {:chatId chat-id :playerId player-id}))]
-                  (envelope-jvm pedido (.formatEnsure jvm-present data)))
+                (p/let [op-id (.stableOperationId jvm-transport
+                                                  (:requestId pedido)
+                                                  "onboard-start")
+                        data (desempenho/medir! ctx "pokemon_jvm_onboard_start"
+                               #(.startJourney jvm
+                                  #js {:chatId chat-id
+                                       :playerId player-id
+                                       :operationId op-id}))
+                        onboard (.-onboarding data)
+                        starters (when onboard (.-starters onboard))
+                        first-starter (when (and starters (pos? (alength starters)))
+                                        (aget starters 0))
+                        img (when (and first-starter
+                                       (= "awaiting_starter" (some-> onboard .-status)))
+                              (render-seguro! ctx "pokemon_jvm_media_starter"
+                                #(.renderSpriteCard jvm-media
+                                                    #js {:nome (.-nome first-starter)
+                                                         :imagem (.-imagem first-starter)
+                                                         :tipos (.-tipos first-starter)
+                                                         :nivel 1}
+                                                    #js {:filename "inicial.png"
+                                                         :size 280})))]
+                  (envelope-jvm pedido
+                                (.formatStartJourney jvm-present data (str config/prefix "pk"))
+                                img))
+
+                "inicial"
+                (let [choice (str/join " " resto)]
+                  (if (str/blank? choice)
+                    (p/let [data (desempenho/medir! ctx "pokemon_jvm_onboarding"
+                                    #(.getOnboarding jvm #js {:chatId chat-id :playerId player-id}))]
+                      (if (= "completed" (.-status data))
+                        (envelope-jvm pedido
+                                      (.formatStarterChosen jvm-present
+                                                            #js {:starterAlreadyChosen true}
+                                                            (str config/prefix "pk")))
+                        (envelope-jvm pedido
+                                      (.formatStartersMenu jvm-present data
+                                                           (str config/prefix "pk")))))
+                    (p/let [op-id (.stableOperationId jvm-transport
+                                                      (:requestId pedido)
+                                                      (str "onboard-starter:" choice))
+                            data (desempenho/medir! ctx "pokemon_jvm_onboard_starter"
+                                   #(.chooseStarter jvm
+                                      #js {:chatId chat-id
+                                           :playerId player-id
+                                           :operationId op-id
+                                           :choice choice}))
+                            img (when (.-imagem data)
+                                  (render-seguro! ctx "pokemon_jvm_media_starter_ok"
+                                    #(.renderSpriteCard jvm-media
+                                                        #js {:nome (or (.-nome data) (.-species data))
+                                                             :imagem (.-imagem data)
+                                                             :nivel 1}
+                                                        #js {:filename "inicial-escolhido.png"
+                                                             :size 280})))]
+                      (envelope-jvm pedido
+                                    (.formatStarterChosen jvm-present data
+                                                          (str config/prefix "pk"))
+                                    img))))
 
                 "ativar"
                 (let [slot (first resto)]

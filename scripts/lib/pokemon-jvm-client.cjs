@@ -236,6 +236,11 @@ function createClient(config = {}) {
       request('GET', `/v1/saves${q({ chatId, playerId })}`),
     ensureTrainer: ({ chatId, playerId }) =>
       request('POST', '/v1/trainer/ensure', { chatId, playerId }),
+    getOnboarding: ({ chatId, playerId }) =>
+      request('GET', `/v1/onboarding${q({ chatId, playerId })}`),
+    startJourney: (body) => mutateOnce('/v1/onboarding/start', body),
+    claimStarterKit: (body) => mutateOnce('/v1/onboarding/kit', body),
+    chooseStarter: (body) => mutateOnce('/v1/onboarding/starter', body),
     activateSave: ({ chatId, playerId, saveId, expectedFenceGeneration }) =>
       request('POST', '/v1/saves/activate', {
         chatId, playerId, saveId,

@@ -73,7 +73,8 @@
      :area_unavailable :invalid_wild_pokemon :hunt_no_candidates
      :unknown_gym :unknown_heal_item :invalid_gym_team
      :invalid_gym_npc_team :invalid_motivation_index
-     :invalid_raid_pokemon :invalid_raid_move :raid_not_found) 400
+     :invalid_raid_pokemon :invalid_raid_move :raid_not_found
+     :invalid_starter) 400
     (:stale_writer_fence :writer_fence_conflict :activate_conflict
      :receipt_payload_mismatch :reward_conflict :reward_save_mismatch
      :operation_forbidden :battle_pending :battle_already_active
@@ -84,7 +85,8 @@
      :raid_not_open :already_in_raid :raid_full :raid_cannot_leave
      :raid_not_creator :not_in_raid :raid_need_players :raid_not_in_combat
      :raid_not_your_turn :raid_save_mismatch :raid_liga_mismatch
-     :raid_capture_unavailable) 409
+     :raid_capture_unavailable
+     :starter_unavailable) 409
     :operation_pending 409
     (:durability_compromised :durability_maintenance
      :durability_journal_required) 503
@@ -201,7 +203,9 @@
                                               "joy-read" "joy-send" "joy-collect"
                                               "adventure-read" "egg-incubate" "egg-hatch"
                                               "shop-read" "shop-buy" "inventory-read"
-                                              "item-use"]
+                                              "item-use"
+                                              "onboarding-read" "onboarding-start"
+                                              "onboarding-kit" "onboarding-starter"]
                                        platform-store
                                        (into ["platform-blocks" "platform-admins"]))}))
 
@@ -271,6 +275,64 @@
                       (when (or (str/blank? chat-id) (str/blank? player-id))
                         (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
                       (ok! ex (tx/ensure-trainer! store {:chat-id chat-id :player-id player-id}))))
+
+                (= path "/v1/onboarding")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (tx/onboarding-status store chat-id player-id))))
+
+                (= path "/v1/onboarding/start")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          operation-id (g body "operationId" "operation-id")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (with-operation! (or operation-id
+                                                   (str "onboard-start:" chat-id "|" player-id))
+                                #(tx/start-journey!
+                                  store {:chat-id chat-id
+                                         :player-id player-id
+                                         :operation-id (or operation-id
+                                                           (str "onboard-kit:" chat-id "|" player-id))})))))
+
+                (= path "/v1/onboarding/kit")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          operation-id (g body "operationId" "operation-id")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id) (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/claim-starter-kit!
+                                  store {:chat-id chat-id
+                                         :player-id player-id
+                                         :operation-id operation-id})))))
+
+                (= path "/v1/onboarding/starter")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          operation-id (g body "operationId" "operation-id")
+                          choice (or (g body "choice") (g body "starter")
+                                     (g body "species") (g body "index"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? operation-id) (nil? choice))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "operationId" "choice"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/choose-starter!
+                                  store {:chat-id chat-id
+                                         :player-id player-id
+                                         :operation-id operation-id
+                                         :choice (str choice)})))))
 
                 (= path "/v1/saves/activate")
                 (do (require-method! ex #{"POST"})

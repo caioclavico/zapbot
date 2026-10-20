@@ -209,8 +209,121 @@ function formatSavesList(data) {
 
 function formatEnsure(data) {
   return [
-    data.created ? '✅ *Treinador criado* (JVM)' : 'ℹ️ *Treinador já existia* (JVM)',
-    `Save ativo: *${data.activeSaveId}* · fence ${data.fenceGeneration}`
+    data.created ? '✅ *Treinador criado*' : 'ℹ️ *Treinador já existia*',
+    `Save ativo: *${data.activeSaveId}*`
+  ].join('\n');
+}
+
+const MENU_CMDS = [
+  '`treinador` — perfil e Pokémon ativo',
+  '`meus` / `time` — coleção',
+  '`cacar` — caçada selvagem',
+  '`mochila` / `loja` — itens e compras',
+  '`joy` — Enfermeira Joy',
+  '`ginasio` — ginásios',
+  '`raide` — raides cooperativas',
+  '`ovos` — Adventure Sync',
+  '`saves` / `ativar a|b` — saves A/B'
+];
+
+function formatMainMenu(onboarding, prefix = '!pk') {
+  const st = (onboarding && onboarding.status) || 'not_started';
+  if (!onboarding || !onboarding.hasTrainer || st === 'not_started') {
+    return [
+      '🌟 *Pokémon RPG*',
+      'Bem-vindo, treinador! Sua jornada ainda não começou.',
+      '',
+      `Para criar seu perfil e receber o kit inicial:`,
+      `👉 ${prefix} iniciar`
+    ].join('\n');
+  }
+  if (st === 'awaiting_starter') {
+    return [
+      '🌟 *Pokémon RPG*',
+      'Você já tem o kit inicial. Falta escolher o primeiro Pokémon!',
+      '',
+      `Veja as opções: ${prefix} iniciar`,
+      `Escolha: ${prefix} inicial <1|2|3>`
+    ].join('\n');
+  }
+  return [
+    '🧢 *Pokémon RPG* — menu',
+    ...MENU_CMDS.map((l) => `• ${l}`),
+    '',
+    `Ex.: ${prefix} treinador · ${prefix} cacar · ${prefix} mochila`
+  ].join('\n');
+}
+
+function formatStartersMenu(onboarding, prefix = '!pk') {
+  const starters = (onboarding && onboarding.starters) || [];
+  const linhas = starters.map((s) => {
+    const tipos = (s.tipos || []).join('/');
+    return `${s.index}. ${s.emoji || ''} *${s.nome}* (${tipos})\n   ${s.descricao || ''}`;
+  });
+  return [
+    '🌟 *Escolha seu Pokémon inicial:*',
+    '',
+    ...linhas,
+    '',
+    `Use ${prefix} inicial <número> ou ${prefix} inicial <nome>.`,
+    'Ex.: `' + prefix + ' inicial 1` · `' + prefix + ' inicial charmander`'
+  ].join('\n');
+}
+
+function formatStartJourney(data, prefix = '!pk') {
+  const onboard = (data && data.onboarding) || {};
+  const kit = data && data.kit;
+  if (data && data.alreadyComplete) {
+    return [
+      '✅ *Sua jornada já começou!*',
+      'O kit e o Pokémon inicial não são concedidos de novo.',
+      '',
+      `Veja o perfil: ${prefix} treinador`,
+      `Coleção: ${prefix} meus`,
+      `Menu: ${prefix}`
+    ].join('\n');
+  }
+  const partes = [];
+  if (data && data.created) {
+    partes.push('✅ *Treinador criado!* Bem-vindo à jornada.');
+  } else {
+    partes.push('👋 Continuando sua jornada…');
+  }
+  if (kit && !kit.kitAlreadyClaimed && (kit.qty || 0) > 0) {
+    partes.push(`🎁 Você recebeu *${kit.qty} Pokébolas* (kit inicial).`);
+  } else if (kit && kit.kitAlreadyClaimed) {
+    partes.push('🎁 Kit inicial já resgatado anteriormente.');
+  } else if (onboard.kitClaimed) {
+    partes.push('🎁 Kit inicial ok.');
+  }
+  if (onboard.status === 'awaiting_starter' || onboard.starterAvailable) {
+    partes.push('', formatStartersMenu(onboard, prefix));
+  } else if (onboard.status === 'completed') {
+    partes.push('', `Tudo certo! ${prefix} treinador · ${prefix} cacar`);
+  }
+  return partes.filter((p) => p !== null && p !== undefined).join('\n');
+}
+
+function formatStarterChosen(data, prefix = '!pk') {
+  if (data && data.starterAlreadyChosen) {
+    return [
+      `🧢 Você já escolheu seu inicial${data.nome ? ` (*${data.nome}*)` : ''}.`,
+      `${prefix} treinador · ${prefix} meus`
+    ].join('\n');
+  }
+  const nome = (data && (data.nome || data.species)) || '?';
+  const emoji = (data && data.emoji) || '🎉';
+  const kitExtra = data && data.kitGrantedWithStarter
+    ? `\n🎁 Também recebeu *${data.kitQty || 10} Pokébolas* do kit.`
+    : '';
+  return [
+    `${emoji} Você escolheu *${nome}* como seu inicial!${kitExtra}`,
+    '',
+    'A aventura começou. Próximos passos:',
+    `• ${prefix} treinador — ver perfil`,
+    `• ${prefix} meus — coleção`,
+    `• ${prefix} cacar — caçar selvagens`,
+    `• ${prefix} mochila — itens`
   ].join('\n');
 }
 
@@ -308,20 +421,21 @@ function formatError(err) {
     POKEMON_FULL_HP: '✨ Esse Pokémon já está com HP cheio.',
     NO_STATUS_TO_CURE: '✨ Não há status para curar no Pokémon alvo.',
     MISSING_ITEM_ID: '❓ Informe o item: !loja comprar <item> ou !pk pocao.',
-    TIMEOUT: '⏳ Bridge JVM demorou. Se foi escrita, confira com !pk recibo <id> antes de repetir.',
-    CONNECT_TIMEOUT: '⚠️ Não conectou na bridge JVM. Nenhuma escrita foi ao Cassandra.',
-    NETWORK: '⚠️ Bridge JVM indisponível. Nenhuma escrita foi ao Cassandra.',
-    ECONNREFUSED: '⚠️ Bridge JVM indisponível. Nenhuma escrita foi ao Cassandra.'
+    TIMEOUT: '⏳ Demorou um pouco. Se foi escrita, confira com !pk recibo <id> antes de repetir.',
+    CONNECT_TIMEOUT: '⚠️ Não consegui falar com o servidor do jogo. Tente de novo em instantes.',
+    NETWORK: '⚠️ Servidor do jogo indisponível. Tente de novo em instantes.',
+    ECONNREFUSED: '⚠️ Servidor do jogo indisponível. Tente de novo em instantes.',
+    INVALID_STARTER: '❓ Escolha inválida. Use !pk inicial 1, 2 ou 3 (Bulbasaur, Charmander ou Squirtle).',
+    STARTER_UNAVAILABLE: '🧢 Inicial já escolhido ou jornada já em andamento. Use !pk treinador.'
   };
-  return map[code] || `⚠️ ${err.message || 'Falha na bridge JVM'} (${code}).`;
+  return map[code] || `⚠️ ${err.message || 'Falha no jogo'} (${code}).`;
 }
 
 function formatUnavailable(commandHint) {
   return [
-    '🚧 *Comando ainda não integrado no adaptador JVM*',
-    commandHint ? `Pedido: \`${commandHint}\`` : null,
-    'Disponíveis: `treinador`, `meus`/`time`, `save`/`saves`, `iniciar`, `ativar a|b`, `cacar`, `capturar`/`cap`, `ginasio`/`gin`, `raide`/`raid`, `joy`, `ovos`/`incubar`, `loja`/`mochila`, `curar`/`pocao`, `recibo <id>`.',
-    'Sem fallback automático para Cassandra. Use `POKEMON_ADAPTER=legacy` para o restante.'
+    '❓ Esse comando ainda não está disponível por aqui.',
+    commandHint ? `Você pediu: \`${commandHint}\`` : null,
+    'Tente: `treinador`, `meus`, `iniciar`, `inicial <1-3>`, `cacar`, `capturar`, `ginasio`, `raide`, `joy`, `ovos`, `loja`, `mochila`, `saves`.'
   ].filter(Boolean).join('\n');
 }
 
@@ -1014,6 +1128,8 @@ const ALIASES = {
   save: 'save', ativo: 'save',
   saves: 'saves', 'saves-list': 'saves',
   iniciar: 'iniciar', criar: 'iniciar',
+  inicial: 'inicial', iniciais: 'inicial', ini: 'inicial',
+  menu: 'menu',
   ativar: 'ativar',
   capturar: 'capturar', cap: 'capturar',
   cacar: 'cacar', caçar: 'cacar', cac: 'cacar', hunt: 'cacar',
@@ -1034,6 +1150,7 @@ const ALIASES = {
 };
 
 function resolveCommand(tokens) {
+  if (!tokens || !tokens.length) return 'menu';
   const raw = (tokens[0] || '').toLowerCase();
   return ALIASES[raw] || null;
 }
@@ -1046,6 +1163,10 @@ module.exports = {
   formatActiveSave,
   formatSavesList,
   formatEnsure,
+  formatMainMenu,
+  formatStartersMenu,
+  formatStartJourney,
+  formatStarterChosen,
   formatActivate,
   formatReceipt,
   formatError,

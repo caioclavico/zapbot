@@ -8,6 +8,7 @@
             [pokemon.application.gym :as gym-app]
             [pokemon.application.hunt :as hunt-app]
             [pokemon.application.joy :as joy-app]
+            [pokemon.application.onboarding :as onboard-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.raid :as raid-app]
             [pokemon.application.reward :as reward-app]
@@ -47,6 +48,24 @@
      :player-id player-id
      :active-save-id (:active-save-id player)
      :fence-generation (:fence-generation player 0)}))
+
+(defn onboarding-status
+  [store chat-id player-id]
+  (onboard-app/status store chat-id player-id))
+
+(defn start-journey!
+  "ensure + kit (10 Pokébolas) idempotente; retorna menu de starters se pendente."
+  [store {:keys [chat-id player-id operation-id] :as req}]
+  (model/validate-create-player! {:chat-id chat-id :player-id player-id})
+  (onboard-app/start-journey! store req))
+
+(defn claim-starter-kit!
+  [store req]
+  (onboard-app/claim-kit! store req))
+
+(defn choose-starter!
+  [store req]
+  (onboard-app/choose-starter! store req))
 
 (defn list-saves
   [store chat-id player-id]
