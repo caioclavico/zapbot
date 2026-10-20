@@ -14,7 +14,8 @@
 | Produção | `.wwebjs_auth` (default) | _(nil)_ | `session/` |
 | Staging | `.wwebjs_auth_staging` | `staging` | `session-staging/` |
 
-Compose monta **somente** `./.wwebjs_auth_staging` → `/app/.wwebjs_auth` (nunca o bind de produção).
+Compose monta **somente** `./.wwebjs_auth_staging` → `/app/.wwebjs_auth_staging`
+(nunca `/app/.wwebjs_auth` — path de produção rejeitado pelo gate de staging).
 
 Gates em `scripts/staging-up.sh node` / `staging-integrated.sh`:
 

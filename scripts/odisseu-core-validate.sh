@@ -48,6 +48,21 @@ fi
 grep -q '.wwebjs_auth_core/' .gitignore && ok "gitignore session core" || bad "gitignore session"
 grep -q '.env.odisseu-core' .gitignore && ok "gitignore env core" || bad "gitignore env"
 
+if grep -q 'WWEBJS_DATA_PATH: /app/.wwebjs_auth_core' docker-compose.odisseu-core.yml \
+   && grep -q './.wwebjs_auth_core:/app/.wwebjs_auth_core' docker-compose.odisseu-core.yml \
+   && ! grep -E 'WWEBJS_DATA_PATH: /app/\.wwebjs_auth$' docker-compose.odisseu-core.yml; then
+  ok "compose session path _core (M9.4)"
+else
+  bad "compose deve usar /app/.wwebjs_auth_core (não /.wwebjs_auth)"
+fi
+
+if grep -q 'bootstrap-tentativas' src/zapbot/core.cljs \
+   && grep -q 'js-listar-grupos-store' src/zapbot/core.cljs; then
+  ok "bootstrap getChats retry + Store fallback (M9.4)"
+else
+  bad "descoberta de grupos M9.4 incompleta"
+fi
+
 TMPENV=$(mktemp)
 trap 'rm -f "$TMPENV"' EXIT
 cp .env.odisseu-core.example "$TMPENV"

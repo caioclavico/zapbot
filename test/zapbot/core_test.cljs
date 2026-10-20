@@ -2,7 +2,15 @@
   (:require [cljs.test :refer-macros [async deftest is]]
             [zapbot.recursos :as recursos]
             [zapbot.desempenho :as desempenho]
+            [zapbot.config :as config]
             [zapbot.core :as core]))
+
+(deftest caminho-sessao-producao-rejeita-apenas-path-exato
+  (is (true? (config/caminho-sessao-producao? ".wwebjs_auth")))
+  (is (true? (config/caminho-sessao-producao? "/app/.wwebjs_auth")))
+  (is (false? (config/caminho-sessao-producao? "/app/.wwebjs_auth_core")))
+  (is (false? (config/caminho-sessao-producao? "/app/.wwebjs_auth_staging")))
+  (is (false? (config/caminho-sessao-producao? ".wwebjs_auth_core"))))
 
 (defn- mensagem-com-reply [chamadas responder]
   #js {:reply (fn [& args]

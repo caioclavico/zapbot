@@ -84,13 +84,13 @@ services:
       NODE_OPTIONS: --max-old-space-size=384
       CHROMIUM_DISABLE_GPU: "true"
       CHROMIUM_LOW_RESOURCE_MODE: "true"
-      # Dentro do container o path montado é /app/.wwebjs_auth, mas clientId
-      # staging isola o perfil (session-staging). Host: .wwebjs_auth_staging/
-      WWEBJS_DATA_PATH: /app/.wwebjs_auth
+      # Path DEVE ser *_staging — APP_ENV=staging rejeita /.wwebjs_auth exato.
+      # clientId=staging → session-staging/ no volume. Host: .wwebjs_auth_staging/
+      WWEBJS_DATA_PATH: /app/.wwebjs_auth_staging
       WWEBJS_CLIENT_ID: staging
     volumes:
       # Bind exclusivo de staging — NÃO monte .wwebjs_auth de produção aqui.
-      - ./.wwebjs_auth_staging:/app/.wwebjs_auth
+      - ./.wwebjs_auth_staging:/app/.wwebjs_auth_staging
       - odisseu-staging-data:/app/data
     # Health Node exige WhatsApp READY — sem sessão de teste fica degraded.
     # scripts/staging-integrated.sh bloqueia QR automático.

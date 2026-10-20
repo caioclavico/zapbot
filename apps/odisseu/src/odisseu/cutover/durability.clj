@@ -332,3 +332,39 @@
    (str "M9.1: JVM/Datomic preparada; Node gated por profile. "
         "Journal/Datomic no mesmo disco ⇒ sem domínio de falha físico. "
         "cutover-ready?=false até autorização e evidências futuras.")})
+
+(defn production-session-path?
+  "Espelho JVM do gate CLJS: path de produção (.wwebjs_auth / /app/.wwebjs_auth).
+   Sufixos _core/_staging são permitidos."
+  [p]
+  (let [s (clojure.string/trim (str (or p "")))]
+    (or (= s ".wwebjs_auth")
+        (= s "/app/.wwebjs_auth")
+        (boolean (re-find #"(^|/)\.wwebjs_auth$" s)))))
+
+(defn evaluate-m94-gates
+  "Gates M9.4 — descoberta de grupos pós-READY + path sessão core."
+  [{:keys [compose-session-path-ok?
+           getchats-retry-implemented?
+           store-fallback-implemented?
+           phone-redacted?
+           bootstrap-no-commands?
+           session-preserved?
+           remote-deploy-executed?
+           production-vm-touched?]}]
+  {:compose-session-path-ok? (boolean compose-session-path-ok?)
+   :getchats-retry-implemented? (boolean getchats-retry-implemented?)
+   :store-fallback-implemented? (boolean store-fallback-implemented?)
+   :phone-redacted? (boolean phone-redacted?)
+   :bootstrap-no-commands? (boolean bootstrap-no-commands?)
+   :session-preserved? (boolean session-preserved?)
+   :remote-deploy-executed? (boolean remote-deploy-executed?)
+   :production-vm-touched? (boolean production-vm-touched?)
+   :global-protection-complete? false
+   :rollback-recon-available? false
+   :cutover-ready? false
+   :exactly-once-claimed? false
+   :rpo-zero-claimed? false
+   :nota
+   (str "M9.4: retries/backoff getChats + fallback Store; Compose usa "
+        "/app/.wwebjs_auth_core. cutover-ready?=false.")})

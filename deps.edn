@@ -368,6 +368,13 @@
               "-Xmx256m"
               "-XX:+UseG1GC"]}
 
+  ;; M9.4 — descoberta grupos pós-READY + path sessão _core
+  :test-m9-4-bootstrap-discovery
+  {:main-opts ["-m" "odisseu.smoke.m9-4-bootstrap-discovery"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"]}
+
   ;; Bridge HTTP longa (dev local). Bind 127.0.0.1.
   :bridge-http
   {:main-opts ["-m" "odisseu.bridge.http-server"]

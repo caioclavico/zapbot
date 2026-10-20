@@ -40,7 +40,8 @@
   (let [txt (slurp "docker-compose.odisseu-core.yml")]
     (is (re-find #"127\.0\.0\.1:18090" txt))
     (is (re-find #"127\.0\.0\.1:3001" txt))
-    (is (re-find #"wwebjs_auth_core" txt))
+    (is (re-find #"WWEBJS_DATA_PATH:\s*/app/\.wwebjs_auth_core" txt))
+    (is (re-find #"\./\.wwebjs_auth_core:/app/\.wwebjs_auth_core" txt))
     (is (re-find #"odisseu-core-journal" txt))
     (is (not (re-find #"0\.0\.0\.0:18090" txt)))
     (is (not (re-find #"with-cassandra" txt)))))

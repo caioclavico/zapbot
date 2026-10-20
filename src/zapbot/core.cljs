@@ -64,42 +64,167 @@
         config/staging-group-discovery-path)
       (path/join (os/homedir) "odisseu-recovery" "m6-3c-private" "groups.json")))
 
-(defn- descobrir-grupos!
-  "Lista apenas grupos (id + nome). Não lê mensagens privadas nem responde."
+(defn- sleep-ms [ms]
+  (js/Promise. (fn [resolve _] (js/setTimeout resolve ms))))
+
+(defn- err-diag
+  "Diagnóstico curto sem stack/credenciais/números."
+  [err]
+  (let [msg (or (some-> err .-message) (str err))
+        name (or (some-> err .-name) "Error")
+        safe (if (> (count msg) 120) (str (subs msg 0 117) "...") msg)]
+    {:name name :message safe}))
+
+(defn- chats->grupos [chats]
+  (->> (array-seq chats)
+       (filter #(true? (.-isGroup %)))
+       (map (fn [^js c]
+              {"id" (or (some-> c .-id .-_serialized)
+                        (str (.-id c)))
+               "name" (or (.-name c) "")}))
+       vec))
+
+(def ^:private js-wwebjs-pronta
+  "() => !!(window.WWebJS && typeof window.WWebJS.getChats === 'function')")
+
+;; Só id + nome de grupos — sem histórico, sem mensagens privadas.
+(def ^:private js-listar-grupos-store
+  (str "async () => {"
+       "  const mapChat = (c) => ({"
+       "    id: (c.id && c.id._serialized) || String(c.id),"
+       "    name: c.name || c.formattedTitle || ''"
+       "  });"
+       "  if (window.WWebJS && typeof window.WWebJS.getChats === 'function') {"
+       "    const chats = await window.WWebJS.getChats();"
+       "    return chats.filter((c) => c.isGroup).map(mapChat);"
+       "  }"
+       "  const Chat = window.Store && window.Store.Chat;"
+       "  if (!Chat) return { __error: 'store_unavailable' };"
+       "  const models = Chat.getModelsArray"
+       "    ? Chat.getModelsArray()"
+       "    : (Chat.models || []);"
+       "  return models"
+       "    .filter((m) => m.isGroup || m.groupMetadata)"
+       "    .map(mapChat);"
+       "}"))
+
+(defn- wwebjs-store-pronta?
+  "READY do Client ≠ inject WWebJS pronto. Evita getChats prematuro (ex.: 'r: r')."
   [^js client]
+  (let [^js page (.-pupPage client)]
+    (if-not page
+      (p/resolved false)
+      (-> (.evaluate page js-wwebjs-pronta)
+          (p/then (fn [ok] (boolean ok)))
+          (p/catch (fn [_] false))))))
+
+(defn- listar-grupos-via-store
+  "Fallback seguro: page.evaluate só retorna id+nome de grupos."
+  [^js client]
+  (let [^js page (.-pupPage client)]
+    (if-not page
+      (p/rejected (js/Error. "pupPage_indisponivel"))
+      (-> (.evaluate page js-listar-grupos-store)
+          (p/then
+           (fn [raw]
+             (if (and raw (aget raw "__error"))
+               (p/rejected (js/Error. (str "store_fallback:" (aget raw "__error"))))
+               (->> (array-seq (or raw #js []))
+                    (map (fn [g]
+                           {"id" (or (aget g "id") "")
+                            "name" (or (aget g "name") "")}))
+                    vec))))))))
+
+(def ^:private bootstrap-tentativas 6)
+(def ^:private bootstrap-backoff-ms [1500 2500 4000 6000 8000 10000])
+
+(defn- tentar-get-chats
+  [^js client tentativa]
   (-> (.getChats client)
-      (p/then
-       (fn [chats]
-         (let [grupos (->> (array-seq chats)
-                           (filter #(true? (.-isGroup %)))
-                           (map (fn [^js c]
-                                  {"id" (or (some-> c .-id .-_serialized)
-                                            (str (.-id c)))
-                                   "name" (or (.-name c) "")}))
-                           vec)
-               out (discovery-path)
-               payload (clj->js {"generatedAt" (.toISOString (js/Date.))
-                                 "connectedUser" (str "+" (.. client -info -wid -user))
-                                 "groups" grupos
-                                 "note" (str "Preencha DEV_GROUP_ID no .env.staging com o id do "
-                                             "grupo de teste, defina STAGING_GROUP_CONFIRMED=1 e "
-                                             "reinicie SEM STAGING_BOOTSTRAP_GROUP.")})]
-           (fs/mkdirSync (path/dirname out) #js {:recursive true})
-           (fs/writeFileSync out (js/JSON.stringify payload nil 2) "utf8")
-           (js/console.log "[bootstrap] Grupos encontrados:" (count grupos))
-           (doseq [g grupos]
-             (js/console.log (str "  - " (get g "name") " => " (get g "id"))))
-           (js/console.log "[bootstrap] Lista escrita em" out)
-           (js/console.log "[bootstrap] Nenhuma mensagem será processada neste modo.")
-           grupos)))
+      (p/then (fn [chats]
+                {:ok? true :via "getChats" :grupos (chats->grupos chats)}))
       (p/catch
        (fn [err]
-         (js/console.error "[bootstrap] Falha ao listar grupos:" err)
+         (js/console.warn "[bootstrap] getChats falhou"
+                          (str "tentativa=" tentativa "/" bootstrap-tentativas)
+                          (clj->js (err-diag err)))
+         {:ok? false :err err}))))
+
+(defn- gravar-grupos-descobertos!
+  [out grupos via]
+  (let [payload (clj->js
+                 {"generatedAt" (.toISOString (js/Date.))
+                  "discoveryVia" via
+                  "connectedUser" "redacted"
+                  "groupCount" (count grupos)
+                  "groups" grupos
+                  "note"
+                  (str "Preencha DEV_GROUP_ID no .env com o id do grupo de teste, "
+                       "defina STAGING_GROUP_CONFIRMED=1 e reinicie "
+                       "SEM STAGING_BOOTSTRAP_GROUP.")})]
+    (fs/mkdirSync (path/dirname out) #js {:recursive true})
+    (fs/writeFileSync out (js/JSON.stringify payload nil 2) "utf8")
+    (js/console.log "[bootstrap] Grupos encontrados:" (count grupos) "(via" via ")")
+    (doseq [g grupos]
+      (js/console.log (str "  - " (get g "name") " => " (get g "id"))))
+    (js/console.log "[bootstrap] Lista escrita em" out)
+    (js/console.log "[bootstrap] Nenhuma mensagem será processada neste modo.")
+    grupos))
+
+(defn- fallback-store-descoberta
+  [^js client out]
+  (-> (listar-grupos-via-store client)
+      (p/then (fn [grupos]
+                (js/console.log "[bootstrap] Fallback Store OK")
+                (gravar-grupos-descobertos! out grupos "store-evaluate")))
+      (p/catch
+       (fn [err]
+         (js/console.error "[bootstrap] Store fallback falhou"
+                           (clj->js (err-diag err)))
+         (js/console.error
+          "[bootstrap] Descoberta abortada — sessão preservada;"
+          "reinicie o Node após alguns segundos ou defina DEV_GROUP_ID"
+          "manualmente se já souber o id @g.us.")
          nil))))
+
+(defn- tentativa-descoberta
+  "Uma tentativa: espera Store se preciso, getChats, ou agenda a próxima."
+  [^js client out n]
+  (if (> n bootstrap-tentativas)
+    (fallback-store-descoberta client out)
+    (let [espera (nth bootstrap-backoff-ms (dec n) 10000)]
+      (-> (wwebjs-store-pronta? client)
+          (p/then
+           (fn [pronta?]
+             (when-not pronta?
+               (js/console.log "[bootstrap] WWebJS/Store ainda não pronta;"
+                               "aguardando antes de getChats"
+                               (str "(tentativa " n ")")))
+             (if pronta? (p/resolved nil) (sleep-ms espera))))
+          (p/then (fn [_] (tentar-get-chats client n)))
+          (p/then
+           (fn [{:keys [ok? via grupos]}]
+             (if ok?
+               (gravar-grupos-descobertos! out grupos via)
+               (-> (sleep-ms espera)
+                   (p/then (fn [_] (tentativa-descoberta client out (inc n))))))))))))
+
+(defn- descobrir-grupos!
+  "Lista apenas grupos (id + nome). Retries + fallback Store. Sem msgs privadas."
+  [^js client]
+  (let [out (discovery-path)]
+    (-> (sleep-ms 2000)
+        (p/then (fn [_] (tentativa-descoberta client out 1)))
+        (p/catch
+         (fn [err]
+           (js/console.error "[bootstrap] Falha inesperada na descoberta:"
+                             (clj->js (err-diag err)))
+           nil)))))
 
 (defn- on-ready [client]
   (js/console.log (str "✅ " config/bot-name " conectado e pronto para uso!"))
-  (js/console.log (str "📞 Número conectado: +" (.. client -info -wid -user)))
+  ;; Não logar número telefônico (PII).
+  (js/console.log "📞 Conta autenticada (número omitido).")
   (if config/staging-bootstrap-group?
     (do
       (js/console.log "[bootstrap] Modo descoberta de grupo — sem comandos/notificações.")
@@ -280,10 +405,11 @@
     (js/console.error "DEV_GROUP_ID está definido, mas o grupo ainda não foi confirmado.")
     (js/process.exit 7))
   (when (and (= "staging" config/app-env)
-             (or (= config/wwebjs-data-path ".wwebjs_auth")
-                 (str/ends-with? config/wwebjs-data-path "/.wwebjs_auth")))
+             (config/caminho-sessao-producao? config/wwebjs-data-path))
     (js/console.error "Staging recusou WWEBJS_DATA_PATH de produção:"
                       config/wwebjs-data-path)
+    (js/console.error "Use /app/.wwebjs_auth_core ou /app/.wwebjs_auth_staging"
+                      "(nunca /app/.wwebjs_auth).")
     (js/process.exit 3))
   (when (compare-and-set! iniciado? false true)
     (let [puppeteer-opts (opcoes-puppeteer)

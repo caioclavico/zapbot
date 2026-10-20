@@ -100,13 +100,15 @@ services:
       CHROMIUM_DISABLE_GPU: "true"
       CHROMIUM_LOW_RESOURCE_MODE: "true"
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
-      # Path no container; clientId=core → session-core/ no volume bind.
-      WWEBJS_DATA_PATH: /app/.wwebjs_auth
+      # Path no container DEVE ser *_core — staging rejeita /.wwebjs_auth exato.
+      # clientId=core → session-core/ dentro do volume bind.
+      WWEBJS_DATA_PATH: /app/.wwebjs_auth_core
       WWEBJS_CLIENT_ID: core
       # Gates: preencher DEV_GROUP_ID + STAGING_* no .env.odisseu-core
     volumes:
       # Bind exclusivo — NÃO monte .wwebjs_auth de odisseu-zapbot.
-      - ./.wwebjs_auth_core:/app/.wwebjs_auth
+      # Host e container usam o mesmo sufixo _core (sessão existente preservada).
+      - ./.wwebjs_auth_core:/app/.wwebjs_auth_core
       - odisseu-core-data:/app/data
     networks:
       - core-internal

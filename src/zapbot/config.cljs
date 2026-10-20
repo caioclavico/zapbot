@@ -110,7 +110,7 @@
 
 ;; Sessão WhatsApp (LocalAuth). Staging NUNCA deve usar o path de produção.
 ;; Produção/default: .wwebjs_auth + clientId nil → session/
-;; Staging: WWEBJS_DATA_PATH=.wwebjs_auth_staging WWEBJS_CLIENT_ID=staging
+;; Staging: WWEBJS_DATA_PATH=.wwebjs_auth_staging|…_core  (nunca .wwebjs_auth)
 (def wwebjs-data-path
   (let [raw (env "WWEBJS_DATA_PATH")]
     (cond
@@ -123,6 +123,16 @@
       (and raw (not (str/blank? raw))) raw
       (= "staging" app-env) "staging"
       :else nil)))
+
+(defn caminho-sessao-producao?
+  "True para o path de produção (.wwebjs_auth), inclusive /app/.wwebjs_auth.
+   False para .wwebjs_auth_staging / .wwebjs_auth_core (sufixos permitidos)."
+  [p]
+  (let [s (str/trim (str (or p "")))]
+    (or (= s ".wwebjs_auth")
+        (= s "/app/.wwebjs_auth")
+        ;; Termina exatamente em "/.wwebjs_auth" — não em "_core"/"_staging".
+        (boolean (re-find #"(^|/)\.wwebjs_auth$" s)))))
 
 ;; Renovação das missões por data local, independente do fuso do servidor.
 (def missoes-timezone (env "MISSOES_TIMEZONE" "America/Sao_Paulo"))
