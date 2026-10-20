@@ -282,7 +282,21 @@ function formaGolpe(tipo) {
     + "fill='#ffffff' fill-opacity='.72' stroke='#facc15' stroke-width='9'/>";
 }
 
-function svgSobreposicao({ texto, shiny, efeito, mostrarEntrada }) {
+function svgBarraHp({ x, y, width, atual, max, cor }) {
+  const m = Math.max(1, Number(max) || 1);
+  const a = Math.max(0, Math.min(m, Number(atual) || 0));
+  const fillW = Math.round((a / m) * width);
+  const pct = a / m;
+  const fill = cor || (pct > 0.5 ? '#22c55e' : (pct > 0.2 ? '#eab308' : '#ef4444'));
+  return `<g>`
+    + `<rect x="${x}" y="${y}" width="${width}" height="10" rx="3" fill="#0f172a" fill-opacity=".55"/>`
+    + `<rect x="${x}" y="${y}" width="${fillW}" height="10" rx="3" fill="${fill}"/>`
+    + `<text x="${x + width / 2}" y="${y + 22}" text-anchor="middle" fill="#f8fafc" `
+    + `font-family="sans-serif" font-size="12" font-weight="700">${Math.floor(a)}/${Math.floor(m)}</text>`
+    + `</g>`;
+}
+
+function svgSobreposicao({ texto, shiny, efeito, mostrarEntrada, hpX, hpO, mostrarHpX = true, mostrarHpO = true }) {
   const t = texto || '';
   const lower = t.toLowerCase();
   const sono = lower.includes('dorm');
@@ -298,9 +312,18 @@ function svgSobreposicao({ texto, shiny, efeito, mostrarEntrada }) {
     return `<g transform="translate(${esquerda} ${topo}) scale(${escala})" filter="url(#golpe-glow)">`
       + `${formaGolpe(e.tipo)}</g>`;
   }).join('');
+  const barras = [];
+  if (mostrarHpX && hpX && Number.isFinite(Number(hpX.max)) && Number(hpX.max) > 0) {
+    barras.push(svgBarraHp({ x: 70, y: 368, width: 190, atual: hpX.atual, max: hpX.max }));
+  }
+  if (mostrarHpO && hpO && Number.isFinite(Number(hpO.max)) && Number(hpO.max) > 0) {
+    const ox = mostrarHpX ? 500 : 285;
+    barras.push(svgBarraHp({ x: ox, y: 368, width: 190, atual: hpO.atual, max: hpO.max }));
+  }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="760" height="400">`
     + `<defs><filter id="golpe-glow"><feDropShadow dx="0" dy="0" stdDeviation="9" flood-color="#ffffff" flood-opacity=".75"/></filter></defs>`
     + golpes
+    + barras.join('')
     + ((sono || confuso)
       ? `<circle cx="380" cy="215" r="72" fill="none" stroke="#ffffff" stroke-opacity=".8" stroke-width="9"/>`
       : '')
@@ -327,6 +350,14 @@ function svgSobreposicao({ texto, shiny, efeito, mostrarEntrada }) {
     + '</svg>';
 }
 
+function hpFromPokemon(p) {
+  if (!p) return null;
+  const max = Number(p.hp);
+  const atual = Number(p.hpAtual != null ? p.hpAtual : p.hp);
+  if (!Number.isFinite(max) || max <= 0 || !Number.isFinite(atual)) return null;
+  return { atual: Math.max(0, atual), max };
+}
+
 async function aplicarSobreposicao(base, opts) {
   return sharp(base)
     .composite([{ input: Buffer.from(svgSobreposicao(opts || {})), left: 0, top: 0 }])
@@ -346,7 +377,9 @@ async function renderHuntArena({
   aguardandoCaptura = false,
   caption = '',
   efeito = null,
-  mostrarEntrada = true
+  mostrarEntrada = true,
+  hpX = null,
+  hpO = null
 } = {}) {
   try {
     const captura = aguardandoCaptura && !fugiu;
@@ -381,7 +414,11 @@ async function renderHuntArena({
       texto: caption,
       shiny,
       efeito,
-      mostrarEntrada
+      mostrarEntrada,
+      hpX: hpX || hpFromPokemon(pokemonX),
+      hpO: hpO || hpFromPokemon(pokemonO),
+      mostrarHpX: mostrarMeu,
+      mostrarHpO: !fugiu
     });
     return {
       base64: base.toString('base64'),

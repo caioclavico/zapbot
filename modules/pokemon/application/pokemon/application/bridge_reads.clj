@@ -116,12 +116,16 @@
      :inventory (:inventory snap)}))
 
 (defn- encounter-pokemon-dto
-  [p]
-  (when p
-    (-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp :hp-atual
-                        :raridade :tipos :ataque :defesa :atq-esp :def-esp :veloc
-                        :imagem :imagem-shiny :altura :golpes :status :habilidade])
-        (cond-> (:shiny? p) (assoc :shiny true)))))
+  "DTO de apresentação (HP atual/máx + golpes). `hp-atual` vem do mapa de batalha."
+  ([p] (encounter-pokemon-dto p nil))
+  ([p hp-atual]
+   (when p
+     (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
+                             :raridade :tipos :ataque :defesa :atq-esp :def-esp :veloc
+                             :imagem :imagem-shiny :altura :golpes :status :habilidade
+                             :motivacao-ginasio :collection-index])
+       true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0)))
+       (:shiny? p) (assoc :shiny true)))))
 
 (defn- area-visual
   "Cores/emoji do bioma para composição de arena no Node (sem Cassandra)."
@@ -178,14 +182,20 @@
           :hp (:hp battle)
           :status (:status battle)
           :bioma (:bioma battle)
-          :clima (:clima battle)
+          :clima (let [c (:clima battle)]
+                   (cond
+                     (map? c) (hunt/clima-dto c)
+                     c (some-> (mundo/obter-clima (str c)) hunt/clima-dto)
+                     :else nil))
           :area (area-visual (:bioma battle))
           :somente-batalha (boolean (:somente-batalha? battle))
           :last-switch (:last-switch battle)
           :reservas-x (count (get-in battle [:reservas :x] []))
           :reservas-o (count (get-in battle [:reservas :o] []))
-          :pokemon-x (encounter-pokemon-dto (get-in battle [:pokemons :x]))
-          :pokemon-o (encounter-pokemon-dto (get-in battle [:pokemons :o]))
+          :pokemon-x (encounter-pokemon-dto (get-in battle [:pokemons :x])
+                                            (get-in battle [:hp :x]))
+          :pokemon-o (encounter-pokemon-dto (get-in battle [:pokemons :o])
+                                            (get-in battle [:hp :o]))
           :inventory (or inv [])}}))))
 
 (defn- occupation-dto

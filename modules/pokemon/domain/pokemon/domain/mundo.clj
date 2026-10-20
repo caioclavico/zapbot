@@ -64,6 +64,11 @@
   (let [id (normalizar texto)]
     (some #(when (or (= id (:id %)) (= id (normalizar (:nome %)))) %) areas)))
 
+(defn obter-clima
+  [texto]
+  (let [id (normalizar texto)]
+    (some #(when (or (= id (:id %)) (= id (normalizar (:nome %)))) %) climas)))
+
 (defn area-disponivel
   [texto dia]
   (when-let [area (obter-area texto)]

@@ -38,8 +38,135 @@ function shinyMark(p) {
 function barraHp(atual, max) {
   const a = Math.max(0, Number(atual) || 0);
   const m = Math.max(1, Number(max) || 1);
-  const filled = Math.round((a / m) * 8);
-  return `${'█'.repeat(filled)}${'░'.repeat(8 - filled)} ${a}/${m}`;
+  const filled = Math.min(10, Math.round((a / m) * 10));
+  return `[${'█'.repeat(filled)}${'░'.repeat(10 - filled)}] ${a}/${m}`;
+}
+
+/** HP atual/máx a partir do DTO — null se dados incompletos (não inventa). */
+function hpPair(p, sideHp) {
+  if (!p) return null;
+  const max = Number(p.hp);
+  const atual = Number(p.hpAtual != null ? p.hpAtual : sideHp);
+  if (!Number.isFinite(max) || max <= 0) return null;
+  if (!Number.isFinite(atual)) return null;
+  return { atual: Math.max(0, Math.floor(atual)), max: Math.floor(max) };
+}
+
+const TIPOS_PT = {
+  normal: 'Normal', fire: 'Fogo', water: 'Água', electric: 'Elétrico',
+  grass: 'Planta', ice: 'Gelo', fighting: 'Lutador', poison: 'Venenoso',
+  ground: 'Terra', flying: 'Voador', psychic: 'Psíquico', bug: 'Inseto',
+  rock: 'Pedra', ghost: 'Fantasma', dragon: 'Dragão', dark: 'Sombrio',
+  steel: 'Aço', fairy: 'Fada'
+};
+
+const TABELA_TIPOS = {
+  normal: { rock: 0.5, steel: 0.5, ghost: 0 },
+  fire: { grass: 2, ice: 2, bug: 2, steel: 2, fire: 0.5, water: 0.5, rock: 0.5, dragon: 0.5 },
+  water: { fire: 2, ground: 2, rock: 2, water: 0.5, grass: 0.5, dragon: 0.5 },
+  electric: { water: 2, flying: 2, electric: 0.5, grass: 0.5, dragon: 0.5, ground: 0 },
+  grass: {
+    water: 2, ground: 2, rock: 2, fire: 0.5, grass: 0.5, poison: 0.5,
+    flying: 0.5, bug: 0.5, dragon: 0.5, steel: 0.5
+  },
+  ice: { grass: 2, ground: 2, flying: 2, dragon: 2, fire: 0.5, water: 0.5, ice: 0.5, steel: 0.5 },
+  fighting: {
+    normal: 2, ice: 2, rock: 2, dark: 2, steel: 2, poison: 0.5, flying: 0.5,
+    psychic: 0.5, bug: 0.5, fairy: 0.5, ghost: 0
+  },
+  poison: { grass: 2, fairy: 2, poison: 0.5, ground: 0.5, rock: 0.5, ghost: 0.5, steel: 0 },
+  ground: { fire: 2, electric: 2, poison: 2, rock: 2, steel: 2, grass: 0.5, bug: 0.5, flying: 0 },
+  flying: { grass: 2, fighting: 2, bug: 2, electric: 0.5, rock: 0.5, steel: 0.5 },
+  psychic: { fighting: 2, poison: 2, psychic: 0.5, steel: 0.5, dark: 0 },
+  bug: {
+    grass: 2, psychic: 2, dark: 2, fire: 0.5, fighting: 0.5, poison: 0.5,
+    flying: 0.5, ghost: 0.5, steel: 0.5, fairy: 0.5
+  },
+  rock: { fire: 2, ice: 2, flying: 2, bug: 2, fighting: 0.5, ground: 0.5, steel: 0.5 },
+  ghost: { psychic: 2, ghost: 2, dark: 0.5, normal: 0 },
+  dragon: { dragon: 2, steel: 0.5, fairy: 0 },
+  dark: { psychic: 2, ghost: 2, fighting: 0.5, dark: 0.5, fairy: 0.5 },
+  steel: { ice: 2, rock: 2, fairy: 2, fire: 0.5, water: 0.5, electric: 0.5, steel: 0.5 },
+  fairy: { fighting: 2, dragon: 2, dark: 2, fire: 0.5, poison: 0.5, steel: 0.5 }
+};
+
+function multiplicadorVsTipos(tipoAtaque, tiposDefesa, habilidadeDefensor) {
+  if (tipoAtaque === 'ground' && habilidadeDefensor === 'levitate') return 0;
+  const tipos = Array.isArray(tiposDefesa) ? tiposDefesa : [];
+  if (!tipos.length) return 1;
+  return tipos.reduce((acc, t) => {
+    const row = TABELA_TIPOS[tipoAtaque] || {};
+    return acc * (row[t] != null ? row[t] : 1);
+  }, 1);
+}
+
+function emojiGolpe(golpe) {
+  const c = golpe && (golpe.classe || golpe.class);
+  if (c === 'fisico' || c === 'físico') return '💥';
+  if (c === 'especial') return '🔮';
+  if (c === 'status') return '📊';
+  if (c === 'transform') return '🧬';
+  return '❓';
+}
+
+function emojiStatus(status) {
+  const s = status && (typeof status === 'string' ? status : status.kind || status.id);
+  switch (s) {
+    case 'queimado': return ' 🔥';
+    case 'envenenado': return ' ☠️';
+    case 'paralisado': return ' ⚡';
+    case 'adormecido': return ' 💤';
+    case 'congelado': return ' 🧊';
+    case 'confuso': return ' 💫';
+    default: return '';
+  }
+}
+
+function resumoEfeitosGolpe(golpe) {
+  const partes = [];
+  const status = golpe.statusCausado || golpe['status-causado'];
+  if (status) {
+    const chance = golpe.chanceStatus != null ? golpe.chanceStatus : golpe['chance-status'];
+    partes.push(`causa ${status}${chance != null && chance < 100 ? ` (${chance}%)` : ''}`);
+  }
+  const alt = golpe.alteracoes || golpe['alteracoes'] || [];
+  if (alt.length) {
+    partes.push(alt.map(a => {
+      const atr = a.atributo || a.attribute || '?';
+      const est = a.estagios != null ? a.estagios : a.stages;
+      return `${atr} ${est > 0 ? '+' : ''}${est}`;
+    }).join(', '));
+  }
+  const cura = Number(golpe.cura || 0);
+  if (cura > 0) partes.push(`recupera ${cura}% do HP`);
+  return partes.length ? partes.join(', ') : 'efeito especial';
+}
+
+function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
+  const nome = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome || golpe.slug || '?';
+  const tipo = golpe.tipo || '?';
+  const classe = golpe.classe || golpe.class || 'fisico';
+  const especial = classe === 'status' || classe === 'transform';
+  const mult = especial ? 1 : multiplicadorVsTipos(tipo, tiposDefesa, habilidadeDefensor);
+  let corpo;
+  if (classe === 'transform') {
+    corpo = 'copia os golpes do rival';
+  } else if (classe === 'status') {
+    const alvo = golpe.alvo || golpe.target;
+    corpo = `${alvo === 'proprio' || alvo === 'próprio' ? 'em si: ' : 'no rival: '}${resumoEfeitosGolpe(golpe)}`;
+  } else {
+    corpo = `poder ${golpe.poder != null ? golpe.poder : '?'}`;
+  }
+  const precisao = golpe.precisao != null ? golpe.precisao : golpe.accuracy;
+  const prec = precisao != null ? `, precisão ${precisao}%` : '';
+  const mark = mult === 0 ? ' 🚫' : (mult > 1 ? ' 🔥' : (mult < 1 ? ' 😕' : ''));
+  return `${idx + 1}. ${emojiGolpe(golpe)} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
+}
+
+function menuGolpes(pokemon, tiposDefesa, habilidadeDefensor) {
+  const gs = (pokemon && pokemon.golpes) || [];
+  if (!gs.length) return null;
+  return gs.map((g, i) => linhaGolpe(i, g, tiposDefesa || [], habilidadeDefensor)).join('\n');
 }
 
 function normalizar(s) {
@@ -478,24 +605,94 @@ function formatHuntEligibility(plan) {
   return null;
 }
 
+/**
+ * Estado de batalha estilo legado (HP barras + menu de golpes numerados).
+ * Retorna texto ou mensagem de erro controlado se HP/golpes faltarem.
+ */
+function formatBattleState(battle, prefix = '!pk', opts = {}) {
+  const b = battle || {};
+  const x = b.pokemonX || (b.pokemons && b.pokemons.x) || {};
+  const o = b.pokemonO || (b.pokemons && b.pokemons.o) || {};
+  const hp = b.hp || {};
+  const status = b.status || {};
+  const area = b.area || opts.area || {};
+  const clima = b.clima || opts.clima || {};
+  const gym = b.kind === 'gym' || Boolean(b.gymId);
+  const hpX = hpPair(x, hp.x);
+  const hpO = hpPair(o, hp.o);
+  if (!hpX || !hpO) {
+    return '❌ Dados de HP incompletos nesta batalha. Reinicie com '
+      + `${prefix} caçar ou ${prefix} gin desafiar.`;
+  }
+  const golpes = menuGolpes(x, o.tipos || [], o.habilidade);
+  if (!golpes) {
+    return `❌ Golpes ausentes para *${nomePokemon(x)}*. Reinicie a batalha.`;
+  }
+  const nGolpes = ((x.golpes) || []).length;
+  const cabecalho = gym
+    ? `🏛️ *${b.gymNome || b.gymId || 'Ginásio'}* — vs ${b.liderNome || 'líder'}`
+    : [
+      area.nome
+        ? `${area.emoji || '🗺️'} *${area.nome}*${clima.nome ? ` • ${clima.emoji || '☁️'} ${clima.nome}` : ''}`
+        : null
+    ].filter(Boolean).join('\n');
+  const reservas = gym && (b.reservasX != null || b.reservasO != null)
+    ? `Reservas: você ${b.reservasX != null ? b.reservasX : '?'} · líder ${b.reservasO != null ? b.reservasO : '?'}`
+    : null;
+  return [
+    cabecalho || null,
+    '',
+    `🐾 *${nomePokemon(x)}*${emojiStatus(status.x)} —`,
+    barraHp(hpX.atual, hpX.max),
+    `👾 *${nomePokemon(o)}*${emojiStatus(status.o)}${o.raridade ? ` — ${textoRaridade(o)}` : ''}`,
+    barraHp(hpO.atual, hpO.max),
+    reservas,
+    '',
+    `Escolha: ${prefix} atacar <1-${nGolpes}> ou ${prefix} <1-${nGolpes}>`,
+    golpes,
+    '',
+    `📖 Ações de batalha: ${prefix} atacar ajuda.`
+  ].filter(v => v !== null).join('\n');
+}
+
 function formatHuntStart(plan, result, prefix = '!pk') {
-  const area = plan.area || {};
-  const clima = plan.clima || {};
+  const area = (result && result.area) || (plan && plan.area) || {};
+  const clima = (plan && plan.clima) || {};
   const selvagem = (result && result.selvagem) || {};
+  const battle = (result && result.battle) || {};
   const somente = result && result.somenteBatalha;
   const surto = result && result.surto;
-  return [
+  const intro = [
     `${area.emoji || '🗺️'} Você entrou em *${area.nome || area.id || '?'}*!`,
     `${clima.emoji || '☁️'} Clima *${clima.nome || '?'}*: tipos ${(clima.tipos || []).join(', ') || '?'} aparecem mais.`,
-    surto && plan.evento ? `🎉 ${plan.evento.nome} — encontro do evento!` : null,
+    surto && plan && plan.evento ? `🎉 ${plan.evento.nome} — encontro do evento!` : null,
     `Um ${textoRaridade(selvagem)} *${selvagem.nome || '?'}* apareceu.`,
     somente
       ? 'Bolsa cheia: esta caçada vale batalha e XP, sem captura.'
-      : 'Derrote-o antes de tentar capturar!',
-    '',
-    `Batalha: ${prefix} atacar <golpe>`,
-    `Captura: ${prefix} capturar <bola> após a vitória.`
+      : 'Derrote-o antes de tentar capturar!'
   ].filter(Boolean).join('\n');
+  const estadoBattle = {
+    ...battle,
+    area: battle.area || area,
+    clima: battle.clima || clima,
+    pokemonX: battle.pokemonX || {},
+    pokemonO: battle.pokemonO || selvagem,
+    hp: battle.hp || {
+      x: battle.pokemonX && battle.pokemonX.hpAtual,
+      o: selvagem.hpAtual != null ? selvagem.hpAtual : selvagem.hp
+    }
+  };
+  const temPokemonX = estadoBattle.pokemonX && (estadoBattle.pokemonX.nome || estadoBattle.pokemonX.species);
+  const temGolpes = ((estadoBattle.pokemonX && estadoBattle.pokemonX.golpes) || []).length > 0;
+  if (temPokemonX && temGolpes) {
+    return `${intro}\n\n${formatBattleState(estadoBattle, prefix, { area, clima })}`;
+  }
+  return [
+    intro,
+    '',
+    `Batalha: ${prefix} atacar <1-4> ou ${prefix} <1-4>`,
+    `Captura: ${prefix} capturar <bola> após a vitória.`
+  ].join('\n');
 }
 
 function golpesLinha(p) {
@@ -538,21 +735,24 @@ function formatGymResolve(gymResolve, battle) {
 
 function formatGymChallengeStart(data, prefix = '!pk') {
   const b = (data && data.battle) || {};
+  const intro = `🏛️ Desafio contra *${b.liderNome || 'líder'}*!`;
+  if (b.pokemonX && ((b.pokemonX.golpes) || []).length && b.pokemonO) {
+    return `${intro}\n\n${formatBattleState(b, prefix)}`;
+  }
   const x = b.pokemonX || {};
   const o = b.pokemonO || {};
   return [
-    `🏛️ Desafio contra *${b.liderNome || 'líder'}*!`,
+    intro,
     `*${x.nome || 'Você'}* vs *${o.nome || 'defensor'}*`,
     `HP: ${b.hp && b.hp.x != null ? b.hp.x : '?'} · ${b.hp && b.hp.o != null ? b.hp.o : '?'}`,
     `Reservas: você ${b.reservasX != null ? b.reservasX : 2} · líder ${b.reservasO != null ? b.reservasO : 2}`,
     golpesLinha(x) ? `Seus golpes: ${golpesLinha(x)}` : null,
-    `Ataque: ${prefix} atacar <1-4>`
+    `Ataque: ${prefix} atacar <1-4> ou ${prefix} <1-4>`
   ].filter(Boolean).join('\n');
 }
 
 function formatBattleTurn(data, prefix = '!pk') {
   const b = (data && data.battle) || {};
-  const hp = b.hp || {};
   const o = b.pokemonO || (b.pokemons && b.pokemons.o) || {};
   const x = b.pokemonX || (b.pokemons && b.pokemons.x) || {};
   const nome = o.nome || o.species || 'adversário';
@@ -562,9 +762,11 @@ function formatBattleTurn(data, prefix = '!pk') {
     return formatGymResolve(data.gymResolve || { venceu: b.outcome === 'win' }, b);
   }
   if (data.aguardandoCaptura || b.aguardandoCaptura) {
+    const hpX = hpPair(x, (b.hp || {}).x);
     return [
       `🏁 *${nome}* foi derrotado!`,
       area.nome ? `${area.emoji || '🗺️'} ${area.nome}` : null,
+      hpX ? `🐾 *${nomePokemon(x)}* — ${barraHp(hpX.atual, hpX.max)}` : null,
       'Agora você pode capturar:',
       `${prefix} capturar`,
       data.chanceBaseCaptura != null
@@ -585,21 +787,14 @@ function formatBattleTurn(data, prefix = '!pk') {
   const switchLine = b.lastSwitch && b.lastSwitch.nome
     ? `🔁 Entra *${b.lastSwitch.nome}*!`
     : null;
-  return [
-    gym
-      ? `🏛️ *${b.gymNome || b.gymId || 'Ginásio'}* — vs ${b.liderNome || 'líder'}`
-      : (area.nome ? `${area.emoji || '🗺️'} *${area.nome}*` : null),
+  const cabeçalhoTurno = [
     switchLine,
     `⚔️ Turno ${b.turnIndex != null ? b.turnIndex : '?'}`,
-    `HP *${x.nome || 'você'}*: ${hp.x != null ? hp.x : '?'} · *${nome}*: ${hp.o != null ? hp.o : '?'}`,
-    gym && (b.reservasX != null || b.reservasO != null)
-      ? `Reservas: você ${b.reservasX != null ? b.reservasX : '?'} · líder ${b.reservasO != null ? b.reservasO : '?'}`
-      : null,
-    (!gym && o.tipos && o.tipos.length) ? `Tipos selvagem: ${o.tipos.join(', ')}` : null,
-    dano,
-    golpesLinha(x) ? `Seus golpes: ${golpesLinha(x)}` : null,
-    `Continue: ${prefix} atacar <1-4>`
+    dano
   ].filter(Boolean).join('\n');
+  const estado = formatBattleState(b, prefix);
+  if (estado.startsWith('❌')) return estado;
+  return [cabeçalhoTurno, '', estado].filter(Boolean).join('\n');
 }
 
 const BOLA_LABEL = {
@@ -1163,6 +1358,8 @@ const ALIASES = {
 function resolveCommand(tokens) {
   if (!tokens || !tokens.length) return 'menu';
   const raw = (tokens[0] || '').toLowerCase();
+  // Alias legado: !pk 1 … !pk 4 escolhe o golpe pelo índice.
+  if (/^[1-4]$/.test(raw)) return 'atacar';
   return ALIASES[raw] || null;
 }
 
@@ -1184,7 +1381,10 @@ module.exports = {
   formatUnavailable,
   formatHuntEligibility,
   formatHuntStart,
+  formatBattleState,
   formatBattleTurn,
+  barraHp,
+  menuGolpes,
   textoRaridade,
   formatCaptureMenu,
   formatCaptureResult,

@@ -41,8 +41,11 @@ test('formatGymChallengeStart e resolve vitória', () => {
   assert.match(present.formatGymChallengeStart({
     battle: {
       liderNome: 'Brock',
-      pokemonX: { nome: 'Pikachu', golpes: [{ nomeExibicao: 'Choque', tipo: 'electric', poder: 40 }] },
-      pokemonO: { nome: 'Geodude' },
+      pokemonX: {
+        nome: 'Pikachu', hp: 80, hpAtual: 80,
+        golpes: [{ nomeExibicao: 'Choque', tipo: 'electric', poder: 40, classe: 'especial', precisao: 100 }]
+      },
+      pokemonO: { nome: 'Geodude', hp: 70, hpAtual: 70, tipos: ['rock', 'ground'] },
       hp: { x: 80, o: 70 },
       reservasX: 2,
       reservasO: 2
@@ -67,13 +70,18 @@ test('formatBattleTurn ginásio em andamento', () => {
       hp: { x: 40, o: 12 },
       reservasX: 1,
       reservasO: 0,
-      pokemonX: { nome: 'A' },
-      pokemonO: { nome: 'Onix' },
+      pokemonX: {
+        nome: 'A', hp: 80, hpAtual: 40,
+        golpes: [{ nomeExibicao: 'Choque', tipo: 'electric', poder: 40, classe: 'especial' }]
+      },
+      pokemonO: { nome: 'Onix', hp: 90, hpAtual: 12, tipos: ['rock', 'ground'] },
       lastAction: { dano: 30 }
     }
   }, '!pk');
   assert.match(text, /Ginásio|Pedra/);
   assert.match(text, /Reservas/);
+  assert.match(text, /40\/80/);
+  assert.match(text, /Choque/);
 });
 
 test('formatGymHeal e time salvo apontam desafiar', () => {

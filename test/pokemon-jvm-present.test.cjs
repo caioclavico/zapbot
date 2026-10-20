@@ -16,6 +16,8 @@ test('resolveCommand mapeia aliases do legado', () => {
   assert.equal(present.resolveCommand(['capturar']), 'capturar');
   assert.equal(present.resolveCommand(['cap']), 'capturar');
   assert.equal(present.resolveCommand(['cacar']), 'cacar');
+  assert.equal(present.resolveCommand(['1']), 'atacar');
+  assert.equal(present.resolveCommand(['4']), 'atacar');
   assert.equal(present.resolveCommand(['batalhar']), null);
 });
 

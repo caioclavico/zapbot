@@ -10,16 +10,20 @@ const magikarp = {
   tipos: ['water'],
   altura: 0.9,
   raridade: 'comum',
-  shiny: false
+  shiny: false,
+  hp: 80,
+  hpAtual: 80
 };
 
 const squirtle = {
   nome: 'Squirtle',
   tipos: ['water'],
   altura: 0.5,
+  hp: 100,
+  hpAtual: 100,
   golpes: [
-    { nomeExibicao: 'Jato', tipo: 'water', poder: 80 },
-    { nomeExibicao: 'Investida', tipo: 'normal', poder: 40 }
+    { nomeExibicao: 'Jato', tipo: 'water', poder: 80, classe: 'especial', precisao: 100 },
+    { nomeExibicao: 'Investida', tipo: 'normal', poder: 40, classe: 'fisico', precisao: 100 }
   ]
 };
 
@@ -145,8 +149,8 @@ test('formatBattleTurn preserva nomes/tipos/golpes', () => {
       turnIndex: 2,
       hp: { x: 80, o: 12 },
       area: praia,
-      pokemonX: squirtle,
-      pokemonO: magikarp,
+      pokemonX: { ...squirtle, hpAtual: 80 },
+      pokemonO: { ...magikarp, hpAtual: 12 },
       lastAction: { dano: 40 }
     }
   });
@@ -154,4 +158,7 @@ test('formatBattleTurn preserva nomes/tipos/golpes', () => {
   assert.match(text, /Magikarp/);
   assert.match(text, /Jato/);
   assert.match(text, /40 de dano/);
+  assert.match(text, /80\/100/);
+  assert.match(text, /12\/80/);
+  assert.match(text, /poder 80/);
 });

@@ -23,6 +23,55 @@
             [pokemon.domain.mundo :as mundo]
             [pokemon.domain.raid :as raid-domain]))
 
+(defn- present-pokemon
+  "DTO de apresentação para Node (HP atual/máx, golpes, sprites).
+   Não inventa atributos — só projeta o que já está no estado de batalha."
+  [p hp-atual]
+  (when p
+    (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
+                            :raridade :tipos :ataque :defesa :atq-esp :def-esp
+                            :veloc :imagem :imagem-shiny :altura :golpes
+                            :status :habilidade :collection-index
+                            :motivacao-ginasio])
+      true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0)))
+      (:shiny? p) (assoc :shiny true))))
+
+(defn- present-battle
+  "Fatia de batalha com HP, golpes e área visual para UI de caça/turno."
+  [battle]
+  (when battle
+    (let [px (get-in battle [:pokemons :x])
+          po (get-in battle [:pokemons :o])
+          hp (:hp battle)]
+      {:battle-id (:battle-id battle)
+       :kind (name (:kind battle :wild))
+       :gym-id (:gym-id battle)
+       :gym-nome (:gym-nome battle)
+       :lider-nome (:lider-nome battle)
+       :active (boolean (:active? battle))
+       :hp hp
+       :status (:status battle)
+       :phase (:phase battle)
+       :outcome (:outcome battle)
+       :turn-index (:turn-index battle 0)
+       :bioma (:bioma battle)
+       :clima (let [c (:clima battle)]
+                (cond
+                  (map? c) (hunt/clima-dto c)
+                  (and c (not (str/blank? (str c))))
+                  (some-> (mundo/obter-clima (str c)) hunt/clima-dto)
+                  :else nil))
+       :area (when-let [a (mundo/obter-area (str (:bioma battle)))]
+               (hunt/area-dto a))
+       :aguardando-captura (boolean (:aguardando-captura? battle))
+       :somente-batalha (boolean (:somente-batalha? battle))
+       :last-action (:last-action battle)
+       :last-switch (:last-switch battle)
+       :reservas-x (count (get-in battle [:reservas :x] []))
+       :reservas-o (count (get-in battle [:reservas :o] []))
+       :pokemon-x (present-pokemon px (get hp :x))
+       :pokemon-o (present-pokemon po (get hp :o))})))
+
 (defn- save-summary
   [store chat-id player-id slot]
   (when-let [save (ports/get-save store chat-id player-id slot)]
@@ -337,26 +386,8 @@
      :area-id (:area-id result)
      :area (when-let [a (mundo/obter-area (str (:area-id result)))]
              (hunt/area-dto a))
-     :selvagem (when selvagem
-                 (select-keys selvagem [:nome :species :slug-especie :raridade
-                                        :shiny :shiny? :tipos :hp :nivel :altura
-                                        :imagem :imagem-shiny :golpes :status
-                                        :habilidade]))
-     :battle (when battle
-               {:battle-id (:battle-id battle)
-                :active (boolean (:active? battle))
-                :hp (:hp battle)
-                :phase (:phase battle)
-                :bioma (:bioma battle)
-                :clima (:clima battle)
-                :pokemon-o (select-keys (get-in battle [:pokemons :o] {})
-                                        [:nome :species :raridade :shiny :shiny?
-                                         :hp :tipos :imagem :imagem-shiny :altura
-                                         :golpes :status])
-                :pokemon-x (select-keys (get-in battle [:pokemons :x] {})
-                                        [:nome :species :hp :nivel :imagem
-                                         :imagem-shiny :altura :tipos :golpes
-                                         :status])})}))
+     :selvagem (present-pokemon selvagem (get-in battle [:hp :o]))
+     :battle (present-battle battle)}))
 
 (defn confirm-battle-turn!
   "Harness/e2e: confirma turno (injeta rng para testes)."
@@ -379,41 +410,13 @@
                          (update :action keyword)))
         result (battle-app/confirm-turn! store writer-ctx normalized)
         battle (:battle result)
-        px (get-in battle [:pokemons :x])
-        po (get-in battle [:pokemons :o])
-        gym-res (:gym-resolve result)]
+        gym-res (:gym-resolve result)
+        presented (present-battle battle)]
     {:operation-id (:operation-id result)
      :duplicate (boolean (:duplicate result))
-     :battle {:battle-id (:battle-id battle)
-              :kind (name (:kind battle :wild))
-              :gym-id (:gym-id battle)
-              :gym-nome (:gym-nome battle)
-              :lider-nome (:lider-nome battle)
-              :active (boolean (:active? battle))
-              :hp (:hp battle)
-              :status (:status battle)
-              :phase (:phase battle)
-              :outcome (:outcome battle)
-              :turn-index (:turn-index battle 0)
-              :bioma (:bioma battle)
-              :clima (:clima battle)
-              :area (when-let [a (mundo/obter-area (str (:bioma battle)))]
-                      (hunt/area-dto a))
-              :aguardando-captura (boolean (:aguardando-captura? battle))
-              :last-action (:last-action battle)
-              :last-switch (:last-switch battle)
-              :reservas-x (count (get-in battle [:reservas :x] []))
-              :reservas-o (count (get-in battle [:reservas :o] []))
-              :pokemon-x (when px
-                           (select-keys px [:nome :species :hp :nivel :imagem
-                                            :imagem-shiny :altura :tipos :golpes
-                                            :status :shiny :shiny?]))
-              :pokemon-o (when po
-                           (select-keys po [:nome :species :raridade :hp :imagem
-                                            :imagem-shiny :altura :tipos :golpes
-                                            :status :shiny :shiny?
-                                            :motivacao-ginasio]))
-              :pokemons {:x px :o po}}
+     :battle (assoc presented
+                    :pokemons {:x (get-in battle [:pokemons :x])
+                               :o (get-in battle [:pokemons :o])})
      :battle-id (:battle-id battle)
      :aguardando-captura (boolean (:aguardando-captura? battle))
      :outcome (:outcome battle)

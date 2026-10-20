@@ -43,18 +43,36 @@ test('formatHuntStart e formatBattleTurn', () => {
       surto: false
     },
     {
-      selvagem: { nome: 'Magikarp', raridade: 'comum', shiny: false },
+      selvagem: {
+        nome: 'Magikarp', raridade: 'comum', shiny: false,
+        hp: 50, hpAtual: 50, tipos: ['water']
+      },
       somenteBatalha: false,
-      surto: false
+      surto: false,
+      battle: {
+        hp: { x: 90, o: 50 },
+        pokemonX: {
+          nome: 'Squirtle', hp: 90, hpAtual: 90,
+          golpes: [{ nomeExibicao: 'Jato', tipo: 'water', poder: 40, classe: 'especial', precisao: 100 }]
+        },
+        pokemonO: { nome: 'Magikarp', hp: 50, hpAtual: 50, raridade: 'comum', tipos: ['water'] }
+      }
     }
   );
   assert.match(text, /Praia Azul/);
   assert.match(text, /Magikarp/);
+  assert.match(text, /Jato/);
+  assert.match(text, /90\/90/);
   assert.match(present.formatBattleTurn({
     aguardandoCaptura: true,
     chanceBaseCaptura: 80,
     battle: { pokemons: { o: { nome: 'Abra' } } }
   }), /capturar/);
+});
+
+test('aliases numéricos 1–4 → atacar', () => {
+  assert.equal(present.resolveCommand(['1']), 'atacar');
+  assert.equal(present.resolveCommand(['4']), 'atacar');
 });
 
 test('suavizarStat espelha legado', () => {

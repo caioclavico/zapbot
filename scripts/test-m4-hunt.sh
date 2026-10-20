@@ -31,7 +31,8 @@ echo "==> Regressão M4.1/M4.2"
 echo "==> Unit Node"
 node --test test/pokemon-jvm-client.test.cjs test/pokemon-jvm-present.test.cjs \
   test/pokemon-jvm-commands.test.cjs test/pokemon-jvm-capture.test.cjs \
-  test/pokemon-jvm-hunt.test.cjs test/pokemon-jvm-media.test.cjs
+  test/pokemon-jvm-hunt.test.cjs test/pokemon-jvm-media.test.cjs \
+  test/pokemon-jvm-battle-ui.test.cjs
 
 echo "==> Contratos Node↔JVM"
 CLOJURE_BIN="${CLOJURE}" node scripts/test-pokemon-jvm-contract.cjs

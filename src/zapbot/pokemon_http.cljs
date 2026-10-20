@@ -563,8 +563,12 @@
         chat-id (:chatId pedido)
         player-id (:playerId pedido)
         player-name (:playerName pedido)
+        primeiro (str (or (first args) ""))
+        ;; !pk 1‥4 → atacar com o índice preservado em resto.
         cmd (.resolveCommand jvm-present (clj->js args))
-        resto (vec (rest args))]
+        resto (if (re-matches #"[1-4]" primeiro)
+                [primeiro]
+                (vec (rest args)))]
     (if-not cmd
       (entregar-envelope-jvm!
        message ctx pedido
