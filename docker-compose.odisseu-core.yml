@@ -1,17 +1,19 @@
-# Odisseu Core (M9.0) — monólito modular na VM Google `odisseu-core`.
+# Odisseu Core (M9.0/M9.1) — monólito modular na VM Google `odisseu-core`.
 # NÃO é a VM de produção `odisseu-zapbot` nem o serviço `odisseu-pokemon`.
 # NÃO publica bridge JVM / health em interface pública.
 # Sem Cassandra. Sem cutover. cutover-ready? permanece false.
 #
+# M9.1 — default sobe SÓ odisseu-jvm. Node/Chromium exigem profile with-node:
+#   ./scripts/odisseu-core-up.sh          # só JVM
+#   ./scripts/odisseu-core-up.sh full     # JVM + Node (WhatsApp)
+#
+# Volumes journal/maint são LÓGICOS (paths separados). No mesmo disco da VM
+# NÃO constituem domínio de falha físico independente.
+#
 # Orçamento alvo (VM ~5,8 GiB RAM + 2 GiB swap):
 #   Node+Chromium ≤ 2560m cgroup | JVM ≤ 768m | margem SO ~2–3 GiB
 #
-# Uso (na VM, após clone + .env.odisseu-core):
-#   ./scripts/odisseu-core-up.sh
-#   ./scripts/odisseu-core-down.sh
-#   ./scripts/odisseu-core-backup.sh
-#
-# Sessão WhatsApp: bind ./.wwebjs_auth_core → /app/.wwebjs_auth (clientId=core).
+# Sessão WhatsApp: bind ./.wwebjs_auth_core (só com profile with-node).
 # NUNCA monte .wwebjs_auth da produção.
 
 name: odisseu-core
@@ -38,7 +40,7 @@ services:
       ODISSEU_BRIDGE_SEED: ${ODISSEU_BRIDGE_SEED:-false}
       ODISSEU_BRIDGE_RESET: ${ODISSEU_BRIDGE_RESET:-false}
       ODISSEU_BRIDGE_ALLOW_TEST_RNG: ${ODISSEU_BRIDGE_ALLOW_TEST_RNG:-true}
-      # Paths de journal/maint (domínio de falha distinto do volume Datomic).
+      # Paths lógicos de journal/maint (mesmo disco ≠ domínio de falha físico).
       ODISSEU_JOURNAL_DIR: /data/journal
       ODISSEU_MAINT_DIR: /data/maint
       JAVA_TOOL_OPTIONS: "-Xms64m -Xmx384m -XX:+UseG1GC"
@@ -51,12 +53,13 @@ services:
       - "127.0.0.1:18090:18090"
     networks:
       - core-internal
+    # GET /health NÃO exige Bearer (bridge.clj) — curl sem Authorization está correto.
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18090/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS -m 4 http://127.0.0.1:18090/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 8
-      start_period: 120s
+      start_period: 180s
     mem_limit: 768m
     memswap_limit: 1024m
     cpus: 1.0
@@ -66,7 +69,10 @@ services:
         max-size: 10m
         max-file: "5"
 
+  # M9.1: Node/Chromium/WhatsApp NÃO sobem no default.
+  # Ativar só com: docker compose --profile with-node ... ou ./scripts/odisseu-core-up.sh full
   odisseu-node:
+    profiles: ["with-node"]
     build:
       context: .
       dockerfile: Dockerfile

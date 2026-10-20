@@ -24,6 +24,18 @@ grep -q 'wwebjs_auth_core' docker-compose.odisseu-core.yml && ok "session core b
 grep -q 'odisseu-core-journal' docker-compose.odisseu-core.yml && ok "journal volume" || bad "journal volume"
 grep -q 'POKEMON_SERVICE_URL: ""' docker-compose.odisseu-core.yml && ok "sem pokemon-service" || bad "pokemon-service"
 grep -q 'name: odisseu-core-datomic' docker-compose.odisseu-core.yml && ok "volume names explícitos" || bad "volume names"
+grep -q 'profiles: \["with-node"\]' docker-compose.odisseu-core.yml && ok "node gated by profile" || bad "node profile"
+grep -q 'curl' Dockerfile.jvm && ok "curl in Dockerfile.jvm" || bad "curl missing"
+grep -q 'ODISSEU_BRIDGE_SEED=false' Dockerfile.jvm && ok "seed default false" || bad "seed default"
+# /health responde sem require-auth no mesmo branch (contrato healthcheck)
+if awk '/\(= path "\/health"\)/,/\(or \(str\/starts-with\? path "\/admin"\)/' \
+     modules/pokemon/infrastructure/pokemon/infrastructure/http/bridge.clj \
+     | grep -q 'require-auth!'; then
+  bad "health branch calls require-auth"
+else
+  ok "GET /health sem Authorization"
+fi
+
 
 if grep -q 'evaluate-m90-gates' apps/odisseu/src/odisseu/cutover/durability.clj \
    && grep -A30 'defn evaluate-m90-gates' apps/odisseu/src/odisseu/cutover/durability.clj \

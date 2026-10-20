@@ -297,3 +297,38 @@
    (str "M9.0 prepara odisseu-core (Compose/volumes/backups/docs). "
         "Deploy remoto e WhatsApp READY na VM exigem autorização explícita. "
         "cutover-ready? permanece false.")})
+
+(defn evaluate-m91-gates
+  "Gates M9.1 — pré-deploy JVM/Datomic only na odisseu-core."
+  [{:keys [health-unauthenticated-ok?
+           curl-in-jvm-image?
+           jvm-only-default?
+           node-profile-gated?
+           seed-reset-default-false?
+           compose-config-ok?
+           local-persistence-ok?
+           journal-same-disk-honest?
+           remote-jvm-deployed?
+           whatsapp-started?
+           production-vm-touched?]}]
+  {:health-unauthenticated-ok? (boolean health-unauthenticated-ok?)
+   :curl-in-jvm-image? (boolean curl-in-jvm-image?)
+   :jvm-only-default? (boolean jvm-only-default?)
+   :node-profile-gated? (boolean node-profile-gated?)
+   :seed-reset-default-false? (boolean seed-reset-default-false?)
+   :compose-config-ok? (boolean compose-config-ok?)
+   :local-persistence-ok? (boolean local-persistence-ok?)
+   :journal-same-disk-honest? (boolean journal-same-disk-honest?)
+   :remote-jvm-deployed? (boolean remote-jvm-deployed?)
+   :whatsapp-started? (boolean whatsapp-started?)
+   :production-vm-touched? (boolean production-vm-touched?)
+   :independent-failure-domain? false
+   :global-protection-complete? false
+   :rollback-recon-available? false
+   :cutover-ready? false
+   :exactly-once-claimed? false
+   :rpo-zero-claimed? false
+   :nota
+   (str "M9.1: JVM/Datomic preparada; Node gated por profile. "
+        "Journal/Datomic no mesmo disco ⇒ sem domínio de falha físico. "
+        "cutover-ready?=false até autorização e evidências futuras.")})

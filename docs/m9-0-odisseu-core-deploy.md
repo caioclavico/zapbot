@@ -71,10 +71,15 @@ Reutiliza `Dockerfile` (Node/Chromium) e `Dockerfile.jvm` (bridge) existentes.
 | Dado | Onde | Nota |
 |---|---|---|
 | Datomic Local | volume `odisseu-core-datomic` → `/data/datomic-local` | FileLock writer único |
-| Journal | volume `odisseu-core-journal` → `/data/journal` | Domínio de falha distinto |
-| Manutenção durable-op | volume `odisseu-core-maint` → `/data/maint` | |
+| Journal | volume `odisseu-core-journal` → `/data/journal` | Separação **lógica** de path |
+| Manutenção durable-op | volume `odisseu-core-maint` → `/data/maint` | Separação lógica |
 | App data Node | volume `odisseu-core-data` | |
 | Sessão WhatsApp | bind `.wwebjs_auth_core` + `clientId=core` | Nunca `.wwebjs_auth` prod |
+
+**Importante (M9.1):** volumes Docker no **mesmo disco** da VM **não** formam
+domínio de falha físico independente. `rollback-recon-available?` e
+`cutover-ready?` permanecem **false** até haver evidência de journal/backup em
+mídia ou zona distinta.
 
 Bridge: `127.0.0.1:18090` · Health Node: `127.0.0.1:3001` · rede `core-internal`.  
 Sem profile Cassandra. `POKEMON_SERVICE_URL=""`.
@@ -94,23 +99,16 @@ cp .env.odisseu-core.example .env.odisseu-core
 chmod 600 .env.odisseu-core
 # Editar: ODISSEU_BRIDGE_TOKEN (segredo real); alinhar PLATFORM/POKEMON tokens
 
-mkdir -p .wwebjs_auth_core
 ./scripts/odisseu-core-validate.sh
-./scripts/odisseu-core-up.sh
+# M9.1 — primeiro deploy: SOMENTE JVM (sem WhatsApp)
+./scripts/odisseu-core-up.sh jvm
+./scripts/odisseu-core-jvm.sh health
 
-# Auth — só conta Business de TESTE
-# Em .env.odisseu-core: STAGING_WHATSAPP_CONFIRM=1 STAGING_ALLOW_QR=1
-# ou STAGING_BOOTSTRAP_GROUP=1 para descobrir DEV_GROUP_ID sem processar cmds
-docker compose -f docker-compose.odisseu-core.yml --env-file .env.odisseu-core \
-  logs -f odisseu-node
-
-# Após READY + confirmação humana do grupo:
-# DEV_GROUP_ID=<id@g.us>
-# STAGING_ALLOWED_USERS=<jids>
-# STAGING_GROUP_CONFIRMED=1
-# (remover BOOTSTRAP)
-./scripts/odisseu-core-update.sh
+# Mais tarde (autorização explícita): Node + WhatsApp de TESTE
+# mkdir -p .wwebjs_auth_core
+# ./scripts/odisseu-core-up.sh full
 ```
+
 
 ### Backup periódico
 

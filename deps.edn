@@ -361,6 +361,13 @@
               "-Xmx256m"
               "-XX:+UseG1GC"]}
 
+  ;; M9.1 — pré-deploy JVM/Datomic (gates estáticos; lab no script shell)
+  :test-m9-1-jvm-datomic
+  {:main-opts ["-m" "odisseu.smoke.m9-1-jvm-datomic"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"]}
+
   ;; Bridge HTTP longa (dev local). Bind 127.0.0.1.
   :bridge-http
   {:main-opts ["-m" "odisseu.bridge.http-server"]

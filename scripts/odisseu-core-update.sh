@@ -10,7 +10,19 @@ source "${ROOT}/scripts/odisseu-core-lib.sh"
 
 odisseu_core_require_env "$ROOT"
 
-echo "==> Rebuild + recreate odisseu-core (volumes preservados)"
-odisseu_core_compose "$ROOT" up -d --build --remove-orphans
+MODE="${1:-jvm}"
+echo "==> Rebuild odisseu-core mode=${MODE} (volumes preservados)"
+case "${MODE}" in
+  jvm|"")
+    odisseu_core_compose "$ROOT" up -d --build --remove-orphans odisseu-jvm
+    ;;
+  full|with-node)
+    odisseu_core_compose "$ROOT" --profile with-node up -d --build --remove-orphans
+    ;;
+  *)
+    echo "Uso: $0 [jvm|full]" >&2
+    exit 2
+    ;;
+esac
 odisseu_core_compose "$ROOT" ps
-echo "==> update ok — verifique health em 127.0.0.1:18090 e :3001"
+echo "==> update ok — health JVM: curl -fsS http://127.0.0.1:18090/health"

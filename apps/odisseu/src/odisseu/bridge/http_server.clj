@@ -54,7 +54,7 @@
                    s)
       (throw (ex-info "bridge_storage_forbidden"
                       {:storage s
-                       :hint "Use .datomic-local/m61-staging (ou volume staging dedicado)."})))))
+                       :hint "Use .datomic-local/m61-staging, m90/m91 lab, ou volume odisseu-core-datomic."})))))
 
 (defn- acquire-writer-lock!
   "Garante um único processo escritor por diretório Datomic Local."
