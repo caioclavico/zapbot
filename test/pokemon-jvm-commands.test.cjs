@@ -234,7 +234,7 @@ test('escrita não integrada, cacar elegível e JVM indisponível', async () => 
     msg,
     ['batalhar']
   );
-  assert.match(denied.messages[0].text, /não integrado/);
+  assert.match(denied.messages[0].text, /não está disponível/);
 
   await withJvm((req, res) => {
     res.setHeader('Content-Type', 'application/json');
@@ -271,7 +271,7 @@ test('escrita não integrada, cacar elegível e JVM indisponível', async () => 
       err => ['NETWORK', 'CONNECT_TIMEOUT', 'TIMEOUT', 'ECONNREFUSED'].includes(err.code)
         || /indispon/i.test(err.message)
     );
-    assert.match(present.formatError({ code: 'ECONNREFUSED' }), /Cassandra/);
+    assert.match(present.formatError({ code: 'ECONNREFUSED' }), /indisponível/);
   } finally {
     dead.close();
   }

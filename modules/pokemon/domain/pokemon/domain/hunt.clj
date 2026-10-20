@@ -85,13 +85,15 @@
   (assoc pokemon :raridade (classificar-raridade pokemon)))
 
 (defn sortear-shiny
-  "1/512. `sorteio` injetável (0 = shiny)."
+  "1/512. `sorteio` injetável (0 = shiny).
+   `nil` no sorteio = RNG local (produção não envia shinyRoll)."
   ([pokemon] (sortear-shiny pokemon (rand-int shiny-chance)))
   ([pokemon sorteio]
-   (if (zero? (long sorteio))
-     (assoc pokemon :shiny? true :shiny true
-            :imagem (or (:imagem-shiny pokemon) (:imagem pokemon)))
-     (assoc pokemon :shiny? false :shiny false))))
+   (let [roll (long (or sorteio (rand-int shiny-chance)))]
+     (if (zero? roll)
+       (assoc pokemon :shiny? true :shiny true
+              :imagem (or (:imagem-shiny pokemon) (:imagem pokemon)))
+       (assoc pokemon :shiny? false :shiny false)))))
 
 (defn pertence-ao-bioma?
   [pokemon tipos]
@@ -142,17 +144,30 @@
   (zero? (cooldown-restante-ms ultima-cacada-at agora-ms)))
 
 (defn validar-candidato-basico!
-  "Rejeita DTO incompleto vindo do Node/PokeAPI."
+  "Rejeita DTO incompleto vindo do Node/PokeAPI.
+   `taxa-captura` é opcional (species pode falhar); raridade cai no fallback."
   [p]
-  (when-not (and (map? p)
-                  (string? (or (:nome p) (:species p)))
-                  (seq (:tipos p))
-                  (number? (:hp p))
-                  (pos? (long (:hp p)))
-                  (seq (:golpes p)))
-    (throw (err/error :invalid_wild_pokemon
-                      {:need [:nome-or-species :tipos :hp :golpes]})))
-  p)
+  (let [g (fn [k]
+            (or (get p k)
+                (get p (keyword k))
+                (when (keyword? k) (get p (name k)))))
+        num? (fn [k] (number? (g k)))]
+    (when-not (and (map? p)
+                    (string? (or (:nome p) (:species p) (g "nome") (g "species")))
+                    (seq (or (:tipos p) (g "tipos")))
+                    (num? :hp)
+                    (pos? (long (or (g :hp) 0)))
+                    (num? :ataque) (num? :defesa)
+                    (num? :atq-esp) (num? :def-esp)
+                    (num? :veloc)
+                    (seq (or (:golpes p) (g "golpes"))))
+      (throw (err/error :invalid_wild_pokemon
+                        {:need [:nome-or-species :tipos :hp :ataque :defesa
+                                :atq-esp :def-esp :veloc :golpes]
+                         :got (select-keys p [:nome :species :tipos :hp :ataque
+                                              :defesa :atq-esp :def-esp :veloc
+                                              :golpes :taxa-captura])})))
+    p))
 
 (defn area-dto
   [area]

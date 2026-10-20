@@ -1243,11 +1243,15 @@
                         (long (:poder-alvo request (hunt/poder-alvo-caca
                                                    (:trainer-level save-m 1))))
                         tipos))
-                     selvagem (-> selvagem
-                                  hunt/com-raridade
-                                  (hunt/sortear-shiny (:shiny-roll request))
-                                  (update :golpes #(moves/garantir-ataque-do-tipo
-                                                    (or % []) (:tipos selvagem))))
+                     selvagem (let [base (hunt/com-raridade selvagem)
+                                    ;; Produção não manda shinyRoll; nil não pode ir
+                                    ;; para (long) — ver NPE doubleValue no !pk caçar.
+                                    com-shiny (if (some? (:shiny-roll request))
+                                                (hunt/sortear-shiny base (:shiny-roll request))
+                                                (hunt/sortear-shiny base))]
+                                (update com-shiny :golpes
+                                        #(moves/garantir-ataque-do-tipo
+                                          (or % []) (:tipos com-shiny))))
                      somente-batalha? (not (capacity/cabe-pokemon? (count colecao) save-m))
                      battle-id (or (:battle-id request) operation-id)
                      state (battle/create-wild-battle

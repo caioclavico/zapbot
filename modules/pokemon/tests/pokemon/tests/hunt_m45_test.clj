@@ -79,8 +79,12 @@
   (is (= 570 (hunt/poder-alvo-caca 11)))
   (is (= 570 (hunt/poder-alvo-caca 99)))
   (is (= "comum" (:raridade (hunt/com-raridade magikarp-cand))))
+  (is (= "comum" (:raridade (hunt/com-raridade (dissoc magikarp-cand :taxa-captura))))
+      "taxa-captura ausente (species falhou) não quebra raridade")
   (is (true? (:shiny? (hunt/sortear-shiny magikarp-cand 0))))
-  (is (false? (:shiny? (hunt/sortear-shiny magikarp-cand 1)))))
+  (is (false? (:shiny? (hunt/sortear-shiny magikarp-cand 1))))
+  (is (false? (:shiny? (hunt/sortear-shiny magikarp-cand nil)))
+      "shiny-roll nil não lança NPE (produção)"))
 
 (deftest selecao-respeita-bioma-e-teto
   (let [alvo 320
@@ -88,6 +92,54 @@
         escolhido (hunt/selecionar-selvagem
                    [geodude-cand magikarp-cand] alvo tipos)]
     (is (= "Magikarp" (:nome escolhido)))))
+
+(deftest start-sem-shiny-roll-nem-taxa-captura
+  "Regressão INTERNAL_ERROR !pk caçar: Node não envia shinyRoll;
+   species pode omitir taxa-captura."
+  (let [s (fresh-store! "hunt-nil-shiny")
+        chat "chat-nil"
+        player "ash"
+        agora 1700000300000
+        cand (dissoc magikarp-cand :taxa-captura)]
+    (boot! s chat player)
+    (let [start (hunt-app/start-hunt!
+                 s chat player
+                 {:operation-id "hunt-no-shiny"
+                  :area-id "praia"
+                  :tipos-encontro ["water" "ice" "flying" "electric"]
+                  :surto? false
+                  :poder-alvo 320
+                  :candidates [cand]
+                  :agora-ms agora})
+          b (:battle start)
+          selv (:selvagem start)]
+      (is (false? (:duplicate start)))
+      (is (some? b))
+      (is (true? (:active? b)))
+      (is (= "Magikarp" (:nome selv)))
+      (is (contains? #{true false} (boolean (:shiny? selv))))
+      (is (= "comum" (:raridade selv))))))
+
+(deftest candidato-incompleto-rejeitado
+  (let [s (fresh-store! "hunt-bad-cand")
+        chat "chat-bad"
+        player "ash"]
+    (boot! s chat player)
+    (is (= :invalid_wild_pokemon
+           (try
+             (hunt-app/start-hunt!
+              s chat player
+              {:operation-id "hunt-bad"
+               :area-id "praia"
+               :tipos-encontro ["water"]
+               :surto? false
+               :poder-alvo 320
+               :candidates [{:nome "X" :tipos ["water"] :hp 10
+                             :golpes [{:nome-exibicao "A" :tipo "normal"
+                                       :poder 40 :classe :fisico}]}]
+               :agora-ms 1700000400000})
+             :ok
+             (catch Exception ex (err/error-code ex)))))))
 
 (deftest caca-batalha-captura-e2e
   (let [s (fresh-store! "hunt-e2e")

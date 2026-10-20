@@ -62,3 +62,21 @@ test('suavizarStat espelha legado', () => {
   assert.equal(pokeapi.suavizarStat(45), 60);
   assert.equal(pokeapi.suavizarStat(105), 90);
 });
+
+test('finalizeWild omite taxa-captura quando species falha', async () => {
+  const poke = await pokeapi.finalizeWild({
+    nome: 'Fantasma',
+    species: '__species_inexistente_m961__',
+    slugEspecie: '__species_inexistente_m961__',
+    tipos: ['normal'],
+    hp: 20, ataque: 10, defesa: 20, atqEsp: 10, defEsp: 20, veloc: 80,
+    nivel: 1,
+    movesBrutos: []
+  });
+  assert.ok(!Object.prototype.hasOwnProperty.call(poke, 'taxa-captura'));
+  assert.notStrictEqual(poke['taxa-captura'], null);
+  assert.equal(poke['atq-esp'], 10);
+  assert.equal(poke['def-esp'], 20);
+  assert.ok(Array.isArray(poke.golpes));
+  assert.equal(poke.taxaCaptura, undefined);
+});

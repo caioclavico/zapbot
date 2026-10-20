@@ -160,19 +160,27 @@ async function finalizeWild(pokemon) {
   const withSp = await enrichSpecies(pokemon);
   const golpes = await escolherGolpes(withSp.movesBrutos, withSp.tipos, withSp.nivel || 1);
   const { movesBrutos, ...rest } = withSp;
-  return {
+  // Não serializar null: JVM (long/double nil) → INTERNAL_ERROR.
+  // taxa-captura ausente é opcional (raridade cai no fallback por poder).
+  const out = {
     ...rest,
     golpes,
-    // chaves kebab para a bridge JVM
     'atq-esp': rest.atqEsp,
     'def-esp': rest.defEsp,
     'slug-especie': rest.slugEspecie,
-    'imagem-shiny': rest.imagemShiny,
-    'lendario-api?': rest.lendarioApi,
-    'mitico-api?': rest.miticoApi,
-    'paradox-api?': rest.paradoxApi,
-    'taxa-captura': rest.taxaCaptura
+    'imagem-shiny': rest.imagemShiny
   };
+  if (rest.lendarioApi != null) out['lendario-api?'] = Boolean(rest.lendarioApi);
+  if (rest.miticoApi != null) out['mitico-api?'] = Boolean(rest.miticoApi);
+  if (rest.paradoxApi != null) out['paradox-api?'] = Boolean(rest.paradoxApi);
+  if (Number.isFinite(Number(rest.taxaCaptura))) {
+    out['taxa-captura'] = Number(rest.taxaCaptura);
+  }
+  delete out.taxaCaptura;
+  delete out.lendarioApi;
+  delete out.miticoApi;
+  delete out.paradoxApi;
+  return out;
 }
 
 async function fetchPokemonById(id) {

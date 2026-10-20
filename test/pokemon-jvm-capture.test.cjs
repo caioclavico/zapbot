@@ -153,7 +153,7 @@ test('menu e captura bem-sucedida via roteador simulado', async () => {
     assert.equal(captureCalls, 1);
 
     const other = await dispatchCapture(client, msg, ['batalhar']);
-    assert.match(other.messages[0].text, /não integrado/);
+    assert.match(other.messages[0].text, /não está disponível/);
   });
 });
 
