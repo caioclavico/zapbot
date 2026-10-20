@@ -1,9 +1,11 @@
 (ns pokemon.domain.battle
   "Estado e turnos de batalha selvagem — puro, sem I/O.
-  Espelha o loop atacar-selvagem / turno-selvagem do legado (sem UI)."
+  Espelha o loop atacar-selvagem / turno-selvagem do legado (sem UI).
+  PvP 1×1 reutiliza dano/status; turnos alternados sem resposta NPC."
   (:require [pokemon.domain.capture :as capture]
             [pokemon.domain.damage :as dmg]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.pvp :as pvp]
             [pokemon.domain.rng :as rng]
             [pokemon.domain.shop :as shop]
             [pokemon.domain.status :as status]))
@@ -146,6 +148,13 @@
   (assoc battle :phase :finished :outcome :draw :active? false
          :aguardando-captura? false))
 
+(defn- finish-pvp
+  "outcome: :x | :o (vencedor) | :draw | :forfeit-x | :forfeit-o"
+  [battle outcome]
+  (assoc battle :phase :finished :outcome outcome :active? false
+         :aguardando-captura? false
+         :desafio-expira-em nil))
+
 (defn- registrar-nocaute
   "Conta KO para o Pokémon ativo do lado oposto ao caído."
   [battle caido]
@@ -188,12 +197,26 @@
     battle))
 
 (defn- resolve-faint
-  "Após HP 0: em caça encerra; em ginásio troca reserva ou encerra o match."
+  "Após HP 0: em caça encerra; em ginásio troca reserva ou encerra o match;
+   em PvP 1×1 define vencedor (:x|:o) ou empate."
   [battle fainted-side]
-  (if (not= :gym (:kind battle))
+  (cond
+    (= :pvp (:kind battle))
+    (let [b (registrar-nocaute battle fainted-side)
+          hx (long (get-in b [:hp :x] 0))
+          ho (long (get-in b [:hp :o] 0))]
+      (cond
+        (and (zero? hx) (zero? ho)) (finish-pvp b :draw)
+        (zero? hx) (finish-pvp b :o)
+        (zero? ho) (finish-pvp b :x)
+        :else b))
+
+    (not= :gym (:kind battle))
     (if (= fainted-side :o)
       (finish-win battle)
       (finish-lose battle))
+
+    :else
     (let [b0 (cond-> battle (= fainted-side :x) mark-fainted-x)
           b (registrar-nocaute b0 fainted-side)
           both-down? (and (zero? (long (get-in b [:hp :x] 0)))
@@ -511,3 +534,254 @@
     :win {:pokemon-xp 0 :coins 0 :awaiting-capture? true}
     :draw {:pokemon-xp 0 :coins 0}
     {}))
+
+(defn create-pvp-challenge
+  "Abre desafio aguardando adversário no chat (fase :waiting)."
+  [{:keys [battle-id chat-id player-id player-name save-id fence-generation
+           pokemon-x hp-x status-x collection-index agora]}]
+  (when-not battle-id
+    (throw (err/error :missing_battle_id {})))
+  (pvp/assert-healthy-active! pokemon-x hp-x)
+  (let [agora (long (or agora (System/currentTimeMillis)))
+        idx (long (or collection-index 0))
+        faixa (pvp/faixa-niveis pokemon-x)]
+    {:battle-id battle-id
+     :kind :pvp
+     :pvp? true
+     :chat-id chat-id
+     :player-id player-id
+     :save-id save-id
+     :fence-generation fence-generation
+     :jogadores {:x player-id}
+     :nomes {:x (or player-name player-id)}
+     :saves {:x save-id}
+     :fences {:x fence-generation}
+     :pokemons {:x pokemon-x}
+     :hp {:x (long (or hp-x (:hp-atual pokemon-x) (:hp pokemon-x) 0))}
+     :status {:x (kw-status status-x)}
+     :estagios {:x {}}
+     :defendendo {:x false}
+     :itens-usados {:x {}}
+     :indices-ativos {:x idx}
+     :participacao {:x {idx 0}}
+     :collection-index idx
+     :faixa-niveis faixa
+     :desafio-expira-em (+ agora pvp/tempo-espera-ms)
+     :turn-index 0
+     :phase :waiting
+     :outcome nil
+     :active? true
+     :aguardando-captura? false
+     :vez nil}))
+
+(defn accept-pvp-challenge
+  "Segundo jogador entra; define :vez pela velocidade efetiva."
+  [battle {:keys [player-id player-name save-id fence-generation
+                  pokemon-o hp-o status-o collection-index agora first-turn-tie]}]
+  (when-not (pvp/aguardando? battle)
+    (throw (err/error :pvp_not_waiting {:phase (:phase battle)})))
+  (when (pvp/expirado? battle (or agora (System/currentTimeMillis)))
+    (throw (err/error :pvp_challenge_expired {})))
+  (when (= player-id (get-in battle [:jogadores :x]))
+    (throw (err/error :pvp_self_accept {})))
+  (pvp/assert-healthy-active! pokemon-o hp-o)
+  (when-not (pvp/compativel? battle pokemon-o)
+    (throw (err/error :pvp_level_incompatible
+                      {:faixa (pvp/faixa-desafio battle)
+                       :nivel (:nivel pokemon-o)})))
+  (let [idx (long (or collection-index 0))
+        b (-> battle
+              (assoc-in [:jogadores :o] player-id)
+              (assoc-in [:nomes :o] (or player-name player-id))
+              (assoc-in [:saves :o] save-id)
+              (assoc-in [:fences :o] fence-generation)
+              (assoc-in [:pokemons :o] pokemon-o)
+              (assoc-in [:hp :o] (long (or hp-o (:hp-atual pokemon-o) (:hp pokemon-o) 0)))
+              (assoc-in [:status :o] (kw-status status-o))
+              (assoc-in [:estagios :o] {})
+              (assoc-in [:defendendo :o] false)
+              (assoc-in [:itens-usados :o] {})
+              (assoc-in [:indices-ativos :o] idx)
+              (assoc-in [:participacao :o] {idx 0})
+              (dissoc :desafio-expira-em)
+              (assoc :phase :active :aguardando-captura? false))
+        ;; Intimidate ao iniciar (como wild/gym).
+        x-int? (= "intimidate" (or (get-in b [:pokemons :x :habilidade])
+                                   (get-in b [:pokemons :x "habilidade"])))
+        o-int? (= "intimidate" (or (get-in b [:pokemons :o :habilidade])
+                                   (get-in b [:pokemons :o "habilidade"])))
+        reduzir (fn [bat marca]
+                  (update-in bat [:pokemons marca :ataque]
+                             #(Math/round (* (double (or % 0)) (/ 2.0 3.0)))))
+        b (cond-> b
+            (and x-int? o-int?) (-> (reduzir :x) (reduzir :o))
+            (and x-int? (not o-int?)) (reduzir :o)
+            (and o-int? (not x-int?)) (reduzir :x))
+        vx (dmg/velocidade-efetiva (get-in b [:pokemons :x])
+                                   (get-in b [:estagios :x] {})
+                                   (get-in b [:status :x]))
+        vo (dmg/velocidade-efetiva (get-in b [:pokemons :o])
+                                   (get-in b [:estagios :o] {})
+                                   (get-in b [:status :o]))
+        vez (cond (> vx vo) :x
+                  (> vo vx) :o
+                  :else (or first-turn-tie :x))]
+    (assoc b :vez vez)))
+
+(defn- apply-item-heal-side
+  [battle marca item-id]
+  (let [id (shop/normalizar-item (str item-id))
+        meta (shop/item id)
+        fracao (:cura-hp meta)]
+    (when-not fracao
+      (throw (err/error :item_use_unsupported
+                        {:item-id id :allowed ["pocao" "pocao-maxima"]})))
+    (let [px (get-in battle [:pokemons marca])
+          heal (shop/aplicar-pocao
+                {:hp (:hp px)
+                 :hp-atual (get-in battle [:hp marca])}
+                fracao)]
+      (-> battle
+          (assoc-in [:hp marca] (long (:hp-depois heal)))
+          (assoc :last-item {:item-id id
+                             :hp-antes (:hp-antes heal)
+                             :hp-depois (:hp-depois heal)
+                             :hp-max (:hp-max heal)})))))
+
+(defn- apply-item-status-cure-side
+  [battle marca item-id]
+  (let [id (shop/normalizar-item (str item-id))
+        st (get-in battle [:status marca])
+        esperado (shop/cura-status-item (when st (name st)))]
+    (when-not st
+      (throw (err/error :no_status_to_cure {})))
+    (when-not (= id esperado)
+      (throw (err/error :wrong_status_item
+                        {:item-id id :status (name st) :expected esperado})))
+    (-> battle
+        (assoc-in [:status marca] nil)
+        (assoc :last-item {:item-id id :status-cleared (name st)}))))
+
+(defn apply-pvp-turn
+  "Turno humano no PvP. Sem wild-response; alterna :vez se a batalha segue."
+  [battle actor-side {:keys [action move-index item-id]} rng]
+  (when-not (and (= :pvp (:kind battle)) (= :active (:phase battle)) (:active? battle))
+    (throw (err/error :battle_not_active {:phase (:phase battle) :kind (:kind battle)})))
+  (when-not (= actor-side (:vez battle))
+    (throw (err/error :pvp_out_of_turn
+                      {:vez (:vez battle) :actor actor-side})))
+  (let [rng (or rng {})
+        foe (if (= actor-side :x) :o :x)
+        defending-before? (boolean (get-in battle [:defendendo actor-side]))]
+    (case action
+      :defend
+      (let [gate (resolve-status-gate battle actor-side rng)]
+        (if (:impedido? gate)
+          (let [b (:battle gate)
+                b (cond-> b
+                    (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
+                    (and (:active? b) (pos? (get-in b [:hp actor-side] 0)))
+                    (assoc :vez foe))]
+            (-> b (update :turn-index inc)
+                (assoc :last-action {:action :defend :impedido? true :side actor-side})))
+          (let [b (assoc-in (:battle gate) [:defendendo actor-side] true)
+                fim (aplicar-fim-de-turno b actor-side)
+                b (:battle fim)
+                b (cond
+                    (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
+                    :else (assoc b :vez foe))]
+            (-> b (update :turn-index inc)
+                (assoc :last-action {:action :defend :side actor-side})))))
+
+      :item
+      (let [id (shop/normalizar-item (str item-id))
+            meta (shop/item id)
+            gate (resolve-status-gate battle actor-side rng)]
+        (if (:impedido? gate)
+          (let [b (:battle gate)
+                b (cond-> b
+                    (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
+                    (and (:active? b) (pos? (get-in b [:hp actor-side] 0)))
+                    (assoc :vez foe))]
+            (-> b (update :turn-index inc)
+                (assoc :last-action {:action :item :item-id id :impedido? true
+                                     :side actor-side})))
+          (let [b (cond
+                    (:cura-hp meta) (apply-item-heal-side (:battle gate) actor-side id)
+                    (contains? shop/status-cura id)
+                    (apply-item-status-cure-side (:battle gate) actor-side id)
+                    :else (throw (err/error :item_use_unsupported
+                                            {:item-id id
+                                             :allowed ["pocao" "pocao-maxima" "status-cura"]})))
+                last-item (:last-item b)
+                b (dissoc b :last-item)
+                fim (aplicar-fim-de-turno b actor-side)
+                b (:battle fim)
+                b (cond
+                    (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
+                    :else (assoc b :vez foe))]
+            (-> b (update :turn-index inc)
+                (assoc :last-action (merge {:action :item :item-id id :side actor-side}
+                                           last-item))))))
+
+      :attack
+      (let [golpes (vec (or (get-in battle [:pokemons actor-side :golpes]) []))
+            idx (long (or move-index 0))]
+        (when-not (< -1 idx (count golpes))
+          (throw (err/error :invalid_move_index {:idx idx :count (count golpes)})))
+        (let [golpe (golpe-normalizado (nth golpes idx))
+              gate (resolve-status-gate battle actor-side rng)]
+          (if (:impedido? gate)
+            (let [b (:battle gate)
+                  b (cond-> b
+                      (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
+                      (and (:active? b) (pos? (get-in b [:hp actor-side] 0)))
+                      (assoc :vez foe))]
+              (-> b (update :turn-index inc)
+                  (assoc :last-action {:action :attack :impedido? true
+                                       :move-index idx :side actor-side})))
+            (let [classe (:classe golpe)
+                  b (:battle gate)
+                  b (if (and (= :status classe) (:cura golpe))
+                      (let [max-hp (get-in b [:pokemons actor-side :hp])
+                            cura (max 1 (quot (* max-hp (long (:cura golpe))) 100))]
+                        (update-in b [:hp actor-side] #(min max-hp (+ % cura))))
+                      b)
+                  hit (if (contains? #{:fisico :especial} classe)
+                        (apply-offensive-hit b actor-side foe golpe
+                                             (boolean (get-in b [:defendendo foe]))
+                                             rng)
+                        {:battle (if (seq (:alteracoes golpe))
+                                   (let [alvo (if (= :adversario (:alvo golpe)) foe actor-side)]
+                                     (aplicar-alteracoes b alvo (:alteracoes golpe)))
+                                   b)
+                         :resolved {:dano 0 :acertou? true}})
+                  b (assoc-in (:battle hit) [:defendendo foe] false)
+                  fim (aplicar-fim-de-turno b actor-side)
+                  b (:battle fim)
+                  b (cond
+                      (zero? (get-in b [:hp foe])) (resolve-faint b foe)
+                      (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
+                      :else (assoc b :vez foe))]
+              (-> b
+                  (update :turn-index inc)
+                  (assoc :last-action {:action :attack
+                                       :move-index idx
+                                       :side actor-side
+                                       :dano (get-in hit [:resolved :dano] 0)
+                                       :acertou? (get-in hit [:resolved :acertou?])}))))))
+
+      (throw (err/error :unknown_battle_action {:action action})))))
+
+(defn forfeit-pvp
+  "Desistência: sem prêmio de vitória; outcome :forfeit-x|:forfeit-o."
+  [battle leaver-side]
+  (when-not (= :pvp (:kind battle))
+    (throw (err/error :not_pvp_battle {:kind (:kind battle)})))
+  (when-not (or (pvp/aguardando? battle)
+                (and (= :active (:phase battle)) (:active? battle)))
+    (throw (err/error :battle_not_active {:phase (:phase battle)})))
+  (if (pvp/aguardando? battle)
+    (assoc battle :phase :finished :outcome :cancelled :active? false
+           :desafio-expira-em nil)
+    (finish-pvp battle (if (= leaver-side :x) :forfeit-x :forfeit-o))))

@@ -1,0 +1,12 @@
+;; A3 — PvP 1×1: ponteiro de desafio/batalha no grupo + lado do oponente.
+[
+ {:db/ident       :group/active-pvp-battle-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Desafio aguardando ou batalha PvP ativa neste chat"}
+
+ {:db/ident       :battle/player-o-key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "player-key do lado :o (PvP); ausente enquanto desafio aguarda"}
+]

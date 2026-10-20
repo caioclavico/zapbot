@@ -618,6 +618,16 @@ function formatError(err) {
     NO_MOVE_OFFER: '❓ Não há oferta de golpe pendente. Use !pk aprender após subir de nível.',
     MOVE_NOT_IN_HISTORY: '❓ Esse golpe não está no histórico para reaprender.',
     CANNOT_FORGET_LAST_MOVE: '🚫 Remover deixaria o Pokémon sem golpes suficientes.',
+    PVP_CHAT_BUSY: '⚔️ Já existe um desafio ou batalha PvP neste chat.',
+    PVP_SELF_ACCEPT: '❓ Você não pode aceitar o próprio desafio.',
+    PVP_NOT_WAITING: '❓ Não há desafio aguardando adversário neste chat.',
+    PVP_CHALLENGE_EXPIRED: '⏳ Este desafio expirou. Abra outro com !pk batalhar.',
+    PVP_LEVEL_INCOMPATIBLE: '❌ Seu Pokémon ativo está fora da faixa de níveis do desafio. Use !pk escolher.',
+    PVP_NO_CHALLENGE: '❓ Não há desafio PvP neste chat. Use !pk batalhar.',
+    PVP_OUT_OF_TURN: '⏳ Não é a sua vez.',
+    PVP_NOT_PARTICIPANT: '🚫 Você não participa desta batalha.',
+    PVP_CANCEL_FORBIDDEN: '🚫 Só quem abriu o desafio pode cancelá-lo com !pk sair.',
+    NOT_PVP_BATTLE: '❓ Esta batalha não é PvP.',
     AREA_UNAVAILABLE: '🗺️ Essa área não está disponível hoje.',
     HUNT_COOLDOWN: '⏳ Ainda em cooldown de caça. Aguarde e tente de novo.',
     CHAT_HUNT_BUSY: '⚔️ Já existe uma caçada em andamento neste chat.',
@@ -1514,7 +1524,9 @@ const ALIASES = {
   aprender: 'aprender', apr: 'aprender',
   reaprender: 'reaprender', reap: 'reaprender',
   removergolpe: 'removergolpe', rmg: 'removergolpe',
-  cancelar: 'cancelar', can: 'cancelar'
+  cancelar: 'cancelar', can: 'cancelar',
+  batalhar: 'batalhar', abrir: 'batalhar', entrar: 'batalhar',
+  sair: 'sair', sai: 'sair'
 };
 
 function resolveCommand(tokens) {
@@ -1593,5 +1605,80 @@ module.exports = {
   formatRefuseOffer,
   formatRelearnMove,
   formatMoveOfferMenu,
-  formatRelearnMenu
+  formatRelearnMenu,
+  formatPvpChallenge,
+  formatPvpBattle,
+  formatPvpIncompatible
 };
+
+function formatPvpChallenge(battle, playerName, prefix = '!pk') {
+  const b = battle || {};
+  const px = b.pokemonX || {};
+  const faixa = b.faixaNiveis || b.faixa || {};
+  const min = faixa.min != null ? faixa.min : '?';
+  const max = faixa.max != null ? faixa.max : '?';
+  const nome = playerName || (b.nomes && b.nomes.x) || 'Treinador';
+  return [
+    '⚔️ *Desafio Pokémon!*',
+    '',
+    `🎮 *${nome}* está procurando um adversário!`,
+    `🐉 Pokémon: *${px.nome || '?'}*`,
+    `⭐ Nível: ${px.nivel || 1}`,
+    '',
+    `📊 Níveis aceitos: ${min} a ${max}`,
+    `Digite ${prefix} batalhar para aceitar com seu Pokémon ativo!`,
+    '⏳ O desafio expira em 5 minutos.'
+  ].join('\n');
+}
+
+function formatPvpIncompatible(battle, pokemon, prefix = '!pk') {
+  const faixa = (battle && (battle.faixaNiveis || battle.faixa)) || {};
+  const p = pokemon || {};
+  return [
+    '❌ *Pokémon incompatível!*',
+    '',
+    `🐲 Seu Pokémon: *${p.nome || '?'}*`,
+    `⭐ Nível atual: ${p.nivel || 1}`,
+    '',
+    `⚔️ O desafio aceita níveis ${faixa.min || '?'} a ${faixa.max || '?'}.`,
+    `🔄 Selecione outro ativo: ${prefix} escolher <número> e envie ${prefix} batalhar.`
+  ].join('\n');
+}
+
+function formatPvpBattle(battle, prefix = '!pk', opts = {}) {
+  const b = battle || {};
+  if (b.aguardando || b.phase === 'waiting') {
+    return formatPvpChallenge(b, opts.playerName, prefix);
+  }
+  const px = b.pokemonX || {};
+  const po = b.pokemonO || {};
+  const nomes = b.nomes || {};
+  const vez = b.vez;
+  const jog = b.jogadores || {};
+  const vezNome = vez === 'x' ? (nomes.x || 'X') : (nomes.o || 'O');
+  const lines = [
+    '⚔️ *Batalha PvP*',
+    `${nomes.x || 'X'}: *${px.nome || '?'}* ${barraHp(px.hpAtual != null ? px.hpAtual : b.hp && b.hp.x, px.hp)}`,
+    `${nomes.o || 'O'}: *${po.nome || '?'}* ${barraHp(po.hpAtual != null ? po.hpAtual : b.hp && b.hp.o, po.hp)}`,
+    ''
+  ];
+  if (b.outcome) {
+    if (b.outcome === 'draw' || b.outcome === 'cancelled') {
+      lines.push(b.outcome === 'draw' ? '🤝 Empate!' : '🚪 Desafio cancelado.');
+    } else if (String(b.outcome).startsWith('forfeit')) {
+      lines.push('🏳️ Desistência — sem prêmio de vitória.');
+    } else {
+      const winName = b.outcome === 'x' ? (nomes.x || 'X') : (nomes.o || 'O');
+      lines.push(`🏆 *${winName}* venceu! (+10 moedas)`);
+    }
+    return lines.join('\n');
+  }
+  lines.push(`👉 Vez de *${vezNome}*`);
+  if (opts.mySide && opts.mySide === vez) {
+    lines.push(menuGolpes(opts.mySide === 'x' ? px : po, [], null));
+    lines.push(`${prefix} atacar <1-4> · ${prefix} defender · ${prefix} pocao · ${prefix} sair`);
+  } else {
+    lines.push('Aguarde o adversário…');
+  }
+  return lines.join('\n');
+}

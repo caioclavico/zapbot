@@ -227,5 +227,33 @@
             :kind (str (or kind "use"))}
      (some? idx) (assoc :idx (long idx)))))
 
+(defn pvp-open-payload
+  [{:keys [collection-index pokemon-id]}]
+  (reward/canonicalize
+   {:collection-index (long collection-index)
+    :pokemon-id (str pokemon-id)}))
+
+(defn pvp-accept-payload
+  [{:keys [battle-id collection-index pokemon-id]}]
+  (reward/canonicalize
+   {:battle-id (str battle-id)
+    :collection-index (long collection-index)
+    :pokemon-id (str pokemon-id)}))
+
+(defn pvp-cancel-payload
+  [{:keys [battle-id]}]
+  (reward/canonicalize {:battle-id (str battle-id)}))
+
+(defn pvp-turn-payload
+  [{:keys [battle-id expected-turn-index action move-index item-id rng actor-side]}]
+  (reward/canonicalize
+   (cond-> {:battle-id (str battle-id)
+            :expected-turn-index (long expected-turn-index)
+            :action (name action)
+            :actor-side (name actor-side)}
+     (some? move-index) (assoc :move-index (long move-index))
+     (some? item-id) (assoc :item-id (str item-id))
+     (map? rng) (assoc :rng (reward/canonicalize rng)))))
+
 (def payload-hash reward/payload-hash)
 (def assert-receipt-payload! reward/assert-receipt-payload!)

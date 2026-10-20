@@ -18,6 +18,7 @@
             [pokemon.domain.mundo :as mundo]
             [pokemon.domain.onboarding :as onboard]
             [pokemon.domain.ops :as ops]
+            [pokemon.domain.pvp :as pvp]
             [pokemon.domain.raid :as raid-domain]
             [pokemon.domain.reward :as reward]
             [pokemon.domain.shop :as shop]
@@ -26,6 +27,7 @@
             [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
             [pokemon.infrastructure.datomic.gym-store :as gym-store]
             [pokemon.infrastructure.datomic.onboarding-store :as onboarding-store]
+            [pokemon.infrastructure.datomic.pvp-store :as pvp-store]
             [pokemon.infrastructure.datomic.raid-store :as raid-store]
             [pokemon.infrastructure.datomic.shop-store :as shop-store]
             [pokemon.infrastructure.datomic.schema :as schema]))
@@ -419,6 +421,14 @@
     (reward/assert-receipt-payload!
      (:operation-receipt/payload-hash e) expected-hash operation-id)
     (->receipt e)))
+
+(defn- resolve-pvp-receipt
+  "Recibo PvP duplicado + batalha reidratada do Datomic (para present HTTP)."
+  [conn e expected-hash operation-id]
+  (when-let [r (resolve-receipt e expected-hash operation-id)]
+    (if-let [bid (get-in r [:summary :battle-id])]
+      (assoc r :battle (->battle (battle-entity (d/db conn) bid)))
+      r)))
 
 (defn- activate-save!*
   [conn chat-id player-id save-id]
@@ -2530,6 +2540,389 @@
                   (resolve-receipt dup phash operation-id)
                   (throw ex))))))))
 
+  (open-pvp-challenge! [_ writer-ctx request]
+    (let [payload (ops/pvp-open-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-pvp-receipt conn existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [chat-id (:chat-id writer-ctx)
+                     player-id (:player-id writer-ctx)
+                     save-id (:save-id writer-ctx)
+                     pk (id/player-key chat-id player-id)
+                     sk (id/save-key chat-id player-id save-id)
+                     _ (pvp-store/assert-player-idle! db chat-id player-id)
+                     group-e (d/pull db '[*] [:group/chat-id chat-id])
+                     existing-pvp (:group/active-pvp-battle-id group-e)
+                     _ (when existing-pvp
+                         (let [be (battle-entity db existing-pvp)
+                               st (when (present? be) (->battle be))]
+                           (when (and st (:active? st)
+                                      (or (pvp/aguardando? st)
+                                          (= :active (:phase st))))
+                             (throw (err/error :pvp_chat_busy
+                                               {:battle-id existing-pvp})))))
+                     wild (:group/active-wild-battle-id group-e)
+                     _ (when wild
+                         (throw (err/error :chat_hunt_busy {:battle-id wild})))
+                     colecao (query-collection db sk)
+                     idx (long (:ativo-index (->save save) 0))
+                     _ (coll/validate-index! idx (count colecao))
+                     poke (nth colecao idx)
+                     _ (pvp/assert-healthy-active! poke (:hp-atual poke))
+                     battle-id (or (:battle-id request) operation-id)
+                     agora (long (or (:agora request) (System/currentTimeMillis)))
+                     state (battle/create-pvp-challenge
+                            {:battle-id battle-id
+                             :chat-id chat-id
+                             :player-id player-id
+                             :player-name (:player-name request)
+                             :save-id save-id
+                             :fence-generation (:fence-generation writer-ctx)
+                             :pokemon-x poke
+                             :hp-x (:hp-atual poke)
+                             :status-x (:status poke)
+                             :collection-index idx
+                             :agora agora})
+                     rev (long (:save/revision save 0))
+                     group-tx (if (present? group-e)
+                                [[:db/add [:group/chat-id chat-id]
+                                  :group/active-pvp-battle-id battle-id]]
+                                [{:group/chat-id chat-id
+                                  :group/label "grupo"
+                                  :group/active-pvp-battle-id battle-id}])]
+                 {:tx (into [{:battle/id battle-id
+                              :battle/save [:save/key sk]
+                              :battle/player-key pk
+                              :battle/save-id save-id
+                              :battle/kind "pvp"
+                              :battle/active? true
+                              :battle/turn-index 0
+                              :battle/phase "waiting"
+                              :battle/collection-index idx
+                              :battle/state-edn (pr-str state)}
+                             [:db/add [:player/key pk] :player/active-battle-id battle-id]
+                             [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                             {:operation-receipt/id operation-id
+                              :operation-receipt/kind "pvp-open"
+                              :operation-receipt/channel "gameplay"
+                              :operation-receipt/payload-hash phash
+                              :operation-receipt/player-key pk
+                              :operation-receipt/save-id save-id
+                              :operation-receipt/summary
+                              (pr-str {:battle-id battle-id :idx idx})}]
+                            group-tx)
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :battle state}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-pvp-receipt conn dup phash operation-id)
+                  (throw ex))))))))
+
+  (accept-pvp-challenge! [_ writer-ctx request]
+    (let [payload (ops/pvp-accept-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-pvp-receipt conn existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [chat-id (:chat-id writer-ctx)
+                     player-id (:player-id writer-ctx)
+                     save-id (:save-id writer-ctx)
+                     pk (id/player-key chat-id player-id)
+                     sk (id/save-key chat-id player-id save-id)
+                     group-e (d/pull db '[*] [:group/chat-id chat-id])
+                     battle-id (or (:battle-id request)
+                                   (:group/active-pvp-battle-id group-e))
+                     _ (when-not battle-id
+                         (throw (err/error :pvp_no_challenge {})))
+                     be (battle-entity db battle-id)
+                     _ (when-not (present? be)
+                         (throw (err/error :battle_not_found {:battle-id battle-id})))
+                     state (->battle be)
+                     ;; Self-accept antes do idle — desafiante já tem active-battle-id.
+                     _ (when (= player-id (get-in state [:jogadores :x]))
+                         (throw (err/error :pvp_self_accept {})))
+                     _ (pvp-store/assert-player-idle! db chat-id player-id)
+                     _ (when-not (pvp/aguardando? state)
+                         (throw (err/error :pvp_not_waiting {:phase (:phase state)})))
+                     colecao (query-collection db sk)
+                     idx (long (:ativo-index (->save save) 0))
+                     _ (coll/validate-index! idx (count colecao))
+                     poke (nth colecao idx)
+                     agora (long (or (:agora request) (System/currentTimeMillis)))
+                     next (battle/accept-pvp-challenge
+                           state
+                           {:player-id player-id
+                            :player-name (:player-name request)
+                            :save-id save-id
+                            :fence-generation (:fence-generation writer-ctx)
+                            :pokemon-o poke
+                            :hp-o (:hp-atual poke)
+                            :status-o (:status poke)
+                            :collection-index idx
+                            :agora agora
+                            :first-turn-tie (:first-turn-tie request)})
+                     rev (long (:save/revision save 0))]
+                 {:tx [{:battle/id battle-id
+                        :battle/player-o-key pk
+                        :battle/active? true
+                        :battle/phase "active"
+                        :battle/turn-index 0
+                        :battle/state-edn (pr-str next)}
+                       [:db/add [:player/key pk] :player/active-battle-id battle-id]
+                       [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                       {:operation-receipt/id operation-id
+                        :operation-receipt/kind "pvp-accept"
+                        :operation-receipt/channel "gameplay"
+                        :operation-receipt/payload-hash phash
+                        :operation-receipt/player-key pk
+                        :operation-receipt/save-id save-id
+                        :operation-receipt/summary
+                        (pr-str {:battle-id battle-id :vez (:vez next)})}]
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :battle next}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-pvp-receipt conn dup phash operation-id)
+                  (throw ex))))))))
+
+  (cancel-pvp! [_ writer-ctx request]
+    (let [payload (ops/pvp-cancel-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-pvp-receipt conn existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [chat-id (:chat-id writer-ctx)
+                     player-id (:player-id writer-ctx)
+                     pk (id/player-key chat-id player-id)
+                     sk (id/save-key chat-id player-id (:save-id writer-ctx))
+                     battle-id (or (:battle-id request)
+                                   (active-battle-id-for db chat-id player-id)
+                                   (:group/active-pvp-battle-id
+                                    (d/pull db '[*] [:group/chat-id chat-id])))
+                     _ (when-not battle-id
+                         (throw (err/error :pvp_no_challenge {})))
+                     be (battle-entity db battle-id)
+                     _ (when-not (present? be)
+                         (throw (err/error :battle_not_found {:battle-id battle-id})))
+                     state (->battle be)
+                     side (pvp/side-of-player state player-id)
+                     _ (when-not side
+                         (throw (err/error :pvp_not_participant {})))
+                     _ (when (and (pvp/aguardando? state) (not= side :x))
+                         (throw (err/error :pvp_cancel_forbidden {})))
+                     next (battle/forfeit-pvp state side)
+                     rev (long (:save/revision save 0))
+                     colecao-x (query-collection
+                                db (id/save-key chat-id
+                                                (get-in state [:jogadores :x])
+                                                (get-in state [:saves :x])))
+                     colecao-o (when (get-in state [:jogadores :o])
+                                 (query-collection
+                                  db (id/save-key chat-id
+                                                  (get-in state [:jogadores :o])
+                                                  (get-in state [:saves :o]))))
+                     poke-x (when (seq colecao-x)
+                              (nth colecao-x (get-in state [:indices-ativos :x] 0) nil))
+                     poke-o (when (and colecao-o (get-in state [:indices-ativos :o]))
+                              (nth colecao-o (get-in state [:indices-ativos :o]) nil))
+                     sync-x (when (and poke-x (get-in next [:hp :x]))
+                              (pvp-store/pokemon-sync-tx
+                               poke-x (get-in next [:hp :x]) (get-in next [:status :x])))
+                     sync-o (when (and poke-o (get-in next [:hp :o]))
+                              (pvp-store/pokemon-sync-tx
+                               poke-o (get-in next [:hp :o]) (get-in next [:status :o])))
+                     clear-x [[:db/retract
+                               [:player/key (id/player-key chat-id (get-in state [:jogadores :x]))]
+                               :player/active-battle-id battle-id]]
+                     clear-o (when (get-in state [:jogadores :o])
+                               [[:db/retract
+                                 [:player/key (id/player-key chat-id (get-in state [:jogadores :o]))]
+                                 :player/active-battle-id battle-id]])
+                     clear-chat (or (pvp-store/clear-chat-pvp-tx db chat-id battle-id) [])]
+                 {:tx (into [[:db/add [:battle/id battle-id] :battle/active? false]
+                             [:db/add [:battle/id battle-id] :battle/phase "finished"]
+                             [:db/add [:battle/id battle-id] :battle/state-edn (pr-str next)]
+                             [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                             {:operation-receipt/id operation-id
+                              :operation-receipt/kind "pvp-cancel"
+                              :operation-receipt/channel "gameplay"
+                              :operation-receipt/payload-hash phash
+                              :operation-receipt/player-key pk
+                              :operation-receipt/save-id (:save-id writer-ctx)
+                              :operation-receipt/summary
+                              (pr-str {:battle-id battle-id :outcome (:outcome next)})}]
+                            (concat clear-x (or clear-o []) clear-chat
+                                    (or sync-x []) (or sync-o [])))
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :battle next}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-pvp-receipt conn dup phash operation-id)
+                  (throw ex))))))))
+
+  (confirm-pvp-turn! [_ writer-ctx request]
+    (let [payload (ops/pvp-turn-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-pvp-receipt conn existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [chat-id (:chat-id writer-ctx)
+                     player-id (:player-id writer-ctx)
+                     battle-id (:battle-id request)
+                     be (battle-entity db battle-id)
+                     _ (when-not (present? be)
+                         (throw (err/error :battle_not_found {:battle-id battle-id})))
+                     state (->battle be)
+                     _ (when-not (= :pvp (:kind state))
+                         (throw (err/error :not_pvp_battle {:kind (:kind state)})))
+                     side (pvp/side-of-player state player-id)
+                     _ (when-not side
+                         (throw (err/error :pvp_not_participant {})))
+                     expected (long (:expected-turn-index request (:turn-index state)))
+                     _ (when-not (= expected (long (:turn-index state)))
+                         (throw (err/error :stale_turn_index
+                                           {:expected expected
+                                            :actual (:turn-index state)})))
+                     action (keyword (:action request))
+                     item-id (when (= :item action)
+                               (shop/normalizar-item (str (:item-id request))))
+                     sk-actor (id/save-key chat-id player-id (:save-id writer-ctx))
+                     inv-tx (when (= :item action)
+                              (inventory-adjust-tx db sk-actor item-id -1))
+                     next-state (battle/apply-pvp-turn
+                                 state side
+                                 {:action action
+                                  :move-index (:move-index request)
+                                  :item-id item-id}
+                                 (:rng request))
+                     pk (id/player-key chat-id player-id)
+                     rev (long (:save/revision save 0))
+                     finished? (not (:active? next-state))
+                     outcome (:outcome next-state)
+                     ;; Sync HP ambos os lados ao encerrar.
+                     sync-both
+                     (when finished?
+                       (mapcat
+                        (fn [marca]
+                          (let [pid (get-in state [:jogadores marca])
+                                sid (get-in state [:saves marca])
+                                idx (get-in state [:indices-ativos marca])]
+                            (when (and pid sid (some? idx))
+                              (let [col (query-collection
+                                         db (id/save-key chat-id pid sid))
+                                    poke (when (and (seq col) (< idx (count col)))
+                                           (nth col idx))]
+                                (pvp-store/pokemon-sync-tx
+                                 poke
+                                 (get-in next-state [:hp marca])
+                                 (get-in next-state [:status marca]))))))
+                        [:x :o]))
+                     winner-side (when (contains? #{:x :o} outcome) outcome)
+                     reward-tx
+                     (when (and finished? winner-side)
+                       (let [wpid (get-in state [:jogadores winner-side])
+                             wsid (get-in state [:saves winner-side])
+                             wsk (id/save-key chat-id wpid wsid)
+                             wsave (save-entity db chat-id wpid wsid)
+                             widx (get-in state [:indices-ativos winner-side])
+                             wcol (query-collection db wsk)
+                             wpoke (when (and (seq wcol) (< widx (count wcol)))
+                                     (nth wcol widx))
+                             kos (long (get-in next-state
+                                               [:participacao winner-side widx] 0))
+                             desafiante (get-in state [:pokemons :x])]
+                         (when (present? wsave)
+                           (pvp-store/winner-rewards-tx
+                            db wsk wsave
+                            (when wpoke
+                              (assoc wpoke :hp-atual (get-in next-state [:hp winner-side])))
+                            kos desafiante))))
+                     clear-players
+                     (when finished?
+                       (vec
+                        (keep (fn [marca]
+                                (when-let [pid (get-in state [:jogadores marca])]
+                                  [:db/retract
+                                   [:player/key (id/player-key chat-id pid)]
+                                   :player/active-battle-id battle-id]))
+                              [:x :o])))
+                     clear-chat (when finished?
+                                  (or (pvp-store/clear-chat-pvp-tx db chat-id battle-id) []))
+                     tx (into [[:db/cas [:battle/id battle-id] :battle/turn-index
+                                expected (long (:turn-index next-state))]
+                               [:db/add [:battle/id battle-id] :battle/active?
+                                (boolean (:active? next-state))]
+                               [:db/add [:battle/id battle-id] :battle/phase
+                                (name (:phase next-state))]
+                               [:db/add [:battle/id battle-id] :battle/state-edn
+                                (pr-str next-state)]
+                               [:db/cas [:save/key sk-actor] :save/revision rev (inc rev)]
+                               {:operation-receipt/id operation-id
+                                :operation-receipt/kind "pvp-turn"
+                                :operation-receipt/channel "gameplay"
+                                :operation-receipt/payload-hash phash
+                                :operation-receipt/player-key pk
+                                :operation-receipt/save-id (:save-id writer-ctx)
+                                :operation-receipt/summary
+                                (pr-str {:battle-id battle-id
+                                         :turn (:turn-index next-state)
+                                         :outcome outcome
+                                         :vez (:vez next-state)})}]
+                              (concat (or inv-tx [])
+                                      (or sync-both [])
+                                      (or reward-tx [])
+                                      (or clear-players [])
+                                      (or clear-chat [])))]
+                 {:tx tx
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :battle next-state}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-pvp-receipt conn dup phash operation-id)
+                  (throw ex))))))))
+
+  (active-pvp-battle [_ chat-id]
+    (let [db (d/db conn)
+          g (d/pull db '[*] [:group/chat-id chat-id])
+          bid (:group/active-pvp-battle-id g)]
+      (when bid
+        (when-let [be (battle-entity db bid)]
+          (when (present? be)
+            (->battle be))))))
+
   (ensure-group! [_ chat-id label]
     (let [db (d/db conn)
           e (d/pull db '[*] [:group/chat-id chat-id])]
@@ -2546,7 +2939,8 @@
         {:chat-id (:group/chat-id e)
          :label (:group/label e)
          :active-wild-battle-id (:group/active-wild-battle-id e)
-         :active-wild-player-id (:group/active-wild-player-id e)})))
+         :active-wild-player-id (:group/active-wild-player-id e)
+         :active-pvp-battle-id (:group/active-pvp-battle-id e)})))
 
   (get-receipt [_ operation-id]
     (let [e (receipt-entity (d/db conn) operation-id)]

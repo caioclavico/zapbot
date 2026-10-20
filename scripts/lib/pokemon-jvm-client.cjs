@@ -298,6 +298,12 @@ function createClient(config = {}) {
     offerMove: (body) => mutateOnce('/v1/pokemon/offer-move', body),
     refuseOffer: (body) => mutateOnce('/v1/pokemon/refuse-offer', body),
     relearnMove: (body) => mutateOnce('/v1/pokemon/relearn-move', body),
+    getActivePvp: ({ chatId }) =>
+      request('GET', `/v1/pvp/active${q({ chatId })}`),
+    openPvp: (body) => mutateOnce('/v1/pvp/open', body),
+    acceptPvp: (body) => mutateOnce('/v1/pvp/accept', body),
+    cancelPvp: (body) => mutateOnce('/v1/pvp/cancel', body),
+    confirmPvpTurn: (body) => mutateOnce('/v1/pvp/turn', body),
     close: () => agent.destroy()
   };
 }

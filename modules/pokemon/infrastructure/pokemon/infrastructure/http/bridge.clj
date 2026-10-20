@@ -76,13 +76,16 @@
      :invalid_raid_pokemon :invalid_raid_move :raid_not_found
      :invalid_starter :invalid_move_slot :move_already_known
      :must_keep_stab_move :no_move_offer :move_not_in_history
-     :cannot_forget_last_move :pokemon_not_found) 400
+     :cannot_forget_last_move :pokemon_not_found
+     :pvp_level_incompatible :pvp_no_challenge :not_pvp_battle) 400
     (:stale_writer_fence :writer_fence_conflict :activate_conflict
      :receipt_payload_mismatch :reward_conflict :reward_save_mismatch
      :operation_forbidden :battle_pending :battle_already_active
      :battle_busy :battle_save_mismatch :encounter_owner_mismatch
      :encounter_not_ready
      :stale_turn_index :chat_hunt_busy :hunt_cooldown
+     :pvp_chat_busy :pvp_self_accept :pvp_not_waiting :pvp_challenge_expired
+     :pvp_out_of_turn :pvp_not_participant :pvp_cancel_forbidden
      :gym_cas_conflict :not_gym_leader :gym_defense_pending
      :cannot_challenge_own_gym :gym_locked :gym_daily_limit
      :raid_not_open :already_in_raid :raid_full :raid_cannot_leave
@@ -211,6 +214,8 @@
                                               "pokemon-learn-move" "pokemon-forget-move"
                                               "pokemon-offer-move" "pokemon-refuse-offer"
                                               "pokemon-relearn-move"
+                                              "pvp-open" "pvp-accept" "pvp-cancel"
+                                              "pvp-turn" "pvp-active-read"
                                               "onboarding-read" "onboarding-start"
                                               "onboarding-kit" "onboarding-starter"]
                                        platform-store
@@ -1331,6 +1336,132 @@
                                                  :idx idx
                                                  :slug slug}
                                           (some? slot) (assoc :slot slot)))))))
+
+                (= path "/v1/pvp/active")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")]
+                      (when (str/blank? chat-id)
+                        (throw (err/error :invalid_query {:required ["chatId"]})))
+                      (ok! ex (or (tx/active-pvp store chat-id)
+                                  {:chat-id chat-id :battle nil}))))
+
+                (= path "/v1/pvp/open")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          player-name (g body "playerName" "player-name")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/open-pvp!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :player-name player-name}
+                                          (some? agora) (assoc :agora agora)))))))
+
+                (= path "/v1/pvp/accept")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          player-name (g body "playerName" "player-name")
+                          battle-id (g body "battleId" "battle-id")
+                          agora (long-or-nil (g body "agoraMs" "agora"))
+                          tie (g body "firstTurnTie" "first-turn-tie")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/accept-pvp!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :player-name player-name}
+                                          battle-id (assoc :battle-id battle-id)
+                                          (some? agora) (assoc :agora agora)
+                                          tie (assoc :first-turn-tie tie)))))))
+
+                (= path "/v1/pvp/cancel")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          battle-id (g body "battleId" "battle-id")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/cancel-pvp!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id}
+                                          battle-id (assoc :battle-id battle-id)))))))
+
+                (= path "/v1/pvp/turn")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          battle-id (g body "battleId" "battle-id")
+                          expected (long-or-nil (g body "expectedTurnIndex"
+                                                   "expected-turn-index"))
+                          action (g body "action")
+                          move-index (long-or-nil (g body "moveIndex" "move-index"))
+                          item-id (g body "itemId" "item-id")
+                          rng (g body "rng")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (str/blank? action))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "action"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/confirm-pvp-turn!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :battle-id battle-id
+                                                 :action action}
+                                          (some? expected)
+                                          (assoc :expected-turn-index expected)
+                                          (some? move-index)
+                                          (assoc :move-index move-index)
+                                          item-id (assoc :item-id item-id)
+                                          (map? rng) (assoc :rng rng)))))))
 
                 :else
                 (send-json! ex 404

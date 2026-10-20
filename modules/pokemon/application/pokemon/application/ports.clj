@@ -188,4 +188,19 @@
     "Concede 10 Pokébolas do kit inicial uma vez por save (fence + recibo).")
 
   (choose-starter! [this writer-ctx request]
-    "Concede Bulbasaur/Charmander/Squirtle e marca inicial-escolhido (fence + recibo)."))
+    "Concede Bulbasaur/Charmander/Squirtle e marca inicial-escolhido (fence + recibo).")
+
+  (open-pvp-challenge! [this writer-ctx request]
+    "Abre desafio PvP 1×1 no chat com o Pokémon ativo; fence + recibo.")
+
+  (accept-pvp-challenge! [this writer-ctx request]
+    "Aceita desafio aguardando; valida faixa ±3; fence do aceitante.")
+
+  (cancel-pvp! [this writer-ctx request]
+    "Cancela desafio próprio ou desiste da batalha ativa.")
+
+  (confirm-pvp-turn! [this writer-ctx request]
+    "Turno PvP do jogador da vez; CAS turn-index; sem resposta NPC.")
+
+  (active-pvp-battle [this chat-id]
+    "Batalha/desafio PvP apontado pelo chat, ou nil."))

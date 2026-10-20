@@ -13,10 +13,12 @@
             [pokemon.application.moves :as moves-app]
             [pokemon.application.onboarding :as onboard-app]
             [pokemon.application.ports :as ports]
+            [pokemon.application.pvp :as pvp-app]
             [pokemon.application.raid :as raid-app]
             [pokemon.application.reward :as reward-app]
             [pokemon.application.shop :as shop-app]
             [pokemon.application.trainer :as trainer]
+            [pokemon.domain.pvp :as pvp-domain]
             [pokemon.domain.shop :as shop-domain]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.errors :as err]
@@ -1056,3 +1058,117 @@
      :preco (:preco result moves/preco-reaprender)
      :coins-depois (:coins-depois result)
      :pokemon (pokemon-summary (:registro result))}))
+
+(defn- present-pvp
+  [battle]
+  (when battle
+    (let [base (present-battle battle)]
+      (merge base
+             {:kind "pvp"
+              :pvp? true
+              :phase (name (:phase battle :waiting))
+              ;; Sem `?` no DTO — JSON camelCase precisa bater com Node (aguardando).
+              :aguardando (boolean (pvp-domain/aguardando? battle))
+              :faixa-niveis (:faixa-niveis battle)
+              :desafio-expira-em (:desafio-expira-em battle)
+              :vez (when-let [v (:vez battle)] (name v))
+              :jogadores (:jogadores battle)
+              :nomes (:nomes battle)
+              :outcome (when-let [o (:outcome battle)] (name o))}))))
+
+(defn open-pvp!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 player-name agora]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        save (ports/get-save store chat-id player-id save-id)
+        colecao (ports/list-collection store chat-id player-id save-id)
+        idx (long (:ativo-index save 0))
+        poke (when (and (seq colecao) (< idx (count colecao))) (nth colecao idx))
+        _ (when-not poke (throw (err/error :no_active_pokemon {})))
+        result (pvp-app/open-challenge!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :collection-index idx
+                         :pokemon-id (:id-pokemon poke)
+                         :player-name player-name}
+                  (some? agora) (assoc :agora agora)))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle (present-pvp (:battle result))}))
+
+(defn accept-pvp!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 player-name battle-id agora first-turn-tie]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        save (ports/get-save store chat-id player-id save-id)
+        colecao (ports/list-collection store chat-id player-id save-id)
+        idx (long (:ativo-index save 0))
+        poke (when (and (seq colecao) (< idx (count colecao))) (nth colecao idx))
+        _ (when-not poke (throw (err/error :no_active_pokemon {})))
+        pending (or battle-id
+                    (:battle-id (pvp-app/active-in-chat store chat-id)))
+        result (pvp-app/accept-challenge!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :battle-id pending
+                         :collection-index idx
+                         :pokemon-id (:id-pokemon poke)
+                         :player-name player-name}
+                  (some? agora) (assoc :agora agora)
+                  first-turn-tie (assoc :first-turn-tie (keyword first-turn-tie))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle (present-pvp (:battle result))}))
+
+(defn cancel-pvp!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id battle-id]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (pvp-app/cancel!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)}
+                  battle-id (assoc :battle-id battle-id)))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle (present-pvp (:battle result))}))
+
+(defn confirm-pvp-turn!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 battle-id expected-turn-index action move-index item-id rng]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        battle (or (ports/get-battle store battle-id)
+                   (pvp-app/active-in-chat store chat-id))
+        _ (when-not battle (throw (err/error :battle_not_found {:battle-id battle-id})))
+        side (pvp-domain/side-of-player battle player-id)
+        _ (when-not side (throw (err/error :pvp_not_participant {})))
+        result (pvp-app/confirm-turn!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :battle-id (:battle-id battle)
+                         :expected-turn-index (long (or expected-turn-index
+                                                        (:turn-index battle 0)))
+                         :action (keyword action)
+                         :actor-side side}
+                  (some? move-index) (assoc :move-index (long move-index))
+                  item-id (assoc :item-id item-id)
+                  (map? rng) (assoc :rng (keywordize-keys rng))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle (present-pvp (:battle result))}))
+
+(defn active-pvp
+  [store chat-id]
+  (when-let [b (pvp-app/active-in-chat store chat-id)]
+    {:chat-id chat-id
+     :battle (present-pvp b)}))
