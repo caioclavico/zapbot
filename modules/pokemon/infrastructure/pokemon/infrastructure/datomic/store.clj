@@ -2,6 +2,7 @@
   "Adapter Datomic Local para TrainerStore.
   Efeitos externos (WhatsApp, HTTP, timers) NÃO entram nas transações."
   (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [datomic.client.api :as d]
             [pokemon.application.ports :as ports]
             [pokemon.domain.battle :as battle]
@@ -109,6 +110,7 @@
              :ultima-cacada-at (long (:save/ultima-cacada-at e 0))
              :kit-inicial-resgatado (boolean (:save/kit-inicial-resgatado e))
              :inicial-escolhido (boolean (:save/inicial-escolhido e))
+             :favorito-id-pokemon (:save/favorito-id-pokemon e)
              :ginasios (or (edn-read (:save/ginasios-edn e)) {})
              :time-ginasio (or (edn-read (:save/time-ginasio-edn e)) [])))))
 
@@ -341,6 +343,73 @@
        (map (comp ->pokemon first))
        (sort-by :collection-index)
        vec))
+
+(defn- ->pokedex-entry
+  [e]
+  (when (present? e)
+    (cond-> {:species (:pokedex-entry/species e)
+             :seen (boolean (:pokedex-entry/seen e))
+             :caught (boolean (:pokedex-entry/caught e))
+             :seen-count (long (:pokedex-entry/seen-count e 0))
+             :caught-count (long (:pokedex-entry/caught-count e 0))
+             :max-level (long (:pokedex-entry/max-level e 0))
+             :shiny-caught (long (:pokedex-entry/shiny-caught e 0))
+             :raridade (or (:pokedex-entry/raridade e) "comum")
+             :tipos (vec (:pokedex-entry/tipos e))}
+      (:pokedex-entry/species e)
+      (assoc :nome (str/capitalize (:pokedex-entry/species e))))))
+
+(defn- query-pokedex
+  [db save-key*]
+  (->> (d/q '[:find (pull ?e [*])
+              :in $ ?sk
+              :where
+              [?s :save/key ?sk]
+              [?e :pokedex-entry/save ?s]]
+            db save-key*)
+       (map (comp ->pokedex-entry first))
+       (remove nil?)
+       (sort-by :species)
+       vec))
+
+(defn- pokedex-entity
+  [db save-key* species]
+  (when (and species (not (str/blank? (str species))))
+    (d/pull db '[*] [:pokedex-entry/key (id/pokedex-entry-key save-key* species)])))
+
+(defn- pokedex-seen-tx
+  "Upsert avistamento: seen + seen-count."
+  [db sk species]
+  (let [prev (pokedex-entity db sk species)
+        prev-count (long (or (when (present? prev) (:pokedex-entry/seen-count prev)) 0))]
+    {:pokedex-entry/key (id/pokedex-entry-key sk species)
+     :pokedex-entry/save [:save/key sk]
+     :pokedex-entry/species (str species)
+     :pokedex-entry/seen true
+     :pokedex-entry/seen-count (inc prev-count)}))
+
+(defn- pokedex-caught-tx
+  "Upsert captura: seen+caught + contadores/nível/shiny/tipos/raridade."
+  [db sk registro]
+  (let [species (or (:species registro) (:nome registro))
+        prev (pokedex-entity db sk species)
+        prev-caught (long (or (when (present? prev) (:pokedex-entry/caught-count prev)) 0))
+        prev-seen (long (or (when (present? prev) (:pokedex-entry/seen-count prev)) 0))
+        prev-max (long (or (when (present? prev) (:pokedex-entry/max-level prev)) 0))
+        prev-shiny (long (or (when (present? prev) (:pokedex-entry/shiny-caught prev)) 0))
+        nivel (long (or (:nivel registro) (:level registro) 1))
+        shiny? (boolean (or (:shiny registro) (:shiny? registro)))]
+    (cond-> {:pokedex-entry/key (id/pokedex-entry-key sk species)
+             :pokedex-entry/save [:save/key sk]
+             :pokedex-entry/species (str species)
+             :pokedex-entry/seen true
+             :pokedex-entry/caught true
+             :pokedex-entry/seen-count (max prev-seen 1)
+             :pokedex-entry/caught-count (inc prev-caught)
+             :pokedex-entry/max-level (max prev-max nivel)
+             :pokedex-entry/shiny-caught (+ prev-shiny (if shiny? 1 0))
+             :pokedex-entry/raridade (or (:raridade registro) "comum")}
+      (seq (:tipos registro)) (assoc :pokedex-entry/tipos (vec (:tipos registro))))))
 
 (defn- writer-fence-tx
   "CAS que exige save ativo + fence congelados (operações iniciadas em A
@@ -765,6 +834,9 @@
   (list-collection [_ chat-id player-id save-id]
     (query-collection (d/db conn) (id/save-key chat-id player-id save-id)))
 
+  (list-pokedex-entries [_ chat-id player-id save-id]
+    (query-pokedex (d/db conn) (id/save-key chat-id player-id save-id)))
+
   (list-inventory [_ chat-id player-id save-id]
     (query-inventory (d/db conn) (id/save-key chat-id player-id save-id)))
 
@@ -797,6 +869,7 @@
              entity (pokemon-entity-map sk registro idx)
              rev (long (:save/revision save 0))]
          {:tx [entity
+               (pokedex-caught-tx db sk registro)
                [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
           :result {:destino :equipe
                    :indice idx
@@ -935,11 +1008,7 @@
                                                 (max maior seq-nova)]
                                                [:db/cas [:save/key sk] :save/coins coins
                                                 (model/apply-coin-delta coins (:moedas rew))]
-                                               {:pokedex-entry/key (id/pokedex-entry-key sk (:species registro))
-                                                :pokedex-entry/save [:save/key sk]
-                                                :pokedex-entry/species (:species registro)
-                                                :pokedex-entry/seen true
-                                                :pokedex-entry/caught true}])
+                                               (pokedex-caught-tx db sk registro)])
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
                           :result {:operation-id operation-id
@@ -1131,11 +1200,7 @@
                                                 (max maior seq-nova)]
                                                [:db/cas [:save/key sk] :save/coins coins
                                                 (model/apply-coin-delta coins (:moedas rew))]
-                                               {:pokedex-entry/key (id/pokedex-entry-key sk (:species registro))
-                                                :pokedex-entry/save [:save/key sk]
-                                                :pokedex-entry/species (:species registro)
-                                                :pokedex-entry/seen true
-                                                :pokedex-entry/caught true}])
+                                               (pokedex-caught-tx db sk registro)])
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
                           :result {:operation-id operation-id
@@ -1317,10 +1382,7 @@
                                [:db/add [:player/key pk] :player/active-battle-id battle-id]
                                [:db/add [:save/key sk] :save/ultima-cacada-at agora]
                                [:db/cas [:save/key sk] :save/revision rev (inc rev)]
-                               {:pokedex-entry/key (id/pokedex-entry-key sk species)
-                                :pokedex-entry/save [:save/key sk]
-                                :pokedex-entry/species species
-                                :pokedex-entry/seen true}
+                               (pokedex-seen-tx db sk species)
                                {:operation-receipt/id operation-id
                                 :operation-receipt/kind "hunt-start"
                                 :operation-receipt/channel "gameplay"
@@ -1510,6 +1572,81 @@
                            :idx idx
                            :ativo-index idx
                            :pokemon poke}})))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (set-favorite-pokemon! [_ writer-ctx request]
+    (let [clear? (boolean (:clear? request))
+          payload (ops/set-favorite-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
+                     colecao (query-collection db sk)
+                     rev (long (:save/revision save 0))
+                     pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                     save-m (->save save)
+                     atual-id (:favorito-id-pokemon save-m)]
+                 (if clear?
+                   (let [tx (cond-> [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                                     {:operation-receipt/id operation-id
+                                      :operation-receipt/kind "set-favorite"
+                                      :operation-receipt/channel "gameplay"
+                                      :operation-receipt/payload-hash phash
+                                      :operation-receipt/player-key pk
+                                      :operation-receipt/save-id (:save-id writer-ctx)
+                                      :operation-receipt/summary (pr-str {:clear? true})}]
+                              atual-id
+                              (conj [:db/retract [:save/key sk] :save/favorito-id-pokemon atual-id]))]
+                     {:tx tx
+                      :result {:operation-id operation-id
+                               :duplicate false
+                               :channel "gameplay"
+                               :payload-hash phash
+                               :clear? true
+                               :favorito nil}})
+                   (let [idx (long (:idx request))
+                         _ (coll/validate-index! idx (count colecao))
+                         poke (nth colecao idx)
+                         poke-id (:id-pokemon poke)
+                         _ (when (str/blank? (str poke-id))
+                             (throw (err/error :invalid_collection_index
+                                               {:reason "missing-id-pokemon" :idx idx})))
+                         tx [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                             [:db/add [:save/key sk] :save/favorito-id-pokemon poke-id]
+                             {:operation-receipt/id operation-id
+                              :operation-receipt/kind "set-favorite"
+                              :operation-receipt/channel "gameplay"
+                              :operation-receipt/payload-hash phash
+                              :operation-receipt/player-key pk
+                              :operation-receipt/save-id (:save-id writer-ctx)
+                              :operation-receipt/summary
+                              (pr-str {:idx idx :id poke-id :nome (:nome poke)})}]
+                         ativo-idx (long (:ativo-index save-m 0))
+                         ativou? (and (pos? (long (:hp-atual poke 0)))
+                                      (not= ativo-idx idx))]
+                     {:tx (cond-> tx
+                            ativou?
+                            (conj [:db/add [:save/key sk] :save/ativo-index idx]))
+                      :result {:operation-id operation-id
+                               :duplicate false
+                               :channel "gameplay"
+                               :payload-hash phash
+                               :clear? false
+                               :idx idx
+                               :ativado? ativou?
+                               :favorito {:id poke-id
+                                          :nome (:nome poke)
+                                          :collection-index idx}
+                               :pokemon poke}})))))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)

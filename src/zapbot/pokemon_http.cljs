@@ -685,12 +685,138 @@
                   (envelope-jvm pedido texto img))
 
                 "time"
-                (p/let [data (desempenho/medir! ctx "pokemon_jvm_collection"
-                                #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))]
-                  ;; Grade de 12 sprites ainda acoplada ao legado; só texto no M4.6.
-                  (envelope-jvm pedido
-                                (.formatCollection jvm-present data (clj->js resto)
-                                                   (str config/prefix "pk"))))
+                (let [prefix (str config/prefix "pk")
+                      marcadores-txt #{"txt" "texto"}
+                      modo-texto? (boolean (some marcadores-txt resto))
+                      resto* (vec (remove marcadores-txt resto))]
+                  (cond
+                    (= "ativo" (first resto*))
+                    (p/let [col (desempenho/medir! ctx "pokemon_jvm_collection"
+                                   #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))
+                            idx (long (or (.-ativoIndex col) 0))
+                            total (alength (or (.-collection col) #js []))
+                            ficha (when (pos? total)
+                                    (desempenho/medir! ctx "pokemon_jvm_ficha"
+                                      #(.getPokemonFicha jvm
+                                         #js {:chatId chat-id
+                                              :playerId player-id
+                                              :collectionIndex idx})))
+                            texto (if ficha
+                                    (.formatFicha jvm-present ficha prefix)
+                                    (str "❓ Sem Pokémon ativo. " prefix " time"))
+                            poke (when ficha (.-pokemon ficha))
+                            img (when poke
+                                  (render-seguro! ctx "pokemon_jvm_media_ficha"
+                                    #(.renderSpriteCard jvm-media poke
+                                                        #js {:filename "ficha-ativo.png"
+                                                             :size 320})))]
+                      (envelope-jvm pedido texto img))
+
+                    :else
+                    (p/let [data (desempenho/medir! ctx "pokemon_jvm_collection"
+                                    #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))
+                            texto (.formatCollection jvm-present data (clj->js resto*) prefix)
+                            page (.collectionPageSlice jvm-present data (clj->js resto*))
+                            slice (.-slice page)
+                            img (when (and (not modo-texto?)
+                                           slice
+                                           (pos? (alength slice)))
+                                  (render-seguro! ctx "pokemon_jvm_media_time"
+                                    #(.renderTeamGrid jvm-media slice
+                                                      #js {:filename "meu-time-pokemon.png"
+                                                           :trainerLevel (or (.-trainerLevel data) 1)
+                                                           :ativoIndex (or (.-ativoIndex data) 0)})))]
+                      (envelope-jvm pedido texto img))))
+
+                "pokedex"
+                (let [prefix (str config/prefix "pk")
+                      sub (str/lower-case (str (or (first resto) "")))]
+                  (cond
+                    (= "descobertas" sub)
+                    (p/let [data (desempenho/medir! ctx "pokemon_jvm_pokedex"
+                                    #(.getPokedex jvm #js {:chatId chat-id :playerId player-id}))]
+                      (envelope-jvm pedido (.formatDiscoveries jvm-present data prefix)))
+
+                    (re-matches #"[0-9]+" sub)
+                    (p/let [col (desempenho/medir! ctx "pokemon_jvm_collection"
+                                   #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))
+                            total (alength (or (.-collection col) #js []))
+                            idx (parse-indice-1based sub total)]
+                      (if (nil? idx)
+                        (envelope-jvm pedido
+                                      (str "❓ Escolha um número válido: " prefix " pokedex <1-"
+                                           (max 1 total) "> (veja com " prefix " time)."))
+                        (p/let [ficha (desempenho/medir! ctx "pokemon_jvm_ficha"
+                                         #(.getPokemonFicha jvm
+                                            #js {:chatId chat-id
+                                                 :playerId player-id
+                                                 :collectionIndex idx}))
+                                texto (.formatFicha jvm-present ficha prefix)
+                                poke (.-pokemon ficha)
+                                img (when poke
+                                      (render-seguro! ctx "pokemon_jvm_media_ficha"
+                                        #(.renderSpriteCard jvm-media poke
+                                                            #js {:filename "ficha-pokemon.png"
+                                                                 :size 320})))]
+                          (envelope-jvm pedido texto img))))
+
+                    :else
+                    (p/let [data (desempenho/medir! ctx "pokemon_jvm_pokedex"
+                                    #(.getPokedex jvm #js {:chatId chat-id :playerId player-id}))]
+                      (envelope-jvm pedido
+                                    (.formatPokedex jvm-present data (clj->js resto) prefix)))))
+
+                "favorito"
+                (let [prefix (str config/prefix "pk")
+                      raw (str/lower-case (str (or (first resto) "")))]
+                  (cond
+                    (contains? #{"remover" "rm" "tirar" "clear"} raw)
+                    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            op-id (.stableOperationId jvm-transport
+                                                      (:requestId pedido)
+                                                      "favorite-clear")
+                            data (desempenho/medir! ctx "pokemon_jvm_favorite"
+                                   #(.setFavoritePokemon jvm
+                                      #js {:chatId chat-id
+                                           :playerId player-id
+                                           :saveId (.-activeSaveId ativo)
+                                           :fenceGeneration (.-fenceGeneration ativo)
+                                           :operationId op-id
+                                           :clear true}))]
+                      (envelope-jvm pedido (.formatFavorite jvm-present
+                                                            #js {:clear true} prefix)))
+
+                    (re-matches #"[0-9]+" raw)
+                    (p/let [col (desempenho/medir! ctx "pokemon_jvm_collection"
+                                   #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))
+                            total (alength (or (.-collection col) #js []))
+                            idx (parse-indice-1based raw total)]
+                      (if (nil? idx)
+                        (envelope-jvm pedido
+                                      (str "❓ Escolha um número válido: " prefix " favorito <1-"
+                                           (max 1 total) ">."))
+                        (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                                op-id (.stableOperationId jvm-transport
+                                                          (:requestId pedido)
+                                                          (str "favorite:" idx))
+                                data (desempenho/medir! ctx "pokemon_jvm_favorite"
+                                       #(.setFavoritePokemon jvm
+                                          #js {:chatId chat-id
+                                               :playerId player-id
+                                               :saveId (.-activeSaveId ativo)
+                                               :fenceGeneration (.-fenceGeneration ativo)
+                                               :operationId op-id
+                                               :collectionIndex idx}))]
+                          (envelope-jvm pedido (.formatFavorite jvm-present data prefix)))))
+
+                    :else
+                    (p/let [col (desempenho/medir! ctx "pokemon_jvm_collection"
+                                   #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))
+                            fav (.-favorito col)]
+                      (envelope-jvm pedido
+                                    (.formatFavorite jvm-present
+                                                     (if fav #js {:atual fav} #js {})
+                                                     prefix)))))
 
                 "save"
                 (p/let [data (desempenho/medir! ctx "pokemon_jvm_active"

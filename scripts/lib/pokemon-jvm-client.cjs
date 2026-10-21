@@ -230,6 +230,10 @@ function createClient(config = {}) {
       request('GET', `/v1/trainer${q({ chatId, playerId })}`),
     getCollection: ({ chatId, playerId, saveId }) =>
       request('GET', `/v1/collection${q({ chatId, playerId, saveId })}`),
+    getPokedex: ({ chatId, playerId, saveId }) =>
+      request('GET', `/v1/pokedex${q({ chatId, playerId, saveId })}`),
+    getPokemonFicha: ({ chatId, playerId, saveId, collectionIndex }) =>
+      request('GET', `/v1/pokemon/ficha${q({ chatId, playerId, saveId, collectionIndex })}`),
     getActiveSave: ({ chatId, playerId }) =>
       request('GET', `/v1/active-save${q({ chatId, playerId })}`),
     listSaves: ({ chatId, playerId }) =>
@@ -292,6 +296,7 @@ function createClient(config = {}) {
     buyItem: (body) => mutateOnce('/v1/shop/buy', body),
     useItem: (body) => mutateOnce('/v1/items/use', body),
     setActivePokemon: (body) => mutateOnce('/v1/pokemon/active', body),
+    setFavoritePokemon: (body) => mutateOnce('/v1/pokemon/favorite', body),
     evolvePokemon: (body) => mutateOnce('/v1/pokemon/evolve', body),
     learnMove: (body) => mutateOnce('/v1/pokemon/learn-move', body),
     forgetMove: (body) => mutateOnce('/v1/pokemon/forget-move', body),

@@ -563,11 +563,121 @@ function efeitoDeTurno(data) {
   };
 }
 
+const CORES_TIPO_TIME = {
+  fire: '#ef5350', water: '#42a5f5', grass: '#66bb6a', electric: '#fbc02d',
+  psychic: '#ec407a', ice: '#4dd0e1', dragon: '#7e57c2', dark: '#5c6b73',
+  fairy: '#f48fb1', fighting: '#e53935', poison: '#ab47bc', ground: '#a1887f',
+  rock: '#bcae66', bug: '#9ccc65', ghost: '#7e57c2', steel: '#90a4ae',
+  flying: '#7986cb', normal: '#b0bec5'
+};
+
+/**
+ * Grade do time (até 12) — espelha criar-cartao-time da master.
+ * Índices exibidos = collectionIndex+1 (mesmos de !pk escolher).
+ */
+async function renderTeamGrid(pokemons, {
+  filename = 'meu-time-pokemon.png',
+  trainerLevel = 1,
+  ativoIndex = 0,
+  title = 'Seu time Pokémon'
+} = {}) {
+  try {
+    const list = Array.isArray(pokemons) ? pokemons.slice(0, 12) : [];
+    if (!list.length) return null;
+    const largura = 1000;
+    const altura = 120 + (Math.ceil(list.length / 2) * 205) + 20;
+    const cards = list.map((p, idx) => {
+      const coluna = idx % 2;
+      const linha = Math.floor(idx / 2);
+      const x = 20 + coluna * 480;
+      const y = 120 + linha * 205;
+      const tipos = p.tipos || [];
+      const cor = CORES_TIPO_TIME[tipos[0]] || '#78909c';
+      const hpMax = Math.max(1, Number(p.hp) || 1);
+      const hpAtual = Math.max(0, Number(p.hpAtual != null ? p.hpAtual : hpMax) || 0);
+      const hpLargura = Math.round(270 * Math.min(1, hpAtual / hpMax));
+      const numero = (p.collectionIndex != null ? p.collectionIndex : idx) + 1;
+      const ativo = Number(p.collectionIndex) === Number(ativoIndex);
+      const nome = escapeXml(String(p.nome || p.species || '?').slice(0, 20));
+      const tiposTxt = escapeXml(tiposPt(tipos));
+      const rar = escapeXml(p.raridade || 'comum');
+      return `<g>`
+        + `<rect x="${x}" y="${y}" width="460" height="185" rx="18" fill="#172033" `
+        + `stroke="${ativo ? '#facc15' : '#2d3b55'}" stroke-width="${ativo ? 5 : 2}"/>`
+        + `<rect x="${x}" y="${y}" width="12" height="185" rx="6" fill="${cor}"/>`
+        + (ativo
+          ? `<text x="${x + 28}" y="${y + 28}" font-size="16" font-family="Arial,sans-serif" `
+            + `font-weight="bold" fill="#facc15">ATIVO</text>`
+          : '')
+        + `<text x="${x + 430}" y="${y + 38}" font-size="24" font-family="Arial,sans-serif" `
+        + `font-weight="bold" fill="#94a3b8" text-anchor="end">#${numero}</text>`
+        + `<text x="${x + 165}" y="${y + 58}" font-size="27" font-family="Arial,sans-serif" `
+        + `font-weight="bold" fill="#f8fafc">${nome}</text>`
+        + `<text x="${x + 165}" y="${y + 88}" font-size="18" font-family="Arial,sans-serif" `
+        + `fill="#cbd5e1">Nv. ${p.nivel || 1} • ${tiposTxt}</text>`
+        + `<text x="${x + 165}" y="${y + 118}" font-size="17" font-family="Arial,sans-serif" `
+        + `fill="#e2e8f0">HP ${hpAtual}/${hpMax}</text>`
+        + `<rect x="${x + 165}" y="${y + 133}" width="270" height="18" rx="9" fill="#334155"/>`
+        + `<rect x="${x + 165}" y="${y + 133}" width="${hpLargura}" height="18" rx="9" `
+        + `fill="${(hpAtual / hpMax) > 0.3 ? '#4ade80' : '#f87171'}"/>`
+        + `<text x="${x + 165}" y="${y + 174}" font-size="15" font-family="Arial,sans-serif" `
+        + `fill="#cbd5e1">${rar}</text>`
+        + `</g>`;
+    }).join('');
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${largura}" height="${altura}">`
+      + `<rect width="100%" height="100%" fill="#0f172a"/>`
+      + `<rect width="100%" height="100" fill="#1e293b"/>`
+      + `<text x="35" y="45" font-size="32" font-family="Arial,sans-serif" font-weight="bold" `
+      + `fill="#f8fafc">${escapeXml(title)}</text>`
+      + `<text x="35" y="76" font-size="18" font-family="Arial,sans-serif" fill="#cbd5e1">`
+      + `Nível de treinador: ${trainerLevel} • ${list.length} Pokémon</text>`
+      + cards
+      + `</svg>`;
+
+    const sprites = await Promise.all(list.map(async (p) => {
+      try {
+        const { buffer } = await spriteProporcional(p, 145);
+        return buffer;
+      } catch (_) {
+        return null;
+      }
+    }));
+
+    const layers = sprites
+      .map((buf, idx) => {
+        if (!buf) return null;
+        return {
+          input: buf,
+          left: 28 + ((idx % 2) * 480),
+          top: 140 + (Math.floor(idx / 2) * 205)
+        };
+      })
+      .filter(Boolean);
+
+    const out = await sharp(Buffer.from(svg))
+      .composite(layers)
+      .png()
+      .toBuffer();
+
+    return {
+      base64: out.toString('base64'),
+      mimeType: 'image/png',
+      filename
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] team-grid:', err.message || err);
+    return null;
+  }
+}
+
 module.exports = {
   renderHuntArena,
   renderCaptureBall,
   renderSpriteCard,
   renderStartersCard,
+  renderTeamGrid,
   efeitoDeTurno,
   tamanhoVisual,
   idCenario,

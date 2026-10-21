@@ -263,6 +263,26 @@
                         (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
                       (ok! ex (reads/collection store chat-id player-id save-id))))
 
+                (= path "/v1/pokedex")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")
+                          save-id (not-empty (g qs "saveId"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (reads/pokedex store chat-id player-id save-id))))
+
+                (= path "/v1/pokemon/ficha")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")
+                          save-id (not-empty (g qs "saveId"))
+                          idx (long-or-nil (g qs "collectionIndex" "idx" "index"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id) (nil? idx))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "collectionIndex"]})))
+                      (ok! ex (reads/pokemon-ficha store chat-id player-id save-id idx))))
+
                 (= path "/v1/active-save")
                 (do (require-method! ex #{"GET"})
                     (let [chat-id (g qs "chatId")
@@ -1164,6 +1184,34 @@
                                          :fence-generation fence
                                          :operation-id operation-id
                                          :idx idx})))))
+
+                (= path "/v1/pokemon/favorite")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          clear? (boolean (or (g body "clear") (g body "clear?")))
+                          idx (long-or-nil (g body "collectionIndex" "idx" "index"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id)
+                                (and (not clear?) (nil? idx)))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "collectionIndex|clear"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/set-favorite-pokemon!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :clear? clear?}
+                                          (some? idx) (assoc :idx idx)))))))
 
                 (= path "/v1/pokemon/evolve")
                 (do (require-method! ex #{"POST"})

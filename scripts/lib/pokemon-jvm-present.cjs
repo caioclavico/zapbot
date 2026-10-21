@@ -181,12 +181,32 @@ function poder(p) {
     .reduce((sum, k) => sum + (Number(p[k]) || 0), 0);
 }
 
+const RARIDADE_FILTRO = {
+  comum: 'comum', common: 'comum',
+  incomum: 'incomum', uncommon: 'incomum',
+  raro: 'raro', rare: 'raro',
+  epico: 'epico', épico: 'epico', epic: 'epico',
+  lendario: 'lendario', lendário: 'lendario', legendary: 'lendario',
+  mitico: 'mitico', mítico: 'mitico', mythical: 'mitico'
+};
+
+const RARIDADE_EMOJI = {
+  comum: '⚪', incomum: '🟢', raro: '🔵', epico: '🟣', lendario: '🟡', mitico: '🔴'
+};
+
+function textoXp(p) {
+  const atual = Number(p.xpDesdeNivel != null ? p.xpDesdeNivel : (p.xp || 0)) || 0;
+  const nec = 9;
+  return `XP ${atual}/${nec}`;
+}
+
 function interpretarFiltros(tokens) {
   const ordem = tokens.includes('>') ? '>' : tokens.includes('<') ? '<' : null;
   const rest = tokens.filter(t => t !== '>' && t !== '<');
   let nivel = null;
   let nome = '';
   const tipos = [];
+  const raridades = [];
   let shiny = false;
   for (let i = 0; i < rest.length; i++) {
     const t = rest[i];
@@ -197,6 +217,12 @@ function interpretarFiltros(tokens) {
     }
     if (/^\d+$/.test(t) && rest[i - 1] && /^(nivel|nível|nv)$/.test(rest[i - 1])) continue;
     if (/^\d+$/.test(t)) continue; // página tratada à parte
+    if ((t === 'raridade' || t === 'rar') && rest[i + 1] && RARIDADE_FILTRO[normalizar(rest[i + 1])]) {
+      raridades.push(RARIDADE_FILTRO[normalizar(rest[++i])]);
+      continue;
+    }
+    const rar = RARIDADE_FILTRO[normalizar(t)];
+    if (rar) { raridades.push(rar); continue; }
     // tipos comuns pt/en
     const tipoAliases = {
       fogo: 'fire', fire: 'fire', agua: 'water', água: 'water', water: 'water',
@@ -212,7 +238,7 @@ function interpretarFiltros(tokens) {
     if (tipoAliases[t]) { tipos.push(tipoAliases[t]); continue; }
     nome = nome ? `${nome} ${t}` : t;
   }
-  return { ordem, nivel, nome: normalizar(nome), tipos, shiny };
+  return { ordem, nivel, nome: normalizar(nome), tipos, raridades, shiny };
 }
 
 function filtrarColecao(items, tokens) {
@@ -226,11 +252,24 @@ function filtrarColecao(items, tokens) {
       const tipos = (p.tipos || []).map(normalizar);
       if (!f.tipos.every(t => tipos.includes(t) || tipos.includes(normalizar(t)))) return false;
     }
+    if (f.raridades.length) {
+      const r = normalizar(p.raridade || 'comum');
+      if (!f.raridades.includes(r)) return false;
+    }
     return true;
   });
   if (f.ordem === '>') list.sort((a, b) => poder(b) - poder(a));
   if (f.ordem === '<') list.sort((a, b) => poder(a) - poder(b));
   return { list, filtros: f };
+}
+
+/** Página da coleção com índices estáveis (collectionIndex) — A2/A4.2. */
+function collectionPageSlice(data, tokens) {
+  const items = data.collection || [];
+  const { list, filtros } = filtrarColecao(items, tokens);
+  const { page, pages, valida } = paginaDe(tokens, list.length);
+  const slice = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  return { items, list, slice, filtros, page, pages, valida };
 }
 
 function paginaDe(tokens, total) {
@@ -271,39 +310,185 @@ function formatTrainer(data, playerName) {
 }
 
 function formatCollection(data, tokens, prefix = '!pk') {
-  const items = data.collection || [];
-  const { list, filtros } = filtrarColecao(items, tokens);
-  const { page, pages, valida } = paginaDe(tokens, list.length);
+  const { items, list, slice, filtros, page, pages, valida } = collectionPageSlice(data, tokens);
   if (!valida && list.length) {
     return `❓ Página inválida. Escolha de 1 a ${pages}: ${prefix} time 1`;
   }
-  const slice = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const ativoIdx = data.ativoIndex;
+  const favId = (data.favorito && data.favorito.id)
+    || data.favoritoIdPokemon
+    || null;
   const linhas = slice.map(p => {
     const idx = p.collectionIndex;
     const marker = idx === ativoIdx ? '👉 ' : '';
-    return `${marker}${(idx != null ? idx + 1 : '?')}. ${shinyMark(p)}*${nomePokemon(p)}* Nv.${p.nivel || 1}`
-      + ` • ${p.raridade || 'comum'}`
-      + `\n   ${barraHp(p.hpAtual, p.hp)}`;
+    const star = (favId && p.idPokemon === favId) ? '⭐ ' : '';
+    const rar = p.raridade || 'comum';
+    return `${marker}${star}${(idx != null ? idx + 1 : '?')}. ${shinyMark(p)}*${nomePokemon(p)}* Nv.${p.nivel || 1}`
+      + ` • ${(RARIDADE_EMOJI[rar] || '')} ${rar}`
+      + `\n   ${barraHp(p.hpAtual, p.hp)}`
+      + `\n   ✨ ${textoXp(p)}`;
   });
   const filtroDesc = [];
   if (filtros.shiny) filtroDesc.push('✨ shiny');
   if (filtros.ordem) filtroDesc.push(filtros.ordem === '>' ? 'força ↓' : 'força ↑');
   if (filtros.nivel != null) filtroDesc.push(`nível ${filtros.nivel}`);
   if (filtros.tipos.length) filtroDesc.push(`tipo ${filtros.tipos.join('/')}`);
+  if (filtros.raridades && filtros.raridades.length) {
+    filtroDesc.push(`raridade ${filtros.raridades.join('/')}`);
+  }
   if (filtros.nome) filtroDesc.push(`nome “${filtros.nome}”`);
 
   return [
-    `🎒 *Sua coleção Pokémon* • Página ${Math.min(page, pages)}/${pages}`,
+    `🎒 *Seu time:* • Página ${Math.min(page, pages)}/${pages}`,
     `🧑‍🎓 Nível de treinador: ${data.trainerLevel || 1} • Save: ${data.saveId || '?'}`,
     filtroDesc.length ? `🔎 Filtros: ${filtroDesc.join(' + ')} — ${list.length} Pokémon` : `Total: ${data.count || items.length}`,
     '',
-    linhas.length ? linhas.join('\n') : (items.length ? 'Nenhum Pokémon corresponde a esse filtro.' : 'Coleção vazia. Use !pk iniciar.'),
+    linhas.length ? linhas.join('\n') : (items.length ? 'Nenhum Pokémon do time corresponde a esse filtro.' : 'Coleção vazia. Use !pk iniciar.'),
     '',
     page > 1 ? `⬅️ Anterior: ${prefix} time ${page - 1}` : null,
     page < pages ? `➡️ Próxima: ${prefix} time ${page + 1}` : null,
-    `Use ${prefix} escolher <número> para trocar o ativo (👉).`
+    `Use ${prefix} escolher <número> pra trocar o ativo (👉), ou ${prefix} joy para enviar os feridos à Enfermeira Joy.`,
+    `Veja a ficha do ativo com ${prefix} time ativo.`,
+    `Favorito: ${prefix} favorito <número>.`,
+    `Combine filtros com ${prefix} time [tipo] [raridade] [nome] [nivel N].`,
+    `Ordene por força: ${prefix} time > ou <.`,
+    `Modo texto: ${prefix} time txt.`
   ].filter(Boolean).join('\n');
+}
+
+function formatPokedex(data, tokens, prefix = '!pk') {
+  const entries = data.entries || [];
+  const f = interpretarFiltros(tokens || []);
+  const filtradas = entries.filter(e => {
+    if (f.shiny && !(e.shinyCapturados || e.shinyCaught)) return false;
+    if (f.nivel != null) {
+      const idxs = e.indices || [];
+      if (!idxs.some(i => Number(i.nivel) === f.nivel)) return false;
+    }
+    if (f.nome && !normalizar(e.nome || e.species).includes(f.nome)) return false;
+    if (f.tipos.length) {
+      const tipos = (e.tipos || []).map(normalizar);
+      if (!f.tipos.every(t => tipos.includes(t))) return false;
+    }
+    if (f.raridades && f.raridades.length) {
+      if (!f.raridades.includes(normalizar(e.raridade || 'comum'))) return false;
+    }
+    return true;
+  });
+  const total = data.totalPokemons || 1025;
+  const reg = entries.length;
+  const pct = total ? ((reg / total) * 100).toFixed(1) : '0.0';
+  const capturas = filtradas.reduce((s, e) => s + (Number(e.capturas || e.caughtCount) || 0), 0);
+  const porRar = {};
+  filtradas.forEach(e => {
+    const r = e.raridade || 'comum';
+    porRar[r] = (porRar[r] || 0) + 1;
+  });
+  const rarLinha = ['comum', 'incomum', 'raro', 'epico', 'lendario', 'mitico']
+    .filter(r => porRar[r])
+    .map(r => `${RARIDADE_EMOJI[r] || ''} ${porRar[r]}`)
+    .join(' • ');
+  const filtroDesc = [];
+  if (f.shiny) filtroDesc.push('✨ shiny');
+  if (f.tipos.length) filtroDesc.push(`tipo ${f.tipos.join('/')}`);
+  if (f.raridades && f.raridades.length) filtroDesc.push(`raridade ${f.raridades.join('/')}`);
+  if (f.nome) filtroDesc.push(`nome “${f.nome}”`);
+  if (f.nivel != null) filtroDesc.push(`nível ${f.nivel}`);
+  const ativo = data.ativo;
+  const linhas = filtradas.slice(0, 60).map(e => {
+    const idxs = e.indices || [];
+    const nums = idxs.map(i => `#${i.numero}`).join(', ');
+    const rar = e.raridade || 'comum';
+    const cap = e.capturas != null ? e.capturas : e.caughtCount;
+    const maxNv = e.maiorNivel != null ? e.maiorNivel : e.maxLevel;
+    const shinyN = e.shinyCapturados != null ? e.shinyCapturados : e.shinyCaught;
+    return `${nums ? `${nums} ` : ''}${RARIDADE_EMOJI[rar] || ''} *${e.nome || e.species}* — ${cap || 0}x`
+      + (maxNv ? ` • maior Nv.${maxNv}` : '')
+      + (shinyN ? ` • ✨ ${shinyN}` : '')
+      + (!nums ? ' (fora da coleção disponível)' : '');
+  });
+  return [
+    `📚 *Sua Pokédex*`,
+    `Espécies registradas: ${reg}/${total} (${pct}%)`,
+    filtroDesc.length ? `🔎 Filtros: ${filtroDesc.join(' + ')} — ${filtradas.length} espécie(s)` : null,
+    `${filtroDesc.length ? 'Capturas neste filtro' : 'Total de capturas'}: ${capturas}`,
+    `🔥 Sequência atual: ${data.sequenciaCapturas || 0}`,
+    ativo
+      ? `👉 Pokémon ativo: #${(data.ativoIndex || 0) + 1} *${shinyMark(ativo)}${nomePokemon(ativo)}*`
+      : null,
+    rarLinha ? `Raridades: ${rarLinha}` : null,
+    '',
+    linhas.length ? `*Registrados:*\n${linhas.join('\n')}` : (filtroDesc.length
+      ? `Nenhum Pokémon corresponde aos filtros.`
+      : `Nenhuma espécie registrada. Use ${prefix} cacar.`),
+    filtradas.length > 60 ? `… e mais ${filtradas.length - 60} espécies.` : null,
+    '',
+    `Os números são os mesmos de ${prefix} time.`,
+    `Abra a ficha com ${prefix} pokedex <número>.`,
+    `Veja estatísticas em ${prefix} pokedex descobertas.`
+  ].filter(v => v != null && v !== '').join('\n');
+}
+
+function formatDiscoveries(data, prefix = '!pk') {
+  const total = data.totalPokemons || 1025;
+  const vistos = data.vistos || 0;
+  const desconhecidos = data.desconhecidos != null
+    ? data.desconhecidos
+    : Math.max(0, total - vistos);
+  const silhuetas = '⬛'.repeat(Math.min(12, desconhecidos))
+    + (desconhecidos > 12 ? ' …' : '');
+  return [
+    `🔎 *Descobertas da Pokédex*`,
+    '',
+    `👀 Espécies vistas: ${vistos}/${total} • ${data.avistamentos || 0} encontros`,
+    `📚 Espécies capturadas: ${data.capturados || 0} • ${data.capturas || 0} capturas`,
+    `✨ Shiny capturados: ${data.shiny || 0}`,
+    `⬛ Silhuetas ainda desconhecidas: ${desconhecidos}`,
+    silhuetas || null,
+    '',
+    `${prefix} pokedex · ${prefix} time`
+  ].filter(v => v != null && v !== '').join('\n');
+}
+
+function formatFicha(data, prefix = '!pk') {
+  const p = (data && data.pokemon) || {};
+  const idx = data.idx != null ? data.idx : p.collectionIndex;
+  const n = idx != null ? Number(idx) + 1 : '?';
+  const ativo = Boolean(data.isAtivo);
+  const fav = Boolean(data.isFavorito);
+  const tipos = (p.tipos || []).map(t => TIPOS_PT[t] || t).join('/') || '?';
+  const golpes = menuGolpes(p, [], null) || 'Nenhum golpe registrado.';
+  return [
+    `${ativo ? '👉 ' : ''}${fav ? '⭐ ' : ''}${n}. ${shinyMark(p)}*${nomePokemon(p)}* Nv.${p.nivel || 1}`,
+    `🏷️ ${tipos} · ${p.raridade || 'comum'}`,
+    `❤️ ${barraHp(p.hpAtual, p.hp)}`,
+    `✨ ${textoXp(p)}`,
+    '',
+    `⚔️ Ataque: ${p.ataque || 0} | 🛡️ Defesa: ${p.defesa || 0}`,
+    `🔮 Atq. Especial: ${p.atqEsp || 0} | 🌀 Def. Especial: ${p.defEsp || 0} | 💨 Velocidade: ${p.veloc || 0}`,
+    '',
+    `🎯 *Golpes:*`,
+    golpes,
+    '',
+    ativo
+      ? '👉 Esse é o seu Pokémon ativo.'
+      : `Use ${prefix} escolher ${n} pra deixar ele ativo.`
+  ].join('\n');
+}
+
+function formatFavorite(data, prefix = '!pk') {
+  if (data && data.clear) {
+    return '💔 Pokémon favorito removido.';
+  }
+  if (data && data.favorito) {
+    const nome = data.favorito.nome || (data.pokemon && data.pokemon.nome) || '?';
+    const extra = data.ativado ? ' e também ficou ativo' : '';
+    return `⭐ *${nome}* agora é seu favorito${extra}.`;
+  }
+  if (data && data.atual) {
+    return `⭐ Seu Pokémon favorito é *${data.atual.nome}*. Quando voltar saudável da Joy ou do ginásio, ficará ativo automaticamente.`;
+  }
+  return `⭐ Escolha com ${prefix} favorito <número> (ou ${prefix} favorito remover).`;
 }
 
 function formatSetActive(data, prefix = '!pk') {
@@ -1513,9 +1698,11 @@ function formatRaidEligible(data, prefix = '!pk') {
 /** Aliases alinhados ao legado (ajuda.cljs / core). */
 const ALIASES = {
   treinador: 'treinador', perfil: 'treinador', tre: 'treinador',
-  meus: 'time', pokemons: 'time', colecao: 'time', 'coleção': 'time',
+  meus: 'time', pokemons: 'time',
   time: 'time', equipe: 'time', tm: 'time',
-  save: 'save', ativo: 'save',
+  pokedex: 'pokedex', dex: 'pokedex', colecao: 'pokedex', 'coleção': 'pokedex',
+  favorito: 'favorito', fav: 'favorito',
+  save: 'save',
   saves: 'saves', 'saves-list': 'saves',
   iniciar: 'iniciar', criar: 'iniciar',
   inicial: 'inicial', iniciais: 'inicial', ini: 'inicial',
@@ -1564,6 +1751,11 @@ module.exports = {
   envelope,
   formatTrainer,
   formatCollection,
+  collectionPageSlice,
+  formatPokedex,
+  formatDiscoveries,
+  formatFicha,
+  formatFavorite,
   formatActiveSave,
   formatSavesList,
   formatEnsure,

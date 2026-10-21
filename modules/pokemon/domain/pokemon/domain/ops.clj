@@ -83,6 +83,14 @@
   [{:keys [idx]}]
   (reward/canonicalize {:idx (long idx)}))
 
+(defn set-favorite-payload
+  "clear?=true remove o favorito; senão exige idx da coleção."
+  [{:keys [idx clear?]}]
+  (reward/canonicalize
+   (if clear?
+     {:clear? true}
+     {:idx (long idx) :clear? false})))
+
 (defn forget-move-payload
   [{:keys [idx slot]}]
   (reward/canonicalize {:idx (long idx) :slot (long slot)}))

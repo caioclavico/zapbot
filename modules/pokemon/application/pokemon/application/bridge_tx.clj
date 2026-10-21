@@ -3,6 +3,7 @@
   Sem seed admin; save-id + fence + operation-id explícitos nas escritas."
   (:require [clojure.string :as str]
             [pokemon.application.active :as active-app]
+            [pokemon.application.favorite :as fav-app]
             [pokemon.application.adventure :as adv]
             [pokemon.application.battle :as battle-app]
             [pokemon.application.capture :as capture-app]
@@ -944,6 +945,24 @@
      :fence-generation (long fence-generation)
      :idx (:idx result)
      :ativo-index (:ativo-index result idx)
+     :pokemon (pokemon-summary (:pokemon result))}))
+
+(defn set-favorite-pokemon!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id idx clear?]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (fav-app/set-favorite!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :clear? (boolean clear?)}
+                  (and (not clear?) (some? idx)) (assoc :idx (long idx))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :clear (boolean (:clear? result))
+     :ativado (boolean (:ativado? result))
+     :favorito (:favorito result)
      :pokemon (pokemon-summary (:pokemon result))}))
 
 (defn evolve-pokemon!

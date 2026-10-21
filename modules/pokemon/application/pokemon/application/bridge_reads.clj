@@ -1,7 +1,8 @@
 (ns pokemon.application.bridge-reads
   "Leituras expostas pela bridge HTTP (M4.1/M4.3/M4.5).
   Sem escritas; sem operações administrativas; DTOs neutros (sem WhatsApp)."
-  (:require             [pokemon.application.adventure :as adv]
+  (:require [clojure.string :as str]
+            [pokemon.application.adventure :as adv]
             [pokemon.application.gym :as gym-app]
             [pokemon.application.hunt :as hunt-app]
             [pokemon.application.joy :as joy-app]
@@ -86,21 +87,155 @@
      :ativo (when ativo (pokemon-dto ativo))
      :collection-count (count colecao)}))
 
+(defn- favorito-dto
+  [save items]
+  (when-let [fid (:favorito-id-pokemon save)]
+    (when-let [p (some #(when (= fid (:id-pokemon %)) %) items)]
+      {:id fid
+       :nome (:nome p)
+       :collection-index (:collection-index p)})))
+
 (defn collection
-  "Coleção de um save (ativo se save-id omitido)."
+  "Coleção de um save (ativo se save-id omitido).
+   Índices estáveis = collection-index (mesmos de escolher/evoluir/golpes)."
   [store chat-id player-id save-id]
   (require-player! store chat-id player-id)
   (let [slot (resolve-save-id! store chat-id player-id save-id)
         save (ports/get-save store chat-id player-id slot)
-        items (ports/list-collection store chat-id player-id slot)]
+        items (ports/list-collection store chat-id player-id slot)
+        fav (favorito-dto save items)]
     {:chat-id chat-id
      :player-id player-id
      :save-id slot
      :fence-generation (:fence-generation (require-player! store chat-id player-id))
      :ativo-index (long (:ativo-index save 0))
      :trainer-level (:trainer-level save 1)
+     :favorito-id-pokemon (:favorito-id-pokemon save)
+     :favorito fav
      :count (count items)
      :collection (mapv pokemon-dto items)}))
+
+(defn- species-key
+  [nome]
+  (-> (str nome)
+      str/lower-case
+      (str/replace #"\s+" "-")))
+
+(defn- merge-pokedex-from-collection
+  "Espelha sincronizar-pokedex-equipe: inclui espécies da coleção sem apagar
+   contadores já persistidos na Pokédex."
+  [entries items]
+  (reduce
+   (fn [acc p]
+     (let [sp (or (:species p) (:nome p))
+           k (species-key sp)
+           prev (get acc k)
+           niveis (conj (or (:indices prev) [])
+                        {:numero (inc (long (:collection-index p 0)))
+                         :nivel (long (:nivel p 1))})
+           base (or prev {:species sp
+                          :nome (or (:nome p) sp)
+                          :seen true
+                          :caught true
+                          :seen-count 0
+                          :caught-count 0
+                          :max-level 0
+                          :shiny-caught 0
+                          :raridade (or (:raridade p) "comum")
+                          :tipos (vec (:tipos p))})]
+       (assoc acc k
+              (-> base
+                  (assoc :seen true :caught true
+                         :indices niveis
+                         :nome (or (:nome base) (:nome p) sp)
+                         :tipos (if (seq (:tipos base)) (:tipos base) (vec (:tipos p)))
+                         :raridade (or (:raridade base) (:raridade p) "comum")
+                         :max-level (max (long (:max-level base 0)) (long (:nivel p 1)))
+                         :caught-count (max (long (:caught-count base 0)) 1)
+                         :shiny-caught (max (long (:shiny-caught base 0))
+                                            (if (:shiny p) 1 0)))))))
+   (into {}
+         (map (fn [e]
+                [(species-key (:species e))
+                 (-> e
+                     (assoc :nome (or (:nome e) (str/capitalize (str (:species e))))
+                            :indices []))]))
+         entries)
+   items))
+
+(defn pokedex
+  "Pokédex pessoal do save ativo (ou save-id): espécies vistas/capturadas +
+   índices da coleção alinhados a !pk time."
+  [store chat-id player-id save-id]
+  (require-player! store chat-id player-id)
+  (let [slot (resolve-save-id! store chat-id player-id save-id)
+        save (ports/get-save store chat-id player-id slot)
+        items (ports/list-collection store chat-id player-id slot)
+        entries (ports/list-pokedex-entries store chat-id player-id slot)
+        merged (merge-pokedex-from-collection entries items)
+        especies (->> (vals merged)
+                      (sort-by #(str/lower-case (str (:nome %))))
+                      vec)
+        total hunt/total-pokemons
+        vistos (count (filter :seen (vals merged)))
+        capturados (count (filter :caught (vals merged)))
+        avistamentos (reduce + 0 (map #(long (:seen-count % 0)) (vals merged)))
+        capturas (reduce + 0 (map #(long (:caught-count % 0)) (vals merged)))
+        shiny (reduce + 0 (map #(long (:shiny-caught % 0)) (vals merged)))
+        ativo-idx (long (:ativo-index save 0))
+        ativo (when (and (seq items) (< ativo-idx (count items)))
+                (nth items ativo-idx))]
+    {:chat-id chat-id
+     :player-id player-id
+     :save-id slot
+     :fence-generation (:fence-generation (require-player! store chat-id player-id))
+     :total-pokemons total
+     :vistos vistos
+     :avistamentos (max avistamentos vistos)
+     :capturados capturados
+     :capturas (max capturas capturados)
+     :shiny shiny
+     :desconhecidos (max 0 (- total vistos))
+     :sequencia-capturas (long (:sequencia-capturas save 0))
+     :ativo-index ativo-idx
+     :ativo (when ativo (pokemon-dto ativo))
+     :favorito (favorito-dto save items)
+     :entries (mapv (fn [e]
+                      (-> e
+                          (select-keys [:species :nome :seen :caught :seen-count
+                                        :caught-count :max-level :shiny-caught
+                                        :raridade :tipos :indices])
+                          (assoc :capturas (long (:caught-count e 0))
+                                 :maior-nivel (long (:max-level e 0))
+                                 :shiny-capturados (long (:shiny-caught e 0)))))
+                    especies)}))
+
+(defn pokemon-ficha
+  "Ficha do Pokémon no índice estável da coleção (1-based no Node → 0-based aqui)."
+  [store chat-id player-id save-id idx]
+  (require-player! store chat-id player-id)
+  (let [slot (resolve-save-id! store chat-id player-id save-id)
+        save (ports/get-save store chat-id player-id slot)
+        items (ports/list-collection store chat-id player-id slot)
+        total (count items)
+        idx* (long idx)]
+    (when (or (neg? idx*) (>= idx* total))
+      (throw (err/error :invalid_collection_index
+                        {:idx idx* :total total})))
+    (let [p (nth items idx*)
+          fav (favorito-dto save items)
+          ativo-idx (long (:ativo-index save 0))]
+      {:chat-id chat-id
+       :player-id player-id
+       :save-id slot
+       :fence-generation (:fence-generation (require-player! store chat-id player-id))
+       :idx idx*
+       :is-ativo (= idx* ativo-idx)
+       :is-favorito (boolean (and fav (= (:id-pokemon p) (:id fav))))
+       :total total
+       :pokemon (pokemon-dto p)
+       :favorito fav
+       :ativo-index ativo-idx})))
 
 (defn active-save
   "Save ativo + party + inventário (snapshot de leitura)."

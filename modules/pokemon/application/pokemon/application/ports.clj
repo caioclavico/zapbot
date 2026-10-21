@@ -27,6 +27,9 @@
   (list-collection [this chat-id player-id save-id]
     "Coleção ordenada por collection-index (legado equipe unificada).")
 
+  (list-pokedex-entries [this chat-id player-id save-id]
+    "Entradas da Pokédex do save (seen/caught + contadores).")
+
   (list-inventory [this chat-id player-id save-id]
     "Itens do inventário do save.")
 
@@ -75,6 +78,9 @@
 
   (set-active-pokemon! [this writer-ctx request]
     "Define o índice ativo do save; bloqueia com batalha/caça ativa.")
+
+  (set-favorite-pokemon! [this writer-ctx request]
+    "Marca/remove favorito por índice da coleção; fence + recibo.")
 
   (forget-move! [this writer-ctx request]
     "Remove golpe no slot do Pokémon; fence + recibo.")
