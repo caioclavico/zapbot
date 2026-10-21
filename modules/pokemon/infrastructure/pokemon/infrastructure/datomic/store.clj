@@ -27,6 +27,7 @@
             [pokemon.domain.status :as status]
             [pokemon.application.mission-queries :as mission-queries]
             [pokemon.infrastructure.datomic.mission-queries :as mission-reads]
+            [pokemon.infrastructure.datomic.mission-events :as mission-events]
             [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
             [pokemon.infrastructure.datomic.gym-store :as gym-store]
             [pokemon.infrastructure.datomic.onboarding-store :as onboarding-store]
@@ -425,7 +426,8 @@
 
 (defn- transact-with-writer!
   [conn writer-ctx build-tx]
-  (let [{:keys [chat-id player-id save-id]} writer-ctx]
+  (let [{:keys [chat-id player-id save-id]} writer-ctx
+        mission-instant (mission-events/*clock*)]
     (loop [attempt 0]
       (let [db (d/db conn)
             player (player-entity db chat-id player-id)
@@ -440,7 +442,7 @@
                             {:expected writer-ctx
                              :active (:player/active-save-id player)
                              :fence (:player/fence-generation player)})))
-        (let [built (build-tx db save)
+        (let [built (mission-events/attach db writer-ctx (build-tx db save) mission-instant)
               tx (into (writer-fence-tx chat-id player-id writer-ctx) (:tx built))
               result (try
                        (d/transact conn {:tx-data tx})

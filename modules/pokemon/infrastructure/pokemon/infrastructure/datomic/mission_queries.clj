@@ -13,7 +13,7 @@
 (defn- state [save attr]
   (if-let [value (get save attr)] (edn/read-string value) {}))
 
-(defn- level [save]
+(defn trainer-level [save]
   ;; Mesmo perfil usado pela bridge; considera componentes e XP legado.
   (:nivel (xp/progresso-treinador
            (max (long (:save/trainer-xp save 0))
@@ -40,11 +40,14 @@
 
 (defn- view [ctx chat player {:keys [instant timezone]}]
   (let [save (:save ctx)]
-    (merge {:chat-id chat :player-id player :save-id (:slot ctx)}
-           (catalog/snapshot (state save :save/missoes-diarias-edn)
+    (merge (catalog/snapshot (state save :save/missoes-diarias-edn)
                              (state save :save/missoes-semanais-edn)
                              (state save :save/missoes-eventos-edn)
-                             (level save) instant timezone))))
+                             (trainer-level save) instant timezone)
+           {:chat-id chat :player-id player :save-id (:slot ctx)
+            :progress-integration-enabled true
+            :progress-events ["wild-defeated" "wild-captured" "pvp-won" "gym-won"]
+            :unavailable-progress-events ["gift-sent"]})))
 
 (defn read-missions [conn chat player slot opts]
   (view (context (d/db conn) chat player slot) chat player (options opts)))
@@ -62,7 +65,7 @@
             tx (cond-> []
                  (not= day (get ds "dia"))
                  (conj [:db/add [:save/key key] :save/missoes-diarias-edn
-                        (pr-str (catalog/daily-state ds day (level save)))])
+                        (pr-str (catalog/daily-state ds day (trainer-level save)))])
                  (not= week (get ws "semana"))
                  (conj [:db/add [:save/key key] :save/missoes-semanais-edn
                         (pr-str (catalog/weekly-state ws week))]))]

@@ -93,7 +93,8 @@
      :raid_not_creator :not_in_raid :raid_need_players :raid_not_in_combat
      :raid_not_your_turn :raid_save_mismatch :raid_liga_mismatch
      :raid_capture_unavailable
-     :starter_unavailable) 409
+     :starter_unavailable :mission_period_conflict :mission_event_identity_conflict
+     :mission_event_already_processed) 409
     :operation_pending 409
     (:durability_compromised :durability_maintenance
      :durability_journal_required) 503

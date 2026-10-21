@@ -21,7 +21,8 @@
    "migrations/pokemon/014-pvp.edn"
    "migrations/pokemon/015-pokedex-favorito.edn"
    "migrations/pokemon/016-missions.edn"
-   "migrations/pokemon/017-mission-events.edn"])
+   "migrations/pokemon/017-mission-events.edn"
+   "migrations/pokemon/018-mission-events-processed.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id
