@@ -263,3 +263,45 @@
                  (trainer/switch-save! s "chat-ab2" "misty" "b")
                  (catch Exception ex (err/error-code ex)))]
       (is (= :gym_defense_pending code)))))
+
+(deftest nocaute-recolhe-status-persistido
+  "Nocaute zera HP e deve retrair :pokemon/status — não só atualizar o EDN da batalha."
+  (let [db "g48-faint-status"
+        s (fresh-store! db)
+        chat "chat-fs"
+        player "ash"]
+    (boot! s chat player :hp 5 :atk 5)
+    (doseq [i [0 1 2]]
+      (collection/atualizar-hp-status! s chat player i 5 "envenenado"))
+    (is (every? #(= "envenenado" (:status %)) (ports/list-collection s chat player "a")))
+    (start-npc! s chat player "start-fs"
+                [(npc "Geodude" 200 :atk 200)
+                 (npc "Sandshrew" 200 :atk 200)
+                 (npc "Onix" 200 :atk 200)])
+    (grind-until-done! s chat player "tfs")
+    (is (nil? (ports/active-battle s chat player)))
+    (let [col (ports/list-collection s chat player "a")]
+      (is (every? zero? (map :hp-atual col)))
+      (is (every? nil? (map :status col))))
+    (let [client (persistence/client {:system system :storage-dir storage-rel})
+          conn (persistence/ensure-db! client db)
+          s2 (doto (store/make-store conn) trainer/bootstrap!)
+          col2 (ports/list-collection s2 chat player "a")]
+      (is (every? zero? (map :hp-atual col2)))
+      (is (every? nil? (map :status col2))))))
+
+(deftest cura-status-sem-mudar-hp-emite-retract
+  "Cura com HP igual ainda precisa de TX; o retract usa o status anterior persistido."
+  (let [colecao [{:id-pokemon "p1" :collection-index 0 :hp-atual 80 :status "adormecido"}
+                 {:id-pokemon "p2" :collection-index 1 :hp-atual 80 :status nil}]
+        battle {:fainted-x #{}
+                :indices-ativos {:x 0}
+                :hp {:x 80}
+                :status {:x nil}}
+        txs (vec (#'store/gym-battle-hp-txs colecao battle))]
+    (is (some #{[:db/retract [:pokemon/id-pokemon "p1"] :pokemon/status "adormecido"]} txs))
+    (is (not-any? (fn [op]
+                    (and (vector? op)
+                         (= :db/add (first op))
+                         (= [:pokemon/id-pokemon "p2"] (second op))))
+                  txs))))
