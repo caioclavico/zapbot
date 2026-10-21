@@ -6,6 +6,7 @@
             [odisseu.platform.infrastructure.http.handlers :as platform-http]
             [pokemon.application.bridge-reads :as reads]
             [pokemon.application.mission-queries :as missions]
+            [pokemon.application.mission-economy :as mission-economy]
             [pokemon.application.bridge-tx :as tx]
             [pokemon.domain.errors :as err]
             [pokemon.infrastructure.http.json :as json])
@@ -94,12 +95,12 @@
      :raid_not_your_turn :raid_save_mismatch :raid_liga_mismatch
      :raid_capture_unavailable
      :starter_unavailable :mission_period_conflict :mission_event_identity_conflict
-     :mission_event_already_processed) 409
+     :mission_event_already_processed :gift_target_changed) 409
     :operation_pending 409
     (:durability_compromised :durability_maintenance
      :durability_journal_required) 503
     (:insufficient_item :insufficient_coins :bag_full :collection_full
-     :pokemon_full_hp :active_pokemon_fainted
+     :pokemon_full_hp :active_pokemon_fainted :invalid_gift_target
      :no_active_pokemon :motivation_full :gym_empty :gym_team_unhealthy) 422
     :unauthorized 401
     :method_not_allowed 405
@@ -201,6 +202,8 @@
                        :capabilities (cond-> ["trainer-read" "collection-read" "active-save-read"
                                               "trainer-ensure" "saves-list" "save-activate"
                                               "missions-read" "missions-prepare"
+                                              "missions-claim-daily" "missions-claim-weekly"
+                                              "gift-send" "missions-pending-collect"
                                               "reward-coins" "operation-get"
                                               "encounter-read" "encounter-capture"
                                               "battle-start" "battle-turn"
@@ -249,7 +252,35 @@
                                                   popts)]
                     (ok! ex (:data res))))
 
-                (= path "/v1/missions")
+                (contains? #{"/v1/missions/claim/daily" "/v1/missions/claim/weekly"
+                             "/v1/gifts/send" "/v1/missions/pending/collect"} path)
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          kind (case path "/v1/gifts/send" :gift
+                                     "/v1/missions/pending/collect" :pending
+                                     "/v1/missions/claim/daily" :daily :weekly)
+                          allowed (cond-> #{"chatId" "playerId" "saveId" "fenceGeneration" "operationId"}
+                                    (= kind :gift) (conj "targetPlayerId")
+                                    (#{:daily :weekly} kind) (conj "period"))
+                          chat (g body "chatId") player (g body "playerId")
+                          slot (g body "saveId") fence (long-or-nil (g body "fenceGeneration"))
+                          operation (g body "operationId")]
+                      (when (or (not (map? body)) (some #(not (contains? allowed %)) (keys body))
+                                (not-every? #(and (string? %) (not (str/blank? %))) [chat player slot operation])
+                                (nil? fence))
+                        (throw (err/error :invalid_query {:allowed (vec (sort allowed))})))
+                      (let [writer {:chat-id chat :player-id player :save-id slot :fence-generation fence}
+                            request (cond-> {:operation-id operation}
+                                      (= kind :gift) (assoc :target-player-id (g body "targetPlayerId"))
+                                      (#{:daily :weekly} kind) (assoc :period (g body "period")))]
+                        (ok! ex (mission-economy/dto
+                                 (with-operation! operation
+                                   #(case kind
+                                      :gift (mission-economy/send-gift! store writer request)
+                                      :pending (mission-economy/collect-pending! store writer request)
+                                      (mission-economy/claim! store writer kind request))))))))
+
+                (contains? #{"/v1/missions" "/v1/missions/rewards"} path)
                 (do (require-method! ex #{"GET"})
                     (let [chat (g qs "chatId") player (g qs "playerId")]
                       (when (or (str/blank? chat) (str/blank? player))
@@ -444,7 +475,10 @@
                       (when (or (str/blank? chat-id) (str/blank? player-id))
                         (throw (err/error :invalid_query
                                           {:required ["chatId" "playerId"]})))
-                      (ok! ex (tx/get-operation store op-id chat-id player-id))))
+                      (let [receipt (tx/get-operation store op-id chat-id player-id)]
+                        (ok! ex (if (map? (get-in receipt [:summary :result]))
+                                  (update-in receipt [:summary :result] mission-economy/dto)
+                                  receipt)))))
 
                 (= path "/v1/encounter")
                 (do (require-method! ex #{"GET"})

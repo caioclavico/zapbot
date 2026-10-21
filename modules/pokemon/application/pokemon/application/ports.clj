@@ -209,4 +209,16 @@
     "Turno PvP do jogador da vez; CAS turn-index; sem resposta NPC.")
 
   (active-pvp-battle [this chat-id]
-    "Batalha/desafio PvP apontado pelo chat, ou nil."))
+    "Batalha/desafio PvP apontado pelo chat, ou nil.")
+
+  (claim-daily-missions! [this writer-ctx request]
+    "Resgata missões diárias concluídas; fence + recibo + XP/itens.")
+
+  (claim-weekly-missions! [this writer-ctx request]
+    "Resgata missões semanais concluídas; fence + recibo + moedas/itens.")
+
+  (send-gift! [this writer-ctx request]
+    "Envia cartão-presente a outro jogador; registra missões do remetente.")
+
+  (collect-mission-pending! [this writer-ctx request]
+    "Recolhe recompensas pendentes até a capacidade, com recibo e fencing."))

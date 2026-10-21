@@ -36,7 +36,9 @@
            :reviver-percent 20 :trade-evolution-percent 20
            :scope "per_completed_mission"}
    :weekly {:trade-evolution-items 1 :scope "per_claim_with_positive_coins"}
-   :trade-evolution-pool ["revestimento-metalico" "escama-dragao" "upgrade" "protetor" "pedra-rei"]})
+   :trade-evolution-pool ["revestimento-metalico" "escama-dragao" "upgrade" "protetor" "pedra-rei"
+                          "eletrizador" "magmarizador" "tecido-ceifador" "escama-prisma"
+                          "chicote-doce" "sache-perfumado"]})
 
 (defn periods [instant timezone]
   (let [day (mundo/dia-atual instant timezone)

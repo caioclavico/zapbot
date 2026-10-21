@@ -46,8 +46,11 @@
                              (trainer-level save) instant timezone)
            {:chat-id chat :player-id player :save-id (:slot ctx)
             :progress-integration-enabled true
-            :progress-events ["wild-defeated" "wild-captured" "pvp-won" "gym-won"]
-            :unavailable-progress-events ["gift-sent"]})))
+            :claims-enabled true
+            :pending-rewards (mapv (fn [[id qty]] {:item-id id :qty qty})
+                                   (sort-by key (state save :save/recompensas-pendentes-edn)))
+            :progress-events ["wild-defeated" "wild-captured" "pvp-won" "gym-won" "gift-sent"]
+            :unavailable-progress-events []})))
 
 (defn read-missions [conn chat player slot opts]
   (view (context (d/db conn) chat player slot) chat player (options opts)))

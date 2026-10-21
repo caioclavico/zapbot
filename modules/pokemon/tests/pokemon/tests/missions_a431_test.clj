@@ -65,7 +65,7 @@
     (is (= 4 (count (get-in r [:weekly :missions]))))
     (is (every? #(= "available" (:estado %)) (get-in r [:daily :missions])))
     (is (= before (:t (d/db conn))))
-    (is (false? (:claims-enabled r)))
+    (is (true? (:claims-enabled r)))
     (let [prepared (prepare! s)
           after (:t (d/db conn))
           save-before (ports/get-save s "chat" "ash" "a")]
@@ -186,7 +186,7 @@
                                  :fenceGeneration (:fence-generation frozen)} "test")]
         (is (= 200 status))
         (is (true? (get-in body ["data" "daily" "initialized"])))
-        (is (false? (get-in body ["data" "claimsEnabled"]))))
+        (is (true? (get-in body ["data" "claimsEnabled"]))))
       (is (= 404 (first (http base "/v1/missions/claim" "POST" {} "test"))))
       (finally (bridge/stop! server)))))
 

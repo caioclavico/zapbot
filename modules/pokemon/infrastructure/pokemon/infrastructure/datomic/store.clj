@@ -26,8 +26,11 @@
             [pokemon.domain.xp :as xp]
             [pokemon.domain.status :as status]
             [pokemon.application.mission-queries :as mission-queries]
+            [pokemon.application.mission-economy :as mission-economy-app]
             [pokemon.infrastructure.datomic.mission-queries :as mission-reads]
             [pokemon.infrastructure.datomic.mission-events :as mission-events]
+            [pokemon.infrastructure.datomic.mission-economy :as mission-economy]
+            [pokemon.infrastructure.datomic.account-provisioning :as provisioning]
             [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
             [pokemon.infrastructure.datomic.gym-store :as gym-store]
             [pokemon.infrastructure.datomic.onboarding-store :as onboarding-store]
@@ -781,6 +784,47 @@
         (conj [:db/retract [:group/chat-id chat-id] :group/active-wild-player-id
                (:group/active-wild-player-id g)])))))
 
+(defn- run-mission-operation!*
+  [conn writer kind request]
+  (mission-economy-app/validate! writer request)
+  (when (= kind :gift) (mission-economy-app/validate-gift! writer request))
+  (let [{:keys [chat-id player-id save-id]} writer
+        operation-id (:operation-id request)
+        payload (merge {:kind kind :chat-id chat-id :player-id player-id :save-id save-id}
+                       (select-keys request [:period :target-player-id]))
+        phash (reward/payload-hash payload)
+        recover (fn [db]
+                  (let [receipt (receipt-entity db operation-id)]
+                    (when (present? receipt)
+                      (when-not (and (= (id/player-key chat-id player-id) (:operation-receipt/player-key receipt))
+                                     (= save-id (:operation-receipt/save-id receipt)))
+                        (throw (err/error :operation_forbidden {:operation-id operation-id})))
+                      (reward/assert-receipt-payload! (:operation-receipt/payload-hash receipt) phash operation-id)
+                      (let [result (:result (edn-read (:operation-receipt/summary receipt)))]
+                        (when-not result (throw (err/error :receipt_payload_mismatch {:operation-id operation-id})))
+                        (assoc result :duplicate true)))))]
+    (or (recover (d/db conn))
+        (let [instant (mission-events/*clock*)
+              target (when (= kind :gift) (mission-economy/freeze-target (d/db conn) chat-id (:target-player-id request)))
+              _ (when (= kind :gift)
+                  (when-not (some #(and (= "cartao-presente" (:item-id %)) (pos? (:qty %)))
+                                  (query-inventory (d/db conn) (id/save-key chat-id player-id save-id)))
+                    (throw (err/error :insufficient_item {:item-id "cartao-presente"})))
+                  (provisioning/ensure-recipient! conn chat-id (:target-player-id request)))
+              draw (memoize (fn [_ n] (mission-economy/*rand-int* n)))]
+          (try
+            (transact-with-writer!
+             conn writer
+             (fn [db save]
+               (when (recover db)
+                 (throw (err/error :mission_operation_already_recorded {:operation-id operation-id})))
+               (mission-economy/build {:db db :writer writer :kind kind :save save
+                                       :request (assoc request :payload-hash phash)
+                                       :instant instant :target target :draw draw
+                                       :inventory-query query-inventory :adjust inventory-adjust-tx})))
+            (catch Exception ex
+              (or (recover (d/db conn)) (throw ex))))))))
+
 (defrecord DatomicTrainerStore [conn]
   mission-queries/MissionQueries
   (read-missions [_ chat-id player-id save-id options]
@@ -790,47 +834,30 @@
 
   ports/TrainerStore
 
+  (claim-daily-missions! [_ writer request]
+    (run-mission-operation!* conn writer :daily request))
+  (claim-weekly-missions! [_ writer request]
+    (run-mission-operation!* conn writer :weekly request))
+  (send-gift! [_ writer request]
+    (run-mission-operation!* conn writer :gift request))
+  (collect-mission-pending! [_ writer request]
+    (run-mission-operation!* conn writer :pending request))
+
   (ensure-schema! [_]
     (schema/install! conn)
     :ok)
 
   (create-player! [_ chat-id player-id]
-    (let [pk (id/player-key chat-id player-id)
-          db (d/db conn)]
-      (if (present? (player-entity db chat-id player-id))
-        (->player (player-entity (d/db conn) chat-id player-id))
-        (do
-          (d/transact conn {:tx-data [{:player/key pk
-                                       :player/chat-id chat-id
-                                       :player/player-id player-id
-                                       :player/fence-generation 0
-                                       :player/gym-defense-count 0}]})
-          (->player (player-entity (d/db conn) chat-id player-id))))))
+    (->player (provisioning/ensure-player! conn chat-id player-id)))
 
   (create-save! [_ chat-id player-id save-id]
     (model/validate-save-slot! save-id)
-    (let [pk (id/player-key chat-id player-id)
-          sk (id/save-key chat-id player-id save-id)
-          init (model/initial-save save-id)
-          db (d/db conn)]
+    (let [db (d/db conn)]
       (when-not (present? (player-entity db chat-id player-id))
         (throw (err/error :player_not_found {:chat-id chat-id :player-id player-id})))
       (when (present? (save-entity db chat-id player-id save-id))
         (throw (err/error :save_already_exists {:save-id save-id})))
-      (d/transact conn {:tx-data [{:save/key sk
-                                   :save/slot-id save-id
-                                   :save/player [:player/key pk]
-                                   :save/coins (:coins init)
-                                   :save/trainer-xp (:trainer-xp init)
-                                   :save/trainer-level (:trainer-level init)
-                                   :save/revision (:revision init)
-                                   :save/ativo-index 0
-                                   :save/vitorias-treinador 0
-                                   :save/pe-ginasios 0
-                                   :save/pe-raids 0
-                                   :save/xp-insignias 0
-                                   :save/xp-missoes 0}]})
-      (->save (save-entity (d/db conn) chat-id player-id save-id))))
+      (->save (provisioning/ensure-save! conn chat-id player-id save-id))))
 
   (get-player [_ chat-id player-id]
     (->player (player-entity (d/db conn) chat-id player-id)))

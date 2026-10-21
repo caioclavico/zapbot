@@ -48,6 +48,17 @@
                     :motivacao 100}
    "reviver" {:nome "Reviver" :emoji "💎" :nao-venda :missoes}
    "catalisador-evolutivo" {:nome "Catalisador Evolutivo" :emoji "🧬" :nao-venda :missoes}
+   "revestimento-metalico" {:nome "Revestimento Metálico" :emoji "🧬" :nao-venda :missoes}
+   "escama-dragao" {:nome "Escama de Dragão" :emoji "🧬" :nao-venda :missoes}
+   "upgrade" {:nome "Upgrade" :emoji "🧬" :nao-venda :missoes}
+   "protetor" {:nome "Protetor" :emoji "🧬" :nao-venda :missoes}
+   "pedra-rei" {:nome "Pedra do Rei" :emoji "🧬" :nao-venda :missoes}
+   "eletrizador" {:nome "Eletrizador" :emoji "🧬" :nao-venda :missoes}
+   "magmarizador" {:nome "Magmarizador" :emoji "🧬" :nao-venda :missoes}
+   "tecido-ceifador" {:nome "Tecido do Ceifador" :emoji "🧬" :nao-venda :missoes}
+   "escama-prisma" {:nome "Escama Prisma" :emoji "🧬" :nao-venda :missoes}
+   "chicote-doce" {:nome "Chicote Doce" :emoji "🧬" :nao-venda :missoes}
+   "sache-perfumado" {:nome "Sachê Perfumado" :emoji "🧬" :nao-venda :missoes}
    "pedra-agua" {:nome "Pedra da Água" :emoji "💧" :nao-venda :ginasio}
    "pedra-trovao" {:nome "Pedra do Trovão" :emoji "⚡" :nao-venda :ginasio}
    "pedra-fogo" {:nome "Pedra do Fogo" :emoji "🔥" :nao-venda :ginasio}

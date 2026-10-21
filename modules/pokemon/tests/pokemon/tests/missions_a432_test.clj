@@ -287,7 +287,7 @@
       (is (= 1 (get-in (snapshot s "ash" "a") [:events 0 :missions 1 :progresso])))
       (is (= history (edn/read-string (:save/missoes-eventos-edn
                                       (d/pull (d/db conn) '[*] [:save/key "chat|ash|a"])))))
-      (is (false? (:claims-enabled (snapshot s "ash" "a")))))))
+      (is (true? (:claims-enabled (snapshot s "ash" "a")))))))
 
 (deftest battle-source-cannot-be-attributed-to-another-trainer
   (binding [events/*clock* (constantly instant)]
@@ -320,7 +320,7 @@
         (is (= 200 status))
         (is (= 1 (get-in body ["data" "daily" "missions" 1 "progresso"])))
         (is (true? (get-in body ["data" "progressIntegrationEnabled"])))
-        (is (false? (get-in body ["data" "claimsEnabled"]))))
+        (is (true? (get-in body ["data" "claimsEnabled"]))))
       (is (= 404 (first (foundation/http base "/v1/missions/events" "POST" {:type "gift-sent"} "test"))))
       (finally (bridge/stop! server)))))
 

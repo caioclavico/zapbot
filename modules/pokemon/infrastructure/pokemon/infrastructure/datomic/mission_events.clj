@@ -64,7 +64,10 @@
       (and (= kind "pvp-turn") finished? (#{:x :o} winner))
       (assoc base :type :pvp-won :source ["pvp-won" bid]
              :player-id (get-in before [:jogadores winner])
-             :save-id (get-in before [:saves winner])))))
+             :save-id (get-in before [:saves winner]))
+
+      (and (= kind "gift-send") (:sent result))
+      (assoc base :type :gift-sent :source ["gift-sent" (:operation-receipt/id receipt)]))))
 
 (defn attach
   "Invocado somente pelo writer transacional com o resultado/recibo da ação.
@@ -113,7 +116,7 @@
                                     (:tx built))
                 tx (cond-> [{:mission-event/key key
                              :mission-event/save lookup
-                             :mission-event/operation "mission-source-receipt"
+                             :mission-event/operation (or (:db/id receipt) "mission-source-receipt")
                              :mission-event/data-edn (pr-str event)}
                             [:db/cas [:player/key pk] :player/active-save-id save-id save-id]
                             [:db/cas [:player/key pk] :player/fence-generation
@@ -124,10 +127,11 @@
                      (conj [:db/add lookup :save/missoes-diarias-edn (pr-str (:daily updated))])
                      (:weekly updated)
                      (conj [:db/add lookup :save/missoes-semanais-edn (pr-str (:weekly updated))]))
-                summary (assoc (read-edn (:operation-receipt/summary receipt)) :mission-event key)]
+                summary (assoc (read-edn (:operation-receipt/summary receipt)) :mission-event key)
+                summary (cond-> summary (map? (:result summary)) (assoc-in [:result :mission-event] key))]
             (-> built
                 (update :tx #(into (mapv (fn [item]
                                           (if (= item receipt)
-                                            (assoc item :db/id "mission-source-receipt"
+                                            (assoc item :db/id (or (:db/id receipt) "mission-source-receipt")
                                                    :operation-receipt/summary (pr-str summary)) item)) %) tx))
                 (assoc-in [:result :mission-event] key))))))))
