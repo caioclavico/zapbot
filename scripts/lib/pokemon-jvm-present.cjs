@@ -628,7 +628,7 @@ function formatError(err) {
     PVP_NOT_PARTICIPANT: '🚫 Você não participa desta batalha.',
     PVP_CANCEL_FORBIDDEN: '🚫 Só quem abriu o desafio pode cancelá-lo com !pk sair.',
     NOT_PVP_BATTLE: '❓ Esta batalha não é PvP.',
-    AREA_UNAVAILABLE: '🗺️ Essa área não está disponível hoje.',
+    AREA_UNAVAILABLE: '🗺️ Essa área não está disponível hoje. Veja a rotação com !pk clima.',
     HUNT_COOLDOWN: '⏳ Ainda em cooldown de caça. Aguarde e tente de novo.',
     CHAT_HUNT_BUSY: '⚔️ Já existe uma caçada em andamento neste chat.',
     ACTIVE_POKEMON_FAINTED: '😵 Seu Pokémon ativo está desmaiado. Cure-o antes de caçar.',
@@ -685,7 +685,13 @@ function formatError(err) {
     INVALID_STARTER: '❓ Escolha inválida. Use !pk inicial 1, 2 ou 3 (Bulbasaur, Charmander ou Squirtle).',
     STARTER_UNAVAILABLE: '🧢 Inicial já escolhido ou jornada já em andamento. Use !pk treinador.'
   };
-  return map[code] || `⚠️ ${err.message || 'Falha no jogo'} (${code}).`;
+  let base = map[code] || `⚠️ ${err.message || 'Falha no jogo'} (${code}).`;
+  if (code === 'AREA_UNAVAILABLE') {
+    const d = (err && err.details) || {};
+    const resumo = d.resumoTexto || d['resumo-texto'];
+    if (resumo) base = `${base}\n${resumo}\nUse !pk cacar <área>.`;
+  }
+  return base;
 }
 
 function formatUnavailable(commandHint) {
@@ -774,30 +780,45 @@ function formatBattleState(battle, prefix = '!pk', opts = {}) {
   ].filter(v => v !== null).join('\n');
 }
 
-/** Clima / áreas do dia — plano de caça (mundo), sem TX. */
+/** Clima / áreas do dia — espelha master mundo/resumo (+ dica de caça). */
 function formatWorldInfo(plan, prefix = '!pk') {
+  const texto = (plan && (plan.resumoTexto || plan['resumo-texto'])) || null;
   const mundo = (plan && plan.mundo) || {};
+  const padrao = mundo.areaPadrao || mundo['area-padrao'] || (plan && plan.area) || {};
+  if (texto) {
+    return `${texto}\n\nCaçar: ${prefix} cacar [área] · Ex.: ${prefix} cacar ${padrao.id || 'praia'}`;
+  }
   const clima = (plan && plan.clima) || mundo.clima || {};
   const disponiveis = mundo.areasDisponiveis || mundo['areas-disponiveis'] || [];
-  const padrao = mundo.areaPadrao || mundo['area-padrao'] || (plan && plan.area) || {};
   const indisponiveis = mundo.areasIndisponiveis || mundo['areas-indisponiveis'] || [];
-  const linhasDisp = disponiveis.length
-    ? disponiveis.map(a => `${a.emoji || '🗺️'} *${a.nome || a.id}* (${(a.tipos || []).join(', ') || '?'})`).join('\n')
-    : 'Nenhuma área listada.';
-  const linhasInd = indisponiveis.length
-    ? `\n🔒 Indisponíveis hoje:\n${indisponiveis.map(a => `${a.emoji || '·'} ${a.nome || a.id}`).join('\n')}`
-    : '';
+  const tiposClima = (clima.tipos || []).slice().sort();
+  const rotacao = disponiveis.map(a => `${a.emoji || '🗺️'} ${a.id || a.nome}`).join(' • ') || '?';
+  const semAcesso = indisponiveis.map(a => `${a.emoji || '·'} ${a.id || a.nome}`).join(' • ') || '—';
   return [
-    `${clima.emoji || '☁️'} Clima de hoje: *${clima.nome || '?'}*`,
-    `Tipos favorecidos: ${(clima.tipos || []).join(', ') || '?'}`,
-    '',
-    `📍 Área padrão agora: ${padrao.emoji || '🗺️'} *${padrao.nome || padrao.id || '?'}*`,
-    '',
-    '🗺️ Áreas disponíveis:',
-    linhasDisp,
-    linhasInd,
+    `${clima.emoji || '☁️'} *Clima de hoje: ${clima.nome || '?'}* — favorece ${tiposClima.join(', ') || '?'}.`,
+    `📍 *Bioma deste horário:* ${padrao.emoji || '🗺️'} ${padrao.id || padrao.nome || '?'}`,
+    `🕒 *Rotação de hoje:* ${rotacao}`,
+    `🚫 *Sem acesso por horário hoje:* ${semAcesso}`,
     '',
     `Caçar: ${prefix} cacar [área] · Ex.: ${prefix} cacar ${padrao.id || 'praia'}`
+  ].join('\n');
+}
+
+/** Surto rotativo 6h — espelha master ver-evento (sem recomeço/loja). */
+function formatEventInfo(plan, prefix = '!pk') {
+  const ev = (plan && (plan.eventoAtual || plan['evento-atual'] || plan.evento)) || {};
+  const especies = Array.isArray(ev.especies) ? ev.especies : [];
+  const fim = Number(ev.fim);
+  const agora = Date.now();
+  const minutos = Number.isFinite(fim)
+    ? Math.max(0, Math.ceil((fim - agora) / 60000))
+    : '?';
+  return [
+    `🎉 *${ev.nome || 'Evento'}*`,
+    `Espécies em destaque: ${especies.join(', ') || '?'}`,
+    '50% das caçadas encontram uma dessas espécies; os demais encontros seguem o bioma.',
+    `Troca de evento em ${minutos} minutos. Os eventos mudam a cada 6 horas.`,
+    `Use ${prefix} cacar. As três tentativas e a chance de fuga continuam valendo.`
   ].join('\n');
 }
 
@@ -1518,6 +1539,7 @@ const ALIASES = {
   pocao: 'pocao', 'poção': 'pocao', pot: 'pocao', vida: 'pocao',
   'pocao-maxima': 'pocao-maxima', maxima: 'pocao-maxima', pmax: 'pocao-maxima',
   clima: 'clima', areas: 'clima', áreas: 'clima', mapa: 'clima',
+  eventos: 'eventos', evento: 'eventos', evt: 'eventos',
   recibo: 'recibo', op: 'recibo', operation: 'recibo',
   escolher: 'escolher', esc: 'escolher', trocar: 'escolher', troca: 'escolher',
   evoluir: 'evoluir', evo: 'evoluir', evolucao: 'evoluir', evolução: 'evoluir',
@@ -1558,6 +1580,7 @@ module.exports = {
   formatBattleState,
   formatBattleTurn,
   formatWorldInfo,
+  formatEventInfo,
   barraHp,
   menuGolpes,
   textoRaridade,

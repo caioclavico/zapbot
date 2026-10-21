@@ -1207,6 +1207,14 @@
                                 (.formatWorldInfo jvm-present plano
                                                   (str config/prefix "pk"))))
 
+                "eventos"
+                (p/let [plano (desempenho/medir! ctx "pokemon_jvm_hunt_plan"
+                                 #(.getHuntPlan jvm
+                                    #js {:chatId chat-id :playerId player-id}))]
+                  (envelope-jvm pedido
+                                (.formatEventInfo jvm-present plano
+                                                  (str config/prefix "pk"))))
+
                 "raid"
                 (executar-raid-jvm! jvm ctx pedido chat-id player-id player-name resto)
 

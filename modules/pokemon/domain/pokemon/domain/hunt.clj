@@ -183,6 +183,19 @@
         (select-keys [:id :nome :emoji])
         (assoc :tipos (vec (sort (:tipos clima)))))))
 
+(defn texto-evento
+  "Espelha core/ver-evento (sem texto de recomeço/loja — fora do escopo A4.1)."
+  [agora-ms & {:keys [prefix]}]
+  (let [agora (long agora-ms)
+        evento (evento-atual agora)
+        minutos (long (Math/ceil (/ (double (- (:fim evento) agora)) 60000.0)))
+        pref (or prefix "!pk")]
+    (str "🎉 *" (:nome evento) "*\n"
+         "Espécies em destaque: " (str/join ", " (:especies evento)) "\n"
+         "50% das caçadas encontram uma dessas espécies; os demais encontros seguem o bioma.\n"
+         "Troca de evento em " minutos " minutos. Os eventos mudam a cada 6 horas.\n"
+         "Use " pref " cacar. As três tentativas e a chance de fuga continuam valendo.")))
+
 (defn montar-plano
   "Plano de caça (RNG injetável para testes)."
   [{:keys [area-pedida instant timezone-id trainer-level
@@ -193,7 +206,10 @@
         clima (mundo/clima-do-dia dia)
         area (if (and area-pedida (not (str/blank? (str area-pedida))))
                (or (mundo/area-disponivel area-pedida dia)
-                   (throw (err/error :area_unavailable {:pedido area-pedida :dia dia})))
+                   (throw (err/error :area_unavailable
+                                     {:pedido area-pedida
+                                      :dia dia
+                                      :resumo-texto (mundo/texto-resumo instant tz)})))
                (mundo/area-padrao instant tz))
         roll-t (long (or roll-tipos (rand-int 100)))
         roll-s (long (or roll-surto (rand-int 100)))
@@ -201,18 +217,23 @@
         evento (evento-atual (.toEpochMilli instant))
         surto (surto? roll-s)
         nivel (long (or trainer-level 1))
-        alvo (poder-alvo-caca nivel)]
+        alvo (poder-alvo-caca nivel)
+        evento-dto (select-keys evento [:nome :especies :fim :chance])]
     {:dia dia
      :timezone tz
      :area (area-dto area)
      :clima (clima-dto clima)
      :tipos-encontro (vec (sort tipos))
      :surto? surto
-     :evento (when surto (select-keys evento [:nome :especies :fim :chance]))
+     ;; Surto desta caçada (só quando roll acertou).
+     :evento (when surto evento-dto)
+     ;; Sempre presente — !pk eventos / apresentação do ciclo 6h.
+     :evento-atual evento-dto
      :poder-alvo alvo
      :tolerancia tolerancia-poder-caca
      :tentativas-max tentativas-caca
      :total-pokemons total-pokemons
      :roll-tipos roll-t
      :roll-surto roll-s
-     :mundo (mundo/resumo instant tz)}))
+     :mundo (mundo/resumo instant tz)
+     :resumo-texto (mundo/texto-resumo instant tz)}))

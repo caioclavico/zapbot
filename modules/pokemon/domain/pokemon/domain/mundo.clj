@@ -104,3 +104,17 @@
       :area-padrao (select-keys atual [:id :nome :emoji :tipos])
       :areas-disponiveis (mapv #(select-keys % [:id :nome :emoji :tipos]) disponiveis)
       :areas-indisponiveis (mapv #(select-keys % [:id :nome :emoji :tipos]) indisponiveis)})))
+
+(defn texto-resumo
+  "Espelha zapbot.pokemon.mundo/resumo (string exibida em !pk clima/areas/mapa)."
+  ([instant] (texto-resumo instant default-timezone))
+  ([instant timezone-id]
+   (let [{:keys [clima area-padrao areas-disponiveis areas-indisponiveis]}
+         (resumo instant timezone-id)]
+     (str (:emoji clima) " *Clima de hoje: " (:nome clima) "* — favorece "
+          (str/join ", " (sort (:tipos clima))) ".\n"
+          "📍 *Bioma deste horário:* " (:emoji area-padrao) " " (:id area-padrao) "\n"
+          "🕒 *Rotação de hoje:* "
+          (str/join " • " (map #(str (:emoji %) " " (:id %)) areas-disponiveis)) "\n"
+          "🚫 *Sem acesso por horário hoje:* "
+          (str/join " • " (map #(str (:emoji %) " " (:id %)) areas-indisponiveis))))))

@@ -406,6 +406,14 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}
 
+  ;; A4.1 — áreas/clima/encontros (+ regressão M4.5)
+  :test-a41-explore
+  {:main-opts ["-m" "odisseu.smoke.a41-explore"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
   ;; Bridge HTTP longa (dev local). Bind 127.0.0.1.
   :bridge-http
   {:main-opts ["-m" "odisseu.bridge.http-server"]
