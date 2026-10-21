@@ -253,6 +253,14 @@ function createClient(config = {}) {
     creditCoins: (body) => mutateOnce('/v1/rewards/coins', body),
     getOperation: ({ operationId, chatId, playerId }) =>
       request('GET', `/v1/operations/${idPath(operationId)}${q({ chatId, playerId })}`),
+    getMissions: ({ chatId, playerId, saveId }) =>
+      request('GET', `/v1/missions${q({ chatId, playerId, saveId })}`),
+    getMissionRewards: ({ chatId, playerId, saveId }) =>
+      request('GET', `/v1/missions/rewards${q({ chatId, playerId, saveId })}`),
+    claimDailyMissions: (body) => mutateOnce('/v1/missions/claim/daily', body),
+    claimWeeklyMissions: (body) => mutateOnce('/v1/missions/claim/weekly', body),
+    sendGift: (body) => mutateOnce('/v1/gifts/send', body),
+    collectMissionPending: (body) => mutateOnce('/v1/missions/pending/collect', body),
     getEncounter: ({ chatId, playerId }) =>
       request('GET', `/v1/encounter${q({ chatId, playerId })}`),
     attemptEncounterCapture: (body) => mutateOnce('/v1/encounter/capture', body),

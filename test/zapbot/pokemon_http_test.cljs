@@ -102,6 +102,57 @@
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally (fn [] (reset! http/cliente-http original) (done)))))))
 
+(deftest missoes-e-presentes-jvm-usam-identidade-da-mensagem-e-recibo-estavel
+  (async done
+    (let [original @http/cliente-jvm
+          jvm? http/jvm-configurado?
+          chamados (atom []) envios (atom [])
+          message #js {:id #js {:_serialized "msg-missao"}
+                       :from "grupo@g.us" :author "ash@c.us"
+                       :mentionedIds #js ["misty@c.us"]
+                       :reply (fn [texto & _] (swap! envios conj texto) (p/resolved nil))}
+          message-gift #js {:id #js {:_serialized "msg-presente"}
+                            :from "grupo@g.us" :author "ash@c.us"
+                            :mentionedIds #js ["misty@c.us"]
+                            :reply (fn [texto & _] (swap! envios conj texto) (p/resolved nil))}
+          missions #js {:daily #js {:period "2026-10-21" :level 1
+                                    :missions #js [#js {:id "capturas" :nome "Colecionador"
+                                                        :objetivo "Capturar" :progresso 2 :meta 2
+                                                        :xp 3 :pokebolas 4 :estado "completed"}]}
+                        :weekly #js {:period "2026-10-19" :missions #js []}
+                        :events #js [#js {:nome "Novo Recomeço" :status "ended"}]}
+          client (clj->js {:getMissions (fn [_] (p/resolved missions))
+                      :getActiveSave (fn [_] (p/resolved #js {:activeSaveId "a" :fenceGeneration 7}))
+                      :claimDailyMissions (fn [body]
+                                            (swap! chamados conj [:daily (js->clj body :keywordize-keys true)])
+                                            (p/resolved #js {:ids #js ["capturas"] :xp 3
+                                                             :items #js [#js {:itemId "pokebola" :qty 4}]
+                                                             :pending #js []}))
+                      :sendGift (fn [body]
+                                  (swap! chamados conj [:gift (js->clj body :keywordize-keys true)])
+                                  (p/resolved #js {:sent true :targetPlayerId "misty@c.us"
+                                                   :items #js [#js {:itemId "pokebola" :qty 3}]
+                                                   :pending #js []}))})]
+      (set! http/jvm-configurado? (fn [] true))
+      (reset! http/cliente-jvm client)
+      (-> (isolado!
+           (fn []
+             (p/let [_ (http/executar message "missoes" "resgatar")
+                     _ (http/executar message-gift "presente" "@ignorado")]
+               (is (= [[:daily {:chatId "grupo@g.us" :playerId "ash@c.us" :saveId "a"
+                                 :fenceGeneration 7 :operationId "msg-missao:mission-claim:daily:2026-10-21"
+                                 :period "2026-10-21"}]
+                       [:gift {:chatId "grupo@g.us" :playerId "ash@c.us" :saveId "a"
+                               :fenceGeneration 7 :operationId "msg-presente:gift-send:misty@c.us"
+                               :targetPlayerId "misty@c.us"}]] @chamados))
+               (is (some #(re-find #"missão\(ões\) resgatada" %) @envios))
+               (is (some #(re-find #"Presente enviado para @misty" %) @envios)))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! http/jvm-configurado? jvm?)
+                       (reset! http/cliente-jvm original)
+                       (done)))))))
+
 (deftest bug-tambem-usa-servico-como-unico-dono-dos-relatorios
   (async done
     (let [chamadas (atom [])

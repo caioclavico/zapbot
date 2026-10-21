@@ -790,7 +790,10 @@ function formatError(err) {
     ENCOUNTER_NOT_READY: '⚔️ Derrote o Pokémon selvagem antes de capturar.',
     ENCOUNTER_OWNER_MISMATCH: '🚫 Essa caçada pertence a outro treinador.',
     UNKNOWN_BALL: '❓ Bola desconhecida. Use !pk capturar para ver o menu.',
-    INSUFFICIENT_ITEM: '🎒 Você não tem essa bola. Escolha outra ou compre na loja (legado).',
+    INSUFFICIENT_ITEM: '🎒 Você não tem o item necessário. Cartões de presente custam 20 moedas: !loja comprar cartao-presente.',
+    INVALID_GIFT_TARGET: '🎁 Marque um amigo válido: !presente @amigo.',
+    GIFT_TARGET_CHANGED: '🎁 O save do destinatário mudou durante o envio. Confira e tente novamente.',
+    MISSION_PERIOD_CONFLICT: '📋 O período de missões mudou. Consulte !missoes e tente novamente.',
     COLLECTION_FULL: '🎒 Bolsa cheia: libere espaço antes de capturar.',
     BATTLE_PENDING: '⚠️ Há batalha/encontro em andamento neste save — não dá para alternar A↔B agora.',
     BATTLE_SAVE_MISMATCH: '⚠️ Encontro pertence a outro save — callback antigo rejeitado.',
@@ -1654,11 +1657,117 @@ function formatInventory(data, prefix = '!mochila') {
       lines.push(`${it.emoji || '•'} ${it.nome || it.itemId} ×${it.qty}`);
     }
   }
-  lines.push(
-    '',
-    `⚠️ Kit/diário/resgatar ainda bloqueados no JVM. Expansão: !loja comprar mochila.`,
-    `${prefix}`
-  );
+  const pendentes = (data && data.pendingRewards) || [];
+  lines.push('');
+  if (pendentes.length) {
+    lines.push(`🎁 Recompensas pendentes: ${formatMissionItems(pendentes)}.`,
+      `Use ${prefix} resgatar para recolher o que couber.`);
+  } else {
+    lines.push(`🎁 Recompensas pendentes: nenhuma.`, `Expansão: !loja comprar mochila.`);
+  }
+  lines.push(`${prefix}`);
+  return lines.join('\n');
+}
+
+const MISSION_ITEM_NAMES = {
+  pokebola: 'Pokébola', 'grande-bola': 'Grande Bola', 'ultra-bola': 'Ultra Bola',
+  reviver: 'Reviver', 'catalisador-evolutivo': 'Catalisador Evolutivo',
+  'revestimento-metalico': 'Revestimento Metálico', 'escama-dragao': 'Escama de Dragão',
+  upgrade: 'Upgrade', protetor: 'Protetor', 'pedra-rei': 'Pedra do Rei',
+  eletrizador: 'Eletrizador', magmarizador: 'Magmarizador',
+  'tecido-ceifador': 'Tecido do Ceifador', 'escama-prisma': 'Escama Prisma',
+  'chicote-doce': 'Chicote Doce', 'sache-perfumado': 'Sachê Perfumado'
+};
+
+function formatMissionItems(items) {
+  const values = Array.isArray(items) ? items : [];
+  if (!values.length) return 'nenhum item';
+  return values.map(item => {
+    const id = item.itemId || item['item-id'] || '?';
+    const qty = Number(item.qty != null ? item.qty : 0);
+    return `${qty}× ${MISSION_ITEM_NAMES[id] || id}`;
+  }).join(', ');
+}
+
+function formatMissionReward(mission) {
+  const parts = [];
+  if (mission.xp) parts.push(`+${mission.xp} PE do treinador`);
+  if (mission.moedas) parts.push(`+${mission.moedas} moedas`);
+  for (const [key, label] of [['pokebolas', 'Pokébolas'], ['grandes', 'Grandes Bolas'],
+    ['ultras', 'Ultra Bolas'], ['catalisadores', 'Catalisador Evolutivo']]) {
+    if (mission[key]) parts.push(`${mission[key]} ${label}`);
+  }
+  return parts.length ? parts.join(' • ') : 'recompensa histórica';
+}
+
+function formatMissionList(kind, group, prefix) {
+  const daily = kind === 'daily';
+  const title = daily ? '📋 *Missões diárias*' : '📅 *Missões semanais*';
+  const period = group && group.period ? group.period : '?';
+  const lines = [
+    `${title} — ${daily ? period : `semana de ${period}`}`,
+    ...(daily && group && group.level != null ? [`Nível de referência: ${group.level}`] : []),
+    ''
+  ];
+  for (const mission of (group && group.missions) || []) {
+    const state = mission.estado;
+    const icon = state === 'rewarded' ? '🎁' : state === 'completed' ? '✅' : '⬜';
+    lines.push(`${icon} *${mission.nome || mission.objetivo || mission.id}*: ${mission.objetivo || ''} — ${mission.progresso || 0}/${mission.meta || 0}`,
+      `   ${formatMissionReward(mission)}${state === 'rewarded' ? ' (resgatada)' : ''}`);
+  }
+  const ready = ((group && group.missions) || []).some(m => m.estado === 'completed');
+  lines.push('', ready
+    ? `🎁 Há recompensa disponível: ${prefix} missoes ${daily ? 'diarias' : 'semanais'} resgatar.`
+    : 'Continue jogando para concluir os objetivos.');
+  return lines.join('\n');
+}
+
+function formatMissions(data, scope = 'all', prefix = '!pk') {
+  const sections = [];
+  if (scope !== 'weekly') sections.push(formatMissionList('daily', data && data.daily, prefix));
+  if (scope !== 'daily') sections.push(formatMissionList('weekly', data && data.weekly, prefix));
+  const event = data && Array.isArray(data.events) ? data.events[0] : null;
+  if (event && event.status === 'ended') {
+    sections.push(`🏁 *${event.nome}* — evento encerrado\nHistórico preservado; não há resgate ativo.`);
+  }
+  return sections.join('\n\n');
+}
+
+function missionResult(data) {
+  return data && data.reconciled && data.summary ? (data.summary.result || data.summary) : (data || {});
+}
+
+function formatMissionClaim(data, kind, prefix = '!pk') {
+  const result = missionResult(data);
+  if (result.empty) return `📋 Nenhuma missão ${kind === 'daily' ? 'diária' : 'semanal'} concluída disponível para resgatar.`;
+  const lines = [`✅ ${result.ids && result.ids.length || 0} missão(ões) resgatada(s)!`];
+  if (result.xp) lines.push(`✨ +${result.xp} PE do treinador`);
+  if (result.coins) lines.push(`💰 +${result.coins} moedas`);
+  if (result.items && result.items.length) lines.push(`🎁 ${formatMissionItems(result.items)}`);
+  if (result.pending && result.pending.length) lines.push(`🎒 Sem espaço: ${formatMissionItems(result.pending)}. Use !mochila resgatar.`);
+  if (result.duplicate || data && data.reconciled) lines.push('_Mesma operação já confirmada._');
+  lines.push(`${prefix} missoes`);
+  return lines.join('\n');
+}
+
+function formatGift(data, prefix = '!presente') {
+  const result = missionResult(data);
+  const target = String(result.targetPlayerId || '?').split('@')[0];
+  const lines = [`🎁 Presente enviado para @${target}!`, `🎁 ${formatMissionItems(result.items || [])}`];
+  if (result.pending && result.pending.length) lines.push(`🎒 Itens sem espaço ficaram pendentes: ${formatMissionItems(result.pending)}.`);
+  lines.push('📋 Envio registrado nas missões diárias e semanais.');
+  if (result.duplicate || data && data.reconciled) lines.push('_Mesma operação já confirmada._');
+  lines.push(`${prefix} @amigo`);
+  return lines.join('\n');
+}
+
+function formatMissionPending(data, prefix = '!mochila') {
+  const result = missionResult(data);
+  if (result.empty) return '🎒 Nenhuma recompensa pendente coube na mochila agora.';
+  const lines = [`🎁 Recompensas recolhidas: ${formatMissionItems(result.added || result.items || [])}.`];
+  if (result.pending && result.pending.length) lines.push(`🎒 Ainda pendentes: ${formatMissionItems(result.pending)}.`);
+  if (result.duplicate || data && data.reconciled) lines.push('_Mesma operação já confirmada._');
+  lines.push(`${prefix}`);
   return lines.join('\n');
 }
 
@@ -1722,6 +1831,8 @@ const ALIASES = {
   incubadoras: 'incubadoras',
   loja: 'loja', shop: 'loja',
   mochila: 'mochila', mch: 'mochila', inventario: 'mochila', inventário: 'mochila',
+  missoes: 'missoes', 'missões': 'missoes', mis: 'missoes',
+  presente: 'presente', presentes: 'presente', pre: 'presente',
   curar: 'curar', cura: 'curar', cur: 'curar',
   pocao: 'pocao', 'poção': 'pocao', pot: 'pocao', vida: 'pocao',
   'pocao-maxima': 'pocao-maxima', maxima: 'pocao-maxima', pmax: 'pocao-maxima',
@@ -1807,6 +1918,11 @@ module.exports = {
   formatShopBuy,
   formatShopDetails,
   formatInventory,
+  formatMissions,
+  formatMissionClaim,
+  formatGift,
+  formatMissionPending,
+  formatMissionItems,
   formatItemUse,
   findShopItem,
   filtrarColecao,

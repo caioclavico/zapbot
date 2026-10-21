@@ -18,6 +18,7 @@
             [pokemon.infrastructure.datomic.mission-events :as events]
             [pokemon.infrastructure.datomic.store :as store]
             [pokemon.infrastructure.http.bridge :as bridge]
+            [pokemon.migration.receipt-a433 :as receipt-audit]
             [pokemon.tests.missions-a431-test :as foundation]
             [pokemon.tests.missions-a432-test :as progress])
   (:import [java.nio.file Files]))
@@ -85,6 +86,16 @@
     (is (= "first" (:operation-receipt/payload-hash
                      (d/pull (d/db conn) '[*]
                              [:operation-receipt/id "receipt-global-key"]))))))
+
+(deftest receipt-migration-audit-is-read-only-and-reports-safe-state
+  (let [{:keys [conn]} (progress/fresh)
+        before (:t (d/db conn))
+        audit (receipt-audit/report conn)]
+    (is (= :db.unique/value (:receipt-uniqueness audit)))
+    (is (empty? (:duplicates audit)))
+    (is (:migration-applied audit))
+    (is (:safe-state? audit))
+    (is (= before (:t (d/db conn))))))
 
 (deftest gift-atomic-existing-recipient-and-retry
   (deterministic

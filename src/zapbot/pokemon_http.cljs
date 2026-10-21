@@ -653,6 +653,51 @@
                          :mostrarEntrada false}))]
     (envelope-jvm pedido texto img)))
 
+(defn- executar-missoes-jvm!
+  "Consulta e resgate de missões; período, prêmio e estado pertencem ao Core."
+  [jvm ctx pedido chat-id player-id resto]
+  (let [prefix (str config/prefix "pk")
+        primeiro (str/lower-case (str (or (first resto) "")))
+        diarias? (= "diarias" primeiro)
+        semanais? (= "semanais" primeiro)
+        acao (if diarias? (second resto) (first resto))
+        scope (cond semanais? "weekly" diarias? "daily" :else "all")]
+    (p/let [missoes (desempenho/medir! ctx "pokemon_jvm_missions"
+                         #(.getMissions jvm #js {:chatId chat-id :playerId player-id}))]
+      (if-not (= "resgatar" (str/lower-case (str (or acao ""))))
+        (envelope-jvm pedido (.formatMissions jvm-present missoes scope prefix))
+        (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                weekly? semanais?
+                period (if weekly? (.-period (.-weekly missoes)) (.-period (.-daily missoes)))
+                op-id (.stableOperationId jvm-transport (:requestId pedido)
+                                            (str "mission-claim:" (if weekly? "weekly:" "daily:") period))
+                data (desempenho/medir! ctx "pokemon_jvm_mission_claim"
+                       #(if weekly?
+                          (.claimWeeklyMissions jvm #js {:chatId chat-id :playerId player-id
+                                                         :saveId (.-activeSaveId ativo)
+                                                         :fenceGeneration (.-fenceGeneration ativo)
+                                                         :operationId op-id :period period})
+                          (.claimDailyMissions jvm #js {:chatId chat-id :playerId player-id
+                                                        :saveId (.-activeSaveId ativo)
+                                                        :fenceGeneration (.-fenceGeneration ativo)
+                                                        :operationId op-id :period period})))]
+          (envelope-jvm pedido (.formatMissionClaim jvm-present data
+                                                     (if weekly? "weekly" "daily") prefix)))))))
+
+(defn- executar-presente-jvm!
+  [jvm ctx pedido chat-id player-id]
+  (let [target (first (get-in pedido [:context :mentionedIds]))]
+    (when (str/blank? (str target))
+      (throw (erro-contrato (str "🎁 Use " config/prefix "presente @amigo."))))
+    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+            op-id (.stableOperationId jvm-transport (:requestId pedido) (str "gift-send:" target))
+            data (desempenho/medir! ctx "pokemon_jvm_gift_send"
+                   #(.sendGift jvm #js {:chatId chat-id :playerId player-id
+                                         :saveId (.-activeSaveId ativo)
+                                         :fenceGeneration (.-fenceGeneration ativo)
+                                         :operationId op-id :targetPlayerId target}))]
+      (envelope-jvm pedido (.formatGift jvm-present data (str config/prefix "presente"))))))
+
 (defn- executar-jvm! [message ctx pedido args]
   ;; Identidade só do contexto WhatsApp; formatação/mídia só no Node.
   ;; Gameplay (JVM) completa antes de qualquer composição de imagem.
@@ -921,6 +966,12 @@
                                           :chatId chat-id
                                           :playerId player-id}))]
                     (envelope-jvm pedido (.formatReceipt jvm-present data))))
+
+                "missoes"
+                (executar-missoes-jvm! jvm ctx pedido chat-id player-id resto)
+
+                "presente"
+                (executar-presente-jvm! jvm ctx pedido chat-id player-id)
 
                 "ginasio"
                 (let [sub (.resolveGymSubcommand jvm-present (or (first resto) ""))
@@ -1399,12 +1450,30 @@
 
                 "mochila"
                 (let [sub (str/lower-case (str (or (first resto) "")))]
-                  (if (contains? #{"kit" "diario" "diário" "resgatar"} sub)
+                  (cond
+                    (= "resgatar" sub)
+                    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            op-id (.stableOperationId jvm-transport (:requestId pedido)
+                                                              "mission-pending-collect")
+                            data (desempenho/medir! ctx "pokemon_jvm_mission_pending"
+                                   #(.collectMissionPending jvm
+                                      #js {:chatId chat-id :playerId player-id
+                                           :saveId (.-activeSaveId ativo)
+                                           :fenceGeneration (.-fenceGeneration ativo)
+                                           :operationId op-id}))]
+                      (envelope-jvm pedido (.formatMissionPending jvm-present data "!mochila")))
+
+                    (contains? #{"kit" "diario" "diário"} sub)
                     (envelope-jvm pedido
                                   (str "🚧 `" sub "` ainda não está no adaptador JVM "
-                                       "(kit/diário/resgatar). Use !mochila para ver o inventário."))
+                                       "(kit/diário). Use !mochila para ver o inventário."))
+
+                    :else
                     (p/let [data (desempenho/medir! ctx "pokemon_jvm_inventory"
-                                     #(.getInventory jvm #js {:chatId chat-id :playerId player-id}))]
+                                     #(.getInventory jvm #js {:chatId chat-id :playerId player-id}))
+                            missoes (desempenho/medir! ctx "pokemon_jvm_missions"
+                                      #(.getMissions jvm #js {:chatId chat-id :playerId player-id}))]
+                      (aset data "pendingRewards" (.-pendingRewards missoes))
                       (envelope-jvm pedido (.formatInventory jvm-present data "!mochila")))))
 
                 "curar"
