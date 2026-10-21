@@ -1,9 +1,32 @@
 (ns pokemon.domain.joy
   "Centro Pokémon / Enfermeira Joy — puro. Espelha treinador.cljs."
-  (:require [pokemon.domain.errors :as err]))
+  (:require [clojure.string :as str]
+            [pokemon.domain.errors :as err]))
 
 (def tempo-tratamento-minutos 30)
 (def tempo-tratamento-ms (* tempo-tratamento-minutos 60 1000))
+(def tempo-tratamento-padrao-segundos 1800)
+
+(defn environment
+  "Indireção para a configuração do processo JVM ser testável."
+  [name]
+  (System/getenv name))
+
+(defn tempo-tratamento-segundos
+  "Apenas novos tratamentos usam este valor. Zero é permitido somente em
+   staging; produção preserva 30 minutos para entradas inválidas ou inseguras."
+  []
+  (let [raw (some-> (environment "POKEMON_JOY_HEAL_SECONDS") str)
+        seconds (try (Long/parseLong raw) (catch Exception _ tempo-tratamento-padrao-segundos))
+        staging? (= "staging" (some-> (environment "APP_ENV") str/lower-case str/trim))]
+    (cond
+      (neg? seconds) tempo-tratamento-padrao-segundos
+      (and (zero? seconds) (not staging?)) tempo-tratamento-padrao-segundos
+      :else seconds)))
+
+(defn tempo-tratamento-atual-ms
+  []
+  (* 1000 (tempo-tratamento-segundos)))
 
 (defn ferido?
   [registro]
@@ -24,7 +47,9 @@
                                 (subvec (vec colecao) (inc idx))))
           entrada {:bed-id (str "bed-" (or (:id-pokemon reg) idx) "-" agora)
                    :pokemon reg
-                   :pronto-em (+ (long agora) tempo-tratamento-ms)}]
+                   ;; `pronto-em` é canônico e imutável: trocar env depois não
+                   ;; altera leitos já persistidos no Datomic.
+                   :pronto-em (+ (long agora) (tempo-tratamento-atual-ms))}]
       {:colecao colecao'
        :enfermaria (conj (vec enfermaria) entrada)
        :registro reg

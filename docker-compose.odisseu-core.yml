@@ -27,6 +27,9 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
     environment:
+      # Configurações de gameplay lidas pelo processo JVM; zero só é aceito em staging.
+      APP_ENV: staging
+      POKEMON_JOY_HEAL_SECONDS: "0"
       ODISSEU_BRIDGE_HOST: "0.0.0.0"
       ODISSEU_BRIDGE_PORT: "18090"
       ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND: "true"

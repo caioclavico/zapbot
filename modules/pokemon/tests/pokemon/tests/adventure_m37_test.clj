@@ -50,6 +50,24 @@
   (is (= 100 (get-in eggs/categorias [:comum :pontos])))
   (is (= 30 joy/tempo-tratamento-minutos)))
 
+(deftest joy-tempo-configuravel-e-protegido-em-producao
+  (let [t0 1000000]
+    (with-redefs [joy/environment (fn [k]
+                                    ({"APP_ENV" "production"
+                                      "POKEMON_JOY_HEAL_SECONDS" "0"} k))]
+      (is (= 1800 (joy/tempo-tratamento-segundos)))
+      (is (= (+ t0 joy/tempo-tratamento-ms)
+             (get-in (joy/enviar [mon] [] 0 t0) [:entrada :pronto-em]))))
+    (with-redefs [joy/environment (fn [k]
+                                    ({"APP_ENV" "staging"
+                                      "POKEMON_JOY_HEAL_SECONDS" "0"} k))]
+      (is (zero? (joy/tempo-tratamento-segundos)))
+      (is (= t0 (get-in (joy/enviar [mon] [] 0 t0) [:entrada :pronto-em]))))
+    (with-redefs [joy/environment (fn [k]
+                                    ({"APP_ENV" "production"
+                                      "POKEMON_JOY_HEAL_SECONDS" "45"} k))]
+      (is (= 45 (joy/tempo-tratamento-segundos))))))
+
 (deftest incubacao-e-nascimento
   (let [s (fresh-store! "e-hatch")
         chat "chat-e1"
@@ -225,6 +243,43 @@
         (is (= (:hp (first col)) (:hp-atual (first col))))
         (is (nil? (:status (first col))))
         (is (= 0 (count (joy-app/list-beds s chat player "a"))))))))
+
+(deftest joy-zero-preserva-fluxo-e-leitos-antigos
+  (let [s (fresh-store! "j-zero-config")
+        chat "chat-j-zero"
+        player "misty"
+        t0 9000000]
+    (boot! s chat player)
+    (collection/adicionar-pokemon! s chat player mon 10 "envenenado")
+    ;; Um leito criado antes da troca conserva o horário original.
+    (with-redefs [joy/environment (fn [k]
+                                    ({"APP_ENV" "production"
+                                      "POKEMON_JOY_HEAL_SECONDS" "1800"} k))]
+      (joy-app/send! s chat player {:operation-id "old-send" :idx 0 :agora t0}))
+    (with-redefs [joy/environment (fn [k]
+                                    ({"APP_ENV" "staging"
+                                      "POKEMON_JOY_HEAL_SECONDS" "0"} k))]
+      (is (= :joy_nothing_ready
+             (try (joy-app/collect! s chat player {:operation-id "old-early" :agora t0})
+                  :ok (catch Exception ex (err/error-code ex)))))
+      (is (= (+ t0 joy/tempo-tratamento-ms)
+             (:pronto-em (first (joy-app/list-beds s chat player "a"))))))
+    ;; A coleta continua canônica; após liberar o leito, novo envio zero passa
+    ;; pela enfermaria e só então pode ser coletado.
+    (joy-app/collect! s chat player {:operation-id "old-collect"
+                                     :agora (+ t0 joy/tempo-tratamento-ms)})
+    (collection/adicionar-pokemon! s chat player mon 10 "envenenado")
+    (with-redefs [joy/environment (fn [k]
+                                    ({"APP_ENV" "staging"
+                                      "POKEMON_JOY_HEAL_SECONDS" "0"} k))]
+      (let [sent (joy-app/send! s chat player {:operation-id "zero-send" :idx 1 :agora t0})
+            duplicate (joy-app/send! s chat player {:operation-id "zero-send" :idx 1 :agora t0})
+            collected (joy-app/collect! s chat player {:operation-id "zero-collect" :agora t0})]
+        (is (= t0 (:pronto-em sent)))
+        (is (true? (:duplicate duplicate)))
+        (is (= 1 (:n collected)))
+        (is (= 2 (count (ports/list-collection s chat player "a"))))
+        (is (zero? (count (joy-app/list-beds s chat player "a"))))))))
 
 (deftest joy-isolamento-saves
   (let [s (fresh-store! "j-iso")
