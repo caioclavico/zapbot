@@ -9,6 +9,7 @@
 
 (def total-pokemons 1025)
 (def cooldown-cacada-ms (* 30 60 1000))
+(def cooldown-cacada-padrao-segundos 1800)
 (def poder-alvo-nivel-1 320)
 (def incremento-poder-por-nivel 25)
 (def tolerancia-poder-caca 60)
@@ -133,10 +134,31 @@
   [roll]
   (< (long roll) chance-surto))
 
+(defn environment
+  "Indireção pequena para tornar a configuração do processo testável."
+  [name]
+  (System/getenv name))
+
+(defn cooldown-cacada-segundos
+  "Lê a configuração do processo. Zero só é aceito em staging; produção mantém
+   o padrão seguro de 30 minutos mesmo se a variável estiver configurada como 0."
+  []
+  (let [raw (some-> (environment "POKEMON_HUNT_COOLDOWN_SECONDS") str)
+        seconds (try (Long/parseLong raw) (catch Exception _ cooldown-cacada-padrao-segundos))
+        staging? (= "staging" (some-> (environment "APP_ENV") str/lower-case str/trim))]
+    (cond
+      (neg? seconds) cooldown-cacada-padrao-segundos
+      (and (zero? seconds) (not staging?)) cooldown-cacada-padrao-segundos
+      :else seconds)))
+
+(defn cooldown-cacada-atual-ms
+  []
+  (* 1000 (cooldown-cacada-segundos)))
+
 (defn cooldown-restante-ms
   [ultima-cacada-at agora-ms]
   (let [ultima (long (or ultima-cacada-at 0))
-        faltam (- cooldown-cacada-ms (- (long agora-ms) ultima))]
+        faltam (- (cooldown-cacada-atual-ms) (- (long agora-ms) ultima))]
     (max 0 faltam)))
 
 (defn pode-cacar?

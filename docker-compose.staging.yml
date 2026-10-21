@@ -29,6 +29,9 @@ services:
     restart: unless-stopped
     stop_grace_period: 20s
     environment:
+      # O Core aplica este valor no processo JVM; zero só é aceito com APP_ENV=staging.
+      APP_ENV: staging
+      POKEMON_HUNT_COOLDOWN_SECONDS: "0"
       ODISSEU_BRIDGE_HOST: "0.0.0.0"
       ODISSEU_BRIDGE_PORT: "18090"
       ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND: "true"

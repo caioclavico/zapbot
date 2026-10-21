@@ -86,6 +86,28 @@
   (is (false? (:shiny? (hunt/sortear-shiny magikarp-cand nil)))
       "shiny-roll nil não lança NPE (produção)"))
 
+(deftest cooldown-de-caca-e-configuravel-com-protecao-de-producao
+  (let [at 1700000000000]
+    (with-redefs [hunt/environment (fn [k]
+                                     ({"APP_ENV" "production"
+                                       "POKEMON_HUNT_COOLDOWN_SECONDS" "0"} k))]
+      (is (= 1800 (hunt/cooldown-cacada-segundos)))
+      (is (= (* 30 60 1000) (hunt/cooldown-restante-ms at at))))
+    (with-redefs [hunt/environment (fn [k]
+                                     ({"APP_ENV" "staging"
+                                       "POKEMON_HUNT_COOLDOWN_SECONDS" "0"} k))]
+      (is (zero? (hunt/cooldown-cacada-segundos)))
+      (is (zero? (hunt/cooldown-restante-ms at at)))
+      (is (hunt/pode-cacar? at at)))
+    (with-redefs [hunt/environment (fn [k]
+                                     ({"APP_ENV" "production"
+                                       "POKEMON_HUNT_COOLDOWN_SECONDS" "45"} k))]
+      (is (= 45 (hunt/cooldown-cacada-segundos)))
+      (is (= 44000 (hunt/cooldown-restante-ms at (+ at 1000)))))
+    (with-redefs [hunt/environment (constantly nil)]
+      (is (= 1800 (hunt/cooldown-cacada-segundos)))
+      (is (= (* 30 60 1000) (hunt/cooldown-restante-ms at at))))))
+
 (deftest selecao-respeita-bioma-e-teto
   (let [alvo 320
         tipos #{"water" "ice"}
@@ -371,3 +393,63 @@
                :shiny-roll 1})
              :ok
              (catch Exception ex (err/error-code ex)))))))
+
+(deftest cooldown-zero-permite-nova-caca-apos-batalha-encerrada
+  (with-redefs [hunt/environment (fn [k]
+                                   ({"APP_ENV" "staging"
+                                     "POKEMON_HUNT_COOLDOWN_SECONDS" "0"} k))]
+    (let [s (fresh-store! "hunt-zero-cooldown")
+          chat "chat-zero"
+          player "ash"
+          agora 1700000400000
+          request (fn [operation-id]
+                    {:operation-id operation-id :area-id "praia"
+                     :tipos-encontro ["water"] :surto? false :poder-alvo 320
+                     :candidates [magikarp-cand] :agora-ms agora :shiny-roll 1})]
+      (boot! s chat player)
+      (let [first-hunt (hunt-app/start-hunt! s chat player (request "hunt-zero-1"))]
+        ;; Mesmo com cooldown zero, uma batalha ainda ativa bloqueia concorrência.
+        (is (= :battle_already_active
+               (try (hunt-app/start-hunt! s chat player (request "hunt-zero-active"))
+                    :ok (catch Exception ex (err/error-code ex)))))
+        ;; A fuga encerra a batalha sem captura e libera a trava canônica do chat.
+        (battle-app/confirm-turn!
+         s chat player
+         {:operation-id "hunt-zero-flee" :battle-id (:battle-id first-hunt)
+          :expected-turn-index 0 :action :defend
+          :rng {:flee 0 :damage-var 0 :crit 99 :accuracy 0 :impede-para 99
+                :cura-sono 99 :cura-gelo 99 :cura-confusao 99 :auto-confusao 99
+                :contagio 99 :status-golpe 99 :wild-move 0}})
+        (is (nil? (:active-wild-battle-id (ports/get-group s chat))))
+        (is (= "hunt-zero-2"
+               (:operation-id (hunt-app/start-hunt! s chat player (request "hunt-zero-2")))))))))
+
+(deftest cooldown-zero-nao-retorna-apos-derrota
+  (with-redefs [hunt/environment (fn [k]
+                                   ({"APP_ENV" "staging"
+                                     "POKEMON_HUNT_COOLDOWN_SECONDS" "0"} k))]
+    (let [s (fresh-store! "hunt-zero-defeat")
+          chat "chat-zero-defeat"
+          player "ash"
+          agora 1700000500000
+          hostile (assoc magikarp-cand :hp 500 :ataque 999 :atq-esp 999
+                          :defesa 999 :def-esp 999
+                          :golpes [{:slug "crush" :nome-exibicao "Crush"
+                                    :tipo "normal" :poder 500 :classe :fisico}])]
+      (boot! s chat player)
+      (let [started (hunt-app/start-hunt!
+                     s chat player
+                     {:operation-id "hunt-zero-defeat-1" :area-id "praia"
+                      :tipos-encontro ["water"] :surto? false :poder-alvo 320
+                      :candidates [hostile] :agora-ms agora :shiny-roll 1})
+            ended (battle-app/confirm-turn!
+                   s chat player
+                   {:operation-id "hunt-zero-defeat-turn" :battle-id (:battle-id started)
+                    :expected-turn-index 0 :action :defend
+                    :rng {:flee 99 :damage-var 10 :crit 0 :accuracy 0 :impede-para 99
+                          :cura-sono 99 :cura-gelo 99 :cura-confusao 99 :auto-confusao 99
+                          :contagio 99 :status-golpe 99 :wild-move 0}})]
+        (is (= :lose (get-in ended [:battle :outcome])))
+        (is (nil? (:active-wild-battle-id (ports/get-group s chat))))
+        (is (true? (get-in (hunt-app/plan s chat player {:agora-ms agora})
+                           [:eligibilidade :cooldown-ok])))))))
