@@ -1,0 +1,17 @@
+;; A4.3 — missões diárias/semanais + recompensas pendentes (save-bound).
+[
+ {:db/ident       :save/missoes-diarias-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "EDN: {dia nivel progresso resgatadas} — faixa fixa no dia"}
+
+ {:db/ident       :save/missoes-semanais-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "EDN: {semana ginasios tipos pvp presentes resgatadas}"}
+
+ {:db/ident       :save/recompensas-pendentes-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "EDN map item-id→qty quando a mochila não cabe o resgate"}
+]

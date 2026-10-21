@@ -5,6 +5,7 @@
   (:require [clojure.string :as str]
             [odisseu.platform.infrastructure.http.handlers :as platform-http]
             [pokemon.application.bridge-reads :as reads]
+            [pokemon.application.mission-queries :as missions]
             [pokemon.application.bridge-tx :as tx]
             [pokemon.domain.errors :as err]
             [pokemon.infrastructure.http.json :as json])
@@ -198,6 +199,7 @@
                        :platformEnabled (boolean platform-store)
                        :capabilities (cond-> ["trainer-read" "collection-read" "active-save-read"
                                               "trainer-ensure" "saves-list" "save-activate"
+                                              "missions-read" "missions-prepare"
                                               "reward-coins" "operation-get"
                                               "encounter-read" "encounter-capture"
                                               "battle-start" "battle-turn"
@@ -245,6 +247,27 @@
                         res (platform-http/handle platform-store method path qs body
                                                   popts)]
                     (ok! ex (:data res))))
+
+                (= path "/v1/missions")
+                (do (require-method! ex #{"GET"})
+                    (let [chat (g qs "chatId") player (g qs "playerId")]
+                      (when (or (str/blank? chat) (str/blank? player))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (missions/read-missions store chat player
+                                                      (not-empty (g qs "saveId")) {}))))
+
+                (= path "/v1/missions/prepare")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat (g body "chatId") player (g body "playerId")
+                          slot (g body "saveId") fence (long-or-nil (g body "fenceGeneration"))]
+                      (when (or (str/blank? chat) (str/blank? player)
+                                (str/blank? slot) (nil? fence))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId" "fenceGeneration"]})))
+                      (ok! ex (missions/prepare-missions!
+                               store {:chat-id chat :player-id player :save-id slot
+                                      :fence-generation fence} {}))))
 
                 (= path "/v1/trainer")
                 (do (require-method! ex #{"GET"})

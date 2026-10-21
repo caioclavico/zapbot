@@ -19,7 +19,9 @@
    "migrations/pokemon/012-enfermaria-bed-origin.edn"
    "migrations/pokemon/013-onboarding.edn"
    "migrations/pokemon/014-pvp.edn"
-   "migrations/pokemon/015-pokedex-favorito.edn"])
+   "migrations/pokemon/015-pokedex-favorito.edn"
+   "migrations/pokemon/016-missions.edn"
+   "migrations/pokemon/017-mission-events.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id

@@ -25,6 +25,8 @@
             [pokemon.domain.shop :as shop]
             [pokemon.domain.xp :as xp]
             [pokemon.domain.status :as status]
+            [pokemon.application.mission-queries :as mission-queries]
+            [pokemon.infrastructure.datomic.mission-queries :as mission-reads]
             [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
             [pokemon.infrastructure.datomic.gym-store :as gym-store]
             [pokemon.infrastructure.datomic.onboarding-store :as onboarding-store]
@@ -778,6 +780,12 @@
                (:group/active-wild-player-id g)])))))
 
 (defrecord DatomicTrainerStore [conn]
+  mission-queries/MissionQueries
+  (read-missions [_ chat-id player-id save-id options]
+    (mission-reads/read-missions conn chat-id player-id save-id options))
+  (prepare-missions! [_ writer options]
+    (mission-reads/prepare! conn writer options))
+
   ports/TrainerStore
 
   (ensure-schema! [_]
