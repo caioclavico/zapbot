@@ -153,6 +153,43 @@
                        (reset! http/cliente-jvm original)
                        (done)))))))
 
+(deftest comandos-de-missoes-preservam-o-filtro-de-apresentacao
+  (async done
+    (let [original @http/cliente-jvm
+          jvm? http/jvm-configurado?
+          envios (atom [])
+          message (fn [id]
+                    #js {:id #js {:_serialized id}
+                         :from "grupo@g.us" :author "ash@c.us" :mentionedIds #js []
+                         :reply (fn [texto & _] (swap! envios conj texto) (p/resolved nil))})
+          missions #js {:daily #js {:period "2026-10-21" :level 1
+                                    :missions #js [#js {:id "diaria" :nome "Diária exclusiva"
+                                                        :objetivo "Capturar" :progresso 1 :meta 2}]}
+                        :weekly #js {:period "2026-10-19"
+                                     :missions #js [#js {:id "semanal" :nome "Semanal exclusiva"
+                                                         :objetivo "Vencer PvP" :progresso 1 :meta 3}]}
+                        :events #js []}
+          client (clj->js {:getMissions (fn [_] (p/resolved missions))})]
+      (set! http/jvm-configurado? (fn [] true))
+      (reset! http/cliente-jvm client)
+      (-> (isolado!
+           (fn []
+             (p/let [_ (http/executar (message "missoes-todas") "pokemon" "missoes")
+                     _ (http/executar (message "missoes-diarias") "pokemon" "missoes diarias")
+                     _ (http/executar (message "missoes-semanais") "pokemon" "missoes semanais")]
+               (let [[todas diarias semanais] @envios]
+                 (is (and (re-find #"Diária exclusiva" todas)
+                          (re-find #"Semanal exclusiva" todas)))
+                 (is (and (re-find #"Diária exclusiva" diarias)
+                          (nil? (re-find #"Semanal exclusiva" diarias))))
+                 (is (and (re-find #"Semanal exclusiva" semanais)
+                          (nil? (re-find #"Diária exclusiva" semanais)))))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! http/jvm-configurado? jvm?)
+                       (reset! http/cliente-jvm original)
+                       (done))))))))
+
 (deftest bug-tambem-usa-servico-como-unico-dono-dos-relatorios
   (async done
     (let [chamadas (atom [])

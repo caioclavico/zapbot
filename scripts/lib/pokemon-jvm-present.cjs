@@ -1722,12 +1722,21 @@ function formatMissionList(kind, group, prefix) {
   return lines.join('\n');
 }
 
+function missionScope(scope) {
+  const normalized = String(scope || 'all').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (['daily', 'diaria', 'diarias'].includes(normalized)) return 'daily';
+  if (['weekly', 'semanal', 'semanais'].includes(normalized)) return 'weekly';
+  return 'all';
+}
+
 function formatMissions(data, scope = 'all', prefix = '!pk') {
+  const selectedScope = missionScope(scope);
   const sections = [];
-  if (scope !== 'weekly') sections.push(formatMissionList('daily', data && data.daily, prefix));
-  if (scope !== 'daily') sections.push(formatMissionList('weekly', data && data.weekly, prefix));
+  if (selectedScope !== 'weekly') sections.push(formatMissionList('daily', data && data.daily, prefix));
+  if (selectedScope !== 'daily') sections.push(formatMissionList('weekly', data && data.weekly, prefix));
   const event = data && Array.isArray(data.events) ? data.events[0] : null;
-  if (event && event.status === 'ended') {
+  if (selectedScope === 'all' && event && event.status === 'ended') {
     sections.push(`🏁 *${event.nome}* — evento encerrado\nHistórico preservado; não há resgate ativo.`);
   }
   return sections.join('\n\n');
@@ -1923,6 +1932,7 @@ module.exports = {
   formatGift,
   formatMissionPending,
   formatMissionItems,
+  missionScope,
   formatItemUse,
   findShopItem,
   filtrarColecao,

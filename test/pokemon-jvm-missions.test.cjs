@@ -72,17 +72,26 @@ test('timeout de resgate reconcilia pelo mesmo recibo sem nova operação', asyn
   assert.equal(claims, 1);
 });
 
-test('apresentação preserva estados, aliases e instruções do legado', () => {
+test('apresentação filtra todas, diárias e semanais sem misturar grupos', () => {
   assert.equal(present.resolveCommand(['mis']), 'missoes');
   assert.equal(present.resolveCommand(['missões']), 'missoes');
   assert.equal(present.resolveCommand(['pre']), 'presente');
-  const text = present.formatMissions({
+  const missions = {
     daily: { period: '2026-10-21', level: 6, missions: [{ id: 'capturas', nome: 'Colecionador', objetivo: 'Capturar Pokémon selvagens', progresso: 1, meta: 4, xp: 6, pokebolas: 8, estado: 'in_progress' }] },
     weekly: { period: '2026-10-19', missions: [{ id: 'pvp', objetivo: 'Vencer 3 batalhas PvP', progresso: 3, meta: 3, moedas: 60, estado: 'completed' }] },
     events: [{ nome: 'Novo Recomeço', status: 'ended' }]
-  }, 'all', '!pk');
-  assert.match(text, /Colecionador/); assert.match(text, /1\/4/); assert.match(text, /resgatar/);
-  assert.match(text, /Novo Recomeço.*encerrado/s);
+  };
+  const all = present.formatMissions(missions, 'all', '!pk');
+  const daily = present.formatMissions(missions, 'diarias', '!pk');
+  const weekly = present.formatMissions(missions, 'semanais', '!pk');
+  assert.match(all, /Colecionador/); assert.match(all, /Vencer 3 batalhas PvP/);
+  assert.match(all, /Novo Recomeço.*encerrado/s);
+  assert.match(daily, /Colecionador/); assert.match(daily, /1\/4/); assert.doesNotMatch(daily, /Vencer 3 batalhas PvP|Missões semanais|Novo Recomeço/);
+  assert.match(weekly, /Vencer 3 batalhas PvP/); assert.doesNotMatch(weekly, /Colecionador|Missões diárias|Novo Recomeço/);
+  assert.equal(present.missionScope('diárias'), 'daily');
+  assert.equal(present.missionScope('semanais'), 'weekly');
+  const text = all;
+  assert.match(text, /resgatar/);
   const claim = present.formatMissionClaim({ kind: 'daily', ids: ['capturas'], xp: 3,
     items: [{ itemId: 'pokebola', qty: 4 }], pending: [{ itemId: 'grande-bola', qty: 1 }] }, 'daily');
   assert.match(claim, /\+3 PE/); assert.match(claim, /Pokébola/); assert.match(claim, /mochila resgatar/);
