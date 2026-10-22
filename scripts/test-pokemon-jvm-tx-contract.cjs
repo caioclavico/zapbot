@@ -65,7 +65,7 @@ async function main() {
     ODISSEU_BRIDGE_TOKEN: TOKEN,
     ODISSEU_BRIDGE_SEED: 'true',
     ODISSEU_BRIDGE_SYSTEM: 'odisseu-m42-contract',
-    ODISSEU_BRIDGE_STORAGE: '.datomic-local/m42-contract',
+    ODISSEU_BRIDGE_STORAGE: require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'odisseu-m42-')),
     ODISSEU_BRIDGE_DB: 'bridge-tx-contract',
     CLJ_CONFIG: process.env.CLJ_CONFIG || path.join(ROOT, '.tools/clj-config'),
     GITLIBS: process.env.GITLIBS || path.join(ROOT, '.tools/gitlibs')
