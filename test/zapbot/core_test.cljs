@@ -3,6 +3,7 @@
             [zapbot.recursos :as recursos]
             [zapbot.desempenho :as desempenho]
             [zapbot.config :as config]
+            [zapbot.whatsapp-saude :as saude]
             [zapbot.core :as core]))
 
 (deftest caminho-sessao-producao-rejeita-apenas-path-exato
@@ -143,7 +144,9 @@
                         recursos/iniciar! (fn [recebido]
                                             (is (identical? client recebido))
                                             (swap! monitores inc))
-                        zapbot.whatsapp-saude/servir! (fn [& _])
+                        saude/servir! (fn
+                                        ([_ _] nil)
+                                        ([_ _ _] nil))
                         zapbot.armazenamento/iniciar! (fn [] (js/Promise.resolve nil))]
             (let [primeira (core/main)]
               (is (nil? (core/main)))
@@ -197,6 +200,7 @@
   (let [medidos (atom 0) processados (atom []) ctx #js {:teste true}]
     (with-redefs [zapbot.config/app-env "development"
                   zapbot.config/dev-group-id "teste@g.us"
+                  zapbot.config/chat-autorizado? #(= % "teste@g.us")
                   zapbot.config/prefix "!"
                   recursos/medir-comando! (fn [executar] (swap! medidos inc) (executar))
                   desempenho/acompanhar-mensagem! (fn [_ executar] (executar ctx))

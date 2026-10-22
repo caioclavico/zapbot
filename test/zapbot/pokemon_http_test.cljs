@@ -270,11 +270,14 @@
 (deftest falha-de-midia-preserva-o-texto-sem-renderizar-no-bot
   (async done
     (let [envios (atom [])
+          tentativas (atom 0)
           cliente #js {:media (fn [_] (p/rejected (js/Error. "mídia indisponível")))}]
       (-> (http/enviar-acao! cliente
              (fn [conteudo opcoes]
-               (swap! envios conj [conteudo (js->clj (.-mentions opcoes))])
-               (p/resolved nil))
+               (if (= 1 (swap! tentativas inc))
+                 (p/rejected (js/Error. "envio de mídia indisponível"))
+                 (do (swap! envios conj [conteudo (js->clj (.-mentions opcoes))])
+                     (p/resolved nil))))
              nil {:type "image" :mediaId "foto" :mimeType "image/png" :filename "foto.png"
                   :text "Resultado da captura" :mentions ["treinador@lid"]})
           (p/then (fn [_]

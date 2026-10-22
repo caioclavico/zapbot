@@ -60,12 +60,15 @@
                       (is (false? (armazenamento/cliente-ativo?)))
                       ;; Não pode ter construído Client nesta chamada.
                       (is (= antes-construido (armazenamento/cliente-construido?)))
-                      (-> (armazenamento/salvar-confirmado! "pokemon-http-deliveries" {"x" 1})
-                          (p/then (fn [_]
-                                    (is (= {"x" 1} (armazenamento/obter "pokemon-http-deliveries")))
-                                    (done))))))
+                      (p/catch
+                       (p/then (armazenamento/salvar-confirmado! "pokemon-http-deliveries" {"x" 1})
+                               (fn [_] (is false "deveria falhar sem Cassandra")))
+                       (fn [erro]
+                         (is (str/includes? (.-message erro) "indisponível"))))))
             (p/catch (fn [erro]
                        (is false (str erro))
-                       (done)))
+                       nil))
             (p/finally (fn []
-                         (reset! armazenamento/client antes-client))))))))
+                         (reset! armazenamento/client antes-client)
+                         (is (nil? (armazenamento/obter "pokemon-http-deliveries")))
+                         (done))))))))
