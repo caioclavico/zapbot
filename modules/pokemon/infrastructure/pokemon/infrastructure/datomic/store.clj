@@ -37,6 +37,7 @@
             [pokemon.infrastructure.datomic.pvp-store :as pvp-store]
             [pokemon.infrastructure.datomic.raid-store :as raid-store]
             [pokemon.infrastructure.datomic.shop-store :as shop-store]
+            [pokemon.infrastructure.datomic.trade-store :as trade-store]
             [pokemon.infrastructure.datomic.schema :as schema]))
 
 (def ^:private max-cas-attempts 12)
@@ -833,6 +834,21 @@
     (mission-reads/prepare! conn writer options))
 
   ports/TrainerStore
+
+  (create-trade! [_ request]
+    (trade-store/create! conn request))
+  (get-trade [_ trade-id]
+    (trade-store/get-trade conn trade-id))
+  (list-trades [_ chat-id player-id]
+    (trade-store/list-trades conn chat-id player-id))
+  (accept-trade! [_ request]
+    (trade-store/accept! conn request))
+  (refuse-trade! [_ request]
+    (trade-store/refuse! conn request))
+  (cancel-trade! [_ request]
+    (trade-store/cancel! conn request))
+  (complete-trade! [_ request]
+    (trade-store/complete! conn request))
 
   (claim-daily-missions! [_ writer request]
     (run-mission-operation!* conn writer :daily request))
@@ -3190,15 +3206,3 @@
   "Constrói store a partir de uma conexão Datomic já aberta."
   [conn]
   (->DatomicTrainerStore conn))
-            [pokemon.infrastructure.datomic.trade-store :as trade-store]
-
-  (create-trade! [_ request]
-    (trade-store/create! conn request))
-  (get-trade [_ trade-id]
-    (trade-store/get-trade conn trade-id))
-  (list-trades [_ chat-id player-id]
-    (trade-store/list-trades conn chat-id player-id))
-  (accept-trade! [_ request] (trade-store/accept! conn request))
-  (refuse-trade! [_ request] (trade-store/refuse! conn request))
-  (cancel-trade! [_ request] (trade-store/cancel! conn request))
-  (complete-trade! [_ request] (trade-store/complete! conn request))
