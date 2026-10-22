@@ -1,14 +1,18 @@
 ;; A4.4.1 — propostas bilaterais, sem transferência de Pokémon.
 [
  {:db/ident :trade/id :db/valueType :db.type/string :db/cardinality :db.cardinality/one :db/unique :db.unique/identity}
- {:db/ident :trade/chat-id :db/valueType :db.type/string :db/cardinality :db.cardinality/one :db/index true}
- {:db/ident :trade/player-a :db/valueType :db.type/string :db/cardinality :db.cardinality/one :db/index true}
- {:db/ident :trade/player-b :db/valueType :db.type/string :db/cardinality :db.cardinality/one :db/index true}
+ {:db/ident :trade/chat-id :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :trade/player-a :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :trade/player-b :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
  {:db/ident :trade/save-a :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
  {:db/ident :trade/save-b :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
- {:db/ident :trade/state :db/valueType :db.type/string :db/cardinality :db.cardinality/one :db/index true}
+ {:db/ident :trade/state :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
  {:db/ident :trade/created-at :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
- {:db/ident :trade/expires-at :db/valueType :db.type/long :db/cardinality :db.cardinality/one :db/index true}
+ {:db/ident :trade/expires-at :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
  {:db/ident :trade/revision :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :trade/fence-a :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :trade/fence-b :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :trade/save-revision-a :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :trade/save-revision-b :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
  {:db/ident :trade/context-edn :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
 ]
