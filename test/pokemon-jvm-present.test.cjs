@@ -18,7 +18,7 @@ test('resolveCommand mapeia aliases do legado', () => {
   assert.equal(present.resolveCommand(['cacar']), 'cacar');
   assert.equal(present.resolveCommand(['1']), 'atacar');
   assert.equal(present.resolveCommand(['4']), 'atacar');
-  assert.equal(present.resolveCommand(['batalhar']), null);
+  assert.equal(present.resolveCommand(['batalhar']), 'batalhar');
 });
 
 test('formatMainMenu e jornada sem jargão técnico', () => {

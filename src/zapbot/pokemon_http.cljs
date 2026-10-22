@@ -116,7 +116,9 @@
         consulta-bug? (and pokemon? (or (= "bugs" subcomando)
                                         (and (= "bug" subcomando) (contains? #{"ver" "resolver" "res"} acao))))
         anterior (when bug? (some-> (historico/mensagem-anterior message) (assoc :origem "anterior")))
-        cita? (and pokemon? (or bug? (contains? #{"doar" "doa" "negociar" "neg"} subcomando))
+        ;; Doações continuam aceitando o autor citado; negociação usa somente
+        ;; menções reais, para que uma resposta citada nunca autorize uma troca.
+        cita? (and pokemon? (or bug? (contains? #{"doar" "doa"} subcomando))
                    (.-hasQuotedMsg message) (fn? (.-getQuotedMessage message)))
         mencionados (vec (keep serializar-id (array-seq (or (.-mentionedIds message) #js []))))]
     (p/let [contato (desempenho/medir! ctx "pokemon_contexto_whatsapp"

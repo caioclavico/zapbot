@@ -162,7 +162,7 @@ test('comandos simulados: treinador e coleção formatados', async () => {
     assert.match(env.messages[0].text, /Squirtle/);
 
     const env2 = await dispatch(client, msg, ['tm']);
-    assert.match(env2.messages[0].text, /coleção/i);
+    assert.match(env2.messages[0].text, /seu time/i);
     assert.match(env2.messages[0].text, /Pidgey/);
   });
 });

@@ -18,12 +18,18 @@ const env = {
   ODISSEU_BRIDGE_TOKEN: token, ODISSEU_BRIDGE_SEED: 'false',
   ODISSEU_BRIDGE_SYSTEM: `trade-e2e-${path.basename(storage)}`,
   ODISSEU_BRIDGE_STORAGE: storage, ODISSEU_BRIDGE_DB: 'trade-e2e',
-  CLOJURE_BIN: process.env.CLOJURE_BIN || '/usr/local/bin/clojure'
+  CLOJURE_BIN: process.env.CLOJURE_BIN || 'clojure'
 };
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function main() {
   const jvm = spawn(env.CLOJURE_BIN, ['-M:bridge-http'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let jvmStdout = '';
+  let jvmStderr = '';
+  let spawnError = null;
+  jvm.stdout.on('data', chunk => { jvmStdout = (jvmStdout + chunk.toString()).slice(-4000); });
+  jvm.stderr.on('data', chunk => { jvmStderr = (jvmStderr + chunk.toString()).slice(-4000); });
+  jvm.on('error', error => { spawnError = error; });
   const client = createClient({ baseUrl: `http://127.0.0.1:${port}`, token, timeoutMs: 8000 });
   const requestId = `trade-e2e-${Date.now()}`;
   const base = { chatId: process.env.TRADE_CHAT_ID || '', playerId: process.env.TRADE_PLAYER_A || '' };
@@ -34,7 +40,18 @@ async function main() {
     for (let i = 0; i < 60 && !healthy; i++) {
       try { healthy = (await client.health()).status === 'up'; } catch (_) { await sleep(250); }
     }
-    if (!healthy) throw new Error('bridge JVM não ficou healthy');
+    if (!healthy) {
+      const detail = {
+        executable: env.CLOJURE_BIN,
+        cwd: root,
+        port,
+        spawnError: spawnError && spawnError.code,
+        exitCode: jvm.exitCode,
+        stdoutTail: jvmStdout,
+        stderrTail: jvmStderr
+      };
+      throw new Error(`bridge JVM não ficou healthy: ${JSON.stringify(detail)}`);
+    }
 
     // A criação exige uma única menção real; zero/múltiplas são rejeitadas antes do HTTP.
     const chatId = process.env.TRADE_CHAT_ID || `trade-e2e-chat-${path.basename(storage)}`;
