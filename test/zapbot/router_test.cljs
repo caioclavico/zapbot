@@ -108,3 +108,46 @@
                            ["loja" ""]] @chamadas))))
           (.catch (fn [erro] (is false (str erro))))
           (.finally done)))))
+
+(deftest comandos-neg-sao-roteados-explicitamente
+  (async done
+    (let [chamadas (atom [])]
+      (with-redefs [config/prefix "!"
+                    bloqueio/chat-id (fn [_] "chat@c.us")
+                    bloqueio/bot-bloqueado? (fn [_] false)
+                    bloqueio/comando-bloqueado? (fn [_ _] false)
+                    pokemon/executar (fn [_ cmd args]
+                                       (swap! chamadas conj [cmd args])
+                                       (js/Promise.resolve :ok))]
+        (-> (js/Promise.all
+             (clj->js (map #(router/processar (mensagem %))
+                           ["!neg" "!neg 2 3 @treinador" "!neg aceitar 123"
+                            "!neg confirmar 123" "!neg recusar 123" "!neg cancelar 123"])))
+            (.then (fn [_]
+                     (is (= [["neg" ""] ["neg" "2 3 @treinador"] ["neg" "aceitar 123"]
+                             ["neg" "confirmar 123"] ["neg" "recusar 123"] ["neg" "cancelar 123"]]
+                            @chamadas))
+                     (done)))
+            (.catch (fn [erro] (is false (str erro)) (done))))))))
+
+(deftest aliases-pk-neg-sao-encaminhados-ao-adaptador-pokemon
+  (async done
+    (let [jogar (atom []) executar (atom [])]
+      (with-redefs [config/prefix "!"
+                    bloqueio/chat-id (fn [_] "chat@c.us")
+                    bloqueio/bot-bloqueado? (fn [_] false)
+                    bloqueio/comando-bloqueado? (fn [_ _] false)
+                    pokemon/jogar (fn [_ args]
+                                    (swap! jogar conj args)
+                                    (js/Promise.resolve :ok))
+                    pokemon/executar (fn [_ cmd args]
+                                       (swap! executar conj [cmd args])
+                                       (js/Promise.resolve :ok))]
+        (-> (js/Promise.all
+             (clj->js [(router/processar (mensagem "!pk neg"))
+                       (router/processar (mensagem "!pk negociar"))]))
+            (.then (fn [_]
+                     (is (= ["neg" "negociar"] @jogar))
+                     (is (empty? @executar))
+                     (done)))
+            (.catch (fn [erro] (is false (str erro)) (done))))))))

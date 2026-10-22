@@ -89,7 +89,7 @@ function createClient(config = {}) {
   const maxJsonBytes = positive(config.maxJsonBytes, 1024 * 1024);
   const prefix = base.pathname.replace(/\/$/, '');
 
-  function request(method, path, payload) {
+  function request(method, path, payload, extraHeaders = {}) {
     return new Promise((resolve, reject) => {
       const body = payload === undefined ? null : Buffer.from(JSON.stringify(payload));
       if (body && body.length > maxJsonBytes) {
@@ -112,6 +112,7 @@ function createClient(config = {}) {
         headers: {
           Authorization: `Bearer ${config.token}`,
           Accept: 'application/json',
+          ...extraHeaders,
           ...(body ? { 'Content-Type': 'application/json', 'Content-Length': body.length } : {})
         }
       }, res => {
@@ -193,9 +194,9 @@ function createClient(config = {}) {
    * Reconcilia após TIMEOUT: consulta recibo; se existir, retorna; senão reenvia
    * o MESMO body (mesmo operationId). Nunca gera operationId novo.
    */
-  async function mutateOnce(path, body) {
+  async function mutateOnce(path, body, extraHeaders = {}) {
     try {
-      return await request('POST', path, body);
+      return await request('POST', path, body, extraHeaders);
     } catch (err) {
       if (err.code !== 'TIMEOUT' && err.code !== 'CONNECT_TIMEOUT') throw err;
       if (!body || !body.operationId || !body.chatId || !body.playerId) throw err;
@@ -217,7 +218,7 @@ function createClient(config = {}) {
       } catch (lookupErr) {
         if (lookupErr.code === 'OPERATION_NOT_FOUND') {
           // Commit pode não ter ocorrido — reenvia o mesmo operationId (idempotente).
-          return request('POST', path, body);
+          return request('POST', path, body, extraHeaders);
         }
         throw err;
       }
@@ -253,6 +254,19 @@ function createClient(config = {}) {
     creditCoins: (body) => mutateOnce('/v1/rewards/coins', body),
     getOperation: ({ operationId, chatId, playerId }) =>
       request('GET', `/v1/operations/${idPath(operationId)}${q({ chatId, playerId })}`),
+    listTrades: ({ chatId, playerId }) =>
+      request('GET', `/v1/trades${q({ chatId, playerId })}`, undefined,
+        { 'X-Actor-Player-Id': playerId }),
+    createTrade: (body) => mutateOnce('/v1/trades', body,
+      { 'X-Actor-Player-Id': body.playerId }),
+    acceptTrade: (body) => mutateOnce('/v1/trades/accept', body,
+      { 'X-Actor-Player-Id': body.playerId }),
+    completeTrade: (body) => mutateOnce('/v1/trades/complete', body,
+      { 'X-Actor-Player-Id': body.playerId }),
+    refuseTrade: (body) => mutateOnce('/v1/trades/refuse', body,
+      { 'X-Actor-Player-Id': body.playerId }),
+    cancelTrade: (body) => mutateOnce('/v1/trades/cancel', body,
+      { 'X-Actor-Player-Id': body.playerId }),
     getMissions: ({ chatId, playerId, saveId }) =>
       request('GET', `/v1/missions${q({ chatId, playerId, saveId })}`),
     getMissionRewards: ({ chatId, playerId, saveId }) =>

@@ -707,11 +707,81 @@
         player-name (:playerName pedido)
         primeiro (str (or (first args) ""))
         ;; !pk 1‥4 → atacar com o índice preservado em resto.
-        cmd (.resolveCommand jvm-present (clj->js args))
+        primeiro-arg (str/lower-case (str (or (first args) "")))
+        trade? (or (str/starts-with? (str/lower-case (str (:command pedido))) "neg")
+                  (= "neg" primeiro-arg)
+                  (= "negociar" primeiro-arg))
+        ;; !neg já chega sem o token de comando; !pk neg/negociar ainda o
+        ;; contém. Só removê-lo quando estiver realmente presente.
+        trade-args (if (contains? #{"neg" "negociar"} primeiro-arg)
+                     (vec (rest args))
+                     args)
+        cmd (when-not trade? (.resolveCommand jvm-present (clj->js args)))
         resto (if (re-matches #"[1-4]" primeiro)
                 [primeiro]
                 (vec (rest args)))]
-    (if-not cmd
+    (if trade?
+      (let [sub (str/lower-case (str (or (first trade-args) "")))
+            rest-args (vec (rest trade-args))
+            op-id (fn [suffix] (.stableOperationId jvm-transport (:requestId pedido) suffix))
+            ativo! #(.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+            col! #(.getCollection jvm #js {:chatId chat-id :playerId player-id})
+            indice! (fn [texto col]
+                       (let [arr (or (.-collection col) #js [])
+                             idx (parse-indice-1based texto (alength arr))]
+                         (when (nil? idx) (throw (erro-contrato "❓ Índice de Pokémon inválido.")))
+                         (let [p (aget arr idx)]
+                           (or (.-pokemonId p) (.-id p) (.-uuid p)))))
+            body-op (fn [action trade-id]
+                      (p/let [a (ativo!)]
+                        #js {:chatId chat-id :playerId player-id :tradeId trade-id
+                             :saveId (.-activeSaveId a) :fenceGeneration (.-fenceGeneration a)
+                             :operationId (op-id action)}))]
+        (cond
+          (str/blank? sub)
+          (p/let [data (.listTrades jvm #js {:chatId chat-id :playerId player-id})
+                  trades (or (.-trades data) #js [])]
+            (envelope-jvm pedido (if (zero? (alength trades))
+                                  "🤝 Nenhuma proposta pendente."
+                                  (str "🤝 Propostas pendentes: " (alength trades)
+                                       ". Use !neg aceitar <id> ou !neg cancelar <id>."))))
+          (= sub "aceitar")
+          (p/let [b (body-op "trade-accept" (first rest-args))
+                  data (.acceptTrade jvm b)] (envelope-jvm pedido (str "✅ Proposta aceita: " (.-tradeId data))))
+          (= sub "confirmar")
+          (p/let [b (body-op "trade-complete" (first rest-args))
+                  listed (.listTrades jvm #js {:chatId chat-id :playerId player-id})
+                  trades (array-seq (or (.-trades listed) #js []))
+                  found (some #(when (= (str (or (.-tradeId %) (.-id %))) (str (first rest-args))) %) trades)]
+            (when found
+              (aset b "pokemonA" (or (.-pokemonA found) (.-pokemon-a found)))
+              (aset b "pokemonB" (or (.-pokemonB found) (.-pokemon-b found))))
+            (let [data (.completeTrade jvm b)]
+              (p/then data (fn [result] (envelope-jvm pedido (str "🤝 Troca concluída: " (or (.-tradeId result) (first rest-args))))))))
+          (= sub "recusar")
+          (p/let [b (body-op "trade-refuse" (first rest-args))
+                  data (.refuseTrade jvm b)] (envelope-jvm pedido (str "🚫 Proposta recusada: " (.-tradeId data))))
+          (= sub "cancelar")
+          (p/let [b (body-op "trade-cancel" (first rest-args))
+                  data (.cancelTrade jvm b)] (envelope-jvm pedido (str "🚫 Proposta cancelada: " (.-tradeId data))))
+          (and (= 3 (count trade-args)) (re-matches #"[1-9][0-9]*" (first trade-args)))
+          (let [[meu outro menc] trade-args
+                mentions (vec (get-in pedido [:context :mentionedIds]))
+                target (first mentions)]
+            (when-not (= 1 (count mentions))
+              (throw (erro-contrato "❓ Mencione exatamente um treinador.")))
+            (p/let [a (ativo!) ca (col!) at (.getActiveSave jvm #js {:chatId chat-id :playerId target})
+                    ct (.getCollection jvm #js {:chatId chat-id :playerId target})
+                    pokemon-a (indice! meu ca) pokemon-b (indice! outro ct)
+                    data (.createTrade jvm #js {:chatId chat-id :playerId player-id :playerA player-id :playerB target
+                                                :saveA (.-activeSaveId a) :saveB (.-activeSaveId at)
+                                                :fenceGeneration (.-fenceGeneration a)
+                                                :fenceA (.-fenceGeneration a) :fenceB (.-fenceGeneration at)
+                                                :pokemonA pokemon-a :pokemonB pokemon-b
+                                                :operationId (op-id (str "trade-create:" target ":" meu ":" outro))})]
+              (envelope-jvm pedido (str "🤝 Proposta criada: " (or (.-tradeId data) (.-id data))))))
+          :else (throw (erro-contrato "❓ Use !neg <meu índice> <índice do outro> @treinador ou !neg aceitar|confirmar|recusar|cancelar <id>."))))
+      (if-not cmd
       (entregar-envelope-jvm!
        message ctx pedido
        (envelope-jvm pedido (.formatUnavailable jvm-present (str/join " " args))))
@@ -1829,7 +1899,7 @@
 
                 (envelope-jvm pedido
                               (.formatUnavailable jvm-present (str/join " " args))))]
-        (entregar-envelope-jvm! message ctx pedido envelope)))))
+        (entregar-envelope-jvm! message ctx pedido envelope))))))
 
 (defn executar [message comando argumentos]
   (let [ctx (desempenho/contexto-de message)

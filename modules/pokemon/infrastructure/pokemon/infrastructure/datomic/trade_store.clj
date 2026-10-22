@@ -19,6 +19,9 @@
 (defn get-trade [conn id]
   (->trade (d/pull (d/db conn) '[*] [:trade/id id])))
 
+(defn- transact! [conn tx]
+  (d/transact conn tx))
+
 (defn- receipt [db op] (d/pull db '[*] [:operation-receipt/id op]))
 (defn- result-receipt [e hash op]
   (when (:db/id e)
@@ -39,7 +42,8 @@
                           (not= save-a (:player/active-save-id a)) (not= save-b (:player/active-save-id b))
                           (not= fence-a (:player/fence-generation a)) (not= fence-b (:player/fence-generation b)))
                   (throw (err/error :invalid_trade {})))
-              t (trade/create! {:id operation-id :chat-id chat-id :player-a player-a :player-b player-b :save-a save-a :save-b save-b :now now})
+              t (assoc (trade/create! {:id operation-id :chat-id chat-id :player-a player-a :player-b player-b :save-a save-a :save-b save-b :now now})
+                       :context (select-keys request [:pokemon-a :pokemon-b]))
               summary {:trade-id operation-id :state :invited}]
           (try
             (d/transact conn {:tx-data [[:db/cas [:player/key (:player/key a)] :player/active-save-id save-a save-a]
@@ -125,7 +129,7 @@
                      :operation-receipt/player-key (:player/key actor) :operation-receipt/save-id save-id
                      :operation-receipt/summary (pr-str summary)}]]
             (try
-              (d/transact conn {:tx-data tx})
+              (transact! conn {:tx-data tx})
               (assoc (get-trade conn trade-id) :duplicate false)
               (catch Exception ex
                 (or (result-receipt (receipt (d/db conn) operation-id) hash operation-id)
@@ -147,12 +151,82 @@
   (transition-request conn (assoc request :action :expire)
                       :expire :expired nil))
 
+(defn- pokemon-by-id [db id]
+  (d/pull db '[*] [:pokemon/id-pokemon id]))
+
+(defn- joy-holds-pokemon? [db save-key pokemon-id]
+  (boolean
+   (some (fn [eid]
+           (let [raw (:enfermaria-bed/pokemon-edn (d/pull db '[*] eid))]
+             (try (= pokemon-id (or (:id-pokemon (edn/read-string raw))
+                                    (:pokemon/id-pokemon (edn/read-string raw))))
+                  (catch Exception _ false))))
+         (d/q '[:find ?e
+                :in $ ?sk
+                :where [?e :enfermaria-bed/save-key ?sk]] db save-key))))
+
+(defn- unavailable? [db p save-key player pokemon-id]
+  (or (:player/active-battle-id player)
+      (joy-holds-pokemon? db save-key pokemon-id)))
+
+(defn complete! [conn request]
+  "Confirma a troca e move as duas instâncias em uma única transação Datomic."
+  (let [{:keys [operation-id trade-id chat-id player-id save-id fence-generation now pokemon-a pokemon-b]} request
+        payload (reward/canonicalize (select-keys request [:trade-id :chat-id :player-id :save-id :fence-generation :pokemon-a :pokemon-b :now]))
+        hash (reward/payload-hash payload)
+        db (d/db conn)]
+    (or (result-receipt (receipt db operation-id) hash operation-id)
+        (let [tr (get-trade conn trade-id)
+              actor (participant-entity db chat-id player-id)
+              a (participant-entity db chat-id (:player-a tr))
+              b (participant-entity db chat-id (:player-b tr))
+              sa (save-entity db chat-id (:player-a tr) (:save-a tr))
+              sb (save-entity db chat-id (:player-b tr) (:save-b tr))
+              pa (pokemon-by-id db pokemon-a)
+              pb (pokemon-by-id db pokemon-b)
+              sk-a (:save/key sa)
+              sk-b (:save/key sb)]
+          (when-not (and tr (= :accepted (:state tr)) (= chat-id (:chat-id tr))
+                         (= player-id (:player-a tr)) (= save-id (:save-a tr))
+                         (= fence-generation (:fence-a tr))
+                         (= save-id (:player/active-save-id actor))
+                         (= fence-generation (:player/fence-generation actor))
+                         (< (long now) (long (:expires-at tr)))
+                         pa pb (not (unavailable? db pa sk-a a pokemon-a))
+                         (not (unavailable? db pb sk-b b pokemon-b))
+                         (= (:db/id sa) (or (-> pa :pokemon/save :db/id) (:pokemon/save pa)))
+                         (= (:db/id sb) (or (-> pb :pokemon/save :db/id) (:pokemon/save pb))))
+            (throw (err/error :invalid_trade {})))
+          (let [tx [[:db/cas [:trade/id trade-id] :trade/revision (:revision tr) (inc (:revision tr))]
+                    [:db/cas [:player/key (:player/key a)] :player/active-save-id (:save-a tr) (:save-a tr)]
+                    [:db/cas [:player/key (:player/key b)] :player/active-save-id (:save-b tr) (:save-b tr)]
+                    [:db/cas [:player/key (:player/key a)] :player/fence-generation (:fence-a tr) (:fence-a tr)]
+                    [:db/cas [:player/key (:player/key b)] :player/fence-generation (:fence-b tr) (:fence-b tr)]
+                    [:db/cas [:save/key (:save/key sa)] :save/revision (:save/revision sa) (inc (:save/revision sa))]
+                    [:db/cas [:save/key (:save/key sb)] :save/revision (:save/revision sb) (inc (:save/revision sb))]
+                    [:db/cas [:pokemon/id-pokemon pokemon-a] :pokemon/save (:db/id sa) (:db/id sb)]
+                    [:db/cas [:pokemon/id-pokemon pokemon-b] :pokemon/save (:db/id sb) (:db/id sa)]
+                    [:db/add [:pokemon/id-pokemon pokemon-a] :pokemon/save (:db/id sb)]
+                    [:db/add [:pokemon/id-pokemon pokemon-b] :pokemon/save (:db/id sa)]
+                    [:db/add [:trade/id trade-id] :trade/state "completed"]
+                    [:db/add [:trade/id trade-id] :trade/revision (inc (:revision tr))]
+                    {:operation-receipt/id operation-id :operation-receipt/kind "trade-complete"
+                     :operation-receipt/channel "gameplay" :operation-receipt/payload-hash hash
+                     :operation-receipt/player-key (:player/key actor) :operation-receipt/save-id save-id
+                     :operation-receipt/summary (pr-str {:trade-id trade-id :state :completed})}]]
+            (try
+              (transact! conn {:tx-data tx})
+              (assoc (get-trade conn trade-id) :duplicate false)
+              (catch Exception ex
+                (or (result-receipt (receipt (d/db conn) operation-id) hash operation-id)
+                    (throw ex)))))))))
+
 (defn list-trades [conn chat-id player-id]
-  (->> (d/q '[:find [?e ...]
-              :in $ ?chat ?player
-              :where [?e :trade/chat-id ?chat]
-                     [?e :trade/player-a ?a]
-                     [?e :trade/player-b ?b]
-                     [(or (= ?player ?a) (= ?player ?b))]]
-            (d/db conn) chat-id player-id)
-       (map #(->trade (d/pull (d/db conn) '[*] %))) vec))
+  (->> (concat
+        (d/q '[:find ?e :in $ ?chat ?player
+               :where [?e :trade/chat-id ?chat] [?e :trade/player-a ?player]]
+             (d/db conn) chat-id player-id)
+        (d/q '[:find ?e :in $ ?chat ?player
+               :where [?e :trade/chat-id ?chat] [?e :trade/player-b ?player]]
+             (d/db conn) chat-id player-id))
+       (map #(->trade (d/pull (d/db conn) '[*] (first %)))) vec))

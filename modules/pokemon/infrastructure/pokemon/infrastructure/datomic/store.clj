@@ -3190,3 +3190,15 @@
   "Constrói store a partir de uma conexão Datomic já aberta."
   [conn]
   (->DatomicTrainerStore conn))
+            [pokemon.infrastructure.datomic.trade-store :as trade-store]
+
+  (create-trade! [_ request]
+    (trade-store/create! conn request))
+  (get-trade [_ trade-id]
+    (trade-store/get-trade conn trade-id))
+  (list-trades [_ chat-id player-id]
+    (trade-store/list-trades conn chat-id player-id))
+  (accept-trade! [_ request] (trade-store/accept! conn request))
+  (refuse-trade! [_ request] (trade-store/refuse! conn request))
+  (cancel-trade! [_ request] (trade-store/cancel! conn request))
+  (complete-trade! [_ request] (trade-store/complete! conn request))

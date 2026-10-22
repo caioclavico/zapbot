@@ -8,6 +8,7 @@
             [pokemon.application.mission-queries :as missions]
             [pokemon.application.mission-economy :as mission-economy]
             [pokemon.application.bridge-tx :as tx]
+            [pokemon.application.ports :as ports]
             [pokemon.domain.errors :as err]
             [pokemon.infrastructure.http.json :as json])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
@@ -308,6 +309,46 @@
                       (when (or (str/blank? chat-id) (str/blank? player-id))
                         (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
                       (ok! ex (reads/trainer store chat-id player-id))))
+
+                (contains? #{"/v1/trades" "/v1/trades/accept" "/v1/trades/refuse"
+                             "/v1/trades/cancel" "/v1/trades/complete"} path)
+                (let [body (when (not= method "GET") (read-body ex))
+                      src (if (= method "GET") qs body)
+                      chat (g src "chatId") player (g src "playerId")
+                      actor (header ex "X-Actor-Player-Id")
+                      op (g src "operationId") trade-id (g src "tradeId")
+                      request (cond-> {:operation-id op :chat-id chat :player-id player
+                                       :trade-id trade-id :save-id (g src "saveId")
+                                       :fence-generation (long-or-nil (g src "fenceGeneration"))
+                                       :now (long (or (long-or-nil (g src "now")) (System/currentTimeMillis)))}
+                                (g src "pokemonA") (assoc :pokemon-a (g src "pokemonA"))
+                                (g src "pokemonB") (assoc :pokemon-b (g src "pokemonB")))]
+                  (if (and (= path "/v1/trades") (= method "GET"))
+                    (do (require-method! ex #{"GET"})
+                        (when (or (str/blank? chat) (str/blank? player)
+                                  (str/blank? actor) (not= actor player))
+                          (throw (err/error :invalid_query {})))
+                        (ok! ex {:trades (ports/list-trades store chat player)}))
+                    (do (require-method! ex #{"POST"})
+                        (when (or (str/blank? chat) (str/blank? player) (str/blank? actor)
+                                  (not= actor player) (str/blank? op)
+                                  (and (not= path "/v1/trades") (str/blank? trade-id))
+                                  (nil? (:fence-generation request)))
+                          (throw (err/error :invalid_query {})))
+                        (ok! ex
+                             (if (= path "/v1/trades")
+                               (ports/create-trade! store (assoc request
+                                                                  :player-a (g src "playerA")
+                                                                  :player-b (g src "playerB")
+                                                                  :save-a (g src "saveA")
+                                                                  :save-b (g src "saveB")
+                                                                  :fence-a (long-or-nil (g src "fenceA"))
+                                                                  :fence-b (long-or-nil (g src "fenceB"))))
+                               (case path
+                               "/v1/trades/accept" (ports/accept-trade! store request)
+                               "/v1/trades/refuse" (ports/refuse-trade! store request)
+                               "/v1/trades/cancel" (ports/cancel-trade! store request)
+                               (ports/complete-trade! store request)))))))
 
                 (= path "/v1/collection")
                 (do (require-method! ex #{"GET"})

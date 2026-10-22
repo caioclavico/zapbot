@@ -190,6 +190,14 @@
   (get-receipt [this operation-id]
     "Recibo de operação por id ou nil (reconciliação M4.2).")
 
+  (create-trade! [this request] "Cria proposta canônica de negociação.")
+  (get-trade [this trade-id] "Consulta proposta canônica.")
+  (list-trades [this chat-id player-id] "Lista propostas visíveis ao participante.")
+  (accept-trade! [this request] "Aceita proposta.")
+  (refuse-trade! [this request] "Recusa proposta.")
+  (cancel-trade! [this request] "Cancela proposta.")
+  (complete-trade! [this request] "Confirma e conclui troca.")
+
   (claim-starter-kit! [this writer-ctx request]
     "Concede 10 Pokébolas do kit inicial uma vez por save (fence + recibo).")
 

@@ -143,6 +143,7 @@
     "status"    (status/status-vm)
     "quiz"      (quiz/jogar message (str/join " " args))
     ("pokemon" "pk") (pokemon/jogar message (str/join " " args))
+    "neg"       (pokemon/executar message "neg" (str/join " " args))
     ("pokedex" "dex" "pdx") (pokemon/executar message "pokedex" (str/join " " args))
     ("presente" "presentes") (pokemon/jogar message (str "presente " (str/join " " args)))
     ("missoes" "missões") (pokemon/jogar message (str "missoes " (str/join " " args)))

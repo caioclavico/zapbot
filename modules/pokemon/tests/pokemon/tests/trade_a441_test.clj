@@ -28,14 +28,18 @@
   (is (= :invalid_trade (try (trade/create! (assoc base :player-b "ash")) :ok
                              (catch Exception e (err/error-code e))))))
 
-(defn- fixture []
-  (let [client (persistence/client {:system (str "trade-test-" (UUID/randomUUID))
-                                    :storage-dir ".datomic-local/trade-a441-tests"})
-        conn (persistence/ensure-db! client "trades")
+(defn fixture* [{:keys [storage-dir system db-name]
+                :or {storage-dir ".datomic-local/trade-a441-tests"
+                     system (str "trade-test-" (UUID/randomUUID))
+                     db-name "trades"}}]
+  (let [client (persistence/client {:system system :storage-dir storage-dir})
+        conn (persistence/ensure-db! client db-name)
         s (store/make-store conn)]
     (ports/ensure-schema! s)
     (doseq [p ["ash" "misty"]] (trainer/create-trainer! s {:chat-id "chat" :player-id p}))
     {:conn conn :store s}))
+
+(defn- fixture [] (fixture* {}))
 
 (deftest create-persiste-recibo-e-reabre
   (let [{:keys [conn store]} (fixture)
@@ -151,3 +155,193 @@
                  (trades/accept! conn {:operation-id "trade-fence-accept" :trade-id "trade-fence-create"
                                        :chat-id "chat" :player-id "misty" :save-id "a"
                                        :fence-generation (inc fb) :now 1001})))))
+
+(defn- seed-trade-pokemon! [conn store]
+  (let [sa (d/pull (d/db conn) '[*] [:save/key "chat|ash|a"])
+        sb (d/pull (d/db conn) '[*] [:save/key "chat|misty|a"])]
+    (d/transact conn {:tx-data [{:pokemon/id-pokemon "poke-ash"
+                                 :pokemon/key "poke-ash"
+                                 :pokemon/save (:db/id sa)
+                                 :pokemon/species "pikachu"
+                                 :pokemon/nickname "Sparky"
+                                 :pokemon/shiny false
+                                 :pokemon/xp 123
+                                 :pokemon/level 7
+                                 :pokemon/hp 35
+                                 :pokemon/hp-atual 30
+                                 :pokemon/collection-index 0}
+                                {:pokemon/id-pokemon "poke-misty"
+                                 :pokemon/key "poke-misty"
+                                 :pokemon/save (:db/id sb)
+                                 :pokemon/species "eevee"
+                                 :pokemon/nickname "Vee"
+                                 :pokemon/shiny true
+                                 :pokemon/xp 456
+                                 :pokemon/level 9
+                                 :pokemon/hp 40
+                                 :pokemon/hp-atual 40
+                                 :pokemon/collection-index 0}]})))
+
+(deftest transferencia-bilateral-atomica
+  (let [{:keys [conn store]} (fixture)
+        _ (seed-trade-pokemon! conn store)
+        fa (:fence-generation (ports/get-player store "chat" "ash"))
+        fb (:fence-generation (ports/get-player store "chat" "misty"))
+        create {:operation-id "trade-complete-create" :chat-id "chat"
+                :player-a "ash" :player-b "misty" :save-a "a" :save-b "a"
+                :fence-a fa :fence-b fb :pokemon-a "poke-ash" :pokemon-b "poke-misty" :now 1000}
+        _ (trades/create! conn create)
+        _ (trades/accept! conn {:operation-id "trade-complete-accept" :trade-id "trade-complete-create"
+                                :chat-id "chat" :player-id "misty" :save-id "a"
+                                :fence-generation fb :now 1001})
+        result (trades/complete! conn {:operation-id "trade-complete" :trade-id "trade-complete-create"
+                                       :chat-id "chat" :player-id "ash" :save-id "a"
+                                       :fence-generation fa :pokemon-a "poke-ash" :pokemon-b "poke-misty"
+                                       :now 1002})
+        ash-save (:db/id (d/pull (d/db conn) '[*] [:save/key "chat|ash|a"]))
+        misty-save (:db/id (d/pull (d/db conn) '[*] [:save/key "chat|misty|a"]))
+        pa (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-ash"])
+        pb (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-misty"])
+        receipt (d/pull (d/db conn) '[*] [:operation-receipt/id "trade-complete"])]
+    (is (= :completed (:state result)))
+    (is (= misty-save (or (-> pa :pokemon/save :db/id) (:pokemon/save pa))))
+    (is (= ash-save (or (-> pb :pokemon/save :db/id) (:pokemon/save pb))))
+    (is (= "Sparky" (:pokemon/nickname pa)))
+    (is (= "pikachu" (:pokemon/species pa)))
+    (is (= "eevee" (:pokemon/species pb)))
+    (is (= 456 (:pokemon/xp pb)))
+    (is (= "trade-complete" (:operation-receipt/kind receipt)))
+    (is (= :completed (:state (trades/get-trade conn "trade-complete-create"))))))
+
+(declare accepted-trade-fixture)
+
+(deftest troca-preserva-contagem-da-colecao
+  (let [{:keys [conn store]} (accepted-trade-fixture)
+        before (count (d/q '[:find ?p :where [?p :pokemon/id-pokemon]] (d/db conn)))
+        fa (:fence-generation (ports/get-player store "chat" "ash"))]
+    (trades/complete! conn {:operation-id "trade-count-complete" :trade-id "trade-idem-create"
+                            :chat-id "chat" :player-id "ash" :save-id "a"
+                            :fence-generation fa :pokemon-a "poke-ash" :pokemon-b "poke-misty"
+                            :now 1002})
+    (is (= before (count (d/q '[:find ?p :where [?p :pokemon/id-pokemon]] (d/db conn)))))))
+
+(defn- accepted-trade-fixture []
+  (let [{:keys [conn store]} (fixture)
+        _ (seed-trade-pokemon! conn store)
+        fa (:fence-generation (ports/get-player store "chat" "ash"))
+        fb (:fence-generation (ports/get-player store "chat" "misty"))
+        create {:operation-id "trade-idem-create" :chat-id "chat" :player-a "ash" :player-b "misty"
+                :save-a "a" :save-b "a" :fence-a fa :fence-b fb
+                :pokemon-a "poke-ash" :pokemon-b "poke-misty" :now 1000}]
+    (trades/create! conn create)
+    (trades/accept! conn {:operation-id "trade-idem-accept" :trade-id "trade-idem-create"
+                          :chat-id "chat" :player-id "misty" :save-id "a"
+                          :fence-generation fb :now 1001})
+    {:conn conn :store store :fa fa :fb fb}))
+
+(deftest complete-idempotente-e-hash
+  (let [{:keys [conn fa]} (accepted-trade-fixture)
+        request {:operation-id "trade-idem-complete" :trade-id "trade-idem-create"
+                 :chat-id "chat" :player-id "ash" :save-id "a" :fence-generation fa
+                 :pokemon-a "poke-ash" :pokemon-b "poke-misty" :now 1002}
+        first (trades/complete! conn request)
+        retry (trades/complete! conn request)]
+    (is (false? (:duplicate first)))
+    (is (true? (:duplicate retry)))
+    (is (= :completed (:state (trades/get-trade conn "trade-idem-create"))))
+    (is (thrown? Exception
+                 (trades/complete! conn (assoc request :now 1003))))))
+
+(deftest complete-concorrente
+  (let [{:keys [conn fa]} (accepted-trade-fixture)
+        request {:operation-id "trade-race-complete" :trade-id "trade-idem-create"
+                 :chat-id "chat" :player-id "ash" :save-id "a" :fence-generation fa
+                 :pokemon-a "poke-ash" :pokemon-b "poke-misty" :now 1002}
+        outcomes (doall (pmap (fn [_]
+                                (try (trades/complete! conn request)
+                                     (catch Exception e e)))
+                              [0 1]))
+        trade (trades/get-trade conn "trade-idem-create")
+        receipt (d/pull (d/db conn) '[*] [:operation-receipt/id "trade-race-complete"])]
+    (is (= 2 (count outcomes)))
+    (is (every? map? outcomes))
+    (is (= :completed (:state trade)))
+    (is (= "trade-complete" (:operation-receipt/kind receipt)))))
+
+(deftest complete-rejeita-save-fence-revisao-e-posse-alterados
+  (let [{:keys [conn store]} (accepted-trade-fixture)
+        fa (:fence-generation (ports/get-player store "chat" "ash"))
+        before-a (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-ash"])]
+    (d/transact conn {:tx-data [[:db/add [:player/key "chat|ash"] :player/fence-generation (inc fa)]]})
+    (is (thrown? Exception
+                 (trades/complete! conn {:operation-id "trade-invalid-fence" :trade-id "trade-idem-create"
+                                         :chat-id "chat" :player-id "ash" :save-id "a"
+                                         :fence-generation fa :pokemon-a "poke-ash" :pokemon-b "poke-misty"
+                                         :now 1002})))
+    (is (= (:pokemon/save before-a)
+           (:pokemon/save (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-ash"]))))
+    (d/transact conn {:tx-data [[:db/add [:pokemon/id-pokemon "poke-ash"] :pokemon/save
+                                 (:db/id (d/pull (d/db conn) '[*] [:save/key "chat|misty|a"]))]]})
+    (is (thrown? Exception
+                 (trades/complete! conn {:operation-id "trade-invalid-owner" :trade-id "trade-idem-create"
+                                         :chat-id "chat" :player-id "ash" :save-id "a"
+                                         :fence-generation (inc fa) :pokemon-a "poke-ash" :pokemon-b "poke-misty"
+                                         :now 1002})))))
+
+(deftest complete-rejeita-batalha-e-joy
+  (let [{:keys [conn fa]} (accepted-trade-fixture)
+        base {:trade-id "trade-idem-create" :chat-id "chat" :player-id "ash" :save-id "a"
+              :fence-generation fa :pokemon-a "poke-ash" :pokemon-b "poke-misty" :now 1002}]
+    (d/transact conn {:tx-data [[:db/add [:player/key "chat|ash"] :player/active-battle-id "battle-1"]]})
+    (is (thrown? Exception (trades/complete! conn (assoc base :operation-id "trade-battle"))))
+    (is (= :accepted (:state (trades/get-trade conn "trade-idem-create"))))
+    (d/transact conn {:tx-data [[:db/retract [:player/key "chat|ash"] :player/active-battle-id "battle-1"]
+                                {:enfermaria-bed/key "chat|ash|a|bed-1"
+                                 :enfermaria-bed/save-key "chat|ash|a"
+                                 :enfermaria-bed/bed-id "bed-1"
+                                 :enfermaria-bed/pokemon-edn (pr-str {:id-pokemon "poke-ash"})
+                                 :enfermaria-bed/pronto-em 999999}]})
+    (is (thrown? Exception (trades/complete! conn (assoc base :operation-id "trade-joy"))))
+    (is (= :accepted (:state (trades/get-trade conn "trade-idem-create"))))))
+
+(deftest complete-falha-antes-do-commit-nao-muta
+  (let [{:keys [conn fa]} (accepted-trade-fixture)
+        request {:operation-id "trade-precommit-failure" :trade-id "trade-idem-create"
+                 :chat-id "chat" :player-id "ash" :save-id "a"
+                 :fence-generation (inc fa) :pokemon-a "poke-ash" :pokemon-b "poke-misty"
+                 :now 1002}]
+    (is (thrown? Exception (trades/complete! conn request)))
+    (is (= :accepted (:state (trades/get-trade conn "trade-idem-create"))))
+    (is (nil? (:db/id (d/pull (d/db conn) '[*] [:operation-receipt/id "trade-precommit-failure"]))))
+    (is (= (:db/id (d/pull (d/db conn) '[*] [:save/key "chat|ash|a"]))
+           (or (-> (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-ash"]) :pokemon/save :db/id)
+               (:pokemon/save (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-ash"])))))))
+
+(deftest complete-reconcilia-apos-commit
+  (let [{:keys [conn fa]} (accepted-trade-fixture)
+        request {:operation-id "trade-postcommit-recovery" :trade-id "trade-idem-create"
+                 :chat-id "chat" :player-id "ash" :save-id "a" :fence-generation fa
+                 :pokemon-a "poke-ash" :pokemon-b "poke-misty" :now 1002}
+        committed (trades/complete! conn request)
+        recovered (trades/complete! conn request)
+        receipt (d/pull (d/db conn) '[*] [:operation-receipt/id "trade-postcommit-recovery"])]
+    (is (false? (:duplicate committed)))
+    (is (true? (:duplicate recovered)))
+    (is (= :completed (:state (trades/get-trade conn "trade-idem-create"))))
+    (is (= "trade-complete" (:operation-receipt/kind receipt)))))
+
+(deftest complete-recupera-excecao-apos-transact
+  (let [{:keys [conn fa]} (accepted-trade-fixture)
+        request {:operation-id "trade-injected-response" :trade-id "trade-idem-create"
+                 :chat-id "chat" :player-id "ash" :save-id "a" :fence-generation fa
+                 :pokemon-a "poke-ash" :pokemon-b "poke-misty" :now 1002}
+        result (with-redefs-fn {#'trades/transact!
+                                (fn [c tx]
+                                  (let [r (datomic.client.api/transact c tx)]
+                                    (throw (ex-info "simulated lost response" {:tx r}))))}
+                 #(trades/complete! conn request))
+        receipt (d/pull (d/db conn) '[*] [:operation-receipt/id "trade-injected-response"])]
+    (is (true? (:duplicate result)))
+    (is (= :completed (:state result)))
+    (is (= "trade-complete" (:operation-receipt/kind receipt)))
+    (is (= :completed (:state (trades/get-trade conn "trade-idem-create"))))))
