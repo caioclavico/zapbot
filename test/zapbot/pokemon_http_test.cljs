@@ -46,7 +46,7 @@
     (let [message #js {:id "req" :fromMe true :to "grupo@g.us" :from "bot@c.us"
                        :hasQuotedMsg true
                        :getQuotedMessage (fn [] (p/resolved #js {:author "citado@lid"}))}]
-      (-> (http/contexto-pedido message "pokemon" "neg 1 2")
+      (-> (http/contexto-pedido message "pokemon" "doar 1")
           (p/then (fn [pedido]
                     (is (= "grupo@g.us" (:chatId pedido)))
                     (is (= "Alguém" (:playerName pedido)))
@@ -172,23 +172,25 @@
           client (clj->js {:getMissions (fn [_] (p/resolved missions))})]
       (set! http/jvm-configurado? (fn [] true))
       (reset! http/cliente-jvm client)
-      (-> (isolado!
-           (fn []
-             (p/let [_ (http/executar (message "missoes-todas") "pokemon" "missoes")
-                     _ (http/executar (message "missoes-diarias") "pokemon" "missoes diarias")
-                     _ (http/executar (message "missoes-semanais") "pokemon" "missoes semanais")]
-               (let [[todas diarias semanais] @envios]
-                 (is (and (re-find #"Diária exclusiva" todas)
-                          (re-find #"Semanal exclusiva" todas)))
-                 (is (and (re-find #"Diária exclusiva" diarias)
-                          (nil? (re-find #"Semanal exclusiva" diarias))))
-                 (is (and (re-find #"Semanal exclusiva" semanais)
-                          (nil? (re-find #"Diária exclusiva" semanais)))))))
-          (p/catch (fn [erro] (is false (str erro))))
-          (p/finally (fn []
-                       (set! http/jvm-configurado? jvm?)
-                       (reset! http/cliente-jvm original)
-                       (done))))))))
+      (p/finally
+       (p/catch
+        (isolado!
+         (fn []
+           (p/let [_ (http/executar (message "missoes-todas") "pokemon" "missoes")
+                   _ (http/executar (message "missoes-diarias") "pokemon" "missoes diarias")
+                   _ (http/executar (message "missoes-semanais") "pokemon" "missoes semanais")]
+             (let [[todas diarias semanais] @envios]
+               (is (and (re-find #"Diária exclusiva" todas)
+                        (re-find #"Semanal exclusiva" todas)))
+               (is (and (re-find #"Diária exclusiva" diarias)
+                        (nil? (re-find #"Semanal exclusiva" diarias))))
+               (is (and (re-find #"Semanal exclusiva" semanais)
+                        (nil? (re-find #"Diária exclusiva" semanais))))))))
+        (fn [erro] (is false (str erro))))
+       (fn []
+         (set! http/jvm-configurado? jvm?)
+         (reset! http/cliente-jvm original)
+         (done))))))
 
 (deftest bug-tambem-usa-servico-como-unico-dono-dos-relatorios
   (async done
