@@ -66,7 +66,7 @@
    {:emoji "📅" :uso "missoes semanais [resgatar]" :desc "Objetivos semanais de ginásios, capturas e PvP com moedas"}
    {:emoji "🤝" :uso "pokemon raid [abrir <liga>|entrar [n]|iniciar|atacar <1-4>|sair|cancelar]" :desc "Enfrente Snorlax com 2 a 6 jogadores da mesma liga; regras em pokemon ajuda raid"}
    {:emoji "💎" :uso "pokemon evoluir <número> <pedra>" :desc "Evolua espécies compatíveis usando uma pedra da mochila"}
-   {:emoji "🔄" :uso "pokemon negociar <seu número> <número do outro> @pessoa" :desc "Proponha uma troca; destinatário aceita e autor confirma usando o ID da proposta"}
+   {:emoji "🔄" :uso "pk troca <seu número> <número do outro> @pessoa" :desc "Proponha uma troca; destinatário aceita e autor confirma usando o ID da proposta"}
    {:emoji "🎉" :uso "pokemon eventos" :desc "Confira as espécies em destaque nas caçadas e o tempo restante do evento"}
    {:emoji "🎁" :uso "presente @amigo" :desc "Envie um cartão comprado na loja com bolas sorteadas para um amigo"}
    {:emoji "📋" :uso "missoes [resgatar]" :desc "Missões diárias com XP de treinador, Pokébolas e chance de Grande ou Ultra Bola"}
@@ -143,7 +143,6 @@
     "status"    (status/status-vm)
     "quiz"      (quiz/jogar message (str/join " " args))
     ("pokemon" "pk") (pokemon/jogar message (str/join " " args))
-    "neg"       (pokemon/executar message "neg" (str/join " " args))
     ("pokedex" "dex" "pdx") (pokemon/executar message "pokedex" (str/join " " args))
     ("presente" "presentes") (pokemon/jogar message (str "presente " (str/join " " args)))
     ("missoes" "missões") (pokemon/jogar message (str "missoes " (str/join " " args)))

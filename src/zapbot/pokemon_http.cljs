@@ -710,12 +710,10 @@
         primeiro (str (or (first args) ""))
         ;; !pk 1‥4 → atacar com o índice preservado em resto.
         primeiro-arg (str/lower-case (str (or (first args) "")))
-        trade? (or (str/starts-with? (str/lower-case (str (:command pedido))) "neg")
-                  (= "neg" primeiro-arg)
-                  (= "negociar" primeiro-arg))
-        ;; !neg já chega sem o token de comando; !pk neg/negociar ainda o
-        ;; contém. Só removê-lo quando estiver realmente presente.
-        trade-args (if (contains? #{"neg" "negociar"} primeiro-arg)
+        trade? (= "troca" primeiro-arg)
+        ;; A negociação só é exposta por !pk troca. O token já vem nos args
+        ;; recebidos de pokemon/jogar e não integra o contrato HTTP.
+        trade-args (if trade?
                      (vec (rest args))
                      args)
         cmd (when-not trade? (.resolveCommand jvm-present (clj->js args)))
@@ -723,7 +721,8 @@
                 [primeiro]
                 (vec (rest args)))]
     (if trade?
-      (let [sub (str/lower-case (str (or (first trade-args) "")))
+      (p/let [envelope
+              (let [sub (str/lower-case (str (or (first trade-args) "")))
             rest-args (vec (rest trade-args))
             op-id (fn [suffix] (.stableOperationId jvm-transport (:requestId pedido) suffix))
             ativo! #(.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
@@ -746,7 +745,7 @@
             (envelope-jvm pedido (if (zero? (alength trades))
                                   "🤝 Nenhuma proposta pendente."
                                   (str "🤝 Propostas pendentes: " (alength trades)
-                                       ". Use !neg aceitar <id> ou !neg cancelar <id>."))))
+                                       ". Use !pk troca aceitar <id> ou !pk troca cancelar <id>."))))
           (= sub "aceitar")
           (p/let [b (body-op "trade-accept" (first rest-args))
                   data (.acceptTrade jvm b)] (envelope-jvm pedido (str "✅ Proposta aceita: " (.-tradeId data))))
@@ -782,7 +781,8 @@
                                                 :pokemonA pokemon-a :pokemonB pokemon-b
                                                 :operationId (op-id (str "trade-create:" target ":" meu ":" outro))})]
               (envelope-jvm pedido (str "🤝 Proposta criada: " (or (.-tradeId data) (.-id data))))))
-          :else (throw (erro-contrato "❓ Use !neg <meu índice> <índice do outro> @treinador ou !neg aceitar|confirmar|recusar|cancelar <id>."))))
+          :else (throw (erro-contrato "❓ Use !pk troca <meu índice> <índice do outro> @treinador ou !pk troca aceitar|confirmar|recusar|cancelar <id>."))))]
+        (entregar-envelope-jvm! message ctx pedido envelope))
       (if-not cmd
       (entregar-envelope-jvm!
        message ctx pedido

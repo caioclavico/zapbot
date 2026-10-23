@@ -16,7 +16,7 @@
                     "cac" "cap" "ini" "dex" "pdx" "tm" "mch" "fav" "tre"
                     "gin" "lig" "evt" "des" "dsf" "fru" "ran" "hist"
                     "abr" "ent" "sal" "usa" "exc" "apa" "rm"
-                    "evo" "neg" "doa" "eqp" "esc" "rmg" "apr" "reap"
+                    "evo" "troca" "doa" "eqp" "esc" "rmg" "apr" "reap"
                     "rev" "can" "mis" "pre" "res"]]
       (is (str/includes? texto (str "`" atalho "`")) atalho)))
   (is (= (ajuda/resposta "ajd") (ajuda/resposta "ajuda atalhos"))))

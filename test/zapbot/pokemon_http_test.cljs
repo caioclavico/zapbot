@@ -295,7 +295,7 @@
     (is (= [mensagem] (http/acoes-de-envio [mensagem])))
     (let [compra (assoc mensagem :text (str "✅ Comprou Poção!\n\n" texto))]
       (is (= [compra] (http/acoes-de-envio [compra]))))))
-(deftest contexto-neg-usa-mencao-real-e-nao-consulta-citacao
+(deftest contexto-troca-usa-mencao-real-e-nao-consulta-citacao
   (async done
     (let [citacoes (atom 0)
           message #js {:id #js {:_serialized "neg-msg"}
@@ -303,7 +303,7 @@
                        :mentionedIds #js [#js {:_serialized "misty@lid"}]
                        :hasQuotedMsg true
                        :getQuotedMessage (fn [] (swap! citacoes inc) (p/resolved #js {:author "forjado@lid"}))}]
-      (-> (http/contexto-pedido message "neg" "2 3 @texto")
+      (-> (http/contexto-pedido message "pokemon" "troca 2 3 @texto")
           (p/then (fn [pedido]
                     (is (= "ash@lid" (:playerId pedido)))
                     (is (= ["misty@lid"] (get-in pedido [:context :mentionedIds])))
@@ -311,7 +311,7 @@
                     (is (zero? @citacoes))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally done)))))
-(deftest neg-rejeita-mencoes-ausentes-ou-ambiguas-e-indice-invalido
+(deftest troca-rejeita-mencoes-ausentes-ou-ambiguas-e-indice-invalido
   (async done
     (let [respostas (atom [])
           original @http/cliente-jvm
@@ -328,18 +328,140 @@
       (reset! http/cliente-jvm client)
       (-> (isolado!
            (fn []
-             (p/let [_ (http/executar (mensagem "neg-sem-mencao" #js [] "2 3 @misty") "neg" "2 3 @misty")
-                     _ (http/executar (mensagem "neg-duas-mencoes"
+             (p/let [_ (http/executar (mensagem "troca-sem-mencao" #js [] "troca 2 3 @misty") "pokemon" "troca 2 3 @misty")
+                     _ (http/executar (mensagem "troca-duas-mencoes"
                                                 #js [#js {:_serialized "misty@lid"}
                                                      #js {:_serialized "brock@lid"}]
-                                                "2 3 @misty") "neg" "2 3 @misty")
-                     _ (http/executar (mensagem "neg-indice-invalido"
+                                                "troca 2 3 @misty") "pokemon" "troca 2 3 @misty")
+                     _ (http/executar (mensagem "troca-indice-invalido"
                                                 #js [#js {:_serialized "misty@lid"}]
-                                                "9 3 @misty") "neg" "9 3 @misty")]
+                                                "troca 9 3 @misty") "pokemon" "troca 9 3 @misty")]
                (is (= 3 (count @respostas)))
                (is (every? #(re-find #"Mencione exatamente um treinador" %)
                            (take 2 @respostas)))
                (is (re-find #"Índice de Pokémon inválido" (last @respostas))))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! http/jvm-configurado? original-config)
+                       (reset! http/cliente-jvm original)
+                       (done)))))))
+
+(deftest troca-entrega-uma-resposta-para-listagem-e-transicoes
+  (async done
+    (let [respostas (atom []) chamadas (atom [])
+          original @http/cliente-jvm
+          original-config http/jvm-configurado?
+          client (clj->js
+                  {:getActiveSave (fn [_] (p/resolved #js {:activeSaveId "save"
+                                                           :fenceGeneration 1}))
+                   :getCollection (fn [_] (p/resolved #js {:collection #js [#js {:pokemonId "p1"}]}))
+                   :listTrades (fn [_] (p/resolved #js {:trades #js []}))
+                   :createTrade (fn [body] (swap! chamadas conj ["create" body])
+                                      (p/resolved #js {:tradeId "t1"}))
+                   :acceptTrade (fn [body] (swap! chamadas conj ["accept" body])
+                                      (p/resolved #js {:tradeId "t1"}))
+                   :completeTrade (fn [body] (swap! chamadas conj ["complete" body])
+                                        (p/resolved #js {:tradeId "t1"}))
+                   :refuseTrade (fn [body] (swap! chamadas conj ["refuse" body])
+                                      (p/resolved #js {:tradeId "t1"}))
+                   :cancelTrade (fn [body] (swap! chamadas conj ["cancel" body])
+                                      (p/resolved #js {:tradeId "t1"}))})
+          mensagem (fn [id player mentions]
+                     #js {:id #js {:_serialized id} :from "grupo@g.us" :author player
+                          :mentionedIds mentions
+                          :reply (fn [texto & _] (swap! respostas conj [id texto]) (p/resolved nil))})]
+      (set! http/jvm-configurado? (fn [] true))
+      (reset! http/cliente-jvm client)
+      (-> (isolado!
+           (fn []
+             (p/let [_ (http/executar (mensagem "list" "ash@lid" #js []) "pokemon" "troca")
+                     _ (http/executar (mensagem "create" "ash@lid" #js [#js {:_serialized "misty@lid"}]) "pokemon" "troca 1 1 @misty")
+                     _ (http/executar (mensagem "accept" "misty@lid" #js []) "pokemon" "troca aceitar t1")
+                     _ (http/executar (mensagem "complete" "ash@lid" #js []) "pokemon" "troca confirmar t1")
+                     _ (http/executar (mensagem "refuse" "misty@lid" #js []) "pokemon" "troca recusar t1")
+                     _ (http/executar (mensagem "cancel" "ash@lid" #js []) "pokemon" "troca cancelar t1")]
+               (is (= 6 (count @respostas)))
+               (is (= ["create" "accept" "complete" "refuse" "cancel"]
+                      (mapv first @chamadas)))
+               (is (= 6 (count (set (map first @respostas))))))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! http/jvm-configurado? original-config)
+                       (reset! http/cliente-jvm original)
+                       (done)))))))
+
+(deftest troca-envia-erro-da-jvm-uma-unica-vez
+  (async done
+    (let [respostas (atom []) original @http/cliente-jvm original-config http/jvm-configurado?
+          message #js {:id #js {:_serialized "trade-error"} :from "grupo@g.us" :author "ash@lid"
+                       :mentionedIds #js []
+                       :reply (fn [texto & _] (swap! respostas conj texto) (p/resolved nil))}]
+      (set! http/jvm-configurado? (fn [] true))
+      (reset! http/cliente-jvm #js {:listTrades (fn [_] (p/rejected (js/Error. "JVM indisponível")))})
+      (-> (isolado! #(http/executar message "pokemon" "troca"))
+          (p/then (fn [_]
+                    (is (= 1 (count @respostas)))
+                    (is (string? (first @respostas)))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! http/jvm-configurado? original-config)
+                       (reset! http/cliente-jvm original)
+                       (done)))))))
+
+(deftest troca-nao-repete-efeito-quando-envio-whatsapp-falha
+  (async done
+    (let [envios (atom []) operacoes (atom #{}) chamadas (atom 0)
+          original @http/cliente-jvm original-config http/jvm-configurado?
+          message #js {:id #js {:_serialized "trade-delivery-failure"} :from "grupo@g.us" :author "ash@lid"
+                       :mentionedIds #js [#js {:_serialized "misty@lid"}]
+                       :reply (fn [texto & _]
+                                (swap! envios conj texto)
+                                (p/rejected (js/Error. "WhatsApp indisponível")))}
+          client #js {:getActiveSave (fn [_] (p/resolved #js {:activeSaveId "save"
+                                                              :fenceGeneration 1}))
+                      :getCollection (fn [_] (p/resolved #js {:collection #js [#js {:pokemonId "p1"}]}))
+                      :createTrade (fn [body]
+                                     (swap! chamadas inc)
+                                     (swap! operacoes conj (.-operationId body))
+                                     (p/resolved #js {:tradeId "t1"}))}]
+      (set! http/jvm-configurado? (fn [] true))
+      (reset! http/cliente-jvm client)
+      (-> (isolado! #(http/executar message "pokemon" "troca 1 1 @misty"))
+          (p/then (fn [_]
+                    ;; Uma falha de transporte não reexecuta a criação.
+                    (is (= 1 @chamadas))
+                    (is (= 1 (count @operacoes)))
+                    (is (= 1 (count @envios)))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! http/jvm-configurado? original-config)
+                       (reset! http/cliente-jvm original)
+                       (done)))))))
+
+(deftest troca-retry-reutiliza-operation-id-e-entrega-uma-resposta
+  (async done
+    (let [envios (atom []) operacoes (atom [])
+          original @http/cliente-jvm original-config http/jvm-configurado?
+          message #js {:id #js {:_serialized "trade-retry"} :from "grupo@g.us" :author "ash@lid"
+                       :mentionedIds #js [#js {:_serialized "misty@lid"}]
+                       :reply (fn [texto & _] (swap! envios conj texto) (p/resolved nil))}
+          client #js {:getActiveSave (fn [_] (p/resolved #js {:activeSaveId "save"
+                                                              :fenceGeneration 1}))
+                      :getCollection (fn [_] (p/resolved #js {:collection #js [#js {:pokemonId "p1"}]}))
+                      :createTrade (fn [body]
+                                     (swap! operacoes conj (.-operationId body))
+                                     (p/resolved #js {:tradeId "t1"}))}]
+      (set! http/jvm-configurado? (fn [] true))
+      (reset! http/cliente-jvm client)
+      (-> (isolado!
+           (fn []
+             (p/let [_ (http/executar message "pokemon" "troca 1 1 @misty")
+                     _ (http/executar message "pokemon" "troca 1 1 @misty")]
+               ;; O recibo global vê a mesma operação; a entrega local também
+               ;; não duplica a mensagem já confirmada.
+               (is (= 2 (count @operacoes)))
+               (is (= 1 (count (set @operacoes))))
+               (is (= 1 (count @envios))))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally (fn []
                        (set! http/jvm-configurado? original-config)
