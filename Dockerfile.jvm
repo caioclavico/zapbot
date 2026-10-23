@@ -18,7 +18,7 @@ WORKDIR /app
 
 # Prefetch deps (cache de layer)
 COPY deps.edn ./
-RUN clojure -P -M:bridge-http || true
+RUN clojure -P -M:bridge-http
 
 COPY apps ./apps
 COPY shared ./shared
@@ -36,7 +36,7 @@ ENV ODISSEU_BRIDGE_HOST=0.0.0.0 \
     ODISSEU_PLATFORM_ENABLED=true \
     ODISSEU_BRIDGE_SEED=false \
     ODISSEU_BRIDGE_RESET=false \
-    ODISSEU_BRIDGE_ALLOW_TEST_RNG=true
+    ODISSEU_BRIDGE_ALLOW_TEST_RNG=false
 
 VOLUME ["/data/datomic-local"]
 EXPOSE 18090

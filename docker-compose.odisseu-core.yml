@@ -42,7 +42,7 @@ services:
       # Seed só na primeira subida controlada; default false em core.
       ODISSEU_BRIDGE_SEED: ${ODISSEU_BRIDGE_SEED:-false}
       ODISSEU_BRIDGE_RESET: ${ODISSEU_BRIDGE_RESET:-false}
-      ODISSEU_BRIDGE_ALLOW_TEST_RNG: ${ODISSEU_BRIDGE_ALLOW_TEST_RNG:-true}
+      ODISSEU_BRIDGE_ALLOW_TEST_RNG: ${ODISSEU_BRIDGE_ALLOW_TEST_RNG:-false}
       # Paths lógicos de journal/maint (mesmo disco ≠ domínio de falha físico).
       ODISSEU_JOURNAL_DIR: /data/journal
       ODISSEU_MAINT_DIR: /data/maint
