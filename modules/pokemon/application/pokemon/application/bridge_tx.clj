@@ -155,11 +155,13 @@
             current (:display-name save)]
         (if (= name current)
           (assoc save :created (nil? existing))
-          (do
-            (ports/rename-save! store {:chat-id chat-id :player-id player-id
-                                       :save-id save-id :display-name name})
-            (assoc (ports/get-save store chat-id player-id save-id)
-                   :created (nil? existing))))))))
+          (if existing
+            (throw (err/error :save_payload_mismatch {:save-id save-id}))
+            (do
+              (ports/rename-save! store {:chat-id chat-id :player-id player-id
+                                         :save-id save-id :display-name name})
+              (assoc (ports/get-save store chat-id player-id save-id)
+                     :created (nil? existing)))))))))
 
 (defn rename-save!
   [store {:keys [chat-id player-id save-id display-name expected-fence-generation]

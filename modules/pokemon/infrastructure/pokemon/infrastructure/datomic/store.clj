@@ -117,6 +117,8 @@
                 :import-status (:save/import-status e)
                 :imported-at (:save/imported-at e)
                 :original-record-ids (edn-read (:save/original-record-ids e))
+                :last-rename-operation-id (:save/last-rename-operation-id e)
+                :last-rename-name (:save/last-rename-name e)
                 :coins (:save/coins e 0)
                 :revision (:save/revision e 0)
                 :ativo-index (:save/ativo-index e 0)
@@ -869,7 +871,7 @@
               (or (recover (d/db conn)) (throw ex))))))))
 
 (defn- rename-save!*
-  [conn {:keys [chat-id player-id save-id display-name expected-fence-generation]}]
+  [conn {:keys [chat-id player-id save-id display-name expected-fence-generation operation-id]}]
   (model/validate-save-slot! save-id)
   (let [name (model/validate-save-display-name! display-name)
         pk (id/player-key chat-id player-id)
@@ -888,12 +890,27 @@
                          fence)]
           (when (not= expected fence)
             (throw (err/error :stale_writer_fence {:expected expected :fence fence})))
-          (if (= name (:save/display-name save))
+          (cond
+            (and operation-id
+                 (= (str operation-id) (:save/last-rename-operation-id save)))
+            (if (= name (:save/last-rename-name save))
+              {:save-id save-id :display-name name :fence-generation fence :status :already-renamed}
+              (throw (err/error :receipt_payload_mismatch
+                                {:operation-id operation-id :save-id save-id})))
+
+            (= name (:save/display-name save))
             {:save-id save-id :display-name name :fence-generation fence :status :already-named}
+
+            :else
             (let [result (try
-                           (d/transact conn {:tx-data [[:db/cas [:player/key pk] :player/fence-generation
-                                                        fence (inc fence)]
-                                                       [:db/add [:save/key sk] :save/display-name name]]})
+                           (d/transact conn {:tx-data (cond-> [[:db/cas [:player/key pk] :player/fence-generation
+                                                                 fence (inc fence)]
+                                                                [:db/add [:save/key sk] :save/display-name name]]
+                                                         operation-id (conj [:db/add [:save/key sk]
+                                                                             :save/last-rename-operation-id
+                                                                             (str operation-id)])
+                                                         operation-id (conj [:db/add [:save/key sk]
+                                                                             :save/last-rename-name name]))})
                            {:ok true}
                            (catch Exception ex {:ok false :ex ex}))]
               (if (:ok result)

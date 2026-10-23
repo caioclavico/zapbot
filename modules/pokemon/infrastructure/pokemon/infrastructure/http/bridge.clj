@@ -72,7 +72,7 @@
      :unknown_shop_item :item_not_for_sale :item_use_unsupported
      :wrong_status_item :no_status_to_cure :missing_item_id
      :invalid_buy_qty :invalid_collection_index
-     :invalid_save_slot :invalid_slot_id :invalid_identity :invalid_save_name :unknown_ball
+     :invalid_save_slot :invalid_slot_id :invalid_identity :invalid_save_name :save_payload_mismatch :unknown_ball
      :area_unavailable :invalid_wild_pokemon :hunt_no_candidates
      :unknown_gym :unknown_heal_item :invalid_gym_team
      :invalid_gym_npc_team :invalid_motivation_index
