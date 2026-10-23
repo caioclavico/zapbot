@@ -148,6 +148,11 @@
   {:main-opts ["-m" "odisseu.smoke.a5-3-raid-eggs"]
    :jvm-opts ["-Xms64m" "-Xmx512m" "-XX:+UseG1GC"]}
 
+  ;; A5.4 — evolução e ciclo persistente de golpes
+  :test-a5-4-evolution-moves
+  {:main-opts ["-m" "odisseu.smoke.a5-4-evolution-moves"]
+   :jvm-opts ["-Xms64m" "-Xmx512m" "-XX:+UseG1GC"]}
+
   ;; M4.9 — raids no adaptador JVM + regressões
   :test-m4-raid
   {:main-opts ["-m" "odisseu.smoke.m4-raid"]
