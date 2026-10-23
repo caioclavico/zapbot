@@ -904,6 +904,35 @@
                                                            :ativoIndex (or (.-ativoIndex data) 0)})))]
                       (envelope-jvm pedido texto img))))
 
+                "shiny"
+                (p/let [data (desempenho/medir! ctx "pokemon_jvm_shiny"
+                                #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))]
+                  (envelope-jvm pedido (.formatCollection jvm-present data #js ["shiny"] (str config/prefix "pk"))))
+
+                "pc"
+                (p/let [data (desempenho/medir! ctx "pokemon_jvm_storage"
+                                #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))]
+                  (envelope-jvm pedido (.formatStorage jvm-present data (clj->js resto) (str config/prefix "pk"))))
+
+                "espaco"
+                (if (= "comprar" (str/lower-case (str (or (first resto) ""))))
+                  (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                          data (.buyItem jvm #js {:chatId chat-id :playerId player-id
+                                                  :saveId (.-activeSaveId a)
+                                                  :fenceGeneration (.-fenceGeneration a)
+                                                  :operationId (.stableOperationId jvm-transport (:requestId pedido) "space-buy")
+                                                  :itemId "mochila" :qty 1})]
+                    (envelope-jvm pedido (str "✅ +50 vagas Pokémon compradas. "
+                                               "Consulte " config/prefix " espaco.")))
+                  (p/let [data (desempenho/medir! ctx "pokemon_jvm_space"
+                                  #(.getShop jvm #js {:chatId chat-id :playerId player-id}))]
+                    (envelope-jvm pedido (.formatSpace jvm-present data (str config/prefix "pk")))))
+
+                "times"
+                (envelope-jvm pedido
+                              (str "👥 Escalações salvas ainda dependem do armazenamento legado. Use "
+                                   config/prefix "pk time para consultar a coleção canônica."))
+
                 "pokedex"
                 (let [prefix (str config/prefix "pk")
                       sub (str/lower-case (str (or (first resto) "")))]

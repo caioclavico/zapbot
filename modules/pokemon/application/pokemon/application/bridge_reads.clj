@@ -11,6 +11,7 @@
             [pokemon.application.shop :as shop-app]
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.eggs :as eggs]
+            [pokemon.domain.capacity :as capacity]
             [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.hunt :as hunt]
@@ -629,7 +630,12 @@
         slot (:active-save-id player)
         save (when slot (ports/get-save store chat-id player-id slot))
         inv (when slot (ports/list-inventory store chat-id player-id slot))
+        collection (when slot (ports/list-collection store chat-id player-id slot))
         cap (when save (shop/capacidade-mochila-save save))
+        pokemon-cap (when save (capacity/capacidade-pokemon
+                                (:trainer-level save 1)
+                                (:expansoes-pokemon-50 save 0)
+                                (:capacidade-pokemon-legada save 0)))
         occ (shop/ocupacao-mochila (or inv []))]
     {:chat-id chat-id
      :player-id player-id
@@ -639,6 +645,9 @@
      :capacidade-mochila cap
      :ocupacao-mochila occ
      :livres (when cap (max 0 (- (long cap) occ)))
+     :capacidade-pokemon pokemon-cap
+     :ocupacao-pokemon (count collection)
+     :expansoes-pokemon-50 (long (:expansoes-pokemon-50 save 0))
      :itens (mapv (fn [it]
                     {:item-id (:item-id it)
                      :nome (:nome it)

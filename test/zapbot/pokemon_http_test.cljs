@@ -496,3 +496,34 @@
                        (set! http/jvm-configurado? original-config)
                        (reset! http/cliente-jvm original)
                        (done)))))))
+
+(deftest shiny-pc-espaco-rota-jvm-canonica
+  (async done
+    (let [respostas (atom []) original @http/cliente-jvm original-config http/jvm-configurado?
+          message (fn [id] #js {:id #js {:_serialized id} :from "grupo@g.us" :author "ash@lid"
+                                 :mentionedIds #js []
+                                 :reply (fn [texto & _] (swap! respostas conj texto) (p/resolved nil))})
+          collection #js {:saveId "a" :count 2 :collection #js [#js {:collectionIndex 0 :idPokemon "p1" :nome "Pikachu" :shiny true :nivel 5}
+                                                                    #js {:collectionIndex 1 :idPokemon "p2" :nome "Rattata" :shiny false :nivel 3}]}
+          client #js {:getCollection (fn [_] (p/resolved collection))
+                      :getShop (fn [_] (p/resolved #js {:capacidadePokemon 30 :ocupacaoPokemon 2 :expansoesPokemon50 0}))
+                      :getActiveSave (fn [_] (p/resolved #js {:activeSaveId "a" :fenceGeneration 1}))
+                      :buyItem (fn [_] (p/resolved #js {:expansao true}))}]
+      (set! http/jvm-configurado? (fn [] true))
+      (reset! http/cliente-jvm client)
+      (-> (isolado!
+           (fn []
+             (p/let [_ (http/executar (message "shiny") "pokemon" "shiny")
+                     _ (http/executar (message "pc") "pokemon" "computador")
+                     _ (http/executar (message "space") "pokemon" "espaco")
+                     _ (http/executar (message "space-buy") "pokemon" "espaco comprar")]
+               (is (= 4 (count @respostas)))
+               (is (some #(re-find #"Pikachu" %) @respostas))
+               (is (some #(re-find #"PC Pokémon" %) @respostas))
+               (is (some #(re-find #"2/30" %) @respostas))
+               (is (some #(re-find #"50 vagas" %) @respostas)))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! http/jvm-configurado? original-config)
+                       (reset! http/cliente-jvm original)
+                       (done)))))))

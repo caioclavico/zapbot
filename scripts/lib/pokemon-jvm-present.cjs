@@ -429,6 +429,24 @@ function formatPokedex(data, tokens, prefix = '!pk') {
   ].filter(v => v != null && v !== '').join('\n');
 }
 
+function formatStorage(data, tokens, prefix = '!pk') {
+  return formatCollection(data, tokens, prefix)
+    .replace('🎒 *Seu time:*', '💻 *PC Pokémon:*')
+    .replace('Nenhum Pokémon do time corresponde', 'Nenhum Pokémon armazenado corresponde');
+}
+
+function formatSpace(data, prefix = '!pk') {
+  const ocupacao = Number(data && (data.ocupacaoPokemon ?? data.ocupacao ?? data.collectionCount ?? 0));
+  const capacidade = Number(data && (data.capacidadePokemon ?? data.capacidade ?? 0));
+  const livres = Math.max(0, capacidade - ocupacao);
+  return [
+    '📦 *Espaço Pokémon*',
+    `Ocupação: ${ocupacao}/${capacidade} (${livres} vagas livres)`,
+    `Expansões: ${Number(data && (data.expansoesPokemon50 ?? data.expansoes ?? 0))}`,
+    `Use ${prefix} espaco comprar para adquirir +50 vagas.`
+  ].join('\n');
+}
+
 function formatDiscoveries(data, prefix = '!pk') {
   const total = data.totalPokemons || 1025;
   const vistos = data.vistos || 0;
@@ -1827,6 +1845,10 @@ const ALIASES = {
   treinador: 'treinador', perfil: 'treinador', tre: 'treinador',
   meus: 'time', pokemons: 'time',
   time: 'time', equipe: 'time', tm: 'time',
+  shiny: 'shiny',
+  pc: 'pc', computador: 'pc', centro: 'pc',
+  espaco: 'espaco', espaço: 'espaco',
+  times: 'times',
   pokedex: 'pokedex', dex: 'pokedex', colecao: 'pokedex', 'coleção': 'pokedex',
   favorito: 'favorito', fav: 'favorito',
   save: 'save',
@@ -1880,6 +1902,8 @@ module.exports = {
   envelope,
   formatTrainer,
   formatCollection,
+  formatStorage,
+  formatSpace,
   collectionPageSlice,
   formatPokedex,
   formatDiscoveries,

@@ -108,6 +108,20 @@ test('formatCollection pagina e filtra', () => {
   assert.match(text, /Página 1/);
 });
 
+test('shiny e armazenamento usam a coleção canônica', () => {
+  const data = {
+    collection: [{ collectionIndex: 0, nome: 'Pikachu', shiny: true, nivel: 5, hp: 20, hpAtual: 20 }],
+    count: 1, saveId: 'a', trainerLevel: 1, ativoIndex: 0
+  };
+  assert.match(present.formatCollection(data, ['shiny'], '!pk'), /Pikachu/);
+  assert.match(present.formatStorage(data, [], '!pk'), /PC Pokémon/);
+  assert.match(present.formatSpace({ capacidadePokemon: 30, ocupacaoPokemon: 1 }, '!pk'), /1\/30/);
+  assert.equal(present.resolveCommand(['computador']), 'pc');
+  assert.equal(present.resolveCommand(['centro']), 'pc');
+  assert.equal(present.resolveCommand(['espaco']), 'espaco');
+  assert.equal(present.resolveCommand(['shiny']), 'shiny');
+});
+
 test('formatError distingue pending local de recibo ausente', () => {
   assert.match(present.formatError({ code: 'OPERATION_PENDING' }), /neste processo JVM/);
   assert.match(present.formatError({ code: 'OPERATION_NOT_FOUND' }), /não persistida/);
