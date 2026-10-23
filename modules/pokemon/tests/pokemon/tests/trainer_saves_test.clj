@@ -198,13 +198,24 @@
           renamed (bridge/rename-save! s {:chat-id chat :player-id player
                                           :save-id "c"
                                           :display-name "Jornada 3"
+                                          :operation-id "rename-c"
                                           :expected-fence-generation (:fence-generation listed)})
+          retry (bridge/rename-save! s {:chat-id chat :player-id player
+                                        :save-id "c" :display-name "Jornada 3"
+                                        :operation-id "rename-c"})
           after (bridge/list-saves s chat player)]
       (is (true? (:created created)))
       (is (= "a" (:active-save-id listed)))
       (is (= ["a" "b" "c"] (mapv :save-id (:saves listed))))
       (is (= "Minha Jornada" (:display-name (some #(when (= "c" (:save-id %)) %) (:saves listed)))))
       (is (= :renamed (:status renamed)))
+      (is (= :already-renamed (:status retry)))
+      (is (try
+            (bridge/rename-save! s {:chat-id chat :player-id player
+                                    :save-id "c" :display-name "Outro"
+                                    :operation-id "rename-c"})
+            false
+            (catch Exception _ true)))
       (is (= "Jornada 3" (:display-name (some #(when (= "c" (:save-id %)) %) (:saves after)))))
       (is (= "a" (:active-save-id after))))))
 
