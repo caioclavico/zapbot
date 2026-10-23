@@ -13,11 +13,29 @@ CREATED_NETWORK=0
 CREATED_CONTAINER=0
 FAILED=1
 KEEP_CONTAINERS="${A63_KEEP_CONTAINERS:-0}"
+# Cassandra 5 needs more than the old 2 GiB cap during bootstrap. These can
+# be overridden for the Docker Desktop allocation.
+CASSANDRA_MEMORY="${A63_CASSANDRA_MEMORY:-3g}"
+CASSANDRA_MAX_HEAP="${A63_CASSANDRA_MAX_HEAP:-1g}"
+CASSANDRA_HEAP_NEWSIZE="${A63_CASSANDRA_HEAP_NEWSIZE:-256m}"
 
 if [[ "$KEEP_CONTAINERS" != 0 && "$KEEP_CONTAINERS" != 1 ]]; then
   echo "A63_KEEP_CONTAINERS deve ser 0 ou 1" >&2
   exit 2
 fi
+
+memory_to_bytes() {
+  local value
+  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$value" in
+    *g) echo $(( ${value%g} * 1024 * 1024 * 1024 )) ;;
+    *m) echo $(( ${value%m} * 1024 * 1024 )) ;;
+    *k) echo $(( ${value%k} * 1024 )) ;;
+    *t) echo $(( ${value%t} * 1024 * 1024 * 1024 * 1024 )) ;;
+    ''|*[!0-9]) return 1 ;;
+    *) echo "$value" ;;
+  esac
+}
 
 diagnose_cassandra() {
   echo "--- Cassandra Docker state ($CASSANDRA) ---" >&2
@@ -45,6 +63,20 @@ trap 'exit 143' TERM
 
 command -v docker >/dev/null || { echo "Docker CLI ausente" >&2; exit 2; }
 docker info >/dev/null 2>&1 || { echo "Daemon Docker indisponível" >&2; exit 2; }
+DOCKER_MEMORY_BYTES="$(docker info --format '{{.MemTotal}}' 2>/dev/null || true)"
+REQUESTED_MEMORY_BYTES="$(memory_to_bytes "$CASSANDRA_MEMORY" || true)"
+if [[ ! "$DOCKER_MEMORY_BYTES" =~ ^[0-9]+$ || ! "$REQUESTED_MEMORY_BYTES" =~ ^[0-9]+$ ]]; then
+  echo "Não foi possível determinar memória: Docker=${DOCKER_MEMORY_BYTES:-unknown}, Cassandra=$CASSANDRA_MEMORY" >&2
+  exit 2
+fi
+# Leave headroom for Docker and the other disposable test processes.
+MIN_REQUIRED_BYTES=$((REQUESTED_MEMORY_BYTES + 512 * 1024 * 1024))
+if (( DOCKER_MEMORY_BYTES < MIN_REQUIRED_BYTES )); then
+  echo "Memória Docker insuficiente: disponível=${DOCKER_MEMORY_BYTES} bytes, necessário pelo menos=${MIN_REQUIRED_BYTES} bytes (Cassandra=$CASSANDRA_MEMORY)" >&2
+  echo "Ajuste A63_CASSANDRA_MEMORY ou aumente a memória do Docker Desktop." >&2
+  exit 2
+fi
+echo "Memória Docker: ${DOCKER_MEMORY_BYTES} bytes; limite Cassandra: $CASSANDRA_MEMORY; heap: $CASSANDRA_MAX_HEAP; new heap: $CASSANDRA_HEAP_NEWSIZE" >&2
 docker image inspect odisseu-contract-tests >/dev/null 2>&1 || {
   echo "Construa odisseu-contract-tests antes deste ensaio." >&2; exit 2;
 }
@@ -55,7 +87,10 @@ docker build --pull=false -f "$ROOT_DIR/pokemon-service/Dockerfile.historical-re
 docker network create --internal "$NETWORK" >/dev/null
 CREATED_NETWORK=1
 docker run -d --name "$CASSANDRA" --network "$NETWORK" --network-alias cassandra-a63 \
-  --memory=2g cassandra:5.0.9 >/dev/null
+  --memory="$CASSANDRA_MEMORY" \
+  -e MAX_HEAP_SIZE="$CASSANDRA_MAX_HEAP" \
+  -e HEAP_NEWSIZE="$CASSANDRA_HEAP_NEWSIZE" \
+  cassandra:5.0.9 >/dev/null
 CREATED_CONTAINER=1
 
 wait_for_cassandra() {
