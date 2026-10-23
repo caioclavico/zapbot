@@ -42,7 +42,7 @@
       (try
         (let [[status data] (get-json (str base "/v1/gyms/ranking?chatId=chat&playerId=ash&gymId=pedra") "ash")]
           (is (= 200 status))
-          (is (= "pedra" (get-in data ["data" "gym-id"]))))
+          (is (= "pedra" (get-in data ["data" "gymId"]))))
         (let [[status data] (get-json (str base "/v1/gyms/history?chatId=chat&playerId=ash&gymId=pedra") "ash")]
           (is (= 200 status))
           (is (= 1 (count (get-in data ["data" "history"])))))
