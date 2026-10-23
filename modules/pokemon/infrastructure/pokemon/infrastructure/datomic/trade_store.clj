@@ -3,7 +3,8 @@
    principal e operações de escolha entram nas etapas seguintes."
   (:require [clojure.edn :as edn] [datomic.client.api :as d]
             [pokemon.domain.errors :as err] [pokemon.domain.reward :as reward]
-            [pokemon.domain.trade :as trade]))
+            [pokemon.domain.trade :as trade]
+            [pokemon.domain.trade-evolution :as trade-evolution]))
 
 (defn- ->trade [e]
   (when (:db/id e)
@@ -154,6 +155,43 @@
 (defn- pokemon-by-id [db id]
   (d/pull db '[*] [:pokemon/id-pokemon id]))
 
+(defn- pokemon-record [e]
+  (when (:db/id e)
+    {:id-pokemon (:pokemon/id-pokemon e)
+     :species (:pokemon/species e)
+     :nome (or (:pokemon/nickname e) (:pokemon/species e))
+     :shiny (boolean (:pokemon/shiny e))
+     :nivel (long (:pokemon/level e 1))
+     :hp (long (:pokemon/hp e 0)) :hp-atual (long (:pokemon/hp-atual e 0))
+     :ataque (long (:pokemon/ataque e 0)) :defesa (long (:pokemon/defesa e 0))
+     :atq-esp (long (:pokemon/atq-esp e 0)) :def-esp (long (:pokemon/def-esp e 0))
+     :veloc (long (:pokemon/veloc e 0)) :tipos (vec (:pokemon/tipos e))
+     :golpes (vec (or (some-> (:pokemon/golpes-edn e) edn/read-string) []))
+     :item (:pokemon/item e) :amizade (long (:pokemon/amizade e 70))}))
+
+(defn- evolution-tx [lookup original evolved prepared]
+  (let [old-types (set (:tipos original)) new-types (set (:tipos evolved))]
+    (vec
+     (concat
+      (map (fn [t] [:db/retract lookup :pokemon/tipos t]) (remove new-types old-types))
+      (map (fn [t] [:db/add lookup :pokemon/tipos t]) (remove old-types new-types))
+      [[:db/add lookup :pokemon/species (:species evolved)]
+       [:db/add lookup :pokemon/nickname (:nome evolved)]
+       [:db/add lookup :pokemon/hp (long (:hp evolved))]
+       [:db/add lookup :pokemon/hp-atual (long (:hp-atual evolved))]
+       [:db/add lookup :pokemon/ataque (long (:ataque evolved))]
+       [:db/add lookup :pokemon/defesa (long (:defesa evolved))]
+       [:db/add lookup :pokemon/atq-esp (long (:atq-esp evolved))]
+       [:db/add lookup :pokemon/def-esp (long (:def-esp evolved))]
+       [:db/add lookup :pokemon/veloc (long (:veloc evolved))]
+       [:db/add lookup :pokemon/golpes-edn (pr-str (:golpes evolved))]]
+      (when (:habilidade evolved)
+        [[:db/add lookup :pokemon/habilidade (:habilidade evolved)]])
+      (when (:imagem evolved)
+        [[:db/add lookup :pokemon/imagem (:imagem evolved)]])
+      (when (:consumed-item prepared)
+        [[:db/retract lookup :pokemon/item (:consumed-item prepared)]])))))
+
 (defn- joy-holds-pokemon? [db save-key pokemon-id]
   (boolean
    (some (fn [eid]
@@ -184,6 +222,14 @@
               sb (save-entity db chat-id (:player-b tr) (:save-b tr))
               pa (pokemon-by-id db pokemon-a)
               pb (pokemon-by-id db pokemon-b)
+              pa-record (pokemon-record pa)
+              pb-record (pokemon-record pb)
+              prepared-a (trade-evolution/prepare pa-record pb-record)
+              prepared-b (trade-evolution/prepare pb-record pa-record)
+              evolved-a (when prepared-a
+                          (trade-evolution/apply-prepared pa-record prepared-a))
+              evolved-b (when prepared-b
+                          (trade-evolution/apply-prepared pb-record prepared-b))
               sk-a (:save/key sa)
               sk-b (:save/key sb)]
           (when-not (and tr (= :accepted (:state tr)) (= chat-id (:chat-id tr))
@@ -197,7 +243,7 @@
                          (= (:db/id sa) (or (-> pa :pokemon/save :db/id) (:pokemon/save pa)))
                          (= (:db/id sb) (or (-> pb :pokemon/save :db/id) (:pokemon/save pb))))
             (throw (err/error :invalid_trade {})))
-          (let [tx [[:db/cas [:trade/id trade-id] :trade/revision (:revision tr) (inc (:revision tr))]
+          (let [base-tx [[:db/cas [:trade/id trade-id] :trade/revision (:revision tr) (inc (:revision tr))]
                     [:db/cas [:player/key (:player/key a)] :player/active-save-id (:save-a tr) (:save-a tr)]
                     [:db/cas [:player/key (:player/key b)] :player/active-save-id (:save-b tr) (:save-b tr)]
                     [:db/cas [:player/key (:player/key a)] :player/fence-generation (:fence-a tr) (:fence-a tr)]
@@ -207,16 +253,24 @@
                     [:db/cas [:pokemon/id-pokemon pokemon-a] :pokemon/save (:db/id sa) (:db/id sb)]
                     [:db/cas [:pokemon/id-pokemon pokemon-b] :pokemon/save (:db/id sb) (:db/id sa)]
                     [:db/add [:pokemon/id-pokemon pokemon-a] :pokemon/save (:db/id sb)]
-                    [:db/add [:pokemon/id-pokemon pokemon-b] :pokemon/save (:db/id sa)]
+                    [:db/add [:pokemon/id-pokemon pokemon-b] :pokemon/save (:db/id sa)]]
+                tx (vec (concat base-tx
+                    (or (when evolved-a
+                          (evolution-tx [:pokemon/id-pokemon pokemon-a] pa-record evolved-a prepared-a)) [])
+                    (or (when evolved-b
+                          (evolution-tx [:pokemon/id-pokemon pokemon-b] pb-record evolved-b prepared-b)) [])
+                    [
                     [:db/add [:trade/id trade-id] :trade/state "completed"]
                     [:db/add [:trade/id trade-id] :trade/revision (inc (:revision tr))]
                     {:operation-receipt/id operation-id :operation-receipt/kind "trade-complete"
                      :operation-receipt/channel "gameplay" :operation-receipt/payload-hash hash
                      :operation-receipt/player-key (:player/key actor) :operation-receipt/save-id save-id
-                     :operation-receipt/summary (pr-str {:trade-id trade-id :state :completed})}]]
+                     :operation-receipt/summary (pr-str {:trade-id trade-id :state :completed
+                                                         :evolutions (vec (keep :target [prepared-a prepared-b]))})}]))]
             (try
               (transact! conn {:tx-data tx})
-              (assoc (get-trade conn trade-id) :duplicate false)
+              (assoc (get-trade conn trade-id) :duplicate false
+                     :evolutions (vec (keep :target [prepared-a prepared-b])))
               (catch Exception ex
                 (or (result-receipt (receipt (d/db conn) operation-id) hash operation-id)
                     (throw ex)))))))))

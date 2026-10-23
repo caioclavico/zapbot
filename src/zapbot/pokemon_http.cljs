@@ -758,7 +758,15 @@
               (aset b "pokemonA" (or (.-pokemonA found) (.-pokemon-a found)))
               (aset b "pokemonB" (or (.-pokemonB found) (.-pokemon-b found))))
             (let [data (.completeTrade jvm b)]
-              (p/then data (fn [result] (envelope-jvm pedido (str "🤝 Troca concluída: " (or (.-tradeId result) (first rest-args))))))))
+              (p/then data
+                      (fn [result]
+                        (let [evolucoes (array-seq (or (.-evolutions result) #js []))
+                              detalhe (when (seq evolucoes)
+                                        (str " Evoluíram: " (str/join ", " evolucoes)))]
+                          (envelope-jvm pedido
+                                        (str "🤝 Troca concluída: "
+                                             (or (.-tradeId result) (first rest-args))
+                                             detalhe)))))))
           (= sub "recusar")
           (p/let [b (body-op "trade-refuse" (first rest-args))
                   data (.refuseTrade jvm b)] (envelope-jvm pedido (str "🚫 Proposta recusada: " (.-tradeId data))))

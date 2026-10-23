@@ -15,22 +15,30 @@ reaprender. As operações persistem histórico/ofertas, usam revisão do save,
 recibos e são idempotentes por `operationId`. MT é consumida na mesma
 transação do aprendizado.
 
-## Lacuna comprovada
+## Evolução por troca
 
-O legado calcula evolução por troca consultando a cadeia da PokeAPI no cliente,
-considerando parceiro e item equipado, e aplica a evolução depois da
-transferência. `trade-store/complete!` no commit-base somente move os dois
-registros; não há no Core um resolvedor canônico persistido de cadeia/espécie
-que possa ser usado pelo JVM. Não foi adicionada uma tabela parcial ou uma
-regra inventada. A evolução por troca permanece bloqueada até que a fonte
-canônica e seus dados de stats sejam disponibilizados ao fluxo JVM.
+O legado calcula a evolução consultando a cadeia da PokeAPI, considerando
+parceiro e item equipado, e aplica o resultado depois da transferência. O Core
+agora usa o catálogo versionado `pokeapi-trade-evolutions-2026-10` em
+`pokemon.domain.trade-evolution`. As condições (espécie, parceiro e item) e
+stats-base são resolvidos antes da transação; `trade-store/complete!` aplica os
+efeitos de ambos os Pokémon, consumo do item e transferência na mesma
+transação Datomic. O recibo registra os alvos evoluídos e retries retornam o
+resultado original.
+
+O catálogo cobre as espécies de troca presentes no legado e os itens de troca
+presentes no inventário Core. Formas que exigem itens fora desse catálogo não
+evoluem no Core, pois não há como equipá-las pelo fluxo normal; nenhum item é
+criado implicitamente.
 
 ## Cobertura adicionada
 
 `pokemon.tests.evolution-moves-a54-test` verifica elegibilidade de
-nível/amizade, evolução com item e retry após reabertura, ciclo de oferta e
-aprendizado de golpe com retry e rejeição de remoção inválida. O smoke
-`:test-a5-4-evolution-moves` executa essa suíte e a regressão M3.3.
+nível/amizade, evolução com item, troca Onix/Shelmet com retry, reabertura,
+ciclo de oferta e aprendizado de golpe com retry e rejeição de remoção
+inválida. O smoke `:test-a5-4-evolution-moves` executa essa suíte e a regressão
+M3.3.
 
-Essa cobertura confirma as invariantes persistentes existentes; não classifica
-evolução por troca como concluída.
+Ainda é necessário ampliar a cobertura HTTP/Node e testar cada espécie do
+catálogo; a transação JVM e o caso de parceiro/item já estão cobertos no smoke
+Datomic.
