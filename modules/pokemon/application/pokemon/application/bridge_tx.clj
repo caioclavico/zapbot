@@ -83,6 +83,10 @@
   [store chat-id player-id slot]
   (when-let [save (ports/get-save store chat-id player-id slot)]
     {:save-id slot
+     :display-name (:display-name save)
+     :origin (:origin save)
+     :origin-player-id (:origin-player-id save)
+     :legacy-version (:legacy-version save)
      :coins (:coins save 0)
      :revision (:revision save 0)
      :trainer-xp (:trainer-xp save 0)
@@ -128,12 +132,41 @@
   (let [player (or (ports/get-player store chat-id player-id)
                    (throw (err/error :player_not_found
                                      {:chat-id chat-id :player-id player-id})))
-        slots (vec model/default-slots)]
+        saves (ports/list-saves store chat-id player-id)]
     {:chat-id chat-id
      :player-id player-id
      :active-save-id (:active-save-id player)
      :fence-generation (:fence-generation player 0)
-     :saves (vec (keep #(save-summary store chat-id player-id %) slots))}))
+     :saves (mapv (fn [save]
+                    (merge (save-summary store chat-id player-id (:slot-id save))
+                           {:slot-id (:slot-id save)}))
+                  saves)}))
+
+(defn create-save-slot!
+  "Cria slot vazio sem alterar o ponteiro ativo. Repetição retorna o existente."
+  [store {:keys [chat-id player-id save-id display-name]}]
+  (model/validate-create-player! {:chat-id chat-id :player-id player-id})
+  (model/validate-save-slot! save-id)
+  (let [existing (ports/get-save store chat-id player-id save-id)
+        save (or existing (trainer/create-save! store chat-id player-id save-id))]
+    (if (str/blank? (str display-name))
+      (assoc save :created (nil? existing))
+      (let [name (model/validate-save-display-name! display-name)
+            current (:display-name save)]
+        (if (= name current)
+          (assoc save :created (nil? existing))
+          (do
+            (ports/rename-save! store {:chat-id chat-id :player-id player-id
+                                       :save-id save-id :display-name name})
+            (assoc (ports/get-save store chat-id player-id save-id)
+                   :created (nil? existing))))))))
+
+(defn rename-save!
+  [store {:keys [chat-id player-id save-id display-name expected-fence-generation]
+          :as request}]
+  (model/validate-create-player! {:chat-id chat-id :player-id player-id})
+  (model/validate-save-slot! save-id)
+  (ports/rename-save! store request))
 
 (defn activate-save!
   "Ativa save via TX Datomic (fence sobe). Opcionalmente exige fence esperado."

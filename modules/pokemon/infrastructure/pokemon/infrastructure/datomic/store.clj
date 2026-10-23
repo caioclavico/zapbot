@@ -63,6 +63,18 @@
   [db chat-id player-id save-id]
   (d/pull db '[*] [:save/key (id/save-key chat-id player-id save-id)]))
 
+(defn- save-entities
+  [db chat-id player-id]
+  (->> (d/q '[:find (pull ?s [*])
+              :in $ ?pk
+              :where
+              [?p :player/key ?pk]
+              [?s :save/player ?p]]
+            db (id/player-key chat-id player-id))
+       (map first)
+       (sort-by :save/slot-id)
+       vec))
+
 (defn- present?
   [entity]
   (boolean (:db/id entity)))
@@ -96,6 +108,15 @@
   (when (present? e)
     (let [base {:save-key (:save/key e)
                 :slot-id (:save/slot-id e)
+                :display-name (:save/display-name e)
+                :origin (:save/origin e)
+                :origin-player-id (:save/origin-player-id e)
+                :legacy-version (:save/legacy-version e)
+                :importer-version (:save/importer-version e)
+                :import-id (:save/import-id e)
+                :import-status (:save/import-status e)
+                :imported-at (:save/imported-at e)
+                :original-record-ids (edn-read (:save/original-record-ids e))
                 :coins (:save/coins e 0)
                 :revision (:save/revision e 0)
                 :ativo-index (:save/ativo-index e 0)
@@ -847,6 +868,43 @@
             (catch Exception ex
               (or (recover (d/db conn)) (throw ex))))))))
 
+(defn- rename-save!*
+  [conn {:keys [chat-id player-id save-id display-name expected-fence-generation]}]
+  (model/validate-save-slot! save-id)
+  (let [name (model/validate-save-display-name! display-name)
+        pk (id/player-key chat-id player-id)
+        sk (id/save-key chat-id player-id save-id)]
+    (loop [attempt 0]
+      (let [db (d/db conn)
+            player (player-entity db chat-id player-id)
+            save (save-entity db chat-id player-id save-id)]
+        (when-not (present? player)
+          (throw (err/error :player_not_found {:chat-id chat-id :player-id player-id})))
+        (when-not (present? save)
+          (throw (err/error :save_not_found {:save-id save-id})))
+        (let [fence (long (:player/fence-generation player 0))
+              expected (if (some? expected-fence-generation)
+                         (long expected-fence-generation)
+                         fence)]
+          (when (not= expected fence)
+            (throw (err/error :stale_writer_fence {:expected expected :fence fence})))
+          (if (= name (:save/display-name save))
+            {:save-id save-id :display-name name :fence-generation fence :status :already-named}
+            (let [result (try
+                           (d/transact conn {:tx-data [[:db/cas [:player/key pk] :player/fence-generation
+                                                        fence (inc fence)]
+                                                       [:db/add [:save/key sk] :save/display-name name]]})
+                           {:ok true}
+                           (catch Exception ex {:ok false :ex ex}))]
+              (if (:ok result)
+                {:save-id save-id :display-name name :fence-generation (inc fence)
+                 :status :renamed}
+                (let [ex (:ex result)]
+                  (if (and (anomaly-conflict? ex) (< attempt max-cas-attempts))
+                    (recur (inc attempt))
+                    (throw (err/error :writer_fence_conflict
+                                      {:cause (ex-message ex) :save-id save-id}))))))))))))
+
 (defrecord DatomicTrainerStore [conn]
   mission-queries/MissionQueries
   (read-missions [_ chat-id player-id save-id options]
@@ -903,6 +961,12 @@
       (when (present? (save-entity db chat-id player-id save-id))
         (throw (err/error :save_already_exists {:save-id save-id})))
       (->save (provisioning/ensure-save! conn chat-id player-id save-id))))
+
+  (list-saves [_ chat-id player-id]
+    (mapv ->save (save-entities (d/db conn) chat-id player-id)))
+
+  (rename-save! [_ request]
+    (rename-save!* conn request))
 
   (get-player [_ chat-id player-id]
     (->player (player-entity (d/db conn) chat-id player-id)))

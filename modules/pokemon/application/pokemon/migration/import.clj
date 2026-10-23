@@ -280,6 +280,11 @@
               bed-entities (mapv #(enfermaria-bed-entity sk %) joy-pokes)
               inv (inventory-tx sk (:inventory save-ir))
               dex (pokedex-tx sk all-pokes)
+              provenance (:provenance save-ir)
+              source-kind (let [v (or (:kind provenance) "offline-import")]
+                            (if (keyword? v) (name v) (str v)))
+              source-version (or (some-> (:sourceVersion provenance) str) "unknown")
+              original-ids (pr-str (select-keys provenance [:snapshot-id :sourceHash :contentHash]))
               ;; Datomic Local: batches grandes ok; chunk se necessário
               chunks (partition-all 40 poke-entities)
               bed-chunks (partition-all 40 bed-entities)
@@ -296,6 +301,14 @@
                                  :joy-bed-count (count joy-pokes)
                                  :coins (:coins save-ir)})}
                        [:db/add [:save/key sk] :save/coins (long (:coins save-ir))]
+                       [:db/add [:save/key sk] :save/origin source-kind]
+                       [:db/add [:save/key sk] :save/origin-player-id (str player-id)]
+                       [:db/add [:save/key sk] :save/legacy-version source-version]
+                       [:db/add [:save/key sk] :save/importer-version "m6.2-ir-v1"]
+                       [:db/add [:save/key sk] :save/import-id op-id]
+                       [:db/add [:save/key sk] :save/import-status "imported"]
+                       [:db/add [:save/key sk] :save/imported-at (java.util.Date.)]
+                       [:db/add [:save/key sk] :save/original-record-ids original-ids]
                        [:db/add [:save/key sk] :save/ativo-index (long (:ativo-index save-ir))]
                        [:db/add [:save/key sk] :save/vitorias-treinador (long (:vitorias-treinador save-ir))]
                        [:db/add [:save/key sk] :save/pe-ginasios (long (:pe-ginasios save-ir))]

@@ -150,6 +150,11 @@
     (is (= 19 (count (ports/list-collection s fix/chat-id fix/player-id "a"))))
     (is (= 7 (count (ports/list-enfermaria s fix/chat-id fix/player-id "a"))))
     (is (= 119 (count (ports/list-collection s fix/chat-id fix/player-id "b"))))
+    (let [save-b (ports/get-save s fix/chat-id fix/player-id "b")]
+      (is (= "historical-independent" (:origin save-b)))
+      (is (= "m6.2-ir-v1" (:importer-version save-b)))
+      (is (= "imported" (:import-status save-b)))
+      (is (= "m51-batch" (second (clojure.string/split (:import-id save-b) #"\|")))))
     (is (some #(and (= "Voltorb" (:species %))
                     (= "hist-voltorb-shiny-001" (:id-pokemon %)))
               (ports/list-collection s fix/chat-id fix/player-id "b")))))

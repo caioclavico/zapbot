@@ -15,6 +15,12 @@
   (create-save! [this chat-id player-id save-id]
     "Cria save vazio no slot. Falha se já existir.")
 
+  (list-saves [this chat-id player-id]
+    "Lista todos os saves do jogador em ordem determinística.")
+
+  (rename-save! [this request]
+    "Renomeia um save com contexto de writer e fence.")
+
   (get-player [this chat-id player-id]
     "Retorna mapa da conta ou nil.")
 

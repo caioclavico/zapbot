@@ -1,0 +1,32 @@
+;; A6.2 — metadados de slots e proveniência de importação.
+;; Os campos são opcionais para manter compatibilidade com saves A/B.
+[
+ {:db/ident :save/display-name
+  :db/valueType :db.type/string
+  :db/cardinality :db.cardinality/one}
+ {:db/ident :save/origin
+  :db/valueType :db.type/string
+  :db/cardinality :db.cardinality/one}
+ {:db/ident :save/origin-player-id
+  :db/valueType :db.type/string
+  :db/cardinality :db.cardinality/one}
+ {:db/ident :save/legacy-version
+  :db/valueType :db.type/string
+  :db/cardinality :db.cardinality/one}
+ {:db/ident :save/importer-version
+  :db/valueType :db.type/string
+  :db/cardinality :db.cardinality/one}
+ {:db/ident :save/import-id
+  :db/valueType :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique :db.unique/identity}
+ {:db/ident :save/import-status
+  :db/valueType :db.type/string
+  :db/cardinality :db.cardinality/one}
+ {:db/ident :save/imported-at
+  :db/valueType :db.type/instant
+  :db/cardinality :db.cardinality/one}
+ {:db/ident :save/original-record-ids
+  :db/valueType :db.type/string
+  :db/cardinality :db.cardinality/one}
+]

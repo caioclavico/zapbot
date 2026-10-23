@@ -3,6 +3,7 @@
   (:require [clojure.test :refer [deftest is]]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.ports :as ports]
+            [pokemon.application.bridge-tx :as bridge]
             [pokemon.application.trainer :as trainer]
             [pokemon.infrastructure.datomic.store :as store]))
 
@@ -184,3 +185,45 @@
       (is (empty? (:party s2)))
       (is (= "raid-ficticia" (:label g)))
       (is (= 5 (:coins (:save (trainer/snapshot-save s chat "p1" "a"))))))))
+
+(deftest slots-dinamicos-lista-cria-e-renomeia-sem-mover-ativo
+  (let [s (boot! "t-dynamic-slots")
+        chat "chat-dynamic"
+        player "player-slots"]
+    (trainer/create-trainer! s {:chat-id chat :player-id player})
+    (let [created (bridge/create-save-slot! s {:chat-id chat :player-id player
+                                                :save-id "c"
+                                                :display-name "Minha Jornada"})
+          listed (bridge/list-saves s chat player)
+          renamed (bridge/rename-save! s {:chat-id chat :player-id player
+                                          :save-id "c"
+                                          :display-name "Jornada 3"
+                                          :expected-fence-generation (:fence-generation listed)})
+          after (bridge/list-saves s chat player)]
+      (is (true? (:created created)))
+      (is (= "a" (:active-save-id listed)))
+      (is (= ["a" "b" "c"] (mapv :save-id (:saves listed))))
+      (is (= "Minha Jornada" (:display-name (some #(when (= "c" (:save-id %)) %) (:saves listed)))))
+      (is (= :renamed (:status renamed)))
+      (is (= "Jornada 3" (:display-name (some #(when (= "c" (:save-id %)) %) (:saves after)))))
+      (is (= "a" (:active-save-id after))))))
+
+(deftest slot-criacao-repetida-e-selecao-preservam-dados
+  (let [s (boot! "t-dynamic-retry")
+        chat "chat-dynamic-retry"
+        player "player-slots-retry"]
+    (trainer/create-trainer! s {:chat-id chat :player-id player})
+    (let [r1 (bridge/create-save-slot! s {:chat-id chat :player-id player :save-id "c"})
+          r2 (bridge/create-save-slot! s {:chat-id chat :player-id player :save-id "c"})]
+      (is (true? (:created r1)))
+      (is (false? (:created r2)))
+      (trainer/admin-seed-reward!
+       s {:operation-id "dynamic-a" :chat-id chat :player-id player :save-id "a"
+          :coins-delta 11 :pokemon {:species "Pikachu"}})
+      (trainer/admin-seed-reward!
+       s {:operation-id "dynamic-c" :chat-id chat :player-id player :save-id "c"
+          :coins-delta 33 :pokemon {:species "Eevee"}})
+      (is (= "c" (get-in (trainer/switch-save! s chat player "c") [:player :active-save-id])))
+      (is (= 33 (:coins (:save (trainer/snapshot-save s chat player "c")))))
+      (is (= 11 (:coins (:save (trainer/snapshot-save s chat player "a")))))
+      (is (= "a" (get-in (trainer/switch-save! s chat player "a") [:player :active-save-id]))))))

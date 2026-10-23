@@ -1,9 +1,18 @@
 (ns pokemon.domain.model
   "Regras puras do núcleo treinador/saves (sem I/O, sem Datomic)."
-  (:require [pokemon.domain.errors :as err]
+  (:require [clojure.string :as str]
+            [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]))
 
 (def default-slots ["a" "b"])
+
+(defn validate-save-display-name!
+  [name]
+  (let [value (some-> name str str/trim)]
+    (when-not (and value (<= 1 (count value) 80)
+                   (not (re-find #"[\r\n]" value)))
+      (throw (err/error :invalid_save_name {:name name})))
+    value))
 
 (defn validate-create-player!
   [{:keys [chat-id player-id]}]
