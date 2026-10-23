@@ -19,6 +19,24 @@ test('resolveCommand mapeia aliases do legado', () => {
   assert.equal(present.resolveCommand(['1']), 'atacar');
   assert.equal(present.resolveCommand(['4']), 'atacar');
   assert.equal(present.resolveCommand(['batalhar']), 'batalhar');
+  assert.equal(present.resolveCommand(['gin']), 'ginasio');
+  assert.equal(present.resolveCommand(['raide']), 'raid');
+  assert.equal(present.resolveCommand(['clima']), 'clima');
+  assert.equal(present.resolveCommand(['eventos']), 'eventos');
+});
+
+test('subcomandos de ginásio e raide e mensagens de evento são apresentados', () => {
+  assert.equal(present.resolveGymSubcommand('des'), 'desafiar');
+  assert.equal(present.resolveGymSubcommand('hist'), 'historico');
+  assert.equal(present.resolveRaidSubcommand('atk'), 'atacar');
+  assert.equal(present.resolveRaidSubcommand('cap'), 'capturar');
+  assert.match(present.formatWorldInfo({
+    area: { id: 'vale', nome: 'Vale' },
+    clima: { nome: 'Sol', tipos: ['fogo'] }
+  }), /Clima de hoje: Sol/);
+  assert.match(present.formatEventInfo({
+    eventoAtual: { nome: 'Festival', especies: ['Pikachu'], fim: Date.now() + 60000 }
+  }), /Festival|Pikachu/);
 });
 
 test('formatMainMenu e jornada sem jargão técnico', () => {
