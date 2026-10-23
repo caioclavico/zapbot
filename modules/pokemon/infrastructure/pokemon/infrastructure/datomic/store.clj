@@ -275,14 +275,16 @@
                 :niveis-subidos (:subidas applied)})}))
 
 (defn- pokemon-hp-status-tx
-  [poke hp-atual st]
-  (when poke
-    (let [lookup [:pokemon/id-pokemon (:id-pokemon poke)]
-          st-str (xp/status->str st)]
-      (cond-> [[:db/add lookup :pokemon/hp-atual (long hp-atual)]]
-        st-str (conj [:db/add lookup :pokemon/status st-str])
-        (and (nil? st-str) (:status poke))
-        (conj [:db/retract lookup :pokemon/status (:status poke)])))))
+  ([poke hp-atual st]
+   (pokemon-hp-status-tx poke hp-atual st (:status poke)))
+  ([poke hp-atual st previous-status]
+   (when poke
+     (let [lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+           st-str (xp/status->str st)]
+       (cond-> [[:db/add lookup :pokemon/hp-atual (long hp-atual)]]
+         st-str (conj [:db/add lookup :pokemon/status st-str])
+         (and (nil? st-str) previous-status)
+         (conj [:db/retract lookup :pokemon/status previous-status]))))))
 
 (defn- sync-colecao-from-gym-battle
   "Atualiza HP/status em memória a partir do estado 3×3 (antes do occupy)."
@@ -290,10 +292,15 @@
   (let [fainted (set (map long (or (:fainted-x battle) #{})))
         active-idx (when-let [i (get-in battle [:indices-ativos :x])] (long i))
         hp-x (long (get-in battle [:hp :x] 0))
-        st-x (get-in battle [:status :x])]
+        st-x (get-in battle [:status :x])
+        defeated? (= :lose (:outcome battle))]
     (mapv (fn [poke]
             (let [idx (long (:collection-index poke))]
               (cond
+                ;; Ao perder o ginásio, toda a equipe foi nocauteada. O estado
+                ;; canônico não pode manter status residuais de antes da luta.
+                defeated?
+                (assoc poke :hp-atual 0 :status nil)
                 (contains? fainted idx)
                 (assoc poke :hp-atual 0 :status nil)
                 (= idx active-idx)
@@ -305,8 +312,10 @@
   [colecao battle]
   (let [synced (sync-colecao-from-gym-battle colecao battle)]
     (mapcat (fn [before after]
-              (when (not= (:hp-atual before) (:hp-atual after))
-                (pokemon-hp-status-tx after (:hp-atual after) (:status after))))
+              (when (or (not= (:hp-atual before) (:hp-atual after))
+                        (not= (:status before) (:status after)))
+                (pokemon-hp-status-tx after (:hp-atual after) (:status after)
+                                        (:status before))))
             colecao
             synced)))
 
@@ -2044,7 +2053,8 @@
                                (gym-battle-hp-txs colecao next-state)
                                (pokemon-hp-status-tx
                                 poke (get-in next-state [:hp :x])
-                                (get-in next-state [:status :x])))
+                                (get-in next-state [:status :x])
+                                (:status poke)))
                      clear-active (when (and (not (:active? next-state))
                                              (not (:aguardando-captura? next-state)))
                                     (into [[:db/retract [:player/key pk] :player/active-battle-id battle-id]]

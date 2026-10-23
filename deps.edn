@@ -138,6 +138,11 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}
 
+  ;; A5.2 — contratos HTTP de ginásios e PvP
+  :test-a5-2-gym-pvp
+  {:main-opts ["-m" "odisseu.smoke.a5-2-gym-pvp"]
+   :jvm-opts ["-Xms64m" "-Xmx512m" "-XX:+UseG1GC"]}
+
   ;; M4.9 — raids no adaptador JVM + regressões
   :test-m4-raid
   {:main-opts ["-m" "odisseu.smoke.m4-raid"]
