@@ -22,18 +22,29 @@ const account = (id, species, coins) => ({
   'vitorias-treinador': 2, 'pe-ginasios': 3
 });
 
-async function waitForCassandra(client) {
+async function connectToCassandra(config) {
   let last;
-  for (let i = 0; i < 60; i++) {
-    try { await client.connect(); return; } catch (error) { last = error; await new Promise(r => setTimeout(r, 1000)); }
+  for (let i = 0; i < 120; i++) {
+    const client = new cassandra.Client(config);
+    try {
+      await client.connect();
+      const result = await client.execute('SELECT cluster_name FROM system.local');
+      if (!result?.rows?.length) throw new Error('cassandra_system_local_empty');
+      return client;
+    } catch (error) {
+      last = error;
+      await client.shutdown().catch(() => {});
+      await new Promise(r => setTimeout(r, 1000));
+    }
   }
-  throw last || new Error('cassandra_unavailable');
+  const detail = last ? `${last.code || 'error'}:${last.message}` : 'unknown';
+  throw new Error(`cassandra_unavailable:${host}:${detail}`);
 }
 
 (async () => {
-  const client = new cassandra.Client({contactPoints: host.split(',').map(v => v.trim()), localDataCenter: dc});
+  let client;
   try {
-    await waitForCassandra(client);
+    client = await connectToCassandra({contactPoints: host.split(',').map(v => v.trim()), localDataCenter: dc});
     await client.execute(`CREATE KEYSPACE ${keyspace} WITH replication = {'class':'SimpleStrategy','replication_factor':1}`);
     await client.execute(`CREATE TABLE ${keyspace}.legacy_estado_particionado (modulo text, particao text, valor text, PRIMARY KEY ((modulo,particao)))`);
     await client.execute(`CREATE TABLE ${keyspace}.legacy_estado (chave text PRIMARY KEY, valor text)`);
@@ -50,5 +61,5 @@ async function waitForCassandra(client) {
     fs.mkdirSync(require('node:path').dirname(output), {recursive: true});
     fs.writeFileSync(output, toEdn(result, true), {mode: 0o600});
     process.stdout.write(JSON.stringify({ok: true, keyspace, output, snapshots: result.historical_snapshots.map(s => ({version: s['legacy-version'], id: s['snapshot-id']}))}) + '\n');
-  } finally { await client.shutdown(); }
+  } finally { if (client) await client.shutdown(); }
 })().catch(error => { console.error(`historical_fixture_failed:${error.message}`); process.exitCode = 1; });

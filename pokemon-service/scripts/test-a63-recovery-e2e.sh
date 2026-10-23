@@ -39,6 +39,54 @@ docker run -d --name "$CASSANDRA" --network "$NETWORK" --network-alias cassandra
   --memory=2g cassandra:5.0.9 >/dev/null
 CREATED_CONTAINER=1
 
+wait_for_cassandra() {
+  local attempt=1
+  local state
+  while (( attempt <= 120 )); do
+    state="$(docker inspect -f '{{.State.Running}}' "$CASSANDRA" 2>/dev/null || true)"
+    if [[ "$state" != true ]]; then
+      echo "Cassandra saiu durante o startup (state=${state:-unknown})" >&2
+      docker logs --tail 100 "$CASSANDRA" >&2 || true
+      return 1
+    fi
+    # This query runs inside Cassandra and proves that the CQL service is up,
+    # rather than merely proving that the container process is running.
+    if docker exec "$CASSANDRA" /opt/cassandra/bin/cqlsh 127.0.0.1 9042 \
+      -e 'SELECT cluster_name FROM system.local;' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  echo "Cassandra não ficou pronto após 120s" >&2
+  docker logs --tail 100 "$CASSANDRA" >&2 || true
+  return 1
+}
+
+wait_for_cassandra
+
+network_members="$(docker network inspect "$NETWORK" --format '{{json .Containers}}')"
+if [[ "$network_members" != *"$CASSANDRA"* ]]; then
+  echo "Cassandra não está na rede esperada: $NETWORK" >&2
+  echo "$network_members" >&2
+  exit 1
+fi
+
+# Verify DNS and TCP reachability from the same Node image/network used by the
+# fixture. This catches alias/network regressions before running any writes.
+docker run --rm --network "$NETWORK" --entrypoint node "$NODE_TEST_IMAGE" -e '
+  const dns = require("node:dns");
+  const net = require("node:net");
+  dns.lookup("cassandra-a63", (dnsError, address) => {
+    if (dnsError) { console.error(`cassandra_dns_failed:${dnsError.message}`); process.exit(1); }
+    const socket = net.createConnection({host: "cassandra-a63", port: 9042});
+    socket.setTimeout(5000);
+    socket.once("connect", () => { console.log(`cassandra_ready_address:${address}`); socket.destroy(); });
+    socket.once("timeout", () => { console.error("cassandra_tcp_timeout"); socket.destroy(); process.exit(1); });
+    socket.once("error", error => { console.error(`cassandra_tcp_failed:${error.message}`); process.exit(1); });
+  });
+'
+
 docker run --rm --network "$NETWORK" \
   -e CASSANDRA_CONTACT_POINTS=cassandra-a63 \
   -e CASSANDRA_LOCAL_DC=datacenter1 \
