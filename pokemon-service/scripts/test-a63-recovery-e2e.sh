@@ -12,13 +12,32 @@ REL_OUTPUT="${OUT_FILE#$ROOT_DIR/}"
 CREATED_NETWORK=0
 CREATED_CONTAINER=0
 FAILED=1
+KEEP_CONTAINERS="${A63_KEEP_CONTAINERS:-0}"
+
+if [[ "$KEEP_CONTAINERS" != 0 && "$KEEP_CONTAINERS" != 1 ]]; then
+  echo "A63_KEEP_CONTAINERS deve ser 0 ou 1" >&2
+  exit 2
+fi
+
+diagnose_cassandra() {
+  echo "--- Cassandra Docker state ($CASSANDRA) ---" >&2
+  docker inspect "$CASSANDRA" --format 'exit={{.State.ExitCode}} oom={{.State.OOMKilled}} status={{.State.Status}} running={{.State.Running}} error={{json .State.Error}} started={{.State.StartedAt}} finished={{.State.FinishedAt}}' >&2 || true
+  echo "--- Cassandra Docker image/config ---" >&2
+  docker inspect "$CASSANDRA" --format 'image={{.Config.Image}} memory={{.HostConfig.Memory}} network={{range $name, $value := .NetworkSettings.Networks}}{{$name}} ip={{$value.IPAddress}} aliases={{json $value.Aliases}} {{end}}' >&2 || true
+  echo "--- Cassandra logs (last 100 lines) ---" >&2
+  docker logs --tail 100 "$CASSANDRA" >&2 || true
+}
 
 cleanup() {
   if [[ "$CREATED_CONTAINER" == 1 ]]; then
-    if [[ "$FAILED" == 1 ]]; then docker logs --tail 100 "$CASSANDRA" >&2 || true; fi
-    docker rm -f -v "$CASSANDRA" >/dev/null 2>&1 || true
+    if [[ "$FAILED" == 1 ]]; then diagnose_cassandra; fi
+    if [[ "$KEEP_CONTAINERS" == 1 ]]; then
+      echo "A63_KEEP_CONTAINERS=1: mantendo Cassandra=$CASSANDRA e network=$NETWORK" >&2
+    else
+      docker rm -f -v "$CASSANDRA" >/dev/null 2>&1 || true
+    fi
   fi
-  if [[ "$CREATED_NETWORK" == 1 ]]; then docker network rm "$NETWORK" >/dev/null 2>&1 || true; fi
+  if [[ "$CREATED_NETWORK" == 1 && "$KEEP_CONTAINERS" != 1 ]]; then docker network rm "$NETWORK" >/dev/null 2>&1 || true; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -46,7 +65,7 @@ wait_for_cassandra() {
     state="$(docker inspect -f '{{.State.Running}}' "$CASSANDRA" 2>/dev/null || true)"
     if [[ "$state" != true ]]; then
       echo "Cassandra saiu durante o startup (state=${state:-unknown})" >&2
-      docker logs --tail 100 "$CASSANDRA" >&2 || true
+      diagnose_cassandra
       return 1
     fi
     # This query runs inside Cassandra and proves that the CQL service is up,
@@ -59,7 +78,7 @@ wait_for_cassandra() {
     attempt=$((attempt + 1))
   done
   echo "Cassandra não ficou pronto após 120s" >&2
-  docker logs --tail 100 "$CASSANDRA" >&2 || true
+  diagnose_cassandra
   return 1
 }
 
