@@ -100,16 +100,22 @@ async function exportHistorical({execute, keyspace, chat, player, versions = 'bo
     const source = VERSION_SOURCES[version];
     let account;
     try {
+      const query = version === 'v1'
+        ? `SELECT valor FROM ${table} WHERE modulo = ? AND particao = ?`
+        : `SELECT valor FROM ${keyspace}.legacy_estado WHERE chave = ?`;
+      const params = version === 'v1' ? ['treinador', chat] : ['treinador'];
       account = await readOne(
         execute,
-        version === 'v1'
-          ? `SELECT valor FROM ${table} WHERE modulo = ? AND particao = ?`
-          : `SELECT valor FROM ${keyspace}.legacy_estado WHERE chave = ?`,
-        version === 'v1' ? ['treinador', chat] : ['treinador'],
+        query,
+        params,
         version,
         chat,
         player
       );
+      // SERIAL não fornece snapshot multi-tabela. Uma segunda leitura da mesma
+      // origem detecta alteração concorrente durante a exportação.
+      const confirmed = await readOne(execute, query, params, version, chat, player);
+      if (hash(account) !== hash(confirmed)) throw new Error(`historical_save_changed_during_export_${version}`);
     } catch (error) {
       if (selected.length > 1 && /^historical_save_not_found_/.test(error.message)) {
         missingVersions.push(version);

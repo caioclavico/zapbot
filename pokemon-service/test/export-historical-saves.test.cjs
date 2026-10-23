@@ -22,9 +22,9 @@ test('exporta V1/V2 por SELECT e preserva identidade de proprietário', async ()
   assert.equal(result.historical_snapshots.length, 2);
   assert.equal(result.historical_snapshots[0].treinador.equipe[0]['id-pokemon'], 'v1-poke');
   assert.equal(result.historical_snapshots[1].treinador.equipe[0]['id-pokemon'], 'v2-poke');
-  assert.equal(calls.length, 2);
-  assert.deepEqual(calls.map(c => c.options.consistency), ['SERIAL','SERIAL']);
-  assert.deepEqual(calls.map(c => c.params), [['treinador','grupo'], ['treinador']]);
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls.map(c => c.options.consistency), ['SERIAL','SERIAL','SERIAL','SERIAL']);
+  assert.deepEqual(calls.map(c => c.params), [['treinador','grupo'], ['treinador','grupo'], ['treinador'], ['treinador']]);
 });
 
 test('não inventa versão ausente e rejeita dados inconsistentes', async () => {
@@ -43,4 +43,14 @@ test('serializador produz EDN estrutural sem converter payload legado em keyword
   const edn = toEdn({meta:{'authorized-offline-copy':true}, historical_snapshots:[{treinador:{'id-pokemon':'x'}}]}, true);
   assert.match(edn, /:authorized-offline-copy true/);
   assert.match(edn, /"id-pokemon" "x"/);
+});
+
+test('detecta alteração concorrente entre leituras SERIAL', async () => {
+  let reads = 0;
+  const execute = async () => {
+    reads++;
+    const account = reads === 1 ? v1Account : {...v1Account, moedas: 999};
+    return {rows:[{valor:JSON.stringify({'p':account})}]};
+  };
+  await assert.rejects(exportHistorical({execute, keyspace:'zapbot', chat:'g', player:'p', versions:'v1'}), /changed_during_export_v1/);
 });

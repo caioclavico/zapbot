@@ -18,6 +18,13 @@ com `['treinador']` para V2. Todas as consultas usam `prepare=true` e
 `consistency=SERIAL`. O processo não contém código de INSERT, UPDATE, DELETE,
 DDL ou migration.
 
+Como `SERIAL` é aplicado por leitura, e não existe snapshot transacional entre
+as tabelas V1 e V2, cada origem é lida duas vezes e o hash é comparado. Uma
+alteração concorrente da mesma origem interrompe a exportação. Ainda assim,
+uma mudança entre as leituras de V1 e V2 pode ocorrer; nesse caso o relatório
+deve ser tratado como inconsistente e a exportação repetida em uma janela
+estável.
+
 ## Pré-requisitos
 
 - Usuário Cassandra dedicado com permissão `SELECT` somente nas duas tabelas
@@ -76,6 +83,22 @@ Pokémon, equipe, HP, golpes, progresso, moedas, inventário, ginásios,
 sequências e Pokedex derivada. Campos operacionais pendentes, batalhas,
 ofertas, raids ativas, tarefas e estruturas desconhecidas permanecem no
 payload de origem/quarentena e não tornam o save jogável automaticamente.
+
+## Ensaio integrado descartável
+
+Com Docker disponível e a imagem `odisseu-contract-tests` construída:
+
+```bash
+cd pokemon-service
+npm run test:historical-recovery:e2e
+```
+
+O runner cria uma rede interna e um Cassandra 5.0.9 efêmeros, insere fixtures
+V1/V2 somente nesse banco, executa o exportador real, valida o EDN e roda o
+importador/preview em Datomic Local descartável. O resultado inclui retry
+idempotente, slots separados, save ativo preservado e reabertura do banco.
+Todos os recursos Docker são removidos ao final; nenhum volume oficial é
+referenciado.
 
 ## Recuperação em caso de falha
 
