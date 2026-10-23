@@ -871,6 +871,15 @@
                       modo-texto? (boolean (some marcadores-txt resto))
                       resto* (vec (remove marcadores-txt resto))]
                   (cond
+                    (contains? #{"csv" "planilha"} (str/lower-case (str (or (first resto*) ""))))
+                    (p/let [d (.getTeamCsv jvm #js {:chatId chat-id :playerId player-id})
+                            doc #js {:base64 (.-base64 d)
+                                     :mimeType (or (.-mimeType d) "text/csv")
+                                     :filename (or (.-filename d) "meu-time-pokemon.csv")}
+                            texto (or (.-text d) "🎒 Seu time em CSV.")]
+                      (.envelope jvm-present (:requestId pedido) texto
+                                  #js {:document doc :effects #js []}))
+
                     (= "ativo" (first resto*))
                     (p/let [col (desempenho/medir! ctx "pokemon_jvm_collection"
                                    #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))
@@ -978,6 +987,24 @@
                             d (.listTeams jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId a)})]
                       (envelope-jvm pedido (.formatTeams jvm-present d (str config/prefix "pk"))))
                     :else (throw (erro-contrato (str "❓ Use " config/prefix "pk times salvar|usar|excluir.")))))
+
+                "liga"
+                (let [league-map {"iniciante" [1 10] "bronze" [11 25] "prata" [26 40]
+                                  "ouro" [41 60] "diamante" [61 100]}
+                      selected (str/lower-case (str (or (first resto) "")))]
+                  (if (str/blank? selected)
+                    (envelope-jvm pedido
+                                  (str "🏆 *Ligas*\n"
+                                       (str/join "\n" (map (fn [[n [lo hi]]] (str "• " n ": níveis " lo "–" hi)) league-map))
+                                       "\n\nUse " config/prefix "pk liga <nome>."))
+                    (if-not (contains? league-map selected)
+                      (envelope-jvm pedido "❓ Liga inválida. Consulte !pk liga.")
+                      (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                              d (.selectLeague jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId a)
+                                                        :fenceGeneration (.-fenceGeneration a)
+                                                        :operationId (.stableOperationId jvm-transport (:requestId pedido) (str "league:" selected))
+                                                        :leagueId selected})]
+                        (envelope-jvm pedido (str "✅ Liga " selected " selecionada. Use " config/prefix "pk times usar <nome> liga."))))))
 
                 "pokedex"
                 (let [prefix (str config/prefix "pk")

@@ -485,6 +485,10 @@
   (let [writer (named-team-writer req)]
     (ports/delete-named-team! store writer (select-keys req [:operation-id :name]))))
 
+(defn select-league! [store req]
+  (let [writer (named-team-writer req)]
+    (ports/select-league! store writer (select-keys req [:operation-id :league-id]))))
+
 (defn start-gym-challenge!
   "Inicia desafio 3×3. NPC: candidates da PokeAPI; ocupado: time do slot."
   [store {:keys [chat-id player-id save-id fence-generation operation-id

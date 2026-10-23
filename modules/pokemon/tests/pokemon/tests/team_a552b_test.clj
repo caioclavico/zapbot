@@ -5,6 +5,7 @@
             [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
             [pokemon.application.collection :as collection]
+            [pokemon.application.bridge-reads :as reads]
             [pokemon.infrastructure.datomic.store :as store]))
 
 (defn- fresh []
@@ -33,7 +34,23 @@
       (is (= 1 (count teams)))
       (is (= [0 1 2] (:indices (first teams))))
       (is (true? (:available? (first teams)))))
+    (is (= "iniciante"
+           (:league-id (ports/select-league! s ctx {:operation-id "league-select-1"
+                                                     :league-id "iniciante"}))))
     (is (= "liga" (:destination (ports/use-named-team! s ctx {:operation-id "team-use-1"
                                                                   :name "Liga 1" :destination "liga"}))))
+    (is (= "bronze"
+           (:league-id (ports/select-league! s ctx {:operation-id "league-select-2"
+                                                     :league-id "bronze"}))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (ports/use-named-team! s ctx {:operation-id "team-use-ineligible"
+                                                :name "Liga 1" :destination "liga"})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (ports/select-league! s ctx {:operation-id "league-select-invalid"
+                                               :league-id "master"})))
     (is (:deleted (ports/delete-named-team! s ctx {:operation-id "team-del-1" :name "Liga 1"})))
-    (is (empty? (ports/list-named-teams s "chat" "ash" "a")))))
+    (is (empty? (ports/list-named-teams s "chat" "ash" "a")))
+    (let [csv (reads/team-csv s "chat" "ash" "a")]
+      (is (= "text/csv" (:mime-type csv)))
+      (is (= "meu-time-pokemon.csv" (:filename csv)))
+      (is (.startsWith ^String (:base64 csv) "77u/")))))

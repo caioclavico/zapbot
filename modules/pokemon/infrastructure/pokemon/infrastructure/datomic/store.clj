@@ -130,7 +130,8 @@
              :ginasios (or (edn-read (:save/ginasios-edn e)) {})
              :time-ginasio (or (edn-read (:save/time-ginasio-edn e)) [])
              :times-prontos (or (edn-read (:save/times-prontos-edn e)) {})
-             :time-liga (or (edn-read (:save/time-liga-edn e)) [])))))
+             :time-liga (or (edn-read (:save/time-liga-edn e)) [])
+             :liga-id (:save/liga-id e)))))
 
 (defn- ->battle
   [e]
@@ -2262,13 +2263,23 @@
                      teams (or (edn-read (:save/times-prontos-edn save)) {})
                      ids (vec (get-in teams [name :pokemon-ids]))
                      collection (query-collection db (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx)))
-                     by-id (into {} (map (juxt :id-pokemon :collection-index) collection))
+                     by-id (into {} (map (juxt :id-pokemon identity) collection))
                      idxs (mapv by-id ids)
                      _ (when-not (seq ids) (throw (err/error :team_not_found {:name name})))
-                     _ (when (some nil? idxs) (throw (err/error :team_pokemon_missing {:name name})))
                      _ (when-not (= 3 (count ids)) (throw (err/error :invalid_team {:name name})))
                      attr (case destination :ginasio :save/time-ginasio-edn :liga :save/time-liga-edn
                                   (throw (err/error :invalid_destination {:destination destination})))
+                     _ (when (some nil? idxs) (throw (err/error :team_pokemon_missing {:name name})))
+                     league-id (:save/liga-id save)
+                     _ (when (and (= destination :liga) (str/blank? (str league-id)))
+                         (throw (err/error :league_not_selected {})))
+                     _ (when (and (= destination :liga)
+                                  (some #(not (raid-domain/pokemon-elegivel-liga? league-id %)) idxs))
+                         (throw (err/error :team_league_ineligible {:league-id league-id :name name})))
+                     _ (when (and (= destination :liga)
+                                  (some #(not (pos? (long (or (:hp-atual %) (:hp %) 0)))) idxs))
+                         (throw (err/error :team_pokemon_unhealthy {:name name})))
+                     idxs (mapv :collection-index idxs)
                      rev (long (:save/revision save 0))
                      result {:operation-id op :duplicate false :name name :destination (clojure.core/name destination)
                              :pokemon-ids ids :indices idxs}]
@@ -2303,6 +2314,27 @@
                         :operation-receipt/player-key (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
                         :operation-receipt/save-id (:save-id writer-ctx)
                         :operation-receipt/summary (pr-str result)}]
+                  :result result})))
+            (catch Exception ex
+              (or (resolve-receipt (receipt-entity (d/db conn) op) phash op) (throw ex)))))))
+
+  (select-league! [_ writer-ctx request]
+    (let [op (:operation-id request) league (str/lower-case (str/trim (str (:league-id request))))
+          phash (reward/payload-hash {:league-id league})
+          existing (receipt-entity (d/db conn) op)]
+      (or (resolve-receipt existing phash op)
+          (try
+            (transact-with-writer! conn writer-ctx
+             (fn [_db save]
+               (when-not (raid-domain/obter-liga league)
+                 (throw (err/error :invalid_league {:league-id league})))
+               (let [rev (long (:save/revision save 0))
+                     result {:operation-id op :duplicate false :league-id league}]
+                 {:tx [[:db/add [:save/key (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))] :save/liga-id league]
+                       [:db/cas [:save/key (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))] :save/revision rev (inc rev)]
+                       {:operation-receipt/id op :operation-receipt/kind "league-select" :operation-receipt/channel "gameplay"
+                        :operation-receipt/payload-hash phash :operation-receipt/player-key (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                        :operation-receipt/save-id (:save-id writer-ctx) :operation-receipt/summary (pr-str result)}]
                   :result result})))
             (catch Exception ex
               (or (resolve-receipt (receipt-entity (d/db conn) op) phash op) (throw ex)))))))

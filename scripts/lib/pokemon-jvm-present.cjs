@@ -9,7 +9,16 @@ const PAGE_SIZE = 12;
 
 function envelope(requestId, text, extras = {}) {
   const messages = [];
-  if (extras.image && (extras.image.mediaId || extras.image.base64)) {
+  if (extras.document && (extras.document.mediaId || extras.document.base64)) {
+    messages.push({
+      type: 'document',
+      text: text || '',
+      mediaId: extras.document.mediaId || null,
+      base64: extras.document.base64 || null,
+      mimeType: extras.document.mimeType || 'text/csv',
+      filename: extras.document.filename || 'pokemon.csv'
+    });
+  } else if (extras.image && (extras.image.mediaId || extras.image.base64)) {
     messages.push({
       type: 'image',
       text: extras.caption || text,
@@ -1860,6 +1869,7 @@ const ALIASES = {
   pc: 'pc', computador: 'pc', centro: 'pc',
   espaco: 'espaco', espaço: 'espaco',
   times: 'times',
+  liga: 'liga', ligas: 'liga', lig: 'liga',
   pokedex: 'pokedex', dex: 'pokedex', colecao: 'pokedex', 'coleção': 'pokedex',
   favorito: 'favorito', fav: 'favorito',
   save: 'save',

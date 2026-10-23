@@ -126,6 +126,9 @@
   (delete-named-team! [this writer-ctx request]
     "Exclui escalação nomeada do save.")
 
+  (select-league! [this writer-ctx request]
+    "Seleciona a liga canônica para o save ativo.")
+
   (start-gym-challenge! [this writer-ctx request]
     "Inicia combate 3×3; resultado só via turnos + resolve interno.")
 

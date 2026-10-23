@@ -83,7 +83,8 @@
      :pvp_level_incompatible :pvp_no_challenge :not_pvp_battle
      :invalid_title :professor_invalid_token :professor_expired :professor_no_cards
      :professor_busy :pokemon_favorite) 400
-    (:invalid_team :invalid_destination :team_not_found :team_pokemon_missing) 400
+    (:invalid_team :invalid_destination :team_not_found :team_pokemon_missing :invalid_league
+     :league_not_selected :team_league_ineligible :team_pokemon_unhealthy) 400
     (:stale_writer_fence :writer_fence_conflict :activate_conflict
      :receipt_payload_mismatch :reward_conflict :reward_save_mismatch
      :operation_forbidden :battle_pending :battle_already_active
@@ -228,6 +229,7 @@
                                               "professor-cards" "professor-send" "professor-confirm"
                                               "professor-cancel" "professor-use"
                                               "named-teams-read" "named-teams-write"
+                                              "team-csv-export" "league-select"
                                               "pvp-open" "pvp-accept" "pvp-cancel"
                                               "pvp-turn" "pvp-active-read"
                                               "onboarding-read" "onboarding-start"
@@ -402,21 +404,32 @@
                         (throw (err/error :invalid_query {})))
                       (ok! ex (tx/list-named-teams store chat player save))))
 
-                (contains? #{"/v1/teams/save" "/v1/teams/use" "/v1/teams/delete"} path)
+                (= path "/v1/teams/csv")
+                (do (require-method! ex #{"GET"})
+                    (let [chat (g qs "chatId") player (g qs "playerId") save (g qs "saveId")
+                          actor (header ex "X-Actor-Player-Id")]
+                      (when (or (str/blank? chat) (str/blank? player) (str/blank? save)
+                                (not= actor player))
+                        (throw (err/error :invalid_query {})))
+                      (ok! ex (reads/team-csv store chat player save))))
+
+                (contains? #{"/v1/teams/save" "/v1/teams/use" "/v1/teams/delete" "/v1/teams/league"} path)
                 (do (require-method! ex #{"POST"})
                     (let [body (read-body ex) chat (g body "chatId") player (g body "playerId")
                           save (g body "saveId") fence (long-or-nil (g body "fenceGeneration"))
                           op (g body "operationId") name (g body "name") actor (header ex "X-Actor-Player-Id")
                           req {:chat-id chat :player-id player :save-id save :fence-generation fence
                                :operation-id op :name name :indices (or (g body "indices") [])
-                               :destination (g body "destination")}]
+                               :destination (g body "destination") :league-id (g body "leagueId")}]
                       (when (or (str/blank? chat) (str/blank? player) (str/blank? save)
-                                (nil? fence) (str/blank? op) (str/blank? name) (not= actor player))
+                                (nil? fence) (str/blank? op) (not= actor player)
+                                (and (not= path "/v1/teams/league") (str/blank? name)))
                         (throw (err/error :invalid_query {})))
                       (ok! ex
                            (case path
                              "/v1/teams/save" (tx/save-named-team! store req)
                              "/v1/teams/use" (tx/use-named-team! store req)
+                             "/v1/teams/league" (tx/select-league! store req)
                              (tx/delete-named-team! store req)))))
 
                 (= path "/v1/collection")

@@ -43,8 +43,13 @@
         (let [[status data] (call base "/v1/teams?chatId=chat&playerId=ash&saveId=a" "GET" nil "ash")]
           (is (= 200 status))
           (is (= "liga" (get-in data ["data" "teams" 0 "name"]))))
+        (is (= 200 (first (call base "/v1/teams/league" "POST"
+                                  (assoc body :operationId "team-http-league" :leagueId "iniciante") "ash"))))
         (is (= 200 (first (call base "/v1/teams/use" "POST"
                                   (assoc body :operationId "team-http-use" :destination "liga") "ash"))))
+        (let [[status data] (call base "/v1/teams/csv?chatId=chat&playerId=ash&saveId=a" "GET" nil "ash")]
+          (is (= 200 status))
+          (is (= "text/csv" (get-in data ["data" "mime-type"]))))
         (is (= 200 (first (call base "/v1/teams/delete" "POST"
                                   (assoc body :operationId "team-http-delete") "ash"))))
         (finally (bridge/stop! server))))))

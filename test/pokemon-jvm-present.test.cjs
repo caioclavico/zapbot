@@ -131,6 +131,15 @@ test('formatTeams apresenta escalações persistidas por nome e índices atuais'
   assert.match(text, /times usar/);
 });
 
+test('envelope suporta documento CSV em base64', () => {
+  const env = present.envelope('csv-1', 'Seu time em CSV', {
+    document: { base64: 'YWJj', mimeType: 'text/csv', filename: 'time.csv' }
+  });
+  assert.equal(env.messages[0].type, 'document');
+  assert.equal(env.messages[0].filename, 'time.csv');
+  assert.equal(env.messages[0].base64, 'YWJj');
+});
+
 test('formatError distingue pending local de recibo ausente', () => {
   assert.match(present.formatError({ code: 'OPERATION_PENDING' }), /neste processo JVM/);
   assert.match(present.formatError({ code: 'OPERATION_NOT_FOUND' }), /não persistida/);

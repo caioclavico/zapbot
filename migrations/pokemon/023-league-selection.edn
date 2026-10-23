@@ -1,0 +1,6 @@
+;; A5.5.3 — liga selecionada persistida por save.
+[
+ {:db/ident       :save/liga-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Liga selecionada pelo treinador"}]

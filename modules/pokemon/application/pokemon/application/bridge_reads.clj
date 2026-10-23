@@ -19,7 +19,9 @@
             [pokemon.domain.mundo :as mundo]
             [pokemon.domain.raid :as raid]
             [pokemon.domain.shop :as shop]
-            [pokemon.domain.xp :as xp]))
+            [pokemon.domain.xp :as xp])
+  (:import [java.nio.charset StandardCharsets]
+           [java.util Base64]))
 
 (defn- require-player!
   [store chat-id player-id]
@@ -115,6 +117,41 @@
      :favorito fav
      :count (count items)
      :collection (mapv pokemon-dto items)}))
+
+(def ^:private csv-columns
+  ["Nº" "Situação" "Nome" "Nível" "Raridade" "Tipos" "HP atual" "HP máximo"
+   "Status" "Item" "XP atual" "XP necessário"])
+
+(defn- csv-field [value]
+  (let [s (str (or value ""))]
+    (if (re-find #"[;\"\n\r]" s)
+      (str "\"" (str/replace s "\"" "\"\"") "\"") s)))
+
+(defn- csv-line [values]
+  (str/join ";" (map csv-field values)))
+
+(defn team-csv
+  "Exportação somente leitura equivalente ao `time csv` legado.
+   O conteúdo é derivado do save autorizado e nunca aceita linhas do cliente."
+  [store chat-id player-id save-id]
+  (require-player! store chat-id player-id)
+  (let [slot (resolve-save-id! store chat-id player-id save-id)
+        items (ports/list-collection store chat-id player-id slot)
+        beds (ports/list-enfermaria store chat-id player-id slot)
+        row (fn [number situation p]
+              (let [xp (long (:xp p 0))]
+                (csv-line [number situation (:nome p) (:nivel p 1) (:raridade p "comum")
+                           (str/join "/" (:tipos p)) (:hp-atual p) (:hp p) (:status p)
+                           (or (:item p) "") xp (long (:xp-necessario p 0))])))
+        content (str "\uFEFF" (str/join "\n"
+                                          (cons (csv-line csv-columns)
+                                                (concat (map-indexed #(row (inc %1) "No time" %2) items)
+                                                        (map #(row "" "Enfermaria" (:pokemon %)) beds)))) "\n")
+        encoded (.encodeToString (Base64/getEncoder) (.getBytes content StandardCharsets/UTF_8))]
+    {:chat-id chat-id :player-id player-id :save-id slot
+     :filename "meu-time-pokemon.csv" :mime-type "text/csv"
+     :text (str "🎒 Seu time: " (+ (count items) (count beds)) " Pokémon na planilha em anexo.")
+     :base64 encoded}))
 
 (defn- species-key
   [nome]
