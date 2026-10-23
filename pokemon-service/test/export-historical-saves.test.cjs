@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const cassandra = require('cassandra-driver');
 const {exportHistorical, toEdn} = require('../scripts/export-historical-saves.cjs');
 
 const v1Account = {equipe:[{'id-pokemon':'v1-poke', nome:'Pikachu'}], moedas:12};
@@ -23,7 +24,14 @@ test('exporta V1/V2 por SELECT e preserva identidade de proprietário', async ()
   assert.equal(result.historical_snapshots[0].treinador.equipe[0]['id-pokemon'], 'v1-poke');
   assert.equal(result.historical_snapshots[1].treinador.equipe[0]['id-pokemon'], 'v2-poke');
   assert.equal(calls.length, 4);
-  assert.deepEqual(calls.map(c => c.options.consistency), ['SERIAL','SERIAL','SERIAL','SERIAL']);
+  assert.deepEqual(calls.map(c => c.options.consistency), [
+    cassandra.types.consistencies.localOne,
+    cassandra.types.consistencies.localOne,
+    cassandra.types.consistencies.localOne,
+    cassandra.types.consistencies.localOne
+  ]);
+  assert.ok(calls.every(c => c.options.consistency !== cassandra.types.consistencies.any));
+  assert.ok(calls.every(c => c.options.serialConsistency === undefined));
   assert.deepEqual(calls.map(c => c.params), [['treinador','grupo'], ['treinador','grupo'], ['treinador'], ['treinador']]);
 });
 
@@ -45,7 +53,7 @@ test('serializador produz EDN estrutural sem converter payload legado em keyword
   assert.match(edn, /"id-pokemon" "x"/);
 });
 
-test('detecta alteração concorrente entre leituras SERIAL', async () => {
+test('detecta alteração concorrente entre leituras LOCAL_ONE', async () => {
   let reads = 0;
   const execute = async () => {
     reads++;

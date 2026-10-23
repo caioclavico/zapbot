@@ -5,6 +5,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const cassandra = require('cassandra-driver');
 
 const {hash} = require('../runtime/restore-protocol.cjs');
 
@@ -12,6 +13,10 @@ const VERSION_SOURCES = Object.freeze({
   v1: {kind: 'legacy_estado_particionado', version: '1'},
   v2: {kind: 'legacy_estado', version: '2'}
 });
+// SELECT cannot use ConsistencyLevel.ANY (write-only). SERIAL is reserved for
+// lightweight transactions; exports perform ordinary reads on a single-node
+// disposable Cassandra, so LOCAL_ONE is the appropriate level here.
+const READ_CONSISTENCY = cassandra.types.consistencies.localOne;
 const object = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const validId = value => typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value);
 const requestedVersions = value => {
@@ -37,7 +42,7 @@ async function readOne(execute, query, params, version, chat, player) {
   const result = await execute(
     query,
     params,
-    {prepare: true, consistency: 'SERIAL'}
+    {prepare: true, consistency: READ_CONSISTENCY}
   );
   const rows = Array.isArray(result?.rows) ? result.rows : (typeof result?.first === 'function' ? (result.first() ? [result.first()] : []) : []);
   if (rows.length > 1) throw new Error(`historical_save_ambiguous_${version}`);
