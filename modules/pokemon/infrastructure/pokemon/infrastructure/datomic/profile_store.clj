@@ -69,7 +69,11 @@
 
 (defn select-title! [conn ctx index]
   (let [payload {:action :select-title :index index}
-        title (profile/title-at (save (d/db conn) (:chat-id ctx) (:player-id ctx) (:save-id ctx)) index)]
+        s (save (d/db conn) (:chat-id ctx) (:player-id ctx) (:save-id ctx))
+        title (profile/title-at {:doacoes (:save/doacoes-pokemon s 0)
+                                 :vitorias-treinador (:save/vitorias-treinador s 0)
+                                 :maior-sequencia-capturas (:save/maior-sequencia-capturas s 0)}
+                                index)]
     (when-not title (throw (err/error :invalid_title {:index index})))
     (transact! conn ctx payload (fn [_ s] {:summary {:title (:id title) :label (:label title)}
                                            :tx [[:db/add [:save/key (save-key (:chat-id ctx) (:player-id ctx) (:save-id ctx))]

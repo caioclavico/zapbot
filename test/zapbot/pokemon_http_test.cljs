@@ -467,3 +467,32 @@
                        (set! http/jvm-configurado? original-config)
                        (reset! http/cliente-jvm original)
                        (done)))))))
+
+(deftest perfil-professor-titulo-amizade-rota-evento-whatsapp
+  (async done
+    (let [respostas (atom []) original @http/cliente-jvm original-config http/jvm-configurado?
+          message (fn [id] #js {:id #js {:_serialized id} :from "grupo@g.us" :author "ash@lid"
+                                 :mentionedIds #js []
+                                 :reply (fn [texto & _] (swap! respostas conj texto) (p/resolved nil))})
+          client #js {:getActiveSave (fn [_] (p/resolved #js {:activeSaveId "a" :fenceGeneration 1}))
+                      :getProfessorCards (fn [_] (p/resolved #js {:cards #js {:pidgey 1}}))
+                      :getTitles (fn [_] (p/resolved #js {:selected "batalhador"
+                                                           :titles #js [#js {:label "Batalhador"}]}))
+                      :getFriendship (fn [_] (p/resolved #js {:species "Pidgey" :value 220
+                                                               :label "melhor amigo"}))}]
+      (set! http/jvm-configurado? (fn [] true))
+      (reset! http/cliente-jvm client)
+      (-> (isolado!
+           (fn []
+             (p/let [_ (http/executar (message "perfil-professor") "pokemon" "professor cartoes")
+                     _ (http/executar (message "perfil-titulo") "pokemon" "titulo")
+                     _ (http/executar (message "perfil-amizade") "pokemon" "amizade 1")]
+               (is (= 3 (count @respostas)))
+               (is (some #(re-find #"Cartões" %) @respostas))
+               (is (some #(re-find #"Batalhador" %) @respostas))
+               (is (some #(re-find #"220/255" %) @respostas)))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! http/jvm-configurado? original-config)
+                       (reset! http/cliente-jvm original)
+                       (done)))))))
