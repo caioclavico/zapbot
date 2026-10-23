@@ -10,6 +10,7 @@
     "build": "shadow-cljs release domain",
     "test": "node --test test/*.test.cjs",
     "test:domain": "shadow-cljs compile test && node target/test.js",
+    "test:historical-export": "node --test test/export-historical-saves.test.cjs",
     "test:save-slots:cassandra": "bash scripts/test-save-slots-cassandra.sh",
     "test:adventure-fence:cassandra": "bash scripts/test-adventure-fence-cassandra.sh",
     "test:adventure-birth:cassandra": "bash scripts/test-adventure-birth-cassandra.sh",
