@@ -711,6 +711,7 @@
         ;; !pk 1‥4 → atacar com o índice preservado em resto.
         primeiro-arg (str/lower-case (str (or (first args) "")))
         trade? (= "troca" primeiro-arg)
+        recovery? (= "recuperar" primeiro-arg)
         save-management? (contains? #{"novo" "renomear"} primeiro-arg)
         ;; A negociação só é exposta por !pk troca. O token já vem nos args
         ;; recebidos de pokemon/jogar e não integra o contrato HTTP.
@@ -719,6 +720,7 @@
                      args)
         resolved-cmd (cond
                        trade? nil
+                       recovery? nil
                        save-management? "save-management"
                        :else (.resolveCommand jvm-present (clj->js args)))
         cmd (if (and (= "time" resolved-cmd)
@@ -729,7 +731,22 @@
         resto (if (re-matches #"[1-4]" primeiro)
                 [primeiro]
                 (vec (rest args)))]
-    (if trade?
+    (if recovery?
+      (let [choice (str/lower-case (str (or (second args) "")))
+            texto (cond
+                    (str/blank? choice)
+                    (str "🗂️ Recuperação histórica requer autorização administrativa.\n"
+                         "Use !pk recuperar v1, !pk recuperar v2 ou !pk recuperar ambos "
+                         "para solicitar uma prévia. Nenhum save foi importado.")
+                    (contains? #{"v1" "v2" "ambos"} choice)
+                    (str "🗂️ Solicitação de recuperação " (str/upper-case choice)
+                         " registrada para validação administrativa.\n"
+                         "A importação só ocorrerá após prévia e confirmação explícita; "
+                         "nenhum save foi ativado ou alterado.")
+                    :else
+                    "❓ Use !pk recuperar, !pk recuperar v1, v2 ou ambos.")]
+        (entregar-envelope-jvm! message ctx pedido (envelope-jvm pedido texto)))
+      (if trade?
       (p/let [envelope
               (let [sub (str/lower-case (str (or (first trade-args) "")))
             rest-args (vec (rest trade-args))
@@ -2224,7 +2241,7 @@
 
                 (envelope-jvm pedido
                               (.formatUnavailable jvm-present (str/join " " args))))]
-        (entregar-envelope-jvm! message ctx pedido envelope))))))
+        (entregar-envelope-jvm! message ctx pedido envelope)))))))
 
 (defn executar [message comando argumentos]
   (let [ctx (desempenho/contexto-de message)

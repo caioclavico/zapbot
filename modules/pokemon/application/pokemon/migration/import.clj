@@ -11,7 +11,8 @@
             [pokemon.application.ports :as ports]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
-            [pokemon.migration.gates :as gates]))
+            [pokemon.migration.gates :as gates]
+            [pokemon.migration.transform :as transform]))
 
 (defn- receipt-id
   [import-batch-id save-key*]
@@ -387,3 +388,49 @@
   [store ir import-batch-id]
   (let [conn (:conn store)]
     (mapv #(import-one-save! store conn import-batch-id %) (:saves ir))))
+
+(defn import-selected-saves!
+  "Importa somente saves históricos previamente selecionados por um fluxo autorizado.
+   O jogador pode já existir: o save atual nunca é sobrescrito e os slots recuperados
+   não são ativados. A chamada deve receber snapshots com identidade já validada."
+  [store snapshots {:keys [import-batch-id chat-id player-id]}]
+  (when (str/blank? import-batch-id)
+    (throw (err/error :missing_import_batch_id {})))
+  (when-not (and chat-id player-id (seq snapshots))
+    (throw (err/error :recovery_selection_invalid
+                      {:chat-id chat-id :player-id player-id
+                       :snapshot-count (count snapshots)})))
+  (let [conn (:conn store)
+        snapshots (mapv (fn [snapshot]
+                          (let [version (or (:legacy-version snapshot)
+                                            (:version snapshot)
+                                            (get-in snapshot [:source :legacy-version])
+                                            (get-in snapshot [:source :legacyVersion])
+                                            (get-in snapshot [:source :sourceVersion]))
+                                version (str/lower-case (str version))
+                                version (if (str/starts-with? version "v") version (str "v" version))]
+                            (assoc snapshot :target-slot (str "recovery-" version))))
+                        snapshots)
+        save-irs (mapv #(transform/snapshot->save-ir % {}) snapshots)
+        ;; Preflight completo antes de qualquer escrita evita criar o primeiro slot
+        ;; quando o segundo snapshot é inválido ou colide.
+        _ (doseq [save-ir save-irs]
+            (when-not (= chat-id (:chat-id save-ir))
+              (throw (err/error :recovery_owner_mismatch {:expected chat-id :actual (:chat-id save-ir)})))
+            (when-not (= player-id (:player-id save-ir))
+              (throw (err/error :recovery_owner_mismatch {:expected player-id :actual (:player-id save-ir)}))))
+        _ (doseq [save-ir save-irs]
+            (when-let [existing (ports/get-save store chat-id player-id (:slot-id save-ir))]
+              (let [op-id (receipt-id import-batch-id (:save-key save-ir))]
+                (when-not (ports/get-receipt store op-id)
+                  (throw (err/error :recovery_slot_already_exists
+                                    {:slot-id (:slot-id save-ir)
+                                     :existing (select-keys existing [:origin :legacy-version :import-id])}))))))
+        _ (when-not (player-exists? store chat-id player-id)
+            (ports/create-player! store chat-id player-id))
+        results (mapv #(import-one-save! store conn import-batch-id %) save-irs)]
+    {:import-batch-id import-batch-id
+     :chat-id chat-id
+     :player-id player-id
+     :results results
+     :active-save-id (ports/active-save-id store chat-id player-id)}))

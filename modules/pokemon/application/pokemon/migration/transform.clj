@@ -222,6 +222,22 @@
                        :q (count @quarantine)})}]
     ir))
 
+(defn snapshot->save-ir
+  "Converte um snapshot histórico isolado em um IR de save.
+   Usado pela recuperação seletiva; não consulta rede nem altera o banco."
+  [{:keys [chat-id player-id target-slot snapshot-id] :as snapshot}
+   {:keys [slot-id] :or {slot-id target-slot}}]
+  (when-not (and chat-id player-id snapshot-id slot-id)
+    (throw (ex-info "recovery_snapshot_identity_incomplete"
+                    {:required [:chat-id :player-id :snapshot-id :slot-id]
+                     :snapshot (select-keys snapshot [:chat-id :player-id :snapshot-id :target-slot])})))
+  (save-ir {:chat-id chat-id
+            :player-id player-id
+            :slot slot-id
+            :provenance (dissoc snapshot :treinador :loja)
+            :treinador (:treinador snapshot)
+            :loja (:loja snapshot)}))
+
 (defn write-ir!
   [ir path]
   (clojure.java.io/make-parents path)

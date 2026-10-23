@@ -55,7 +55,7 @@
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra versão, últimas mudanças, consumo de recursos e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
-   {:emoji "⚡" :uso "pokemon [inicial|cacar [area]|clima|treinador|titulo|amizade|pokedex [n|descobertas]|ginasio|liga|time|mochila|saves|save <n>|novo save|renomear save <n> <nome>|atacar|sair]" :desc "Batalhe, explore áreas com clima e complete sua Pokédex"}
+   {:emoji "⚡" :uso "pokemon [inicial|cacar [area]|clima|treinador|titulo|amizade|pokedex [n|descobertas]|ginasio|liga|time|mochila|saves|save <n>|novo save|renomear save <n> <nome>|recuperar [v1|v2|ambos]|atacar|sair]" :desc "Batalhe, explore áreas com clima e complete sua Pokédex"}
    {:emoji "🐛" :uso "pk bug" :desc "Registra no Cassandra a mensagem respondida ou a anterior, junto da versão atual"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
    {:emoji "📚" :uso "pokemon ajuda [batalhas|ginasios|cacadas|ligas|time|evolucao|shiny|semanais|raid]" :desc "Guias de como jogar, com passos, regras e exemplos; também aceita pokemon <módulo> ajuda"}
