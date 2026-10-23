@@ -71,13 +71,14 @@
      item-id (assoc :item-id item-id))))
 
 (defn learn-move-payload
-  [{:keys [idx golpe slot oferta?]}]
+  [{:keys [idx golpe slot oferta? consume-item-id]}]
   (reward/canonicalize
    (cond-> {:idx (long idx)
             :golpe (reward/canonicalize
                     (select-keys golpe [:slug :nome-exibicao :tipo :poder :classe]))
             :oferta? (boolean oferta?)}
-     (some? slot) (assoc :slot (long slot)))))
+     (some? slot) (assoc :slot (long slot))
+     consume-item-id (assoc :consume-item-id (str consume-item-id)))))
 
 (defn set-active-payload
   [{:keys [idx]}]

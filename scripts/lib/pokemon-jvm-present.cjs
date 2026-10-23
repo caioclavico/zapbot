@@ -1789,6 +1789,12 @@ function formatItemUse(data, prefix = '!pk') {
   if (data && data.kind === 'pocao') {
     return `🧪 *${nome}* HP ${data.hpAntes}→${data.hpDepois}/${data.hpMax}. ${prefix} time`;
   }
+  if (data && data.kind === 'reviver') {
+    return `💎 *${nome}* foi revivido com HP completo. 1 Reviver consumido. ${prefix} time`;
+  }
+  if (data && data.kind === 'equip') {
+    return `🎒 *${nome}* agora segura \`${data.itemId}\`.`;
+  }
   return `✅ Item usado em *${nome}*.`;
 }
 

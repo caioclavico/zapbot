@@ -145,6 +145,82 @@
       (is (true? (:duplicate pot2)))
       (is (= 26 (:hp-atual (first col)))))))
 
+(deftest reviver-equipamento-sao-atomicos
+  (let [s (fresh-store! "s411-revive-equip")
+        chat "chat-revive"
+        mon {:nome "Rattata" :hp 40 :hp-atual 0 :ataque 30 :defesa 20
+             :atq-esp 20 :def-esp 20 :veloc 40 :tipos ["normal"]
+             :nivel 5 :raridade "comum"}]
+    (boot! s chat "ash" 100)
+    (collection/adicionar-pokemon! s chat "ash" mon 10 nil)
+    (ports/update-hp-status! s {:chat-id chat :player-id "ash" :save-id "a"
+                                :fence-generation (fence s chat "ash")}
+                               0 0 nil)
+    (reward-app/admin-seed-reward!
+     s {:operation-id "seed-reviver" :chat-id chat :player-id "ash"
+        :save-id "a" :item {:item-id "reviver" :qty 1}})
+    (let [f (fence s chat "ash")
+          r (tx/use-item! s {:chat-id chat :player-id "ash" :save-id "a"
+                              :fence-generation f :operation-id "use-reviver"
+                              :item-id "reviver" :idx 0})
+          retry (tx/use-item! s {:chat-id chat :player-id "ash" :save-id "a"
+                                 :fence-generation f :operation-id "use-reviver"
+                                 :item-id "reviver" :idx 0})
+          poke (first (ports/list-collection s chat "ash" "a"))
+          inv (ports/list-inventory s chat "ash" "a")]
+      (is (= "reviver" (:kind r)))
+      (is (true? (:duplicate retry)))
+      (is (= 40 (:hp-atual poke)))
+      (is (zero? (or (:qty (first (filter #(= "reviver" (:item-id %)) inv))) 0))))))
+
+(deftest equipamento-troca-item-com-cas
+  (let [s (fresh-store! "s411-equip")
+        chat "chat-equip"
+        mon {:nome "Rattata" :hp 40 :hp-atual 40 :ataque 30 :defesa 20
+             :atq-esp 20 :def-esp 20 :veloc 40 :tipos ["normal"]
+             :nivel 5 :raridade "comum"}]
+    (boot! s chat "ash" 100)
+    (collection/adicionar-pokemon! s chat "ash" mon 10 nil)
+    (tx/buy-item! s {:chat-id chat :player-id "ash" :save-id "a"
+                     :fence-generation (fence s chat "ash")
+                     :operation-id "buy-restos" :item-id "restos"})
+    (let [r (tx/use-item! s {:chat-id chat :player-id "ash" :save-id "a"
+                             :fence-generation (fence s chat "ash")
+                             :operation-id "equip-restos" :item-id "restos" :idx 0})
+          poke (first (ports/list-collection s chat "ash" "a"))]
+      (is (= "equip" (:kind r)))
+      (is (= "restos" (:item poke))))))
+
+(deftest mt-consome-item-com-a-mesma-transacao
+  (let [s (fresh-store! "s411-mt")
+        chat "chat-mt"
+        mon {:nome "Rattata" :hp 40 :hp-atual 40 :ataque 30 :defesa 20
+             :atq-esp 20 :def-esp 20 :veloc 40 :tipos ["normal"]
+             :nivel 5 :raridade "comum"
+             :golpes [{:slug "tackle" :nome-exibicao "Investida"
+                       :tipo "normal" :poder 40 :classe :fisico}]}]
+    (boot! s chat "ash" 250)
+    (collection/adicionar-pokemon! s chat "ash" mon 10 nil)
+    (tx/buy-item! s {:chat-id chat :player-id "ash" :save-id "a"
+                     :fence-generation (fence s chat "ash")
+                     :operation-id "buy-mt" :item-id "mt"})
+    (let [r (tx/learn-move!
+             s {:chat-id chat :player-id "ash" :save-id "a"
+                :fence-generation (fence s chat "ash")
+                :operation-id "learn-mt" :idx 0 :consume-item-id "mt"
+                :golpe {:slug "quick-attack" :nome-exibicao "Ataque Rápido"
+                        :tipo "normal" :poder 40 :classe :fisico}})
+          retry (tx/learn-move!
+                 s {:chat-id chat :player-id "ash" :save-id "a"
+                    :fence-generation (fence s chat "ash")
+                    :operation-id "learn-mt" :idx 0 :consume-item-id "mt"
+                    :golpe {:slug "quick-attack" :nome-exibicao "Ataque Rápido"
+                            :tipo "normal" :poder 40 :classe :fisico}})
+          inv (ports/list-inventory s chat "ash" "a")]
+      (is (false? (:duplicate r)))
+      (is (true? (:duplicate retry)))
+      (is (zero? (or (:qty (first (filter #(= "mt" (:item-id %)) inv))) 0))))))
+
 (deftest expansao-mochila
   (let [s (fresh-store! "s411-bag")
         chat "chat-bag"]

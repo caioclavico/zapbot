@@ -129,6 +129,60 @@
                   :hp-max (:hp-max heal)
                   :pokemon (select-keys poke [:nome :species])}})
 
+      (= item-id "reviver")
+      (do
+        (when (pos? (long (or (:hp-atual poke) 0)))
+          (throw (err/error :pokemon_not_fainted {:idx idx})))
+        (let [hp-max (long (or (:hp poke) 0))
+              item-tx (inventory-adjust-tx db sk item-id -1)
+              tx (cond-> (vec (concat item-tx
+                                      [[:db/add lookup :pokemon/hp-atual hp-max]]))
+                   status-str (conj [:db/retract lookup :pokemon/status status-str])
+                   true (conj [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                              {:operation-receipt/id operation-id
+                               :operation-receipt/kind "shop-use"
+                               :operation-receipt/channel "gameplay"
+                               :operation-receipt/payload-hash phash
+                               :operation-receipt/player-key (id/player-key chat-id player-id)
+                               :operation-receipt/save-id save-id
+                               :operation-receipt/summary
+                               (pr-str {:item-id item-id :idx idx :kind "reviver"})}))]
+          {:tx tx
+           :result {:operation-id operation-id
+                    :duplicate false
+                    :kind "reviver"
+                    :item-id item-id
+                    :idx idx
+                    :pokemon (select-keys poke [:nome :species :hp :hp-atual])}}))
+
+      (:equipavel? meta)
+      (do
+        (when (= item-id (or (:item poke) (get poke "item")))
+          (throw (err/error :item_already_equipped {:item-id item-id :idx idx})))
+        (let [item-tx (concat (inventory-adjust-tx db sk item-id -1)
+                              (when-let [old-item (or (:item poke) (get poke "item"))]
+                                (inventory-adjust-tx db sk old-item 1)))]
+          {:tx (concat item-tx
+                       (if-let [old-item (or (:item poke) (get poke "item"))]
+                         [[:db/retract lookup :pokemon/item old-item]
+                          [:db/add lookup :pokemon/item item-id]]
+                         [[:db/add lookup :pokemon/item item-id]])
+                       [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                        {:operation-receipt/id operation-id
+                         :operation-receipt/kind "shop-use"
+                         :operation-receipt/channel "gameplay"
+                         :operation-receipt/payload-hash phash
+                         :operation-receipt/player-key (id/player-key chat-id player-id)
+                         :operation-receipt/save-id save-id
+                         :operation-receipt/summary
+                         (pr-str {:item-id item-id :idx idx :kind "equip"})}])
+           :result {:operation-id operation-id
+                    :duplicate false
+                    :kind "equip"
+                    :item-id item-id
+                    :idx idx
+                    :pokemon (assoc (select-keys poke [:nome :species :item]) :item item-id)}}))
+
       :else
       (throw (err/error :item_use_unsupported
                         {:item-id item-id

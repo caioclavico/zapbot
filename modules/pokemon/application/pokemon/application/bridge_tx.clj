@@ -987,7 +987,7 @@
 
 (defn learn-move!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
-                 idx golpe slot oferta?]
+                 idx golpe slot oferta? consume-item-id]
           :as req}]
   (let [writer-ctx (require-writer! req)
         golpe* (keywordize-keys (or golpe {}))
@@ -997,7 +997,8 @@
                          :idx (long idx)
                          :golpe golpe*
                          :oferta? (boolean oferta?)}
-                  (some? slot) (assoc :slot (long slot))))]
+                  (some? slot) (assoc :slot (long slot))
+                  consume-item-id (assoc :consume-item-id (str consume-item-id))))]
     {:operation-id (:operation-id result)
      :duplicate (boolean (:duplicate result))
      :save-id save-id

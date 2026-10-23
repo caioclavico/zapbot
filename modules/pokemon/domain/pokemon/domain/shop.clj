@@ -96,6 +96,11 @@
   (or (get catalogo-venda item-id)
       (get catalogo-info item-id)))
 
+(defn item-equipavel?
+  "Retorna true somente para itens que a master permite segurar."
+  [item-id]
+  (true? (:equipavel? (item (normalizar-item item-id)))))
+
 (defn catalogo-loja
   "Itens à venda, ordenados por preço."
   []

@@ -1558,7 +1558,10 @@
                      rev (long (:save/revision save 0))
                      pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
                      lookup [:pokemon/id-pokemon (:id-pokemon poke)]
-                     tx (cond-> [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                     item-tx (when-let [item-id (:consume-item-id request)]
+                               (inventory-adjust-tx db sk item-id -1))
+                     tx (cond-> (vec (concat (or item-tx [])
+                                             [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
                                  [:db/add lookup :pokemon/golpes-edn (pr-str (:golpes atualizado))]
                                  [:db/add lookup :pokemon/historico-golpes-edn
                                   (pr-str (:historico-golpes atualizado))]
@@ -1571,7 +1574,7 @@
                                   :operation-receipt/player-key pk
                                   :operation-receipt/save-id (:save-id writer-ctx)
                                   :operation-receipt/summary
-                                  (pr-str {:idx idx :slug (moves/chave (:golpe request))})}]
+                                  (pr-str {:idx idx :slug (moves/chave (:golpe request))})}]))
                            oferta?
                            (conj [:db/add lookup :pokemon/ofertas-golpes-edn
                                   (pr-str (or (:ofertas-golpes atualizado)
@@ -2717,6 +2720,7 @@
                (let [sk (id/save-key (:chat-id writer-ctx)
                                      (:player-id writer-ctx)
                                      (:save-id writer-ctx))]
+                 (assert-no-busy-battle! db (:chat-id writer-ctx) (:player-id writer-ctx))
                  (shop-store/build-use-tx
                   {:db db
                    :writer-ctx writer-ctx
