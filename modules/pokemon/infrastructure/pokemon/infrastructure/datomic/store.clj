@@ -41,6 +41,14 @@
             [pokemon.infrastructure.datomic.profile-store :as profile-store]
             [pokemon.infrastructure.datomic.schema :as schema]))
 
+(defn- normalize-team-name
+  [value]
+  (-> (str value)
+      str/lower-case
+      (java.text.Normalizer/normalize java.text.Normalizer$Form/NFD)
+      (str/replace #"[\\u0300-\\u036f]" "")
+      str/trim))
+
 (def ^:private max-cas-attempts 12)
 
 (defn- anomaly-conflict?
@@ -120,7 +128,9 @@
              :inicial-escolhido (boolean (:save/inicial-escolhido e))
              :favorito-id-pokemon (:save/favorito-id-pokemon e)
              :ginasios (or (edn-read (:save/ginasios-edn e)) {})
-             :time-ginasio (or (edn-read (:save/time-ginasio-edn e)) [])))))
+             :time-ginasio (or (edn-read (:save/time-ginasio-edn e)) [])
+             :times-prontos (or (edn-read (:save/times-prontos-edn e)) {})
+             :time-liga (or (edn-read (:save/time-liga-edn e)) [])))))
 
 (defn- ->battle
   [e]
@@ -2188,6 +2198,114 @@
          {:tx [[:db/add [:save/key sk] :save/time-ginasio-edn (pr-str idxs)]
                [:db/cas [:save/key sk] :save/revision rev (inc rev)]]
           :result {:time-ginasio idxs}}))))
+
+  (list-named-teams [_ chat-id player-id save-id]
+    (let [db (d/db conn)
+          _ (when-not (present? (player-entity db chat-id player-id))
+              (throw (err/error :player_not_found {:chat-id chat-id :player-id player-id})))
+          e (save-entity db chat-id player-id save-id)
+          _ (when-not (present? e)
+              (throw (err/error :save_not_found {:save-id save-id})))
+          teams (or (edn-read (:save/times-prontos-edn e)) {})
+          collection (query-collection db (id/save-key chat-id player-id save-id))
+          by-id (into {} (map (juxt :id-pokemon identity) collection))]
+      (mapv (fn [[name team]]
+              (let [ids (vec (:pokemon-ids team []))]
+                {:name name
+                 :pokemon-ids ids
+                 :indices (mapv #(some-> (get by-id %) :collection-index) ids)
+                 :available? (every? #(contains? by-id %) ids)}))
+            (sort-by key teams))))
+
+  (save-named-team! [_ writer-ctx request]
+    (let [op (:operation-id request)
+          payload (select-keys request [:name :indices :pokemon-ids])
+          phash (reward/payload-hash payload)
+          existing (receipt-entity (d/db conn) op)]
+      (or (resolve-receipt existing phash op)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [name (normalize-team-name (:name request))
+                     idxs (mapv long (or (:indices request) []))
+                     _ (when (str/blank? name) (throw (err/error :invalid_team {:reason :blank_name})))
+                     _ (when-not (and (= 3 (count idxs)) (= 3 (count (set idxs))))
+                         (throw (err/error :invalid_team {:indices idxs})))
+                     collection (query-collection db (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx)))
+                     _ (doseq [i idxs] (coll/validate-index! i (count collection)))
+                     ids (mapv #(get (nth collection %) :id-pokemon) idxs)
+                     _ (when (some nil? ids) (throw (err/error :invalid_team {:indices idxs})))
+                     teams (assoc (or (edn-read (:save/times-prontos-edn save)) {}) name {:pokemon-ids ids})
+                     rev (long (:save/revision save 0))
+                     result {:operation-id op :duplicate false :name name :pokemon-ids ids :indices idxs}]
+                 {:tx [[:db/add [:save/key (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))] :save/times-prontos-edn (pr-str teams)]
+                       [:db/cas [:save/key (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))] :save/revision rev (inc rev)]
+                       {:operation-receipt/id op :operation-receipt/kind "named-team-save"
+                        :operation-receipt/channel "gameplay" :operation-receipt/payload-hash phash
+                        :operation-receipt/player-key (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                        :operation-receipt/save-id (:save-id writer-ctx)
+                        :operation-receipt/summary (pr-str result)}]
+                  :result result})))
+            (catch Exception ex
+              (or (resolve-receipt (receipt-entity (d/db conn) op) phash op) (throw ex)))))))
+
+  (use-named-team! [_ writer-ctx request]
+    (let [op (:operation-id request) destination (keyword (str/lower-case (str (or (:destination request) "liga"))))
+          payload (select-keys request [:name :destination]) phash (reward/payload-hash payload)
+          existing (receipt-entity (d/db conn) op)]
+      (or (resolve-receipt existing phash op)
+          (try
+            (transact-with-writer! conn writer-ctx
+             (fn [db save]
+               (let [name (normalize-team-name (:name request))
+                     teams (or (edn-read (:save/times-prontos-edn save)) {})
+                     ids (vec (get-in teams [name :pokemon-ids]))
+                     collection (query-collection db (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx)))
+                     by-id (into {} (map (juxt :id-pokemon :collection-index) collection))
+                     idxs (mapv by-id ids)
+                     _ (when-not (seq ids) (throw (err/error :team_not_found {:name name})))
+                     _ (when (some nil? idxs) (throw (err/error :team_pokemon_missing {:name name})))
+                     _ (when-not (= 3 (count ids)) (throw (err/error :invalid_team {:name name})))
+                     attr (case destination :ginasio :save/time-ginasio-edn :liga :save/time-liga-edn
+                                  (throw (err/error :invalid_destination {:destination destination})))
+                     rev (long (:save/revision save 0))
+                     result {:operation-id op :duplicate false :name name :destination (clojure.core/name destination)
+                             :pokemon-ids ids :indices idxs}]
+                 {:tx [[:db/add [:save/key (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))] attr (pr-str idxs)]
+                       [:db/cas [:save/key (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))] :save/revision rev (inc rev)]
+                       {:operation-receipt/id op :operation-receipt/kind "named-team-use"
+                        :operation-receipt/channel "gameplay" :operation-receipt/payload-hash phash
+                        :operation-receipt/player-key (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                        :operation-receipt/save-id (:save-id writer-ctx)
+                        :operation-receipt/summary (pr-str result)}]
+                  :result result})))
+            (catch Exception ex
+              (or (resolve-receipt (receipt-entity (d/db conn) op) phash op) (throw ex)))))))
+
+  (delete-named-team! [_ writer-ctx request]
+    (let [op (:operation-id request) payload (select-keys request [:name]) phash (reward/payload-hash payload)
+          existing (receipt-entity (d/db conn) op)]
+      (or (resolve-receipt existing phash op)
+          (try
+            (transact-with-writer! conn writer-ctx
+             (fn [db save]
+               (let [name (normalize-team-name (:name request))
+                     teams (or (edn-read (:save/times-prontos-edn save)) {})
+                     _ (when-not (contains? teams name) (throw (err/error :team_not_found {:name name})))
+                     rev (long (:save/revision save 0))
+                     result {:operation-id op :duplicate false :name name :deleted true}]
+                 {:tx [[:db/add [:save/key (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))] :save/times-prontos-edn
+                        (pr-str (dissoc teams name))]
+                       [:db/cas [:save/key (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))] :save/revision rev (inc rev)]
+                       {:operation-receipt/id op :operation-receipt/kind "named-team-delete"
+                        :operation-receipt/channel "gameplay" :operation-receipt/payload-hash phash
+                        :operation-receipt/player-key (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
+                        :operation-receipt/save-id (:save-id writer-ctx)
+                        :operation-receipt/summary (pr-str result)}]
+                  :result result})))
+            (catch Exception ex
+              (or (resolve-receipt (receipt-entity (d/db conn) op) phash op) (throw ex)))))))
 
   (start-gym-challenge! [_ writer-ctx request]
     (let [payload (ops/gym-challenge-start-payload request)

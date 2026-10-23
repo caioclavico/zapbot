@@ -462,6 +462,29 @@
      :indices (:time-ginasio result idxs)
      :time-ginasio (:time-ginasio result idxs)}))
 
+(defn- named-team-writer
+  [{:keys [chat-id player-id save-id fence-generation]}]
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context {})))
+  {:chat-id chat-id :player-id player-id :save-id save-id
+   :fence-generation (long fence-generation)})
+
+(defn list-named-teams [store chat-id player-id save-id]
+  {:teams (ports/list-named-teams store chat-id player-id save-id)
+   :chat-id chat-id :player-id player-id :save-id save-id})
+
+(defn save-named-team! [store req]
+  (let [writer (named-team-writer req)]
+    (ports/save-named-team! store writer (select-keys req [:operation-id :name :indices :pokemon-ids]))))
+
+(defn use-named-team! [store req]
+  (let [writer (named-team-writer req)]
+    (ports/use-named-team! store writer (select-keys req [:operation-id :name :destination]))))
+
+(defn delete-named-team! [store req]
+  (let [writer (named-team-writer req)]
+    (ports/delete-named-team! store writer (select-keys req [:operation-id :name]))))
+
 (defn start-gym-challenge!
   "Inicia desafio 3×3. NPC: candidates da PokeAPI; ocupado: time do slot."
   [store {:keys [chat-id player-id save-id fence-generation operation-id

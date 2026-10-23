@@ -122,6 +122,15 @@ test('shiny e armazenamento usam a coleção canônica', () => {
   assert.equal(present.resolveCommand(['shiny']), 'shiny');
 });
 
+test('formatTeams apresenta escalações persistidas por nome e índices atuais', () => {
+  const text = present.formatTeams({ teams: [
+    { name: 'Liga 1', pokemonIds: ['p-1', 'p-2', 'p-3'], indices: [2, 0, 4] }
+  ] }, '!pk');
+  assert.match(text, /Liga 1/);
+  assert.match(text, /3, 1, 5/);
+  assert.match(text, /times usar/);
+});
+
 test('formatError distingue pending local de recibo ausente', () => {
   assert.match(present.formatError({ code: 'OPERATION_PENDING' }), /neste processo JVM/);
   assert.match(present.formatError({ code: 'OPERATION_NOT_FOUND' }), /não persistida/);

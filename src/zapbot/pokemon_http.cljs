@@ -716,7 +716,12 @@
         trade-args (if trade?
                      (vec (rest args))
                      args)
-        cmd (when-not trade? (.resolveCommand jvm-present (clj->js args)))
+        resolved-cmd (when-not trade? (.resolveCommand jvm-present (clj->js args)))
+        cmd (if (and (= "time" resolved-cmd)
+                     (contains? #{"salvar" "usar" "ver" "excluir" "apagar" "remover"}
+                                (str/lower-case (str (or (first (rest args)) "")))))
+              "times"
+              resolved-cmd)
         resto (if (re-matches #"[1-4]" primeiro)
                 [primeiro]
                 (vec (rest args)))]
@@ -929,9 +934,50 @@
                     (envelope-jvm pedido (.formatSpace jvm-present data (str config/prefix "pk")))))
 
                 "times"
-                (envelope-jvm pedido
-                              (str "👥 Escalações salvas ainda dependem do armazenamento legado. Use "
-                                   config/prefix "pk time para consultar a coleção canônica."))
+                (let [sub (str/lower-case (str (or (first resto) "")))
+                      restp (vec (rest resto))
+                      op-id (fn [suffix] (.stableOperationId jvm-transport (:requestId pedido) suffix))
+                      team-name (fn [xs] (str/trim (str/join " " xs)))]
+                  (cond
+                    (str/blank? sub)
+                    (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            d (.listTeams jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId a)})]
+                      (envelope-jvm pedido (.formatTeams jvm-present d (str config/prefix "pk"))))
+                    (= sub "salvar")
+                    (let [raw (last restp) nome (team-name (butlast restp))
+                          nums (str/split (str raw) #",")]
+                      (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                              c (.getCollection jvm #js {:chatId chat-id :playerId player-id})
+                              total (alength (or (.-collection c) #js []))
+                              idxs (mapv #(parse-indice-1based (str/trim %) total) nums)]
+                        (when (or (str/blank? nome) (not= 3 (count idxs)) (some nil? idxs))
+                          (throw (erro-contrato (str "❓ Use " config/prefix "pk times salvar <nome> <1,2,3>."))))
+                        (p/let [d (.saveTeam jvm #js {:chatId chat-id :playerId player-id
+                                                       :saveId (.-activeSaveId a) :fenceGeneration (.-fenceGeneration a)
+                                                       :operationId (op-id (str "team-save:" nome))
+                                                       :name nome :indices (clj->js idxs)})]
+                          (envelope-jvm pedido (str "✅ Escalação *" nome "* salva.")))))
+                    (= sub "usar")
+                    (let [dest (if (#{"liga" "ginasio" "ginásio"} (str/lower-case (str (last restp))))
+                                 (str/lower-case (str (last restp))) "liga")
+                          nome (team-name (if (= dest "liga") restp (butlast restp)))]
+                      (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                              d (.useTeam jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId a)
+                                                   :fenceGeneration (.-fenceGeneration a) :operationId (op-id (str "team-use:" nome ":" dest))
+                                                   :name nome :destination (if (= dest "ginásio") "ginasio" dest)})]
+                        (envelope-jvm pedido (str "✅ Escalação *" nome "* preparada para " dest "."))))
+                    (contains? #{"excluir" "apagar" "remover"} sub)
+                    (let [nome (team-name restp)]
+                      (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                              d (.deleteTeam jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId a)
+                                                      :fenceGeneration (.-fenceGeneration a) :operationId (op-id (str "team-delete:" nome))
+                                                      :name nome})]
+                        (envelope-jvm pedido (str "🗑️ Escalação *" nome "* excluída."))))
+                    (= sub "ver")
+                    (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            d (.listTeams jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId a)})]
+                      (envelope-jvm pedido (.formatTeams jvm-present d (str config/prefix "pk"))))
+                    :else (throw (erro-contrato (str "❓ Use " config/prefix "pk times salvar|usar|excluir.")))))
 
                 "pokedex"
                 (let [prefix (str config/prefix "pk")

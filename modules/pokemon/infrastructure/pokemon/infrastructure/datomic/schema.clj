@@ -25,7 +25,8 @@
    "migrations/pokemon/018-mission-events-processed.edn"
    "migrations/pokemon/019-operation-receipt-unique-value.edn"
    "migrations/pokemon/020-trades.edn"
-   "migrations/pokemon/021-professor-titles.edn"])
+   "migrations/pokemon/021-professor-titles.edn"
+   "migrations/pokemon/022-named-teams.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id

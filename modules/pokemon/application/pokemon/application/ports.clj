@@ -114,6 +114,18 @@
   (set-gym-team! [this writer-ctx indices]
     "Salva escalação de 3 índices no save ativo.")
 
+  (list-named-teams [this chat-id player-id save-id]
+    "Escalações nomeadas persistidas no save, referenciando IDs canônicos.")
+
+  (save-named-team! [this writer-ctx request]
+    "Salva ou substitui escalação nomeada, sem reservar Pokémon.")
+
+  (use-named-team! [this writer-ctx request]
+    "Aplica escalação nomeada ao ginásio ou liga, revalidando IDs.")
+
+  (delete-named-team! [this writer-ctx request]
+    "Exclui escalação nomeada do save.")
+
   (start-gym-challenge! [this writer-ctx request]
     "Inicia combate 3×3; resultado só via turnos + resolve interno.")
 

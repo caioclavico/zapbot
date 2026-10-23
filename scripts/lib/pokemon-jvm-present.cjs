@@ -447,6 +447,17 @@ function formatSpace(data, prefix = '!pk') {
   ].join('\n');
 }
 
+function formatTeams(data, prefix = '!pk') {
+  const teams = (data && (data.teams || data.namedTeams)) || [];
+  if (!teams.length) return `👥 Nenhuma escalação salva. Use ${prefix} times salvar <nome> <1,2,3>.`;
+  const lines = teams.map((team) => {
+    const ids = Array.isArray(team.pokemonIds) ? team.pokemonIds : (team.pokemon_ids || []);
+    const indices = Array.isArray(team.indices) ? team.indices.map((i) => i == null ? '?' : Number(i) + 1) : [];
+    return `• *${team.name || '?'}*: ${indices.length ? indices.join(', ') : ids.join(', ')}`;
+  });
+  return `👥 *Escalações salvas*\n${lines.join('\n')}\n\nUse ${prefix} times usar <nome> [liga|ginasio].`;
+}
+
 function formatDiscoveries(data, prefix = '!pk') {
   const total = data.totalPokemons || 1025;
   const vistos = data.vistos || 0;
@@ -1903,6 +1914,7 @@ module.exports = {
   formatTrainer,
   formatCollection,
   formatStorage,
+  formatTeams,
   formatSpace,
   collectionPageSlice,
   formatPokedex,

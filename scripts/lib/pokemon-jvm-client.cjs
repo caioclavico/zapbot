@@ -267,6 +267,15 @@ function createClient(config = {}) {
       { 'X-Actor-Player-Id': body.playerId }),
     cancelTrade: (body) => mutateOnce('/v1/trades/cancel', body,
       { 'X-Actor-Player-Id': body.playerId }),
+    listTeams: ({ chatId, playerId, saveId }) =>
+      request('GET', `/v1/teams${q({ chatId, playerId, saveId })}`, undefined,
+        { 'X-Actor-Player-Id': playerId }),
+    saveTeam: (body) => mutateOnce('/v1/teams/save', body,
+      { 'X-Actor-Player-Id': body.playerId }),
+    useTeam: (body) => mutateOnce('/v1/teams/use', body,
+      { 'X-Actor-Player-Id': body.playerId }),
+    deleteTeam: (body) => mutateOnce('/v1/teams/delete', body,
+      { 'X-Actor-Player-Id': body.playerId }),
     getFriendship: ({ chatId, playerId, saveId, collectionIndex }) =>
       request('GET', `/v1/profile/friendship${q({ chatId, playerId, saveId, collectionIndex })}`, undefined,
         { 'X-Actor-Player-Id': playerId }),
