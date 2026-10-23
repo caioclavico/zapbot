@@ -12,7 +12,7 @@ da resposta.
 | Coleção, ficha e Pokédex (`time`, `pokedex`, `dex`, `pdx`) | DTOs, filtros, ficha e leitura Datomic | `pokemon-jvm-present.test.cjs`, `pokemon_http.cljs` | funcional | mídia e paginação ainda precisam de smoke real |
 | Caçada e captura (`cacar`, `capturar`, `cap`) | Plano, início, turno e captura | `capture_m33_test.clj`, `pokemon-jvm-capture.test.cjs` | funcional no contrato | E2E WhatsApp completo não executado nesta auditoria |
 | Batalha PvE (`atacar`, `defender`, `escolher`, `curar`, `pocao`, `sair`) | Turnos JVM e CAS de save | `battle_m34_test.clj`, `pokemon_http.cljs` | funcional no domínio | falta fluxo HTTP público em ambiente com socket |
-| Ginásios (`ginasio`, `gin`, desafio, time, cura, ranking, histórico) | Leitura, escalação, desafio e turnos | `gym_m35_test.clj`, `gym_m36_test.clj`, `gym_m47_test.clj`, `gym_m48_test.clj` | parcial | cobertura ponta a ponta e recompensas após reinício |
+| Ginásios (`ginasio`, `gin`, desafio, time, cura, ranking, histórico) | Leitura, escalação, desafio, turnos e estatísticas persistidas | `gym_m35_test.clj`, `gym_m36_test.clj`, `gym_m47_test.clj`, `gym_m48_test.clj`, `gym_history_a555b_test.clj` | parcial | smoke HTTP/reinício ainda pendente |
 | PvP (`batalhar`, `abrir`, `entrar`, `atacar`, `defender`, `sair`) | Estado e turnos Datomic/bridge | `pvp_a3_test.clj`, `pokemon-jvm-a3.test.cjs` | parcial | autorização e resposta WhatsApp real |
 | Raids (`raid`/`raide`, abrir, entrar, iniciar, atacar, capturar, sair) | Cliente, bridge e domínio | `raid_m36_test.clj`, `raid_m49_test.clj`, `pokemon-jvm-raid.test.cjs` | parcial | teste Node→JVM com múltiplos participantes |
 | Joy (`joy`, `enfermeira`, `enfermaria`, `hospital`) | Envio, coleta e disponibilidade | `joy_eggs_m410_test.clj`, `pokemon-jvm-joy-eggs.test.cjs` | funcional no contrato | smoke WhatsApp completo |
@@ -70,20 +70,22 @@ existência de um handler não é considerada teste ponta a ponta.
 
 | Área | Domínio JVM/Datomic | HTTP | WhatsApp simulado | Estado atual |
 |---|---|---|---|---|
-| Ginásios | 13 testes de M4.8, incluindo derrota, HP/status e recompensa idempotente | Testes preparados, mas loopback bloqueado | Presenter e aliases testados | **parcial**: ranking/histórico ainda não persistidos no Core |
+| Ginásios | 13 testes de M4.8 + persistência de ranking/histórico | Rotas `/v1/gyms/ranking` e `/v1/gyms/history` implementadas; smoke bloqueado por loopback | Presenter e aliases testados | **parcial operacional**: HTTP real pendente |
 | PvP | Cobertura A3 de desafio, aceitação, turnos e retry | Testes preparados, loopback bloqueado | Alias `batalhar` e apresentação testados | **parcial operacional** |
 | Raids | Cobertura M3.6/M4.9 de entrada, turnos, captura e recompensas | Testes preparados, loopback bloqueado | Aliases e subcomandos testados | **parcial operacional**; abertura/cancelamento continuam administrativos |
 | Clima/eventos | Plano de caça JVM e regras determinísticas | Rota existe, sem smoke neste sandbox | `clima`, `eventos`, `tempo` e `evt` cobertos na apresentação | **implementado, aguardando smoke HTTP** |
 | Equipes/liga/CSV | IDs canônicos, faixas, HP, migration 022/023 e exportação | Rotas implementadas | Formatação de documento CSV testada | **implementado no domínio; HTTP pendente** |
 
-### Ranking e histórico de ginásios
+### Ranking e histórico de ginásios (A5.5.5b)
 
 O legado possui `ginasios/ranking` e `ginasios/historico`, alimentados por
-`ginasios-estatisticas` em armazenamento próprio. O Core atual persiste
-ocupação, defesa e recompensas no Datomic, mas não possui entidade ou migration
-equivalente para essas estatísticas. O presenter continua respondendo que as
-operações estão indisponíveis. Isso é uma lacuna conhecida e foi mantida como
-etapa separada (A5.5.5b), sem inventar critérios de ordenação ou pontuação.
+`ginasios-estatisticas`. A migration `pokemon/024-gym-history` agora persiste
+uma entidade por `chat|ginásio`, com líderes (defesas e permanência) e os 50
+últimos desafios. A atualização é parte da mesma transação que resolve o
+desafio, portanto o recibo existente também torna o registro idempotente.
+As leituras autenticadas `/v1/gyms/ranking` e `/v1/gyms/history` preservam o
+critério legado (defesas e permanência decrescentes; dez eventos mais recentes)
+e o adaptador apresenta os resultados em `ginasio ranking/historico`.
 
 ### Execução desta regressão
 
@@ -91,6 +93,7 @@ etapa separada (A5.5.5b), sem inventar critérios de ordenação ou pontuação.
   asserções, 0 falhas, 0 erros**.
 - Domínio ginásio/PvP/raid: **33 testes, 142 asserções, 0 falhas, 0 erros**.
 - Presenter Node: **10 testes, 10 aprovados**.
+- A5.5.5b migration/ranking: **2 testes, 6 asserções, 0 falhas, 0 erros**; presenter: **11 testes, 11 aprovados**.
 - Instalação das migrations 001–023 em banco descartável, seguida de segunda
   instalação: **idempotente**.
 - Testes HTTP de negociação, perfil e equipes: bloqueados antes da primeira
@@ -103,7 +106,7 @@ docker run --rm --network bridge -v "$PWD:/app" odisseu-contract-tests \
   bash -lc 'npx shadow-cljs compile test && node target/test.js && npm run test:m4-jvm && CLOJURE_BIN="$(command -v clojure)" npm run test:trade-e2e'
 ```
 
-O estado permanece **BLOCKED** para A5.6 até os contratos HTTP e o fluxo
-WhatsApp simulado serem executados em ambiente com loopback permitido, e até a
-decisão A5.5.5b sobre ranking/histórico ser implementada ou formalmente
-retirada do escopo.
+O estado permanece **BLOCKED** para A5.6 até os contratos HTTP (incluindo as
+novas leituras) e o fluxo WhatsApp simulado serem executados em ambiente com
+loopback permitido. A implementação Datomic da A5.5.5b está validada em banco
+descartável; o smoke HTTP continua pendente por restrição ambiental.

@@ -2093,6 +2093,11 @@
                           (id/gym-occupation-key (:chat-id writer-ctx) (:gym-id next-state)))
                      slot (when gym-finished?
                             (d/pull db '[*] [:gym-occupation/key gk]))
+                     statistics (when gym-finished?
+                                  (d/pull db '[*]
+                                          [:gym-statistics/key
+                                           (gym-store/statistics-key
+                                            (:chat-id writer-ctx) (:gym-id next-state))]))
                      ocup (when gym-finished?
                             (gym-store/occupation->map slot edn-read present?))
                      resolve-part
@@ -2113,6 +2118,7 @@
                                    :indices (when venceu? (:team-x-indices next-state))
                                    :expected-revision (:expected-revision next-state 0)}
                          :ocupacao ocup :colecao colecao'
+                         :statistics-entity statistics
                          :slot-revision (long (or (:gym-occupation/revision slot) 0))
                          :query-collection query-collection
                          :save-entity save-entity
@@ -2176,6 +2182,11 @@
   (get-gym-occupation [_ chat-id gym-id]
     (let [e (d/pull (d/db conn) '[*] [:gym-occupation/key (id/gym-occupation-key chat-id gym-id)])]
       (gym-store/occupation->map e edn-read present?)))
+
+  (get-gym-statistics [_ chat-id gym-id]
+    (let [e (d/pull (d/db conn) '[*]
+                    [:gym-statistics/key (gym-store/statistics-key chat-id gym-id)])]
+      (gym-store/statistics->map e edn-read present?)))
 
   (list-gym-occupations-for-player [_ chat-id player-id]
     (let [pk (id/player-key chat-id player-id)
@@ -2483,6 +2494,9 @@
                (let [sk (id/save-key chat-id (:player-id writer-ctx) (:save-id writer-ctx))
                      save-m (->save save)
                      slot (d/pull db '[*] [:gym-occupation/key gk])
+                     statistics (d/pull db '[*]
+                                         [:gym-statistics/key
+                                          (gym-store/statistics-key chat-id gym-id)])
                      ocup (gym-store/occupation->map slot edn-read present?)
                      slot-rev (long (:gym-occupation/revision slot 0))
                      colecao (query-collection db sk)]
@@ -2492,6 +2506,7 @@
                                    :ginasios (:ginasios save-m {})
                                    :payload-hash phash)
                    :ocupacao ocup :colecao colecao
+                   :statistics-entity statistics
                    :slot-revision slot-rev
                    :query-collection query-collection
                    :save-entity save-entity

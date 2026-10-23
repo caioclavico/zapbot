@@ -27,7 +27,8 @@
    "migrations/pokemon/020-trades.edn"
    "migrations/pokemon/021-professor-titles.edn"
    "migrations/pokemon/022-named-teams.edn"
-   "migrations/pokemon/023-league-selection.edn"])
+   "migrations/pokemon/023-league-selection.edn"
+   "migrations/pokemon/024-gym-history.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id

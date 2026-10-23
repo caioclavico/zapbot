@@ -1412,6 +1412,22 @@ function formatGymBlocked(action) {
   return map[action] || formatUnavailable(`ginasio ${action || ''}`.trim());
 }
 
+function formatGymRanking(data) {
+  const rows = (data && (data.rankingDefesas || data.ranking)) || [];
+  const time = (data && data.rankingTempo) || rows;
+  if (!rows.length) return '🏛️ Ainda não há defesas registradas neste ginásio.';
+  const list = (items, field, suffix) => items.map((r, i) =>
+    `${i + 1}. ${r.nome || r.playerId} — ${field === 'defesas' ? (r.defesas || 0) + ' defesa(s)' : Math.round((r.tempoMs || 0) / 1000) + 's'}`).join('\n');
+  return `🏛️ *Ranking — ${data.gymId}*\n🛡️ Defesas vencidas\n${list(rows, 'defesas')}\n\n⏱️ Permanência acumulada\n${list(time, 'tempo-ms')}`;
+}
+
+function formatGymHistory(data) {
+  const rows = (data && data.history) || [];
+  if (!rows.length) return '🏛️ Ainda não há desafios registrados neste ginásio.';
+  return [`🏛️ *Histórico — ${data.gymId}*`, ...rows.map(r =>
+    `${r.venceu ? '✅' : '❌'} ${r.nome || r.desafiante || 'Treinador'}${r.lider ? ` vs ${r.lider}` : ''}`)].join('\n');
+}
+
 const RAID_SUB = {
   ent: 'entrar', entrar: 'entrar',
   sai: 'sair', sair: 'sair',
@@ -1968,6 +1984,8 @@ module.exports = {
   formatGymTeamSaved,
   formatGymHeal,
   formatGymBlocked,
+  formatGymRanking,
+  formatGymHistory,
   formatGymChallengeStart,
   formatGymResolve,
   resolveRaidSubcommand,

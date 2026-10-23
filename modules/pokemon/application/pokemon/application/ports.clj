@@ -108,6 +108,9 @@
   (get-gym-occupation [this chat-id gym-id]
     "Ocupação atual do ginásio no grupo ou nil (NPC).")
 
+  (get-gym-statistics [this chat-id gym-id]
+    "Ranking e histórico persistidos do ginásio ou nil.")
+
   (list-gym-occupations-for-player [this chat-id player-id]
     "Ginásios que o jogador ocupa (qualquer save).")
 

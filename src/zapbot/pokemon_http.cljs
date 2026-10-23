@@ -1305,7 +1305,35 @@
                             (envelope-jvm pedido texto img)))))
 
                     (contains? #{"ranking" "historico"} sub)
-                    (envelope-jvm pedido (.formatGymBlocked jvm-present sub))
+                    (let [gym-id (when (seq args-gin)
+                                   (str/lower-case (str (first args-gin))))
+                          fetch (fn [gid]
+                                  (if (= "ranking" sub)
+                                    (.getGymRanking jvm #js {:chatId chat-id :playerId player-id
+                                                             :gymId gid})
+                                    (.getGymHistory jvm #js {:chatId chat-id :playerId player-id
+                                                             :gymId gid})))]
+                      (if gym-id
+                        (p/let [data (desempenho/medir! ctx "pokemon_jvm_gym_stats"
+                                                        #(fetch gym-id))]
+                          (envelope-jvm pedido
+                                        (if (= "ranking" sub)
+                                          (.formatGymRanking jvm-present data)
+                                          (.formatGymHistory jvm-present data))))
+                        (p/let [overview (desempenho/medir! ctx "pokemon_jvm_gyms"
+                                                            #(.listGyms jvm #js {:chatId chat-id
+                                                                                  :playerId player-id}))
+                                rows (js->clj (.-gyms overview) :keywordize-keys true)
+                                results (p/all (map (fn [row]
+                                                      (desempenho/medir! ctx "pokemon_jvm_gym_stats"
+                                                                          (fn [] (fetch (:id row)))))
+                                                    rows))]
+                          (envelope-jvm pedido
+                                        (str/join "\n\n"
+                                                  (map #(if (= "ranking" sub)
+                                                          (.formatGymRanking jvm-present %)
+                                                          (.formatGymHistory jvm-present %))
+                                                       results))))))
 
                     (contains? #{"entrar" "iniciar" "sair" "cancelar" "atacar" "capturar"} sub)
                     ;; Mesmos fluxos que !pk raide <sub> …

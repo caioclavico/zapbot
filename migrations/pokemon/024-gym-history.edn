@@ -1,0 +1,24 @@
+;; A5.5.5b — ranking e histórico de ginásios.
+[
+ {:db/ident       :gym-statistics/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Chave canônica chat|ginásio"}
+ {:db/ident       :gym-statistics/chat-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+ {:db/ident       :gym-statistics/gym-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+ {:db/ident       :gym-statistics/leader-stats-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "EDN de estatísticas dos líderes"}
+ {:db/ident       :gym-statistics/history-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "EDN dos últimos desafios (máximo 50)"}
+ {:db/ident       :gym-statistics/revision
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}]

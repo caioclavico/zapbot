@@ -1,11 +1,69 @@
 (ns pokemon.infrastructure.datomic.gym-store
   "Montagem de TX de ginásio (fora do store monolítico)."
-  (:require [pokemon.domain.collection :as coll]
+  (:require [clojure.edn :as edn]
+            [pokemon.domain.collection :as coll]
             [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]
             [pokemon.domain.xp :as xp]))
+
+(defn statistics-key [chat-id gym-id]
+  (str chat-id "|" gym-id))
+
+(defn statistics->map [e edn-read present?]
+  (when (and (present? e) (:gym-statistics/key e))
+    {:key (:gym-statistics/key e)
+     :chat-id (:gym-statistics/chat-id e)
+     :gym-id (:gym-statistics/gym-id e)
+     :leaders (or (edn-read (:gym-statistics/leader-stats-edn e)) {})
+     :history (or (edn-read (:gym-statistics/history-edn e)) [])
+     :revision (long (:gym-statistics/revision e 0))}))
+
+(defn build-statistics-tx
+  "Registra um desafio dentro da mesma transação de resolução."
+  [{:keys [statistics-entity chat-id gym-id agora venceu? ocupacao challenger-id challenger-name]}]
+  (let [key (statistics-key chat-id gym-id)
+        stats (statistics->map statistics-entity edn/read-string some?)
+        leaders (or (:leaders stats) {})
+        history (or (:history stats) [])
+        old-pid (some-> ocupacao :pid str)
+        old-name (some-> ocupacao :nome)
+        challenger-id (str challenger-id)
+        leaders (cond
+                  (and (not venceu?) old-pid)
+                  (let [old (or (get leaders old-pid) {})]
+                    (assoc leaders old-pid
+                           (merge old {:nome (or (:nome old) old-name old-pid)
+                                       :defesas (inc (long (:defesas old 0)))
+                                       :tempo-ms (long (:tempo-ms old 0))})))
+                  (and venceu? old-pid)
+                  (let [old (or (get leaders old-pid) {})
+                        permanencia (max 0 (- (long agora) (long (:desde ocupacao agora))))]
+                    (assoc leaders old-pid
+                           (merge old {:nome (or (:nome old) old-name old-pid)
+                                       :defesas (long (:defesas old 0))
+                                       :tempo-ms (+ (long (:tempo-ms old 0)) permanencia)})))
+                  :else leaders)
+        event {:quando (long agora) :desafiante challenger-id
+               :nome (or challenger-name challenger-id)
+               :lider (or old-name old-pid "Líder NPC") :venceu (boolean venceu?)}
+        next-history (->> (conj (vec history) event) (take-last 50) vec)
+        next-rev (inc (long (:revision stats 0)))
+        entity {:gym-statistics/key key :gym-statistics/chat-id chat-id
+                :gym-statistics/gym-id gym-id
+                :gym-statistics/leader-stats-edn (pr-str leaders)
+                :gym-statistics/history-edn (pr-str next-history)
+                :gym-statistics/revision next-rev}]
+    {:tx (if stats
+           [[:db/cas [:gym-statistics/key key] :gym-statistics/revision
+             (long (:revision stats 0)) next-rev]
+            [:db/add [:gym-statistics/key key] :gym-statistics/leader-stats-edn
+             (pr-str leaders)]
+            [:db/add [:gym-statistics/key key] :gym-statistics/history-edn
+             (pr-str next-history)]]
+           [entity])
+     :statistics {:leaders leaders :history next-history :revision next-rev}}))
 
 (defn occupation->map
   "Nil se slot vazio (stub rev 0 sem player-key)."
@@ -58,7 +116,7 @@
   [{:keys [db save writer-ctx request ocupacao colecao slot-revision
            query-collection save-entity player-entity
            pokemon-entity-map apply-pokemon-xp-tx inventory-adjust-tx
-           omit-receipt? omit-revision-cas?]}]
+           omit-receipt? omit-revision-cas? statistics-entity]}]
   (let [chat-id (:chat-id writer-ctx)
         player-id (:player-id writer-ctx)
         save-id (:save-id writer-ctx)
@@ -226,8 +284,14 @@
                          (or prev-coins-tx []) occ-tx
                          (or prev-defense-tx []) challenger-defense)
              :meta {:moedas-permanencia moedas-ant :xp-permanencia xp-ant}}))
-        tx (into (into base-tx (concat (or xp-txs []) (or wear-tx [])))
-                 (or (:tx occupy-tx) []))]
+        stats-part (build-statistics-tx
+                    {:statistics-entity statistics-entity
+                     :chat-id chat-id :gym-id gym-id :agora agora
+                     :venceu? venceu? :ocupacao ocupacao
+                     :challenger-id player-id :challenger-name (:nome request)})
+        tx (into (into (into base-tx (concat (or xp-txs []) (or wear-tx [])))
+                       (or (:tx occupy-tx) []))
+                 (:tx stats-part))]
     {:tx tx
      :result {:operation-id operation-id
               :duplicate false
@@ -238,6 +302,7 @@
               :reward vit-rew
               :pe-delta pe-delta
               :occupied? (boolean occupy-tx)
+              :statistics (:statistics stats-part)
               :permanencia (or (:meta occupy-tx) {})}}))
 
 (defn build-heal-tx

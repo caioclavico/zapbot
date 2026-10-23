@@ -315,6 +315,12 @@ function createClient(config = {}) {
       request('GET', `/v1/gyms${q({ chatId, playerId, agoraMs })}`),
     getGym: ({ chatId, playerId, gymId, agoraMs }) =>
       request('GET', `/v1/gyms/${encodeURIComponent(gymId)}${q({ chatId, playerId, agoraMs })}`),
+    getGymRanking: ({ chatId, playerId, actorPlayerId = playerId, gymId, agoraMs }) =>
+      request('GET', `/v1/gyms/ranking${q({ chatId, playerId, gymId, agoraMs })}`, undefined,
+        { 'X-Actor-Player-Id': actorPlayerId }),
+    getGymHistory: ({ chatId, playerId, actorPlayerId = playerId, gymId }) =>
+      request('GET', `/v1/gyms/history${q({ chatId, playerId, gymId })}`, undefined,
+        { 'X-Actor-Player-Id': actorPlayerId }),
     getGymTeam: ({ chatId, playerId }) =>
       request('GET', `/v1/gyms/team${q({ chatId, playerId })}`),
     setGymTeam: (body) => mutateOnce('/v1/gyms/team', body),

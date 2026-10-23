@@ -39,6 +39,19 @@ test('subcomandos de ginásio e raide e mensagens de evento são apresentados', 
   }), /Festival|Pikachu/);
 });
 
+test('ranking e histórico de ginásio apresentam DTOs persistidos', () => {
+  const ranking = present.formatGymRanking({ gymId: 'pedra', ranking: [
+    { nome: 'Ash', defesas: 2, tempoMs: 5000 }
+  ] });
+  assert.match(ranking, /Ranking — pedra/);
+  assert.match(ranking, /Ash/);
+  const history = present.formatGymHistory({ gymId: 'pedra', history: [
+    { nome: 'Ash', lider: 'Brock', venceu: true }
+  ] });
+  assert.match(history, /Histórico — pedra/);
+  assert.match(history, /Ash vs Brock/);
+});
+
 test('formatMainMenu e jornada sem jargão técnico', () => {
   const novo = present.formatMainMenu({ hasTrainer: false, status: 'not_started' }, '!pk');
   assert.match(novo, /Bem-vindo/);

@@ -214,7 +214,7 @@
                                               "battle-start" "battle-turn"
                                               "hunt-plan" "hunt-start"
                                               "gyms-read" "gym-team" "gym-heal"
-                                              "gym-challenge"
+                                              "gym-challenge" "gym-ranking" "gym-history"
                                               "raid-read" "raid-join" "raid-leave"
                                               "raid-start" "raid-attack" "raid-capture"
                                               "joy-read" "joy-send" "joy-collect"
@@ -819,6 +819,28 @@
 
                   :else
                   (throw (err/error :method_not_allowed {:method method})))
+
+                (= path "/v1/gyms/ranking")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId") player-id (g qs "playerId")
+                          gym-id (g qs "gymId" "gym-id") actor (header ex "X-Actor-Player-Id")
+                          agora (long-or-nil (g qs "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? gym-id) (not= actor player-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "gymId"]})))
+                      (ok! ex (reads/gym-ranking store chat-id player-id gym-id
+                                                 {:agora-ms agora}))))
+
+                (= path "/v1/gyms/history")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId") player-id (g qs "playerId")
+                          gym-id (g qs "gymId" "gym-id") actor (header ex "X-Actor-Player-Id")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? gym-id) (not= actor player-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "gymId"]})))
+                      (ok! ex (reads/gym-history store chat-id player-id gym-id))))
 
                 (= path "/v1/gyms/heal")
                 (do (require-method! ex #{"POST"})

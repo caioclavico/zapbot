@@ -460,6 +460,40 @@
                      (= 3 (count (set idxs)))
                      (= 3 (count (remove nil? membros))))}))
 
+(defn gym-ranking
+  "Ranking persistido no mesmo formato semântico do legado."
+  [store chat-id player-id gym-id {:keys [agora-ms]}]
+  (require-player! store chat-id player-id)
+  (when-not (gym/obter-ginasio (str gym-id))
+    (throw (err/error :unknown_gym {:gym-id gym-id})))
+  (let [stats (or (ports/get-gym-statistics store chat-id (str gym-id))
+                  {:leaders {} :history []})
+        ocup (gym-app/get-occupation store chat-id (str gym-id))
+        agora (long (or agora-ms (System/currentTimeMillis)))
+        leaders (cond-> (:leaders stats)
+                  ocup (update (:pid ocup) (fn [old]
+                                             (let [old (or old {})
+                                                   elapsed (max 0 (- agora (long (:desde ocup agora))))]
+                                               (assoc old :nome (or (:nome old) (:nome ocup) (:pid ocup))
+                                                          :defesas (long (:defesas old 0))
+                                                          :tempo-ms (+ (long (:tempo-ms old 0)) elapsed))))))
+        rows (mapv (fn [[pid row]] (merge {:player-id pid} row)) leaders)
+        by-defesas (->> rows (sort-by #(long (:defesas % 0)) >) (take 10) vec)
+        by-tempo (->> rows (sort-by #(long (:tempo-ms % 0)) >) (take 10) vec)]
+    {:chat-id chat-id :player-id player-id :gym-id (str gym-id)
+     :ranking by-defesas :ranking-defesas by-defesas :ranking-tempo by-tempo
+     :generated-at agora}))
+
+(defn gym-history
+  [store chat-id player-id gym-id]
+  (require-player! store chat-id player-id)
+  (when-not (gym/obter-ginasio (str gym-id))
+    (throw (err/error :unknown_gym {:gym-id gym-id})))
+  (let [stats (or (ports/get-gym-statistics store chat-id (str gym-id))
+                  {:history []})]
+    {:chat-id chat-id :player-id player-id :gym-id (str gym-id)
+     :history (->> (:history stats) reverse (take 10) vec)}))
+
 (defn- raid-participant-dto
   [pid p viewer-id]
   (cond-> {:player-id pid
