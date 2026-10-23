@@ -16,7 +16,7 @@
   (let [b (HttpRequest/newBuilder (URI/create url))
         _ (.header b "Authorization" "Bearer test")
         _ (.header b "X-Actor-Player-Id" actor)
-        r (.send (HttpClient/newHttpClient) (.GET b) (HttpResponse$BodyHandlers/ofString))]
+        r (.send (HttpClient/newHttpClient) (.build (.GET b)) (HttpResponse$BodyHandlers/ofString))]
     [(.statusCode r) (json/read-str (.body r))]))
 
 (deftest ranking-history-http-authenticated
