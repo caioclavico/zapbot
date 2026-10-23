@@ -98,6 +98,30 @@ test('erro de negócio estruturado sem retry com novo operationId', async () => 
   }
 });
 
+test('cliente expõe criação e renomeação de slots com operationId estável', async () => {
+  const received = [];
+  const f = await fixture((req, res) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => {
+      received.push({method: req.method, path: req.url, body: JSON.parse(Buffer.concat(chunks).toString())});
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ok: true, data: {saveId: 'c', displayName: 'Jornada'}}));
+    });
+  });
+  try {
+    const create = await f.client.createSave({chatId: 'c', playerId: 'p', saveId: 'c', operationId: 'save-create-1'});
+    const rename = await f.client.renameSave({chatId: 'c', playerId: 'p', saveId: 'c', displayName: 'Jornada', expectedFenceGeneration: 0, operationId: 'save-rename-1'});
+    assert.equal(create.saveId, 'c');
+    assert.equal(rename.displayName, 'Jornada');
+    assert.deepEqual(received.map(r => r.path), ['/v1/saves/create', '/v1/saves/rename']);
+    assert.equal(received[0].body.operationId, 'save-create-1');
+    assert.equal(received[1].body.expectedFenceGeneration, 0);
+  } finally {
+    await f.close();
+  }
+});
+
 test('timeout em escrita tenta reconciliar com o mesmo operationId', async () => {
   let posts = 0;
   let gets = 0;

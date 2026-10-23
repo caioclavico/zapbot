@@ -711,12 +711,16 @@
         ;; !pk 1‥4 → atacar com o índice preservado em resto.
         primeiro-arg (str/lower-case (str (or (first args) "")))
         trade? (= "troca" primeiro-arg)
+        save-management? (contains? #{"novo" "renomear"} primeiro-arg)
         ;; A negociação só é exposta por !pk troca. O token já vem nos args
         ;; recebidos de pokemon/jogar e não integra o contrato HTTP.
         trade-args (if trade?
                      (vec (rest args))
                      args)
-        resolved-cmd (when-not trade? (.resolveCommand jvm-present (clj->js args)))
+        resolved-cmd (cond
+                       trade? nil
+                       save-management? "save-management"
+                       :else (.resolveCommand jvm-present (clj->js args)))
         cmd (if (and (= "time" resolved-cmd)
                      (contains? #{"salvar" "usar" "ver" "excluir" "apagar" "remover"}
                                 (str/lower-case (str (or (first (rest args)) "")))))
@@ -1097,14 +1101,77 @@
                                                      prefix)))))
 
                 "save"
-                (p/let [data (desempenho/medir! ctx "pokemon_jvm_active"
-                                #(.getActiveSave jvm #js {:chatId chat-id :playerId player-id}))]
-                  (envelope-jvm pedido (.formatActiveSave jvm-present data)))
+                (if (empty? resto)
+                  (p/let [data (desempenho/medir! ctx "pokemon_jvm_active"
+                                  #(.getActiveSave jvm #js {:chatId chat-id :playerId player-id}))]
+                    (envelope-jvm pedido (.formatActiveSave jvm-present data)))
+                  (p/let [listed (.listSaves jvm #js {:chatId chat-id :playerId player-id})
+                          saves (array-seq (or (.-saves listed) #js []))
+                          target (first resto)
+                          idx (when (re-matches #"[0-9]+" (str target))
+                                (dec (js/parseInt (str target) 10)))
+                          selected (if (some? idx) (nth saves idx nil)
+                                       (some #(when (= (str (or (.-saveId %) (.-slotId %)))
+                                                    (str target)) %) saves))]
+                    (when-not selected
+                      (throw (erro-contrato "❓ Save inválido. Use !pk saves para consultar.")))
+                    (let [data (desempenho/medir! ctx "pokemon_jvm_activate"
+                               #(.activateSave jvm #js {:chatId chat-id
+                                                         :playerId player-id
+                                                         :saveId (or (.-saveId selected) (.-slotId selected))
+                                                         :expectedFenceGeneration (.-fenceGeneration listed)}))]
+                      (envelope-jvm pedido (.formatActivate jvm-present data)))))
 
                 "saves"
                 (p/let [data (desempenho/medir! ctx "pokemon_jvm_saves"
                                 #(.listSaves jvm #js {:chatId chat-id :playerId player-id}))]
                   (envelope-jvm pedido (.formatSavesList jvm-present data)))
+
+                "save-management"
+                (let [sub primeiro-arg]
+                  (cond
+                    (= sub "novo")
+                    (do
+                      (when-not (= "save" (str/lower-case (str (first resto))))
+                        (throw (erro-contrato "❓ Use: !pk novo save")))
+                      (let [op-id (.stableOperationId jvm-transport (:requestId pedido) "save-create")
+                            raw-id (or (:requestId pedido) op-id)
+                            slot-id (str "slot-" (-> raw-id str
+                                                      (str/replace #"[^A-Za-z0-9_-]" "-")
+                                                      (subs 0 (min 48 (count (str raw-id))))))]
+                        (p/let [data (.createSave jvm #js {:chatId chat-id :playerId player-id
+                                                            :saveId slot-id :operationId op-id})]
+                          (envelope-jvm pedido
+                                        (str "✅ Save criado: *" slot-id "*. Use !pk save " slot-id
+                                             " para selecionar.")))))
+
+                    (= sub "renomear")
+                    (let [tokens (vec resto)]
+                      (when-not (and (= "save" (str/lower-case (str (first tokens))))
+                                     (>= (count tokens) 3))
+                        (throw (erro-contrato "❓ Use: !pk renomear save <número ou id> <nome>")))
+                      (let [target (second tokens)
+                            name (str/join " " (drop 2 tokens))]
+                        (p/let [listed (.listSaves jvm #js {:chatId chat-id :playerId player-id})
+                                saves (array-seq (or (.-saves listed) #js []))
+                                idx (when (re-matches #"[0-9]+" (str target))
+                                      (dec (js/parseInt (str target) 10)))
+                                selected (if (some? idx) (nth saves idx nil)
+                                             (some #(when (= (str (or (.-saveId %) (.-slotId %)))
+                                                          (str target)) %) saves))]
+                          (when-not selected
+                            (throw (erro-contrato "❓ Save inválido. Use !pk saves para consultar.")))
+                          (let [data (.renameSave jvm #js {:chatId chat-id :playerId player-id
+                                                           :saveId (or (.-saveId selected) (.-slotId selected))
+                                                           :displayName name
+                                                           :expectedFenceGeneration (.-fenceGeneration listed)
+                                                           :operationId (.stableOperationId jvm-transport
+                                                                                             (:requestId pedido)
+                                                                                             (str "save-rename:" target))})]
+                            (envelope-jvm pedido (str "✅ Save renomeado para *" name "*."))))))
+
+                    :else
+                    (throw (erro-contrato "❓ Use: !pk novo save ou !pk renomear save <número> <nome>"))))
 
                 "menu"
                 (p/let [data (desempenho/medir! ctx "pokemon_jvm_onboarding"
@@ -1178,8 +1245,8 @@
 
                 "ativar"
                 (let [slot (first resto)]
-                  (when-not (contains? #{"a" "b"} slot)
-                    (throw (erro-contrato "Use: !pk ativar a|b")))
+                  (when (str/blank? (str slot))
+                    (throw (erro-contrato "Use: !pk ativar <id-do-save>")))
                   (p/let [antes (.listSaves jvm #js {:chatId chat-id :playerId player-id})
                           data (desempenho/medir! ctx "pokemon_jvm_activate"
                                  #(.activateSave jvm

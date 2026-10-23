@@ -72,7 +72,7 @@
      :unknown_shop_item :item_not_for_sale :item_use_unsupported
      :wrong_status_item :no_status_to_cure :missing_item_id
      :invalid_buy_qty :invalid_collection_index
-     :invalid_save_slot :invalid_slot_id :invalid_identity :unknown_ball
+     :invalid_save_slot :invalid_slot_id :invalid_identity :invalid_save_name :unknown_ball
      :area_unavailable :invalid_wild_pokemon :hunt_no_candidates
      :unknown_gym :unknown_heal_item :invalid_gym_team
      :invalid_gym_npc_team :invalid_motivation_index
@@ -205,7 +205,7 @@
                        :allowTestRng (boolean allow-test-rng?)
                        :platformEnabled (boolean platform-store)
                        :capabilities (cond-> ["trainer-read" "collection-read" "active-save-read"
-                                              "trainer-ensure" "saves-list" "save-activate"
+                                              "trainer-ensure" "saves-list" "save-create" "save-rename" "save-activate"
                                               "missions-read" "missions-prepare"
                                               "missions-claim-daily" "missions-claim-weekly"
                                               "gift-send" "missions-pending-collect"
@@ -476,6 +476,47 @@
                       (when (or (str/blank? chat-id) (str/blank? player-id))
                         (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
                       (ok! ex (tx/list-saves store chat-id player-id))))
+
+                (= path "/v1/saves/create")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          save-id (g body "saveId" "save-id")
+                          display-name (g body "displayName" "display-name")
+                          operation-id (g body "operationId" "operation-id")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/create-save-slot!
+                                  store {:chat-id chat-id :player-id player-id
+                                         :save-id save-id :display-name display-name
+                                         :operation-id operation-id})))))
+
+                (= path "/v1/saves/rename")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          save-id (g body "saveId" "save-id")
+                          display-name (g body "displayName" "display-name")
+                          operation-id (g body "operationId" "operation-id")
+                          fence (long-or-nil (g body "expectedFenceGeneration"
+                                                   "expected-fence-generation"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (str/blank? display-name)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "displayName" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/rename-save!
+                                  store {:chat-id chat-id :player-id player-id
+                                         :save-id save-id :display-name display-name
+                                         :expected-fence-generation fence
+                                         :operation-id operation-id})))))
 
                 (= path "/v1/trainer/ensure")
                 (do (require-method! ex #{"POST"})

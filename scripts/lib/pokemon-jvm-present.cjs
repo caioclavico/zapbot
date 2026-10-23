@@ -635,7 +635,7 @@ function formatActiveSave(data) {
   const party = data.party || [];
   return [
     '💾 *Save ativo*',
-    `Slot: *${data.activeSaveId || save.slotId || '?'}* · fence ${data.fenceGeneration || 0}`,
+    `Slot: *${save.displayName || data.activeSaveId || save.slotId || '?'}* (${data.activeSaveId || save.slotId || '?'}) · fence ${data.fenceGeneration || 0}`,
     `💰 Moedas: ${save.coins || 0} · Nv.treinador ${save.nivel || save.trainerLevel || 1}`,
     `⭐ PE ${save.xp || save.trainerXp || 0} · revisão ${save.revision || 0}`,
     `👥 Party: ${party.length} · Inventário: ${(data.inventory || []).length} itens`,
@@ -648,13 +648,14 @@ function formatActiveSave(data) {
 function formatSavesList(data) {
   const linhas = (data.saves || []).map(s => {
     const ativo = s.saveId === data.activeSaveId ? ' 👉' : '';
-    return `• *${s.saveId}*${ativo}: ${s.coins || 0} moedas · ${s.collectionCount || 0} na coleção · party ${s.partyCount || 0}`;
+    const nome = s.displayName ? ` — ${s.displayName}` : '';
+    return `• *${s.saveId}*${nome}${ativo}: ${s.coins || 0} moedas · ${s.collectionCount || 0} na coleção · party ${s.partyCount || 0}`;
   });
   return [
-    `💾 *Saves A/B* · ativo=${data.activeSaveId || '?'} · fence=${data.fenceGeneration || 0}`,
+    `💾 *Saves* · ativo=${data.activeSaveId || '?'} · fence=${data.fenceGeneration || 0}`,
     ...linhas,
     '',
-    'Alternar: !pk ativar a|b'
+    'Alternar: !pk save <número ou id> · Criar: !pk novo save · Renomear: !pk renomear save <número ou id> <nome>'
   ].join('\n');
 }
 

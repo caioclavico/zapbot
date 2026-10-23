@@ -239,6 +239,8 @@ function createClient(config = {}) {
       request('GET', `/v1/active-save${q({ chatId, playerId })}`),
     listSaves: ({ chatId, playerId }) =>
       request('GET', `/v1/saves${q({ chatId, playerId })}`),
+    createSave: (body) => mutateOnce('/v1/saves/create', body),
+    renameSave: (body) => mutateOnce('/v1/saves/rename', body),
     ensureTrainer: ({ chatId, playerId }) =>
       request('POST', '/v1/trainer/ensure', { chatId, playerId }),
     getOnboarding: ({ chatId, playerId }) =>
