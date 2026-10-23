@@ -80,7 +80,9 @@
      :invalid_starter :invalid_move_slot :move_already_known
      :must_keep_stab_move :no_move_offer :move_not_in_history
      :cannot_forget_last_move :pokemon_not_found
-     :pvp_level_incompatible :pvp_no_challenge :not_pvp_battle) 400
+     :pvp_level_incompatible :pvp_no_challenge :not_pvp_battle
+     :invalid_title :professor_invalid_token :professor_expired :professor_no_cards
+     :professor_busy :pokemon_favorite) 400
     (:stale_writer_fence :writer_fence_conflict :activate_conflict
      :receipt_payload_mismatch :reward_conflict :reward_save_mismatch
      :operation_forbidden :battle_pending :battle_already_active
@@ -221,6 +223,9 @@
                                               "pokemon-learn-move" "pokemon-forget-move"
                                               "pokemon-offer-move" "pokemon-refuse-offer"
                                               "pokemon-relearn-move"
+                                              "profile-friendship" "profile-titles" "profile-title-select"
+                                              "professor-cards" "professor-send" "professor-confirm"
+                                              "professor-cancel" "professor-use"
                                               "pvp-open" "pvp-accept" "pvp-cancel"
                                               "pvp-turn" "pvp-active-read"
                                               "onboarding-read" "onboarding-start"
@@ -301,6 +306,42 @@
                       (ok! ex (missions/prepare-missions!
                                store {:chat-id chat :player-id player :save-id slot
                                       :fence-generation fence} {}))))
+
+                (= path "/v1/profile/friendship")
+                (do (require-method! ex #{"GET"})
+                    (let [chat (g qs "chatId") player (g qs "playerId") save (g qs "saveId") idx (long-or-nil (g qs "collectionIndex")) actor (header ex "X-Actor-Player-Id")]
+                      (when (or (str/blank? chat) (str/blank? player) (str/blank? save) (nil? idx) (not= actor player))
+                        (throw (err/error :invalid_query {})))
+                      (ok! ex (ports/get-friendship store chat player save idx))))
+
+                (= path "/v1/profile/titles")
+                (do (require-method! ex #{"GET"})
+                    (let [chat (g qs "chatId") player (g qs "playerId") save (g qs "saveId") actor (header ex "X-Actor-Player-Id")]
+                      (when (or (str/blank? chat) (str/blank? player) (str/blank? save) (not= actor player)) (throw (err/error :invalid_query {})))
+                      (ok! ex (ports/list-titles store chat player save))))
+
+                (contains? #{"/v1/profile/title" "/v1/professor/send" "/v1/professor/cancel"
+                             "/v1/professor/confirm" "/v1/professor/use"} path)
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex) chat (g body "chatId") player (g body "playerId") save (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration")) op (g body "operationId") actor (header ex "X-Actor-Player-Id")
+                          req {:chat-id chat :player-id player :save-id save :fence-generation fence :operation-id op
+                               :title-index (long-or-nil (g body "titleIndex")) :collection-index (long-or-nil (g body "collectionIndex" "index"))
+                               :token (g body "token") :now (long (or (long-or-nil (g body "now")) (System/currentTimeMillis)))}]
+                      (when (or (str/blank? chat) (str/blank? player) (str/blank? save) (str/blank? op)
+                                (nil? fence) (not= actor player)) (throw (err/error :invalid_query {})))
+                      (ok! ex (with-operation! op #(case path
+                        "/v1/profile/title" (ports/select-title! store req)
+                        "/v1/professor/send" (ports/professor-send! store req)
+                        "/v1/professor/cancel" (ports/professor-cancel! store req)
+                        "/v1/professor/confirm" (ports/professor-confirm! store req)
+                        (ports/professor-use! store req))))))
+
+                (= path "/v1/professor/cards")
+                (do (require-method! ex #{"GET"})
+                    (let [chat (g qs "chatId") player (g qs "playerId") save (g qs "saveId") actor (header ex "X-Actor-Player-Id")]
+                      (when (or (str/blank? chat) (str/blank? player) (str/blank? save) (not= actor player)) (throw (err/error :invalid_query {})))
+                      (ok! ex (ports/professor-cards store chat player save))))
 
                 (= path "/v1/trainer")
                 (do (require-method! ex #{"GET"})

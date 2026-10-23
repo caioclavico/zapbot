@@ -1821,6 +1821,9 @@ function formatRaidEligible(data, prefix = '!pk') {
 
 /** Aliases alinhados ao legado (ajuda.cljs / core). */
 const ALIASES = {
+  professor: 'professor', prof: 'professor',
+  titulo: 'titulo', título: 'titulo', titulos: 'titulo', 'títulos': 'titulo',
+  amizade: 'amizade', happy: 'amizade',
   treinador: 'treinador', perfil: 'treinador', tre: 'treinador',
   meus: 'time', pokemons: 'time',
   time: 'time', equipe: 'time', tm: 'time',
@@ -1893,6 +1896,13 @@ module.exports = {
   formatReceipt,
   formatError,
   formatUnavailable,
+  formatFriendship: d => `💛 ${d && d.species ? d.species : 'Pokémon'}: ${d && d.value != null ? d.value : 70}/255 — ${d && d.label ? d.label : 'ainda se conhecendo'}`,
+  formatTitles: d => {
+    const titles = Array.isArray(d && d.titles) ? d.titles : [];
+    return `🏅 Títulos${d && d.selected ? ` (atual: ${d.selected})` : ''}:\n` +
+      (titles.length ? titles.map((t, i) => `${i + 1}. ${t.label || t.id}`).join('\n') : 'Nenhum título desbloqueado.');
+  },
+  formatProfessor: d => `🎓 Professor: ${d && d.token ? `confirme com ${d.token}` : (d && d.used ? 'cartão utilizado.' : 'operação concluída.')}`,
   formatHuntEligibility,
   formatHuntStart,
   formatBattleState,

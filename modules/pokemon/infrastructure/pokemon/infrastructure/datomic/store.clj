@@ -38,6 +38,7 @@
             [pokemon.infrastructure.datomic.raid-store :as raid-store]
             [pokemon.infrastructure.datomic.shop-store :as shop-store]
             [pokemon.infrastructure.datomic.trade-store :as trade-store]
+            [pokemon.infrastructure.datomic.profile-store :as profile-store]
             [pokemon.infrastructure.datomic.schema :as schema]))
 
 (def ^:private max-cas-attempts 12)
@@ -858,6 +859,14 @@
     (trade-store/cancel! conn request))
   (complete-trade! [_ request]
     (trade-store/complete! conn request))
+  (get-friendship [_ chat player save idx] (profile-store/friendship conn chat player save idx))
+  (list-titles [_ chat player save] (profile-store/titles conn chat player save))
+  (select-title! [_ request] (profile-store/select-title! conn request (:title-index request)))
+  (professor-cards [_ chat player save] (profile-store/professor-cards conn chat player save))
+  (professor-send! [_ request] (profile-store/professor-send! conn request (:collection-index request) (:now request)))
+  (professor-cancel! [_ request] (profile-store/professor-cancel! conn request))
+  (professor-confirm! [_ request] (profile-store/professor-confirm! conn request (:token request) (:now request)))
+  (professor-use! [_ request] (profile-store/professor-use! conn request (:collection-index request)))
 
   (claim-daily-missions! [_ writer request]
     (run-mission-operation!* conn writer :daily request))

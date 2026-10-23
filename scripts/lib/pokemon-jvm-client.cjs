@@ -267,6 +267,20 @@ function createClient(config = {}) {
       { 'X-Actor-Player-Id': body.playerId }),
     cancelTrade: (body) => mutateOnce('/v1/trades/cancel', body,
       { 'X-Actor-Player-Id': body.playerId }),
+    getFriendship: ({ chatId, playerId, saveId, collectionIndex }) =>
+      request('GET', `/v1/profile/friendship${q({ chatId, playerId, saveId, collectionIndex })}`, undefined,
+        { 'X-Actor-Player-Id': playerId }),
+    getTitles: ({ chatId, playerId, saveId }) =>
+      request('GET', `/v1/profile/titles${q({ chatId, playerId, saveId })}`, undefined,
+        { 'X-Actor-Player-Id': playerId }),
+    selectTitle: (body) => mutateOnce('/v1/profile/title', body, { 'X-Actor-Player-Id': body.playerId }),
+    getProfessorCards: ({ chatId, playerId, saveId }) =>
+      request('GET', `/v1/professor/cards${q({ chatId, playerId, saveId })}`, undefined,
+        { 'X-Actor-Player-Id': playerId }),
+    professorSend: (body) => mutateOnce('/v1/professor/send', body, { 'X-Actor-Player-Id': body.playerId }),
+    professorCancel: (body) => mutateOnce('/v1/professor/cancel', body, { 'X-Actor-Player-Id': body.playerId }),
+    professorConfirm: (body) => mutateOnce('/v1/professor/confirm', body, { 'X-Actor-Player-Id': body.playerId }),
+    professorUse: (body) => mutateOnce('/v1/professor/use', body, { 'X-Actor-Player-Id': body.playerId }),
     getMissions: ({ chatId, playerId, saveId }) =>
       request('GET', `/v1/missions${q({ chatId, playerId, saveId })}`),
     getMissionRewards: ({ chatId, playerId, saveId }) =>

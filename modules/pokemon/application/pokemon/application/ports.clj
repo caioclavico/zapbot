@@ -198,6 +198,15 @@
   (cancel-trade! [this request] "Cancela proposta.")
   (complete-trade! [this request] "Confirma e conclui troca.")
 
+  (get-friendship [this chat-id player-id save-id collection-index])
+  (list-titles [this chat-id player-id save-id])
+  (select-title! [this request])
+  (professor-cards [this chat-id player-id save-id])
+  (professor-send! [this request])
+  (professor-cancel! [this request])
+  (professor-confirm! [this request])
+  (professor-use! [this request])
+
   (claim-starter-kit! [this writer-ctx request]
     "Concede 10 Pokébolas do kit inicial uma vez por save (fence + recibo).")
 

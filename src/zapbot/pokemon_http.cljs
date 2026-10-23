@@ -797,6 +797,57 @@
        (envelope-jvm pedido (.formatUnavailable jvm-present (str/join " " args))))
       (p/let [envelope
               (case cmd
+                "amizade"
+                (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                        texto (first resto)
+                        idx (parse-indice-1based (or texto "1") 999999)
+                        data (.getFriendship jvm #js {:chatId chat-id :playerId player-id
+                                                      :saveId (.-activeSaveId ativo) :collectionIndex idx})]
+                  (envelope-jvm pedido (.formatFriendship jvm-present data)))
+
+                "titulo"
+                (let [sub (str/lower-case (str (or (first resto) "")))]
+                  (if (re-matches #"[0-9]+" sub)
+                    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            data (.selectTitle jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId ativo)
+                                                        :fenceGeneration (.-fenceGeneration ativo)
+                                                        :titleIndex (dec (js/parseInt sub 10))
+                                                        :operationId (.stableOperationId jvm-transport (:requestId pedido) (str "title:" sub))})]
+                      (envelope-jvm pedido (str "🏅 Título selecionado: " (or (.-label data) (.-title data)))))
+                    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            data (.getTitles jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId ativo)})]
+                      (envelope-jvm pedido (.formatTitles jvm-present data)))))
+
+                "professor"
+                (let [sub (str/lower-case (str (or (first resto) ""))) restp (vec (rest resto))]
+                  (cond
+                    (= sub "cartoes")
+                    (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            d (.getProfessorCards jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId a)})]
+                      (envelope-jvm pedido (str "🎓 Cartões: " (pr-str (js->clj (.-cards d))))))
+                    (= sub "cancelar")
+                    (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            d (.professorCancel jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId a)
+                                                         :fenceGeneration (.-fenceGeneration a) :operationId (.stableOperationId jvm-transport (:requestId pedido) "prof-cancel")})]
+                      (envelope-jvm pedido "✅ Envio ao professor cancelado."))
+                    (= sub "confirmar")
+                    (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            d (.professorConfirm jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId a)
+                                                          :fenceGeneration (.-fenceGeneration a) :token (first restp)
+                                                          :now (js/Date.now) :operationId (.stableOperationId jvm-transport (:requestId pedido) "prof-confirm")})]
+                      (envelope-jvm pedido (.formatProfessor jvm-present d)))
+                    (= sub "usar")
+                    (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            d (.professorUse jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId a)
+                                                      :fenceGeneration (.-fenceGeneration a) :collectionIndex (dec (js/parseInt (first restp) 10))
+                                                      :operationId (.stableOperationId jvm-transport (:requestId pedido) (str "prof-use:" (first restp)))})]
+                      (envelope-jvm pedido (.formatProfessor jvm-present d)))
+                    :else (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                                  d (.professorSend jvm #js {:chatId chat-id :playerId player-id :saveId (.-activeSaveId a)
+                                                             :fenceGeneration (.-fenceGeneration a) :collectionIndex (dec (js/parseInt (first restp) 10))
+                                                             :now (js/Date.now) :operationId (.stableOperationId jvm-transport (:requestId pedido) (str "prof-send:" (first restp)))})]
+                             (envelope-jvm pedido (.formatProfessor jvm-present d)))))
+
                 "treinador"
                 (p/let [data (desempenho/medir! ctx "pokemon_jvm_trainer"
                                 #(.getTrainer jvm #js {:chatId chat-id :playerId player-id}))
