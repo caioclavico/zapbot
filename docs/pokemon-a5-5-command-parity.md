@@ -61,3 +61,49 @@ Estado: **BLOCKED para declarar paridade total A5.5**. Os comandos listados
 como ausentes precisam de escopo próprio; os fluxos funcionais precisam de
 smoke HTTP/WhatsApp fora da restrição de loopback antes de serem classificados
 como totalmente migrados.
+
+## A5.5.5 — revisão no commit e098c82
+
+Esta seção atualiza a matriz acima para o estado efetivamente verificado neste
+commit. A classificação separa domínio, contrato HTTP e entrada WhatsApp; a
+existência de um handler não é considerada teste ponta a ponta.
+
+| Área | Domínio JVM/Datomic | HTTP | WhatsApp simulado | Estado atual |
+|---|---|---|---|---|
+| Ginásios | 13 testes de M4.8, incluindo derrota, HP/status e recompensa idempotente | Testes preparados, mas loopback bloqueado | Presenter e aliases testados | **parcial**: ranking/histórico ainda não persistidos no Core |
+| PvP | Cobertura A3 de desafio, aceitação, turnos e retry | Testes preparados, loopback bloqueado | Alias `batalhar` e apresentação testados | **parcial operacional** |
+| Raids | Cobertura M3.6/M4.9 de entrada, turnos, captura e recompensas | Testes preparados, loopback bloqueado | Aliases e subcomandos testados | **parcial operacional**; abertura/cancelamento continuam administrativos |
+| Clima/eventos | Plano de caça JVM e regras determinísticas | Rota existe, sem smoke neste sandbox | `clima`, `eventos`, `tempo` e `evt` cobertos na apresentação | **implementado, aguardando smoke HTTP** |
+| Equipes/liga/CSV | IDs canônicos, faixas, HP, migration 022/023 e exportação | Rotas implementadas | Formatação de documento CSV testada | **implementado no domínio; HTTP pendente** |
+
+### Ranking e histórico de ginásios
+
+O legado possui `ginasios/ranking` e `ginasios/historico`, alimentados por
+`ginasios-estatisticas` em armazenamento próprio. O Core atual persiste
+ocupação, defesa e recompensas no Datomic, mas não possui entidade ou migration
+equivalente para essas estatísticas. O presenter continua respondendo que as
+operações estão indisponíveis. Isso é uma lacuna conhecida e foi mantida como
+etapa separada (A5.5.5b), sem inventar critérios de ordenação ou pontuação.
+
+### Execução desta regressão
+
+- `npx shadow-cljs compile test && node target/test.js`: **231 testes, 1.389
+  asserções, 0 falhas, 0 erros**.
+- Domínio ginásio/PvP/raid: **33 testes, 142 asserções, 0 falhas, 0 erros**.
+- Presenter Node: **10 testes, 10 aprovados**.
+- Instalação das migrations 001–023 em banco descartável, seguida de segunda
+  instalação: **idempotente**.
+- Testes HTTP de negociação, perfil e equipes: bloqueados antes da primeira
+  requisição por `SocketException: Operation not permitted` ao abrir loopback.
+
+Comando recomendado no Mac/Docker para concluir os smoke tests:
+
+```bash
+docker run --rm --network bridge -v "$PWD:/app" odisseu-contract-tests \
+  bash -lc 'npx shadow-cljs compile test && node target/test.js && npm run test:m4-jvm && CLOJURE_BIN="$(command -v clojure)" npm run test:trade-e2e'
+```
+
+O estado permanece **BLOCKED** para A5.6 até os contratos HTTP e o fluxo
+WhatsApp simulado serem executados em ambiente com loopback permitido, e até a
+decisão A5.5.5b sobre ranking/histórico ser implementada ou formalmente
+retirada do escopo.
