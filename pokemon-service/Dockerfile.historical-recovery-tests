@@ -1,0 +1,16 @@
+FROM node:22-bookworm-slim
+
+WORKDIR /app
+
+# Install from the lockfile inside the image.  The recovery fixture must not
+# depend on a developer's node_modules mounted from the host.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+# Copy only the files needed by the Cassandra fixture and exporter.  This also
+# keeps credentials, .env files and local data out of the test image.
+COPY runtime/restore-protocol.cjs ./runtime/restore-protocol.cjs
+COPY scripts/export-historical-saves.cjs ./scripts/export-historical-saves.cjs
+COPY scripts/test-historical-recovery-cassandra.cjs ./scripts/test-historical-recovery-cassandra.cjs
+
+ENTRYPOINT ["node", "/app/scripts/test-historical-recovery-cassandra.cjs"]

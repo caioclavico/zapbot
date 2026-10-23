@@ -5,6 +5,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NETWORK="odisseu-a63-recovery-net-$$"
 CASSANDRA="odisseu-a63-cassandra-$$"
+NODE_TEST_IMAGE="odisseu-a63-recovery-node:local"
 OUT_DIR="${A63_OUTPUT_DIR:-$ROOT_DIR/target/a63-recovery-$$}"
 OUT_FILE="$OUT_DIR/historical.edn"
 REL_OUTPUT="${OUT_FILE#$ROOT_DIR/}"
@@ -29,6 +30,9 @@ docker image inspect odisseu-contract-tests >/dev/null 2>&1 || {
   echo "Construa odisseu-contract-tests antes deste ensaio." >&2; exit 2;
 }
 mkdir -p "$OUT_DIR"
+echo "Construindo imagem Node de fixture com npm ci: $NODE_TEST_IMAGE" >&2
+docker build --pull=false -f "$ROOT_DIR/pokemon-service/Dockerfile.historical-recovery-tests" \
+  -t "$NODE_TEST_IMAGE" "$ROOT_DIR/pokemon-service" >/dev/null
 docker network create --internal "$NETWORK" >/dev/null
 CREATED_NETWORK=1
 docker run -d --name "$CASSANDRA" --network "$NETWORK" --network-alias cassandra-a63 \
@@ -41,9 +45,9 @@ docker run --rm --network "$NETWORK" \
   -e RECOVERY_CHAT_ID=a63-chat \
   -e RECOVERY_PLAYER_ID=a63-player@c.us \
   -e RECOVERY_VERSIONS=both \
-  -e RECOVERY_OUTPUT=/work/$REL_OUTPUT \
-  -v "$ROOT_DIR:/work" -w /work/pokemon-service node:22-bookworm-slim \
-  node scripts/test-historical-recovery-cassandra.cjs
+  -e RECOVERY_OUTPUT=/out/historical.edn \
+  -v "$OUT_DIR:/out" \
+  "$NODE_TEST_IMAGE"
 
 test -s "$OUT_FILE"
 docker run --rm --network none \
