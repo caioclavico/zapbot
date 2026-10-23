@@ -38,6 +38,14 @@ copy_vol odisseu-core-datomic datomic
 copy_vol odisseu-core-journal journal
 copy_vol odisseu-core-maint maint
 
+# Manifesto verificável do backup frio (sem incluir metadados mutáveis).
+(
+  cd "$DEST"
+  find datomic journal maint -type f -print0 \
+    | sort -z \
+    | xargs -0 sha256sum > meta/SHA256SUMS
+)
+
 # Metadados (sem secrets).
 {
   echo "stamp=${STAMP}"

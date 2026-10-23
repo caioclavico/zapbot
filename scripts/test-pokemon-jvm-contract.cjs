@@ -13,8 +13,8 @@ const path = require('node:path');
 
 const TOKEN = process.env.ODISSEU_BRIDGE_TOKEN || 'm41-contract-token';
 const PORT = Number(process.env.ODISSEU_BRIDGE_PORT || 18091);
-const CHAT = 'chat-m61-staging';
-const PLAYER = 'player-m61';
+const CHAT = 'chat-m41-ficticio';
+const PLAYER = 'player-m41';
 const ROOT = path.resolve(__dirname, '..');
 
 function resolveClojure() {

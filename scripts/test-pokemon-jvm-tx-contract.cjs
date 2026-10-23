@@ -51,6 +51,8 @@ function assert(cond, msg) {
 }
 
 async function main() {
+  const storageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odisseu-m42-datomic-'));
+  const runId = path.basename(storageDir);
   const identity = trustedIdentityFromMessage({
     fromMe: false,
     from: 'chat-m42-node@g.us',
@@ -64,9 +66,9 @@ async function main() {
     ODISSEU_BRIDGE_PORT: String(PORT),
     ODISSEU_BRIDGE_TOKEN: TOKEN,
     ODISSEU_BRIDGE_SEED: 'true',
-    ODISSEU_BRIDGE_SYSTEM: 'odisseu-m42-contract',
-    ODISSEU_BRIDGE_STORAGE: require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'odisseu-m42-')),
-    ODISSEU_BRIDGE_DB: 'bridge-tx-contract',
+    ODISSEU_BRIDGE_SYSTEM: `odisseu-m42-contract-${runId}`,
+    ODISSEU_BRIDGE_STORAGE: storageDir,
+    ODISSEU_BRIDGE_DB: `bridge-tx-contract-${runId}`,
     CLJ_CONFIG: process.env.CLJ_CONFIG || path.join(ROOT, '.tools/clj-config'),
     GITLIBS: process.env.GITLIBS || path.join(ROOT, '.tools/gitlibs')
   };
@@ -264,6 +266,7 @@ async function main() {
       path.join(os.tmpdir(), 'm4-2-contract-result.json'),
       JSON.stringify(results, null, 2)
     );
+    fs.rmSync(storageDir, { recursive: true, force: true });
   }
 }
 

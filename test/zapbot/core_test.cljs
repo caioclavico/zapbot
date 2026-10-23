@@ -200,7 +200,9 @@
   (let [medidos (atom 0) processados (atom []) ctx #js {:teste true}]
     (with-redefs [zapbot.config/app-env "development"
                   zapbot.config/dev-group-id "teste@g.us"
-                  zapbot.config/chat-autorizado? #(= % "teste@g.us")
+                  zapbot.config/staging-like? true
+                  zapbot.config/staging-bootstrap-group? false
+                  zapbot.config/staging-allowed-users #{}
                   zapbot.config/prefix "!"
                   recursos/medir-comando! (fn [executar] (swap! medidos inc) (executar))
                   desempenho/acompanhar-mensagem! (fn [_ executar] (executar ctx))

@@ -99,9 +99,11 @@
   ([saude client req res] (atender! saude client req res nil))
   ([saude ^js client ^js req ^js res opts]
    ;; Evita ECONNRESET se o cliente abortar no meio do evaluate.
-   (.on req "aborted" #(log! "cliente HTTP abortou a requisição"))
-   (.on res "error" #(log! (str "erro no socket HTTP: "
-                                (or (some-> % .-message) "desconhecido"))))
+   (when (fn? (.-on req))
+     (.on req "aborted" #(log! "cliente HTTP abortou a requisição")))
+   (when (fn? (.-on res))
+     (.on res "error" #(log! (str "erro no socket HTTP: "
+                                  (or (some-> % .-message) "desconhecido")))))
    (let [method (.-method req)
          path (url-path req)
          on-discover (:on-discover-groups opts)]

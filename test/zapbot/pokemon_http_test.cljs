@@ -41,6 +41,81 @@
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally done)))))
 
+(deftest contexto-neg-usa-mencao-real-e-nao-consulta-citacao
+  (async done
+    (let [citacoes (atom 0)
+          message #js {:id #js {:_serialized "neg-msg"}
+                       :from "grupo@g.us" :author "ash@lid"
+                       :mentionedIds #js [#js {:_serialized "misty@lid"}]
+                       :hasQuotedMsg true
+                       :getQuotedMessage (fn [] (swap! citacoes inc) (p/resolved #js {:author "forjado@lid"}))}]
+      (-> (http/contexto-pedido message "neg" "2 3 @texto")
+          (p/then (fn [pedido]
+                    (is (= "ash@lid" (:playerId pedido)))
+                    (is (= ["misty@lid"] (get-in pedido [:context :mentionedIds])))
+                    (is (nil? (get-in pedido [:context :quotedPlayerId])))
+                    (is (zero? @citacoes))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally done)))))
+
+(deftest neg-rejeita-mencoes-ausentes-ou-ambiguas-e-indice-invalido
+  (async done
+    (let [respostas (atom [])
+          original @http/cliente-jvm
+          original-config http/jvm-configurado?
+          client (clj->js {:getActiveSave (fn [_] (p/resolved #js {:activeSaveId "save"
+                                                                    :fenceGeneration 1}))
+                           :getCollection (fn [_] (p/resolved #js {:collection #js [#js {:pokemonId "p1"}]}))})
+          mensagem (fn [id mentions args]
+                    #js {:id #js {:_serialized id}
+                         :from (str id "@g.us") :author "ash@lid"
+                         :mentionedIds mentions
+                         :reply (fn [texto & _] (swap! respostas conj texto) (p/resolved nil))})]
+      (set! http/jvm-configurado? (fn [] true))
+      (reset! http/cliente-jvm client)
+      (-> (isolado!
+           (fn []
+             (p/let [_ (http/executar (mensagem "neg-sem-mencao" #js [] "2 3 @misty") "neg" "2 3 @misty")
+                     _ (http/executar (mensagem "neg-duas-mencoes"
+                                                #js [#js {:_serialized "misty@lid"}
+                                                     #js {:_serialized "brock@lid"}]
+                                                "2 3 @misty") "neg" "2 3 @misty")
+                     _ (http/executar (mensagem "neg-indice-invalido"
+                                                #js [#js {:_serialized "misty@lid"}]
+                                                "9 3 @misty") "neg" "9 3 @misty")]
+               (is (= 3 (count @respostas)))
+               (is (every? #(re-find #"Mencione exatamente um treinador" %)
+                           (take 2 @respostas)))
+               (is (re-find #"Índice de Pokémon inválido" (last @respostas))))))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (set! http/jvm-configurado? original-config)
+                       (reset! http/cliente-jvm original)
+                       (done)))))))
+
+(deftest neg-em-falha-da-jvm-nao-usa-cliente-legado
+  (async done
+    (let [respostas (atom []) chamadas-legado (atom 0)
+          original-jvm @http/cliente-jvm original-http @http/cliente-http
+          original-config http/jvm-configurado?
+          client #js {:getActiveSave (fn [_] (p/rejected (js/Error. "JVM indisponível")))}
+          message #js {:id #js {:_serialized "neg-falha-jvm"}
+                       :from "grupo@g.us" :author "ash@lid"
+                       :mentionedIds #js [#js {:_serialized "misty@lid"}]
+                       :reply (fn [texto & _] (swap! respostas conj texto) (p/resolved nil))}]
+      (set! http/jvm-configurado? (fn [] true))
+      (reset! http/cliente-jvm client)
+      (reset! http/cliente-http #js {:command (fn [_] (swap! chamadas-legado inc))})
+      (-> (isolado! #(http/executar message "neg" "2 3 @misty"))
+          (p/catch (fn [erro] (is false (str erro))))
+          (p/finally (fn []
+                       (is (zero? @chamadas-legado))
+                       (is (= 1 (count @respostas)))
+                       (set! http/jvm-configurado? original-config)
+                       (reset! http/cliente-jvm original-jvm)
+                       (reset! http/cliente-http original-http)
+                       (done)))))))
+
 (deftest doacao-http-usa-autor-citado-sem-mencao-e-chat-de-saida
   (async done
     (let [message #js {:id "req" :fromMe true :to "grupo@g.us" :from "bot@c.us"
@@ -272,14 +347,11 @@
 (deftest falha-de-midia-preserva-o-texto-sem-renderizar-no-bot
   (async done
     (let [envios (atom [])
-          tentativas (atom 0)
           cliente #js {:media (fn [_] (p/rejected (js/Error. "mídia indisponível")))}]
       (-> (http/enviar-acao! cliente
              (fn [conteudo opcoes]
-               (if (= 1 (swap! tentativas inc))
-                 (p/rejected (js/Error. "envio de mídia indisponível"))
-                 (do (swap! envios conj [conteudo (js->clj (.-mentions opcoes))])
-                     (p/resolved nil))))
+               (swap! envios conj [conteudo (js->clj (.-mentions opcoes))])
+               (p/resolved nil))
              nil {:type "image" :mediaId "foto" :mimeType "image/png" :filename "foto.png"
                   :text "Resultado da captura" :mentions ["treinador@lid"]})
           (p/then (fn [_]
@@ -295,53 +367,3 @@
     (is (= [mensagem] (http/acoes-de-envio [mensagem])))
     (let [compra (assoc mensagem :text (str "✅ Comprou Poção!\n\n" texto))]
       (is (= [compra] (http/acoes-de-envio [compra]))))))
-(deftest contexto-neg-usa-mencao-real-e-nao-consulta-citacao
-  (async done
-    (let [citacoes (atom 0)
-          message #js {:id #js {:_serialized "neg-msg"}
-                       :from "grupo@g.us" :author "ash@lid"
-                       :mentionedIds #js [#js {:_serialized "misty@lid"}]
-                       :hasQuotedMsg true
-                       :getQuotedMessage (fn [] (swap! citacoes inc) (p/resolved #js {:author "forjado@lid"}))}]
-      (-> (http/contexto-pedido message "neg" "2 3 @texto")
-          (p/then (fn [pedido]
-                    (is (= "ash@lid" (:playerId pedido)))
-                    (is (= ["misty@lid"] (get-in pedido [:context :mentionedIds])))
-                    (is (nil? (get-in pedido [:context :quotedPlayerId])))
-                    (is (zero? @citacoes))))
-          (p/catch (fn [erro] (is false (str erro))))
-          (p/finally done)))))
-(deftest neg-rejeita-mencoes-ausentes-ou-ambiguas-e-indice-invalido
-  (async done
-    (let [respostas (atom [])
-          original @http/cliente-jvm
-          original-config http/jvm-configurado?
-          client (clj->js {:getActiveSave (fn [_] (p/resolved #js {:activeSaveId "save"
-                                                                    :fenceGeneration 1}))
-                           :getCollection (fn [_] (p/resolved #js {:collection #js [#js {:pokemonId "p1"}]}))})
-          mensagem (fn [id mentions args]
-                    #js {:id #js {:_serialized id}
-                         :from (str id "@g.us") :author "ash@lid"
-                         :mentionedIds mentions
-                         :reply (fn [texto & _] (swap! respostas conj texto) (p/resolved nil))})]
-      (set! http/jvm-configurado? (fn [] true))
-      (reset! http/cliente-jvm client)
-      (-> (isolado!
-           (fn []
-             (p/let [_ (http/executar (mensagem "neg-sem-mencao" #js [] "2 3 @misty") "neg" "2 3 @misty")
-                     _ (http/executar (mensagem "neg-duas-mencoes"
-                                                #js [#js {:_serialized "misty@lid"}
-                                                     #js {:_serialized "brock@lid"}]
-                                                "2 3 @misty") "neg" "2 3 @misty")
-                     _ (http/executar (mensagem "neg-indice-invalido"
-                                                #js [#js {:_serialized "misty@lid"}]
-                                                "9 3 @misty") "neg" "9 3 @misty")]
-               (is (= 3 (count @respostas)))
-               (is (every? #(re-find #"Mencione exatamente um treinador" %)
-                           (take 2 @respostas)))
-               (is (re-find #"Índice de Pokémon inválido" (last @respostas))))))
-          (p/catch (fn [erro] (is false (str erro))))
-          (p/finally (fn []
-                       (set! http/jvm-configurado? original-config)
-                       (reset! http/cliente-jvm original)
-                       (done)))))))

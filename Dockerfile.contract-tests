@@ -1,0 +1,22 @@
+# Ambiente exclusivo para os contratos Node → JVM. Não é imagem de produção.
+FROM node:22-bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends default-jdk ca-certificates curl rlwrap \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL -o /tmp/linux-install.sh https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh \
+    && chmod +x /tmp/linux-install.sh \
+    && /tmp/linux-install.sh \
+    && rm /tmp/linux-install.sh
+
+WORKDIR /app
+COPY package*.json ./
+COPY scripts/patch-whatsapp-media.js ./scripts/patch-whatsapp-media.js
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV CLOJURE_BIN=/usr/local/bin/clojure
+RUN npm ci
+COPY . .
+RUN clojure -P -M:bridge-http
+
+# O runner inicia a bridge como processo filho e usa Datomic Local descartável.
+CMD ["npm", "run", "test:m4-jvm"]

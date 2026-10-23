@@ -25,6 +25,7 @@
             [pokemon.domain.shop :as shop]
             [pokemon.domain.xp :as xp]
             [pokemon.domain.status :as status]
+            [pokemon.domain.missions :as missions]
             [pokemon.application.mission-queries :as mission-queries]
             [pokemon.application.mission-economy :as mission-economy-app]
             [pokemon.infrastructure.datomic.mission-queries :as mission-reads]
@@ -33,6 +34,7 @@
             [pokemon.infrastructure.datomic.account-provisioning :as provisioning]
             [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
             [pokemon.infrastructure.datomic.gym-store :as gym-store]
+            [pokemon.infrastructure.datomic.missions-store :as missions-store]
             [pokemon.infrastructure.datomic.onboarding-store :as onboarding-store]
             [pokemon.infrastructure.datomic.pvp-store :as pvp-store]
             [pokemon.infrastructure.datomic.raid-store :as raid-store]
@@ -118,6 +120,12 @@
              :kit-inicial-resgatado (boolean (:save/kit-inicial-resgatado e))
              :inicial-escolhido (boolean (:save/inicial-escolhido e))
              :favorito-id-pokemon (:save/favorito-id-pokemon e)
+             :missoes-diarias-edn (:save/missoes-diarias-edn e)
+             :missoes-semanais-edn (:save/missoes-semanais-edn e)
+             :recompensas-pendentes-edn (:save/recompensas-pendentes-edn e)
+             :missoes-diarias (or (edn-read (:save/missoes-diarias-edn e)) {})
+             :missoes-semanais (or (edn-read (:save/missoes-semanais-edn e)) {})
+             :recompensas-pendentes (or (edn-read (:save/recompensas-pendentes-edn e)) {})
              :ginasios (or (edn-read (:save/ginasios-edn e)) {})
              :time-ginasio (or (edn-read (:save/time-ginasio-edn e)) [])))))
 
@@ -394,6 +402,40 @@
      :pokedex-entry/species (str species)
      :pokedex-entry/seen true
      :pokedex-entry/seen-count (inc prev-count)}))
+
+(defn- mission-progress-fragments
+  "TX fragments de progresso. `eventos` = [[evento valores] ...]
+   Idempotente junto do recibo da operação pai (não usa recibo próprio)."
+  [db sk save-m eventos agora]
+  (let [instant (java.time.Instant/ofEpochMilli (long (or agora (System/currentTimeMillis))))
+        dia (missions/dia-atual instant)
+        semana (missions/semana-de dia)
+        nivel (long (or (:trainer-level save-m)
+                        (:nivel (xp/perfil-treinador save-m))
+                        1))]
+    (reduce
+     (fn [{:keys [tx save-m completou-diario?]} [evento valores]]
+       (let [ev (str evento)
+             daily (when (missions/evento-diario? ev)
+                     (missions-store/progress-daily-tx sk save-m ev dia nivel edn-read))
+             save-m' (cond-> save-m
+                       daily (assoc :missoes-diarias-edn (pr-str (:estado daily))))
+             weekly (when (missions/evento-semanal? ev)
+                      (missions-store/progress-weekly-tx
+                       sk save-m' ev (vec (or valores [])) semana edn-read))
+             save-m'' (cond-> save-m'
+                        weekly (assoc :missoes-semanais-edn (pr-str (:estado weekly))))]
+         {:tx (into (into tx (or (:tx daily) [])) (or (:tx weekly) []))
+          :save-m save-m''
+          :completou-diario? (or completou-diario? (boolean (:completou? daily)))}))
+     {:tx [] :save-m save-m :completou-diario? false}
+     eventos)))
+
+(defn- mission-progress-fragments
+  "Compatibilidade temporária do WIP: o processamento canônico agora ocorre
+  em mission-events/attach na mesma TX. O esboço original acima foi preservado."
+  [& _]
+  {:tx [] :completou-diario? false})
 
 (defn- pokedex-caught-tx
   "Upsert captura: seen+caught + contadores/nível/shiny/tipos/raridade."
@@ -835,21 +877,6 @@
 
   ports/TrainerStore
 
-  (create-trade! [_ request]
-    (trade-store/create! conn request))
-  (get-trade [_ trade-id]
-    (trade-store/get-trade conn trade-id))
-  (list-trades [_ chat-id player-id]
-    (trade-store/list-trades conn chat-id player-id))
-  (accept-trade! [_ request]
-    (trade-store/accept! conn request))
-  (refuse-trade! [_ request]
-    (trade-store/refuse! conn request))
-  (cancel-trade! [_ request]
-    (trade-store/cancel! conn request))
-  (complete-trade! [_ request]
-    (trade-store/complete! conn request))
-
   (claim-daily-missions! [_ writer request]
     (run-mission-operation!* conn writer :daily request))
   (claim-weekly-missions! [_ writer request]
@@ -858,6 +885,17 @@
     (run-mission-operation!* conn writer :gift request))
   (collect-mission-pending! [_ writer request]
     (run-mission-operation!* conn writer :pending request))
+
+  (create-trade! [_ request]
+    (trade-store/create! conn request))
+  (get-trade [_ trade-id]
+    (trade-store/get-trade conn trade-id))
+  (list-trades [_ chat-id player-id]
+    (trade-store/list-trades conn chat-id player-id))
+  (accept-trade! [_ request] (trade-store/accept! conn request))
+  (refuse-trade! [_ request] (trade-store/refuse! conn request))
+  (cancel-trade! [_ request] (trade-store/cancel! conn request))
+  (complete-trade! [_ request] (trade-store/complete! conn request))
 
   (ensure-schema! [_]
     (schema/install! conn)
@@ -1054,6 +1092,11 @@
                              ativo (when (seq colecao) (nth colecao ativo-idx))
                              xp-part (when (and ativo (pos? (:xp rew)))
                                        (apply-pokemon-xp-tx ativo (:xp rew)))
+                             miss-part (mission-progress-fragments
+                                        db sk save-m
+                                        [["capturas" []]
+                                         ["tipos" (vec (:tipos registro))]]
+                                        (System/currentTimeMillis))
                              tx (cond-> (into base-tx
                                               [entity
                                                [:db/add [:save/key sk] :save/sequencia-capturas seq-nova]
@@ -1062,7 +1105,8 @@
                                                [:db/cas [:save/key sk] :save/coins coins
                                                 (model/apply-coin-delta coins (:moedas rew))]
                                                (pokedex-caught-tx db sk registro)])
-                                  xp-part (into (:tx xp-part)))]
+                                  xp-part (into (:tx xp-part))
+                                  true (into (:tx miss-part)))]
                          {:tx tx
                           :result {:operation-id operation-id
                                    :duplicate false
@@ -1070,6 +1114,7 @@
                                    :payload-hash phash
                                    :capturou? true
                                    :fugiu? false
+                                   :missao-completa? (:completou-diario? miss-part)
                                    :chance (:chance attempt)
                                    :indice idx
                                    :id-pokemon (:id-pokemon registro)
@@ -1246,6 +1291,11 @@
                              ativo (when (seq colecao) (nth colecao ativo-idx))
                              xp-part (when (and ativo (pos? (:xp rew)))
                                        (apply-pokemon-xp-tx ativo (:xp rew)))
+                             miss-part (mission-progress-fragments
+                                        db sk save-m
+                                        [["capturas" []]
+                                         ["tipos" (vec (:tipos registro))]]
+                                        (System/currentTimeMillis))
                              tx (cond-> (into base-tx
                                               [entity
                                                [:db/add [:save/key sk] :save/sequencia-capturas seq-nova]
@@ -1254,12 +1304,14 @@
                                                [:db/cas [:save/key sk] :save/coins coins
                                                 (model/apply-coin-delta coins (:moedas rew))]
                                                (pokedex-caught-tx db sk registro)])
-                                  xp-part (into (:tx xp-part)))]
+                                  xp-part (into (:tx xp-part))
+                                  true (into (:tx miss-part)))]
                          {:tx tx
                           :result {:operation-id operation-id
                                    :duplicate false
                                    :channel "gameplay"
                                    :payload-hash phash
+                                   :missao-completa? (:completou-diario? miss-part)
                                    :battle-id battle-id
                                    :capturou? true
                                    :fugiu? false
@@ -2110,12 +2162,28 @@
                      ;; Ginásio finalizado: revision CAS vem do resolve.
                      rev-tx (when-not gym-finished?
                               [[:db/cas [:save/key sk] :save/revision rev (inc rev)]])
+                     miss-wild
+                     (when (and (not gym?)
+                                (= :win (:outcome next-state))
+                                (or (:aguardando-captura? next-state)
+                                    (and (not (:active? next-state))
+                                         (not (:aguardando-captura? next-state)))))
+                       (mission-progress-fragments
+                        db sk save-m [["selvagens" []]] agora))
+                     miss-gym
+                     (when (and gym-finished? venceu? (:gym-id next-state))
+                       (mission-progress-fragments
+                        db sk save-m
+                        [["ginasios" [(:gym-id next-state)]]]
+                        agora))
                      tx (into (into battle-core (or rev-tx []))
                               (concat (or inv-tx [])
                                       (or hp-sync [])
                                       (or clear-active [])
                                       (or (:tx xp-part) [])
-                                      (or (:tx resolve-part) [])))]
+                                      (or (:tx resolve-part) [])
+                                      (or (:tx miss-wild) [])
+                                      (or (:tx miss-gym) [])))]
                  {:tx tx
                   :result {:operation-id operation-id
                            :duplicate false
@@ -2124,7 +2192,10 @@
                            :battle next-state
                            :subida (:subida xp-part)
                            :reward (if gym-finished? (:reward (:result resolve-part)) rew)
-                           :gym-resolve (when gym-finished? (:result resolve-part))}})))
+                           :gym-resolve (when gym-finished? (:result resolve-part))
+                           :missao-completa?
+                           (or (:completou-diario? miss-wild)
+                               (:completou-diario? miss-gym))}})))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)
@@ -3056,6 +3127,17 @@
                             (when wpoke
                               (assoc wpoke :hp-atual (get-in next-state [:hp winner-side])))
                             kos desafiante))))
+                     miss-pvp
+                     (when (and finished? winner-side)
+                       (let [wpid (get-in state [:jogadores winner-side])
+                             wsid (get-in state [:saves winner-side])
+                             wsk (id/save-key chat-id wpid wsid)
+                             wsave (save-entity db chat-id wpid wsid)]
+                         (when (present? wsave)
+                           (mission-progress-fragments
+                            db wsk (->save wsave)
+                            [["vitorias" []] ["pvp" []]]
+                            (System/currentTimeMillis)))))
                      clear-players
                      (when finished?
                        (vec
@@ -3090,6 +3172,7 @@
                               (concat (or inv-tx [])
                                       (or sync-both [])
                                       (or reward-tx [])
+                                      (or (:tx miss-pvp) [])
                                       (or clear-players [])
                                       (or clear-chat [])))]
                  {:tx tx
@@ -3097,7 +3180,8 @@
                            :duplicate false
                            :channel "gameplay"
                            :payload-hash phash
-                           :battle next-state}})))
+                           :battle next-state
+                           :missao-completa? (:completou-diario? miss-pvp)}})))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)

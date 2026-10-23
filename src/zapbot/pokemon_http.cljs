@@ -222,11 +222,11 @@
                         (desempenho/medir! ctx "pokemon_envio_whatsapp" (fn [] (enviar text opcoes))))]
     (if (= "text" type)
       (p/resolved (enviar-texto))
-      (-> (p/let [b64 (if (and (string? base64) (not (str/blank? base64)))
-                       base64
-                       (desempenho/codificar-base64!
-                        ctx
-                        (desempenho/medir! ctx "pokemon_transferencia_midia" #(.media http mediaId))))
+      (-> (p/let [buffer (when-not (and (string? base64) (not (str/blank? base64)))
+                            (desempenho/medir! ctx "pokemon_transferencia_midia" #(.media http mediaId)))
+                  b64 (if (and (string? base64) (not (str/blank? base64)))
+                        base64
+                        (desempenho/codificar-base64! ctx buffer))
                   media (MessageMedia. mimeType b64 filename)
                   _ (desempenho/medir! ctx "pokemon_envio_whatsapp"
                       #(enviar media
