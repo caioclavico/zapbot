@@ -82,6 +82,7 @@
     {:chat-id chat-id
      :player-id player-id
      :active-save-id slot
+     :active-save-name (:display-name save)
      :fence-generation (:fence-generation player)
      :active-battle-id (:active-battle-id player)
      :gym-defense-count (:gym-defense-count player 0)

@@ -307,7 +307,7 @@ function formatTrainer(data, playerName) {
     `🧢 *Treinador: ${nome}*`,
     `⭐ Nível ${nivel} • ✨ PE ${xp} • próximo ${xpAtual}/${xpNec}`,
     `🎖️ PE ginásios +${perfil.peGinasios || 0} • raides +${perfil.peRaids || 0}`,
-    `💰 Moedas: ${perfil.coins || 0} • Save: ${data.activeSaveId || '?'}`,
+    `💰 Moedas: ${perfil.coins || 0} • Save: ${data.activeSaveName || data.activeSaveId || '?'}`,
     `🔥 Capturas: sequência ${perfil.sequenciaCapturas || 0} • recorde ${perfil.maiorSequenciaCapturas || 0}`,
     `⚡ Ativo: ${ativo
       ? `#${(data.ativoIndex || 0) + 1} *${shinyMark(ativo)}${nomePokemon(ativo)}* • Nv.${ativo.nivel || 1}`
