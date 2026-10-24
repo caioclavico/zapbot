@@ -29,13 +29,22 @@ const requestedVersions = value => {
 };
 
 function parseAccount(raw, version, chat, player) {
-  let value;
-  try { value = JSON.parse(raw); } catch { throw new Error(`invalid_json_${version}`); }
+  const value = parseLegacyValue(raw, version);
   const account = version === 'v1' ? value?.[player] : value?.[chat]?.[player];
   if (!object(account)) throw new Error(`historical_save_not_found_${version}`);
   const bytes = Buffer.byteLength(JSON.stringify(account));
   if (bytes > 8 * 1024 * 1024) throw new Error(`historical_save_too_large_${version}`);
   return account;
+}
+
+function parseLegacyValue(raw, version) {
+  try { return JSON.parse(raw); } catch { throw new Error(`invalid_json_${version}`); }
+}
+
+function rowsOf(result) {
+  return Array.isArray(result?.rows)
+    ? result.rows
+    : (typeof result?.first === 'function' ? (result.first() ? [result.first()] : []) : []);
 }
 
 async function readOne(execute, query, params, version, chat, player) {
@@ -44,10 +53,36 @@ async function readOne(execute, query, params, version, chat, player) {
     params,
     {prepare: true, consistency: READ_CONSISTENCY}
   );
-  const rows = Array.isArray(result?.rows) ? result.rows : (typeof result?.first === 'function' ? (result.first() ? [result.first()] : []) : []);
+  const rows = rowsOf(result);
   if (rows.length > 1) throw new Error(`historical_save_ambiguous_${version}`);
   if (!rows.length || !rows[0]?.valor) throw new Error(`historical_save_not_found_${version}`);
   return parseAccount(rows[0].valor, version, chat, player);
+}
+
+async function listHistoricalPlayers({execute, keyspace, chatIds}) {
+  if (keyspace !== 'zapbot') throw new Error('list_players_requires_zapbot_keyspace');
+  if (!Array.isArray(chatIds) || !chatIds.length || chatIds.some(chat => !validId(chat))) {
+    throw new Error('invalid_chat_ids');
+  }
+  const table = `${keyspace}.legacy_estado_particionado`;
+  const players = [];
+  for (const chat of chatIds) {
+    const result = await execute(
+      `SELECT valor FROM ${table} WHERE modulo = ? AND particao = ?`,
+      ['treinador', chat],
+      {prepare: true, consistency: READ_CONSISTENCY}
+    );
+    const rows = rowsOf(result);
+    if (rows.length > 1) throw new Error(`historical_save_ambiguous_v1:${chat}`);
+    const value = rows.length && rows[0]?.valor ? parseLegacyValue(rows[0].valor, 'v1') : {};
+    if (!object(value)) throw new Error(`invalid_legacy_shape_v1:${chat}`);
+    const playerIds = Object.entries(value)
+      .filter(([player, account]) => validId(player) && object(account))
+      .map(([player]) => player)
+      .sort();
+    players.push({chatId: chat, playerIds});
+  }
+  return players;
 }
 
 function ednString(value) { return JSON.stringify(value); }
@@ -149,8 +184,13 @@ async function exportHistorical({execute, keyspace, chat, player, versions = 'bo
 }
 
 async function runCli() {
-  const required = ['CASSANDRA_CONTACT_POINTS', 'CASSANDRA_KEYSPACE', 'RECOVERY_CHAT_ID', 'RECOVERY_PLAYER_ID'];
+  const listMode = process.argv.includes('--list-players');
+  const required = ['CASSANDRA_CONTACT_POINTS', 'CASSANDRA_KEYSPACE'];
+  if (!listMode) required.push('RECOVERY_CHAT_ID', 'RECOVERY_PLAYER_ID');
   for (const key of required) if (!process.env[key]) throw new Error(`missing_${key}`);
+  if (listMode && process.env.CASSANDRA_KEYSPACE !== 'zapbot') {
+    throw new Error('list_players_requires_zapbot_keyspace');
+  }
   const cassandra = require('cassandra-driver');
   const auth = process.env.CASSANDRA_USERNAME && process.env.CASSANDRA_PASSWORD
     ? {username: process.env.CASSANDRA_USERNAME, password: process.env.CASSANDRA_PASSWORD} : undefined;
@@ -160,10 +200,21 @@ async function runCli() {
     keyspace: process.env.CASSANDRA_KEYSPACE,
     ...(auth ? {authProvider: new cassandra.auth.PlainTextAuthProvider(auth.username, auth.password)} : {})
   });
-  const output = process.env.RECOVERY_OUTPUT;
-  if (!output) throw new Error('missing_RECOVERY_OUTPUT');
   try {
     await client.connect();
+    if (listMode) {
+      const rawChats = process.argv.slice(process.argv.indexOf('--list-players') + 1);
+      const chatIds = (rawChats.length ? rawChats : String(process.env.RECOVERY_CHAT_IDS || '').split(',').map(s => s.trim()).filter(Boolean));
+      const players = await listHistoricalPlayers({
+        execute: (query, params, options) => client.execute(query, params, options),
+        keyspace: process.env.CASSANDRA_KEYSPACE,
+        chatIds
+      });
+      process.stdout.write(JSON.stringify({ok: true, players}) + '\n');
+      return;
+    }
+    const output = process.env.RECOVERY_OUTPUT;
+    if (!output) throw new Error('missing_RECOVERY_OUTPUT');
     const result = await exportHistorical({
       execute: (query, params, options) => client.execute(query, params, options),
       keyspace: process.env.CASSANDRA_KEYSPACE,
@@ -180,5 +231,5 @@ async function runCli() {
   }
 }
 
-module.exports = {exportHistorical, toEdn, VERSION_SOURCES};
+module.exports = {exportHistorical, listHistoricalPlayers, toEdn, VERSION_SOURCES};
 if (require.main === module) runCli().catch(error => { console.error(`historical_export_failed:${error.message}`); process.exitCode = 1; });

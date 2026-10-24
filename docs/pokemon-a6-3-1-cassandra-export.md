@@ -15,10 +15,34 @@ SELECT valor FROM <keyspace>.legacy_estado WHERE chave = ?
 ```
 
 com `['treinador']` para V2. Todas as consultas usam `prepare=true` e
-`consistency=SERIAL`. O processo não contém código de INSERT, UPDATE, DELETE,
+`consistency=LOCAL_ONE`; `SERIAL` é reservado para operações condicionais de
+escrita. O processo não contém código de INSERT, UPDATE, DELETE,
 DDL ou migration.
 
-Como `SERIAL` é aplicado por leitura, e não existe snapshot transacional entre
+## Listagem de jogadores V1
+
+Para descobrir somente os `player-id` presentes em partições V1, sem imprimir
+contas, Pokémon ou moedas, use o modo `--list-players`. Ele consulta apenas
+`zapbot.legacy_estado_particionado`, com `modulo='treinador'`, parâmetros
+preparados e `LOCAL_ONE`:
+
+```bash
+export CASSANDRA_KEYSPACE='zapbot'
+export RECOVERY_CHAT_IDS='120363231939572938@g.us,120363427684548487@g.us'
+node pokemon-service/scripts/export-historical-saves.cjs --list-players
+```
+
+Também é possível passar os grupos diretamente:
+
+```bash
+node pokemon-service/scripts/export-historical-saves.cjs --list-players \
+  '120363231939572938@g.us' '120363427684548487@g.us'
+```
+
+A saída contém somente `{chatId, playerIds}`. O modo exige o keyspace `zapbot`
+e não executa escrita, DDL, importação ou acesso ao Datomic.
+
+Como `LOCAL_ONE` é aplicado por leitura, e não existe snapshot transacional entre
 as tabelas V1 e V2, cada origem é lida duas vezes e o hash é comparado. Uma
 alteração concorrente da mesma origem interrompe a exportação. Ainda assim,
 uma mudança entre as leituras de V1 e V2 pode ocorrer; nesse caso o relatório
