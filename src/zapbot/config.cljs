@@ -56,7 +56,7 @@
 (def app-env (env "APP_ENV" "production"))
 (def dev-group-id (env "DEV_GROUP_ID"))
 
-;; development|staging: só DEV_GROUP_ID (+ allowlist opcional de remitentes).
+;; development|staging: DEV_GROUP_ID por padrão (+ allowlist de remetentes).
 (def staging-like?
   (contains? #{"development" "staging"} app-env))
 
@@ -68,6 +68,9 @@
 (defn- env-flag-on? [k]
   (contains? #{"1" "true" "yes" "on"}
              (str/lower-case (str/trim (env k "false")))))
+
+;; Opt-in: libera grupos em qualquer ambiente, sem mudar usuários ou admins.
+(def allow-all-groups? (env-flag-on? "ALLOW_ALL_GROUPS"))
 
 ;; M6.3C — bootstrap só para descobrir DEV_GROUP_ID (sem processar mensagens).
 ;; STAGING_BOOTSTRAP_GROUP=1 permite boot sem DEV_GROUP_ID; nunca responde chats.
@@ -87,12 +90,14 @@
   (env "STAGING_GROUP_DISCOVERY_PATH"))
 
 (defn chat-autorizado?
-  "Em staging-like, só o DEV_GROUP_ID. Fora disso, qualquer chat.
+  "Em staging-like, só DEV_GROUP_ID, ou qualquer grupo com ALLOW_ALL_GROUPS.
+   A opção não libera conversas privadas. Fora de staging-like, qualquer chat.
    Bootstrap de grupo: nunca autoriza (não processa mensagens)."
   [cid]
   (cond
     staging-bootstrap-group? false
     (not staging-like?) true
+    (and allow-all-groups? (string? cid) (str/ends-with? cid "@g.us")) true
     :else (and (string? dev-group-id)
                (not (str/blank? dev-group-id))
                (= cid dev-group-id))))

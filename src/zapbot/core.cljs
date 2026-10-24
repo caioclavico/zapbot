@@ -346,7 +346,7 @@
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
 
-;; em development|staging: só DEV_GROUP_ID (+ STAGING_ALLOWED_USERS se definido)
+;; ALLOW_ALL_GROUPS libera apenas o filtro de grupo; a allowlist continua ativa.
 (defn- remetente-id [message]
   (or (.-author message)
       (when-not (.-fromMe message) (.-from message))))
@@ -500,6 +500,7 @@
 (defn main [& _args]
   ;; Um único cliente/browser por processo; só a injeção pode ser repetida.
   (when (and config/staging-like?
+             (not config/allow-all-groups?)
              (not config/staging-bootstrap-group?)
              (or (nil? config/dev-group-id) (str/blank? config/dev-group-id)))
     (js/console.error "APP_ENV=" config/app-env
@@ -507,6 +508,7 @@
     (js/console.error "Para só descobrir o ID do grupo: STAGING_BOOTSTRAP_GROUP=1")
     (js/process.exit 2))
   (when (and (= "staging" config/app-env)
+             (not config/allow-all-groups?)
              (not config/staging-bootstrap-group?)
              (string? config/dev-group-id)
              (not (str/blank? config/dev-group-id))
