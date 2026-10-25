@@ -15,9 +15,9 @@
    "rr" "Roraima" "sc" "Santa Catarina" "sp" "São Paulo" "se" "Sergipe"
    "to" "Tocantins"})
 
-;; O TSE publica o presidente e os cargos estaduais em eleições distintas.
-(def ^:private eleicao-presidente "6257")
-(def ^:private eleicao-estadual "6259")
+;; Identificadores do segundo turno de 2026. Cargos legislativos permanecem no primeiro turno.
+(def ^:private eleicao-presidente "6258")
+(def ^:private eleicao-estadual "6260")
 
 (defn- url-resultados [eleicao uf cargo]
   (str "https://resultados.tse.jus.br/oficial/ele2026/" eleicao "/dados/" uf "/"
@@ -26,11 +26,11 @@
 (defn- cargos-do-estado [uf]
   [{:nome "Presidente" :eleicao eleicao-presidente :cargo "0001" :top 5}
    {:nome "Governador" :eleicao eleicao-estadual :cargo "0003" :top 5}
-   {:nome "Senador" :eleicao eleicao-estadual :cargo "0005" :top 4}
-   {:nome "Deputado Federal" :eleicao eleicao-estadual :cargo "0006" :top 5}
+   {:nome "Senador (1º turno)" :eleicao "6259" :cargo "0005" :top 4}
+   {:nome "Deputado Federal (1º turno)" :eleicao "6259" :cargo "0006" :top 5}
    (if (= "df" uf)
-     {:nome "Deputado Distrital" :eleicao eleicao-estadual :cargo "0008" :top 5}
-     {:nome "Deputado Estadual" :eleicao eleicao-estadual :cargo "0007" :top 5})])
+     {:nome "Deputado Distrital (1º turno)" :eleicao "6259" :cargo "0008" :top 5}
+     {:nome "Deputado Estadual (1º turno)" :eleicao "6259" :cargo "0007" :top 5})])
 
 (defn- decodificar-jws [jws]
   (let [[_ payload assinatura] (str/split (str/trim jws) #"\.")]
@@ -72,7 +72,7 @@
   (if-let [cargo (first (filter #(= "1" (:cd %)) (:carg dados)))]
     (let [totalizadas (get-in dados [:s :st])
           total-secoes (get-in dados [:s :ts])]
-      (str "🗳️ *Apuração presidencial 2026 — 1º turno*\n\n"
+      (str "🗳️ *Apuração presidencial 2026 — 2º turno*\n\n"
            "*Seções totalizadas:* " (formatar-numero totalizadas) "/"
            (formatar-numero total-secoes) " (" (get-in dados [:s :pst] "0,00") "%)\n"
            "*Atualização:* " (:ht dados) " de " (:dt dados) "\n\n"
@@ -110,7 +110,7 @@
       (if (every? nil? secoes)
         (str "❌ Não consegui buscar a apuração de " (get ufs uf)
              " agora. Tente novamente mais tarde.")
-        (str "🗳️ *Apuração 2026 — " (get ufs uf) " (" (str/upper-case uf) ")*\n\n"
+        (str "🗳️ *Apuração 2026 — 2º turno — " (get ufs uf) " (" (str/upper-case uf) ")*\n\n"
              (str/join "\n\n"
                        (map (fn [{:keys [nome]} texto]
                               (or texto (str "*" nome "* — indisponível no momento.")))
@@ -125,7 +125,7 @@
 
 (defn buscar-apuracao
   "Sem UF (nil) ou BR: presidente no Brasil. Com UF: presidente, governador,
-  senadores e deputados do estado."
+  senadores e deputados do estado (legislativos do 1º turno)."
   [uf-informada]
   (let [uf (str/lower-case (str/trim (or uf-informada "br")))]
     (cond
