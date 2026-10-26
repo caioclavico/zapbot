@@ -199,6 +199,7 @@
 (deftest latencia-mede-apenas-comandos-permitidos-preservando-contexto-pokemon
   (let [medidos (atom 0) processados (atom []) ctx #js {:teste true}]
     (with-redefs [zapbot.config/app-env "development"
+                  zapbot.config/allow-all-groups? false
                   zapbot.config/dev-group-id "teste@g.us"
                   zapbot.config/staging-like? true
                   zapbot.config/staging-bootstrap-group? false
@@ -217,3 +218,61 @@
         (is (identical? ctx (second (first @processados))))
         (is (nil? (second (first @processados)))))
       (is (every? nil? (map second (rest @processados)))))))
+
+(deftest filtro-de-mensagem-preserva-usuarios-bootstrap-e-from-me
+  (with-redefs [config/staging-like? true
+                config/staging-bootstrap-group? false
+                config/allow-all-groups? true
+                config/dev-group-id "teste@g.us"
+                config/staging-allowed-users #{"permitido"}]
+    (is (core/permitido-pelo-ambiente?
+         #js {:from "outro@g.us" :author "permitido@c.us"}))
+    (is (not (core/permitido-pelo-ambiente?
+              #js {:from "outro@g.us" :author "negado@c.us"})))
+    (is (core/permitido-pelo-ambiente?
+         #js {:fromMe true :to "outro@g.us" :author "permitido@c.us"}))
+    (with-redefs [config/staging-bootstrap-group? true]
+      (is (not (core/permitido-pelo-ambiente?
+                #js {:from "outro@g.us" :author "permitido@c.us"}))))))
+
+(deftest mensagens-negadas-nao-chegam-aos-handlers
+  (let [chamadas (atom [])]
+    (with-redefs [config/staging-like? true
+                  config/staging-bootstrap-group? false
+                  config/allow-all-groups? false
+                  config/dev-group-id "teste@g.us"
+                  config/staging-allowed-users #{}
+                  zapbot.adedonha/capturar-resposta! #(swap! chamadas conj :jogo)
+                  zapbot.historico/registrar! #(swap! chamadas conj :historico)
+                  zapbot.router/processar #(swap! chamadas conj :router)]
+      (is (nil? (core/on-message #js {:from "outro@g.us" :body "!ajuda"})))
+      (with-redefs [config/allow-all-groups? true
+                    config/staging-bootstrap-group? true]
+        (is (nil? (core/on-message #js {:from "outro@g.us" :body "!ajuda"})))))
+    (is (empty? @chamadas))))
+
+(deftest inicializacao-libera-apenas-gates-de-grupo
+  (with-redefs [config/app-env "staging"
+                config/staging-like? true
+                config/dev-group-id nil
+                config/staging-bootstrap-group? false
+                config/staging-group-confirmed? false
+                config/wwebjs-data-path ".wwebjs_auth_core"
+                core/iniciado? (atom true)]
+    (let [saidas (atom [])]
+      (with-redefs [js/process.exit #(swap! saidas conj %)
+                    config/allow-all-groups? false]
+        (core/main)
+        (is (= [2] @saidas))
+        (reset! saidas [])
+        (with-redefs [config/dev-group-id "teste@g.us"]
+          (core/main)
+          (is (= [7] @saidas))))
+      (reset! saidas [])
+      (with-redefs [js/process.exit #(swap! saidas conj %)
+                    config/allow-all-groups? true]
+        (core/main)
+        (is (empty? @saidas))
+        (with-redefs [config/wwebjs-data-path ".wwebjs_auth"]
+          (core/main)
+          (is (= [3] @saidas)))))))
