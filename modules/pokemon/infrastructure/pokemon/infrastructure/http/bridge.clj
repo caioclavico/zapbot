@@ -8,6 +8,7 @@
             [pokemon.application.mission-queries :as missions]
             [pokemon.application.mission-economy :as mission-economy]
             [pokemon.application.bridge-tx :as tx]
+            [pokemon.application.recovery-catalog :as recovery-catalog]
             [pokemon.application.ports :as ports]
             [pokemon.domain.errors :as err]
             [pokemon.infrastructure.http.json :as json])
@@ -82,7 +83,12 @@
      :cannot_forget_last_move :pokemon_not_found
      :pvp_level_incompatible :pvp_no_challenge :not_pvp_battle
      :invalid_title :professor_invalid_token :professor_expired :professor_no_cards
-     :professor_busy :pokemon_favorite) 400
+     :professor_busy :pokemon_favorite
+     :recovery_catalog_unavailable :recovery_request_not_found
+     :recovery_request_owner_mismatch :recovery_request_not_confirmed
+     :recovery_confirmation_mismatch :recovery_selection_invalid
+     :recovery_save_not_found) 400
+    :recovery_import_unauthorized 401
     (:invalid_team :invalid_destination :team_not_found :team_pokemon_missing :invalid_league
      :league_not_selected :team_league_ineligible :team_pokemon_unhealthy) 400
     (:stale_writer_fence :writer_fence_conflict :activate_conflict
@@ -186,7 +192,7 @@
    :score-point! (fn [store cid pid nome jogo op]) — M8.6 rank durable-op
    :platform-hooks mapa M8.7 (set-bot-blocked! / block-commands! / …)"
   [store token allow-test-rng? platform-store
-   & [{:keys [credit-coins! score-point! platform-hooks]
+   & [{:keys [credit-coins! score-point! platform-hooks recovery-catalog]
        :or {credit-coins! tx/credit-coins!
             platform-hooks {}}}]]
   (reify HttpHandler
@@ -204,6 +210,8 @@
                        :readsOnly false
                        :allowTestRng (boolean allow-test-rng?)
                        :platformEnabled (boolean platform-store)
+                       :recoveryCatalogReady (boolean (and recovery-catalog
+                                                           (recovery-catalog/available? recovery-catalog)))
                        :capabilities (cond-> ["trainer-read" "collection-read" "active-save-read"
                                               "trainer-ensure" "saves-list" "save-create" "save-rename" "save-activate"
                                               "missions-read" "missions-prepare"
@@ -233,7 +241,9 @@
                                               "pvp-open" "pvp-accept" "pvp-cancel"
                                               "pvp-turn" "pvp-active-read"
                                               "onboarding-read" "onboarding-start"
-                                              "onboarding-kit" "onboarding-starter"]
+                                              "onboarding-kit" "onboarding-starter"
+                                              "recovery-available" "recovery-request"
+                                              "recovery-confirm" "recovery-import"]
                                        platform-store
                                        (into ["platform-blocks" "platform-admins"]))}))
 
@@ -517,6 +527,85 @@
                                          :save-id save-id :display-name display-name
                                          :expected-fence-generation fence
                                          :operation-id operation-id})))))
+
+                (= path "/v1/recovery/available")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")
+                          catalog (or recovery-catalog
+                                      (recovery-catalog/load-catalog {}))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (recovery-catalog/discover catalog chat-id player-id))))
+
+                (= path "/v1/recovery/request")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          choice (g body "choice" "selection")
+                          catalog (or recovery-catalog
+                                      (throw (err/error :recovery_catalog_unavailable {})))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id) (str/blank? choice))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "choice"]})))
+                      (try
+                        (ok! ex (recovery-catalog/register-request!
+                                 catalog {:chat-id chat-id :player-id player-id :choice choice}))
+                        (catch clojure.lang.ExceptionInfo e
+                          (let [msg (ex-message e)]
+                            (cond
+                              (re-find #"recovery_selection_invalid" msg)
+                              (throw (err/error :recovery_selection_invalid (ex-data e)))
+                              (re-find #"recovery_save_not_found" msg)
+                              (throw (err/error :recovery_save_not_found (ex-data e)))
+                              :else (throw e)))))))
+
+                (= path "/v1/recovery/confirm")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          request-id (g body "requestId" "request-id")
+                          token (g body "confirmationToken" "confirmation-token")
+                          catalog (or recovery-catalog
+                                      (throw (err/error :recovery_catalog_unavailable {})))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (recovery-catalog/player-confirm!
+                               catalog {:chat-id chat-id
+                                        :player-id player-id
+                                        :request-id request-id
+                                        :confirmation-token token}))))
+
+                (= path "/v1/recovery/status")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          player-id (g qs "playerId")
+                          request-id (g qs "requestId")
+                          catalog (or recovery-catalog
+                                      (recovery-catalog/load-catalog {}))
+                          st (recovery-catalog/request-status catalog chat-id player-id request-id)]
+                      (when (or (str/blank? chat-id) (str/blank? player-id))
+                        (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+                      (ok! ex (or st {:status "none"}))))
+
+                (= path "/v1/recovery/import")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          request-id (g body "requestId" "request-id")
+                          import-token (or (header ex "X-Recovery-Import-Token")
+                                           (g body "importToken" "import-token"))
+                          batch (g body "importBatchId" "import-batch-id")
+                          catalog (or recovery-catalog
+                                      (throw (err/error :recovery_catalog_unavailable {})))]
+                      (when (str/blank? request-id)
+                        (throw (err/error :invalid_query {:required ["requestId"]})))
+                      (ok! ex (recovery-catalog/admin-import!
+                               catalog store
+                               {:request-id request-id
+                                :import-token import-token
+                                :import-batch-id batch}))))
 
                 (= path "/v1/trainer/ensure")
                 (do (require-method! ex #{"POST"})
@@ -1768,7 +1857,7 @@
   a porta NÃO deve ser publicada publicamente no Compose.
   `:allow-test-rng true` só para smoke/dev — nunca no caminho WhatsApp."
   [{:keys [host port token store platform-store allow-test-rng allow-private-bind
-           credit-coins! score-point! platform-hooks]
+           credit-coins! score-point! platform-hooks recovery-catalog]
     :or {host "127.0.0.1" port 18090 allow-test-rng false allow-private-bind false}}]
   (let [allowed (cond-> loopback-hosts
                   allow-private-bind (conj "0.0.0.0"))]
@@ -1787,7 +1876,8 @@
                                 (cond-> {}
                                   credit-coins! (assoc :credit-coins! credit-coins!)
                                   score-point! (assoc :score-point! score-point!)
-                                  (seq platform-hooks) (assoc :platform-hooks platform-hooks)))]
+                                  (seq platform-hooks) (assoc :platform-hooks platform-hooks)
+                                  recovery-catalog (assoc :recovery-catalog recovery-catalog)))]
       (.createContext server "/" handler)
       (.setExecutor server (Executors/newFixedThreadPool 8))
       (.start server)

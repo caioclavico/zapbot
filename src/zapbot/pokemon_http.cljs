@@ -732,19 +732,63 @@
                 [primeiro]
                 (vec (rest args)))]
     (if recovery?
-      (let [choice (str/lower-case (str (or (second args) "")))
-            texto (cond
-                    (str/blank? choice)
-                    (str "🗂️ Recuperação histórica requer autorização administrativa.\n"
-                         "Use !pk recuperar v1, !pk recuperar v2 ou !pk recuperar ambos "
-                         "para solicitar uma prévia. Nenhum save foi importado.")
-                    (contains? #{"v1" "v2" "ambos"} choice)
-                    (str "🗂️ Solicitação de recuperação " (str/upper-case choice)
-                         " registrada para validação administrativa.\n"
-                         "A importação só ocorrerá após prévia e confirmação explícita; "
-                         "nenhum save foi ativado ou alterado.")
-                    :else
-                    "❓ Use !pk recuperar, !pk recuperar v1, v2 ou ambos.")]
+      (p/let [sub (str/lower-case (str (or (second args) "")))
+              texto
+              (cond
+                (contains? #{"confirmar" "confirm"} sub)
+                (p/let [data (.confirmRecovery jvm #js {:chatId chat-id :playerId player-id})]
+                  (str "✅ Solicitação confirmada (" (or (.-choice data) "?") ").\n"
+                       "Status: aguardando importação administrativa.\n"
+                       "Nenhum save foi importado ou ativado ainda.\n"
+                       "Depois da importação use !pk saves / !pk save."))
+
+                (str/blank? sub)
+                (p/let [data (.getRecoveryAvailable jvm #js {:chatId chat-id :playerId player-id})
+                        ready? (boolean (.-catalogReady data))
+                        versoes (array-seq (or (.-versions data) #js []))
+                        disponiveis (array-seq (or (.-available data) #js []))]
+                  (if-not ready?
+                    (str "🗂️ Recuperação histórica indisponível no momento.\n"
+                         "O catálogo offline autorizado ainda não foi carregado.\n"
+                         "Nenhum progresso foi alterado.")
+                    (if (empty? versoes)
+                      (str "🗂️ Nenhum save histórico V1/V2 vinculado com segurança à sua conta.\n"
+                           "A identidade vem só do WhatsApp (chat + jogador); "
+                           "não use IDs digitados.\n"
+                           "Nenhum progresso foi alterado.")
+                      (str "🗂️ SAVES HISTÓRICOS DISPONÍVEIS\n"
+                           (str/join "\n"
+                                     (map (fn [p]
+                                            (str "• " (str/upper-case (str (or (.-version p) "?")))
+                                                 " → slot " (or (.-slotId p) "?")
+                                                 " | Pokémon: " (or (.-pokemonCount p) 0)
+                                                 (when (some? (.-coins p))
+                                                   (str " | moedas: " (.-coins p)))))
+                                          disponiveis))
+                           (when (.-aliasApplied data)
+                             "\n(identidade histórica resolvida via alias autorizado)")
+                           "\n\nUse !pk recuperar v1, !pk recuperar v2 ou !pk recuperar ambos.\n"
+                           "Depois: !pk recuperar confirmar\n"
+                           "A importação final é administrativa; o save ativo não muda."))))
+
+                (contains? #{"v1" "v2" "ambos" "both"} sub)
+                (let [choice (if (= sub "ambos") "both" (if (= sub "both") "both" sub))]
+                  (p/let [data (.requestRecovery jvm #js {:chatId chat-id
+                                                          :playerId player-id
+                                                          :choice choice})
+                          selected (array-seq (or (.-selected data) #js []))]
+                    (str "🗂️ Prévia " (str/upper-case (str (or (.-choice data) choice)))
+                         " registrada.\n"
+                         (str/join "\n"
+                                   (map (fn [p]
+                                          (str "• " (str/upper-case (str (or (.-version p) "?")))
+                                               " | Pokémon: " (or (.-pokemonCount p) 0)))
+                                        selected))
+                         "\n\nConfirme com !pk recuperar confirmar (válido por ~10 min).\n"
+                         "Nenhum save foi importado ou ativado.")))
+
+                :else
+                (p/resolved "❓ Use !pk recuperar, !pk recuperar v1|v2|ambos ou !pk recuperar confirmar."))]
         (entregar-envelope-jvm! message ctx pedido (envelope-jvm pedido texto)))
       (if trade?
       (p/let [envelope

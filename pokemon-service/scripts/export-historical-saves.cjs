@@ -85,6 +85,39 @@ async function listHistoricalPlayers({execute, keyspace, chatIds}) {
   return players;
 }
 
+/**
+ * Verifica presença V1/V2 sem exportar atributos, Pokémon ou moedas.
+ * Retorna somente {chatId, playerId, versions:['v1'|'v2']}.
+ */
+async function probeHistoricalPresence({execute, keyspace, chat, player}) {
+  if (keyspace !== 'zapbot') throw new Error('probe_requires_zapbot_keyspace');
+  if (!validId(chat) || !validId(player)) throw new Error('invalid_identity');
+  const versions = [];
+  const v1Result = await execute(
+    `SELECT valor FROM ${keyspace}.legacy_estado_particionado WHERE modulo = ? AND particao = ?`,
+    ['treinador', chat],
+    {prepare: true, consistency: READ_CONSISTENCY}
+  );
+  const v1Rows = rowsOf(v1Result);
+  if (v1Rows.length > 1) throw new Error('historical_save_ambiguous_v1');
+  if (v1Rows.length && v1Rows[0]?.valor) {
+    const value = parseLegacyValue(v1Rows[0].valor, 'v1');
+    if (object(value) && object(value[player])) versions.push('v1');
+  }
+  const v2Result = await execute(
+    `SELECT valor FROM ${keyspace}.legacy_estado WHERE chave = ?`,
+    ['treinador'],
+    {prepare: true, consistency: READ_CONSISTENCY}
+  );
+  const v2Rows = rowsOf(v2Result);
+  if (v2Rows.length > 1) throw new Error('historical_save_ambiguous_v2');
+  if (v2Rows.length && v2Rows[0]?.valor) {
+    const value = parseLegacyValue(v2Rows[0].valor, 'v2');
+    if (object(value) && object(value[chat]) && object(value[chat][player])) versions.push('v2');
+  }
+  return {chatId: chat, playerId: player, versions};
+}
+
 function ednString(value) { return JSON.stringify(value); }
 function ednKey(key) { return `:${String(key).replace(/[^A-Za-z0-9_.*+!?_-]/g, '_')}`; }
 // Structural maps use keyword keys; account payloads retain their original
@@ -185,11 +218,13 @@ async function exportHistorical({execute, keyspace, chat, player, versions = 'bo
 
 async function runCli() {
   const listMode = process.argv.includes('--list-players');
+  const probeMode = process.argv.includes('--probe-player');
   const required = ['CASSANDRA_CONTACT_POINTS', 'CASSANDRA_KEYSPACE'];
-  if (!listMode) required.push('RECOVERY_CHAT_ID', 'RECOVERY_PLAYER_ID');
+  if (!listMode && !probeMode) required.push('RECOVERY_CHAT_ID', 'RECOVERY_PLAYER_ID');
+  if (probeMode) required.push('RECOVERY_CHAT_ID', 'RECOVERY_PLAYER_ID');
   for (const key of required) if (!process.env[key]) throw new Error(`missing_${key}`);
-  if (listMode && process.env.CASSANDRA_KEYSPACE !== 'zapbot') {
-    throw new Error('list_players_requires_zapbot_keyspace');
+  if ((listMode || probeMode) && process.env.CASSANDRA_KEYSPACE !== 'zapbot') {
+    throw new Error(listMode ? 'list_players_requires_zapbot_keyspace' : 'probe_requires_zapbot_keyspace');
   }
   const cassandra = require('cassandra-driver');
   const auth = process.env.CASSANDRA_USERNAME && process.env.CASSANDRA_PASSWORD
@@ -213,6 +248,16 @@ async function runCli() {
       process.stdout.write(JSON.stringify({ok: true, players}) + '\n');
       return;
     }
+    if (probeMode) {
+      const presence = await probeHistoricalPresence({
+        execute: (query, params, options) => client.execute(query, params, options),
+        keyspace: process.env.CASSANDRA_KEYSPACE,
+        chat: process.env.RECOVERY_CHAT_ID,
+        player: process.env.RECOVERY_PLAYER_ID
+      });
+      process.stdout.write(JSON.stringify({ok: true, presence}) + '\n');
+      return;
+    }
     const output = process.env.RECOVERY_OUTPUT;
     if (!output) throw new Error('missing_RECOVERY_OUTPUT');
     const result = await exportHistorical({
@@ -231,5 +276,5 @@ async function runCli() {
   }
 }
 
-module.exports = {exportHistorical, listHistoricalPlayers, toEdn, VERSION_SOURCES};
+module.exports = {exportHistorical, listHistoricalPlayers, probeHistoricalPresence, toEdn, VERSION_SOURCES};
 if (require.main === module) runCli().catch(error => { console.error(`historical_export_failed:${error.message}`); process.exitCode = 1; });

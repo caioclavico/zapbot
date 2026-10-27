@@ -303,7 +303,8 @@
                                  :coins (:coins save-ir)})}
                        [:db/add [:save/key sk] :save/coins (long (:coins save-ir))]
                        [:db/add [:save/key sk] :save/origin source-kind]
-                       [:db/add [:save/key sk] :save/origin-player-id (str player-id)]
+                       [:db/add [:save/key sk] :save/origin-player-id
+                        (str (or (:origin-player-id save-ir) player-id))]
                        [:db/add [:save/key sk] :save/legacy-version source-version]
                        [:db/add [:save/key sk] :save/importer-version "m6.2-ir-v1"]
                        [:db/add [:save/key sk] :save/import-id op-id]
@@ -392,8 +393,9 @@
 (defn import-selected-saves!
   "Importa somente saves históricos previamente selecionados por um fluxo autorizado.
    O jogador pode já existir: o save atual nunca é sobrescrito e os slots recuperados
-   não são ativados. A chamada deve receber snapshots com identidade já validada."
-  [store snapshots {:keys [import-batch-id chat-id player-id]}]
+   não são ativados. A chamada deve receber snapshots com identidade já validada.
+   origin-player-id opcional registra o player histórico quando houve alias."
+  [store snapshots {:keys [import-batch-id chat-id player-id origin-player-id]}]
   (when (str/blank? import-batch-id)
     (throw (err/error :missing_import_batch_id {})))
   (when-not (and chat-id player-id (seq snapshots))
@@ -409,9 +411,14 @@
                                             (get-in snapshot [:source :sourceVersion]))
                                 version (str/lower-case (str version))
                                 version (if (str/starts-with? version "v") version (str "v" version))]
-                            (assoc snapshot :target-slot (str "recovery-" version))))
+                            (cond-> (assoc snapshot :target-slot (str "recovery-" version))
+                              origin-player-id (assoc :origin-player-id origin-player-id))))
                         snapshots)
-        save-irs (mapv #(transform/snapshot->save-ir % {}) snapshots)
+        save-irs (mapv (fn [snap]
+                         (cond-> (transform/snapshot->save-ir snap {})
+                           (or (:origin-player-id snap) origin-player-id)
+                           (assoc :origin-player-id (or (:origin-player-id snap) origin-player-id))))
+                       snapshots)
         ;; Preflight completo antes de qualquer escrita evita criar o primeiro slot
         ;; quando o segundo snapshot é inválido ou colide.
         _ (doseq [save-ir save-irs]

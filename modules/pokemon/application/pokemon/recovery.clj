@@ -35,6 +35,63 @@
      :created-at (:created-at snapshot)
      :content-hash (:content-hash save)}))
 
+(defn public-preview
+  "Resumo seguro para WhatsApp: sem IDs de Pokémon, hashes ou identidades."
+  [preview]
+  (-> preview
+      (select-keys [:version :pokemon-count :trainer-level :coins :created-at])
+      (assoc :slot-id (str "recovery-" (:version preview)))))
+
+(defn- alias-entries
+  [export]
+  (let [raw (or (get-in export [:meta :identity-aliases])
+                (get-in export [:meta "identity-aliases"])
+                [])]
+    (cond
+      (map? raw) (mapv (fn [[k v]]
+                         (let [parts (str/split (str k) #"\|" 2)]
+                           {:current-chat-id (nth parts 0 nil)
+                            :current-player-id (nth parts 1 nil)
+                            :historical-chat-id (or (:chat-id v) (get v "chat-id") (get v :historical-chat-id))
+                            :historical-player-id (or (:player-id v) (get v "player-id")
+                                                     (get v :historical-player-id))}))
+                       raw)
+      (sequential? raw) (mapv (fn [e]
+                                {:current-chat-id (or (:current-chat-id e) (get e "current-chat-id"))
+                                 :current-player-id (or (:current-player-id e) (get e "current-player-id"))
+                                 :historical-chat-id (or (:historical-chat-id e) (get e "historical-chat-id")
+                                                         (:chat-id e) (get e "chat-id"))
+                                 :historical-player-id (or (:historical-player-id e) (get e "historical-player-id")
+                                                           (:player-id e) (get e "player-id"))})
+                              raw)
+      :else [])))
+
+(defn resolve-identity
+  "Resolve identidade histórica a partir do chat/player atuais.
+
+  Igualdade exata primeiro. Alias só se declarado no dump autorizado
+  (:meta :identity-aliases). Argumentos de comando nunca entram aqui."
+  [export chat-id player-id]
+  (let [exact {:chat-id chat-id :player-id player-id :alias-applied? false}
+        snapshots (or (:historical_snapshots export) [])
+        exact-hit? (some #(and (= chat-id (:chat-id %)) (= player-id (:player-id %))) snapshots)]
+    (if exact-hit?
+      exact
+      (if-let [alias (->> (alias-entries export)
+                          (filter #(and (= chat-id (:current-chat-id %))
+                                        (= player-id (:current-player-id %))
+                                        (string? (:historical-chat-id %))
+                                        (string? (:historical-player-id %))
+                                        (not (str/blank? (:historical-chat-id %)))
+                                        (not (str/blank? (:historical-player-id %)))))
+                          first)]
+        {:chat-id (:historical-chat-id alias)
+         :player-id (:historical-player-id alias)
+         :alias-applied? true
+         :current-chat-id chat-id
+         :current-player-id player-id}
+        exact))))
+
 (defn discover
   "Descobre snapshots pertencentes exatamente a chat/player.
    Snapshots sem ID, identidade ou versão explícita ficam indisponíveis."
@@ -58,7 +115,7 @@
         wanted (case choice
                  :v1 #{"v1"}
                  :v2 #{"v2"}
-                 :both #{"v1" "v2"}
+                 (:both :ambos) #{"v1" "v2"}
                  (throw (ex-info "recovery_selection_invalid" {:choice choice})))
         selected (filterv #(contains? wanted (:version %)) available)]
     (when (empty? selected)
@@ -77,8 +134,13 @@
 (defn confirm!
   "Executa importação somente após token da prévia coincidir.
    O caller deve transformar os previews em snapshots originais e fornecer o
-   import-batch-id estável; esta função não ativa slots recuperados."
-  [store snapshots {:keys [chat-id player-id selected token import-batch-id]}]
+   import-batch-id estável; esta função não ativa slots recuperados.
+
+   chat-id/player-id = identidade histórica do snapshot (token/prévia).
+   target-chat-id/target-player-id = destino Datomic (jogador atual no WhatsApp).
+   Quando o destino difere, o snapshot é remapeado e origin-player-id preserva o histórico."
+  [store snapshots {:keys [chat-id player-id selected token import-batch-id
+                           target-chat-id target-player-id]}]
   (let [actual (mapv (fn [snapshot]
                        (let [version (version-of snapshot)]
                          (when-not (contains? supported-versions version)
@@ -90,5 +152,19 @@
       (throw (ex-info "recovery_selection_payload_mismatch" {}))))
   (when-not (= token (confirmation-token chat-id player-id selected))
     (throw (ex-info "recovery_confirmation_mismatch" {})))
-  (migration-import/import-selected-saves!
-   store snapshots {:chat-id chat-id :player-id player-id :import-batch-id import-batch-id}))
+  (let [dest-chat (or target-chat-id chat-id)
+        dest-player (or target-player-id player-id)
+        remapped? (or (not= dest-chat chat-id) (not= dest-player player-id))
+        snapshots* (if-not remapped?
+                     snapshots
+                     (mapv #(assoc %
+                                   :chat-id dest-chat
+                                   :player-id dest-player
+                                   :origin-chat-id chat-id
+                                   :origin-player-id player-id)
+                           snapshots))]
+    (migration-import/import-selected-saves!
+     store snapshots* {:chat-id dest-chat
+                       :player-id dest-player
+                       :import-batch-id import-batch-id
+                       :origin-player-id (when remapped? player-id)})))

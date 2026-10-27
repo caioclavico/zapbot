@@ -239,6 +239,18 @@ function createClient(config = {}) {
       request('GET', `/v1/active-save${q({ chatId, playerId })}`),
     listSaves: ({ chatId, playerId }) =>
       request('GET', `/v1/saves${q({ chatId, playerId })}`),
+    getRecoveryAvailable: ({ chatId, playerId }) =>
+      request('GET', `/v1/recovery/available${q({ chatId, playerId })}`),
+    requestRecovery: (body) =>
+      request('POST', '/v1/recovery/request', body),
+    confirmRecovery: (body) =>
+      request('POST', '/v1/recovery/confirm', body),
+    getRecoveryStatus: ({ chatId, playerId, requestId }) =>
+      request('GET', `/v1/recovery/status${q({ chatId, playerId, requestId })}`),
+    importRecovery: (body, importToken) =>
+      request('POST', '/v1/recovery/import', body, {
+        'X-Recovery-Import-Token': importToken
+      }),
     createSave: (body) => mutateOnce('/v1/saves/create', body),
     renameSave: (body) => mutateOnce('/v1/saves/rename', body),
     ensureTrainer: ({ chatId, playerId }) =>

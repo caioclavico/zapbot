@@ -9,6 +9,7 @@
             [odisseu.platform.infrastructure.datomic.store :as platform-store]
             [pokemon.application.collection :as coll-app]
             [pokemon.application.ports :as ports]
+            [pokemon.application.recovery-catalog :as recovery-catalog]
             [pokemon.application.trainer :as trainer]
             [pokemon.infrastructure.datomic.store :as store]
             [pokemon.infrastructure.http.bridge :as bridge])
@@ -119,6 +120,17 @@
         reset? (env-bool "ODISSEU_BRIDGE_RESET" false)
         private-bind? (env-bool "ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND" false)
         allow-rng? (env-bool "ODISSEU_BRIDGE_ALLOW_TEST_RNG" false)
+        recovery-dump (env "ODISSEU_RECOVERY_DUMP_PATH")
+        recovery-import-token (env "ODISSEU_RECOVERY_IMPORT_TOKEN")
+        recovery-cat (try
+                       (recovery-catalog/load-catalog
+                        {:dump-path recovery-dump
+                         :import-token recovery-import-token})
+                       (catch Exception e
+                         (binding [*out* *err*]
+                           (println "[odisseu-bridge] recovery catalog:" (ex-message e)))
+                         (recovery-catalog/load-catalog
+                          {:import-token recovery-import-token})))
         _ (assert-storage-safe! storage)
         _ (when (and (= "0.0.0.0" host) (not private-bind?))
             (throw (ex-info "private_bind_required"
@@ -141,7 +153,8 @@
                              :store s
                              :platform-store platform
                              :allow-test-rng allow-rng?
-                             :allow-private-bind private-bind?})
+                             :allow-private-bind private-bind?
+                             :recovery-catalog recovery-cat})
         stopped (atom false)
         stop! (fn []
                 (when (compare-and-set! stopped false true)

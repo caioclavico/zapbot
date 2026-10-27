@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const cassandra = require('cassandra-driver');
-const {exportHistorical, listHistoricalPlayers, toEdn} = require('../scripts/export-historical-saves.cjs');
+const {exportHistorical, listHistoricalPlayers, probeHistoricalPresence, toEdn} = require('../scripts/export-historical-saves.cjs');
 
 const v1Account = {equipe:[{'id-pokemon':'v1-poke', nome:'Pikachu'}], moedas:12};
 const v2Account = {equipe:[{'id-pokemon':'v2-poke', nome:'Eevee'}], moedas:34};
@@ -92,4 +92,28 @@ test('listagem V1 rejeita keyspace diferente do legado alvo', async () => {
     listHistoricalPlayers({execute: async () => ({rows: []}), keyspace: 'outro', chatIds: ['chat-a']}),
     /list_players_requires_zapbot_keyspace/
   );
+});
+
+test('probe retorna só versões presentes sem atributos de conta', async () => {
+  const execute = async (query) => {
+    if (query.includes('legacy_estado_particionado')) {
+      return {rows: [{valor: JSON.stringify({
+        'player@c.us': {moedas: 99, equipe: [{nome: 'Secret'}]},
+        'other@lid': {moedas: 1}
+      })}]};
+    }
+    return {rows: [{valor: JSON.stringify({
+      grupo: {'player@c.us': {moedas: 7, equipe: [{nome: 'Hidden'}]}}
+    })}]};
+  };
+  const presence = await probeHistoricalPresence({
+    execute, keyspace: 'zapbot', chat: 'grupo', player: 'player@c.us'
+  });
+  assert.deepEqual(presence, {chatId: 'grupo', playerId: 'player@c.us', versions: ['v1', 'v2']});
+  assert.equal(JSON.stringify(presence).includes('moedas'), false);
+  assert.equal(JSON.stringify(presence).includes('Secret'), false);
+  const onlyV2 = await probeHistoricalPresence({
+    execute, keyspace: 'zapbot', chat: 'grupo', player: 'missing@c.us'
+  });
+  assert.deepEqual(onlyV2.versions, []);
 });
