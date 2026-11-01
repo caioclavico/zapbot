@@ -2,7 +2,8 @@
 
 **Data (UTC):** 2026-11-01  
 **Branch:** `hotfix/a6-raid-fase12.3.1` (isolada; base pós-Fase 12.2 / `fcd1ec9`)  
-**Artefatos RC:** `~/odisseu-recovery/a6-fase12.3.1-rc-<STAMP>/` (preenchido ao fechar o RC)  
+**Artefatos RC:** `~/odisseu-recovery/a6-fase12.3.1-rc-20261101T161034Z/`  
+**Git SHA:** `e4dffcf257702b1355a0f9f05ed9b450d20eb300`  
 **Modo:** correção + testes + RC imutável — **sem** deploy, recreate, restart, migrate, escrita em saves live ou auto-heal de raides.
 
 Produção live (Fase 12.2) permanece intocada nesta fase.
@@ -182,8 +183,25 @@ Restaurar tags 12.2 (`odisseu-jvm/node:a6-raidfix-20261101T152138Z-5b9a97e60228-
 
 ## 10. Release Candidate
 
-Preenchido na seção de artefatos após build imutável amd64 (Git SHA, content-hash, Image IDs, tar SHA-256).  
-Classificação desta fase de código+testes: **READY** para RC e aguardando GO explícito de implantação (fase seguinte).
+**READY** — RC `a6-raid-hotfix1231-20261101T161034Z-1eede78e365c` (Node+JVM amd64) validado.  
+Aguardando **GO explícito** de implantação coordenada (fase seguinte). Produção **não** alterada.
+
+| | Node | JVM |
+| --- | --- | --- |
+| Tag | `odisseu-node:a6-raid-hotfix1231-20261101T161034Z-1eede78e365c-amd64` | `odisseu-jvm:a6-raid-hotfix1231-20261101T161034Z-1eede78e365c-amd64` |
+| Image ID | `sha256:f1833b2772459a7f7a79c55d15492eb4ab9053f539fcef8470467e28feb6ffbd` | `sha256:04f22e2bb33f13216f9913f932fc7b42ad4c70a174983a1c795176e0322300b2` |
+| Platform | `linux/amd64` | `linux/amd64` |
+| Tar | `images/odisseu-node-a6-raid-hotfix1231.tar` (~371 MiB) | `images/odisseu-jvm-a6-raid-hotfix1231.tar` (~249 MiB) |
+| Tar SHA-256 | `42be4e97305b6c111b2f3e72e4fd4a2c6c7401e46e44a5a16ef8320d66de4b78` | `e3bb7d983946af4978cb95ef57b565a4ccebf20ae58b3c43e9d0111806e22fc4` |
+| Labels | `git-sha=e4dffcf…` · `content-hash=1eede78e365c…` · `release=a6-raid-hotfix-fase12.3.1` | idem |
+
+**Content hash (paths do RC):** `1eede78e365cd8b1c16dbc6c93f908c380a327fda7a08a3650977b5970114830`  
+**Sem** tags mutáveis (`latest` / `a6` soltas).
+
+### Smoke imagem
+
+Node: `ALLOWLIST_OK` · `MEDIA_OK` · `PRESENT_OK` · `ENSURE_ALPHA_OK` · `BLEND_OVER_OK`  
+JVM: `ECONOMY_STORE_OK` · `NIL_CAS_OK` · `ARTWORK_OK` · `MIGRATIONS_PRESENT_OK` (30)
 
 ### Live atual (não alterado nesta fase)
 
@@ -191,3 +209,8 @@ Classificação desta fase de código+testes: **READY** para RC e aguardando GO 
 | --- | --- | --- |
 | `odisseu-a6-jvm` | `…a6-raidfix-20261101T152138Z-5b9a97e60228-amd64` | `sha256:82e1a06c…` |
 | `odisseu-a6-node` | `…a6-raidfix-20261101T152138Z-5b9a97e60228-amd64` | `sha256:dbcb6c02…` |
+
+### Status final
+
+**READY** — hotfix comprovado (CAS nil operacional + alpha Onix), regressões verdes, RC imutável empacotado.  
+**NO-GO** de deploy até autorização explícita.
