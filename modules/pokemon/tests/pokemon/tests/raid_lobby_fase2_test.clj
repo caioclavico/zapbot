@@ -47,7 +47,7 @@
 ;;;; Domínio puro
 
 (deftest constantes-lobby-fase2
-  (is (= (* 2 60 1000) raid/duracao-inscricoes))
+  (is (= (* 5 60 1000) raid/duracao-inscricoes))
   (is (= 5 raid/max-participantes))
   (is (= 2 raid/min-participantes)))
 
@@ -70,10 +70,10 @@
                            :liga "iniciante" :chefe boss :agora 1000
                            :criador "ash"})]
     (is (= "inscricoes" (:fase r)))
-    (is (= 121000 (:expira r)))
+    (is (= (+ 1000 raid/duracao-inscricoes) (:expira r)))
     (is (= 5 (:max-jogadores r)))
     (is (raid/lobby-ou-combate-vivo? r 1001))
-    (is (not (raid/lobby-ou-combate-vivo? r 121000)))))
+    (is (not (raid/lobby-ou-combate-vivo? r (+ 1000 raid/duracao-inscricoes))))))
 
 (deftest dominio-inscricao-idempotente-e-limite
   (let [boss (:chefe (raid/boss-do-ginasio "pedra"))
@@ -104,9 +104,9 @@
                                :fence-generation 0 :pokemon mon :collection-index 0}
                             1001))
         sozinho (join base "ash")
-        cancelado (raid/expirar-inscricoes sozinho 121000)
+        cancelado (raid/expirar-inscricoes sozinho (+ 1000 raid/duracao-inscricoes))
         duo (-> base (join "ash") (join "misty"))
-        combate (raid/expirar-inscricoes duo 121000)]
+        combate (raid/expirar-inscricoes duo (+ 1000 raid/duracao-inscricoes))]
     (is (= :cancelada (:acao cancelado)))
     (is (= "cancelada" (get-in cancelado [:raid :fase])))
     (is (= :combate (:acao combate)))
@@ -213,7 +213,7 @@
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
         :operation-id "j" :collection-index 0 :nome "Ash" :agora-ms 1001})
-    (let [after (raid-app/expire-lobby! s chat 121000)]
+    (let [after (raid-app/expire-lobby! s chat (+ 1000 raid/duracao-inscricoes))]
       (is (= "cancelada" (:fase after))))
     (is (nil? (raid-app/active-raid s chat)))))
 
@@ -234,7 +234,7 @@
      s {:chat-id chat :player-id "misty" :save-id "a"
         :fence-generation (fence s chat "misty")
         :operation-id "jm" :collection-index 0 :nome "Misty" :agora-ms 1002})
-    (let [after (raid-app/expire-lobby! s chat 121000)]
+    (let [after (raid-app/expire-lobby! s chat (+ 1000 raid/duracao-inscricoes))]
       (is (= "combate" (:fase after)))
       (is (= 440 (:hp-chefe after))))))
 
@@ -358,7 +358,7 @@
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
         :operation-id "j" :collection-index 0 :nome "Ash" :agora-ms 1001})
-    (raid-app/expire-lobby! s chat 121000)
+    (raid-app/expire-lobby! s chat (+ 1000 raid/duracao-inscricoes))
     (is (nil? (raid-app/active-raid s chat)))
     (is (= :raid_not_found
            (try

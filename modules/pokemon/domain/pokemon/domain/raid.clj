@@ -5,7 +5,8 @@
             [pokemon.domain.gym :as gym]))
 
 ;; Lobby Fase 2 (abertura manual cooperativa).
-(def duracao-inscricoes (* 2 60 1000))
+;; Fase 12: duração padrão 5 min (raides já abertas preservam :expira gravado).
+(def duracao-inscricoes (* 5 60 1000))
 (def max-participantes 5)
 (def min-participantes 2)
 
@@ -273,17 +274,33 @@
       (assoc raid' :vez (first vivos))
       :else raid')))
 
+(defn vez-valida?
+  "Invariante: em combate, :vez deve apontar a participante vivo na ordem."
+  [raid]
+  (let [vez (:vez raid)
+        parts (:participantes raid {})]
+    (boolean
+     (and (string? vez)
+          (seq vez)
+          (contains? parts vez)
+          (some #{vez} (:ordem raid))
+          (pos? (long (get-in parts [vez :hp] 0)))))))
+
 (defn- aplicar-inicio-combate
   [raid agora]
   (let [n (count (:ordem raid))
-        parts (:participantes raid)]
+        parts (:participantes raid)
+        ;; Primeira vez = primeiro da ordem com HP>0 (participante real).
+        vez0 (first (filter #(pos? (get-in parts [% :hp] 0)) (:ordem raid)))]
+    (when-not vez0
+      (throw (err/error :raid_no_eligible_turn {:ordem (:ordem raid)})))
     (assoc raid
            :fase "combate"
            :hp-chefe (* hp-por-jogador n)
            :hp-max (* hp-por-jogador n)
            :defesa (media-stat parts :defesa)
            :def-esp (media-stat parts :def-esp)
-           :vez (first (:ordem raid))
+           :vez vez0
            :expira (+ (long agora) duracao-combate)
            :proxima (+ (long agora) intervalo-proxima)
            :turn-index 0)))
@@ -343,10 +360,17 @@
     (first (filter vivos depois))))
 
 (defn atacar
-  "Aplica um ataque. Retorna {:raid :dano :revide :venceu? :derrota?}."
+  "Aplica um ataque. Retorna {:raid :dano :revide :venceu? :derrota?}.
+  Compara player-id autenticado com :vez por igualdade literal (identidade
+  canônica do participante) — sem strip de @lid/@c.us."
   [raid player-id move-index agora]
   (when-not (and (ativa? raid agora) (= "combate" (str (:fase raid))))
     (throw (err/error :raid_not_in_combat {:fase (:fase raid)})))
+  (when-not (vez-valida? raid)
+    (throw (err/error :raid_turn_invalid
+                      {:vez (:vez raid)
+                       :ordem (:ordem raid)
+                       :player-id player-id})))
   (when-not (= player-id (:vez raid))
     (throw (err/error :raid_not_your_turn {:vez (:vez raid) :player-id player-id})))
   (let [part (get-in raid [:participantes player-id])

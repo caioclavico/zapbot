@@ -625,7 +625,8 @@
            :dano (:dano p 0)
            :collection-index (:collection-index p)
            :pokemon (encounter-pokemon-dto (:pokemon p))
-           :voce? (= pid viewer-id)}
+           ;; Sem `?` no keyword: JSON camelCase → `voce` (não `voce?`).
+           :voce (= pid viewer-id)}
     (= pid viewer-id)
     (assoc :save-id (:save-id p)
            :fence-generation (:fence-generation p))))
@@ -637,7 +638,18 @@
           ativa (or (raid/ativa? raid agora) (= "vitoria" fase))
           parts (:participantes raid {})
           viewer (get parts player-id)
-          cap (get-in raid [:capturas player-id])]
+          cap (get-in raid [:capturas player-id])
+          vez (:vez raid)
+          ;; Identidade canônica: igualdade literal do player-id autenticado
+          ;; com a chave persistida em :vez/:participantes (sem strip de sufixo).
+          sua-vez? (boolean (and player-id vez (= player-id vez)))
+          vez-participante (when vez (get parts vez))
+          proxima (when (and (= "combate" fase) vez)
+                    (let [ordem (:ordem raid [])
+                          vivos (filterv #(pos? (get-in parts [% :hp] 0)) ordem)
+                          depois (concat (rest (drop-while #(not= vez %) vivos))
+                                         (take-while #(not= vez %) vivos))]
+                      (first depois)))]
       {:raid-id (:raid-id raid)
        :chat-id (:chat-id raid)
        :ginasio (:ginasio raid)
@@ -650,12 +662,21 @@
        :captura-expira (:captura-expira raid)
        :hp-chefe (:hp-chefe raid)
        :hp-max (:hp-max raid)
-       :vez (:vez raid)
-       :sua-vez? (= player-id (:vez raid))
+       :vez vez
+       :vez-nome (or (:nome vez-participante) nil)
+       :vez-pokemon (when-let [pk (:pokemon vez-participante)]
+                      (encounter-pokemon-dto pk))
+       :vez-hp (:hp vez-participante)
+       :vez-valida (boolean (and vez (contains? parts vez)
+                                 (pos? (long (:hp vez-participante 0)))))
+       ;; Keywords sem `?` → `suaVez` / `inscrito` no JSON (contrato Node).
+       :sua-vez sua-vez?
        :turn-index (:turn-index raid 0)
        :ordem (:ordem raid [])
        :n-participantes (count (:ordem raid []))
-       :inscrito? (boolean viewer)
+       :inscrito (boolean viewer)
+       :proxima-vez proxima
+       :proxima-vez-nome (when proxima (get-in parts [proxima :nome]))
        :chefe (encounter-pokemon-dto (:chefe raid))
        :participantes
        (mapv (fn [pid]

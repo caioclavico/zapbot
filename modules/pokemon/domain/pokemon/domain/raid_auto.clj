@@ -102,7 +102,7 @@
   (let [chefe (:chefe raid)]
     (str "📣 *Raide automática* em " (or (:nome-ginasio raid) (:ginasio raid)) "!\n"
          "Chefe: *" (or (:nome chefe) "?") "* · liga " (or (:liga raid) "?") "\n"
-         "Inscrições por 2 minutos · máx. 5 treinadores.\n"
+         "Inscrições por 5 minutos · máx. 5 treinadores.\n"
          "Entre: !pk raide entrar auto")))
 
 (defn format-started

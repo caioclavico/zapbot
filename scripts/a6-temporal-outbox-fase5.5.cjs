@@ -12,7 +12,7 @@ const { createClient, stableOperationId } =
 const JVM_URL = process.env.A6_JVM_URL || 'http://127.0.0.1:18091';
 const TOKEN = process.env.ODISSEU_BRIDGE_TOKEN || process.env.A6_TOKEN;
 const RUN = process.env.A6_RUN_ID || `t${Date.now()}`;
-const LOBBY_MS = 2 * 60 * 1000; // min-interval = duração lobby
+const LOBBY_MS = 5 * 60 * 1000; // min-interval = duração lobby (Fase 12)
 const INTERVAL_MS = LOBBY_MS; // intervalo mínimo válido
 const results = [];
 

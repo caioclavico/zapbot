@@ -65,7 +65,7 @@
     (let [dto (reads/active-raid s chat "ash" {:agora-ms 1001})]
       (is (= "inscricoes" (get-in dto [:raid :fase])))
       (is (= "bronze" (get-in dto [:raid :liga])))
-      (is (false? (get-in dto [:raid :inscrito?]))))))
+      (is (false? (get-in dto [:raid :inscrito]))))))
 
 (deftest join-auto-e-liga
   (let [s (fresh-store! "r49-join")

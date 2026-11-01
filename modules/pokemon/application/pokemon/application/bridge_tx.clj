@@ -638,25 +638,52 @@
        :depois (:depois result)})))
 
 (defn- raid-summary
+  "Resumo leve para mutações. Inclui bloco de vez (Fase 12) sem IDs crús
+  como nome — usa :nome do participante canônico."
   [raid]
   (when raid
-    {:raid-id (:raid-id raid)
-     :fase (:fase raid)
-     :ginasio (:ginasio raid)
-     :nome-ginasio (:nome-ginasio raid)
-     :liga (:liga raid)
-     :hp-chefe (:hp-chefe raid)
-     :hp-max (:hp-max raid)
-     :vez (:vez raid)
-     :turn-index (:turn-index raid 0)
-     :ordem (:ordem raid [])
-     :n-participantes (count (:ordem raid []))
-     :chefe (select-keys (or (:chefe raid) {})
-                         [:nome :species :raridade :hp :tipos :imagem
-                          :imagem-shiny :nivel])
-     :expira (:expira raid)
-     :captura-expira (:captura-expira raid)
-     :rewards-paid (boolean (:rewards-paid? raid))}))
+    (let [parts (:participantes raid {})
+          vez (:vez raid)
+          vp (when vez (get parts vez))
+          vivos (when (= "combate" (str (:fase raid)))
+                  (filterv #(pos? (get-in parts [% :hp] 0)) (:ordem raid [])))
+          proxima (when (and vez (seq vivos))
+                    (first (concat (rest (drop-while #(not= vez %) vivos))
+                                   (take-while #(not= vez %) vivos))))
+          poke (:pokemon vp)]
+      {:raid-id (:raid-id raid)
+       :fase (:fase raid)
+       :ginasio (:ginasio raid)
+       :nome-ginasio (:nome-ginasio raid)
+       :liga (:liga raid)
+       :hp-chefe (:hp-chefe raid)
+       :hp-max (:hp-max raid)
+       :vez vez
+       :vez-nome (:nome vp)
+       :vez-hp (:hp vp)
+       :vez-valida (boolean (raid-domain/vez-valida? raid))
+       :vez-pokemon (when poke
+                      (select-keys poke [:nome :species :hp :hp-atual :imagem
+                                         :imagem-shiny :nivel :tipos :golpes]))
+       :proxima-vez proxima
+       :proxima-vez-nome (when proxima (get-in parts [proxima :nome]))
+       :turn-index (:turn-index raid 0)
+       :ordem (:ordem raid [])
+       :n-participantes (count (:ordem raid []))
+       :participantes
+       (mapv (fn [pid]
+               (let [p (get parts pid)]
+                 {:player-id pid
+                  :nome (:nome p)
+                  :hp (:hp p)
+                  :dano (:dano p 0)}))
+             (:ordem raid []))
+       :chefe (select-keys (or (:chefe raid) {})
+                           [:nome :species :raridade :hp :tipos :imagem
+                            :imagem-shiny :nivel])
+       :expira (:expira raid)
+       :captura-expira (:captura-expira raid)
+       :rewards-paid (boolean (:rewards-paid? raid))})))
 
 (defn- require-writer!
   [{:keys [chat-id player-id save-id fence-generation operation-id]}]

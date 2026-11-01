@@ -1110,6 +1110,8 @@ function formatError(err) {
     RAID_NEED_PLAYERS: '❓ Precisa de pelo menos 2 inscritos para iniciar.',
     RAID_NOT_IN_COMBAT: '❓ A raide não está em combate.',
     RAID_NOT_YOUR_TURN: '⏳ Não é a sua vez de atacar.',
+    RAID_TURN_INVALID: '⚠️ A vez da raide está inválida (participante ausente). Avise um admin — sem correção automática.',
+    RAID_NO_ELIGIBLE_TURN: '⚠️ Nenhum participante elegível para iniciar o combate.',
     RAID_SAVE_MISMATCH: '⚠️ Você mudou de save após entrar — reentre na próxima raide.',
     RAID_LIGA_MISMATCH: '❓ Esse Pokémon não está na faixa de nível da liga da raide.',
     INVALID_RAID_POKEMON: '❓ Escolha um Pokémon saudável com golpe ofensivo: !pk raide time.',
@@ -1704,27 +1706,43 @@ const RAID_GYMS = [
   { id: 'fogo', nome: '🔥 Fogo', nivel: 50 }
 ];
 
+function normalizeGymToken(token) {
+  return String(token || '')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^a-z0-9]+/gi, '')
+    .toLowerCase()
+    .trim();
+}
+
 function resolveRaidGym(token) {
   const raw = String(token || '').trim().toLowerCase();
   if (!raw) return null;
   const n = parseInt(raw, 10);
-  if (!Number.isNaN(n) && n >= 1 && n <= RAID_GYMS.length) {
+  if (!Number.isNaN(n) && String(n) === raw && n >= 1 && n <= RAID_GYMS.length) {
     return RAID_GYMS[n - 1].id;
   }
-  const hit = RAID_GYMS.find(g => g.id === raw);
-  return hit ? hit.id : null;
+  const byId = RAID_GYMS.find(g => g.id === raw);
+  if (byId) return byId.id;
+  const norm = normalizeGymToken(raw);
+  const byNome = RAID_GYMS.find((g) => {
+    const nomeNorm = normalizeGymToken(g.nome);
+    return nomeNorm === norm || nomeNorm.endsWith(norm) || g.id === norm;
+  });
+  return byNome ? byNome.id : null;
 }
 
 function formatRaidOpenHelp(prefix = '!pk') {
   return [
     '⚔️ *Abrir raide cooperativa*',
-    'Lobby: até 5 treinadores · mín. 2 · 2 minutos de inscrição.',
+    'Lobby: até 5 treinadores · mín. 2 · 5 minutos de inscrição.',
     'O criador também precisa entrar com `raide entrar`.',
     '',
     '*Ginásios:*',
     ...RAID_GYMS.map((g, i) => `${i + 1}. ${g.nome} (nv.${g.nivel}) — \`${g.id}\``),
     '',
-    `Use: ${prefix} raide abrir <n|id>`
+    `Abra direto: ${prefix} raide abrir 1   (ou o id, ex. pedra)`,
+    `Sem argumento: ${prefix} raide abrir`
   ].join('\n');
 }
 
@@ -1746,10 +1764,70 @@ function formatRaidOpened(data, prefix = '!pk') {
   return [
     `📣 *Raide aberta* em ${r.nomeGinasio || r.ginasio || 'ginásio'}!`,
     `Chefe: *${chefe.nome || '?'}* · liga ${r.liga || '?'}`,
-    prazo || 'Inscrições por 2 minutos · máx. 5 treinadores.',
+    prazo || 'Inscrições por 5 minutos · máx. 5 treinadores.',
     `Entre: ${prefix} raide entrar auto`,
     `Status: ${prefix} raide · Cancelar: ${prefix} raide cancelar`
   ].join('\n');
+}
+
+/** Lê flags booleanas do DTO mesmo se o JSON legado trouxe `suaVez?`. */
+function raidFlag(obj, camelKey) {
+  if (!obj || typeof obj !== 'object') return false;
+  if (obj[camelKey] != null) return Boolean(obj[camelKey]);
+  if (obj[`${camelKey}?`] != null) return Boolean(obj[`${camelKey}?`]);
+  return false;
+}
+
+function displayTrainerName(partOrNome, playerId) {
+  const nome = typeof partOrNome === 'string'
+    ? partOrNome
+    : (partOrNome && (partOrNome.nome || partOrNome.name));
+  if (nome && String(nome).trim() && !/@/.test(String(nome))) {
+    return String(nome).trim();
+  }
+  return 'Treinador';
+}
+
+function formatRaidMoveLines(pokemon, prefix = '!pk') {
+  const golpes = (pokemon && (pokemon.golpes || pokemon.moves)) || [];
+  if (!golpes.length) {
+    return ['(sem golpes)'];
+  }
+  return golpes.slice(0, 4).map((g, i) => {
+    const nome = g.nomeExibicao || g['nome-exibicao'] || g.nome || g.slug || `Golpe ${i + 1}`;
+    const classe = String(g.classe || g.class || '').toLowerCase();
+    const poder = Number(g.poder || g.power || 0);
+    const ofensivo = (classe === 'fisico' || classe === 'especial' || classe === 'physical' || classe === 'special')
+      && poder > 0;
+    if (!ofensivo) {
+      return `${i + 1}. ${nome} — _indisponível_`;
+    }
+    return `${i + 1}. ${nome} (${poder}) → \`${prefix} raide atacar ${i + 1}\``;
+  });
+}
+
+function formatRaidTurnBlock(r, prefix = '!pk') {
+  if (!r || r.fase !== 'combate' || !r.vez) return [];
+  const nome = displayTrainerName(r.vezNome || r.vez_nome, r.vez);
+  const poke = r.vezPokemon || r.vez_pokemon || {};
+  const pokeNome = poke.nome || poke.species || '?';
+  const hp = r.vezHp != null ? r.vezHp : (r.vez_hp != null ? r.vez_hp : '?');
+  const lines = [
+    `👉 Vez de *${nome}* — ${pokeNome} (HP ${hp})`,
+    ...formatRaidMoveLines(poke, prefix)
+  ];
+  const proxNome = r.proximaVezNome || r.proxima_vez_nome;
+  if (proxNome) {
+    lines.push(`⏭️ Próximo: *${displayTrainerName(proxNome)}*`);
+  }
+  if (raidFlag(r, 'suaVez')) {
+    lines.push(`✅ É a sua vez — escolha o golpe acima.`);
+  } else if (r.vezValida === false || r['vezValida?'] === false) {
+    lines.push('⚠️ Ponteiro de vez inválido — avise um admin.');
+  } else {
+    lines.push('⏳ Aguarde a vez do treinador indicado.');
+  }
+  return lines;
 }
 
 function formatRaidCancelled(data, prefix = '!pk') {
@@ -1798,7 +1876,7 @@ function formatRaidStatus(data, prefix = '!pk') {
   if (!r) {
     return [
       '🏛️ Nenhuma raide ativa neste chat.',
-      `Ajuda: ${prefix} raide ajuda`
+      `Abrir: ${prefix} raide abrir   ·   direto: ${prefix} raide abrir 1`
     ].join('\n');
   }
   const chefe = r.chefe || {};
@@ -1812,22 +1890,24 @@ function formatRaidStatus(data, prefix = '!pk') {
       ? `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`
       : `Inscritos: ${r.nParticipantes || 0}/5`,
     prazo,
-    r.vez ? `Vez: ${r.suaVez ? '*você*' : r.vez}` : null,
-    r.capturaPendente
+    r.capturaPendente || r['capturaPendente?']
       ? `🎯 Captura aberta: ${prefix} raide capturar <bola>`
       : null,
     '',
     r.fase === 'inscricoes'
       ? `${prefix} raide entrar auto · ${prefix} raide iniciar · ${prefix} raide sair · ${prefix} raide cancelar`
-      : (r.fase === 'combate'
-        ? `${prefix} raide atacar <1-4>`
-        : null)
+      : null
   ];
+  if (r.fase === 'combate') {
+    lines.push(...formatRaidTurnBlock(r, prefix));
+  }
   if (Array.isArray(r.participantes) && r.participantes.length) {
     lines.push('', '*Participantes*');
     for (const p of r.participantes) {
+      const nome = displayTrainerName(p);
+      const voce = raidFlag(p, 'voce');
       lines.push(
-        `• ${p.voce ? '👉 ' : ''}${p.nome || p.playerId}`
+        `• ${voce ? '👉 ' : ''}${nome}`
         + (p.hp != null ? ` · HP ${p.hp}` : '')
         + (p.dano ? ` · dano ${p.dano}` : '')
       );
@@ -1882,8 +1962,8 @@ function formatRaidStart(data, prefix = '!pk') {
   const r = (data && data.raid) || {};
   return [
     `🔥 Combate iniciado! Chefe com ${r.hpChefe || r.hpMax || '?'} HP.`,
-    `Vez: ${r.vez || '?'}`,
-    `Ataque: ${prefix} raide atacar <1-4>`
+    `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`,
+    ...formatRaidTurnBlock(r, prefix)
   ].join('\n');
 }
 
@@ -1902,9 +1982,8 @@ function formatRaidAttack(data, prefix = '!pk') {
   return [
     `💥 Dano ${data.dano != null ? data.dano : '?'} · revide ${data.revide != null ? data.revide : 0}`,
     `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`,
-    r.vez ? `Próxima vez: ${r.vez}` : null,
-    data.duplicate ? '_idempotente: mesmo operationId_' : null,
-    `Continue: ${prefix} raide atacar <1-4>`
+    ...formatRaidTurnBlock(r, prefix),
+    data.duplicate ? '_idempotente: mesmo operationId_' : null
   ].filter(Boolean).join('\n');
 }
 
@@ -2553,6 +2632,11 @@ module.exports = {
   formatRaidAttack,
   formatRaidCapture,
   formatRaidEligible,
+  raidFlag,
+  displayTrainerName,
+  formatRaidTurnBlock,
+  formatRaidMoveLines,
+  normalizeGymToken,
   formatJoyStatus,
   formatJoySend,
   formatJoyCollect,

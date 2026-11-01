@@ -5,8 +5,11 @@
   (:import [java.util List Map]))
 
 (defn- camel-key
+  "Keywords → camelCase. Sufixo `?` (booleans Clojure) é removido para o
+  contrato JSON bater com o Node (`:sua-vez?` → `suaVez`, não `suaVez?`)."
   [k]
-  (let [s (if (keyword? k) (name k) (str k))
+  (let [s (-> (if (keyword? k) (name k) (str k))
+              (str/replace #"\?$" ""))
         parts (str/split s #"-")]
     (apply str (first parts) (map str/capitalize (rest parts)))))
 

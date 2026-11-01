@@ -158,7 +158,7 @@
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
         :operation-id "j1" :collection-index 0 :nome "Ash" :agora-ms 1001})
-    (let [r (raid-auto/tick! s {:agora-ms 121000 :global-enabled? true :chat-id chat})
+    (let [r (raid-auto/tick! s {:agora-ms (+ 1000 raid/duracao-inscricoes) :global-enabled? true :chat-id chat})
           events (raid-auto/pending-events s {:limit 20})]
       (is (some #(= :cancelada (:acao %)) (:expired r)))
       (is (nil? (raid-app/active-raid s chat)))
@@ -182,7 +182,7 @@
        s {:chat-id chat :player-id "misty" :save-id "a"
           :fence-generation (fence s chat "misty")
           :operation-id "jm" :collection-index 0 :nome "Misty" :agora-ms 1002})
-      (let [r (raid-auto/tick! s {:agora-ms 121000 :global-enabled? true :chat-id chat})
+      (let [r (raid-auto/tick! s {:agora-ms (+ 1000 raid/duracao-inscricoes) :global-enabled? true :chat-id chat})
             active (raid-app/active-raid s chat)
             events (raid-auto/pending-events s {:limit 20})]
         (is (some #(= :combate (:acao %)) (:expired r)))
@@ -270,16 +270,16 @@
     (let [sch1 (raid-auto/get-schedule s chat)
           rid1 (:raid-id (raid-app/active-raid s chat))
           ;; Expire no instante do lobby; next-at já passou do fim do lobby.
-          r (raid-auto/tick! s {:agora-ms 121000 :global-enabled? true :chat-id chat})
+          r (raid-auto/tick! s {:agora-ms (+ 1000 raid/duracao-inscricoes) :global-enabled? true :chat-id chat})
           active (raid-app/active-raid s chat)
           sch2 (raid-auto/get-schedule s chat)]
       (is (= (inc (+ 1000 raid/duracao-inscricoes)) (:next-at sch1)))
       (is (some #(= :cancelada (:acao %)) (:expired r)))
-      ;; Sem novo spawn no mesmo tick (next-at = 121001 > 121000)
+      ;; Sem novo spawn no mesmo tick (next-at = (inc (+ 1000 raid/duracao-inscricoes)) > (+ 1000 raid/duracao-inscricoes))
       (is (empty? (filter #(= :spawn (:acao %)) (:spawned r))))
       (is (nil? active))
       (is (= rid1 (:last-raid-id sch2)))
-      (is (> (:next-at sch2) 121000)))))
+      (is (> (:next-at sch2) (+ 1000 raid/duracao-inscricoes))))))
 
 (deftest ticks-concorrentes-um-vencedor
   (let [[s _] (fresh! "f31-race")

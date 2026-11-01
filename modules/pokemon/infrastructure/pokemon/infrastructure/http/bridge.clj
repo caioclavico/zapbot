@@ -110,7 +110,8 @@
      :cannot_challenge_own_gym :gym_locked :gym_daily_limit
      :raid_not_open :already_in_raid :raid_full :raid_cannot_leave
      :raid_not_creator :not_in_raid :raid_need_players :raid_not_in_combat
-     :raid_not_your_turn :raid_save_mismatch :raid_liga_mismatch
+     :raid_not_your_turn :raid_turn_invalid :raid_no_eligible_turn
+     :raid_save_mismatch :raid_liga_mismatch
      :raid_capture_unavailable :raid_chat_busy :raid_gym_unknown
      :raid_boss_template_missing :raid_config_invalid :raid_cannot_cancel
      :starter_unavailable :mission_period_conflict :mission_event_identity_conflict

@@ -640,8 +640,20 @@
                              :playerId player-id
                              :saveId (.-activeSaveId ativo)
                              :fenceGeneration (.-fenceGeneration ativo)
-                             :operationId op-id}))]
-        (envelope-jvm pedido (.formatRaidStart jvm-present data prefix)))
+                             :operationId op-id}))
+              img (render-seguro! ctx "pokemon_jvm_media_raid_start"
+                    #(.renderRaidBattleCard jvm-media
+                       #js {:ginasio (or (.-nomeGinasio (.-raid data))
+                                         (.-ginasio (.-raid data)))
+                            :chefe (some-> (.-raid data) .-chefe)
+                            :atacante (some-> (.-raid data) .-vezPokemon)
+                            :treinador (or (.-vezNome (.-raid data)) player-name)
+                            :hpChefe (.-hpChefe (.-raid data))
+                            :hpMax (.-hpMax (.-raid data))
+                            :hpAtacante (.-vezHp (.-raid data))
+                            :fase (.-fase (.-raid data))
+                            :turnIndex (.-turnIndex (.-raid data))}))]
+        (envelope-jvm pedido (.formatRaidStart jvm-present data prefix) img))
 
       (= "atacar" sub)
       (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
@@ -649,7 +661,12 @@
               raid (.-raid raid-data)
               _ (when-not raid
                   (throw (erro-contrato "❓ Nenhuma raide ativa neste chat.")))
-              _ (when-not (.-suaVez raid)
+              ;; Aceita `suaVez` (contrato) e `suaVez?` (legado camelCase com ?).
+              ;; Também confere igualdade literal player-id === vez (identidade canônica).
+              sua-vez? (or (true? (.-suaVez raid))
+                           (true? (aget raid "suaVez?"))
+                           (and player-id (.-vez raid) (= player-id (.-vez raid))))
+              _ (when-not sua-vez?
                   (throw (erro-contrato "⏳ Não é a sua vez de atacar.")))
               move (js/parseInt (or (first resto) "1") 10)
               move-idx (if (js/isNaN move) 0 (max 0 (dec move)))
@@ -667,8 +684,24 @@
                              :operationId op-id
                              :raidId (.-raidId raid)
                              :expectedTurnIndex (.-turnIndex raid)
-                             :moveIndex move-idx}))]
-        (envelope-jvm pedido (.formatRaidAttack jvm-present data prefix)))
+                             :moveIndex move-idx}))
+              img (render-seguro! ctx "pokemon_jvm_media_raid_atk"
+                    #(.renderRaidBattleCard jvm-media
+                       #js {:ginasio (or (.-nomeGinasio (.-raid data))
+                                         (.-ginasio (.-raid data)))
+                            :chefe (some-> (.-raid data) .-chefe)
+                            :atacante (or (.-vezPokemon (.-raid data))
+                                          (some-> raid .-vezPokemon))
+                            :treinador (or (.-vezNome (.-raid data))
+                                           (.-vezNome raid)
+                                           player-name)
+                            :hpChefe (.-hpChefe (.-raid data))
+                            :hpMax (.-hpMax (.-raid data))
+                            :hpAtacante (or (.-vezHp (.-raid data))
+                                            (.-vezHp raid))
+                            :fase (.-fase (.-raid data))
+                            :turnIndex (.-turnIndex (.-raid data))}))]
+        (envelope-jvm pedido (.formatRaidAttack jvm-present data prefix) img))
 
       (= "capturar" sub)
       (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
@@ -1772,8 +1805,8 @@
                                                           (.formatGymHistory jvm-present %))
                                                        results))))))
 
-                    (contains? #{"entrar" "iniciar" "sair" "cancelar" "atacar" "capturar"} sub)
-                    ;; Mesmos fluxos que !pk raide <sub> …
+                    (contains? #{"abrir" "entrar" "iniciar" "sair" "cancelar" "atacar" "capturar"} sub)
+                    ;; Mesmos fluxos que !pk raide <sub> … (abrir N sem menu prévio).
                     (p/let [args-raid (into [sub] args-gin)
                             env (executar-raid-jvm! jvm ctx pedido chat-id player-id
                                                     player-name args-raid)]

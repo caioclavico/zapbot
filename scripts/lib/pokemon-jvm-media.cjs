@@ -807,6 +807,94 @@ async function renderTeamGrid(pokemons, {
   }
 }
 
+/**
+ * Cartão visual da raide (Fase 12). Reusa sprites em cache; falha → null
+ * (caller cai para texto). Evita downloads se URLs já estiverem no cache.
+ */
+async function renderRaidBattleCard({
+  ginasio = '',
+  chefe = null,
+  atacante = null,
+  treinador = '',
+  hpChefe = null,
+  hpMax = null,
+  hpAtacante = null,
+  fase = 'combate',
+  turnIndex = 0
+} = {}) {
+  try {
+    const SPRITE = 220;
+    const [bossSp, atkSp] = await Promise.all([
+      chefe ? spriteProporcional(chefe, SPRITE) : null,
+      atacante ? spriteProporcional(atacante, SPRITE) : null
+    ]);
+    const nomeTre = String(treinador || '').replace(/@.*/g, '').trim() || 'Treinador';
+    const nomeBoss = (chefe && (chefe.nome || chefe.species)) || 'Chefe';
+    const nomeAtk = (atacante && (atacante.nome || atacante.species)) || 'Pokémon';
+    const hpC = Number(hpChefe);
+    const hpM = Number(hpMax) || Math.max(1, hpC || 1);
+    const hpA = Number(hpAtacante);
+    const hpAMax = Number((atacante && (atacante.hp || atacante.hpMax)) || hpA || 1);
+    const svg = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="760" height="400">`
+      + `<defs><linearGradient id="raid-bg" x1="0" y1="0" x2="0" y2="1">`
+      + `<stop stop-color="#312e81"/><stop offset="1" stop-color="#0f172a"/></linearGradient></defs>`
+      + `<rect width="760" height="400" rx="28" fill="url(#raid-bg)"/>`
+      + `<text x="380" y="42" text-anchor="middle" fill="#e0e7ff" font-family="sans-serif" `
+      + `font-size="22" font-weight="700">${escapeXml(ginasio || 'Raide')}</text>`
+      + `<text x="380" y="68" text-anchor="middle" fill="#a5b4fc" font-family="sans-serif" `
+      + `font-size="14">${escapeXml(fase)} · rodada ${Number(turnIndex) + 1}</text>`
+      + `<text x="190" y="100" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" `
+      + `font-size="16" font-weight="700">${escapeXml(nomeTre)}</text>`
+      + `<text x="190" y="122" text-anchor="middle" fill="#cbd5e1" font-family="sans-serif" `
+      + `font-size="13">${escapeXml(nomeAtk)}</text>`
+      + `<text x="570" y="100" text-anchor="middle" fill="#fde68a" font-family="sans-serif" `
+      + `font-size="16" font-weight="700">${escapeXml(nomeBoss)}</text>`
+      + `<text x="570" y="122" text-anchor="middle" fill="#fbbf24" font-family="sans-serif" `
+      + `font-size="13">Chefe</text>`
+      + svgBarraHp({
+        x: 60, y: 340, width: 260,
+        atual: Number.isFinite(hpA) ? hpA : hpAMax,
+        max: hpAMax,
+        rotulo: nomeAtk
+      })
+      + svgBarraHp({
+        x: 440, y: 340, width: 260,
+        atual: Number.isFinite(hpC) ? hpC : hpM,
+        max: hpM,
+        cor: '#f59e0b',
+        rotulo: nomeBoss
+      })
+      + `</svg>`
+    );
+    const layers = [];
+    if (atkSp) {
+      layers.push({
+        input: atkSp.buffer,
+        left: 190 - Math.floor(atkSp.tamanho / 2),
+        top: 280 - atkSp.tamanho
+      });
+    }
+    if (bossSp) {
+      layers.push({
+        input: bossSp.buffer,
+        left: 570 - Math.floor(bossSp.tamanho / 2),
+        top: 280 - bossSp.tamanho
+      });
+    }
+    const buf = await sharp(svg).composite(layers).png().toBuffer();
+    return {
+      base64: buf.toString('base64'),
+      mimeType: 'image/png',
+      filename: 'raid-batalha.png'
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] raid-card:', err.message || err);
+    return null;
+  }
+}
+
 module.exports = {
   renderHuntArena,
   renderCaptureBall,
@@ -815,6 +903,7 @@ module.exports = {
   renderTeamGrid,
   renderStaticAsset,
   renderTrainerCard,
+  renderRaidBattleCard,
   resolveJoyTheme,
   efeitoDeTurno,
   tamanhoVisual,
