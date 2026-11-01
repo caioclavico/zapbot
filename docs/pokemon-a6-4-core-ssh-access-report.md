@@ -208,7 +208,9 @@ Artefatos privados (mode 600, fora do Git):
 
 ## 9. Próxima ação recomendada
 
-Autorizar **export SELECT-only** dos 23 players V1 (e operacionais divergentes)
-para dumps privados + matriz de aliases — ainda sem import — e um ensaio de
-`discover`/`confirm!` em cópia descartável do A5.6 cold com um jogador piloto
-(hash já sobreposto: p.ex. `6635c7f7bf15`).
+**Feito (2026-10-28):** export SELECT-only dos 23 + matriz anonimizada + ensaio
+`discover` (sem `confirm!`). Ver
+[`docs/pokemon-a6-4-reconciliation-matrix.md`](pokemon-a6-4-reconciliation-matrix.md).
+
+Aguardando aprovação para: export `loja`, aliases com evidência, decisão nos 9
+pending, e ensaio `confirm!`+import de 1 elegível em cópia descartável.

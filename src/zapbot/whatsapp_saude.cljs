@@ -60,19 +60,24 @@
                 [60 120 180])))
 
 (defn resposta [saude ^js client]
-  (let [^js browser (.-pupBrowser client)
-        ^js page (.-pupPage client)
-        chromium? (boolean (try
-                             (and browser (fn? (.-isConnected browser)) (.isConnected browser)
-                                  page (fn? (.-isClosed page)) (not (.isClosed page)))
-                             (catch :default _ false)))
-        estado @(:estado saude)
-        pronto? (and (= estado "READY") chromium?
-                     (not (.-lastLoggedOut client))
-                     (or (nil? (.-zapbotStartupState client))
-                         (= "ready" (.-zapbotStartupState client))))]
-    {:status (if pronto? "ok" "degraded")
-     :whatsapp estado :chromium chromium?}))
+  (let [estado @(:estado saude)]
+    (if (or (nil? client) (= estado "DISABLED"))
+      {:status (if (= estado "DISABLED") "ok" "degraded")
+       :whatsapp estado
+       :chromium false
+       :transport "disabled"}
+      (let [^js browser (.-pupBrowser client)
+            ^js page (.-pupPage client)
+            chromium? (boolean (try
+                                 (and browser (fn? (.-isConnected browser)) (.isConnected browser)
+                                      page (fn? (.-isClosed page)) (not (.isClosed page)))
+                                 (catch :default _ false)))
+            pronto? (and (= estado "READY") chromium?
+                         (not (.-lastLoggedOut client))
+                         (or (nil? (.-zapbotStartupState client))
+                             (= "ready" (.-zapbotStartupState client))))]
+        {:status (if pronto? "ok" "degraded")
+         :whatsapp estado :chromium chromium?}))))
 
 (defn- url-path [^js req]
   (let [u (str (or (.-url req) ""))]
@@ -117,6 +122,13 @@
          (let [dados (resposta saude client)]
            (json-res! res (if (= "ok" (:status dados)) 200 503) dados))
 
+         (and (= "GET" method) (= "/jvm-health" path) (:on-jvm-health opts))
+         (let [result (try
+                        ((:on-jvm-health opts))
+                        (catch :default err
+                          {:ok false :error (or (.-message err) "jvm_probe_failed")}))]
+           (json-res! res (if (:ok result) 200 503) result))
+
          ;; Bootstrap: responde JSON primeiro; trabalho assíncrono fica no callback.
          (and on-discover
               (#{"GET" "POST"} method)
@@ -144,8 +156,9 @@
 (defn servir!
   ([saude client] (servir! saude client nil))
   ([saude ^js client opts]
-   ;; Loopback dentro do container: nenhuma porta publicada na VM.
-   (let [server (.createServer http #(atender! saude client %1 %2 opts))]
+   (let [host (or (:bind-host opts) "127.0.0.1")
+         server (.createServer http #(atender! saude client %1 %2 opts))]
      (.on server "error" #(log! (str "Healthcheck indisponível: " (.-message %))))
-     (.listen server 3001 "127.0.0.1")
+     (.listen server 3001 host)
+     (log! (str "HTTP health em http://" host ":3001/health"))
      server)))

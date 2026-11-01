@@ -8,30 +8,36 @@
 const PAGE_SIZE = 12;
 
 function envelope(requestId, text, extras = {}) {
+  const mentions = Array.isArray(extras.mentions)
+    ? extras.mentions.filter(m => typeof m === 'string' && m)
+    : null;
+  const withMentions = (msg) => (mentions && mentions.length
+    ? Object.assign({}, msg, { mentions })
+    : msg);
   const messages = [];
   if (extras.document && (extras.document.mediaId || extras.document.base64)) {
-    messages.push({
+    messages.push(withMentions({
       type: 'document',
       text: text || '',
       mediaId: extras.document.mediaId || null,
       base64: extras.document.base64 || null,
       mimeType: extras.document.mimeType || 'text/csv',
       filename: extras.document.filename || 'pokemon.csv'
-    });
+    }));
   } else if (extras.image && (extras.image.mediaId || extras.image.base64)) {
-    messages.push({
+    messages.push(withMentions({
       type: 'image',
       text: extras.caption || text,
       mediaId: extras.image.mediaId || null,
       base64: extras.image.base64 || null,
       mimeType: extras.image.mimeType || 'image/png',
       filename: extras.image.filename || 'pokemon-jvm.png'
-    });
+    }));
     if (text && extras.caption && text !== extras.caption && text.length > 900) {
-      messages.push({ type: 'text', text });
+      messages.push(withMentions({ type: 'text', text }));
     }
   } else if (text) {
-    messages.push({ type: 'text', text });
+    messages.push(withMentions({ type: 'text', text }));
   }
   return { requestId, messages, effects: extras.effects || [] };
 }
@@ -44,9 +50,35 @@ function shinyMark(p) {
   return p && p.shiny ? '✨ ' : '';
 }
 
+/** Formata duração em pt-BR a partir de segundos (ex.: 1800 → "30 minutos"). */
+function formatDurationPt(seconds) {
+  const s = Math.max(0, Math.ceil(Number(seconds) || 0));
+  if (s <= 0) return 'agora';
+  if (s < 60) return `${s}s`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const rem = s % 60;
+  const parts = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(h > 0 || rem > 0 ? `${m}m` : (m === 1 ? '1 minuto' : `${m} minutos`));
+  if (rem > 0 && h === 0) parts.push(`${rem}s`);
+  if (parts.length === 1 && m > 0 && h === 0 && rem === 0) {
+    return m === 1 ? '1 minuto' : `${m} minutos`;
+  }
+  return parts.join(' ') || `${s}s`;
+}
+
 function barraHp(atual, max) {
   const a = Math.max(0, Number(atual) || 0);
   const m = Math.max(1, Number(max) || 1);
+  const filled = Math.min(10, Math.round((a / m) * 10));
+  return `[${'█'.repeat(filled)}${'░'.repeat(10 - filled)}] ${a}/${m}`;
+}
+
+/** Barra de progresso XP do treinador (mesma escala visual do HP). */
+function barraXp(atual, necessario) {
+  const a = Math.max(0, Number(atual) || 0);
+  const m = Math.max(1, Number(necessario) || 1);
   const filled = Math.min(10, Math.round((a / m) * 10));
   return `[${'█'.repeat(filled)}${'░'.repeat(10 - filled)}] ${a}/${m}`;
 }
@@ -209,6 +241,37 @@ function textoXp(p) {
   return `XP ${atual}/${nec}`;
 }
 
+/** Aliases pt/en → id canônico (inglês). Lookup sempre via normalizar(). */
+const TIPO_ALIASES = {
+  fogo: 'fire', fire: 'fire',
+  agua: 'water', water: 'water',
+  planta: 'grass', grama: 'grass', grass: 'grass',
+  eletrico: 'electric', electric: 'electric',
+  pedra: 'rock', rock: 'rock',
+  terra: 'ground', ground: 'ground',
+  voador: 'flying', flying: 'flying',
+  psiquico: 'psychic', psychic: 'psychic',
+  gelo: 'ice', ice: 'ice',
+  dragao: 'dragon', dragon: 'dragon',
+  sombrio: 'dark', dark: 'dark',
+  aco: 'steel', steel: 'steel',
+  fada: 'fairy', fairy: 'fairy',
+  lutador: 'fighting', luta: 'fighting', fighting: 'fighting',
+  veneno: 'poison', poison: 'poison',
+  inseto: 'bug', bug: 'bug',
+  fantasma: 'ghost', ghost: 'ghost',
+  normal: 'normal'
+};
+
+function canonicalTipo(t) {
+  const n = normalizar(t);
+  return TIPO_ALIASES[n] || n;
+}
+
+function especieChave(p) {
+  return normalizar(p && (p.species || p.nome || p.nickname) || '');
+}
+
 function interpretarFiltros(tokens) {
   const ordem = tokens.includes('>') ? '>' : tokens.includes('<') ? '<' : null;
   const rest = tokens.filter(t => t !== '>' && t !== '<');
@@ -217,53 +280,64 @@ function interpretarFiltros(tokens) {
   const tipos = [];
   const raridades = [];
   let shiny = false;
+  let repetidos = false;
   for (let i = 0; i < rest.length; i++) {
     const t = rest[i];
-    if (t === 'shiny' || t === '✨') { shiny = true; continue; }
-    if ((t === 'nivel' || t === 'nível' || t === 'nv') && rest[i + 1] && /^\d+$/.test(rest[i + 1])) {
+    const tn = normalizar(t);
+    if (tn === 'shiny' || t === '✨') { shiny = true; continue; }
+    if (tn === 'repetidos' || tn === 'repetido' || tn === 'duplicados'
+        || tn === 'duplicado' || tn === 'dup' || tn === 'repeats') {
+      repetidos = true;
+      continue;
+    }
+    if ((tn === 'nivel' || tn === 'nv') && rest[i + 1] && /^\d+$/.test(rest[i + 1])) {
       nivel = Number(rest[++i]);
       continue;
     }
-    if (/^\d+$/.test(t) && rest[i - 1] && /^(nivel|nível|nv)$/.test(rest[i - 1])) continue;
+    if (/^\d+$/.test(t) && rest[i - 1] && /^(nivel|nível|nv)$/i.test(rest[i - 1])) continue;
     if (/^\d+$/.test(t)) continue; // página tratada à parte
-    if ((t === 'raridade' || t === 'rar') && rest[i + 1] && RARIDADE_FILTRO[normalizar(rest[i + 1])]) {
+    if ((tn === 'raridade' || tn === 'rar') && rest[i + 1] && RARIDADE_FILTRO[normalizar(rest[i + 1])]) {
       raridades.push(RARIDADE_FILTRO[normalizar(rest[++i])]);
       continue;
     }
-    const rar = RARIDADE_FILTRO[normalizar(t)];
+    const rar = RARIDADE_FILTRO[tn];
     if (rar) { raridades.push(rar); continue; }
-    // tipos comuns pt/en
-    const tipoAliases = {
-      fogo: 'fire', fire: 'fire', agua: 'water', água: 'water', water: 'water',
-      grama: 'grass', grass: 'grass', eletrico: 'electric', elétrico: 'electric',
-      electric: 'electric', pedra: 'rock', rock: 'rock', terra: 'ground', ground: 'ground',
-      voador: 'flying', flying: 'flying', psiquico: 'psychic', psíquico: 'psychic',
-      psychic: 'psychic', gelo: 'ice', ice: 'ice', dragao: 'dragon', dragão: 'dragon',
-      dragon: 'dragon', sombrio: 'dark', dark: 'dark', aco: 'steel', aço: 'steel',
-      steel: 'steel', fada: 'fairy', fairy: 'fairy', lutador: 'fighting', fighting: 'fighting',
-      veneno: 'poison', poison: 'poison', inseto: 'bug', bug: 'bug', fantasma: 'ghost',
-      ghost: 'ghost', normal: 'normal'
-    };
-    if (tipoAliases[t]) { tipos.push(tipoAliases[t]); continue; }
+    if (TIPO_ALIASES[tn]) { tipos.push(TIPO_ALIASES[tn]); continue; }
     nome = nome ? `${nome} ${t}` : t;
   }
-  return { ordem, nivel, nome: normalizar(nome), tipos, raridades, shiny };
+  return { ordem, nivel, nome: normalizar(nome), tipos, raridades, shiny, repetidos };
 }
 
 function filtrarColecao(items, tokens) {
   const f = interpretarFiltros(tokens);
   let list = items.slice();
+  let especiesRepetidas = null;
+  if (f.repetidos) {
+    const contagem = {};
+    for (const p of list) {
+      const k = especieChave(p);
+      if (!k) continue;
+      contagem[k] = (contagem[k] || 0) + 1;
+    }
+    especiesRepetidas = new Set(
+      Object.keys(contagem).filter(k => contagem[k] > 1)
+    );
+  }
   list = list.filter(p => {
     if (f.shiny && !p.shiny) return false;
     if (f.nivel != null && Number(p.nivel) !== f.nivel) return false;
     if (f.nome && !normalizar(nomePokemon(p)).includes(f.nome)) return false;
     if (f.tipos.length) {
-      const tipos = (p.tipos || []).map(normalizar);
-      if (!f.tipos.every(t => tipos.includes(t) || tipos.includes(normalizar(t)))) return false;
+      const tipos = (p.tipos || []).map(canonicalTipo);
+      if (!f.tipos.every(t => tipos.includes(t))) return false;
     }
     if (f.raridades.length) {
       const r = normalizar(p.raridade || 'comum');
       if (!f.raridades.includes(r)) return false;
+    }
+    if (especiesRepetidas) {
+      const k = especieChave(p);
+      if (!k || !especiesRepetidas.has(k)) return false;
     }
     return true;
   });
@@ -295,27 +369,146 @@ function paginaDe(tokens, total) {
   return { page: valida ? page : page, pages, valida };
 }
 
-function formatTrainer(data, playerName) {
+function pokemonStorageFields(data) {
+  const d = data || {};
+  const ocupacao = Number(d.ocupacaoPokemon ?? d.ocupacao ?? d.collectionCount ?? d.count ?? 0);
+  const capacidade = Number(d.capacidadePokemon ?? d.capacidade ?? 0);
+  const excesso = Number(d.excessoPokemon ?? Math.max(0, ocupacao - (capacidade || 0)));
+  const cheio = d.colecaoCheia === true
+    || d.cheio === true
+    || (capacidade > 0 && ocupacao >= capacidade);
+  return { ocupacao, capacidade, excesso, cheio };
+}
+
+/** Linha única: `📦 Armazenamento Pokémon: 119/100 — CHEIO (19 acima do limite)` */
+function formatPokemonStorageLine(data) {
+  const { ocupacao, capacidade, excesso, cheio } = pokemonStorageFields(data);
+  if (!capacidade) {
+    return `📦 Coleção: ${ocupacao} Pokémon`;
+  }
+  if (cheio && excesso > 0) {
+    return `📦 Armazenamento Pokémon: ${ocupacao}/${capacidade} — CHEIO (${excesso} acima do limite)`;
+  }
+  if (cheio) {
+    return `📦 Armazenamento Pokémon: ${ocupacao}/${capacidade} — CHEIO`;
+  }
+  return `📦 Armazenamento Pokémon: ${ocupacao}/${capacidade}`;
+}
+
+function formatTrainer(data, playerName, prefix = '!pk') {
+  const d = data || {};
   const nome = playerName || 'Treinador';
-  const perfil = data.profile || {};
-  const ativo = data.ativo;
+  const perfil = d.profile || {};
+  const ativo = d.ativo;
+  const joy = d.joy || {};
+  const hunt = d.hunt || {};
   const nivel = perfil.nivel || perfil.trainerLevel || 1;
   const xp = perfil.xp != null ? perfil.xp : (perfil.trainerXp || 0);
   const xpAtual = perfil.xpAtual != null ? perfil.xpAtual : 0;
   const xpNec = perfil.xpNecessario != null ? perfil.xpNecessario : 5;
-  return [
-    `🧢 *Treinador: ${nome}*`,
-    `⭐ Nível ${nivel} • ✨ PE ${xp} • próximo ${xpAtual}/${xpNec}`,
-    `🎖️ PE ginásios +${perfil.peGinasios || 0} • raides +${perfil.peRaids || 0}`,
-    `💰 Moedas: ${perfil.coins || 0} • Save: ${data.activeSaveName || data.activeSaveId || '?'}`,
-    `🔥 Capturas: sequência ${perfil.sequenciaCapturas || 0} • recorde ${perfil.maiorSequenciaCapturas || 0}`,
-    `⚡ Ativo: ${ativo
-      ? `#${(data.ativoIndex || 0) + 1} *${shinyMark(ativo)}${nomePokemon(ativo)}* • Nv.${ativo.nivel || 1}`
-      : 'nenhum'}`,
-    `📦 Coleção: ${data.collectionCount || 0} Pokémon`,
-    '',
-    '_Perfil JVM (dev). Cartão visual legado ainda não portado._'
-  ].join('\n');
+  const vitorias = perfil.vitoriasTreinador;
+  const peGin = perfil.peGinasios || 0;
+  const peRaid = perfil.peRaids || 0;
+  const xpIns = Number(perfil.xpInsignias || 0);
+  const xpMis = Number(perfil.xpMissoes || 0);
+  const seq = perfil.sequenciaCapturas;
+  const recorde = perfil.maiorSequenciaCapturas;
+  const economiaOk = d.economiaConfiavel === true;
+  const saveAtivo = d.activeSaveName || d.activeSaveId || '?';
+  const saves = Array.isArray(d.saves) ? d.saves : [];
+  const partyDefined = d.partyDefined === true;
+  const party = d.partyCount;
+  const shiny = Number(d.shinyCount != null ? d.shinyCount : 0);
+  const bagCap = d.capacidadeMochila;
+  const bagOcc = d.ocupacaoMochila;
+  const gymDef = Number(d.gymDefenseCount || 0);
+  const titulo = d.titulo || d.titleLabel || null;
+  const ginasiosNomes = d.ginasiosNomes || 'nenhuma';
+  const insignias = Array.isArray(d.insignias) ? d.insignias : [];
+
+  const lines = [
+    `🧢 *Treinador: ${nome}*`
+  ];
+  if (titulo) lines.push(`🏷️ Título: *${titulo}*`);
+  lines.push(`⭐ Nível ${nivel} • ✨ PE ${xp} • próximo ${xpAtual}/${xpNec}`);
+  lines.push(barraXp(xpAtual, xpNec));
+  lines.push(
+    `🎖️ PE extra: insígnias +${xpIns} • missões +${xpMis}`
+    + ` • ginásios +${peGin} • raides +${peRaid}`
+  );
+  lines.push(`🏛️ Ginásios: ${ginasiosNomes}`);
+  if (vitorias != null && Number(vitorias) > 0) {
+    lines.push(`🏅 Vitórias: ${vitorias}`);
+  }
+  lines.push(`🔥 Capturas: sequência ${seq || 0} • recorde ${recorde || 0}`);
+
+  lines.push('');
+  lines.push(formatPokemonStorageLine(d));
+  if (partyDefined) {
+    lines.push(`👥 Equipe: ${Number(party) || 0}`);
+  } else {
+    lines.push('👥 Equipe: não definida');
+  }
+  if (shiny > 0) {
+    lines.push(`✨ Shiny: ${shiny}`);
+  }
+  lines.push(`⚡ Ativo: ${ativo
+    ? `#${(d.ativoIndex || 0) + 1} *${shinyMark(ativo)}${nomePokemon(ativo)}* • Nv.${ativo.nivel || 1}`
+    : 'nenhum'}`);
+
+  lines.push('');
+  lines.push(`💾 Save ativo: *${saveAtivo}*`);
+  if (saves.length) {
+    for (const s of saves) {
+      const id = s.saveId || s.slotId || '?';
+      const label = s.displayName && s.displayName !== id ? `${id} — ${s.displayName}` : id;
+      const mark = (s.active === true || id === d.activeSaveId) ? ' 👉' : '';
+      const n = s.collectionCount != null ? s.collectionCount : 0;
+      lines.push(`• ${label}${mark}: ${n} Pokémon`);
+    }
+    lines.push(`_Gerenciar: ${prefix} saves_`);
+  } else if (d.savesCount != null) {
+    lines.push(`Saves: ${d.savesCount} · _${prefix} saves_`);
+  }
+
+  lines.push('');
+  if (economiaOk && (d.coins != null || perfil.coins != null)) {
+    lines.push(`💰 Moedas: ${d.coins != null ? d.coins : perfil.coins}`);
+  } else if (d.economiaConfiavel === false || d.coinsStatus === 'unknown-pending') {
+    lines.push('💰 Moedas: saldo histórico em reconciliação');
+  }
+  if (bagCap != null) {
+    lines.push(`🎒 Mochila de itens: ${bagOcc != null ? bagOcc : 0}/${bagCap}`);
+  }
+
+  const joyN = Number(joy.emTratamento || 0);
+  if (joyN > 0) {
+    const restMs = Number(joy.proximoRestanteMs || 0);
+    const when = restMs > 0 ? ` (próximo em ~${formatDurationPt(restMs / 1000)})` : '';
+    lines.push(`🏥 Joy: ${joyN} em tratamento${when}`);
+  }
+  if (hunt.cooldownOk === false && Number(hunt.cooldownRestanteS || 0) > 0) {
+    lines.push(`🎯 Caça: cooldown ~${formatDurationPt(hunt.cooldownRestanteS)}`);
+  } else if (hunt.cooldownOk === true) {
+    lines.push('🎯 Caça: disponível');
+  }
+  if (gymDef > 0) {
+    lines.push(`🏛️ Em ginásios: ${gymDef} Pokémon`);
+  }
+
+  if (insignias.length) {
+    const done = insignias.filter((i) => i.conquistada === true).length;
+    lines.push('');
+    lines.push(`🏅 *Conquistas: ${done}/${insignias.length}*`);
+    for (const i of insignias) {
+      const mark = i.conquistada ? '🏅' : '🔒';
+      const pe = i.xpRecompensa != null ? i.xpRecompensa : 0;
+      lines.push(`${mark} ${i.nome} — ${i.requisito} (+${pe} PE)`);
+    }
+    lines.push(`_Título: ${prefix} titulo_`);
+  }
+
+  return lines.join('\n');
 }
 
 function formatCollection(data, tokens, prefix = '!pk') {
@@ -339,9 +532,12 @@ function formatCollection(data, tokens, prefix = '!pk') {
   });
   const filtroDesc = [];
   if (filtros.shiny) filtroDesc.push('✨ shiny');
+  if (filtros.repetidos) filtroDesc.push('repetidos');
   if (filtros.ordem) filtroDesc.push(filtros.ordem === '>' ? 'força ↓' : 'força ↑');
   if (filtros.nivel != null) filtroDesc.push(`nível ${filtros.nivel}`);
-  if (filtros.tipos.length) filtroDesc.push(`tipo ${filtros.tipos.join('/')}`);
+  if (filtros.tipos.length) {
+    filtroDesc.push(`tipo ${filtros.tipos.map(t => TIPOS_PT[t] || t).join('/')}`);
+  }
   if (filtros.raridades && filtros.raridades.length) {
     filtroDesc.push(`raridade ${filtros.raridades.join('/')}`);
   }
@@ -350,6 +546,7 @@ function formatCollection(data, tokens, prefix = '!pk') {
   return [
     `🎒 *Seu time:* • Página ${Math.min(page, pages)}/${pages}`,
     `🧑‍🎓 Nível de treinador: ${data.trainerLevel || 1} • Save: ${data.saveId || '?'}`,
+    formatPokemonStorageLine(data),
     filtroDesc.length ? `🔎 Filtros: ${filtroDesc.join(' + ')} — ${list.length} Pokémon` : `Total: ${data.count || items.length}`,
     '',
     linhas.length ? linhas.join('\n') : (items.length ? 'Nenhum Pokémon do time corresponde a esse filtro.' : 'Coleção vazia. Use !pk iniciar.'),
@@ -359,9 +556,10 @@ function formatCollection(data, tokens, prefix = '!pk') {
     `Use ${prefix} escolher <número> pra trocar o ativo (👉), ou ${prefix} joy para enviar os feridos à Enfermeira Joy.`,
     `Veja a ficha do ativo com ${prefix} time ativo.`,
     `Favorito: ${prefix} favorito <número>.`,
-    `Combine filtros com ${prefix} time [tipo] [raridade] [nome] [nivel N].`,
+    `Combine filtros com ${prefix} time [tipo] [raridade] [nome] [nivel N] [repetidos].`,
     `Ordene por força: ${prefix} time > ou <.`,
-    `Modo texto: ${prefix} time txt.`
+    `Modo texto: ${prefix} time txt.`,
+    `+50 vagas: ${prefix} espaco comprar`
   ].filter(Boolean).join('\n');
 }
 
@@ -445,15 +643,23 @@ function formatStorage(data, tokens, prefix = '!pk') {
 }
 
 function formatSpace(data, prefix = '!pk') {
-  const ocupacao = Number(data && (data.ocupacaoPokemon ?? data.ocupacao ?? data.collectionCount ?? 0));
-  const capacidade = Number(data && (data.capacidadePokemon ?? data.capacidade ?? 0));
+  const { ocupacao, capacidade, excesso, cheio } = pokemonStorageFields(data);
   const livres = Math.max(0, capacidade - ocupacao);
+  const status = cheio
+    ? (excesso > 0
+      ? `CHEIO (${excesso} acima do limite) — Pokémon históricos preservados`
+      : 'CHEIO')
+    : `${livres} vagas livres`;
   return [
     '📦 *Espaço Pokémon*',
-    `Ocupação: ${ocupacao}/${capacidade} (${livres} vagas livres)`,
-    `Expansões: ${Number(data && (data.expansoesPokemon50 ?? data.expansoes ?? 0))}`,
-    `Use ${prefix} espaco comprar para adquirir +50 vagas.`
-  ].join('\n');
+    formatPokemonStorageLine(data),
+    `Status: ${status}`,
+    `Expansões compradas: ${Number(data && (data.expansoesPokemon50 ?? data.expansoes ?? 0))} (+${50 * Number(data && (data.expansoesPokemon50 ?? data.expansoes ?? 0))} vagas)`,
+    (data && data.economiaConfiavel === false)
+      ? '💰 Compra de expansão bloqueada: saldo de moedas deste save ainda não é confiável.'
+      : `Use ${prefix} espaco comprar para adquirir +50 vagas (200 moedas).`,
+    'Mochila de itens é separada: !mochila / !loja comprar mochila.'
+  ].filter(Boolean).join('\n');
 }
 
 function formatTeams(data, prefix = '!pk') {
@@ -674,6 +880,7 @@ const MENU_CMDS = [
   '`joy` — Enfermeira Joy',
   '`ginasio` — ginásios',
   '`raide` — raides cooperativas',
+  '`sair` — abandonar batalha/raid/PvP',
   '`ovos` — Adventure Sync',
   '`saves` / `ativar a|b` — saves A/B'
 ];
@@ -816,7 +1023,8 @@ function formatError(err) {
     SAVE_NOT_FOUND: '⚠️ Save não encontrado.',
     STALE_WRITER_FENCE:
       '⚠️ Save/fence obsoleto (provavelmente houve !pk ativar). Consulte !pk saves e tente de novo.',
-    WRITER_FENCE_CONFLICT: '⚠️ Conflito de fence. Tente novamente com o mesmo operationId.',
+    WRITER_FENCE_CONFLICT:
+      '⚠️ Conflito ao gravar (outra ação no mesmo save). Espere 1s e tente de novo com !pk cacar / o mesmo comando.',
     ACTIVATE_CONFLICT: '⚠️ Não foi possível alternar o save (conflito). Tente de novo.',
     RECEIPT_PAYLOAD_MISMATCH:
       '⚠️ Mesmo operationId com payload diferente — operação rejeitada.',
@@ -833,12 +1041,34 @@ function formatError(err) {
     INVALID_GIFT_TARGET: '🎁 Marque um amigo válido: !presente @amigo.',
     GIFT_TARGET_CHANGED: '🎁 O save do destinatário mudou durante o envio. Confira e tente novamente.',
     MISSION_PERIOD_CONFLICT: '📋 O período de missões mudou. Consulte !missoes e tente novamente.',
-    COLLECTION_FULL: '🎒 Bolsa cheia: libere espaço antes de capturar.',
+    ECONOMY_UNRELIABLE:
+      '💰 Moedas deste save de recuperação ainda não são confiáveis (saldo histórico pendente). '
+      + 'A capacidade Pokémon é só informativa — compra de expansão bloqueada até a economia ser reconciliada.',
+    COLLECTION_FULL: (() => {
+      const det = (err && err.details) || {};
+      const ocup = det.count != null ? det.count : det.ocupacao;
+      const cap = det.capacidade;
+      const exc = det.excesso;
+      if (ocup != null && cap != null) {
+        const over = exc != null ? exc : Math.max(0, Number(ocup) - Number(cap));
+        return over > 0
+          ? `📦 Armazenamento Pokémon cheio: ${ocup}/${cap} (${over} acima do limite). Libere ou compre vagas (!pk espaco) antes de capturar.`
+          : `📦 Armazenamento Pokémon cheio: ${ocup}/${cap}. Libere ou compre vagas (!pk espaco) antes de capturar.`;
+      }
+      return '📦 Armazenamento Pokémon cheio: libere ou compre vagas (!pk espaco) antes de capturar.';
+    })(),
     BATTLE_PENDING: '⚠️ Há batalha/encontro em andamento neste save — não dá para alternar A↔B agora.',
     BATTLE_SAVE_MISMATCH: '⚠️ Encontro pertence a outro save — callback antigo rejeitado.',
     BATTLE_ALREADY_ACTIVE: '⚔️ Já existe uma batalha/encontro seu em andamento.',
-    BATTLE_BUSY: '🚫 Termine a batalha/caça antes de trocar o ativo, evoluir ou alterar golpes.',
-    INVALID_COLLECTION_INDEX: '❓ Número de Pokémon inválido. Veja com !pk time.',
+    BATTLE_BUSY: '🚫 Termine a batalha/caça antes de trocar o ativo, evoluir, alterar golpes ou usar o professor.',
+    INVALID_COLLECTION_INDEX: '❓ Número inválido. Consulte !pk tm.',
+    PROFESSOR_BUSY: '⚠️ Já existe um envio pendente. Confirme o código ou use !pk professor cancelar.',
+    PROFESSOR_INVALID_TOKEN: '❓ Confirmação inválida, expirada ou Pokémon alterado/protegido. Faça um novo pedido de envio.',
+    PROFESSOR_EXPIRED: '❓ Confirmação expirada (5 minutos). Faça um novo !pk professor enviar <número>.',
+    PROFESSOR_NO_CARDS: '🎟️ Você não tem cartões dessa família.',
+    POKEMON_FAVORITE: '⭐ Remova a marca de favorito antes de enviar este Pokémon ao professor.',
+    POKEMON_IN_TREATMENT: '🏥 Este Pokémon está na enfermaria. Espere o retorno antes de enviar ao professor.',
+    POKEMON_MAX_LEVEL: '🏅 Este Pokémon já está no nível máximo. Nenhum cartão foi gasto.',
     INVALID_MOVE_SLOT: '❓ Informe um golpe válido (1-4) para substituir ou liberar vaga.',
     MOVE_ALREADY_KNOWN: '❓ Esse golpe já é conhecido (ou já foi oferecido/removido).',
     MUST_KEEP_STAB_MOVE: '🚫 Mantenha pelo menos um ataque ofensivo do próprio tipo.',
@@ -874,7 +1104,9 @@ function formatError(err) {
     RAID_NOT_OPEN: '❓ As inscrições desta raide não estão abertas.',
     ALREADY_IN_RAID: '⚔️ Você já está inscrito nesta raide.',
     RAID_FULL: '🚫 A raide já está cheia (máx. 6).',
-    RAID_CANNOT_LEAVE: '🚫 Só é possível sair durante as inscrições.',
+    RAID_CANNOT_LEAVE: '🚫 Não é possível sair desta raide neste momento.',
+    FEATURE_DISABLED: '⚠️ Este comando está temporariamente desabilitado. Tente mais tarde.',
+    NOT_FOUND: '❓ Rota inexistente.',
     RAID_NEED_PLAYERS: '❓ Precisa de pelo menos 2 inscritos para iniciar.',
     RAID_NOT_IN_COMBAT: '❓ A raide não está em combate.',
     RAID_NOT_YOUR_TURN: '⏳ Não é a sua vez de atacar.',
@@ -897,7 +1129,7 @@ function formatError(err) {
     EGG_SAVE_MISMATCH: '⚠️ Esse ovo foi incubado em outro save — volte ao save de origem.',
     ADVENTURE_ACCOUNT_MISSING: '❓ Conta Adventure Sync ainda não criada. Use !pk ovos.',
     INSUFFICIENT_COINS: '❌ Moedas insuficientes para essa compra.',
-    BAG_FULL: '🎒 Mochila cheia! Use itens ou compre expansão: !loja comprar mochila.',
+    BAG_FULL: '🎒 Sem espaço na mochila (kit precisa de 10 vagas). Libere itens ou compre expansão: !loja comprar mochila.',
     UNKNOWN_SHOP_ITEM: '❓ Item não encontrado. Use !loja para ver o catálogo.',
     ITEM_NOT_FOR_SALE: '🎁 Esse item não está à venda (missões, diário ou ginásio).',
     ITEM_USE_UNSUPPORTED: '🚧 Uso desse item ainda não está no adaptador JVM.',
@@ -917,6 +1149,13 @@ function formatError(err) {
     const d = (err && err.details) || {};
     const resumo = d.resumoTexto || d['resumo-texto'];
     if (resumo) base = `${base}\n${resumo}\nUse !pk cacar <área>.`;
+  }
+  if (code === 'HUNT_COOLDOWN') {
+    const d = (err && err.details) || {};
+    const ms = d.restanteMs != null ? d.restanteMs : d['restante-ms'];
+    if (ms != null) {
+      base = `⏳ Calma aí! Você pode caçar de novo em ${formatDurationPt(Number(ms) / 1000)}.`;
+    }
   }
   return base;
 }
@@ -950,11 +1189,23 @@ function formatHuntEligibility(plan) {
   if (!e.temPokemon) return '❓ Você precisa de um Pokémon na equipe para caçar. Use !pk iniciar.';
   if (!e.ativoVivo) return '😵 Seu Pokémon ativo está desmaiado. Cure-o antes de caçar.';
   if (!e.cooldownOk) {
-    return `⏳ Calma aí! Você pode caçar de novo em ${e.cooldownRestanteS || '?'}s.`;
+    const secs = e.cooldownRestanteS != null ? e.cooldownRestanteS : e['cooldown-restante-s'];
+    return `⏳ Calma aí! Você pode caçar de novo em ${formatDurationPt(secs)}.`;
   }
   if (!e.semBatalhaPropria) return '⚔️ Já existe uma batalha/encontro seu em andamento.';
   if (!e.chatLivre) return '⚔️ Já existe uma caçada em andamento neste chat.';
   return null;
+}
+
+function formatHuntStorageHint(plan) {
+  const e = (plan && plan.eligibilidade) || {};
+  if (!(e.somenteBatalha || e.colecaoCheia)) return null;
+  return formatPokemonStorageLine({
+    ocupacaoPokemon: e.ocupacaoPokemon,
+    capacidadePokemon: e.capacidadePokemon,
+    excessoPokemon: e.excessoPokemon,
+    colecaoCheia: true
+  }) + ' — captura bloqueada; batalha ainda permitida.';
 }
 
 /**
@@ -1000,10 +1251,10 @@ function formatBattleState(battle, prefix = '!pk', opts = {}) {
     barraHp(hpO.atual, hpO.max),
     reservas,
     '',
-    `Escolha: ${prefix} atacar <1-${nGolpes}> · ${prefix} <1-${nGolpes}> · ${prefix} defender · ${prefix} pocao`,
+    `Escolha: ${prefix} atacar <1-${nGolpes}> · ${prefix} <1-${nGolpes}> · ${prefix} defender · ${prefix} pocao · ${prefix} sair`,
     golpes,
     '',
-    `📖 Ações: ${prefix} atacar ajuda · ${prefix} defender · ${prefix} pocao`
+    `📖 Ações: ${prefix} atacar ajuda · ${prefix} defender · ${prefix} pocao · ${prefix} sair`
   ].filter(v => v !== null).join('\n');
 }
 
@@ -1062,7 +1313,8 @@ function formatHuntStart(plan, result, prefix = '!pk') {
     surto && plan && plan.evento ? `🎉 ${plan.evento.nome} — encontro do evento!` : null,
     `Um ${textoRaridade(selvagem)} *${selvagem.nome || '?'}* apareceu.`,
     somente
-      ? 'Bolsa cheia: esta caçada vale batalha e XP, sem captura.'
+      ? ((formatHuntStorageHint(plan) || formatHuntStorageHint({ eligibilidade: result }))
+        || '📦 Armazenamento Pokémon cheio: esta caçada vale batalha e XP, sem captura.')
       : 'Derrote-o antes de tentar capturar!'
   ].filter(Boolean).join('\n');
   const estadoBattle = {
@@ -1155,18 +1407,46 @@ function formatBattleTurn(data, prefix = '!pk') {
   if (data.gymResolve || (!b.active && gym && b.outcome)) {
     return formatGymResolve(data.gymResolve || { venceu: b.outcome === 'win' }, b);
   }
-  if (data.aguardandoCaptura || b.aguardandoCaptura) {
+  const bolsaCheiaLiberou = Boolean(
+    data.selvagemLiberadoBolsaCheia || b.selvagemLiberadoBolsaCheia
+    || ((data.somenteBatalha || b.somenteBatalha)
+        && (data.aguardandoCaptura || b.aguardandoCaptura
+            || b.outcome === 'win' || data.outcome === 'win'))
+  );
+  if (bolsaCheiaLiberou) {
     const hpX = hpPair(x, (b.hp || {}).x);
-    return [
+    const header = [
       `🏁 *${nome}* foi derrotado!`,
       area.nome ? `${area.emoji || '🗺️'} ${area.nome}` : null,
-      hpX ? `🐾 *${nomePokemon(x)}* — ${barraHp(hpX.atual, hpX.max)}` : null,
-      'Agora você pode capturar:',
-      `${prefix} capturar`,
-      data.chanceBaseCaptura != null
-        ? `Chance-base carimbada: ${data.chanceBaseCaptura}%`
-        : null
+      hpX ? `🐾 *${nomePokemon(x)}* — ${barraHp(hpX.atual, hpX.max)}` : null
     ].filter(Boolean).join('\n');
+    return [
+      header,
+      '🎒 Bolsa cheia: o selvagem foi liberado. Vitória registrada; sem captura nesta caçada.'
+    ].join('\n');
+  }
+  if (data.aguardandoCaptura || b.aguardandoCaptura) {
+    const hpX = hpPair(x, (b.hp || {}).x);
+    const header = [
+      `🏁 *${nome}* foi derrotado!`,
+      area.nome ? `${area.emoji || '🗺️'} ${area.nome}` : null,
+      hpX ? `🐾 *${nomePokemon(x)}* — ${barraHp(hpX.atual, hpX.max)}` : null
+    ].filter(Boolean).join('\n');
+    // Paridade master: após o KO, menu de bolas direto — sem etapa "carimbada".
+    const menu = formatCaptureMenu({
+      encounter: {
+        aguardandoCaptura: true,
+        pokemonO: o,
+        chanceBaseCaptura: data.chanceBaseCaptura != null
+          ? data.chanceBaseCaptura
+          : b.chanceBaseCaptura,
+        tentativasCaptura: data.tentativasCaptura != null
+          ? data.tentativasCaptura
+          : (b.tentativasCaptura || 0),
+        inventory: data.inventory || b.inventory || []
+      }
+    }, prefix);
+    return `${header}\n\n${menu}`;
   }
   if (b.outcome === 'lose' || data.outcome === 'lose') {
     return gym
@@ -1178,10 +1458,12 @@ function formatBattleTurn(data, prefix = '!pk') {
   }
   const la = b.lastAction || {};
   const switchLine = b.lastSwitch && b.lastSwitch.nome
-    ? `🔁 Entra *${b.lastSwitch.nome}*!`
+    ? `🔁 Envia *${b.lastSwitch.nome}*!`
     : null;
   let acaoLinha = null;
-  if (la.action === 'defend' || la.action === ':defend') {
+  if (la.mensagem) {
+    acaoLinha = la.mensagem;
+  } else if (la.action === 'defend' || la.action === ':defend') {
     acaoLinha = la.impedido
       ? '🛡️ Tentou defender, mas ficou impedido pelo status.'
       : '🛡️ Entrou em posição defensiva (esquiva / metade do dano).';
@@ -1198,10 +1480,12 @@ function formatBattleTurn(data, prefix = '!pk') {
   } else if (la.dano != null) {
     acaoLinha = `Último golpe: ${la.dano} de dano.`;
   }
+  const rivalLinha = la.mensagemRival || null;
   const cabeçalhoTurno = [
     switchLine,
-    `⚔️ Turno ${b.turnIndex != null ? b.turnIndex : '?'}`,
-    acaoLinha
+    acaoLinha,
+    rivalLinha,
+    `⚔️ Turno ${b.turnIndex != null ? b.turnIndex : '?'}`
   ].filter(Boolean).join('\n');
   const estado = formatBattleState(b, prefix);
   if (estado.startsWith('❌')) return estado;
@@ -1406,11 +1690,74 @@ function formatGymHeal(data) {
 function formatGymBlocked(action) {
   const map = {
     ranking: '🚧 Ranking de ginásio ainda não persistido no Datomic.',
-    historico: '🚧 Histórico de ginásio ainda não persistido no Datomic.',
-    cancelar: '🚧 Cancelar raide ainda não está no núcleo JVM.',
-    abrir: '🚧 A aparição automática de raides foi removida; abertura admin não está no WhatsApp.'
+    historico: '🚧 Histórico de ginásio ainda não persistido no Datomic.'
   };
   return map[action] || formatUnavailable(`ginasio ${action || ''}`.trim());
+}
+
+/** Catálogo A6 — mesmos ids de pokemon.domain.gym/ginasios. */
+const RAID_GYMS = [
+  { id: 'pedra', nome: '🪨 Pedra', nivel: 10 },
+  { id: 'agua', nome: '💧 Água', nivel: 20 },
+  { id: 'eletrico', nome: '⚡ Elétrico', nivel: 30 },
+  { id: 'planta', nome: '🍃 Planta', nivel: 40 },
+  { id: 'fogo', nome: '🔥 Fogo', nivel: 50 }
+];
+
+function resolveRaidGym(token) {
+  const raw = String(token || '').trim().toLowerCase();
+  if (!raw) return null;
+  const n = parseInt(raw, 10);
+  if (!Number.isNaN(n) && n >= 1 && n <= RAID_GYMS.length) {
+    return RAID_GYMS[n - 1].id;
+  }
+  const hit = RAID_GYMS.find(g => g.id === raw);
+  return hit ? hit.id : null;
+}
+
+function formatRaidOpenHelp(prefix = '!pk') {
+  return [
+    '⚔️ *Abrir raide cooperativa*',
+    'Lobby: até 5 treinadores · mín. 2 · 2 minutos de inscrição.',
+    'O criador também precisa entrar com `raide entrar`.',
+    '',
+    '*Ginásios:*',
+    ...RAID_GYMS.map((g, i) => `${i + 1}. ${g.nome} (nv.${g.nivel}) — \`${g.id}\``),
+    '',
+    `Use: ${prefix} raide abrir <n|id>`
+  ].join('\n');
+}
+
+function formatRaidPrazo(expiraMs, agoraMs) {
+  const exp = Number(expiraMs);
+  if (!Number.isFinite(exp) || exp <= 0) return null;
+  const agora = Number.isFinite(Number(agoraMs)) ? Number(agoraMs) : Date.now();
+  const sec = Math.max(0, Math.ceil((exp - agora) / 1000));
+  if (sec <= 0) return '⏱️ Prazo esgotado';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `⏱️ ${m}m${String(s).padStart(2, '0')}s restantes` : `⏱️ ${s}s restantes`;
+}
+
+function formatRaidOpened(data, prefix = '!pk') {
+  const r = (data && data.raid) || {};
+  const chefe = r.chefe || {};
+  const prazo = formatRaidPrazo(r.expira, data && data.agora);
+  return [
+    `📣 *Raide aberta* em ${r.nomeGinasio || r.ginasio || 'ginásio'}!`,
+    `Chefe: *${chefe.nome || '?'}* · liga ${r.liga || '?'}`,
+    prazo || 'Inscrições por 2 minutos · máx. 5 treinadores.',
+    `Entre: ${prefix} raide entrar auto`,
+    `Status: ${prefix} raide · Cancelar: ${prefix} raide cancelar`
+  ].join('\n');
+}
+
+function formatRaidCancelled(data, prefix = '!pk') {
+  const r = (data && data.raid) || {};
+  return [
+    `🚫 Raide em ${r.nomeGinasio || r.ginasio || 'ginásio'} cancelada.`,
+    `Abrir outra: ${prefix} raide abrir`
+  ].join('\n');
 }
 
 function formatGymRanking(data) {
@@ -1436,6 +1783,7 @@ const RAID_SUB = {
   atk: 'atacar', atacar: 'atacar',
   cap: 'capturar', capturar: 'capturar',
   tm: 'time', time: 'time',
+  st: 'status', status: 'status',
   abr: 'abrir', abrir: 'abrir',
   can: 'cancelar', cancelar: 'cancelar'
 };
@@ -1454,19 +1802,23 @@ function formatRaidStatus(data, prefix = '!pk') {
     ].join('\n');
   }
   const chefe = r.chefe || {};
+  const prazo = r.fase === 'inscricoes'
+    ? formatRaidPrazo(r.expira, data && data.agora)
+    : null;
   const lines = [
     `⚔️ *Raide — ${chefe.nome || 'Chefe'}* / ${r.liga || '?'}`,
     `🏛️ ${r.nomeGinasio || r.ginasio || 'Ginásio'} · fase *${r.fase}*`,
     r.fase === 'combate' || r.fase === 'vitoria'
       ? `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`
-      : `Inscritos: ${r.nParticipantes || 0}/6`,
+      : `Inscritos: ${r.nParticipantes || 0}/5`,
+    prazo,
     r.vez ? `Vez: ${r.suaVez ? '*você*' : r.vez}` : null,
     r.capturaPendente
       ? `🎯 Captura aberta: ${prefix} raide capturar <bola>`
       : null,
     '',
     r.fase === 'inscricoes'
-      ? `${prefix} raide entrar auto · ${prefix} raide iniciar · ${prefix} raide sair`
+      ? `${prefix} raide entrar auto · ${prefix} raide iniciar · ${prefix} raide sair · ${prefix} raide cancelar`
       : (r.fase === 'combate'
         ? `${prefix} raide atacar <1-4>`
         : null)
@@ -1488,16 +1840,42 @@ function formatRaidJoin(data, prefix = '!pk') {
   const r = (data && data.raid) || {};
   return [
     `✅ Você entrou na raide de *${r.nomeGinasio || r.ginasio || 'ginásio'}*!`,
-    `Inscritos: ${r.nParticipantes || '?'}/6 · liga ${r.liga || '?'}`,
+    `Inscritos: ${r.nParticipantes || '?'}/5 · liga ${r.liga || '?'}`,
     data.collectionIndex != null
       ? `Pokémon nº ${Number(data.collectionIndex) + 1} da coleção.`
       : null,
+    data.duplicate ? '_já estava inscrito (idempotente)_' : null,
     `Quando houver ≥2: ${prefix} raide iniciar`
   ].filter(Boolean).join('\n');
 }
 
 function formatRaidLeave() {
   return '👋 Você saiu das inscrições da raide.';
+}
+
+function formatLeaveResult(data, prefix = '!pk') {
+  const status = (data && data.status) || 'left';
+  const modality = (data && data.modality) || '';
+  if (status === 'no_battle') {
+    return '⚠️ Você não está participando de nenhuma batalha.';
+  }
+  if (status === 'already_finished') {
+    return 'ℹ️ Essa batalha já foi encerrada.';
+  }
+  if (modality === 'pvp') {
+    const outcome = data && data.battle && (data.battle.outcome || data.battle.Outcome);
+    if (outcome === 'cancelled' || outcome === ':cancelled') {
+      return '🏳️ Desafio PvP cancelado.';
+    }
+    return '🏳️ Você desistiu da batalha PvP. O adversário foi notificado.';
+  }
+  if (modality === 'raid') {
+    if (data && data.raidEnded) {
+      return '🏳️ Você saiu e a raide encerrou (ninguém restou no combate).';
+    }
+    return '🏳️ Você saiu da raide. Os demais participantes continuam.';
+  }
+  return '🏳️ Você abandonou a batalha. Seus Pokémon foram preservados e você pode continuar jogando.';
 }
 
 function formatRaidStart(data, prefix = '!pk') {
@@ -1548,15 +1926,21 @@ function formatRaidCapture(data, prefix = '!pk') {
 function formatJoyStatus(data, prefix = '!pk') {
   const beds = (data && data.enfermaria) || [];
   const feridos = (data && data.feridos) || [];
-  const mins = (data && data.tempoTratamentoMinutos) || 30;
+  const secsCfg = (data && (data.tempoTratamentoSegundos != null
+    ? data.tempoTratamentoSegundos
+    : data['tempo-tratamento-segundos']));
+  const mins = secsCfg != null
+    ? Math.max(1, Math.ceil(Number(secsCfg) / 60))
+    : ((data && data.tempoTratamentoMinutos) || 30);
   const lines = ['🏥 *Centro Pokémon — Enfermeira Joy*'];
   if (beds.length) {
     lines.push(`Leitos: ${beds.length} (${data.prontos || 0} pronto(s))`);
     for (const b of beds) {
       const nome = (b.pokemon && (b.pokemon.nome || b.pokemon.species)) || '?';
+      const restMs = b.restanteMs != null ? b.restanteMs : b['restante-ms'];
       const rest = b.pronto
         ? 'pronto — use o comando de novo para recolher'
-        : `~${Math.ceil((b.restanteMs || 0) / 60000)} min`;
+        : formatDurationPt(Number(restMs || 0) / 1000);
       lines.push(`• ${nome} — ${rest}`);
     }
   } else {
@@ -1580,9 +1964,15 @@ function formatJoyStatus(data, prefix = '!pk') {
 
 function formatJoySend(data, prefix = '!pk') {
   const nome = (data && data.pokemon && (data.pokemon.nome || data.pokemon.species)) || 'Pokémon';
+  const restMs = data && (data.restanteMs != null ? data.restanteMs : data['restante-ms']);
+  const secsCfg = data && (data.tempoTratamentoSegundos != null
+    ? data.tempoTratamentoSegundos
+    : data['tempo-tratamento-segundos']);
+  const secs = restMs != null ? Number(restMs) / 1000
+    : (secsCfg != null ? Number(secsCfg) : 1800);
   return [
     `🏥 A Enfermeira Joy recebeu *${nome}*.`,
-    'Eles voltarão com HP cheio em 30 minutos.',
+    `Voltará com HP cheio em ${formatDurationPt(secs)}.`,
     `Acompanhe: ${prefix} joy · ${prefix} time`
   ].join('\n');
 }
@@ -1696,6 +2086,58 @@ function formatShopDetails(item, prefix = '!loja') {
     item.preco != null ? `💰 Preço: ${item.preco} moedas` : '🎁 Não está à venda',
     item.descricao || ''
   ].filter(Boolean).join('\n');
+}
+
+function formatBagKit(data, prefix = '!mochila') {
+  const d = data || {};
+  if (d.kitAlreadyClaimed || (d.duplicate && !(d.qty > 0))) {
+    return '🎁 Você já resgatou o kit inicial.';
+  }
+  const texto = d.rewardsText
+    || (d.qty ? `${d.qty}× Pokébola` : null)
+    || formatMissionItemsFromMap(d.added || d.items);
+  return `🎁 Você recebeu ${texto}!`;
+}
+
+function formatBagDaily(data, prefix = '!mochila') {
+  const d = data || {};
+  const tz = d.timezone || 'America/Sao_Paulo';
+  if (d.dailyAlreadyClaimed || (d.duplicate && !(d.sequencia > 0 && d.items && Object.keys(d.items).length))) {
+    return `🎁 O bônus diário de hoje já foi resgatado. Volte após a meia-noite (${tz}).`;
+  }
+  const seq = d.sequencia != null ? d.sequencia : 1;
+  const texto = d.rewardsText || formatMissionItemsFromMap(d.items || d.added);
+  let msg = `🎁 *Bônus diário resgatado — sequência de ${seq} dia(s):* ${texto}!`;
+  if (d.frutaDourada) {
+    msg += ' 🌟 Você ganhou uma Fruta Frambo Dourada!';
+  }
+  const pending = d.pending || {};
+  const pendingQty = Object.values(pending).reduce((a, n) => a + Number(n || 0), 0);
+  if (pendingQty > 0) {
+    msg += ` Itens sem espaço ficaram pendentes: ${prefix} resgatar.`;
+  }
+  return msg;
+}
+
+function formatMissionItemsFromMap(map) {
+  if (!map || typeof map !== 'object') return 'recompensas';
+  const names = Object.assign({}, MISSION_ITEM_NAMES, {
+    'fruta-dourada': 'Fruta Frambo Dourada',
+    fruta: 'Fruta Frambo'
+  });
+  const order = ['pokebola', 'grande-bola', 'ultra-bola', 'fruta', 'fruta-dourada',
+    'reviver', 'catalisador-evolutivo'];
+  const parts = [];
+  for (const id of order) {
+    const q = Number(map[id] || 0);
+    if (q > 0) parts.push(`${q}× ${names[id] || id}`);
+  }
+  for (const [id, q0] of Object.entries(map)) {
+    if (order.includes(id)) continue;
+    const q = Number(q0 || 0);
+    if (q > 0) parts.push(`${q}× ${names[id] || id}`);
+  }
+  return parts.join(', ') || 'recompensas';
 }
 
 function formatInventory(data, prefix = '!mochila') {
@@ -1936,9 +2378,12 @@ function resolveCommand(tokens) {
 }
 
 module.exports = {
+  formatDurationPt,
+  barraXp,
   PAGE_SIZE,
   envelope,
   formatTrainer,
+  formatPokemonStorageLine,
   formatCollection,
   formatStorage,
   formatTeams,
@@ -1960,12 +2405,116 @@ module.exports = {
   formatError,
   formatUnavailable,
   formatFriendship: d => `💛 ${d && d.species ? d.species : 'Pokémon'}: ${d && d.value != null ? d.value : 70}/255 — ${d && d.label ? d.label : 'ainda se conhecendo'}`,
-  formatTitles: d => {
+  formatTitles: (d, prefix = '!pk') => {
     const titles = Array.isArray(d && d.titles) ? d.titles : [];
-    return `🏅 Títulos${d && d.selected ? ` (atual: ${d.selected})` : ''}:\n` +
-      (titles.length ? titles.map((t, i) => `${i + 1}. ${t.label || t.id}`).join('\n') : 'Nenhum título desbloqueado.');
+    const selectedId = d && d.selected;
+    const selectedLabel = selectedId
+      ? ((titles.find((t) => t.id === selectedId) || {}).label || selectedId)
+      : null;
+    const head = selectedLabel
+      ? `🏷️ *Títulos conquistados* (atual: *${selectedLabel}*)`
+      : '🏷️ *Títulos conquistados*';
+    const body = titles.length
+      ? titles.map((t, i) => `${i + 1}. ${t.label || t.id}`).join('\n')
+      : 'Nenhum ainda. Complete conquistas do treinador.';
+    return `${head}\n${body}\n\nEscolha com ${prefix} titulo <número>.`;
   },
-  formatProfessor: d => `🎓 Professor: ${d && d.token ? `confirme com ${d.token}` : (d && d.used ? 'cartão utilizado.' : 'operação concluída.')}`,
+  formatProfessorCards: (d, prefix = '!pk') => {
+    const cards = (d && d.cards) || {};
+    const lines = Object.keys(cards)
+      .sort()
+      .filter((k) => Number(cards[k]) > 0)
+      .map((k) => `${k}: ${cards[k]}`);
+    return [
+      '🎟️ *Cartões de XP por família*',
+      lines.length ? lines.join('\n') : 'Você ainda não tem cartões.',
+      `Cada cartão concede +3 XP: ${prefix} professor usar <número>.`
+    ].join('\n');
+  },
+  formatProfessorHelp: (prefix = '!pk') => [
+    '👨‍🔬 *Professor — cartões de XP*',
+    `Enviar: ${prefix} professor enviar <número> ou ${prefix} professor enviar 1,2,3`,
+    'Cada transferência dá 1 cartão da família. Confirme em até 5 minutos.',
+    `Usar 1 cartão (+3 XP): ${prefix} professor usar <número>`,
+    `Saldo: ${prefix} professor cartoes`,
+    `Cancelar envio: ${prefix} professor cancelar`
+  ].join('\n'),
+  formatProfessor: (d, prefix = '!pk') => {
+    const data = d || {};
+    const nested = data.summary && typeof data.summary === 'object' ? data.summary : {};
+    const x = Object.assign({}, nested, data);
+    if (x.cancelled) {
+      return '✅ Transferência cancelada. Nenhum Pokémon foi enviado.';
+    }
+    if (x.confirmed) {
+      const count = Number(x.count || x.n || ((x.entries && x.entries.length) || 1)) || 1;
+      if (count > 1) {
+        const cards = Number(x.cardsGranted != null ? x.cardsGranted : count) || count;
+        const items = Number(x.itemsReturned || 0);
+        return [
+          `✅ *${count}* Pokémon enviados definitivamente ao professor.`,
+          `+${cards} cartão(ões) de família e ${count} vaga(s) liberada(s).`,
+          items > 0 ? `${items} item(ns) equipado(s) voltaram para a mochila.` : null,
+          `Confira os novos números em ${prefix} tm.`
+        ].filter(Boolean).join('\n');
+      }
+      const fam = x.family || '?';
+      const nome = x.nome || x.species || 'Pokémon';
+      const item = x.itemReturned || x.item;
+      return [
+        `✅ *${nome}* enviado definitivamente ao professor.`,
+        `+1 cartão da família *${fam}* e uma vaga liberada.`,
+        item ? 'O item equipado voltou para a mochila.' : null,
+        `Confira os novos números em ${prefix} tm.`
+      ].filter(Boolean).join('\n');
+    }
+    if (x.used) {
+      const fam = x.family || '?';
+      const nome = x.nome || 'Pokémon';
+      const nivel = x.level != null ? x.level : '?';
+      const up = x.leveledUp === true;
+      return [
+        `🎟️ 1 cartão da família *${fam}* usado em *${nome}*: +3 XP.`,
+        up ? `Subiu para o nível ${nivel}!` : null
+      ].filter(Boolean).join('\n');
+    }
+    if (x.token) {
+      const entries = Array.isArray(x.entries) && x.entries.length
+        ? x.entries
+        : null;
+      if (entries && entries.length > 1) {
+        const linhas = entries.map((e) => {
+          const n = e.displayIndex || ((Number(e.index) || 0) + 1);
+          const nome = e.nome || e.species || 'Pokémon';
+          const nivel = e.nivel != null ? e.nivel : (e.level != null ? e.level : '?');
+          const shiny = e.shiny ? ' ✨' : '';
+          return `• nº ${n} *${nome}* Nv.${nivel}${shiny} (${e.family || '?'})`;
+        });
+        const comItem = entries.filter((e) => e.item).length;
+        return [
+          `⚠️ Enviar *${entries.length}* Pokémon ao professor? A transferência é definitiva.`,
+          linhas.join('\n'),
+          `Receberá ${entries.length} cartão(ões) de família (+3 XP cada ao usar).`,
+          comItem ? `${comItem} item(ns) equipado(s) voltarão à mochila.` : null,
+          `Confirme em até 5 minutos: ${prefix} professor confirmar ${x.token}`,
+          `Cancelar: ${prefix} professor cancelar`
+        ].filter(Boolean).join('\n');
+      }
+      const n = x.displayIndex || ((Number(x.index) || 0) + 1);
+      const nome = x.nome || x.species || 'Pokémon';
+      const nivel = x.nivel != null ? x.nivel : (x.level != null ? x.level : '?');
+      const shiny = x.shiny ? ' ✨ SHINY' : '';
+      const fam = x.family || '?';
+      return [
+        `⚠️ Enviar *${nome}* nº ${n} Nv.${nivel}${shiny} ao professor? A transferência é definitiva: você não poderá recuperar este Pokémon.`,
+        `Receberá 1 cartão da família *${fam}* (+3 XP ao usar em outro membro da família).`,
+        x.item ? 'O item equipado será devolvido à mochila.' : null,
+        `Confirme em até 5 minutos: ${prefix} professor confirmar ${x.token}`,
+        `Cancelar: ${prefix} professor cancelar`
+      ].filter(Boolean).join('\n');
+    }
+    return '👨‍🔬 Operação do professor concluída.';
+  },
   formatHuntEligibility,
   formatHuntStart,
   formatBattleState,
@@ -1990,9 +2539,16 @@ module.exports = {
   formatGymChallengeStart,
   formatGymResolve,
   resolveRaidSubcommand,
+  resolveRaidGym,
+  RAID_GYMS,
+  formatRaidPrazo,
+  formatRaidOpenHelp,
+  formatRaidOpened,
+  formatRaidCancelled,
   formatRaidStatus,
   formatRaidJoin,
   formatRaidLeave,
+  formatLeaveResult,
   formatRaidStart,
   formatRaidAttack,
   formatRaidCapture,
@@ -2008,6 +2564,9 @@ module.exports = {
   formatShopBuy,
   formatShopDetails,
   formatInventory,
+  formatBagKit,
+  formatBagDaily,
+  formatMissionItemsFromMap,
   formatMissions,
   formatMissionClaim,
   formatGift,
@@ -2030,6 +2589,9 @@ module.exports = {
   formatRelearnMenu,
   formatPvpChallenge,
   formatPvpBattle,
+  formatPvpTurn,
+  formatPvpRewards,
+  pvpViewForSide,
   formatPvpIncompatible
 };
 
@@ -2067,40 +2629,140 @@ function formatPvpIncompatible(battle, pokemon, prefix = '!pk') {
   ].join('\n');
 }
 
-function formatPvpBattle(battle, prefix = '!pk', opts = {}) {
+/**
+ * Assentos canônicos :x/:o — NUNCA espelha.
+ * Espelhar por mySide fazia as barras trocarem de lado a cada turno no grupo
+ * (mensagens alternam entre jogador X e O). Mantido só por compat de API.
+ */
+function pvpViewForSide(battle, mySide) {
   const b = battle || {};
-  if (b.aguardando || b.phase === 'waiting') {
-    return formatPvpChallenge(b, opts.playerName, prefix);
+  const side = mySide === 'o' ? 'o' : (mySide === 'x' ? 'x' : null);
+  return {
+    battle: b,
+    viewSide: side || 'x',
+    swapped: false
+  };
+}
+
+function formatPvpRewards(rewards, prefix = '!pk') {
+  const r = rewards || {};
+  if (!r || (!r.moedas && !r.pe && !(r.pokemon && r.pokemon.length) && !r.bola)) {
+    return null;
   }
-  const px = b.pokemonX || {};
-  const po = b.pokemonO || {};
-  const nomes = b.nomes || {};
-  const vez = b.vez;
-  const jog = b.jogadores || {};
-  const vezNome = vez === 'x' ? (nomes.x || 'X') : (nomes.o || 'O');
-  const lines = [
-    '⚔️ *Batalha PvP*',
-    `${nomes.x || 'X'}: *${px.nome || '?'}* ${barraHp(px.hpAtual != null ? px.hpAtual : b.hp && b.hp.x, px.hp)}`,
-    `${nomes.o || 'O'}: *${po.nome || '?'}* ${barraHp(po.hpAtual != null ? po.hpAtual : b.hp && b.hp.o, po.hp)}`,
-    ''
-  ];
-  if (b.outcome) {
-    if (b.outcome === 'draw' || b.outcome === 'cancelled') {
-      lines.push(b.outcome === 'draw' ? '🤝 Empate!' : '🚪 Desafio cancelado.');
-    } else if (String(b.outcome).startsWith('forfeit')) {
+  const lines = [];
+  if (r.moedas) lines.push(`💰 +${r.moedas} moedas (confira com ${prefix} loja)`);
+  if (r.pe) lines.push(`⭐ +${r.pe} PE de treinador (vitória)`);
+  if (r.bola) lines.push(`🎒 +1 ${r.bola}`);
+  const pokes = Array.isArray(r.pokemon) ? r.pokemon : [];
+  if (pokes.length) {
+    lines.push('✨ *XP por Pokémon:*');
+    for (const p of pokes) {
+      const nv = p.nivelFinal != null || p.subidas
+        ? (p.subidas ? ` → Nv.${p.nivelFinal || '?'}` : '')
+        : '';
+      lines.push(`• ${p.treinador || '?'}: *${p.nome || '?'}* — ${p.nocautes || 0} nocaute(s), +${p.xp || 0} XP${nv}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function formatPvpBattle(battle, prefix = '!pk', opts = {}) {
+  const raw = battle || {};
+  if (raw.aguardando || raw.phase === 'waiting') {
+    return formatPvpChallenge(raw, opts.playerName, prefix);
+  }
+  const mySide = opts.mySide === 'o' || opts.mySide === 'x' ? opts.mySide : null;
+  const suaVez = opts.suaVez != null
+    ? Boolean(opts.suaVez)
+    : Boolean(mySide && raw.vez && mySide === raw.vez);
+  const nomes = raw.nomes || {};
+  const vezNome = raw.vez === 'x' ? (nomes.x || 'X') : (nomes.o || 'O');
+  // Assentos fixos: X sempre em cima/esquerda, O embaixo/direita (sem espelhar).
+  const px = raw.pokemonX || {};
+  const po = raw.pokemonO || {};
+  const hp = raw.hp || {};
+  const status = raw.status || {};
+  const hpX = hpPair(px, hp.x);
+  const hpO = hpPair(po, hp.o);
+  const rewards = opts.rewards || raw.rewards || null;
+
+  if (raw.outcome) {
+    const lines = [
+      '⚔️ *Batalha PvP*',
+      `🐾 *${nomes.x || 'X'}* — *${nomePokemon(px)}*`,
+      hpX ? barraHp(hpX.atual, hpX.max) : null,
+      `👾 *${nomes.o || 'O'}* — *${nomePokemon(po)}*`,
+      hpO ? barraHp(hpO.atual, hpO.max) : null,
+      ''
+    ].filter(v => v != null);
+    if (raw.outcome === 'draw' || raw.outcome === 'cancelled') {
+      lines.push(raw.outcome === 'draw' ? '🤝 Empate!' : '🚪 Desafio cancelado.');
+    } else if (String(raw.outcome).startsWith('forfeit')) {
       lines.push('🏳️ Desistência — sem prêmio de vitória.');
     } else {
-      const winName = b.outcome === 'x' ? (nomes.x || 'X') : (nomes.o || 'O');
-      lines.push(`🏆 *${winName}* venceu! (+10 moedas)`);
+      const winName = raw.outcome === 'x' ? (nomes.x || 'X') : (nomes.o || 'O');
+      lines.push(`🏆 *${winName}* venceu!`);
+      const rewTxt = formatPvpRewards(rewards, prefix);
+      if (rewTxt) lines.push(rewTxt);
+      else lines.push('💰 +10 moedas');
     }
     return lines.join('\n');
   }
-  lines.push(`👉 Vez de *${vezNome}*`);
-  if (opts.mySide && opts.mySide === vez) {
-    lines.push(menuGolpes(opts.mySide === 'x' ? px : po, [], null));
-    lines.push(`${prefix} atacar <1-4> · ${prefix} defender · ${prefix} pocao · ${prefix} sair`);
-  } else {
-    lines.push('Aguarde o adversário…');
+
+  const la = raw.lastAction || {};
+  let acaoLinha = null;
+  if (la.mensagem) acaoLinha = la.mensagem;
+  else if (la.action === 'defend' || la.action === ':defend') {
+    acaoLinha = la.impedido
+      ? '🛡️ Tentou defender, mas ficou impedido pelo status.'
+      : '🛡️ Entrou em posição defensiva (esquiva / metade do dano).';
+  } else if (la.action === 'item' || la.action === ':item') {
+    if (la.hpDepois != null) {
+      acaoLinha = `🧪 Usou *${la.itemId || 'poção'}* e recuperou HP (${la.hpAntes}→${la.hpDepois}/${la.hpMax}).`;
+    } else if (la.statusCleared) {
+      acaoLinha = `💊 Curou status *${la.statusCleared}* com \`${la.itemId}\`.`;
+    } else if (la.impedido) {
+      acaoLinha = '🧪 Tentou usar item, mas ficou impedido pelo status.';
+    } else {
+      acaoLinha = `🧪 Usou item \`${la.itemId || '?'}\`.`;
+    }
+  } else if (la.dano != null) {
+    acaoLinha = `Último golpe: ${la.dano} de dano.`;
   }
+
+  const atacante = raw.vez === 'o' ? po : px;
+  const defensor = raw.vez === 'o' ? px : po;
+  const golpes = menuGolpes(atacante, defensor.tipos || [], defensor.habilidade);
+  const nGolpes = ((atacante.golpes) || []).length;
+
+  const lines = [
+    '⚔️ *Batalha PvP*',
+    nomes.x || nomes.o ? `${nomes.x || 'X'} vs ${nomes.o || 'O'}` : null,
+    acaoLinha,
+    raw.turnIndex != null ? `⚔️ Turno ${raw.turnIndex}` : null,
+    `👉 Vez de *${vezNome}*`,
+    '',
+    hpX ? `🐾 *${nomes.x || 'X'}* — *${nomePokemon(px)}*${emojiStatus(status.x)}` : null,
+    hpX ? barraHp(hpX.atual, hpX.max) : null,
+    hpO ? `👾 *${nomes.o || 'O'}* — *${nomePokemon(po)}*${emojiStatus(status.o)}` : null,
+    hpO ? barraHp(hpO.atual, hpO.max) : null,
+    '',
+    golpes
+      ? `Escolha: ${prefix} atacar <1-${nGolpes || 4}> · ${prefix} <1-${nGolpes || 4}> · ${prefix} defender · ${prefix} pocao · ${prefix} sair`
+      : null,
+    golpes,
+    '',
+    `📖 Ações: ${prefix} atacar ajuda · ${prefix} defender · ${prefix} pocao · ${prefix} sair`,
+    mySide && !suaVez ? '' : null,
+    mySide && !suaVez ? '⏳ Aguarde o adversário — não é a sua vez.' : null
+  ].filter(v => v != null);
+
   return lines.join('\n');
+}
+
+/** Pós-turno PvP — mesmo envelope textual da caça (dano + estado + prêmios). */
+function formatPvpTurn(data, prefix = '!pk', opts = {}) {
+  const b = (data && data.battle) || data || {};
+  const rewards = (data && data.rewards) || b.rewards || opts.rewards;
+  return formatPvpBattle(b, prefix, Object.assign({}, opts, { rewards }));
 }

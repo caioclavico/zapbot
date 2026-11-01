@@ -69,28 +69,144 @@
               :xp-atual (:xp-atual prog (:xp-atual save 0))
               :xp-necessario (:xp-necessario prog (:xp-necessario save 5))}))))
 
-(defn trainer
-  "Perfil do treinador + save ativo (DTO neutro para apresentação no Node)."
-  [store chat-id player-id]
-  (let [player (require-player! store chat-id player-id)
-        slot (:active-save-id player)
-        save (when slot (ports/get-save store chat-id player-id slot))
-        colecao (when slot (ports/list-collection store chat-id player-id slot))
-        ativo-idx (long (:ativo-index save 0))
-        ativo (when (and colecao (seq colecao) (< ativo-idx (count colecao)))
-                (nth colecao ativo-idx))]
-    {:chat-id chat-id
-     :player-id player-id
-     :active-save-id slot
-     :active-save-name (:display-name save)
-     :fence-generation (:fence-generation player)
-     :active-battle-id (:active-battle-id player)
-     :gym-defense-count (:gym-defense-count player 0)
-     :profile (save-profile save)
-     :ativo-index ativo-idx
-     :ativo (when ativo (pokemon-dto ativo))
-     :collection-count (count colecao)}))
+(defn- storage-dto
+  [save colecao]
+  (when save
+    (capacity/resumo-armazenamento-pokemon (count (or colecao [])) save)))
 
+(defn- party-battle-resumo
+  "Equipe de combate ≠ coleção.
+
+  No V1 unificado (`equipe` + `pc` fundidos) todos ficam in-party=true — não
+  há sinal seguro de escalação. Só confiamos quando in-party distingue um
+  subconjunto real (parte dentro, parte fora). Não inventa os 6 primeiros."
+  [colecao]
+  (let [items (vec (or colecao []))
+        n (count items)
+        in (count (filter :in-party items))
+        out (- n in)]
+    (cond
+      (zero? n) {:party-defined true :party-count 0}
+      (and (pos? in) (pos? out)) {:party-defined true :party-count (long in)}
+      :else {:party-defined false :party-count nil})))
+
+(defn- save-slot-resumo
+  "Resumo leve de um slot (contagens). Usa coleção já carregada quando fornecida."
+  [store chat-id player-id save colecao-opt]
+  (let [slot (:slot-id save)
+        colecao (or colecao-opt
+                    (ports/list-collection store chat-id player-id slot))
+        party (party-battle-resumo colecao)]
+    (merge {:save-id slot
+            :display-name (:display-name save)
+            :origin (:origin save)
+            :legacy-version (:legacy-version save)
+            :collection-count (count colecao)
+            :trainer-level (long (:trainer-level save 1))}
+           party)))
+
+(defn- joy-resumo
+  "Somente leitura: quantos na enfermaria e próximo retorno (ms)."
+  [beds agora]
+  (let [ativos (filterv #(> (long (:pronto-em % 0)) (long agora)) (or beds []))
+        proximos (sort (map #(long (:pronto-em % 0)) ativos))
+        proximo (first proximos)]
+    {:em-tratamento (count ativos)
+     :prontos (count (filter #(<= (long (:pronto-em % 0)) (long agora)) (or beds [])))
+     :proximo-pronto-em proximo
+     :proximo-restante-ms (when proximo (max 0 (- proximo (long agora))))}))
+
+(defn- hunt-cooldown-resumo
+  "Cooldown de caça a partir de ultima-cacada-at — sem RNG / sem plano de encontro."
+  [save agora]
+  (let [ultima (long (:ultima-cacada-at save 0))
+        restante (hunt/cooldown-restante-ms ultima agora)]
+    {:cooldown-ok (hunt/pode-cacar? ultima agora)
+     :cooldown-restante-ms restante
+     :cooldown-restante-s (long (Math/ceil (/ (double restante) 1000.0)))}))
+
+(defn trainer
+  "Perfil consolidado do treinador (somente leitura) para `!pk treinador`.
+   Inclui progressão, armazenamento, saves A6, economia confiável, mochila,
+   Joy e cooldown de caça — sem efeitos colaterais e sem RNG de caça."
+  ([store chat-id player-id]
+   (trainer store chat-id player-id nil))
+  ([store chat-id player-id {:keys [agora-ms]}]
+   (let [player (require-player! store chat-id player-id)
+         slot (:active-save-id player)
+         agora (long (or agora-ms (System/currentTimeMillis)))
+         save (when slot (ports/get-save store chat-id player-id slot))
+         colecao (when slot (ports/list-collection store chat-id player-id slot))
+         inv (when slot (ports/list-inventory store chat-id player-id slot))
+         beds (when slot (ports/list-enfermaria store chat-id player-id slot))
+         saves (ports/list-saves store chat-id player-id)
+         ativo-idx (long (:ativo-index save 0))
+         ativo (when (and colecao (seq colecao) (< ativo-idx (count colecao)))
+                 (nth colecao ativo-idx))
+         storage (storage-dto save colecao)
+         economia-ok? (boolean (and save (shop/economia-confiavel? save)))
+         spendable (long (or (:coins-spendable save)
+                             (:coins save 0)))
+         bag-cap (when save (shop/capacidade-mochila-save save))
+         bag-occ (shop/ocupacao-mochila (or inv []))
+         party (party-battle-resumo colecao)
+         shiny-n (count (filter :shiny (or colecao [])))
+         saves-resumo
+         (mapv (fn [s]
+                 (let [sid (:slot-id s)
+                       coll (if (= sid slot) colecao nil)
+                       base (save-slot-resumo store chat-id player-id s coll)]
+                   (assoc base :active (= sid slot))))
+               saves)
+         perfil* (save-profile save)
+         ;; Saldo comprovado apenas; unknown-pending sem operacional → sem coins no perfil.
+         perfil (cond-> perfil*
+                  (and perfil* (pos? spendable)) (assoc :coins spendable)
+                  (and perfil* (not economia-ok?) (zero? spendable)) (dissoc :coins))
+         insignias (when save (xp/insignias-treinador save))
+         titulo (when save (xp/titulo-label (:title save)))
+         ginasios-map (or (:ginasios save) {})
+         ginasios-nomes (if (seq ginasios-map)
+                          (->> (keys ginasios-map)
+                               (map #(or (:nome (gym/obter-ginasio %)) (str %)))
+                               (str/join ", "))
+                          "nenhuma")
+         body (merge {:chat-id chat-id
+                      :player-id player-id
+                      :active-save-id slot
+                      :active-save-name (:display-name save)
+                      :fence-generation (:fence-generation player)
+                      :active-battle-id (:active-battle-id player)
+                      :gym-defense-count (:gym-defense-count player 0)
+                      :profile perfil
+                      :titulo titulo
+                      :insignias (or insignias [])
+                      :ginasios-nomes ginasios-nomes
+                      :ativo-index ativo-idx
+                      :ativo (when ativo (pokemon-dto ativo))
+                      :collection-count (count colecao)
+                      :shiny-count shiny-n
+                      :saves-count (count saves)
+                      :saves saves-resumo
+                      :economia-confiavel economia-ok?
+                      :capacidade-mochila bag-cap
+                      :ocupacao-mochila bag-occ
+                      :joy (joy-resumo beds agora)
+                      :hunt (when save (hunt-cooldown-resumo save agora))}
+                     party)]
+     (cond-> body
+       storage (merge {:capacidade-pokemon (:capacidade storage)
+                       :ocupacao-pokemon (:ocupacao storage)
+                       :livres-pokemon (:livres storage)
+                       :excesso-pokemon (:excesso storage)
+                       :colecao-cheia (:cheio? storage)
+                       :expansoes-pokemon-50 (:expansoes-pokemon-50 storage)})
+       save (assoc :coins spendable
+                   :coins-spendable spendable
+                   :coins-operational (long (or (:coins-operational save) 0))
+                   :economy-status (or (:economy-status save)
+                                       (if economia-ok? "trusted" "unknown-pending")))
+       (and save (not economia-ok?)) (assoc :coins-status "unknown-pending")))))
 (defn- favorito-dto
   [save items]
   (when-let [fid (:favorito-id-pokemon save)]
@@ -107,18 +223,24 @@
   (let [slot (resolve-save-id! store chat-id player-id save-id)
         save (ports/get-save store chat-id player-id slot)
         items (ports/list-collection store chat-id player-id slot)
-        fav (favorito-dto save items)]
-    {:chat-id chat-id
-     :player-id player-id
-     :save-id slot
-     :fence-generation (:fence-generation (require-player! store chat-id player-id))
-     :ativo-index (long (:ativo-index save 0))
-     :trainer-level (:trainer-level save 1)
-     :favorito-id-pokemon (:favorito-id-pokemon save)
-     :favorito fav
-     :count (count items)
-     :collection (mapv pokemon-dto items)}))
-
+        fav (favorito-dto save items)
+        storage (storage-dto save items)]
+    (cond-> {:chat-id chat-id
+             :player-id player-id
+             :save-id slot
+             :fence-generation (:fence-generation (require-player! store chat-id player-id))
+             :ativo-index (long (:ativo-index save 0))
+             :trainer-level (:trainer-level save 1)
+             :favorito-id-pokemon (:favorito-id-pokemon save)
+             :favorito fav
+             :count (count items)
+             :collection (mapv pokemon-dto items)}
+      storage (merge {:capacidade-pokemon (:capacidade storage)
+                      :ocupacao-pokemon (:ocupacao storage)
+                      :livres-pokemon (:livres storage)
+                      :excesso-pokemon (:excesso storage)
+                      :colecao-cheia (:cheio? storage)
+                      :expansoes-pokemon-50 (:expansoes-pokemon-50 storage)}))))
 (def ^:private csv-columns
   ["Nº" "Situação" "Nome" "Nível" "Raridade" "Tipos" "HP atual" "HP máximo"
    "Status" "Item" "XP atual" "XP necessário"])
@@ -561,7 +683,11 @@
   [store chat-id player-id {:keys [agora-ms]}]
   (let [player (require-player! store chat-id player-id)
         agora (long (or agora-ms (System/currentTimeMillis)))
-        raid0 (raid-app/active-raid store chat-id)
+        ;; Eager expire materializa cancelada/combate sem timer em memória.
+        _ (raid-app/expire-lobby! store chat-id agora)
+        raid0 (or (raid-app/active-raid store chat-id)
+                  ;; captura pós-vitória: ponteiro pode ter sido limpo — busca via get se houver
+                  nil)
         raid (when (raid-visivel? raid0 agora) raid0)
         inv (when-let [slot (:active-save-id player)]
               (ports/list-inventory store chat-id player-id slot))]
@@ -581,6 +707,7 @@
    (let [player (require-player! store chat-id player-id)
          slot (:active-save-id player)
          agora (long (or agora-ms (System/currentTimeMillis)))
+         _ (raid-app/expire-lobby! store chat-id agora)
          raid0 (raid-app/active-raid store chat-id)
          raid (when (raid-visivel? raid0 agora) raid0)
          _ (when-not (and raid (= "inscricoes" (str (:fase raid))))
@@ -629,7 +756,8 @@
      :active-save-id slot
      :fence-generation (:fence-generation player 0)
      :agora agora
-     :tempo-tratamento-minutos joy/tempo-tratamento-minutos
+     :tempo-tratamento-segundos (joy/tempo-tratamento-segundos)
+     :tempo-tratamento-minutos (long (Math/ceil (/ (double (joy/tempo-tratamento-segundos)) 60.0)))
      :enfermaria (mapv #(bed-dto % agora) (or beds []))
      :prontos (count (filter #(<= (long (:pronto-em % 0)) agora) (or beds [])))
      :em-tratamento (count (filter #(> (long (:pronto-em % 0)) agora) (or beds [])))
@@ -704,30 +832,31 @@
         inv (when slot (ports/list-inventory store chat-id player-id slot))
         collection (when slot (ports/list-collection store chat-id player-id slot))
         cap (when save (shop/capacidade-mochila-save save))
-        pokemon-cap (when save (capacity/capacidade-pokemon
-                                (:trainer-level save 1)
-                                (:expansoes-pokemon-50 save 0)
-                                (:capacidade-pokemon-legada save 0)))
+        storage (storage-dto save collection)
         occ (shop/ocupacao-mochila (or inv []))]
-    {:chat-id chat-id
-     :player-id player-id
-     :active-save-id slot
-     :fence-generation (:fence-generation player 0)
-     :coins (long (:coins save 0))
-     :capacidade-mochila cap
-     :ocupacao-mochila occ
-     :livres (when cap (max 0 (- (long cap) occ)))
-     :capacidade-pokemon pokemon-cap
-     :ocupacao-pokemon (count collection)
-     :expansoes-pokemon-50 (long (:expansoes-pokemon-50 save 0))
-     :itens (mapv (fn [it]
-                    {:item-id (:item-id it)
-                     :nome (:nome it)
-                     :emoji (:emoji it)
-                     :preco (:preco it)
-                     :descricao (:descricao it)
-                     :expansao (boolean (:expansao? it))})
-                  (shop-app/catalog))}))
+    (cond-> {:chat-id chat-id
+             :player-id player-id
+             :active-save-id slot
+             :fence-generation (:fence-generation player 0)
+             :coins (long (:coins save 0))
+             :capacidade-mochila cap
+             :ocupacao-mochila occ
+             :livres (when cap (max 0 (- (long cap) occ)))
+             :itens (mapv (fn [it]
+                            {:item-id (:item-id it)
+                             :nome (:nome it)
+                             :emoji (:emoji it)
+                             :preco (:preco it)
+                             :descricao (:descricao it)
+                             :expansao (boolean (:expansao? it))})
+                          (shop-app/catalog))}
+      storage (merge {:capacidade-pokemon (:capacidade storage)
+                      :ocupacao-pokemon (:ocupacao storage)
+                      :livres-pokemon (:livres storage)
+                      :excesso-pokemon (:excesso storage)
+                      :colecao-cheia (:cheio? storage)
+                      :expansoes-pokemon-50 (:expansoes-pokemon-50 storage)
+                      :economia-confiavel (shop/economia-confiavel? save)}))))
 
 (defn inventory-bag
   "Inventário do save ativo + capacidade da mochila."

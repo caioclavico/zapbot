@@ -29,7 +29,12 @@
    "migrations/pokemon/022-named-teams.edn"
    "migrations/pokemon/023-league-selection.edn"
    "migrations/pokemon/024-gym-history.edn"
-   "migrations/pokemon/025-save-slot-metadata.edn"])
+   "migrations/pokemon/025-save-slot-metadata.edn"
+   "migrations/pokemon/026-battle-idle.edn"
+   "migrations/pokemon/027-bag-daily.edn"
+   "migrations/pokemon/028-economy-ledger.edn"
+   "migrations/pokemon/029-raid-lobby.edn"
+   "migrations/pokemon/030-raid-auto.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id

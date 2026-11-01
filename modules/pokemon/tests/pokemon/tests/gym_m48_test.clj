@@ -1,6 +1,7 @@
 (ns pokemon.tests.gym-m48-test
   "M4.8 — combate 3×3 de ginásio + resolve interno (sem venceu? do cliente)."
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.battle :as battle-app]
             [pokemon.application.bridge-reads :as reads]
@@ -67,7 +68,8 @@
     :gym-id "pedra"
     :nome "Ash"
     :dia "2026-10-17"
-    :agora 1000
+    ;; Relógio real: idle 300s a partir de agora (evita battle_idle_expired nos turnos).
+    :agora (System/currentTimeMillis)
     :candidates npcs}))
 
 (defn- grind-until-done!
@@ -85,7 +87,7 @@
             :move-index 0
             :rng hit-rng
             :dia "2026-10-17"
-            :agora (+ 2000 n)
+            :agora (+ (System/currentTimeMillis) n)
             :pedra-roll 0})
           (recur (inc n)))
         n))))
@@ -305,3 +307,156 @@
                          (= :db/add (first op))
                          (= [:pokemon/id-pokemon "p2"] (second op))))
                   txs))))
+
+(defn- fat-historico
+  "Histórico V1 ~1.8KiB — cabe em :pokemon/historico-golpes-edn."
+  []
+  (into {}
+        (for [i (range 18)]
+          [(keyword (str "g" i))
+           {:slug (str "move-hist-" i)
+            :nome (str "GolpeHist" i)
+            :tipo "rock"
+            :poder (+ 10 i)
+            :detalhe (apply str (repeat 70 "x"))}])))
+
+(defn- fat-mon
+  [nome]
+  (assoc (mon nome 120 90)
+         :historico-golpes (fat-historico)
+         :golpes-oferecidos [{:slug "offer" :pad (apply str (repeat 40 "o"))}]
+         :golpes-removidos [{:slug "rem" :pad (apply str (repeat 40 "r"))}]
+         :imagem (apply str (repeat 80 "I"))
+         :imagem-shiny (apply str (repeat 80 "S"))
+         :hp-atual 120
+         :golpes (mapv (fn [i]
+                         {:slug (str "atk-" i)
+                          :nome-exibicao (str "AtaqueRochaLongo" i)
+                          :tipo "rock" :poder 70 :classe :fisico
+                          :descricao (apply str (repeat 80 "d"))})
+                       (range 4))))
+
+(deftest gym-state-edn-slim-reservas-evita-item-too-large
+  "Regressão prod Ginásio Pedra: encode só slimava pokemons x/o;
+   reservas 3×3 com historico V1 → ~14KiB > 4000."
+  (testing "estado cru com 6 históricos excede limite; encode-state-edn cabe"
+    (let [fat-x (mapv #(assoc (fat-mon (str "X" %)) :collection-index %) (range 3))
+          fat-o (mapv #(fat-mon (str "O" %)) (range 3))
+          ;; Simula pré-patch: create sem slim + reservas gordas
+          raw {:battle-id "gym-fat" :kind :gym :gym-id "pedra" :gym-nome "Pedra"
+               :save-id "recovery-v1" :fence-generation 2
+               :pokemons {:x (first fat-x) :o (first fat-o)}
+               :hp {:x 120 :o 120} :status {:x nil :o nil}
+               :reservas {:x (mapv (fn [p] {:collection-index (:collection-index p)
+                                            :pokemon (dissoc p :collection-index)})
+                                   (rest fat-x))
+                          :o (vec (rest fat-o))}
+               :turn-index 0 :phase :active :active? true
+               :team-x-indices [0 1 2]}
+          raw-bytes (count (pr-str raw))
+          encoded (battle/encode-state-edn raw)
+          decoded (battle/decode-compact-edn encoded)
+          rx0 (get-in decoded [:reservas :x 0 :pokemon])
+          ro0 (get-in decoded [:reservas :o 0])]
+      (is (> raw-bytes 4000) (str "fixture gym deve exceder; got " raw-bytes))
+      (is (>= raw-bytes 10000) (str "espelha ordem de grandeza prod (~14k); got " raw-bytes))
+      (is (<= (count encoded) 4000) (str "encoded=" (count encoded)))
+      (is (nil? (get-in decoded [:pokemons :x :historico-golpes])))
+      (is (nil? (:historico-golpes rx0)))
+      (is (nil? (:historico-golpes ro0)))
+      (is (nil? (get-in decoded [:pokemons :x :id-pokemon])) "allowlist drop id")
+      (is (seq (:golpes (get-in decoded [:pokemons :x]))) "golpes combate ok")
+      (is (= 1 (:collection-index (get-in decoded [:reservas :x 0]))))
+      ;; Compact path: se plain > 4000, prefixo gzip deve round-trip via decode.
+      (when (str/starts-with? (str encoded) "odisseu.gz;")
+        (is (map? decoded))
+        (is (= :gym (:kind decoded))))))
+
+  (testing "start-challenge recovery-v1 fence≥2 + time 3 gordos persiste Pedra"
+    (let [s (fresh-store! "g48-fat-pedra")
+          chat "chat-fat-gym"
+          player "ash"]
+      (trainer/create-trainer! s {:chat-id chat :player-id player})
+      (ports/create-save! s chat player "recovery-v1")
+      (trainer/switch-save! s chat player "recovery-v1")
+      (doseq [n ["A" "B" "C"]]
+        (collection/adicionar-pokemon! s chat player (fat-mon n) 120 nil))
+      ;; Eleva fence como activate prod.
+      (trainer/switch-save! s chat player "a")
+      (trainer/switch-save! s chat player "recovery-v1")
+      (let [w-fence (long (:fence-generation (ports/get-player s chat player) 0))
+            _ (is (>= w-fence 2))
+            col0 (ports/list-collection s chat player "recovery-v1")
+            _ (is (= 3 (count col0)))
+            hist0 (count (pr-str (:historico-golpes (first col0))))
+            _ (is (> hist0 1500))
+            _ (tx/set-gym-team!
+               s {:chat-id chat :player-id player :save-id "recovery-v1"
+                  :fence-generation w-fence :indices [0 1 2]})
+            save0 (ports/get-save s chat player "recovery-v1")
+            rev0 (long (:revision save0 0))
+            t0 (System/currentTimeMillis)
+            result (gym-app/start-challenge!
+                    s chat player
+                    {:operation-id "fat-pedra-1"
+                     :gym-id "pedra"
+                     :nome "Ash"
+                     :dia "2026-10-17"
+                     :agora t0
+                     :candidates [(npc "Geodude" 5) (npc "Sandshrew" 5) (npc "Onix" 5)]})
+            battle (ports/active-battle s chat player)
+            col1 (ports/list-collection s chat player "recovery-v1")
+            save1 (ports/get-save s chat player "recovery-v1")
+            enc-bytes (count (battle/encode-state-edn battle))]
+        (is (some? (:battle-id result)))
+        (is (= :gym (:kind battle)))
+        (is (= "pedra" (:gym-id battle)))
+        (is (= (inc rev0) (long (:revision save1 0))) "CAS avançou — tx completa")
+        (is (= 3 (count col1)) "coleção não truncada")
+        (is (seq (:historico-golpes (first col1))) "histórico canônico intacto")
+        (is (nil? (get-in battle [:pokemons :x :historico-golpes])))
+        (is (nil? (get-in battle [:reservas :x 0 :pokemon :historico-golpes])))
+        (is (some? (get-in battle [:pokemons :x :imagem])) "ativo mantém sprite")
+        ;; Reservas também guardam URL de sprite — sem isso o WA mostra caixa preta no switch.
+        (is (some? (get-in battle [:reservas :x 0 :pokemon :imagem])) "reserva mantém sprite")
+        (is (<= enc-bytes 4000) (str "state-edn=" enc-bytes))
+        ;; Turno após encode compacto não pode cair em mission_event_identity_conflict.
+        (battle-app/confirm-turn!
+         s chat player
+         {:operation-id "fat-pedra-t0"
+          :battle-id (:battle-id battle)
+          :expected-turn-index 0
+          :action :attack :move-index 0 :rng hit-rng
+          :dia "2026-10-17" :agora (+ t0 1000)})
+        (is (some? (ports/active-battle s chat player)))
+        (grind-until-done! s chat player "fat-pedra-w")
+        (is (nil? (ports/active-battle s chat player)))
+        (is (= "2026-10-17" (get (:ginasios (ports/get-save s chat player "recovery-v1")) "pedra")))
+        ;; Vitória move o time 3×3 para a ocupação — coleção do save fica vazia.
+        (is (zero? (count (ports/list-collection s chat player "recovery-v1"))))
+        (let [ocup (ports/get-gym-occupation s chat "pedra")
+              team-edn (battle/encode-gym-team-edn (:time ocup))]
+          (is (= 3 (count (:time ocup))))
+          (is (<= (count team-edn) 4000) (str "team-edn=" (count team-edn)))
+          (is (nil? (:historico-golpes (first (:time ocup)))))))))
+
+  (testing "falha explícita datomic_value_too_large sem batalha parcial"
+    (with-redefs [battle/encode-state-edn
+                  (fn [_]
+                    (throw (err/error :datomic_value_too_large
+                                      {:attr :battle/state-edn
+                                       :bytes 14503
+                                       :limit 4000})))]
+      (let [s (fresh-store! "g48-too-large")
+            chat "chat-tl"
+            player "ash"]
+        (boot! s chat player)
+        (let [code (try
+                     (start-npc! s chat player "tl-1"
+                                 [(npc "Geodude" 5) (npc "Sandshrew" 5) (npc "Onix" 5)])
+                     :ok
+                     (catch Exception ex (err/error-code ex)))]
+          (is (= :datomic_value_too_large code))
+          (is (nil? (ports/active-battle s chat player)) "sem batalha parcial")
+          (is (nil? (get (:ginasios (ports/get-save s chat player "a")) "pedra")))
+          (is (= 3 (count (ports/list-collection s chat player "a")))))))))

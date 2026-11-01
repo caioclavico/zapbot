@@ -155,7 +155,7 @@
     "Raid apontada pelo chat (ponteiro), ou nil. Expiração fica na bridge.")
 
   (open-raid! [this writer-ctx request]
-    "Abre inscrições de raid no chat (criação manual/harness).")
+    "Abre lobby cooperativo no chat (1 ativa; CAS no ponteiro).")
 
   (join-raid! [this writer-ctx request]
     "Inscreve com save-id+fence carimbados; snapshot do Pokémon.")
@@ -165,6 +165,27 @@
 
   (start-raid! [this writer-ctx request]
     "Inicia combate (≥2); define HP compartilhado.")
+
+  (cancel-raid! [this writer-ctx request]
+    "Cancela lobby antes do combate (criador).")
+
+  (expire-raid-lobby! [this chat-id agora]
+    "Eager expire de inscrições vencidas (sem timer). Retorna raid atualizada ou nil.")
+
+  (get-raid-auto-schedule [this chat-id]
+    "Agenda de aparição automática do chat ou nil.")
+
+  (upsert-raid-auto-schedule! [this schedule]
+    "Cria/atualiza agenda (CAS revision).")
+
+  (tick-raid-auto! [this request]
+    "Tick recuperável: spawns due + expire lobbies auto. Sem timers em memória.")
+
+  (list-pokemon-outbox [this limit]
+    "Eventos pendentes (acked-at nil), ordem por created-at.")
+
+  (ack-pokemon-outbox! [this event-id agora]
+    "Confirma entrega WhatsApp (idempotente).")
 
   (raid-attack! [this writer-ctx request]
     "Turno de ataque com CAS turn-index; recompensas na transição vitória.")
@@ -232,7 +253,10 @@
   (professor-use! [this request])
 
   (claim-starter-kit! [this writer-ctx request]
-    "Concede 10 Pokébolas do kit inicial uma vez por save (fence + recibo).")
+    "Concede 10 Pokébolas do kit inicial uma vez por treinador (fence + recibo).")
+
+  (claim-bag-daily! [this writer-ctx request]
+    "Bônus diário da mochila (3–7 bolas + fruta/7d); fence + recibo; anti-farm entre saves.")
 
   (choose-starter! [this writer-ctx request]
     "Concede Bulbasaur/Charmander/Squirtle e marca inicial-escolhido (fence + recibo).")
@@ -262,4 +286,17 @@
     "Envia cartão-presente a outro jogador; registra missões do remetente.")
 
   (collect-mission-pending! [this writer-ctx request]
-    "Recolhe recompensas pendentes até a capacidade, com recibo e fencing."))
+    "Recolhe recompensas pendentes até a capacidade, com recibo e fencing.")
+
+  (leave-battle! [this writer-ctx request]
+    "Abandono voluntário (!pk sair): wild/gym/pvp/raid individual.
+     Receipt idempotente; sem recompensas; notifica oponente PvP via outbox.")
+
+  (expire-idle-battles! [this opts]
+    "Sweeper: encerra batalhas/raids com idle-expires-at vencido (idempotente).")
+
+  (list-battle-idle-notifications [this opts]
+    "Outbox de avisos de inatividade/leave ainda não ackados.")
+
+  (ack-battle-idle-notification! [this notify-id]
+    "Ack idempotente de notificação de idle/leave."))

@@ -66,7 +66,20 @@
     (with-redefs [joy/environment (fn [k]
                                     ({"APP_ENV" "production"
                                       "POKEMON_JOY_HEAL_SECONDS" "45"} k))]
-      (is (= 45 (joy/tempo-tratamento-segundos))))))
+      (is (= 45 (joy/tempo-tratamento-segundos))))
+    (with-redefs [joy/environment (fn [k]
+                                    ({"APP_ENV" "staging"
+                                      "POKEMON_JOY_HEAL_SECONDS" "1800"} k))]
+      (is (= 1800 (joy/tempo-tratamento-segundos)))
+      (let [entrada (get-in (joy/enviar [mon] [] 0 t0) [:entrada])]
+        (is (= (+ t0 (* 1800 1000)) (:pronto-em entrada)))
+        ;; trocar env depois não altera leito já criado (pronto-em imutável)
+        (with-redefs [joy/environment (fn [k]
+                                        ({"APP_ENV" "staging"
+                                          "POKEMON_JOY_HEAL_SECONDS" "0"} k))]
+          (is (= (+ t0 (* 1800 1000)) (:pronto-em entrada)))
+          (is (empty? (:prontos (joy/curados [entrada] (+ t0 (* 60 1000)))))
+              "cura não termina antes dos 30 min mesmo com env zerado depois"))))))
 
 (deftest incubacao-e-nascimento
   (let [s (fresh-store! "e-hatch")
@@ -243,6 +256,65 @@
         (is (= (:hp (first col)) (:hp-atual (first col))))
         (is (nil? (:status (first col))))
         (is (= 0 (count (joy-app/list-beds s chat player "a"))))))))
+
+(deftest joy-send-pokemon-gordo-cabe-no-leito
+  "recovery-v1: historico/origin gordos estouravam :enfermaria-bed/pokemon-edn."
+  (let [s (fresh-store! "j-fat")
+        chat "chat-j-fat"
+        player "red"
+        t0 6100000
+        fat-golpe (fn [i]
+                    {:slug (str "move-" i)
+                     :nome-exibicao (str "Golpe Gordo " i)
+                     :tipo "normal"
+                     :poder 80
+                     :classe :especial
+                     :descricao (apply str (repeat 90 "x"))
+                     :efeitos (vec (repeat 4 {:nome "buff"
+                                              :detalhe (apply str (repeat 24 "y"))}))
+                     :precisao 100
+                     :alvo :adversario})
+        ;; Blob com origin/legado: só exercita bed-write-attrs (attrs separados).
+        fat-com-origem (-> mon
+                           (assoc :id-pokemon "recovery-fat-origin"
+                                  :origin-edn (pr-str {:source "recovery-v1"
+                                                       :blob (apply str (repeat 2500 "o"))})
+                                  :legado {:notas (apply str (repeat 400 "L"))}
+                                  :historico-golpes (into {} (map (fn [i] [(str "m" i) (fat-golpe i)])
+                                                                  (range 20)))
+                                  :imagem (str "https://example.com/"
+                                               (apply str (repeat 300 "p")) ".png")))
+        ;; Coleção: historico cabe no attr próprio; o mapa inteiro estoura o leito cru.
+        fat-colecao (-> mon
+                        (assoc :id-pokemon "recovery-fat-1"
+                               :historico-golpes (into {} (map (fn [i] [(str "m" i) (fat-golpe i)])
+                                                               (range 8)))
+                               :imagem (str "https://example.com/"
+                                            (apply str (repeat 1200 "q")) ".png")))]
+    (is (> (count (pr-str fat-com-origem)) 4000))
+    (boot! s chat player)
+    (let [attrs (joy/bed-write-attrs "bk" "sk"
+                                     {:bed-id "bed-x" :pokemon fat-com-origem :pronto-em t0})]
+      (is (<= (count (:enfermaria-bed/pokemon-edn attrs)) 4000))
+      (is (some? (:enfermaria-bed/origin-edn attrs)))
+      (is (some? (:enfermaria-bed/legado-edn attrs)))
+      (is (not (re-find #":origin-edn|:legado" (:enfermaria-bed/pokemon-edn attrs)))))
+    (is (<= (count (pr-str (:historico-golpes fat-colecao))) 4000))
+    (is (> (count (pr-str fat-colecao)) 4000)
+        "pré-condição: sem slim o leito estouraria")
+    (collection/adicionar-pokemon! s chat player fat-colecao 10 "envenenado")
+    (let [r (joy-app/send! s chat player {:operation-id "fat-send" :idx 0 :agora t0})
+          beds (joy-app/list-beds s chat player "a")
+          c (joy-app/collect! s chat player
+                              {:operation-id "fat-collect"
+                               :agora (+ t0 joy/tempo-tratamento-ms)})
+          col (ports/list-collection s chat player "a")]
+      (is (some? (:pronto-em r)))
+      (is (= 1 (count beds)))
+      (is (= "recovery-fat-1" (get-in (first beds) [:pokemon :id-pokemon])))
+      (is (= 1 (:n c)))
+      (is (= "recovery-fat-1" (:id-pokemon (first col))))
+      (is (= (:hp (first col)) (:hp-atual (first col)))))))
 
 (deftest joy-zero-preserva-fluxo-e-leitos-antigos
   (let [s (fresh-store! "j-zero-config")

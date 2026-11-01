@@ -16,16 +16,21 @@ function positive(value, fallback) {
 
 /**
  * Mesma política do cliente Pokémon (M9.5.2):
- * loopback sempre; `http://odisseu-jvm:18090` só com allowPrivateHost
- * (Compose staging; desligado por padrão). Sem IPs/domínios arbitrários.
+ * loopback sempre; `http://odisseu-jvm:18090` ou `http://odisseu-a6-jvm:18090`
+ * só com allowPrivateHost (Compose staging; desligado por padrão).
+ * Sem IPs/domínios arbitrários.
  */
+function isDockerJvmHost(host) {
+  return host === 'odisseu-jvm' || host === 'odisseu-a6-jvm';
+}
+
 function assertHost(base, allowPrivate) {
   const host = (base.hostname || '').toLowerCase();
   if (['127.0.0.1', 'localhost', '::1'].includes(host)) return;
   const port = String(base.port || (base.protocol === 'https:' ? '443' : '80'));
   if (
     allowPrivate === true &&
-    host === 'odisseu-jvm' &&
+    isDockerJvmHost(host) &&
     port === '18090' &&
     base.protocol === 'http:'
   ) {
@@ -33,7 +38,7 @@ function assertHost(base, allowPrivate) {
   }
   throw failure(
     'CONFIG',
-    'PLATFORM_JVM_URL deve ser loopback ou http://odisseu-jvm:18090 (Docker staging).'
+    'PLATFORM_JVM_URL deve ser loopback ou http://odisseu-jvm:18090 / http://odisseu-a6-jvm:18090 (Docker staging).'
   );
 }
 

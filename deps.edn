@@ -161,6 +161,43 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}
 
+  :test-raid-lobby-fase2
+  {:main-opts ["-m" "odisseu.smoke.raid-lobby-fase2"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
+  :test-raid-auto-fase3
+  {:main-opts ["-m" "odisseu.smoke.raid-auto-fase3"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
+  :test-raid-homolog-fase4
+  {:main-opts ["-m" "odisseu.smoke.raid-homolog-fase4"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx512m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=512"]}
+
+  ;; Fase 5.1 — save-slots × raides (anti-interferência)
+  :test-raid-save-slots-reconcile
+  {:main-opts ["-m" "odisseu.smoke.raid-save-slots-reconcile"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx512m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=512"]}
+
+  ;; A6 — economy ledger + capacity + battle-idle
+  :test-a6-economy-capacity
+  {:main-opts ["-m" "odisseu.smoke.a6-economy-capacity"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx512m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=512"]}
+
   ;; M4.10 — Joy + ovos no adaptador JVM + regressão M3.7
   :test-m4-joy-eggs
   {:main-opts ["-m" "odisseu.smoke.m4-joy-eggs"]

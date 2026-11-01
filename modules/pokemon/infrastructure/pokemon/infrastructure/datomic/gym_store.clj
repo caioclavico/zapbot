@@ -1,12 +1,13 @@
 (ns pokemon.infrastructure.datomic.gym-store
   "Montagem de TX de ginásio (fora do store monolítico)."
   (:require [clojure.edn :as edn]
+            [pokemon.domain.battle :as battle]
             [pokemon.domain.collection :as coll]
             [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.identities :as id]
-            [pokemon.domain.model :as model]
-            [pokemon.domain.xp :as xp]))
+            [pokemon.domain.xp :as xp]
+            [pokemon.infrastructure.datomic.economy-store :as economy-store]))
 
 (defn statistics-key [chat-id gym-id]
   (str chat-id "|" gym-id))
@@ -140,10 +141,13 @@
         participacao (or (:participacao request) {})
         rev (long (:save/revision save 0))
         pe (long (:save/pe-ginasios save 0))
-        coins (long (:save/coins save 0))
         vitorias (long (:save/vitorias-treinador save 0))
         operation-id (:operation-id request)
         phash (:payload-hash request)
+        coin-part (when (pos? coins-delta)
+                    (economy-store/apply-delta-tx
+                     {:sk sk :save save :delta coins-delta
+                      :operation-id operation-id :source "gym" :role "primary"}))
         occupy-indices (when (and venceu? (seq (:indices request)))
                          (set (map long (:indices request))))
         expected-rev (when occupy-indices
@@ -181,9 +185,8 @@
                          :operation-receipt/summary
                          (pr-str {:gym-id gym-id :venceu? venceu? :premio premio})})
                   premio (conj [:db/add [:save/key sk] :save/ginasios-edn (pr-str insignias')])
-                  (pos? coins-delta)
-                  (conj [:db/cas [:save/key sk] :save/coins coins
-                         (model/apply-coin-delta coins coins-delta)])
+                  (seq (:tx coin-part))
+                  (into (:tx coin-part))
                   (:vitoria-treinador? vit-rew)
                   (conj [:db/add [:save/key sk] :save/vitorias-treinador (inc vitorias)])
                   (and (:pedra? vit-rew) (:item g))
@@ -252,10 +255,11 @@
                         prev-sk (id/save-key (:chat-id prev) (:player-id prev)
                                              (:save-id ocupacao))
                         prev-save (save-entity db (:chat-id prev) (:player-id prev)
-                                               (:save-id ocupacao))
-                        pc (long (:save/coins prev-save 0))]
-                    [[:db/cas [:save/key prev-sk] :save/coins pc
-                      (model/apply-coin-delta pc moedas-ant)]]))
+                                               (:save-id ocupacao))]
+                    (:tx (economy-store/apply-delta-tx
+                          {:sk prev-sk :save prev-save :delta moedas-ant
+                           :operation-id operation-id
+                           :source "gym-permanence" :role "permanence"}))))
                 occ-entity {:gym-occupation/key gk
                             :gym-occupation/chat-id chat-id
                             :gym-occupation/gym-id gym-id
@@ -265,7 +269,8 @@
                             :gym-occupation/desde agora
                             :gym-occupation/motivacao-edn (pr-str (:motivacao nova))
                             :gym-occupation/motivacao-em agora
-                            :gym-occupation/team-edn (pr-str (:time nova))}
+                            :gym-occupation/team-edn
+                            (battle/encode-gym-team-edn (:time nova))}
                 occ-tx [occ-entity
                         [:db/cas [:gym-occupation/key gk]
                          :gym-occupation/revision expected-rev (inc expected-rev)]]

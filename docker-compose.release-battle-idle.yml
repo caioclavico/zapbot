@@ -1,0 +1,37 @@
+services:
+  odisseu-jvm:
+    image: odisseu-jvm:a64-battle-leave-20261029T1910-amd64
+    platform: linux/amd64
+    environment:
+      ODISSEU_BRIDGE_ALLOW_TEST_RNG: "false"
+      ODISSEU_BRIDGE_RESET: "false"
+      POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS: "300"
+      POKEMON_BATTLE_IDLE_SWEEP_MS: "30000"
+      POKEMON_BATTLE_LEAVE_ENABLED: "true"
+    volumes: !override
+      - odisseu-core-a56-datomic:/data/datomic-local
+      - odisseu-core-a56-journal:/data/journal
+      - odisseu-core-a56-maint:/data/maint
+
+  odisseu-node:
+    image: odisseu-node:a64-battle-leave-20261029T1910-amd64
+    platform: linux/amd64
+    environment:
+      ALLOW_ALL_GROUPS: "true"
+      STAGING_STRICT_USER_ALLOWLIST: "0"
+      STAGING_ALLOWED_USERS: ""
+      STAGING_BOOTSTRAP_GROUP: "0"
+      POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS: "300"
+    volumes: !override
+      - /home/caiohclavico/odisseu-core/.wwebjs_auth_core:/app/.wwebjs_auth_core
+      - odisseu-core-a56-data:/app/data
+
+volumes:
+  odisseu-core-a56-datomic:
+    name: odisseu-core-a56-datomic
+  odisseu-core-a56-journal:
+    name: odisseu-core-a56-journal
+  odisseu-core-a56-maint:
+    name: odisseu-core-a56-maint
+  odisseu-core-a56-data:
+    name: odisseu-core-a56-data

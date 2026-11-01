@@ -173,6 +173,42 @@ test('fuga e envelope {messages,effects}', () => {
   assert.deepEqual(env.effects, []);
 });
 
+test('vitória mostra menu de bolas sem etapa carimbada', () => {
+  const text = present.formatBattleTurn({
+    aguardandoCaptura: true,
+    chanceBaseCaptura: 80,
+    inventory: [{ itemId: 'pokebola', qty: 3 }],
+    battle: {
+      aguardandoCaptura: true,
+      pokemonO: { nome: 'Pidgey' },
+      pokemonX: { nome: 'Bulbasaur', hp: 100, hpAtual: 70 },
+      hp: { x: 70, o: 0 }
+    }
+  }, '!pk');
+  assert.match(text, /Pidgey.*derrotado|derrotado.*Pidgey/s);
+  assert.match(text, /Escolha a bola/);
+  assert.match(text, /75% de chance/); // min(75, 80)
+  assert.doesNotMatch(text, /carimbada/i);
+});
+
+test('falha de captura mantém menu com chance da bola', () => {
+  const text = present.formatCaptureResult({
+    capturou: false,
+    fugiu: false,
+    chance: 60,
+    chanceBase: 40,
+    bola: 'grande-bola',
+    tentativa: 1,
+    inventory: [{ itemId: 'grande-bola', qty: 2 }],
+    encounter: { pokemonO: { nome: 'Onix' } }
+  }, '!pk');
+  assert.match(text, /falhou/);
+  assert.match(text, /continua aqui/);
+  assert.match(text, /60% de chance/);
+  assert.match(text, /Escolha a bola/);
+  assert.doesNotMatch(text, /carimbada/i);
+});
+
 test('timeout em captura reconcilia com o mesmo operationId', async () => {
   let posts = 0;
   let gets = 0;

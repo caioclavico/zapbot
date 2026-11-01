@@ -23,25 +23,91 @@ test('formatPvpChallenge espelha master', () => {
   assert.match(text, /!pk batalhar/);
 });
 
-test('formatPvpBattle indica vez e golpes', () => {
+test('formatPvpBattle mantém X acima e O abaixo (assentos fixos)', () => {
   const battle = {
     phase: 'active',
     active: true,
-    vez: 'x',
+    vez: 'o',
+    turnIndex: 1,
     nomes: { x: 'Ash', o: 'Misty' },
     jogadores: { x: 'ash', o: 'misty' },
     pokemonX: {
       nome: 'Pikachu', hp: 45, hpAtual: 40,
       golpes: [{ nomeExibicao: 'Choque', tipo: 'electric', poder: 40, classe: 'especial' }]
     },
-    pokemonO: { nome: 'Squirtle', hp: 44, hpAtual: 44 },
-    hp: { x: 40, o: 44 }
+    pokemonO: {
+      nome: 'Squirtle', hp: 44, hpAtual: 30,
+      golpes: [{ nomeExibicao: 'Jato', tipo: 'water', poder: 40, classe: 'especial' }],
+      tipos: ['water']
+    },
+    hp: { x: 40, o: 30 }
   };
-  const mine = present.formatPvpBattle(battle, '!pk', { mySide: 'x' });
-  assert.match(mine, /Vez de \*Ash\*/);
-  assert.match(mine, /atacar/);
-  const wait = present.formatPvpBattle(battle, '!pk', { mySide: 'o' });
-  assert.match(wait, /Aguarde/);
+  const text = present.formatPvpBattle(battle, '!pk', { mySide: 'o', suaVez: true });
+  assert.match(text, /Vez de \*Misty\*/);
+  assert.match(text, /Ash.*Pikachu[\s\S]*Misty.*Squirtle/);
+  assert.match(text, /Jato/);
+  const idxAsh = text.indexOf('Ash');
+  const idxMisty = text.indexOf('Misty', idxAsh + 1);
+  assert.ok(idxAsh >= 0 && idxMisty > idxAsh, 'Ash (X) aparece antes de Misty (O)');
+});
+
+test('pvpViewForSide nunca espelha assentos (evita barras alternando)', () => {
+  const battle = {
+    vez: 'o',
+    pokemonX: { nome: 'Pikachu' },
+    pokemonO: { nome: 'Squirtle' },
+    hp: { x: 40, o: 30 },
+    nomes: { x: 'Ash', o: 'Misty' }
+  };
+  const fromO = present.pvpViewForSide(battle, 'o');
+  assert.equal(fromO.swapped, false);
+  assert.equal(fromO.battle.pokemonX.nome, 'Pikachu');
+  assert.equal(fromO.battle.pokemonO.nome, 'Squirtle');
+  assert.equal(fromO.battle.hp.x, 40);
+  assert.equal(fromO.battle.vez, 'o');
+});
+
+test('formatPvpBattle vitória mostra XP e PE', () => {
+  const text = present.formatPvpBattle({
+    phase: 'finished', outcome: 'x',
+    nomes: { x: 'Ash', o: 'Misty' },
+    pokemonX: { nome: 'Pikachu', hp: 45, hpAtual: 10 },
+    pokemonO: { nome: 'Squirtle', hp: 44, hpAtual: 0 },
+    hp: { x: 10, o: 0 }
+  }, '!pk', {
+    rewards: {
+      moedas: 10, pe: 1, bola: 'pokebola',
+      pokemon: [{ treinador: 'Ash', nome: 'Pikachu', nocautes: 1, xp: 3, subidas: 0 }]
+    }
+  });
+  assert.match(text, /Ash.*venceu/);
+  assert.match(text, /\+10 moedas/);
+  assert.match(text, /\+1 PE/);
+  assert.match(text, /\+3 XP/);
+});
+
+test('formatPvpBattle com vez string tolera suaVez do DTO', () => {
+  const battle = {
+    phase: 'active', active: true, vez: 'o', suaVez: true,
+    nomes: { x: 'Ash', o: 'Misty' },
+    jogadores: { x: 'ash', o: 'misty' },
+    pokemonX: {
+      nome: 'Pikachu', hp: 45, hpAtual: 40,
+      golpes: [{ nomeExibicao: 'Choque', tipo: 'electric', poder: 40, classe: 'especial' }]
+    },
+    pokemonO: {
+      nome: 'Squirtle', hp: 44, hpAtual: 30,
+      golpes: [{ nomeExibicao: 'Jato', tipo: 'water', poder: 40, classe: 'especial' }],
+      tipos: ['water']
+    },
+    hp: { x: 40, o: 30 },
+    lastAction: { mensagem: '⚡ *Choque* causou *12* de dano!' }
+  };
+  const text = present.formatPvpBattle(battle, '!pk', { mySide: 'o', suaVez: true });
+  assert.match(text, /causou \*12\* de dano/);
+  assert.match(text, /Vez de \*Misty\*/);
+  assert.match(text, /Squirtle/);
+  assert.match(text, /atacar/);
 });
 
 test('formatPvpBattle vitória e forfeit', () => {

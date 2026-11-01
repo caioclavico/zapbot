@@ -1,6 +1,6 @@
 (ns zapbot.pokemon.armazenamento-regras)
 
-(def capacidade-inicial-pokemon 30)
+(def capacidade-inicial-pokemon 50)
 (def capacidade-inicial-mochila 50)
 (def marcos
   {5 {:pokemon 50} 10 {:mochila 50} 15 {:pokemon 50} 20 {:mochila 50}

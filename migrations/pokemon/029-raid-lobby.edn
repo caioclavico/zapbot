@@ -1,0 +1,17 @@
+;; Fase 2 — metadados de lobby cooperativo (aditivo; não altera 007).
+[
+ {:db/ident       :raid/criada-em
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Epoch ms da abertura do lobby"}
+
+ {:db/ident       :raid/min-jogadores
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Mínimo para iniciar (default domínio 2)"}
+
+ {:db/ident       :raid/max-jogadores
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Máximo de inscritos (default domínio 5)"}
+]

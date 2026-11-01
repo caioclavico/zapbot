@@ -2,40 +2,230 @@
   "Estado e turnos de batalha selvagem — puro, sem I/O.
   Espelha o loop atacar-selvagem / turno-selvagem do legado (sem UI).
   PvP 1×1 reutiliza dano/status; turnos alternados sem resposta NPC."
-  (:require [pokemon.domain.capture :as capture]
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
+            [pokemon.domain.capture :as capture]
             [pokemon.domain.damage :as dmg]
             [pokemon.domain.errors :as err]
             [pokemon.domain.pvp :as pvp]
             [pokemon.domain.rng :as rng]
             [pokemon.domain.shop :as shop]
-            [pokemon.domain.status :as status]))
+            [pokemon.domain.status :as status])
+  (:import [java.io ByteArrayInputStream ByteArrayOutputStream]
+           [java.util Base64]
+           [java.util.zip GZIPInputStream GZIPOutputStream]
+           [java.nio.charset StandardCharsets]))
 
 (def golpe-padrao
   {:slug "tackle" :nome-exibicao "Investida" :tipo "normal"
    :poder 40 :classe :fisico})
 
+(def ^:private datomic-local-string-limit
+  "Limite prático do Datomic Local para valor de atributo (~4096)."
+  4000)
+
+(def ^:private compact-edn-prefix
+  "Prefixo de state-edn/team-edn gzip+Base64 quando o EDN plain > limite."
+  "odisseu.gz;")
+
+(def ^:private battle-pokemon-drop-keys
+  "Campos de coleção/legado não necessários no loop de batalha.
+   historico/ofertas/ivs incham battle/state-edn além do limite Local."
+  [:historico-golpes "historico-golpes"
+   :golpes-oferecidos "golpes-oferecidos"
+   :ofertas-golpes "ofertas-golpes"
+   :golpes-removidos "golpes-removidos"
+   :ivs "ivs"
+   :legado "legado"
+   :origin-edn "origin-edn"
+   :pokemon-key "pokemon-key"
+   :id-pokemon "id-pokemon"
+   :nickname "nickname"
+   :xp "xp"
+   :xp-desde-nivel "xp-desde-nivel"
+   :amizade "amizade"
+   :in-party "in-party"
+   :location "location"
+   :raridade "raridade"
+   :altura "altura"
+   :peso "peso"
+   :pronto-em "pronto-em"
+   :collection-index "collection-index"])
+
+(def ^:private battle-pokemon-drop-keys-bench
+  "Reservas 3×3: URLs de sprite são pequenas (~gzip); manter evita caixa preta no switch."
+  [])
+
+(def ^:private battle-pokemon-keep-keys
+  "Allowlist pós-drop — evita campos residuais incharem o snapshot 3×3.
+   taxa-captura fica: captura pós-caça lê do selvagem no state-edn."
+  #{:species :nome :shiny :nivel :level :hp :hp-atual :status
+    :ataque :defesa :atq-esp :def-esp :veloc :tipos :habilidade :golpes :item
+    :taxa-captura :imagem :imagem-shiny})
+
 (defn- kw-status [s] (status/->kw s))
+
+(defn- golpe-get
+  [g & ks]
+  (some #(let [v (get g %)]
+           (when (some? v) v))
+        ks))
 
 (defn- golpe-normalizado
   [g]
-  (if (and (map? g) (contains? g "slug"))
-    {:slug (get g "slug")
-     :nome-exibicao (get g "nome-exibicao")
-     :tipo (get g "tipo")
-     :poder (or (get g "poder") 0)
-     :classe (keyword (get g "classe" "fisico"))
-     :precisao (get g "precisao")
-     :status-causado (when-let [s (get g "status-causado")] (keyword s))
-     :chance-status (get g "chance-status")
-     :cura (get g "cura")
-     :dreno (get g "dreno")
-     :recuo (get g "recuo")
-     :min-acertos (get g "min-acertos")
-     :max-acertos (get g "max-acertos")
-     :alteracoes (get g "alteracoes")
-     :alvo (when-let [a (get g "alvo")] (keyword a))}
+  (if (and (map? g) (or (contains? g "slug") (contains? g :slug)))
+    (let [classe (golpe-get g :classe "classe")
+          status (golpe-get g :status-causado "status-causado" :statusCausado "statusCausado")
+          alvo (golpe-get g :alvo "alvo")]
+      {:slug (golpe-get g :slug "slug")
+       :nome-exibicao (golpe-get g :nome-exibicao "nome-exibicao" :nomeExibicao "nomeExibicao" :nome "nome")
+       :tipo (golpe-get g :tipo "tipo")
+       :poder (or (golpe-get g :poder "poder") 0)
+       :classe (keyword (or classe "fisico"))
+       :precisao (golpe-get g :precisao "precisao")
+       :status-causado (when status (keyword status))
+       :chance-status (golpe-get g :chance-status "chance-status" :chanceStatus "chanceStatus")
+       :cura (golpe-get g :cura "cura")
+       :dreno (golpe-get g :dreno "dreno")
+       :recuo (golpe-get g :recuo "recuo")
+       :min-acertos (golpe-get g :min-acertos "min-acertos" :minAcertos "minAcertos")
+       :max-acertos (golpe-get g :max-acertos "max-acertos" :maxAcertos "maxAcertos")
+       :alteracoes (golpe-get g :alteracoes "alteracoes")
+       :alvo (when alvo (keyword alvo))})
     (cond-> g
       (string? (:classe g)) (update :classe keyword))))
+
+(defn- slim-golpe-default?
+  "Defaults V1 (0/[]/precisao 100/alvo adversário) — ausente = mesmo efeito no loop."
+  [[k v]]
+  (or (nil? v)
+      (and (#{:cura :dreno :recuo :chance-status} k) (number? v) (zero? (long v)))
+      (and (= :alteracoes k) (or (nil? v) (and (sequential? v) (empty? v))))
+      (and (= :precisao k) (number? v) (= 100 (long v)))
+      (and (= :alvo k) (or (= :adversario v) (= "adversario" v)))))
+
+(defn slim-golpe-for-battle
+  "Mantém só campos usados em dano/status/UI de menu — descarta descricao/efeitos/defaults.
+   Também usado em leitos Joy / snapshots fora de batalha."
+  [g]
+  (when g
+    (let [n (golpe-normalizado g)
+          combat (select-keys n [:slug :nome-exibicao :tipo :poder :classe
+                                 :precisao :status-causado :chance-status
+                                 :cura :dreno :recuo :min-acertos :max-acertos
+                                 :alteracoes :alvo])]
+      (into {} (remove slim-golpe-default? combat)))))
+
+(defn slim-pokemon-for-battle
+  "Remove blobs de coleção do Pokémon embutido no estado de batalha."
+  ([pokemon] (slim-pokemon-for-battle pokemon {:keep-images? true}))
+  ([pokemon {:keys [keep-images?] :or {keep-images? true}}]
+   (when pokemon
+     (let [keep (cond-> battle-pokemon-keep-keys
+                  (not keep-images?) (disj :imagem :imagem-shiny))
+           raw-golpes (or (when (sequential? (:golpes pokemon)) (:golpes pokemon))
+                          (when (sequential? (get pokemon "golpes")) (get pokemon "golpes")))
+           base (-> pokemon
+                    (#(apply dissoc % battle-pokemon-drop-keys))
+                    (cond-> (and (not keep-images?) (seq battle-pokemon-drop-keys-bench))
+                      (#(apply dissoc % battle-pokemon-drop-keys-bench)))
+                    (dissoc "golpes")
+                    (cond-> raw-golpes
+                      (assoc :golpes (mapv slim-golpe-for-battle raw-golpes))))]
+       (select-keys base keep)))))
+
+(defn- slim-reserva-entry
+  "Reserva do desafiante: {:collection-index :pokemon}; NPC/PvP: mapa Pokémon.
+   Mantém imagem* — gzip cobre; sem URL o WA mostra caixa preta no switch."
+  [entry]
+  (cond
+    (and (map? entry) (contains? entry :pokemon))
+    (update entry :pokemon #(slim-pokemon-for-battle % {:keep-images? true}))
+    (map? entry)
+    (slim-pokemon-for-battle entry {:keep-images? true})
+    :else entry))
+
+(defn- slim-reservas
+  [reservas]
+  (when reservas
+    (cond-> reservas
+      (sequential? (:x reservas)) (update :x #(mapv slim-reserva-entry %))
+      (sequential? (:o reservas)) (update :o #(mapv slim-reserva-entry %)))))
+
+(defn slim-battle-state
+  "Compacta snapshots embutidos (ativos + reservas) sem tocar na coleção.
+   Estratégia única caça/ginásio/PvP.
+   Ativos mantêm imagem* (UI da arena). Reservas 3×3 sem sprites (gzip cobre o resto)."
+  [state]
+  (cond-> state
+    (map? (get-in state [:pokemons :x]))
+    (update-in [:pokemons :x] #(slim-pokemon-for-battle % {:keep-images? true}))
+    (map? (get-in state [:pokemons :o]))
+    (update-in [:pokemons :o] #(slim-pokemon-for-battle % {:keep-images? true}))
+    (map? (:reservas state))
+    (update :reservas slim-reservas)))
+
+(defn- assert-edn-within-limit!
+  [attr s]
+  (when (> (count s) datomic-local-string-limit)
+    (throw (err/error :datomic_value_too_large
+                      {:attr attr
+                       :bytes (count s)
+                       :limit datomic-local-string-limit})))
+  s)
+
+(defn- gzip-b64
+  [^String s]
+  (let [baos (ByteArrayOutputStream.)]
+    (with-open [gz (GZIPOutputStream. baos)]
+      (.write gz (.getBytes s StandardCharsets/UTF_8)))
+    (.encodeToString (Base64/getEncoder) (.toByteArray baos))))
+
+(defn- gunzip-b64
+  [^String b64]
+  (let [bytes (.decode (Base64/getDecoder) b64)
+        bais (ByteArrayInputStream. bytes)]
+    (with-open [gz (GZIPInputStream. bais)]
+      (slurp gz :encoding "UTF-8"))))
+
+(defn decode-compact-edn
+  "Lê state-edn/team-edn plain ou compactado (odisseu.gz;…)."
+  [s]
+  (when (and s (not (str/blank? s)))
+    (if (str/starts-with? s compact-edn-prefix)
+      (edn/read-string (gunzip-b64 (subs s (count compact-edn-prefix))))
+      (edn/read-string s))))
+
+(defn encode-value-edn
+  "EDN plain se couber; senão gzip+Base64 com prefixo, ainda sob o limite Local.
+   Usado por batalha, ginásio e leitos Joy (:enfermaria-bed/pokemon-edn)."
+  [attr value]
+  (let [plain (pr-str value)]
+    (if (<= (count plain) datomic-local-string-limit)
+      plain
+      (assert-edn-within-limit!
+       attr
+       (str compact-edn-prefix (gzip-b64 plain))))))
+
+(defn- encode-compact-edn!
+  [attr value]
+  (encode-value-edn attr value))
+
+(defn encode-state-edn
+  "Serializa estado de batalha para :battle/state-edn dentro do limite Local.
+   Não altera a coleção persistida — só o snapshot embutido na batalha.
+   Caça e ginásio/PvP compartilham a mesma estratégia (ativos + reservas).
+   Se o slim ainda exceder 4000 (ginásio 3×3 gordo), compacta com gzip."
+  [state]
+  (encode-value-edn :battle/state-edn (slim-battle-state state)))
+
+(defn encode-gym-team-edn
+  "Snapshot de ocupação (:gym-occupation/team-edn) — mesmos drops da batalha.
+   Histórico canônico permanece nos attrs :pokemon/* da coleção (quando aplicável)."
+  [team]
+  (encode-value-edn
+   :gym-occupation/team-edn
+   (mapv #(slim-pokemon-for-battle % {:keep-images? false}) (or team []))))
 
 (defn create-wild-battle
   "Cria estado inicial de caçada. Intimidate aplica-se na criação."
@@ -44,7 +234,9 @@
            collection-index]}]
   (when-not battle-id
     (throw (err/error :missing_battle_id {})))
-  (let [base {:battle-id battle-id
+  (let [pokemon-x (slim-pokemon-for-battle pokemon-x)
+        pokemon-o (slim-pokemon-for-battle pokemon-o)
+        base {:battle-id battle-id
               :kind :wild
               :chat-id chat-id
               :player-id player-id
@@ -332,9 +524,15 @@
         (let [golpe (pick-wild-move (get-in battle [:pokemons :o]) rng)
               hit (apply-offensive-hit (:battle gate) :o :x golpe
                                        player-was-defending? rng)
+              rival-la (dmg/last-action-ataque
+                        golpe
+                        (get-in (:battle gate) [:pokemons :o])
+                        (get-in (:battle gate) [:pokemons :x])
+                        (:resolved hit)
+                        player-was-defending?)
               b (assoc-in (:battle hit) [:defendendo :x] false)
               fim (aplicar-fim-de-turno b :o)
-              b (:battle fim)]
+              b (assoc (:battle fim) :last-rival-action rival-la)]
           (cond
             (zero? (get-in b [:hp :x])) (resolve-faint b :x)
             (zero? (get-in b [:hp :o])) (resolve-faint b :o)
@@ -428,23 +626,38 @@
         (let [golpe (golpe-normalizado (nth golpes idx))
               gate (resolve-status-gate battle :x rng)]
           (if (:impedido? gate)
-            (let [b (wild-response (:battle gate) false rng)]
+            (let [b (wild-response (:battle gate) false rng)
+                  nome (or (get-in battle [:pokemons :x :nome]) "Pokémon")
+                  msg (str "⚠️ *" nome "* " (or (:texto gate) "não conseguiu agir") "!")]
               (-> b (update :turn-index inc)
-                  (assoc :last-action {:action :attack :impedido? true :move-index idx})))
+                  (assoc :last-action (cond-> {:action :attack :impedido? true
+                                               :move-index idx :mensagem msg}
+                                        (:mensagem (:last-rival-action b))
+                                        (assoc :mensagem-rival (:mensagem (:last-rival-action b)))))))
             (let [classe (:classe golpe)
-                  b (:battle gate)
+                  b0 (:battle gate)
+                  atk (get-in b0 [:pokemons :x])
+                  def (get-in b0 [:pokemons :o])
                   b (if (and (= :status classe) (:cura golpe))
-                      (let [max-hp (get-in b [:pokemons :x :hp])
+                      (let [max-hp (get-in b0 [:pokemons :x :hp])
                             cura (max 1 (quot (* max-hp (long (:cura golpe))) 100))]
-                        (update-in b [:hp :x] #(min max-hp (+ % cura))))
-                      b)
+                        (update-in b0 [:hp :x] #(min max-hp (+ % cura))))
+                      b0)
                   hit (if (contains? #{:fisico :especial} classe)
                         (apply-offensive-hit b :x :o golpe false rng)
                         {:battle (if (seq (:alteracoes golpe))
                                    (let [alvo (if (= :adversario (:alvo golpe)) :o :x)]
                                      (aplicar-alteracoes b alvo (:alteracoes golpe)))
                                    b)
-                         :resolved {:dano 0 :acertou? true}})
+                         :resolved {:dano 0 :acertou? true :multiplicador 1 :acertos 1}})
+                  player-la (if (contains? #{:fisico :especial} classe)
+                              (dmg/last-action-ataque golpe atk def (:resolved hit) false
+                                                      :move-index idx)
+                              {:action :attack :move-index idx :dano 0 :acertou? true
+                               :golpe-nome (or (:nome-exibicao golpe) (:slug golpe))
+                               :tipo-golpe (:tipo golpe)
+                               :mensagem (str "📊 *" (or (:nome-exibicao golpe) (:slug golpe))
+                                              "* de *" (or (:nome atk) "Pokémon") "*!")})
                   b (:battle hit)
                   fim (aplicar-fim-de-turno b :x)
                   b (:battle fim)
@@ -458,13 +671,15 @@
                           (wild-response b2 defending-before? rng)
                           b2))
                       (zero? (get-in b [:hp :x])) (resolve-faint b :x)
-                      :else (wild-response b defending-before? rng))]
+                      :else (wild-response b defending-before? rng))
+                  rival (:last-rival-action b)
+                  la (cond-> player-la
+                       (:mensagem rival)
+                       (assoc :mensagem-rival (:mensagem rival)
+                              :dano-rival (:dano rival)))]
               (-> b
                   (update :turn-index inc)
-                  (assoc :last-action {:action :attack
-                                       :move-index idx
-                                       :dano (get-in hit [:resolved :dano] 0)
-                                       :acertou? (get-in hit [:resolved :acertou?])}))))))
+                  (assoc :last-action la))))))
 
       (throw (err/error :unknown_battle_action {:action action})))))
 
@@ -479,11 +694,17 @@
   (when-not (and (= 3 (count team-x)) (= 3 (count team-o)))
     (throw (err/error :invalid_gym_team
                       {:x (count team-x) :o (count team-o)})))
-  (let [normalize-x (fn [p]
+  (let [normalize-x (fn [idx p]
                       {:collection-index (long (:collection-index p))
-                       :pokemon (dissoc p :collection-index)})
-        xs (mapv normalize-x team-x)
+                       :pokemon (slim-pokemon-for-battle
+                                 (dissoc p :collection-index)
+                                 {:keep-images? true})})
+        xs (mapv normalize-x (range) team-x)
         first-x (:pokemon (first xs))
+        ;; Sprites nas reservas: evita caixa preta ao lançar o próximo.
+        team-o (mapv (fn [idx p]
+                       (slim-pokemon-for-battle p {:keep-images? true}))
+                     (range) team-o)
         first-o (first team-o)
         idx0 (:collection-index (first xs))
         base {:battle-id battle-id
@@ -525,14 +746,33 @@
       (and x-int? (not o-int?)) (reduzir :o)
       (and o-int? (not x-int?)) (reduzir :x))))
 
+(defn abandon
+  "Desistência voluntária (!pk sair) — wild/gym (inclui aguardando captura).
+   Sem recompensas."
+  [battle]
+  (when-not battle
+    (throw (err/error :battle_not_found {})))
+  (when-not (or (:active? battle) (:aguardando-captura? battle))
+    (throw (err/error :battle_already_finished
+                      {:phase (:phase battle) :outcome (:outcome battle)})))
+  (assoc battle
+         :phase :finished
+         :outcome :abandoned
+         :active? false
+         :aguardando-captura? false
+         :desafio-expira-em nil))
+
 (defn reward-for-outcome
-  "Derrota/fuga: +1 XP no Pokémon ativo (legado). Vitória selvagem espera captura.
-  Ginásio: XP/recompensas via resolve-challenge (não aqui)."
+  "Derrota/fuga selvagem (RNG): +1 XP no Pokémon ativo (legado).
+  Vitória selvagem espera captura.
+  Ginásio: XP/recompensas via resolve-challenge (não aqui).
+  Idle-timeout / abandoned (!pk sair): sem XP/moedas."
   [outcome]
   (case outcome
     (:lose :flee) {:pokemon-xp 1 :coins 0}
     :win {:pokemon-xp 0 :coins 0 :awaiting-capture? true}
     :draw {:pokemon-xp 0 :coins 0}
+    (:idle-timeout :abandoned) {:pokemon-xp 0 :coins 0}
     {}))
 
 (defn create-pvp-challenge
@@ -582,7 +822,7 @@
     (throw (err/error :pvp_not_waiting {:phase (:phase battle)})))
   (when (pvp/expirado? battle (or agora (System/currentTimeMillis)))
     (throw (err/error :pvp_challenge_expired {})))
-  (when (= player-id (get-in battle [:jogadores :x]))
+  (when (= player-id (pvp/jogador battle :x))
     (throw (err/error :pvp_self_accept {})))
   (pvp/assert-healthy-active! pokemon-o hp-o)
   (when-not (pvp/compativel? battle pokemon-o)
@@ -665,71 +905,39 @@
 (defn apply-pvp-turn
   "Turno humano no PvP. Sem wild-response; alterna :vez se a batalha segue."
   [battle actor-side {:keys [action move-index item-id]} rng]
-  (when-not (and (= :pvp (:kind battle)) (= :active (:phase battle)) (:active? battle))
-    (throw (err/error :battle_not_active {:phase (:phase battle) :kind (:kind battle)})))
-  (when-not (= actor-side (:vez battle))
-    (throw (err/error :pvp_out_of_turn
-                      {:vez (:vez battle) :actor actor-side})))
-  (let [rng (or rng {})
-        foe (if (= actor-side :x) :o :x)
-        defending-before? (boolean (get-in battle [:defendendo actor-side]))]
-    (case action
-      :defend
-      (let [gate (resolve-status-gate battle actor-side rng)]
-        (if (:impedido? gate)
-          (let [b (:battle gate)
-                b (cond-> b
-                    (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
-                    (and (:active? b) (pos? (get-in b [:hp actor-side] 0)))
-                    (assoc :vez foe))]
-            (-> b (update :turn-index inc)
-                (assoc :last-action {:action :defend :impedido? true :side actor-side})))
-          (let [b (assoc-in (:battle gate) [:defendendo actor-side] true)
-                fim (aplicar-fim-de-turno b actor-side)
-                b (:battle fim)
-                b (cond
-                    (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
-                    :else (assoc b :vez foe))]
-            (-> b (update :turn-index inc)
-                (assoc :last-action {:action :defend :side actor-side})))))
+  (let [battle (pvp/normalize-battle-sides battle)
+        actor-side (pvp/as-side actor-side)]
+    (when-not (and (= :pvp (:kind battle)) (= :active (:phase battle)) (:active? battle))
+      (throw (err/error :battle_not_active {:phase (:phase battle) :kind (:kind battle)})))
+    (when-not (and actor-side (= actor-side (:vez battle)))
+      (throw (err/error :pvp_out_of_turn
+                        {:vez (:vez battle) :actor actor-side})))
+    (let [rng (or rng {})
+          foe (if (= actor-side :x) :o :x)
+          defending-before? (boolean (get-in battle [:defendendo actor-side]))]
+      (case action
+        :defend
+        (let [gate (resolve-status-gate battle actor-side rng)]
+          (if (:impedido? gate)
+            (let [b (:battle gate)
+                  b (cond-> b
+                      (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
+                      (and (:active? b) (pos? (get-in b [:hp actor-side] 0)))
+                      (assoc :vez foe))]
+              (-> b (update :turn-index inc)
+                  (assoc :last-action {:action :defend :impedido? true :side actor-side})))
+            (let [b (assoc-in (:battle gate) [:defendendo actor-side] true)
+                  fim (aplicar-fim-de-turno b actor-side)
+                  b (:battle fim)
+                  b (cond
+                      (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
+                      :else (assoc b :vez foe))]
+              (-> b (update :turn-index inc)
+                  (assoc :last-action {:action :defend :side actor-side})))))
 
-      :item
-      (let [id (shop/normalizar-item (str item-id))
-            meta (shop/item id)
-            gate (resolve-status-gate battle actor-side rng)]
-        (if (:impedido? gate)
-          (let [b (:battle gate)
-                b (cond-> b
-                    (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
-                    (and (:active? b) (pos? (get-in b [:hp actor-side] 0)))
-                    (assoc :vez foe))]
-            (-> b (update :turn-index inc)
-                (assoc :last-action {:action :item :item-id id :impedido? true
-                                     :side actor-side})))
-          (let [b (cond
-                    (:cura-hp meta) (apply-item-heal-side (:battle gate) actor-side id)
-                    (contains? shop/status-cura id)
-                    (apply-item-status-cure-side (:battle gate) actor-side id)
-                    :else (throw (err/error :item_use_unsupported
-                                            {:item-id id
-                                             :allowed ["pocao" "pocao-maxima" "status-cura"]})))
-                last-item (:last-item b)
-                b (dissoc b :last-item)
-                fim (aplicar-fim-de-turno b actor-side)
-                b (:battle fim)
-                b (cond
-                    (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
-                    :else (assoc b :vez foe))]
-            (-> b (update :turn-index inc)
-                (assoc :last-action (merge {:action :item :item-id id :side actor-side}
-                                           last-item))))))
-
-      :attack
-      (let [golpes (vec (or (get-in battle [:pokemons actor-side :golpes]) []))
-            idx (long (or move-index 0))]
-        (when-not (< -1 idx (count golpes))
-          (throw (err/error :invalid_move_index {:idx idx :count (count golpes)})))
-        (let [golpe (golpe-normalizado (nth golpes idx))
+        :item
+        (let [id (shop/normalizar-item (str item-id))
+              meta (shop/item id)
               gate (resolve-status-gate battle actor-side rng)]
           (if (:impedido? gate)
             (let [b (:battle gate)
@@ -738,40 +946,82 @@
                       (and (:active? b) (pos? (get-in b [:hp actor-side] 0)))
                       (assoc :vez foe))]
               (-> b (update :turn-index inc)
-                  (assoc :last-action {:action :attack :impedido? true
-                                       :move-index idx :side actor-side})))
-            (let [classe (:classe golpe)
-                  b (:battle gate)
-                  b (if (and (= :status classe) (:cura golpe))
-                      (let [max-hp (get-in b [:pokemons actor-side :hp])
-                            cura (max 1 (quot (* max-hp (long (:cura golpe))) 100))]
-                        (update-in b [:hp actor-side] #(min max-hp (+ % cura))))
-                      b)
-                  hit (if (contains? #{:fisico :especial} classe)
-                        (apply-offensive-hit b actor-side foe golpe
-                                             (boolean (get-in b [:defendendo foe]))
-                                             rng)
-                        {:battle (if (seq (:alteracoes golpe))
-                                   (let [alvo (if (= :adversario (:alvo golpe)) foe actor-side)]
-                                     (aplicar-alteracoes b alvo (:alteracoes golpe)))
-                                   b)
-                         :resolved {:dano 0 :acertou? true}})
-                  b (assoc-in (:battle hit) [:defendendo foe] false)
+                  (assoc :last-action {:action :item :item-id id :impedido? true
+                                       :side actor-side})))
+            (let [b (cond
+                      (:cura-hp meta) (apply-item-heal-side (:battle gate) actor-side id)
+                      (contains? shop/status-cura id)
+                      (apply-item-status-cure-side (:battle gate) actor-side id)
+                      :else (throw (err/error :item_use_unsupported
+                                              {:item-id id
+                                               :allowed ["pocao" "pocao-maxima" "status-cura"]})))
+                  last-item (:last-item b)
+                  b (dissoc b :last-item)
                   fim (aplicar-fim-de-turno b actor-side)
                   b (:battle fim)
                   b (cond
-                      (zero? (get-in b [:hp foe])) (resolve-faint b foe)
                       (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
                       :else (assoc b :vez foe))]
-              (-> b
-                  (update :turn-index inc)
-                  (assoc :last-action {:action :attack
-                                       :move-index idx
-                                       :side actor-side
-                                       :dano (get-in hit [:resolved :dano] 0)
-                                       :acertou? (get-in hit [:resolved :acertou?])}))))))
+              (-> b (update :turn-index inc)
+                  (assoc :last-action (merge {:action :item :item-id id :side actor-side}
+                                             last-item))))))
 
-      (throw (err/error :unknown_battle_action {:action action})))))
+        :attack
+        (let [golpes (vec (or (get-in battle [:pokemons actor-side :golpes]) []))
+              idx (long (or move-index 0))]
+          (when-not (< -1 idx (count golpes))
+            (throw (err/error :invalid_move_index {:idx idx :count (count golpes)})))
+          (let [golpe (golpe-normalizado (nth golpes idx))
+                gate (resolve-status-gate battle actor-side rng)]
+            (if (:impedido? gate)
+              (let [b (:battle gate)
+                    nome (or (get-in battle [:pokemons actor-side :nome]) "Pokémon")
+                    msg (str "⚠️ *" nome "* " (or (:texto gate) "não conseguiu agir") "!")
+                    b (cond-> b
+                        (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
+                        (and (:active? b) (pos? (get-in b [:hp actor-side] 0)))
+                        (assoc :vez foe))]
+                (-> b (update :turn-index inc)
+                    (assoc :last-action {:action :attack :impedido? true
+                                         :move-index idx :side actor-side
+                                         :mensagem msg})))
+              (let [classe (:classe golpe)
+                    b0 (:battle gate)
+                    atk (get-in b0 [:pokemons actor-side])
+                    def (get-in b0 [:pokemons foe])
+                    defending? (boolean (get-in b0 [:defendendo foe]))
+                    b (if (and (= :status classe) (:cura golpe))
+                        (let [max-hp (get-in b0 [:pokemons actor-side :hp])
+                              cura (max 1 (quot (* max-hp (long (:cura golpe))) 100))]
+                          (update-in b0 [:hp actor-side] #(min max-hp (+ % cura))))
+                        b0)
+                    hit (if (contains? #{:fisico :especial} classe)
+                          (apply-offensive-hit b actor-side foe golpe defending? rng)
+                          {:battle (if (seq (:alteracoes golpe))
+                                     (let [alvo (if (= :adversario (:alvo golpe)) foe actor-side)]
+                                       (aplicar-alteracoes b alvo (:alteracoes golpe)))
+                                     b)
+                           :resolved {:dano 0 :acertou? true :multiplicador 1 :acertos 1}})
+                    la (if (contains? #{:fisico :especial} classe)
+                         (dmg/last-action-ataque golpe atk def (:resolved hit) defending?
+                                                 :move-index idx :side actor-side)
+                         {:action :attack :move-index idx :side actor-side :dano 0 :acertou? true
+                          :golpe-nome (or (:nome-exibicao golpe) (:slug golpe))
+                          :tipo-golpe (:tipo golpe)
+                          :mensagem (str "📊 *" (or (:nome-exibicao golpe) (:slug golpe))
+                                         "* de *" (or (:nome atk) "Pokémon") "*!")})
+                    b (assoc-in (:battle hit) [:defendendo foe] false)
+                    fim (aplicar-fim-de-turno b actor-side)
+                    b (:battle fim)
+                    b (cond
+                        (zero? (get-in b [:hp foe])) (resolve-faint b foe)
+                        (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
+                        :else (assoc b :vez foe))]
+                (-> b
+                    (update :turn-index inc)
+                    (assoc :last-action la))))))
+
+        (throw (err/error :unknown_battle_action {:action action}))))))
 
 (defn forfeit-pvp
   "Desistência: sem prêmio de vitória; outcome :forfeit-x|:forfeit-o."

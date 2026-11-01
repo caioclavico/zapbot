@@ -39,6 +39,8 @@
   [sequencia]
   (min 2 (max 0 (dec (long sequencia)))))
 
+(def bonus-base-vitoria-sem-captura 1)
+
 (defn recompensa-pos-captura
   "Espelha encerrar-cacada! quando capturou? ou fugiu? (sem vitória-sem-captura)."
   [{:keys [raridade sequencia-nova primeira-tentativa? capturou?]}]
@@ -52,6 +54,16 @@
        :moedas (+ 2 (min 10 (long sequencia-nova)))
        :sequencia sequencia-nova})
     {:xp 1 :bonus-xp 0 :bonus-primeira 0 :moedas 0 :sequencia 0}))
+
+(defn recompensa-vitoria-sem-captura
+  "Bolsa cheia / somente-batalha: raridade + 1 XP; sem moedas; sequência intacta.
+   Espelha encerrar-cacada! com :vitoria-sem-captura? true."
+  [{:keys [raridade]}]
+  (let [base (get xp-base-raridade (or raridade "comum") 2)]
+    {:xp (+ base bonus-base-vitoria-sem-captura)
+     :bonus-xp bonus-base-vitoria-sem-captura
+     :bonus-primeira 0
+     :moedas 0}))
 
 (defn poder-total
   [pokemon]

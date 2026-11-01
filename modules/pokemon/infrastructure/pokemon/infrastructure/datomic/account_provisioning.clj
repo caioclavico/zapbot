@@ -3,7 +3,8 @@
   (:require [datomic.client.api :as d]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
-            [pokemon.domain.model :as model]))
+            [pokemon.domain.model :as model]
+            [pokemon.infrastructure.datomic.economy-store :as economy-store]))
 
 (defn- initialize-missing! [conn lookup defaults]
   (loop [attempt 0]
@@ -25,6 +26,14 @@
       (d/transact conn {:tx-data [{:player/key key :player/chat-id chat :player/player-id player}]}))
     (initialize-missing! conn lookup {:player/fence-generation 0 :player/gym-defense-count 0})))
 
+(defn- ledger-defaults-for-slot
+  [slot]
+  (let [s (str slot)]
+    (if (or (.startsWith s "recovery")
+            (= s "offline-import"))
+      (economy-store/recovery-ledger-defaults)
+      (economy-store/new-save-ledger-defaults))))
+
 (defn ensure-save! [conn chat player slot]
   (let [key (id/save-key chat player slot) lookup [:save/key key]
         initial (model/initial-save slot)]
@@ -32,10 +41,11 @@
       (d/transact conn {:tx-data [{:save/key key :save/slot-id slot
                                   :save/player [:player/key (id/player-key chat player)]}]}))
     (initialize-missing!
-     conn lookup {:save/coins (:coins initial) :save/trainer-xp (:trainer-xp initial)
-                  :save/trainer-level (:trainer-level initial) :save/revision (:revision initial)
-                  :save/ativo-index 0 :save/vitorias-treinador 0 :save/pe-ginasios 0
-                  :save/pe-raids 0 :save/xp-insignias 0 :save/xp-missoes 0})))
+     conn lookup (merge {:save/coins (:coins initial) :save/trainer-xp (:trainer-xp initial)
+                         :save/trainer-level (:trainer-level initial) :save/revision (:revision initial)
+                         :save/ativo-index 0 :save/vitorias-treinador 0 :save/pe-ginasios 0
+                         :save/pe-raids 0 :save/xp-insignias 0 :save/xp-missoes 0}
+                        (ledger-defaults-for-slot slot)))))
 
 (defn ensure-recipient! [conn chat player]
   (let [p (ensure-player! conn chat player)

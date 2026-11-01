@@ -86,28 +86,61 @@
 (def staging-group-discovery-path
   (env "STAGING_GROUP_DISCOVERY_PATH"))
 
+;; Homologação HTTP-only: sem Client/LocalAuth/QR/Chromium.
+;; WHATSAPP_TRANSPORT=disabled|off|none
+(def whatsapp-transport-disabled?
+  (contains? #{"disabled" "off" "none" "0" "false"}
+             (str/lower-case (str/trim (env "WHATSAPP_TRANSPORT" "enabled")))))
+
+;; Bind do /health (default loopback). Em Compose A6 HTTP-only use 0.0.0.0.
+(def health-bind-host
+  (or (env "HEALTH_BIND_HOST") "127.0.0.1"))
+
+;; Piloto/liberação controlada: ALLOW_ALL_GROUPS=true abre qualquer @g.us
+;; (ainda sujeito a STAGING_ALLOWED_USERS). Default false.
+(def allow-all-groups?
+  (env-flag-on? "ALLOW_ALL_GROUPS"))
+
+;; Se true em staging-like, STAGING_ALLOWED_USERS vazio = negar todos (fail-closed).
+(def staging-strict-user-allowlist?
+  (env-flag-on? "STAGING_STRICT_USER_ALLOWLIST"))
+
 (defn chat-autorizado?
-  "Em staging-like, só o DEV_GROUP_ID. Fora disso, qualquer chat.
+  "Em staging-like: só DEV_GROUP_ID, salvo ALLOW_ALL_GROUPS (qualquer @g.us).
    Bootstrap de grupo: nunca autoriza (não processa mensagens)."
   [cid]
   (cond
     staging-bootstrap-group? false
     (not staging-like?) true
+    allow-all-groups? (and (string? cid)
+                           (or (str/ends-with? cid "@g.us")
+                               (str/ends-with? cid "@c.us")))
     :else (and (string? dev-group-id)
                (not (str/blank? dev-group-id))
                (= cid dev-group-id))))
 
 (defn usuario-autorizado?
-  "Allowlist opcional de remitentes em staging-like. Vazia = liberado."
+  "Allowlist de remitentes em staging-like.
+   Com STAGING_STRICT_USER_ALLOWLIST: lista vazia nega todos.
+   Sem strict: lista vazia libera (legado).
+   Compara JID completo e a parte local (antes de @) nos dois lados —
+   ex.: allowlist `265…@lid` autoriza também `265…` e vice-versa."
   [uid]
-  (or (not staging-like?)
-      (empty? staging-allowed-users)
-      (and (string? uid)
-           (or (contains? staging-allowed-users uid)
-               ;; aceita forma serializada sem sufixo @c.us
-               (contains? staging-allowed-users
-                          (first (str/split (str uid) #"@")))))))
-
+  (cond
+    (not staging-like?) true
+    (and staging-strict-user-allowlist? (empty? staging-allowed-users)) false
+    (empty? staging-allowed-users) true
+    (not (string? uid)) false
+    :else
+    (let [local (first (str/split (str uid) #"@"))]
+      (or (contains? staging-allowed-users uid)
+          (contains? staging-allowed-users local)
+          (boolean
+           (some (fn [allowed]
+                   (or (= uid allowed)
+                       (= local allowed)
+                       (= local (first (str/split (str allowed) #"@")))))
+                 staging-allowed-users))))))
 ;; Sessão WhatsApp (LocalAuth). Staging NUNCA deve usar o path de produção.
 ;; Produção/default: .wwebjs_auth + clientId nil → session/
 ;; Staging: WWEBJS_DATA_PATH=.wwebjs_auth_staging|…_core  (nunca .wwebjs_auth)
@@ -150,6 +183,19 @@
 (def pokemon-timeout-ms (inteiro-positivo "POKEMON_TIMEOUT_MS" 45000))
 (def pokemon-event-poll-ms (inteiro-positivo "POKEMON_EVENT_POLL_MS" 15000))
 (def pokemon-max-media-bytes (inteiro-positivo "POKEMON_MAX_MEDIA_BYTES" (* 10 1024 1024)))
+;; Fase 3 — kill switch do tick de raides automáticas (default off).
+(def pokemon-raid-auto-tick?
+  (= "true" (str/lower-case (env "POKEMON_RAID_AUTO_TICK" "false"))))
+(def pokemon-raid-auto-tick-ms
+  (inteiro-positivo "POKEMON_RAID_AUTO_TICK_MS" 30000))
+
+;; Idle timeout de batalhas JVM (espelha POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS na bridge).
+(def pokemon-battle-idle-timeout-seconds
+  (inteiro-positivo "POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS" 300))
+
+;; Kit/diário da mochila na JVM — desligado até backfill RO das flags recovery.
+(def pokemon-bag-kit-daily-enabled?
+  (= "true" (str/lower-case (str/trim (env "POKEMON_BAG_KIT_DAILY_ENABLED" "false")))))
 
 ;; M4.1/M6.1 — bridge JVM em development|staging. Produção sempre força legado.
 ;; POKEMON_ADAPTER=legacy|jvm (default legacy). Sem fallback de escrita.

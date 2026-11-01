@@ -8,6 +8,7 @@
             [pokemon.application.mission-queries :as missions]
             [pokemon.application.mission-economy :as mission-economy]
             [pokemon.application.bridge-tx :as tx]
+            [pokemon.application.raid-auto :as raid-auto]
             [pokemon.application.recovery-catalog :as recovery-catalog]
             [pokemon.application.ports :as ports]
             [pokemon.domain.errors :as err]
@@ -15,13 +16,18 @@
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress URLDecoder]
            [java.nio.charset StandardCharsets]
-           [java.util.concurrent Executors]))
+           [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
 
 (def ^:private loopback-hosts #{"127.0.0.1" "localhost" "::1"})
 ;; 0.0.0.0 só com flag explícita (rede privada Docker). Nunca publicar a porta.
 
 ;; operation-id em voo → :operation_pending (sem inventar novo id no cliente).
 (def ^:private inflight (atom #{}))
+
+(def ^:private idle-sweep-interval-ms
+  (try
+    (Long/parseLong (or (System/getenv "POKEMON_BATTLE_IDLE_SWEEP_MS") "30000"))
+    (catch Exception _ 30000)))
 
 (defn- query-map
   [^String raw]
@@ -83,7 +89,7 @@
      :cannot_forget_last_move :pokemon_not_found
      :pvp_level_incompatible :pvp_no_challenge :not_pvp_battle
      :invalid_title :professor_invalid_token :professor_expired :professor_no_cards
-     :professor_busy :pokemon_favorite
+     :professor_busy :pokemon_favorite :pokemon_in_treatment :pokemon_max_level
      :recovery_catalog_unavailable :recovery_request_not_found
      :recovery_request_owner_mismatch :recovery_request_not_confirmed
      :recovery_confirmation_mismatch :recovery_selection_invalid
@@ -97,6 +103,7 @@
      :battle_busy :battle_save_mismatch :encounter_owner_mismatch
      :encounter_not_ready
      :stale_turn_index :chat_hunt_busy :hunt_cooldown
+     :battle_idle_expired
      :pvp_chat_busy :pvp_self_accept :pvp_not_waiting :pvp_challenge_expired
      :pvp_out_of_turn :pvp_not_participant :pvp_cancel_forbidden
      :gym_cas_conflict :not_gym_leader :gym_defense_pending
@@ -104,13 +111,15 @@
      :raid_not_open :already_in_raid :raid_full :raid_cannot_leave
      :raid_not_creator :not_in_raid :raid_need_players :raid_not_in_combat
      :raid_not_your_turn :raid_save_mismatch :raid_liga_mismatch
-     :raid_capture_unavailable
+     :raid_capture_unavailable :raid_chat_busy :raid_gym_unknown
+     :raid_boss_template_missing :raid_config_invalid :raid_cannot_cancel
      :starter_unavailable :mission_period_conflict :mission_event_identity_conflict
      :mission_event_already_processed :gift_target_changed) 409
     :operation_pending 409
+    :datomic_value_too_large 500
     (:durability_compromised :durability_maintenance
      :durability_journal_required) 503
-    (:insufficient_item :insufficient_coins :bag_full :collection_full
+    (:insufficient_item :insufficient_coins :economy_unreliable :bag_full :collection_full
      :pokemon_full_hp :active_pokemon_fainted :invalid_gift_target
      :no_active_pokemon :motivation_full :gym_empty :gym_team_unhealthy) 422
     :unauthorized 401
@@ -186,15 +195,35 @@
     (number? v) (long v)
     :else nil))
 
+(defn- long-list-or-nil
+  "Aceita vetor/seq JSON, string \"1,2,3\" ou um único número."
+  [v]
+  (cond
+    (nil? v) nil
+    (sequential? v)
+    (let [xs (->> v (map long-or-nil) (filter some?) distinct vec)]
+      (when (seq xs) xs))
+    (string? v)
+    (let [xs (->> (str/split v #"[,\s]+")
+                  (map long-or-nil)
+                  (filter some?)
+                  distinct
+                  vec)]
+      (when (seq xs) xs))
+    :else
+    (when-let [n (long-or-nil v)] [n])))
+
 (defn- make-handler
   "opts opcionais:
    :credit-coins! (fn [store req]) — M8.5 durable-op; default tx/credit-coins!
    :score-point! (fn [store cid pid nome jogo op]) — M8.6 rank durable-op
    :platform-hooks mapa M8.7 (set-bot-blocked! / block-commands! / …)"
   [store token allow-test-rng? platform-store
-   & [{:keys [credit-coins! score-point! platform-hooks recovery-catalog]
+   & [{:keys [credit-coins! score-point! platform-hooks recovery-catalog
+              raid-auto-tick-enabled?]
        :or {credit-coins! tx/credit-coins!
-            platform-hooks {}}}]]
+            platform-hooks {}
+            raid-auto-tick-enabled? false}}]]
   (reify HttpHandler
     (handle [_ ex]
       (try
@@ -209,6 +238,7 @@
                        :role "pokemon-jvm-bridge"
                        :readsOnly false
                        :allowTestRng (boolean allow-test-rng?)
+                       :raidAutoTickEnabled (boolean raid-auto-tick-enabled?)
                        :platformEnabled (boolean platform-store)
                        :recoveryCatalogReady (boolean (and recovery-catalog
                                                            (recovery-catalog/available? recovery-catalog)))
@@ -225,6 +255,7 @@
                                               "gym-challenge" "gym-ranking" "gym-history"
                                               "raid-read" "raid-join" "raid-leave"
                                               "raid-start" "raid-attack" "raid-capture"
+                                              "raid-auto-schedule" "events-pending" "events-ack"
                                               "joy-read" "joy-send" "joy-collect"
                                               "adventure-read" "egg-incubate" "egg-hatch"
                                               "shop-read" "shop-buy" "inventory-read"
@@ -242,8 +273,12 @@
                                               "pvp-turn" "pvp-active-read"
                                               "onboarding-read" "onboarding-start"
                                               "onboarding-kit" "onboarding-starter"
+                                              "bag-kit" "bag-daily"
                                               "recovery-available" "recovery-request"
                                               "recovery-confirm" "recovery-import"]
+                                       (= "true" (some-> (System/getenv "POKEMON_BATTLE_LEAVE_ENABLED")
+                                                         str/lower-case str/trim))
+                                       (conj "battle-leave")
                                        platform-store
                                        (into ["platform-blocks" "platform-admins"]))}))
 
@@ -339,8 +374,13 @@
                 (do (require-method! ex #{"POST"})
                     (let [body (read-body ex) chat (g body "chatId") player (g body "playerId") save (g body "saveId")
                           fence (long-or-nil (g body "fenceGeneration")) op (g body "operationId") actor (header ex "X-Actor-Player-Id")
+                          indexes (or (long-list-or-nil (g body "collectionIndexes" "indexes"))
+                                      (when-let [i (long-or-nil (g body "collectionIndex" "index"))]
+                                        [i]))
                           req {:chat-id chat :player-id player :save-id save :fence-generation fence :operation-id op
-                               :title-index (long-or-nil (g body "titleIndex")) :collection-index (long-or-nil (g body "collectionIndex" "index"))
+                               :title-index (long-or-nil (g body "titleIndex"))
+                               :collection-index (first indexes)
+                               :collection-indexes indexes
                                :token (g body "token") :now (long (or (long-or-nil (g body "now")) (System/currentTimeMillis)))}]
                       (when (or (str/blank? chat) (str/blank? player) (str/blank? save) (str/blank? op)
                                 (nil? fence) (not= actor player)) (throw (err/error :invalid_query {})))
@@ -654,6 +694,40 @@
                                   store {:chat-id chat-id
                                          :player-id player-id
                                          :operation-id operation-id})))))
+
+                (= path "/v1/bag/kit")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          operation-id (g body "operationId" "operation-id")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id) (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/claim-starter-kit!
+                                  store {:chat-id chat-id
+                                         :player-id player-id
+                                         :operation-id operation-id})))))
+
+                (= path "/v1/bag/daily")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          operation-id (g body "operationId" "operation-id")
+                          dia (g body "dia" "day")
+                          timezone (g body "timezone")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id) (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/claim-bag-daily!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :operation-id operation-id}
+                                          (not (str/blank? dia)) (assoc :dia dia)
+                                          (not (str/blank? timezone)) (assoc :timezone timezone)))))))
 
                 (= path "/v1/onboarding/starter")
                 (do (require-method! ex #{"POST"})
@@ -1053,6 +1127,70 @@
                       (ok! ex (reads/gym-detail store chat-id player-id gym-id
                                                 {:agora-ms agora}))))
 
+                (= path "/v1/events/pending")
+                (do (require-method! ex #{"GET"})
+                    (let [limit (or (long-or-nil (g qs "limit")) 20)
+                          events (raid-auto/pending-events store {:limit limit})]
+                      (ok! ex {:events
+                               (mapv (fn [e]
+                                       {:id (:id e)
+                                        :chatId (:chat-id e)
+                                        :texto (:texto e)
+                                        :kind (:kind e)
+                                        :createdAt (:created-at e)})
+                                     events)})))
+
+                (and (str/starts-with? path "/v1/events/")
+                     (str/ends-with? path "/ack"))
+                (do (require-method! ex #{"POST"})
+                    (let [id (subs path (count "/v1/events/")
+                                   (- (count path) (count "/ack")))
+                          body (read-body ex)
+                          agora (or (long-or-nil (g body "agoraMs" "agora"))
+                                    (System/currentTimeMillis))]
+                      (when (str/blank? id)
+                        (throw (err/error :invalid_query {:required ["eventId"]})))
+                      (ok! ex (raid-auto/ack-event! store id agora))))
+
+                (= path "/v1/raids/auto/schedule")
+                (do (case method
+                      "GET"
+                      (let [chat-id (g qs "chatId")]
+                        (when (str/blank? chat-id)
+                          (throw (err/error :invalid_query {:required ["chatId"]})))
+                        (ok! ex {:schedule (raid-auto/get-schedule store chat-id)}))
+                      "PUT"
+                      (let [body (read-body ex)
+                            chat-id (g body "chatId")
+                            enabled (g body "enabled")
+                            interval (long-or-nil (g body "intervalMs" "interval-ms"))
+                            next-at (long-or-nil (g body "nextAt" "next-at"))
+                            idx (long-or-nil (g body "ginasioIndex" "ginasio-index"))
+                            agora (long-or-nil (g body "agoraMs" "agora"))]
+                        (when (str/blank? chat-id)
+                          (throw (err/error :invalid_query {:required ["chatId"]})))
+                        (ok! ex {:schedule
+                                 (raid-auto/upsert-schedule!
+                                  store (cond-> {:chat-id chat-id}
+                                          (some? enabled) (assoc :enabled (boolean enabled))
+                                          interval (assoc :interval-ms interval)
+                                          next-at (assoc :next-at next-at)
+                                          idx (assoc :ginasio-index idx)
+                                          agora (assoc :agora-ms agora)))}))
+                      (throw (err/error :method_not_allowed {:method method}))))
+
+                (= path "/v1/raids/auto/tick")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          agora (long-or-nil (g body "agoraMs" "agora"))
+                          chat-id (g body "chatId")
+                          limit (or (long-or-nil (g body "limit")) 32)]
+                      (ok! ex (raid-auto/tick!
+                               store {:agora-ms agora
+                                      :chat-id (when-not (str/blank? chat-id) chat-id)
+                                      :limit limit
+                                      :global-enabled? (boolean raid-auto-tick-enabled?)}))))
+
                 (= path "/v1/raids/active")
                 (do (require-method! ex #{"GET"})
                     (let [chat-id (g qs "chatId")
@@ -1073,9 +1211,6 @@
 
                 (= path "/v1/raids/open")
                 (do (require-method! ex #{"POST"})
-                    (when-not allow-test-rng?
-                      (throw (err/error :operation_forbidden
-                                        {:reason "raid-open-harness-only"})))
                     (let [body (read-body ex)
                           chat-id (g body "chatId")
                           player-id (g body "playerId")
@@ -1087,7 +1222,13 @@
                           liga (g body "liga")
                           chefe (or (g body "chefe" "boss") {})
                           nivel (long-or-nil (g body "nivelGinasio" "nivel-ginasio"))
-                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                          agora (long-or-nil (g body "agoraMs" "agora"))
+                          harness-chefe? (map? chefe)]
+                      ;; Gameplay: ginasio obrigatório (chefe derivado).
+                      ;; Harness: pode enviar chefe explícito (allowTestRng).
+                      (when (and harness-chefe? (seq chefe) (not allow-test-rng?))
+                        (throw (err/error :operation_forbidden
+                                          {:reason "raid-open-explicit-boss-harness-only"})))
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? save-id) (nil? fence)
                                 (str/blank? operation-id) (str/blank? ginasio))
@@ -1102,8 +1243,9 @@
                                                  :save-id save-id
                                                  :fence-generation fence
                                                  :operation-id operation-id
-                                                 :ginasio ginasio
-                                                 :chefe chefe}
+                                                 :ginasio ginasio}
+                                          (and allow-test-rng? (seq chefe))
+                                          (assoc :chefe chefe)
                                           raid-id (assoc :raid-id raid-id)
                                           liga (assoc :liga liga)
                                           nivel (assoc :nivel-ginasio nivel)
@@ -1161,6 +1303,32 @@
                                                       "fenceGeneration" "operationId"]})))
                       (ok! ex (with-operation! operation-id
                                 #(tx/leave-raid!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id}
+                                          raid-id (assoc :raid-id raid-id)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/raids/cancel")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          raid-id (g body "raidId" "raid-id")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/cancel-raid!
                                   store (cond-> {:chat-id chat-id
                                                  :player-id player-id
                                                  :save-id save-id
@@ -1844,6 +2012,71 @@
                                           item-id (assoc :item-id item-id)
                                           (map? rng) (assoc :rng rng)))))))
 
+                (= path "/v1/events/pending")
+                (do (require-method! ex #{"GET"})
+                    (let [limit (or (long-or-nil (g qs "limit")) 50)
+                          events (ports/list-battle-idle-notifications
+                                  store {:limit limit})]
+                      (ok! ex {:ok true :events events})))
+
+                (and (str/starts-with? path "/v1/events/")
+                     (str/ends-with? path "/ack"))
+                (do (require-method! ex #{"POST"})
+                    (let [id (-> path
+                                 (subs (count "/v1/events/"))
+                                 (str/replace #"/ack$" "")
+                                 (URLDecoder/decode StandardCharsets/UTF_8))
+                          result (ports/ack-battle-idle-notification! store id)]
+                      (ok! ex (assoc result :ok true))))
+
+                (= path "/v1/battles/leave")
+                ;; !pk sair: gated por POKEMON_BATTLE_LEAVE_ENABLED (default off).
+                ;; Feature off ≠ rota ausente ≠ ausência de batalha (no_battle 200).
+                (if-not (= "true" (some-> (System/getenv "POKEMON_BATTLE_LEAVE_ENABLED")
+                                          str/lower-case str/trim))
+                  (send-json! ex 503
+                              {:ok false
+                               :error {:code "feature_disabled"
+                                       :message "Saída de batalha temporariamente desabilitada."}})
+                  (do (require-method! ex #{"POST"})
+                      (let [body (read-body ex)
+                            chat-id (g body "chatId")
+                            player-id (g body "playerId")
+                            save-id (g body "saveId")
+                            fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                            operation-id (g body "operationId")
+                            battle-id (g body "battleId" "battle-id")
+                            raid-id (g body "raidId" "raid-id")
+                            agora (long-or-nil (g body "agoraMs" "agora"))]
+                        (when (or (str/blank? chat-id) (str/blank? player-id)
+                                  (str/blank? save-id) (nil? fence)
+                                  (str/blank? operation-id))
+                          (throw (err/error :invalid_query
+                                            {:required ["chatId" "playerId" "saveId"
+                                                        "fenceGeneration" "operationId"]})))
+                        (ok! ex (with-operation! operation-id
+                                  #(tx/leave-battle!
+                                    store (cond-> {:chat-id chat-id
+                                                   :player-id player-id
+                                                   :save-id save-id
+                                                   :fence-generation fence
+                                                   :operation-id operation-id}
+                                            battle-id (assoc :battle-id battle-id)
+                                            raid-id (assoc :raid-id raid-id)
+                                            (some? agora) (assoc :agora-ms agora))))))))
+
+                (= path "/v1/battles/expire-idle")
+                (do (require-method! ex #{"POST"})
+                    ;; Sweeper/harness: só encerra vencidos. force=true NÃO é exposto
+                    ;; via HTTP (ops admin de alto impacto — usar porta interna/testes).
+                    (let [body (read-body ex)
+                          agora (long-or-nil (g body "agoraMs" "agora"))
+                          limit (or (long-or-nil (g body "limit")) 32)]
+                      (ok! ex (assoc (ports/expire-idle-battles!
+                                      store (cond-> {:limit limit :force false}
+                                              agora (assoc :agora agora)))
+                                     :ok true))))
+
                 :else
                 (send-json! ex 404
                             {:ok false
@@ -1851,14 +2084,36 @@
         (catch Throwable t
           (handle-error! ex t))))))
 
+(defn- start-idle-sweeper!
+  [store]
+  (let [sched (Executors/newSingleThreadScheduledExecutor
+               (reify java.util.concurrent.ThreadFactory
+                 (newThread [_ r]
+                   (doto (Thread. r "battle-idle-sweeper")
+                     (.setDaemon true)))))
+        interval (max 5000 (long idle-sweep-interval-ms))]
+    (.scheduleWithFixedDelay
+     sched
+     ^Runnable
+     (fn []
+       (try
+         (ports/expire-idle-battles! store {:limit 32})
+         (catch Throwable t
+           (binding [*out* *err*]
+             (println "[bridge] idle-sweeper:" (ex-message t))))))
+     interval interval TimeUnit/MILLISECONDS)
+    sched))
+
 (defn start!
   "Sobe HttpServer. Default: loopback.
   `:allow-private-bind true` permite host 0.0.0.0 (rede privada de containers);
   a porta NÃO deve ser publicada publicamente no Compose.
   `:allow-test-rng true` só para smoke/dev — nunca no caminho WhatsApp."
   [{:keys [host port token store platform-store allow-test-rng allow-private-bind
-           credit-coins! score-point! platform-hooks recovery-catalog]
-    :or {host "127.0.0.1" port 18090 allow-test-rng false allow-private-bind false}}]
+           credit-coins! score-point! platform-hooks recovery-catalog
+           raid-auto-tick-enabled?]
+    :or {host "127.0.0.1" port 18090 allow-test-rng false allow-private-bind false
+         raid-auto-tick-enabled? false}}]
   (let [allowed (cond-> loopback-hosts
                   allow-private-bind (conj "0.0.0.0"))]
     (when-not (contains? allowed host)
@@ -1873,11 +2128,13 @@
     (let [addr (InetSocketAddress. ^String host (int port))
           server (HttpServer/create addr 0)
           handler (make-handler store token (boolean allow-test-rng) platform-store
-                                (cond-> {}
+                                (cond-> {:raid-auto-tick-enabled?
+                                         (boolean raid-auto-tick-enabled?)}
                                   credit-coins! (assoc :credit-coins! credit-coins!)
                                   score-point! (assoc :score-point! score-point!)
                                   (seq platform-hooks) (assoc :platform-hooks platform-hooks)
-                                  recovery-catalog (assoc :recovery-catalog recovery-catalog)))]
+                                  recovery-catalog (assoc :recovery-catalog recovery-catalog)))
+          sweeper (start-idle-sweeper! store)]
       (.createContext server "/" handler)
       (.setExecutor server (Executors/newFixedThreadPool 8))
       (.start server)
@@ -1889,12 +2146,16 @@
          :port bound
          :base-url (str "http://" url-host ":" bound)
          :allow-test-rng (boolean allow-test-rng)
+         :raid-auto-tick-enabled? (boolean raid-auto-tick-enabled?)
          :allow-private-bind (boolean allow-private-bind)
          :platform-enabled (boolean platform-store)
          :durable-coins? (boolean credit-coins!)
          :durable-rank? (boolean score-point!)
          :durable-blocks-admins? (boolean (seq platform-hooks))
-         :stop! (fn [] (.stop server 1))}))))
+         :idle-sweeper sweeper
+         :stop! (fn []
+                  (try (.shutdownNow sweeper) (catch Exception _))
+                  (.stop server 1))}))))
 
 (defn stop!
   [{:keys [stop!]}]

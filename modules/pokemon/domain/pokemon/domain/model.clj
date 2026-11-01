@@ -39,22 +39,30 @@
 
 (defn assert-activate
   "Decide se a alternância é no-op ou deve avançar o fence.
-  Nunca muta dados do outro save — só o ponteiro ativo."
+  Nunca muta dados do outro save — só o ponteiro ativo.
+
+  set-initial: usa o fence atual como expected (não assume 0). Casos em que o
+  jogador já teve fence avançado sem active-save-id (ex.: import recovery)
+  deixam de falhar CAS 0→1 contra fence real >0."
   [{:keys [active-save-id fence-generation]} target-save-id]
   (validate-save-slot! target-save-id)
-  (cond
-    (nil? active-save-id)
-    {:action :set-initial :target target-save-id :next-fence 1}
+  (let [fence (long (or fence-generation 0))]
+    (cond
+      (nil? active-save-id)
+      {:action :set-initial
+       :target target-save-id
+       :expected-fence fence
+       :next-fence (inc fence)}
 
-    (= active-save-id target-save-id)
-    {:action :noop :target target-save-id :fence-generation fence-generation}
+      (= active-save-id target-save-id)
+      {:action :noop :target target-save-id :fence-generation fence}
 
-    :else
-    {:action :switch
-     :from active-save-id
-     :target target-save-id
-     :expected-fence fence-generation
-     :next-fence (inc (long fence-generation))}))
+      :else
+      {:action :switch
+       :from active-save-id
+       :target target-save-id
+       :expected-fence fence
+       :next-fence (inc fence)})))
 
 (defn apply-coin-delta
   [coins delta]

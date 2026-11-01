@@ -2,6 +2,9 @@
 
 **Não executar automaticamente.** Este documento é o checklist operacional.
 
+> Runbook completo de produção (backup, 025, manifesto 12/39, rollback, Go/No-go):
+> [`pokemon-a6-4-production-runbook.md`](pokemon-a6-4-production-runbook.md).
+
 ## Pré-condições
 
 1. Branch `a6-save-slots` no remoto (HEAD com A6.2–A6.4).

@@ -98,6 +98,66 @@
       {:nivel nivel :xp-atual restante :xp-necessario necessario}
       (recur (inc nivel) (- restante necessario) (+ necessario 2)))))
 
+(def catalogo-insignias
+  "Espelha treinador/catalogo-insignias da master (PE único por marco)."
+  [{:id "doador-pokemon" :nome "Doador de Pokémon" :requisito "Doar 1 Pokémon"
+    :metric :doacoes :minimo 1 :xp-recompensa 3}
+   {:id "doador-generoso" :nome "Doador Generoso" :requisito "Doar 10 Pokémon"
+    :metric :doacoes :minimo 10 :xp-recompensa 6}
+   {:id "benfeitor" :nome "Benfeitor Pokémon" :requisito "Doar 50 Pokémon"
+    :metric :doacoes :minimo 50 :xp-recompensa 12}
+   {:id "mestre-doador" :nome "Mestre das Doações" :requisito "Doar 100 Pokémon"
+    :metric :doacoes :minimo 100 :xp-recompensa 24}
+   {:id "primeira-vitoria" :nome "Primeira vitória" :requisito "1 vitória"
+    :metric :vitorias :minimo 1 :xp-recompensa 3}
+   {:id "batalhador" :nome "Batalhador" :requisito "10 vitórias"
+    :metric :vitorias :minimo 10 :xp-recompensa 6}
+   {:id "veterano" :nome "Veterano" :requisito "50 vitórias"
+    :metric :vitorias :minimo 50 :xp-recompensa 12}
+   {:id "campeao" :nome "Campeão" :requisito "100 vitórias"
+    :metric :vitorias :minimo 100 :xp-recompensa 24}
+   {:id "capturador" :nome "Capturador" :requisito "3 capturas seguidas"
+    :metric :capturas :minimo 3 :xp-recompensa 3}
+   {:id "cacador" :nome "Caçador" :requisito "5 capturas seguidas"
+    :metric :capturas :minimo 5 :xp-recompensa 6}
+   {:id "especialista-captura" :nome "Especialista" :requisito "10 capturas seguidas"
+    :metric :capturas :minimo 10 :xp-recompensa 12}
+   {:id "mestre-captura" :nome "Mestre da captura" :requisito "20 capturas seguidas"
+    :metric :capturas :minimo 20 :xp-recompensa 24}])
+
+(def catalogo-insignias-pe
+  "Alias estável — testes/código legado."
+  catalogo-insignias)
+
+(defn insignias-treinador
+  "Lista completa de conquistas com :conquistada (bool), para `!pk treinador`."
+  [{:keys [doacoes-pokemon vitorias-treinador maior-sequencia-capturas]
+    :or {doacoes-pokemon 0 vitorias-treinador 0 maior-sequencia-capturas 0}}]
+  (let [metricas {:doacoes (long doacoes-pokemon)
+                  :vitorias (long vitorias-treinador)
+                  :capturas (long maior-sequencia-capturas)}]
+    (mapv (fn [{:keys [id nome requisito metric minimo xp-recompensa]}]
+            {:id id
+             :nome nome
+             :requisito requisito
+             :xp-recompensa (long xp-recompensa)
+             :conquistada (>= (get metricas metric 0) (long minimo))})
+          catalogo-insignias)))
+
+(defn xp-insignias-from-metrics
+  "Deriva PE de conquistas a partir dos marcos persistidos (legado xp-insignias).
+   Não grava; evita duplicar XP ao reiniciar ou reconsultar o perfil."
+  [metrics]
+  (reduce + 0 (map :xp-recompensa (filter :conquistada (insignias-treinador metrics)))))
+
+(defn titulo-label
+  "Resolve id persistido (:save/title) → nome exibível da master."
+  [title-id]
+  (when title-id
+    (some (fn [{:keys [id nome]}]
+            (when (= id (str title-id)) nome))
+          catalogo-insignias)))
+
 (defn xp-treinador-total
   "Soma dos componentes (legado xp-treinador), sem I/O."
   [{:keys [vitorias-treinador pe-ginasios pe-raids xp-insignias xp-missoes]

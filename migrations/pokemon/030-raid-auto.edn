@@ -1,0 +1,72 @@
+;; Fase 3 — agenda automática + outbox de anúncios (aditivo; default off).
+[
+ {:db/ident       :raid-auto-schedule/chat-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Agenda de aparição automática por grupo"}
+
+ {:db/ident       :raid-auto-schedule/enabled
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Default false — não dispara até autorização explícita"}
+
+ {:db/ident       :raid-auto-schedule/interval-ms
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-auto-schedule/next-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Epoch ms da próxima tentativa (fonte de verdade do scheduler)"}
+
+ {:db/ident       :raid-auto-schedule/ginasio-index
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Cursor round-robin no catálogo A6 de ginásios"}
+
+ {:db/ident       :raid-auto-schedule/revision
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid-auto-schedule/last-spawn-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Último slot claimado (chat:due-at)"}
+
+ {:db/ident       :raid-auto-schedule/last-raid-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/origem
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "manual|auto — anúncios outbox só para auto"}
+
+ ;; Outbox canônico (mesmo contrato Node: id + chatId + texto; ack limpa pendência).
+ {:db/ident       :pokemon-outbox/id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity}
+
+ {:db/ident       :pokemon-outbox/chat-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon-outbox/kind
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon-outbox/texto
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon-outbox/created-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon-outbox/acked-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "nil = pendente"}
+]

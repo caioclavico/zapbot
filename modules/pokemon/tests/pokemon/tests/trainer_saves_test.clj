@@ -238,3 +238,64 @@
       (is (= 33 (:coins (:save (trainer/snapshot-save s chat player "c")))))
       (is (= 11 (:coins (:save (trainer/snapshot-save s chat player "a")))))
       (is (= "a" (get-in (trainer/switch-save! s chat player "a") [:player :active-save-id]))))))
+
+(deftest set-initial-com-fence-elevado-nao-conflita
+  "fence>0 e active=null: set-initial CAS no fence atual (não assume 0)."
+  (let [s (boot! "t-set-initial-fence")
+        chat "chat-set-initial"
+        player "player-fence"
+        d (requiring-resolve 'datomic.client.api/transact)
+        db-fn (requiring-resolve 'datomic.client.api/db)
+        pull (requiring-resolve 'datomic.client.api/pull)]
+    (trainer/create-trainer! s {:chat-id chat :player-id player})
+    (trainer/switch-save! s chat player "b")
+    (trainer/switch-save! s chat player "a")
+    (let [fence-before (:fence-generation (ports/get-player s chat player))
+          pk (str chat "|" player)
+          conn (:conn s)]
+      (d conn {:tx-data [[:db/retract [:player/key pk] :player/active-save-id]]})
+      (let [ent (pull (db-fn conn) '[:player/active-save-id :player/fence-generation]
+                      [:player/key pk])]
+        (is (nil? (:player/active-save-id ent)))
+        (is (= fence-before (:player/fence-generation ent))))
+      (let [r (bridge/activate-save!
+               s {:chat-id chat :player-id player :save-id "a"
+                  :expected-fence-generation fence-before})
+            p (ports/get-player s chat player)]
+        (is (= "a" (:active-save-id r)))
+        (is (= "a" (:active-save-id p)))
+        (is (= (inc fence-before) (long (:fence-generation p))))
+        (let [r2 (bridge/activate-save!
+                  s {:chat-id chat :player-id player :save-id "a"
+                     :expected-fence-generation (:fence-generation p)})]
+          (is (= "a" (:active-save-id r2)))
+          (is (= (:fence-generation p)
+                 (:fence-generation (ports/get-player s chat player)))))))))
+
+(deftest set-initial-concorrente-um-vence
+  (let [s (boot! "t-set-initial-race")
+        chat "chat-race"
+        player "player-race"
+        d (requiring-resolve 'datomic.client.api/transact)]
+    (trainer/create-trainer! s {:chat-id chat :player-id player})
+    (trainer/switch-save! s chat player "b")
+    (let [fence (:fence-generation (ports/get-player s chat player))
+          pk (str chat "|" player)
+          conn (:conn s)]
+      (d conn {:tx-data [[:db/retract [:player/key pk] :player/active-save-id]]})
+      (let [futs (doall
+                  (for [slot ["a" "b" "a" "b"]]
+                    (future
+                      (try
+                        (bridge/activate-save!
+                         s {:chat-id chat :player-id player :save-id slot
+                            :expected-fence-generation fence})
+                        :ok
+                        (catch Exception _
+                          :conflict)))))
+            results (mapv deref futs)
+            active (ports/active-save-id s chat player)]
+        (is (pos? (count (filter #{:ok} results))))
+        (is (contains? #{"a" "b"} active))
+        (is (>= (long (:fence-generation (ports/get-player s chat player)))
+                (inc fence)))))))

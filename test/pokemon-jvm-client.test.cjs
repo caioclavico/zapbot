@@ -5,7 +5,8 @@ const http = require('node:http');
 const {
   createClient,
   trustedIdentityFromMessage,
-  stableOperationId
+  stableOperationId,
+  encodeOutboxEventId
 } = require('../scripts/lib/pokemon-jvm-client.cjs');
 
 async function fixture(handler, config = {}) {
@@ -184,7 +185,13 @@ test('aceita loopback sem flag Docker', () => {
   c.close();
 });
 
-test('aceita odisseu-jvm:18090 só com allowDockerJvmHost', () => {
+test('encodeOutboxEventId preserva : e @ dos IDs estáveis', () => {
+  const id = 'raid-opened:raid-auto:chat@g.us:5030000';
+  assert.equal(encodeOutboxEventId(id), id);
+  assert.match(encodeOutboxEventId('a b'), /a%20b/);
+});
+
+test('aceita odisseu-jvm e odisseu-a6-jvm:18090 só com allowDockerJvmHost', () => {
   assert.throws(
     () => createClient({ baseUrl: 'http://odisseu-jvm:18090', token: 'x' }),
     { code: 'CONFIG' }
@@ -196,6 +203,12 @@ test('aceita odisseu-jvm:18090 só com allowDockerJvmHost', () => {
   });
   assert.equal(typeof c.close, 'function');
   c.close();
+  const a6 = createClient({
+    baseUrl: 'http://odisseu-a6-jvm:18090',
+    token: 'x',
+    allowDockerJvmHost: true
+  });
+  a6.close();
 });
 
 test('recusa hostnames/IPs/portas fora da allowlist Docker', () => {

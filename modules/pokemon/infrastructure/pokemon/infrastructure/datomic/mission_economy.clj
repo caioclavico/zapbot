@@ -8,6 +8,7 @@
             [pokemon.domain.mission-catalog :as catalog]
             [pokemon.domain.mission-rewards :as rewards]
             [pokemon.domain.mundo :as mundo]
+            [pokemon.infrastructure.datomic.economy-store :as economy-store]
             [pokemon.infrastructure.datomic.mission-queries :as queries]))
 
 (def ^:dynamic *rand-int* rand-int)
@@ -82,16 +83,20 @@
                             (catalog/weekly-state current week))
                   reward (if daily? (rewards/daily state draw) (rewards/weekly state draw))
                   grant (grant db save sk ref inventory (:items reward) pending adjust)
-                  coins (+ (:save/coins save 0) (:coins reward))
+                  coin-part (when (pos? (long (:coins reward 0)))
+                              (economy-store/apply-delta-tx
+                               {:sk sk :save save :delta (long (:coins reward))
+                                :operation-id operation-id :source "mission"
+                                :role "primary"}))
                   tx (into (conj common [:db/add ref attr (pr-str (:state reward))]) (:tx grant))]
-              {:tx (cond-> tx
+              {:tx (cond-> (into tx (or (:tx coin-part) []))
                      (pos? (:xp reward))
-                     (conj [:db/add ref :save/xp-missoes (+ (:save/xp-missoes save 0) (:xp reward))])
-                     (pos? (:coins reward))
-                     (conj [:db/cas ref :save/coins (:save/coins save 0) coins]))
+                     (conj [:db/add ref :save/xp-missoes (+ (:save/xp-missoes save 0) (:xp reward))]))
                :result {:kind (name kind) :period period :ids (:ids reward)
                         :empty (empty? (:ids reward)) :xp (:xp reward) :coins (:coins reward)
-                        :coins-after coins :items (:items reward) :added (:added grant) :pending (:pending grant)}}))
+                        :coins-after (or (:operational-after coin-part)
+                                         (economy-store/spendable-from-entity save))
+                        :items (:items reward) :added (:added grant) :pending (:pending grant)}}))
 
           :gift
           (let [cards (some #(when (= "cartao-presente" (:item-id %)) (:qty %)) inventory)

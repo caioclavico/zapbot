@@ -22,6 +22,21 @@ test('aliases cacar/atacar e elegibilidade', () => {
     }
   });
   assert.match(blocked, /40s/);
+  assert.match(present.formatHuntEligibility({
+    eligibilidade: {
+      temTreinador: true,
+      temPokemon: true,
+      ativoVivo: true,
+      cooldownOk: false,
+      cooldownRestanteS: 1800,
+      semBatalhaPropria: true,
+      chatLivre: true
+    }
+  }), /30 minutos/);
+  assert.match(present.formatError({
+    code: 'HUNT_COOLDOWN',
+    details: { restanteMs: 1800 * 1000 }
+  }), /30 minutos/);
   assert.equal(present.formatHuntEligibility({
     eligibilidade: {
       temTreinador: true,
@@ -32,6 +47,13 @@ test('aliases cacar/atacar e elegibilidade', () => {
       chatLivre: true
     }
   }), null);
+  // Mensagens distintas: Node só retenta STALE (1x); CONFLICT não é auto-retry.
+  assert.match(present.formatError({ code: 'STALE_WRITER_FENCE' }), /obsoleto|ativar|saves/i);
+  assert.match(present.formatError({ code: 'WRITER_FENCE_CONFLICT' }), /Conflito ao gravar|tente de novo/i);
+  assert.notEqual(
+    present.formatError({ code: 'STALE_WRITER_FENCE' }),
+    present.formatError({ code: 'WRITER_FENCE_CONFLICT' })
+  );
 });
 
 test('formatHuntStart e formatBattleTurn', () => {
@@ -63,11 +85,15 @@ test('formatHuntStart e formatBattleTurn', () => {
   assert.match(text, /Magikarp/);
   assert.match(text, /Jato/);
   assert.match(text, /90\/90/);
-  assert.match(present.formatBattleTurn({
+  const win = present.formatBattleTurn({
     aguardandoCaptura: true,
     chanceBaseCaptura: 80,
-    battle: { pokemons: { o: { nome: 'Abra' } } }
-  }), /capturar/);
+    inventory: [{ itemId: 'pokebola', qty: 1 }],
+    battle: { pokemons: { o: { nome: 'Abra' } }, pokemonO: { nome: 'Abra' } }
+  });
+  assert.match(win, /capturar/);
+  assert.match(win, /Escolha a bola/);
+  assert.doesNotMatch(win, /carimbada/i);
 });
 
 test('aliases numéricos 1–4 → atacar', () => {

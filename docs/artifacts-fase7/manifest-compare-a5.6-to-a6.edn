@@ -1,0 +1,10 @@
+{:missing-players (),
+ :extra-players (),
+ :changed-player-hashes [],
+ :count-diffs {},
+ :intentional-schema
+ [:applied-029-raid-lobby
+  :applied-030-raid-auto
+  :migration-count-delta],
+ :unexpected-divergences false,
+ :block-migration? false}

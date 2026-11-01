@@ -21,9 +21,21 @@ test('formatJoyStatus e send/collect', () => {
     tempoTratamentoMinutos: 30
   }, '!pk'), /Feridos/);
   assert.match(present.formatJoySend({
-    pokemon: { nome: 'Rattata' }
-  }), /Joy recebeu/);
+    pokemon: { nome: 'Rattata' },
+    tempoTratamentoSegundos: 1800
+  }), /30 minutos/);
+  assert.match(present.formatJoyStatus({
+    enfermaria: [{
+      pokemon: { nome: 'Rattata' },
+      pronto: false,
+      restanteMs: 25 * 60 * 1000
+    }],
+    prontos: 0,
+    tempoTratamentoSegundos: 1800
+  }, '!pk'), /25 minutos/);
   assert.match(present.formatJoyCollect({ n: 1, curados: [{ nome: 'Rattata' }] }), /curado/);
+  assert.equal(present.formatDurationPt(1800), '30 minutos');
+  assert.equal(present.formatDurationPt(90), '1m 30s');
 });
 
 test('formatAdventureStatus e hatch', () => {

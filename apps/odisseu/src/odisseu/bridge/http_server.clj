@@ -48,14 +48,14 @@
     (catch Exception _ nil)))
 
 (defn- assert-storage-safe!
-  "Recusa storages de referência M5.3B/M5.5 e paths de produção."
+  "Recusa storages de referência M5.3B/M5.5, Core A5.6 e paths de produção."
   [storage]
   (let [s (str storage)]
-    (when (re-find #"(?i)m53-real-offline|m55-real-offline|m53-real-offline-bak|prod|oracle|odisseu-live"
+    (when (re-find #"(?i)m53-real-offline|m55-real-offline|m53-real-offline-bak|prod|oracle|odisseu-live|a56-datomic|odisseu-core-a56|odisseu-m90-core"
                    s)
       (throw (ex-info "bridge_storage_forbidden"
                       {:storage s
-                       :hint "Use .datomic-local/m61-staging, m90/m91 lab, ou volume odisseu-core-datomic."})))))
+                       :hint "Use volume odisseu-a6-staging-datomic (system odisseu-a6-staging) ou lab m61/m90/m91 — nunca a56/Core."})))))
 
 (defn- acquire-writer-lock!
   "Garante um único processo escritor por diretório Datomic Local."
@@ -120,6 +120,9 @@
         reset? (env-bool "ODISSEU_BRIDGE_RESET" false)
         private-bind? (env-bool "ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND" false)
         allow-rng? (env-bool "ODISSEU_BRIDGE_ALLOW_TEST_RNG" false)
+        ;; Kill switch global do tick de raides auto (default OFF).
+        ;; Só ligar em lab sintético (ex.: odisseu-a6-staging).
+        raid-auto-tick? (env-bool "ODISSEU_BRIDGE_RAID_AUTO_TICK" false)
         recovery-dump (env "ODISSEU_RECOVERY_DUMP_PATH")
         recovery-import-token (env "ODISSEU_RECOVERY_IMPORT_TOKEN")
         recovery-cat (try
@@ -154,7 +157,8 @@
                              :platform-store platform
                              :allow-test-rng allow-rng?
                              :allow-private-bind private-bind?
-                             :recovery-catalog recovery-cat})
+                             :recovery-catalog recovery-cat
+                             :raid-auto-tick-enabled? raid-auto-tick?})
         stopped (atom false)
         stop! (fn []
                 (when (compare-and-set! stopped false true)
@@ -169,6 +173,7 @@
              "system=" system
              "db=" db-name
              "platform-db=" (when platform platform-db)
+             "raid-auto-tick=" raid-auto-tick?
              "writer-lock=" (:path writer-lock)
              (when demo (str "seed=" (pr-str demo))))
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable stop!))

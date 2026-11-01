@@ -506,7 +506,7 @@
           collection #js {:saveId "a" :count 2 :collection #js [#js {:collectionIndex 0 :idPokemon "p1" :nome "Pikachu" :shiny true :nivel 5}
                                                                     #js {:collectionIndex 1 :idPokemon "p2" :nome "Rattata" :shiny false :nivel 3}]}
           client #js {:getCollection (fn [_] (p/resolved collection))
-                      :getShop (fn [_] (p/resolved #js {:capacidadePokemon 30 :ocupacaoPokemon 2 :expansoesPokemon50 0}))
+                      :getShop (fn [_] (p/resolved #js {:capacidadePokemon 50 :ocupacaoPokemon 2 :expansoesPokemon50 0}))
                       :getActiveSave (fn [_] (p/resolved #js {:activeSaveId "a" :fenceGeneration 1}))
                       :buyItem (fn [_] (p/resolved #js {:expansao true}))}]
       (set! http/jvm-configurado? (fn [] true))
@@ -520,7 +520,7 @@
                (is (= 4 (count @respostas)))
                (is (some #(re-find #"Pikachu" %) @respostas))
                (is (some #(re-find #"PC Pokémon" %) @respostas))
-               (is (some #(re-find #"2/30" %) @respostas))
+               (is (some #(re-find #"2/50" %) @respostas))
                (is (some #(re-find #"50 vagas" %) @respostas)))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally (fn []

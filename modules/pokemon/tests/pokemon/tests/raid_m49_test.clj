@@ -79,6 +79,11 @@
                 :operation-id "join-auto" :auto? true :nome "Ash"
                 :agora-ms 1002})]
       (is (= 1 (get-in j [:raid :n-participantes]))))
+    ;; Libera o chat (1 raide ativa) antes do cenário de liga.
+    (tx/cancel-raid!
+     s {:chat-id chat :player-id "ash" :save-id "a"
+        :fence-generation (fence s chat "ash")
+        :operation-id "cancel-j" :agora-ms 1500})
     ;; nv.20 vs liga iniciante → mismatch
     (let [bad (try
                 (raid-app/open-raid!

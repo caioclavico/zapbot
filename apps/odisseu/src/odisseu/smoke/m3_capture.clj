@@ -7,6 +7,7 @@
             [pokemon.tests.reward-m32-test]
             [pokemon.tests.collection-m31-test]
             [pokemon.tests.xp-equivalence-test]
+            [pokemon.tests.economy-ledger-test]
             [pokemon.tests.trainer-saves-test])
   (:import [java.lang.management ManagementFactory]
            [java.time Instant]))
@@ -38,6 +39,7 @@
         summaries [(test/run-tests 'pokemon.tests.capture-m33-test)
                    (test/run-tests 'pokemon.tests.reward-m32-test)
                    (test/run-tests 'pokemon.tests.xp-equivalence-test)
+                   (test/run-tests 'pokemon.tests.economy-ledger-test)
                    (test/run-tests 'pokemon.tests.collection-m31-test)
                    (test/run-tests 'pokemon.tests.trainer-saves-test)]
         ok? (every? #(and (zero? (:fail %)) (zero? (:error %))) summaries)

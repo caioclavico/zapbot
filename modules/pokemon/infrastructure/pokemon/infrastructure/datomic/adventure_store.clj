@@ -228,17 +228,14 @@
                  remaining)
         bed (:entrada out)
         bed-key (id/enfermaria-bed-key sk (:bed-id bed))
+        bed-entity (joy/bed-write-attrs bed-key sk bed)
         rev (long (:save/revision save 0))
         operation-id (:operation-id request)
         phash (:payload-hash request)]
     {:tx (concat
           [[:db/retractEntity [:pokemon/id-pokemon rem-id]]]
           reindex
-          [{:enfermaria-bed/key bed-key
-            :enfermaria-bed/save-key sk
-            :enfermaria-bed/bed-id (:bed-id bed)
-            :enfermaria-bed/pokemon-edn (pr-str (:pokemon bed))
-            :enfermaria-bed/pronto-em (:pronto-em bed)}
+          [bed-entity
            [:db/cas [:save/key sk] :save/revision rev (inc rev)]
            {:operation-receipt/id operation-id
             :operation-receipt/kind "joy-send"

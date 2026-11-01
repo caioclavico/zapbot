@@ -55,6 +55,20 @@
      (ops/validate-mutation! full)
      (ports/start-raid! store writer-ctx full))))
 
+(defn cancel-raid!
+  ([store chat-id player-id request]
+   (cancel-raid! store (writer/freeze-writer store chat-id player-id) request))
+  ([store writer-ctx request]
+   (let [full (merge request
+                     (select-keys writer-ctx
+                                  [:chat-id :player-id :save-id :fence-generation]))]
+     (ops/validate-mutation! full)
+     (ports/cancel-raid! store writer-ctx full))))
+
+(defn expire-lobby!
+  [store chat-id agora]
+  (ports/expire-raid-lobby! store chat-id agora))
+
 (defn attack!
   ([store chat-id player-id request]
    (attack! store (writer/freeze-writer store chat-id player-id) request))

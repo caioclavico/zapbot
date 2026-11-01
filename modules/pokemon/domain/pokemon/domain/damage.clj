@@ -1,7 +1,8 @@
 (ns pokemon.domain.damage
   "Cálculo de dano — fórmulas exatas de zapbot.pokemon.core.
   Sem STAB no dano (só preferência de moveset no legado)."
-  (:require [pokemon.domain.rng :as rng]
+  (:require [clojure.string :as str]
+            [pokemon.domain.rng :as rng]
             [pokemon.domain.types :as types]))
 
 (def fator-dano 0.22)
@@ -101,3 +102,82 @@
      :esquivou? (boolean esquivou?)
      :acertos acertos
      :impulso impulso}))
+
+(defn- emoji-golpe
+  [golpe]
+  (case (let [c (:classe golpe)] (if (keyword? c) c (keyword (or c "fisico"))))
+    :fisico "💥"
+    :especial "🔮"
+    :status "📊"
+    :transform "🧬"
+    "❓"))
+
+(defn- texto-efetividade
+  [multiplicador]
+  (cond
+    (> (double multiplicador) 1.0) "\n🔥 Foi super efetivo!"
+    (< (double multiplicador) 1.0) "\n😕 Não foi muito efetivo..."
+    :else ""))
+
+(defn- texto-critico
+  [critico?]
+  (if critico? "\n💢 Foi um golpe crítico!" ""))
+
+(defn- texto-impulso
+  [impulso nome-habilidade]
+  (if (and impulso (> (double impulso) 1.0) (not (str/blank? (str nome-habilidade))))
+    (str "\n🌟 " (str/capitalize (str nome-habilidade)) " ativou e turbinou o ataque!")
+    ""))
+
+(defn mensagem-ataque
+  "Texto legado de core/resolver-ataque (`causou N de dano` + sufixos)."
+  [golpe atacante defensor resolved defendendo?]
+  (let [nome-golpe (str (emoji-golpe golpe) " *"
+                        (or (:nome-exibicao golpe) (:slug golpe) "golpe") "*")
+        nome-atk (or (:nome atacante) (:species atacante) "Pokémon")
+        nome-def (or (:nome defensor) (:species defensor) "adversário")
+        dano (long (:dano resolved 0))
+        acertos (long (:acertos resolved 1))
+        sufixo (str (texto-efetividade (:multiplicador resolved 1))
+                    (texto-critico (:critico? resolved))
+                    (texto-impulso (:impulso resolved)
+                                   (or (:habilidade atacante) (get atacante "habilidade"))))]
+    (cond
+      (:errou? resolved)
+      (str nome-golpe " de *" nome-atk "* errou o alvo!")
+
+      (:esquivou? resolved)
+      (str "💨 *" nome-def "* esquivou completamente de " nome-golpe
+           " de *" nome-atk "*! Nenhum dano.")
+
+      (zero? dano)
+      (str nome-golpe " de *" nome-atk "* não teve efeito em *"
+           nome-def "*! 🚫")
+
+      defendendo?
+      (str nome-golpe " de *" nome-atk "*! *" nome-def
+           "* estava se defendendo e sofreu só " dano " de dano." sufixo)
+
+      :else
+      (str nome-golpe " de *" nome-atk "* causou " dano
+           " de dano em *" nome-def "*!" sufixo
+           (when (> acertos 1) (str "\n🎯 Acertou " acertos " vezes!"))))))
+
+(defn last-action-ataque
+  "Payload de :last-action para turno ofensivo (present/UI)."
+  [golpe atacante defensor resolved defendendo? & {:keys [move-index side]}]
+  (let [golpe (or golpe {})
+        resolved (or resolved {})]
+    (cond-> {:action :attack
+             :dano (long (:dano resolved 0))
+             :acertou? (boolean (:acertou? resolved))
+             :critico? (boolean (:critico? resolved))
+             :multiplicador (:multiplicador resolved 1)
+             :errou? (boolean (:errou? resolved))
+             :esquivou? (boolean (:esquivou? resolved))
+             :acertos (long (:acertos resolved 1))
+             :tipo-golpe (:tipo golpe)
+             :golpe-nome (or (:nome-exibicao golpe) (:slug golpe))
+             :mensagem (mensagem-ataque golpe atacante defensor resolved defendendo?)}
+      (some? move-index) (assoc :move-index move-index)
+      (some? side) (assoc :side side))))

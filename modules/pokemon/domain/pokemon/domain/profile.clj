@@ -1,26 +1,25 @@
 (ns pokemon.domain.profile
   "Regras puras do perfil do treinador e do professor Pokémon.
    O catálogo permanece versionado no código para não depender de rede."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [pokemon.domain.xp :as xp]))
 
 (def title-catalog
-  [{:id "doador-pokemon" :label "Doador Pokémon" :metric :doacoes :threshold 1}
-   {:id "doador-generoso" :label "Doador Generoso" :metric :doacoes :threshold 10}
-   {:id "benfeitor" :label "Benfeitor" :metric :doacoes :threshold 50}
-   {:id "mestre-doador" :label "Mestre Doador" :metric :doacoes :threshold 100}
-   {:id "primeira-vitoria" :label "Primeira vitória" :metric :vitorias-treinador :threshold 1}
-   {:id "batalhador" :label "Batalhador" :metric :vitorias-treinador :threshold 10}
-   {:id "veterano" :label "Veterano" :metric :vitorias-treinador :threshold 50}
-   {:id "campeao" :label "Campeão" :metric :vitorias-treinador :threshold 100}
-   {:id "capturador" :label "Capturador" :metric :maior-sequencia-capturas :threshold 3}
-   {:id "cacador" :label "Caçador" :metric :maior-sequencia-capturas :threshold 5}
-   {:id "especialista-captura" :label "Especialista" :metric :maior-sequencia-capturas :threshold 10}
-   {:id "mestre-captura" :label "Mestre captura" :metric :maior-sequencia-capturas :threshold 20}])
+  "Títulos = conquistas da master; ids estáveis no Datomic, labels = nomes master."
+  (mapv (fn [{:keys [id nome metric minimo]}]
+          {:id id
+           :label nome
+           :metric (case metric
+                     :doacoes :doacoes
+                     :vitorias :vitorias-treinador
+                     :capturas :maior-sequencia-capturas)
+           :threshold minimo})
+        xp/catalogo-insignias))
 
 (defn available-titles [save]
   (let [metrics (merge {:doacoes 0} save)]
     (->> title-catalog
-         (filter #(>= (long (get metrics (:metric % ) 0)) (:threshold %)))
+         (filter #(>= (long (get metrics (:metric %) 0)) (:threshold %)))
          vec)))
 
 (defn title-at [save index]

@@ -20,6 +20,12 @@ test('aceita odisseu-jvm:18090 só com allowPrivateHost', () => {
     allowPrivateHost: true
   });
   assert.equal(typeof c.getBlocks, 'function');
+  const a6 = createClient({
+    baseUrl: 'http://odisseu-a6-jvm:18090',
+    token: 't',
+    allowPrivateHost: true
+  });
+  assert.equal(typeof a6.getBlocks, 'function');
 });
 
 test('recusa IPs privados e outros hostnames mesmo com flag', () => {
@@ -42,4 +48,5 @@ test('assertHost espelha a allowlist', () => {
   assert.doesNotThrow(() => assertHost(new URL('http://localhost:18090'), false));
   assert.throws(() => assertHost(new URL('http://odisseu-jvm:18090'), false), {code: 'CONFIG'});
   assert.doesNotThrow(() => assertHost(new URL('http://odisseu-jvm:18090'), true));
+  assert.doesNotThrow(() => assertHost(new URL('http://odisseu-a6-jvm:18090'), true));
 });

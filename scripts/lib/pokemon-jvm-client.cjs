@@ -17,17 +17,21 @@ function positive(value, fallback) {
 /**
  * Host permitido:
  * - loopback (sempre);
- * - hostname exato `odisseu-jvm` na porta 18090 via HTTP, só com
+ * - hostname `odisseu-jvm` ou `odisseu-a6-jvm` na porta 18090 via HTTP, só com
  *   allowDockerJvmHost=true (staging Compose; desligado por padrão).
  * Não aceita IPs privados, outros hostnames nem HTTPS nesse modo Docker.
  */
+function isDockerJvmHost(host) {
+  return host === 'odisseu-jvm' || host === 'odisseu-a6-jvm';
+}
+
 function assertJvmUrl(base, { allowDockerJvmHost = false } = {}) {
   const host = (base.hostname || '').toLowerCase();
   if (['127.0.0.1', 'localhost', '::1'].includes(host)) return;
   const port = String(base.port || (base.protocol === 'https:' ? '443' : '80'));
   if (
     allowDockerJvmHost === true &&
-    host === 'odisseu-jvm' &&
+    isDockerJvmHost(host) &&
     port === '18090' &&
     base.protocol === 'http:'
   ) {
@@ -37,7 +41,7 @@ function assertJvmUrl(base, { allowDockerJvmHost = false } = {}) {
     'CONFIG',
     'POKEMON_JVM_URL deve apontar para loopback (127.0.0.1/localhost)' +
       (allowDockerJvmHost
-        ? ' ou http://odisseu-jvm:18090 (Docker staging).'
+        ? ' ou http://odisseu-jvm:18090 / http://odisseu-a6-jvm:18090 (Docker staging).'
         : '.')
   );
 }
@@ -259,6 +263,8 @@ function createClient(config = {}) {
       request('GET', `/v1/onboarding${q({ chatId, playerId })}`),
     startJourney: (body) => mutateOnce('/v1/onboarding/start', body),
     claimStarterKit: (body) => mutateOnce('/v1/onboarding/kit', body),
+    claimBagKit: (body) => mutateOnce('/v1/bag/kit', body),
+    claimBagDaily: (body) => mutateOnce('/v1/bag/daily', body),
     chooseStarter: (body) => mutateOnce('/v1/onboarding/starter', body),
     activateSave: ({ chatId, playerId, saveId, expectedFenceGeneration }) =>
       request('POST', '/v1/saves/activate', {
@@ -322,6 +328,7 @@ function createClient(config = {}) {
     attemptEncounterCapture: (body) => mutateOnce('/v1/encounter/capture', body),
     startBattle: (body) => mutateOnce('/v1/battles/start', body),
     confirmBattleTurn: (body) => mutateOnce('/v1/battles/turn', body),
+    leaveBattle: (body) => mutateOnce('/v1/battles/leave', body),
     getHuntPlan: ({ chatId, playerId, areaId, agoraMs, rollTipos, rollSurto }) =>
       request('GET', `/v1/hunt/plan${q({ chatId, playerId, areaId, agoraMs, rollTipos, rollSurto })}`),
     startHunt: (body) => mutateOnce('/v1/hunt/start', body),
@@ -347,9 +354,21 @@ function createClient(config = {}) {
     openRaid: (body) => mutateOnce('/v1/raids/open', body),
     joinRaid: (body) => mutateOnce('/v1/raids/join', body),
     leaveRaid: (body) => mutateOnce('/v1/raids/leave', body),
+    cancelRaid: (body) => mutateOnce('/v1/raids/cancel', body),
     startRaid: (body) => mutateOnce('/v1/raids/start', body),
     raidAttack: (body) => mutateOnce('/v1/raids/attack', body),
     raidCapture: (body) => mutateOnce('/v1/raids/capture', body),
+    getRaidAutoSchedule: ({ chatId }) =>
+      request('GET', `/v1/raids/auto/schedule${q({ chatId })}`),
+    putRaidAutoSchedule: (body) =>
+      request('PUT', '/v1/raids/auto/schedule', body),
+    tickRaidAuto: (body) =>
+      request('POST', '/v1/raids/auto/tick', body || {}),
+    pendingEvents: (opts = {}) =>
+      request('GET', `/v1/events/pending${q({ limit: opts.limit })}`),
+    // IDs estáveis usam ':' — encodeURIComponent quebrava o path no HttpServer.
+    ackEvent: (id, body) =>
+      request('POST', `/v1/events/${encodeOutboxEventId(id)}/ack`, body || {}),
     getJoyStatus: ({ chatId, playerId, agoraMs }) =>
       request('GET', `/v1/joy${q({ chatId, playerId, agoraMs })}`),
     joySend: (body) => mutateOnce('/v1/joy/send', body),
@@ -379,13 +398,23 @@ function createClient(config = {}) {
     acceptPvp: (body) => mutateOnce('/v1/pvp/accept', body),
     cancelPvp: (body) => mutateOnce('/v1/pvp/cancel', body),
     confirmPvpTurn: (body) => mutateOnce('/v1/pvp/turn', body),
+    expireIdleBattles: (body = {}) =>
+      mutateOnce('/v1/battles/expire-idle', body),
     close: () => agent.destroy()
   };
+}
+
+/** Preserva ':' e '@' dos IDs estáveis de outbox (raid-opened:…). */
+function encodeOutboxEventId(id) {
+  return encodeURIComponent(String(id))
+    .replace(/%3A/gi, ':')
+    .replace(/%40/gi, '@');
 }
 
 module.exports = {
   createClient,
   trustedIdentityFromMessage,
   stableOperationId,
-  assertJvmUrl
+  assertJvmUrl,
+  encodeOutboxEventId
 };

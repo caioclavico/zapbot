@@ -7,12 +7,11 @@
             [pokemon.domain.onboarding :as onboard]))
 
 (defn- kit-claimed-any?
-  "Legado: kit uma vez por conta. No modelo A/B, qualquer slot marcado bloqueia."
+  "Legado: kit uma vez por conta. Qualquer save (a/b/recovery-v1) marcado bloqueia."
   [store chat-id player-id]
   (boolean
-   (some (fn [slot]
-           (:kit-inicial-resgatado (ports/get-save store chat-id player-id slot)))
-         ["a" "b"])))
+   (some :kit-inicial-resgatado
+         (ports/list-saves store chat-id player-id))))
 
 (defn status
   [store chat-id player-id]

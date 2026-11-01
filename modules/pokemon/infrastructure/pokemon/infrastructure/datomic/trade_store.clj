@@ -2,6 +2,7 @@
   "Repositório A4.4.1. Transições usam CAS de revisão; integração ao adapter
    principal e operações de escolha entram nas etapas seguintes."
   (:require [clojure.edn :as edn] [datomic.client.api :as d]
+            [pokemon.domain.battle :as battle]
             [pokemon.domain.errors :as err] [pokemon.domain.reward :as reward]
             [pokemon.domain.trade :as trade]
             [pokemon.domain.trade-evolution :as trade-evolution]))
@@ -196,8 +197,9 @@
   (boolean
    (some (fn [eid]
            (let [raw (:enfermaria-bed/pokemon-edn (d/pull db '[*] eid))]
-             (try (= pokemon-id (or (:id-pokemon (edn/read-string raw))
-                                    (:pokemon/id-pokemon (edn/read-string raw))))
+             (try (let [poke (or (battle/decode-compact-edn raw) {})]
+                    (= pokemon-id (or (:id-pokemon poke)
+                                      (:pokemon/id-pokemon poke))))
                   (catch Exception _ false))))
          (d/q '[:find ?e
                 :in $ ?sk

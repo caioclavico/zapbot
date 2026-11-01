@@ -253,6 +253,14 @@
   [{:keys [battle-id]}]
   (reward/canonicalize {:battle-id (str battle-id)}))
 
+(defn battle-leave-payload
+  "Payload estável de !pk sair (battle-id ou raid-id opcional)."
+  [{:keys [battle-id raid-id]}]
+  (reward/canonicalize
+   (cond-> {:action "leave"}
+     battle-id (assoc :battle-id (str battle-id))
+     raid-id (assoc :raid-id (str raid-id)))))
+
 (defn pvp-turn-payload
   [{:keys [battle-id expected-turn-index action move-index item-id rng actor-side]}]
   (reward/canonicalize

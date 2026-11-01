@@ -12,6 +12,7 @@
             [pokemon.application.hunt :as hunt-app]
             [pokemon.application.joy :as joy-app]
             [pokemon.application.moves :as moves-app]
+            [pokemon.application.bag :as bag-app]
             [pokemon.application.onboarding :as onboard-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.pvp :as pvp-app]
@@ -25,6 +26,7 @@
             [pokemon.domain.errors :as err]
             [pokemon.domain.hunt :as hunt]
             [pokemon.domain.identities :as id]
+            [pokemon.domain.joy :as joy]
             [pokemon.domain.model :as model]
             [pokemon.domain.moves :as moves]
             [pokemon.domain.mundo :as mundo]
@@ -72,6 +74,8 @@
                (hunt/area-dto a))
        :aguardando-captura (boolean (:aguardando-captura? battle))
        :somente-batalha (boolean (:somente-batalha? battle))
+       :selvagem-liberado-bolsa-cheia
+       (boolean (:selvagem-liberado-bolsa-cheia? battle))
        :last-action (:last-action battle)
        :last-switch (:last-switch battle)
        :reservas-x (count (get-in battle [:reservas :x] []))
@@ -121,7 +125,11 @@
 
 (defn claim-starter-kit!
   [store req]
-  (onboard-app/claim-kit! store req))
+  (bag-app/claim-kit! store req))
+
+(defn claim-bag-daily!
+  [store req]
+  (bag-app/claim-daily! store req))
 
 (defn choose-starter!
   [store req]
@@ -453,24 +461,32 @@
         result (battle-app/confirm-turn! store writer-ctx normalized)
         battle (:battle result)
         gym-res (:gym-resolve result)
-        presented (present-battle battle)]
-    {:operation-id (:operation-id result)
-     :duplicate (boolean (:duplicate result))
-     :battle (assoc presented
-                    :pokemons {:x (get-in battle [:pokemons :x])
-                               :o (get-in battle [:pokemons :o])})
-     :battle-id (:battle-id battle)
-     :aguardando-captura (boolean (:aguardando-captura? battle))
-     :outcome (:outcome battle)
-     :chance-base-captura (:chance-base-captura battle)
-     :gym-resolve (when gym-res
-                    {:venceu (boolean (:venceu? gym-res))
-                     :premio (when-let [p (:premio gym-res)] (name p))
-                     :occupied (boolean (:occupied? gym-res))
-                     :pe-delta (:pe-delta gym-res)
-                     :reward (:reward gym-res)})
-     :save-id save-id
-     :fence-generation (long fence-generation)}))
+        presented (present-battle battle)
+        aguardando? (boolean (:aguardando-captura? battle))
+        ;; Inventário no DTO de vitória → Node mostra menu de bolas como no master
+        ;; (sem etapa extra de "carimbada"). Sem mutação; leitura do save ativo.
+        inv (when (and aguardando? chat-id player-id save-id)
+              (ports/list-inventory store chat-id player-id save-id))]
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :battle (assoc presented
+                            :pokemons {:x (get-in battle [:pokemons :x])
+                                       :o (get-in battle [:pokemons :o])})
+             :battle-id (:battle-id battle)
+             :aguardando-captura aguardando?
+             :outcome (:outcome battle)
+             :chance-base-captura (:chance-base-captura battle)
+             :tentativas-captura (long (:tentativas-captura battle 0))
+             :somente-batalha (boolean (:somente-batalha? battle))
+             :gym-resolve (when gym-res
+                            {:venceu (boolean (:venceu? gym-res))
+                             :premio (when-let [p (:premio gym-res)] (name p))
+                             :occupied (boolean (:occupied? gym-res))
+                             :pe-delta (:pe-delta gym-res)
+                             :reward (:reward gym-res)})
+             :save-id save-id
+             :fence-generation (long fence-generation)}
+      (some? inv) (assoc :inventory inv))))
 
 (def ^:private heal-by-item
   "Pontos de motivação derivados do item — nunca do cliente."
@@ -656,27 +672,50 @@
    :fence-generation (long fence-generation)})
 
 (defn open-raid!
-  "Harness/teste: abre inscrições. Nunca pelo WhatsApp."
+  "Abre lobby. Se `chefe`/`liga` omitidos, deriva do ginásio A6."
   [store {:keys [chat-id player-id save-id fence-generation operation-id
                  raid-id ginasio nome-ginasio nivel-ginasio liga chefe agora-ms]
           :as req}]
   (let [writer-ctx (require-writer! req)
-        chefe-m (keywordize-keys (or chefe {}))
+        derived (when (and ginasio (or (nil? chefe) (empty? chefe)))
+                  (raid-domain/boss-do-ginasio ginasio))
+        chefe-m (keywordize-keys (or (when (seq chefe) chefe) (:chefe derived) {}))
+        _ (when-not (seq (str (or (:nome chefe-m) "")))
+            (throw (err/error :raid_config_invalid {:need :chefe})))
+        ginasio* (str (or (:ginasio derived) ginasio))
         result (raid-app/open-raid!
                 store writer-ctx
-                (cond-> {:operation-id (str operation-id)
-                         :raid-id (or raid-id (str operation-id))
-                         :ginasio (str ginasio)
-                         :nome-ginasio (or nome-ginasio ginasio)
-                         :nivel-ginasio (long (or nivel-ginasio 1))
-                         :liga (or liga "iniciante")
-                         :chefe chefe-m
-                         :agora (or agora-ms (System/currentTimeMillis))}
-                  true identity))]
+                {:operation-id (str operation-id)
+                 :raid-id (or raid-id (str operation-id))
+                 :ginasio ginasio*
+                 :nome-ginasio (or nome-ginasio (:nome-ginasio derived) ginasio*)
+                 :nivel-ginasio (long (or nivel-ginasio (:nivel-ginasio derived) 1))
+                 :liga (or liga (:liga derived) "iniciante")
+                 :chefe chefe-m
+                 :agora (or agora-ms (System/currentTimeMillis))})]
     {:operation-id (:operation-id result)
      :duplicate (boolean (:duplicate result))
      :save-id save-id
      :fence-generation (long fence-generation)
+     :raid (raid-summary (:raid result))}))
+
+(defn cancel-raid!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        agora (or agora-ms (System/currentTimeMillis))
+        _ (raid-app/expire-lobby! store chat-id agora)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        result (raid-app/cancel-raid!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :agora agora})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
      :raid (raid-summary (:raid result))}))
 
 (defn join-raid!
@@ -841,15 +880,21 @@
                  :idx (long idx)
                  :agora (or agora-ms (System/currentTimeMillis))})
         entrada (:entrada result)]
-    {:operation-id (:operation-id result)
-     :duplicate (boolean (:duplicate result))
-     :save-id save-id
-     :fence-generation (long fence-generation)
-     :pronto-em (:pronto-em result)
-     :bed-id (:bed-id entrada)
-     :pokemon (select-keys (or (:pokemon entrada) {})
-                           [:nome :species :nivel :hp :hp-atual :status
-                            :collection-index])}))
+    (let [agora (long (or agora-ms (System/currentTimeMillis)))
+          pronto (long (or (:pronto-em result)
+                           (:pronto-em entrada)
+                           0))]
+      {:operation-id (:operation-id result)
+       :duplicate (boolean (:duplicate result))
+       :save-id save-id
+       :fence-generation (long fence-generation)
+       :pronto-em pronto
+       :restante-ms (max 0 (- pronto agora))
+       :tempo-tratamento-segundos (joy/tempo-tratamento-segundos)
+       :bed-id (:bed-id entrada)
+       :pokemon (select-keys (or (:pokemon entrada) {})
+                             [:nome :species :nivel :hp :hp-atual :status
+                              :collection-index])})))
 
 (defn joy-collect!
   "Recolhe todos os leitos prontos do save ativo."
@@ -946,7 +991,10 @@
      :preco (:preco result)
      :coins (:coins-depois result)
      :expansao (boolean (:expansao? result))
-     :expansoes-mochila-50 (:expansoes-mochila-50 result)}))
+     :expansao? (boolean (:expansao? result))
+     :expansao-tipo (:expansao-tipo result)
+     :expansoes-mochila-50 (:expansoes-mochila-50 result)
+     :expansoes-pokemon-50 (:expansoes-pokemon-50 result)}))
 
 (defn use-item!
   "Usa poção/cura. Se item-id vazio e kind=curar, resolve pelo status do alvo."
@@ -1142,21 +1190,29 @@
      :pokemon (pokemon-summary (:registro result))}))
 
 (defn- present-pvp
-  [battle]
-  (when battle
-    (let [base (present-battle battle)]
-      (merge base
-             {:kind "pvp"
-              :pvp? true
-              :phase (name (:phase battle :waiting))
-              ;; Sem `?` no DTO — JSON camelCase precisa bater com Node (aguardando).
-              :aguardando (boolean (pvp-domain/aguardando? battle))
-              :faixa-niveis (:faixa-niveis battle)
-              :desafio-expira-em (:desafio-expira-em battle)
-              :vez (when-let [v (:vez battle)] (name v))
-              :jogadores (:jogadores battle)
-              :nomes (:nomes battle)
-              :outcome (when-let [o (:outcome battle)] (name o))}))))
+  ([battle] (present-pvp battle nil))
+  ([battle player-id]
+   (when battle
+     (let [battle (pvp-domain/normalize-battle-sides battle)
+           base (present-battle battle)
+           vez (pvp-domain/as-side (:vez battle))
+           side (when player-id (pvp-domain/side-of-player battle player-id))]
+       (merge base
+              {:kind "pvp"
+               :pvp? true
+               :phase (name (:phase battle :waiting))
+               ;; Sem `?` no DTO — JSON camelCase precisa bater com Node (aguardando).
+               :aguardando (boolean (pvp-domain/aguardando? battle))
+               :faixa-niveis (:faixa-niveis battle)
+               :desafio-expira-em (:desafio-expira-em battle)
+               :vez (when vez (name vez))
+               :jogadores {:x (pvp-domain/jogador battle :x)
+                           :o (pvp-domain/jogador battle :o)}
+               :nomes (let [n (or (:nomes battle) {})]
+                        {:x (or (get n :x) (get n "x"))
+                         :o (or (get n :o) (get n "o"))})
+               :outcome (when-let [o (:outcome battle)] (name o))
+               :sua-vez (boolean (and side vez (= side vez)))})))))
 
 (defn open-pvp!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
@@ -1243,14 +1299,46 @@
                   (some? move-index) (assoc :move-index (long move-index))
                   item-id (assoc :item-id item-id)
                   (map? rng) (assoc :rng (keywordize-keys rng))))]
-    {:operation-id (:operation-id result)
-     :duplicate (boolean (:duplicate result))
-     :save-id save-id
-     :fence-generation (long fence-generation)
-     :battle (present-pvp (:battle result))}))
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :save-id save-id
+             :fence-generation (long fence-generation)
+             :battle (present-pvp (:battle result))}
+      (:rewards result) (assoc :rewards (:rewards result)))))
 
 (defn active-pvp
   [store chat-id]
   (when-let [b (pvp-app/active-in-chat store chat-id)]
     {:chat-id chat-id
      :battle (present-pvp b)}))
+
+(defn leave-battle!
+  "!pk sair — abandono voluntário unificado (wild/gym/pvp/raid)."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 battle-id raid-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (ports/leave-battle!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)}
+                  battle-id (assoc :battle-id battle-id)
+                  raid-id (assoc :raid-id raid-id)
+                  (some? agora-ms) (assoc :agora agora-ms)))
+        status (or (:status result) "left")
+        modality (:modality result)]
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :status status
+             :save-id save-id
+             :fence-generation (long fence-generation)}
+      modality (assoc :modality modality)
+      (some? (:opponent-notified result))
+      (assoc :opponent-notified (boolean (:opponent-notified result)))
+      (some? (:raid-ended result))
+      (assoc :raid-ended (boolean (:raid-ended result)))
+      (:battle result)
+      (assoc :battle (if (= "pvp" (str modality))
+                       (present-pvp (:battle result))
+                       (present-battle (:battle result))))
+      (:raid result)
+      (assoc :raid (raid-summary (:raid result))))))

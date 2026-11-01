@@ -9,7 +9,11 @@
   {"cartao-presente" {:nome "Cartão de presente" :emoji "🎁" :preco 20
                       :descricao "Presente para outro treinador (fluxo presente ainda bloqueado no JVM)."}
    "mochila" {:nome "Expansão de Mochila" :emoji "🎒" :preco 200 :expansao? true
-              :descricao "Aumenta a capacidade da mochila em +50 (contador expansoes-mochila-50)."}
+              :expansao-tipo :mochila
+              :descricao "Aumenta a capacidade da mochila de itens em +50."}
+   "espaco-pokemon" {:nome "Expansão de Armazenamento" :emoji "📦" :preco 200 :expansao? true
+                     :expansao-tipo :pokemon
+                     :descricao "Aumenta a capacidade de Pokémon em +50 (expansoes-pokemon-50)."}
    "mt" {:nome "MT de Ataque" :emoji "💿" :preco 200
          :descricao "Aprende golpe (uso MT ainda bloqueado no JVM)."}
    "atadura" {:nome "Atadura" :emoji "🔥" :preco 15 :status "queimado"
@@ -77,7 +81,9 @@
   {"normal" "pokebola" "grande" "grande-bola" "ultra" "ultra-bola"
    "maxima" "pocao-maxima" "maxima-pocao" "pocao-maxima"
    "poção" "pocao" "poção-maxima" "pocao-maxima"
-   "óculos" "oculos" "oculos-sabios" "oculos"})
+   "óculos" "oculos" "oculos-sabios" "oculos"
+   "espaco" "espaco-pokemon" "espaço" "espaco-pokemon"
+   "espaco-pc" "espaco-pokemon" "pc" "espaco-pokemon"})
 
 (defn normalizar-item
   [nome]
@@ -124,12 +130,26 @@
   [save inventory]
   (< (ocupacao-mochila inventory) (capacidade-mochila-save save)))
 
+(defn economia-confiavel?
+  "Recovery/offline-import pode ter coins=0 como placeholder (unknown-pending).
+   Não tratar isso como saldo real gastável."
+  [save]
+  (let [origin (some-> (:origin save) str)
+        slot (some-> (or (:slot-id save) (:save-id save)) str)
+        legacy (some-> (:legacy-version save) str)]
+    (not (or (= origin "offline-import")
+             (and (string? slot) (str/starts-with? slot "recovery"))
+             (= legacy "unknown")))))
+
 (defn validar-compra!
-  "Retorna item meta ou lança. Não muta estado."
+  "Retorna item meta ou lança. Não muta estado.
+   `coins` deve ser o saldo comprovadamente gastável (spendable), não o
+   placeholder :save/coins de recovery unknown-pending."
   [item-id save inventory coins]
   (let [id (normalizar-item item-id)
         meta (get catalogo-venda id)
-        info (get catalogo-info id)]
+        info (get catalogo-info id)
+        preco (long (or (:preco meta) 0))]
     (cond
       (and (nil? meta) (nil? info))
       (throw (err/error :unknown_shop_item {:item-id id}))
@@ -138,9 +158,19 @@
       (throw (err/error :item_not_for_sale
                         {:item-id id :reason (:nao-venda info)}))
 
-      (< (long coins) (long (:preco meta)))
+      ;; Débito só contra saldo comprovado (economy/assert-can-spend! no store).
+      ;; Aqui: se spendable insuficiente e recovery sem operacional → unreliable.
+      (and (not (economia-confiavel? save))
+           (<= (long coins) 0))
+      (throw (err/error :economy_unreliable
+                        {:item-id id
+                         :reason :no-proven-balance
+                         :coins coins
+                         :message "Sem saldo operacional comprovado. Histórico unknown-pending não é gastável."}))
+
+      (< (long coins) preco)
       (throw (err/error :insufficient_coins
-                        {:coins coins :preco (:preco meta) :item-id id}))
+                        {:coins coins :preco preco :item-id id}))
 
       (and (not (:expansao? meta)) (not (cabe-item? save inventory)))
       (throw (err/error :bag_full

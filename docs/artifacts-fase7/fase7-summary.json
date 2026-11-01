@@ -1,0 +1,34 @@
+{
+  "phase": "fase7",
+  "liveHttpSubset": {
+    "playerCount": 19,
+    "totals": {
+      "coinsSumListed": 130,
+      "players": 19,
+      "pokemonListed": 1063,
+      "slots": 57
+    },
+    "ok": true,
+    "note": "HTTP roster subset; Datomic cold is authoritative"
+  },
+  "cold": {
+    "stamp": "20261101T132844Z",
+    "filecount": 17,
+    "manifestOfManifestSha256": "4783f36ed941c3af35862ee975c3c4783c32cac66721df9c63dea693d7a02076",
+    "restoreCheck": "17=17 hashes match (Mac + Core)"
+  },
+  "datomicAuthoritative": {
+    "players": 20,
+    "saves": 59,
+    "pokemon": 1072,
+    "coinsSum": 181,
+    "migrationsBefore": 28,
+    "migrationsAfterRehearsal": 30,
+    "blockMigration": false,
+    "unexpectedDivergences": false,
+    "playerCanonicalHashesEqual": true,
+    "pokemonIdsHashesEqual": true,
+    "pokemonStateHashesEqual": true,
+    "rollbackDrillEqual": true
+  }
+}

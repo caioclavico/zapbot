@@ -84,9 +84,15 @@
     {:moedas (long (or (get l "moedas") (get l :moedas) 0))
      :inventario (or (get l "inventario") (get l :inventario) {})
      :expansoes-pokemon-50 (long (or (get l "expansoes-pokemon-50")
-                                     (get l :expansoes-pokemon-50) 0))
+                                     (get l :expansoes-pokemon-50)
+                                     (get l "expansoes-pc")
+                                     (get l :expansoes-pc)
+                                     0))
      :expansoes-mochila-50 (long (or (get l "expansoes-mochila-50")
-                                     (get l :expansoes-mochila-50) 0))}))
+                                     (get l :expansoes-mochila-50) 0))
+     :capacidade-pokemon-legada (long (or (get l "capacidade-pokemon")
+                                          (get l :capacidade-pokemon)
+                                          0))}))
 
 (defn- candidate
   [{:keys [origin snapshot-id slot-id chat-id player-id created-at

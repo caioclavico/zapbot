@@ -74,9 +74,11 @@
     (dotimes [_ 5]
       (collection/registrar-vitoria-treinador! s chat player))
     (let [perfil (:perfil (collection/consultar-treinador s chat player))]
+      ;; 5 vitórias + 3 PE da conquista "Primeira vitória" (master deriva xp-insignias).
       (is (= 5 (:vitorias-treinador perfil)))
+      (is (= 3 (:xp-insignias perfil)))
       (is (= 2 (:nivel perfil)))
-      (is (= 0 (:xp-atual perfil))))))
+      (is (= 3 (:xp-atual perfil))))))
 
 (deftest moedas-inventario-idempotentes
   (let [s (fresh-store! "c-eco")

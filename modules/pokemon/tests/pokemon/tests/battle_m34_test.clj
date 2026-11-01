@@ -85,6 +85,31 @@
     (is (pos? (:dano r)))
     (is (true? (:acertou? r)))))
 
+(deftest mensagem-ataque-espelha-master
+  (let [golpe {:tipo "water" :poder 40 :classe :especial :nome-exibicao "Jato d'Água"}
+        atk {:nome "Squirtle" :habilidade "torrent" :hp 100}
+        def {:nome "Charmander" :tipos ["fire"]}
+        r {:dano 42 :acertou? true :critico? true :multiplicador 2.0
+           :errou? false :esquivou? false :acertos 1 :impulso 1.0}
+        msg (dmg/mensagem-ataque golpe atk def r false)]
+    (is (re-find #"causou 42 de dano" msg))
+    (is (re-find #"Foi super efetivo" msg))
+    (is (re-find #"golpe crítico" msg)))
+  (let [msg (dmg/mensagem-ataque
+             {:tipo "normal" :classe :fisico :nome-exibicao "Investida"
+              :min-acertos 2 :max-acertos 5}
+             {:nome "A"} {:nome "B"}
+             {:dano 20 :acertou? true :critico? false :multiplicador 1.0
+              :errou? false :esquivou? false :acertos 3 :impulso 1.0}
+             false)]
+    (is (re-find #"Acertou 3 vezes" msg)))
+  (is (re-find #"errou o alvo"
+               (dmg/mensagem-ataque {:nome-exibicao "X" :classe :fisico}
+                                    {:nome "A"} {:nome "B"}
+                                    {:dano 0 :errou? true :esquivou? false
+                                     :acertou? false :multiplicador 1 :acertos 1}
+                                    false))))
+
 (deftest status-impede-e-dot
   (let [imp (status/impedimento-status :paralisado {:impede-para 0})]
     (is (true? (:impedido? imp))))

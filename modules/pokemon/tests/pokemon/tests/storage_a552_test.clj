@@ -26,4 +26,4 @@
             shop (reads/shop-catalog s "chat" "ash")]
         (is (= [true false] (mapv :shiny (:collection collection))))
         (is (= 2 (:ocupacao-pokemon shop)))
-        (is (= 30 (:capacidade-pokemon shop)))))))
+        (is (= 50 (:capacidade-pokemon shop)))))))

@@ -29,6 +29,12 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/target/main.js ./target/main.js
 COPY package*.json ./
 COPY assets/abujamra.png ./assets/abujamra.png
+COPY assets/ash.png ./assets/ash.png
+COPY assets/centro-pokemon.png ./assets/centro-pokemon.png
+COPY assets/enfermeira-joy.png ./assets/enfermeira-joy.png
+COPY assets/enfermeira-joy-tratando.png ./assets/enfermeira-joy-tratando.png
+COPY assets/loja-pokemon.png ./assets/loja-pokemon.png
+COPY assets/professor-carvalho.png ./assets/professor-carvalho.png
 COPY scripts/lib ./scripts/lib
 ENTRYPOINT ["/usr/bin/tini", "--"]
 # LocalAuth usa /app/.wwebjs_auth, persistido pelo Compose. Nunca limpar locks.

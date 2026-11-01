@@ -346,7 +346,8 @@
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
 
-;; em development|staging: só DEV_GROUP_ID (+ STAGING_ALLOWED_USERS se definido)
+;; staging: DEV_GROUP_ID (ou ALLOW_ALL_GROUPS) + STAGING_ALLOWED_USERS
+;; (com STAGING_STRICT_USER_ALLOWLIST lista vazia nega todos)
 (defn- remetente-id [message]
   (or (.-author message)
       (when-not (.-fromMe message) (.-from message))))
@@ -497,7 +498,68 @@
       (unchecked-set opts "clientId" config/wwebjs-client-id))
     opts))
 
+(defonce ^:private jvm-probe-cache*
+  (atom {:ok false :transport "disabled" :error "probing"}))
+
+(defn- probe-jvm-health []
+  (try
+    (let [jvm (js/require "../scripts/lib/pokemon-jvm-client.cjs")
+          client (.createClient jvm
+                                #js {:baseUrl config/pokemon-jvm-url
+                                     :token (or config/pokemon-jvm-token "")
+                                     :allowDockerJvmHost (boolean config/pokemon-jvm-allow-docker-host?)
+                                     :connectTimeoutMs config/pokemon-jvm-connect-timeout-ms
+                                     :timeoutMs config/pokemon-jvm-timeout-ms})]
+      (-> (.health client)
+          (p/then (fn [data]
+                    (.close client)
+                    {:ok true :transport "disabled" :jvm (js->clj data :keywordize-keys true)}))
+          (p/catch (fn [err]
+                     (try (.close client) (catch :default _))
+                     {:ok false :transport "disabled"
+                      :error (or (.-message err) "jvm_unreachable")}))))
+    (catch :default err
+      (p/resolved {:ok false :transport "disabled"
+                   :error (or (.-message err) "jvm_client_config")}))))
+
+(defn- main-http-only!
+  "Homologação A6: Node sobe /health + probe JVM sem WhatsApp/QR/Chromium."
+  []
+  (js/console.log "[boot] WHATSAPP_TRANSPORT=disabled — sem QR, sem LocalAuth, sem Chromium.")
+  (js/console.log "[boot] POKEMON_RAID_AUTO_TICK=" config/pokemon-raid-auto-tick?)
+  (let [diagnostico (saude/criar)
+        _ (saude/atualizar! diagnostico "DISABLED"
+                            "Transporte WhatsApp desativado (homolog HTTP-only).")
+        server (saude/servir!
+                diagnostico nil
+                {:bind-host config/health-bind-host
+                 :on-jvm-health (fn [] @jvm-probe-cache*)})
+        encerrando? (atom false)]
+    (doseq [sinal ["SIGTERM" "SIGINT"]]
+      (.on js/process sinal
+           (fn []
+             (when (compare-and-set! encerrando? false true)
+               (.close server)
+               (js/process.exit 0)))))
+    (letfn [(refresh-probe! []
+              (-> (probe-jvm-health)
+                  (p/then (fn [r] (reset! jvm-probe-cache* r) nil))
+                  (p/catch (fn [err]
+                             (reset! jvm-probe-cache*
+                                     {:ok false :error (or (.-message err) "probe_failed")})))))]
+      (refresh-probe!)
+      (js/setInterval refresh-probe! 15000)
+      (when config/pokemon-jvm-enabled?
+        (js/console.log "[boot] HTTP-only: bridge JVM=" config/pokemon-jvm-url
+                        " allowDockerHost=" config/pokemon-jvm-allow-docker-host?))
+      (js/console.log "[boot] HTTP-only ready — /health e /jvm-health em"
+                      config/health-bind-host ":3001"))))
+
 (defn main [& _args]
+  (if config/whatsapp-transport-disabled?
+    (when (compare-and-set! iniciado? false true)
+      (main-http-only!))
+    (do
   ;; Um único cliente/browser por processo; só a injeção pode ser repetida.
   (when (and config/staging-like?
              (not config/staging-bootstrap-group?)
@@ -540,11 +602,12 @@
                         (assoc :restoreOnly false))))
           server (saude/servir!
                   diagnostico client
-                  (when config/staging-bootstrap-group?
-                    {:on-discover-groups
-                     (fn []
-                       ;; Síncrono + setTimeout(0): HTTP responde antes do evaluate.
-                       (agendar-descoberta-http!))}))]
+                  (cond-> {:bind-host config/health-bind-host}
+                    config/staging-bootstrap-group?
+                    (assoc :on-discover-groups
+                           (fn []
+                             ;; Síncrono + setTimeout(0): HTTP responde antes do evaluate.
+                             (agendar-descoberta-http!)))))]
       (when config/staging-bootstrap-group?
         (js/console.log "[bootstrap] STAGING_BOOTSTRAP_GROUP=1 — sem comandos, sem replies, sem notificações.")
         (js/console.log "[bootstrap] Endpoint: POST/GET http://127.0.0.1:3001/bootstrap/discover-groups"))
@@ -599,4 +662,4 @@
                      (when-not (.stopping recovery)
                        (saude/atualizar! diagnostico "ERROR"
                                         (str "Erro ao inicializar: " (.-message err)))
-                       (js/console.error err))))))))
+                       (js/console.error err))))))))))

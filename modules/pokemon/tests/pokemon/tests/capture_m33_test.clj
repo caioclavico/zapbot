@@ -326,3 +326,70 @@
                                    :hp 70 :ataque 2 :defesa 2 :atq-esp 2 :def-esp 2 :veloc 2})]
     (is (= 0 (:hp-atual out)))
     (is (= "Charmeleon" (:nome out)))))
+
+(deftest carimbada-nao-e-rolagem-extra
+  "chance-base-pos-batalha é determinística: mesmos inputs → mesma %,
+   sem consumir RNG. A única rolagem de captura é attempt-capture."
+  (let [base (capture/chance-base-pos-batalha magikarp nil 0)]
+    (dotimes [_ 50]
+      (is (= base (capture/chance-base-pos-batalha magikarp nil 0))))
+    (is (= 75 (capture/chance-com-bola base "pokebola")))
+    (is (true? (:capturou? (capture/attempt-capture
+                            {:pokemon magikarp :bola "pokebola"
+                             :chance-base base :roll 0 :fuga-roll 99}))))
+    (is (false? (:capturou? (capture/attempt-capture
+                             {:pokemon magikarp :bola "pokebola"
+                              :chance-base base :roll 99 :fuga-roll 99}))))))
+
+(deftest modificadores-bola-e-limites
+  (let [base 40]
+    (is (= 40 (capture/chance-com-bola base "pokebola")))
+    (is (= 60 (capture/chance-com-bola base "grande-bola")))
+    (is (= 80 (capture/chance-com-bola base "ultra-bola"))))
+  (is (= 75 (capture/chance-com-bola 95 "pokebola")) "pokébola cap 75")
+  (is (= 88 (capture/chance-com-bola 95 "grande-bola")) "grande cap 88")
+  (is (= 95 (capture/chance-com-bola 95 "ultra-bola")) "ultra cap 95")
+  (is (= 15 (capture/chance-captura
+             {:raridade "mitico"
+              :hp 200 :ataque 200 :defesa 200 :atq-esp 200 :def-esp 200 :veloc 200}))
+      "mínimo espécie 15")
+  (is (= 90 (capture/chance-captura magikarp)) "máximo espécie 90")
+  (is (= 95 (capture/chance-base-pos-batalha magikarp :adormecido 10))
+      "teto pós-batalha 95"))
+
+(deftest hp-zero-nao-altera-chance-especie
+  "Derrota zera HP de batalha, mas poder-total usa o atributo :hp (máx)."
+  (let [vivo magikarp
+        nocaute (assoc magikarp :hp-atual 0)]
+    (is (= (capture/poder-total vivo) (capture/poder-total nocaute)))
+    (is (= (capture/chance-captura vivo) (capture/chance-captura nocaute)))
+    (is (= (capture/chance-base-pos-batalha vivo nil 0)
+           (capture/chance-base-pos-batalha nocaute nil 0)))))
+
+(deftest simulacao-estatistica-deterministica
+  "Percorre rolls 0..99 (sem aleatoriedade): frequência = chance publicada."
+  (doseq [{:keys [chance-base bola chance-bola]} (load-capture-fixtures)]
+    (let [sucessos (count
+                    (filter
+                     (fn [roll]
+                       (:capturou?
+                        (capture/attempt-capture
+                         {:pokemon magikarp
+                          :bola bola
+                          :chance-base chance-base
+                          :roll roll
+                          :fuga-roll 99
+                          :tentativas-anteriores 0})))
+                     (range 100)))]
+      (is (= chance-bola sucessos)
+          (str bola " base=" chance-base " esperava " chance-bola
+               " sucessos em 100 rolls, obteve " sucessos)))))
+
+(deftest recompensa-vitoria-sem-captura-master
+  "Bolsa cheia: raridade + 1 XP, 0 moedas (legado encerrar-cacada!)."
+  (is (= {:xp 3 :bonus-xp 1 :bonus-primeira 0 :moedas 0}
+         (capture/recompensa-vitoria-sem-captura {:raridade "comum"})))
+  (is (= {:xp 8 :bonus-xp 1 :bonus-primeira 0 :moedas 0}
+         (capture/recompensa-vitoria-sem-captura {:raridade "mitico"})))
+  (is (= 1 (:xp (capture/recompensa-pos-captura
+                 {:raridade "comum" :capturou? false :sequencia-nova 0})))))

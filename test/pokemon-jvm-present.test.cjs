@@ -104,21 +104,129 @@ test('formatTrainer produz envelope texto compatível', () => {
     activeSaveId: 'a',
     fenceGeneration: 2,
     collectionCount: 1,
+    partyDefined: true,
+    partyCount: 1,
+    shinyCount: 0,
+    capacidadePokemon: 50,
+    ocupacaoPokemon: 1,
+    colecaoCheia: false,
+    economiaConfiavel: true,
+    coins: 40,
+    capacidadeMochila: 50,
+    ocupacaoMochila: 2,
+    savesCount: 2,
+    saves: [
+      { saveId: 'a', active: true, collectionCount: 1 },
+      { saveId: 'b', active: false, collectionCount: 0 }
+    ],
+    hunt: { cooldownOk: true, cooldownRestanteS: 0 },
+    joy: { emTratamento: 0 },
     ativoIndex: 0,
     profile: {
       nivel: 3, xp: 12, xpAtual: 2, xpNecessario: 9, coins: 40,
+      vitoriasTreinador: 4,
       peGinasios: 1, peRaids: 0, sequenciaCapturas: 2, maiorSequenciaCapturas: 5
     },
     ativo: { nome: 'Bulbasaur', species: 'Bulbasaur', nivel: 12, shiny: false }
   }, 'Ash');
   assert.match(text, /Treinador: Ash/);
   assert.match(text, /Nível 3/);
+  assert.match(text, /\[.*\].*2\/9/);
+  assert.match(text, /Vitórias: 4/);
   assert.match(text, /Bulbasaur/);
-  assert.match(text, /Save: a/);
+  assert.match(text, /Save ativo: \*a\*/);
+  assert.match(text, /a 👉/);
+  assert.match(text, /Moedas: 40/);
+  assert.match(text, /Mochila de itens: 2\/50/);
+  assert.match(text, /Caça: disponível/);
+  assert.doesNotMatch(text, /Perfil JVM \(dev\)/);
   const env = present.envelope('req-1', text);
   assert.equal(env.requestId, 'req-1');
   assert.equal(env.messages[0].type, 'text');
   assert.deepEqual(env.effects, []);
+});
+
+test('formatTrainer recovery-v1 cheio sem moedas falsas', () => {
+  const text = present.formatTrainer({
+    activeSaveId: 'recovery-v1',
+    activeSaveName: 'recovery-v1',
+    collectionCount: 119,
+    partyDefined: false,
+    partyCount: null,
+    shinyCount: 3,
+    capacidadePokemon: 100,
+    ocupacaoPokemon: 119,
+    excessoPokemon: 19,
+    colecaoCheia: true,
+    economiaConfiavel: false,
+    coinsStatus: 'unknown-pending',
+    capacidadeMochila: 100,
+    ocupacaoMochila: 3,
+    saves: [
+      { saveId: 'a', active: false, collectionCount: 0 },
+      { saveId: 'b', active: false, collectionCount: 0 },
+      { saveId: 'recovery-v1', displayName: 'recovery-v1', active: true, collectionCount: 119 }
+    ],
+    hunt: { cooldownOk: false, cooldownRestanteS: 900 },
+    joy: { emTratamento: 2, proximoRestanteMs: 600000 },
+    gymDefenseCount: 3,
+    ativoIndex: 93,
+    profile: {
+      nivel: 10, xp: 127, xpAtual: 2, xpNecessario: 9,
+      peGinasios: 0, peRaids: 0
+    },
+    ativo: { nome: 'Nidoqueen', nivel: 18, shiny: false }
+  }, 'Caio', '!pk');
+  assert.match(text, /119\/100 — CHEIO \(19 acima/);
+  assert.match(text, /Equipe: não definida/);
+  assert.doesNotMatch(text, /Equipe: 119/);
+  assert.match(text, /Shiny: 3/);
+  assert.match(text, /#94 \*Nidoqueen\* • Nv\.18/);
+  assert.match(text, /recovery-v1 👉/);
+  assert.match(text, /saldo histórico em reconciliação/);
+  assert.doesNotMatch(text, /Moedas: 0/);
+  assert.match(text, /Mochila de itens: 3\/100/);
+  assert.match(text, /Joy: 2 em tratamento/);
+  assert.match(text, /Caça: cooldown/);
+  assert.match(text, /Em ginásios: 3/);
+  assert.match(text, /!pk saves/);
+});
+
+test('formatTrainer equipe parcial definida sem inventar', () => {
+  const text = present.formatTrainer({
+    activeSaveId: 'a',
+    collectionCount: 10,
+    partyDefined: true,
+    partyCount: 3,
+    shinyCount: 0,
+    capacidadePokemon: 50,
+    ocupacaoPokemon: 10,
+    profile: { nivel: 2, xp: 5, xpAtual: 1, xpNecessario: 7 },
+    ativoIndex: 0,
+    ativo: { nome: 'Squirtle', nivel: 5 },
+    saves: [{ saveId: 'a', active: true, collectionCount: 10 }]
+  }, 'Misty');
+  assert.match(text, /Equipe: 3/);
+  assert.doesNotMatch(text, /não definida/);
+  assert.doesNotMatch(text, /Equipe: 10/);
+});
+
+test('formatTrainer omite campos opcionais ausentes', () => {
+  const text = present.formatTrainer({
+    activeSaveId: 'a',
+    collectionCount: 0,
+    capacidadePokemon: 50,
+    ocupacaoPokemon: 0,
+    economiaConfiavel: true,
+    coins: 0,
+    profile: { nivel: 1, xp: 0, xpAtual: 0, xpNecessario: 5 },
+    saves: [{ saveId: 'a', active: true, collectionCount: 0 }]
+  }, 'Novo');
+  assert.match(text, /Treinador: Novo/);
+  assert.match(text, /0\/50/);
+  assert.doesNotMatch(text, /Joy:/);
+  assert.doesNotMatch(text, /Em ginásios/);
+  assert.doesNotMatch(text, /Vitórias/);
 });
 
 test('formatCollection pagina e filtra', () => {
@@ -139,6 +247,46 @@ test('formatCollection pagina e filtra', () => {
   assert.match(text, /Página 1/);
 });
 
+test('filtro planta e grama resolvem grass; repetidos lista só espécies duplicadas', () => {
+  const collection = [
+    { collectionIndex: 0, nome: 'Bulba', species: 'bulbasaur', nivel: 5, hp: 40, hpAtual: 40, tipos: ['grass', 'poison'] },
+    { collectionIndex: 1, nome: 'Ivy', species: 'ivysaur', nivel: 16, hp: 50, hpAtual: 50, tipos: ['grass', 'poison'] },
+    { collectionIndex: 2, nome: 'Ratta A', species: 'rattata', nivel: 3, hp: 20, hpAtual: 20, tipos: ['normal'] },
+    { collectionIndex: 3, nome: 'Ratta B', species: 'rattata', nivel: 4, hp: 22, hpAtual: 22, tipos: ['normal'] },
+    { collectionIndex: 4, nome: 'Charmander', species: 'charmander', nivel: 5, hp: 30, hpAtual: 30, tipos: ['fire'] }
+  ];
+  const data = { collection, count: 5, saveId: 'a', trainerLevel: 1, ativoIndex: 0 };
+  const planta = present.formatCollection(data, ['planta'], '!pk');
+  assert.match(planta, /Bulba/);
+  assert.match(planta, /Ivy/);
+  assert.doesNotMatch(planta, /Charmander/);
+  assert.match(planta, /tipo Planta/);
+  assert.match(present.formatCollection(data, ['grama'], '!pk'), /Bulba/);
+  const reps = present.formatCollection(data, ['repetidos'], '!pk');
+  assert.match(reps, /Ratta A/);
+  assert.match(reps, /Ratta B/);
+  assert.doesNotMatch(reps, /Bulba/);
+  assert.match(reps, /repetidos/);
+});
+
+test('formatProfessor lote lista entradas e confirma contagem', () => {
+  const pending = present.formatProfessor({
+    token: '321',
+    entries: [
+      { displayIndex: 1, nome: 'Pidgey', nivel: 5, family: 'pidgey' },
+      { displayIndex: 4, nome: 'Rattata', nivel: 3, family: 'rattata', item: 'pokebola' }
+    ]
+  }, '!pk');
+  assert.match(pending, /2\* Pokémon|Enviar \*2\*/);
+  assert.match(pending, /Pidgey/);
+  assert.match(pending, /Rattata/);
+  assert.match(pending, /professor confirmar 321/);
+  assert.match(
+    present.formatProfessor({ confirmed: true, count: 2, cardsGranted: 2, itemsReturned: 1 }),
+    /2\* Pokémon enviados|enviados definitivamente/
+  );
+});
+
 test('shiny e armazenamento usam a coleção canônica', () => {
   const data = {
     collection: [{ collectionIndex: 0, nome: 'Pikachu', shiny: true, nivel: 5, hp: 20, hpAtual: 20 }],
@@ -146,7 +294,28 @@ test('shiny e armazenamento usam a coleção canônica', () => {
   };
   assert.match(present.formatCollection(data, ['shiny'], '!pk'), /Pikachu/);
   assert.match(present.formatStorage(data, [], '!pk'), /PC Pokémon/);
-  assert.match(present.formatSpace({ capacidadePokemon: 30, ocupacaoPokemon: 1 }, '!pk'), /1\/30/);
+  assert.match(present.formatSpace({ capacidadePokemon: 50, ocupacaoPokemon: 1 }, '!pk'), /1\/50/);
+  assert.match(
+    present.formatSpace({ capacidadePokemon: 100, ocupacaoPokemon: 119, excessoPokemon: 19, colecaoCheia: true }, '!pk'),
+    /119\/100.*CHEIO.*19 acima/
+  );
+  assert.match(
+    present.formatPokemonStorageLine({ capacidadePokemon: 100, ocupacaoPokemon: 119, excessoPokemon: 19 }),
+    /119\/100 — CHEIO \(19 acima do limite\)/
+  );
+  assert.match(
+    present.formatCollection(
+      { collection: [{ collectionIndex: 0, nome: 'X', nivel: 1, hp: 1, hpAtual: 1 }],
+        count: 119, capacidadePokemon: 100, ocupacaoPokemon: 119, excessoPokemon: 19, colecaoCheia: true,
+        saveId: 'recovery-v1', trainerLevel: 10, ativoIndex: 0 },
+      [], '!pk'
+    ),
+    /119\/100 — CHEIO/
+  );
+  assert.match(
+    present.formatError({ code: 'COLLECTION_FULL', details: { count: 119, capacidade: 100, excesso: 19 } }),
+    /119\/100/
+  );
   assert.equal(present.resolveCommand(['computador']), 'pc');
   assert.equal(present.resolveCommand(['centro']), 'pc');
   assert.equal(present.resolveCommand(['espaco']), 'espaco');
@@ -185,4 +354,71 @@ test('formatUnavailable amigável sem jargão de infra', () => {
   assert.match(text, /não está disponível/);
   assert.match(text, /batalhar/);
   assert.doesNotMatch(text, /Cassandra|POKEMON_ADAPTER|JVM/);
+});
+
+test('formatProfessor espelha master: pendente, confirmação e cartões', () => {
+  const pending = present.formatProfessor({
+    token: '742',
+    nome: 'Pidgey',
+    displayIndex: 3,
+    nivel: 5,
+    family: 'pidgey',
+    shiny: true
+  }, '!pk');
+  assert.match(pending, /Enviar \*Pidgey\* nº 3/);
+  assert.match(pending, /SHINY/);
+  assert.match(pending, /professor confirmar 742/);
+  assert.match(pending, /5 minutos/);
+  assert.match(
+    present.formatProfessor({ confirmed: true, nome: 'Pidgey', family: 'pidgey', itemReturned: 'pokebola' }),
+    /enviado definitivamente.*cartão.*mochila/s
+  );
+  assert.match(
+    present.formatProfessor({ used: true, nome: 'Pidgeotto', family: 'pidgey', level: 6, leveledUp: true }),
+    /cartão.*\+3 XP.*nível 6/s
+  );
+  assert.match(present.formatProfessor({ cancelled: true }), /Transferência cancelada/);
+  assert.match(present.formatProfessorCards({ cards: { pidgey: 2 } }), /pidgey: 2/);
+  assert.match(present.formatProfessorHelp('!pk'), /professor enviar/);
+  assert.match(present.formatError({ code: 'PROFESSOR_BUSY' }), /envio pendente/);
+  assert.match(present.formatError({ code: 'POKEMON_FAVORITE' }), /favorito/);
+});
+
+test('formatLeaveResult cobre modalidades e ausência de batalha', () => {
+  assert.match(present.formatLeaveResult({ status: 'no_battle' }), /não está participando/);
+  assert.match(present.formatLeaveResult({ status: 'already_finished' }), /já foi encerrada/);
+  assert.match(present.formatLeaveResult({ status: 'left', modality: 'wild' }), /abandonou a batalha/);
+  assert.match(present.formatLeaveResult({ status: 'left', modality: 'gym' }), /abandonou a batalha/);
+  assert.match(
+    present.formatLeaveResult({ status: 'left', modality: 'pvp', battle: { outcome: 'forfeit-x' } }),
+    /desistiu.*PvP|adversário/
+  );
+  assert.match(
+    present.formatLeaveResult({ status: 'left', modality: 'raid', raidEnded: false }),
+    /saiu da raide.*demais participantes/
+  );
+  assert.match(
+    present.formatLeaveResult({ status: 'left', modality: 'raid', raidEnded: true }),
+    /raide encerrou/
+  );
+  assert.match(present.formatError({ code: 'FEATURE_DISABLED' }), /temporariamente desabilitado/);
+  assert.match(present.formatError({ code: 'NOT_FOUND' }), /Rota inexistente/);
+});
+
+test('formatBagKit e formatBagDaily espelham legado', () => {
+  assert.match(present.formatBagKit({ kitAlreadyClaimed: true }), /já resgatou o kit/);
+  assert.match(present.formatBagKit({ qty: 10, itemId: 'pokebola' }), /10× Pokébola/);
+  assert.match(
+    present.formatBagDaily({ dailyAlreadyClaimed: true, timezone: 'America/Sao_Paulo' }),
+    /já foi resgatado.*America\/Sao_Paulo/
+  );
+  const ok = present.formatBagDaily({
+    sequencia: 7,
+    items: { pokebola: 7, 'fruta-dourada': 1 },
+    frutaDourada: true,
+    pending: { pokebola: 2 }
+  });
+  assert.match(ok, /sequência de 7/);
+  assert.match(ok, /Fruta Frambo Dourada/);
+  assert.match(ok, /resgatar/);
 });

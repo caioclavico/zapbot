@@ -164,6 +164,11 @@ test('formatBattleTurn com HP zero no adversário (nocaute → captura)', () => 
   const text = present.formatBattleTurn({
     aguardandoCaptura: true,
     chanceBaseCaptura: 70,
+    inventory: [
+      { itemId: 'pokebola', qty: 2 },
+      { itemId: 'grande-bola', qty: 1 },
+      { itemId: 'ultra-bola', qty: 0 }
+    ],
     battle: {
       aguardandoCaptura: true,
       area: praia,
@@ -173,8 +178,12 @@ test('formatBattleTurn com HP zero no adversário (nocaute → captura)', () => 
     }
   }, '!pk');
   assert.match(text, /derrotado/);
-  assert.match(text, /capturar/);
+  assert.match(text, /Escolha a bola/);
+  assert.match(text, /!pk capturar 1/);
+  assert.match(text, /70%|75%/); // chance por bola (base 70 → pokébola 70)
   assert.match(text, /60\/100/);
+  assert.doesNotMatch(text, /carimbada/i);
+  assert.doesNotMatch(text, /Agora você pode capturar/);
 });
 
 test('formatBattleState erro controlado sem golpes / sem HP', () => {

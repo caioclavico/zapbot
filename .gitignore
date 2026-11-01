@@ -4,11 +4,13 @@ target/
 .wwebjs_auth/
 .wwebjs_auth_staging/
 .wwebjs_auth_core/
+.wwebjs_auth_a6_staging/
 .wwebjs_cache/
 data/
 .env
 .env.staging
 .env.odisseu-core
+.env.a6-staging
 .env.*.local
 *.log
 .nrepl-port

@@ -2,8 +2,8 @@
   "TX builders de compra e uso de itens."
   (:require [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
-            [pokemon.domain.model :as model]
-            [pokemon.domain.shop :as shop]))
+            [pokemon.domain.shop :as shop]
+            [pokemon.infrastructure.datomic.economy-store :as economy-store]))
 
 (defn build-buy-tx
   [{:keys [db writer-ctx request save inventory inventory-adjust-tx]}]
@@ -11,36 +11,51 @@
         player-id (:player-id writer-ctx)
         save-id (:save-id writer-ctx)
         sk (id/save-key chat-id player-id save-id)
-        coins (long (:save/coins save 0))
-        save-m {:trainer-level (long (:save/trainer-level save 1))
-                :expansoes-mochila-50 (long (:save/expansoes-mochila-50 save 0))
-                :capacidade-mochila-legada (long (:save/capacidade-mochila-legada save 50))}
+        save-eco (economy-store/entity->economy-save save)
+        spendable (economy-store/spendable-from-entity save)
+        save-m (merge save-eco
+                      {:trainer-level (long (:save/trainer-level save 1))
+                       :trainer-xp (long (:save/trainer-xp save 0))
+                       :expansoes-mochila-50 (long (:save/expansoes-mochila-50 save 0))
+                       :expansoes-pokemon-50 (long (:save/expansoes-pokemon-50 save 0))
+                       :capacidade-mochila-legada (long (:save/capacidade-mochila-legada save 50))
+                       :capacidade-pokemon-legada (long (:save/capacidade-pokemon-legada save 0))})
         item-id (shop/normalizar-item (:item-id request))
         qty (long (or (:qty request) 1))
         _ (when-not (= 1 qty)
             (throw (err/error :invalid_buy_qty {:qty qty})))
-        meta (shop/validar-compra! item-id save-m inventory coins)
+        meta (shop/validar-compra! item-id save-m inventory spendable)
         preco (long (:preco meta))
-        next-coins (model/apply-coin-delta coins (- preco))
+        _ (economy-store/assert-debit! save-eco preco)
+        coin-part (economy-store/apply-delta-tx
+                   {:sk sk :save save :delta (- preco)
+                    :operation-id (:operation-id request)
+                    :source "shop" :role "primary"})
         rev (long (:save/revision save 0))
         operation-id (:operation-id request)
         phash (:payload-hash request)
         expansao? (boolean (:expansao? meta))
+        expansao-tipo (:expansao-tipo meta)
         item-tx (when-not expansao?
                   (inventory-adjust-tx db sk item-id 1))
-        exp-atual (long (:save/expansoes-mochila-50 save 0))]
-    {:tx (cond-> [[:db/cas [:save/key sk] :save/coins coins next-coins]
-                  [:db/cas [:save/key sk] :save/revision rev (inc rev)]
-                  {:operation-receipt/id operation-id
-                   :operation-receipt/kind "shop-buy"
-                   :operation-receipt/channel "gameplay"
-                   :operation-receipt/payload-hash phash
-                   :operation-receipt/player-key (id/player-key chat-id player-id)
-                   :operation-receipt/save-id save-id
-                   :operation-receipt/summary
-                   (pr-str {:item-id item-id :preco preco :expansao? expansao?})}]
-           expansao?
-           (conj [:db/add [:save/key sk] :save/expansoes-mochila-50 (inc exp-atual)])
+        exp-mochila (long (:save/expansoes-mochila-50 save 0))
+        exp-pokemon (long (:save/expansoes-pokemon-50 save 0))
+        next-coins (:operational-after coin-part)]
+    {:tx (cond-> (into [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                        {:operation-receipt/id operation-id
+                         :operation-receipt/kind "shop-buy"
+                         :operation-receipt/channel "gameplay"
+                         :operation-receipt/payload-hash phash
+                         :operation-receipt/player-key (id/player-key chat-id player-id)
+                         :operation-receipt/save-id save-id
+                         :operation-receipt/summary
+                         (pr-str {:item-id item-id :preco preco :expansao? expansao?
+                                  :expansao-tipo expansao-tipo})}]
+                       (:tx coin-part))
+           (and expansao? (= expansao-tipo :mochila))
+           (conj [:db/add [:save/key sk] :save/expansoes-mochila-50 (inc exp-mochila)])
+           (and expansao? (= expansao-tipo :pokemon))
+           (conj [:db/add [:save/key sk] :save/expansoes-pokemon-50 (inc exp-pokemon)])
            (seq item-tx)
            (into item-tx))
      :result {:operation-id operation-id
@@ -51,7 +66,11 @@
               :preco preco
               :coins-depois next-coins
               :expansao? expansao?
-              :expansoes-mochila-50 (if expansao? (inc exp-atual) exp-atual)}}))
+              :expansao-tipo expansao-tipo
+              :expansoes-mochila-50 (if (and expansao? (= expansao-tipo :mochila))
+                                      (inc exp-mochila) exp-mochila)
+              :expansoes-pokemon-50 (if (and expansao? (= expansao-tipo :pokemon))
+                                      (inc exp-pokemon) exp-pokemon)}}))
 
 (defn build-use-tx
   "Usa cura de status ou poção no índice da coleção."

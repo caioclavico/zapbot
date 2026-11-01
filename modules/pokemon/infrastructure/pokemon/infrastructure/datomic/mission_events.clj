@@ -2,6 +2,7 @@
   "Enriquece a TX canônica antes do commit. Nenhum callback ou fila em memória."
   (:require [clojure.edn :as edn]
             [datomic.client.api :as d]
+            [pokemon.domain.battle :as battle]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
             [pokemon.domain.mission-catalog :as catalog]
@@ -22,7 +23,8 @@
         next (or (:battle result) (:encounter result))
         bid (or (:battle-id next) (:battle-id result) (:battle-id summary))
         previous (when bid (d/pull db '[*] [:battle/id bid]))
-        before (read-edn (:battle/state-edn previous))
+        ;; state-edn pode ser compactado (odisseu.gz;) — nunca edn/read-string cru.
+        before (or (battle/decode-compact-edn (:battle/state-edn previous)) {})
         _ (when (and bid (#{"battle-turn" "encounter-capture" "pvp-turn"} kind))
             (let [side (some (fn [[side pid]] (when (= pid (:player-id writer)) side))
                              (:jogadores before))

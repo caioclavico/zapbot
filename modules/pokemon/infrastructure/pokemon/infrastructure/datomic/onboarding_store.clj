@@ -1,24 +1,49 @@
 (ns pokemon.infrastructure.datomic.onboarding-store
   "TX builders M9.6 — kit inicial e escolha do starter.
-   Kit: uma vez por treinador (flags em A e B) — sem kit extra ao trocar save.
+   Kit: uma vez por treinador (flags em TODOS os saves) — sem kit extra ao trocar save.
    Starter: uma vez por save (playthrough A/B independente), com coleção>0 bloqueando."
-  (:require [pokemon.domain.capacity :as capacity]
+  (:require [datomic.client.api :as d]
+            [pokemon.domain.bag-rewards :as bag]
+            [pokemon.domain.capacity :as capacity]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]
             [pokemon.domain.onboarding :as onboard]
-            [pokemon.domain.reward :as reward]))
+            [pokemon.domain.reward :as reward]
+            [pokemon.domain.shop :as shop]))
 
-(defn- kit-flag-tx
-  "Marca kit-inicial-resgatado em todos os slots A/B (anti-farm por troca de save)."
-  [chat-id player-id]
-  (mapv (fn [slot]
-          [:db/add [:save/key (id/save-key chat-id player-id slot)]
-           :save/kit-inicial-resgatado true])
-        model/default-slots))
+(defn save-entities-for-player
+  [db chat-id player-id]
+  (->> (d/q '[:find (pull ?s [*])
+              :in $ ?pk
+              :where
+              [?p :player/key ?pk]
+              [?s :save/player ?p]]
+            db (id/player-key chat-id player-id))
+       (map first)
+       vec))
+
+(defn kit-claimed-any?
+  [db chat-id player-id]
+  (boolean
+   (some (fn [e] (boolean (:save/kit-inicial-resgatado e)))
+         (save-entities-for-player db chat-id player-id))))
+
+(defn kit-flag-tx
+  "Marca kit-inicial-resgatado em todos os saves existentes do treinador.
+   Inclui recovery-v1 e qualquer slot além de a/b."
+  [db chat-id player-id]
+  (let [existing (save-entities-for-player db chat-id player-id)
+        keys (mapv :save/key existing)
+        ;; Garante a/b mesmo se ainda não materializados (bootstrap legado).
+        ensured (into (set keys)
+                      (map #(id/save-key chat-id player-id %) model/default-slots))]
+    (mapv (fn [sk]
+            [:db/add [:save/key sk] :save/kit-inicial-resgatado true])
+          ensured)))
 
 (defn build-claim-kit-tx
-  [{:keys [db writer-ctx request save inventory-adjust-tx kit-claimed-any?]}]
+  [{:keys [db writer-ctx request save inventory inventory-adjust-tx kit-claimed-any?]}]
   (let [chat-id (:chat-id writer-ctx)
         player-id (:player-id writer-ctx)
         save-id (:save-id writer-ctx)
@@ -27,21 +52,36 @@
         already? (boolean (or kit-claimed-any?
                               (:save/kit-inicial-resgatado save
                                                            (:kit-inicial-resgatado save))))
+        save-m {:trainer-level (long (:save/trainer-level save (:trainer-level save 1)))
+                :expansoes-mochila-50 (long (:save/expansoes-mochila-50 save
+                                                                        (:expansoes-mochila-50 save 0)))
+                :capacidade-mochila-legada (long (:save/capacidade-mochila-legada save
+                                                                                 (:capacidade-mochila-legada save 50)))}
         payload (reward/reward-payload
                  {:item {:item-id onboard/kit-item-id :qty onboard/kit-qty}})
         phash (reward/payload-hash payload)
         rev (long (:save/revision save (:revision save 0)))]
-    (if already?
+    (cond
+      already?
       {:tx []
        :result {:operation-id operation-id :duplicate true
                 :kit-already-claimed true
                 :item-id onboard/kit-item-id :qty 0
                 :payload-hash phash}}
+
+      (not (bag/kit-espaco-ok? save-m (or inventory [])))
+      (throw (err/error :bag_full
+                        {:ocupacao (shop/ocupacao-mochila (or inventory []))
+                         :capacidade (shop/capacidade-mochila-save save-m)
+                         :required onboard/kit-qty
+                         :hint :kit_needs_free_slots}))
+
+      :else
       (let [item-tx (inventory-adjust-tx db sk onboard/kit-item-id onboard/kit-qty)]
-        {:tx (into (into (vec item-tx) (kit-flag-tx chat-id player-id))
+        {:tx (into (into (vec item-tx) (kit-flag-tx db chat-id player-id))
                    [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
                     {:operation-receipt/id operation-id
-                     :operation-receipt/kind "onboard-kit"
+                     :operation-receipt/kind "bag-kit"
                      :operation-receipt/channel "gameplay"
                      :operation-receipt/payload-hash phash
                      :operation-receipt/player-key (id/player-key chat-id player-id)
@@ -51,6 +91,8 @@
          :result {:operation-id operation-id :duplicate false
                   :kit-already-claimed false
                   :item-id onboard/kit-item-id :qty onboard/kit-qty
+                  :items {onboard/kit-item-id onboard/kit-qty}
+                  :added {onboard/kit-item-id onboard/kit-qty}
                   :payload-hash phash}}))))
 
 (defn build-choose-starter-tx
@@ -122,7 +164,7 @@
                       (pr-str {:species species :id-pokemon (:id-pokemon reg)})}]
             tx (cond-> (into (vec (or kit-tx [])) base-tx)
                  (not kit-done?)
-                 (into (kit-flag-tx chat-id player-id)))]
+                 (into (kit-flag-tx db chat-id player-id)))]
         {:tx tx
          :result {:operation-id operation-id
                   :duplicate false

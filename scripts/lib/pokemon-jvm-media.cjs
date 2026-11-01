@@ -6,10 +6,23 @@
  * Falha de download/render → null (o chamador cai para texto; nunca re-TX).
  */
 
+const fs = require('fs');
+const path = require('path');
 const sharp = require('sharp');
 
 const SPRITE_CACADA = 320;
 const TIMEOUT_MS = 6000;
+/** PNGs estáticos do legado (treinador/loja/joy/professor). */
+const ASSETS_DIR = path.join(__dirname, '..', '..', 'assets');
+
+const STATIC_ASSETS = {
+  joy: 'enfermeira-joy.png',
+  'joy-tratando': 'enfermeira-joy-tratando.png',
+  hospital: 'centro-pokemon.png',
+  missao: 'professor-carvalho.png',
+  loja: 'loja-pokemon.png',
+  ash: 'ash.png'
+};
 /** Cache em memória de sprites baixados (URLs PokeAPI/CDN). Limite evita crescimento na VM. */
 const SPRITE_CACHE_MAX = 48;
 const spriteCache = new Map();
@@ -282,13 +295,18 @@ function formaGolpe(tipo) {
     + "fill='#ffffff' fill-opacity='.72' stroke='#facc15' stroke-width='9'/>";
 }
 
-function svgBarraHp({ x, y, width, atual, max, cor }) {
+function svgBarraHp({ x, y, width, atual, max, cor, rotulo }) {
   const m = Math.max(1, Number(max) || 1);
   const a = Math.max(0, Math.min(m, Number(atual) || 0));
   const fillW = Math.round((a / m) * width);
   const pct = a / m;
   const fill = cor || (pct > 0.5 ? '#22c55e' : (pct > 0.2 ? '#eab308' : '#ef4444'));
+  const label = rotulo ? String(rotulo).slice(0, 16) : '';
   return `<g>`
+    + (label
+      ? `<text x="${x}" y="${y - 6}" text-anchor="start" fill="#e2e8f0" `
+        + `font-family="sans-serif" font-size="11" font-weight="700">${escapeXml(label)}</text>`
+      : '')
     + `<rect x="${x}" y="${y}" width="${width}" height="10" rx="3" fill="#0f172a" fill-opacity=".55"/>`
     + `<rect x="${x}" y="${y}" width="${fillW}" height="10" rx="3" fill="${fill}"/>`
     + `<text x="${x + width / 2}" y="${y + 22}" text-anchor="middle" fill="#f8fafc" `
@@ -296,7 +314,15 @@ function svgBarraHp({ x, y, width, atual, max, cor }) {
     + `</g>`;
 }
 
-function svgSobreposicao({ texto, shiny, efeito, mostrarEntrada, hpX, hpO, mostrarHpX = true, mostrarHpO = true }) {
+function escapeXml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function svgSobreposicao({ texto, shiny, efeito, mostrarEntrada, hpX, hpO, mostrarHpX = true, mostrarHpO = true, rotuloX, rotuloO }) {
   const t = texto || '';
   const lower = t.toLowerCase();
   const sono = lower.includes('dorm');
@@ -306,19 +332,24 @@ function svgSobreposicao({ texto, shiny, efeito, mostrarEntrada, hpX, hpO, mostr
   const efeitos = efeito == null ? [] : (Array.isArray(efeito) ? efeito : [efeito]);
   const golpes = efeitos.map(e => {
     const escala = 0.29 + Math.min(0.19, Math.max(0, Number(e.dano) || 0) / 500);
-    const centro = e.origem === 'o' || e.origem === ':o' ? 432 : 328;
+    // origem = atacante: x esquerda, o direita (assentos fixos).
+    const centro = e.origem === 'o' || e.origem === ':o' ? 520 : 240;
     const esquerda = centro - 380 * escala;
     const topo = 205 - 210 * escala;
     return `<g transform="translate(${esquerda} ${topo}) scale(${escala})" filter="url(#golpe-glow)">`
       + `${formaGolpe(e.tipo)}</g>`;
   }).join('');
   const barras = [];
+  // Assentos fixos: X sempre à esquerda (70), O sempre à direita (500).
   if (mostrarHpX && hpX && Number.isFinite(Number(hpX.max)) && Number(hpX.max) > 0) {
-    barras.push(svgBarraHp({ x: 70, y: 368, width: 190, atual: hpX.atual, max: hpX.max }));
+    barras.push(svgBarraHp({
+      x: 70, y: 368, width: 190, atual: hpX.atual, max: hpX.max, rotulo: rotuloX
+    }));
   }
   if (mostrarHpO && hpO && Number.isFinite(Number(hpO.max)) && Number(hpO.max) > 0) {
-    const ox = mostrarHpX ? 500 : 285;
-    barras.push(svgBarraHp({ x: ox, y: 368, width: 190, atual: hpO.atual, max: hpO.max }));
+    barras.push(svgBarraHp({
+      x: 500, y: 368, width: 190, atual: hpO.atual, max: hpO.max, rotulo: rotuloO
+    }));
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="760" height="400">`
     + `<defs><filter id="golpe-glow"><feDropShadow dx="0" dy="0" stdDeviation="9" flood-color="#ffffff" flood-opacity=".75"/></filter></defs>`
@@ -369,6 +400,11 @@ async function aplicarSobreposicao(base, opts) {
  * Arena da caça (encontro / turno / fuga).
  * @returns {{ base64, mimeType, filename } | null}
  */
+function nomeCurtoPokemon(p) {
+  if (!p) return '';
+  return String(p.nickname || p.nome || p.species || p.name || '').trim();
+}
+
 async function renderHuntArena({
   area,
   pokemonX,
@@ -379,7 +415,9 @@ async function renderHuntArena({
   efeito = null,
   mostrarEntrada = true,
   hpX = null,
-  hpO = null
+  hpO = null,
+  rotuloX = null,
+  rotuloO = null
 } = {}) {
   try {
     const captura = aguardandoCaptura && !fugiu;
@@ -418,7 +456,9 @@ async function renderHuntArena({
       hpX: hpX || hpFromPokemon(pokemonX),
       hpO: hpO || hpFromPokemon(pokemonO),
       mostrarHpX: mostrarMeu,
-      mostrarHpO: !fugiu
+      mostrarHpO: !fugiu,
+      rotuloX: rotuloX != null ? rotuloX : nomeCurtoPokemon(pokemonX),
+      rotuloO: rotuloO != null ? rotuloO : nomeCurtoPokemon(pokemonO)
     });
     return {
       base64: base.toString('base64'),
@@ -467,6 +507,92 @@ async function renderSpriteCard(pokemon, { filename = 'pokemon.png', size = 320 
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[pokemon-jvm-media] sprite:', err.message || err);
+    return null;
+  }
+}
+
+/**
+ * Tema de cartão estático da Joy — espelha tema-evento-da-resposta do legado.
+ * null = sem imagem (erro / bloqueio).
+ */
+function resolveJoyTheme(texto) {
+  const t = String(texto || '');
+  if (/não pode enviar Pokémon/i.test(t)) return null;
+  if (/time já está saudável/i.test(t)) return 'hospital';
+  if (t.includes('A Enfermeira Joy recebeu')) return 'joy';
+  if (t.includes('Enfermeira Joy')) return 'joy-tratando';
+  return 'hospital';
+}
+
+async function renderStaticAsset(theme, { filename } = {}) {
+  try {
+    const file = STATIC_ASSETS[theme];
+    if (!file) return null;
+    const full = path.join(ASSETS_DIR, file);
+    if (!fs.existsSync(full)) return null;
+    const buffer = await sharp(full)
+      .resize(760, 400, { fit: 'cover', position: 'centre' })
+      .png()
+      .toBuffer();
+    return {
+      base64: buffer.toString('base64'),
+      mimeType: 'image/png',
+      filename: filename || `${theme}.png`
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] static:', theme, err.message || err);
+    return null;
+  }
+}
+
+/**
+ * Perfil do treinador (legado): fundo vermelho + Ash + Pokémon ativo.
+ */
+async function renderTrainerCard(pokemon, {
+  filename = 'treinador-pokemon.png',
+  playerName = 'Treinador'
+} = {}) {
+  try {
+    const ashPath = path.join(ASSETS_DIR, STATIC_ASSETS.ash);
+    const svg = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="760" height="400">
+        <defs>
+          <linearGradient id="f" x1="0" y1="0" x2="1" y2="1">
+            <stop stop-color="#7f1d1d"/><stop offset=".48" stop-color="#dc2626"/>
+            <stop offset="1" stop-color="#450a0a"/>
+          </linearGradient>
+        </defs>
+        <rect width="760" height="400" rx="28" fill="url(#f)"/>
+        <path d="M0 296H760" stroke="#fee2e2" stroke-width="10" opacity=".2"/>
+      </svg>`
+    );
+    const overlays = [];
+    if (fs.existsSync(ashPath)) {
+      const ash = await sharp(ashPath)
+        .resize(270, 350, {
+          fit: 'contain',
+          background: { r: 0, g: 0, b: 0, alpha: 0 }
+        })
+        .png()
+        .toBuffer();
+      overlays.push({ input: ash, left: 78, top: 50 });
+    }
+    if (pokemon) {
+      try {
+        const { buffer } = await spriteProporcional(pokemon, 280);
+        overlays.push({ input: buffer, left: 410, top: 88 });
+      } catch (_) { /* sprite opcional */ }
+    }
+    const buffer = await sharp(svg).composite(overlays).png().toBuffer();
+    return {
+      base64: buffer.toString('base64'),
+      mimeType: 'image/png',
+      filename
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] trainer:', err.message || err);
     return null;
   }
 }
@@ -553,12 +679,21 @@ async function renderStartersCard(starters, {
 }
 
 function efeitoDeTurno(data) {
-  const la = (data && data.battle && data.battle.lastAction) || (data && data.lastAction);
+  const battle = (data && data.battle) || data || {};
+  const la = battle.lastAction || (data && data.lastAction);
   if (!la || !la.dano) return null;
-  const tipos = (data.battle && data.battle.pokemonX && data.battle.pokemonX.tipos) || [];
+  const tipoGolpe = la.tipoGolpe || la['tipo-golpe']
+    || (la.golpe && (la.golpe.tipo || la.golpe.type));
+  const side = la.side || la.origem || la.actorSide || la['actor-side'];
+  const sideStr = side == null ? '' : String(side).replace(/^:/, '').toLowerCase();
+  // PvP/caça: origem = atacante. Sem side → assume X (caça humana).
+  const origem = (sideStr === 'o' || sideStr === 'pokemono') ? 'o' : 'x';
+  const tiposAtk = origem === 'o'
+    ? ((battle.pokemonO && battle.pokemonO.tipos) || [])
+    : ((battle.pokemonX && battle.pokemonX.tipos) || []);
   return {
-    tipo: (Array.isArray(tipos) && tipos[0]) || 'normal',
-    origem: 'x',
+    tipo: tipoGolpe || (Array.isArray(tiposAtk) && tiposAtk[0]) || 'normal',
+    origem,
     dano: Number(la.dano) || 0
   };
 }
@@ -678,6 +813,9 @@ module.exports = {
   renderSpriteCard,
   renderStartersCard,
   renderTeamGrid,
+  renderStaticAsset,
+  renderTrainerCard,
+  resolveJoyTheme,
   efeitoDeTurno,
   tamanhoVisual,
   idCenario,

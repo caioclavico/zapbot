@@ -1,0 +1,13 @@
+;; A6 — bônus diário da mochila (legado ultimo-bonus-diario / sequencia-bonus-diario).
+;; Flags por save; anti-farm marca todos os slots do treinador na TX.
+[
+ {:db/ident       :save/ultimo-bonus-diario
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "YYYY-MM-DD (MISSOES_TIMEZONE) do último !mochila diario resgatado"}
+
+ {:db/ident       :save/sequencia-bonus-diario
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Sequência atual de dias consecutivos do bônus diário"}
+]

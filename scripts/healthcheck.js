@@ -1,14 +1,14 @@
 // Passive, bounded readiness probe. Never accesses the session or restarts it.
 'use strict';
 const http=require('node:http');
-const states=new Set(['STARTING','AUTHENTICATED','QR','READY','DISCONNECTED','AUTH_FAILURE','ERROR','RECOVERING']);
+const states=new Set(['STARTING','AUTHENTICATED','QR','READY','DISCONNECTED','AUTH_FAILURE','ERROR','RECOVERING','DISABLED']);
 function checkHealth({get=http.get,schedule=setTimeout,cancel=clearTimeout,log=console.log,error=console.error}={}){
   return new Promise(resolve=>{
     let request,timer,done=false;
     function finish(code,reason,health){
       if(done)return;done=true;cancel(timer);
       try{
-        if(health)log(JSON.stringify({status:health.status,whatsapp:health.whatsapp,chromium:health.chromium}));
+        if(health)log(JSON.stringify({status:health.status,whatsapp:health.whatsapp,chromium:health.chromium,transport:health.transport}));
         else error('Healthcheck failed: '+reason);
       }catch{}
       if(code!==0)request?.destroy();
@@ -32,6 +32,9 @@ function checkHealth({get=http.get,schedule=setTimeout,cancel=clearTimeout,log=c
             const health=JSON.parse(body);
             if(!health||!['ok','degraded'].includes(health.status)||!states.has(health.whatsapp)||typeof health.chromium!=='boolean')
               return finish(1,'invalid_response');
+            // Homolog HTTP-only: transporte desativado, sem Chromium/QR.
+            if(res.statusCode===200&&health.status==='ok'&&health.whatsapp==='DISABLED')
+              return finish(0,'http_only',health);
             finish(res.statusCode===200&&health.status==='ok'&&health.whatsapp==='READY'&&health.chromium?0:1,'not_ready',health);
           }catch{finish(1,'invalid_response');}
         });

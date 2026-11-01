@@ -1,0 +1,42 @@
+# EXEMPLO — overlay de corte A6 na VM Core (NÃO aplicar sem GO).
+# Uso futuro (após build com digest imutável):
+#   docker compose --env-file .env.odisseu-core \
+#     -f docker-compose.odisseu-core.yml \
+#     -f docker-compose.release-a6-cutover.yml \
+#     up -d
+#
+# Regras obrigatórias neste overlay:
+#   - ALLOW_ALL_GROUPS=false (nunca herdar true do battle-idle)
+#   - imagens por tag imutável + preferir image@sha256:…
+#   - raides auto OFF
+#   - volumes: apontar ao DESTINO A6 preparado (não misturar a56 live até validar)
+
+services:
+  odisseu-jvm:
+    # Substituir pelos digests gerados no build de corte:
+    image: odisseu-jvm:a6-cutover-REPLACE_STAMP-amd64
+    # image: odisseu-jvm@sha256:REPLACE_JVM_DIGEST
+    environment:
+      ODISSEU_BRIDGE_RAID_AUTO_TICK: "false"
+      ODISSEU_BRIDGE_RESET: "false"
+      ODISSEU_BRIDGE_SEED: "false"
+      ODISSEU_BRIDGE_ALLOW_TEST_RNG: "false"
+    # mem alinhado ao orçamento Core (substituição, não colocalização)
+    mem_limit: 768m
+    memswap_limit: 1024m
+
+  odisseu-node:
+    image: odisseu-node:a6-cutover-REPLACE_STAMP-amd64
+    # image: odisseu-node@sha256:REPLACE_NODE_DIGEST
+    environment:
+      ALLOW_ALL_GROUPS: "false"
+      STAGING_STRICT_USER_ALLOWLIST: "1"
+      STAGING_GROUP_CONFIRMED: "1"
+      STAGING_BOOTSTRAP_GROUP: "0"
+      STAGING_ALLOW_QR: "0"
+      # Preencher no .env (não aqui) se quiser evitar commit de IDs:
+      # DEV_GROUP_ID / STAGING_ALLOWED_USERS
+      POKEMON_RAID_AUTO_TICK: "false"
+      POKEMON_RAID_AUTO_TICK_MS: "30000"
+    mem_limit: 2560m
+    memswap_limit: 2560m

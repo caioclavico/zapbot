@@ -39,7 +39,13 @@ test('formatRaidAttack vitória e turno', () => {
   }, '!pk'), /Dano 40/);
 });
 
-test('abrir/cancelar permanecem bloqueados', () => {
-  assert.match(present.formatGymBlocked('abrir'), /automática|admin/i);
-  assert.match(present.formatGymBlocked('cancelar'), /Cancelar/);
+test('abrir/cancelar de raide saíram do formatGymBlocked (Fase 2)', () => {
+  // ranking/historico de ginásio seguem bloqueados; abrir/cancelar não.
+  assert.match(present.formatGymBlocked('ranking'), /Ranking/);
+  assert.match(present.formatGymBlocked('historico'), /Histórico/);
+  assert.doesNotMatch(present.formatGymBlocked('abrir'), /automática|admin/i);
+  assert.doesNotMatch(present.formatGymBlocked('cancelar'), /Cancelar raide/);
+  assert.match(present.formatRaidOpenHelp('!pk'), /Abrir raide/);
+  assert.match(present.resolveRaidSubcommand('abrir'), /abrir/);
+  assert.match(present.resolveRaidSubcommand('cancelar'), /cancelar/);
 });

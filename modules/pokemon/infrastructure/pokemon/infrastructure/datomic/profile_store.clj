@@ -1,6 +1,7 @@
 (ns pokemon.infrastructure.datomic.profile-store
   (:require [clojure.edn :as edn]
             [datomic.client.api :as d]
+            [pokemon.domain.battle :as battle]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
             [pokemon.domain.profile :as profile]
@@ -12,6 +13,7 @@
 (defn- player [db chat player-id] (d/pull db '[*] [:player/key (id/player-key chat player-id)]))
 (defn- present? [x] (boolean (:db/id x)))
 (defn- read-edn [x] (if (seq x) (edn/read-string x) {}))
+(defn- read-bed-pokemon [x] (or (battle/decode-compact-edn x) {}))
 (defn- pokemon-at [db sk idx]
   (when-let [eid (ffirst (d/q '[:find ?p :in $ ?sk ?idx :where
                                  [?s :save/key ?sk] [?p :pokemon/save ?s]
@@ -20,7 +22,11 @@
 (defn- receipt [db op]
   (let [r (d/pull db '[*] [:operation-receipt/id op])]
     (when (:db/id r) r)))
-(defn- result [op summary] {:operation-id op :summary summary})
+(defn- result
+  "DTO plano para o Node (token/confirmed no topo) + :summary para recibos/testes."
+  [op summary]
+  (merge {:operation-id op :summary summary}
+         (or summary {})))
 (defn- transact! [conn ctx payload build]
   (let [{:keys [chat-id player-id save-id fence-generation operation-id]} ctx
         ph (reward/payload-hash payload) sk (save-key chat-id player-id save-id)]
@@ -94,25 +100,126 @@
        (sort-by :pokemon/collection-index)
        vec))
 
-(defn professor-send! [conn ctx idx now]
-  (let [payload {:action :professor-send :index idx}
+(defn- adjust-slots
+  "Espelha ajustar-times-remocao do legado: remove idx e decrementa maiores."
+  [slots idx]
+  (mapv (fn [slot]
+          (cond (nil? slot) nil
+                (= (long slot) (long idx)) nil
+                (> (long slot) (long idx)) (dec (long slot))
+                :else slot))
+        (vec (or slots []))))
+
+(defn- adjust-slots-many
+  "Aplica remoções em lote (índices altos primeiro)."
+  [slots idxs]
+  (reduce adjust-slots slots (sort > (map long idxs))))
+
+(defn- next-active-after-removals
+  [active removed-idxs]
+  (let [removed (set (map long removed-idxs))
+        active (long (or active 0))]
+    (if (contains? removed active)
+      0
+      (- active (count (filter #(< % active) removed))))))
+
+(defn- team-index-tx
+  "Ajusta time-ginasio e times-liga (mapa liga→slots) após remoção(ões)."
+  [sk s idx-or-idxs]
+  (let [idxs (if (sequential? idx-or-idxs) (mapv long idx-or-idxs) [(long idx-or-idxs)])
+        tg (let [v (read-edn (:save/time-ginasio-edn s))]
+             (if (sequential? v) (vec v) []))
+        tl (let [v (read-edn (:save/time-liga-edn s))]
+             (cond (map? v) v
+                   (sequential? v) {"default" (vec v)}
+                   :else {}))
+        tg' (adjust-slots-many tg idxs)
+        tl' (into {} (map (fn [[liga slots]] [liga (adjust-slots-many slots idxs)]) tl))]
+    (cond-> []
+      (not= tg tg') (conj [:db/add [:save/key sk] :save/time-ginasio-edn (pr-str tg')])
+      (not= tl tl') (conj [:db/add [:save/key sk] :save/time-liga-edn (pr-str tl')]))))
+
+(defn- normalize-send-indexes
+  "Aceita um índice, seq de índices ou nil."
+  [idx-or-idxs]
+  (cond
+    (nil? idx-or-idxs) nil
+    (number? idx-or-idxs) [(long idx-or-idxs)]
+    (sequential? idx-or-idxs)
+    (->> idx-or-idxs (map long) distinct sort vec)
+    :else nil))
+
+(defn- entry-from-pokemon
+  [p idx]
+  (let [nome (or (:pokemon/nickname p) (:pokemon/nome p) (:pokemon/species p) "?")]
+    {:id-pokemon (:pokemon/id-pokemon p)
+     :index (long idx)
+     :display-index (inc (long idx))
+     :species (:pokemon/species p)
+     :nome nome
+     :nivel (long (:pokemon/level p 1))
+     :shiny (boolean (or (:pokemon/shiny? p) (:pokemon/shiny p)))
+     :item (:pokemon/item p)
+     :family (profile/family (:pokemon/species p))}))
+
+(defn- in-enfermaria?
+  [db sk id-pokemon]
+  (let [beds (d/q '[:find ?e :in $ ?sk :where
+                    [?e :enfermaria-bed/save-key ?sk]]
+                  db sk)]
+    (some (fn [[eid]]
+            (let [e (d/pull db '[:enfermaria-bed/pokemon-edn] eid)
+                  poke (read-bed-pokemon (:enfermaria-bed/pokemon-edn e))
+                  id (or (:id-pokemon poke) (get poke "id-pokemon"))]
+              (= (str id) (str id-pokemon))))
+          beds)))
+
+(defn professor-send! [conn ctx idx-or-idxs now]
+  (let [idxs (normalize-send-indexes idx-or-idxs)
+        payload {:action :professor-send :indexes idxs}
         sk (save-key (:chat-id ctx) (:player-id ctx) (:save-id ctx))]
+    (when (or (nil? idxs) (empty? idxs))
+      (throw (err/error :invalid_collection_index {:index idx-or-idxs})))
+    (when (> (count idxs) 50)
+      (throw (err/error :invalid_collection_index {:index idx-or-idxs :hint "máx 50"})))
     (transact! conn ctx payload
       (fn [db s]
         (when (seq (pending s)) (throw (err/error :professor_busy {})))
         (when (:player/active-battle-id (player db (:chat-id ctx) (:player-id ctx)))
           (throw (err/error :battle_busy {})))
-        (let [p (pokemon-at db sk idx)]
-          (when-not p (throw (err/error :invalid_collection_index {:index idx})))
-          (when (or (:pokemon/favorite? p)
-                    (= (:save/favorito-id-pokemon s) (:pokemon/id-pokemon p)))
-            (throw (err/error :pokemon_favorite {})))
-          (let [token (str (+ 100 (mod (Math/abs (hash (:operation-id ctx))) 900)))]
-            (let [pend {:token token :expires-at (+ now 300000) :species (:pokemon/species p)
-                        :id-pokemon (:pokemon/id-pokemon p) :index idx
-                        :family (profile/family (:pokemon/species p))}]
-              {:summary pend
-               :tx [[:db/add [:save/key sk] :save/professor-pending-edn (pr-str pend)] ]})))))))
+        (let [entries
+              (mapv (fn [idx]
+                      (let [p (pokemon-at db sk idx)]
+                        (when-not p
+                          (throw (err/error :invalid_collection_index {:index idx})))
+                        (when (in-enfermaria? db sk (:pokemon/id-pokemon p))
+                          (throw (err/error :pokemon_in_treatment
+                                            {:id-pokemon (:pokemon/id-pokemon p)})))
+                        (when (or (:pokemon/favorite? p)
+                                  (= (:save/favorito-id-pokemon s) (:pokemon/id-pokemon p)))
+                          (throw (err/error :pokemon_favorite {})))
+                        (entry-from-pokemon p idx)))
+                    idxs)
+              token (str (+ 100 (mod (Math/abs (hash (:operation-id ctx))) 900)))
+              first-e (first entries)
+              pend (cond-> {:token token
+                            :expires-at (+ (long now) 300000)
+                            :save-id (:save-id ctx)
+                            :entries entries
+                            :count (count entries)
+                            ;; Campos do 1º mantêm compat com formatProfessor antigo.
+                            :species (:species first-e)
+                            :nome (:nome first-e)
+                            :nivel (:nivel first-e)
+                            :shiny (:shiny first-e)
+                            :item (:item first-e)
+                            :id-pokemon (:id-pokemon first-e)
+                            :index (:index first-e)
+                            :display-index (:display-index first-e)
+                            :family (:family first-e)}
+                     (> (count entries) 1) (assoc :batch true))]
+          {:summary pend
+           :tx [[:db/add [:save/key sk] :save/professor-pending-edn (pr-str pend)]]})))))
 
 (defn professor-cancel! [conn ctx]
   (transact! conn ctx {:action :professor-cancel}
@@ -120,47 +227,101 @@
                          :tx [[:db/retract [:save/key (save-key (:chat-id ctx) (:player-id ctx) (:save-id ctx))]
                                                :save/professor-pending-edn]]})))
 
+(defn- pending-entries
+  "Normaliza pendente legado (1 poke) ou lote (:entries)."
+  [pend]
+  (if (seq (:entries pend))
+    (vec (:entries pend))
+    [(select-keys pend [:id-pokemon :index :display-index :species :nome
+                        :nivel :shiny :item :family])]))
+
 (defn professor-confirm! [conn ctx token now]
   (let [payload {:action :professor-confirm :token token}
         sk (save-key (:chat-id ctx) (:player-id ctx) (:save-id ctx))]
     (transact! conn ctx payload
       (fn [db s]
         (let [pend (pending s)]
-          (when-not (= token (:token pend)) (throw (err/error :professor_invalid_token {})))
-          (when (>= now (long (:expires-at pend 0))) (throw (err/error :professor_expired {})))
-          (let [eid (ffirst (d/q '[:find ?p :in $ ?id :where [?p :pokemon/id-pokemon ?id]] db (:id-pokemon pend)))
-                p (when eid (d/pull db '[*] eid))]
-            (when-not p (throw (err/error :pokemon_not_found {})))
-            (let [idx (:index pend)
-                  rest-pokemon (remove #(= (:db/id %) (:db/id p)) (collection db sk))
-                  item (:pokemon/item p)
-                  item-key (when item (id/inventory-item-key sk item))
-                  old-qty (long (:inventory-item/qty (when item (d/pull db '[:inventory-item/qty]
-                                                                          [:inventory-item/key item-key])) 0))
-                  reindex-tx (mapcat (fn [q]
-                                       (when (> (long (:pokemon/collection-index q)) (long idx))
-                                         [[:db/add [:pokemon/id-pokemon (:pokemon/id-pokemon q)]
-                                                    :pokemon/collection-index (dec (long (:pokemon/collection-index q)))]]))
-                                     rest-pokemon)
-                  active (long (:save/ativo-index s 0))
-                  next-active (cond (= active idx) 0 (> active idx) (dec active) :else active)
-                  item-tx (when item
-                            [{:inventory-item/key item-key :inventory-item/save [:save/key sk]
-                              :inventory-item/item-id item :inventory-item/qty (inc old-qty)}])]
-             (let [base-tx [[:db/retractEntity (:db/id p)]
-                            [:db/retract [:save/key sk] :save/professor-pending-edn]
-                            [:db/add [:save/key sk] :save/professor-cards-edn
-                                      (pr-str (update (read-edn (:save/professor-cards-edn s))
-                                                      (:family pend) (fnil inc 0)))]
-                            [:db/add [:save/key sk] :save/doacoes-pokemon
-                                      (inc (long (:save/doacoes-pokemon s 0)))]
-                            [:db/add [:save/key sk] :save/ativo-index next-active]]]
-               {:summary {:confirmed true :family (:family pend) :id-pokemon (:id-pokemon pend)
-                          :item-returned item}
-                :tx (vec (concat base-tx reindex-tx item-tx))}))))))))
+          (when-not (seq pend) (throw (err/error :professor_invalid_token {})))
+          (when-not (= (str token) (str (:token pend)))
+            (throw (err/error :professor_invalid_token {})))
+          (when (>= (long now) (long (:expires-at pend 0)))
+            (throw (err/error :professor_expired {})))
+          ;; Save ativo diferente do pedido → fence/CAS já cobre; reforço explícito.
+          (when (and (:save-id pend) (not= (:save-id pend) (:save-id ctx)))
+            (throw (err/error :stale_writer_fence {:reason "save-switched"})))
+          (let [entries (pending-entries pend)
+                ids (set (map :id-pokemon entries))
+                idxs (mapv long (map :index entries))
+                col (collection db sk)
+                by-id (into {} (map (fn [p] [(:pokemon/id-pokemon p) p]) col))
+                entities (mapv (fn [e]
+                                 (let [p (get by-id (:id-pokemon e))]
+                                   (when-not p
+                                     (throw (err/error :pokemon_not_found
+                                                       {:id-pokemon (:id-pokemon e)})))
+                                   (let [save-ref (:db/id (:pokemon/save p))
+                                         save-eid (:db/id s)]
+                                     (when-not (= save-ref save-eid)
+                                       (throw (err/error :pokemon_not_found
+                                                         {:reason "wrong-save"}))))
+                                   (when (in-enfermaria? db sk (:pokemon/id-pokemon p))
+                                     (throw (err/error :pokemon_in_treatment
+                                                       {:id-pokemon (:pokemon/id-pokemon p)})))
+                                   (when (or (:pokemon/favorite? p)
+                                             (= (:save/favorito-id-pokemon s)
+                                                (:pokemon/id-pokemon p)))
+                                     (throw (err/error :pokemon_favorite {})))
+                                   p))
+                               entries)
+                rest-pokemon (vec (remove #(contains? ids (:pokemon/id-pokemon %)) col))
+                reindex-tx (map-indexed
+                            (fn [i q]
+                              [:db/add [:pokemon/id-pokemon (:pokemon/id-pokemon q)]
+                               :pokemon/collection-index (long i)])
+                            (sort-by :pokemon/collection-index rest-pokemon))
+                retract-tx (mapv #(vector :db/retractEntity (:db/id %)) entities)
+                item-counts (frequencies (keep :pokemon/item entities))
+                item-tx (mapv (fn [[item n]]
+                                (let [ik (id/inventory-item-key sk item)
+                                      old (long (:inventory-item/qty
+                                                 (d/pull db '[:inventory-item/qty]
+                                                         [:inventory-item/key ik]) 0))]
+                                  {:inventory-item/key ik
+                                   :inventory-item/save [:save/key sk]
+                                   :inventory-item/item-id item
+                                   :inventory-item/qty (+ old (long n))}))
+                              item-counts)
+                cards0 (read-edn (:save/professor-cards-edn s))
+                cards' (reduce (fn [m e]
+                                 (update m (:family e) (fnil inc 0)))
+                               cards0 entries)
+                n (count entries)
+                next-active (next-active-after-removals
+                             (long (:save/ativo-index s 0)) idxs)
+                team-tx (team-index-tx sk s idxs)
+                first-e (first entries)
+                base-tx [[:db/retract [:save/key sk] :save/professor-pending-edn]
+                         [:db/add [:save/key sk] :save/professor-cards-edn (pr-str cards')]
+                         [:db/add [:save/key sk] :save/doacoes-pokemon
+                          (+ (long (:save/doacoes-pokemon s 0)) n)]
+                         [:db/add [:save/key sk] :save/ativo-index next-active]]
+                summary (cond-> {:confirmed true
+                                 :count n
+                                 :cards-granted n
+                                 :items-returned (long (reduce + 0 (vals item-counts)))
+                                 :family (:family first-e)
+                                 :id-pokemon (:id-pokemon first-e)
+                                 :nome (:nome first-e)
+                                 :collection-count (count rest-pokemon)}
+                          (= n 1) (assoc :item-returned (:item first-e))
+                          (> n 1) (assoc :entries entries))]
+            {:summary summary
+             :tx (vec (concat retract-tx base-tx reindex-tx item-tx team-tx))}))))))
 
 (defn professor-use! [conn ctx idx]
   (let [payload {:action :professor-use :index idx} sk (save-key (:chat-id ctx) (:player-id ctx) (:save-id ctx))]
+    (when (nil? idx)
+      (throw (err/error :invalid_collection_index {:index idx})))
     (transact! conn ctx payload
       (fn [db s]
         (let [p (pokemon-at db sk idx)]
@@ -169,10 +330,24 @@
             (when-not (pos? (long (get cards fam 0))) (throw (err/error :professor_no_cards {})))
             (when (>= (long (:pokemon/level p 1)) xp/nivel-maximo)
               (throw (err/error :pokemon_max_level {})))
-            (let [applied (xp/aplicar-xp-pokemon p 3)
-                  n (:registro applied)]
+            (let [nivel0 (long (:pokemon/level p 1))
+                  reg {:nivel nivel0
+                       :xp-desde-nivel (long (:pokemon/xp-desde-nivel p 0))
+                       :hp (long (:pokemon/hp p 1))
+                       :hp-atual (long (:pokemon/hp-atual p (:pokemon/hp p 1)))
+                       :ataque (long (:pokemon/ataque p 0))
+                       :defesa (long (:pokemon/defesa p 0))
+                       :atq-esp (long (:pokemon/atq-esp p 0))
+                       :def-esp (long (:pokemon/def-esp p 0))
+                       :veloc (long (:pokemon/veloc p 0))
+                       :amizade (long (:pokemon/amizade p 70))
+                       :nome (or (:pokemon/nickname p) (:pokemon/nome p) (:pokemon/species p))}
+                  applied (xp/aplicar-xp-pokemon reg 3)
+                  n (:registro applied)
+                  nome (:nome applied)]
             {:summary {:used true :family fam :id-pokemon (:pokemon/id-pokemon p)
-                       :level (:nivel-final applied)}
+                       :nome nome :level (:nivel-final applied)
+                       :leveled-up? (> (long (:nivel-final applied)) nivel0)}
              :tx [[:db/add [:save/key sk] :save/professor-cards-edn
                    (pr-str (update cards fam dec))]
                   [:db/add [:pokemon/id-pokemon (:pokemon/id-pokemon p)] :pokemon/xp-desde-nivel

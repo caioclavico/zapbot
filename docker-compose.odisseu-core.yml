@@ -29,7 +29,9 @@ services:
     environment:
       # Configurações de gameplay lidas pelo processo JVM; zero só é aceito em staging.
       APP_ENV: staging
-      POKEMON_JOY_HEAL_SECONDS: "0"
+      POKEMON_HUNT_COOLDOWN_SECONDS: "1800"
+      POKEMON_JOY_HEAL_SECONDS: "1800"
+      POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS: ${POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS:-300}
       ODISSEU_BRIDGE_HOST: "0.0.0.0"
       ODISSEU_BRIDGE_PORT: "18090"
       ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND: "true"
@@ -95,6 +97,7 @@ services:
       POKEMON_JVM_TOKEN: ${ODISSEU_BRIDGE_TOKEN:?Defina ODISSEU_BRIDGE_TOKEN}
       # Opt-in staging: allowlist estrita http://odisseu-jvm:18090 (não loopback).
       POKEMON_JVM_ALLOW_DOCKER_HOST: "true"
+      POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS: ${POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS:-300}
       POKEMON_SERVICE_URL: ""
       POKEMON_SERVICE_TOKEN: ""
       PLATFORM_ADAPTER: datomic

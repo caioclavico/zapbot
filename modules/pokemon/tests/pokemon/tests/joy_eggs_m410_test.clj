@@ -152,6 +152,41 @@
   (is (= (* 6 60 60 1000) (get-in eggs/categorias [:raro :tempo-ms])))
   (is (= (* 12 60 60 1000) (get-in eggs/categorias [:epico :tempo-ms]))))
 
+(deftest joy-api-reflete-duracao-efetiva-do-dominio
+  "GET joy-status e POST joy-send expõem a mesma duração que
+   joy/tempo-tratamento-segundos (POKEMON_JOY_HEAL_SECONDS efetiva).
+   Não usa a constante fixa tempo-tratamento-minutos quando a env difere."
+  (let [chat "chat-joy-api"
+        t0 5000000]
+    (doseq [[env-map expected-s]
+            [[{"APP_ENV" "staging" "POKEMON_JOY_HEAL_SECONDS" "1800"} 1800]
+             [{"APP_ENV" "staging" "POKEMON_JOY_HEAL_SECONDS" "45"} 45]
+             [{"APP_ENV" "production" "POKEMON_JOY_HEAL_SECONDS" "0"} 1800]]]
+      (with-redefs [joy/environment (fn [k] (get env-map k))]
+        (is (= expected-s (joy/tempo-tratamento-segundos))
+            (str "domínio " env-map))
+        (let [s (fresh-store! (str "j410-api-" expected-s "-" (hash env-map)))]
+          (boot! s chat "ash")
+          (collection/adicionar-pokemon! s chat "ash" ferido 10 "envenenado")
+          (let [st (reads/joy-status s chat "ash" {:agora-ms t0})]
+            (is (= expected-s (:tempo-tratamento-segundos st)))
+            (is (= (long (Math/ceil (/ (double expected-s) 60.0)))
+                   (:tempo-tratamento-minutos st)))
+            (is (= (joy/tempo-tratamento-segundos)
+                   (:tempo-tratamento-segundos st))
+                "API e domínio idênticos no status"))
+          (let [r (tx/joy-send!
+                   s {:chat-id chat :player-id "ash" :save-id "a"
+                      :fence-generation (fence s chat "ash")
+                      :operation-id (str "js-api-" expected-s)
+                      :idx 0 :agora-ms t0})]
+            (is (= expected-s (:tempo-tratamento-segundos r)))
+            (is (= (joy/tempo-tratamento-segundos)
+                   (:tempo-tratamento-segundos r))
+                "API e domínio idênticos no send")
+            (is (= (+ t0 (* expected-s 1000)) (:pronto-em r)))
+            (is (= (* expected-s 1000) (:restante-ms r)))))))))
+
 (deftest dois-jogadores-joy
   (let [s (fresh-store! "j410-2p")
         chat "chat-2p"

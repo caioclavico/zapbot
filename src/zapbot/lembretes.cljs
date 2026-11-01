@@ -201,7 +201,8 @@
   (doseq [[id item] @lembretes
           :when (and (<= (:em item) (.now js/Date))
                      (not (contains? @enviando id))
-                     (config/chat-autorizado? (:chat item)))]
+                     (config/chat-autorizado? (:chat item))
+                     (config/usuario-autorizado? (or (:criador item) (:chat item))))]
     (swap! enviando conj id)
     (let [criador (:criador item)
           texto (texto-envio item)]
@@ -257,6 +258,9 @@
                  (p/resolved false)
 
                  (not (config/chat-autorizado? (:chat item)))
+                 (p/resolved false)
+
+                 (not (config/usuario-autorizado? (or (:criador item) (:chat item))))
                  (p/resolved false)
 
                  :else

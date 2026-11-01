@@ -1,0 +1,81 @@
+;; A6 economy ledger — aditivo, compatível com saves existentes.
+;; NÃO aplicar em produção sem GO explícito (ensaios locais/testes OK via schema/install!).
+;; Política: docs/pokemon-a6-4-economy-ledger.md
+[
+ ;; --- Status e saldos no save ---
+ {:db/ident       :save/economy-status
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "trusted | unknown-pending | reconciled. Recovery/offline-import → unknown-pending. Nunca auto-promover por crédito operacional."}
+
+ {:db/ident       :save/coins-operational
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Saldo operacional líquido (créditos A6 − débitos A6). Gastável comprovado enquanto histórico for unknown."}
+
+ {:db/ident       :save/coins-operational-earned
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Total de créditos operacionais concedidos no A6 (lifetime)."}
+
+ {:db/ident       :save/coins-operational-spent
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Total de débitos operacionais no A6 (lifetime)."}
+
+ {:db/ident       :save/coins-historical-status
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "unknown | declared | reconciled | rejected | none. Nunca auto-somar V1/V2/operacional."}
+
+ {:db/ident       :save/coins-historical-amount
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Valor histórico só após declared/reconciled manual. Não gastar se status ≠ reconciled."}
+
+ ;; --- Linhas de ledger (idempotentes por save+operation+role) ---
+ {:db/ident       :coin-ledger/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "\"{save-key}|{operation-id}|{role}\""}
+
+ {:db/ident       :coin-ledger/save
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Save afetado"}
+
+ {:db/ident       :coin-ledger/operation-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Identificador idempotente da operação de origem (receipt / raid-reward / …)"}
+
+ {:db/ident       :coin-ledger/role
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "primary | permanence | admin | … — desambigua múltiplos créditos na mesma op"}
+
+ {:db/ident       :coin-ledger/kind
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "credit | debit"}
+
+ {:db/ident       :coin-ledger/source
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "capture | pvp | gym | gym-permanence | raid | mission | shop | admin | relearn | reward"}
+
+ {:db/ident       :coin-ledger/amount
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Magnitude positiva; sinal em :coin-ledger/kind"}
+
+ {:db/ident       :coin-ledger/balance-after
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "coins-operational após esta linha"}
+
+ {:db/ident       :coin-ledger/at
+  :db/valueType   :db.type/instant
+  :db/cardinality :db.cardinality/one}
+]

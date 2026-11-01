@@ -11,9 +11,83 @@
             [pokemon.application.ports :as ports]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
+            [pokemon.domain.reward :as reward]
             [pokemon.migration.gates :as gates]
-            [pokemon.migration.transform :as transform]))
+            [pokemon.migration.transform :as transform]
+            [pokemon.infrastructure.datomic.economy-store :as economy-store]))
 
+(def ^:private datomic-local-string-limit
+  "Limite prático do Datomic Local para valor de atributo (~4096)."
+  4000)
+
+(defn- sha12 [s]
+  (subs (reward/payload-hash {:s (str s)}) 0 12))
+
+(defn- compact-origin-edn
+  "Mantém origin verificável dentro do limite Datomic Local.
+   Não inventa attrs de gameplay: só compacta o blob de proveniência.
+   Campos já persistidos em attrs dedicados (golpes/histórico/ivs) podem
+   ser omitidos do blob; o hash do origin integral fica em :a64-origin-sha12."
+  [origin-edn]
+  (when origin-edn
+    (let [s (str origin-edn)]
+      (if (<= (count s) datomic-local-string-limit)
+        s
+        (let [full-hash (sha12 s)
+              m (try (edn/read-string {:readers *data-readers*} s)
+                     (catch Exception _ nil))]
+          (if-not (map? m)
+            (pr-str {:a64-origin-omitted true
+                     :a64-origin-sha12 full-hash
+                     :a64-origin-bytes (count s)})
+            (let [drop1 [:historico-golpes "historico-golpes"
+                         :golpes "golpes"
+                         :golpes-removidos "golpes-removidos"
+                         :golpes-oferecidos "golpes-oferecidos"
+                         :ofertas-golpes "ofertas-golpes"
+                         :ivs "ivs"]
+                  c1 (-> (apply dissoc m drop1)
+                         (assoc :a64-origin-compacted true
+                                :a64-origin-sha12 full-hash
+                                :a64-origin-bytes (count s)))
+                  s1 (pr-str c1)]
+              (if (<= (count s1) datomic-local-string-limit)
+                s1
+                (let [c2 (-> c1
+                             (dissoc :imagem "imagem" :imagem-shiny "imagem-shiny")
+                             (assoc :a64-origin-compacted-level 2))
+                      s2 (pr-str c2)]
+                  (if (<= (count s2) datomic-local-string-limit)
+                    s2
+                    (pr-str {:a64-origin-omitted true
+                             :a64-origin-sha12 full-hash
+                             :a64-origin-bytes (count s)
+                             :id-pokemon (or (:id-pokemon m) (get m "id-pokemon"))
+                             :nome (or (:nome m) (get m "nome"))})))))))))))
+
+(defn- fit-edn-attr
+  "Garante string EDN ≤ limite; se mapa, remove chaves volumosas já espelhadas."
+  [v]
+  (when (some? v)
+    (let [s (if (string? v) v (pr-str v))]
+      (if (<= (count s) datomic-local-string-limit)
+        s
+        (let [m (try (edn/read-string {:readers *data-readers*} s)
+                     (catch Exception _ nil))
+              full-hash (sha12 s)]
+          (if (map? m)
+            (let [slim (pr-str (assoc (dissoc m :detalhes "detalhes" :log "log")
+                                 :a64-edn-compacted true
+                                 :a64-edn-sha12 full-hash
+                                 :a64-edn-bytes (count s)))]
+              (if (<= (count slim) datomic-local-string-limit)
+                slim
+                (pr-str {:a64-edn-omitted true
+                         :a64-edn-sha12 full-hash
+                         :a64-edn-bytes (count s)})))
+            (pr-str {:a64-edn-omitted true
+                     :a64-edn-sha12 full-hash
+                     :a64-edn-bytes (count s)})))))))
 (defn- receipt-id
   [import-batch-id save-key*]
   (str "m50-import|" import-batch-id "|" save-key*))
@@ -118,11 +192,12 @@
                               {:id-pokemon id-poke :species (:species poke)})))
         bed-id (import-bed-id id-poke)
         pronto (long (:pronto-em poke))
-        origin (or (:origin-edn poke)
-                   (when (:origin poke) (pr-str (:origin poke))))
-        legado (when (seq (:legado poke)) (pr-str (:legado poke)))
+        origin (compact-origin-edn
+                (or (:origin-edn poke)
+                    (when (:origin poke) (pr-str (:origin poke)))))
+        legado (when (seq (:legado poke)) (fit-edn-attr (pr-str (:legado poke))))
         edn-str (pr-str (bed-registro poke))
-        _ (when (> (count edn-str) 4000)
+        _ (when (> (count edn-str) datomic-local-string-limit)
             (throw (err/error :import_joy_bed_payload_too_large
                               {:id-pokemon id-poke :bytes (count edn-str)})))]
     (cond-> {:enfermaria-bed/key (id/enfermaria-bed-key sk bed-id)
@@ -132,7 +207,6 @@
              :enfermaria-bed/pronto-em pronto}
       origin (assoc :enfermaria-bed/origin-edn origin)
       legado (assoc :enfermaria-bed/legado-edn legado))))
-
 (defn- pokemon->entity
   "Persiste attrs suportados + location/legado/origin (equipe/pc).
    Enfermaria não usa este caminho — ver enfermaria-bed-entity.
@@ -178,23 +252,24 @@
       (:imagem poke) (assoc :pokemon/imagem (:imagem poke))
       (:imagem-shiny poke) (assoc :pokemon/imagem-shiny (:imagem-shiny poke))
       (seq (:golpes-removidos poke))
-      (assoc :pokemon/golpes-removidos-edn (pr-str (:golpes-removidos poke)))
+      (assoc :pokemon/golpes-removidos-edn (fit-edn-attr (:golpes-removidos poke)))
       (seq (:historico-golpes poke))
-      (assoc :pokemon/historico-golpes-edn (pr-str (:historico-golpes poke)))
+      (assoc :pokemon/historico-golpes-edn (fit-edn-attr (:historico-golpes poke)))
       (or (seq (:golpes-oferecidos poke)) (seq (:ofertas-golpes poke)))
       (assoc :pokemon/ofertas-golpes-edn
-             (pr-str (or (:golpes-oferecidos poke) (:ofertas-golpes poke))))
-      (:ivs poke) (assoc :pokemon/ivs-edn (pr-str (:ivs poke)))
+             (fit-edn-attr (or (:golpes-oferecidos poke) (:ofertas-golpes poke))))
+      (:ivs poke) (assoc :pokemon/ivs-edn (fit-edn-attr (:ivs poke)))
       (and (contains? poke :item) (some? (:item poke)))
       (assoc :pokemon/item (str (:item poke)))
       (number? (:altura poke)) (assoc :pokemon/altura (double (:altura poke)))
       (number? (:peso poke)) (assoc :pokemon/peso (double (:peso poke)))
       (number? (:taxa-captura poke)) (assoc :pokemon/taxa-captura (long (:taxa-captura poke)))
-      (seq (:legado poke)) (assoc :pokemon/legado-edn (pr-str (:legado poke)))
-      (:origin-edn poke) (assoc :pokemon/origin-edn (:origin-edn poke))
-      (and (nil? (:origin-edn poke)) (:origin poke))
-      (assoc :pokemon/origin-edn (pr-str (:origin poke))))))
-
+      (seq (:legado poke)) (assoc :pokemon/legado-edn (fit-edn-attr (:legado poke)))
+      (or (:origin-edn poke) (:origin poke))
+      (assoc :pokemon/origin-edn
+             (compact-origin-edn
+              (or (:origin-edn poke)
+                  (when (:origin poke) (pr-str (:origin poke)))))))))
 (defn- inventory-tx
   [sk items]
   (mapv (fn [{:keys [item-id qty]}]
@@ -289,56 +364,74 @@
               ;; Datomic Local: batches grandes ok; chunk se necessário
               chunks (partition-all 40 poke-entities)
               bed-chunks (partition-all 40 bed-entities)
-              base-tx [{:operation-receipt/id op-id
-                        :operation-receipt/kind "migration-import"
-                        :operation-receipt/channel "m5.0"
-                        :operation-receipt/payload-hash phash
-                        :operation-receipt/player-key (:player-key save-ir)
-                        :operation-receipt/save-id slot-id
-                        :operation-receipt/summary
-                        (pr-str {:snapshot-id (get-in save-ir [:provenance :snapshot-id])
-                                 :kind (get-in save-ir [:provenance :kind])
-                                 :pokemon-count (:pokemon-count save-ir)
-                                 :joy-bed-count (count joy-pokes)
-                                 :coins (:coins save-ir)})}
-                       [:db/add [:save/key sk] :save/coins (long (:coins save-ir))]
-                       [:db/add [:save/key sk] :save/origin source-kind]
-                       [:db/add [:save/key sk] :save/origin-player-id
-                        (str (or (:origin-player-id save-ir) player-id))]
-                       [:db/add [:save/key sk] :save/legacy-version source-version]
-                       [:db/add [:save/key sk] :save/importer-version "m6.2-ir-v1"]
-                       [:db/add [:save/key sk] :save/import-id op-id]
-                       [:db/add [:save/key sk] :save/import-status "imported"]
-                       [:db/add [:save/key sk] :save/imported-at (java.util.Date.)]
-                       [:db/add [:save/key sk] :save/original-record-ids original-ids]
-                       [:db/add [:save/key sk] :save/ativo-index (long (:ativo-index save-ir))]
-                       [:db/add [:save/key sk] :save/vitorias-treinador (long (:vitorias-treinador save-ir))]
-                       [:db/add [:save/key sk] :save/pe-ginasios (long (:pe-ginasios save-ir))]
-                       [:db/add [:save/key sk] :save/pe-raids (long (:pe-raids save-ir))]
-                       [:db/add [:save/key sk] :save/xp-insignias (long (:xp-insignias save-ir))]
-                       [:db/add [:save/key sk] :save/xp-missoes (long (:xp-missoes save-ir))]
-                       [:db/add [:save/key sk] :save/ginasios-edn (pr-str (:ginasios save-ir))]
-                       [:db/add [:save/key sk] :save/sequencia-capturas (long (:sequencia-capturas save-ir))]
-                       [:db/add [:save/key sk] :save/maior-sequencia-capturas
-                        (long (:maior-sequencia-capturas save-ir))]
-                       [:db/add [:save/key sk] :save/expansoes-pokemon-50
-                        (long (:expansoes-pokemon-50 save-ir))]
-                       [:db/add [:save/key sk] :save/expansoes-mochila-50
-                        (long (:expansoes-mochila-50 save-ir))]
-                       [:db/add [:save/key sk] :save/capacidade-mochila-legada
-                        (long (:capacidade-mochila-legada save-ir))]]]
-          (d/transact conn {:tx-data (into base-tx (concat inv dex))})
-          (doseq [chunk chunks]
-            (d/transact conn {:tx-data (vec chunk)}))
-          (doseq [chunk bed-chunks]
-            (d/transact conn {:tx-data (vec chunk)}))
-          {:status :imported
-           :slot-id slot-id
-           :operation-id op-id
-           :content-hash phash
-           :pokemon-count (:pokemon-count save-ir)
-           :collection-count (count active-pokes)
-           :joy-bed-count (count joy-pokes)})))))
+              ;; Metadados do save ANTES dos Pokémon; recibo SÓ no final —
+              ;; evita marcar import incompleto como :duplicate após falha no meio.
+              ;; :save/coins permanece como placeholder/histórico opaco.
+              ;; Ledger operacional começa em 0 — NÃO transferir histórico.
+              ledger (economy-store/recovery-ledger-defaults)
+              meta-tx (into [[:db/add [:save/key sk] :save/coins (long (:coins save-ir))]
+                             [:db/add [:save/key sk] :save/origin source-kind]
+                             [:db/add [:save/key sk] :save/origin-player-id
+                              (str (or (:origin-player-id save-ir) player-id))]
+                             [:db/add [:save/key sk] :save/legacy-version source-version]
+                             [:db/add [:save/key sk] :save/importer-version "m6.2-ir-v1"]
+                             [:db/add [:save/key sk] :save/original-record-ids original-ids]
+                             [:db/add [:save/key sk] :save/ativo-index (long (:ativo-index save-ir))]
+                             [:db/add [:save/key sk] :save/vitorias-treinador (long (:vitorias-treinador save-ir))]
+                             [:db/add [:save/key sk] :save/pe-ginasios (long (:pe-ginasios save-ir))]
+                             [:db/add [:save/key sk] :save/pe-raids (long (:pe-raids save-ir))]
+                             [:db/add [:save/key sk] :save/xp-insignias (long (:xp-insignias save-ir))]
+                             [:db/add [:save/key sk] :save/xp-missoes (long (:xp-missoes save-ir))]
+                             [:db/add [:save/key sk] :save/ginasios-edn
+                              (fit-edn-attr (pr-str (:ginasios save-ir)))]
+                             [:db/add [:save/key sk] :save/sequencia-capturas (long (:sequencia-capturas save-ir))]
+                             [:db/add [:save/key sk] :save/maior-sequencia-capturas
+                              (long (:maior-sequencia-capturas save-ir))]
+                             [:db/add [:save/key sk] :save/expansoes-pokemon-50
+                              (long (:expansoes-pokemon-50 save-ir))]
+                             [:db/add [:save/key sk] :save/capacidade-pokemon-legada
+                              (long (:capacidade-pokemon-legada save-ir 0))]
+                             [:db/add [:save/key sk] :save/expansoes-mochila-50
+                              (long (:expansoes-mochila-50 save-ir))]
+                             [:db/add [:save/key sk] :save/capacidade-mochila-legada
+                              (long (:capacidade-mochila-legada save-ir))]]
+                            (map (fn [[attr v]] [:db/add [:save/key sk] attr v]) ledger))
+              receipt-tx [{:operation-receipt/id op-id
+                           :operation-receipt/kind "migration-import"
+                           :operation-receipt/channel "m5.0"
+                           :operation-receipt/payload-hash phash
+                           :operation-receipt/player-key (:player-key save-ir)
+                           :operation-receipt/save-id slot-id
+                           :operation-receipt/summary
+                           (pr-str {:snapshot-id (get-in save-ir [:provenance :snapshot-id])
+                                    :kind (get-in save-ir [:provenance :kind])
+                                    :pokemon-count (:pokemon-count save-ir)
+                                    :joy-bed-count (count joy-pokes)
+                                    :coins (:coins save-ir)})}
+                          [:db/add [:save/key sk] :save/import-id op-id]
+                          [:db/add [:save/key sk] :save/import-status "imported"]
+                          [:db/add [:save/key sk] :save/imported-at (java.util.Date.)]]]
+          (try
+            (d/transact conn {:tx-data (into meta-tx (concat inv dex))})
+            (doseq [chunk chunks]
+              (d/transact conn {:tx-data (vec chunk)}))
+            (doseq [chunk bed-chunks]
+              (d/transact conn {:tx-data (vec chunk)}))
+            (d/transact conn {:tx-data receipt-tx})
+            {:status :imported
+             :slot-id slot-id
+             :operation-id op-id
+             :content-hash phash
+             :pokemon-count (:pokemon-count save-ir)
+             :collection-count (count active-pokes)
+             :joy-bed-count (count joy-pokes)}
+            (catch Exception ex
+              (throw (err/error :import_partial_failed
+                                {:save-key sk
+                                 :slot-id slot-id
+                                 :operation-id op-id
+                                 :cause (ex-message ex)
+                                 :hint "Recibo não gravado; limpe o slot recovery antes de retentar."})))))))))
 
 (defn import-ir!
   "Importa IR completa. Recusa se houver quarentena bloqueante sem :allow-quarantine?

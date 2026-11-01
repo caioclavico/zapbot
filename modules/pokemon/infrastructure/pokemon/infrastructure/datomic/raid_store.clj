@@ -4,9 +4,11 @@
             [pokemon.domain.collection :as coll]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
-            [pokemon.domain.model :as model]
             [pokemon.domain.ops :as ops]
-            [pokemon.domain.raid :as raid]))
+            [pokemon.domain.raid :as raid]
+            [pokemon.domain.raid-auto :as raid-auto]
+            [pokemon.infrastructure.datomic.battle-idle-store :as battle-idle-store]
+            [pokemon.infrastructure.datomic.economy-store :as economy-store]))
 
 (defn participant->map
   [e edn-read present?]
@@ -54,9 +56,16 @@
        :ordem (or (edn-read (:raid/ordem-edn e)) [])
        :chefe (or (edn-read (:raid/chefe-edn e)) {})
        :criador (:raid/criador e)
+       :criada-em (:raid/criada-em e)
+       :min-jogadores (when (:raid/min-jogadores e) (long (:raid/min-jogadores e)))
+       :max-jogadores (when (:raid/max-jogadores e) (long (:raid/max-jogadores e)))
        :turn-index (long (:raid/turn-index e 0))
        :revision (long (:raid/revision e 0))
        :rewards-paid? (boolean (:raid/rewards-paid? e))
+       :origem (:raid/origem e)
+       :last-activity-at (:raid/last-activity-at e)
+       :idle-expires-at (:raid/idle-expires-at e)
+       :idle-expired? (boolean (:raid/idle-expired? e))
        :participantes parts
        :capturas caps})))
 
@@ -82,7 +91,55 @@
     (:defesa r) (assoc :raid/defesa (double (:defesa r)))
     (:def-esp r) (assoc :raid/def-esp (double (:def-esp r)))
     (:vez r) (assoc :raid/vez (:vez r))
-    (:criador r) (assoc :raid/criador (:criador r))))
+    (:criador r) (assoc :raid/criador (:criador r))
+    (:criada-em r) (assoc :raid/criada-em (long (:criada-em r)))
+    (:min-jogadores r) (assoc :raid/min-jogadores (long (:min-jogadores r)))
+    (:max-jogadores r) (assoc :raid/max-jogadores (long (:max-jogadores r)))
+    (:origem r) (assoc :raid/origem (str (:origem r)))
+    (:last-activity-at r) (assoc :raid/last-activity-at (long (:last-activity-at r)))
+    (:idle-expires-at r) (assoc :raid/idle-expires-at (long (:idle-expires-at r)))
+    (some? (:idle-expired? r)) (assoc :raid/idle-expired? (boolean (:idle-expired? r)))))
+
+(defn schedule->map
+  [e present?]
+  (when (present? e)
+    {:chat-id (:raid-auto-schedule/chat-id e)
+     :enabled (boolean (:raid-auto-schedule/enabled e))
+     :interval-ms (long (:raid-auto-schedule/interval-ms e
+                                                         raid-auto/default-interval-ms))
+     :next-at (long (:raid-auto-schedule/next-at e 0))
+     :ginasio-index (long (:raid-auto-schedule/ginasio-index e 0))
+     :revision (long (:raid-auto-schedule/revision e 0))
+     :last-spawn-id (:raid-auto-schedule/last-spawn-id e)
+     :last-raid-id (:raid-auto-schedule/last-raid-id e)}))
+
+(defn outbox->map
+  [e present?]
+  (when (and (present? e) (nil? (:pokemon-outbox/acked-at e)))
+    {:id (:pokemon-outbox/id e)
+     :chat-id (:pokemon-outbox/chat-id e)
+     :kind (:pokemon-outbox/kind e)
+     :texto (:pokemon-outbox/texto e)
+     :created-at (long (:pokemon-outbox/created-at e 0))}))
+
+(defn- outbox-tx
+  [{:keys [id chat-id kind texto created-at]}]
+  {:pokemon-outbox/id id
+   :pokemon-outbox/chat-id chat-id
+   :pokemon-outbox/kind (str kind)
+   :pokemon-outbox/texto (str texto)
+   :pokemon-outbox/created-at (long created-at)})
+
+(defn- schedule-entity-tx
+  [s]
+  (cond-> {:raid-auto-schedule/chat-id (:chat-id s)
+           :raid-auto-schedule/enabled (boolean (:enabled s))
+           :raid-auto-schedule/interval-ms (long (:interval-ms s))
+           :raid-auto-schedule/next-at (long (:next-at s))
+           :raid-auto-schedule/ginasio-index (long (:ginasio-index s 0))
+           :raid-auto-schedule/revision (long (:revision s 0))}
+    (:last-spawn-id s) (assoc :raid-auto-schedule/last-spawn-id (:last-spawn-id s))
+    (:last-raid-id s) (assoc :raid-auto-schedule/last-raid-id (:last-raid-id s))))
 
 (defn- participant-entity
   [raid-id player-id chat-id p]
@@ -98,24 +155,206 @@
    :raid-participant/collection-index (long (:collection-index p 0))})
 
 (defn build-open-tx
-  [{:keys [request]}]
-  (let [r (raid/nova-raid request)
+  "Abre lobby. `active-raid` = snapshot do ponteiro (já eager-expired se preciso)."
+  [{:keys [request active-raid]}]
+  (let [agora (long (or (:agora request) (System/currentTimeMillis)))
+        _ (when (and active-raid (raid/lobby-ou-combate-vivo? active-raid agora))
+            (throw (err/error :raid_chat_busy
+                              {:raid-id (:raid-id active-raid)
+                               :fase (:fase active-raid)})))
+        r (assoc (raid/nova-raid request) :origem (or (:origem request) "manual"))
         operation-id (:operation-id request)
         phash (:payload-hash request)
-        pk (id/player-key (:chat-id r) (or (:criador r) "system"))]
-    {:tx [(raid-entity-tx r)
-          {:chat-active-raid/chat-id (:chat-id r)
-           :chat-active-raid/raid-id (:raid-id r)}
-          {:operation-receipt/id operation-id
-           :operation-receipt/kind "raid-open"
-           :operation-receipt/channel "gameplay"
-           :operation-receipt/payload-hash phash
-           :operation-receipt/player-key pk
-           :operation-receipt/save-id (or (:save-id request) "a")
-           :operation-receipt/summary (pr-str {:raid-id (:raid-id r)})}]
+        pk (id/player-key (:chat-id r) (or (:criador r) "system"))
+        chat-id (:chat-id r)
+        ;; Ponteiro deve existir (ensure no store). CAS nil|old → novo id.
+        expected-id (when active-raid (:raid-id active-raid))
+        pointer-tx (if (= expected-id (:raid-id r))
+                     []
+                     [[:db/cas [:chat-active-raid/chat-id chat-id]
+                       :chat-active-raid/raid-id expected-id (:raid-id r)]])]
+    {:tx (into [(raid-entity-tx r)
+                {:operation-receipt/id operation-id
+                 :operation-receipt/kind "raid-open"
+                 :operation-receipt/channel "gameplay"
+                 :operation-receipt/payload-hash phash
+                 :operation-receipt/player-key pk
+                 :operation-receipt/save-id (or (:save-id request) "a")
+                 :operation-receipt/summary (pr-str {:raid-id (:raid-id r)})}]
+               pointer-tx)
      :result {:operation-id operation-id
               :duplicate false
               :raid r}}))
+
+(defn build-upsert-schedule-tx
+  [{:keys [schedule expected-revision]}]
+  (let [s schedule
+        expected (long (or expected-revision (:revision s 0)))
+        next-rev (inc expected)
+        s' (assoc s :revision next-rev)]
+    {:tx (cond-> [(schedule-entity-tx s')]
+           (pos? expected)
+           (conj [:db/cas [:raid-auto-schedule/chat-id (:chat-id s)]
+                  :raid-auto-schedule/revision expected next-rev]))
+     :result {:schedule s'}}))
+
+(defn build-auto-spawn-tx
+  "Spawn automático atômico: receipt spawn-id + raid + ponteiro + agenda + outbox."
+  [{:keys [plan schedule active-raid announce-texto agora]}]
+  (let [acao (:acao plan)
+        chat-id (:chat-id schedule)
+        expected-rev (long (:revision schedule 0))
+        next-rev (inc expected-rev)
+        agora (long agora)]
+    (case acao
+      (:noop :skip-disabled)
+      {:tx [] :result {:acao acao :schedule schedule :duplicate false}}
+
+      :skip-busy
+      (let [s' (assoc schedule
+                      :next-at (:next-at plan)
+                      :revision next-rev
+                      :last-spawn-id (:spawn-id plan))
+            rev-tx (when (pos? expected-rev)
+                     [[:db/cas [:raid-auto-schedule/chat-id chat-id]
+                       :raid-auto-schedule/revision expected-rev next-rev]])]
+        {:tx (into [(schedule-entity-tx s')
+                    {:operation-receipt/id (:spawn-id plan)
+                     :operation-receipt/kind "raid-auto-skip"
+                     :operation-receipt/channel "system"
+                     :operation-receipt/payload-hash (:spawn-id plan)
+                     :operation-receipt/player-key (id/player-key chat-id "system")
+                     :operation-receipt/save-id "a"
+                     :operation-receipt/summary
+                     (pr-str {:acao :skip-busy :active (:active-raid-id plan)})}]
+                   (or rev-tx []))
+         :result {:acao :skip-busy :schedule s' :duplicate false}})
+
+      :spawn
+      (let [_ (when (raid-auto/ocupa-slot-contra-spawn? active-raid)
+                (throw (err/error :raid_chat_busy
+                                  {:raid-id (:raid-id active-raid)
+                                   :fase (:fase active-raid)
+                                   :origem (:origem active-raid)})))
+            r (-> (raid/nova-raid {:raid-id (:raid-id plan)
+                                   :chat-id chat-id
+                                   :ginasio (:ginasio plan)
+                                   :nome-ginasio (:nome-ginasio plan)
+                                   :nivel-ginasio (:nivel-ginasio plan)
+                                   :liga (:liga plan)
+                                   :chefe (:chefe plan)
+                                   :agora agora
+                                   :criador nil})
+                  (assoc :origem "auto"))
+            expected-ptr (when active-raid (:raid-id active-raid))
+            s' (assoc schedule
+                      :next-at (:next-at plan)
+                      :ginasio-index (:next-ginasio-index plan)
+                      :revision next-rev
+                      :last-spawn-id (:spawn-id plan)
+                      :last-raid-id (:raid-id plan))
+            event-id (raid-auto/outbox-opened-id (:raid-id plan))
+            pointer-tx [[:db/cas [:chat-active-raid/chat-id chat-id]
+                         :chat-active-raid/raid-id expected-ptr (:raid-id r)]]
+            rev-tx (when (pos? expected-rev)
+                     [[:db/cas [:raid-auto-schedule/chat-id chat-id]
+                       :raid-auto-schedule/revision expected-rev next-rev]])]
+        {:tx (into [(raid-entity-tx r)
+                    (schedule-entity-tx s')
+                    {:operation-receipt/id (:spawn-id plan)
+                     :operation-receipt/kind "raid-auto-spawn"
+                     :operation-receipt/channel "system"
+                     :operation-receipt/payload-hash (:spawn-id plan)
+                     :operation-receipt/player-key (id/player-key chat-id "system")
+                     :operation-receipt/save-id "a"
+                     :operation-receipt/summary
+                     (pr-str {:raid-id (:raid-id r) :due-at (:due-at plan)})}
+                    (outbox-tx {:id event-id
+                                :chat-id chat-id
+                                :kind "raid-opened"
+                                :texto announce-texto
+                                :created-at agora})]
+                   (concat pointer-tx (or rev-tx [])))
+         :result {:acao :spawn :schedule s' :raid r :duplicate false
+                  :due-at (:due-at plan)
+                  :outbox-id event-id}}))))
+
+(defn build-auto-expire-announce-tx
+  "Após expire de lobby auto: anuncia combate ou cancelamento via outbox.
+   IDs estáveis por raid-id + expira do lobby (reenvio WA não recria jogo)."
+  [{:keys [raid acao agora texto]}]
+  (when (and (= "auto" (str (:origem raid)))
+             (contains? #{:combate :cancelada} acao)
+             (string? texto) (seq texto))
+    (let [lobby-expira (long (:expira raid 0))
+          event-id (if (= :combate acao)
+                     (raid-auto/outbox-started-id (:raid-id raid) lobby-expira)
+                     (raid-auto/outbox-cancelled-id (:raid-id raid) lobby-expira))
+          kind (if (= :combate acao) "raid-started" "raid-cancelled")]
+      {:tx [(outbox-tx {:id event-id
+                        :chat-id (:chat-id raid)
+                        :kind kind
+                        :texto texto
+                        :created-at (long agora)})]
+       :result {:outbox-id event-id :kind kind}})))
+
+(defn build-expire-lobby-tx
+  "Materializa expiração de inscrições (cancelada ou combate)."
+  [{:keys [raid agora announce-texto]}]
+  (let [exp (raid/expirar-inscricoes raid agora)
+        raid' (:raid exp)
+        acao (:acao exp)
+        expected-rev (long (:revision raid 0))
+        chat-id (:chat-id raid)
+        rid (:raid-id raid)
+        announce (when (and announce-texto
+                            (= "auto" (str (:origem raid)))
+                            (contains? #{:combate :cancelada} acao))
+                   (build-auto-expire-announce-tx
+                    {:raid raid :acao acao :agora agora :texto announce-texto}))]
+    (case acao
+      :noop {:tx [] :result {:raid raid' :acao :noop}}
+      :cancelada
+      ;; Mantém entidade do ponteiro; só limpa raid-id (CAS nil na próxima open).
+      {:tx (into [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
+                  [:db/cas [:raid/id rid] :raid/revision
+                   expected-rev (inc expected-rev)]
+                  [:db/retract [:chat-active-raid/chat-id chat-id]
+                   :chat-active-raid/raid-id rid]]
+                 (or (:tx announce) []))
+       :result {:raid raid' :acao :cancelada :outbox-id (:outbox-id (:result announce))}}
+      :combate
+      {:tx (into [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
+                  [:db/cas [:raid/id rid] :raid/revision
+                   expected-rev (inc expected-rev)]]
+                 (or (:tx announce) []))
+       :result {:raid raid' :acao :combate :outbox-id (:outbox-id (:result announce))}})))
+
+(defn build-cancel-tx
+  [{:keys [save writer-ctx request raid]}]
+  (let [player-id (:player-id writer-ctx)
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        raid' (raid/cancelar raid player-id agora)
+        expected-rev (long (:revision raid 0))
+        sk (id/save-key (:chat-id writer-ctx) player-id (:save-id writer-ctx))
+        rev (long (:save/revision save 0))
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        chat-id (:chat-id raid)
+        rid (:raid-id raid)]
+    {:tx [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
+          [:db/cas [:raid/id rid] :raid/revision expected-rev (inc expected-rev)]
+          [:db/retract [:chat-active-raid/chat-id chat-id]
+           :chat-active-raid/raid-id rid]
+          [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+          {:operation-receipt/id operation-id
+           :operation-receipt/kind "raid-cancel"
+           :operation-receipt/channel "gameplay"
+           :operation-receipt/payload-hash phash
+           :operation-receipt/player-key (id/player-key (:chat-id writer-ctx) player-id)
+           :operation-receipt/save-id (:save-id writer-ctx)
+           :operation-receipt/summary (pr-str {:raid-id rid})}]
+     :result {:operation-id operation-id :duplicate false :raid raid'}}))
 
 (defn build-join-tx
   [{:keys [db save writer-ctx request raid colecao]}]
@@ -123,45 +362,59 @@
         player-id (:player-id writer-ctx)
         save-id (:save-id writer-ctx)
         fence (:fence-generation writer-ctx)
-        idx (long (:collection-index request))
-        poke (when (< idx (count colecao)) (nth colecao idx))
-        _ (when-not poke (throw (err/error :pokemon_not_found {:idx idx})))
-        _ (when-not (raid/pokemon-elegivel-liga? (:liga raid) poke)
-            (throw (err/error :raid_liga_mismatch
-                              {:liga (:liga raid)
-                               :nivel (:nivel poke)
-                               :idx idx})))
         agora (long (or (:agora request) (System/currentTimeMillis)))
-        nome (or (:nome request) player-id)
-        raid' (raid/entrar raid
-                           {:player-id player-id
-                            :nome nome
-                            :save-id save-id
-                            :fence-generation fence
-                            :pokemon poke
-                            :collection-index idx}
-                           agora)
-        p (get-in raid' [:participantes player-id])
-        sk (id/save-key chat-id player-id save-id)
-        rev (long (:save/revision save 0))
-        expected-rev (long (:revision raid 0))
         operation-id (:operation-id request)
-        phash (:payload-hash request)]
-    {:tx [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
-          [:db/cas [:raid/id (:raid-id raid)] :raid/revision expected-rev (inc expected-rev)]
-          (participant-entity (:raid-id raid) player-id chat-id p)
-          [:db/cas [:save/key sk] :save/revision rev (inc rev)]
-          {:operation-receipt/id operation-id
-           :operation-receipt/kind "raid-join"
-           :operation-receipt/channel "gameplay"
-           :operation-receipt/payload-hash phash
-           :operation-receipt/player-key (id/player-key chat-id player-id)
-           :operation-receipt/save-id save-id
-           :operation-receipt/summary (pr-str {:raid-id (:raid-id raid) :idx idx})}]
-     :result {:operation-id operation-id
-              :duplicate false
-              :raid raid'
-              :participant p}}))
+        phash (:payload-hash request)
+        already? (contains? (:participantes raid) player-id)]
+    (if already?
+      {:tx [{:operation-receipt/id operation-id
+             :operation-receipt/kind "raid-join"
+             :operation-receipt/channel "gameplay"
+             :operation-receipt/payload-hash phash
+             :operation-receipt/player-key (id/player-key chat-id player-id)
+             :operation-receipt/save-id save-id
+             :operation-receipt/summary
+             (pr-str {:raid-id (:raid-id raid) :already true})}]
+       :result {:operation-id operation-id
+                :duplicate true
+                :raid raid
+                :participant (get-in raid [:participantes player-id])}}
+      (let [idx (long (:collection-index request))
+            poke (when (< idx (count colecao)) (nth colecao idx))
+            _ (when-not poke (throw (err/error :pokemon_not_found {:idx idx})))
+            _ (when-not (raid/pokemon-elegivel-liga? (:liga raid) poke)
+                (throw (err/error :raid_liga_mismatch
+                                  {:liga (:liga raid)
+                                   :nivel (:nivel poke)
+                                   :idx idx})))
+            nome (or (:nome request) player-id)
+            raid' (raid/entrar raid
+                               {:player-id player-id
+                                :nome nome
+                                :save-id save-id
+                                :fence-generation fence
+                                :pokemon poke
+                                :collection-index idx}
+                               agora)
+            p (get-in raid' [:participantes player-id])
+            sk (id/save-key chat-id player-id save-id)
+            rev (long (:save/revision save 0))
+            expected-rev (long (:revision raid 0))]
+        {:tx [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
+              [:db/cas [:raid/id (:raid-id raid)] :raid/revision expected-rev (inc expected-rev)]
+              (participant-entity (:raid-id raid) player-id chat-id p)
+              [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+              {:operation-receipt/id operation-id
+               :operation-receipt/kind "raid-join"
+               :operation-receipt/channel "gameplay"
+               :operation-receipt/payload-hash phash
+               :operation-receipt/player-key (id/player-key chat-id player-id)
+               :operation-receipt/save-id save-id
+               :operation-receipt/summary (pr-str {:raid-id (:raid-id raid) :idx idx})}]
+         :result {:operation-id operation-id
+                  :duplicate false
+                  :raid raid'
+                  :participant p}}))))
 
 (defn build-leave-tx
   [{:keys [save writer-ctx request raid]}]
@@ -193,14 +446,18 @@
   [{:keys [save writer-ctx request raid]}]
   (let [player-id (:player-id writer-ctx)
         agora (long (or (:agora request) (System/currentTimeMillis)))
-        raid' (raid/iniciar raid player-id agora)
+        idle (battle-idle-store/raid-touch-attrs agora)
+        raid' (-> (raid/iniciar raid player-id agora)
+                  (assoc :last-activity-at (:raid/last-activity-at idle)
+                         :idle-expires-at (:raid/idle-expires-at idle)
+                         :idle-expired? false))
         expected-rev (long (:revision raid 0))
         expected-turn (long (:turn-index raid 0))
         sk (id/save-key (:chat-id writer-ctx) player-id (:save-id writer-ctx))
         rev (long (:save/revision save 0))
         operation-id (:operation-id request)
         phash (:payload-hash request)]
-    {:tx [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
+    {:tx [(merge (raid-entity-tx (assoc raid' :revision (inc expected-rev))) idle)
           [:db/cas [:raid/id (:raid-id raid)] :raid/revision expected-rev (inc expected-rev)]
           [:db/cas [:raid/id (:raid-id raid)] :raid/turn-index expected-turn 0]
           [:db/cas [:save/key sk] :save/revision rev (inc rev)]
@@ -219,7 +476,6 @@
         save-id (:save-id part)
         sk (id/save-key chat-id player-id save-id)
         save (save-entity db chat-id player-id save-id)
-        coins (long (:save/coins save 0))
         pe (long (:save/pe-raids save 0))
         rev (long (:save/revision save 0))
         receipt-id (str "raid-reward|" (:raid-id raid) "|" player-id)
@@ -229,11 +485,12 @@
                (some #(when (= (:id-pokemon %) id-poke) %)
                      (query-collection db sk)))
         xp-part (when live
-                  (apply-pokemon-xp-tx live raid/recompensa-xp-pokemon))]
+                  (apply-pokemon-xp-tx live raid/recompensa-xp-pokemon))
+        coin-part (economy-store/apply-delta-tx
+                   {:sk sk :save save :delta raid/recompensa-moedas
+                    :operation-id receipt-id :source "raid" :role "primary"})]
     {:tx (concat
-          [[:db/cas [:save/key sk] :save/coins coins
-            (model/apply-coin-delta coins raid/recompensa-moedas)]
-           [:db/add [:save/key sk] :save/pe-raids (+ pe raid/recompensa-pe)]
+          [[:db/add [:save/key sk] :save/pe-raids (+ pe raid/recompensa-pe)]
            [:db/cas [:save/key sk] :save/revision rev (inc rev)]
            {:operation-receipt/id receipt-id
             :operation-receipt/kind "raid-reward"
@@ -246,6 +503,7 @@
             :operation-receipt/save-id save-id
             :operation-receipt/summary
             (pr-str {:moedas raid/recompensa-moedas :pe raid/recompensa-pe})}]
+          (:tx coin-part)
           (or (:tx xp-part) []))
      :player-id player-id
      :moedas raid/recompensa-moedas
@@ -264,9 +522,16 @@
                               {:expected expected-turn
                                :actual (:turn-index raid)})))
         agora (long (or (:agora request) (System/currentTimeMillis)))
+        _ (battle-idle-store/assert-battle-not-idle-expired! raid agora)
         move-index (long (:move-index request))
         outcome (raid/atacar raid player-id move-index agora)
         raid' (:raid outcome)
+        still-combat? (= "combate" (str (:fase raid')))
+        idle (when still-combat? (battle-idle-store/raid-touch-attrs agora))
+        raid' (cond-> raid'
+                idle (assoc :last-activity-at (:raid/last-activity-at idle)
+                            :idle-expires-at (:raid/idle-expires-at idle)
+                            :idle-expired? false))
         expected-rev (long (:revision raid 0))
         sk (id/save-key (:chat-id writer-ctx) player-id (:save-id writer-ctx))
         rev (long (:save/revision save 0))
@@ -285,9 +550,10 @@
                           :when (not= pid player-id)]
                       (participant-entity (:raid-id raid) pid (:chat-id writer-ctx) p))
         raid-tx (concat
-                 [(raid-entity-tx (assoc raid' :revision (inc expected-rev)
-                                         :rewards-paid? (or (:rewards-paid? raid)
-                                                            pay-rewards?)))
+                 [(cond-> (raid-entity-tx (assoc raid' :revision (inc expected-rev)
+                                                 :rewards-paid? (or (:rewards-paid? raid)
+                                                                    pay-rewards?)))
+                    idle (merge idle))
                   [:db/cas [:raid/id (:raid-id raid)] :raid/revision
                    expected-rev (inc expected-rev)]
                   [:db/cas [:raid/id (:raid-id raid)] :raid/turn-index

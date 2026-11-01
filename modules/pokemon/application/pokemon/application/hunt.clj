@@ -38,23 +38,28 @@
                 :trainer-level nivel
                 :roll-tipos roll-tipos
                 :roll-surto roll-surto})
-        cabe? (and save (capacity/cabe-pokemon? (count colecao) save))]
+        storage (when save (capacity/resumo-armazenamento-pokemon (count colecao) save))
+        cabe? (and storage (not (:cheio? storage)))]
     (merge plano
            {:chat-id chat-id
             :player-id player-id
             :active-save-id slot
             :fence-generation (:fence-generation player 0)
             :eligibilidade
-            {:tem-treinador (some? player)
-             :tem-pokemon (boolean (seq colecao))
-             :ativo-vivo (boolean (and ativo (pos? (long (:hp-atual ativo 0)))))
-             :cooldown-ok (hunt/pode-cacar? ultima agora)
-             :cooldown-restante-s (long (Math/ceil (/ restante 1000.0)))
-             :sem-batalha-propria (nil? battle)
-             :chat-livre (or (nil? group)
-                             (nil? (:active-wild-battle-id group))
-                             (= (:active-wild-player-id group) player-id))
-             :somente-batalha (not cabe?)}
+            (cond-> {:tem-treinador (some? player)
+                     :tem-pokemon (boolean (seq colecao))
+                     :ativo-vivo (boolean (and ativo (pos? (long (:hp-atual ativo 0)))))
+                     :cooldown-ok (hunt/pode-cacar? ultima agora)
+                     :cooldown-restante-s (long (Math/ceil (/ restante 1000.0)))
+                     :sem-batalha-propria (nil? battle)
+                     :chat-livre (or (nil? group)
+                                     (nil? (:active-wild-battle-id group))
+                                     (= (:active-wild-player-id group) player-id))
+                     :somente-batalha (not cabe?)}
+              storage (assoc :ocupacao-pokemon (:ocupacao storage)
+                             :capacidade-pokemon (:capacidade storage)
+                             :excesso-pokemon (:excesso storage)
+                             :colecao-cheia (:cheio? storage)))
             :ativo (when ativo
                      (select-keys ativo [:collection-index :nome :species :nivel
                                          :hp :hp-atual :status]))})))

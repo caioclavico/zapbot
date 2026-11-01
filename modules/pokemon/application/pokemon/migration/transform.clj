@@ -100,9 +100,12 @@
      :provenance provenance
      :coins (long (or (:moedas l) 0))
      :inventory (normalize-inventory (:inventario l))
-     :expansoes-pokemon-50 (long (or (:expansoes-pokemon-50 l) 0))
+     :expansoes-pokemon-50 (long (or (:expansoes-pokemon-50 l)
+                                     (:expansoes-pc l)
+                                     0))
      :expansoes-mochila-50 (long (or (:expansoes-mochila-50 l) 0))
      :capacidade-mochila-legada (long (or (:capacidade-mochila l) 50))
+     :capacidade-pokemon-legada (long (or (:capacidade-pokemon l) 0))
      :ativo-index (long (or (:ativo t) 0))
      :vitorias-treinador (long (or (:vitorias-treinador t) 0))
      :pe-ginasios (long (or (:pe-ginasios t) 0))
