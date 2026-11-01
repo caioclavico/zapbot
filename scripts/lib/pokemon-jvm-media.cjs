@@ -138,15 +138,40 @@ function spriteUrl(pokemon) {
   return pokemon.imagem || pokemon.imagemShiny || pokemon['imagem-shiny'] || null;
 }
 
+/**
+ * Redimensiona preservando alpha. JPEG/WebP sem transparência: não inventa
+ * fundo preto — mantém o bitmap e deixa o composite sobre o ginásio.
+ * PNG com alpha: ensureAlpha + contain com fundo transparente (evita caixa preta).
+ */
 async function spriteProporcional(pokemon, maximo) {
   const tamanho = tamanhoVisual(pokemon, maximo);
   const buf = await baixarBuffer(spriteUrl(pokemon));
-  const entrada = buf || svgPlaceholder(tamanho);
-  const out = await sharp(entrada)
-    .resize(tamanho, tamanho, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-    .png()
-    .toBuffer();
-  return { buffer: out, tamanho };
+  if (!buf) {
+    const out = await sharp(svgPlaceholder(tamanho)).png().toBuffer();
+    return { buffer: out, tamanho, placeholder: true };
+  }
+  try {
+    const meta = await sharp(buf).metadata();
+    const pipeline = sharp(buf).ensureAlpha();
+    const out = await pipeline
+      .resize(tamanho, tamanho, {
+        fit: 'contain',
+        background: { r: 0, g: 0, b: 0, alpha: 0 }
+      })
+      .png()
+      .toBuffer();
+    return {
+      buffer: out,
+      tamanho,
+      hasAlpha: Boolean(meta.hasAlpha),
+      channels: meta.channels
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[pokemon-jvm-media] sprite inválido, placeholder:', err.message || err);
+    const out = await sharp(svgPlaceholder(tamanho)).png().toBuffer();
+    return { buffer: out, tamanho, placeholder: true };
+  }
 }
 
 function idCenario(area) {
@@ -882,7 +907,11 @@ async function renderRaidBattleCard({
         top: 280 - bossSp.tamanho
       });
     }
-    const buf = await sharp(svg).composite(layers).png().toBuffer();
+    // Base SVG já é opaco; composite com PNGs ensureAlpha — sem flatten preto.
+    const buf = await sharp(svg)
+      .composite(layers.map((l) => ({ ...l, blend: 'over' })))
+      .png()
+      .toBuffer();
     return {
       base64: buf.toString('base64'),
       mimeType: 'image/png',

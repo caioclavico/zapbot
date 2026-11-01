@@ -129,26 +129,38 @@
       (/ (double (reduce + (map #(long (or (get % stat) (get % (name stat)) 50)) regs)))
          n))))
 
+(defn- artwork-url
+  "URL estática PokeAPI (sem fetch por ataque). dex-id numérico."
+  [dex-id]
+  (str "https://raw.githubusercontent.com/PokeAPI/sprites/master/"
+       "sprites/pokemon/other/official-artwork/" dex-id ".png"))
+
 (def ^:private chefes-ginasio
-  "Templates determinísticos dos ases do catálogo A6 (última espécie do time)."
+  "Templates determinísticos dos ases do catálogo A6 (última espécie do time).
+   `:imagem` aponta artwork oficial com alpha — evita placeholder/caixa preta no cartão."
   {"onix" {:nome "Onix" :species "onix" :tipos ["rock" "ground"] :raridade "raro"
            :hp 70 :ataque 60 :defesa 100 :atq-esp 40 :def-esp 55 :veloc 50
+           :imagem (artwork-url 95)
            :golpes [{:nome-exibicao "Rock Throw" :tipo "rock" :poder 50 :classe :fisico}
                     {:nome-exibicao "Earthquake" :tipo "ground" :poder 80 :classe :fisico}]}
    "starmie" {:nome "Starmie" :species "starmie" :tipos ["water" "psychic"] :raridade "raro"
               :hp 65 :ataque 60 :defesa 70 :atq-esp 95 :def-esp 70 :veloc 100
+              :imagem (artwork-url 121)
               :golpes [{:nome-exibicao "Water Gun" :tipo "water" :poder 40 :classe :especial}
                        {:nome-exibicao "Psychic" :tipo "psychic" :poder 80 :classe :especial}]}
    "raichu" {:nome "Raichu" :species "raichu" :tipos ["electric"] :raridade "raro"
              :hp 65 :ataque 80 :defesa 55 :atq-esp 90 :def-esp 70 :veloc 100
+             :imagem (artwork-url 26)
              :golpes [{:nome-exibicao "Thunderbolt" :tipo "electric" :poder 80 :classe :especial}
                       {:nome-exibicao "Quick Attack" :tipo "normal" :poder 40 :classe :fisico}]}
    "vileplume" {:nome "Vileplume" :species "vileplume" :tipos ["grass" "poison"] :raridade "raro"
                 :hp 80 :ataque 70 :defesa 75 :atq-esp 100 :def-esp 80 :veloc 45
+                :imagem (artwork-url 45)
                 :golpes [{:nome-exibicao "Petal Dance" :tipo "grass" :poder 80 :classe :especial}
                          {:nome-exibicao "Acid" :tipo "poison" :poder 40 :classe :especial}]}
    "arcanine" {:nome "Arcanine" :species "arcanine" :tipos ["fire"] :raridade "raro"
                :hp 90 :ataque 100 :defesa 75 :atq-esp 85 :def-esp 75 :veloc 90
+               :imagem (artwork-url 59)
                :golpes [{:nome-exibicao "Flamethrower" :tipo "fire" :poder 80 :classe :especial}
                         {:nome-exibicao "Take Down" :tipo "normal" :poder 70 :classe :fisico}]}})
 
@@ -169,7 +181,8 @@
                            :tipos (:tipos base)
                            :raridade (:raridade base)
                            :golpes (:golpes base)
-                           :hp-atual (:hp (gym/escalar-nivel base nivel))))]
+                           :hp-atual (:hp (gym/escalar-nivel base nivel)))
+                    (cond-> (:imagem base) (assoc :imagem (:imagem base))))]
       {:ginasio (:id g)
        :nome-ginasio (:nome g)
        :nivel-ginasio nivel
