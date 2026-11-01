@@ -1025,6 +1025,9 @@ function formatError(err) {
       '⚠️ Save/fence obsoleto (provavelmente houve !pk ativar). Consulte !pk saves e tente de novo.',
     WRITER_FENCE_CONFLICT:
       '⚠️ Conflito ao gravar (outra ação no mesmo save). Espere 1s e tente de novo com !pk cacar / o mesmo comando.',
+    DATOMIC_VALUE_TOO_LARGE:
+      '⚠️ Não consegui gravar este passo (dados do Pokémon grandes demais no snapshot). '
+      + 'Seu save não foi sobrescrito por uma versão antiga. Tente de novo; se repetir, avise um admin.',
     ACTIVATE_CONFLICT: '⚠️ Não foi possível alternar o save (conflito). Tente de novo.',
     RECEIPT_PAYLOAD_MISMATCH:
       '⚠️ Mesmo operationId com payload diferente — operação rejeitada.',

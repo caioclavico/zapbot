@@ -1,6 +1,7 @@
 (ns pokemon.infrastructure.datomic.raid-store
   "TX builders de raid (fora do store monolítico)."
-  (:require [pokemon.domain.capture :as capture]
+  (:require [pokemon.domain.battle :as battle]
+            [pokemon.domain.capture :as capture]
             [pokemon.domain.collection :as coll]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
@@ -141,6 +142,15 @@
     (:last-spawn-id s) (assoc :raid-auto-schedule/last-spawn-id (:last-spawn-id s))
     (:last-raid-id s) (assoc :raid-auto-schedule/last-raid-id (:last-raid-id s))))
 
+(defn- encode-participant-pokemon-edn
+  "Snapshot de combate no participante — sem historico/ofertas/legado.
+   Mesma estratégia de caça/ginásio/Joy: slim + gzip se plain > limite Local (~4096).
+   Coleção canônica permanece em :pokemon/*; não truncamos identificadores."
+  [pokemon]
+  (battle/encode-value-edn
+   :raid-participant/pokemon-edn
+   (battle/slim-pokemon-for-battle pokemon {:keep-images? true})))
+
 (defn- participant-entity
   [raid-id player-id chat-id p]
   {:raid-participant/key (id/raid-participant-key raid-id player-id)
@@ -149,7 +159,7 @@
    :raid-participant/save-id (:save-id p)
    :raid-participant/fence-generation (long (:fence-generation p))
    :raid-participant/nome (:nome p)
-   :raid-participant/pokemon-edn (pr-str (:pokemon p))
+   :raid-participant/pokemon-edn (encode-participant-pokemon-edn (:pokemon p))
    :raid-participant/hp (long (:hp p))
    :raid-participant/dano (long (:dano p 0))
    :raid-participant/collection-index (long (:collection-index p 0))})
