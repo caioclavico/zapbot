@@ -73,9 +73,11 @@ Env JVM: `POKEMON_BATTLE_LEAVE_ENABLED=true` · `ODISSEU_BRIDGE_RAID_AUTO_TICK=f
 
 ## 5. Incidente durante o GO
 
-Durante o recreate, o compose chegou a apontar temporariamente para tags `a6-raid-join-vtl-…` (RC 12.5) e o Node saiu. Havia smoke paralelo `fase12.5-smoke-open-20261101T192147Z` no chat piloto.
+Durante o recreate, o compose foi alterado **em paralelo** para tags `a6-raid-join-vtl-…` (RC 12.5) mais de uma vez; o Node saiu. Havia smoke paralelo `fase12.5-smoke-open-20261101T192147Z` no chat piloto.
 
-**Recuperação:** compose restaurado para JVM leave-fix + Node hotfix1231; Node recriado; WA READY sem QR. O gate de leave removeu o jogador piloto daquele lobby de smoke (1 participante PeerSmoke permaneceu).
+**Recuperação (2×):** compose relocado para JVM leave-fix + Node hotfix1231; Node recriado; WA READY sem QR (`19:22` e de novo `19:24`). O primeiro gate de leave removeu o jogador piloto daquele lobby de smoke (PeerSmoke permaneceu). Relock final: leave `no_battle` 200 · `RELOCKED_OK 2026-11-01T19:24:47Z`.
+
+**Atenção:** se outro processo continuar o deploy 12.5, ele pode sobrescrever o compose de novo. Confirmar imagens live antes de novos GOs.
 
 ---
 
