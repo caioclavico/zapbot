@@ -148,6 +148,15 @@
       (let [none (leave! s chat player "leave-none")]
         (is (= "no_battle" (:status none)))))))
 
+(deftest saida-sem-nunca-ter-batalhado
+  ;; Regressão Client API: open-battle-id-fallback não pode usar :find [?id ...].
+  (let [s (fresh-store! "leave-virgin")
+        chat "chat-v" player "ash"
+        _ (boot! s chat player)
+        r (leave! s chat player "leave-virgin")]
+    (is (= "no_battle" (:status r)))
+    (is (nil? (:modality r)))))
+
 (deftest saida-ginasio-sem-vitoria
   (let [s (fresh-store! "leave-gym")
         chat "chat-g" player "ash"

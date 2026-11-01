@@ -210,15 +210,17 @@
         b))))
 
 (defn- open-battle-id-fallback
-  "Se o ponteiro active-battle-id sumiu mas ainda há batalha aberta do jogador."
+  "Se o ponteiro active-battle-id sumiu mas ainda há batalha aberta do jogador.
+  Usa :find relacional — Client API rejeita collection find [?id ...]."
   [db chat-id player-id]
   (let [pk (id/player-key chat-id player-id)
-        ids (d/q '[:find [?id ...]
-                   :in $ ?pk
-                   :where
-                   [?e :battle/player-key ?pk]
-                   [?e :battle/id ?id]]
-                 db pk)]
+        ids (mapv first
+                  (d/q '[:find ?id
+                         :in $ ?pk
+                         :where
+                         [?e :battle/player-key ?pk]
+                         [?e :battle/id ?id]]
+                       db pk))]
     (->> ids
          (keep (fn [id]
                  (let [b (->battle (battle-entity db id))]
