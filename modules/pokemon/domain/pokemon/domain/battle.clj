@@ -39,7 +39,7 @@
    :legado "legado"
    :origin-edn "origin-edn"
    :pokemon-key "pokemon-key"
-   :id-pokemon "id-pokemon"
+   ;; :id-pokemon preservado — raide liquida XP do mon via este id (Fase 12.6).
    :nickname "nickname"
    :xp "xp"
    :xp-desde-nivel "xp-desde-nivel"
@@ -58,8 +58,9 @@
 
 (def ^:private battle-pokemon-keep-keys
   "Allowlist pós-drop — evita campos residuais incharem o snapshot 3×3.
-   taxa-captura fica: captura pós-caça lê do selvagem no state-edn."
-  #{:species :nome :shiny :nivel :level :hp :hp-atual :status
+   taxa-captura fica: captura pós-caça lê do selvagem no state-edn.
+   id-pokemon é obrigatório em raide: liquidação de XP do mon participante."
+  #{:id-pokemon :species :nome :shiny :nivel :level :hp :hp-atual :status
     :ataque :defesa :atq-esp :def-esp :veloc :tipos :habilidade :golpes :item
     :taxa-captura :imagem :imagem-shiny})
 

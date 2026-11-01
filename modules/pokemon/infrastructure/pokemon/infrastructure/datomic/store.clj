@@ -853,16 +853,16 @@
                                   first))
                        (filter some?)
                        vec)
-            caps (->> (d/q '[:find ?pid ?t ?c
+            caps (->> (d/q '[:find (pull ?x [*])
                              :in $ ?rid
-                             :where
-                             [?x :raid-capture/raid-id ?rid]
-                             [?x :raid-capture/player-id ?pid]
-                             [?x :raid-capture/tentativas ?t]
-                             [?x :raid-capture/capturou ?c]]
+                             :where [?x :raid-capture/raid-id ?rid]]
                            db raid-id)
-                      (map (fn [[pid t c]]
-                             [pid {:tentativas t :capturou c}])))]
+                      (map (fn [[x]]
+                             [(:raid-capture/player-id x)
+                              {:tentativas (long (:raid-capture/tentativas x 0))
+                               :capturou (boolean (:raid-capture/capturou x))
+                               :frambo-preparada
+                               (boolean (:raid-capture/frambo-preparada x))}])))]
         (raid-store/raid->map e parts caps edn-read present?)))))
 
 (defn- ensure-chat-raid-pointer!
@@ -3284,12 +3284,37 @@
                      sk (id/save-key (:chat-id writer-ctx)
                                      (:player-id writer-ctx)
                                      (:save-id writer-ctx))
-                     colecao (query-collection db sk)]
+                     colecao (query-collection db sk)
+                     save-m (->save save)]
                  (raid-store/build-capture-tx
-                  {:db db :save save :writer-ctx writer-ctx
+                  {:db db :save save :save-m save-m :writer-ctx writer-ctx
                    :request (assoc request :payload-hash phash)
                    :raid raid :colecao colecao
                    :pokemon-entity-map pokemon-entity-map
+                   :inventory-adjust-tx inventory-adjust-tx}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (raid-frambo-prepare! [_ writer-ctx request]
+    (let [payload (ops/raid-frambo-prep-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [raid (or (load-raid db (:raid-id request))
+                              (throw (err/error :raid_not_found
+                                                {:raid-id (:raid-id request)})))]
+                 (raid-store/build-frambo-prepare-tx
+                  {:db db :save save :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :raid raid
                    :inventory-adjust-tx inventory-adjust-tx}))))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]

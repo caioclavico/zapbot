@@ -114,6 +114,7 @@
      :raid_save_mismatch :raid_liga_mismatch
      :raid_capture_unavailable :raid_chat_busy :raid_gym_unknown
      :raid_boss_template_missing :raid_config_invalid :raid_cannot_cancel
+     :frambo_already_prepared
      :starter_unavailable :mission_period_conflict :mission_event_identity_conflict
      :mission_event_already_processed :gift_target_changed) 409
     :operation_pending 409
@@ -256,6 +257,7 @@
                                               "gym-challenge" "gym-ranking" "gym-history"
                                               "raid-read" "raid-join" "raid-leave"
                                               "raid-start" "raid-attack" "raid-capture"
+                                              "raid-frambo"
                                               "raid-auto-schedule" "events-pending" "events-ack"
                                               "joy-read" "joy-send" "joy-collect"
                                               "adventure-read" "egg-incubate" "egg-hatch"
@@ -1408,6 +1410,8 @@
                           raid-id (g body "raidId" "raid-id")
                           bola (g body "bola" "ball")
                           roll (long-or-nil (g body "roll"))
+                          frambo? (boolean (or (g body "frambo") (g body "useFrambo")
+                                               (g body "use-frambo")))
                           agora (long-or-nil (g body "agoraMs" "agora"))]
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? save-id) (nil? fence)
@@ -1425,8 +1429,35 @@
                                                  :operation-id operation-id
                                                  :bola bola}
                                           raid-id (assoc :raid-id raid-id)
+                                          frambo? (assoc :frambo true)
                                           (and allow-test-rng? (some? roll))
                                           (assoc :roll roll)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/raids/frambo")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          raid-id (g body "raidId" "raid-id")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/raid-frambo-prepare!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id}
+                                          raid-id (assoc :raid-id raid-id)
                                           (some? agora) (assoc :agora-ms agora)))))))
 
                 (= path "/v1/joy")

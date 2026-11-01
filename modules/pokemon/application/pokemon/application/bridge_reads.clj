@@ -17,6 +17,7 @@
             [pokemon.domain.hunt :as hunt]
             [pokemon.domain.joy :as joy]
             [pokemon.domain.mundo :as mundo]
+            [pokemon.domain.capture :as capture]
             [pokemon.domain.raid :as raid]
             [pokemon.domain.shop :as shop]
             [pokemon.domain.xp :as xp])
@@ -684,10 +685,30 @@
              (:ordem raid []))
        :captura-pendente
        (boolean (and player-id (raid/captura-pendente? raid player-id agora)))
-       :captura (when cap
-                  {:tentativas (:tentativas cap 0)
-                   :capturou (boolean (:capturou cap))})
+       :captura (when (or cap (= "vitoria" fase))
+                  (let [chefe (:chefe raid)
+                        raridade (or (:raridade chefe) (get chefe "raridade") "raro")
+                        base (raid/chance-captura raridade)
+                        frambo? (boolean (:frambo-preparada cap))
+                        chances
+                        (into {}
+                              (for [bola (keys capture/bolas)]
+                                [bola (capture/chance-com-bola-frambo base bola frambo?)]))]
+                    {:tentativas (long (:tentativas cap 0))
+                     :max-tentativas raid/max-tentativas-captura
+                     :capturou (boolean (:capturou cap))
+                     :frambo-preparada frambo?
+                     :chance-base base
+                     :chances chances
+                     :captura-expira (:captura-expira raid)}))
        :rewards-paid (boolean (:rewards-paid? raid))})))
+
+(defn- inv-qty
+  [inv item-id]
+  (->> (or inv [])
+       (filter #(= (str (:item-id %)) (str item-id)))
+       (map #(long (:qty % 0)))
+       (reduce + 0)))
 
 (defn- raid-visivel?
   "Inscrições/combate não expirados, ou vitória ainda na janela de captura."
@@ -711,13 +732,25 @@
                   nil)
         raid (when (raid-visivel? raid0 agora) raid0)
         inv (when-let [slot (:active-save-id player)]
-              (ports/list-inventory store chat-id player-id slot))]
+              (ports/list-inventory store chat-id player-id slot))
+        dto (raid-dto raid player-id agora)
+        captura-ui (when (and dto (:captura-pendente dto))
+                     {:bolas (into {}
+                                   (for [b (keys capture/bolas)]
+                                     [b (inv-qty inv b)]))
+                      :frambo (inv-qty inv capture/frambo-item-id)
+                      :frambo-preparada (boolean (get-in dto [:captura :frambo-preparada]))
+                      :chances (get-in dto [:captura :chances])
+                      :tentativas (get-in dto [:captura :tentativas] 0)
+                      :max-tentativas raid/max-tentativas-captura
+                      :chefe (get-in dto [:chefe :nome])})]
     {:chat-id chat-id
      :player-id player-id
      :active-save-id (:active-save-id player)
      :fence-generation (:fence-generation player 0)
      :agora agora
-     :raid (raid-dto raid player-id agora)
+     :raid dto
+     :captura-ui captura-ui
      :inventory (or inv [])}))
 
 (defn raid-eligible-pokemon

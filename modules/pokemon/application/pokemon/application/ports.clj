@@ -193,6 +193,9 @@
   (raid-capture! [this writer-ctx request]
     "Tentativa de captura pós-vitória (bola + roll).")
 
+  (raid-frambo-prepare! [this writer-ctx request]
+    "Prepara Fruta Frambo para a próxima tentativa de captura do chefe.")
+
   (ensure-adventure-account! [this chat-id player-id]
     "Garante conta Adventure Sync do jogador (global ao pid).")
 

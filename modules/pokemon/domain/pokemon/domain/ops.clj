@@ -195,10 +195,16 @@
    {:raid-id raid-id :player-id player-id :kind "raid-victory"}))
 
 (defn raid-capture-payload
-  [{:keys [raid-id bola roll]}]
+  [{:keys [raid-id bola roll frambo]}]
   (reward/canonicalize
    (cond-> {:raid-id raid-id :bola bola}
-     (some? roll) (assoc :roll (long roll)))))
+     (some? roll) (assoc :roll (long roll))
+     (boolean frambo) (assoc :frambo true))))
+
+(defn raid-frambo-prep-payload
+  [{:keys [raid-id]}]
+  (reward/canonicalize
+   {:raid-id raid-id :kind "raid-frambo-prep"}))
 
 (defn egg-grant-payload
   [{:keys [egg-id category species]}]

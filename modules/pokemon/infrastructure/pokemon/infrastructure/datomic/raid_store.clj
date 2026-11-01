@@ -1,6 +1,7 @@
 (ns pokemon.infrastructure.datomic.raid-store
   "TX builders de raid (fora do store monolítico)."
   (:require [pokemon.domain.battle :as battle]
+            [pokemon.domain.capacity :as capacity]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.collection :as coll]
             [pokemon.domain.errors :as err]
@@ -37,7 +38,8 @@
           caps (into {}
                      (map (fn [[pid c]]
                             [pid {:tentativas (long (:tentativas c 0))
-                                  :capturou (boolean (:capturou c))}])
+                                  :capturou (boolean (:capturou c))
+                                  :frambo-preparada (boolean (:frambo-preparada c))}])
                           capturas))]
       {:raid-id (:raid/id e)
        :chat-id (:raid/chat-id e)
@@ -494,8 +496,9 @@
         live (when id-poke
                (some #(when (= (:id-pokemon %) id-poke) %)
                      (query-collection db sk)))
+        xp-qtd (if live raid/recompensa-xp-pokemon 0)
         xp-part (when live
-                  (apply-pokemon-xp-tx live raid/recompensa-xp-pokemon))
+                  (apply-pokemon-xp-tx live xp-qtd))
         coin-part (economy-store/apply-delta-tx
                    {:sk sk :save save :delta raid/recompensa-moedas
                     :operation-id receipt-id :source "raid" :role "primary"})]
@@ -512,12 +515,16 @@
             :operation-receipt/player-key (id/player-key chat-id player-id)
             :operation-receipt/save-id save-id
             :operation-receipt/summary
-            (pr-str {:moedas raid/recompensa-moedas :pe raid/recompensa-pe})}]
+            (pr-str {:moedas raid/recompensa-moedas
+                     :pe raid/recompensa-pe
+                     :xp-pokemon xp-qtd})}]
           (:tx coin-part)
           (or (:tx xp-part) []))
      :player-id player-id
      :moedas raid/recompensa-moedas
-     :pe raid/recompensa-pe}))
+     :pe raid/recompensa-pe
+     :xp-pokemon xp-qtd
+     :pokemon-id id-poke}))
 
 (defn build-attack-tx
   [{:keys [db save writer-ctx request raid
@@ -589,11 +596,53 @@
               :venceu? (:venceu? outcome)
               :derrota? (:derrota? outcome)
               :raid raid'
-              :rewards (mapv #(select-keys % [:player-id :moedas :pe])
+              :rewards (mapv #(select-keys % [:player-id :moedas :pe :xp-pokemon :pokemon-id])
                              (or reward-bundles []))}}))
 
+(defn build-frambo-prepare-tx
+  "Prepara Frambo para a próxima tentativa — não consome ainda."
+  [{:keys [db save writer-ctx request raid inventory-adjust-tx]}]
+  (let [chat-id (:chat-id writer-ctx)
+        player-id (:player-id writer-ctx)
+        save-id (:save-id writer-ctx)
+        part (get-in raid [:participantes player-id])
+        _ (raid/assert-participant-fence! part writer-ctx)
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        _ (when-not (raid/captura-pendente? raid player-id agora)
+            (throw (err/error :raid_capture_unavailable {:player-id player-id})))
+        cap (get-in raid [:capturas player-id])
+        _ (when (:frambo-preparada cap)
+            (throw (err/error :frambo_already_prepared {:player-id player-id})))
+        sk (id/save-key chat-id player-id save-id)
+        ;; Valida qty>=1 sem incluir o débito no TX (consumo só na captura).
+        _ (inventory-adjust-tx db sk capture/frambo-item-id -1)
+        rev (long (:save/revision save 0))
+        cap-key (id/raid-capture-key (:raid-id raid) player-id)
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        tentativas (long (:tentativas cap 0))]
+    {:tx [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+          {:raid-capture/key cap-key
+           :raid-capture/raid-id (:raid-id raid)
+           :raid-capture/player-id player-id
+           :raid-capture/tentativas tentativas
+           :raid-capture/capturou (boolean (:capturou cap))
+           :raid-capture/frambo-preparada true}
+          {:operation-receipt/id operation-id
+           :operation-receipt/kind "raid-frambo-prep"
+           :operation-receipt/channel "gameplay"
+           :operation-receipt/payload-hash phash
+           :operation-receipt/player-key (id/player-key chat-id player-id)
+           :operation-receipt/save-id save-id
+           :operation-receipt/summary
+           (pr-str {:raid-id (:raid-id raid) :frambo true})}]
+     :result {:operation-id operation-id
+              :duplicate false
+              :frambo-preparada true
+              :tentativas tentativas}}))
+
 (defn build-capture-tx
-  [{:keys [db save writer-ctx request raid colecao
+  [{:keys [db save writer-ctx request raid colecao save-m
            pokemon-entity-map inventory-adjust-tx]}]
   (let [chat-id (:chat-id writer-ctx)
         player-id (:player-id writer-ctx)
@@ -606,8 +655,13 @@
         bola (:bola request)
         chefe (:chefe raid)
         chance-base (raid/chance-captura (or (:raridade chefe) (get chefe "raridade")))
-        chance (capture/chance-com-bola chance-base bola)
-        roll (long (or (:roll request) 100))
+        prepared? (boolean (get-in raid [:capturas player-id :frambo-preparada]))
+        ;; `:frambo true` no request permite operação combinada (prepare+uso).
+        frambo? (or prepared? (boolean (:frambo request)))
+        chance (capture/chance-com-bola-frambo chance-base bola frambo?)
+        ;; Produção: RNG local. Testes/smoke injetam `:roll` (0–99).
+        ;; Bug 12.6: default antigo 100 ⇒ (< roll chance) sempre falso.
+        roll (long (or (:roll request) (rand-int 100)))
         sucesso? (< roll chance)
         tentativas (long (get-in raid [:capturas player-id :tentativas] 0))
         sk (id/save-key chat-id player-id save-id)
@@ -615,7 +669,16 @@
         cap-key (id/raid-capture-key (:raid-id raid) player-id)
         operation-id (:operation-id request)
         phash (:payload-hash request)
+        storage (capacity/resumo-armazenamento-pokemon (count colecao) (or save-m save))
+        _ (when (:cheio? storage)
+            (throw (err/error :collection_full
+                              {:count (:ocupacao storage)
+                               :capacidade (:capacidade storage)
+                               :excesso (:excesso storage)
+                               :nivel (:nivel storage)})))
         item-tx (inventory-adjust-tx db sk bola -1)
+        frambo-tx (when frambo?
+                    (inventory-adjust-tx db sk capture/frambo-item-id -1))
         add-tx (when sucesso?
                  (let [reg (-> chefe
                                (dissoc :id-pokemon)
@@ -628,13 +691,15 @@
                                                    (get chefe "nome"))))]
                    [(pokemon-entity-map sk reg (count colecao))]))]
     {:tx (concat item-tx
+                 (or frambo-tx [])
                  (or add-tx [])
                  [{:raid-capture/key cap-key
                    :raid-capture/raid-id (:raid-id raid)
                    :raid-capture/player-id player-id
                    :raid-capture/tentativas (inc tentativas)
                    :raid-capture/capturou (or sucesso?
-                                              (boolean (get-in raid [:capturas player-id :capturou])))}
+                                              (boolean (get-in raid [:capturas player-id :capturou])))
+                   :raid-capture/frambo-preparada false}
                   [:db/cas [:save/key sk] :save/revision rev (inc rev)]
                   {:operation-receipt/id operation-id
                    :operation-receipt/kind "raid-capture"
@@ -643,10 +708,14 @@
                    :operation-receipt/player-key (id/player-key chat-id player-id)
                    :operation-receipt/save-id save-id
                    :operation-receipt/summary
-                   (pr-str {:sucesso? sucesso? :chance chance :roll roll})}])
+                   (pr-str {:sucesso? sucesso? :chance chance :roll roll
+                            :frambo? frambo?})}])
      :result {:operation-id operation-id
               :duplicate false
               :sucesso? sucesso?
               :chance chance
+              :chance-base chance-base
               :roll roll
+              :frambo? frambo?
+              :bola bola
               :tentativas (inc tentativas)}}))

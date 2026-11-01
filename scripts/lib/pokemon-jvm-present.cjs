@@ -1120,6 +1120,7 @@ function formatError(err) {
     INVALID_RAID_POKEMON: '❓ Escolha um Pokémon saudável com golpe ofensivo: !pk raide time.',
     INVALID_RAID_MOVE: '❓ Use !pk raide atacar <1-4> com um golpe ofensivo.',
     RAID_CAPTURE_UNAVAILABLE: '❓ Captura indisponível (sem dano, janela expirada ou já capturou).',
+    FRAMBO_ALREADY_PREPARED: '🍓 Frambo já está preparada para a próxima tentativa.',
     RAID_NOT_CREATOR: '🚫 Só quem abriu a raide pode iniciar (quando há criador).',
     NOT_IN_RAID: '❓ Você não está nesta raide.',
     INVALID_JOY_INDEX: '❓ Índice inválido. Use !pk joy para ver os feridos.',
@@ -1863,6 +1864,7 @@ const RAID_SUB = {
   ini: 'iniciar', iniciar: 'iniciar',
   atk: 'atacar', atacar: 'atacar',
   cap: 'capturar', capturar: 'capturar',
+  frambo: 'frambo', framb: 'frambo', razz: 'frambo',
   tm: 'time', time: 'time',
   st: 'status', status: 'status',
   abr: 'abrir', abrir: 'abrir',
@@ -1894,7 +1896,7 @@ function formatRaidStatus(data, prefix = '!pk') {
       : `Inscritos: ${r.nParticipantes || 0}/5`,
     prazo,
     r.capturaPendente || r['capturaPendente?']
-      ? `🎯 Captura aberta: ${prefix} raide capturar <bola>`
+      ? `🎯 Captura aberta — ${prefix} raide capturar  ·  ${prefix} raide frambo`
       : null,
     '',
     r.fase === 'inscricoes'
@@ -1970,13 +1972,31 @@ function formatRaidStart(data, prefix = '!pk') {
   ].join('\n');
 }
 
+function formatRaidRewardLines(rewards) {
+  const rows = Array.isArray(rewards) ? rewards : [];
+  if (!rows.length) return ['Recompensas confirmadas para quem causou dano (>0).'];
+  return [
+    '*Recompensas confirmadas*',
+    ...rows.map((rw) => {
+      const pid = rw.playerId || rw['player-id'] || '?';
+      const moedas = rw.moedas != null ? rw.moedas : 0;
+      const pe = rw.pe != null ? rw.pe : 0;
+      const xp = rw.xpPokemon != null ? rw.xpPokemon : rw['xp-pokemon'];
+      const xpBit = xp != null ? ` · +${xp} XP Pokémon` : '';
+      return `• ${pid}: +${moedas} moedas · +${pe} PE${xpBit}`;
+    })
+  ];
+}
+
 function formatRaidAttack(data, prefix = '!pk') {
   const r = (data && data.raid) || {};
   if (data.venceu) {
     return [
       `🏅 *Vitória!* O chefe caiu (${data.dano || 0} de dano no golpe final).`,
-      'Recompensas creditadas a quem causou dano (>0).',
-      `Captura: ${prefix} raide capturar <bola>`
+      ...formatRaidRewardLines(data.rewards),
+      '',
+      `🎯 Captura: ${prefix} raide capturar <bola>`,
+      `🍓 Frambo: ${prefix} raide frambo  (depois capture)`
     ].join('\n');
   }
   if (data.derrota) {
@@ -1990,19 +2010,69 @@ function formatRaidAttack(data, prefix = '!pk') {
   ].filter(Boolean).join('\n');
 }
 
+function formatRaidCaptureUi(data, prefix = '!pk') {
+  const ui = (data && (data.capturaUi || data['captura-ui'])) || null;
+  const r = (data && data.raid) || {};
+  const cap = r.captura || {};
+  const chefe = (r.chefe && (r.chefe.nome || r.chefe.species))
+    || (ui && ui.chefe)
+    || 'Chefe';
+  const tent = ui && ui.tentativas != null ? ui.tentativas : (cap.tentativas || 0);
+  const maxT = ui && ui.maxTentativas != null
+    ? ui.maxTentativas
+    : (cap.maxTentativas || cap['max-tentativas'] || 3);
+  const bolas = (ui && ui.bolas) || {};
+  const framboQty = ui && ui.frambo != null ? ui.frambo : '?';
+  const prepared = Boolean(ui && (ui.framboPreparada || ui['frambo-preparada']))
+    || Boolean(cap.framboPreparada || cap['frambo-preparada']);
+  const chances = (ui && ui.chances) || cap.chances || {};
+  const lines = [
+    `🎯 *Captura — ${chefe}*`,
+    `Tentativas: ${tent}/${maxT}`,
+    `Bolas: poke ${bolas.pokebola || 0} · grande ${bolas['grande-bola'] || 0} · ultra ${bolas['ultra-bola'] || 0}`,
+    `🍓 Frambo: ${framboQty}${prepared ? ' · *bônus ativo*' : ''}`
+  ];
+  const chanceBits = ['pokebola', 'grande-bola', 'ultra-bola']
+    .filter((b) => chances[b] != null)
+    .map((b) => `${b} ${chances[b]}%`);
+  if (chanceBits.length) lines.push(`Chance efetiva: ${chanceBits.join(' · ')}`);
+  lines.push(
+    '',
+    `${prefix} raide capturar <pokebola|grande-bola|ultra-bola>`,
+    `${prefix} raide frambo`
+  );
+  return lines.join('\n');
+}
+
+function formatRaidFrambo(data, prefix = '!pk') {
+  if (data && data.duplicate) {
+    return '🍓 Frambo já estava preparada (idempotente).';
+  }
+  return [
+    '🍓 Frambo preparada para a *próxima* tentativa!',
+    'A fruta só será consumida se a tentativa for aceita.',
+    `Agora: ${prefix} raide capturar <bola>`
+  ].join('\n');
+}
+
 function formatRaidCapture(data, prefix = '!pk') {
   const bola = data.bola || 'pokebola';
+  const frambo = Boolean(data.frambo);
+  const chefe = (data.chefe && (data.chefe.nome || data.chefe.species)) || 'chefe';
+  const bonus = frambo ? ' · Frambo' : '';
   if (data.capturou) {
     return [
-      `✅ Captura concluída com ${bola}! (${data.chance != null ? data.chance : '?'}%)`,
-      'O chefe entrou na sua coleção (nv.1).'
+      `✅ Capturou *${chefe}* com ${bola}${bonus}! (${data.chance != null ? data.chance : '?'}%)`,
+      'Entrou na coleção (nv.1).'
     ].join('\n');
   }
   return [
-    `💥 A ${bola} falhou (${data.chance != null ? data.chance : '?'}%).`,
+    `💥 A ${bola} falhou${bonus} (${data.chance != null ? data.chance : '?'}%).`,
     `Tentativas: ${data.tentativas || '?'}/3`,
-    `Tente de novo: ${prefix} raide capturar <bola>`
-  ].join('\n');
+    frambo ? '🍓 Frambo consumida nesta tentativa.' : null,
+    `Tente de novo: ${prefix} raide capturar <bola>`,
+    `Preparar Frambo: ${prefix} raide frambo`
+  ].filter(Boolean).join('\n');
 }
 
 function formatJoyStatus(data, prefix = '!pk') {
@@ -2634,6 +2704,9 @@ module.exports = {
   formatRaidStart,
   formatRaidAttack,
   formatRaidCapture,
+  formatRaidCaptureUi,
+  formatRaidFrambo,
+  formatRaidRewardLines,
   formatRaidEligible,
   raidFlag,
   displayTrainerName,

@@ -850,12 +850,20 @@
      :revide (:revide result)
      :venceu (boolean (:venceu? result))
      :derrota (boolean (:derrota? result))
-     :rewards (:rewards result)
+     :rewards (mapv (fn [rw]
+                      (cond-> {:player-id (:player-id rw)
+                               :moedas (:moedas rw)
+                               :pe (:pe rw)}
+                        (some? (:xp-pokemon rw))
+                        (assoc :xp-pokemon (:xp-pokemon rw))
+                        (:pokemon-id rw)
+                        (assoc :pokemon-id (:pokemon-id rw))))
+                    (or (:rewards result) []))
      :raid (raid-summary (:raid result))}))
 
 (defn raid-capture!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
-                 raid-id bola roll agora-ms]
+                 raid-id bola roll frambo agora-ms]
           :as req}]
   (let [writer-ctx (require-writer! req)
         raid (or (when raid-id (raid-app/get-raid store raid-id))
@@ -869,14 +877,46 @@
                          :raid-id (:raid-id raid)
                          :bola bola-id
                          :agora (or agora-ms (System/currentTimeMillis))}
-                  (some? roll) (assoc :roll (long roll))))]
-    {:operation-id (:operation-id result)
+                  (some? roll) (assoc :roll (long roll))
+                  (boolean frambo) (assoc :frambo true)))
+        summary (or (:summary result) {})
+        sucesso? (or (:sucesso? result) (:sucesso? summary))]
+    {:operation-id (or (:operation-id result) operation-id)
      :duplicate (boolean (:duplicate result))
-     :capturou (boolean (:sucesso? result))
-     :chance (:chance result)
-     :roll (:roll result)
-     :tentativas (:tentativas result)
+     :capturou (boolean sucesso?)
+     :chance (or (:chance result) (:chance summary))
+     :chance-base (or (:chance-base result) (:chance-base summary))
+     :roll (or (:roll result) (:roll summary))
+     :frambo (boolean (or (:frambo? result) (:frambo? summary)))
+     :tentativas (or (:tentativas result) (:tentativas summary))
      :bola bola-id
+     :raid-id (:raid-id raid)
+     :chefe (when-let [c (:chefe raid)]
+              {:nome (or (:nome c) (get c "nome"))
+               :raridade (or (:raridade c) (get c "raridade"))})
+     :save-id save-id
+     :fence-generation (long fence-generation)}))
+
+(defn raid-frambo-prepare!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        result (raid-app/prepare-frambo!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :agora (or agora-ms (System/currentTimeMillis))})
+        summary (or (:summary result) {})]
+    {:operation-id (or (:operation-id result) operation-id)
+     :duplicate (boolean (:duplicate result))
+     :frambo-preparada (boolean (or (:frambo-preparada result)
+                                    (:frambo summary)
+                                    (:duplicate result)))
+     :tentativas (or (:tentativas result) (:tentativas summary) 0)
      :raid-id (:raid-id raid)
      :save-id save-id
      :fence-generation (long fence-generation)}))

@@ -100,6 +100,21 @@
     (min (:limite-captura bola)
          (Math/round (* (double chance-base) (:multiplicador-captura bola))))))
 
+;; Fruta Frambo (item de loja `fruta`) — bônus de captura de chefe de raide.
+;; Gym `!pk gin potenciar` continua usando o mesmo item como motivação; aqui só
+;; captura. Multiplicador 1.5 sobre a chance pós-bola, re-capado no limite da bola.
+(def frambo-item-id "fruta")
+(def frambo-multiplicador-captura 1.5)
+
+(defn chance-com-bola-frambo
+  "Chance final de raide: bola (± frambo). Sem frambo ≡ chance-com-bola."
+  [chance-base bola-id frambo?]
+  (let [com-bola (chance-com-bola chance-base bola-id)]
+    (if-not frambo?
+      com-bola
+      (let [lim (get-in bolas [bola-id :limite-captura] 95)]
+        (min lim (Math/round (* (double com-bola) frambo-multiplicador-captura)))))))
+
 (defn attempt-capture
   "Resolve uma tentativa. `roll` / `fuga-roll` são 0–99 (injetáveis).
   Espelha capturar-selvagem: bola já deve ter sido consumida pelo caller.

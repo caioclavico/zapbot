@@ -703,35 +703,68 @@
                             :turnIndex (.-turnIndex (.-raid data))}))]
         (envelope-jvm pedido (.formatRaidAttack jvm-present data prefix) img))
 
-      (= "capturar" sub)
+      (= "frambo" sub)
       (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
                            #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
               raid (.-raid raid-data)
               _ (when-not (and raid (.-capturaPendente raid))
                   (throw (erro-contrato "❓ Captura de raide indisponível agora.")))
-              bola (str/join " " resto)
-              _ (when (str/blank? bola)
-                  (throw (erro-contrato
-                          (str "❓ Use " prefix " raide capturar <pokebola|grande-bola|ultra-bola>"))))
               ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
               op-id (.stableOperationId jvm-transport
                                         (:requestId pedido)
-                                        (str "raid-cap:" (.-raidId raid) ":" bola))
-              data (desempenho/medir! ctx "pokemon_jvm_raid_capture"
-                     #(.raidCapture jvm
+                                        (str "raid-frambo:" (.-raidId raid)))
+              data (desempenho/medir! ctx "pokemon_jvm_raid_frambo"
+                     #(.raidFrambo jvm
                         #js {:chatId chat-id
                              :playerId player-id
                              :saveId (.-activeSaveId ativo)
                              :fenceGeneration (.-fenceGeneration ativo)
                              :operationId op-id
-                             :raidId (.-raidId raid)
-                             :bola bola}))
-              img (render-seguro! ctx "pokemon_jvm_media_raid_cap"
-                    #(.renderCaptureBall jvm-media
-                        #js {:bola (or (.-bola data) "pokebola")
-                             :capturou (boolean (.-capturou data))
-                             :fugiu false}))]
-        (envelope-jvm pedido (.formatRaidCapture jvm-present data prefix) img))
+                             :raidId (.-raidId raid)}))]
+        (envelope-jvm pedido (.formatRaidFrambo jvm-present data prefix)))
+
+      (= "capturar" sub)
+      (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
+                           #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
+              raid (.-raid raid-data)
+              _ (when-not (and raid (.-capturaPendente raid))
+                  (throw (erro-contrato "❓ Captura de raide indisponível agora.")))]
+        (if (str/blank? (str/join " " resto))
+          (envelope-jvm pedido (.formatRaidCaptureUi jvm-present raid-data prefix))
+          (let [tokens (->> resto (map str) (remove str/blank?) vec)
+                frambo? (boolean (some #(contains? #{"frambo" "framb" "razz"}
+                                                   (str/lower-case %))
+                                       tokens))
+                bola (->> tokens
+                          (remove #(contains? #{"frambo" "framb" "razz"}
+                                              (str/lower-case %)))
+                          (str/join " "))
+                _ (when (str/blank? bola)
+                    (throw (erro-contrato
+                            (str "❓ Use " prefix
+                                 " raide capturar <pokebola|grande-bola|ultra-bola>"
+                                 " [frambo]"))))]
+            (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                    op-id (.stableOperationId jvm-transport
+                                              (:requestId pedido)
+                                              (str "raid-cap:" (.-raidId raid) ":"
+                                                   bola (when frambo? ":frambo")))
+                    data (desempenho/medir! ctx "pokemon_jvm_raid_capture"
+                           #(.raidCapture jvm
+                              (clj->js (cond-> {:chatId chat-id
+                                                :playerId player-id
+                                                :saveId (.-activeSaveId ativo)
+                                                :fenceGeneration (.-fenceGeneration ativo)
+                                                :operationId op-id
+                                                :raidId (.-raidId raid)
+                                                :bola bola}
+                                         frambo? (assoc :frambo true)))))
+                    img (render-seguro! ctx "pokemon_jvm_media_raid_cap"
+                          #(.renderCaptureBall jvm-media
+                              #js {:bola (or (.-bola data) "pokebola")
+                                   :capturou (boolean (.-capturou data))
+                                   :fugiu false}))]
+              (envelope-jvm pedido (.formatRaidCapture jvm-present data prefix) img)))))
 
       :else
       (envelope-jvm pedido

@@ -89,6 +89,16 @@
      (ops/validate-mutation! full)
      (ports/raid-capture! store writer-ctx full))))
 
+(defn prepare-frambo!
+  ([store chat-id player-id request]
+   (prepare-frambo! store (writer/freeze-writer store chat-id player-id) request))
+  ([store writer-ctx request]
+   (let [full (merge request
+                     (select-keys writer-ctx
+                                  [:chat-id :player-id :save-id :fence-generation]))]
+     (ops/validate-mutation! full)
+     (ports/raid-frambo-prepare! store writer-ctx full))))
+
 (defn no-ginasio?
   [store chat-id gym-id agora]
   (when-let [r (active-raid store chat-id)]
