@@ -101,47 +101,61 @@
 (def allow-all-groups?
   (env-flag-on? "ALLOW_ALL_GROUPS"))
 
+;; Fase 11.1 — allowlist multi-grupo (IDs literais @g.us). Compatível com DEV_GROUP_ID.
+;; CSV; IDs inválidos → falha segura (nega todos os chats em staging-like).
+(def allowed-group-ids-csv (env "ALLOWED_GROUP_IDS" ""))
+
 ;; Se true em staging-like, STAGING_ALLOWED_USERS vazio = negar todos (fail-closed).
+;; STRICT_USER_ALLOWLIST é alias opcional da mesma flag.
 (def staging-strict-user-allowlist?
-  (env-flag-on? "STAGING_STRICT_USER_ALLOWLIST"))
+  (or (env-flag-on? "STAGING_STRICT_USER_ALLOWLIST")
+      (env-flag-on? "STRICT_USER_ALLOWLIST")))
+
+(def ^:private group-allowlist-lib
+  (js/require "../scripts/lib/group-allowlist.cjs"))
+
+;; Objeto JS bruto (preserva groupSet) — não round-trip via cljs.
+(def ^:private authorized-groups-js
+  (.buildAuthorizedGroups group-allowlist-lib
+                          #js {:allowedGroupIdsCsv allowed-group-ids-csv
+                               :devGroupId dev-group-id}))
+
+(def authorized-groups
+  "Espelho CLJ do resultado (inspeção/logs)."
+  (js->clj authorized-groups-js :keywordize-keys true))
+
+(def allowed-group-ids
+  "Vetor deduplicado de @g.us autorizados (ALLOWED_GROUP_IDS ∪ DEV_GROUP_ID)."
+  (vec (or (.-groups authorized-groups-js) #js [])))
+
+(def allowed-groups-config-error?
+  (not (boolean (.-ok authorized-groups-js))))
+
+(when (and staging-like? allowed-groups-config-error?)
+  (js/console.error "[config] ALLOWED_GROUP_IDS/DEV_GROUP_ID inválido(s) — fail-closed:"
+                    (pr-str (js->clj (.-invalid authorized-groups-js)))))
 
 (defn chat-autorizado?
-  "Em staging-like: só DEV_GROUP_ID, salvo ALLOW_ALL_GROUPS (qualquer @g.us).
-   Bootstrap de grupo: nunca autoriza (não processa mensagens)."
+  "Em staging-like: membros de ALLOWED_GROUP_IDS ∪ DEV_GROUP_ID, salvo ALLOW_ALL_GROUPS.
+   Bootstrap de grupo: nunca autoriza. Config de grupo inválida: nega todos."
   [cid]
-  (cond
-    staging-bootstrap-group? false
-    (not staging-like?) true
-    allow-all-groups? (and (string? cid)
-                           (or (str/ends-with? cid "@g.us")
-                               (str/ends-with? cid "@c.us")))
-    :else (and (string? dev-group-id)
-               (not (str/blank? dev-group-id))
-               (= cid dev-group-id))))
-
+  (.chatAuthorized group-allowlist-lib
+                   #js {:chatId cid
+                        :stagingLike staging-like?
+                        :bootstrap staging-bootstrap-group?
+                        :allowAllGroups allow-all-groups?
+                        :authorized authorized-groups-js}))
 (defn usuario-autorizado?
-  "Allowlist de remitentes em staging-like.
-   Com STAGING_STRICT_USER_ALLOWLIST: lista vazia nega todos.
-   Sem strict: lista vazia libera (legado).
-   Compara JID completo e a parte local (antes de @) nos dois lados —
-   ex.: allowlist `265…@lid` autoriza também `265…` e vice-versa."
+  "Allowlist de remitentes em staging-like — separada da de grupo.
+   STRICT=1 (STAGING_STRICT_USER_ALLOWLIST|STRICT_USER_ALLOWLIST) + lista vazia → nega todos.
+   STRICT=0 + lista vazia → libera qualquer uid string (participantes do grupo autorizado).
+   Match literal do JID completo apenas (sem normalizar @lid/@c.us)."
   [uid]
-  (cond
-    (not staging-like?) true
-    (and staging-strict-user-allowlist? (empty? staging-allowed-users)) false
-    (empty? staging-allowed-users) true
-    (not (string? uid)) false
-    :else
-    (let [local (first (str/split (str uid) #"@"))]
-      (or (contains? staging-allowed-users uid)
-          (contains? staging-allowed-users local)
-          (boolean
-           (some (fn [allowed]
-                   (or (= uid allowed)
-                       (= local allowed)
-                       (= local (first (str/split (str allowed) #"@")))))
-                 staging-allowed-users))))))
-;; Sessão WhatsApp (LocalAuth). Staging NUNCA deve usar o path de produção.
+  (.userAuthorized group-allowlist-lib
+                   #js {:userId uid
+                        :stagingLike staging-like?
+                        :strictUserAllowlist staging-strict-user-allowlist?
+                        :allowedUsersCsv (env "STAGING_ALLOWED_USERS" "")}));; Sessão WhatsApp (LocalAuth). Staging NUNCA deve usar o path de produção.
 ;; Produção/default: .wwebjs_auth + clientId nil → session/
 ;; Staging: WWEBJS_DATA_PATH=.wwebjs_auth_staging|…_core  (nunca .wwebjs_auth)
 (def wwebjs-data-path

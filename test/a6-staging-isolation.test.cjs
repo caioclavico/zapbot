@@ -94,14 +94,16 @@ describe('A6 isolated staging — schemas e guardrail storage', () => {
 });
 
 describe('A6 isolated staging — política chat fail-closed (código)', () => {
-  it('chat-autorizado? documentado: allow-all default false; bootstrap nega', () => {
+  it('chat-autorizado? documentado: allow-all default false; bootstrap nega; multi-grupo', () => {
     const cfg = fs.readFileSync(
       path.join(ROOT, 'src/zapbot/config.cljs'),
       'utf8'
     );
     assert.match(cfg, /allow-all-groups\?/);
-    assert.match(cfg, /staging-bootstrap-group\? false/);
+    assert.match(cfg, /staging-bootstrap-group\?/);
     assert.match(cfg, /env-flag-on\? "ALLOW_ALL_GROUPS"/);
     assert.match(cfg, /STAGING_GROUP_CONFIRMED/);
+    assert.match(cfg, /ALLOWED_GROUP_IDS/);
+    assert.match(cfg, /group-allowlist\.cjs/);
   });
 });

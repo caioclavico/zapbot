@@ -35,7 +35,7 @@ services:
       STAGING_BOOTSTRAP_GROUP: "0"
       STAGING_ALLOW_QR: "0"
       # Preencher no .env (não aqui) se quiser evitar commit de IDs:
-      # DEV_GROUP_ID / STAGING_ALLOWED_USERS
+      # DEV_GROUP_ID / ALLOWED_GROUP_IDS / STAGING_ALLOWED_USERS
       POKEMON_RAID_AUTO_TICK: "false"
       POKEMON_RAID_AUTO_TICK_MS: "30000"
     mem_limit: 2560m
