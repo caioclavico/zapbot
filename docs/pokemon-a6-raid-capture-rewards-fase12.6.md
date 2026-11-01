@@ -2,7 +2,9 @@
 
 **Data (UTC):** 2026-11-01  
 **Branch:** `hotfix/a6-raid-capture-rewards-fase12.6`  
-**Modo:** correção + feature + testes + doc — **sem** deploy, restart, migrate live, backfill ou mutação de dados reais.
+**Git SHA:** `c9476f191435a4b4ed4afb797b0eef7740773256`  
+**Artefatos RC:** `~/odisseu-recovery/a6-fase12.6-rc-20261101T202907Z/`  
+**Modo:** correção + feature + testes + RC imutável — **sem** deploy, restart, migrate live, backfill ou mutação de dados reais.
 
 ---
 
@@ -157,10 +159,23 @@ Captura do chefe: mon nv.1 na coleção — **sem** crédito econômico extra.
 clojure -M:test-raid-capture-rewards-fase126  → 44/44
 clojure -M:test-raid-join-value-too-large-fase125 → 30/30
 clojure -M:test-raid-hotfix-fase1231 → 28/28
+clojure -M:test-m4-raid → OK (M4.9 + M3.6 + M4.8)
 node --test test/pokemon-jvm-present.test.cjs → 19/19
 ```
 
 Cobertura: RNG default ≠100, ultra sucesso/falha, Frambo prepare/ausente/combinada, recompensas detalhadas, captura-ui.
+
+### RC imutável
+
+| Campo | Valor |
+| --- | --- |
+| Stamp | `20261101T202907Z` |
+| Content short | `bd350a5b29ba` |
+| Node tag | `odisseu-node:a6-raid-cap-126-20261101T202907Z-bd350a5b29ba-amd64` |
+| JVM tag | `odisseu-jvm:a6-raid-cap-126-20261101T202907Z-bd350a5b29ba-amd64` |
+| Node ID | `sha256:e7f87857bdaad90964ad07cbef653627b3381534fe73213b69b35eaf630595d1` |
+| JVM ID | `sha256:4c25bd9c74cf4265403f372e9db6042a7aec825ba49bcc3e47777a4a888f7890` |
+| Decisão | **CONDITIONAL** (migration 031 no GO) |
 
 ---
 
