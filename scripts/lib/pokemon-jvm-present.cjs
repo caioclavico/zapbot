@@ -1993,7 +1993,7 @@ function formatRaidJoin(data, prefix = '!pk') {
       : null,
     data.duplicate ? '_já inscrito com este Pokémon (idempotente)_' : null,
     `Trocar no lobby: ${prefix} escolher + ${prefix} raide entrar  ·  ou ${prefix} raide entrar <n>`,
-    `Quando houver ≥2: ${prefix} raide iniciar`
+    `Quando houver o mínimo de inscritos: ${prefix} raide iniciar`
   ].filter(Boolean).join('\n');
 }
 

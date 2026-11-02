@@ -86,7 +86,9 @@
     (is (= :spawn (:acao free)))
     (is (= "pedra" (:ginasio free)))
     (is (= (domain/spawn-id "c" 1000) (:spawn-id free)))
-    (is (= (domain/advance-next-at sch 1000) (:next-at free)))))
+    (is (= (domain/advance-next-at sch 1000 (:duracao-ms free)) (:next-at free)))
+    (is (pos? (:duracao-ms free)))
+    (is (pos? (:min-jogadores free)))))
 
 ;;;; Integração
 
@@ -104,15 +106,19 @@
     (enable! s chat 5000)
     (let [r (raid-auto/tick! s {:agora-ms 5000 :global-enabled? true :chat-id chat})
           raid (raid-app/active-raid s chat)
-          events (raid-auto/pending-events s {:limit 10})]
+          events (raid-auto/pending-events s {:limit 10})
+          lobby (raid/lobby-params-for-categoria (get-in raid [:chefe :raridade]))]
       (is (= 1 (count (:spawned r))))
       (is (= :spawn (:acao (first (:spawned r)))))
       (is (= "inscricoes" (:fase raid)))
       (is (= "auto" (:origem raid)))
       (is (nil? (:criador raid)))
       (is (= 1 (count events)))
-      (is (re-find #"Raide automática" (:texto (first events))))
-      (is (= (+ 5000 raid/duracao-inscricoes) (:expira raid))))))
+      (is (re-find #"RAID" (:texto (first events))))
+      (is (re-find #"entrar auto" (:texto (first events))))
+      (is (= (+ 5000 (:duracao-ms lobby)) (:expira raid)))
+      (is (= (:min-jogadores lobby) (:min-jogadores raid)))
+      (is (= (:max-jogadores lobby) (:max-jogadores raid))))))
 
 (deftest spawn-idempotente-por-spawn-id
   (let [[s _] (fresh! "f3-idemp")
@@ -154,35 +160,38 @@
      s {:chat-id chat :enabled true :interval-ms 3600000
         :next-at 1000 :ginasio-index 0 :agora-ms 1000})
     (raid-auto/tick! s {:agora-ms 1000 :global-enabled? true :chat-id chat})
-    (tx/join-raid!
-     s {:chat-id chat :player-id "ash" :save-id "a"
-        :fence-generation (fence s chat "ash")
-        :operation-id "j1" :collection-index 0 :nome "Ash" :agora-ms 1001})
-    (let [r (raid-auto/tick! s {:agora-ms (+ 1000 raid/duracao-inscricoes) :global-enabled? true :chat-id chat})
-          events (raid-auto/pending-events s {:limit 20})]
-      (is (some #(= :cancelada (:acao %)) (:expired r)))
-      (is (nil? (raid-app/active-raid s chat)))
-      (is (some #(= "raid-cancelled" (:kind %)) events)))))
+    (let [raid0 (raid-app/active-raid s chat)
+          expira (:expira raid0)]
+      ;; Raro exige só 1; forçar cancelamento só quando min > inscritos.
+      ;; Com 1 inscrito e min=1 (raro), expire inicia combate — usar 0 inscritos.
+      (let [r (raid-auto/tick! s {:agora-ms expira :global-enabled? true :chat-id chat})
+            events (raid-auto/pending-events s {:limit 20})]
+        (is (some #(= :cancelada (:acao %)) (:expired r)))
+        (is (nil? (raid-app/active-raid s chat)))
+        (is (some #(= "raid-cancelled" (:kind %)) events))))))
 
 (deftest expire-com-quorum-inicia-combate
   (let [[s _] (fresh! "f3-exp2")
         chat "chat-e2"]
     (boot! s chat "ash")
     (boot! s chat "misty")
+    (boot! s chat "brock")
     (raid-auto/upsert-schedule!
      s {:chat-id chat :enabled true :interval-ms 3600000
         :next-at 1000 :ginasio-index 0 :agora-ms 1000})
     (raid-auto/tick! s {:agora-ms 1000 :global-enabled? true :chat-id chat})
-    (let [rid (:raid-id (raid-app/active-raid s chat))]
-      (tx/join-raid!
-       s {:chat-id chat :player-id "ash" :save-id "a"
-          :fence-generation (fence s chat "ash")
-          :operation-id "ja" :collection-index 0 :nome "Ash" :agora-ms 1001})
-      (tx/join-raid!
-       s {:chat-id chat :player-id "misty" :save-id "a"
-          :fence-generation (fence s chat "misty")
-          :operation-id "jm" :collection-index 0 :nome "Misty" :agora-ms 1002})
-      (let [r (raid-auto/tick! s {:agora-ms (+ 1000 raid/duracao-inscricoes) :global-enabled? true :chat-id chat})
+    (let [raid0 (raid-app/active-raid s chat)
+          rid (:raid-id raid0)
+          expira (:expira raid0)
+          min-n (long (:min-jogadores raid0 2))
+          players (cond-> ["ash" "misty"] (>= min-n 3) (conj "brock"))]
+      (doseq [[i pid] (map-indexed vector players)]
+        (tx/join-raid!
+         s {:chat-id chat :player-id pid :save-id "a"
+            :fence-generation (fence s chat pid)
+            :operation-id (str "j" i) :collection-index 0 :nome pid
+            :agora-ms (+ 1001 i)}))
+      (let [r (raid-auto/tick! s {:agora-ms expira :global-enabled? true :chat-id chat})
             active (raid-app/active-raid s chat)
             events (raid-auto/pending-events s {:limit 20})]
         (is (some #(= :combate (:acao %)) (:expired r)))
@@ -267,19 +276,21 @@
     (boot! s chat "ash")
     (enable! s chat 1000)
     (raid-auto/tick! s {:agora-ms 1000 :global-enabled? true :chat-id chat})
-    (let [sch1 (raid-auto/get-schedule s chat)
-          rid1 (:raid-id (raid-app/active-raid s chat))
+    (let [raid0 (raid-app/active-raid s chat)
+          lobby-ms (- (long (:expira raid0)) 1000)
+          sch1 (raid-auto/get-schedule s chat)
+          rid1 (:raid-id raid0)
           ;; Expire no instante do lobby; next-at já passou do fim do lobby.
-          r (raid-auto/tick! s {:agora-ms (+ 1000 raid/duracao-inscricoes) :global-enabled? true :chat-id chat})
+          r (raid-auto/tick! s {:agora-ms (:expira raid0) :global-enabled? true :chat-id chat})
           active (raid-app/active-raid s chat)
           sch2 (raid-auto/get-schedule s chat)]
-      (is (= (inc (+ 1000 raid/duracao-inscricoes)) (:next-at sch1)))
+      (is (= (inc (+ 1000 lobby-ms)) (:next-at sch1)))
       (is (some #(= :cancelada (:acao %)) (:expired r)))
-      ;; Sem novo spawn no mesmo tick (next-at = (inc (+ 1000 raid/duracao-inscricoes)) > (+ 1000 raid/duracao-inscricoes))
+      ;; Sem novo spawn no mesmo tick
       (is (empty? (filter #(= :spawn (:acao %)) (:spawned r))))
       (is (nil? active))
       (is (= rid1 (:last-raid-id sch2)))
-      (is (> (:next-at sch2) (+ 1000 raid/duracao-inscricoes))))))
+      (is (> (:next-at sch2) (:expira raid0))))))
 
 (deftest ticks-concorrentes-um-vencedor
   (let [[s _] (fresh! "f31-race")

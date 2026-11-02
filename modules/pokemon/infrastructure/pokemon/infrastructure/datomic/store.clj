@@ -920,6 +920,131 @@
        (take (long limit))
        vec))
 
+(defn- outbox-entity
+  [db event-id]
+  (when (string? event-id)
+    (d/pull db '[*] [:pokemon-outbox/id event-id])))
+
+(defn- outbox-exists?
+  "True se o id já foi materializado (pendente ou acked) — base da idempotência."
+  [db event-id]
+  (let [e (outbox-entity db event-id)]
+    (boolean (and (present? e) (:pokemon-outbox/id e)))))
+
+(defn- reminder-candidate-chats
+  "Agendas enabled com next-at no futuro e dentro da janela máxima de lembrete (30 min)."
+  [db agora limit]
+  (let [agora (long agora)
+        horizon (+ agora raid-auto/reminder-offset-30-ms)]
+    (->> (d/q '[:find ?chat
+                :in $ ?agora ?horizon
+                :where
+                [?e :raid-auto-schedule/enabled true]
+                [?e :raid-auto-schedule/chat-id ?chat]
+                [?e :raid-auto-schedule/next-at ?n]
+                [(< ?agora ?n)]
+                [(<= ?n ?horizon)]]
+              db agora horizon)
+         (map first)
+         (sort)
+         (take (long limit))
+         vec)))
+
+(defn- pending-reminder-outbox-ids
+  [db]
+  (->> (d/q '[:find ?id ?k
+              :where
+              [?e :pokemon-outbox/id ?id]
+              [?e :pokemon-outbox/kind ?k]]
+            db)
+       (keep (fn [[id kind]]
+               (let [e (outbox-entity db id)]
+                 (when (and (present? e)
+                            (nil? (:pokemon-outbox/acked-at e))
+                            (raid-auto/reminder-kind? kind))
+                   id))))
+       vec))
+
+(defn- reminder-still-valid?
+  [db chat-id due-at]
+  (let [sch (load-schedule db chat-id)]
+    (boolean
+     (and sch
+          (:enabled sch)
+          (= (long due-at) (long (:next-at sch 0)))))))
+
+(defn- ack-outbox-now!
+  [conn event-id agora]
+  (let [db (d/db conn)
+        e (outbox-entity db event-id)]
+    (when (and (present? e)
+               (:pokemon-outbox/id e)
+               (nil? (:pokemon-outbox/acked-at e)))
+      (try
+        (d/transact conn {:tx-data
+                          [[:db/add [:pokemon-outbox/id event-id]
+                            :pokemon-outbox/acked-at (long agora)]]})
+        true
+        (catch Exception _
+          false)))))
+
+(defn- suppress-stale-reminders!
+  "Se agenda desligada ou next-at mudou, não entrega lembretes órfãos pendentes."
+  [conn agora]
+  (let [db (d/db conn)]
+    (->> (pending-reminder-outbox-ids db)
+         (keep (fn [event-id]
+                 (when-let [parsed (raid-auto/parse-reminder-id event-id)]
+                   (when-not (reminder-still-valid? db (:chat-id parsed) (:due-at parsed))
+                     (when (ack-outbox-now! conn event-id agora)
+                       (raid-auto-log/emit!
+                        :raid_auto_reminder_suppressed
+                        {:chat-id (:chat-id parsed)
+                         :due-at (:due-at parsed)
+                         :offset-ms (:offset-ms parsed)
+                         :event-id event-id
+                         :result "stale"})
+                       {:event-id event-id
+                        :chat-id (:chat-id parsed)
+                        :acao :suppressed})))))
+         vec)))
+
+(defn- emit-reminders-for-chat!
+  [conn chat-id agora]
+  (let [db (d/db conn)
+        schedule (or (load-schedule db chat-id)
+                     (raid-auto/default-schedule chat-id agora))
+        plans (raid-auto/plan-reminders schedule agora)]
+    (->> plans
+         (mapv
+          (fn [plan]
+            (if (outbox-exists? (d/db conn) (:event-id plan))
+              (do
+                (raid-auto-log/emit!
+                 :raid_auto_reminder
+                 {:chat-id chat-id :event-id (:event-id plan)
+                  :due-at (:due-at plan) :offset-ms (:offset-ms plan)
+                  :kind (:kind plan) :result "duplicate"})
+                {:acao :remind :chat-id chat-id :duplicate true
+                 :outbox-id (:event-id plan) :kind (:kind plan)
+                 :due-at (:due-at plan) :offset-ms (:offset-ms plan)})
+              (let [built (raid-store/build-reminder-outbox-tx
+                           {:plan plan :agora agora})]
+                (try
+                  (d/transact conn {:tx-data (:tx built)})
+                  (raid-auto-log/emit!
+                   :raid_auto_reminder
+                   {:chat-id chat-id :event-id (:event-id plan)
+                    :due-at (:due-at plan) :offset-ms (:offset-ms plan)
+                    :kind (:kind plan) :result "enqueued"})
+                  (assoc (:result built) :duplicate false)
+                  (catch Exception ex
+                    (if (outbox-exists? (d/db conn) (:event-id plan))
+                      {:acao :remind :chat-id chat-id :duplicate true
+                       :outbox-id (:event-id plan) :kind (:kind plan)
+                       :due-at (:due-at plan) :offset-ms (:offset-ms plan)}
+                      (throw ex)))))))))))
+
 (defn- active-raid-chats
   [db]
   (->> (d/q '[:find ?chat
@@ -986,7 +1111,15 @@
                               {:ginasio (:ginasio plan)
                                :nome-ginasio (:nome-ginasio plan)
                                :liga (:liga plan)
-                               :chefe (:chefe plan)}))
+                               :chefe (:chefe plan)
+                               :boss-categoria (:boss-categoria plan)
+                               :lobby (:lobby plan)
+                               :min-jogadores (:min-jogadores plan)
+                               :max-jogadores (:max-jogadores plan)
+                               :lobby-minutos (get-in plan [:lobby :minutos])
+                               :criada-em agora
+                               :expira (+ agora (long (:duracao-ms plan
+                                                                  raid-domain/duracao-inscricoes)))}))
                   built (raid-store/build-auto-spawn-tx
                          {:plan plan :schedule schedule :active-raid active
                           :announce-texto announce :agora agora})]
@@ -3064,15 +3197,34 @@
                    row)
                  {:chat-id chat :acao :noop})))
            (active-raid-chats (d/db conn)))
+          ;; 2) Lembretes órfãos (enabled:false / nextAt mudou) → ack sem entrega.
+          suppressed (suppress-stale-reminders! conn agora)
           db1 (d/db conn)
+          ;; 3) Lembretes T-30/15/5 (antes do spawn oficial).
+          reminder-chats
+          (if (string? chat-filter)
+            (let [s (load-schedule db1 chat-filter)]
+              (if (and s (:enabled s)
+                       (< agora (long (:next-at s 0)))
+                       (<= (long (:next-at s 0))
+                           (+ agora raid-auto/reminder-offset-30-ms)))
+                [chat-filter]
+                []))
+            (reminder-candidate-chats db1 agora limit))
+          reminded (vec (mapcat #(emit-reminders-for-chat! conn % agora)
+                                reminder-chats))
+          db2 (d/db conn)
+          ;; 4) Spawns due.
           due (if (string? chat-filter)
-                (let [s (load-schedule db1 chat-filter)]
+                (let [s (load-schedule db2 chat-filter)]
                   (if (and s (raid-auto/due? s agora)) [chat-filter] []))
-                (due-schedule-chats db1 agora limit))
+                (due-schedule-chats db2 agora limit))
           spawned (mapv #(spawn-auto-for-chat! conn % agora) due)]
       {:enabled true
        :agora agora
        :spawned spawned
+       :reminded reminded
+       :suppressed suppressed
        :expired (filterv #(not= :noop (:acao %)) expired)}))
 
   (list-pokemon-outbox [_ limit]

@@ -256,8 +256,12 @@
                                    :liga (:liga plan)
                                    :chefe (:chefe plan)
                                    :agora agora
-                                   :criador nil})
-                  (assoc :origem "auto"))
+                                   :criador nil
+                                   :min-jogadores (:min-jogadores plan)
+                                   :max-jogadores (:max-jogadores plan)
+                                   :duracao-ms (:duracao-ms plan)})
+                  (assoc :origem "auto"
+                         :boss-categoria (:boss-categoria plan)))
             expected-ptr (when active-raid (:raid-id active-raid))
             s' (assoc schedule
                       :next-at (:next-at plan)
@@ -309,6 +313,22 @@
                         :texto texto
                         :created-at (long agora)})]
        :result {:outbox-id event-id :kind kind}})))
+
+(defn build-reminder-outbox-tx
+  "Enfileira lembrete visual (kind raid-reminder-*). Sem migration — só outbox 030."
+  [{:keys [plan agora]}]
+  (let [event-id (:event-id plan)]
+    {:tx [(outbox-tx {:id event-id
+                      :chat-id (:chat-id plan)
+                      :kind (:kind plan)
+                      :texto (:texto plan)
+                      :created-at (long agora)})]
+     :result {:acao :remind
+              :outbox-id event-id
+              :kind (:kind plan)
+              :due-at (:due-at plan)
+              :offset-ms (:offset-ms plan)
+              :chat-id (:chat-id plan)}}))
 
 (defn build-expire-lobby-tx
   "Materializa expiração de inscrições (cancelada ou combate)."

@@ -1,8 +1,8 @@
 # A6 — Readiness 12.7: ativação gradual de raids automáticas
 
-**Status:** READY FOR PILOT GO (aguarda autorização definitiva)  
+**Status:** PILOT GO EXECUTADO — ver `docs/pokemon-a6-raid-deploy-fase12.7.md`  
 **Escopo:** catálogo dinâmico 571 chefes + scheduler já existente (Fase 3/3.1)  
-**Não feito nesta entrega:** deploy, migrate, restart, tick ON, `enabled` em produção
+**Pós-GO:** imagens 12.7 + ticks ON + `enabled:true` **somente** no piloto; sem liberação global / sem migrate
 
 Preservar 12.6.2: recovery-v1, fences, unknown-pending, cooldowns, battle leave ON, schema 031, piloto exclusivo.
 

@@ -124,9 +124,13 @@
         (is (string? (get-in raid [:chefe :species])))
         (is (= "raro" (get-in raid [:chefe :raridade])))
         (is (number? (get-in raid [:chefe :fator-dificuldade])))
-        (is (re-find #"Raide automática" (:texto opened)))
+        (is (re-find #"RAID" (:texto opened)))
         (is (re-find #"raide entrar auto" (:texto opened)))
         (is (re-find #"5 minutos" (:texto opened)))
+        (is (re-find #"iniciar" (:texto opened)))
+        (is (= 1 (:min-jogadores raid)))
+        (is (= 5 (:max-jogadores raid)))
+        (is (= (+ agora raid/duracao-inscricoes) (:expira raid)))
         (is (not (re-find #"@[0-9]+@(lid|c\.us)" (:texto opened))))
         (raid-auto/ack-event! s (:id opened) (inc agora))
 
@@ -340,11 +344,16 @@
   (doseq [ginasio ["pedra" "agua" "eletrico" "planta" "fogo"]]
     (let [boss (rb/select-boss-for-ginasio ginasio {:rng (constantly 0.2)})
           nome (get-in boss [:chefe :nome])
-          opened (domain/format-opened boss)
+          opened (domain/format-opened
+                  (assoc boss
+                         :boss-categoria (:categoria boss)
+                         :lobby (raid/lobby-params-for-categoria (:categoria boss))
+                         :min-jogadores 2 :max-jogadores 5 :lobby-minutos 10))
           started (domain/format-started (assoc boss :hp-chefe 400 :hp-max 400))
           cancelled (domain/format-cancelled boss)]
       (is (re-find #"!pk raide entrar auto" opened))
-      (is (re-find #"Raide automática" opened))
+      (is (re-find #"RAID" opened))
+      (is (re-find #"iniciar" opened))
       (is (.contains ^String opened (str "*" nome "*")))
       (is (not (re-find #"@[0-9]+@(lid|c\.us)" opened)))
       (is (not (re-find #"player-id" opened)))

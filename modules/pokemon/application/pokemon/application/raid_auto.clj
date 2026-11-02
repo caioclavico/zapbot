@@ -6,6 +6,8 @@
 (def format-opened raid-auto/format-opened)
 (def format-started raid-auto/format-started)
 (def format-cancelled raid-auto/format-cancelled)
+(def format-reminder raid-auto/format-reminder)
+(def plan-reminders raid-auto/plan-reminders)
 
 (defn get-schedule
   [store chat-id]

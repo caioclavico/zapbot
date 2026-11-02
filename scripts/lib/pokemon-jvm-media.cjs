@@ -21,7 +21,17 @@ const STATIC_ASSETS = {
   hospital: 'centro-pokemon.png',
   missao: 'professor-carvalho.png',
   loja: 'loja-pokemon.png',
-  ash: 'ash.png'
+  ash: 'ash.png',
+  // Fase 12.7.1 — lembretes de raid automática (ovo no ginásio; sem spoiler do chefe)
+  'raid-egg-30': 'raid-egg-30min.png',
+  'raid-egg-15': 'raid-egg-15min.png',
+  'raid-egg-5': 'raid-egg-5min.png'
+};
+
+const RAID_REMINDER_KIND_TO_THEME = {
+  'raid-reminder-30': 'raid-egg-30',
+  'raid-reminder-15': 'raid-egg-15',
+  'raid-reminder-5': 'raid-egg-5'
 };
 /** Cache em memória de sprites baixados (URLs PokeAPI/CDN). Limite evita crescimento na VM. */
 const SPRITE_CACHE_MAX = 48;
@@ -572,6 +582,40 @@ async function renderStaticAsset(theme, { filename } = {}) {
 }
 
 /**
+ * PNG pré-gerado do ovo no ginásio (Fase 12.7.1).
+ * Sem rede / sem spoiler — só lê asset local pelo kind do outbox.
+ */
+async function renderRaidEggReminder(kindOrMinutes, { filename } = {}) {
+  try {
+    let theme = null;
+    if (typeof kindOrMinutes === 'number' || /^\d+$/.test(String(kindOrMinutes))) {
+      theme = `raid-egg-${Number(kindOrMinutes)}`;
+    } else {
+      theme = RAID_REMINDER_KIND_TO_THEME[String(kindOrMinutes || '')] || null;
+    }
+    const file = theme && STATIC_ASSETS[theme];
+    if (!file) return null;
+    const full = path.join(ASSETS_DIR, file);
+    if (!fs.existsSync(full)) return null;
+    // Mantém resolução nativa do template (legível no WA; ~20KB).
+    const buffer = await sharp(full).png().toBuffer();
+    return {
+      base64: buffer.toString('base64'),
+      mimeType: 'image/png',
+      filename: filename || file
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] raid-egg:', err.message || err);
+    return null;
+  }
+}
+
+function isRaidReminderKind(kind) {
+  return Boolean(RAID_REMINDER_KIND_TO_THEME[String(kind || '')]);
+}
+
+/**
  * Perfil do treinador (legado): fundo vermelho + Ash + Pokémon ativo.
  */
 async function renderTrainerCard(pokemon, {
@@ -933,6 +977,8 @@ module.exports = {
   renderStaticAsset,
   renderTrainerCard,
   renderRaidBattleCard,
+  renderRaidEggReminder,
+  isRaidReminderKind,
   resolveJoyTheme,
   efeitoDeTurno,
   tamanhoVisual,

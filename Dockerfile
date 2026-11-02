@@ -35,6 +35,10 @@ COPY assets/enfermeira-joy.png ./assets/enfermeira-joy.png
 COPY assets/enfermeira-joy-tratando.png ./assets/enfermeira-joy-tratando.png
 COPY assets/loja-pokemon.png ./assets/loja-pokemon.png
 COPY assets/professor-carvalho.png ./assets/professor-carvalho.png
+# Fase 12.7.1 — lembretes de raid automática (ovo no ginásio)
+COPY assets/raid-egg-30min.png ./assets/raid-egg-30min.png
+COPY assets/raid-egg-15min.png ./assets/raid-egg-15min.png
+COPY assets/raid-egg-5min.png ./assets/raid-egg-5min.png
 COPY scripts/lib ./scripts/lib
 ENTRYPOINT ["/usr/bin/tini", "--"]
 # LocalAuth usa /app/.wwebjs_auth, persistido pelo Compose. Nunca limpar locks.

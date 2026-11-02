@@ -6,7 +6,9 @@
 
 ;; Lobby Fase 2 (abertura manual cooperativa).
 ;; Fase 12: duração padrão 5 min (raides já abertas preservam :expira gravado).
+;; Fase 12.7.1: lobby dinâmico por categoria em raids automáticas.
 (def duracao-inscricoes (* 5 60 1000))
+(def max-duracao-inscricoes (* 30 60 1000))
 (def max-participantes 5)
 (def min-participantes 2)
 
@@ -18,6 +20,40 @@
 (def recompensa-moedas 50)
 (def recompensa-pe 6)
 (def recompensa-xp-pokemon 6)
+
+(def lobby-por-categoria
+  "Lobby dinâmico (auto). Manual continua com duracao-inscricoes / min 2 / max 5."
+  {"raro" {:duracao-ms (* 5 60 1000)
+           :minutos 5
+           :min-jogadores 1
+           :max-jogadores 5
+           :estrelas "⭐"
+           :label "Rara"}
+   "epico" {:duracao-ms (* 10 60 1000)
+            :minutos 10
+            :min-jogadores 2
+            :max-jogadores 5
+            :estrelas "⭐⭐⭐"
+            :label "Épica"}
+   "lendario" {:duracao-ms (* 20 60 1000)
+               :minutos 20
+               :min-jogadores 2
+               :max-jogadores 5
+               :estrelas "⭐⭐⭐⭐⭐"
+               :label "Lendária"}
+   "mitico" {:duracao-ms (* 30 60 1000)
+             :minutos 30
+             :min-jogadores 3
+             :max-jogadores 5
+             :estrelas "⭐⭐⭐⭐⭐⭐"
+             :label "Mítica"}})
+
+(defn lobby-params-for-categoria
+  "Params de lobby para categoria (raro|epico|lendario|mitico). Fallback: raro."
+  [categoria]
+  (let [k (str/lower-case (str (or categoria "raro")))]
+    (or (get lobby-por-categoria k)
+        (get lobby-por-categoria "raro"))))
 
 (def ligas
   "Faixas de nível por liga (espelho treinador.cljs)."
@@ -201,7 +237,7 @@
                    (string? chat-id) (seq chat-id)
                    (map? chefe) (seq (str (or (:nome chefe) (get chefe "nome") "")))
                    (pos? agora)
-                   (<= 1000 dur 900000)
+                   (<= 1000 dur max-duracao-inscricoes)
                    (<= 1 mn mx 6))
       (throw (err/error :raid_config_invalid
                         {:raid-id raid-id :duracao-ms dur :min mn :max mx})))
@@ -342,10 +378,12 @@
            :turn-index 0)))
 
 (defn iniciar
-  "Início antecipado pelo criador inscrito (mín. de jogadores)."
+  "Início antecipado. Manual: só o criador (se definido). Auto (criador nil):
+   qualquer inscrito. Sempre exige mínimo de jogadores da raid."
   [raid player-id agora]
   (when-not (inscricoes-abertas? raid agora)
     (throw (err/error :raid_not_open {:fase (:fase raid)})))
+  ;; Auto tem :criador nil → qualquer participante inscrito pode iniciar.
   (when (and (:criador raid) (not= player-id (:criador raid)))
     (throw (err/error :raid_not_creator {:player-id player-id})))
   (when-not (contains? (:participantes raid) player-id)
