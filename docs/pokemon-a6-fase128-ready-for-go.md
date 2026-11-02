@@ -3,18 +3,21 @@
 **Decisão prep:** **READY FOR GO** (produção **intacta** — sem cutover nesta etapa)  
 **Escopo:** missões UX + recompensas diárias/semanais + Doces (rename) + clima PT + captura por raridade + Frambo caça + flag mochila preparada  
 **Fora de escopo (→ 12.8.1):** ativação operacional de eventos temáticos / claim de Doces de evento  
-**Commit:** _(preenchido após `git commit`)_  
-**Content hash:** _(preenchido após build)_  
-**RC dir:** _(local após build)_
+**Commit:** `7d0325a0153e86a17f62eff9206f4bb106eb4733`  
+**Content hash:** `a46a1464586cb53d9cf81e371fa3301256153bd9`  
+**RC:** `/Users/caioclavico/odisseu-recovery/a6-fase128-rc-20261102T194042Z/`
 
 ---
 
 ## 1. Commit exclusivo 12.8.0
 
-Inclui domínio/app/infra/Node/CLJS/testes/docs da fase.  
-**Sem** migration · **sem** allowlist · **sem** push obrigatório · **sem** deploy.
+```
+7d0325a0153e86a17f62eff9206f4bb106eb4733
+feat(a6): release 12.8.0 — missões, Doces, clima, captura e Frambo na caça
+39 files · +1803/−336
+```
 
-Exclui: `tmp-*`, previews, docs de cutover 7–11 não relacionados, smoke raid 12.6.1 avulso.
+**Sem** migration · **sem** allowlist · **sem** push obrigatório · **sem** deploy.
 
 ---
 
@@ -22,15 +25,16 @@ Exclui: `tmp-*`, previews, docs de cutover 7–11 não relacionados, smoke raid 
 
 | | Tag | Digest |
 | --- | --- | --- |
-| JVM | `odisseu-jvm:a6-fase128-YYYYMMDDTHHMMSSZ-<hash12>-amd64` | _(build)_ |
-| Node | `odisseu-node:a6-fase128-YYYYMMDDTHHMMSSZ-<hash12>-amd64` | _(build)_ |
+| JVM | `odisseu-jvm:a6-fase128-20261102T194042Z-a46a1464586c-amd64` | `sha256:f56d6da5b1522130b4cc6c2f33f678178cfd7d85d96f6ecca033d757798c7157` |
+| Node | `odisseu-node:a6-fase128-20261102T194042Z-a46a1464586c-amd64` | `sha256:a5bba1600dfc45e779c94d247358105ece0239bcc0185cab66bad73dea1df098` |
 
-Labels: `fase=12.8.0` · `io.zapbot.git-sha` · `io.zapbot.content-hash`  
+Labels: `fase=12.8.0` · `git-sha=7d0325a0…` · `content-hash=a46a1464586c…` (JVM=Node)  
+Tars: `$RC/images/*.tar` · checksums: `$RC/checksums/IMAGES.sha256`  
 **Deploy:** não executado.
 
 ### Produção atual (inalterada)
 
-Hotfix turno/ginásio/nível/IA (`cd03767` / imagens turn-gym-level-ai) permanece em execução no piloto.
+Hotfix turno/ginásio/nível/IA (`cd03767` / imagens turn-gym-level-ai) permanece no piloto.
 
 ---
 
@@ -39,12 +43,12 @@ Hotfix turno/ginásio/nível/IA (`cd03767` / imagens turn-gym-level-ai) permanec
 | Item | Valor |
 | --- | --- |
 | Env | `POKEMON_BAG_KIT_DAILY_ENABLED` |
-| Exemplo / prep | `false` (`.env.odisseu-core.example`) |
-| Processo | Node (`config/pokemon-bag-kit-daily-enabled?`) — comandos `!pk mochila kit\|diario` |
-| Persistência | Domínio `bag-rewards` + Datomic; overflow → pending; 1×/dia civil |
-| Ativação live | **NÃO** nesta etapa — só no GO definitivo de cutover |
+| Prep / exemplo | `false` |
+| Processo | Node (`config/pokemon-bag-kit-daily-enabled?`) |
+| Persistência | `bag-rewards` + Datomic; overflow → pending; 1×/dia |
+| Live | **NÃO** ativada nesta etapa |
 
-**Plano de ativação (cutover):** setar `true` no `.env` do Node piloto → recreate **somente** o serviço Node (JVM inalterada) → smoke `!pk mochila diario` 1× → repetir no mesmo dia deve negar.
+**Ativação no cutover (GO futuro):** `true` no `.env` Node piloto → recreate só Node → smoke `!pk mochila diario` 1× → 2ª chamada no mesmo dia nega.
 
 ---
 
@@ -52,15 +56,13 @@ Hotfix turno/ginásio/nível/IA (`cd03767` / imagens turn-gym-level-ai) permanec
 
 | Controle | Evidência |
 | --- | --- |
-| Catálogo 7 eventos com `inicio`/`fim` nil | `status-at` → `inactive` |
+| 7 eventos com `inicio`/`fim` nil | `status-at` → `inactive` |
 | `POKEMON_THEMATIC_EVENTS_ENABLED` default false | `active-events` → `[]` |
-| `montar-plano` | chama `resolver-tipos-encontro` com 3 args (sem bias) |
-| Claim Doces de evento | não wired — 12.8.1 |
-| Teste | `eventos-catalogo-tematico-sem-doce-generico` + empty `active-events` PASS |
+| `montar-plano` | aridade 3 (sem bias temático) |
+| Claim Doces de evento | não wired (12.8.1) |
+| Teste | `eventos-catalogo-tematico…` PASS |
 
-Surto 6h legado (`evento-atual`) **preservado** — independente do catálogo temático.
-
-Plano 12.8.1: `docs/pokemon-a6-fase1281-events-plan.md`.
+Surto 6h legado preservado. Plano: `docs/pokemon-a6-fase1281-events-plan.md`.
 
 ---
 
@@ -68,16 +70,16 @@ Plano 12.8.1: `docs/pokemon-a6-fase1281-events-plan.md`.
 
 | Raridade | Chance base Pokébola |
 | --- | --- |
-| comum | 75–90 (centro ~82) |
+| comum | 75–90 (~82) |
 | incomum | 55–75 (~65) |
 | raro | 30–50 (~40) |
 | épico | 15–30 (~22) |
 | lendário | 5–12 (~8) |
 | mítico | 3–8 (~5) |
 
-Pós-batalha: `round(status × espécie) + min(10, seq)` cap 95 (**sem +25 legado**).  
-Bolas: Poké ×1 / Super ×1,5 / Ultra ×2 · Frambo ×1,5 na **próxima** tentativa · caps 95.  
-Texto = RNG (`chances-painel` / attempt). Raids: regressão 12.6 PASS (estado Frambo separado).
+Pós-batalha: `round(status × espécie) + min(10, seq)` cap 95 (sem +25).  
+Bolas ×1 / ×1,5 / ×2 · Frambo ×1,5 na próxima tentativa · caps 95.  
+Texto = RNG. Raids: regressão 12.6 PASS.
 
 ---
 
@@ -94,11 +96,11 @@ Texto = RNG (`chances-painel` / attempt). Raids: regressão 12.6 PASS (estado Fr
 | Semanal PvP | 2 Ultra + 1 cartão-presente + 60 moedas |
 | Semanal Presentes | 3 Super + 2 Frambo + 50 moedas |
 
-Mecanismos existentes (allocate / pending / ledger). **Sem** inventário paralelo. Doces = rename de cartões de família (professor); não custo de evolução nesta release.
+Mecanismos existentes. Doces = rename de cartões de família (professor).
 
 ---
 
-## 7. Testes executados (prep)
+## 7. Testes executados
 
 | Suite | Resultado |
 | --- | --- |
@@ -111,33 +113,32 @@ Mecanismos existentes (allocate / pending / ledger). **Sem** inventário paralel
 | Node missions/present/capture/hunt/battle-ui | PASS |
 | Node raid hotfix + fase12 | PASS |
 
-Integração Datomic: suites bag-kit / capture / economy usam storage descartável local (`.datomic-local/…`).
+Datomic descartável: suites bag/capture/economy (`.datomic-local/…`).
 
 ---
 
-## 8. Compatibilidade / proteções
+## 8. Compatibilidade
 
-Preservados: `recovery-v1`, fences, `unknown-pending`, ledger, migration 031, cooldowns, battle leave ON, raids auto (`dailyLimit=12`, `specialReserve=2`), lobbies/solo, ginásios por tipo, Frambo raid, PNGs ovo/revelação, Gemini/Groq, allowlist piloto.  
-**Sem** alteração de dados reais.
+Preservados: `recovery-v1`, fences, `unknown-pending`, ledger, migration 031, cooldowns, battle leave ON, raids auto (`dailyLimit=12`, `specialReserve=2`), lobbies/solo, ginásios por tipo, Frambo raid, PNGs, Gemini/Groq, allowlist piloto.
 
 ---
 
-## 9. Cutover e rollback (após GO definitivo)
+## 9. Cutover / rollback (após GO definitivo)
 
-1. Backups warm/cold piloto.  
-2. Tag imagens RC no compose piloto (JVM+Node mesma revisão).  
-3. Opcional: `POKEMON_BAG_KIT_DAILY_ENABLED=true` no Node.  
+1. Backups warm/cold piloto (script `scripts/a6-periodic-backup-a6.sh` / runbook existente) — **não executados agora**.  
+2. Aplicar tags RC no compose piloto (JVM+Node).  
+3. Opcional: `POKEMON_BAG_KIT_DAILY_ENABLED=true`.  
 4. Manter `POKEMON_THEMATIC_EVENTS_ENABLED=false`.  
-5. Smoke: missoes aliases/resumo, professor Doces, clima PT, caça+fruta, captura %, raids, mochila diario.  
-6. Rollback: imagens anteriores (`cd03767` / turn-gym-level-ai); flag diária → `false` se necessário.
+5. Smoke: missoes, Doces, clima, caça+fruta, captura %, raids, mochila diario.  
+6. Rollback: imagens `cd03767` / turn-gym-level-ai; flag diária → `false`.
 
 ---
 
 ## 10. Pendências 12.8.1
 
-Ver `docs/pokemon-a6-fase1281-events-plan.md`.
+`docs/pokemon-a6-fase1281-events-plan.md`
 
 ---
 
-**READY FOR GO 12.8.0.** Aguarda autorização explícita de cutover / flag live.  
-**NÃO** deploy · **NÃO** `POKEMON_BAG_KIT_DAILY_ENABLED=true` em produção nesta etapa.
+**READY FOR GO 12.8.0.** Aguarda GO definitivo de cutover.  
+**NÃO** deploy · **NÃO** flag live nesta etapa.
