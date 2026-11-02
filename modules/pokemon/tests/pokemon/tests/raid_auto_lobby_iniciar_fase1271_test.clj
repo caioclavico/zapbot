@@ -41,18 +41,23 @@
 (deftest lobby-params-por-categoria
   (is (= 5 (:minutos (raid/lobby-params-for-categoria "raro"))))
   (is (= 1 (:min-jogadores (raid/lobby-params-for-categoria "raro"))))
+  (is (= 1 (:recomendados (raid/lobby-params-for-categoria "raro"))))
   (is (= 10 (:minutos (raid/lobby-params-for-categoria "epico"))))
-  (is (= 2 (:min-jogadores (raid/lobby-params-for-categoria "epico"))))
+  (is (= 1 (:min-jogadores (raid/lobby-params-for-categoria "epico"))))
+  (is (= 2 (:recomendados (raid/lobby-params-for-categoria "epico"))))
   (is (= 20 (:minutos (raid/lobby-params-for-categoria "lendario"))))
+  (is (= 1 (:min-jogadores (raid/lobby-params-for-categoria "lendario"))))
+  (is (= 2 (:recomendados (raid/lobby-params-for-categoria "lendario"))))
   (is (= 30 (:minutos (raid/lobby-params-for-categoria "mitico"))))
-  (is (= 3 (:min-jogadores (raid/lobby-params-for-categoria "mitico"))))
+  (is (= 1 (:min-jogadores (raid/lobby-params-for-categoria "mitico"))))
+  (is (= 3 (:recomendados (raid/lobby-params-for-categoria "mitico"))))
   (is (= 5 (:max-jogadores (raid/lobby-params-for-categoria "mitico"))))
   (is (<= (:duracao-ms (raid/lobby-params-for-categoria "mitico"))
           raid/max-duracao-inscricoes)))
 
 (deftest plan-spawn-aplica-lobby-dinamico
-  (doseq [[cat minutos min-j] [["raro" 5 1] ["epico" 10 2]
-                               ["lendario" 20 2] ["mitico" 30 3]]]
+  (doseq [[cat minutos rec] [["raro" 5 1] ["epico" 10 2]
+                             ["lendario" 20 2] ["mitico" 30 3]]]
     (let [sch (domain/normalize-schedule
                {:enabled true :interval-ms (* 6 60 60 1000) :next-at 1000}
                "c" 1000)
@@ -63,7 +68,8 @@
       (is (= :spawn (:acao plan)))
       (is (= cat (:boss-categoria plan)))
       (is (= (* minutos 60 1000) (:duracao-ms plan)))
-      (is (= min-j (:min-jogadores plan)))
+      (is (= 1 (:min-jogadores plan)))
+      (is (= rec (:recomendados plan)))
       (is (= 5 (:max-jogadores plan)))
       (is (= (domain/advance-next-at sch 1000 (:duracao-ms plan))
              (:next-at plan))))))
@@ -76,14 +82,14 @@
             :chefe {:nome "Rayquaza" :hp 3500 :raridade "lendario"}
             :boss-categoria "lendario"
             :lobby lobby
-            :min-jogadores 2 :max-jogadores 5
+            :min-jogadores 1 :recomendados 2 :max-jogadores 5
             :lobby-minutos 20})]
     (is (re-find #"RAYQUAZA|Rayquaza" t))
     (is (re-find #"Lendária|LENDÁRIA" t))
     (is (re-find #"20 minutos" t))
+    (is (re-find #"Jogadores recomendados: 2" t))
     (is (re-find #"iniciar" t))
     (is (re-find #"entrar auto" t))))
-
 (deftest format-reminder-ainda-sem-spoiler
   (doseq [m [30 15 5]]
     (let [t (domain/format-reminder m)]
@@ -130,7 +136,8 @@
                   :fence-generation (fence s chat starter)
                   :operation-id "start-dup" :agora-ms (+ agora 60)})))))))
 
-(deftest iniciar-auto-rejeita-sem-minimo
+(deftest iniciar-auto-aceita-um-inscrito
+  "Após hotfix: mínimo real=1 — solo inicia em qualquer categoria."
   (let [[s _] (fresh! "lobby-start-min")
         chat "pilot-min@g.us"
         agora 200000]
@@ -140,18 +147,17 @@
         :next-at agora :ginasio-index 0 :agora-ms agora})
     (raid-auto/tick! s {:agora-ms agora :global-enabled? true :chat-id chat})
     (let [raid (raid-app/active-raid s chat)]
-      (when (> (long (:min-jogadores raid 2)) 1)
-        (tx/join-raid!
-         s {:chat-id chat :player-id "ash" :save-id "a"
-            :fence-generation (fence s chat "ash")
-            :operation-id "only-one" :collection-index 0 :nome "Ash"
-            :agora-ms (inc agora)})
-        (is (thrown? Exception
-              (tx/start-raid!
-               s {:chat-id chat :player-id "ash" :save-id "a"
-                  :fence-generation (fence s chat "ash")
-                  :operation-id "too-soon" :agora-ms (+ agora 2)})))))))
-
+      (is (= 1 (long (:min-jogadores raid 1))))
+      (tx/join-raid!
+       s {:chat-id chat :player-id "ash" :save-id "a"
+          :fence-generation (fence s chat "ash")
+          :operation-id "only-one" :collection-index 0 :nome "Ash"
+          :agora-ms (inc agora)})
+      (let [st (tx/start-raid!
+                s {:chat-id chat :player-id "ash" :save-id "a"
+                   :fence-generation (fence s chat "ash")
+                   :operation-id "solo-ok" :agora-ms (+ agora 2)})]
+        (is (= "combate" (get-in st [:raid :fase])))))))
 (deftest iniciar-manual-ainda-exige-criador
   (let [[s _] (fresh! "lobby-start-manual")
         chat "manual@g.us"]

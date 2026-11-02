@@ -357,7 +357,8 @@
                                    :max-jogadores (:max-jogadores plan)
                                    :duracao-ms (:duracao-ms plan)})
                   (assoc :origem "auto"
-                         :boss-categoria (:boss-categoria plan)))
+                         :boss-categoria (:boss-categoria plan)
+                         :recomendados (:recomendados plan)))
             expected-ptr (when active-raid (:raid-id active-raid))
             s' (assoc schedule
                       :next-at (:next-at plan)

@@ -348,7 +348,8 @@
         (contains? #{"inscricoes" "combate"} (str (:fase active-raid))))))
 
 (defn format-opened
-  "Anúncio oficial pós-eclosão. Revela chefe/categoria/lobby dinâmico."
+  "Anúncio oficial pós-eclosão. Revela chefe/categoria/lobby dinâmico.
+   Recomendados são informativos — mínimo real é 1 (não bloqueia solo)."
   [raid]
   (let [chefe (:chefe raid)
         cat (str (or (:boss-categoria raid)
@@ -360,13 +361,17 @@
         minutos (long (or (:lobby-minutos raid)
                           (:minutos lobby)
                           5))
-        mn (long (or (:min-jogadores raid) (:min-jogadores lobby) 2))
+        rec (long (or (:recomendados raid)
+                      (:recomendados lobby)
+                      1))
         mx (long (or (:max-jogadores raid) (:max-jogadores lobby) 5))
         n (count (or (:ordem raid) []))
         nome (or (:nome chefe) (get chefe "nome") "?")
         hp (or (:hp chefe) (get chefe "hp") "?")
         label (or (:label lobby) cat)
-        stars (or (:estrelas lobby) "⭐")]
+        stars (or (:estrelas lobby) "⭐")
+        solo-hint (when (> rec 1)
+                    (str "💪 Você pode tentar sozinho, mas esta raid será muito difícil!\n"))]
     (str "⚡ *UMA RAID " (str/upper-case (str label)) " APARECEU!*\n"
          "\n"
          "👑 Chefe: *" nome "*\n"
@@ -374,14 +379,16 @@
          "❤️ HP base: " hp "\n"
          "🏛️ " (or (:nome-ginasio raid) (:ginasio raid) "Ginásio")
          " · liga " (or (:liga raid) "?") "\n"
-         "👥 Participantes: " n "/" mx " (mín. " mn ")\n"
+         "👥 Jogadores recomendados: " rec "\n"
+         "⚔️ Participantes: " n "/" mx "\n"
+         (or solo-hint "")
          "⏳ Lobby aberto por *" minutos " minutos*.\n"
          "\n"
          "*Comandos:*\n"
          "`!pk raide entrar` — Pokémon ativo\n"
          "`!pk raide entrar auto` — melhor elegível\n"
          "`!pk raide entrar <n>` — índice da coleção\n"
-         "`!pk raide iniciar` — começar agora (se ≥ mín.)")))
+         "`!pk raide iniciar` — começar agora (1+ inscrito)")))
 
 (defn format-started
   [raid]
@@ -766,6 +773,7 @@
           :lobby lobby
           :duracao-ms (:duracao-ms lobby)
           :min-jogadores (:min-jogadores lobby)
+          :recomendados (:recomendados lobby)
           :max-jogadores (:max-jogadores lobby)
           :recent-bosses recent'
           :spawns-today spawns-today

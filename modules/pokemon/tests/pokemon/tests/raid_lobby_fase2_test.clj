@@ -49,7 +49,7 @@
 (deftest constantes-lobby-fase2
   (is (= (* 5 60 1000) raid/duracao-inscricoes))
   (is (= 5 raid/max-participantes))
-  (is (= 2 raid/min-participantes)))
+  (is (= 1 raid/min-participantes)))
 
 (deftest boss-do-ginasio-pedra
   (let [b (raid/boss-do-ginasio "pedra")]
@@ -94,7 +94,8 @@
              (try (join full "f")
                   (catch Exception ex (err/error-code ex))))))))
 
-(deftest dominio-expirar-sem-quorum-e-com-quorum
+(deftest dominio-expirar-vazio-cancela-e-com-inscritos-inicia
+  "Mínimo real=1: 0 inscritos → cancelada; 1+ → combate."
   (let [boss (:chefe (raid/boss-do-ginasio "pedra"))
         base (raid/nova-raid {:raid-id "r1" :chat-id "c1" :ginasio "pedra"
                               :liga "iniciante" :chefe boss :agora 1000
@@ -103,12 +104,15 @@
                (raid/entrar r {:player-id pid :nome pid :save-id "a"
                                :fence-generation 0 :pokemon mon :collection-index 0}
                             1001))
+        vazio (raid/expirar-inscricoes base (+ 1000 raid/duracao-inscricoes))
         sozinho (join base "ash")
-        cancelado (raid/expirar-inscricoes sozinho (+ 1000 raid/duracao-inscricoes))
+        solo (raid/expirar-inscricoes sozinho (+ 1000 raid/duracao-inscricoes))
         duo (-> base (join "ash") (join "misty"))
         combate (raid/expirar-inscricoes duo (+ 1000 raid/duracao-inscricoes))]
-    (is (= :cancelada (:acao cancelado)))
-    (is (= "cancelada" (get-in cancelado [:raid :fase])))
+    (is (= :cancelada (:acao vazio)))
+    (is (= "cancelada" (get-in vazio [:raid :fase])))
+    (is (= :combate (:acao solo)))
+    (is (= "combate" (get-in solo [:raid :fase])))
     (is (= :combate (:acao combate)))
     (is (= "combate" (get-in combate [:raid :fase])))
     (is (= 440 (get-in combate [:raid :hp-chefe])))))
@@ -201,7 +205,20 @@
                  :operation-id "o2" :ginasio "agua" :agora-ms 1002})]
       (is (= "agua" (get-in o2 [:raid :ginasio]))))))
 
-(deftest expiracao-eager-sem-quorum
+(deftest expiracao-eager-sem-inscritos-cancela
+  (let [[s _] (fresh! "f2-exp-empty")
+        chat "chat-e0"]
+    (boot! s chat "ash")
+    (tx/open-raid!
+     s {:chat-id chat :player-id "ash" :save-id "a"
+        :fence-generation (fence s chat "ash")
+        :operation-id "o" :ginasio "pedra" :agora-ms 1000})
+    (let [after (raid-app/expire-lobby! s chat (+ 1000 raid/duracao-inscricoes))]
+      (is (= "cancelada" (:fase after))))
+    (is (nil? (raid-app/active-raid s chat)))))
+
+(deftest expiracao-eager-um-inscrito-inicia
+  "Mínimo real=1: um jogador no lobby → combate ao expirar."
   (let [[s _] (fresh! "f2-exp")
         chat "chat-e"]
     (boot! s chat "ash")
@@ -214,8 +231,8 @@
         :fence-generation (fence s chat "ash")
         :operation-id "j" :collection-index 0 :nome "Ash" :agora-ms 1001})
     (let [after (raid-app/expire-lobby! s chat (+ 1000 raid/duracao-inscricoes))]
-      (is (= "cancelada" (:fase after))))
-    (is (nil? (raid-app/active-raid s chat)))))
+      (is (= "combate" (:fase after)))
+      (is (some? (raid-app/active-raid s chat))))))
 
 (deftest expiracao-eager-com-quorum-inicia-combate
   (let [[s _] (fresh! "f2-exp2")
@@ -346,6 +363,7 @@
       (is (= 2 (count (:ordem r)))))))
 
 (deftest comando-apos-expiracao-cancelada
+  "Sem inscritos o lobby cancela; entrar/iniciar depois → raid_not_found."
   (let [[s _] (fresh! "f2-exp-cmd")
         chat "chat-ec"]
     (boot! s chat "ash")
@@ -354,10 +372,7 @@
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
         :operation-id "o" :ginasio "pedra" :agora-ms 1000})
-    (tx/join-raid!
-     s {:chat-id chat :player-id "ash" :save-id "a"
-        :fence-generation (fence s chat "ash")
-        :operation-id "j" :collection-index 0 :nome "Ash" :agora-ms 1001})
+    ;; Ninguém entra → ao expirar cancela (mínimo real=1 exige ≥1 inscrito).
     (raid-app/expire-lobby! s chat (+ 1000 raid/duracao-inscricoes))
     (is (nil? (raid-app/active-raid s chat)))
     (is (= :raid_not_found
@@ -492,6 +507,6 @@
         :operation-id "o" :ginasio "pedra" :agora-ms 5000})
     (let [r (raid-app/active-raid s chat)]
       (is (= 5000 (:criada-em r)))
-      (is (= 2 (:min-jogadores r)))
+      (is (= 1 (:min-jogadores r)))
       (is (= 5 (:max-jogadores r)))
       (is (= (+ 5000 raid/duracao-inscricoes) (:expira r))))))

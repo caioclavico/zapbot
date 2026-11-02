@@ -1110,11 +1110,11 @@ function formatError(err) {
     RAID_NOT_FOUND: '❓ Nenhuma raide ativa neste chat.',
     RAID_NOT_OPEN: '❓ As inscrições desta raide não estão abertas.',
     ALREADY_IN_RAID: '⚔️ Você já está inscrito nesta raide.',
-    RAID_FULL: '🚫 A raide já está cheia (máx. 6).',
+    RAID_FULL: '🚫 A raide já está cheia (máx. 5).',
     RAID_CANNOT_LEAVE: '🚫 Não é possível sair desta raide neste momento.',
     FEATURE_DISABLED: '⚠️ Este comando está temporariamente desabilitado. Tente mais tarde.',
     NOT_FOUND: '❓ Rota inexistente.',
-    RAID_NEED_PLAYERS: '❓ Precisa de pelo menos 2 inscritos para iniciar.',
+    RAID_NEED_PLAYERS: '❓ Precisa de pelo menos 1 inscrito para iniciar.',
     RAID_NOT_IN_COMBAT: '❓ A raide não está em combate.',
     RAID_NOT_YOUR_TURN: '⏳ Não é a sua vez de atacar.',
     RAID_TURN_INVALID: '⚠️ A vez da raide está inválida (participante ausente). Avise um admin — sem correção automática.',
@@ -1744,7 +1744,7 @@ function resolveRaidGym(token) {
 function formatRaidOpenHelp(prefix = '!pk') {
   return [
     '⚔️ *Abrir raide cooperativa*',
-    'Lobby: até 5 treinadores · mín. 2 · 5 minutos de inscrição.',
+    'Lobby: até 5 treinadores · pode começar com 1 · 5 minutos de inscrição.',
     'O criador também precisa entrar com `raide entrar`.',
     '',
     '*Ginásios:*',
@@ -1993,7 +1993,7 @@ function formatRaidJoin(data, prefix = '!pk') {
       : null,
     data.duplicate ? '_já inscrito com este Pokémon (idempotente)_' : null,
     `Trocar no lobby: ${prefix} escolher + ${prefix} raide entrar  ·  ou ${prefix} raide entrar <n>`,
-    `Quando houver o mínimo de inscritos: ${prefix} raide iniciar`
+    `Começar agora: ${prefix} raide iniciar (1+ inscrito)`
   ].filter(Boolean).join('\n');
 }
 

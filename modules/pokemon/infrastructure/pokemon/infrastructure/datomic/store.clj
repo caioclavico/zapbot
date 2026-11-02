@@ -1291,6 +1291,7 @@
                                :boss-categoria (:boss-categoria plan)
                                :lobby (:lobby plan)
                                :min-jogadores (:min-jogadores plan)
+                               :recomendados (:recomendados plan)
                                :max-jogadores (:max-jogadores plan)
                                :lobby-minutos (get-in plan [:lobby :minutos])
                                :criada-em agora

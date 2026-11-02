@@ -10,7 +10,8 @@
 (def duracao-inscricoes (* 5 60 1000))
 (def max-duracao-inscricoes (* 30 60 1000))
 (def max-participantes 5)
-(def min-participantes 2)
+;; Mínimo real para iniciar combate (manual e auto). Recomendados são só UX.
+(def min-participantes 1)
 
 (def duracao-combate (* 30 60 1000))
 (def duracao-captura (* 30 60 1000))
@@ -22,28 +23,32 @@
 (def recompensa-xp-pokemon 6)
 
 (def lobby-por-categoria
-  "Lobby dinâmico (auto). Manual continua com duracao-inscricoes / min 2 / max 5."
+  "Lobby dinâmico (auto). min-jogadores=1 em todas; recomendados só informativo."
   {"raro" {:duracao-ms (* 5 60 1000)
            :minutos 5
            :min-jogadores 1
+           :recomendados 1
            :max-jogadores 5
            :estrelas "⭐"
            :label "Rara"}
    "epico" {:duracao-ms (* 10 60 1000)
             :minutos 10
-            :min-jogadores 2
+            :min-jogadores 1
+            :recomendados 2
             :max-jogadores 5
             :estrelas "⭐⭐⭐"
             :label "Épica"}
    "lendario" {:duracao-ms (* 20 60 1000)
                :minutos 20
-               :min-jogadores 2
+               :min-jogadores 1
+               :recomendados 2
                :max-jogadores 5
                :estrelas "⭐⭐⭐⭐⭐"
                :label "Lendária"}
    "mitico" {:duracao-ms (* 30 60 1000)
              :minutos 30
-             :min-jogadores 3
+             :min-jogadores 1
+             :recomendados 3
              :max-jogadores 5
              :estrelas "⭐⭐⭐⭐⭐⭐"
              :label "Mítica"}})
@@ -79,8 +84,21 @@
   (long (or (:max-jogadores raid) max-participantes)))
 
 (defn min-da-raid
+  "Mínimo real para iniciar (sempre ≥1). Não confundir com :recomendados (UX)."
   [raid]
-  (long (or (:min-jogadores raid) min-participantes)))
+  (max 1 (long (or (:min-jogadores raid) min-participantes))))
+
+(defn recomendados-da-raid
+  "Sugestão de time — nunca bloqueia início."
+  [raid]
+  (let [lobby (when-let [cat (or (:boss-categoria raid)
+                                 (:categoria raid)
+                                 (get-in raid [:chefe :raridade])
+                                 (get-in raid [:chefe "raridade"]))]
+                (lobby-params-for-categoria cat))]
+    (long (or (:recomendados raid)
+              (:recomendados lobby)
+              (min-da-raid raid)))))
 
 (defn pokemon-elegivel-liga?
   "Pokémon elegível para a liga da raid (nível na faixa)."

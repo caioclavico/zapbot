@@ -195,18 +195,29 @@
                     :already-expired? already?}})))))
 
 (defn build-expire-raid-tx
+  "Encerra combate por idle. Lobby (`inscricoes`) é no-op — o tick de raid-auto
+   já materializa cancelada/combate no prazo do lobby."
   [db raid-id agora]
   (let [re (d/pull db '[*] [:raid/id raid-id])]
     (when-not (present? re)
       (throw (err/error :raid_not_found {:raid-id raid-id})))
-    (let [op-id (str "raid-idle-expire|" raid-id)
+    (let [fase (str (:raid/fase re))
+          op-id (str "raid-idle-expire|" raid-id)
           existing (d/pull db '[:operation-receipt/id] [:operation-receipt/id op-id])]
-      (if (present? existing)
+      (cond
+        (present? existing)
         {:tx []
          :result {:operation-id op-id :duplicate true :raid-id raid-id
                   :already-expired? true}}
+
+        ;; Defesa em profundidade: nunca matar lobby via idle.
+        (= "inscricoes" fase)
+        {:tx []
+         :result {:operation-id op-id :duplicate false :raid-id raid-id
+                  :skipped "lobby" :already-expired? false}}
+
+        :else
         (let [chat-id (:raid/chat-id re)
-              fase (str (:raid/fase re))
               already? (or (true? (:raid/idle-expired? re))
                            (contains? #{"vitoria" "derrota" "expirada" "idle-timeout"} fase))
               parts (d/q '[:find ?pid
@@ -225,7 +236,11 @@
                         :player-ids pids
                         :timeout-seconds (idle/idle-timeout-segundos)})
               notify (mapv #(notify-tx raid-id chat-id % payload agora) pids)
-              clear (or (clear-raid-pointer-tx db chat-id raid-id) [])
+              ;; Retract só o attr — mantém entidade do ponteiro (CAS nil→id).
+              clear (let [e (d/pull db '[*] [:chat-active-raid/chat-id chat-id])]
+                      (when (and (present? e) (= raid-id (:chat-active-raid/raid-id e)))
+                        [[:db/retract [:chat-active-raid/chat-id chat-id]
+                          :chat-active-raid/raid-id raid-id]]))
               core [{:raid/id raid-id
                      :raid/fase "idle-timeout"
                      :raid/idle-expired? true}
@@ -240,7 +255,7 @@
               cas (when-not (true? (:raid/idle-expired? re))
                     [[:db/cas [:raid/id raid-id] :raid/idle-expired?
                       (:raid/idle-expired? re) true]])]
-          {:tx (into [] (concat core cas clear notify))
+          {:tx (into [] (concat core cas (or clear []) notify))
            :result {:operation-id op-id
                     :duplicate false
                     :raid-id raid-id
@@ -270,7 +285,8 @@
        (mapv :battle/id)))
 
 (defn find-open-raid-ids
-  "Raids em inscrição ou combate (não idle-expired)."
+  "Raids em inscrição ou combate (não idle-expired).
+   Uso: force-expire admin. Idle sweeper NÃO mata lobby — ver find-combat-raid-ids."
   [db]
   (->> (d/q '[:find ?rid ?fase
               :where
@@ -279,6 +295,23 @@
             db)
        (filter (fn [[rid fase]]
                  (and (contains? #{"inscricoes" "combate"} (str fase))
+                      (not (true? (:raid/idle-expired?
+                                   (d/pull db '[:raid/idle-expired?]
+                                           [:raid/id rid])))))))
+       (mapv first)))
+
+(defn find-combat-raid-ids
+  "Só combate ativo. Idle de batalha não se aplica ao lobby (`inscricoes`).
+   Bug pré-fix: backfill/expire usavam find-open-raid-ids e matavam lobbies
+   de 20–30 min com timeout de 5 min, limpando o ponteiro → RAID_NOT_FOUND."
+  [db]
+  (->> (d/q '[:find ?rid ?fase
+              :where
+              [?e :raid/id ?rid]
+              [?e :raid/fase ?fase]]
+            db)
+       (filter (fn [[rid fase]]
+                 (and (= "combate" (str fase))
                       (not (true? (:raid/idle-expired?
                                    (d/pull db '[:raid/idle-expired?]
                                            [:raid/id rid])))))))
@@ -299,8 +332,9 @@
        (mapv :battle/id)))
 
 (defn find-expired-raid-ids
+  "Só combate com idle vencido. Lobby (`inscricoes`) nunca entra aqui."
   [db agora]
-  (->> (find-open-raid-ids db)
+  (->> (find-combat-raid-ids db)
        (filter (fn [rid]
                  (let [re (d/pull db '[:raid/idle-expires-at :raid/idle-expired?]
                                   [:raid/id rid])]
@@ -361,8 +395,9 @@
        vec))
 
 (defn find-combat-raids-missing-idle
+  "Backfill de idle só em combate — nunca em lobby."
   [db]
-  (->> (find-open-raid-ids db)
+  (->> (find-combat-raid-ids db)
        (remove (fn [rid]
                  (let [re (d/pull db '[:raid/idle-expires-at :raid/idle-expired?]
                                   [:raid/id rid])]
