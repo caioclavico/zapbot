@@ -14,13 +14,16 @@ Auditoria de fuga / seleção: `docs/pokemon-a6-raid-hotfix-selecao-mencoes-fuga
 
 | Campo | Valor |
 | --- | --- |
-| Git SHA | _(preenchido pós-commit — ver §10)_ |
-| Content hash | _(preenchido pós-build)_ |
-| JVM tag | _(preenchido pós-build)_ |
-| JVM digest | _(preenchido pós-build)_ |
-| Node tag | _(preenchido pós-build)_ |
-| Node digest | _(preenchido pós-build)_ |
-| RC dir | `~/odisseu-recovery/a6-fase12.6.2-rc-<STAMP>/` |
+| Git SHA | `ea037ded39d958fe912b32acfe42c67e8a6a7176` |
+| Content hash | `2252380c57bbf026b09bada27ccbd3f9f38bab5748bc78e05ef3fa92a33241d3` |
+| JVM tag | `odisseu-jvm:a6-raid-cap-1262-20261102T013909Z-2252380c57bb-amd64` |
+| JVM digest | `sha256:348e59cb05f06c3de24d95ed2e55905604b192e82781081dc3d144d5c3fa0b8a` |
+| Node tag | `odisseu-node:a6-raid-cap-1262-20261102T013909Z-2252380c57bb-amd64` |
+| Node digest | `sha256:2eb5c00703205b2d85f5f385dc40a383b8513a34dd02c8cf9fb6920622208f83` |
+| Manifest | `696cd684838b34f2461dd6961a07922a47e159ea3f3bdd0ede1d77a93e4200c0` |
+| RC dir | `~/odisseu-recovery/a6-fase12.6.2-rc-20261102T013909Z/` |
+| Labels | `io.zapbot.git-sha=ea037de…` · `fase=12.6.2` · `content-hash=2252380c57bb…` |
+| 031 na JVM | **presente** (`OK_031`) |
 | Migration nova | **Nenhuma** (031 permanece) |
 
 ---
@@ -129,6 +132,21 @@ Procedimento: freeze Node → recreate JVM 12.6.1 → recreate Node → health/W
 
 ---
 
-## 10. Artefato RC (preenchido após build)
+## 10. Artefato RC
 
-_Ver atualização no final deste arquivo após `docker build` / `docker save`._
+```
+STAMP=20261102T013909Z
+GIT_SHA=ea037ded39d958fe912b32acfe42c67e8a6a7176
+CONTENT_HASH=2252380c57bbf026b09bada27ccbd3f9f38bab5748bc78e05ef3fa92a33241d3
+JVM_TAG=odisseu-jvm:a6-raid-cap-1262-20261102T013909Z-2252380c57bb-amd64
+JVM_ID=sha256:348e59cb05f06c3de24d95ed2e55905604b192e82781081dc3d144d5c3fa0b8a
+NODE_TAG=odisseu-node:a6-raid-cap-1262-20261102T013909Z-2252380c57bb-amd64
+NODE_ID=sha256:2eb5c00703205b2d85f5f385dc40a383b8513a34dd02c8cf9fb6920622208f83
+MANIFEST=696cd684838b34f2461dd6961a07922a47e159ea3f3bdd0ede1d77a93e4200c0
+OUT=~/odisseu-recovery/a6-fase12.6.2-rc-20261102T013909Z
+DECISION=READY_FOR_GO_NO_DEPLOY
+```
+
+Tars: `images/odisseu-jvm-a6-raid-cap-1262.tar` (~249 MiB) · `images/odisseu-node-a6-raid-cap-1262.tar` (~371 MiB).
+
+**Nenhum serviço foi reiniciado. Nenhum deploy foi executado.**
