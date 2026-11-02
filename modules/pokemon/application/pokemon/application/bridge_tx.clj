@@ -745,37 +745,53 @@
      :duplicate (boolean (:duplicate result))
      :raid (raid-summary (:raid result))}))
 
+(defn- raid-apto?
+  [raid p]
+  (and p
+       (pos? (long (:hp-atual p 0)))
+       (raid-domain/pokemon-elegivel-liga? (:liga raid) p)
+       (some (fn [g]
+               (let [c (or (:classe g) (get g "classe"))
+                     poder (long (or (:poder g) (get g "poder") 0))]
+                 (and (contains? #{:fisico :especial "fisico" "especial"} c)
+                      (pos? poder))))
+             (or (:golpes p) []))))
+
+(defn- raid-auto-index
+  [raid colecao]
+  (let [score (fn [p]
+                (reduce + 0 (map #(long (or (get p %) 0))
+                                 [:hp-atual :ataque :defesa
+                                  :atq-esp :def-esp :veloc])))
+        aptos (filterv #(raid-apto? raid %) colecao)]
+    (if (seq aptos)
+      (long (:collection-index (apply max-key score aptos)))
+      (throw (err/error :invalid_raid_pokemon {:auto? true})))))
+
 (defn join-raid!
+  "Inscrição. Modes: `:auto?` (melhor apto), `:use-active?` (Pokémon ativo
+   elegível; se inapto → auto), ou `:collection-index` explícito.
+   No lobby, reentrar com outro índice atualiza o snapshot."
   [store {:keys [chat-id player-id save-id fence-generation operation-id
-                 raid-id collection-index nome agora-ms auto?]
+                 raid-id collection-index nome agora-ms auto? use-active?]
           :as req}]
   (let [writer-ctx (require-writer! req)
         raid (or (when raid-id (raid-app/get-raid store raid-id))
                  (raid-app/active-raid store chat-id)
                  (throw (err/error :raid_not_found {:raid-id raid-id})))
         colecao (ports/list-collection store chat-id player-id save-id)
-        idx (if auto?
-              (let [score (fn [p]
-                            (reduce + 0 (map #(long (or (get p %) 0))
-                                             [:hp-atual :ataque :defesa
-                                              :atq-esp :def-esp :veloc])))
-                    aptos (keep
-                           (fn [p]
-                             (when (and (pos? (long (:hp-atual p 0)))
-                                        (raid-domain/pokemon-elegivel-liga?
-                                         (:liga raid) p)
-                                        (some (fn [g]
-                                                (let [c (or (:classe g) (get g "classe"))
-                                                      poder (long (or (:poder g) (get g "poder") 0))]
-                                                  (and (contains? #{:fisico :especial "fisico" "especial"} c)
-                                                       (pos? poder))))
-                                              (or (:golpes p) [])))
-                               p))
-                           colecao)]
-                (if (seq aptos)
-                  (long (:collection-index (apply max-key score aptos)))
-                  (throw (err/error :invalid_raid_pokemon {:auto? true}))))
-              (long collection-index))
+        save-m (ports/get-save store chat-id player-id save-id)
+        idx (cond
+              auto? (raid-auto-index raid colecao)
+              use-active?
+              (let [ai (long (:ativo-index save-m 0))
+                    p (when (< ai (count colecao)) (nth colecao ai))]
+                (if (raid-apto? raid p)
+                  ai
+                  (raid-auto-index raid colecao)))
+              (some? collection-index) (long collection-index)
+              :else (throw (err/error :invalid_query
+                                      {:required ["collectionIndex|auto|useActive"]})))
         result (raid-app/join-raid!
                 store writer-ctx
                 {:operation-id (str operation-id)
@@ -785,10 +801,12 @@
                  :agora (or agora-ms (System/currentTimeMillis))})]
     {:operation-id (:operation-id result)
      :duplicate (boolean (:duplicate result))
+     :refreshed (boolean (:refreshed result))
      :save-id save-id
      :fence-generation (long fence-generation)
      :raid (raid-summary (:raid result))
      :collection-index (long idx)
+     :mode (cond auto? "auto" use-active? "ativo" :else "index")
      :participant (select-keys (:participant result)
                                [:nome :hp :dano :collection-index])}))
 
@@ -846,6 +864,7 @@
                  :agora (or agora-ms (System/currentTimeMillis))})]
     {:operation-id (:operation-id result)
      :duplicate (boolean (:duplicate result))
+     :player-id player-id
      :dano (:dano result)
      :revide (:revide result)
      :venceu (boolean (:venceu? result))

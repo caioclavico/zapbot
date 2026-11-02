@@ -377,8 +377,13 @@
         agora (long (or (:agora request) (System/currentTimeMillis)))
         operation-id (:operation-id request)
         phash (:payload-hash request)
-        already? (contains? (:participantes raid) player-id)]
-    (if already?
+        already? (contains? (:participantes raid) player-id)
+        old (when already? (get-in raid [:participantes player-id]))
+        idx (long (:collection-index request))
+        same-idx? (and already? (= idx (long (:collection-index old -1))))]
+    (cond
+      ;; Já inscrito com o mesmo mon → idempotente.
+      (and already? same-idx?)
       {:tx [{:operation-receipt/id operation-id
              :operation-receipt/kind "raid-join"
              :operation-receipt/channel "gameplay"
@@ -386,20 +391,29 @@
              :operation-receipt/player-key (id/player-key chat-id player-id)
              :operation-receipt/save-id save-id
              :operation-receipt/summary
-             (pr-str {:raid-id (:raid-id raid) :already true})}]
+             (pr-str {:raid-id (:raid-id raid) :already true :idx idx})}]
        :result {:operation-id operation-id
                 :duplicate true
+                :refreshed false
                 :raid raid
-                :participant (get-in raid [:participantes player-id])}}
-      (let [idx (long (:collection-index request))
-            poke (when (< idx (count colecao)) (nth colecao idx))
+                :participant old}}
+
+      ;; Combate: combatente travado — não troca.
+      (and already? (not (raid/inscricoes-abertas? raid agora)))
+      (throw (err/error :raid_combatant_locked
+                        {:fase (:fase raid)
+                         :collection-index (:collection-index old)
+                         :requested idx}))
+
+      :else
+      (let [poke (when (< idx (count colecao)) (nth colecao idx))
             _ (when-not poke (throw (err/error :pokemon_not_found {:idx idx})))
             _ (when-not (raid/pokemon-elegivel-liga? (:liga raid) poke)
                 (throw (err/error :raid_liga_mismatch
                                   {:liga (:liga raid)
                                    :nivel (:nivel poke)
                                    :idx idx})))
-            nome (or (:nome request) player-id)
+            nome (or (:nome request) (:nome old) player-id)
             raid' (raid/entrar raid
                                {:player-id player-id
                                 :nome nome
@@ -422,9 +436,11 @@
                :operation-receipt/payload-hash phash
                :operation-receipt/player-key (id/player-key chat-id player-id)
                :operation-receipt/save-id save-id
-               :operation-receipt/summary (pr-str {:raid-id (:raid-id raid) :idx idx})}]
+               :operation-receipt/summary
+               (pr-str {:raid-id (:raid-id raid) :idx idx :refreshed already?})}]
          :result {:operation-id operation-id
                   :duplicate false
+                  :refreshed (boolean already?)
                   :raid raid'
                   :participant p}}))))
 

@@ -225,33 +225,40 @@
      :revision 0
      :rewards-paid? false}))
 
+(defn- assert-combatente-valido!
+  [raid pokemon player-id]
+  (let [hp (long (or (:hp-atual pokemon) (:hp pokemon) 0))]
+    (when-not (and pokemon (pos? hp) (some golpe-dano? (or (:golpes pokemon) [])))
+      (throw (err/error :invalid_raid_pokemon {:player-id player-id})))
+    (when-not (pokemon-elegivel-liga? (:liga raid) pokemon)
+      (throw (err/error :raid_liga_mismatch
+                        {:liga (:liga raid)
+                         :nivel (or (:nivel pokemon) (get pokemon "nivel"))})))
+    hp))
+
 (defn entrar
-  "Inscrição. Idempotente se já inscrito (não duplica)."
+  "Inscrição. Se já inscrito no lobby com outro índice, troca o combatente
+   (snapshot). Em combate, combatente fica travado."
   [raid {:keys [player-id nome save-id fence-generation pokemon collection-index]} agora]
   (when-not (inscricoes-abertas? raid agora)
     (throw (err/error :raid_not_open {:fase (:fase raid)})))
-  (if (contains? (:participantes raid) player-id)
-    raid
-    (do
-      (when (>= (count (:ordem raid)) (max-da-raid raid))
-        (throw (err/error :raid_full {:max (max-da-raid raid)})))
-      (let [hp (long (or (:hp-atual pokemon) (:hp pokemon) 0))]
-        (when-not (and pokemon (pos? hp) (some golpe-dano? (or (:golpes pokemon) [])))
-          (throw (err/error :invalid_raid_pokemon {:player-id player-id})))
-        (when-not (pokemon-elegivel-liga? (:liga raid) pokemon)
-          (throw (err/error :raid_liga_mismatch
-                            {:liga (:liga raid)
-                             :nivel (or (:nivel pokemon) (get pokemon "nivel"))})))
+  (let [hp (assert-combatente-valido! raid pokemon player-id)
+        part {:nome nome
+              :save-id save-id
+              :fence-generation (long fence-generation)
+              :pokemon pokemon
+              :collection-index (long (or collection-index 0))
+              :hp hp
+              :dano 0}]
+    (if (contains? (:participantes raid) player-id)
+      ;; Lobby: permite trocar o mon selado (HP do snapshot reinicia no lobby).
+      (assoc-in raid [:participantes player-id] part)
+      (do
+        (when (>= (count (:ordem raid)) (max-da-raid raid))
+          (throw (err/error :raid_full {:max (max-da-raid raid)})))
         (-> raid
             (update :ordem conj player-id)
-            (assoc-in [:participantes player-id]
-                      {:nome nome
-                       :save-id save-id
-                       :fence-generation (long fence-generation)
-                       :pokemon pokemon
-                       :collection-index (long (or collection-index 0))
-                       :hp hp
-                       :dano 0}))))))
+            (assoc-in [:participantes player-id] part))))))
 
 (defn sair
   "Sai durante inscrições (legado)."

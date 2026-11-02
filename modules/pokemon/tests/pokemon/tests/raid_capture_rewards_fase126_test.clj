@@ -2,6 +2,7 @@
   "Fase 12.6 — captura de raide (RNG), Frambo, recompensas e capacidade."
   (:require [clojure.test :refer [deftest is testing]]
             [odisseu.persistence.datomic :as persistence]
+            [pokemon.application.active :as active-app]
             [pokemon.application.bridge-reads :as reads]
             [pokemon.application.bridge-tx :as tx]
             [pokemon.application.collection :as collection]
@@ -309,3 +310,82 @@
       (is (pos? (get-in dto [:captura-ui :bolas "ultra-bola"] 0)))
       (is (= 3 (get-in dto [:captura-ui :frambo])))
       (is (= 70 (get-in dto [:captura-ui :chances "ultra-bola"]))))))
+
+(def ^:private mon-b
+  {:nome "Onix" :hp 180 :ataque 40 :defesa 90 :atq-esp 30 :def-esp 40 :veloc 50
+   :tipos ["rock"] :nivel 18 :raridade "raro"
+   :golpes [{:nome-exibicao "Rock Throw" :tipo "rock" :poder 50 :classe :fisico}]})
+
+(deftest join-usa-pokemon-ativo
+  (let [s (fresh-store! "r126-ativo")
+        chat "c-at"
+        rid "raid-at"]
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (collection/adicionar-pokemon! s chat "ash" mon-b 180 nil)
+    ;; ativo = índice 1 (Onix)
+    (active-app/set-active! s chat "ash" {:operation-id "set-at" :idx 1})
+    (open! s chat rid)
+    (let [j (tx/join-raid!
+             s {:chat-id chat :player-id "ash" :save-id "a"
+                :fence-generation (fence s chat "ash")
+                :operation-id "j-ativo" :use-active? true :nome "Ash"
+                :agora-ms 2})]
+      (is (= 1 (:collection-index j)))
+      (is (= "ativo" (:mode j)))
+      (is (= "Onix" (get-in (raid-app/get-raid s rid)
+                            [:participantes "ash" :pokemon :nome]))))))
+
+(deftest lobby-refresh-combatente
+  (let [s (fresh-store! "r126-ref")
+        chat "c-rf"
+        rid "raid-rf"]
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (collection/adicionar-pokemon! s chat "ash" mon-b 180 nil)
+    (open! s chat rid)
+    (tx/join-raid!
+     s {:chat-id chat :player-id "ash" :save-id "a"
+        :fence-generation (fence s chat "ash")
+        :operation-id "j0" :collection-index 0 :agora-ms 2})
+    (is (= 0 (get-in (raid-app/get-raid s rid)
+                     [:participantes "ash" :collection-index])))
+    (let [j2 (tx/join-raid!
+              s {:chat-id chat :player-id "ash" :save-id "a"
+                 :fence-generation (fence s chat "ash")
+                 :operation-id "j1" :collection-index 1 :agora-ms 3})]
+      (is (true? (:refreshed j2)))
+      (is (false? (:duplicate j2)))
+      (is (= 1 (:collection-index j2)))
+      (is (= "Onix" (get-in (raid-app/get-raid s rid)
+                            [:participantes "ash" :pokemon :nome]))))))
+
+(deftest combate-trava-troca-de-combatente
+  (let [s (fresh-store! "r126-lock")
+        chat "c-lk"
+        rid "raid-lk"]
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (collection/adicionar-pokemon! s chat "ash" mon-b 180 nil)
+    (open! s chat rid)
+    (tx/join-raid!
+     s {:chat-id chat :player-id "ash" :save-id "a"
+        :fence-generation (fence s chat "ash")
+        :operation-id "ja" :collection-index 0 :agora-ms 2})
+    (tx/join-raid!
+     s {:chat-id chat :player-id "misty" :save-id "a"
+        :fence-generation (fence s chat "misty")
+        :operation-id "jm" :collection-index 0 :agora-ms 3})
+    (tx/start-raid!
+     s {:chat-id chat :player-id "ash" :save-id "a"
+        :fence-generation (fence s chat "ash")
+        :operation-id "st" :agora-ms 4})
+    (let [code (try
+                 (tx/join-raid!
+                  s {:chat-id chat :player-id "ash" :save-id "a"
+                     :fence-generation (fence s chat "ash")
+                     :operation-id "j-swap" :collection-index 1 :agora-ms 5})
+                 (catch Exception ex (err/error-code ex)))]
+      (is (= :raid_combatant_locked code))
+      (is (= 0 (get-in (raid-app/get-raid s rid)
+                       [:participantes "ash" :collection-index]))))))

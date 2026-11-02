@@ -114,7 +114,7 @@
      :raid_save_mismatch :raid_liga_mismatch
      :raid_capture_unavailable :raid_chat_busy :raid_gym_unknown
      :raid_boss_template_missing :raid_config_invalid :raid_cannot_cancel
-     :frambo_already_prepared
+     :frambo_already_prepared :raid_combatant_locked
      :starter_unavailable :mission_period_conflict :mission_event_identity_conflict
      :mission_event_already_processed :gift_target_changed) 409
     :operation_pending 409
@@ -1264,17 +1264,20 @@
                           operation-id (g body "operationId")
                           raid-id (g body "raidId" "raid-id")
                           idx (long-or-nil (g body "collectionIndex" "collection-index"))
-                          auto? (boolean (or (g body "auto") (= "auto" (str (g body "mode")))))
+                          mode (str/lower-case (str (or (g body "mode") "")))
+                          auto? (boolean (or (g body "auto") (= "auto" mode)))
+                          use-active? (boolean (or (g body "useActive") (g body "use-active")
+                                                   (= "ativo" mode) (= "active" mode)))
                           nome (g body "nome" "name")
                           agora (long-or-nil (g body "agoraMs" "agora"))]
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? save-id) (nil? fence)
                                 (str/blank? operation-id)
-                                (and (not auto?) (nil? idx)))
+                                (and (not auto?) (not use-active?) (nil? idx)))
                         (throw (err/error :invalid_query
                                           {:required ["chatId" "playerId" "saveId"
                                                       "fenceGeneration" "operationId"
-                                                      "collectionIndex|auto"]})))
+                                                      "collectionIndex|auto|useActive"]})))
                       (ok! ex (with-operation! operation-id
                                 #(tx/join-raid!
                                   store (cond-> {:chat-id chat-id
@@ -1282,7 +1285,8 @@
                                                  :save-id save-id
                                                  :fence-generation fence
                                                  :operation-id operation-id
-                                                 :auto? auto?}
+                                                 :auto? auto?
+                                                 :use-active? use-active?}
                                           raid-id (assoc :raid-id raid-id)
                                           (some? idx) (assoc :collection-index idx)
                                           nome (assoc :nome nome)

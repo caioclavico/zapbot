@@ -196,3 +196,43 @@ test('resolveCommand não engole raid abrir N', () => {
   // bare 1 continua atacar (sem menu de ginásio pendente)
   assert.equal(present.resolveCommand(['1']), 'atacar');
 });
+
+test('vitória lista recompensas reais e captura; fruta aliases', () => {
+  assert.equal(present.resolveRaidSubcommand('fruta'), 'fruta');
+  assert.equal(present.resolveRaidSubcommand('frambo'), 'frambo');
+  const win = present.formatRaidAttack({
+    venceu: true,
+    playerId: 'ash',
+    dano: 80,
+    rewards: [
+      { playerId: 'ash', moedas: 50, pe: 6, xpPokemon: 6 },
+      { playerId: 'misty', moedas: 50, pe: 6, xpPokemon: 6 }
+    ],
+    raid: { chefe: { nome: 'Onix' } }
+  }, '!pk');
+  assert.match(win, /RAID CONCLUÍDA/);
+  assert.match(win, /Onix/);
+  assert.match(win, /Moedas: \+50/);
+  assert.match(win, /PE do treinador: \+6/);
+  assert.match(win, /XP do Pokémon: \+6/);
+  assert.match(win, /raide fruta/);
+  assert.match(win, /capturar/);
+  const fruta = present.formatRaidFrambo({}, '!pk');
+  assert.match(fruta, /Fruta Frambo utilizada/);
+  const ui = present.formatRaidCaptureUi({
+    capturaUi: {
+      chefe: 'Onix',
+      tentativas: 0,
+      maxTentativas: 3,
+      bolas: { pokebola: 10, 'grande-bola': 5, 'ultra-bola': 3 },
+      frambo: 2,
+      framboPreparada: true,
+      chances: { pokebola: 35, 'grande-bola': 53, 'ultra-bola': 95 }
+    },
+    raid: { chefe: { nome: 'Onix' }, captura: {} }
+  }, '!pk');
+  assert.match(ui, /CAPTURA DO CHEFE/);
+  assert.match(ui, /Ultra Bola: 3/);
+  assert.match(ui, /bônus ativo/);
+  assert.match(ui, /raide fruta/);
+});

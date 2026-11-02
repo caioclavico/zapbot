@@ -587,17 +587,24 @@
         (envelope-jvm pedido (.formatRaidEligible jvm-present data prefix)))
 
       (= "entrar" sub)
-      (let [raw (str/lower-case (str (or (first resto) "auto")))
-            auto? (or (= "auto" raw) (str/blank? (str (first resto))))
-            idx (when-not auto?
+      ;; Default: Pokémon *ativo* (escolher). `auto` = melhor apto. `<n>` = índice.
+      (let [raw (str/lower-case (str/trim (str (or (first resto) "ativo"))))
+            auto? (= "auto" raw)
+            use-active? (or (str/blank? raw) (= "ativo" raw) (= "active" raw)
+                            (= "escolhido" raw))
+            idx (when-not (or auto? use-active?)
                   (let [n (js/parseInt raw 10)]
                     (when-not (js/isNaN n) (dec n))))]
-        (when (and (not auto?) (or (nil? idx) (neg? idx)))
-          (throw (erro-contrato "❓ Use !pk raide entrar auto ou !pk raide entrar <n>")))
+        (when (and (not auto?) (not use-active?) (or (nil? idx) (neg? idx)))
+          (throw (erro-contrato
+                  (str "❓ Use " prefix " raide entrar  ·  "
+                       prefix " raide entrar auto  ·  "
+                       prefix " raide entrar <n>"))))
         (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                mode (cond auto? "auto" use-active? "ativo" :else (str idx))
                 op-id (.stableOperationId jvm-transport
                                           (:requestId pedido)
-                                          (str "raid-join:" (if auto? "auto" idx)))
+                                          (str "raid-join:" mode))
                 data (desempenho/medir! ctx "pokemon_jvm_raid_join"
                        #(.joinRaid jvm
                           (clj->js (cond-> {:chatId chat-id
@@ -607,7 +614,9 @@
                                             :operationId op-id
                                             :nome player-name}
                                      auto? (assoc :auto true)
-                                     (not auto?) (assoc :collectionIndex idx)))))]
+                                     use-active? (assoc :useActive true)
+                                     (and (not auto?) (not use-active?))
+                                     (assoc :collectionIndex idx)))))]
           (envelope-jvm pedido (.formatRaidJoin jvm-present data prefix))))
 
       (= "sair" sub)
@@ -703,7 +712,8 @@
                             :turnIndex (.-turnIndex (.-raid data))}))]
         (envelope-jvm pedido (.formatRaidAttack jvm-present data prefix) img))
 
-      (= "frambo" sub)
+      ;; fruta / frambo / fruta frambo
+      (or (= "frambo" sub) (= "fruta" sub))
       (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
                            #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
               raid (.-raid raid-data)
