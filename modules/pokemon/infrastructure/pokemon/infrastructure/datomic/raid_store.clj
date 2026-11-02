@@ -210,37 +210,105 @@
                   :raid-auto-schedule/revision expected next-rev]))
      :result {:schedule s'}}))
 
+(defn intent-receipt-tx
+  "Persiste próximo slot planejado. `:operation-receipt/id` é unique/value —
+   create vs update explícitos (sem migration)."
+  [chat-id intent exists?]
+  (when (and chat-id (map? intent) (:next-at intent))
+    (let [rid (raid-auto/intent-receipt-id chat-id)
+          summary (pr-str {:next-at (long (:next-at intent))
+                           :categoria (str (:categoria intent))
+                           :reminders? (boolean (:reminders? intent))})]
+      (if exists?
+        {:db/id [:operation-receipt/id rid]
+         :operation-receipt/summary summary
+         :operation-receipt/kind "raid-auto-intent"
+         :operation-receipt/payload-hash rid}
+        {:operation-receipt/id rid
+         :operation-receipt/kind "raid-auto-intent"
+         :operation-receipt/channel "system"
+         :operation-receipt/payload-hash rid
+         :operation-receipt/player-key (id/player-key chat-id "system")
+         :operation-receipt/save-id "a"
+         :operation-receipt/summary summary}))))
+
+(defn cadence-receipt-tx
+  "Overrides de cadência (intervalos + daily-limit) — unique/value create/update."
+  [chat-id cadence exists?]
+  (when (and chat-id (map? cadence)
+             (or (:category-intervals cadence)
+                 (some? (:daily-limit cadence))
+                 (some? (:special-reserve cadence))))
+    (let [rid (raid-auto/cadence-receipt-id chat-id)
+          intervals (when-let [i (:category-intervals cadence)]
+                      (raid-auto/normalize-category-intervals i))
+          daily (when (some? (:daily-limit cadence))
+                  (raid-auto/normalize-daily-limit (:daily-limit cadence)))
+          reserve (when (some? (:special-reserve cadence))
+                    (raid-auto/normalize-special-reserve
+                     (:special-reserve cadence)
+                     (or daily raid-auto/default-daily-limit)))
+          summary (pr-str (cond-> {}
+                            intervals (assoc :category-intervals intervals)
+                            (some? daily) (assoc :daily-limit daily)
+                            (some? reserve) (assoc :special-reserve reserve)))]
+      (if exists?
+        {:db/id [:operation-receipt/id rid]
+         :operation-receipt/summary summary
+         :operation-receipt/kind "raid-auto-cadence"
+         :operation-receipt/payload-hash rid}
+        {:operation-receipt/id rid
+         :operation-receipt/kind "raid-auto-cadence"
+         :operation-receipt/channel "system"
+         :operation-receipt/payload-hash rid
+         :operation-receipt/player-key (id/player-key chat-id "system")
+         :operation-receipt/save-id "a"
+         :operation-receipt/summary summary}))))
+
 (defn build-auto-spawn-tx
-  "Spawn automático atômico: receipt spawn-id + raid + ponteiro + agenda + outbox."
-  [{:keys [plan schedule active-raid announce-texto agora]}]
+  "Spawn automático atômico: receipt spawn-id + raid + ponteiro + agenda + outbox.
+   Também grava intent do próximo slot (categoria/lembretes) — Fase 12.7.2."
+  [{:keys [plan schedule active-raid announce-texto agora intent-exists?]}]
   (let [acao (:acao plan)
         chat-id (:chat-id schedule)
         expected-rev (long (:revision schedule 0))
         next-rev (inc expected-rev)
-        agora (long agora)]
+        agora (long agora)
+        intent-tx (intent-receipt-tx chat-id (:intent plan) (boolean intent-exists?))]
     (case acao
       (:noop :skip-disabled)
       {:tx [] :result {:acao acao :schedule schedule :duplicate false}}
 
-      :skip-busy
-      (let [s' (assoc schedule
+      (:skip-busy :skip-daily-cap)
+      (let [skip-kind (if (= :skip-daily-cap acao)
+                        "raid-auto-skip-cap"
+                        "raid-auto-skip")
+            s' (assoc schedule
                       :next-at (:next-at plan)
                       :revision next-rev
-                      :last-spawn-id (:spawn-id plan))
+                      :last-spawn-id (:spawn-id plan)
+                      :next-categoria (:next-categoria plan)
+                      :next-reminders? (:next-reminders? plan))
             rev-tx (when (pos? expected-rev)
                      [[:db/cas [:raid-auto-schedule/chat-id chat-id]
                        :raid-auto-schedule/revision expected-rev next-rev]])]
-        {:tx (into [(schedule-entity-tx s')
-                    {:operation-receipt/id (:spawn-id plan)
-                     :operation-receipt/kind "raid-auto-skip"
-                     :operation-receipt/channel "system"
-                     :operation-receipt/payload-hash (:spawn-id plan)
-                     :operation-receipt/player-key (id/player-key chat-id "system")
-                     :operation-receipt/save-id "a"
-                     :operation-receipt/summary
-                     (pr-str {:acao :skip-busy :active (:active-raid-id plan)})}]
+        {:tx (into (cond-> [(schedule-entity-tx s')
+                            {:operation-receipt/id (:spawn-id plan)
+                             :operation-receipt/kind skip-kind
+                             :operation-receipt/channel "system"
+                             :operation-receipt/payload-hash (:spawn-id plan)
+                             :operation-receipt/player-key (id/player-key chat-id "system")
+                             :operation-receipt/save-id "a"
+                             :operation-receipt/summary
+                             (pr-str {:acao acao
+                                      :active (:active-raid-id plan)
+                                      :spawns-today (:spawns-today plan)
+                                      :daily-limit (:daily-limit plan)
+                                      :next-categoria (:next-categoria plan)})}]
+                     intent-tx (conj intent-tx))
                    (or rev-tx []))
-         :result {:acao :skip-busy :schedule s' :duplicate false}})
+         :result {:acao acao :schedule s' :duplicate false
+                  :intent (:intent plan)}})
 
       :spawn
       (let [_ (when (raid-auto/ocupa-slot-contra-spawn? active-raid)
@@ -268,32 +336,38 @@
                       :ginasio-index (:next-ginasio-index plan)
                       :revision next-rev
                       :last-spawn-id (:spawn-id plan)
-                      :last-raid-id (:raid-id plan))
+                      :last-raid-id (:raid-id plan)
+                      :next-categoria (:next-categoria plan)
+                      :next-reminders? (:next-reminders? plan))
             event-id (raid-auto/outbox-opened-id (:raid-id plan))
             pointer-tx [[:db/cas [:chat-active-raid/chat-id chat-id]
                          :chat-active-raid/raid-id expected-ptr (:raid-id r)]]
             rev-tx (when (pos? expected-rev)
                      [[:db/cas [:raid-auto-schedule/chat-id chat-id]
                        :raid-auto-schedule/revision expected-rev next-rev]])]
-        {:tx (into [(raid-entity-tx r)
-                    (schedule-entity-tx s')
-                    {:operation-receipt/id (:spawn-id plan)
-                     :operation-receipt/kind "raid-auto-spawn"
-                     :operation-receipt/channel "system"
-                     :operation-receipt/payload-hash (:spawn-id plan)
-                     :operation-receipt/player-key (id/player-key chat-id "system")
-                     :operation-receipt/save-id "a"
-                     :operation-receipt/summary
-                     (pr-str {:raid-id (:raid-id r) :due-at (:due-at plan)})}
-                    (outbox-tx {:id event-id
-                                :chat-id chat-id
-                                :kind "raid-opened"
-                                :texto announce-texto
-                                :created-at agora})]
+        {:tx (into (cond-> [(raid-entity-tx r)
+                            (schedule-entity-tx s')
+                            {:operation-receipt/id (:spawn-id plan)
+                             :operation-receipt/kind "raid-auto-spawn"
+                             :operation-receipt/channel "system"
+                             :operation-receipt/payload-hash (:spawn-id plan)
+                             :operation-receipt/player-key (id/player-key chat-id "system")
+                             :operation-receipt/save-id "a"
+                             :operation-receipt/summary
+                             (pr-str {:raid-id (:raid-id r)
+                                      :due-at (:due-at plan)
+                                      :boss-categoria (:boss-categoria plan)})}
+                            (outbox-tx {:id event-id
+                                        :chat-id chat-id
+                                        :kind "raid-opened"
+                                        :texto announce-texto
+                                        :created-at agora})]
+                     intent-tx (conj intent-tx))
                    (concat pointer-tx (or rev-tx [])))
          :result {:acao :spawn :schedule s' :raid r :duplicate false
                   :due-at (:due-at plan)
-                  :outbox-id event-id}}))))
+                  :outbox-id event-id
+                  :intent (:intent plan)}}))))
 
 (defn build-auto-expire-announce-tx
   "Após expire de lobby auto: anuncia combate ou cancelamento via outbox.

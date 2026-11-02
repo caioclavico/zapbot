@@ -238,6 +238,14 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}
 
+  ;; Fase 12.7.2 — cadência por categoria (raro/épico frequentes; especiais)
+  :test-raid-auto-cadence-fase1272
+  {:main-opts ["-m" "odisseu.smoke.raid-auto-cadence-fase1272"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
   ;; A6 — economy ledger + capacity + battle-idle
   :test-a6-economy-capacity
   {:main-opts ["-m" "odisseu.smoke.a6-economy-capacity"]

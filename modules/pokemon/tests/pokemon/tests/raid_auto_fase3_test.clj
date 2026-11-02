@@ -54,7 +54,7 @@
 (deftest default-desligado
   (let [s (domain/default-schedule "c" 1000)]
     (is (false? (:enabled s)))
-    (is (= raid/intervalo-proxima (:interval-ms s)))
+    (is (= domain/default-interval-ms (:interval-ms s)))
     (is (false? (domain/due? s 999999)))))
 
 (deftest intervalo-minimo-e-next-at-deterministico

@@ -15,16 +15,43 @@
       (raid-auto/default-schedule chat-id 0)))
 
 (defn upsert-schedule!
-  "Atualiza agenda. enabled default false se omitido na criação."
-  [store {:keys [chat-id enabled interval-ms next-at ginasio-index agora-ms]}]
+  "Atualiza agenda. enabled default false se omitido na criação.
+   Cadência 12.7.2: category-intervals / daily-limit / next-categoria.
+   Com `:safe-cadence? true` (migração 6h→1h): nunca antecipa next-at nem
+   dropa especial já planejado."
+  [store {:keys [chat-id enabled interval-ms next-at ginasio-index agora-ms
+                 category-intervals next-categoria next-reminders?
+                 daily-limit special-reserve safe-cadence?]}]
   (let [agora (long (or agora-ms (System/currentTimeMillis)))
         cur (get-schedule store chat-id)
+        patch (if safe-cadence?
+                (raid-auto/safe-cadence-patch
+                 cur {:interval-ms interval-ms
+                      :daily-limit daily-limit
+                      :special-reserve special-reserve
+                      :category-intervals category-intervals
+                      :next-at next-at
+                      :next-categoria next-categoria
+                      :agora agora})
+                {})
         s (raid-auto/normalize-schedule
-           (cond-> cur
+           (cond-> (merge cur patch)
              (some? enabled) (assoc :enabled (boolean enabled))
-             (some? interval-ms) (assoc :interval-ms (long interval-ms))
-             (some? next-at) (assoc :next-at (long next-at))
-             (some? ginasio-index) (assoc :ginasio-index (long ginasio-index)))
+             (and (not safe-cadence?) (some? interval-ms))
+             (assoc :interval-ms (long interval-ms))
+             (and (not safe-cadence?) (some? next-at))
+             (assoc :next-at (long next-at))
+             (some? ginasio-index) (assoc :ginasio-index (long ginasio-index))
+             (and (not safe-cadence?) (some? category-intervals))
+             (assoc :category-intervals category-intervals)
+             (and (not safe-cadence?) (some? next-categoria))
+             (assoc :next-categoria (str next-categoria))
+             (and (not safe-cadence?) (some? next-reminders?))
+             (assoc :next-reminders? (boolean next-reminders?))
+             (and (not safe-cadence?) (some? daily-limit))
+             (assoc :daily-limit (long daily-limit))
+             (and (not safe-cadence?) (some? special-reserve))
+             (assoc :special-reserve (long special-reserve)))
            chat-id agora)]
     (ports/upsert-raid-auto-schedule! store s)))
 

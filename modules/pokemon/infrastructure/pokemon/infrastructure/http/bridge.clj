@@ -1169,7 +1169,14 @@
                             interval (long-or-nil (g body "intervalMs" "interval-ms"))
                             next-at (long-or-nil (g body "nextAt" "next-at"))
                             idx (long-or-nil (g body "ginasioIndex" "ginasio-index"))
-                            agora (long-or-nil (g body "agoraMs" "agora"))]
+                            agora (long-or-nil (g body "agoraMs" "agora"))
+                            next-cat (g body "nextCategoria" "next-categoria")
+                            daily (long-or-nil (g body "dailyLimit" "daily-limit"))
+                            reserve (long-or-nil (g body "specialReserve" "special-reserve"))
+                            safe? (boolean (or (g body "safeCadence")
+                                               (g body "safe-cadence")))
+                            intervals (or (g body "categoryIntervals")
+                                          (g body "category-intervals"))]
                         (when (str/blank? chat-id)
                           (throw (err/error :invalid_query {:required ["chatId"]})))
                         (ok! ex {:schedule
@@ -1179,7 +1186,14 @@
                                           interval (assoc :interval-ms interval)
                                           next-at (assoc :next-at next-at)
                                           idx (assoc :ginasio-index idx)
-                                          agora (assoc :agora-ms agora)))}))
+                                          agora (assoc :agora-ms agora)
+                                          daily (assoc :daily-limit daily)
+                                          (some? reserve) (assoc :special-reserve reserve)
+                                          safe? (assoc :safe-cadence? true)
+                                          (not (str/blank? (str next-cat)))
+                                          (assoc :next-categoria (str next-cat))
+                                          (map? intervals)
+                                          (assoc :category-intervals intervals)))}))
                       (throw (err/error :method_not_allowed {:method method}))))
 
                 (= path "/v1/raids/auto/tick")

@@ -899,11 +899,106 @@
          (or (load-raid (d/db conn) (:raid-id raid))
              (:raid (:result built))))))))
 
+(defn- load-intent
+  "Próximo slot planejado (categoria/lembretes) — receipt sem migration."
+  [db chat-id]
+  (let [e (receipt-entity db (raid-auto/intent-receipt-id chat-id))]
+    (when (present? e)
+      (let [s (:summary (->receipt e))]
+        (when (map? s)
+          {:next-at (when-let [n (:next-at s)] (long n))
+           :categoria (when-let [c (:categoria s)] (str c))
+           :reminders? (boolean (:reminders? s))})))))
+
+(defn- load-cadence
+  "Overrides de cadência (intervalos + daily-limit) — receipt opcional."
+  [db chat-id]
+  (let [e (receipt-entity db (raid-auto/cadence-receipt-id chat-id))]
+    (when (present? e)
+      (let [s (:summary (->receipt e))]
+        (when (map? s)
+          (cond-> {}
+            (or (:category-intervals s)
+                (and (map? s) (contains? s "raro")))
+            (assoc :category-intervals
+                   (raid-auto/normalize-category-intervals
+                    (or (:category-intervals s) s)))
+            (some? (:daily-limit s))
+            (assoc :daily-limit (long (:daily-limit s)))
+            (some? (:special-reserve s))
+            (assoc :special-reserve (long (:special-reserve s)))))))))
+
+(defn- enrich-schedule
+  "Mescla intent + cadence no mapa da agenda (campos não-schema)."
+  [db schedule]
+  (when schedule
+    (let [chat-id (:chat-id schedule)
+          intent (load-intent db chat-id)
+          cadence (load-cadence db chat-id)
+          intent-match? (and intent
+                             (= (long (:next-at schedule 0))
+                                (long (:next-at intent 0))))]
+      (cond-> schedule
+        (:category-intervals cadence)
+        (assoc :category-intervals (:category-intervals cadence))
+        (some? (:daily-limit cadence))
+        (assoc :daily-limit (:daily-limit cadence))
+        (some? (:special-reserve cadence))
+        (assoc :special-reserve (:special-reserve cadence))
+        intent-match?
+        (assoc :next-categoria (:categoria intent)
+               :next-reminders? (boolean (:reminders? intent)))))))
+
+(defn- auto-spawns-on-day
+  "Spawns auto no dia BRT de `agora` → {:count :specials :rows}."
+  [db chat-id agora]
+  (let [day (raid-auto/day-key-brt agora)
+        rows (->> (d/q '[:find ?criada ?chefe
+                         :in $ ?chat
+                         :where
+                         [?e :raid/chat-id ?chat]
+                         [?e :raid/origem "auto"]
+                         [?e :raid/criada-em ?criada]
+                         [?e :raid/chefe-edn ?chefe]]
+                       db (str chat-id))
+                  (keep (fn [[criada raw]]
+                          (when (= day (raid-auto/day-key-brt criada))
+                            (let [c (edn-read raw)
+                                  cat (str (or (:raridade c) (get c "raridade") "raro"))]
+                              {:at (long criada) :categoria cat}))))
+                  vec)]
+    {:count (count rows)
+     :specials (count (filter #(raid-auto/special-category? (:categoria %)) rows))
+     :rows rows}))
+
 (defn- load-schedule
   [db chat-id]
-  (raid-store/schedule->map
-   (d/pull db '[*] [:raid-auto-schedule/chat-id chat-id])
-   present?))
+  (enrich-schedule
+   db
+   (raid-store/schedule->map
+    (d/pull db '[*] [:raid-auto-schedule/chat-id chat-id])
+    present?)))
+
+(defn- last-auto-by-categoria
+  "Último criada-em por raridade do chefe (raids auto). Sem migration."
+  [db chat-id]
+  (->> (d/q '[:find ?criada ?chefe
+              :in $ ?chat
+              :where
+              [?e :raid/chat-id ?chat]
+              [?e :raid/origem "auto"]
+              [?e :raid/criada-em ?criada]
+              [?e :raid/chefe-edn ?chefe]]
+            db (str chat-id))
+       (reduce
+        (fn [acc [criada raw]]
+          (let [c (edn-read raw)
+                cat (str (or (:raridade c) (get c "raridade") "raro"))
+                prev (get acc cat)]
+            (if (or (nil? prev) (> (long criada) (long prev)))
+              (assoc acc cat (long criada))
+              acc)))
+        {})))
 
 (defn- due-schedule-chats
   [db agora limit]
@@ -1084,8 +1179,23 @@
           rid (when (present? ptr) (:chat-active-raid/raid-id ptr))
           active (when rid (load-raid db rid))
           recent (recent-auto-boss-species db chat-id raid-boss/recent-window-default)
-          plan (raid-auto/plan-spawn schedule active agora
-                                     {:recent-species recent})]
+          last-by (last-auto-by-categoria db chat-id)
+          day-stats (auto-spawns-on-day db chat-id agora)
+          plan (raid-auto/plan-spawn
+                schedule active agora
+                (cond-> {:recent-species recent
+                         :last-by-categoria last-by
+                         :spawns-today (:count day-stats)
+                         :specials-today (:specials day-stats)}
+                  (:category-intervals schedule)
+                  (assoc :category-intervals (:category-intervals schedule))
+                  (some? (:daily-limit schedule))
+                  (assoc :daily-limit (:daily-limit schedule))
+                  (some? (:special-reserve schedule))
+                  (assoc :special-reserve (:special-reserve schedule))
+                  (:next-categoria schedule)
+                  (assoc :forced-categoria (:next-categoria schedule)
+                         :preserve-next-categoria (:next-categoria schedule))))]
       (if (contains? #{:noop :skip-disabled} (:acao plan))
         {:acao (:acao plan) :chat-id chat-id}
         (let [spawn-id (:spawn-id plan)
@@ -1094,7 +1204,11 @@
             ;; Retry/timeout após TX confirmada: não avança agenda de novo.
             (let [kind (:operation-receipt/kind existing)
                   summary (:summary (->receipt existing))
-                  out {:acao (if (= "raid-auto-skip" kind) :skip-busy :spawn)
+                  acao (case kind
+                         "raid-auto-skip" :skip-busy
+                         "raid-auto-skip-cap" :skip-daily-cap
+                         :spawn)
+                  out {:acao acao
                        :chat-id chat-id
                        :duplicate true
                        :spawn-id spawn-id
@@ -1102,11 +1216,14 @@
                        :raid-id (:raid-id summary)
                        :confirmed true}]
               (raid-auto-log/emit!
-               (if (= :skip-busy (:acao out)) :raid_auto_skip :raid_auto_spawn)
+               (case acao
+                 :skip-busy :raid_auto_skip
+                 :skip-daily-cap :raid_auto_skip_cap
+                 :raid_auto_spawn)
                {:chat-id chat-id :spawn-id spawn-id :due-at (:due-at plan)
                 :raid-id (:raid-id out) :result "duplicate"})
               out)
-            (let [announce (when (= :spawn (:acao plan))
+              (let [announce (when (= :spawn (:acao plan))
                              (raid-auto/format-opened
                               {:ginasio (:ginasio plan)
                                :nome-ginasio (:nome-ginasio plan)
@@ -1120,9 +1237,13 @@
                                :criada-em agora
                                :expira (+ agora (long (:duracao-ms plan
                                                                   raid-domain/duracao-inscricoes)))}))
+                  intent-exists? (present?
+                                  (receipt-entity
+                                   db (raid-auto/intent-receipt-id chat-id)))
                   built (raid-store/build-auto-spawn-tx
                          {:plan plan :schedule schedule :active-raid active
-                          :announce-texto announce :agora agora})]
+                          :announce-texto announce :agora agora
+                          :intent-exists? intent-exists?})]
               (if (empty? (:tx built))
                 (assoc (:result built) :chat-id chat-id)
                 (let [tx-result
@@ -1136,12 +1257,17 @@
                                      :due-at (:due-at plan)
                                      :confirmed true)]
                       (raid-auto-log/emit!
-                       (if (= :skip-busy (:acao out)) :raid_auto_skip :raid_auto_spawn)
+                       (case (:acao out)
+                         :skip-busy :raid_auto_skip
+                         :skip-daily-cap :raid_auto_skip_cap
+                         :raid_auto_spawn)
                        {:chat-id chat-id
                         :spawn-id spawn-id
                         :due-at (:due-at plan)
                         :raid-id (get-in out [:raid :raid-id])
                         :next-at (get-in out [:schedule :next-at])
+                        :spawns-today (:spawns-today plan)
+                        :daily-limit (:daily-limit plan)
                         :result (name (:acao out))})
                       out)
                     (let [ex (:ex tx-result)]
@@ -3137,10 +3263,43 @@
                                               (System/currentTimeMillis)))
           built (raid-store/build-upsert-schedule-tx
                  {:schedule (assoc s :revision expected)
-                  :expected-revision expected})]
+                  :expected-revision expected})
+          cadence-exists? (present?
+                           (receipt-entity
+                            db (raid-auto/cadence-receipt-id chat-id)))
+          intent-exists? (present?
+                          (receipt-entity
+                           db (raid-auto/intent-receipt-id chat-id)))
+          cadence-tx (when (or (:category-intervals schedule)
+                               (some? (:daily-limit schedule))
+                               (some? (:special-reserve schedule)))
+                       (raid-store/cadence-receipt-tx
+                        chat-id
+                        (cond-> {}
+                          (:category-intervals schedule)
+                          (assoc :category-intervals (:category-intervals schedule))
+                          (some? (:daily-limit schedule))
+                          (assoc :daily-limit (:daily-limit schedule))
+                          (some? (:special-reserve schedule))
+                          (assoc :special-reserve (:special-reserve schedule)))
+                        cadence-exists?))
+          intent-tx (when (and (:next-categoria s) (:next-at s))
+                      (raid-store/intent-receipt-tx
+                       chat-id
+                       {:next-at (long (:next-at s))
+                        :categoria (str (:next-categoria s))
+                        :reminders?
+                        (boolean
+                         (or (:next-reminders? s)
+                             (raid-auto/special-category?
+                              (:next-categoria s))))}
+                       intent-exists?))
+          tx-data (cond-> (:tx built)
+                    cadence-tx (conj cadence-tx)
+                    intent-tx (conj intent-tx))]
       (try
-        (d/transact conn {:tx-data (:tx built)})
-        (:schedule (:result built))
+        (d/transact conn {:tx-data tx-data})
+        (enrich-schedule (d/db conn) (:schedule (:result built)))
         (catch Exception ex
           (if (err/conflict? ex)
             (throw (err/error :raid_auto_schedule_conflict
