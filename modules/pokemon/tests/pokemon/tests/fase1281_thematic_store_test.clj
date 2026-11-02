@@ -170,3 +170,61 @@
                 (thematic/claim! store w {:occurrence-id oid :operation-id "claim-ended-2"})
                 nil
                 (catch Exception ex ex))))))))
+
+(deftest piloto-24h-isolamento-disable-on-end-e-cancel
+  "Etapa B: 24h one-shot, isolamento, fim auto desliga agenda, cancel anuncia."
+  (with-redefs [events/thematic-events-enabled? (constantly true)]
+    (let [{:keys [store conn]} (fresh)
+          agora 6000000
+          day-ms (* 24 60 60 1000)
+          _ (trainer/create-trainer! store {:chat-id "chat-outro" :player-id "misty"})
+          _ (thematic/admin-schedule!
+             store {:chat-id "chat-piloto" :next-at agora
+                    :catalog-id "festival-dragoes" :enabled? true
+                    :duration-h 24 :agora-ms agora})
+          _ (thematic/admin-schedule!
+             store {:chat-id "chat-outro" :next-at agora
+                    :enabled? false :agora-ms agora})
+          t-piloto (thematic/tick! store {:chat-id "chat-piloto" :agora-ms agora})
+          t-outro (thematic/tick! store {:chat-id "chat-outro" :agora-ms agora})
+          t-blank (thematic/tick! store {:agora-ms agora})
+          oid (:started (first (:processed t-piloto)))
+          occ (first (tstore/active-occurrences (d/db conn) "chat-piloto" agora))
+          sched-live (thematic/schedule store "chat-piloto")]
+      (is (some? oid))
+      (is (= "festival-dragoes" (:catalog-id occ)))
+      (is (= day-ms (- (long (:fim-ms occ)) (long (:inicio-ms occ)))))
+      (is (true? (get-in sched-live [:policy :disable-on-end])))
+      (is (nil? (get-in sched-live [:policy :force-catalog-id])))
+      (is (nil? (:started (first (:processed t-outro)))))
+      (is (empty? (tstore/active-occurrences (d/db conn) "chat-outro" agora)))
+      (is (= ["chat-piloto"]
+             (mapv :chat-id
+                   (filter #(= "active" (:status %))
+                           (mapcat :active (:processed t-blank))))))
+      (let [fim (:fim-ms occ)
+            t-end (thematic/tick! store {:chat-id "chat-piloto" :agora-ms fim})
+            p (first (:processed t-end))]
+        (is (= [oid] (:ended p)))
+        (is (true? (:disabled-on-end p)))
+        (is (false? (:enabled (thematic/schedule store "chat-piloto"))))
+        (is (empty? (tstore/active-occurrences (d/db conn) "chat-piloto" fim)))
+        (is (nil? (:started
+                   (first (:processed
+                           (thematic/tick! store {:chat-id "chat-piloto"
+                                                  :agora-ms (+ fim (* 80 60 60 1000))})))))))
+      (let [agora2 (+ agora (* 200 60 60 1000))
+            _ (thematic/admin-schedule!
+               store {:chat-id "chat-piloto" :next-at agora2
+                      :catalog-id "festival-dragoes" :enabled? true
+                      :duration-h 24 :agora-ms agora2})
+            oid2 (:started (first (:processed
+                                   (thematic/tick! store {:chat-id "chat-piloto"
+                                                          :agora-ms agora2}))))
+            cancelled (thematic/cancel! store oid2)
+            end-ev (some #(when (= "thematic-event-ended" (:kind %)) %)
+                         (ports/list-pokemon-outbox store 40))]
+        (is (some? oid2))
+        (is (= "cancelled" (:status cancelled)))
+        (is (some? end-ev))
+        (is (false? (:enabled (thematic/schedule store "chat-piloto"))))))))

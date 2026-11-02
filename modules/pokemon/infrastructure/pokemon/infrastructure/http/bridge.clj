@@ -413,6 +413,7 @@
                         next-at (long-or-nil (g body "nextAt" "next-at"))
                         catalog-id (g body "catalogId" "catalog-id")
                         enabled (g body "enabled")
+                        duration-h (long-or-nil (g body "durationHours" "duration-h" "durationH"))
                         agora (or (long-or-nil (g body "agoraMs" "agora"))
                                   (System/currentTimeMillis))]
                     (when (str/blank? chat-id)
@@ -422,6 +423,7 @@
                                     :next-at (or next-at agora)
                                     :catalog-id catalog-id
                                     :enabled? (when (some? enabled) (boolean enabled))
+                                    :duration-h duration-h
                                     :agora-ms agora})))
 
                   :else (throw (err/error :method_not_allowed {:method method})))

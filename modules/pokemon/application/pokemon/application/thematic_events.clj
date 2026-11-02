@@ -25,17 +25,20 @@
                                         (long (or agora-ms (System/currentTimeMillis)))))
 
 (defn admin-schedule!
-  "Agenda next-at / force catalog / enable. Sem efeito sem auth na bridge."
-  [store {:keys [chat-id next-at catalog-id enabled? agora-ms]}]
+  "Agenda next-at / force catalog / duration-h / enable. Sem efeito sem auth na bridge."
+  [store {:keys [chat-id next-at catalog-id enabled? agora-ms duration-h]}]
   (when (str/blank? (str chat-id))
     (throw (err/error :invalid_query {:required ["chatId"]})))
   (when (and catalog-id (nil? (events/by-id (str catalog-id))))
     (throw (err/error :invalid_query {:catalog-id catalog-id})))
+  (when (and (some? duration-h) (or (not (number? duration-h)) (<= (long duration-h) 0)))
+    (throw (err/error :invalid_query {:duration-h duration-h})))
   (ports/admin-schedule-thematic!
    store chat-id
    {:next-at (long (or next-at agora-ms (System/currentTimeMillis)))
     :catalog-id (some-> catalog-id str)
-    :enabled? enabled?}))
+    :enabled? enabled?
+    :duration-h (when (some? duration-h) (long duration-h))}))
 
 (defn cancel!
   [store occurrence-id]

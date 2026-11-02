@@ -113,22 +113,41 @@
   (load-schedule (d/db conn) chat-id))
 
 (defn admin-schedule!
-  [conn chat-id {:keys [next-at catalog-id enabled?]}]
+  "Agenda next-at / force catalog / duração forçada (h) / enable.
+   duration-h ⇒ one-shot: force-duration-h + disable-on-end (sem recorrência)."
+  [conn chat-id {:keys [next-at catalog-id enabled? duration-h]}]
   (ensure-schedule! conn chat-id (or next-at (System/currentTimeMillis)))
-  (let [tx (cond-> [[:db/add [:thematic-event-schedule/chat-id chat-id]
+  (let [policy (cond-> {}
+                 catalog-id (assoc :force-catalog-id (str catalog-id))
+                 (some? duration-h) (assoc :force-duration-h (long duration-h)
+                                           :disable-on-end true))
+        tx (cond-> [[:db/add [:thematic-event-schedule/chat-id chat-id]
                      :thematic-event-schedule/next-at (long next-at)]]
              (some? enabled?)
              (conj [:db/add [:thematic-event-schedule/chat-id chat-id]
                     :thematic-event-schedule/enabled (boolean enabled?)])
-             catalog-id
+             (seq policy)
              (conj [:db/add [:thematic-event-schedule/chat-id chat-id]
-                    :thematic-event-schedule/policy-edn
-                    (pr-str {:force-catalog-id (str catalog-id)})]))]
+                    :thematic-event-schedule/policy-edn (pr-str policy)]))]
     (d/transact conn {:tx-data tx})
     (load-schedule (d/db conn) chat-id)))
 
 (defn- force-catalog-id [sched-m]
   (get-in sched-m [:policy :force-catalog-id]))
+
+(defn- force-duration-ms [sched-m catalog-id]
+  (if-let [h (get-in sched-m [:policy :force-duration-h])]
+    (* (long h) 60 60 1000)
+    (sched/duration-ms catalog-id)))
+
+(defn- disable-on-end? [sched-m]
+  (true? (get-in sched-m [:policy :disable-on-end])))
+
+(defn- policy-after-force-start
+  "Remove force-* mas preserva disable-on-end para o encerramento one-shot."
+  [sched-m]
+  (cond-> {}
+    (disable-on-end? sched-m) (assoc :disable-on-end true)))
 
 (defn tick-chat!
   "Processa fim de ocorrências + possível ativação. Idempotente."
@@ -156,11 +175,19 @@
                          [[:db/add [:thematic-event-occurrence/id oid]
                            :thematic-event-occurrence/announced-end? true]]))))
            ends)
+          ;; One-shot piloto: ao encerrar, desliga agenda (impede recorrência em next-at).
+          tx-disable
+          (when (and (seq ends) (disable-on-end? sched-m) (:enabled sched-m))
+            [[:db/add [:thematic-event-schedule/chat-id chat-id]
+              :thematic-event-schedule/enabled false]
+             [:db/add [:thematic-event-schedule/chat-id chat-id]
+              :thematic-event-schedule/policy-edn (pr-str {})]])
           forced (force-catalog-id sched-m)
-          plan (when (and (:enabled sched-m) (empty? ends))
+          ;; Não inicia novo evento no mesmo tick em que encerrou (one-shot / anti-corrida).
+          plan (when (and (:enabled sched-m) (empty? ends) (nil? tx-disable))
                  (if (and forced (empty? actives))
                    (let [start (long agora-ms)
-                         dur (sched/duration-ms forced)
+                         dur (force-duration-ms sched-m forced)
                          oid (sched/occurrence-id chat-id forced start)]
                      {:catalog-id forced :occurrence-id oid
                       :inicio-ms start :fim-ms (+ start dur)
@@ -181,7 +208,8 @@
             (let [ev (events/by-id (:catalog-id plan))
                   oid (:occurrence-id plan)
                   start-outbox (str "thematic-start:" oid)
-                  rem (sched/format-remaining (- (:fim-ms plan) (:inicio-ms plan)))]
+                  rem (sched/format-remaining (- (:fim-ms plan) (:inicio-ms plan)))
+                  policy' (policy-after-force-start sched-m)]
               (concat
                [{:thematic-event-occurrence/id oid
                  :thematic-event-occurrence/chat-id chat-id
@@ -202,30 +230,51 @@
                  :thematic-event-schedule/next-at (sched/next-slot-after (:inicio-ms plan))]
                 [:db/add [:thematic-event-schedule/chat-id chat-id]
                  :thematic-event-schedule/revision (inc (long (:revision sched-m 0)))]
-                ;; Limpa force após uso
+                ;; Limpa force-* ; preserva disable-on-end se one-shot
                 [:db/add [:thematic-event-schedule/chat-id chat-id]
-                 :thematic-event-schedule/policy-edn (pr-str {})]]
+                 :thematic-event-schedule/policy-edn (pr-str policy')]]
                (when ev
                  (outbox-tx start-outbox chat-id "thematic-event-started"
                             (events/announce-start-text ev rem) agora-ms)))))
-          tx (vec (concat tx-end tx-start))]
+          tx (vec (concat tx-end tx-disable tx-start))]
       (when (seq tx)
         (d/transact conn {:tx-data tx}))
       {:ended (mapv :occurrence-id ends)
        :started (when (and plan (not (:thematic-event-occurrence/id existing-occ)))
                   (:occurrence-id plan))
+       :disabled-on-end (boolean (seq tx-disable))
        :schedule (load-schedule (d/db conn) chat-id)
        :active (active-occurrences (d/db conn) chat-id agora-ms)})))
 
 (defn cancel-occurrence!
+  "Desativação emergencial: status cancelled + anúncio de fim (idempotente).
+   Se o schedule do chat tiver disable-on-end, desliga a agenda."
   [conn occurrence-id]
   (let [db (d/db conn)
-        e (d/pull db '[*] [:thematic-event-occurrence/id occurrence-id])]
+        e (d/pull db '[*] [:thematic-event-occurrence/id occurrence-id])
+        occ (occurrence->map e)]
     (when-not (:thematic-event-occurrence/id e)
       (throw (err/error :not_found {:occurrence-id occurrence-id})))
-    (d/transact conn {:tx-data [[:db/add [:thematic-event-occurrence/id occurrence-id]
-                                 :thematic-event-occurrence/status "cancelled"]]})
-    (occurrence->map (d/pull (d/db conn) '[*] [:thematic-event-occurrence/id occurrence-id]))))
+    (let [agora (System/currentTimeMillis)
+          chat-id (:chat-id occ)
+          sched-m (load-schedule db chat-id)
+          ev (events/by-id (:catalog-id occ))
+          end-outbox (str "thematic-end:" occurrence-id)
+          existing (d/pull db '[*] [:pokemon-outbox/id end-outbox])
+          tx (cond-> [[:db/add [:thematic-event-occurrence/id occurrence-id]
+                       :thematic-event-occurrence/status "cancelled"]]
+               (and ev (not (:announced-end? occ)) (not (:pokemon-outbox/id existing)))
+               (concat (outbox-tx end-outbox chat-id "thematic-event-ended"
+                                  (events/announce-end-text ev) agora)
+                       [[:db/add [:thematic-event-occurrence/id occurrence-id]
+                         :thematic-event-occurrence/announced-end? true]])
+               (and sched-m (disable-on-end? sched-m) (:enabled sched-m))
+               (concat [[:db/add [:thematic-event-schedule/chat-id chat-id]
+                         :thematic-event-schedule/enabled false]
+                        [:db/add [:thematic-event-schedule/chat-id chat-id]
+                         :thematic-event-schedule/policy-edn (pr-str {})]]))]
+      (d/transact conn {:tx-data (vec tx)})
+      (occurrence->map (d/pull (d/db conn) '[*] [:thematic-event-occurrence/id occurrence-id])))))
 
 (defn- trainer-level [save]
   (:nivel (xp/progresso-treinador
