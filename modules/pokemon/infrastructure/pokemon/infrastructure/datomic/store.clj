@@ -1045,6 +1045,65 @@
          (take (long limit))
          vec)))
 
+(defn- intent-planning-candidate-chats
+  "12.7.3: enabled com next-at futuro dentro do lead de planejamento (antes de T-30)."
+  [db agora limit]
+  (let [agora (long agora)
+        horizon (+ agora raid-auto/intent-planning-lead-ms)]
+    (->> (d/q '[:find ?chat
+                :in $ ?agora ?horizon
+                :where
+                [?e :raid-auto-schedule/enabled true]
+                [?e :raid-auto-schedule/chat-id ?chat]
+                [?e :raid-auto-schedule/next-at ?n]
+                [(< ?agora ?n)]
+                [(<= ?n ?horizon)]]
+              db agora horizon)
+         (map first)
+         (sort)
+         (take (long limit))
+         vec)))
+
+(defn- ensure-intent-for-chat!
+  "Persiste intent do slot atual sem spawn. Idempotente; não re-sorteia se já
+   houver next-categoria (intent match ou reserva explícita)."
+  [conn chat-id agora]
+  (let [db (d/db conn)
+        schedule (or (load-schedule db chat-id)
+                     (raid-auto/default-schedule chat-id agora))]
+    (if-not (raid-auto/needs-intent-planning? schedule agora)
+      {:acao :noop :chat-id chat-id}
+      (let [last-by (last-auto-by-categoria db chat-id)
+            day-stats (auto-spawns-on-day db chat-id agora)
+            intent (raid-auto/plan-slot-intent
+                    schedule last-by
+                    (cond-> {:spawns-today (:count day-stats)
+                             :specials-today (:specials day-stats)}
+                      (:category-intervals schedule)
+                      (assoc :category-intervals (:category-intervals schedule))
+                      (some? (:daily-limit schedule))
+                      (assoc :daily-limit (:daily-limit schedule))
+                      (some? (:special-reserve schedule))
+                      (assoc :special-reserve (:special-reserve schedule))))
+            intent-exists? (present?
+                            (receipt-entity
+                             db (raid-auto/intent-receipt-id chat-id)))
+            tx (raid-store/intent-receipt-tx chat-id intent intent-exists?)]
+        (if (nil? tx)
+          {:acao :noop :chat-id chat-id}
+          (do
+            (d/transact conn {:tx-data [tx]})
+            (raid-auto-log/emit!
+             :raid_auto_intent_planned
+             {:chat-id chat-id
+              :next-at (:next-at intent)
+              :due-at (:next-at intent)
+              :result (if (:reminders? intent) "special" "easy")})
+            {:acao :planned
+             :chat-id chat-id
+             :intent intent
+             :next-categoria (:categoria intent)
+             :next-reminders? (:reminders? intent)}))))))
 (defn- pending-reminder-outbox-ids
   [db]
   (->> (d/q '[:find ?id ?k
@@ -3359,21 +3418,28 @@
           ;; 2) Lembretes órfãos (enabled:false / nextAt mudou) → ack sem entrega.
           suppressed (suppress-stale-reminders! conn agora)
           db1 (d/db conn)
-          ;; 3) Lembretes T-30/15/5 (antes do spawn oficial).
+          ;; 3) 12.7.3 — intent do slot atual antes dos ovos (sem spawn).
+          intent-chats
+          (if (string? chat-filter)
+            [chat-filter]
+            (intent-planning-candidate-chats db1 agora limit))
+          planned (mapv #(ensure-intent-for-chat! conn % agora) intent-chats)
+          db1b (d/db conn)
+          ;; 4) Lembretes T-30/15/5 (antes do spawn oficial).
           reminder-chats
           (if (string? chat-filter)
-            (let [s (load-schedule db1 chat-filter)]
+            (let [s (load-schedule db1b chat-filter)]
               (if (and s (:enabled s)
                        (< agora (long (:next-at s 0)))
                        (<= (long (:next-at s 0))
                            (+ agora raid-auto/reminder-offset-30-ms)))
                 [chat-filter]
                 []))
-            (reminder-candidate-chats db1 agora limit))
+            (reminder-candidate-chats db1b agora limit))
           reminded (vec (mapcat #(emit-reminders-for-chat! conn % agora)
                                 reminder-chats))
           db2 (d/db conn)
-          ;; 4) Spawns due.
+          ;; 5) Spawns due.
           due (if (string? chat-filter)
                 (let [s (load-schedule db2 chat-filter)]
                   (if (and s (raid-auto/due? s agora)) [chat-filter] []))
@@ -3381,11 +3447,11 @@
           spawned (mapv #(spawn-auto-for-chat! conn % agora) due)]
       {:enabled true
        :agora agora
+       :planned (filterv #(not= :noop (:acao %)) planned)
        :spawned spawned
        :reminded reminded
        :suppressed suppressed
        :expired (filterv #(not= :noop (:acao %)) expired)}))
-
   (list-pokemon-outbox [_ limit]
     (let [db (d/db conn)
           rows (->> (d/q '[:find ?id ?created

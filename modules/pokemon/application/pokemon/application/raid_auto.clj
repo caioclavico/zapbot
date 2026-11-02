@@ -18,12 +18,18 @@
   "Atualiza agenda. enabled default false se omitido na criação.
    Cadência 12.7.2: category-intervals / daily-limit / next-categoria.
    Com `:safe-cadence? true` (migração 6h→1h): nunca antecipa next-at nem
-   dropa especial já planejado."
+   dropa especial já planejado.
+   12.7.3: se next-at muda sem next-categoria explícita, invalida o intent do
+   slot antigo (não carrega especial/raro para o novo due)."
   [store {:keys [chat-id enabled interval-ms next-at ginasio-index agora-ms
                  category-intervals next-categoria next-reminders?
                  daily-limit special-reserve safe-cadence?]}]
   (let [agora (long (or agora-ms (System/currentTimeMillis)))
         cur (get-schedule store chat-id)
+        next-at-changed?
+        (and (not safe-cadence?)
+             (some? next-at)
+             (not= (long next-at) (long (:next-at cur 0))))
         patch (if safe-cadence?
                 (raid-auto/safe-cadence-patch
                  cur {:interval-ms interval-ms
@@ -46,6 +52,8 @@
              (assoc :category-intervals category-intervals)
              (and (not safe-cadence?) (some? next-categoria))
              (assoc :next-categoria (str next-categoria))
+             (and (not safe-cadence?) next-at-changed? (nil? next-categoria))
+             (assoc :next-categoria nil :next-reminders? false)
              (and (not safe-cadence?) (some? next-reminders?))
              (assoc :next-reminders? (boolean next-reminders?))
              (and (not safe-cadence?) (some? daily-limit))
@@ -54,7 +62,6 @@
              (assoc :special-reserve (long special-reserve)))
            chat-id agora)]
     (ports/upsert-raid-auto-schedule! store s)))
-
 (defn tick!
   "Processa agendas due + expire de lobbies auto. Relógio injetável via agora-ms.
    Sem efeito se global-enabled? for false (kill switch)."

@@ -1,16 +1,16 @@
 (ns pokemon.domain.raid-auto
-  "Agenda de aparições automáticas — regras puras (Fase 3 / 3.1 / 12.7 / 12.7.1 / 12.7.2).
+  "Agenda de aparições automáticas — regras puras (Fase 3 / 3.1 / 12.7 / 12.7.1 / 12.7.2 / 12.7.3).
   Desligada por padrão; não altera combate/economia.
   Chefe: catálogo dinâmico (raid-boss), não lista fixa de ginásio.
   Cadência 12.7.2: intervalo-base (~1h) + cooldown por categoria; lembretes
-  T-30/15/5 (ovo) só para eventos especiais (lendário/mítico)."
+  T-30/15/5 (ovo) só para eventos especiais (lendário/mítico).
+  12.7.3: intent do slot atual planejado antes de T-30 (não só pós-spawn)."
   (:require [clojure.string :as str]
             [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.raid :as raid]
             [pokemon.domain.raid-boss :as raid-boss])
   (:import [java.time Instant ZoneId]))
-
 ;; Cadência base entre slots exclusivos (1 evento por grupo por vez).
 ;; Cooldowns por categoria vivem em category-interval-ms-default.
 (def default-interval-ms (* 60 60 1000))
@@ -52,11 +52,13 @@
 (def reminder-offset-15-ms (* 15 60 1000))
 (def reminder-offset-5-ms (* 5 60 1000))
 
+;; 12.7.3: planejar categoria com folga antes do primeiro ovo (T-30).
+;; Tick típico ~30s → lead 40min garante intent persistido antes da janela.
+(def intent-planning-lead-ms (* 40 60 1000))
 ;; Janela de atraso tolerada após fire-at. Tick típico 30s; deploy/restart no
 ;; meio da janela NÃO deve disparar lembretes já vencidos há minutos
 ;; (ex.: cutover em T-20 não envia o T-30 perdido).
 (def reminder-late-grace-ms (* 2 60 1000))
-
 (def reminder-specs
   "Specs estáveis: offset → kind outbox → minutos no PNG."
   [{:offset-ms reminder-offset-30-ms :minutes 30 :kind "raid-reminder-30"}
@@ -560,13 +562,43 @@
   {(str (or categoria "raro")) 1.0})
 
 (defn plan-next-intent
-  "Planeja categoria do próximo slot (após spawn/skip). Puro."
+  "Planeja categoria de um slot (next-at alvo). Puro.
+   Usado no pós-spawn/skip (slot seguinte) e no planejamento antecipado 12.7.3
+   (slot atual)."
   [next-at last-by-cat opts]
   (let [cat (or (:preserve-categoria opts)
                 (pick-categoria next-at last-by-cat opts))]
     {:next-at (long next-at)
      :categoria (str cat)
      :reminders? (special-category? cat)}))
+
+(defn intent-matches-next-at?
+  "True se o receipt de intent aponta para o mesmo next-at da agenda."
+  [intent next-at]
+  (and (map? intent)
+       (some? (:next-at intent))
+       (some? next-at)
+       (= (long (:next-at intent)) (long next-at))))
+
+(defn needs-intent-planning?
+  "12.7.3: agenda enabled com next-at futuro e sem categoria durável para esse
+   slot. Planeja assim que o slot entra na janela (agora + lead >= next-at) ou
+   já está dentro de T-30 — nunca após o due (spawn assume).
+   Não re-sorteia se next-categoria já veio do intent (enrich) ou PUT."
+  ([schedule agora]
+   (needs-intent-planning? schedule agora intent-planning-lead-ms))
+  ([schedule agora lead-ms]
+   (let [agora (long agora)
+         due (long (:next-at schedule 0))
+         lead (long (or lead-ms intent-planning-lead-ms))]
+     (boolean
+      (and (map? schedule)
+           (:enabled schedule)
+           (pos? due)
+           (< agora due)
+           ;; dentro da janela de planejamento (lead) ou já em T-30+
+           (<= due (+ agora (max lead reminder-offset-30-ms)))
+           (nil? (:next-categoria schedule)))))))
 
 (defn- budget-opts
   [schedule opts]
@@ -587,6 +619,23 @@
      :special-reserve reserve
      :spawns-today (long (or (:spawns-today opts) 0))
      :specials-today (long (or (:specials-today opts) 0))}))
+
+(defn plan-slot-intent
+  "Planeja categoria do slot ATUAL (next-at da agenda). Puro — sem spawn.
+   Preserva especial já reservado em :next-categoria / :preserve-categoria."
+  [schedule last-by-cat opts]
+  (let [schedule (normalize-schedule schedule (:chat-id schedule)
+                                     (or (:next-at schedule) 0))
+        due (long (:next-at schedule))
+        cat-opts (budget-opts schedule opts)
+        preserve (or (:preserve-categoria opts)
+                     (when (special-category? (:next-categoria schedule))
+                       (:next-categoria schedule)))]
+    (plan-next-intent
+     due last-by-cat
+     (cond-> cat-opts
+       (special-category? preserve)
+       (assoc :preserve-categoria (str preserve))))))
 
 (defn plan-spawn
   "Decide o que o tick deve fazer. Puro — store aplica CAS.

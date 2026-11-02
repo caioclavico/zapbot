@@ -3,8 +3,7 @@
 
 (def ^:private allowed-keys
   #{:chat-id :raid-id :spawn-id :due-at :next-at :origem :result :event-id
-    :active-raid-id :active-fase})
-
+    :active-raid-id :active-fase :kind})
 (defn emit!
   "event: keyword/string. fields: mapa plano (valores escalares, chaves allowlist)."
   [event fields]
