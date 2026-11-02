@@ -672,11 +672,16 @@
        :n-participantes (count (:ordem raid []))
        :participantes
        (mapv (fn [pid]
-               (let [p (get parts pid)]
-                 {:player-id pid
-                  :nome (:nome p)
-                  :hp (:hp p)
-                  :dano (:dano p 0)}))
+               (let [p (get parts pid)
+                     poke (:pokemon p)]
+                 (cond-> {:player-id pid
+                          :nome (:nome p)
+                          :hp (:hp p)
+                          :dano (:dano p 0)
+                          :collection-index (:collection-index p)}
+                   poke (assoc :pokemon
+                               (select-keys poke
+                                            [:nome :species :nivel :hp-atual])))))
              (:ordem raid []))
        :chefe (select-keys (or (:chefe raid) {})
                            [:nome :species :raridade :hp :tipos :imagem
@@ -757,21 +762,56 @@
                       (pos? poder))))
              (or (:golpes p) []))))
 
+(defn- pokemon-by-collection-index
+  "Resolve o mon do jogador por `:collection-index` canônico.
+   Fallback `nth` cobre ativo-index legado (= posição na coleção ordenada)."
+  [colecao idx]
+  (let [idx (long idx)]
+    (or (some #(when (= (long (:collection-index % -1)) idx) %) colecao)
+        (when (and (<= 0 idx) (< idx (count colecao)))
+          (nth colecao idx)))))
+
+(defn- raid-auto-score
+  "Critérios reais de combate disponíveis: soma de atributos + melhor
+   poder ofensivo. Sem type chart no domínio de raide."
+  [p]
+  (let [stats (reduce + 0 (map #(long (or (get p %) 0))
+                               [:hp-atual :ataque :defesa
+                                :atq-esp :def-esp :veloc]))
+        max-poder (reduce max 0
+                          (map #(long (or (:poder %) (get % "poder") 0))
+                               (or (:golpes p) [])))]
+    (+ stats (long max-poder))))
+
 (defn- raid-auto-index
+  "Melhor mon *elegível deste jogador* — nunca compartilha seleção."
   [raid colecao]
-  (let [score (fn [p]
-                (reduce + 0 (map #(long (or (get p %) 0))
-                                 [:hp-atual :ataque :defesa
-                                  :atq-esp :def-esp :veloc])))
-        aptos (filterv #(raid-apto? raid %) colecao)]
-    (if (seq aptos)
-      (long (:collection-index (apply max-key score aptos)))
-      (throw (err/error :invalid_raid_pokemon {:auto? true})))))
+  (let [aptos (filterv #(raid-apto? raid %) colecao)]
+    (when-not (seq aptos)
+      (throw (err/error :invalid_raid_pokemon {:auto? true})))
+    (let [best (apply max-key raid-auto-score aptos)
+          ci (:collection-index best)]
+      (if (some? ci)
+        (long ci)
+        (long (or (first (keep-indexed
+                          (fn [i p] (when (identical? p best) i))
+                          colecao))
+                  0))))))
+
+(defn- raid-inapto-reason
+  [raid p]
+  (cond
+    (nil? p) :not_found
+    (not (pos? (long (:hp-atual p 0)))) :hp
+    (not (raid-domain/pokemon-elegivel-liga? (:liga raid) p)) :liga
+    :else :sem_golpe_ofensivo))
 
 (defn join-raid!
-  "Inscrição. Modes: `:auto?` (melhor apto), `:use-active?` (Pokémon ativo
-   elegível; se inapto → auto), ou `:collection-index` explícito.
-   No lobby, reentrar com outro índice atualiza o snapshot."
+  "Inscrição *por jogador/save*. Modes:
+   - `:auto?` → melhor apto da coleção deste jogador
+   - `:use-active?` → Pokémon ativo; se inapto → erro (sem fallback silencioso)
+   - `:collection-index` → slot explícito
+   No lobby, reentrar atualiza só o snapshot deste `player-id`."
   [store {:keys [chat-id player-id save-id fence-generation operation-id
                  raid-id collection-index nome agora-ms auto? use-active?]
           :as req}]
@@ -785,10 +825,13 @@
               auto? (raid-auto-index raid colecao)
               use-active?
               (let [ai (long (:ativo-index save-m 0))
-                    p (when (< ai (count colecao)) (nth colecao ai))]
-                (if (raid-apto? raid p)
-                  ai
-                  (raid-auto-index raid colecao)))
+                    p (pokemon-by-collection-index colecao ai)]
+                (when-not (raid-apto? raid p)
+                  (throw (err/error :invalid_raid_pokemon
+                                    {:use-active? true
+                                     :ativo-index ai
+                                     :reason (raid-inapto-reason raid p)})))
+                (long (:collection-index p ai)))
               (some? collection-index) (long collection-index)
               :else (throw (err/error :invalid_query
                                       {:required ["collectionIndex|auto|useActive"]})))
@@ -807,8 +850,12 @@
      :raid (raid-summary (:raid result))
      :collection-index (long idx)
      :mode (cond auto? "auto" use-active? "ativo" :else "index")
-     :participant (select-keys (:participant result)
-                               [:nome :hp :dano :collection-index])}))
+     :participant (let [part (:participant result)
+                        poke (:pokemon part)]
+                    (cond-> (select-keys part
+                                         [:nome :hp :dano :collection-index])
+                      poke (assoc :pokemon (select-keys poke
+                                                        [:nome :species :nivel]))))}))
 
 (defn leave-raid!
   [store {:keys [chat-id player-id save-id fence-generation operation-id

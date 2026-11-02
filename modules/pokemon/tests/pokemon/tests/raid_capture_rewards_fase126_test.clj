@@ -389,3 +389,113 @@
       (is (= :raid_combatant_locked code))
       (is (= 0 (get-in (raid-app/get-raid s rid)
                        [:participantes "ash" :collection-index]))))))
+
+;; --- Hotfix 12.6.2: seleção isolada por jogador + captura sem fuga definitiva ---
+
+(def ^:private mon-fraco
+  "Inapto: nível fora da liga bronze + sem golpe ofensivo."
+  {:nome "Magikarp" :hp 40 :ataque 10 :defesa 55 :atq-esp 10 :def-esp 20 :veloc 80
+   :tipos ["water"] :nivel 5 :raridade "comum"
+   :golpes [{:nome-exibicao "Splash" :tipo "normal" :poder 0 :classe :status}]})
+
+(def ^:private mon-forte
+  {:nome "Dragonite" :hp 220 :ataque 120 :defesa 90 :atq-esp 100 :def-esp 90 :veloc 80
+   :tipos ["dragon" "flying"] :nivel 22 :raridade "raro"
+   :golpes [{:nome-exibicao "Outrage" :tipo "dragon" :poder 110 :classe :fisico}]})
+
+(deftest multi-jogador-entrar-auto-nao-altera-outro
+  "A entra com auto (melhor), B com ativo — seleções independentes."
+  (let [s (fresh-store! "r1262-iso")
+        chat "c-iso"
+        rid "raid-iso"]
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (collection/adicionar-pokemon! s chat "ash" mon-b 180 nil)
+    (collection/adicionar-pokemon! s chat "ash" mon-forte 220 nil)
+    (collection/adicionar-pokemon! s chat "misty" mon-b 180 nil)
+    ;; Misty ativo = Onix (idx 1); Ash ativo permanece Snorlax (0).
+    (active-app/set-active! s chat "misty" {:operation-id "set-m" :idx 1})
+    (open! s chat rid)
+    (let [ja (tx/join-raid!
+              s {:chat-id chat :player-id "ash" :save-id "a"
+                 :fence-generation (fence s chat "ash")
+                 :operation-id "ja-auto" :auto? true :nome "Ash" :agora-ms 2})
+          jm (tx/join-raid!
+              s {:chat-id chat :player-id "misty" :save-id "a"
+                 :fence-generation (fence s chat "misty")
+                 :operation-id "jm-ativo" :use-active? true :nome "Misty"
+                 :agora-ms 3})
+          raid (raid-app/get-raid s rid)]
+      (is (= "auto" (:mode ja)))
+      (is (= "ativo" (:mode jm)))
+      ;; Auto escolhe Dragonite (melhor score) só para Ash.
+      (is (= "Dragonite" (get-in raid [:participantes "ash" :pokemon :nome])))
+      (is (= "Onix" (get-in raid [:participantes "misty" :pokemon :nome])))
+      (is (= 1 (:collection-index jm)))
+      ;; Ash reentra no lobby trocando para Snorlax — Misty intacta.
+      (let [ja2 (tx/join-raid!
+                 s {:chat-id chat :player-id "ash" :save-id "a"
+                    :fence-generation (fence s chat "ash")
+                    :operation-id "ja-swap" :collection-index 0 :nome "Ash"
+                    :agora-ms 4})
+            raid2 (raid-app/get-raid s rid)]
+        (is (true? (:refreshed ja2)))
+        (is (= "Snorlax" (get-in raid2 [:participantes "ash" :pokemon :nome])))
+        (is (= "Onix" (get-in raid2 [:participantes "misty" :pokemon :nome])))))))
+
+(deftest use-active-inapto-nao-faz-fallback-silencioso
+  (let [s (fresh-store! "r1262-inapto")
+        chat "c-in"
+        rid "raid-in"]
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (collection/adicionar-pokemon! s chat "ash" mon-fraco 40 nil)
+    (active-app/set-active! s chat "ash" {:operation-id "set-karp" :idx 1})
+    (open! s chat rid)
+    (let [code (try
+                 (tx/join-raid!
+                  s {:chat-id chat :player-id "ash" :save-id "a"
+                     :fence-generation (fence s chat "ash")
+                     :operation-id "j-bad" :use-active? true :nome "Ash"
+                     :agora-ms 2})
+                 (catch Exception ex (err/error-code ex)))]
+      (is (= :invalid_raid_pokemon code))
+      (is (nil? (get-in (raid-app/get-raid s rid) [:participantes "ash"]))))))
+
+(deftest captura-falha-preserva-janela-sem-fuga-definitiva
+  "Falha de bola ≠ fuga. Após falha ainda há captura-pendente; expiração é distinta."
+  (let [s (fresh-store! "r1262-flee")
+        chat "c-fl"
+        rid "raid-fl"]
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (win-raid! s chat rid)
+    (let [cap (tx/raid-capture!
+               s {:chat-id chat :player-id "ash" :save-id "a"
+                  :fence-generation (fence s chat "ash")
+                  :operation-id "cap-miss" :bola "ultra-bola" :roll 99
+                  :frambo true :agora-ms 100})
+          raid (raid-app/get-raid s rid)
+          dto (reads/active-raid s chat "ash" {:agora-ms 100})]
+      (is (false? (:capturou cap)))
+      (is (= 95 (:chance cap)) "ultra+frambo cap 95")
+      (is (true? (:frambo cap)))
+      (is (= 1 (:tentativas cap)))
+      (is (true? (raid/captura-pendente? raid "ash" 100)))
+      (is (true? (get-in dto [:raid :captura-pendente])))
+      ;; Sem campo/flag de fuga definitiva no DTO de captura de raide.
+      (is (nil? (:fugiu cap)))
+      (is (false? (boolean (:fugiu cap)))))
+    (testing "janela expirada ≠ fuga aleatória"
+      (let [expira (long (:captura-expira (raid-app/get-raid s rid)))
+            code (try
+                   (tx/raid-capture!
+                    s {:chat-id chat :player-id "ash" :save-id "a"
+                       :fence-generation (fence s chat "ash")
+                       :operation-id "cap-exp" :bola "ultra-bola" :roll 0
+                       :agora-ms (+ expira 1)})
+                   (catch Exception ex (err/error-code ex)))]
+        (is (= :raid_capture_unavailable code))
+        ;; Recompensas de vitória permanecem.
+        (is (= 50 (:coins (ports/get-save s chat "ash" "a"))))
+        (is (= 6 (:pe-raids (ports/get-save s chat "ash" "a"))))))))

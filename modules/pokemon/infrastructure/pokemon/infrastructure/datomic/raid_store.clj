@@ -406,7 +406,9 @@
                          :requested idx}))
 
       :else
-      (let [poke (when (< idx (count colecao)) (nth colecao idx))
+      (let [poke (or (some #(when (= (long (:collection-index % -1)) idx) %) colecao)
+                     (when (and (<= 0 idx) (< idx (count colecao)))
+                       (nth colecao idx)))
             _ (when-not poke (throw (err/error :pokemon_not_found {:idx idx})))
             _ (when-not (raid/pokemon-elegivel-liga? (:liga raid) poke)
                 (throw (err/error :raid_liga_mismatch

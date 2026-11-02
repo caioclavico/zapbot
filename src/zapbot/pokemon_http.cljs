@@ -276,13 +276,17 @@
                ctx (str "jvm:" (:requestId pedido)) resposta)))
 
 (defn- envelope-jvm
-  "Texto obrigatório; imagem opcional. Efeitos ficam vazios (não são TX Datomic)."
-  ([pedido texto] (envelope-jvm pedido texto nil))
-  ([pedido texto imagem]
-   (if imagem
-     (.envelope jvm-present (:requestId pedido) texto
-                #js {:image imagem :caption texto :effects #js []})
-     (.envelope jvm-present (:requestId pedido) texto #js {:effects #js []}))))
+  "Texto obrigatório; imagem e mentions opcionais. Efeitos vazios (não são TX Datomic)."
+  ([pedido texto] (envelope-jvm pedido texto nil nil))
+  ([pedido texto imagem] (envelope-jvm pedido texto imagem nil))
+  ([pedido texto imagem mentions]
+   (let [extras #js {:effects #js []}]
+     (when imagem
+       (aset extras "image" imagem)
+       (aset extras "caption" texto))
+     (when (seq mentions)
+       (aset extras "mentions" (clj->js (vec mentions))))
+     (.envelope jvm-present (:requestId pedido) texto extras))))
 
 (defn- render-seguro!
   "Render de mídia pós-TX. Qualquer falha → nil (nunca reexecuta gameplay)."
@@ -709,8 +713,11 @@
                             :hpAtacante (or (.-vezHp (.-raid data))
                                             (.-vezHp raid))
                             :fase (.-fase (.-raid data))
-                            :turnIndex (.-turnIndex (.-raid data))}))]
-        (envelope-jvm pedido (.formatRaidAttack jvm-present data prefix) img))
+                            :turnIndex (.-turnIndex (.-raid data))}))
+              present (.coerceRaidPresent jvm-present
+                                          (.formatRaidAttack jvm-present data prefix))]
+        (envelope-jvm pedido (.-text present) img
+                      (js->clj (or (.-mentions present) #js []))))
 
       ;; fruta / frambo / fruta frambo
       (or (= "frambo" sub) (= "fruta" sub))

@@ -1121,7 +1121,7 @@ function formatError(err) {
     RAID_NO_ELIGIBLE_TURN: '⚠️ Nenhum participante elegível para iniciar o combate.',
     RAID_SAVE_MISMATCH: '⚠️ Você mudou de save após entrar — reentre na próxima raide.',
     RAID_LIGA_MISMATCH: '❓ Esse Pokémon não está na faixa de nível da liga da raide.',
-    INVALID_RAID_POKEMON: '❓ Escolha um Pokémon saudável com golpe ofensivo: !pk raide time.',
+    INVALID_RAID_POKEMON: '❓ Seu Pokémon ativo não está apto para esta raide (HP, liga ou golpe ofensivo). Use !pk raide entrar auto, !pk raide entrar <n> ou !pk escolher + !pk raide entrar.',
     INVALID_RAID_MOVE: '❓ Use !pk raide atacar <1-4> com um golpe ofensivo.',
     RAID_CAPTURE_UNAVAILABLE: '❓ Captura indisponível (sem dano, janela expirada ou já capturou).',
     FRAMBO_ALREADY_PREPARED: '🍓 Frambo já está preparada para a próxima tentativa.',
@@ -1791,10 +1791,58 @@ function displayTrainerName(partOrNome, playerId) {
   const nome = typeof partOrNome === 'string'
     ? partOrNome
     : (partOrNome && (partOrNome.nome || partOrNome.name));
-  if (nome && String(nome).trim() && !/@/.test(String(nome))) {
+  if (nome && String(nome).trim() && !looksLikeTechnicalId(String(nome))) {
     return String(nome).trim();
   }
   return 'Treinador';
+}
+
+/** IDs técnicos WhatsApp (@lid / @c.us / dígitos) — nunca exibir ao jogador. */
+function looksLikeTechnicalId(value) {
+  const s = String(value || '').trim();
+  if (!s) return true;
+  if (/@lid\b/i.test(s) || /@c\.us\b/i.test(s) || /@s\.whatsapp\.net\b/i.test(s)) {
+    return true;
+  }
+  if (/^\d{8,}$/.test(s)) return true;
+  if (/^@?\d{8,}@/i.test(s)) return true;
+  return false;
+}
+
+/**
+ * Rótulo seguro para menção visual (@Nome). Nunca telefone/LID.
+ * Fallback: Treinador N (1-based na ordem da raide).
+ */
+function safeRaidMentionLabel(part, ordinal) {
+  const raw = part && (part.nome || part.name || part.displayName || part.display_name);
+  if (raw && String(raw).trim() && !looksLikeTechnicalId(raw)) {
+    // Remove @ inicial e espaços extremos; preserva o nome de exibição.
+    return String(raw).trim().replace(/^@+/, '');
+  }
+  const n = ordinal != null ? Number(ordinal) + 1 : 1;
+  return `Treinador ${n}`;
+}
+
+/**
+ * Constrói texto com @rótulos e lista de JIDs para whatsapp-web.js.
+ * Credenciais/recompensas continuam indexadas por playerId canônico.
+ */
+function buildRaidMentionRoster(participants) {
+  const parts = Array.isArray(participants) ? participants : [];
+  const mentions = [];
+  const labels = [];
+  const byPlayerId = {};
+  parts.forEach((p, i) => {
+    const pid = p && (p.playerId || p['player-id'] || p.id);
+    const label = safeRaidMentionLabel(p, i);
+    const tag = `@${label}`;
+    labels.push({ playerId: pid, label, tag, part: p, ordinal: i });
+    if (pid && typeof pid === 'string' && pid.includes('@')) {
+      mentions.push(pid);
+    }
+    if (pid) byPlayerId[pid] = { label, tag, part: p, ordinal: i };
+  });
+  return { mentions, labels, byPlayerId };
 }
 
 function formatRaidMoveLines(pokemon, prefix = '!pk') {
@@ -1987,62 +2035,100 @@ function formatRaidStart(data, prefix = '!pk') {
   ].join('\n');
 }
 
-function formatRaidRewardLines(rewards, viewerId) {
+function formatRaidRewardLines(rewards, viewerId, mentionRoster) {
   const rows = Array.isArray(rewards) ? rewards : [];
   if (!rows.length) {
-    return ['🎁 *RECOMPENSAS*', '_Nenhuma recompensa liquidada nesta resposta._'];
+    return { lines: ['🎁 *RECOMPENSAS*', '_Nenhuma recompensa liquidada nesta resposta._'], mentions: [] };
   }
-  const mine = viewerId
-    ? rows.find((rw) => (rw.playerId || rw['player-id']) === viewerId)
-    : (rows.length === 1 ? rows[0] : null);
-  const focus = mine || rows[0];
-  const moedas = focus.moedas != null ? focus.moedas : 0;
-  const pe = focus.pe != null ? focus.pe : 0;
-  const xp = focus.xpPokemon != null ? focus.xpPokemon : focus['xp-pokemon'];
-  const lines = [
-    '🎁 *RECOMPENSAS* (creditadas e persistidas)',
-    `💰 Moedas: +${moedas}`,
-    xp != null ? `⭐ XP do Pokémon: +${xp}` : null,
-    `🏅 PE do treinador: +${pe}`
-  ].filter(Boolean);
-  // Domínio atual não dropa bolas/frutas na vitória — só capturáveis via loja/captura.
-  if (rows.length > 1) {
-    lines.push('', '_Por participante com dano > 0:_');
-    for (const rw of rows) {
-      const pid = rw.playerId || rw['player-id'] || '?';
-      const x = rw.xpPokemon != null ? rw.xpPokemon : rw['xp-pokemon'];
-      lines.push(`• ${pid}: +${rw.moedas || 0}💰 · +${rw.pe || 0} PE` + (x != null ? ` · +${x} XP` : ''));
+  const roster = mentionRoster || { byPlayerId: {}, mentions: [], labels: [] };
+  const lines = ['🎁 *RECOMPENSAS*'];
+  const mentions = [];
+  for (const rw of rows) {
+    const pid = rw.playerId || rw['player-id'];
+    const entry = (pid && roster.byPlayerId[pid]) || null;
+    const tag = entry ? entry.tag : `@${safeRaidMentionLabel({ nome: rw.nome }, mentions.length)}`;
+    if (pid && typeof pid === 'string' && pid.includes('@')) {
+      mentions.push(pid);
     }
+    const x = rw.xpPokemon != null ? rw.xpPokemon : rw['xp-pokemon'];
+    lines.push(
+      tag,
+      `💰 +${rw.moedas != null ? rw.moedas : 0} moedas`,
+      `🏅 +${rw.pe != null ? rw.pe : 0} PE`,
+      x != null ? `⭐ +${x} XP` : null,
+      ''
+    );
   }
-  return lines;
+  while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return { lines: lines.filter((l) => l !== null), mentions };
+}
+
+/**
+ * Vitória de raide: texto + mentions (JIDs canônicos).
+ * Retorno: `{ text, mentions }` — callers devem passar mentions ao envelope.
+ */
+function formatRaidVictory(data, prefix = '!pk') {
+  const r = (data && data.raid) || {};
+  const chefe = (r.chefe && (r.chefe.nome || r.chefe.species)) || 'Chefe';
+  const participants = Array.isArray(r.participantes) ? r.participantes : [];
+  const roster = buildRaidMentionRoster(participants);
+  const partLines = ['👥 *PARTICIPANTES*'];
+  if (roster.labels.length) {
+    for (const entry of roster.labels) {
+      const poke = entry.part && (entry.part.pokemon || entry.part.Pokemon);
+      const pokeNome = (poke && (poke.nome || poke.species)) || '?';
+      partLines.push(`${entry.tag} — Pokémon: ${pokeNome}`);
+    }
+  } else {
+    partLines.push('_Sem participantes listados._');
+  }
+  const rewards = formatRaidRewardLines(data.rewards, data.playerId || data['player-id'], roster);
+  const mentionSet = [];
+  for (const m of [...roster.mentions, ...rewards.mentions]) {
+    if (m && !mentionSet.includes(m)) mentionSet.push(m);
+  }
+  const text = [
+    '🏆 *RAID CONCLUÍDA!*',
+    `👾 Chefe derrotado: *${chefe}*`,
+    '',
+    ...partLines,
+    '',
+    ...rewards.lines,
+    '',
+    '🎯 *CAPTURA DO CHEFE*',
+    `${prefix} raide capturar          — ver bolas / chances`,
+    `${prefix} raide capturar ultra-bola`,
+    `${prefix} raide fruta             — Frambo (+chance)`,
+    `${prefix} mochila`
+  ].join('\n');
+  return { text, mentions: mentionSet };
 }
 
 function formatRaidAttack(data, prefix = '!pk') {
-  const r = (data && data.raid) || {};
-  const chefe = (r.chefe && (r.chefe.nome || r.chefe.species)) || 'Chefe';
-  if (data.venceu) {
-    return [
-      '🏆 *RAID CONCLUÍDA!*',
-      `👾 Chefe derrotado: *${chefe}*`,
-      '',
-      ...formatRaidRewardLines(data.rewards, data.playerId || data['player-id']),
-      '',
-      '🎯 *CAPTURA DO CHEFE*',
-      `${prefix} raide capturar          — ver bolas / chances`,
-      `${prefix} raide capturar ultra-bola`,
-      `${prefix} raide fruta             — Frambo (+chance)`,
-      `${prefix} mochila`
-    ].join('\n');
+  if (data && data.venceu) {
+    return formatRaidVictory(data, prefix);
   }
-  if (data.derrota) {
+  if (data && data.derrota) {
     return '💀 A raide foi derrotada. Sem recompensas.';
   }
+  const r = (data && data.raid) || {};
   return [
-    `💥 Dano ${data.dano != null ? data.dano : '?'} · revide ${data.revide != null ? data.revide : 0}`,
+    `💥 Dano ${data && data.dano != null ? data.dano : '?'} · revide ${data && data.revide != null ? data.revide : 0}`,
     `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`,
     ...formatRaidTurnBlock(r, prefix),
-    data.duplicate ? '_idempotente: mesmo operationId_' : null
+    data && data.duplicate ? '_idempotente: mesmo operationId_' : null
   ].filter(Boolean).join('\n');
+}
+
+/** Normaliza retorno de formatRaidAttack (string | {text,mentions}). */
+function coerceRaidPresent(result) {
+  if (result && typeof result === 'object' && typeof result.text === 'string') {
+    return {
+      text: result.text,
+      mentions: Array.isArray(result.mentions) ? result.mentions.filter(Boolean) : []
+    };
+  }
+  return { text: String(result || ''), mentions: [] };
 }
 
 function formatRaidCaptureUi(data, prefix = '!pk') {
@@ -2094,24 +2180,46 @@ function formatRaidFrambo(data, prefix = '!pk') {
   ].join('\n');
 }
 
+function bolaLabelRaid(bolaId) {
+  const id = String(bolaId || 'pokebola').toLowerCase();
+  if (id === 'ultra-bola' || id === 'ultrabola') return 'Ultra Bola';
+  if (id === 'grande-bola' || id === 'super-bola') return 'Grande Bola';
+  if (id === 'pokebola' || id === 'poke-bola') return 'Poké Bola';
+  return bolaId || 'Poké Bola';
+}
+
 function formatRaidCapture(data, prefix = '!pk') {
   const bola = data.bola || 'pokebola';
+  const bolaNome = bolaLabelRaid(bola);
   const frambo = Boolean(data.frambo);
   const chefe = (data.chefe && (data.chefe.nome || data.chefe.species)) || 'chefe';
-  const bonus = frambo ? ' · Frambo' : '';
+  const tent = data.tentativas != null ? Number(data.tentativas) : null;
+  const maxT = 3;
   if (data.capturou) {
     return [
-      `✅ Capturou *${chefe}* com ${bola}${bonus}! (${data.chance != null ? data.chance : '?'}%)`,
+      `✅ Capturou *${chefe}* com ${bolaNome}${frambo ? ' + Frambo' : ''}! (${data.chance != null ? data.chance : '?'}%)`,
       'Entrou na coleção (nv.1).'
     ].join('\n');
   }
+  // Raide: falha de bola ≠ fuga definitiva. Janela segue até 3 tentativas ou captura-expira.
+  const aindaPode = tent == null || tent < maxT;
+  if (aindaPode) {
+    return [
+      `💥 *O ${chefe} escapou da ${bolaNome}!*`,
+      data.chance != null ? `🎯 Chance era ${data.chance}%${frambo ? ' (Frambo)' : ''}.` : null,
+      '🎯 Você ainda pode tentar capturá-lo.',
+      tent != null ? `Tentativas: ${tent}/${maxT}` : null,
+      frambo ? '🍓 Frambo consumida nesta tentativa.' : null,
+      `Tente de novo: ${prefix} raide capturar <bola>`,
+      `Preparar Frambo: ${prefix} raide frambo`
+    ].filter(Boolean).join('\n');
+  }
   return [
-    `💥 A ${bola} falhou${bonus} (${data.chance != null ? data.chance : '?'}%).`,
-    `Tentativas: ${data.tentativas || '?'}/3`,
-    frambo ? '🍓 Frambo consumida nesta tentativa.' : null,
-    `Tente de novo: ${prefix} raide capturar <bola>`,
-    `Preparar Frambo: ${prefix} raide frambo`
-  ].filter(Boolean).join('\n');
+    `💥 *O ${chefe} escapou da ${bolaNome}!*`,
+    `Tentativas esgotadas (${maxT}/${maxT}).`,
+    '🎁 As recompensas pela vitória foram mantidas.',
+    'A janela de captura encerrou para você (sem fuga aleatória do chefe).'
+  ].join('\n');
 }
 
 function formatJoyStatus(data, prefix = '!pk') {
@@ -2742,10 +2850,15 @@ module.exports = {
   formatLeaveResult,
   formatRaidStart,
   formatRaidAttack,
+  formatRaidVictory,
   formatRaidCapture,
   formatRaidCaptureUi,
   formatRaidFrambo,
   formatRaidRewardLines,
+  coerceRaidPresent,
+  buildRaidMentionRoster,
+  safeRaidMentionLabel,
+  looksLikeTechnicalId,
   formatRaidEligible,
   raidFlag,
   displayTrainerName,

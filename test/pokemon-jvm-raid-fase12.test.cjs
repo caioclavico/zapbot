@@ -200,23 +200,35 @@ test('resolveCommand não engole raid abrir N', () => {
 test('vitória lista recompensas reais e captura; fruta aliases', () => {
   assert.equal(present.resolveRaidSubcommand('fruta'), 'fruta');
   assert.equal(present.resolveRaidSubcommand('frambo'), 'frambo');
-  const win = present.formatRaidAttack({
+  const winRaw = present.formatRaidAttack({
     venceu: true,
-    playerId: 'ash',
+    playerId: '121212@lid',
     dano: 80,
     rewards: [
-      { playerId: 'ash', moedas: 50, pe: 6, xpPokemon: 6 },
-      { playerId: 'misty', moedas: 50, pe: 6, xpPokemon: 6 }
+      { playerId: '121212@lid', moedas: 50, pe: 6, xpPokemon: 6 },
+      { playerId: '5511999999999@c.us', moedas: 50, pe: 6, xpPokemon: 6 }
     ],
-    raid: { chefe: { nome: 'Onix' } }
+    raid: {
+      chefe: { nome: 'Onix' },
+      participantes: [
+        { playerId: '121212@lid', nome: 'Jogador1', pokemon: { nome: 'Charizard' } },
+        { playerId: '5511999999999@c.us', nome: 'Jogador2', pokemon: { nome: 'Blastoise' } }
+      ]
+    }
   }, '!pk');
-  assert.match(win, /RAID CONCLUÍDA/);
-  assert.match(win, /Onix/);
-  assert.match(win, /Moedas: \+50/);
-  assert.match(win, /PE do treinador: \+6/);
-  assert.match(win, /XP do Pokémon: \+6/);
-  assert.match(win, /raide fruta/);
-  assert.match(win, /capturar/);
+  const win = present.coerceRaidPresent(winRaw);
+  assert.match(win.text, /RAID CONCLUÍDA/);
+  assert.match(win.text, /Onix/);
+  assert.match(win.text, /@Jogador1 — Pokémon: Charizard/);
+  assert.match(win.text, /@Jogador2 — Pokémon: Blastoise/);
+  assert.match(win.text, /@Jogador1\n💰 \+50 moedas/);
+  assert.match(win.text, /🏅 \+6 PE/);
+  assert.match(win.text, /⭐ \+6 XP/);
+  assert.doesNotMatch(win.text, /121212@lid/);
+  assert.doesNotMatch(win.text, /5511999999999/);
+  assert.deepEqual(win.mentions, ['121212@lid', '5511999999999@c.us']);
+  assert.match(win.text, /raide fruta/);
+  assert.match(win.text, /capturar/);
   const fruta = present.formatRaidFrambo({}, '!pk');
   assert.match(fruta, /Fruta Frambo utilizada/);
   const ui = present.formatRaidCaptureUi({
@@ -235,4 +247,43 @@ test('vitória lista recompensas reais e captura; fruta aliases', () => {
   assert.match(ui, /Ultra Bola: 3/);
   assert.match(ui, /bônus ativo/);
   assert.match(ui, /raide fruta/);
+});
+
+test('menções: nome ausente e IDs técnicos viram Treinador N', () => {
+  const win = present.coerceRaidPresent(present.formatRaidAttack({
+    venceu: true,
+    rewards: [
+      { playerId: 'aaa@lid', moedas: 50, pe: 6, xpPokemon: 6 },
+      { playerId: 'bbb@c.us', moedas: 50, pe: 6, xpPokemon: 6 }
+    ],
+    raid: {
+      chefe: { nome: 'Onix' },
+      participantes: [
+        { playerId: 'aaa@lid', nome: '121212@lid', pokemon: { nome: 'Pikachu' } },
+        { playerId: 'bbb@c.us', pokemon: { nome: 'Squirtle' } }
+      ]
+    }
+  }, '!pk'));
+  assert.match(win.text, /@Treinador 1 — Pokémon: Pikachu/);
+  assert.match(win.text, /@Treinador 2 — Pokémon: Squirtle/);
+  assert.doesNotMatch(win.text, /@lid/);
+  assert.deepEqual(win.mentions, ['aaa@lid', 'bbb@c.us']);
+});
+
+test('captura malsucedida distingue falha de bola vs tentativas esgotadas', () => {
+  const fail = present.formatRaidCapture({
+    capturou: false, bola: 'ultra-bola', frambo: true, chance: 95,
+    tentativas: 1, chefe: { nome: 'Onix' }
+  }, '!pk');
+  assert.match(fail, /escapou da Ultra Bola/);
+  assert.match(fail, /ainda pode tentar/);
+  assert.doesNotMatch(fail, /fugiu!/);
+
+  const done = present.formatRaidCapture({
+    capturou: false, bola: 'ultra-bola', chance: 95,
+    tentativas: 3, chefe: { nome: 'Onix' }
+  }, '!pk');
+  assert.match(done, /Tentativas esgotadas/);
+  assert.match(done, /recompensas pela vitória foram mantidas/);
+  assert.doesNotMatch(done, /fugiu!/);
 });
