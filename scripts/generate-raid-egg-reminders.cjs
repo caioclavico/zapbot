@@ -67,10 +67,6 @@ function gymBackdrop() {
   <circle cx="120" cy="180" r="3" fill="#fde68a"/><circle cx="980" cy="220" r="2.5" fill="#fde68a"/>
   <circle cx="200" cy="320" r="2" fill="#e0e7ff"/><circle cx="860" cy="160" r="3" fill="#e0e7ff"/>
   <circle cx="960" cy="400" r="2" fill="#fde68a"/><circle cx="80" cy="450" r="2.5" fill="#e0e7ff"/>
-  <rect x="140" y="420" width="70" height="380" rx="12" fill="#1e293b" stroke="#94a3b8" stroke-width="5"/>
-  <rect x="870" y="420" width="70" height="380" rx="12" fill="#1e293b" stroke="#94a3b8" stroke-width="5"/>
-  <path d="M110 420 L540 200 L970 420" fill="none" stroke="#fbbf24" stroke-width="16" stroke-linejoin="round"/>
-  <path d="M110 420 L540 200 L970 420" fill="none" stroke="#fef3c7" stroke-width="5" stroke-linejoin="round" opacity="0.75"/>
   <ellipse cx="540" cy="920" rx="360" ry="55" fill="url(#plat)" stroke="#78350f" stroke-width="6"/>
   <ellipse cx="540" cy="908" rx="300" ry="32" fill="#fde68a" opacity="0.5"/>
   `;

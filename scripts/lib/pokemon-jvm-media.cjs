@@ -615,6 +615,86 @@ function isRaidReminderKind(kind) {
   return Boolean(RAID_REMINDER_KIND_TO_THEME[String(kind || '')]);
 }
 
+function isRaidOpenedKind(kind) {
+  return String(kind || '') === 'raid-opened';
+}
+
+/**
+ * Revelação do chefe no spawn (mesmo visual do ovo, sem casinha).
+ * Baixa sprite oficial; falha → null (caller cai para texto).
+ */
+async function renderRaidOpenedReveal(media = {}, { filename } = {}) {
+  try {
+    const W = 1080;
+    const H = 1080;
+    const nome = String((media && (media.nome || media.species)) || 'Chefe');
+    const cat = String((media && media.categoria) || 'raro').toUpperCase();
+    const ginasio = String((media && media.ginasio) || '');
+    const pokemon = {
+      nome,
+      species: media && media.species,
+      imagem: media && media.imagem,
+      altura: 1.6
+    };
+    const { buffer: spriteBuf, tamanho } = await spriteProporcional(pokemon, 520);
+    const svg = Buffer.from(
+      `<?xml version="1.0" encoding="UTF-8"?>`
+      + `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">`
+      + `<defs>`
+      + `<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">`
+      + `<stop offset="0%" stop-color="#0f0a2a"/>`
+      + `<stop offset="40%" stop-color="#1e1b4b"/>`
+      + `<stop offset="100%" stop-color="#020617"/>`
+      + `</linearGradient>`
+      + `<linearGradient id="plat" x1="0" y1="0" x2="0" y2="1">`
+      + `<stop offset="0%" stop-color="#fbbf24"/>`
+      + `<stop offset="100%" stop-color="#b45309"/>`
+      + `</linearGradient>`
+      + `<radialGradient id="aura" cx="50%" cy="45%" r="55%">`
+      + `<stop offset="0%" stop-color="#fbbf24aa"/>`
+      + `<stop offset="55%" stop-color="#a855f744"/>`
+      + `<stop offset="100%" stop-color="#00000000"/>`
+      + `</radialGradient>`
+      + `</defs>`
+      + `<rect width="${W}" height="${H}" fill="url(#sky)"/>`
+      + `<circle cx="120" cy="180" r="3" fill="#fde68a"/>`
+      + `<circle cx="980" cy="220" r="2.5" fill="#fde68a"/>`
+      + `<circle cx="200" cy="320" r="2" fill="#e0e7ff"/>`
+      + `<circle cx="860" cy="160" r="3" fill="#e0e7ff"/>`
+      + `<circle cx="960" cy="400" r="2" fill="#fde68a"/>`
+      + `<circle cx="80" cy="450" r="2.5" fill="#e0e7ff"/>`
+      + `<ellipse cx="540" cy="920" rx="360" ry="55" fill="url(#plat)" stroke="#78350f" stroke-width="6"/>`
+      + `<ellipse cx="540" cy="908" rx="300" ry="32" fill="#fde68a" opacity="0.5"/>`
+      + `<circle cx="540" cy="620" r="280" fill="url(#aura)"/>`
+      + `<rect x="60" y="40" width="960" height="200" rx="24" fill="#020617cc"/>`
+      + `<text x="540" y="100" text-anchor="middle" font-family="Arial Black, Helvetica, sans-serif"`
+      + ` font-size="42" fill="#fde68a" letter-spacing="6">RAID REVELADA</text>`
+      + `<text x="540" y="175" text-anchor="middle" font-family="Arial Black, Helvetica, sans-serif"`
+      + ` font-size="52" font-weight="700" fill="#f8fafc" stroke="#0f172a" stroke-width="3"`
+      + ` letter-spacing="2">${escapeXml(nome.toUpperCase())}</text>`
+      + `<text x="540" y="1020" text-anchor="middle" font-family="Arial Black, Helvetica, sans-serif"`
+      + ` font-size="34" fill="#fde68a" letter-spacing="3">${escapeXml(cat)}`
+      + `${ginasio ? ' · ' + escapeXml(ginasio.toUpperCase()) : ''}</text>`
+      + `</svg>`
+    );
+    const left = Math.max(0, 540 - Math.floor(tamanho / 2));
+    const top = Math.max(220, 620 - Math.floor(tamanho / 2));
+    const buf = await sharp(svg)
+      .composite([{ input: spriteBuf, left, top, blend: 'over' }])
+      .png()
+      .toBuffer();
+    return {
+      base64: buf.toString('base64'),
+      mimeType: 'image/png',
+      filename: filename || 'raid-revelada.png'
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] raid-opened:', err.message || err);
+    return null;
+  }
+}
+
 /**
  * Perfil do treinador (legado): fundo vermelho + Ash + Pokémon ativo.
  */
@@ -978,7 +1058,9 @@ module.exports = {
   renderTrainerCard,
   renderRaidBattleCard,
   renderRaidEggReminder,
+  renderRaidOpenedReveal,
   isRaidReminderKind,
+  isRaidOpenedKind,
   resolveJoyTheme,
   efeitoDeTurno,
   tamanhoVisual,

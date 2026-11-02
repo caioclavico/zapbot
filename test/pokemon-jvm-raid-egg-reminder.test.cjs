@@ -25,6 +25,8 @@ describe('raid egg reminder media (12.7.1)', () => {
     assert.equal(media.isRaidReminderKind('raid-reminder-15'), true);
     assert.equal(media.isRaidReminderKind('raid-reminder-5'), true);
     assert.equal(media.isRaidReminderKind('raid-opened'), false);
+    assert.equal(media.isRaidOpenedKind('raid-opened'), true);
+    assert.equal(media.isRaidOpenedKind('raid-reminder-30'), false);
   });
 
   it('renderRaidEggReminder returns png base64 without network', async () => {
@@ -45,5 +47,23 @@ describe('raid egg reminder media (12.7.1)', () => {
     const out = await media.renderRaidEggReminder(15);
     assert.ok(out);
     assert.match(out.filename, /15min/);
+  });
+
+  it('renderRaidOpenedReveal shows boss (sprite or placeholder)', async () => {
+    const out = await media.renderRaidOpenedReveal({
+      nome: 'Mewtwo',
+      species: 'mewtwo',
+      categoria: 'lendario',
+      ginasio: 'Ginásio Central',
+      imagem:
+        'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/150.png'
+    });
+    assert.ok(out);
+    assert.equal(out.mimeType, 'image/png');
+    assert.match(out.filename, /raid-revelada/);
+    const buf = Buffer.from(out.base64, 'base64');
+    assert.equal(buf[0], 0x89);
+    assert.equal(buf[1], 0x50);
+    assert.ok(buf.length > 5000);
   });
 });

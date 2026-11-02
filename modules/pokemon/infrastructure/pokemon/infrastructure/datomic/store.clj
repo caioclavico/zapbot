@@ -3463,9 +3463,15 @@
                     vec)]
       (->> rows
            (keep (fn [[id _]]
-                   (raid-store/outbox->map
-                    (d/pull db '[*] [:pokemon-outbox/id id])
-                    present?)))
+                   (when-let [ev (raid-store/outbox->map
+                                  (d/pull db '[*] [:pokemon-outbox/id id])
+                                  present?)]
+                     (if-let [rid (raid-store/opened-raid-id (:id ev))]
+                       (if-let [media (raid-store/opened-media-from-raid
+                                       (load-raid db rid))]
+                         (assoc ev :media media)
+                         ev)
+                       ev))))
            (take (long (or limit 20)))
            vec)))
 

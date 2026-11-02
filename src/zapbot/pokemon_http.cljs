@@ -2756,7 +2756,8 @@
 (defn- entregar-evento-jvm!
   "Retorna a promise do sendMessage — ack JVM só depois do WhatsApp aceitar.
    Aceita outbox de raide (:texto) e notificações idle (:text / payload).
-   Lembretes raid-reminder-* enviam PNG local (ovo) + legenda."
+   Lembretes raid-reminder-* → PNG ovo local + legenda.
+   raid-opened → PNG do chefe (revelação) + legenda; fallback texto."
   [evento]
   (if-let [whatsapp @cliente-whatsapp]
     (let [texto (or (:texto evento)
@@ -2768,24 +2769,38 @@
           mentions (when-let [pid (or (:playerId evento) (:player-id evento))]
                      #js [pid])
           opts (clj->js (cond-> {} mentions (assoc :mentions mentions)))
-          kind (str (or (:kind evento) ""))]
-      (if (.isRaidReminderKind jvm-media kind)
+          kind (str (or (:kind evento) ""))
+          enviar-imagem!
+          (fn [media-info fallback-name]
+            (if media-info
+              (let [media (MessageMedia. (or (.-mimeType media-info) "image/png")
+                                         (.-base64 media-info)
+                                         (or (.-filename media-info) fallback-name))]
+                (.sendMessage whatsapp (:chatId evento) media
+                              (js/Object.assign #js {} opts
+                                                #js {:caption texto})))
+              (.sendMessage whatsapp (:chatId evento) texto opts)))]
+      (cond
+        (.isRaidReminderKind jvm-media kind)
         (-> (p/let [media-info (.renderRaidEggReminder jvm-media kind)
-                    _ (if media-info
-                        (let [media (MessageMedia. (or (.-mimeType media-info) "image/png")
-                                                   (.-base64 media-info)
-                                                   (or (.-filename media-info)
-                                                       "raid-egg.png"))]
-                          (.sendMessage whatsapp (:chatId evento) media
-                                        (js/Object.assign #js {} opts
-                                                          #js {:caption texto})))
-                        ;; Fallback texto se asset ausente — nunca bloqueia o tick.
-                        (.sendMessage whatsapp (:chatId evento) texto opts))]
+                    _ (enviar-imagem! media-info "raid-egg.png")]
               nil)
             (p/catch (fn [erro]
                        (js/console.warn "[PokemonJVM] Lembrete raid imagem falhou; texto:"
                                         (or (.-message erro) erro))
                        (.sendMessage whatsapp (:chatId evento) texto opts))))
+
+        (.isRaidOpenedKind jvm-media kind)
+        (-> (p/let [media-js (clj->js (or (:media evento) {}))
+                    media-info (.renderRaidOpenedReveal jvm-media media-js)
+                    _ (enviar-imagem! media-info "raid-revelada.png")]
+              nil)
+            (p/catch (fn [erro]
+                       (js/console.warn "[PokemonJVM] Revelação raid imagem falhou; texto:"
+                                        (or (.-message erro) erro))
+                       (.sendMessage whatsapp (:chatId evento) texto opts))))
+
+        :else
         (.sendMessage whatsapp (:chatId evento) texto opts)))
     (p/rejected (js/Error. "WhatsApp client ausente no envio de evento JVM."))))
 

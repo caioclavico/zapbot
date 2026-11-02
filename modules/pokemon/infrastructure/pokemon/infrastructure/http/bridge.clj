@@ -1136,11 +1136,18 @@
                           events (raid-auto/pending-events store {:limit limit})]
                       (ok! ex {:events
                                (mapv (fn [e]
-                                       {:id (:id e)
-                                        :chatId (:chat-id e)
-                                        :texto (:texto e)
-                                        :kind (:kind e)
-                                        :createdAt (:created-at e)})
+                                       (cond-> {:id (:id e)
+                                                :chatId (:chat-id e)
+                                                :texto (:texto e)
+                                                :kind (:kind e)
+                                                :createdAt (:created-at e)}
+                                         (map? (:media e))
+                                         (assoc :media
+                                                {:nome (get-in e [:media :nome])
+                                                 :species (get-in e [:media :species])
+                                                 :imagem (get-in e [:media :imagem])
+                                                 :categoria (get-in e [:media :categoria])
+                                                 :ginasio (get-in e [:media :ginasio])})))
                                      events)})))
 
                 (and (str/starts-with? path "/v1/events/")

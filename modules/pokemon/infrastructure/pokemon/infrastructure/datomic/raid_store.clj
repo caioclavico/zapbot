@@ -1,6 +1,7 @@
 (ns pokemon.infrastructure.datomic.raid-store
   "TX builders de raid (fora do store monolítico)."
-  (:require [pokemon.domain.battle :as battle]
+  (:require [clojure.string :as str]
+            [pokemon.domain.battle :as battle]
             [pokemon.domain.capacity :as capacity]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.collection :as coll]
@@ -11,7 +12,6 @@
             [pokemon.domain.raid-auto :as raid-auto]
             [pokemon.infrastructure.datomic.battle-idle-store :as battle-idle-store]
             [pokemon.infrastructure.datomic.economy-store :as economy-store]))
-
 (defn participant->map
   [e edn-read present?]
   (when (present? e)
@@ -124,6 +124,34 @@
      :kind (:pokemon-outbox/kind e)
      :texto (:pokemon-outbox/texto e)
      :created-at (long (:pokemon-outbox/created-at e 0))}))
+
+(defn opened-raid-id
+  "Extrai raid-id de outbox `raid-opened:{raid-id}`."
+  [event-id]
+  (let [id (str event-id)
+        prefix "raid-opened:"]
+    (when (str/starts-with? id prefix)
+      (subs id (count prefix)))))
+
+(defn opened-media-from-raid
+  "Payload de mídia para revelar o chefe no Node (sem migration)."
+  [raid]
+  (when (map? raid)
+    (let [chefe (or (:chefe raid) {})
+          nome (or (:nome chefe) (get chefe "nome")
+                   (:species chefe) (get chefe "species"))
+          imagem (or (:imagem chefe) (get chefe "imagem")
+                     (:imagem-shiny chefe) (get chefe "imagem-shiny"))
+          species (or (:species chefe) (get chefe "species") nome)
+          cat (or (:boss-categoria raid)
+                  (:raridade chefe) (get chefe "raridade")
+                  "raro")]
+      (when (and (string? nome) (seq nome))
+        {:nome (str nome)
+         :species (when species (str species))
+         :imagem (when (string? imagem) (str imagem))
+         :categoria (str cat)
+         :ginasio (str (or (:nome-ginasio raid) (:ginasio raid) ""))}))))
 
 (defn- outbox-tx
   [{:keys [id chat-id kind texto created-at]}]
