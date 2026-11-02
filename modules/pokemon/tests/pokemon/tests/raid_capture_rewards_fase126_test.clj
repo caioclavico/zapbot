@@ -393,7 +393,7 @@
 ;; --- Hotfix 12.6.2: seleção isolada por jogador + captura sem fuga definitiva ---
 
 (def ^:private mon-fraco
-  "Inapto: nível fora da liga bronze + sem golpe ofensivo."
+  "Inapto por HP (desmaiado). Catálogo pode enriquecer golpes — nível não bloqueia mais."
   {:nome "Magikarp" :hp 40 :ataque 10 :defesa 55 :atq-esp 10 :def-esp 20 :veloc 80
    :tipos ["water"] :nivel 5 :raridade "comum"
    :golpes [{:nome-exibicao "Splash" :tipo "normal" :poder 0 :classe :status}]})
@@ -451,6 +451,8 @@
     (boot! s chat "misty")
     (collection/adicionar-pokemon! s chat "ash" mon-fraco 40 nil)
     (active-app/set-active! s chat "ash" {:operation-id "set-karp" :idx 1})
+    ;; Desmaia o ativo — HP 0 continua bloqueando (nível não).
+    (collection/atualizar-hp-status! s chat "ash" 1 0 "desmaiado")
     (open! s chat rid)
     (let [code (try
                  (tx/join-raid!

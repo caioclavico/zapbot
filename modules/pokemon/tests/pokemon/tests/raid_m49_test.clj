@@ -84,18 +84,16 @@
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
         :operation-id "cancel-j" :agora-ms 1500})
-    ;; nv.20 vs liga iniciante → mismatch
-    (let [bad (try
-                (raid-app/open-raid!
-                 s chat "ash"
-                 {:operation-id "open-bad" :raid-id "raid-bad"
-                  :ginasio "agua" :liga "iniciante" :chefe chefe :agora 2000})
-                (raid-app/join-raid!
-                 s chat "misty"
-                 {:operation-id "join-bad" :raid-id "raid-bad"
-                  :collection-index 0 :agora 2001})
-                (catch Exception ex (err/error-code ex)))]
-      (is (= :raid_liga_mismatch bad)))))
+    ;; Hotfix ginásio: nível fora da faixa antiga da liga NÃO bloqueia mais.
+    (raid-app/open-raid!
+     s chat "ash"
+     {:operation-id "open-any-lvl" :raid-id "raid-any"
+      :ginasio "agua" :liga "iniciante" :chefe chefe :agora 2000})
+    (raid-app/join-raid!
+     s chat "misty"
+     {:operation-id "join-any-lvl" :raid-id "raid-any"
+      :collection-index 0 :agora 2001})
+    (is (some? (get-in (raid-app/get-raid s "raid-any") [:participantes "misty"])))))
 
 (deftest ciclo-bridge-vitoria-captura-idempotente
   (let [s (fresh-store! "r49-win")

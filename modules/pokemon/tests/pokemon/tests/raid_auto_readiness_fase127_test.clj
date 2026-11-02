@@ -151,8 +151,10 @@
           (is (some #(= :combate (:acao %)) (:expired tick2)))
           (is (= "combate" (:fase active)))
           (is (some? started))
-          (is (re-find #"Raide iniciada automaticamente" (:texto started)))
-          (is (re-find #"Chefe HP:" (:texto started)))
+          (is (re-find #"RAID INICIADA AUTOMATICAMENTE" (:texto started)))
+          (is (re-find #"HP do chefe:" (:texto started)))
+          (is (re-find #"Vez de" (:texto started)))
+          (is (re-find #"raide atacar" (:texto started)))
           (raid-auto/ack-event! s (:id started) (inc exp))
 
           (let [fight (fight-to-end! s chat ["ash" "misty"] (+ exp 10))]
@@ -349,7 +351,19 @@
                          :boss-categoria (:categoria boss)
                          :lobby (raid/lobby-params-for-categoria (:categoria boss))
                          :min-jogadores 2 :max-jogadores 5 :lobby-minutos 10))
-          started (domain/format-started (assoc boss :hp-chefe 400 :hp-max 400))
+          started (domain/format-started
+                   (assoc boss
+                          :fase "combate"
+                          :hp-chefe 400 :hp-max 400
+                          :vez "ash"
+                          :ordem ["ash"]
+                          :participantes
+                          {"ash" {:nome "Ash" :hp 120
+                                  :pokemon {:nome "Dragonite"
+                                            :golpes [{:nome-exibicao "Garra de Dragão"
+                                                      :poder 80 :classe :fisico}
+                                                     {:nome-exibicao "Hiper Raio"
+                                                      :poder 120 :classe :especial}]}}}))
           cancelled (domain/format-cancelled boss)]
       (is (re-find #"!pk raide entrar auto" opened))
       (is (re-find #"RAID" opened))
@@ -357,7 +371,10 @@
       (is (.contains ^String opened (str "*" nome "*")))
       (is (not (re-find #"@[0-9]+@(lid|c\.us)" opened)))
       (is (not (re-find #"player-id" opened)))
-      (is (re-find #"Chefe HP: 400/400" started))
+      (is (re-find #"HP do chefe: 400/400" started))
+      (is (re-find #"Vez de \*Ash\*" started))
+      (is (re-find #"Garra de Dragão" started))
+      (is (re-find #"!pk raide atacar 1" started))
       (is (re-find #"poucos inscritos" cancelled)))))
 
 ;;;; 9. Seleção ampla

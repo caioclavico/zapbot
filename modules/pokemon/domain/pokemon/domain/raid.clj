@@ -101,12 +101,11 @@
               (min-da-raid raid)))))
 
 (defn pokemon-elegivel-liga?
-  "Pokémon elegível para a liga da raid (nível na faixa)."
-  [liga-id pokemon]
-  (let [liga (obter-liga liga-id)
-        nivel (long (or (:nivel pokemon) (get pokemon "nivel")
-                        (:level pokemon) 1))]
-    (boolean (and liga pokemon (<= (:min liga) nivel (:max liga))))))
+  "Legado: faixa de liga era gate de entrada. A partir do hotfix de ginásio,
+  qualquer nível pode entrar na raid — retorna true se há Pokémon.
+  A liga do ginásio permanece só como metadado/UX de dificuldade do chefe."
+  [_liga-id pokemon]
+  (boolean pokemon))
 
 (defn inscricoes-abertas?
   [raid agora]
@@ -284,10 +283,7 @@
   (let [hp (long (or (:hp-atual pokemon) (:hp pokemon) 0))]
     (when-not (and pokemon (pos? hp) (some golpe-dano? (or (:golpes pokemon) [])))
       (throw (err/error :invalid_raid_pokemon {:player-id player-id})))
-    (when-not (pokemon-elegivel-liga? (:liga raid) pokemon)
-      (throw (err/error :raid_liga_mismatch
-                        {:liga (:liga raid)
-                         :nivel (or (:nivel pokemon) (get pokemon "nivel"))})))
+    ;; Sem bloqueio de nível mínimo/máximo — liga é só flavor do ginásio.
     hp))
 
 (defn entrar

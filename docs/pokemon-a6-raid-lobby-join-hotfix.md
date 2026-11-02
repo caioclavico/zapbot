@@ -1,7 +1,8 @@
 # Hotfix — entrada no lobby + mínimo real = 1
 
-**Status:** implementado e testado localmente · **sem deploy** (aguarda GO)  
-**Produção atual:** cartões de revelação (`c413d14`) — **não alterada**
+**Status:** **SUCCESS em produção (piloto)** — cutover `2026-11-02T05:55:45Z`  
+**Produção atual:** hotfix lobby+solo (`5e8375d`) · relatório `docs/pokemon-a6-raid-deploy-lobby-join-hotfix.md`  
+**Rollback:** imagens de revelação (`c413d14` / digests `34a1b5d7…` / `79a6ae27…`)
 
 ---
 

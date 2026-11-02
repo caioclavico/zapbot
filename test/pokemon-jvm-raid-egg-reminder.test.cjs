@@ -66,4 +66,35 @@ describe('raid egg reminder media (12.7.1)', () => {
     assert.equal(buf[1], 0x50);
     assert.ok(buf.length > 5000);
   });
+
+  it('resolveRevealTheme covers 18 types with distinct accents', () => {
+    assert.equal(Object.keys(media.TYPE_REVEAL_THEMES).length, 18);
+    const fire = media.resolveRevealTheme({ tipo: 'fire' });
+    const water = media.resolveRevealTheme({ tipos: ['water'] });
+    const psychic = media.resolveRevealTheme({ tipo: 'psychic' });
+    assert.equal(fire.label, 'Fogo');
+    assert.equal(water.label, 'Água');
+    assert.equal(psychic.label, 'Psíquico');
+    assert.notEqual(fire.sky[0], water.sky[0]);
+  });
+
+  it('renderRaidOpenedReveal themes by primary type', async () => {
+    const samples = [
+      { nome: 'Moltres', tipo: 'fire', ginasio: '🔥 Fogo', species: 'moltres',
+        imagem: 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/146.png' },
+      { nome: 'Kyogre', tipo: 'water', ginasio: '💧 Água', species: 'kyogre',
+        imagem: 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/382.png' },
+      { nome: 'Mewtwo', tipo: 'psychic', ginasio: '🔮 Psíquico', species: 'mewtwo',
+        imagem: 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/150.png' }
+    ];
+    for (const s of samples) {
+      const out = await media.renderRaidOpenedReveal({
+        ...s, categoria: 'lendario'
+      });
+      assert.ok(out, s.nome);
+      const buf = Buffer.from(out.base64, 'base64');
+      assert.equal(buf[0], 0x89);
+      assert.ok(buf.length > 5000, s.nome);
+    }
+  });
 });

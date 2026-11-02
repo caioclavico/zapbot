@@ -754,7 +754,6 @@
   [raid p]
   (and p
        (pos? (long (:hp-atual p 0)))
-       (raid-domain/pokemon-elegivel-liga? (:liga raid) p)
        (some (fn [g]
                (let [c (or (:classe g) (get g "classe"))
                      poder (long (or (:poder g) (get g "poder") 0))]
@@ -803,7 +802,6 @@
   (cond
     (nil? p) :not_found
     (not (pos? (long (:hp-atual p 0)))) :hp
-    (not (raid-domain/pokemon-elegivel-liga? (:liga raid) p)) :liga
     :else :sem_golpe_ofensivo))
 
 (defn join-raid!

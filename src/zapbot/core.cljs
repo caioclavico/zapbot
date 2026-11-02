@@ -24,6 +24,7 @@
             [zapbot.quiz :as quiz]
             [zapbot.rank :as rank]
             [zapbot.platform-jvm :as platform]
+            [zapbot.gemini :as gemini]
             [zapbot.router :as router]))
 
 (def ^:private Client (.-Client wwjs))
@@ -333,6 +334,7 @@
   (js/console.log (str "✅ " config/bot-name " conectado e pronto para uso!"))
   ;; Não logar número telefônico (PII).
   (js/console.log "📞 Conta autenticada (número omitido).")
+  (gemini/log-status-boot!)
   (if config/staging-bootstrap-group?
     (do
       (reset! bootstrap-client client)

@@ -44,6 +44,43 @@ const TIPO_PT = {
   dark: 'Sombrio', steel: 'Aço', fairy: 'Fada'
 };
 
+/** Temas de revelação por tipo primário do chefe (espelha raid_gym_theme.clj). */
+const TYPE_REVEAL_THEMES = {
+  normal: { sky: ['#1f2937', '#374151', '#111827'], plat: ['#d1d5db', '#6b7280'], accent: '#f3f4f6', label: 'Normal' },
+  fire: { sky: ['#7f1d1d', '#9a3412', '#450a0a'], plat: ['#f97316', '#b45309'], accent: '#fdba74', label: 'Fogo' },
+  water: { sky: ['#0c4a6e', '#075985', '#082f49'], plat: ['#38bdf8', '#0369a1'], accent: '#bae6fd', label: 'Água' },
+  grass: { sky: ['#14532d', '#166534', '#052e16'], plat: ['#4ade80', '#15803d'], accent: '#bbf7d0', label: 'Planta' },
+  electric: { sky: ['#422006', '#713f12', '#1c1917'], plat: ['#facc15', '#a16207'], accent: '#fef08a', label: 'Elétrico' },
+  ice: { sky: ['#0e7490', '#155e75', '#083344'], plat: ['#a5f3fc', '#0891b2'], accent: '#ecfeff', label: 'Gelo' },
+  fighting: { sky: ['#7c2d12', '#9a3412', '#431407'], plat: ['#fb923c', '#c2410c'], accent: '#fed7aa', label: 'Lutador' },
+  poison: { sky: ['#4c1d95', '#5b21b6', '#2e1065'], plat: ['#c084fc', '#7e22ce'], accent: '#e9d5ff', label: 'Veneno' },
+  ground: { sky: ['#78350f', '#92400e', '#451a03'], plat: ['#d97706', '#b45309'], accent: '#fde68a', label: 'Terra' },
+  flying: { sky: ['#1e3a8a', '#1d4ed8', '#0f172a'], plat: ['#93c5fd', '#2563eb'], accent: '#dbeafe', label: 'Voador' },
+  psychic: { sky: ['#831843', '#9d174d', '#500724'], plat: ['#f472b6', '#db2777'], accent: '#fbcfe8', label: 'Psíquico' },
+  bug: { sky: ['#365314', '#3f6212', '#1a2e05'], plat: ['#a3e635', '#65a30d'], accent: '#ecfccb', label: 'Inseto' },
+  rock: { sky: ['#44403c', '#57534e', '#1c1917'], plat: ['#a8a29e', '#78716c'], accent: '#e7e5e4', label: 'Pedra' },
+  ghost: { sky: ['#2e1065', '#4c1d95', '#0f0724'], plat: ['#a78bfa', '#6d28d9'], accent: '#ddd6fe', label: 'Fantasma' },
+  dragon: { sky: ['#1e1b4b', '#312e81', '#0b1026'], plat: ['#818cf8', '#4338ca'], accent: '#c7d2fe', label: 'Dragão' },
+  dark: { sky: ['#0a0a0a', '#171717', '#000000'], plat: ['#525252', '#262626'], accent: '#a3a3a3', label: 'Sombrio' },
+  steel: { sky: ['#334155', '#475569', '#0f172a'], plat: ['#94a3b8', '#64748b'], accent: '#e2e8f0', label: 'Aço' },
+  fairy: { sky: ['#9d174d', '#be185d', '#500724'], plat: ['#f9a8d4', '#db2777'], accent: '#fce7f3', label: 'Fada' }
+};
+
+const DEFAULT_REVEAL_THEME = {
+  sky: ['#0f0a2a', '#1e1b4b', '#020617'],
+  plat: ['#fbbf24', '#b45309'],
+  accent: '#fde68a',
+  label: null
+};
+
+function resolveRevealTheme(media = {}) {
+  const raw = media.tipo || media.type
+    || (Array.isArray(media.tipos) && media.tipos[0])
+    || (Array.isArray(media.types) && media.types[0]);
+  const key = String(raw || '').toLowerCase().trim();
+  return TYPE_REVEAL_THEMES[key] || DEFAULT_REVEAL_THEME;
+}
+
 const CORES_BOLA = {
   pokebola: '#dc2626',
   'grande-bola': '#2563eb',
@@ -630,6 +667,10 @@ async function renderRaidOpenedReveal(media = {}, { filename } = {}) {
     const nome = String((media && (media.nome || media.species)) || 'Chefe');
     const cat = String((media && media.categoria) || 'raro').toUpperCase();
     const ginasio = String((media && media.ginasio) || '');
+    const theme = resolveRevealTheme(media || {});
+    const tipoLabel = theme.label
+      || (media && media.tipo && TIPO_PT[String(media.tipo).toLowerCase()])
+      || '';
     const pokemon = {
       nome,
       species: media && media.species,
@@ -637,44 +678,46 @@ async function renderRaidOpenedReveal(media = {}, { filename } = {}) {
       altura: 1.6
     };
     const { buffer: spriteBuf, tamanho } = await spriteProporcional(pokemon, 520);
+    const footerBits = [cat];
+    if (tipoLabel) footerBits.push(String(tipoLabel).toUpperCase());
+    if (ginasio) footerBits.push(ginasio.toUpperCase());
     const svg = Buffer.from(
       `<?xml version="1.0" encoding="UTF-8"?>`
       + `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">`
       + `<defs>`
       + `<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">`
-      + `<stop offset="0%" stop-color="#0f0a2a"/>`
-      + `<stop offset="40%" stop-color="#1e1b4b"/>`
-      + `<stop offset="100%" stop-color="#020617"/>`
+      + `<stop offset="0%" stop-color="${theme.sky[0]}"/>`
+      + `<stop offset="40%" stop-color="${theme.sky[1]}"/>`
+      + `<stop offset="100%" stop-color="${theme.sky[2]}"/>`
       + `</linearGradient>`
       + `<linearGradient id="plat" x1="0" y1="0" x2="0" y2="1">`
-      + `<stop offset="0%" stop-color="#fbbf24"/>`
-      + `<stop offset="100%" stop-color="#b45309"/>`
+      + `<stop offset="0%" stop-color="${theme.plat[0]}"/>`
+      + `<stop offset="100%" stop-color="${theme.plat[1]}"/>`
       + `</linearGradient>`
       + `<radialGradient id="aura" cx="50%" cy="45%" r="55%">`
-      + `<stop offset="0%" stop-color="#fbbf24aa"/>`
-      + `<stop offset="55%" stop-color="#a855f744"/>`
+      + `<stop offset="0%" stop-color="${theme.accent}aa"/>`
+      + `<stop offset="55%" stop-color="${theme.plat[0]}44"/>`
       + `<stop offset="100%" stop-color="#00000000"/>`
       + `</radialGradient>`
       + `</defs>`
       + `<rect width="${W}" height="${H}" fill="url(#sky)"/>`
-      + `<circle cx="120" cy="180" r="3" fill="#fde68a"/>`
-      + `<circle cx="980" cy="220" r="2.5" fill="#fde68a"/>`
+      + `<circle cx="120" cy="180" r="3" fill="${theme.accent}"/>`
+      + `<circle cx="980" cy="220" r="2.5" fill="${theme.accent}"/>`
       + `<circle cx="200" cy="320" r="2" fill="#e0e7ff"/>`
       + `<circle cx="860" cy="160" r="3" fill="#e0e7ff"/>`
-      + `<circle cx="960" cy="400" r="2" fill="#fde68a"/>`
+      + `<circle cx="960" cy="400" r="2" fill="${theme.accent}"/>`
       + `<circle cx="80" cy="450" r="2.5" fill="#e0e7ff"/>`
-      + `<ellipse cx="540" cy="920" rx="360" ry="55" fill="url(#plat)" stroke="#78350f" stroke-width="6"/>`
-      + `<ellipse cx="540" cy="908" rx="300" ry="32" fill="#fde68a" opacity="0.5"/>`
+      + `<ellipse cx="540" cy="920" rx="360" ry="55" fill="url(#plat)" stroke="#0f172a" stroke-width="6"/>`
+      + `<ellipse cx="540" cy="908" rx="300" ry="32" fill="${theme.accent}" opacity="0.5"/>`
       + `<circle cx="540" cy="620" r="280" fill="url(#aura)"/>`
       + `<rect x="60" y="40" width="960" height="200" rx="24" fill="#020617cc"/>`
       + `<text x="540" y="100" text-anchor="middle" font-family="Arial Black, Helvetica, sans-serif"`
-      + ` font-size="42" fill="#fde68a" letter-spacing="6">RAID REVELADA</text>`
+      + ` font-size="42" fill="${theme.accent}" letter-spacing="6">RAID REVELADA</text>`
       + `<text x="540" y="175" text-anchor="middle" font-family="Arial Black, Helvetica, sans-serif"`
       + ` font-size="52" font-weight="700" fill="#f8fafc" stroke="#0f172a" stroke-width="3"`
       + ` letter-spacing="2">${escapeXml(nome.toUpperCase())}</text>`
       + `<text x="540" y="1020" text-anchor="middle" font-family="Arial Black, Helvetica, sans-serif"`
-      + ` font-size="34" fill="#fde68a" letter-spacing="3">${escapeXml(cat)}`
-      + `${ginasio ? ' · ' + escapeXml(ginasio.toUpperCase()) : ''}</text>`
+      + ` font-size="34" fill="${theme.accent}" letter-spacing="3">${escapeXml(footerBits.join(' · '))}</text>`
       + `</svg>`
     );
     const left = Math.max(0, 540 - Math.floor(tamanho / 2));
@@ -1062,6 +1105,8 @@ module.exports = {
   isRaidReminderKind,
   isRaidOpenedKind,
   resolveJoyTheme,
+  resolveRevealTheme,
+  TYPE_REVEAL_THEMES,
   efeitoDeTurno,
   tamanhoVisual,
   idCenario,

@@ -770,7 +770,6 @@
          aptos (filterv
                 (fn [p]
                   (and (pos? (long (:hp-atual p 0)))
-                       (raid/pokemon-elegivel-liga? (:liga raid) p)
                        (some (fn [g]
                                (let [c (or (:classe g) (get g "classe"))
                                      poder (or (:poder g) (get g "poder") 0)]

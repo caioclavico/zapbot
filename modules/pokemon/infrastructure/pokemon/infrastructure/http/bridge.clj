@@ -1143,11 +1143,17 @@
                                                 :createdAt (:created-at e)}
                                          (map? (:media e))
                                          (assoc :media
-                                                {:nome (get-in e [:media :nome])
-                                                 :species (get-in e [:media :species])
-                                                 :imagem (get-in e [:media :imagem])
-                                                 :categoria (get-in e [:media :categoria])
-                                                 :ginasio (get-in e [:media :ginasio])})))
+                                                (cond-> {:nome (get-in e [:media :nome])
+                                                         :species (get-in e [:media :species])
+                                                         :imagem (get-in e [:media :imagem])
+                                                         :categoria (get-in e [:media :categoria])
+                                                         :ginasio (get-in e [:media :ginasio])}
+                                                  (get-in e [:media :tipo])
+                                                  (assoc :tipo (get-in e [:media :tipo]))
+                                                  (seq (get-in e [:media :tipos]))
+                                                  (assoc :tipos (get-in e [:media :tipos]))))
+                                         (seq (:mentions e))
+                                         (assoc :mentions (vec (:mentions e)))))
                                      events)})))
 
                 (and (str/starts-with? path "/v1/events/")

@@ -3467,12 +3467,23 @@
                    (when-let [ev (raid-store/outbox->map
                                   (d/pull db '[*] [:pokemon-outbox/id id])
                                   present?)]
-                     (if-let [rid (raid-store/opened-raid-id (:id ev))]
-                       (if-let [media (raid-store/opened-media-from-raid
-                                       (load-raid db rid))]
-                         (assoc ev :media media)
-                         ev)
-                       ev))))
+                     (cond
+                       (raid-store/opened-raid-id (:id ev))
+                       (let [rid (raid-store/opened-raid-id (:id ev))]
+                         (if-let [media (raid-store/opened-media-from-raid
+                                         (load-raid db rid))]
+                           (assoc ev :media media)
+                           ev))
+
+                       (raid-store/started-raid-id (:id ev))
+                       (let [rid (raid-store/started-raid-id (:id ev))
+                             raid (load-raid db rid)
+                             vez (when (map? raid) (:vez raid))]
+                         (cond-> ev
+                           (and (string? vez) (seq vez))
+                           (assoc :mentions [vez])))
+
+                       :else ev))))
            (take (long (or limit 20)))
            vec)))
 

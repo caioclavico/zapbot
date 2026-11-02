@@ -9,7 +9,8 @@
             [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.raid :as raid]
-            [pokemon.domain.raid-boss :as raid-boss])
+            [pokemon.domain.raid-boss :as raid-boss]
+            [pokemon.domain.raid-gym-theme :as gym-theme])
   (:import [java.time Instant ZoneId]))
 ;; Cadência base entre slots exclusivos (1 evento por grupo por vez).
 ;; Cooldowns por categoria vivem em category-interval-ms-default.
@@ -390,11 +391,68 @@
          "`!pk raide entrar <n>` — índice da coleção\n"
          "`!pk raide iniciar` — começar agora (1+ inscrito)")))
 
-(defn format-started
+(defn- golpe-label
+  [g]
+  (or (:nome-exibicao g) (get g "nomeExibicao") (get g "nome-exibicao")
+      (:nome g) (get g "nome") "?"))
+
+(defn- golpe-poder
+  [g]
+  (or (:poder g) (get g "poder") "?"))
+
+(defn- format-started-turn-lines
+  "Bloco de turno alinhado a formatRaidTurnBlock (Node) — sem IDs técnicos."
   [raid]
-  (str "⚔️ Raide iniciada automaticamente em "
-       (or (:nome-ginasio raid) (:ginasio raid)) "!\n"
-       "Chefe HP: " (:hp-chefe raid) "/" (:hp-max raid)))
+  (let [parts (:participantes raid {})
+        vez (:vez raid)
+        vp (when vez (get parts vez))
+        poke (or (:pokemon vp) {})
+        nome (let [n (or (:nome vp) "Treinador")]
+               (if (or (re-find #"@(?:lid|c\.us)\b" (str n))
+                       (re-find #"^\d{8,}$" (str n)))
+                 "Treinador"
+                 n))
+        poke-nome (or (:nome poke) (:species poke) (get poke "nome") "?")
+        hp (or (:hp vp) (:hp-atual poke) (get poke "hpAtual") "?")
+        golpes (vec (or (:golpes poke) (get poke "golpes") []))
+        move-lines
+        (map-indexed
+         (fn [i g]
+           (str (inc i) ". " (golpe-label g) " (" (golpe-poder g) ")"
+                " → `!pk raide atacar " (inc i) "`"))
+         (take 4 golpes))
+        vivos (filterv #(pos? (long (get-in parts [% :hp] 0))) (:ordem raid []))
+        proxima (when (and vez (seq vivos))
+                  (first (concat (rest (drop-while #(not= % vez) vivos))
+                                 (take-while #(not= % vez) vivos))))
+        prox-nome (when proxima
+                    (let [n (get-in parts [proxima :nome])]
+                      (when (and n (not (re-find #"@(?:lid|c\.us)\b" (str n))))
+                        n)))]
+    (cond-> [(str "👉 Vez de *" nome "* — " poke-nome " (HP " hp ")")]
+      (seq move-lines) (into move-lines)
+      (empty? move-lines) (conj "_sem golpes ofensivos listados_")
+      prox-nome (conj (str "⏭️ Próximo: *" prox-nome "*"))
+      true (conj "⏳ Aguarde a vez do treinador indicado — ou ataque se for você."))))
+
+(defn format-started
+  "Anúncio de combate automático — mesma informação do início manual
+  (HP do chefe + vez + golpes + comando atacar). Degrada se ainda sem :vez."
+  [raid]
+  (let [ginasio (or (:nome-ginasio raid) (:ginasio raid) "ginásio")
+        chefe (or (:chefe raid) {})
+        chefe-nome (or (:nome chefe) (get chefe "nome") "Chefe")
+        hp-c (or (:hp-chefe raid) "?")
+        hp-m (or (:hp-max raid) hp-c)
+        header [(str "⚔️ *RAID INICIADA AUTOMATICAMENTE!*")
+                (str "🏛️ " ginasio)
+                (str "🔥 Chefe: *" chefe-nome "*")
+                (str "❤️ HP do chefe: " hp-c "/" hp-m)]
+        turn (when (and (= "combate" (str (:fase raid))) (:vez raid))
+               (format-started-turn-lines raid))]
+    (->> (concat header [""] (or turn
+                                 ["⚔️ O combate começou — use `!pk raide status`."]))
+         (str/join "\n"))))
 
 (defn format-cancelled
   [raid]
@@ -730,12 +788,14 @@
              weights (or (:category-weights opts)
                          (force-category-weights cat))
              gym (pick-ginasio (:ginasio-index schedule))
-             boss (raid-boss/select-boss-for-ginasio
-                   (:ginasio gym)
-                   (cond-> {:recent-species recent
-                            :category-weights weights}
-                     (contains? opts :rng) (assoc :rng (:rng opts))
-                     (contains? opts :catalog) (assoc :catalog (:catalog opts))))
+             boss0 (raid-boss/select-boss-for-ginasio
+                    (:ginasio gym)
+                    (cond-> {:recent-species recent
+                             :category-weights weights}
+                      (contains? opts :rng) (assoc :rng (:rng opts))
+                      (contains? opts :catalog) (assoc :catalog (:catalog opts))))
+             ;; Dificuldade (nível/liga) do cursor; identidade visual pelo tipo do chefe.
+             boss (gym-theme/apply-boss-venue boss0 (:chefe boss0))
              sid (spawn-id (:chat-id schedule) due)
              raid-id sid
              species (or (get-in boss [:chefe :species])
@@ -770,6 +830,7 @@
           :liga (:liga boss)
           :chefe (:chefe boss)
           :boss-categoria actual-cat
+          :boss-tipo (:boss-tipo boss)
           :lobby lobby
           :duracao-ms (:duracao-ms lobby)
           :min-jogadores (:min-jogadores lobby)

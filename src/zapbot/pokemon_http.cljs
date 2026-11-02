@@ -2766,8 +2766,11 @@
                     (str "⏰ A batalha encerrou por inatividade ("
                          config/pokemon-battle-idle-timeout-seconds
                          "s sem ação válida)."))
-          mentions (when-let [pid (or (:playerId evento) (:player-id evento))]
-                     #js [pid])
+          mention-ids (or (when-let [xs (:mentions evento)]
+                            (when (seq xs) (vec xs)))
+                          (when-let [pid (or (:playerId evento) (:player-id evento))]
+                            [pid]))
+          mentions (when (seq mention-ids) (clj->js mention-ids))
           opts (clj->js (cond-> {} mentions (assoc :mentions mentions)))
           kind (str (or (:kind evento) ""))
           enviar-imagem!
@@ -2800,6 +2803,7 @@
                                         (or (.-message erro) erro))
                        (.sendMessage whatsapp (:chatId evento) texto opts))))
 
+        ;; raid-started: texto já traz turno/golpes (format-started); mentions = vez.
         :else
         (.sendMessage whatsapp (:chatId evento) texto opts)))
     (p/rejected (js/Error. "WhatsApp client ausente no envio de evento JVM."))))

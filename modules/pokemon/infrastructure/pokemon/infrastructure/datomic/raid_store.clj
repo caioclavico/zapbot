@@ -133,6 +133,16 @@
     (when (str/starts-with? id prefix)
       (subs id (count prefix)))))
 
+(defn started-raid-id
+  "Extrai raid-id de outbox `raid-started:{raid-id}:{lobby-expira}`."
+  [event-id]
+  (let [id (str event-id)
+        prefix "raid-started:"]
+    (when (str/starts-with? id prefix)
+      (let [rest (subs id (count prefix))]
+        (when-let [m (re-matches #"(.*):(\d+)" rest)]
+          (nth m 1))))))
+
 (defn opened-media-from-raid
   "Payload de mídia para revelar o chefe no Node (sem migration)."
   [raid]
@@ -145,13 +155,17 @@
           species (or (:species chefe) (get chefe "species") nome)
           cat (or (:boss-categoria raid)
                   (:raridade chefe) (get chefe "raridade")
-                  "raro")]
+                  "raro")
+          tipos (or (:tipos chefe) (get chefe "tipos") [])
+          tipo (when (seq tipos) (str (first tipos)))]
       (when (and (string? nome) (seq nome))
-        {:nome (str nome)
-         :species (when species (str species))
-         :imagem (when (string? imagem) (str imagem))
-         :categoria (str cat)
-         :ginasio (str (or (:nome-ginasio raid) (:ginasio raid) ""))}))))
+        (cond-> {:nome (str nome)
+                 :species (when species (str species))
+                 :imagem (when (string? imagem) (str imagem))
+                 :categoria (str cat)
+                 :ginasio (str (or (:nome-ginasio raid) (:ginasio raid) ""))}
+          tipo (assoc :tipo (str/lower-case (str tipo)))
+          (seq tipos) (assoc :tipos (mapv #(str/lower-case (str %)) tipos)))))))
 
 (defn- outbox-tx
   [{:keys [id chat-id kind texto created-at]}]
@@ -533,11 +547,6 @@
                      (when (and (<= 0 idx) (< idx (count colecao)))
                        (nth colecao idx)))
             _ (when-not poke (throw (err/error :pokemon_not_found {:idx idx})))
-            _ (when-not (raid/pokemon-elegivel-liga? (:liga raid) poke)
-                (throw (err/error :raid_liga_mismatch
-                                  {:liga (:liga raid)
-                                   :nivel (:nivel poke)
-                                   :idx idx})))
             nome (or (:nome request) (:nome old) player-id)
             raid' (raid/entrar raid
                                {:player-id player-id

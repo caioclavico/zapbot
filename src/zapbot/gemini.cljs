@@ -10,6 +10,34 @@
   (or (not (str/blank? config/gemini-api-key))
       (not (str/blank? config/groq-api-key))))
 
+(defn status-provedores
+  "Presença/formato das chaves — nunca inclui valores secretos."
+  []
+  (let [g? (not (str/blank? config/gemini-api-key))
+        q? (not (str/blank? config/groq-api-key))
+        g-len (if g? (count (str/trim config/gemini-api-key)) 0)
+        q-len (if q? (count (str/trim config/groq-api-key)) 0)
+        g-fmt (boolean (and g? (or (str/starts-with? (str/trim config/gemini-api-key) "AIza")
+                                   (>= g-len 20))))
+        q-fmt (boolean (and q? (or (str/starts-with? (str/trim config/groq-api-key) "gsk_")
+                                   (>= q-len 20))))]
+    {:gemini {:configured g? :len g-len :format-ok g-fmt :model config/gemini-model}
+     :groq {:configured q? :len q-len :format-ok q-fmt :model config/groq-model}
+     :disponivel? (or g? q?)}))
+
+(defn log-status-boot!
+  "Log seguro no boot: só presença/formato, sem valores."
+  []
+  (let [st (status-provedores)]
+    (js/console.log
+     (str "[IA] gemini=" (if (get-in st [:gemini :configured]) "configured" "missing")
+          " format=" (get-in st [:gemini :format-ok])
+          " model=" (get-in st [:gemini :model])
+          " | groq=" (if (get-in st [:groq :configured]) "configured" "missing")
+          " format=" (get-in st [:groq :format-ok])
+          " model=" (get-in st [:groq :model])
+          " | disponivel=" (:disponivel? st)))))
+
 (defn- requisitar! [url opcoes] (js/fetch url opcoes))
 
 (defn gerar-texto

@@ -1120,8 +1120,8 @@ function formatError(err) {
     RAID_TURN_INVALID: '⚠️ A vez da raide está inválida (participante ausente). Avise um admin — sem correção automática.',
     RAID_NO_ELIGIBLE_TURN: '⚠️ Nenhum participante elegível para iniciar o combate.',
     RAID_SAVE_MISMATCH: '⚠️ Você mudou de save após entrar — reentre na próxima raide.',
-    RAID_LIGA_MISMATCH: '❓ Esse Pokémon não está na faixa de nível da liga da raide.',
-    INVALID_RAID_POKEMON: '❓ Seu Pokémon ativo não está apto para esta raide (HP, liga ou golpe ofensivo). Use !pk raide entrar auto, !pk raide entrar <n> ou !pk escolher + !pk raide entrar.',
+    RAID_LIGA_MISMATCH: '❓ Esse Pokémon não está apto para esta raide.',
+    INVALID_RAID_POKEMON: '❓ Seu Pokémon ativo não está apto para esta raide (HP ou golpe ofensivo). Use !pk raide entrar auto, !pk raide entrar <n> ou !pk escolher + !pk raide entrar.',
     INVALID_RAID_MOVE: '❓ Use !pk raide atacar <1-4> com um golpe ofensivo.',
     RAID_CAPTURE_UNAVAILABLE: '❓ Captura indisponível (sem dano, janela expirada ou já capturou).',
     FRAMBO_ALREADY_PREPARED: '🍓 Frambo já está preparada para a próxima tentativa.',
@@ -2602,14 +2602,14 @@ function findShopItem(data, rawId) {
 function formatRaidEligible(data, prefix = '!pk') {
   const aptos = (data && data.aptos) || [];
   if (!aptos.length) {
-    return `❓ Nenhum Pokémon apto para a liga *${data.liga || '?'}*. Cure e confira o nível.`;
+    return '❓ Nenhum Pokémon apto (precisa de HP e golpe ofensivo). Cure com `!pk joy` ou escolha outro.';
   }
   const linhas = aptos.slice(0, 12).map((p, i) => {
     const n = (p.collectionIndex != null ? p.collectionIndex : i) + 1;
     return `${n}. ${p.nome || '?'} Nv.${p.nivel || '?'}`;
   });
   return [
-    `⚔️ *Aptos para a raide* (liga ${data.liga || '?'})`,
+    '⚔️ *Aptos para a raide*',
     ...linhas,
     `${prefix} raide entrar <n> · ${prefix} raide entrar auto`
   ].join('\n');
