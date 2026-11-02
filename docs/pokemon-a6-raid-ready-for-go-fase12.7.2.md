@@ -1,6 +1,7 @@
 # A6 — READY FOR GO definitivo · Fase 12.7.2
 
-**Decisão prep:** **READY FOR GO** (aguardando GO explícito — **sem deploy**)  
+**Decisão:** **GO DEFINITIVO EXECUTADO — SUCCESS** (ver `pokemon-a6-raid-deploy-fase12.7.2.md`)  
+**Commit live:** `0d54e6c0863f86ddda2131a004226bb2c8a6f184`  
 **Escopo:** cadência dinâmica + limite 12/dia + anti-starvation especiais  
 **Piloto:** `120363427684548487@g.us`  
 **Preserva:** 12.7.1 (lobby/`iniciar`/ovos PNG) · 12.6.2 economia · recovery-v1 · fences · unknown-pending · leave ON · allowlist
