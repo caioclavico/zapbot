@@ -23,6 +23,7 @@
             [pokemon.domain.pvp :as pvp]
             [pokemon.domain.raid :as raid-domain]
             [pokemon.domain.raid-auto :as raid-auto]
+            [pokemon.domain.raid-boss :as raid-boss]
             [pokemon.infrastructure.datomic.raid-auto-log :as raid-auto-log]
             [pokemon.domain.reward :as reward]
             [pokemon.domain.shop :as shop]
@@ -929,6 +930,24 @@
        (map first)
        vec))
 
+(defn- recent-auto-boss-species
+  "Espécies dos últimos spawns auto do chat (anti-repetição sem migration)."
+  [db chat-id limit]
+  (->> (d/q '[:find ?criada ?chefe
+              :in $ ?chat
+              :where
+              [?e :raid/chat-id ?chat]
+              [?e :raid/origem "auto"]
+              [?e :raid/criada-em ?criada]
+              [?e :raid/chefe-edn ?chefe]]
+            db (str chat-id))
+       (sort-by first >)
+       (take (long limit))
+       (keep (fn [[_ raw]]
+               (let [c (edn-read raw)]
+                 (some-> (or (:species c) (get c "species")) str))))
+       vec))
+
 (defn- spawn-auto-for-chat!
   [conn chat-id agora]
   (ensure-chat-raid-pointer! conn chat-id)
@@ -939,7 +958,9 @@
           ptr (d/pull db '[*] [:chat-active-raid/chat-id chat-id])
           rid (when (present? ptr) (:chat-active-raid/raid-id ptr))
           active (when rid (load-raid db rid))
-          plan (raid-auto/plan-spawn schedule active agora)]
+          recent (recent-auto-boss-species db chat-id raid-boss/recent-window-default)
+          plan (raid-auto/plan-spawn schedule active agora
+                                     {:recent-species recent})]
       (if (contains? #{:noop :skip-disabled} (:acao plan))
         {:acao (:acao plan) :chat-id chat-id}
         (let [spawn-id (:spawn-id plan)

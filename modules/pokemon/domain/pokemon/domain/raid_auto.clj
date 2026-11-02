@@ -1,9 +1,11 @@
 (ns pokemon.domain.raid-auto
-  "Agenda de aparições automáticas — regras puras (Fase 3 / 3.1).
-  Desligada por padrão; não altera combate/economia."
+  "Agenda de aparições automáticas — regras puras (Fase 3 / 3.1 / 12.7).
+  Desligada por padrão; não altera combate/economia.
+  Chefe: catálogo dinâmico (raid-boss), não lista fixa de ginásio."
   (:require [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
-            [pokemon.domain.raid :as raid]))
+            [pokemon.domain.raid :as raid]
+            [pokemon.domain.raid-boss :as raid-boss]))
 
 (def default-interval-ms raid/intervalo-proxima)
 (def default-enabled false)
@@ -37,7 +39,10 @@
    :ginasio-index 0
    :revision 0
    :last-spawn-id nil
-   :last-raid-id nil})
+   :last-raid-id nil
+   ;; Histórico curto em memória/opts (anti-repetição). Persistência opcional
+   ;; via recent-bosses no tick — sem migration obrigatória.
+   :recent-bosses []})
 
 (defn normalize-interval
   [interval-ms]
@@ -53,14 +58,17 @@
   [raw chat-id agora]
   (let [base (default-schedule chat-id (or agora 0))
         m (merge base (or raw {}))
-        interval (normalize-interval (:interval-ms m))]
+        interval (normalize-interval (:interval-ms m))
+        recent (vec (take raid-boss/recent-window-default
+                          (map str (or (:recent-bosses m) []))))]
     (-> m
         (assoc :chat-id (str chat-id)
                :enabled (boolean (:enabled m))
                :interval-ms interval
                :next-at (long (or (:next-at m) agora 0))
                :ginasio-index (long (or (:ginasio-index m) 0))
-               :revision (long (or (:revision m) 0))))))
+               :revision (long (or (:revision m) 0))
+               :recent-bosses recent))))
 
 (defn due?
   [schedule agora]
@@ -117,45 +125,67 @@
        (or (:nome-ginasio raid) (:ginasio raid))
        " — poucos inscritos."))
 
+(defn remember-boss
+  "Atualiza anel de espécies recentes (mais nova primeiro)."
+  [recent species]
+  (let [sp (str species)]
+    (vec (take raid-boss/recent-window-default
+               (cons sp (remove #{sp} (map str (or recent []))))))))
+
 (defn plan-spawn
   "Decide o que o tick deve fazer. Puro — store aplica CAS.
-   Retorna {:acao :spawn|:skip-busy|:skip-disabled|:noop ...}."
-  [schedule active-raid agora]
-  (let [agora (long agora)
-        schedule (normalize-schedule schedule (:chat-id schedule) agora)]
-    (cond
-      (not (:enabled schedule))
-      {:acao :skip-disabled :schedule schedule}
+   Retorna {:acao :spawn|:skip-busy|:skip-disabled|:noop ...}.
+   Opts: :rng (fn [] double), :recent-species, :catalog, :category-weights."
+  ([schedule active-raid agora]
+   (plan-spawn schedule active-raid agora {}))
+  ([schedule active-raid agora opts]
+   (let [agora (long agora)
+         schedule (normalize-schedule schedule (:chat-id schedule) agora)
+         recent (vec (or (:recent-species opts) (:recent-bosses schedule) []))]
+     (cond
+       (not (:enabled schedule))
+       {:acao :skip-disabled :schedule schedule}
 
-      (not (due? schedule agora))
-      {:acao :noop :schedule schedule}
+       (not (due? schedule agora))
+       {:acao :noop :schedule schedule}
 
-      (ocupa-slot-contra-spawn? active-raid)
-      (let [due (long (:next-at schedule))]
-        {:acao :skip-busy
-         :schedule schedule
-         :spawn-id (spawn-id (:chat-id schedule) due)
-         :due-at due
-         :next-at (advance-next-at schedule due)
-         :active-raid-id (:raid-id active-raid)
-         :active-origem (:origem active-raid)
-         :active-fase (:fase active-raid)})
+       (ocupa-slot-contra-spawn? active-raid)
+       (let [due (long (:next-at schedule))]
+         {:acao :skip-busy
+          :schedule schedule
+          :spawn-id (spawn-id (:chat-id schedule) due)
+          :due-at due
+          :next-at (advance-next-at schedule due)
+          :active-raid-id (:raid-id active-raid)
+          :active-origem (:origem active-raid)
+          :active-fase (:fase active-raid)})
 
-      :else
-      (let [due (long (:next-at schedule))
-            gym (pick-ginasio (:ginasio-index schedule))
-            boss (raid/boss-do-ginasio (:ginasio gym))
-            sid (spawn-id (:chat-id schedule) due)
-            raid-id sid]
-        {:acao :spawn
-         :schedule schedule
-         :spawn-id sid
-         :due-at due
-         :next-at (advance-next-at schedule due)
-         :next-ginasio-index (:next-ginasio-index gym)
-         :raid-id raid-id
-         :ginasio (:ginasio boss)
-         :nome-ginasio (:nome-ginasio boss)
-         :nivel-ginasio (:nivel-ginasio boss)
-         :liga (:liga boss)
-         :chefe (:chefe boss)}))))
+       :else
+       (let [due (long (:next-at schedule))
+             gym (pick-ginasio (:ginasio-index schedule))
+             boss (raid-boss/select-boss-for-ginasio
+                   (:ginasio gym)
+                   (cond-> {:recent-species recent}
+                     (contains? opts :rng) (assoc :rng (:rng opts))
+                     (contains? opts :catalog) (assoc :catalog (:catalog opts))
+                     (contains? opts :category-weights)
+                     (assoc :category-weights (:category-weights opts))))
+             sid (spawn-id (:chat-id schedule) due)
+             raid-id sid
+             species (or (get-in boss [:chefe :species])
+                         (get-in boss [:chefe "species"]))
+             recent' (remember-boss recent species)]
+         {:acao :spawn
+          :schedule (assoc schedule :recent-bosses recent')
+          :spawn-id sid
+          :due-at due
+          :next-at (advance-next-at schedule due)
+          :next-ginasio-index (:next-ginasio-index gym)
+          :raid-id raid-id
+          :ginasio (:ginasio boss)
+          :nome-ginasio (:nome-ginasio boss)
+          :nivel-ginasio (:nivel-ginasio boss)
+          :liga (:liga boss)
+          :chefe (:chefe boss)
+          :boss-categoria (:categoria boss)
+          :recent-bosses recent'})))))

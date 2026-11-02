@@ -81,8 +81,8 @@
 
 (defn chance-captura
   [raridade]
-  (get {"raro" 35 "lendario" 8 "mitico" 4
-        :raro 35 :lendario 8 :mitico 4} raridade 35))
+  (get {"raro" 35 "epico" 20 "lendario" 8 "mitico" 4
+        :raro 35 :epico 20 :lendario 8 :mitico 4} raridade 35))
 
 (defn elegivel-recompensa?
   [participante]
@@ -306,20 +306,36 @@
           (some #{vez} (:ordem raid))
           (pos? (long (get-in parts [vez :hp] 0)))))))
 
+(defn- fator-chefe
+  "Fator de dificuldade do chefe (1.0 se ausente — raids legadas)."
+  [chefe]
+  (let [f (or (:fator-dificuldade chefe) (get chefe "fator-dificuldade") 1.0)]
+    (max 0.5 (min 2.0 (double f)))))
+
 (defn- aplicar-inicio-combate
   [raid agora]
   (let [n (count (:ordem raid))
         parts (:participantes raid)
+        fator (fator-chefe (:chefe raid))
+        hp-base (long (Math/round (* (double hp-por-jogador) n fator)))
+        media-def (media-stat parts :defesa)
+        media-spdef (media-stat parts :def-esp)
+        chefe (:chefe raid)
+        boss-def (double (or (:defesa chefe) (get chefe "defesa") media-def))
+        boss-spdef (double (or (:def-esp chefe) (get chefe "def-esp") media-spdef))
+        ;; Mistura defesa dos jogadores com a do chefe (atributos reais influenciam).
+        defesa (+ (* 0.55 media-def) (* 0.45 boss-def))
+        def-esp (+ (* 0.55 media-spdef) (* 0.45 boss-spdef))
         ;; Primeira vez = primeiro da ordem com HP>0 (participante real).
         vez0 (first (filter #(pos? (get-in parts [% :hp] 0)) (:ordem raid)))]
     (when-not vez0
       (throw (err/error :raid_no_eligible_turn {:ordem (:ordem raid)})))
     (assoc raid
            :fase "combate"
-           :hp-chefe (* hp-por-jogador n)
-           :hp-max (* hp-por-jogador n)
-           :defesa (media-stat parts :defesa)
-           :def-esp (media-stat parts :def-esp)
+           :hp-chefe hp-base
+           :hp-max hp-base
+           :defesa defesa
+           :def-esp def-esp
            :vez vez0
            :expira (+ (long agora) duracao-combate)
            :proxima (+ (long agora) intervalo-proxima)

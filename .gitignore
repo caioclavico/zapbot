@@ -25,3 +25,7 @@ data/
 .cpcache/
 .datomic-local/
 .tools/
+
+# Catálogo estático de chefes (Fase 12.7) — exception to data/
+!modules/pokemon/domain/pokemon/domain/data/
+!modules/pokemon/domain/pokemon/domain/data/raid_boss_catalog.edn
