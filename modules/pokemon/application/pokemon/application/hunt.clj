@@ -3,6 +3,7 @@
   (:require [pokemon.application.ports :as ports]
             [pokemon.application.writer :as writer]
             [pokemon.domain.capacity :as capacity]
+            [pokemon.domain.events :as events]
             [pokemon.domain.hunt :as hunt]
             [pokemon.domain.ops :as ops]
             [pokemon.domain.xp :as xp]))
@@ -31,13 +32,16 @@
         ativo-idx (long (:ativo-index save 0))
         ativo (when (and colecao (seq colecao) (< ativo-idx (count colecao)))
                 (nth colecao ativo-idx))
+        thematic (when (events/thematic-events-enabled?)
+                   (ports/thematic-active-events store chat-id agora))
         plano (hunt/montar-plano
                {:area-pedida area-id
                 :agora-ms agora
                 :timezone-id timezone-id
                 :trainer-level nivel
                 :roll-tipos roll-tipos
-                :roll-surto roll-surto})
+                :roll-surto roll-surto
+                :active-events thematic})
         storage (when save (capacity/resumo-armazenamento-pokemon (count colecao) save))
         cabe? (and storage (not (:cheio? storage)))]
     (merge plano

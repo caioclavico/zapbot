@@ -1015,9 +1015,27 @@
                                            #js {:filename "missao.png"}))]
           (envelope-jvm pedido texto img))
         (if eventos?
-          (envelope-jvm pedido
-                        (str "🎉 Missões de evento ainda não têm resgate em lote. "
-                             "Conclua os objetivos e as recompensas serão creditadas automaticamente."))
+          (let [ativos (filter #(or (= "active" (str (.-status %)))
+                                    (true? (.-available %)))
+                               (js->clj (or (.-events missoes) #js []) :keywordize-keys true))
+                ;; Preferir ocorrência temática (tem occurrence-id); legado Novo Recomeço não.
+                occ-id (some (fn [ev]
+                               (or (:occurrence-id ev) (:occurrenceId ev)))
+                             ativos)]
+            (if-not occ-id
+              (envelope-jvm pedido
+                            (str "🎉 Nenhum evento temático ativo para resgatar. "
+                                 "Consulte `" prefix " missoes evento`."))
+              (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                      op-id (.stableOperationId jvm-transport (:requestId pedido)
+                                                 (str "mission-claim:event:" occ-id))
+                      data (desempenho/medir! ctx "pokemon_jvm_mission_claim_event"
+                             #(.claimEventMissions jvm #js {:chatId chat-id :playerId player-id
+                                                            :saveId (.-activeSaveId ativo)
+                                                            :fenceGeneration (.-fenceGeneration ativo)
+                                                            :operationId op-id
+                                                            :occurrenceId occ-id}))]
+                (envelope-jvm pedido (.formatMissionClaim jvm-present data "event" prefix)))))
           (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
                   weekly? semanais?
                   period (if weekly? (.-period (.-weekly missoes)) (.-period (.-daily missoes)))
@@ -2800,11 +2818,12 @@
     (clj->js (merge {:event event :ts (.now js/Date)} fields)))))
 
 (defn- evento-sistema-outbox?
-  "Anúncios/lembretes de raide automática não têm playerId."
+  "Anúncios/lembretes de raide automática / eventos temáticos não têm playerId."
   [evento]
   (let [kind (str (or (:kind evento) ""))]
     (or (str/starts-with? kind "raid-reminder")
-        (#{"raid-opened" "raid-started" "raid-cancelled"} kind))))
+        (#{"raid-opened" "raid-started" "raid-cancelled"
+           "thematic-event-started" "thematic-event-ended"} kind))))
 
 (defn- entregar-evento-jvm!
   "Retorna a promise do sendMessage — ack JVM só depois do WhatsApp aceitar.
@@ -2911,10 +2930,21 @@
                    (js/console.warn "[PokemonJVM] Tick raid-auto falhou:"
                                     (or (.-code erro) "TICK") (.-message erro)))))))
 
+(defn- tick-thematic-events-jvm! []
+  "Tick de eventos temáticos — no-op se flag off no JVM."
+  (when (jvm-configurado?)
+    (-> (p/let [jvm (cliente-jvm!)
+                _ (.tickThematicEvents jvm #js {})]
+          nil)
+        (p/catch (fn [erro]
+                   (js/console.warn "[PokemonJVM] Tick thematic-events falhou:"
+                                    (or (.-code erro) "TICK") (.-message erro)))))))
+
 (defn- consultar-eventos! []
   (cond
     (jvm-configurado?)
     (do (tick-raid-auto-jvm!)
+        (tick-thematic-events-jvm!)
         (consultar-eventos-jvm!))
 
     (and @cliente-whatsapp (configurado?) (compare-and-set! consultando-eventos? false true))

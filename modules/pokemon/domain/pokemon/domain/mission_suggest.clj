@@ -80,7 +80,10 @@
      :daily-suggested (suggest daily 2)
      :weekly-suggested (suggest weekly 2)
      :event-suggested (vec (take 2 (rank-pending (active-event-missions events))))
-     :active-events (mapv #(select-keys % [:id :nome :status]) active-events)}))
+     :active-events (mapv #(select-keys % [:id :nome :emoji :status
+                                           :remaining-ms :remaining-label
+                                           :occurrence-id])
+                          active-events)}))
 
 (defn normalize-scope
   "Normaliza token de filtro: diaria(s), semanal(is), evento(s), all."

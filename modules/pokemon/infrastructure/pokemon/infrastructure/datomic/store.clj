@@ -47,7 +47,9 @@
             [pokemon.infrastructure.datomic.economy-store :as economy-store]
             [pokemon.infrastructure.datomic.trade-store :as trade-store]
             [pokemon.infrastructure.datomic.profile-store :as profile-store]
-            [pokemon.infrastructure.datomic.schema :as schema]))
+            [pokemon.infrastructure.datomic.schema :as schema]
+            [pokemon.infrastructure.datomic.thematic-event-store :as thematic-store]
+            [pokemon.domain.events :as events]))
 
 (defn- normalize-team-name
   [value]
@@ -1542,6 +1544,55 @@
     (run-mission-operation!* conn writer :gift request))
   (collect-mission-pending! [_ writer request]
     (run-mission-operation!* conn writer :pending request))
+
+  (thematic-active-events [_ chat-id agora-ms]
+    (if-not (events/thematic-events-enabled?)
+      []
+      (mapv events/occurrence->event-view
+            (thematic-store/active-occurrences (d/db conn) chat-id agora-ms))))
+  (thematic-event-history [_ chat-id limit]
+    (thematic-store/history (d/db conn) chat-id limit))
+  (get-thematic-schedule [_ chat-id]
+    (thematic-store/load-schedule (d/db conn) chat-id))
+  (set-thematic-schedule-enabled! [_ chat-id enabled? agora-ms]
+    (thematic-store/set-schedule-enabled! conn chat-id enabled? agora-ms))
+  (admin-schedule-thematic! [_ chat-id opts]
+    (thematic-store/admin-schedule! conn chat-id opts))
+  (cancel-thematic-occurrence! [_ occurrence-id]
+    (thematic-store/cancel-occurrence! conn occurrence-id))
+  (tick-thematic-events! [_ request]
+    (let [agora (long (or (:agora request) (System/currentTimeMillis)))
+          draw (or (:draw request) 0)
+          limit (long (or (:limit request) 32))
+          chats (cond
+                  (string? (:chat-id request)) [(:chat-id request)]
+                  (seq (:chats request)) (vec (:chats request))
+                  :else
+                  (->> (d/q '[:find ?chat
+                              :where [?e :thematic-event-schedule/chat-id ?chat]
+                              [?e :thematic-event-schedule/enabled true]]
+                            (d/db conn))
+                       (map first)
+                       (take limit)
+                       vec))]
+      {:enabled true
+       :agora agora
+       :processed (mapv #(thematic-store/tick-chat! conn % agora draw) chats)}))
+  (claim-event-missions! [_ writer request]
+    (thematic-store/claim-event-missions!
+     conn writer
+     {:occurrence-id (:occurrence-id request)
+      :operation-id (:operation-id request)
+      :payload-hash (or (:payload-hash request)
+                        (ops/payload-hash
+                         {:kind "missions-claim-event"
+                          :occurrence-id (:occurrence-id request)
+                          :chat-id (:chat-id writer)
+                          :player-id (:player-id writer)
+                          :save-id (:save-id writer)}))
+      :draw (:draw request)
+      :inventory-query query-inventory
+      :adjust inventory-adjust-tx}))
 
   (ensure-schema! [_]
     (schema/install! conn)

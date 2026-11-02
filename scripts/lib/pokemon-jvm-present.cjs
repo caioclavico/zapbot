@@ -2578,20 +2578,46 @@ function formatMissionList(kind, group, prefix) {
   return lines.join('\n');
 }
 
+function formatMissionRewards(mission) {
+  const parts = [];
+  const rewards = mission.recompensas || {};
+  const qty = (id) => Number(rewards[id] || 0);
+  if (qty('fruta')) parts.push(`${qty('fruta')} Frambo`);
+  if (qty('pokebola')) parts.push(`${qty('pokebola')} Poké Bolas`);
+  if (qty('grande-bola')) parts.push(`${qty('grande-bola')} Super Bolas`);
+  if (qty('ultra-bola')) parts.push(`${qty('ultra-bola')} Ultra Bolas`);
+  if (qty('cartao-presente')) parts.push(`${qty('cartao-presente')} cartão-presente`);
+  const doces = mission.doces || {};
+  Object.keys(doces).forEach((fam) => {
+    const n = Number(doces[fam] || 0);
+    if (n > 0) parts.push(`${n} Doce ${fam.charAt(0).toUpperCase()}${fam.slice(1)}`);
+  });
+  return parts.length ? `🎁 ${parts.join(' + ')}` : null;
+}
+
 function formatMissionEventList(events, prefix) {
   const active = (events || []).filter((e) => e && (e.status === 'active' || e.available));
   if (!active.length) return '🎉 Nenhum evento de missões ativo no momento.';
-  const lines = ['🎉 *MISSÕES DE EVENTO*', ''];
+  const lines = [];
   for (const ev of active) {
-    lines.push(`${ev.emoji || '🎉'} *${ev.nome || ev.id}*`);
+    const title = `${ev.emoji || '🎉'} *${String(ev.nome || ev.id || '').toUpperCase()}*`;
+    lines.push(title);
+    const rem = ev.remainingLabel || ev['remaining-label'] || ev.remaining_label;
+    if (rem) lines.push(`⏳ Termina em ${rem}`);
+    lines.push('', `${ev.emoji || '🎯'} *MISSÕES DO EVENTO*`, '');
+    let i = 1;
     for (const mission of ev.missions || []) {
       const state = mission.estado;
       const icon = state === 'rewarded' ? '🎁' : state === 'completed' ? '✅' : '⬜';
-      lines.push(`${icon} ${mission.nome || mission.objetivo || mission.id} — ${mission.progresso || 0}/${mission.meta || 0}`);
+      lines.push(`${i}. ${icon} ${mission.nome || mission.objetivo || mission.id} — ${mission.progresso || 0}/${mission.meta || 0}`);
+      const rewardLine = formatMissionRewards(mission);
+      if (rewardLine) lines.push(`   ${rewardLine}`);
+      i += 1;
     }
     lines.push('');
   }
-  lines.push(`Resumo: ${prefix} missoes`);
+  lines.push(`Resgatar: \`${prefix} missoes evento resgatar\``);
+  lines.push(`Resumo: \`${prefix} missoes\``);
   return lines.join('\n');
 }
 
@@ -2620,7 +2646,11 @@ function formatMissionsSummary(data, prefix = '!pk') {
     `📅 Semanais: ${weeklyDone != null ? weeklyDone : '?'}/${weeklyTotal != null ? weeklyTotal : '?'} concluídas`
   ];
   if (activeEvents.length) {
-    lines.push(`🎉 Evento ativo: ${activeEvents.map((e) => e.nome || e.id).join(', ')}`);
+    const labels = activeEvents.map((e) => {
+      const rem = e.remainingLabel || e['remaining-label'];
+      return rem ? `${e.nome || e.id} (${rem})` : (e.nome || e.id);
+    });
+    lines.push(`🎉 Evento ativo: ${labels.join(', ')}`);
   }
   lines.push('', '☀️ *DIÁRIAS SUGERIDAS*');
   if (dailySug.length) dailySug.forEach((m) => lines.push(formatSuggestedLine(m)));
@@ -2668,10 +2698,18 @@ function missionResult(data) {
 
 function formatMissionClaim(data, kind, prefix = '!pk') {
   const result = missionResult(data);
-  if (result.empty) return `📋 Nenhuma missão ${kind === 'daily' ? 'diária' : 'semanal'} concluída disponível para resgatar.`;
+  if (result.empty) {
+    const label = kind === 'daily' ? 'diária' : kind === 'weekly' ? 'semanal' : 'de evento';
+    return `📋 Nenhuma missão ${label} concluída disponível para resgatar.`;
+  }
   const lines = [`✅ ${result.ids && result.ids.length || 0} missão(ões) resgatada(s)!`];
   if (result.xp) lines.push(`✨ +${result.xp} PE do treinador`);
   if (result.coins) lines.push(`💰 +${result.coins} moedas`);
+  const doces = result.doces || {};
+  Object.keys(doces).forEach((fam) => {
+    const n = Number(doces[fam] || 0);
+    if (n > 0) lines.push(`🍬 +${n} Doce ${fam.charAt(0).toUpperCase()}${fam.slice(1)}`);
+  });
   if (result.items && result.items.length) lines.push(`🎁 ${formatMissionItems(result.items)}`);
   if (result.pending && result.pending.length) lines.push(`🎒 Sem espaço: ${formatMissionItems(result.pending)}. Use !mochila resgatar.`);
   if (result.duplicate || data && data.reconciled) lines.push('_Mesma operação já confirmada._');

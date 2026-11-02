@@ -9,8 +9,10 @@
             [pokemon.application.mission-economy :as mission-economy]
             [pokemon.application.bridge-tx :as tx]
             [pokemon.application.raid-auto :as raid-auto]
+            [pokemon.application.thematic-events :as thematic]
             [pokemon.application.recovery-catalog :as recovery-catalog]
             [pokemon.application.ports :as ports]
+            [pokemon.domain.events :as events]
             [pokemon.domain.errors :as err]
             [pokemon.infrastructure.http.json :as json])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
@@ -248,6 +250,8 @@
                                               "trainer-ensure" "saves-list" "save-create" "save-rename" "save-activate"
                                               "missions-read" "missions-prepare"
                                               "missions-claim-daily" "missions-claim-weekly"
+                                              "missions-claim-event"
+                                              "thematic-events-tick" "thematic-events-admin"
                                               "gift-send" "missions-pending-collect"
                                               "reward-coins" "operation-get"
                                               "encounter-read" "encounter-capture"
@@ -337,6 +341,98 @@
                                       :gift (mission-economy/send-gift! store writer request)
                                       :pending (mission-economy/collect-pending! store writer request)
                                       (mission-economy/claim! store writer kind request))))))))
+
+                (= path "/v1/missions/claim/event")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          allowed #{"chatId" "playerId" "saveId" "fenceGeneration"
+                                    "operationId" "occurrenceId"}
+                          chat (g body "chatId") player (g body "playerId")
+                          slot (g body "saveId") fence (long-or-nil (g body "fenceGeneration"))
+                          operation (g body "operationId")
+                          occ (g body "occurrenceId")]
+                      (when (or (not (map? body)) (some #(not (contains? allowed %)) (keys body))
+                                (not-every? #(and (string? %) (not (str/blank? %)))
+                                            [chat player slot operation occ])
+                                (nil? fence))
+                        (throw (err/error :invalid_query {:allowed (vec (sort allowed))})))
+                      (let [writer {:chat-id chat :player-id player :save-id slot
+                                    :fence-generation fence}
+                            request {:operation-id operation :occurrence-id occ}]
+                        (ok! ex (mission-economy/dto
+                                 (with-operation! operation
+                                   #(thematic/claim! store writer request)))))))
+
+                (= path "/v1/thematic-events/tick")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          agora (long-or-nil (g body "agoraMs" "agora"))
+                          chat-id (g body "chatId")
+                          draw (long-or-nil (g body "draw"))
+                          limit (or (long-or-nil (g body "limit")) 32)]
+                      (ok! ex (thematic/tick!
+                               store {:agora-ms agora
+                                      :chat-id (when-not (str/blank? chat-id) chat-id)
+                                      :draw (or draw 0)
+                                      :limit limit}))))
+
+                (= path "/v1/thematic-events/active")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          agora (or (long-or-nil (g qs "agoraMs" "agora"))
+                                    (System/currentTimeMillis))]
+                      (when (str/blank? chat-id)
+                        (throw (err/error :invalid_query {:required ["chatId"]})))
+                      (ok! ex {:chat-id chat-id
+                               :enabled (events/thematic-events-enabled?)
+                               :events (thematic/active store chat-id agora)
+                               :schedule (thematic/schedule store chat-id)})))
+
+                (= path "/v1/thematic-events/history")
+                (do (require-method! ex #{"GET"})
+                    (let [chat-id (g qs "chatId")
+                          limit (or (long-or-nil (g qs "limit")) 20)]
+                      (when (str/blank? chat-id)
+                        (throw (err/error :invalid_query {:required ["chatId"]})))
+                      (ok! ex {:chat-id chat-id
+                               :history (thematic/history store chat-id limit)})))
+
+                (= path "/v1/thematic-events/schedule")
+                (cond
+                  (= method "GET")
+                  (let [chat-id (g qs "chatId")]
+                    (when (str/blank? chat-id)
+                      (throw (err/error :invalid_query {:required ["chatId"]})))
+                    (ok! ex {:schedule (thematic/schedule store chat-id)
+                             :catalog (mapv #(select-keys % [:id :nome :emoji :categoria])
+                                            events/catalog)}))
+
+                  (= method "PUT")
+                  (let [body (read-body ex)
+                        chat-id (g body "chatId")
+                        next-at (long-or-nil (g body "nextAt" "next-at"))
+                        catalog-id (g body "catalogId" "catalog-id")
+                        enabled (g body "enabled")
+                        agora (or (long-or-nil (g body "agoraMs" "agora"))
+                                  (System/currentTimeMillis))]
+                    (when (str/blank? chat-id)
+                      (throw (err/error :invalid_query {:required ["chatId"]})))
+                    (ok! ex (thematic/admin-schedule!
+                             store {:chat-id chat-id
+                                    :next-at (or next-at agora)
+                                    :catalog-id catalog-id
+                                    :enabled? (when (some? enabled) (boolean enabled))
+                                    :agora-ms agora})))
+
+                  :else (throw (err/error :method_not_allowed {:method method})))
+
+                (= path "/v1/thematic-events/cancel")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          occ (g body "occurrenceId" "occurrence-id")]
+                      (when (str/blank? occ)
+                        (throw (err/error :invalid_query {:required ["occurrenceId"]})))
+                      (ok! ex (thematic/cancel! store occ))))
 
                 (contains? #{"/v1/missions" "/v1/missions/rewards"} path)
                 (do (require-method! ex #{"GET"})

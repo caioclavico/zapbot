@@ -295,6 +295,30 @@
   (collect-mission-pending! [this writer-ctx request]
     "Recolhe recompensas pendentes até a capacidade, com recibo e fencing.")
 
+  (thematic-active-events [this chat-id agora-ms]
+    "Ocorrências temáticas ativas do chat (views) ou [].")
+
+  (thematic-event-history [this chat-id limit]
+    "Histórico recente de ocorrências do chat.")
+
+  (get-thematic-schedule [this chat-id]
+    "Agenda temática do chat ou nil.")
+
+  (set-thematic-schedule-enabled! [this chat-id enabled? agora-ms]
+    "Liga/desliga agenda automática (default false).")
+
+  (admin-schedule-thematic! [this chat-id opts]
+    "Agenda next-at / force catalog / enable.")
+
+  (cancel-thematic-occurrence! [this occurrence-id]
+    "Cancela ocorrência (futura ou ativa).")
+
+  (tick-thematic-events! [this request]
+    "Tick: encerra vencidos + ativa due (flag + enabled por chat).")
+
+  (claim-event-missions! [this writer-ctx request]
+    "Resgata missões concluídas da ocorrência temática; fence + recibo + doces.")
+
   (leave-battle! [this writer-ctx request]
     "Abandono voluntário (!pk sair): wild/gym/pvp/raid individual.
      Receipt idempotente; sem recompensas; notifica oponente PvP via outbox.")

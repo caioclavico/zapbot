@@ -233,9 +233,10 @@
          "Use " pref " cacar. As três tentativas e a chance de fuga continuam valendo.")))
 
 (defn montar-plano
-  "Plano de caça (RNG injetável para testes)."
+  "Plano de caça (RNG injetável para testes).
+  :active-events — ocorrências/views temáticas ativas (12.8.1); nil = só clima/bioma."
   [{:keys [area-pedida instant timezone-id trainer-level
-           roll-tipos roll-surto agora-ms]}]
+           roll-tipos roll-surto agora-ms active-events]}]
   (let [instant (or instant (Instant/ofEpochMilli (long (or agora-ms (System/currentTimeMillis)))))
         tz (or timezone-id mundo/default-timezone)
         dia (mundo/dia-atual instant tz)
@@ -249,12 +250,14 @@
                (mundo/area-padrao instant tz))
         roll-t (long (or roll-tipos (rand-int 100)))
         roll-s (long (or roll-surto (rand-int 100)))
-        tipos (resolver-tipos-encontro area clima roll-t)
+        thematic (when (events/thematic-events-enabled?) active-events)
+        tipos (resolver-tipos-encontro area clima roll-t thematic)
         evento (evento-atual (.toEpochMilli instant))
         surto (surto? roll-s)
         nivel (long (or trainer-level 1))
         alvo (poder-alvo-caca nivel)
-        evento-dto (select-keys evento [:nome :especies :fim :chance])]
+        evento-dto (select-keys evento [:nome :especies :fim :chance])
+        bands (events/combined-type-roll-bands thematic)]
     {:dia dia
      :timezone tz
      :area (area-dto area)
@@ -265,6 +268,10 @@
      :evento (when surto evento-dto)
      ;; Sempre presente — !pk eventos / apresentação do ciclo 6h.
      :evento-atual evento-dto
+     :eventos-tematicos (mapv #(select-keys % [:id :nome :emoji :tipos-favorecidos :bias-tipos
+                                               :occurrence-id :inicio-ms :fim-ms])
+                              (or thematic []))
+     :type-roll-bands bands
      :poder-alvo alvo
      :tolerancia tolerancia-poder-caca
      :tentativas-max tentativas-caca

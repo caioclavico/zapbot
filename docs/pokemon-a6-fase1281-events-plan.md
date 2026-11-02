@@ -1,8 +1,8 @@
 # Fase 12.8.1 — Plano: Eventos temáticos operacionais
 
-**Status:** planejamento · **bloqueado até GO pós-12.8.0**  
+**Status:** implementação descartável pronta · ver `docs/pokemon-a6-fase1281-events-ready.md`  
 **Pré-requisito:** cutover 12.8.0 estável no piloto  
-**Flag:** `POKEMON_THEMATIC_EVENTS_ENABLED` (default `false` em 12.8.0)
+**Flag:** `POKEMON_THEMATIC_EVENTS_ENABLED` (default `false` — sem GO em produção)
 
 ---
 

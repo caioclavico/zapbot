@@ -3,11 +3,13 @@
   (:require [clojure.edn :as edn]
             [datomic.client.api :as d]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.events :as events]
             [pokemon.domain.identities :as id]
             [pokemon.domain.mission-catalog :as catalog]
             [pokemon.domain.model :as model]
             [pokemon.domain.mundo :as mundo]
-            [pokemon.domain.xp :as xp])
+            [pokemon.domain.xp :as xp]
+            [pokemon.infrastructure.datomic.thematic-event-store :as thematic])
   (:import [java.time Instant]))
 
 (defn- state [save attr]
@@ -38,22 +40,27 @@
    :timezone (or (:timezone opts) (not-empty (System/getenv "MISSOES_TIMEZONE"))
                  mundo/default-timezone)})
 
-(defn- view [ctx chat player {:keys [instant timezone]}]
-  (let [save (:save ctx)]
+(defn- view [db ctx chat player {:keys [instant timezone]}]
+  (let [save (:save ctx)
+        agora (.toEpochMilli instant)
+        occs (when (events/thematic-events-enabled?)
+               (thematic/active-occurrences db chat agora))]
     (merge (catalog/snapshot (state save :save/missoes-diarias-edn)
                              (state save :save/missoes-semanais-edn)
                              (state save :save/missoes-eventos-edn)
-                             (trainer-level save) instant timezone)
+                             (trainer-level save) instant timezone occs)
            {:chat-id chat :player-id player :save-id (:slot ctx)
             :progress-integration-enabled true
             :claims-enabled true
             :pending-rewards (mapv (fn [[id qty]] {:item-id id :qty qty})
                                    (sort-by key (state save :save/recompensas-pendentes-edn)))
-            :progress-events ["wild-defeated" "wild-captured" "pvp-won" "gym-won" "gift-sent"]
+            :progress-events ["wild-defeated" "wild-captured" "pvp-won" "gym-won" "gift-sent"
+                              "evolved" "raid-joined" "raid-won"]
             :unavailable-progress-events []})))
 
 (defn read-missions [conn chat player slot opts]
-  (view (context (d/db conn) chat player slot) chat player (options opts)))
+  (let [db (d/db conn)]
+    (view db (context db chat player slot) chat player (options opts))))
 
 (defn prepare! [conn {:keys [chat-id player-id save-id fence-generation]} opts]
   (when (or (nil? save-id) (nil? fence-generation))
@@ -76,7 +83,7 @@
                   (not= fence-generation (:player/fence-generation player)))
           (throw (err/error :stale_writer_fence {})))
         (if (empty? tx)
-          (view ctx chat-id player-id opts)
+          (view (d/db conn) ctx chat-id player-id opts)
           (let [result (try
                          (d/transact conn
                                      {:tx-data (into tx

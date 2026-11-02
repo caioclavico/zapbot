@@ -1,7 +1,10 @@
 (ns pokemon.domain.mission-catalog
-  "Catálogo e projeção de leitura A4.3.1 / Fase 12.8. Sem concessão de recompensas."
+  "Catálogo e projeção de leitura A4.3.1 / Fase 12.8 / 12.8.1. Sem concessão de recompensas."
   (:require [pokemon.domain.mundo :as mundo]
-            [pokemon.domain.mission-suggest :as suggest])
+            [pokemon.domain.mission-suggest :as suggest]
+            [pokemon.domain.event-missions :as event-missions]
+            [pokemon.domain.event-schedule :as event-schedule]
+            [pokemon.domain.events :as events])
   (:import [java.time Instant LocalDate]))
 
 ;; Recompensas diversificadas (Fase 12.8). Campos:
@@ -70,32 +73,54 @@
                        (pos? progress) "in_progress"
                        :else "available")))
 
-(defn snapshot [daily-stored weekly-stored events level instant timezone]
-  (let [{:keys [day week]} (periods instant timezone)
-        ds (daily-state daily-stored day level)
-        ws (weekly-state weekly-stored week)
-        start (Instant/parse (:inicio new-beginning))
+(defn- thematic-event-views
+  "Ocorrências ativas (opts :thematic-occurrences) + legado Novo Recomeço."
+  [events-edn instant thematic-occurrences]
+  (let [start (Instant/parse (:inicio new-beginning))
         end (Instant/parse (:fim new-beginning))
-        event-state (get events (:id new-beginning) {})
-        base {:timezone timezone :claims-enabled false :progress-integration-enabled false
-              :reward-rules reward-rules
-              :daily {:period day :initialized (= day (get daily-stored "dia"))
-                      :level (get ds "nivel")
-                      :missions (mapv #(mission % (get-in ds ["progresso" (:id %)] 0)
-                                                (boolean (some #{(:id %)} (get ds "resgatadas"))))
-                                      (scaled-daily (get ds "nivel")))}
-              :weekly {:period week :initialized (= week (get weekly-stored "semana"))
-                       :missions (mapv #(mission %
-                                                (if (#{"pvp" "presentes"} (:id %))
-                                                  (get ws (:id %) 0)
-                                                  (count (distinct (get ws (:id %) []))))
-                                                (boolean (some #{(:id %)} (get ws "resgatadas")))) weekly)}
-              :events [(assoc (dissoc new-beginning :objetivos)
-                              :status (cond (.isBefore instant start) "upcoming"
-                                            (.isBefore instant end) "active"
-                                            :else "ended")
-                              :available (and (not (.isBefore instant start)) (.isBefore instant end))
-                              :missions (mapv #(mission % (get-in event-state ["progresso" (:id %)] 0)
-                                                        (boolean (some #{(:id %)} (get event-state "premiados"))))
-                                              (:objetivos new-beginning)))]}]
-    (assoc base :summary (suggest/summary-projection base))))
+        event-state (get events-edn (:id new-beginning) {})
+        legacy [(assoc (dissoc new-beginning :objetivos)
+                       :status (cond (.isBefore instant start) "upcoming"
+                                     (.isBefore instant end) "active"
+                                     :else "ended")
+                       :available (and (not (.isBefore instant start)) (.isBefore instant end))
+                       :missions (mapv #(mission % (get-in event-state ["progresso" (:id %)] 0)
+                                                 (boolean (some #{(:id %)} (get event-state "premiados"))))
+                                       (:objetivos new-beginning)))]
+        agora-ms (.toEpochMilli instant)
+        thematic
+        (for [occ (or thematic-occurrences [])
+              :let [view (events/occurrence->event-view occ)
+                    st (event-missions/occurrence-state events-edn (:occurrence-id occ))
+                    rem (event-schedule/remaining-ms occ agora-ms)]
+              :when view]
+          (-> view
+              (assoc :status (events/status-at view instant)
+                     :available (= "active" (events/status-at view instant))
+                     :remaining-ms rem
+                     :remaining-label (event-schedule/format-remaining rem)
+                     :missions (event-missions/project-missions (:catalog-id occ) st))))]
+    (vec (concat thematic legacy))))
+
+(defn snapshot
+  ([daily-stored weekly-stored events level instant timezone]
+   (snapshot daily-stored weekly-stored events level instant timezone nil))
+  ([daily-stored weekly-stored events level instant timezone thematic-occurrences]
+   (let [{:keys [day week]} (periods instant timezone)
+         ds (daily-state daily-stored day level)
+         ws (weekly-state weekly-stored week)
+         base {:timezone timezone :claims-enabled false :progress-integration-enabled false
+               :reward-rules reward-rules
+               :daily {:period day :initialized (= day (get daily-stored "dia"))
+                       :level (get ds "nivel")
+                       :missions (mapv #(mission % (get-in ds ["progresso" (:id %)] 0)
+                                                 (boolean (some #{(:id %)} (get ds "resgatadas"))))
+                                       (scaled-daily (get ds "nivel")))}
+               :weekly {:period week :initialized (= week (get weekly-stored "semana"))
+                        :missions (mapv #(mission %
+                                                 (if (#{"pvp" "presentes"} (:id %))
+                                                   (get ws (:id %) 0)
+                                                   (count (distinct (get ws (:id %) []))))
+                                                 (boolean (some #{(:id %)} (get ws "resgatadas")))) weekly)}
+               :events (thematic-event-views events instant thematic-occurrences)}]
+     (assoc base :summary (suggest/summary-projection base)))))

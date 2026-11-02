@@ -321,6 +321,19 @@ function createClient(config = {}) {
       request('GET', `/v1/missions/rewards${q({ chatId, playerId, saveId })}`),
     claimDailyMissions: (body) => mutateOnce('/v1/missions/claim/daily', body),
     claimWeeklyMissions: (body) => mutateOnce('/v1/missions/claim/weekly', body),
+    claimEventMissions: (body) => mutateOnce('/v1/missions/claim/event', body),
+    tickThematicEvents: (body) =>
+      request('POST', '/v1/thematic-events/tick', body || {}),
+    getThematicEventsActive: ({ chatId, agoraMs }) =>
+      request('GET', `/v1/thematic-events/active${q({ chatId, agoraMs })}`),
+    getThematicEventsHistory: ({ chatId, limit }) =>
+      request('GET', `/v1/thematic-events/history${q({ chatId, limit })}`),
+    getThematicEventsSchedule: ({ chatId }) =>
+      request('GET', `/v1/thematic-events/schedule${q({ chatId })}`),
+    putThematicEventsSchedule: (body) =>
+      request('PUT', '/v1/thematic-events/schedule', body),
+    cancelThematicEvent: (body) =>
+      request('POST', '/v1/thematic-events/cancel', body),
     sendGift: (body) => mutateOnce('/v1/gifts/send', body),
     collectMissionPending: (body) => mutateOnce('/v1/missions/pending/collect', body),
     getEncounter: ({ chatId, playerId }) =>
