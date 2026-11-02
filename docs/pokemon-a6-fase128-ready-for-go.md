@@ -1,6 +1,6 @@
 # A6 — READY FOR GO · Release 12.8.0
 
-**Decisão prep:** **READY FOR GO** (produção **intacta** — sem cutover nesta etapa)  
+**Decisão prep:** **READY FOR GO** → **cutover SUCCESS no piloto** (ver `docs/pokemon-a6-fase128-deploy.md`)  
 **Escopo:** missões UX + recompensas diárias/semanais + Doces (rename) + clima PT + captura por raridade + Frambo caça + flag mochila preparada  
 **Fora de escopo (→ 12.8.1):** ativação operacional de eventos temáticos / claim de Doces de evento  
 **Commit:** `7d0325a0153e86a17f62eff9206f4bb106eb4733`  
