@@ -1,9 +1,20 @@
 (ns pokemon.domain.mundo
   "Rotação diária de clima e biomas — espelho de zapbot.pokemon.mundo.
   Puro: timezone e instante injetáveis."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [pokemon.domain.raid-gym-theme :as gym-theme])
   (:import [java.time Instant ZoneId ZonedDateTime]
            [java.time.format DateTimeFormatter]))
+
+(defn tipo-label-pt
+  "Traduz id interno do tipo para português (reusa ginásios por tipo)."
+  [tipo]
+  (or (:label-pt (gym-theme/venue-for-type tipo))
+      (str tipo)))
+
+(defn tipos-labels-pt
+  [tipos]
+  (mapv tipo-label-pt tipos))
 
 (def default-timezone "America/Sao_Paulo")
 
@@ -112,7 +123,7 @@
    (let [{:keys [clima area-padrao areas-disponiveis areas-indisponiveis]}
          (resumo instant timezone-id)]
      (str (:emoji clima) " *Clima de hoje: " (:nome clima) "* — favorece "
-          (str/join ", " (sort (:tipos clima))) ".\n"
+          (str/join ", " (sort (tipos-labels-pt (:tipos clima)))) ".\n"
           "📍 *Bioma deste horário:* " (:emoji area-padrao) " " (:id area-padrao) "\n"
           "🕒 *Rotação de hoje:* "
           (str/join " • " (map #(str (:emoji %) " " (:id %)) areas-disponiveis)) "\n"

@@ -84,14 +84,18 @@ test('apresentação filtra todas, diárias e semanais sem misturar grupos', () 
   const all = present.formatMissions(missions, 'all', '!pk');
   const daily = present.formatMissions(missions, 'diarias', '!pk');
   const weekly = present.formatMissions(missions, 'semanais', '!pk');
-  assert.match(all, /Colecionador/); assert.match(all, /Vencer 3 batalhas PvP/);
-  assert.match(all, /Novo Recomeço.*encerrado/s);
+  // Resumo compacto (Fase 12.8): progresso + sugeridas + links
+  assert.match(all, /MISSÕES DO TREINADOR/);
+  assert.match(all, /Capturar Pokémon selvagens — 1\/4/);
+  assert.match(all, /missoes diaria/);
+  assert.match(all, /missoes semanal/);
+  assert.match(all, /missoes evento/);
+  assert.doesNotMatch(all, /Novo Recomeço.*encerrado/s);
   assert.match(daily, /Colecionador/); assert.match(daily, /1\/4/); assert.doesNotMatch(daily, /Vencer 3 batalhas PvP|Missões semanais|Novo Recomeço/);
   assert.match(weekly, /Vencer 3 batalhas PvP/); assert.doesNotMatch(weekly, /Colecionador|Missões diárias|Novo Recomeço/);
   assert.equal(present.missionScope('diárias'), 'daily');
-  assert.equal(present.missionScope('semanais'), 'weekly');
-  const text = all;
-  assert.match(text, /resgatar/);
+  assert.equal(present.missionScope('semanal'), 'weekly');
+  assert.equal(present.missionScope('eventos'), 'event');
   const claim = present.formatMissionClaim({ kind: 'daily', ids: ['capturas'], xp: 3,
     items: [{ itemId: 'pokebola', qty: 4 }], pending: [{ itemId: 'grande-bola', qty: 1 }] }, 'daily');
   assert.match(claim, /\+3 PE/); assert.match(claim, /Pokébola/); assert.match(claim, /mochila resgatar/);

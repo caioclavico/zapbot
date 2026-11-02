@@ -333,7 +333,7 @@
   (let [base (capture/chance-base-pos-batalha magikarp nil 0)]
     (dotimes [_ 50]
       (is (= base (capture/chance-base-pos-batalha magikarp nil 0))))
-    (is (= 75 (capture/chance-com-bola base "pokebola")))
+    (is (= base (capture/chance-com-bola base "pokebola")))
     (is (true? (:capturou? (capture/attempt-capture
                             {:pokemon magikarp :bola "pokebola"
                              :chance-base base :roll 0 :fuga-roll 99}))))
@@ -346,15 +346,17 @@
     (is (= 40 (capture/chance-com-bola base "pokebola")))
     (is (= 60 (capture/chance-com-bola base "grande-bola")))
     (is (= 80 (capture/chance-com-bola base "ultra-bola"))))
-  (is (= 75 (capture/chance-com-bola 95 "pokebola")) "pokébola cap 75")
-  (is (= 88 (capture/chance-com-bola 95 "grande-bola")) "grande cap 88")
+  ;; Fase 12.8: caps unificados em 95 (comuns podem exibir 75–90 com Pokébola).
+  (is (= 95 (capture/chance-com-bola 95 "pokebola")) "pokébola cap 95")
+  (is (= 95 (capture/chance-com-bola 95 "grande-bola")) "grande cap 95")
   (is (= 95 (capture/chance-com-bola 95 "ultra-bola")) "ultra cap 95")
-  (is (= 15 (capture/chance-captura
+  (let [mit (capture/chance-captura
              {:raridade "mitico"
-              :hp 200 :ataque 200 :defesa 200 :atq-esp 200 :def-esp 200 :veloc 200}))
-      "mínimo espécie 15")
-  (is (= 90 (capture/chance-captura magikarp)) "máximo espécie 90")
-  (is (= 95 (capture/chance-base-pos-batalha magikarp :adormecido 10))
+              :hp 200 :ataque 200 :defesa 200 :atq-esp 200 :def-esp 200 :veloc 200})]
+    (is (<= 3 mit 8) "faixa mítico 3–8"))
+  (let [c (capture/chance-captura magikarp)]
+    (is (<= 75 c 90) "faixa comum 75–90"))
+  (is (<= (capture/chance-base-pos-batalha magikarp :adormecido 10) 95)
       "teto pós-batalha 95"))
 
 (deftest hp-zero-nao-altera-chance-especie

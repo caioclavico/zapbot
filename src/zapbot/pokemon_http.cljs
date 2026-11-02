@@ -987,40 +987,54 @@
                          :mostrarEntrada false}))]
     (envelope-jvm pedido texto img)))
 
+(defn- normalizar-missao-token
+  "Remove acentos/caixa — aceita diaria(s), semanal(is), evento(s)."
+  [s]
+  (-> (str (or s ""))
+      str/lower-case
+      (.normalize "NFD")
+      (str/replace #"[\u0300-\u036f]" "")
+      str/trim))
+
 (defn- executar-missoes-jvm!
   "Consulta e resgate de missões; período, prêmio e estado pertencem ao Core."
   [jvm ctx pedido chat-id player-id resto]
   (let [prefix (str config/prefix "pk")
-        primeiro (str/lower-case (str (or (first resto) "")))
-        diarias? (= "diarias" primeiro)
-        semanais? (= "semanais" primeiro)
-        acao (if diarias? (second resto) (first resto))
-        scope (cond semanais? "weekly" diarias? "daily" :else "all")]
+        primeiro (normalizar-missao-token (first resto))
+        diarias? (contains? #{"diaria" "diarias" "dia" "daily"} primeiro)
+        semanais? (contains? #{"semanal" "semanais" "semana" "weekly"} primeiro)
+        eventos? (contains? #{"evento" "eventos" "event"} primeiro)
+        acao (if (or diarias? semanais? eventos?) (second resto) (first resto))
+        scope (cond semanais? "weekly" diarias? "daily" eventos? "event" :else "all")]
     (p/let [missoes (desempenho/medir! ctx "pokemon_jvm_missions"
                          #(.getMissions jvm #js {:chatId chat-id :playerId player-id}))]
-      (if-not (= "resgatar" (str/lower-case (str (or acao ""))))
+      (if-not (= "resgatar" (normalizar-missao-token acao))
         (p/let [texto (.formatMissions jvm-present missoes scope prefix)
                 img (render-seguro! ctx "pokemon_jvm_media_missao"
                       #(.renderStaticAsset jvm-media "missao"
                                            #js {:filename "missao.png"}))]
           (envelope-jvm pedido texto img))
-        (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                weekly? semanais?
-                period (if weekly? (.-period (.-weekly missoes)) (.-period (.-daily missoes)))
-                op-id (.stableOperationId jvm-transport (:requestId pedido)
-                                            (str "mission-claim:" (if weekly? "weekly:" "daily:") period))
-                data (desempenho/medir! ctx "pokemon_jvm_mission_claim"
-                       #(if weekly?
-                          (.claimWeeklyMissions jvm #js {:chatId chat-id :playerId player-id
-                                                         :saveId (.-activeSaveId ativo)
-                                                         :fenceGeneration (.-fenceGeneration ativo)
-                                                         :operationId op-id :period period})
-                          (.claimDailyMissions jvm #js {:chatId chat-id :playerId player-id
-                                                        :saveId (.-activeSaveId ativo)
-                                                        :fenceGeneration (.-fenceGeneration ativo)
-                                                        :operationId op-id :period period})))]
-          (envelope-jvm pedido (.formatMissionClaim jvm-present data
-                                                     (if weekly? "weekly" "daily") prefix)))))))
+        (if eventos?
+          (envelope-jvm pedido
+                        (str "🎉 Missões de evento ainda não têm resgate em lote. "
+                             "Conclua os objetivos e as recompensas serão creditadas automaticamente."))
+          (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                  weekly? semanais?
+                  period (if weekly? (.-period (.-weekly missoes)) (.-period (.-daily missoes)))
+                  op-id (.stableOperationId jvm-transport (:requestId pedido)
+                                              (str "mission-claim:" (if weekly? "weekly:" "daily:") period))
+                  data (desempenho/medir! ctx "pokemon_jvm_mission_claim"
+                         #(if weekly?
+                            (.claimWeeklyMissions jvm #js {:chatId chat-id :playerId player-id
+                                                           :saveId (.-activeSaveId ativo)
+                                                           :fenceGeneration (.-fenceGeneration ativo)
+                                                           :operationId op-id :period period})
+                            (.claimDailyMissions jvm #js {:chatId chat-id :playerId player-id
+                                                          :saveId (.-activeSaveId ativo)
+                                                          :fenceGeneration (.-fenceGeneration ativo)
+                                                          :operationId op-id :period period})))]
+            (envelope-jvm pedido (.formatMissionClaim jvm-present data
+                                                       (if weekly? "weekly" "daily") prefix))))))))
 
 (defn- executar-presente-jvm!
   [jvm ctx pedido chat-id player-id]
@@ -1248,10 +1262,10 @@
                     (or (str/blank? sub)
                         (contains? #{"ajuda" "help" "?"} sub)
                         (not (contains? #{"enviar" "confirmar" "usar" "cancelar"
-                                          "cartoes" "cartões" "saldo"} sub)))
+                                          "cartoes" "cartões" "saldo" "doces" "doce"} sub)))
                     (envelope-jvm pedido (.formatProfessorHelp jvm-present prefix))
 
-                    (contains? #{"cartoes" "cartões" "saldo"} sub)
+                    (contains? #{"cartoes" "cartões" "saldo" "doces" "doce"} sub)
                     (p/let [a (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
                             d (.getProfessorCards jvm #js {:chatId chat-id :playerId player-id
                                                            :saveId (.-activeSaveId a)})]
@@ -1990,6 +2004,39 @@
                                                  :mostrarEntrada true}))]
                             (envelope-jvm pedido texto img)))))))
 
+                "fruta"
+                (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
+                               #(.getEncounter jvm #js {:chatId chat-id :playerId player-id}))
+                        encontro (.-encounter enc)]
+                  (cond
+                    (nil? encontro)
+                    (envelope-jvm pedido
+                                  (str "❓ Não há encontro de caça para usar Frambo. "
+                                       "Em raids: " config/prefix "pk raide frambo"))
+
+                    (not (.-aguardandoCaptura encontro))
+                    (envelope-jvm pedido
+                                  "⚔️ Derrote o Pokémon selvagem antes de usar a Fruta Frambo.")
+
+                    :else
+                    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            op-id (.stableOperationId jvm-transport (:requestId pedido)
+                                                      (str "encounter-frambo:"
+                                                           (.-battleId encontro)))
+                            _ (desempenho/medir! ctx "pokemon_jvm_encounter_frambo"
+                                #(.prepareEncounterFrambo jvm
+                                   #js {:chatId chat-id
+                                        :playerId player-id
+                                        :saveId (.-activeSaveId ativo)
+                                        :fenceGeneration (.-fenceGeneration ativo)
+                                        :operationId op-id
+                                        :battleId (.-battleId encontro)}))
+                            enc2 (desempenho/medir! ctx "pokemon_jvm_encounter"
+                                   #(.getEncounter jvm #js {:chatId chat-id :playerId player-id}))
+                            texto (.formatCaptureMenu jvm-present enc2
+                                                      (str config/prefix "pk"))]
+                      (envelope-jvm pedido texto))))
+
                 "capturar"
                 (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
                                #(.getEncounter jvm #js {:chatId chat-id :playerId player-id}))]
@@ -1998,19 +2045,25 @@
                                   (.formatCaptureMenu jvm-present enc
                                                       (str config/prefix "pk")))
                     (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            tokens (mapv str/lower-case resto)
+                            frambo? (boolean (some #(contains? #{"frambo" "framb" "razz" "fruta"} %)
+                                                   tokens))
+                            bola-tokens (remove #(contains? #{"frambo" "framb" "razz" "fruta"} %)
+                                                tokens)
                             op-id (.stableOperationId jvm-transport
                                                       (:requestId pedido)
                                                       (str "encounter-capture:"
                                                            (str/join "-" resto)))
-                            data (desempenho/medir! ctx "pokemon_jvm_capture"
-                                   #(.attemptEncounterCapture jvm
-                                      #js {:chatId chat-id
+                            body (clj->js {:chatId chat-id
                                            :playerId player-id
                                            :saveId (.-activeSaveId ativo)
                                            :fenceGeneration (.-fenceGeneration ativo)
                                            :operationId op-id
-                                           :bola (str/join " " resto)
-                                           :battleId (some-> (.-encounter enc) .-battleId)}))
+                                           :bola (str/join " " bola-tokens)
+                                           :battleId (some-> (.-encounter enc) .-battleId)
+                                           :frambo frambo?})
+                            data (desempenho/medir! ctx "pokemon_jvm_capture"
+                                   #(.attemptEncounterCapture jvm body))
                             texto (.formatCaptureResult jvm-present data
                                                         (str config/prefix "pk"))
                             img (render-seguro! ctx "pokemon_jvm_media_capture"

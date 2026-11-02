@@ -144,7 +144,7 @@ test('menu e captura bem-sucedida via roteador simulado', async () => {
   }, async client => {
     const msg = fakeMessage({ chatId: 'g@g.us', playerId: 'ash', requestId: 'req-cap' });
     const menu = await dispatchCapture(client, msg, ['capturar']);
-    assert.match(menu.messages[0].text, /Escolha a bola/);
+    assert.match(menu.messages[0].text, /CHANCES DE CAPTURA|Escolha sua Poké Bola|Capturar:/);
     assert.match(menu.messages[0].text, /Magikarp/);
 
     const ok = await dispatchCapture(client, msg, ['cap', '1']);
@@ -186,9 +186,47 @@ test('vitória mostra menu de bolas sem etapa carimbada', () => {
     }
   }, '!pk');
   assert.match(text, /Pidgey.*derrotado|derrotado.*Pidgey/s);
-  assert.match(text, /Escolha a bola/);
-  assert.match(text, /75% de chance/); // min(75, 80)
+  assert.match(text, /CHANCES DE CAPTURA|Capturar:|Escolha sua Poké Bola/);
+  assert.match(text, /Poké Bola: 80%/); // cap 95 — base 80 permanece 80
   assert.doesNotMatch(text, /carimbada/i);
+});
+
+test('menu de captura caça: fruta e chances reais antes/depois do Frambo', () => {
+  const antes = present.formatCaptureMenu({
+    encounter: {
+      aguardandoCaptura: true,
+      chanceBaseCaptura: 40,
+      tentativasCaptura: 0,
+      frambo: 3,
+      pokemonO: { nome: 'Eevee', raridade: 'comum' },
+      chances: { pokebola: 40, 'grande-bola': 60, 'ultra-bola': 80 }
+    }
+  }, '!pk');
+  assert.match(antes, /UM POKÉMON SELVAGEM APARECEU/);
+  assert.match(antes, /Poké Bola: 40%/);
+  assert.match(antes, /Super Bola: 60%/);
+  assert.match(antes, /Ultra Bola: 80%/);
+  assert.match(antes, /Frutas Frambo: 3/);
+  assert.match(antes, /!pk fruta/);
+
+  const depois = present.formatCaptureMenu({
+    encounter: {
+      aguardandoCaptura: true,
+      chanceBaseCaptura: 40,
+      tentativasCaptura: 0,
+      framboPreparada: true,
+      frambo: 2,
+      pokemonO: { nome: 'Eevee', raridade: 'comum' },
+      chances: { pokebola: 60, 'grande-bola': 90, 'ultra-bola': 95 }
+    }
+  }, '!pk');
+  assert.match(depois, /FRUTA FRAMBO UTILIZADA/);
+  assert.match(depois, /CHANCES ATUALIZADAS/);
+  assert.match(depois, /Poké Bola: 60%/);
+  assert.match(depois, /Super Bola: 90%/);
+  assert.match(depois, /Ultra Bola: 95%/);
+  assert.match(depois, /Frutas Frambo restantes: 2/);
+  assert.match(depois, /Bônus ativo/);
 });
 
 test('falha de captura mantém menu com chance da bola', () => {
@@ -205,7 +243,7 @@ test('falha de captura mantém menu com chance da bola', () => {
   assert.match(text, /falhou/);
   assert.match(text, /continua aqui/);
   assert.match(text, /60% de chance/);
-  assert.match(text, /Escolha a bola/);
+  assert.match(text, /CHANCES DE CAPTURA|Capturar:|Escolha sua Poké Bola/);
   assert.doesNotMatch(text, /carimbada/i);
 });
 

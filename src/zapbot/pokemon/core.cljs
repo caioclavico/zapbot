@@ -5095,23 +5095,23 @@
         [acao numero] args
         idx (indice-pc numero (count (treinador/equipe cid pid)))
         registro (when (some? idx) (get (treinador/equipe cid pid) idx))
-        guia (str "👨‍🔬 *Professor — cartões de XP*"
+        guia (str "👨‍🔬 *Professor — Doces Pokémon*"
                   "\nEnviar definitivamente: " config/prefix "pk professor enviar <número>"
-                  "\nCada transferência dá 1 cartão da família. Confirme em até 5 minutos."
-                  "\nUsar 1 cartão (+3 XP): " config/prefix "pk professor usar <número>"
-                  "\nSaldo: " config/prefix "pk professor cartoes"
+                  "\nCada transferência dá 1 Doce da família. Confirme em até 5 minutos."
+                  "\nUsar 1 Doce (+3 XP): " config/prefix "pk professor usar <número>"
+                  "\nSaldo: " config/prefix "pk professor cartoes (ou doces)"
                   "\nCancelar envio: " config/prefix "pk professor cancelar")]
     (cond
       (= acao "cancelar")
       (do (treinador/cancelar-transferencia-professor! cid pid)
           (p/resolved "✅ Transferência cancelada. Nenhum Pokémon foi enviado."))
-      (contains? #{"cartoes" "cartões" "saldo"} acao)
-      (p/resolved (str "🎟️ *Cartões de XP por família*\n"
+      (contains? #{"cartoes" "cartões" "saldo" "doces" "doce"} acao)
+      (p/resolved (str "🍬 *Doces Pokémon*\n"
                        (or (not-empty (str/join "\n" (for [[familia quantidade] (sort-by key (treinador/cartoes-professor cid pid))
                                                              :when (pos? quantidade)]
-                                                         (str familia ": " quantidade))))
-                           "Você ainda não tem cartões.")
-                       "\nCada cartão concede +3 XP: " config/prefix "pk professor usar <número>."))
+                                                         (str "🍬 Doce " (str/capitalize familia) ": " quantidade))))
+                           "Você ainda não tem Doces.")
+                       "\nCada Doce concede +3 XP: " config/prefix "pk professor usar <número>."))
       (not (contains? #{"enviar" "confirmar" "usar"} acao)) (p/resolved guia)
       (professor-bloqueado? cid pid)
       (p/resolved "🚫 Termine a batalha, caçada, raide e alterações pendentes antes de usar o professor.")
@@ -5120,8 +5120,10 @@
        (let [{:keys [status registro familia]} (treinador/confirmar-transferencia-professor! cid pid numero (.now js/Date))]
          (if (= status :ok)
            (do (when-let [item (get registro "item")] (loja/devolver-item! cid pid item))
-               (str "✅ *" (get registro "nome") "* enviado definitivamente ao professor."
-                    "\n+1 cartão da família *" familia "* e uma vaga liberada."
+               (str "👨‍🔬 *POKÉMON ENVIADO!*\n"
+                    (get registro "nome") " foi transferido.\n"
+                    "🍬 +1 Doce " (str/capitalize familia)
+                    "\n🎒 Uma vaga liberada."
                     (when (get registro "item") " O item equipado voltou para a mochila.")
                     "\nConfira os novos números em " config/prefix "pk tm."))
            "❓ Confirmação inválida, expirada ou Pokémon alterado/protegido. Faça um novo pedido de envio.")))
@@ -5145,7 +5147,7 @@
                   (str "⚠️ Enviar *" (get registro "nome") "* nº " (inc idx)
                        " Nv." (get registro "nivel" 1) (when (get registro "shiny") " ✨ SHINY")
                        " ao professor? A transferência é definitiva: você não poderá recuperar este Pokémon."
-                       "\nReceberá 1 cartão da família *" familia "* (+3 XP ao usar em outro membro da família)."
+                       "\nReceberá 🍬 1 Doce " (str/capitalize familia) " (+3 XP ao usar em outro membro da família)."
                        (when (get registro "item") "\nO item equipado será devolvido à mochila.")
                        "\nConfirme em até 5 minutos: " config/prefix "pk professor confirmar " (get pendente "token")
                        "\nCancelar: " config/prefix "pk professor cancelar")
@@ -5153,14 +5155,14 @@
                 :else
                 (let [{:keys [status nome nivel subiu?]} (treinador/usar-cartao-professor! cid pid idx registro familia)]
                   (case status
-                    :nivel-maximo "🏅 Este Pokémon já está no nível máximo. Nenhum cartão foi gasto."
-                    :sem-cartoes (str "🎟️ Você não tem cartões da família *" familia "*.")
+                    :nivel-maximo "🏅 Este Pokémon já está no nível máximo. Nenhum Doce foi gasto."
+                    :sem-cartoes (str "🍬 Você não tem Doces " (str/capitalize familia) ".")
                     :ok (p/let [_ (when subiu? (verificar-evolucao! message cid pid idx))
                                 _ (when subiu? (aprender-golpe-por-nivel! message cid pid nivel idx))]
-                          (str "🎟️ 1 cartão da família *" familia "* usado em *" nome "*: +3 XP."
+                          (str "🍬 1 Doce " (str/capitalize familia) " usado em *" nome "*: +3 XP."
                                (when subiu? (str " Subiu para o nível " nivel "!"))
                                "\n" (texto-xp (get (treinador/equipe cid pid) idx))))
-                    "⚠️ O Pokémon mudou. Nenhum cartão foi gasto."))))
+                    "⚠️ O Pokémon mudou. Nenhum Doce foi gasto."))))
             (p/catch (fn [erro]
                        (js/console.error "Erro no professor:" erro)
                        "❌ Não consegui concluir a operação. Confira !pk tm e !pk professor cartoes antes de tentar novamente."))

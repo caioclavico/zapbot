@@ -4,13 +4,15 @@
 
 (def order
   (vec (concat ["pokebola" "grande-bola" "ultra-bola" "fruta" "fruta-dourada"
-                "reviver" "catalisador-evolutivo"]
+                "cartao-presente" "reviver" "catalisador-evolutivo"]
                (:trade-evolution-pool catalog/reward-rules)
                (sort ["pedra-agua" "pedra-trovao" "pedra-fogo" "pedra-folha" "pedra-lua"]))))
 
 (defn base-items [mission]
   (into {} (for [[field item] [[:pokebolas "pokebola"] [:grandes "grande-bola"]
-                              [:ultras "ultra-bola"] [:catalisadores "catalisador-evolutivo"]]
+                              [:ultras "ultra-bola"] [:frutas "fruta"]
+                              [:presentes-item "cartao-presente"]
+                              [:catalisadores "catalisador-evolutivo"]]
                 :let [n (get mission field 0)] :when (pos? n)] [item n])))
 
 (defn- evolution-item [draw key]

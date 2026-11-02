@@ -58,6 +58,14 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}
 
+  ;; Fase 12.8 — missões/doces/clima/captura/eventos (domínio)
+  :test-fase128
+  {:main-opts ["-m" "odisseu.smoke.fase128"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
   ;; Testes M3.4 — motor de batalha + regressões
   :test-m3-battle
   {:main-opts ["-m" "odisseu.smoke.m3-battle"]

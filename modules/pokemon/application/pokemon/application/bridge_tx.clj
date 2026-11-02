@@ -301,7 +301,7 @@
 (defn attempt-encounter-capture!
   "POST captura no encontro ativo. Exige save-id + fence + operation-id."
   [store {:keys [chat-id player-id save-id fence-generation operation-id
-                 bola battle-id roll fuga-roll]
+                 bola battle-id roll fuga-roll frambo]
           :as req}]
   (when (or (nil? operation-id) (empty? (str operation-id)))
     (throw (err/error :missing_operation_id {})))
@@ -321,6 +321,7 @@
                (cond-> {:operation-id (str operation-id)
                         :bola ball}
                  battle-id (assoc :battle-id battle-id)
+                 (true? frambo) (assoc :frambo true)
                  (some? roll) (assoc :roll (long roll))
                  (some? fuga-roll) (assoc :fuga-roll (long fuga-roll))))
           result (merge-capture-receipt raw)
@@ -338,6 +339,8 @@
        :fugiu (boolean (:fugiu? result))
        :chance (:chance result)
        :chance-base (:chance-base result)
+       :frambo (boolean (:frambo result))
+       :chances (:chances result)
        :tentativa (:tentativa result)
        :bola (:bola result ball)
        :indice (:indice result)
@@ -982,6 +985,31 @@
                                     (:duplicate result)))
      :tentativas (or (:tentativas result) (:tentativas summary) 0)
      :raid-id (:raid-id raid)
+     :save-id save-id
+     :fence-generation (long fence-generation)}))
+
+(defn encounter-frambo-prepare!
+  "Prepara Frambo na caça selvagem (estado separado da raide)."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 battle-id]
+          :as req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (let [writer-ctx (require-writer! req)
+        result (ports/encounter-frambo-prepare!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)}
+                  battle-id (assoc :battle-id battle-id)))
+        summary (or (:summary result) result)]
+    {:operation-id (or (:operation-id result) operation-id)
+     :duplicate (boolean (:duplicate result))
+     :frambo-preparada (boolean (or (:frambo-preparada summary)
+                                    (:frambo-preparada result)
+                                    (:duplicate result)))
+     :chance-base (:chance-base summary)
+     :chances (:chances summary)
+     :frambo (:frambo summary)
+     :battle-id (:battle-id summary)
      :save-id save-id
      :fence-generation (long fence-generation)}))
 

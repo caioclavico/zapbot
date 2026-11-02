@@ -92,7 +92,7 @@ test('formatHuntStart e formatBattleTurn', () => {
     battle: { pokemons: { o: { nome: 'Abra' } }, pokemonO: { nome: 'Abra' } }
   });
   assert.match(win, /capturar/);
-  assert.match(win, /Escolha a bola/);
+  assert.match(win, /CHANCES DE CAPTURA|Capturar:|Escolha sua Poké Bola/);
   assert.doesNotMatch(win, /carimbada/i);
 });
 

@@ -1072,10 +1072,10 @@ function formatError(err) {
     PROFESSOR_BUSY: '⚠️ Já existe um envio pendente. Confirme o código ou use !pk professor cancelar.',
     PROFESSOR_INVALID_TOKEN: '❓ Confirmação inválida, expirada ou Pokémon alterado/protegido. Faça um novo pedido de envio.',
     PROFESSOR_EXPIRED: '❓ Confirmação expirada (5 minutos). Faça um novo !pk professor enviar <número>.',
-    PROFESSOR_NO_CARDS: '🎟️ Você não tem cartões dessa família.',
+    PROFESSOR_NO_CARDS: '🍬 Você não tem Doces Pokémon dessa família.',
     POKEMON_FAVORITE: '⭐ Remova a marca de favorito antes de enviar este Pokémon ao professor.',
     POKEMON_IN_TREATMENT: '🏥 Este Pokémon está na enfermaria. Espere o retorno antes de enviar ao professor.',
-    POKEMON_MAX_LEVEL: '🏅 Este Pokémon já está no nível máximo. Nenhum cartão foi gasto.',
+    POKEMON_MAX_LEVEL: '🏅 Este Pokémon já está no nível máximo. Nenhum Doce foi gasto.',
     INVALID_MOVE_SLOT: '❓ Informe um golpe válido (1-4) para substituir ou liberar vaga.',
     MOVE_ALREADY_KNOWN: '❓ Esse golpe já é conhecido (ou já foi oferecido/removido).',
     MUST_KEEP_STAB_MOVE: '🚫 Mantenha pelo menos um ataque ofensivo do próprio tipo.',
@@ -1280,7 +1280,7 @@ function formatWorldInfo(plan, prefix = '!pk') {
   const clima = (plan && plan.clima) || mundo.clima || {};
   const disponiveis = mundo.areasDisponiveis || mundo['areas-disponiveis'] || [];
   const indisponiveis = mundo.areasIndisponiveis || mundo['areas-indisponiveis'] || [];
-  const tiposClima = (clima.tipos || []).slice().sort();
+  const tiposClima = (clima.tipos || []).slice().sort().map(tipoLabelPt);
   const rotacao = disponiveis.map(a => `${a.emoji || '🗺️'} ${a.id || a.nome}`).join(' • ') || '?';
   const semAcesso = indisponiveis.map(a => `${a.emoji || '·'} ${a.id || a.nome}`).join(' • ') || '—';
   return [
@@ -1514,10 +1514,12 @@ function qtyBall(inv, id) {
   return row ? Number(row.qty) || 0 : 0;
 }
 
-function chanceComBola(chanceBase, bolaId) {
-  const limits = { pokebola: [1, 75], 'grande-bola': [1.5, 88], 'ultra-bola': [2, 95] };
-  const [mult, lim] = limits[bolaId] || [1, 75];
-  return Math.min(lim, Math.round(Number(chanceBase || 0) * mult));
+function chanceComBola(chanceBase, bolaId, frambo) {
+  const limits = { pokebola: [1, 95], 'grande-bola': [1.5, 95], 'ultra-bola': [2, 95] };
+  const [mult, lim] = limits[bolaId] || [1, 95];
+  let n = Math.min(lim, Math.round(Number(chanceBase || 0) * mult));
+  if (frambo) n = Math.min(lim, Math.round(n * 1.5));
+  return n;
 }
 
 function formatCaptureMenu(encounterData, prefix = '!pk') {
@@ -1526,20 +1528,55 @@ function formatCaptureMenu(encounterData, prefix = '!pk') {
   if (!enc.aguardandoCaptura) {
     return '⚔️ Derrote o Pokémon selvagem antes de capturar.';
   }
-  const nome = (enc.pokemonO && (enc.pokemonO.nome || enc.pokemonO.species)) || 'selvagem';
+  const poke = enc.pokemonO || {};
+  const nome = poke.nome || poke.species || 'selvagem';
+  const raridade = poke.raridade || poke.rarity || '?';
   const inv = enc.inventory || [];
   const base = enc.chanceBaseCaptura;
   const tent = Number(enc.tentativasCaptura) || 0;
-  const linhas = ['pokebola', 'grande-bola', 'ultra-bola'].map((id, i) => {
-    const meta = BOLA_LABEL[id];
-    return `${prefix} capturar ${i + 1} — ${meta.emoji} ${meta.nome} — ${qtyBall(inv, id)} disponível(is) — ${chanceComBola(base, id)}% de chance`;
-  });
+  const framboPrep = Boolean(enc.framboPreparada || enc['frambo-preparada']);
+  const framboQty = enc.frambo != null ? Number(enc.frambo)
+    : qtyBall(inv, 'fruta');
+  const chances = enc.chances || {};
+  const pct = (id) => (chances[id] != null
+    ? Number(chances[id])
+    : chanceComBola(base, id, framboPrep));
+  const linhasChance = [
+    `🔴 Poké Bola: ${pct('pokebola')}%`,
+    `🔵 Super Bola: ${pct('grande-bola')}%`,
+    `🟡 Ultra Bola: ${pct('ultra-bola')}%`
+  ];
+  if (framboPrep) {
+    return [
+      '🍓 *FRUTA FRAMBO UTILIZADA!*',
+      '',
+      `🐾 Pokémon: ${nome}`,
+      '',
+      '✨ *CHANCES ATUALIZADAS*',
+      ...linhasChance,
+      '',
+      `🍓 Frutas Frambo restantes: ${Math.max(0, framboQty)}`,
+      '🍓 Bônus ativo para a próxima tentativa!',
+      '',
+      '🎯 Escolha sua Poké Bola.',
+      `${prefix} capturar 1 · ${prefix} capturar 2 · ${prefix} capturar 3`,
+      `Tentativas restantes: ${3 - tent} de 3.`
+    ].join('\n');
+  }
   return [
-    `🎯 *Escolha a bola para capturar ${nome}!*`,
-    ...linhas,
+    '🌿 *UM POKÉMON SELVAGEM APARECEU!*',
+    '',
+    `🐾 Pokémon: ${nome}`,
+    `⭐ Raridade: ${String(raridade).charAt(0).toUpperCase()}${String(raridade).slice(1)}`,
+    '',
+    '🎯 *CHANCES DE CAPTURA*',
+    ...linhasChance,
+    '',
+    `🍓 Frutas Frambo: ${framboQty}`,
+    `*Use \`${prefix} fruta\` para aumentar suas chances!*`,
     '',
     `Tentativas restantes: ${3 - tent} de 3.`,
-    `📖 Como capturar: ${prefix} capturar <bola>`
+    `📖 Capturar: ${prefix} capturar <bola>`
   ].join('\n');
 }
 
@@ -2485,12 +2522,35 @@ function formatMissionItems(items) {
   }).join(', ');
 }
 
+const TYPE_LABEL_PT = {
+  normal: 'Normal', fire: 'Fogo', water: 'Água', electric: 'Elétrico',
+  grass: 'Planta', ice: 'Gelo', fighting: 'Lutador', poison: 'Venenoso',
+  ground: 'Terrestre', flying: 'Voador', psychic: 'Psíquico', bug: 'Inseto',
+  rock: 'Pedra', ghost: 'Fantasma', dragon: 'Dragão', dark: 'Sombrio',
+  steel: 'Aço', fairy: 'Fada'
+};
+
+function tipoLabelPt(t) {
+  const k = String(t || '').toLowerCase();
+  return TYPE_LABEL_PT[k] || t;
+}
+
+function candyLabel(family, qty) {
+  const fam = String(family || '?');
+  const pretty = fam.split('-').map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join('-');
+  const n = Number(qty);
+  if (n === 1) return `Doce ${pretty}`;
+  return `Doces ${pretty}`;
+}
+
 function formatMissionReward(mission) {
   const parts = [];
   if (mission.xp) parts.push(`+${mission.xp} PE do treinador`);
   if (mission.moedas) parts.push(`+${mission.moedas} moedas`);
-  for (const [key, label] of [['pokebolas', 'Pokébolas'], ['grandes', 'Grandes Bolas'],
-    ['ultras', 'Ultra Bolas'], ['catalisadores', 'Catalisador Evolutivo']]) {
+  for (const [key, label] of [['pokebolas', 'Pokébolas'], ['grandes', 'Super Bolas'],
+    ['ultras', 'Ultra Bolas'], ['frutas', 'Frutas Frambo'],
+    ['presentesItem', 'Cartão-presente'], ['presentes-item', 'Cartão-presente'],
+    ['catalisadores', 'Catalisador Evolutivo']]) {
     if (mission[key]) parts.push(`${mission[key]} ${label}`);
   }
   return parts.length ? parts.join(' • ') : 'recompensa histórica';
@@ -2518,23 +2578,87 @@ function formatMissionList(kind, group, prefix) {
   return lines.join('\n');
 }
 
+function formatMissionEventList(events, prefix) {
+  const active = (events || []).filter((e) => e && (e.status === 'active' || e.available));
+  if (!active.length) return '🎉 Nenhum evento de missões ativo no momento.';
+  const lines = ['🎉 *MISSÕES DE EVENTO*', ''];
+  for (const ev of active) {
+    lines.push(`${ev.emoji || '🎉'} *${ev.nome || ev.id}*`);
+    for (const mission of ev.missions || []) {
+      const state = mission.estado;
+      const icon = state === 'rewarded' ? '🎁' : state === 'completed' ? '✅' : '⬜';
+      lines.push(`${icon} ${mission.nome || mission.objetivo || mission.id} — ${mission.progresso || 0}/${mission.meta || 0}`);
+    }
+    lines.push('');
+  }
+  lines.push(`Resumo: ${prefix} missoes`);
+  return lines.join('\n');
+}
+
+function formatSuggestedLine(mission) {
+  return `• ${mission.objetivo || mission.nome || mission.id} — ${mission.progresso || 0}/${mission.meta || 0}`;
+}
+
+function formatMissionsSummary(data, prefix = '!pk') {
+  const summary = (data && data.summary) || {};
+  const dailyDone = summary.dailyDone != null ? summary.dailyDone : summary['daily-done'];
+  const dailyTotal = summary.dailyTotal != null ? summary.dailyTotal : summary['daily-total'];
+  const weeklyDone = summary.weeklyDone != null ? summary.weeklyDone : summary['weekly-done'];
+  const weeklyTotal = summary.weeklyTotal != null ? summary.weeklyTotal : summary['weekly-total'];
+  const dailySug = summary.dailySuggested || summary['daily-suggested']
+    || ((data.daily && data.daily.missions) || []).filter((m) => m.estado === 'available' || m.estado === 'in_progress').slice(0, 2);
+  const weeklySug = summary.weeklySuggested || summary['weekly-suggested']
+    || ((data.weekly && data.weekly.missions) || []).filter((m) => m.estado === 'available' || m.estado === 'in_progress').slice(0, 2);
+  const eventSug = summary.eventSuggested || summary['event-suggested'] || [];
+  const activeEvents = summary.activeEvents || summary['active-events']
+    || ((data.events || []).filter((e) => e.status === 'active' || e.available));
+  const lines = [
+    '📜 *MISSÕES DO TREINADOR*',
+    '',
+    '📊 *Seu progresso*',
+    `☀️ Diárias: ${dailyDone != null ? dailyDone : '?'}/${dailyTotal != null ? dailyTotal : '?'} concluídas`,
+    `📅 Semanais: ${weeklyDone != null ? weeklyDone : '?'}/${weeklyTotal != null ? weeklyTotal : '?'} concluídas`
+  ];
+  if (activeEvents.length) {
+    lines.push(`🎉 Evento ativo: ${activeEvents.map((e) => e.nome || e.id).join(', ')}`);
+  }
+  lines.push('', '☀️ *DIÁRIAS SUGERIDAS*');
+  if (dailySug.length) dailySug.forEach((m) => lines.push(formatSuggestedLine(m)));
+  else lines.push('• Nenhuma pendente — consulte a lista completa.');
+  lines.push('', '📅 *SEMANAIS SUGERIDAS*');
+  if (weeklySug.length) weeklySug.forEach((m) => lines.push(formatSuggestedLine(m)));
+  else lines.push('• Nenhuma pendente — consulte a lista completa.');
+  if (eventSug.length || activeEvents.length) {
+    lines.push('', '🎉 *MISSÃO DE EVENTO*');
+    if (eventSug.length) eventSug.forEach((m) => lines.push(formatSuggestedLine(m)));
+    else lines.push('• Veja os objetivos com o filtro de eventos.');
+  }
+  lines.push(
+    '',
+    '🔎 *Veja todas as missões:*',
+    `\`${prefix} missoes diaria\``,
+    `\`${prefix} missoes semanal\``,
+    `\`${prefix} missoes evento\``
+  );
+  return lines.join('\n');
+}
+
 function missionScope(scope) {
   const normalized = String(scope || 'all').normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  if (['daily', 'diaria', 'diarias'].includes(normalized)) return 'daily';
-  if (['weekly', 'semanal', 'semanais'].includes(normalized)) return 'weekly';
+    .replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  if (['daily', 'diaria', 'diarias', 'dia'].includes(normalized)) return 'daily';
+  if (['weekly', 'semanal', 'semanais', 'semana'].includes(normalized)) return 'weekly';
+  if (['event', 'evento', 'eventos'].includes(normalized)) return 'event';
   return 'all';
 }
 
 function formatMissions(data, scope = 'all', prefix = '!pk') {
   const selectedScope = missionScope(scope);
+  if (selectedScope === 'all') return formatMissionsSummary(data, prefix);
+  if (selectedScope === 'event') return formatMissionEventList(data && data.events, prefix);
   const sections = [];
-  if (selectedScope !== 'weekly') sections.push(formatMissionList('daily', data && data.daily, prefix));
-  if (selectedScope !== 'daily') sections.push(formatMissionList('weekly', data && data.weekly, prefix));
-  const event = data && Array.isArray(data.events) ? data.events[0] : null;
-  if (selectedScope === 'all' && event && event.status === 'ended') {
-    sections.push(`🏁 *${event.nome}* — evento encerrado\nHistórico preservado; não há resgate ativo.`);
-  }
+  if (selectedScope === 'daily') sections.push(formatMissionList('daily', data && data.daily, prefix));
+  if (selectedScope === 'weekly') sections.push(formatMissionList('weekly', data && data.weekly, prefix));
   return sections.join('\n\n');
 }
 
@@ -2665,7 +2789,8 @@ const ALIASES = {
   removergolpe: 'removergolpe', rmg: 'removergolpe',
   cancelar: 'cancelar', can: 'cancelar',
   batalhar: 'batalhar', abrir: 'batalhar', entrar: 'batalhar',
-  sair: 'sair', sai: 'sair'
+  sair: 'sair', sai: 'sair',
+  fruta: 'fruta', frambo: 'fruta', framb: 'fruta', razz: 'fruta'
 };
 
 function resolveCommand(tokens) {
@@ -2723,19 +2848,20 @@ module.exports = {
     const lines = Object.keys(cards)
       .sort()
       .filter((k) => Number(cards[k]) > 0)
-      .map((k) => `${k}: ${cards[k]}`);
+      .map((k) => `🍬 ${candyLabel(k, cards[k])}: ${cards[k]}`);
     return [
-      '🎟️ *Cartões de XP por família*',
-      lines.length ? lines.join('\n') : 'Você ainda não tem cartões.',
-      `Cada cartão concede +3 XP: ${prefix} professor usar <número>.`
+      '🍬 *Doces Pokémon*',
+      lines.length ? lines.join('\n') : 'Você ainda não tem Doces.',
+      `Cada Doce concede +3 XP ao usar: ${prefix} professor usar <número>.`,
+      `Aliases: ${prefix} professor cartoes`
     ].join('\n');
   },
   formatProfessorHelp: (prefix = '!pk') => [
-    '👨‍🔬 *Professor — cartões de XP*',
+    '👨‍🔬 *Professor — Doces Pokémon*',
     `Enviar: ${prefix} professor enviar <número> ou ${prefix} professor enviar 1,2,3`,
-    'Cada transferência dá 1 cartão da família. Confirme em até 5 minutos.',
-    `Usar 1 cartão (+3 XP): ${prefix} professor usar <número>`,
-    `Saldo: ${prefix} professor cartoes`,
+    'Cada transferência dá 1 Doce da família evolutiva. Confirme em até 5 minutos.',
+    `Usar 1 Doce (+3 XP): ${prefix} professor usar <número>`,
+    `Saldo: ${prefix} professor cartoes  (ou doces)`,
     `Cancelar envio: ${prefix} professor cancelar`
   ].join('\n'),
   formatProfessor: (d, prefix = '!pk') => {
@@ -2751,8 +2877,9 @@ module.exports = {
         const cards = Number(x.cardsGranted != null ? x.cardsGranted : count) || count;
         const items = Number(x.itemsReturned || 0);
         return [
-          `✅ *${count}* Pokémon enviados definitivamente ao professor.`,
-          `+${cards} cartão(ões) de família e ${count} vaga(s) liberada(s).`,
+          `👨‍🔬 *POKÉMON ENVIADOS!*`,
+          `✅ *${count}* Pokémon transferidos ao professor.`,
+          `🍬 +${cards} Doces Pokémon · ${count} vaga(s) liberada(s).`,
           items > 0 ? `${items} item(ns) equipado(s) voltaram para a mochila.` : null,
           `Confira os novos números em ${prefix} tm.`
         ].filter(Boolean).join('\n');
@@ -2760,9 +2887,14 @@ module.exports = {
       const fam = x.family || '?';
       const nome = x.nome || x.species || 'Pokémon';
       const item = x.itemReturned || x.item;
+      const total = x.cardsTotal != null ? x.cardsTotal : null;
       return [
-        `✅ *${nome}* enviado definitivamente ao professor.`,
-        `+1 cartão da família *${fam}* e uma vaga liberada.`,
+        '👨‍🔬 *POKÉMON ENVIADO!*',
+        '',
+        `${nome} foi transferido.`,
+        '',
+        `🍬 +1 ${candyLabel(fam, 1)}`,
+        total != null ? `🎒 Total: ${total} ${candyLabel(fam, total)}` : null,
         item ? 'O item equipado voltou para a mochila.' : null,
         `Confira os novos números em ${prefix} tm.`
       ].filter(Boolean).join('\n');
@@ -2773,7 +2905,7 @@ module.exports = {
       const nivel = x.level != null ? x.level : '?';
       const up = x.leveledUp === true;
       return [
-        `🎟️ 1 cartão da família *${fam}* usado em *${nome}*: +3 XP.`,
+        `🍬 1 ${candyLabel(fam, 1)} usado em *${nome}*: +3 XP.`,
         up ? `Subiu para o nível ${nivel}!` : null
       ].filter(Boolean).join('\n');
     }
@@ -2787,13 +2919,13 @@ module.exports = {
           const nome = e.nome || e.species || 'Pokémon';
           const nivel = e.nivel != null ? e.nivel : (e.level != null ? e.level : '?');
           const shiny = e.shiny ? ' ✨' : '';
-          return `• nº ${n} *${nome}* Nv.${nivel}${shiny} (${e.family || '?'})`;
+          return `• nº ${n} *${nome}* Nv.${nivel}${shiny} (${candyLabel(e.family || '?', 1)})`;
         });
         const comItem = entries.filter((e) => e.item).length;
         return [
           `⚠️ Enviar *${entries.length}* Pokémon ao professor? A transferência é definitiva.`,
           linhas.join('\n'),
-          `Receberá ${entries.length} cartão(ões) de família (+3 XP cada ao usar).`,
+          `Receberá ${entries.length} Doce(s) Pokémon (+3 XP cada ao usar).`,
           comItem ? `${comItem} item(ns) equipado(s) voltarão à mochila.` : null,
           `Confirme em até 5 minutos: ${prefix} professor confirmar ${x.token}`,
           `Cancelar: ${prefix} professor cancelar`
@@ -2806,7 +2938,7 @@ module.exports = {
       const fam = x.family || '?';
       return [
         `⚠️ Enviar *${nome}* nº ${n} Nv.${nivel}${shiny} ao professor? A transferência é definitiva: você não poderá recuperar este Pokémon.`,
-        `Receberá 1 cartão da família *${fam}* (+3 XP ao usar em outro membro da família).`,
+        `Receberá 1 ${candyLabel(fam, 1)} (+3 XP ao usar em outro membro da família).`,
         x.item ? 'O item equipado será devolvido à mochila.' : null,
         `Confirme em até 5 minutos: ${prefix} professor confirmar ${x.token}`,
         `Cancelar: ${prefix} professor cancelar`

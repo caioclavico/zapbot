@@ -73,6 +73,10 @@
     "Tentativa de captura no encontro ativo (aguardando-captura?).
      Consome bola + atualiza/encerra batalha na mesma TX; fence + recibo.")
 
+  (encounter-frambo-prepare! [this writer-ctx request]
+    "Prepara Fruta Frambo na caça selvagem (consome 1 fruta, marca bônus).
+     Independente do prepare de raide; fence + recibo.")
+
   (start-hunt! [this writer-ctx request]
     "Inicia caça: seleciona selvagem validado, cria batalha, cooldown + trava de chat.")
 

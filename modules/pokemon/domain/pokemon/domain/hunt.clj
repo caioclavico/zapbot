@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.events :as events]
             [pokemon.domain.mundo :as mundo])
   (:import [java.time Instant]))
 
@@ -124,11 +125,24 @@
             (recur (next restantes) melhor')))))))
 
 (defn resolver-tipos-encontro
-  "35% clima / 65% bioma. roll 0–99."
-  [bioma clima roll]
-  (if (< (long roll) chance-tipos-clima)
-    (set (:tipos clima))
-    (set (:tipos bioma))))
+  "Sorteio de tipos do encontro.
+  Sem evento: 35% clima / 65% bioma.
+  Com active-events (12.8.1): bias% tipos do evento, depois clima, depois bioma.
+  Isolamento 12.8.0: montar-plano chama a aridade de 3 args (nil) e
+  events/active-events retorna [] com POKEMON_THEMATIC_EVENTS_ENABLED≠true."
+  ([bioma clima roll]
+   (resolver-tipos-encontro bioma clima roll nil))
+  ([bioma clima roll active-events]
+   (let [r (long roll)
+         bias (events/type-bias-chance active-events)
+         favored (events/favored-types active-events)]
+     (cond
+       (and (pos? bias) (seq favored) (< r bias))
+       favored
+       (< r (+ bias chance-tipos-clima))
+       (set (:tipos clima))
+       :else
+       (set (:tipos bioma))))))
 
 (defn surto?
   [roll]

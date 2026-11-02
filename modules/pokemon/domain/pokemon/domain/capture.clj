@@ -1,14 +1,25 @@
 (ns pokemon.domain.capture
-  "Probabilidade e resolução de captura — fórmulas de zapbot.pokemon.core
-  e multiplicadores de loja/bolas. RNG injetável para testes."
+  "Probabilidade e resolução de captura — Fase 12.8: raridade ancora a chance.
+  RNG injetável para testes."
   (:require [pokemon.domain.errors :as err]))
 
-(def chance-captura-base 70)
-(def chance-captura-por-poder 0.15)
-(def poder-referencia-captura 450)
-(def chance-captura-minima 15)
-(def chance-captura-maxima 90)
+;; Faixas-base (Pokébola, sem status/seqüência) — Fase 12.8.
+;; Valores centrais das faixas pedidas; leve variação por poder dentro da faixa.
+(def raridade-chance-base
+  {"comum" 82
+   "incomum" 65
+   "raro" 40
+   "epico" 22
+   "lendario" 8
+   "mitico" 5})
 
+(def raridade-chance-min
+  {"comum" 75 "incomum" 55 "raro" 30 "epico" 15 "lendario" 5 "mitico" 3})
+
+(def raridade-chance-max
+  {"comum" 90 "incomum" 75 "raro" 50 "epico" 30 "lendario" 12 "mitico" 8})
+
+;; Compat: mapa antigo ainda consultado por código legado de peso.
 (def raridades
   {"comum" {:captura 1.15}
    "incomum" {:captura 1.0}
@@ -17,6 +28,13 @@
    "lendario" {:captura 0.4}
    "mitico" {:captura 0.3}})
 
+(def chance-captura-minima 3)
+(def chance-captura-maxima 90)
+(def poder-referencia-captura 450)
+;; ±4 pp dentro da faixa por desvio de poder (não cruza limites da raridade).
+(def poder-variacao-pp 4)
+(def poder-variacao-ref 200)
+
 (def bonus-captura-status
   {:adormecido 2 :congelado 2
    :paralisado 1.5 :envenenado 1.5 :queimado 1.5 :confuso 1.5
@@ -24,9 +42,12 @@
    "paralisado" 1.5 "envenenado" 1.5 "queimado" 1.5 "confuso" 1.5})
 
 (def bolas
-  {"pokebola" {:nome "Pokébola" :multiplicador-captura 1 :limite-captura 75}
-   "grande-bola" {:nome "Grande Bola" :multiplicador-captura 1.5 :limite-captura 88}
+  {"pokebola" {:nome "Pokébola" :multiplicador-captura 1 :limite-captura 95}
+   "grande-bola" {:nome "Grande Bola" :multiplicador-captura 1.5 :limite-captura 95}
    "ultra-bola" {:nome "Ultra Bola" :multiplicador-captura 2 :limite-captura 95}})
+
+;; Caps de bola: Pokébola sobe a 95 para não truncar comuns (~82–90) artificialmente.
+;; Grande/Ultra mantêm 95. Chance nunca > 100 após frambo (re-capada no limite).
 
 (def fuga-raridade
   {"comum" 5 "incomum" 7 "raro" 9 "epico" 11 "lendario" 14 "mitico" 16})
@@ -56,8 +77,7 @@
     {:xp 1 :bonus-xp 0 :bonus-primeira 0 :moedas 0 :sequencia 0}))
 
 (defn recompensa-vitoria-sem-captura
-  "Bolsa cheia / somente-batalha: raridade + 1 XP; sem moedas; sequência intacta.
-   Espelha encerrar-cacada! com :vitoria-sem-captura? true."
+  "Bolsa cheia / somente-batalha: raridade + 1 XP; sem moedas; sequência intacta."
   [{:keys [raridade]}]
   (let [base (get xp-base-raridade (or raridade "comum") 2)]
     {:xp (+ base bonus-base-vitoria-sem-captura)
@@ -70,27 +90,44 @@
   (let [g (fn [k] (long (or (get pokemon k) (get pokemon (name k)) 0)))]
     (+ (g :hp) (g :ataque) (g :defesa) (g :atq-esp) (g :def-esp) (g :veloc))))
 
-(defn chance-captura
-  "Taxa da espécie (15–90), antes de status/sequência/bola."
+(defn- raridade-de
   [pokemon]
-  (let [raridade (or (:raridade pokemon) (get pokemon "raridade") "comum")
-        fator (get-in raridades [raridade :captura] 1.0)
-        bruto (* (- chance-captura-base
-                    (* chance-captura-por-poder
-                       (- (poder-total pokemon) poder-referencia-captura)))
-                 fator)
-        arred (Math/round (double bruto))]
-    (-> arred
+  (or (:raridade pokemon) (get pokemon "raridade") "comum"))
+
+(defn chance-captura
+  "Taxa da espécie ancorada na raridade (faixas 12.8), com leve variação por poder."
+  [pokemon]
+  (let [raridade (raridade-de pokemon)
+        centro (get raridade-chance-base raridade 65)
+        lo (get raridade-chance-min raridade chance-captura-minima)
+        hi (get raridade-chance-max raridade chance-captura-maxima)
+        poder (poder-total pokemon)
+        ;; Poder alto → um pouco mais difícil dentro da faixa.
+        delta (-> (- (double poder) poder-referencia-captura)
+                  (/ poder-variacao-ref)
+                  (* poder-variacao-pp)
+                  Math/round
+                  long
+                  -)
+        bruto (+ centro delta)]
+    (-> bruto
+        (max lo)
+        (min hi)
         (max chance-captura-minima)
         (min chance-captura-maxima))))
 
 (defn chance-base-pos-batalha
-  "min(95, round(bonus_status * chance-captura) + 25 + min(20, 2*sequencia))."
+  "Pós-batalha: status × espécie + bônus moderado de sequência.
+  Sem o +25 legado — preserva ordenação por raridade (comuns ≫ lendários)."
   [pokemon status sequencia-capturas]
   (let [bonus (get bonus-captura-status status 1)
         base (chance-captura pokemon)
-        seq-bonus (min 20 (* 2 (max 0 (long sequencia-capturas))))]
-    (min 95 (+ (Math/round (* (double bonus) base)) 25 seq-bonus))))
+        ;; Sequência ajuda no máximo +10 (antes: +25 flat + até +20 seq).
+        seq-bonus (min 10 (long sequencia-capturas))]
+    (-> (Math/round (* (double bonus) base))
+        (+ seq-bonus)
+        (max 1)
+        (min 95))))
 
 (defn chance-com-bola
   [chance-base bola-id]
@@ -100,14 +137,12 @@
     (min (:limite-captura bola)
          (Math/round (* (double chance-base) (:multiplicador-captura bola))))))
 
-;; Fruta Frambo (item de loja `fruta`) — bônus de captura de chefe de raide.
-;; Gym `!pk gin potenciar` continua usando o mesmo item como motivação; aqui só
-;; captura. Multiplicador 1.5 sobre a chance pós-bola, re-capado no limite da bola.
+;; Fruta Frambo (item `fruta`) — caça e raide.
 (def frambo-item-id "fruta")
 (def frambo-multiplicador-captura 1.5)
 
 (defn chance-com-bola-frambo
-  "Chance final de raide: bola (± frambo). Sem frambo ≡ chance-com-bola."
+  "Chance final: bola (± frambo 1.5×). Sem frambo ≡ chance-com-bola. Cap no limite da bola."
   [chance-base bola-id frambo?]
   (let [com-bola (chance-com-bola chance-base bola-id)]
     (if-not frambo?
@@ -115,22 +150,30 @@
       (let [lim (get-in bolas [bola-id :limite-captura] 95)]
         (min lim (Math/round (* (double com-bola) frambo-multiplicador-captura)))))))
 
+(defn chances-painel
+  "Mapa bola→% para UI (antes/depois da fruta)."
+  [chance-base frambo?]
+  (into {}
+        (for [bola (keys bolas)]
+          [bola (chance-com-bola-frambo chance-base bola frambo?)])))
+
 (defn attempt-capture
   "Resolve uma tentativa. `roll` / `fuga-roll` são 0–99 (injetáveis).
-  Espelha capturar-selvagem: bola já deve ter sido consumida pelo caller.
-  Se `:chance-base` vier carimbada no encontro, usa esse valor (legado)."
+  Se `:chance-base` vier carimbada no encontro, usa esse valor.
+  `:frambo` aplica o multiplicador Frambo (caça ou raide)."
   [{:keys [pokemon status sequencia-capturas bola tentativas-anteriores
-           roll fuga-roll chance-base]}]
+           roll fuga-roll chance-base frambo]}]
   (when-not (contains? bolas bola)
     (throw (err/error :unknown_ball {:bola bola})))
   (let [chance-base (long (or chance-base
                               (chance-base-pos-batalha pokemon status sequencia-capturas)))
-        chance (chance-com-bola chance-base bola)
+        frambo? (boolean frambo)
+        chance (chance-com-bola-frambo chance-base bola frambo?)
         roll (long (or roll (rand-int 100)))
         capturou? (< roll chance)
         tentativas (inc (long (or tentativas-anteriores 0)))
         fuga-chance (get fuga-raridade
-                         (or (:raridade pokemon) (get pokemon "raridade") "comum")
+                         (raridade-de pokemon)
                          8)
         fugiu? (and (not capturou?)
                     (or (>= tentativas 3)
@@ -140,5 +183,7 @@
      :chance chance
      :chance-base chance-base
      :bola bola
+     :frambo? frambo?
      :roll roll
-     :tentativa tentativas}))
+     :tentativa tentativas
+     :chances (chances-painel chance-base frambo?)}))

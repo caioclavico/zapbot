@@ -1,47 +1,44 @@
-;; Fixtures de equivalência — fórmulas de captura do legado (core.cljs).
-;; chance-captura = clamp(round((70 - 0.15*(poder-450))*fator_raridade), 15, 90)
-;; chance-base-pos-batalha = min(95, round(bonus_status * chance) + 25 + min(20, 2*seq))
-;; chance-com-bola = min(limite, round(chance-base * mult))
+;; Fixtures Fase 12.8 — captura ancorada em raridade (faixas).
+;; chance-captura = clamp na faixa da raridade ± variação leve por poder
+;; chance-base-pos-batalha = min(95, round(bonus_status * chance) + min(10, seq))
+;; chance-com-bola = min(95, round(chance-base * mult))  ; pokébola lim 95
 [
- ;; Magikarp fraco comum: poder baixo → chance alta
  {:id "magikarp-comum-neutro"
   :pokemon {:nome "Magikarp" :raridade "comum"
             :hp 20 :ataque 10 :defesa 55 :atq-esp 15 :def-esp 20 :veloc 80}
-  ;; poder = 200; bruto = (70 - 0.15*(200-450))*1.15 = (70 - 0.15*(-250))*1.15
-  ;; = (70 + 37.5)*1.15 = 107.5*1.15 = 123.625 → round 124 → clamp 90
-  :chance-especie 90
+  ;; poder=200; centro 82; delta = -round((200-450)/200*4) = -round(-5)=5 → 87
+  ;; clamp faixa comum [75,90] → 87
+  :chance-especie 87
   :status nil
   :sequencia 0
-  ;; base = min(95, round(1*90)+25+0) = 95
-  :chance-base 95
+  ;; base = round(1*87)+0 = 87
+  :chance-base 87
   :bola "pokebola"
-  ;; min(75, round(95*1)) = 75
-  :chance-bola 75}
+  :chance-bola 87}
 
  {:id "onix-raro-paralisado-seq3"
   :pokemon {:nome "Onix" :raridade "raro"
             :hp 80 :ataque 70 :defesa 120 :atq-esp 40 :def-esp 50 :veloc 70}
-  ;; poder = 430; bruto = (70 - 0.15*(430-450))*0.8 = (70 - 0.15*(-20))*0.8
-  ;; = (70+3)*0.8 = 58.4 → round 58
-  :chance-especie 58
+  ;; poder=430; centro 40; delta = -round((430-450)/200*4)= -round(-0.4)=0 → 40
+  :chance-especie 40
   :status :paralisado
   :sequencia 3
-  ;; base = min(95, round(1.5*58)+25+min(20,6)) = min(95, 87+25+6) = 95
-  :chance-base 95
+  ;; base = round(1.5*40)+min(10,3) = 60+3 = 63
+  :chance-base 63
   :bola "ultra-bola"
-  ;; min(95, round(95*2)) = 95
+  ;; min(95, round(63*2)) = 95? 126 → 95
   :chance-bola 95}
 
  {:id "mewtwo-mitico-sem-status"
   :pokemon {:nome "Mewtwo" :raridade "mitico"
             :hp 120 :ataque 110 :defesa 90 :atq-esp 154 :def-esp 90 :veloc 130}
-  ;; poder = 694; bruto = (70 - 0.15*(694-450))*0.3 = (70 - 36.6)*0.3 = 33.4*0.3 = 10.02 → 10 → clamp 15
-  :chance-especie 15
+  ;; poder=694; centro 5; delta = -round((694-450)/200*4)= -round(4.88)=-5 → 0 → lo=3
+  :chance-especie 3
   :status nil
   :sequencia 0
-  ;; base = min(95, 15+25+0) = 40
-  :chance-base 40
+  ;; base = 3+0 = 3
+  :chance-base 3
   :bola "grande-bola"
-  ;; min(88, round(40*1.5)) = min(88, 60) = 60
-  :chance-bola 60}
+  ;; min(95, round(3*1.5)) = 5
+  :chance-bola 5}
 ]

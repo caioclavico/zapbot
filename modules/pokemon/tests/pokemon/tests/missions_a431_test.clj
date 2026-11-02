@@ -37,22 +37,27 @@
   (d/transact conn {:tx-data [[:db/add [:save/key "chat|ash|a"] attr (pr-str value)]]}))
 
 (deftest exact-master-catalog
-  (is (= [["selvagens" 3 2 3 nil nil nil]
-          ["capturas" 2 3 4 1 nil nil]
-          ["vitorias" 1 3 3 1 1 1]
-          ["presentes" 2 2 3 nil nil nil]]
-         (mapv #(mapv % [:id :meta :xp :pokebolas :grandes :ultras :catalisadores]) catalog/daily)))
-  (is (= [["ginasios" 2 60 8 4 2 1] ["tipos" 5 50 6 3 1 1]
-          ["pvp" 3 60 8 4 2 1] ["presentes" 10 50 6 3 1 1]]
-         (mapv #(mapv % [:id :meta :moedas :pokebolas :grandes :ultras :catalisadores]) catalog/weekly)))
+  ;; Fase 12.8 — recompensas diversificadas (fruta / cartão-presente).
+  (is (= [["selvagens" 3 2 2 nil nil 1 nil]
+          ["capturas" 2 3 nil 2 nil 1 nil]
+          ["vitorias" 1 3 nil nil 1 nil 1]
+          ["presentes" 2 2 2 nil nil 1 nil]]
+         (mapv #(mapv % [:id :meta :xp :pokebolas :grandes :ultras :frutas :presentes-item])
+               catalog/daily)))
+  (is (= [["ginasios" 2 60 nil 3 nil 2 nil]
+          ["tipos" 5 50 nil nil 2 nil 1]
+          ["pvp" 3 60 nil nil 2 nil 1]
+          ["presentes" 10 50 nil 3 nil 2 nil]]
+         (mapv #(mapv % [:id :meta :moedas :pokebolas :grandes :ultras :frutas :presentes-item])
+               catalog/weekly)))
   (is (= [6 4 2 4] (mapv :meta (catalog/scaled-daily 6))))
   (is (= [4 6 6 4] (mapv :xp (catalog/scaled-daily 6))))
-  (is (= [6 8 6 6] (mapv :pokebolas (catalog/scaled-daily 6))))
+  (is (= [4 0 0 4] (mapv :pokebolas (catalog/scaled-daily 6))))
   (is (= {:ultra-bola 10 :grande-bola 25 :none 65} (get-in catalog/reward-rules [:daily :ball-bonus])))
   (is (= 20 (get-in catalog/reward-rules [:daily :reviver-percent])))
   (is (= 20 (get-in catalog/reward-rules [:daily :trade-evolution-percent])))
   (is (= 1 (get-in catalog/reward-rules [:weekly :trade-evolution-items])))
-  (is (= 1 (:catalisadores (nth (catalog/scaled-daily 11) 2))))
+  (is (= 3 (:presentes-item (nth (catalog/scaled-daily 11) 2))))
   (is (= (:meta (first (catalog/scaled-daily 1))) (:meta (first (catalog/scaled-daily 5))))))
 
 (deftest read-is-pure-and-prepare-is-idempotent

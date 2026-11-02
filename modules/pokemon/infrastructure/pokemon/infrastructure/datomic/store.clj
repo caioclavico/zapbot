@@ -1872,7 +1872,12 @@
                                             :capacidade (:capacidade storage)
                                             :excesso (:excesso storage)
                                             :nivel (:nivel storage)})))
-                     ball-tx (inventory-adjust-tx db sk bola -1)
+                     prepared-frambo? (boolean (:frambo-preparada state))
+                     request-frambo? (boolean (:frambo request))
+                     frambo? (or prepared-frambo? request-frambo?)
+                     frambo-tx (when (and frambo? (not prepared-frambo?))
+                                 (inventory-adjust-tx db sk capture/frambo-item-id -1))
+                     ball-tx (into (or frambo-tx []) (inventory-adjust-tx db sk bola -1))
                      tentativas-ant (long (:tentativas-captura state 0))
                      chance-base (or (:chance-base-captura state)
                                      (capture/chance-base-pos-batalha
@@ -1885,6 +1890,7 @@
                                :sequencia-capturas (:sequencia-capturas save-m 0)
                                :chance-base chance-base
                                :bola bola
+                               :frambo frambo?
                                :tentativas-anteriores tentativas-ant
                                :roll (:roll request)
                                :fuga-roll (:fuga-roll request)})
@@ -1898,7 +1904,9 @@
                      next-state (cond-> (assoc state
                                                :tentativas-captura (:tentativa attempt)
                                                :chance-base-captura chance-base
-                                               :turn-index (inc turn-now))
+                                               :turn-index (inc turn-now)
+                                               ;; bônus Frambo vale só para a tentativa atual
+                                               :frambo-preparada false)
                                   encerrado? (assoc :aguardando-captura? false
                                                     :phase :finished
                                                     :active? false
@@ -1937,9 +1945,12 @@
                                       (pr-str {:capturou? (:capturou? attempt)
                                                :fugiu? (:fugiu? attempt)
                                                :bola bola
+                                               :frambo? frambo?
                                                :chance (:chance attempt)
                                                :battle-id battle-id
                                                :tentativa (:tentativa attempt)})}]))
+                     frambo-fields {:frambo frambo?
+                                    :chances (:chances attempt)}
                      resultado
                      (cond
                        (:capturou? attempt)
@@ -1973,23 +1984,24 @@
                                                (:tx coin-part)))
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
-                          :result {:operation-id operation-id
-                                   :duplicate false
-                                   :channel "gameplay"
-                                   :payload-hash phash
-                                   :battle-id battle-id
-                                   :capturou? true
-                                   :fugiu? false
-                                   :chance (:chance attempt)
-                                   :chance-base chance-base
-                                   :tentativa (:tentativa attempt)
-                                   :bola bola
-                                   :indice idx
-                                   :id-pokemon (:id-pokemon registro)
-                                   :recompensa rew
-                                   :subida (:subida xp-part)
-                                   :registro (assoc registro :collection-index idx)
-                                   :encounter next-state}})
+                          :result (merge frambo-fields
+                                         {:operation-id operation-id
+                                          :duplicate false
+                                          :channel "gameplay"
+                                          :payload-hash phash
+                                          :battle-id battle-id
+                                          :capturou? true
+                                          :fugiu? false
+                                          :chance (:chance attempt)
+                                          :chance-base chance-base
+                                          :tentativa (:tentativa attempt)
+                                          :bola bola
+                                          :indice idx
+                                          :id-pokemon (:id-pokemon registro)
+                                          :recompensa rew
+                                          :subida (:subida xp-part)
+                                          :registro (assoc registro :collection-index idx)
+                                          :encounter next-state})})
 
                        (:fugiu? attempt)
                        (let [rew (capture/recompensa-pos-captura
@@ -2008,36 +2020,115 @@
                                                [:db/add [:save/key sk] :save/sequencia-capturas 0]])
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
-                          :result {:operation-id operation-id
-                                   :duplicate false
-                                   :channel "gameplay"
-                                   :payload-hash phash
-                                   :battle-id battle-id
-                                   :capturou? false
-                                   :fugiu? true
-                                   :chance (:chance attempt)
-                                   :chance-base chance-base
-                                   :tentativa (:tentativa attempt)
-                                   :bola bola
-                                   :recompensa rew
-                                   :subida (:subida xp-part)
-                                   :encounter next-state}})
+                          :result (merge frambo-fields
+                                         {:operation-id operation-id
+                                          :duplicate false
+                                          :channel "gameplay"
+                                          :payload-hash phash
+                                          :battle-id battle-id
+                                          :capturou? false
+                                          :fugiu? true
+                                          :chance (:chance attempt)
+                                          :chance-base chance-base
+                                          :tentativa (:tentativa attempt)
+                                          :bola bola
+                                          :recompensa rew
+                                          :subida (:subida xp-part)
+                                          :encounter next-state})})
 
                        :else
                        {:tx base-tx
-                        :result {:operation-id operation-id
-                                 :duplicate false
-                                 :channel "gameplay"
-                                 :payload-hash phash
-                                 :battle-id battle-id
-                                 :capturou? false
-                                 :fugiu? false
-                                 :chance (:chance attempt)
-                                 :chance-base chance-base
-                                 :tentativa (:tentativa attempt)
-                                 :bola bola
-                                 :encounter next-state}})]
+                        :result (merge frambo-fields
+                                       {:operation-id operation-id
+                                        :duplicate false
+                                        :channel "gameplay"
+                                        :payload-hash phash
+                                        :battle-id battle-id
+                                        :capturou? false
+                                        :fugiu? false
+                                        :chance (:chance attempt)
+                                        :chance-base chance-base
+                                        :tentativa (:tentativa attempt)
+                                        :bola bola
+                                        :encounter next-state})})]
                  resultado)))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (encounter-frambo-prepare! [_ writer-ctx request]
+    (let [battle-id0 (:battle-id request)
+          payload (ops/encounter-frambo-prep-payload
+                   {:battle-id (or battle-id0 "active")})
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [chat-id (:chat-id writer-ctx)
+                     player-id (:player-id writer-ctx)
+                     sk (id/save-key chat-id player-id (:save-id writer-ctx))
+                     pk (id/player-key chat-id player-id)
+                     battle-id (or battle-id0
+                                   (active-battle-id-for db chat-id player-id))
+                     _ (when-not battle-id
+                         (throw (err/error :encounter_not_found
+                                           {:chat-id chat-id :player-id player-id})))
+                     be (battle-entity db battle-id)
+                     _ (when-not (present? be)
+                         (throw (err/error :encounter_not_found {:battle-id battle-id})))
+                     state (->battle be)
+                     _ (when-not (= player-id (:player-id state))
+                         (throw (err/error :encounter_owner_mismatch
+                                           {:owner (:player-id state)
+                                            :player-id player-id})))
+                     _ (when-not (:aguardando-captura? state)
+                         (throw (err/error :encounter_not_ready
+                                           {:battle-id battle-id})))
+                     _ (when (:frambo-preparada state)
+                         (throw (err/error :frambo_already_prepared
+                                           {:battle-id battle-id})))
+                     frambo-tx (inventory-adjust-tx db sk capture/frambo-item-id -1)
+                     save-m (->save save)
+                     chance-base (or (:chance-base-captura state)
+                                     (capture/chance-base-pos-batalha
+                                      (get-in state [:pokemons :o])
+                                      (get-in state [:status :o])
+                                      (:sequencia-capturas save-m 0)))
+                     next-state (assoc state
+                                       :frambo-preparada true
+                                       :chance-base-captura chance-base)
+                     rev (long (:save/revision save 0))
+                     inv-after (query-inventory db sk)
+                     frambo-left (long (or (some #(when (= capture/frambo-item-id (:item-id %))
+                                                    (:qty %))
+                                                 inv-after)
+                                           0))
+                     summary {:frambo-preparada true
+                              :battle-id battle-id
+                              :chance-base chance-base
+                              :chances (capture/chances-painel chance-base true)
+                              :frambo frambo-left}]
+                 {:tx (into frambo-tx
+                            [[:db/add [:battle/id battle-id] :battle/state-edn
+                              (battle/encode-state-edn next-state)]
+                             [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                             {:operation-receipt/id operation-id
+                              :operation-receipt/kind "encounter-frambo-prep"
+                              :operation-receipt/channel "gameplay"
+                              :operation-receipt/payload-hash phash
+                              :operation-receipt/player-key pk
+                              :operation-receipt/save-id (:save-id writer-ctx)
+                              :operation-receipt/summary (pr-str summary)}])
+                  :result (assoc summary
+                                 :operation-id operation-id
+                                 :duplicate false
+                                 :payload-hash phash)})))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)

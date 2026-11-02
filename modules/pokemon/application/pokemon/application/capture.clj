@@ -27,3 +27,13 @@
                                   [:chat-id :player-id :save-id :fence-generation]))]
      (ops/validate-mutation! full)
      (ports/attempt-encounter-capture! store writer-ctx full))))
+
+(defn encounter-frambo-prepare!
+  ([store chat-id player-id request]
+   (encounter-frambo-prepare! store (writer/freeze-writer store chat-id player-id) request))
+  ([store writer-ctx request]
+   (let [full (merge request
+                     (select-keys writer-ctx
+                                  [:chat-id :player-id :save-id :fence-generation]))]
+     (ops/validate-mutation! full)
+     (ports/encounter-frambo-prepare! store writer-ctx full))))

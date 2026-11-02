@@ -98,7 +98,8 @@ test('formatWorldInfo lista clima e áreas', () => {
     }
   }, '!pk');
   assert.match(text, /Chuvoso/);
-  assert.match(text, /Praia Azul/);
+  assert.match(text, /Água/); // tipos do clima em PT-BR
+  assert.match(text, /praia|Praia Azul/);
   assert.match(text, /cacar/);
 });
 
@@ -178,9 +179,9 @@ test('formatBattleTurn com HP zero no adversário (nocaute → captura)', () => 
     }
   }, '!pk');
   assert.match(text, /derrotado/);
-  assert.match(text, /Escolha a bola/);
-  assert.match(text, /!pk capturar 1/);
-  assert.match(text, /70%|75%/); // chance por bola (base 70 → pokébola 70)
+  assert.match(text, /CHANCES DE CAPTURA|Capturar:|Escolha sua Poké Bola/);
+  assert.match(text, /!pk capturar|!pk fruta/);
+  assert.match(text, /Poké Bola: 70%/); // cap 95 — base 70 permanece
   assert.match(text, /60\/100/);
   assert.doesNotMatch(text, /carimbada/i);
   assert.doesNotMatch(text, /Agora você pode capturar/);

@@ -33,12 +33,19 @@
 (defn encounter-capture-payload
   "Payload canônico da tentativa sobre encontro já persistido (M4.4).
   Tentativas/chance-base vêm do estado da batalha — não do cliente."
-  [{:keys [battle-id bola roll fuga-roll]}]
+  [{:keys [battle-id bola roll fuga-roll frambo]}]
   (reward/canonicalize
    (cond-> {:battle-id (str battle-id)
             :bola bola}
      (some? roll) (assoc :roll (long roll))
-     (some? fuga-roll) (assoc :fuga-roll (long fuga-roll)))))
+     (some? fuga-roll) (assoc :fuga-roll (long fuga-roll))
+     (true? frambo) (assoc :frambo true))))
+
+(defn encounter-frambo-prep-payload
+  [{:keys [battle-id]}]
+  (reward/canonicalize
+   {:battle-id (str battle-id)
+    :action "encounter-frambo-prep"}))
 
 (defn hunt-start-payload
   "Payload canônico do início de caça (M4.5). Candidatos entram no hash

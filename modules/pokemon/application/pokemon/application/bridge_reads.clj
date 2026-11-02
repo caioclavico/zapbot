@@ -457,8 +457,23 @@
        :active-save-id (:active-save-id player)
        :fence-generation (:fence-generation player)
        :encounter nil}
-      (let [chance-base (:chance-base-captura battle)
-            aguardando? (boolean (:aguardando-captura? battle))]
+      (let [seq-cap (long (or (when-let [slot (:active-save-id player)]
+                                (:sequencia-capturas
+                                 (ports/get-save store chat-id player-id slot)))
+                              0))
+            chance-base (or (:chance-base-captura battle)
+                            (when-let [poke (get-in battle [:pokemons :o])]
+                              (capture/chance-base-pos-batalha
+                               poke (get-in battle [:status :o]) seq-cap)))
+            aguardando? (boolean (:aguardando-captura? battle))
+            frambo-prep? (boolean (:frambo-preparada battle))
+            frambo-qty (long (or (some #(when (= capture/frambo-item-id
+                                                 (or (:item-id %) (get % "item-id")))
+                                          (or (:qty %) (get % "qty")))
+                                       inv)
+                                 0))
+            chances (when (and aguardando? chance-base)
+                      (capture/chances-painel chance-base frambo-prep?))]
         {:chat-id chat-id
          :player-id player-id
          :active-save-id (:active-save-id player)
@@ -477,6 +492,9 @@
           :turn-index (:turn-index battle 0)
           :tentativas-captura (long (:tentativas-captura battle 0))
           :chance-base-captura chance-base
+          :frambo frambo-qty
+          :frambo-preparada frambo-prep?
+          :chances chances
           :hp (:hp battle)
           :status (:status battle)
           :bioma (:bioma battle)

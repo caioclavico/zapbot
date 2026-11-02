@@ -283,7 +283,7 @@ test('formatProfessor lote lista entradas e confirma contagem', () => {
   assert.match(pending, /professor confirmar 321/);
   assert.match(
     present.formatProfessor({ confirmed: true, count: 2, cardsGranted: 2, itemsReturned: 1 }),
-    /2\* Pokémon enviados|enviados definitivamente/
+    /POKÉMON ENVIADOS|Doces Pokémon/
   );
 });
 
@@ -371,15 +371,16 @@ test('formatProfessor espelha master: pendente, confirmação e cartões', () =>
   assert.match(pending, /5 minutos/);
   assert.match(
     present.formatProfessor({ confirmed: true, nome: 'Pidgey', family: 'pidgey', itemReturned: 'pokebola' }),
-    /enviado definitivamente.*cartão.*mochila/s
+    /POKÉMON ENVIADO[\s\S]*Doce Pidgey[\s\S]*mochila/s
   );
   assert.match(
     present.formatProfessor({ used: true, nome: 'Pidgeotto', family: 'pidgey', level: 6, leveledUp: true }),
-    /cartão.*\+3 XP.*nível 6/s
+    /Doce Pidgey[\s\S]*\+3 XP[\s\S]*nível 6/s
   );
   assert.match(present.formatProfessor({ cancelled: true }), /Transferência cancelada/);
-  assert.match(present.formatProfessorCards({ cards: { pidgey: 2 } }), /pidgey: 2/);
+  assert.match(present.formatProfessorCards({ cards: { pidgey: 2 } }), /Doces Pidgey: 2/);
   assert.match(present.formatProfessorHelp('!pk'), /professor enviar/);
+  assert.match(present.formatProfessorHelp('!pk'), /Doces Pokémon/);
   assert.match(present.formatError({ code: 'PROFESSOR_BUSY' }), /envio pendente/);
   assert.match(present.formatError({ code: 'POKEMON_FAVORITE' }), /favorito/);
 });

@@ -97,11 +97,12 @@
     :semanais
     (str "📅 *Missões semanais*\n\n"
          "Consulte " (comando "missoes semanais") " e receba com " (comando "missoes semanais resgatar") ".\n"
-         "• Vencer em 2 ginásios diferentes: 60 moedas, 8 Pokébolas, 4 Grandes e 2 Ultras.\n"
-         "• Capturar Pokémon de 5 tipos diferentes: 50 moedas, 6 Pokébolas, 3 Grandes e 1 Ultra.\n"
-         "• Vencer 3 batalhas PvP: 60 moedas, 8 Pokébolas, 4 Grandes e 2 Ultras.\n"
-         "• Enviar 10 presentes: 50 moedas, 6 Pokébolas, 3 Grandes e 1 Ultra.\n"
-         "Use !missoes para ver todas ou !missoes diarias / !missoes semanais. Presentes: !loja comprar cartao-presente e !presente @amigo.\n"
+         "• Vencer em 2 ginásios diferentes: 60 moedas, 3 Super Bolas e 2 Frutas Frambo.\n"
+         "• Capturar Pokémon de 5 tipos diferentes: 50 moedas, 2 Ultras e 1 cartão-presente.\n"
+         "• Vencer 3 batalhas PvP: 60 moedas, 2 Ultras e 1 cartão-presente.\n"
+         "• Enviar 10 presentes: 50 moedas, 3 Super Bolas e 2 Frutas Frambo.\n"
+         "Resumo: " (comando "missoes") ". Listas: " (comando "missoes diaria") " / " (comando "missoes semanal") " / " (comando "missoes evento") " (singular/plural e com acento também).\n"
+         "Presentes: !loja comprar cartao-presente e !presente @amigo.\n"
          "Cada missão pode ser resgatada uma vez por semana. Progresso começa nesta atualização; a semana reinicia na segunda-feira no fuso das missões. Resgate antes da virada.")
 
     :ginasios
@@ -130,7 +131,9 @@
          "• " (comando "capturar pokebola") "\n"
          "• " (comando "capturar grande-bola") "\n"
          "• " (comando "capturar ultra-bola") "\n\n"
-         "O menu mostra o estoque e a chance de cada bola. Cada lançamento consome uma bola. São até três tentativas: o Pokémon pode fugir após uma falha e foge após a terceira.\n"
+         "O menu mostra as chances reais de cada bola. A raridade define a dificuldade (comuns são bem mais fáceis que lendários).\n"
+         "🍓 Use " (comando "fruta") " (alias " (comando "frambo") ") para consumir 1 Fruta Frambo e aumentar as chances da próxima tentativa (×1,5, sem garantir captura).\n"
+         "Cada lançamento consome uma bola. São até três tentativas: o Pokémon pode fugir após uma falha e foge após a terceira.\n"
          "✨ Capturar na primeira tentativa dá +1 XP extra ao Pokémon ativo, além do XP de raridade e do bônus de sequência. Comando inválido ou falta de bola não conta como tentativa.\n"
          "Você tem 5 minutos para agir. Para desistir: " (comando "sair") ".\n"
          "Sem bolas? Compre na " config/prefix "loja ou use " config/prefix "mochila kit, "
@@ -140,8 +143,8 @@
     (str "🌿 *Como jogar: caçadas*\n\n"
          "1. Escolha seu inicial com " (comando "inicial") ". Confira as bolas em " (comando "mochila") " e os itens em " config/prefix "loja.\n"
          "2. Use " (comando "time") " e " (comando "escolher 1") " para definir um Pokémon com HP.\n"
-         "Com a bolsa cheia, você pode lutar nas caçadas, mas precisa de vaga para capturar. Se vencer sem espaço, o selvagem será liberado.\n3. Consulte clima e áreas com " (comando "clima") ". Três áreas ficam disponíveis por dia; escolha, por exemplo, com " (comando "cacar floresta") ". O clima aumenta os encontros de tipos favorecidos.\n"
-         "4. Derrote o selvagem usando " (comando "atacar 1") ". Depois escolha uma bola no menu: " (comando "capturar pokebola") ".\n\n"
+         "Com a bolsa cheia, você pode lutar nas caçadas, mas precisa de vaga para capturar. Se vencer sem espaço, o selvagem será liberado.\n3. Consulte clima e áreas com " (comando "clima") " (tipos em português). Três áreas ficam disponíveis por dia; escolha, por exemplo, com " (comando "cacar floresta") ". O clima aumenta de fato os encontros dos tipos favorecidos.\n"
+         "4. Derrote o selvagem usando " (comando "atacar 1") ". Depois escolha uma bola no menu: " (comando "capturar pokebola") ". Opcional: " (comando "fruta") " antes de lançar.\n\n"
          "A captura exige uma bola da mochila e pode falhar. Há até três tentativas, mas o selvagem pode fugir antes. Capturar de primeira dá +1 XP extra. Veja as regras em " (comando "capturar ajuda") ".\n"
          "Cada encontro tem chance de 1 em 512 de ser ✨ Shiny: cores especiais, mesmos atributos. Avistamentos, maiores níveis e primeiros shiny ficam em " (comando "pokedex descobertas") ".\n"
          "Durante o combate, é permitida uma troca de Pokémon com " (comando "escolher <número>") "; ela gasta sua ação.\n"
@@ -165,17 +168,17 @@
          "Complete a missão do evento para liberar vagas temporárias. Consulte " (comando "eventos") " para o prazo. Ao terminar, os Pokémon são preservados; acima da capacidade, libere/compre vagas para novas aquisições.\n"
          "Capacidade inicial: 50 Pokémon. Joy e defensores dos ginásios também contam. Compras anteriores continuam valendo; os Pokémon do antigo PC são incorporados ao carregar os dados, preservando os índices de batalha.\n"
          "Pokémon antigos acima do limite são preservados e continuam utilizáveis. Sem vaga, novas caçadas, capturas e doações recebidas ficam bloqueadas. Retornos da Joy e dos ginásios nunca são descartados.\n"
-         "Para liberar espaço, doe ou consulte " (comando "professor ajuda") ". A transferência ao professor é definitiva e dá 1 cartão de XP da família.\n"
+         "Para liberar espaço, doe ou consulte " (comando "professor ajuda") ". A transferência ao professor é definitiva e dá 1 Doce Pokémon da família.\n"
          "Ginásios e ligas continuam usando escalações de três Pokémon da sua coleção.")
 
     :professor
-    (str "👨‍🔬 *Professor — transferência e cartões de XP*\n\n"
+    (str "👨‍🔬 *Professor — transferência e Doces Pokémon*\n\n"
          "• " (comando "professor enviar <número>") " ou " (comando "professor enviar 1,2,3") ": prepara o envio de um ou vários Pokémon da coleção (até 50).\n"
          "O envio é definitivo e libera vagas. Confirme pelo código de 3 dígitos da mensagem em até 5 minutos; para desistir: " (comando "professor cancelar") ".\n"
-         "Cada Pokémon transferido dá 1 cartão da família evolutiva. Pidgey, Pidgeotto e Pidgeot rendem cartões da família Pidgey. O item equipado volta à mochila e o registro shiny histórico é preservado.\n"
-         "• " (comando "professor cartoes") ": saldo por família.\n"
-         "• " (comando "professor usar <número>") ": gasta 1 cartão da família do Pokémon escolhido e concede +3 XP. São 9 XP por nível; três cartões rendem um nível. No nível 100, nenhum cartão é gasto.\n"
-         "O XP segue as regras normais de atributos, HP, golpes e evolução por nível. As evoluções por pedras e trocas continuam disponíveis.\n"
+         "Cada Pokémon transferido dá 1 Doce da família evolutiva (ex.: Charmander/Charmeleon/Charizard → Doce Charmander). O item equipado volta à mochila e o registro shiny histórico é preservado.\n"
+         "• " (comando "professor cartoes") " (alias doces): saldo de Doces por família.\n"
+         "• " (comando "professor usar <número>") ": gasta 1 Doce da família do Pokémon escolhido e concede +3 XP. São 9 XP por nível; três Doces rendem um nível. No nível 100, nenhum Doce é gasto.\n"
+         "O XP segue as regras normais de atributos, HP, golpes e evolução por nível. As evoluções por pedras e trocas continuam disponíveis (não consomem Doces).\n"
          "Favoritos não podem ser enviados. Operações ficam bloqueadas durante batalha, caçada, raide e alterações pendentes. Pokémon na Joy ou defendendo ginásios devem retornar primeiro.\n"
          "Confira os números após cada transferência: " (comando "time") ".")
 
@@ -184,7 +187,7 @@
          "• " (comando "time") ": coleção completa, com uma imagem de até 12 Pokémon por página.\n"
          "Use " (comando "time 2") " para a página seguinte, ou " (comando "time 2 fogo >") " para manter filtros. Um número no início indica página; para nível, use nivel N.\n"
          "Compre +50 vagas com " (comando "espaco comprar") ". Ginásios e ligas usam escalações de três Pokémon.\n"
-         "Envie repetidos ao professor para liberar vagas e ganhar cartões de XP: " (comando "professor ajuda") ".\n"
+         "Envie repetidos ao professor para liberar vagas e ganhar Doces Pokémon: " (comando "professor ajuda") ".\n"
          "• " (comando "time txt") ": lista completa em texto; " (comando "time csv") ": planilha.\n"
          "• " (comando "time >") ": maior força primeiro; " (comando "time <") ": menor primeiro. A força é a soma dos seis atributos.\n"
          "• Combine filtros: " (comando "time txt fogo >") ", " (comando "time planta") " ou " (comando "time bronze") ". " (comando "time repetidos") " lista espécies com mais de um exemplar. Os números da coleção não mudam.\n"
@@ -198,7 +201,7 @@
     :evolucao
     (str "💎 *Como jogar: evolução*\n\n"
          "1. Consulte a ficha com " (comando "pokedex 1") " (número do Pokémon no seu time) ou " config/prefix "pokedex pikachu (nome da espécie).\n"
-         "Cartões do professor concedem XP: " (comando "professor usar <número>") ". Consulte " (comando "professor ajuda") ".\n"
+         "Doces Pokémon do professor concedem XP: " (comando "professor usar <número>") ". Consulte " (comando "professor ajuda") ".\n"
          "2. A ficha informa evoluções por nível e as pedras compatíveis disponíveis no bot. Ganhe XP nas batalhas para alcançar o nível necessário.\n"
          "3. Ganhe pedras nos ginásios e confira " (comando "mochila") ".\n"
          "4. Para um Pikachu compatível na posição 1, use " (comando "evoluir 1 pedra-trovao") ". A evolução consome uma pedra e exige estar fora de combate.\n"
@@ -218,10 +221,10 @@
                                 ["batalhas" "turnos, golpes e vitória"]
                                 ["ginasios" "líderes, insígnias e recompensas"]
                                 ["cacadas" "selvagens e captura"]
-                                ["captura" "Pokébolas, tentativas e bônus de XP"]
+                                ["captura" "bolas, Frambo e chances por raridade"]
                                 ["ligas" "faixas de nível e escalação"]
                                 ["time" "coleção, páginas, filtros e recuperação"]
-                                ["professor" "transferência e cartões de XP"]
+                                ["professor" "transferência e Doces Pokémon"]
                                 ["espaco" "estoque e expansões"]
                                 ["shiny" "coleção histórica e fotos"]
                                 ["semanais" "objetivos e recompensas semanais"]
