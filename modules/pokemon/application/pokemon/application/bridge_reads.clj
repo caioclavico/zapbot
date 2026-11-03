@@ -53,7 +53,7 @@
 (defn- save-profile
   [save]
   (when save
-    (let [base (select-keys save [:slot-id :coins :revision :trainer-xp :trainer-level
+    (let [base (select-keys save [:slot-id :display-name :coins :revision :trainer-xp :trainer-level
                                   :xp-atual :xp-necessario :ativo-index
                                   :vitorias-treinador :pe-ginasios :pe-raids
                                   :xp-insignias :xp-missoes :sequencia-capturas

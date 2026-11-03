@@ -107,7 +107,7 @@ function main() {
 
   // !pk saves
   const sTxt = present.formatSavesList(saves);
-  if (!sTxt.includes('Saves A/B')) fail('formatSavesList título');
+  if (!sTxt.includes('SEUS SAVES')) fail('formatSavesList título');
   if (!/ativo=a/.test(sTxt) && saves.activeSaveId !== 'a') {
     fail(`activeSaveId=${saves.activeSaveId}`);
   }

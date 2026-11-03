@@ -135,7 +135,7 @@ test('formatTrainer produz envelope texto compatível', () => {
   assert.match(text, /Vitórias: 4/);
   assert.match(text, /Bulbasaur/);
   assert.match(text, /Save ativo: \*a\*/);
-  assert.match(text, /a 👉/);
+  assert.match(text, /\*a\* ✅/);
   assert.match(text, /Moedas: 40/);
   assert.match(text, /Mochila de itens: 2\/50/);
   assert.match(text, /Caça: disponível/);
@@ -182,7 +182,7 @@ test('formatTrainer recovery-v1 cheio sem moedas falsas', () => {
   assert.doesNotMatch(text, /Equipe: 119/);
   assert.match(text, /Shiny: 3/);
   assert.match(text, /#94 \*Nidoqueen\* • Nv\.18/);
-  assert.match(text, /recovery-v1 👉/);
+  assert.match(text, /\*recovery-v1\* ✅/);
   assert.match(text, /saldo histórico em reconciliação/);
   assert.doesNotMatch(text, /Moedas: 0/);
   assert.match(text, /Mochila de itens: 3\/100/);
@@ -422,4 +422,28 @@ test('formatBagKit e formatBagDaily espelham legado', () => {
   assert.match(ok, /sequência de 7/);
   assert.match(ok, /Fruta Frambo Dourada/);
   assert.match(ok, /resgatar/);
+});
+
+test('saves: label público, resolução e próximo slot', () => {
+  const saves = [
+    { saveId: 'a', displayName: 'aventura', coins: 1 },
+    { saveId: 'b', coins: 0 },
+    { saveId: 'recovery-v1', origin: 'recovery-v1', coins: 9 }
+  ];
+  assert.equal(present.publicSaveLabel(saves[0]), 'aventura');
+  assert.equal(present.publicSaveLabel(saves[1]), 'b');
+  assert.equal(present.nextSaveSlotId(saves), 'c');
+  assert.equal(present.resolveSaveSelection(saves, '1').saveId, 'a');
+  assert.equal(present.resolveSaveSelection(saves, 'aventura').saveId, 'a');
+  assert.equal(present.resolveSaveSelection(saves, 'b').saveId, 'b');
+  assert.equal(present.resolveSaveSelection(saves, 'recovery-v1').saveId, 'recovery-v1');
+  assert.equal(present.resolveSaveSelection(saves, 'nope'), null);
+  const txt = present.formatSavesList({ saves, activeSaveId: 'a', fenceGeneration: 3 }, '!pk');
+  assert.match(txt, /SEUS SAVES/);
+  assert.match(txt, /aventura/);
+  assert.match(txt, /ativo/);
+  assert.match(txt, /recuperado/);
+  assert.match(txt, /novo save/);
+  assert.match(txt, /renomear save/);
+  assert.doesNotMatch(txt, /^\• \*a\*/m);
 });

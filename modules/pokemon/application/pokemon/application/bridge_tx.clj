@@ -151,32 +151,45 @@
                   saves)}))
 
 (defn create-save-slot!
-  "Cria slot vazio sem alterar o ponteiro ativo. Repetição retorna o existente."
+  "Cria slot vazio sem alterar o ponteiro ativo. Repetição retorna o existente.
+  Se `save-id` vier em branco, aloca o próximo slot livre (a–z, s1…)."
   [store {:keys [chat-id player-id save-id display-name]}]
   (model/validate-create-player! {:chat-id chat-id :player-id player-id})
-  (model/validate-save-slot! save-id)
-  (let [existing (ports/get-save store chat-id player-id save-id)
-        save (or existing (trainer/create-save! store chat-id player-id save-id))]
-    (if (str/blank? (str display-name))
-      (assoc save :created (nil? existing))
-      (let [name (model/validate-save-display-name! display-name)
-            current (:display-name save)]
-        (if (= name current)
-          (assoc save :created (nil? existing))
-          (if existing
-            (throw (err/error :save_payload_mismatch {:save-id save-id}))
-            (do
-              (ports/rename-save! store {:chat-id chat-id :player-id player-id
-                                         :save-id save-id :display-name name})
-              (assoc (ports/get-save store chat-id player-id save-id)
-                     :created (nil? existing)))))))))
+  (let [listed (ports/list-saves store chat-id player-id)
+        resolved-id (if (str/blank? (str save-id))
+                      (model/next-available-slot-id (mapv :slot-id listed))
+                      (str/lower-case (str/trim (str save-id))))]
+    (model/validate-save-slot! resolved-id)
+    (let [existing (ports/get-save store chat-id player-id resolved-id)
+          name (when-not (str/blank? (str display-name))
+                 (model/validate-save-display-name! display-name))]
+      (when name
+        (model/assert-display-name-available! listed resolved-id name))
+      (let [save (or existing (trainer/create-save! store chat-id player-id resolved-id))]
+        (if (nil? name)
+          (assoc save :created (nil? existing) :slot-id resolved-id :save-id resolved-id)
+          (let [current (:display-name save)]
+            (if (= name current)
+              (assoc save :created (nil? existing) :slot-id resolved-id :save-id resolved-id)
+              (if existing
+                (throw (err/error :save_payload_mismatch {:save-id resolved-id}))
+                (do
+                  (ports/rename-save! store {:chat-id chat-id :player-id player-id
+                                             :save-id resolved-id :display-name name})
+                  (assoc (ports/get-save store chat-id player-id resolved-id)
+                         :created true
+                         :slot-id resolved-id
+                         :save-id resolved-id))))))))))
 
 (defn rename-save!
   [store {:keys [chat-id player-id save-id display-name expected-fence-generation]
           :as request}]
   (model/validate-create-player! {:chat-id chat-id :player-id player-id})
   (model/validate-save-slot! save-id)
-  (ports/rename-save! store request))
+  (let [name (model/validate-save-display-name! display-name)
+        listed (ports/list-saves store chat-id player-id)]
+    (model/assert-display-name-available! listed save-id name)
+    (ports/rename-save! store (assoc request :display-name name))))
 
 (defn activate-save!
   "Ativa save via TX Datomic (fence sobe). Opcionalmente exige fence esperado."
@@ -199,7 +212,8 @@
        :active-save-id (:active-save-id p)
        :fence-generation (:fence-generation p)
        :save (select-keys (:save snap)
-                          [:slot-id :coins :revision :trainer-xp :trainer-level])})))
+                          [:slot-id :display-name :coins :revision
+                           :trainer-xp :trainer-level])})))
 
 (defn credit-coins!
   "Mutação representativa: credita moedas no save congelado (fence + recibo).

@@ -1488,6 +1488,10 @@
           (throw (err/error :player_not_found {:chat-id chat-id :player-id player-id})))
         (when-not (present? save)
           (throw (err/error :save_not_found {:save-id save-id})))
+        ;; Unicidade revalidada sob o snapshot atual (corrida entre renames).
+        (model/assert-display-name-available!
+         (mapv ->save (save-entities db chat-id player-id))
+         save-id name)
         (let [fence (long (:player/fence-generation player 0))
               expected (if (some? expected-fence-generation)
                          (long expected-fence-generation)

@@ -6,13 +6,57 @@
 
 (def default-slots ["a" "b"])
 
+(def ^:private reserved-display-names
+  "Nomes bloqueados para evitar ambiguidade com subcomandos."
+  #{"save" "saves" "novo" "renomear" "ativar" "ativo" "recuperar"
+    "recovery" "slot" "id" "help" "ajuda"})
+
+(defn normalize-public-name
+  "Normaliza rótulo público para comparação (trim + lower-case)."
+  [name]
+  (some-> name str str/trim str/lower-case not-empty))
+
+(defn public-save-label
+  "Identificador público: display-name se presente; senão slot-id interno."
+  [save]
+  (let [shown (some-> (:display-name save) str str/trim not-empty)]
+    (or shown (str (:slot-id save)))))
+
 (defn validate-save-display-name!
   [name]
   (let [value (some-> name str str/trim)]
     (when-not (and value (<= 1 (count value) 80)
                    (not (re-find #"[\r\n]" value)))
       (throw (err/error :invalid_save_name {:name name})))
+    (when (contains? reserved-display-names (str/lower-case value))
+      (throw (err/error :invalid_save_name {:name name :reason :reserved})))
     value))
+
+(defn assert-display-name-available!
+  "Garante unicidade do rótulo público por jogador.
+  Colide com display-name ou slot-id de outro save (case-insensitive)."
+  [saves save-id display-name]
+  (let [wanted (normalize-public-name display-name)
+        others (remove #(= (str save-id) (str (:slot-id %))) saves)]
+    (when (some (fn [s]
+                  (let [labels (cond-> [(normalize-public-name (:slot-id s))]
+                                 (normalize-public-name (:display-name s))
+                                 (conj (normalize-public-name (:display-name s))))]
+                    (some #(= wanted %) labels)))
+                others)
+      (throw (err/error :save_name_taken {:name display-name :save-id save-id})))
+    display-name))
+
+(defn next-available-slot-id
+  "Próximo slot interno livre: a–z, depois s1…s99."
+  [existing-ids]
+  (let [used (set (map str existing-ids))
+        letters (map str "abcdefghijklmnopqrstuvwxyz")
+        extras (map #(str "s" %) (range 1 100))
+        pick (first (remove used (concat letters extras)))]
+    (when-not pick
+      (throw (err/error :save_limit_reached {:used (count used)})))
+    pick))
 
 (defn validate-create-player!
   [{:keys [chat-id player-id]}]

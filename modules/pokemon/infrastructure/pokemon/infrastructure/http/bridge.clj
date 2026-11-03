@@ -81,7 +81,8 @@
      :unknown_shop_item :item_not_for_sale :item_use_unsupported
      :wrong_status_item :no_status_to_cure :missing_item_id
      :invalid_buy_qty :invalid_collection_index
-     :invalid_save_slot :invalid_slot_id :invalid_identity :invalid_save_name :save_payload_mismatch :unknown_ball
+     :invalid_save_slot :invalid_slot_id :invalid_identity :invalid_save_name
+     :save_payload_mismatch :save_limit_reached :unknown_ball
      :area_unavailable :invalid_wild_pokemon :hunt_no_candidates
      :unknown_gym :unknown_heal_item :invalid_gym_team
      :invalid_gym_npc_team :invalid_motivation_index
@@ -118,7 +119,8 @@
      :raid_boss_template_missing :raid_config_invalid :raid_cannot_cancel
      :frambo_already_prepared :raid_combatant_locked
      :starter_unavailable :mission_period_conflict :mission_event_identity_conflict
-     :mission_event_already_processed :gift_target_changed) 409
+     :mission_event_already_processed :gift_target_changed
+     :save_name_taken :save_already_exists) 409
     :operation_pending 409
     :datomic_value_too_large 500
     (:durability_compromised :durability_maintenance
@@ -636,10 +638,11 @@
                           save-id (g body "saveId" "save-id")
                           display-name (g body "displayName" "display-name")
                           operation-id (g body "operationId" "operation-id")]
+                      ;; saveId opcional: servidor aloca próximo slot livre.
                       (when (or (str/blank? chat-id) (str/blank? player-id)
-                                (str/blank? save-id) (str/blank? operation-id))
+                                (str/blank? operation-id))
                         (throw (err/error :invalid_query
-                                          {:required ["chatId" "playerId" "saveId" "operationId"]})))
+                                          {:required ["chatId" "playerId" "operationId"]})))
                       (ok! ex (with-operation! operation-id
                                 #(tx/create-save-slot!
                                   store {:chat-id chat-id :player-id player-id

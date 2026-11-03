@@ -239,6 +239,71 @@
       (is (= 11 (:coins (:save (trainer/snapshot-save s chat player "a")))))
       (is (= "a" (get-in (trainer/switch-save! s chat player "a") [:player :active-save-id]))))))
 
+(deftest aloca-proximo-slot-e-nome-publico-unico
+  (let [s (boot! "t-public-label")
+        chat "chat-public"
+        player "player-public"
+        model (requiring-resolve 'pokemon.domain.model/next-available-slot-id)
+        public (requiring-resolve 'pokemon.domain.model/public-save-label)]
+    (trainer/create-trainer! s {:chat-id chat :player-id player})
+    (is (= "c" (model ["a" "b"])))
+    (let [auto (bridge/create-save-slot! s {:chat-id chat :player-id player
+                                             :display-name "aventura"})
+          listed (bridge/list-saves s chat player)
+          c (some #(when (= "c" (:save-id %)) %) (:saves listed))]
+      (is (true? (:created auto)))
+      (is (= "c" (:slot-id auto)))
+      (is (= "aventura" (:display-name auto)))
+      (is (= "a" (:active-save-id listed)))
+      (is (= "aventura" (public c)))
+      (is (= "aventura" (:display-name c))))
+    (trainer/admin-seed-reward!
+     s {:operation-id "pub-coins" :chat-id chat :player-id player :save-id "c"
+        :coins-delta 41 :pokemon {:species "Charmander"}})
+    (let [ren (bridge/rename-save! s {:chat-id chat :player-id player
+                                      :save-id "a" :display-name "main"
+                                      :operation-id "ren-a"
+                                      :expected-fence-generation
+                                      (:fence-generation (bridge/list-saves s chat player))})
+          snap-c (trainer/snapshot-save s chat player "c")
+          after (bridge/list-saves s chat player)]
+      (is (= :renamed (:status ren)))
+      (is (= 41 (:coins (:save snap-c))))
+      (is (= 1 (count (:party snap-c))))
+      (is (try
+            (bridge/rename-save! s {:chat-id chat :player-id player
+                                    :save-id "b" :display-name "aventura"
+                                    :operation-id "ren-b-collision"})
+            false
+            (catch Exception _ true)))
+      (is (try
+            (bridge/rename-save! s {:chat-id chat :player-id player
+                                    :save-id "b" :display-name "c"
+                                    :operation-id "ren-b-slot"})
+            false
+            (catch Exception _ true)))
+      (is (= "main" (:display-name (some #(when (= "a" (:save-id %)) %) (:saves after)))))
+      (is (= "a" (:active-save-id after))))))
+
+(deftest rename-recovery-preserva-slot-e-origem
+  (let [s (boot! "t-rename-recovery")
+        chat "chat-rec"
+        player "player-rec"]
+    (trainer/create-trainer! s {:chat-id chat :player-id player})
+    (bridge/create-save-slot! s {:chat-id chat :player-id player :save-id "recovery-v1"})
+    (let [listed (bridge/list-saves s chat player)
+          ren (bridge/rename-save! s {:chat-id chat :player-id player
+                                      :save-id "recovery-v1"
+                                      :display-name "legado"
+                                      :operation-id "ren-rec"
+                                      :expected-fence-generation (:fence-generation listed)})
+          after (bridge/list-saves s chat player)
+          rec (some #(when (= "recovery-v1" (:save-id %)) %) (:saves after))]
+      (is (= :renamed (:status ren)))
+      (is (= "recovery-v1" (:save-id rec)))
+      (is (= "legado" (:display-name rec)))
+      (is (= "a" (:active-save-id after))))))
+
 (deftest set-initial-com-fence-elevado-nao-conflita
   "fence>0 e active=null: set-initial CAS no fence atual (não assume 0)."
   (let [s (boot! "t-set-initial-fence")

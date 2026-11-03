@@ -457,14 +457,16 @@ function formatTrainer(data, playerName, prefix = '!pk') {
     : 'nenhum'}`);
 
   lines.push('');
-  lines.push(`💾 Save ativo: *${saveAtivo}*`);
+  const ativoLabel = d.activeSaveName || saveAtivo;
+  lines.push(`💾 Save ativo: *${ativoLabel}*`);
   if (saves.length) {
     for (const s of saves) {
       const id = s.saveId || s.slotId || '?';
-      const label = s.displayName && s.displayName !== id ? `${id} — ${s.displayName}` : id;
-      const mark = (s.active === true || id === d.activeSaveId) ? ' 👉' : '';
+      const label = publicSaveLabel(s);
+      const mark = (s.active === true || id === d.activeSaveId) ? ' ✅' : '';
       const n = s.collectionCount != null ? s.collectionCount : 0;
-      lines.push(`• ${label}${mark}: ${n} Pokémon`);
+      const extra = label !== id ? ` _(id ${id})_` : '';
+      lines.push(`• *${label}*${mark}${extra}: ${n} Pokémon`);
     }
     lines.push(`_Gerenciar: ${prefix} saves_`);
   } else if (d.savesCount != null) {
@@ -545,7 +547,7 @@ function formatCollection(data, tokens, prefix = '!pk') {
 
   return [
     `🎒 *Seu time:* • Página ${Math.min(page, pages)}/${pages}`,
-    `🧑‍🎓 Nível de treinador: ${data.trainerLevel || 1} • Save: ${data.saveId || '?'}`,
+    `🧑‍🎓 Nível de treinador: ${data.trainerLevel || 1} • Save: ${publicSaveLabel({ displayName: data.displayName || data.saveDisplayName, saveId: data.saveId }) || '?'}`,
     formatPokemonStorageLine(data),
     filtroDesc.length ? `🔎 Filtros: ${filtroDesc.join(' + ')} — ${list.length} Pokémon` : `Total: ${data.count || items.length}`,
     '',
@@ -840,32 +842,82 @@ function formatRelearnMenu(pokemon, opcoes, prefix = '!pk') {
   ].filter(Boolean).join('\n');
 }
 
+function publicSaveLabel(save) {
+  if (!save) return '?';
+  const shown = String(save.displayName || '').trim();
+  return shown || String(save.saveId || save.slotId || '?');
+}
+
+function nextSaveSlotId(saves) {
+  const used = new Set((saves || []).map((s) => String(s.saveId || s.slotId || '')));
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  for (const ch of letters) {
+    if (!used.has(ch)) return ch;
+  }
+  for (let i = 1; i <= 99; i += 1) {
+    const id = `s${i}`;
+    if (!used.has(id)) return id;
+  }
+  return null;
+}
+
+/** Resolve por índice 1-based, slot-id interno ou nome público (displayName). */
+function resolveSaveSelection(saves, target) {
+  const list = Array.isArray(saves) ? saves : [];
+  const raw = String(target == null ? '' : target).trim();
+  if (!raw) return null;
+  if (/^[0-9]+$/.test(raw)) {
+    const idx = Number.parseInt(raw, 10) - 1;
+    return idx >= 0 && idx < list.length ? list[idx] : null;
+  }
+  const needle = raw.toLowerCase();
+  const bySlot = list.find((s) => String(s.saveId || s.slotId || '').toLowerCase() === needle);
+  if (bySlot) return bySlot;
+  const byName = list.filter((s) => String(s.displayName || '').trim().toLowerCase() === needle);
+  return byName.length === 1 ? byName[0] : null;
+}
+
 function formatActiveSave(data) {
   const save = data.save || {};
   const party = data.party || [];
+  const label = publicSaveLabel({
+    displayName: save.displayName,
+    saveId: data.activeSaveId || save.slotId || save.saveId
+  });
+  const internal = data.activeSaveId || save.slotId || save.saveId || '?';
   return [
     '💾 *Save ativo*',
-    `Slot: *${save.displayName || data.activeSaveId || save.slotId || '?'}* (${data.activeSaveId || save.slotId || '?'}) · fence ${data.fenceGeneration || 0}`,
+    `Save: *${label}* · fence ${data.fenceGeneration || 0}`,
+    internal !== label ? `_id interno: ${internal}_` : null,
     `💰 Moedas: ${save.coins || 0} · Nv.treinador ${save.nivel || save.trainerLevel || 1}`,
     `⭐ PE ${save.xp || save.trainerXp || 0} · revisão ${save.revision || 0}`,
     `👥 Party: ${party.length} · Inventário: ${(data.inventory || []).length} itens`,
     party.length
       ? party.map(p => `• ${shinyMark(p)}${nomePokemon(p)} Nv.${p.nivel || 1}`).join('\n')
       : '(party vazia)'
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
-function formatSavesList(data) {
-  const linhas = (data.saves || []).map(s => {
-    const ativo = s.saveId === data.activeSaveId ? ' 👉' : '';
-    const nome = s.displayName ? ` — ${s.displayName}` : '';
-    return `• *${s.saveId}*${nome}${ativo}: ${s.coins || 0} moedas · ${s.collectionCount || 0} na coleção · party ${s.partyCount || 0}`;
+function formatSavesList(data, prefix = '!pk') {
+  const active = data.activeSaveId;
+  const linhas = (data.saves || []).map((s) => {
+    const label = publicSaveLabel(s);
+    const internal = String(s.saveId || s.slotId || '');
+    const ativo = internal === active;
+    const recovered = String(s.origin || '').toLowerCase().includes('recovery')
+      || /^recovery-v\d+$/i.test(internal);
+    const mark = ativo ? '✅' : (recovered ? '📦' : '•');
+    const tag = ativo ? ' — ativo' : (recovered ? ' — recuperado' : '');
+    const extra = label !== internal ? ` _(id ${internal})_` : '';
+    return `${mark} \`${label}\`${tag}${extra}`;
   });
   return [
-    `💾 *Saves* · ativo=${data.activeSaveId || '?'} · fence=${data.fenceGeneration || 0}`,
+    '📁 *SEUS SAVES*',
     ...linhas,
     '',
-    'Alternar: !pk save <número ou id> · Criar: !pk novo save · Renomear: !pk renomear save <número ou id> <nome>'
+    `Selecionar: ${prefix} save <nome|número|id>`,
+    `Criar: ${prefix} novo save [nome]`,
+    `Renomear: ${prefix} renomear save <nome|número|id> <novo-nome>`
   ].join('\n');
 }
 
@@ -886,7 +938,8 @@ const MENU_CMDS = [
   '`raide` — raides cooperativas',
   '`sair` — abandonar batalha/raid/PvP',
   '`ovos` — Adventure Sync',
-  '`saves` / `ativar a|b` — saves A/B'
+  '`saves` / `save <nome>` — listar e selecionar saves',
+  '`novo save [nome]` / `renomear save <nome> <novo>` — criar e renomear'
 ];
 
 function formatMainMenu(onboarding, prefix = '!pk') {
@@ -1003,8 +1056,12 @@ function formatStarterChosen(data, prefix = '!pk') {
 
 function formatActivate(data) {
   const save = data.save || {};
+  const label = publicSaveLabel({
+    displayName: save.displayName,
+    saveId: data.activeSaveId || save.slotId || save.saveId
+  });
   return [
-    `✅ Save *${data.activeSaveId}* ativo`,
+    `✅ Save *${label}* ativo`,
     `Fence: ${data.fenceGeneration} · moedas: ${save.coins || 0}`
   ].join('\n');
 }
@@ -1025,6 +1082,12 @@ function formatError(err) {
     PLAYER_NOT_FOUND: '⚠️ Treinador não encontrado. Use !pk iniciar.',
     NO_ACTIVE_SAVE: '⚠️ Nenhum save ativo. Use !pk iniciar ou !pk ativar a|b.',
     SAVE_NOT_FOUND: '⚠️ Save não encontrado.',
+    INVALID_SLOT_ID: '❓ Identificador de save inválido. Use !pk saves e escolha um nome ou id listado.',
+    INVALID_SAVE_NAME: '❓ Nome de save inválido. Evite vazio, palavras reservadas ou quebras de linha.',
+    SAVE_NAME_TAKEN: '⚠️ Esse nome já está em uso em outro save seu. Escolha outro.',
+    SAVE_LIMIT_REACHED: '⚠️ Limite de saves atingido para este treinador.',
+    SAVE_ALREADY_EXISTS: '⚠️ Esse save já existe.',
+    SAVE_PAYLOAD_MISMATCH: '⚠️ Dados do save não batem com a operação (retry divergente).',
     STALE_WRITER_FENCE:
       '⚠️ Save/fence obsoleto (provavelmente houve !pk ativar). Consulte !pk saves e tente de novo.',
     WRITER_FENCE_CONFLICT:
@@ -2857,6 +2920,9 @@ module.exports = {
   formatFavorite,
   formatActiveSave,
   formatSavesList,
+  publicSaveLabel,
+  nextSaveSlotId,
+  resolveSaveSelection,
   formatEnsure,
   formatMainMenu,
   formatStartersMenu,
