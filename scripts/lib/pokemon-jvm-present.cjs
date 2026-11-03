@@ -743,7 +743,7 @@ function formatSetActive(data, prefix = '!pk') {
   return [
     `✅ *${p.nome || '?'}* agora é seu Pokémon ativo! (#${n})`,
     `${prefix} time · ${prefix} cacar`,
-    `⚔️ Raide: o combatente é o da *entrada*. No lobby use \`${prefix} raide entrar\` de novo (ou \`${prefix} raide entrar <n>\`) para atualizar. Em combate a troca fica travada.`
+    `⚔️ Raid: o combatente é o da *entrada*. No lobby use \`${prefix} raid entrar\` de novo (ou \`${prefix} raid entrar <n>\`) para atualizar. Em combate a troca fica travada.`
   ].join('\n');
 }
 
@@ -935,7 +935,7 @@ const MENU_CMDS = [
   '`mochila` / `loja` — itens e compras',
   '`joy` — Enfermeira Joy',
   '`ginasio` — ginásios',
-  '`raide` — raides cooperativas',
+  '`raid` — raids cooperativas (alias: raide)',
   '`sair` — abandonar batalha/raid/PvP',
   '`ovos` — Adventure Sync',
   '`saves` / `save <nome>` — listar e selecionar saves',
@@ -1170,27 +1170,29 @@ function formatError(err) {
     GYM_TEAM_UNHEALTHY: '❓ Escale três Pokémon saudáveis: !pk gin time auto ou !pk gin time 1,2,3.',
     INVALID_GYM_NPC_TEAM: '❌ Não consegui montar o time do líder. Tente de novo.',
     UNKNOWN_GYM: '❓ Ginásio desconhecido. Use pedra, agua, eletrico, planta ou fogo.',
-    RAID_NOT_FOUND: '❓ Nenhuma raide ativa neste chat.',
-    RAID_NOT_OPEN: '❓ As inscrições desta raide não estão abertas.',
-    ALREADY_IN_RAID: '⚔️ Você já está inscrito nesta raide.',
-    RAID_FULL: '🚫 A raide já está cheia (máx. 5).',
-    RAID_CANNOT_LEAVE: '🚫 Não é possível sair desta raide neste momento.',
+    RAID_NOT_FOUND: '❓ Nenhuma raid ativa neste chat.',
+    RAID_NOT_OPEN: '❓ As inscrições desta raid não estão abertas.',
+    RAID_ALREADY_STARTED: '⚔️ Esta raid já está em andamento.',
+    RAID_START_NOT_JOINED: '⚠️ Entre na raid antes de iniciar a batalha.',
+    ALREADY_IN_RAID: '⚔️ Você já está inscrito nesta raid.',
+    RAID_FULL: '🚫 A raid já está cheia (máx. 5).',
+    RAID_CANNOT_LEAVE: '🚫 Não é possível sair desta raid neste momento.',
     FEATURE_DISABLED: '⚠️ Este comando está temporariamente desabilitado. Tente mais tarde.',
     NOT_FOUND: '❓ Rota inexistente.',
     RAID_NEED_PLAYERS: '❓ Precisa de pelo menos 1 inscrito para iniciar.',
-    RAID_NOT_IN_COMBAT: '❓ A raide não está em combate.',
+    RAID_NOT_IN_COMBAT: '❓ A raid não está em combate.',
     RAID_NOT_YOUR_TURN: '⏳ Não é a sua vez de atacar.',
-    RAID_TURN_INVALID: '⚠️ A vez da raide está inválida (participante ausente). Avise um admin — sem correção automática.',
+    RAID_TURN_INVALID: '⚠️ A vez da raid está inválida (participante ausente). Avise um admin — sem correção automática.',
     RAID_NO_ELIGIBLE_TURN: '⚠️ Nenhum participante elegível para iniciar o combate.',
-    RAID_SAVE_MISMATCH: '⚠️ Você mudou de save após entrar — reentre na próxima raide.',
-    RAID_LIGA_MISMATCH: '❓ Esse Pokémon não está apto para esta raide.',
-    INVALID_RAID_POKEMON: '❓ Seu Pokémon ativo não está apto para esta raide (HP ou golpe ofensivo). Use !pk raide entrar auto, !pk raide entrar <n> ou !pk escolher + !pk raide entrar.',
-    INVALID_RAID_MOVE: '❓ Use !pk raide atacar <1-4> com um golpe ofensivo.',
+    RAID_SAVE_MISMATCH: '⚠️ Você mudou de save após entrar — reentre na próxima raid.',
+    RAID_LIGA_MISMATCH: '❓ Esse Pokémon não está apto para esta raid.',
+    INVALID_RAID_POKEMON: '❓ Seu Pokémon ativo não está apto para esta raid (HP ou golpe ofensivo). Use !pk raid entrar auto, !pk raid entrar <n> ou !pk escolher + !pk raid entrar.',
+    INVALID_RAID_MOVE: '❓ Use !pk raid atacar <1-4> com um golpe ofensivo.',
     RAID_CAPTURE_UNAVAILABLE: '❓ Captura indisponível (sem dano, janela expirada ou já capturou).',
     FRAMBO_ALREADY_PREPARED: '🍓 Frambo já está preparada para a próxima tentativa.',
-    RAID_COMBATANT_LOCKED: '🚫 Não dá para trocar de Pokémon no meio do combate da raide. O combatente foi fixado na entrada.',
-    RAID_NOT_CREATOR: '🚫 Só quem abriu a raide pode iniciar (quando há criador).',
-    NOT_IN_RAID: '❓ Você não está nesta raide.',
+    RAID_COMBATANT_LOCKED: '🚫 Não dá para trocar de Pokémon no meio do combate da raid. O combatente foi fixado na entrada.',
+    RAID_NOT_CREATOR: '🚫 Só quem abriu a raid pode iniciar (quando há criador).',
+    NOT_IN_RAID: '❓ Você não está nesta raid.',
     INVALID_JOY_INDEX: '❓ Índice inválido. Use !pk joy para ver os feridos.',
     POKEMON_HEALTHY: '✨ Esse Pokémon já está saudável.',
     JOY_NOTHING_READY: '⏳ Ainda não há Pokémon prontos na enfermaria.',
@@ -1843,15 +1845,15 @@ function resolveRaidGym(token) {
 
 function formatRaidOpenHelp(prefix = '!pk') {
   return [
-    '⚔️ *Abrir raide cooperativa*',
+    '⚔️ *Abrir raid cooperativa*',
     'Lobby: até 5 treinadores · pode começar com 1 · 5 minutos de inscrição.',
-    'O criador também precisa entrar com `raide entrar`.',
+    'O criador também precisa entrar com `raid entrar`.',
     '',
     '*Ginásios:*',
     ...RAID_GYMS.map((g, i) => `${i + 1}. ${g.nome} (nv.${g.nivel}) — \`${g.id}\``),
     '',
-    `Abra direto: ${prefix} raide abrir 1   (ou o id, ex. pedra)`,
-    `Sem argumento: ${prefix} raide abrir`
+    `Abra direto: ${prefix} raid abrir 1   (ou o id, ex. pedra)`,
+    `Sem argumento: ${prefix} raid abrir`
   ].join('\n');
 }
 
@@ -1871,11 +1873,11 @@ function formatRaidOpened(data, prefix = '!pk') {
   const chefe = r.chefe || {};
   const prazo = formatRaidPrazo(r.expira, data && data.agora);
   return [
-    `📣 *Raide aberta* em ${r.nomeGinasio || r.ginasio || 'ginásio'}!`,
+    `📣 *Raid aberta* em ${r.nomeGinasio || r.ginasio || 'ginásio'}!`,
     `Chefe: *${chefe.nome || '?'}* · liga ${r.liga || '?'}`,
     prazo || 'Inscrições por 5 minutos · máx. 5 treinadores.',
-    `Entre: ${prefix} raide entrar auto`,
-    `Status: ${prefix} raide · Cancelar: ${prefix} raide cancelar`
+    `Entre: ${prefix} raid entrar auto`,
+    `Status: ${prefix} raid · Cancelar: ${prefix} raid cancelar`
   ].join('\n');
 }
 
@@ -1959,7 +1961,7 @@ function formatRaidMoveLines(pokemon, prefix = '!pk') {
     if (!ofensivo) {
       return `${i + 1}. ${nome} — _indisponível_`;
     }
-    return `${i + 1}. ${nome} (${poder}) → \`${prefix} raide atacar ${i + 1}\``;
+    return `${i + 1}. ${nome} (${poder}) → \`${prefix} raid atacar ${i + 1}\``;
   });
 }
 
@@ -1990,8 +1992,8 @@ function formatRaidTurnBlock(r, prefix = '!pk') {
 function formatRaidCancelled(data, prefix = '!pk') {
   const r = (data && data.raid) || {};
   return [
-    `🚫 Raide em ${r.nomeGinasio || r.ginasio || 'ginásio'} cancelada.`,
-    `Abrir outra: ${prefix} raide abrir`
+    `🚫 Raid em ${r.nomeGinasio || r.ginasio || 'ginásio'} cancelada.`,
+    `Abrir outra: ${prefix} raid abrir`
   ].join('\n');
 }
 
@@ -2034,8 +2036,8 @@ function formatRaidStatus(data, prefix = '!pk') {
   const r = data && data.raid;
   if (!r) {
     return [
-      '🏛️ Nenhuma raide ativa neste chat.',
-      `Abrir: ${prefix} raide abrir   ·   direto: ${prefix} raide abrir 1`
+      '🏛️ Nenhuma raid ativa neste chat.',
+      `Abrir: ${prefix} raid abrir   ·   direto: ${prefix} raid abrir 1`
     ].join('\n');
   }
   const chefe = r.chefe || {};
@@ -2043,18 +2045,18 @@ function formatRaidStatus(data, prefix = '!pk') {
     ? formatRaidPrazo(r.expira, data && data.agora)
     : null;
   const lines = [
-    `⚔️ *Raide — ${chefe.nome || 'Chefe'}* / ${r.liga || '?'}`,
+    `⚔️ *Raid — ${chefe.nome || 'Chefe'}* / ${r.liga || '?'}`,
     `🏛️ ${r.nomeGinasio || r.ginasio || 'Ginásio'} · fase *${r.fase}*`,
     r.fase === 'combate' || r.fase === 'vitoria'
       ? `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`
       : `Inscritos: ${r.nParticipantes || 0}/5`,
     prazo,
     r.capturaPendente || r['capturaPendente?']
-      ? `🎯 Captura aberta — ${prefix} raide capturar  ·  ${prefix} raide frambo`
+      ? `🎯 Captura aberta — ${prefix} raid capturar  ·  ${prefix} raid fruta`
       : null,
     '',
     r.fase === 'inscricoes'
-      ? `${prefix} raide entrar auto · ${prefix} raide iniciar · ${prefix} raide sair · ${prefix} raide cancelar`
+      ? `${prefix} raid entrar auto · ${prefix} raid iniciar · ${prefix} raid sair · ${prefix} raid cancelar`
       : null
   ];
   if (r.fase === 'combate') {
@@ -2085,20 +2087,20 @@ function formatRaidJoin(data, prefix = '!pk') {
       : '';
   return [
     data.refreshed
-      ? `🔄 Combatente da raide atualizado!`
-      : `✅ Você entrou na raide de *${r.nomeGinasio || r.ginasio || 'ginásio'}*!`,
+      ? `🔄 Combatente da raid atualizado!`
+      : `✅ Você entrou na raid de *${r.nomeGinasio || r.ginasio || 'ginásio'}*!`,
     `Inscritos: ${r.nParticipantes || '?'}/5 · liga ${r.liga || '?'}`,
     data.collectionIndex != null
       ? `Pokémon nº ${Number(data.collectionIndex) + 1} da coleção${modeHint}.`
       : null,
     data.duplicate ? '_já inscrito com este Pokémon (idempotente)_' : null,
-    `Trocar no lobby: ${prefix} escolher + ${prefix} raide entrar  ·  ou ${prefix} raide entrar <n>`,
-    `Começar agora: ${prefix} raide iniciar (1+ inscrito)`
+    `Trocar no lobby: ${prefix} escolher + ${prefix} raid entrar  ·  ou ${prefix} raid entrar <n>`,
+    `Começar agora: ${prefix} raid iniciar (1+ inscrito)`
   ].filter(Boolean).join('\n');
 }
 
 function formatRaidLeave() {
-  return '👋 Você saiu das inscrições da raide.';
+  return '👋 Você saiu das inscrições da raid.';
 }
 
 function formatLeaveResult(data, prefix = '!pk') {
@@ -2196,9 +2198,9 @@ function formatRaidVictory(data, prefix = '!pk') {
     ...rewards.lines,
     '',
     '🎯 *CAPTURA DO CHEFE*',
-    `${prefix} raide capturar          — ver bolas / chances`,
-    `${prefix} raide capturar ultra-bola`,
-    `${prefix} raide fruta             — Frambo (+chance)`,
+    `${prefix} raid capturar          — ver bolas / chances`,
+    `${prefix} raid capturar 1|2|3    — Poké / Super / Ultra`,
+    `${prefix} raid fruta             — Frambo (+chance)`,
     `${prefix} mochila`
   ].join('\n');
   return { text, mentions: mentionSet };
@@ -2281,7 +2283,12 @@ function coerceRaidPresent(result) {
   return { text: String(result || ''), mentions: [] };
 }
 
-function formatRaidCaptureUi(data, prefix = '!pk') {
+/**
+ * Interface canônica de captura do chefe (inicial e pós-Frambo).
+ * Chances vêm do domínio (`captura-ui.chances`) — nunca fixas na UI.
+ * opts.afterFrambo: banner de Frambo *preparada* (ainda não consumida).
+ */
+function formatRaidCaptureUi(data, prefix = '!pk', opts = {}) {
   const ui = (data && (data.capturaUi || data['captura-ui'])) || null;
   const r = (data && data.raid) || {};
   const cap = r.captura || {};
@@ -2295,38 +2302,60 @@ function formatRaidCaptureUi(data, prefix = '!pk') {
   const bolas = (ui && ui.bolas) || {};
   const framboQty = ui && ui.frambo != null ? ui.frambo : '?';
   const prepared = Boolean(ui && (ui.framboPreparada || ui['frambo-preparada']))
-    || Boolean(cap.framboPreparada || cap['frambo-preparada']);
+    || Boolean(cap.framboPreparada || cap['frambo-preparada'])
+    || Boolean(opts && opts.afterFrambo);
   const chances = (ui && ui.chances) || cap.chances || {};
-  const lines = [
-    '🎯 *CAPTURA DO CHEFE*',
-    `👾 Pokémon: *${chefe}*`,
+  const pct = (id) => (chances[id] != null ? `${chances[id]}%` : '?%');
+  const afterFrambo = Boolean(opts && opts.afterFrambo);
+  const lines = [];
+  if (afterFrambo) {
+    lines.push(
+      '🍓 *FRUTA FRAMBO PREPARADA!*',
+      '',
+      'Bônus ativo na *próxima* tentativa — a fruta só é consumida ao lançar a bola.',
+      ''
+    );
+  }
+  lines.push(
+    `🎯 *CAPTURA DO CHEFE — ${String(chefe).toUpperCase()}*`,
     `Tentativas: ${tent}/${maxT}`,
+    prepared
+      ? '🍓 Bônus Frambo: *PREPARADO* (consome 1 fruta na próxima bola)'
+      : '🍓 Bônus Frambo: inativo',
     '',
-    '🎒 *Itens disponíveis*',
-    `🔴 Poké Bola: ${bolas.pokebola || 0}` + (chances.pokebola != null ? ` (${chances.pokebola}%)` : ''),
-    `🔵 Grande Bola: ${bolas['grande-bola'] || 0}` + (chances['grande-bola'] != null ? ` (${chances['grande-bola']}%)` : ''),
-    `🟡 Ultra Bola: ${bolas['ultra-bola'] || 0}` + (chances['ultra-bola'] != null ? ` (${chances['ultra-bola']}%)` : ''),
-    `🍓 Fruta Frambo: ${framboQty}${prepared ? ' · ✨ *bônus ativo na próxima tentativa*' : ''}`,
+    'Escolha sua Poké Bola:',
+    '',
+    `1️⃣ Poké Bola — ${pct('pokebola')} · estoque ${bolas.pokebola || 0}`,
+    `2️⃣ Super Bola — ${pct('grande-bola')} · estoque ${bolas['grande-bola'] || 0}`,
+    `3️⃣ Ultra Bola — ${pct('ultra-bola')} · estoque ${bolas['ultra-bola'] || 0}`,
+    '',
+    // Estoque real atual (prepare não debita; consumo só na tentativa).
+    `🍓 Frutas no estoque: ${framboQty}${prepared ? ' (1 será consumida na próxima tentativa)' : ''}`,
     '',
     '*Comandos:*',
-    `\`${prefix} raide capturar pokebola\``,
-    `\`${prefix} raide capturar grande-bola\``,
-    `\`${prefix} raide capturar ultra-bola\``,
-    `\`${prefix} raide fruta\` — oferecer Frambo`,
-    `\`${prefix} mochila\``
-  ];
+    `\`${prefix} raid capturar 1\``,
+    `\`${prefix} raid capturar 2\``,
+    `\`${prefix} raid capturar 3\``
+  );
+  if (!prepared) {
+    lines.push(`\`${prefix} raid fruta\` — preparar Frambo (não consome ainda)`);
+  }
   return lines.join('\n');
 }
 
 function formatRaidFrambo(data, prefix = '!pk') {
-  if (data && data.duplicate) {
+  if (data && data.duplicate && !(data.capturaUi || data['captura-ui'] || (data.raid && data.raid.captura))) {
     return '🍓 Frambo já estava preparada (idempotente).';
   }
+  // Preferir UI completa recalculada (Node re-fetch após prepare).
+  if (data && (data.capturaUi || data['captura-ui'] || (data.raid && data.raid.captura))) {
+    return formatRaidCaptureUi(data, prefix, { afterFrambo: true });
+  }
   return [
-    '🍓 *Fruta Frambo utilizada!*',
-    '✨ Sua próxima tentativa terá uma chance maior de capturar o chefe!',
-    '🎯 Agora escolha sua Poké Bola.',
-    `\`${prefix} raide capturar ultra-bola\``
+    '🍓 *FRUTA FRAMBO PREPARADA!*',
+    'Bônus ativo na próxima tentativa — a fruta só é consumida ao lançar a bola.',
+    '🎯 Escolha sua Poké Bola:',
+    `\`${prefix} raid capturar 1\` · \`${prefix} raid capturar 2\` · \`${prefix} raid capturar 3\``
   ].join('\n');
 }
 
@@ -2360,8 +2389,8 @@ function formatRaidCapture(data, prefix = '!pk') {
       '🎯 Você ainda pode tentar capturá-lo.',
       tent != null ? `Tentativas: ${tent}/${maxT}` : null,
       frambo ? '🍓 Frambo consumida nesta tentativa.' : null,
-      `Tente de novo: ${prefix} raide capturar <bola>`,
-      `Preparar Frambo: ${prefix} raide frambo`
+      `Tente de novo: ${prefix} raid capturar 1|2|3`,
+      `Preparar Frambo: ${prefix} raid fruta`
     ].filter(Boolean).join('\n');
   }
   return [
@@ -2884,9 +2913,9 @@ function formatRaidEligible(data, prefix = '!pk') {
     return `${n}. ${p.nome || '?'} Nv.${p.nivel || '?'}`;
   });
   return [
-    '⚔️ *Aptos para a raide*',
+    '⚔️ *Aptos para a raid*',
     ...linhas,
-    `${prefix} raide entrar <n> · ${prefix} raide entrar auto`
+    `${prefix} raid entrar <n> · ${prefix} raid entrar auto`
   ].join('\n');
 }
 

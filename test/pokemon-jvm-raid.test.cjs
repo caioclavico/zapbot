@@ -13,7 +13,7 @@ test('aliases raide/raid e subcomandos', () => {
 });
 
 test('formatRaidStatus sem raid e com combate', () => {
-  assert.match(present.formatRaidStatus({ raid: null }), /Nenhuma raide/);
+  assert.match(present.formatRaidStatus({ raid: null }), /Nenhuma raid/);
   assert.match(present.formatRaidStatus({
     raid: {
       fase: 'combate',
@@ -27,7 +27,7 @@ test('formatRaidStatus sem raid e com combate', () => {
       chefe: { nome: 'Snorlax' },
       participantes: [{ nome: 'Ash', voce: true, hp: 180, dano: 40 }]
     }
-  }, '!pk'), /Raide/);
+  }, '!pk'), /Raid/);
 });
 
 test('formatRaidAttack vitória, derrota e turno', () => {
@@ -54,7 +54,7 @@ test('abrir/cancelar de raide saíram do formatGymBlocked (Fase 2)', () => {
   assert.match(present.formatGymBlocked('historico'), /Histórico/);
   assert.doesNotMatch(present.formatGymBlocked('abrir'), /automática|admin/i);
   assert.doesNotMatch(present.formatGymBlocked('cancelar'), /Cancelar raide/);
-  assert.match(present.formatRaidOpenHelp('!pk'), /Abrir raide/);
+  assert.match(present.formatRaidOpenHelp('!pk'), /Abrir raid/);
   assert.match(present.resolveRaidSubcommand('abrir'), /abrir/);
   assert.match(present.resolveRaidSubcommand('cancelar'), /cancelar/);
 });

@@ -416,7 +416,7 @@
       (is (= ["misty"] (:ordem r)))
       (is (= "ash" (:criador r)))
       ;; Criador fora: não pode iniciar; misty também não (só criador).
-      (is (= :not_in_raid
+      (is (= :raid_start_not_joined
              (try
                (tx/start-raid!
                 s {:chat-id chat :player-id "ash" :save-id "a"

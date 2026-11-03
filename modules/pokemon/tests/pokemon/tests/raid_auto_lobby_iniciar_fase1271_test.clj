@@ -8,6 +8,7 @@
             [pokemon.application.raid :as raid-app]
             [pokemon.application.raid-auto :as raid-auto]
             [pokemon.application.trainer :as trainer]
+            [pokemon.domain.errors :as err]
             [pokemon.domain.raid :as raid]
             [pokemon.domain.raid-auto :as domain]
             [pokemon.infrastructure.datomic.store :as store]))
@@ -184,7 +185,39 @@
               s {:chat-id chat :player-id "ash" :save-id "a"
                  :fence-generation (fence s chat "ash")
                  :operation-id "creator-ok" :agora-ms 1004})]
-      (is (= "combate" (get-in st [:raid :fase]))))))
+      (is (= "combate" (get-in st [:raid :fase])))
+      (is (true? (get-in st [:raid :sua-vez]))))))
+
+(deftest iniciar-auto-ignora-criador-fantasma
+  "Hotfix 12.8.3.1: origem=auto → qualquer inscrito, mesmo se :criador residual."
+  (let [lobby (raid/lobby-params-for-categoria "raro")
+        r0 (-> (raid/nova-raid
+                {:raid-id "r-auto-ghost" :chat-id "c" :ginasio "pedra"
+                 :nome-ginasio "Pedra" :nivel-ginasio 10 :liga "iniciante"
+                 :chefe {:nome "Onix" :hp 70 :ataque 60 :defesa 100 :atq-esp 40
+                         :def-esp 55 :veloc 50 :tipos ["rock"] :raridade "raro"
+                         :golpes [{:nome-exibicao "Rock Throw" :tipo "rock"
+                                   :poder 50 :classe :fisico}]}
+                 :agora 1000 :criador "ghost@lid"
+                 :min-jogadores (:min-jogadores lobby)
+                 :max-jogadores (:max-jogadores lobby)
+                 :duracao-ms (:duracao-ms lobby)})
+               (assoc :origem "auto"))
+        r1 (raid/entrar r0
+                        {:player-id "ash@lid" :nome "Ash" :save-id "a"
+                         :fence-generation 1 :pokemon mon :collection-index 0}
+                        1001)
+        started (raid/iniciar r1 "ash@lid" 1002)]
+    (is (= "combate" (:fase started)))
+    (is (= "ash@lid" (:vez started)))
+    (is (= :raid_start_not_joined
+           (try
+             (raid/iniciar r1 "outro@lid" 1002)
+             (catch Exception ex (err/error-code ex)))))
+    (is (= :raid_already_started
+           (try
+             (raid/iniciar started "ash@lid" 1003)
+             (catch Exception ex (err/error-code ex)))))))
 
 (deftest lobby-cheio-nao-inicia-sozinho
   (let [lobby (raid/lobby-params-for-categoria "raro")

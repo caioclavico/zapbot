@@ -131,7 +131,7 @@ test('apresentação de turno: nome, golpes, comando e próximo', () => {
   assert.match(text, /Starmie/);
   assert.match(text, /Water Gun/);
   assert.match(text, /indisponível/);
-  assert.match(text, /!pk raide atacar 1/);
+  assert.match(text, /!pk raid atacar 1/);
   assert.match(text, /Próximo: \*Ash\*/);
   assert.doesNotMatch(text, /222@c\.us/);
 });
@@ -227,10 +227,31 @@ test('vitória lista recompensas reais e captura; fruta aliases', () => {
   assert.doesNotMatch(win.text, /121212@lid/);
   assert.doesNotMatch(win.text, /5511999999999/);
   assert.deepEqual(win.mentions, ['121212@lid', '5511999999999@c.us']);
-  assert.match(win.text, /raide fruta/);
+  assert.match(win.text, /raid fruta/);
   assert.match(win.text, /capturar/);
-  const fruta = present.formatRaidFrambo({}, '!pk');
-  assert.match(fruta, /Fruta Frambo utilizada/);
+  const fruta = present.formatRaidFrambo({
+    capturaUi: {
+      chefe: 'Onix',
+      tentativas: 0,
+      maxTentativas: 3,
+      bolas: { pokebola: 10, 'grande-bola': 5, 'ultra-bola': 3 },
+      frambo: 2,
+      framboPreparada: true,
+      chances: { pokebola: 35, 'grande-bola': 53, 'ultra-bola': 95 }
+    },
+    raid: { chefe: { nome: 'Onix' }, captura: { framboPreparada: true } }
+  }, '!pk');
+  assert.match(fruta, /FRUTA FRAMBO PREPARADA/);
+  assert.match(fruta, /não é consumida|só é consumida ao lançar/i);
+  assert.match(fruta, /CAPTURA DO CHEFE — ONIX/);
+  assert.match(fruta, /35%/);
+  assert.match(fruta, /53%/);
+  assert.match(fruta, /95%/);
+  assert.match(fruta, /raid capturar 1/);
+  assert.match(fruta, /raid capturar 2/);
+  assert.match(fruta, /raid capturar 3/);
+  assert.match(fruta, /Frutas no estoque: 2/);
+  assert.doesNotMatch(fruta, /UTILIZADA/);
   const ui = present.formatRaidCaptureUi({
     capturaUi: {
       chefe: 'Onix',
@@ -243,10 +264,11 @@ test('vitória lista recompensas reais e captura; fruta aliases', () => {
     },
     raid: { chefe: { nome: 'Onix' }, captura: {} }
   }, '!pk');
-  assert.match(ui, /CAPTURA DO CHEFE/);
-  assert.match(ui, /Ultra Bola: 3/);
-  assert.match(ui, /bônus ativo/);
-  assert.match(ui, /raide fruta/);
+  assert.match(ui, /CAPTURA DO CHEFE — ONIX/);
+  assert.match(ui, /Ultra Bola — 95%/);
+  assert.match(ui, /Bônus Frambo: \*PREPARADO\*/);
+  assert.match(ui, /raid capturar 1/);
+  assert.doesNotMatch(ui, /raid fruta/); // frambo já preparada → omitir comando
 });
 
 test('menções: nome ausente e IDs técnicos viram Treinador N', () => {

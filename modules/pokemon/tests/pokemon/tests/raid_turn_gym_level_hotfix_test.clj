@@ -153,7 +153,7 @@
         (is (some? started))
         (is (re-find #"RAID INICIADA AUTOMATICAMENTE" (:texto started)))
         (is (re-find #"Vez de" (:texto started)))
-        (is (re-find #"raide atacar 1" (:texto started)))
+        (is (re-find #"raid atacar 1" (:texto started)))
         (is (seq (:mentions started)))
         (is (= vez0 (first (:mentions started))))
         (let [atk (tx/raid-attack!
@@ -169,4 +169,4 @@
   (let [t (domain/format-started {:nome-ginasio "🔥 Fogo" :hp-chefe 10 :hp-max 10
                                   :fase "combate" :chefe {:nome "X"}})]
     (is (re-find #"RAID INICIADA" t))
-    (is (re-find #"status" t))))
+    (is (re-find #"!pk raid" t))))

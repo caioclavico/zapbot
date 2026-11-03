@@ -13,9 +13,9 @@ test('resolveRaidGym numérico e por id', () => {
 
 test('formatRaidOpenHelp lista ginásios', () => {
   const t = present.formatRaidOpenHelp('!pk');
-  assert.match(t, /Abrir raide/);
+  assert.match(t, /Abrir raid/);
   assert.match(t, /1\. .*Pedra/);
-  assert.match(t, /!pk raide abrir/);
+  assert.match(t, /!pk raid abrir/);
 });
 
 test('formatRaidOpened e cancelada', () => {

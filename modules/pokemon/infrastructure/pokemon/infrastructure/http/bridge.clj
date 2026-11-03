@@ -111,8 +111,9 @@
      :pvp_out_of_turn :pvp_not_participant :pvp_cancel_forbidden
      :gym_cas_conflict :not_gym_leader :gym_defense_pending
      :cannot_challenge_own_gym :gym_locked :gym_daily_limit
-     :raid_not_open :already_in_raid :raid_full :raid_cannot_leave
-     :raid_not_creator :not_in_raid :raid_need_players :raid_not_in_combat
+     :raid_not_open :raid_already_started :already_in_raid :raid_full
+     :raid_cannot_leave :raid_not_creator :not_in_raid :raid_start_not_joined
+     :raid_need_players :raid_not_in_combat
      :raid_not_your_turn :raid_turn_invalid :raid_no_eligible_turn
      :raid_save_mismatch :raid_liga_mismatch
      :raid_capture_unavailable :raid_chat_busy :raid_gym_unknown

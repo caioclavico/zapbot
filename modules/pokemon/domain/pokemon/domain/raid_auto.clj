@@ -588,10 +588,10 @@
          "⏳ Lobby aberto por *" minutos " minutos*.\n"
          "\n"
          "*Comandos:*\n"
-         "`!pk raide entrar` — Pokémon ativo\n"
-         "`!pk raide entrar auto` — melhor elegível\n"
-         "`!pk raide entrar <n>` — índice da coleção\n"
-         "`!pk raide iniciar` — começar agora (1+ inscrito)")))
+         "`!pk raid entrar` — Pokémon ativo\n"
+         "`!pk raid entrar auto` — melhor elegível\n"
+         "`!pk raid entrar <n>` — índice da coleção\n"
+         "`!pk raid iniciar` — começar agora (1+ inscrito)")))
 
 (defn- golpe-label
   [g]
@@ -621,7 +621,7 @@
         (map-indexed
          (fn [i g]
            (str (inc i) ". " (golpe-label g) " (" (golpe-poder g) ")"
-                " → `!pk raide atacar " (inc i) "`"))
+                " → `!pk raid atacar " (inc i) "`"))
          (take 4 golpes))
         vivos (filterv #(pos? (long (get-in parts [% :hp] 0))) (:ordem raid []))
         proxima (when (and vez (seq vivos))
@@ -653,7 +653,7 @@
         turn (when (and (= "combate" (str (:fase raid))) (:vez raid))
                (format-started-turn-lines raid))]
     (->> (concat header [""] (or turn
-                                 ["⚔️ O combate começou — use `!pk raide status`."]))
+                                 ["⚔️ O combate começou — use `!pk raid`."]))
          (str/join "\n"))))
 
 (defn format-cancelled

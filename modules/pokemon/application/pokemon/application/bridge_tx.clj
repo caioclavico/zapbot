@@ -903,10 +903,17 @@
                 store writer-ctx
                 {:operation-id (str operation-id)
                  :raid-id (:raid-id raid)
-                 :agora (or agora-ms (System/currentTimeMillis))})]
+                 :agora (or agora-ms (System/currentTimeMillis))})
+        summary (raid-summary (:raid result))
+        pid (:player-id writer-ctx)
+        ;; Enriquecer sua-vez para o formatRaidTurnBlock mostrar "É a sua vez"
+        ;; e golpes numerados no primeiro turno após !pk raid iniciar.
+        enriched (when summary
+                   (assoc summary
+                          :sua-vez (boolean (and pid (= pid (:vez summary))))))]
     {:operation-id (:operation-id result)
      :duplicate (boolean (:duplicate result))
-     :raid (raid-summary (:raid result))}))
+     :raid enriched}))
 
 (defn raid-attack!
   [store {:keys [chat-id player-id save-id fence-generation operation-id

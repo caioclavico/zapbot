@@ -149,7 +149,7 @@ test('ciclo integrado: abrir1 → join×2 → lobby5 → start → vez → golpe
   const statusAsh = present.formatRaidStatus(dtoFor(raid, ash), '!pk');
   assert.match(statusAsh, /Vez de \*Ash\*/);
   assert.match(statusAsh, /Thunderbolt/);
-  assert.match(statusAsh, /!pk raide atacar 1/);
+  assert.match(statusAsh, /!pk raid atacar 1/);
   assert.match(statusAsh, /É a sua vez/);
   assert.doesNotMatch(statusAsh, /111@lid/);
 

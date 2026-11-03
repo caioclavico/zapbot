@@ -410,20 +410,28 @@
            :turn-index 0)))
 
 (defn iniciar
-  "Início antecipado. Manual: só o criador (se definido). Auto (criador nil):
-   qualquer inscrito. Sempre exige mínimo de jogadores da raid."
+  "Início antecipado.
+  Auto (`origem` = auto): qualquer inscrito — não exige criador humano.
+  Manual: se há `:criador`, só ele inicia.
+  Sempre exige mínimo de jogadores da raid."
   [raid player-id agora]
-  (when-not (inscricoes-abertas? raid agora)
-    (throw (err/error :raid_not_open {:fase (:fase raid)})))
-  ;; Auto tem :criador nil → qualquer participante inscrito pode iniciar.
-  (when (and (:criador raid) (not= player-id (:criador raid)))
-    (throw (err/error :raid_not_creator {:player-id player-id})))
-  (when-not (contains? (:participantes raid) player-id)
-    (throw (err/error :not_in_raid {:player-id player-id})))
-  (when (< (count (:ordem raid)) (min-da-raid raid))
-    (throw (err/error :raid_need_players
-                      {:have (count (:ordem raid)) :min (min-da-raid raid)})))
-  (aplicar-inicio-combate raid agora))
+  (let [fase (str (:fase raid))
+        auto? (= "auto" (str (:origem raid)))]
+    (when-not (inscricoes-abertas? raid agora)
+      (if (= "combate" fase)
+        (throw (err/error :raid_already_started {:fase fase}))
+        (throw (err/error :raid_not_open {:fase fase}))))
+    ;; Auto: qualquer participante inscrito (criador humano irrelevante).
+    (when (and (not auto?)
+               (:criador raid)
+               (not= player-id (:criador raid)))
+      (throw (err/error :raid_not_creator {:player-id player-id})))
+    (when-not (contains? (:participantes raid) player-id)
+      (throw (err/error :raid_start_not_joined {:player-id player-id})))
+    (when (< (count (:ordem raid)) (min-da-raid raid))
+      (throw (err/error :raid_need_players
+                        {:have (count (:ordem raid)) :min (min-da-raid raid)})))
+    (aplicar-inicio-combate raid agora)))
 
 (defn cancelar
   "Cancela lobby antes do combate (só criador)."
