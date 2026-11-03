@@ -37,6 +37,7 @@ test('aliases cacar/atacar e elegibilidade', () => {
     code: 'HUNT_COOLDOWN',
     details: { restanteMs: 1800 * 1000 }
   }), /30 minutos/);
+  assert.match(present.formatError({ code: 'BATTLE_PENDING' }), /batalha\/encontro em andamento|iniciar outra caçada/i);
   assert.equal(present.formatHuntEligibility({
     eligibilidade: {
       temTreinador: true,

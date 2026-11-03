@@ -260,14 +260,17 @@
 
 (defn- mensagem-falha [erro]
   ;; Legado HTTP e JVM compartilham códigos; JVM usa present.formatError.
-  (if (jvm-configurado?)
-    (.formatError jvm-present erro)
-    (case (.-code erro)
-      ("TIMEOUT" "CONNECT_TIMEOUT")
-      "⏳ O serviço Pokémon demorou para responder. O comando pode ter sido processado; confira o estado antes de repetir uma compra, troca ou captura."
-      "CONFIG" "⚠️ O serviço Pokémon ainda não está configurado. Os outros comandos continuam disponíveis."
-      "LIMIT" "⚠️ A resposta Pokémon excedeu o limite de tamanho. Tente consultar a coleção em texto: !pk time txt."
-      "⚠️ Não consegui concluir a resposta do Pokémon. O comando pode ter sido processado; confira o estado antes de repetir uma ação. Os outros comandos continuam disponíveis.")))
+  (let [codigo (str/upper-case (str (or (some-> erro .-code) "")))]
+    (if (= codigo "BATTLE_PENDING")
+      "⚠️ Há batalha/encontro em andamento neste save — não dá para iniciar outra caçada agora."
+      (if (jvm-configurado?)
+        (.formatError jvm-present erro)
+        (case (.-code erro)
+          ("TIMEOUT" "CONNECT_TIMEOUT")
+          "⏳ O serviço Pokémon demorou para responder. O comando pode ter sido processado; confira o estado antes de repetir uma compra, troca ou captura."
+          "CONFIG" "⚠️ O serviço Pokémon ainda não está configurado. Os outros comandos continuam disponíveis."
+          "LIMIT" "⚠️ A resposta Pokémon excedeu o limite de tamanho. Tente consultar a coleção em texto: !pk time txt."
+          "⚠️ Não consegui concluir a resposta do Pokémon. O comando pode ter sido processado; confira o estado antes de repetir uma ação. Os outros comandos continuam disponíveis.")))))
 
 (defn- entregar-envelope-jvm! [message ctx pedido envelope]
   (let [resposta (assoc (js->clj envelope :keywordize-keys true)

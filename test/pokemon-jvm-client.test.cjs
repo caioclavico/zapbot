@@ -99,6 +99,28 @@ test('erro de negócio estruturado sem retry com novo operationId', async () => 
   }
 });
 
+test('erro HTTP 500 é rejeitado sem fabricar sucesso', async () => {
+  let calls = 0;
+  const f = await fixture((req, res) => {
+    calls += 1;
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ok: false, error: { code: 'INTERNAL', message: 'falha interna' } }));
+  });
+  try {
+    await assert.rejects(
+      () => f.client.creditCoins({
+        chatId: 'c', playerId: 'p', saveId: 'a', fenceGeneration: 0,
+        operationId: 'op-500', coinsDelta: 1
+      }),
+      err => err.code === 'INTERNAL' && err.status === 500
+    );
+    assert.equal(calls, 1);
+  } finally {
+    await f.close();
+  }
+});
+
 test('cliente expõe criação e renomeação de slots com operationId estável', async () => {
   const received = [];
   const f = await fixture((req, res) => {

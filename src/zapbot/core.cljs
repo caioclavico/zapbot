@@ -444,11 +444,28 @@
   (let [executar #(if (and (permitido-pelo-ambiente? message)
                           (desempenho/pokemon? (.-body message)))
                    (desempenho/acompanhar-mensagem! message (fn [ctx] (processar-mensagem message ctx)))
-                   (processar-mensagem message nil))]
+                   (processar-mensagem message nil))
+        ;; O evento WhatsApp ignora o retorno do dispatcher; absorver aqui
+        ;; somente rejeições já tratadas evita unhandledRejection no processo.
+        executar-seguro #(try
+                           (let [resultado (executar)]
+                             (if (and resultado (fn? (.-then ^js resultado)))
+                               (-> (js/Promise.resolve resultado)
+                                   (p/catch (fn [err]
+                                              (js/console.error
+                                               "[dispatch] rejeição de comando isolada:"
+                                               (clj->js (err-diag err)))
+                                              nil))
+                               resultado))
+                           (catch :default err
+                             (js/console.error
+                              "[dispatch] exceção de comando isolada:"
+                              (clj->js (err-diag err)))
+                             nil)))]
     (if (and (permitido-pelo-ambiente? message)
              (str/starts-with? (str/trim (or (.-body message) "")) config/prefix))
-      (recursos/medir-comando! executar)
-      (executar))))
+      (recursos/medir-comando! executar-seguro)
+      (executar-seguro))))
 
 (defn opcoes-puppeteer []
   (cond-> {:protocolTimeout 300000
