@@ -1103,6 +1103,12 @@ function formatError(err) {
     OPERATION_NOT_FOUND:
       '⚠️ Recibo não encontrado (operação não persistida ou id inválido).',
     OPERATION_FORBIDDEN: '⚠️ Recibo de outro jogador — consulta negada.',
+    TRADE_FORBIDDEN: '🔒 Você não participa desta proposta de troca. Confira o ID enviado pelo bot e use sua própria conta no grupo.',
+    TRADE_ACTION_FORBIDDEN: '🔒 Você não tem permissão para esta etapa da troca. Só o destinatário aceita; depois, só quem criou confirma.',
+    TRADE_SAVE_MISMATCH: '⚠️ Seu save ativo mudou desde a proposta. Use !pk saves, ative o save original e tente novamente.',
+    TRADE_EXPIRED: '⌛ Esta proposta de troca expirou. Crie uma nova proposta.',
+    INVALID_TRADE_TRANSITION: '✅ Esta proposta já foi respondida ou concluída. Consulte !pk troca para ver as pendentes.',
+    INVALID_TRADE: '⚠️ A troca não pode ser concluída com o estado atual dos Pokémon. Confirme o save ativo, os Pokémon selecionados e se nenhum está indisponível.',
     ENCOUNTER_NOT_FOUND: '❓ Não há caçada/encontro em andamento.',
     ENCOUNTER_NOT_READY: '⚔️ Derrote o Pokémon selvagem antes de capturar.',
     ENCOUNTER_OWNER_MISMATCH: '🚫 Essa caçada pertence a outro treinador.',

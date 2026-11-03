@@ -349,6 +349,15 @@ test('formatError distingue pending local de recibo ausente', () => {
   assert.match(present.formatError({ code: 'INVALID_STARTER' }), /1, 2 ou 3/);
 });
 
+test('formatError explica os gates de troca sem expor dados do outro treinador', () => {
+  assert.match(present.formatError({ code: 'TRADE_FORBIDDEN' }), /não participa|própria conta/i);
+  assert.match(present.formatError({ code: 'TRADE_ACTION_FORBIDDEN' }), /destinatário aceita|criou confirma/i);
+  assert.match(present.formatError({ code: 'TRADE_SAVE_MISMATCH' }), /save ativo mudou/i);
+  assert.match(present.formatError({ code: 'TRADE_EXPIRED' }), /expirou/i);
+  assert.match(present.formatError({ code: 'INVALID_TRADE_TRANSITION' }), /respondida|concluída/i);
+  assert.doesNotMatch(present.formatError({ code: 'TRADE_FORBIDDEN' }), /@lid|@c\.us|[0-9]{5,}/i);
+});
+
 test('formatUnavailable amigável sem jargão de infra', () => {
   const text = present.formatUnavailable('batalhar');
   assert.match(text, /não está disponível/);

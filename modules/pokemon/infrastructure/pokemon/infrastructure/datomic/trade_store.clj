@@ -96,15 +96,22 @@
               sa (save-entity db chat-id (:player-a before) (:save-a before))
               sb (save-entity db chat-id (:player-b before) (:save-b before))
               expired? (and before (>= (long now) (long (:expires-at before))))
-              actor-ok (and before (= chat-id (:chat-id before))
-                            (trade/participant? before player-id)
-                            (or (nil? required-actor)
-                                (= player-id (if (= required-actor :player-b)
-                                               (:player-b before)
-                                               (:player-a before))))
-                            (= save-id (:player/active-save-id actor))
-                            (= fence-generation (:player/fence-generation actor)))]
-          (when-not actor-ok (throw (err/error :trade_forbidden {})))
+              required-player (when required-actor
+                                (if (= required-actor :player-b)
+                                  (:player-b before)
+                                  (:player-a before)))]
+          ;; JIDs são literais por segurança: @lid e @c.us não são aliases
+          ;; intercambiáveis sem vínculo explícito e confiável. Classificar os
+          ;; demais gates evita que uma troca legítima pareça "forbidden".
+          (when-not (and before (= chat-id (:chat-id before))
+                         (trade/participant? before player-id))
+            (throw (err/error :trade_forbidden {})))
+          (when (and required-player (not= player-id required-player))
+            (throw (err/error :trade_action_forbidden {})))
+          (when-not (= save-id (:player/active-save-id actor))
+            (throw (err/error :trade_save_mismatch {})))
+          (when-not (= fence-generation (:player/fence-generation actor))
+            (throw (err/error :stale_writer_fence {})))
           (when-not (and a b sa sb
                          (= (:save-a before) (:player/active-save-id a))
                          (= (:save-b before) (:player/active-save-id b))
@@ -234,8 +241,12 @@
                           (trade-evolution/apply-prepared pb-record prepared-b))
               sk-a (:save/key sa)
               sk-b (:save/key sb)]
-          (when-not (and tr (= :accepted (:state tr)) (= chat-id (:chat-id tr))
-                         (= player-id (:player-a tr)) (= save-id (:save-a tr))
+          (when-not (and tr (= chat-id (:chat-id tr))
+                         (trade/participant? tr player-id))
+            (throw (err/error :trade_forbidden {})))
+          (when-not (= player-id (:player-a tr))
+            (throw (err/error :trade_action_forbidden {})))
+          (when-not (and (= :accepted (:state tr)) (= save-id (:save-a tr))
                          (= fence-generation (:fence-a tr))
                          (= save-id (:player/active-save-id actor))
                          (= fence-generation (:player/fence-generation actor))

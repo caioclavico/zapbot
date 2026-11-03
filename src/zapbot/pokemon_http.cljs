@@ -1184,7 +1184,11 @@
                                        ". Use !pk troca aceitar <id> ou !pk troca cancelar <id>."))))
           (= sub "aceitar")
           (p/let [b (body-op "trade-accept" (first rest-args))
-                  data (.acceptTrade jvm b)] (envelope-jvm pedido (str "✅ Proposta aceita: " (.-tradeId data))))
+                  data (.acceptTrade jvm b)]
+            (envelope-jvm pedido
+                          (str "✅ Proposta aceita: " (.-tradeId data)
+                               ". Agora quem criou a proposta deve usar !pk troca confirmar "
+                               (.-tradeId data) ".")))
           (= sub "confirmar")
           (p/let [b (body-op "trade-complete" (first rest-args))
                   listed (.listTrades jvm #js {:chatId chat-id :playerId player-id})
@@ -1224,7 +1228,11 @@
                                                 :fenceA (.-fenceGeneration a) :fenceB (.-fenceGeneration at)
                                                 :pokemonA pokemon-a :pokemonB pokemon-b
                                                 :operationId (op-id (str "trade-create:" target ":" meu ":" outro))})]
-              (envelope-jvm pedido (str "🤝 Proposta criada: " (or (.-tradeId data) (.-id data))))))
+              (let [trade-id (or (.-tradeId data) (.-id data))]
+                (envelope-jvm pedido
+                              (str "🤝 Proposta criada: " trade-id
+                                   ". O treinador mencionado deve usar !pk troca aceitar " trade-id
+                                   "; depois você confirma com !pk troca confirmar " trade-id ".")))))
           :else (throw (erro-contrato "❓ Use !pk troca <meu índice> <índice do outro> @treinador ou !pk troca aceitar|confirmar|recusar|cancelar <id>."))))]
         (entregar-envelope-jvm! message ctx pedido envelope))
       (if-not cmd

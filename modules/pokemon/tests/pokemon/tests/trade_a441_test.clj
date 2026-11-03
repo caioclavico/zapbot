@@ -156,6 +156,73 @@
                                        :chat-id "chat" :player-id "misty" :save-id "a"
                                        :fence-generation (inc fb) :now 1001})))))
 
+(deftest transicao-classifica-ator-save-fence-e-jid-sem-inferir-alias
+  (let [{:keys [conn store]} (fixture)
+        fa (:fence-generation (ports/get-player store "chat" "ash"))
+        fb (:fence-generation (ports/get-player store "chat" "misty"))
+        request {:operation-id "trade-gates-create" :chat-id "chat"
+                 :player-a "ash" :player-b "misty" :save-a "a" :save-b "a"
+                 :fence-a fa :fence-b fb :now 1000}
+        code (fn [request]
+               (try (trades/accept! conn request) :ok
+                    (catch Exception e (err/error-code e))))]
+    (trades/create! conn request)
+    (is (= :trade_action_forbidden
+           (code {:operation-id "trade-gates-wrong-role" :trade-id "trade-gates-create"
+                  :chat-id "chat" :player-id "ash" :save-id "a"
+                  :fence-generation fa :now 1001})))
+    (is (= :trade_save_mismatch
+           (code {:operation-id "trade-gates-wrong-save" :trade-id "trade-gates-create"
+                  :chat-id "chat" :player-id "misty" :save-id "b"
+                  :fence-generation fb :now 1001})))
+    (is (= :stale_writer_fence
+           (code {:operation-id "trade-gates-stale-fence" :trade-id "trade-gates-create"
+                  :chat-id "chat" :player-id "misty" :save-id "a"
+                  :fence-generation (inc fb) :now 1001})))
+    (trainer/create-trainer! store {:chat-id "chat" :player-id "misty@lid"})
+    (is (= :trade_forbidden
+           (code {:operation-id "trade-gates-unproven-alias" :trade-id "trade-gates-create"
+                  :chat-id "chat" :player-id "misty@lid" :save-id "a"
+                  :fence-generation (:fence-generation (ports/get-player store "chat" "misty@lid"))
+                  :now 1001})))) )
+
+(deftest troca-usa-slot-interno-apos-rename-e-recovery-v1
+  (let [{:keys [conn store]} (fixture)
+        _ (trainer/create-save! store "chat" "ash" "recovery-v1")
+        fence0 (:fence-generation (ports/get-player store "chat" "ash"))
+        _ (ports/rename-save! store {:chat-id "chat" :player-id "ash"
+                                     :save-id "recovery-v1" :display-name "Recuperado"
+                                     :expected-fence-generation fence0 :operation-id "trade-recovery-rename"})
+        _ (trainer/switch-save! store "chat" "ash" "recovery-v1")
+        fa (:fence-generation (ports/get-player store "chat" "ash"))
+        fb (:fence-generation (ports/get-player store "chat" "misty"))
+        sa (d/pull (d/db conn) '[*] [:save/key "chat|ash|recovery-v1"])
+        sb (d/pull (d/db conn) '[*] [:save/key "chat|misty|a"])
+        _ (d/transact conn {:tx-data [{:pokemon/id-pokemon "poke-recovery"
+                                       :pokemon/key "poke-recovery" :pokemon/save (:db/id sa)
+                                       :pokemon/species "pikachu" :pokemon/level 5 :pokemon/hp 20 :pokemon/hp-atual 20}
+                                      {:pokemon/id-pokemon "poke-normal"
+                                       :pokemon/key "poke-normal" :pokemon/save (:db/id sb)
+                                       :pokemon/species "eevee" :pokemon/level 5 :pokemon/hp 20 :pokemon/hp-atual 20}]})
+        create {:operation-id "trade-recovery-create" :chat-id "chat"
+                :player-a "ash" :player-b "misty" :save-a "recovery-v1" :save-b "a"
+                :fence-a fa :fence-b fb :pokemon-a "poke-recovery" :pokemon-b "poke-normal" :now 1000}
+        _ (trades/create! conn create)
+        _ (trades/accept! conn {:operation-id "trade-recovery-accept" :trade-id "trade-recovery-create"
+                                :chat-id "chat" :player-id "misty" :save-id "a"
+                                :fence-generation fb :now 1001})
+        completed (trades/complete! conn {:operation-id "trade-recovery-complete" :trade-id "trade-recovery-create"
+                                          :chat-id "chat" :player-id "ash" :save-id "recovery-v1"
+                                          :fence-generation fa :pokemon-a "poke-recovery" :pokemon-b "poke-normal" :now 1002})]
+    (is (= :completed (:state completed)))
+    (is (= "Recuperado" (:display-name (ports/get-save store "chat" "ash" "recovery-v1"))))
+    (is (= (:db/id sb) (or (-> (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-recovery"])
+                               :pokemon/save :db/id)
+                            (:pokemon/save (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-recovery"])))))
+    (is (= (:db/id sa) (or (-> (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-normal"])
+                               :pokemon/save :db/id)
+                            (:pokemon/save (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-normal"])))))))
+
 (defn- seed-trade-pokemon! [conn store]
   (let [sa (d/pull (d/db conn) '[*] [:save/key "chat|ash|a"])
         sb (d/pull (d/db conn) '[*] [:save/key "chat|misty|a"])]
