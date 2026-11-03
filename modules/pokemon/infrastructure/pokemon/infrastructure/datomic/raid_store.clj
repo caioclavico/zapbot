@@ -657,8 +657,15 @@
      :result {:operation-id operation-id :duplicate false :raid raid'}}))
 
 (defn- reward-tx-for-participant
-  [db raid player-id part apply-pokemon-xp-tx save-entity query-collection]
-  (let [chat-id (:chat-id raid)
+  "Liquida PE/XP/(moedas) para um elegível. `outcome` ∈ #{:vitoria :derrota}.
+  Recibo determinístico `raid-reward|raid-id|player-id` — uma concessão por raid.
+  XP aplica-se ao mon da coleção (mesmo nocauteado no snapshot da raid)."
+  [db raid player-id part apply-pokemon-xp-tx save-entity query-collection outcome]
+  (let [amounts (raid/recompensas outcome)
+        moedas (long (:moedas amounts))
+        pe-qtd (long (:pe amounts))
+        xp-base (long (:xp-pokemon amounts))
+        chat-id (:chat-id raid)
         save-id (:save-id part)
         sk (id/save-key chat-id player-id save-id)
         save (save-entity db chat-id player-id save-id)
@@ -670,14 +677,15 @@
         live (when id-poke
                (some #(when (= (:id-pokemon %) id-poke) %)
                      (query-collection db sk)))
-        xp-qtd (if live raid/recompensa-xp-pokemon 0)
-        xp-part (when live
+        xp-qtd (if live xp-base 0)
+        xp-part (when (and live (pos? xp-qtd))
                   (apply-pokemon-xp-tx live xp-qtd))
-        coin-part (economy-store/apply-delta-tx
-                   {:sk sk :save save :delta raid/recompensa-moedas
-                    :operation-id receipt-id :source "raid" :role "primary"})]
+        coin-part (when (pos? moedas)
+                    (economy-store/apply-delta-tx
+                     {:sk sk :save save :delta moedas
+                      :operation-id receipt-id :source "raid" :role "primary"}))]
     {:tx (concat
-          [[:db/add [:save/key sk] :save/pe-raids (+ pe raid/recompensa-pe)]
+          [[:db/add [:save/key sk] :save/pe-raids (+ pe pe-qtd)]
            [:db/cas [:save/key sk] :save/revision rev (inc rev)]
            {:operation-receipt/id receipt-id
             :operation-receipt/kind "raid-reward"
@@ -685,20 +693,24 @@
             :operation-receipt/payload-hash
             (ops/payload-hash
              (ops/raid-reward-payload
-              {:raid-id (:raid-id raid) :player-id player-id}))
+              {:raid-id (:raid-id raid)
+               :player-id player-id
+               :outcome outcome}))
             :operation-receipt/player-key (id/player-key chat-id player-id)
             :operation-receipt/save-id save-id
             :operation-receipt/summary
-            (pr-str {:moedas raid/recompensa-moedas
-                     :pe raid/recompensa-pe
+            (pr-str {:outcome (name outcome)
+                     :moedas moedas
+                     :pe pe-qtd
                      :xp-pokemon xp-qtd})}]
-          (:tx coin-part)
+          (or (:tx coin-part) [])
           (or (:tx xp-part) []))
      :player-id player-id
-     :moedas raid/recompensa-moedas
-     :pe raid/recompensa-pe
+     :moedas moedas
+     :pe pe-qtd
      :xp-pokemon xp-qtd
-     :pokemon-id id-poke}))
+     :pokemon-id id-poke
+     :outcome outcome}))
 
 (defn build-attack-tx
   [{:keys [db save writer-ctx request raid
@@ -728,12 +740,17 @@
         rev (long (:save/revision save 0))
         operation-id (:operation-id request)
         phash (:payload-hash request)
-        pay-rewards? (and (:venceu? outcome) (not (:rewards-paid? raid)))
+        reward-outcome (cond
+                         (:venceu? outcome) :vitoria
+                         (:derrota? outcome) :derrota
+                         :else nil)
+        pay-rewards? (and reward-outcome (not (:rewards-paid? raid)))
         reward-bundles (when pay-rewards?
                          (mapv (fn [[pid p]]
                                  (reward-tx-for-participant
                                   db raid' pid p
-                                  apply-pokemon-xp-tx save-entity query-collection))
+                                  apply-pokemon-xp-tx save-entity query-collection
+                                  reward-outcome))
                                (raid/participantes-elegiveis raid')))
         part' (get-in raid' [:participantes player-id])
         ;; Atualiza HP/dano dos participantes vivos no snapshot
@@ -760,7 +777,9 @@
                    (id/player-key (:chat-id writer-ctx) player-id)
                    :operation-receipt/save-id (:save-id writer-ctx)
                    :operation-receipt/summary
-                   (pr-str {:dano (:dano outcome) :venceu? (:venceu? outcome)})}]
+                   (pr-str {:dano (:dano outcome)
+                            :venceu? (:venceu? outcome)
+                            :derrota? (:derrota? outcome)})}]
                  other-parts)]
     {:tx (into (vec raid-tx) (mapcat :tx reward-bundles))
      :result {:operation-id operation-id
@@ -770,7 +789,8 @@
               :venceu? (:venceu? outcome)
               :derrota? (:derrota? outcome)
               :raid raid'
-              :rewards (mapv #(select-keys % [:player-id :moedas :pe :xp-pokemon :pokemon-id])
+              :rewards (mapv #(select-keys % [:player-id :moedas :pe :xp-pokemon
+                                              :pokemon-id :outcome])
                              (or reward-bundles []))}}))
 
 (defn build-frambo-prepare-tx

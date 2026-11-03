@@ -197,9 +197,13 @@
     :move-index (long move-index)}))
 
 (defn raid-reward-payload
-  [{:keys [raid-id player-id]}]
+  "Payload estável do recibo `raid-reward|raid-id|player-id`.
+  Vitória preserva kind legado `raid-victory`; derrota usa `raid-defeat`."
+  [{:keys [raid-id player-id outcome]}]
   (reward/canonicalize
-   {:raid-id raid-id :player-id player-id :kind "raid-victory"}))
+   {:raid-id raid-id
+    :player-id player-id
+    :kind (if (= outcome :derrota) "raid-defeat" "raid-victory")}))
 
 (defn raid-capture-payload
   [{:keys [raid-id bola roll frambo]}]

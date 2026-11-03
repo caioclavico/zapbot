@@ -30,10 +30,19 @@ test('formatRaidStatus sem raid e com combate', () => {
   }, '!pk'), /Raide/);
 });
 
-test('formatRaidAttack vitória e turno', () => {
-  assert.match(present.formatRaidAttack({
+test('formatRaidAttack vitória, derrota e turno', () => {
+  const win = present.coerceRaidPresent(present.formatRaidAttack({
     venceu: true, dano: 80, raid: {}
-  }), /Vitória/);
+  }));
+  assert.match(win.text, /RAID CONCLUÍDA/);
+  const lose = present.coerceRaidPresent(present.formatRaidAttack({
+    derrota: true,
+    rewards: [{ playerId: 'ash@lid', moedas: 0, pe: 3, xpPokemon: 3 }],
+    raid: { chefe: { nome: 'Onix' }, participantes: [{ playerId: 'ash@lid', nome: 'Ash' }] }
+  }));
+  assert.match(lose.text, /RAID ENCERRADA — DERROTA/);
+  assert.match(lose.text, /\+3 PE/);
+  assert.match(lose.text, /Moedas: 0/);
   assert.match(present.formatRaidAttack({
     dano: 40, revide: 10, raid: { hpChefe: 100, hpMax: 440, vez: 'misty' }
   }, '!pk'), /Dano 40/);

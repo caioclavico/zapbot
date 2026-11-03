@@ -2204,12 +2204,62 @@ function formatRaidVictory(data, prefix = '!pk') {
   return { text, mentions: mentionSet };
 }
 
+/**
+ * Derrota: PE/XP de participação (valores do DTO `rewards`, já persistidos).
+ * Sem captura / moedas / itens.
+ */
+function formatRaidDefeat(data, _prefix = '!pk') {
+  const r = (data && data.raid) || {};
+  const chefe = (r.chefe && (r.chefe.nome || r.chefe.species)) || 'Chefe';
+  const participants = Array.isArray(r.participantes) ? r.participantes : [];
+  const roster = buildRaidMentionRoster(participants);
+  const rows = Array.isArray(data && data.rewards) ? data.rewards : [];
+  const lines = [
+    '💀 *RAID ENCERRADA — DERROTA*',
+    `🐉 *${chefe}* resistiu aos ataques!`,
+    '',
+    'Mesmo sem vencer, seus Pokémon ganharam experiência pela batalha.',
+    '',
+    '🎖️ *Recompensas de participação*'
+  ];
+  const mentions = [];
+  if (!rows.length) {
+    lines.push('_Nenhuma participação efetiva liquidada._');
+  } else {
+    for (const rw of rows) {
+      const pid = rw.playerId || rw['player-id'];
+      const entry = (pid && roster.byPlayerId[pid]) || null;
+      const tag = entry ? entry.tag : `@${safeRaidMentionLabel({ nome: rw.nome }, mentions.length)}`;
+      if (pid && typeof pid === 'string' && pid.includes('@')) {
+        mentions.push(pid);
+      }
+      const pe = rw.pe != null ? rw.pe : 0;
+      const xp = rw.xpPokemon != null ? rw.xpPokemon : (rw['xp-pokemon'] != null ? rw['xp-pokemon'] : 0);
+      const moedas = rw.moedas != null ? rw.moedas : 0;
+      lines.push(
+        tag,
+        `👤 Treinador: +${pe} PE`,
+        `⚔️ Pokémon participante: +${xp} XP`,
+        `🪙 Moedas: ${moedas}`,
+        ''
+      );
+    }
+    while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  }
+  lines.push('', '🎯 Continue treinando e tente novamente!');
+  const mentionSet = [];
+  for (const m of [...roster.mentions, ...mentions]) {
+    if (m && !mentionSet.includes(m)) mentionSet.push(m);
+  }
+  return { text: lines.join('\n'), mentions: mentionSet };
+}
+
 function formatRaidAttack(data, prefix = '!pk') {
   if (data && data.venceu) {
     return formatRaidVictory(data, prefix);
   }
   if (data && data.derrota) {
-    return '💀 A raide foi derrotada. Sem recompensas.';
+    return formatRaidDefeat(data, prefix);
   }
   const r = (data && data.raid) || {};
   return [
@@ -3087,6 +3137,7 @@ module.exports = {
   formatRaidStart,
   formatRaidAttack,
   formatRaidVictory,
+  formatRaidDefeat,
   formatRaidCapture,
   formatRaidCaptureUi,
   formatRaidFrambo,

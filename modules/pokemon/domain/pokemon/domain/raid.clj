@@ -21,6 +21,24 @@
 (def recompensa-moedas 50)
 (def recompensa-pe 6)
 (def recompensa-xp-pokemon 6)
+;; Derrota com participação efetiva (dano > 0): 50% PE/XP da vitória, sem economia.
+;; Arredondamento: quot (floor) — 50% de 6 → 3. Determinístico e estável.
+(def recompensa-moedas-derrota 0)
+(def recompensa-pe-derrota (quot recompensa-pe 2))
+(def recompensa-xp-pokemon-derrota (quot recompensa-xp-pokemon 2))
+
+(defn recompensas
+  "Tabela canônica de liquidação. `outcome` ∈ #{:vitoria :derrota}.
+  Vitória: valores integrais. Derrota: PE/XP via quot(vitória/2); moedas 0."
+  [outcome]
+  (case outcome
+    :vitoria {:moedas recompensa-moedas
+              :pe recompensa-pe
+              :xp-pokemon recompensa-xp-pokemon}
+    :derrota {:moedas recompensa-moedas-derrota
+              :pe recompensa-pe-derrota
+              :xp-pokemon recompensa-xp-pokemon-derrota}
+    (throw (err/error :invalid_raid_reward_outcome {:outcome outcome}))))
 
 (def lobby-por-categoria
   "Lobby dinâmico (auto). min-jogadores=1 em todas; recomendados só informativo."

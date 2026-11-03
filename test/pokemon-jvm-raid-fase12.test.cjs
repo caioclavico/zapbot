@@ -287,3 +287,33 @@ test('captura malsucedida distingue falha de bola vs tentativas esgotadas', () =
   assert.match(done, /recompensas pela vitória foram mantidas/);
   assert.doesNotMatch(done, /fugiu!/);
 });
+
+test('derrota lista PE/XP persistidos sem captura (12.8.3)', () => {
+  const raw = present.formatRaidAttack({
+    derrota: true,
+    playerId: '121212@lid',
+    rewards: [
+      { playerId: '121212@lid', moedas: 0, pe: 3, xpPokemon: 3, outcome: 'derrota' },
+      { playerId: '5511999999999@c.us', moedas: 0, pe: 3, xpPokemon: 3, outcome: 'derrota' }
+    ],
+    raid: {
+      chefe: { nome: 'Onix' },
+      participantes: [
+        { playerId: '121212@lid', nome: 'Ash', pokemon: { nome: 'Magikarp' } },
+        { playerId: '5511999999999@c.us', nome: 'Misty', pokemon: { nome: 'Feebas' } }
+      ]
+    }
+  }, '!pk');
+  const msg = present.coerceRaidPresent(raw);
+  assert.match(msg.text, /RAID ENCERRADA — DERROTA/);
+  assert.match(msg.text, /Onix/);
+  assert.match(msg.text, /Recompensas de participação/);
+  assert.match(msg.text, /@Ash\n👤 Treinador: \+3 PE/);
+  assert.match(msg.text, /⚔️ Pokémon participante: \+3 XP/);
+  assert.match(msg.text, /🪙 Moedas: 0/);
+  assert.match(msg.text, /@Misty\n👤 Treinador: \+3 PE/);
+  assert.doesNotMatch(msg.text, /CAPTURA DO CHEFE/);
+  assert.doesNotMatch(msg.text, /Sem recompensas/);
+  assert.doesNotMatch(msg.text, /\+50/);
+  assert.deepEqual(msg.mentions, ['121212@lid', '5511999999999@c.us']);
+});

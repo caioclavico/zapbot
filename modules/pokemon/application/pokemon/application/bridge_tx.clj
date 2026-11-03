@@ -938,7 +938,9 @@
                         (some? (:xp-pokemon rw))
                         (assoc :xp-pokemon (:xp-pokemon rw))
                         (:pokemon-id rw)
-                        (assoc :pokemon-id (:pokemon-id rw))))
+                        (assoc :pokemon-id (:pokemon-id rw))
+                        (:outcome rw)
+                        (assoc :outcome (name (:outcome rw)))))
                     (or (:rewards result) []))
      :raid (raid-summary (:raid result))}))
 
