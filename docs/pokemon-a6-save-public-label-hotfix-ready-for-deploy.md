@@ -58,7 +58,31 @@ Use `!pk save aventura` para selecionar.
 
 ## 6. Artefatos RC
 
-Preenchidos após build (seção abaixo / `$RC/meta/IMAGES.txt`).
+| | Valor |
+| --- | --- |
+| Commit código | `d153f1ff8e815f844ea198e11ccdc9dc7623c2c0` |
+| Content hash | `167e7707e33edf19166bb7ca948812b5b9bab1704fbb82eebca2824d6b154993` |
+| RC dir | `/Users/caioclavico/odisseu-recovery/a6-fase1282b-saves-rc-20261103T024704Z/` |
+| JVM tag | `odisseu-jvm:a6-fase1282b-20261103T024704Z-167e7707e33e-amd64` |
+| JVM digest | `sha256:8d4a5d7ef6c3a9dd035b05a1d2f63f2f44b35a23c6366f687b4fdf34609c558d` |
+| Node tag | `odisseu-node:a6-fase1282b-20261103T024704Z-167e7707e33e-amd64` |
+| Node digest | `sha256:75192ac2cf208718e295163d8f7690568b12a081f5f9e6db6787e67d5b07b4c6` |
+| Arch | amd64 / amd64 |
+| Labels | `fase=12.8.2-b` · mesmo git-sha/content-hash JVM=Node |
+
+Tar SHA-256 (`$RC/checksums/IMAGES.sha256`):
+
+| Tar | SHA-256 |
+| --- | --- |
+| JVM | `4aaf38515a5e8e21d3103da158abd70b83f0e30514626ae0c538379e21c1911d` |
+| Node | `14147838d2b6ad1aefe0d2a000c77ac3b42a35d58034aad3a85f0488f6237075` |
+
+Rollback produção atual (12.8.2):
+
+| | Tag | Digest |
+| --- | --- | --- |
+| JVM | `odisseu-jvm:a6-fase1282-20261103T013255Z-276deceffe6d-amd64` | `sha256:1af532ece8523c91101b5b7033683c93fd6347c33587881b9fe51dbda0bfc3a8` |
+| Node | `odisseu-node:a6-fase1282-20261103T013255Z-276deceffe6d-amd64` | `sha256:2a3090349054d2b1c4e6ee00d5e961fe17096068e41f4a94ab363907a2029204` |
 
 ## 7. Migration
 
