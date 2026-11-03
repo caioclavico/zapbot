@@ -54,7 +54,7 @@ Use `!pk save aventura` para selecionar.
 | `clojure -M:test-fase128` | **PASS** 0 fail |
 | `clojure -M:test-a6-economy-capacity` | **PASS** economy+capacity+idle |
 | `clojure -M:test-raid-capture-rewards-fase126` | **PASS** 15 / 75 |
-| `clojure -M:test-raid-save-slots-reconcile` | ver log RC |
+| `clojure -M:test-raid-save-slots-reconcile` | **PASS** 3 / 13 |
 
 ## 6. Artefatos RC
 
