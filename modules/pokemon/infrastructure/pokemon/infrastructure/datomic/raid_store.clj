@@ -275,12 +275,17 @@
          :operation-receipt/summary summary}))))
 
 (defn cadence-receipt-tx
-  "Overrides de cadência (intervalos + daily-limit) — unique/value create/update."
+  "Overrides de cadência (intervalos + daily-limit + janela 12.8.2) —
+   unique/value create/update. Sem migration de schema."
   [chat-id cadence exists?]
   (when (and chat-id (map? cadence)
              (or (:category-intervals cadence)
                  (some? (:daily-limit cadence))
-                 (some? (:special-reserve cadence))))
+                 (some? (:special-reserve cadence))
+                 (some? (:distribution cadence))
+                 (some? (:window-start-hour cadence))
+                 (some? (:window-end-hour cadence))
+                 (some? (:timezone cadence))))
     (let [rid (raid-auto/cadence-receipt-id chat-id)
           intervals (when-let [i (:category-intervals cadence)]
                       (raid-auto/normalize-category-intervals i))
@@ -290,10 +295,21 @@
                     (raid-auto/normalize-special-reserve
                      (:special-reserve cadence)
                      (or daily raid-auto/default-daily-limit)))
+          dist (when (some? (:distribution cadence))
+                 (raid-auto/normalize-distribution (:distribution cadence)))
           summary (pr-str (cond-> {}
                             intervals (assoc :category-intervals intervals)
                             (some? daily) (assoc :daily-limit daily)
-                            (some? reserve) (assoc :special-reserve reserve)))]
+                            (some? reserve) (assoc :special-reserve reserve)
+                            dist (assoc :distribution dist)
+                            (some? (:window-start-hour cadence))
+                            (assoc :window-start-hour
+                                   (long (:window-start-hour cadence)))
+                            (some? (:window-end-hour cadence))
+                            (assoc :window-end-hour
+                                   (long (:window-end-hour cadence)))
+                            (some? (:timezone cadence))
+                            (assoc :timezone (str (:timezone cadence)))))]
       (if exists?
         {:db/id [:operation-receipt/id rid]
          :operation-receipt/summary summary
@@ -321,16 +337,22 @@
       (:noop :skip-disabled)
       {:tx [] :result {:acao acao :schedule schedule :duplicate false}}
 
-      (:skip-busy :skip-daily-cap)
-      (let [skip-kind (if (= :skip-daily-cap acao)
-                        "raid-auto-skip-cap"
+      (:skip-busy :skip-daily-cap :skip-outside-window :skip-missed)
+      (let [skip-kind (case acao
+                        :skip-daily-cap "raid-auto-skip-cap"
+                        :skip-outside-window "raid-auto-skip-outside-window"
+                        :skip-missed "raid-auto-skip-missed"
                         "raid-auto-skip")
-            s' (assoc schedule
-                      :next-at (:next-at plan)
-                      :revision next-rev
-                      :last-spawn-id (:spawn-id plan)
-                      :next-categoria (:next-categoria plan)
-                      :next-reminders? (:next-reminders? plan))
+            ;; 12.8.2: last-spawn-id só muda em spawn real — preserva raid aberta.
+            s' (cond-> (assoc schedule
+                              :next-at (:next-at plan)
+                              :revision next-rev
+                              :next-categoria (:next-categoria plan)
+                              :next-reminders? (:next-reminders? plan))
+                 (:last-spawn-id schedule)
+                 (assoc :last-spawn-id (:last-spawn-id schedule))
+                 (:last-raid-id schedule)
+                 (assoc :last-raid-id (:last-raid-id schedule)))
             rev-tx (when (pos? expected-rev)
                      [[:db/cas [:raid-auto-schedule/chat-id chat-id]
                        :raid-auto-schedule/revision expected-rev next-rev]])]
@@ -346,7 +368,9 @@
                                       :active (:active-raid-id plan)
                                       :spawns-today (:spawns-today plan)
                                       :daily-limit (:daily-limit plan)
-                                      :next-categoria (:next-categoria plan)})}]
+                                      :next-categoria (:next-categoria plan)
+                                      :next-at (:next-at plan)
+                                      :skip-reason (or (:skip-reason plan) acao)})}]
                      intent-tx (conj intent-tx))
                    (or rev-tx []))
          :result {:acao acao :schedule s' :duplicate false

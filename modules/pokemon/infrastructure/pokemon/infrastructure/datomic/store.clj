@@ -913,7 +913,7 @@
            :reminders? (boolean (:reminders? s))})))))
 
 (defn- load-cadence
-  "Overrides de cadência (intervalos + daily-limit) — receipt opcional."
+  "Overrides de cadência (intervalos + daily-limit + janela 12.8.2) — receipt opcional."
   [db chat-id]
   (let [e (receipt-entity db (raid-auto/cadence-receipt-id chat-id))]
     (when (present? e)
@@ -928,7 +928,15 @@
             (some? (:daily-limit s))
             (assoc :daily-limit (long (:daily-limit s)))
             (some? (:special-reserve s))
-            (assoc :special-reserve (long (:special-reserve s)))))))))
+            (assoc :special-reserve (long (:special-reserve s)))
+            (some? (:distribution s))
+            (assoc :distribution (raid-auto/normalize-distribution (:distribution s)))
+            (some? (:window-start-hour s))
+            (assoc :window-start-hour (long (:window-start-hour s)))
+            (some? (:window-end-hour s))
+            (assoc :window-end-hour (long (:window-end-hour s)))
+            (some? (:timezone s))
+            (assoc :timezone (str (:timezone s)))))))))
 
 (defn- enrich-schedule
   "Mescla intent + cadence no mapa da agenda (campos não-schema)."
@@ -947,6 +955,14 @@
         (assoc :daily-limit (:daily-limit cadence))
         (some? (:special-reserve cadence))
         (assoc :special-reserve (:special-reserve cadence))
+        (:distribution cadence)
+        (assoc :distribution (:distribution cadence))
+        (some? (:window-start-hour cadence))
+        (assoc :window-start-hour (:window-start-hour cadence))
+        (some? (:window-end-hour cadence))
+        (assoc :window-end-hour (:window-end-hour cadence))
+        (:timezone cadence)
+        (assoc :timezone (:timezone cadence))
         intent-match?
         (assoc :next-categoria (:categoria intent)
                :next-reminders? (boolean (:reminders? intent)))))))
@@ -1170,7 +1186,11 @@
   (let [db (d/db conn)
         schedule (or (load-schedule db chat-id)
                      (raid-auto/default-schedule chat-id agora))
-        plans (raid-auto/plan-reminders schedule agora)]
+        day-stats (auto-spawns-on-day db chat-id agora)
+        plans (raid-auto/plan-reminders
+               schedule agora
+               {:spawns-today (:count day-stats)
+                :specials-today (:specials day-stats)})]
     (->> plans
          (mapv
           (fn [plan]
@@ -1268,6 +1288,8 @@
                   acao (case kind
                          "raid-auto-skip" :skip-busy
                          "raid-auto-skip-cap" :skip-daily-cap
+                         "raid-auto-skip-outside-window" :skip-outside-window
+                         "raid-auto-skip-missed" :skip-missed
                          :spawn)
                   out {:acao acao
                        :chat-id chat-id
@@ -1280,6 +1302,8 @@
                (case acao
                  :skip-busy :raid_auto_skip
                  :skip-daily-cap :raid_auto_skip_cap
+                 :skip-outside-window :raid_auto_skip_outside_window
+                 :skip-missed :raid_auto_skip_missed
                  :raid_auto_spawn)
                {:chat-id chat-id :spawn-id spawn-id :due-at (:due-at plan)
                 :raid-id (:raid-id out) :result "duplicate"})
@@ -1322,6 +1346,8 @@
                        (case (:acao out)
                          :skip-busy :raid_auto_skip
                          :skip-daily-cap :raid_auto_skip_cap
+                         :skip-outside-window :raid_auto_skip_outside_window
+                         :skip-missed :raid_auto_skip_missed
                          :raid_auto_spawn)
                        {:chat-id chat-id
                         :spawn-id spawn-id
@@ -3474,7 +3500,11 @@
                            db (raid-auto/intent-receipt-id chat-id)))
           cadence-tx (when (or (:category-intervals schedule)
                                (some? (:daily-limit schedule))
-                               (some? (:special-reserve schedule)))
+                               (some? (:special-reserve schedule))
+                               (some? (:distribution schedule))
+                               (some? (:window-start-hour schedule))
+                               (some? (:window-end-hour schedule))
+                               (some? (:timezone schedule)))
                        (raid-store/cadence-receipt-tx
                         chat-id
                         (cond-> {}
@@ -3483,7 +3513,15 @@
                           (some? (:daily-limit schedule))
                           (assoc :daily-limit (:daily-limit schedule))
                           (some? (:special-reserve schedule))
-                          (assoc :special-reserve (:special-reserve schedule)))
+                          (assoc :special-reserve (:special-reserve schedule))
+                          (some? (:distribution schedule))
+                          (assoc :distribution (:distribution schedule))
+                          (some? (:window-start-hour schedule))
+                          (assoc :window-start-hour (:window-start-hour schedule))
+                          (some? (:window-end-hour schedule))
+                          (assoc :window-end-hour (:window-end-hour schedule))
+                          (some? (:timezone schedule))
+                          (assoc :timezone (:timezone schedule)))
                         cadence-exists?))
           intent-tx (when (and (:next-categoria s) (:next-at s))
                       (raid-store/intent-receipt-tx

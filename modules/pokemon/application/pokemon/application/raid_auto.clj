@@ -17,13 +17,15 @@
 (defn upsert-schedule!
   "Atualiza agenda. enabled default false se omitido na criação.
    Cadência 12.7.2: category-intervals / daily-limit / next-categoria.
+   12.8.2: distribution / window-start-hour / window-end-hour / timezone.
    Com `:safe-cadence? true` (migração 6h→1h): nunca antecipa next-at nem
    dropa especial já planejado.
    12.7.3: se next-at muda sem next-categoria explícita, invalida o intent do
    slot antigo (não carrega especial/raro para o novo due)."
   [store {:keys [chat-id enabled interval-ms next-at ginasio-index agora-ms
                  category-intervals next-categoria next-reminders?
-                 daily-limit special-reserve safe-cadence?]}]
+                 daily-limit special-reserve safe-cadence?
+                 distribution window-start-hour window-end-hour timezone]}]
   (let [agora (long (or agora-ms (System/currentTimeMillis)))
         cur (get-schedule store chat-id)
         next-at-changed?
@@ -38,6 +40,10 @@
                       :category-intervals category-intervals
                       :next-at next-at
                       :next-categoria next-categoria
+                      :distribution distribution
+                      :window-start-hour window-start-hour
+                      :window-end-hour window-end-hour
+                      :timezone timezone
                       :agora agora})
                 {})
         s (raid-auto/normalize-schedule
@@ -59,9 +65,27 @@
              (and (not safe-cadence?) (some? daily-limit))
              (assoc :daily-limit (long daily-limit))
              (and (not safe-cadence?) (some? special-reserve))
-             (assoc :special-reserve (long special-reserve)))
+             (assoc :special-reserve (long special-reserve))
+             (and (not safe-cadence?) (some? distribution))
+             (assoc :distribution (str distribution))
+             (and (not safe-cadence?) (some? window-start-hour))
+             (assoc :window-start-hour (long window-start-hour))
+             (and (not safe-cadence?) (some? window-end-hour))
+             (assoc :window-end-hour (long window-end-hour))
+             (and (not safe-cadence?) (some? timezone))
+             (assoc :timezone (str timezone)))
            chat-id agora)]
     (ports/upsert-raid-auto-schedule! store s)))
+
+(defn schedule-view
+  "Agenda + diagnóstico 12.8.2 (janela/timezone/distribution).
+   Contagens do dia vêm em opts {:spawns-today :specials-today} quando o
+   caller as tiver (store/bridge)."
+  [store chat-id agora-ms opts]
+  (let [agora (long (or agora-ms (System/currentTimeMillis)))
+        sch (get-schedule store chat-id)
+        diag (raid-auto/schedule-diagnostics sch agora (or opts {}))]
+    (assoc sch :diagnostics diag)))
 (defn tick!
   "Processa agendas due + expire de lobbies auto. Relógio injetável via agora-ms.
    Sem efeito se global-enabled? for false (kill switch)."

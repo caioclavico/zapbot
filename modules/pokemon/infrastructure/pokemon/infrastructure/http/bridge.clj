@@ -1296,10 +1296,13 @@
                 (= path "/v1/raids/auto/schedule")
                 (do (case method
                       "GET"
-                      (let [chat-id (g qs "chatId")]
+                      (let [chat-id (g qs "chatId")
+                            agora (or (long-or-nil (g qs "agoraMs" "agora"))
+                                      (System/currentTimeMillis))]
                         (when (str/blank? chat-id)
                           (throw (err/error :invalid_query {:required ["chatId"]})))
-                        (ok! ex {:schedule (raid-auto/get-schedule store chat-id)}))
+                        (ok! ex {:schedule
+                                 (raid-auto/schedule-view store chat-id agora {})}))
                       "PUT"
                       (let [body (read-body ex)
                             chat-id (g body "chatId")
@@ -1314,7 +1317,15 @@
                             safe? (boolean (or (g body "safeCadence")
                                                (g body "safe-cadence")))
                             intervals (or (g body "categoryIntervals")
-                                          (g body "category-intervals"))]
+                                          (g body "category-intervals"))
+                            dist (g body "distribution")
+                            win-start (long-or-nil
+                                       (g body "windowStart" "window-start"
+                                          "windowStartHour" "window-start-hour"))
+                            win-end (long-or-nil
+                                     (g body "windowEnd" "window-end"
+                                        "windowEndHour" "window-end-hour"))
+                            tz (g body "timezone")]
                         (when (str/blank? chat-id)
                           (throw (err/error :invalid_query {:required ["chatId"]})))
                         (ok! ex {:schedule
@@ -1331,7 +1342,15 @@
                                           (not (str/blank? (str next-cat)))
                                           (assoc :next-categoria (str next-cat))
                                           (map? intervals)
-                                          (assoc :category-intervals intervals)))}))
+                                          (assoc :category-intervals intervals)
+                                          (not (str/blank? (str dist)))
+                                          (assoc :distribution (str dist))
+                                          (some? win-start)
+                                          (assoc :window-start-hour win-start)
+                                          (some? win-end)
+                                          (assoc :window-end-hour win-end)
+                                          (not (str/blank? (str tz)))
+                                          (assoc :timezone (str tz))))}))
                       (throw (err/error :method_not_allowed {:method method}))))
 
                 (= path "/v1/raids/auto/tick")

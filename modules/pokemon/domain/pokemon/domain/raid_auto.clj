@@ -1,17 +1,21 @@
 (ns pokemon.domain.raid-auto
-  "Agenda de aparições automáticas — regras puras (Fase 3 / 3.1 / 12.7 / 12.7.1 / 12.7.2 / 12.7.3).
+  "Agenda de aparições automáticas — regras puras
+  (Fase 3 / 3.1 / 12.7 / 12.7.1 / 12.7.2 / 12.7.3 / 12.8.2).
   Desligada por padrão; não altera combate/economia.
   Chefe: catálogo dinâmico (raid-boss), não lista fixa de ginásio.
   Cadência 12.7.2: intervalo-base (~1h) + cooldown por categoria; lembretes
   T-30/15/5 (ovo) só para eventos especiais (lendário/mítico).
-  12.7.3: intent do slot atual planejado antes de T-30 (não só pós-spawn)."
+  12.7.3: intent do slot atual planejado antes de T-30 (não só pós-spawn).
+  12.8.2: distribuição uniforme de até dailyLimit slots na janela
+  [window-start, window-end) no timezone da agenda (default America/Sao_Paulo);
+  ativação controlada via :distribution \"uniform\" (default legado \"interval\")."
   (:require [clojure.string :as str]
             [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.raid :as raid]
             [pokemon.domain.raid-boss :as raid-boss]
             [pokemon.domain.raid-gym-theme :as gym-theme])
-  (:import [java.time Instant ZoneId]))
+  (:import [java.time Instant LocalDate LocalTime ZoneId]))
 ;; Cadência base entre slots exclusivos (1 evento por grupo por vez).
 ;; Cooldowns por categoria vivem em category-interval-ms-default.
 (def default-interval-ms (* 60 60 1000))
@@ -33,17 +37,29 @@
 
 (def special-categories #{"lendario" "mitico"})
 
-;; Dia BRT: prioriza raro/épico. Noite: prioriza especiais quando due.
+;; Janela civil no timezone da agenda (não no TZ do servidor).
+;; Legado 12.7: [08:00, 22:00). Uniform 12.8.2: [08:00, 23:00).
 (def day-hour-start-brt 8)
 (def day-hour-end-brt 22)
-(def brt-zone (ZoneId/of "America/Sao_Paulo"))
+(def default-window-start-hour 8)
+(def default-window-end-hour-legacy 22)
+(def default-window-end-hour-uniform 23)
+(def default-timezone "America/Sao_Paulo")
+(def brt-zone (ZoneId/of default-timezone))
+(def distribution-interval "interval")
+(def distribution-uniform "uniform")
+(def default-distribution distribution-interval)
+;; Grace para slot atrasado: além disso → skip-missed (sem catch-up).
+(def slot-stale-grace-ms (* 10 60 1000))
 
 ;; Cap diário piloto (metas de categoria ≠ obrigação absoluta).
 (def default-daily-limit 12)
-;; Últimos N slots do dia preferem especial due (anti-starvation).
+;; Até N slots/dia preferem especial due (ocupam o orçamento diário; não 13ª).
 (def default-special-reserve 2)
 (def min-daily-limit 1)
 (def max-daily-limit 48)
+(def min-window-hour 0)
+(def max-window-hour 24)
 
 ;; Compat 12.7.1: agendas sem next-categoria e interval longo ainda lembram.
 (def legacy-reminder-interval-ms (* 3 60 60 1000))
@@ -78,45 +94,128 @@
   [categoria]
   (contains? special-categories (str categoria)))
 
+(defn zone-id
+  "Timezone da agenda — nunca o TZ implícito do servidor."
+  [schedule-or-opts]
+  (let [tz (str (or (when (map? schedule-or-opts)
+                      (or (:timezone schedule-or-opts)
+                          (get schedule-or-opts "timezone")))
+                    default-timezone))]
+    (try (ZoneId/of tz)
+         (catch Exception _
+           brt-zone))))
+
+(defn normalize-distribution
+  [raw]
+  (let [s (str/lower-case (str (or raw default-distribution)))]
+    (if (#{"uniform" "slots" "distributed"} s)
+      distribution-uniform
+      distribution-interval)))
+
+(defn uniform-distribution?
+  [schedule-or-opts]
+  (= distribution-uniform
+     (normalize-distribution
+      (when (map? schedule-or-opts)
+        (or (:distribution schedule-or-opts)
+            (get schedule-or-opts "distribution"))))))
+
+(defn normalize-window-hour
+  [n label]
+  (let [v (long n)]
+    (when-not (<= min-window-hour v max-window-hour)
+      (throw (err/error :raid_auto_window_invalid
+                        {:field label :hour v
+                         :min min-window-hour :max max-window-hour})))
+    v))
+
+(defn window-config
+  "Extrai {:start :end :distribution :timezone :zone} da agenda/opts."
+  [schedule-or-opts]
+  (let [m (if (map? schedule-or-opts) schedule-or-opts {})
+        dist (normalize-distribution
+              (or (:distribution m) (get m "distribution")))
+        start (normalize-window-hour
+               (or (:window-start-hour m) (:window-start m)
+                   (get m "windowStart") (get m "window-start")
+                   default-window-start-hour)
+               :window-start)
+        end-default (if (= dist distribution-uniform)
+                      default-window-end-hour-uniform
+                      default-window-end-hour-legacy)
+        end (normalize-window-hour
+             (or (:window-end-hour m) (:window-end m)
+                 (get m "windowEnd") (get m "window-end")
+                 end-default)
+             :window-end)
+        tz (str (or (:timezone m) (get m "timezone") default-timezone))]
+    (when-not (< start end)
+      (throw (err/error :raid_auto_window_invalid
+                        {:window-start start :window-end end})))
+    {:start start :end end :distribution dist :timezone tz
+     :zone (zone-id {:timezone tz})}))
+
 (defn hour-of-day-brt
-  [epoch-ms]
-  (.getHour (.atZone (Instant/ofEpochMilli (long epoch-ms)) brt-zone)))
+  ([epoch-ms]
+   (hour-of-day-brt epoch-ms brt-zone))
+  ([epoch-ms zone]
+   (.getHour (.atZone (Instant/ofEpochMilli (long epoch-ms))
+                      (or zone brt-zone)))))
 
 (defn day-window-brt?
-  "True em [08:00, 22:00) America/Sao_Paulo."
-  [epoch-ms]
-  (let [h (hour-of-day-brt epoch-ms)]
-    (and (<= day-hour-start-brt h) (< h day-hour-end-brt))))
+  "True em [window-start, window-end) no timezone da agenda.
+   Aridade 1: janela legada [08:00, 22:00) America/Sao_Paulo."
+  ([epoch-ms]
+   (day-window-brt? epoch-ms {:distribution distribution-interval
+                              :window-start-hour day-hour-start-brt
+                              :window-end-hour day-hour-end-brt}))
+  ([epoch-ms schedule-or-opts]
+   (let [{:keys [start end zone]} (window-config schedule-or-opts)
+         h (hour-of-day-brt epoch-ms zone)]
+     (and (<= start h) (< h end)))))
 
 (defn day-key-brt
-  "Chave de dia civil BRT: \"yyyy-MM-dd\"."
-  [epoch-ms]
-  (let [zdt (.atZone (Instant/ofEpochMilli (long epoch-ms)) brt-zone)]
-    (str (.getYear zdt) "-"
-         (format "%02d" (.getMonthValue zdt)) "-"
-         (format "%02d" (.getDayOfMonth zdt)))))
+  "Chave de dia civil no timezone: \"yyyy-MM-dd\"."
+  ([epoch-ms]
+   (day-key-brt epoch-ms brt-zone))
+  ([epoch-ms zone]
+   (let [zdt (.atZone (Instant/ofEpochMilli (long epoch-ms))
+                      (or zone brt-zone))]
+     (str (.getYear zdt) "-"
+          (format "%02d" (.getMonthValue zdt)) "-"
+          (format "%02d" (.getDayOfMonth zdt))))))
 
 (defn start-of-day-brt
-  [epoch-ms]
+  ([epoch-ms]
+   (start-of-day-brt epoch-ms brt-zone))
+  ([epoch-ms zone]
+   (-> (Instant/ofEpochMilli (long epoch-ms))
+       (.atZone (or zone brt-zone))
+       (.toLocalDate)
+       (.atStartOfDay (or zone brt-zone))
+       (.toInstant)
+       (.toEpochMilli))))
+
+(defn- local-date-of
+  [epoch-ms zone]
   (-> (Instant/ofEpochMilli (long epoch-ms))
-      (.atZone brt-zone)
-      (.toLocalDate)
-      (.atStartOfDay brt-zone)
+      (.atZone zone)
+      (.toLocalDate)))
+
+(defn- at-local-hm
+  "Epoch ms de y-m-d h:min no zone."
+  [^LocalDate date hour minute zone]
+  (-> date
+      (.atTime (LocalTime/of (int hour) (int minute)))
+      (.atZone zone)
       (.toInstant)
       (.toEpochMilli)))
 
-(defn next-day-morning-brt
-  "Próximo 08:00 BRT estritamente após o dia civil de epoch-ms (retoma filler)."
-  [epoch-ms]
-  (let [next-date (-> (Instant/ofEpochMilli (long epoch-ms))
-                      (.atZone brt-zone)
-                      (.toLocalDate)
-                      (.plusDays 1))]
-    (-> next-date
-        (.atTime day-hour-start-brt 0)
-        (.atZone brt-zone)
-        (.toInstant)
-        (.toEpochMilli))))
+(defn window-start-ms
+  "Início da janela no dia civil de epoch-ms."
+  [epoch-ms schedule-or-opts]
+  (let [{:keys [start zone]} (window-config schedule-or-opts)]
+    (at-local-hm (local-date-of epoch-ms zone) start 0 zone)))
 
 (defn normalize-daily-limit
   [n]
@@ -154,6 +253,82 @@
          (assoc acc cat n)))
      {}
      (keys base))))
+
+(defn next-day-morning-brt
+  "Próximo início de janela estritamente após o dia civil de epoch-ms."
+  ([epoch-ms]
+   (next-day-morning-brt epoch-ms {:distribution distribution-interval
+                                   :window-start-hour day-hour-start-brt
+                                   :window-end-hour day-hour-end-brt}))
+  ([epoch-ms schedule-or-opts]
+   (let [{:keys [start zone]} (window-config schedule-or-opts)
+         next-date (.plusDays (local-date-of epoch-ms zone) 1)]
+     (at-local-hm next-date start 0 zone))))
+
+(defn day-slots
+  "Vetor de epoch-ms dos slots do dia civil de `epoch-ms`.
+   Distribuição uniforme: slot[i] = window-start + i * span / daily-limit.
+   Ex. 08–23 / 12 → passo 75min → 08:00 … 21:45."
+  [epoch-ms schedule-or-opts]
+  (let [{:keys [start end zone]} (window-config schedule-or-opts)
+        limit (normalize-daily-limit
+               (or (when (map? schedule-or-opts)
+                     (or (:daily-limit schedule-or-opts)
+                         (get schedule-or-opts "dailyLimit")))
+                   default-daily-limit))
+        date (local-date-of epoch-ms zone)
+        win0 (at-local-hm date start 0 zone)
+        span-ms (* (- (long end) (long start)) 60 60 1000)
+        step (quot span-ms (long limit))]
+    (mapv (fn [i] (+ win0 (* (long i) step))) (range limit))))
+
+(defn next-slot-at-or-after
+  "Primeiro slot >= agora no dia; senão primeiro slot do dia seguinte."
+  [agora schedule-or-opts]
+  (let [agora (long agora)
+        today (day-slots agora schedule-or-opts)
+        future (filterv #(>= (long %) agora) today)]
+    (if (seq future)
+      (long (first future))
+      (long (first (day-slots (next-day-morning-brt agora schedule-or-opts)
+                              schedule-or-opts))))))
+
+(defn next-slot-strictly-after
+  "Próximo slot com due > due-at; senão primeiro do dia seguinte."
+  [due-at schedule-or-opts]
+  (let [due (long due-at)
+        today (day-slots due schedule-or-opts)
+        later (filterv #(> (long %) due) today)]
+    (if (seq later)
+      (long (first later))
+      (long (first (day-slots (next-day-morning-brt due schedule-or-opts)
+                              schedule-or-opts))))))
+
+(defn slot-index-on-day
+  "Índice 0..limit-1 do slot que casa com due-at (tolerância 1s), ou nil."
+  [due-at schedule-or-opts]
+  (let [due (long due-at)
+        slots (day-slots due schedule-or-opts)]
+    (first
+     (keep-indexed
+      (fn [i s] (when (<= (Math/abs (- due (long s))) 1000) i))
+      slots))))
+
+(defn special-prefer-slot?
+  "Últimos `special-reserve` índices do dia preferem especial (se elegível)."
+  [due-at schedule-or-opts]
+  (let [idx (slot-index-on-day due-at schedule-or-opts)
+        limit (normalize-daily-limit
+               (or (when (map? schedule-or-opts) (:daily-limit schedule-or-opts))
+                   default-daily-limit))
+        reserve (normalize-special-reserve
+                 (or (when (map? schedule-or-opts) (:special-reserve schedule-or-opts))
+                     default-special-reserve)
+                 limit)]
+    (boolean
+     (and (some? idx)
+          (pos? reserve)
+          (>= (long idx) (- limit reserve))))))
 
 (defn count-spawns-on-day
   "Quantos timestamps caem no mesmo dia BRT que `agora`."
@@ -223,6 +398,11 @@
    :category-intervals category-interval-ms-default
    :daily-limit default-daily-limit
    :special-reserve default-special-reserve
+   ;; 12.8.2 — default legado (interval); uniform só via config explícita.
+   :distribution default-distribution
+   :window-start-hour default-window-start-hour
+   :window-end-hour default-window-end-hour-legacy
+   :timezone default-timezone
    ;; next-categoria / next-reminders? vêm do intent (receipt); nil = legado.
    :next-categoria nil})
 
@@ -250,6 +430,9 @@
         special-reserve (normalize-special-reserve
                          (or (:special-reserve m) default-special-reserve)
                          daily-limit)
+        dist (normalize-distribution
+              (or (:distribution m) (get m "distribution") default-distribution))
+        win (window-config (assoc m :distribution dist))
         next-cat (when-let [c (:next-categoria m)]
                    (let [s (str/lower-case (str c))]
                      (when (contains? (set (keys category-interval-ms-default)) s)
@@ -266,8 +449,12 @@
                        :category-intervals intervals
                        :daily-limit daily-limit
                        :special-reserve special-reserve
+                       :distribution dist
+                       :window-start-hour (:start win)
+                       :window-end-hour (:end win)
+                       :timezone (:timezone win)
                        :next-categoria next-cat)
-                (dissoc :next-reminders?))
+                (dissoc :next-reminders? :window-start :window-end))
       (contains? raw :next-reminders?)
       (assoc :next-reminders? (boolean (:next-reminders? raw)))
       (and (not (contains? raw :next-reminders?))
@@ -279,7 +466,8 @@
    o passado nem para 'agora'. Preserva next-at futuro e next-categoria especial.
    Retorna patch para merge em upsert — não aplica sozinho."
   [schedule {:keys [interval-ms daily-limit special-reserve category-intervals
-                    next-at next-categoria agora]}]
+                    next-at next-categoria agora distribution
+                    window-start-hour window-end-hour timezone]}]
   (let [agora (long (or agora (System/currentTimeMillis)))
         cur (normalize-schedule schedule (:chat-id schedule) agora)
         keep-next (long (:next-at cur 0))
@@ -306,6 +494,13 @@
                                         (or daily-limit (:daily-limit cur))))
       (some? category-intervals)
       (assoc :category-intervals (normalize-category-intervals category-intervals))
+      (some? distribution)
+      (assoc :distribution (normalize-distribution distribution))
+      (some? window-start-hour)
+      (assoc :window-start-hour (normalize-window-hour window-start-hour :window-start))
+      (some? window-end-hour)
+      (assoc :window-end-hour (normalize-window-hour window-end-hour :window-end))
+      (some? timezone) (assoc :timezone (str timezone))
       (some? cat') (assoc :next-categoria cat'
                           :next-reminders? (special-category? cat')))))
 
@@ -329,16 +524,23 @@
 
 (defn advance-next-at
   "Próximo due determinístico a partir do vencimento lógico (não do relógio de parede).
-   Garante next-at > due + duração do lobby, mesmo se interval == lobby.
+   Legado (interval): due+interval, com piso pós-lobby.
+   Uniform (12.8.2): próximo slot estritamente após due (sem catch-up / compressão).
    `lobby-ms` = duração real do lobby deste spawn (dinâmico por categoria)."
   ([schedule due-at]
    (advance-next-at schedule due-at raid/duracao-inscricoes))
   ([schedule due-at lobby-ms]
    (let [due (long due-at)
-         interval (normalize-interval (:interval-ms schedule))
          lobby (long (or lobby-ms raid/duracao-inscricoes))
          after-lobby (inc (+ due lobby))]
-     (max (+ due interval) after-lobby))))
+     (if (uniform-distribution? schedule)
+       (let [slot (next-slot-strictly-after due schedule)]
+         ;; Lobby longo (mítico 30m) não pode colidir com o próximo slot.
+         (if (> after-lobby slot)
+           (next-slot-at-or-after after-lobby schedule)
+           slot))
+       (let [interval (normalize-interval (:interval-ms schedule))]
+         (max (+ due interval) after-lobby))))))
 
 (defn ocupa-slot-contra-spawn?
   "Qualquer raide em inscrição/combate bloqueia spawn (manual nunca é substituída).
@@ -501,42 +703,69 @@
           (> fire window-start)))))
 
 (defn reminders-allowed?
-  "12.7.2: ovo só para especiais. Compat: agenda legada (sem next-categoria,
-   interval ≥ 3h) mantém lembretes 12.7.1."
+  "12.7.2 / 12.8.2: ovo só para especiais. Compat: agenda legada (sem
+   next-categoria, interval ≥ 3h) mantém lembretes 12.7.1.
+   `next-reminders?=true` sem categoria especial NÃO libera lembrete (anti-fantasma)."
   [schedule]
   (let [cat (:next-categoria schedule)
         explicit (:next-reminders? schedule)
         interval (long (:interval-ms schedule default-interval-ms))]
     (cond
-      (true? explicit) true
       (false? explicit) false
       (special-category? cat) true
       (and (nil? cat) (>= interval legacy-reminder-interval-ms)) true
       :else false)))
 
+(defn reminder-opportunity-viable?
+  "12.8.2: lembrete só se a oportunidade especial ainda puder eclosionar.
+   Em distribution=uniform exige due dentro da janela e slot válido.
+   Modo interval (legado): mantém só enabled/especial/cap.
+   Opts opcionais: :spawns-today (default 0)."
+  ([schedule agora]
+   (reminder-opportunity-viable? schedule agora {}))
+  ([schedule agora opts]
+   (let [schedule (normalize-schedule schedule (:chat-id schedule) agora)
+         due (long (:next-at schedule 0))
+         agora (long agora)
+         spawns (long (or (:spawns-today opts) 0))
+         limit (long (:daily-limit schedule default-daily-limit))
+         uniform? (uniform-distribution? schedule)]
+     (boolean
+      (and (:enabled schedule)
+           (reminders-allowed? schedule)
+           (pos? due)
+           (< agora due)
+           (< spawns limit)
+           (or (not uniform?)
+               (and (day-window-brt? due schedule)
+                    (some? (slot-index-on-day due schedule)))))))))
+
 (defn plan-reminders
   "Lembretes due para a agenda atual. Puro — store cria outbox se id ainda não existe.
    Não revela chefe; vincula event-id ao next-at (due) da raid agendada.
-   12.7.2: só especiais (ou agenda legada 12.7.1)."
-  [schedule agora]
-  (let [schedule (normalize-schedule schedule (:chat-id schedule) agora)
-        agora (long agora)
-        due (long (:next-at schedule 0))
-        interval (:interval-ms schedule)]
-    (if-not (and (:enabled schedule) (reminders-allowed? schedule))
-      []
-      (->> reminder-specs
-           (filter #(reminder-window-due? due (:offset-ms %) agora interval))
-           (mapv (fn [{:keys [offset-ms minutes kind]}]
-                   {:acao :remind
-                    :chat-id (:chat-id schedule)
-                    :due-at due
-                    :offset-ms offset-ms
-                    :minutes minutes
-                    :kind kind
-                    :event-id (outbox-reminder-id (:chat-id schedule) due offset-ms)
-                    :texto (format-reminder minutes)
-                    :media-key (str "raid-egg-" minutes "min")}))))))
+   12.7.2: só especiais (ou agenda legada 12.7.1).
+   12.8.2: exige oportunidade viável (janela/cap/slot)."
+  ([schedule agora]
+   (plan-reminders schedule agora {}))
+  ([schedule agora opts]
+   (let [schedule (normalize-schedule schedule (:chat-id schedule) agora)
+         agora (long agora)
+         due (long (:next-at schedule 0))
+         interval (:interval-ms schedule)]
+     (if-not (reminder-opportunity-viable? schedule agora opts)
+       []
+       (->> reminder-specs
+            (filter #(reminder-window-due? due (:offset-ms %) agora interval))
+            (mapv (fn [{:keys [offset-ms minutes kind]}]
+                    {:acao :remind
+                     :chat-id (:chat-id schedule)
+                     :due-at due
+                     :offset-ms offset-ms
+                     :minutes minutes
+                     :kind kind
+                     :event-id (outbox-reminder-id (:chat-id schedule) due offset-ms)
+                     :texto (format-reminder minutes)
+                     :media-key (str "raid-egg-" minutes "min")})))))))
 
 (defn remember-boss
   "Atualiza anel de espécies recentes (mais nova primeiro)."
@@ -572,10 +801,17 @@
           (>= (- (long agora) (long last))
               (long (* (double factor) interval)))))))
 
+(defn- common-pick
+  [due-set]
+  (or (when (contains? due-set "epico") "epico")
+      (when (contains? due-set "raro") "raro")
+      "raro"))
+
 (defn pick-categoria
   "Escolhe categoria due com viés dia/noite + anti-starvation de especiais.
    Metas de frequência ≠ obrigação: cap diário e reserva moldam a escolha.
-   Dia: épico/raro; noite/overdue/reserva: especiais entram."
+   Dia: épico/raro; noite/overdue/reserva/slots preferenciais: especiais entram.
+   12.8.2: reserva esgotada NÃO bloqueia comuns; especiais nunca excedem reserve."
   ([agora last-by-cat]
    (pick-categoria agora last-by-cat {}))
   ([agora last-by-cat opts]
@@ -591,12 +827,21 @@
          remaining (max 0 (- daily-limit spawns-today))
          due-set (set (filter #(category-due? % agora last-by-cat intervals)
                               category-order))
-         day? (day-window-brt? agora)
-         special-due (filterv #(contains? due-set %) ["mitico" "lendario"])
+         sch-opts (cond-> opts
+                    (nil? (:daily-limit opts)) (assoc :daily-limit daily-limit)
+                    (nil? (:special-reserve opts)) (assoc :special-reserve reserve))
+         day? (day-window-brt? agora sch-opts)
+         special-budget? (< specials-today reserve)
+         special-due (filterv #(and special-budget? (contains? due-set %))
+                              ["mitico" "lendario"])
          special-overdue (filterv #(category-overdue? % agora last-by-cat intervals 1.5)
                                   special-due)
          in-reserve? (and (pos? reserve)
+                          special-budget?
                           (<= remaining reserve))
+         prefer-slot? (and special-budget?
+                           (uniform-distribution? sch-opts)
+                           (special-prefer-slot? agora sch-opts))
          ;; Sem especial hoje + restante apertado + especial due → força.
          starved? (and (zero? specials-today)
                        (seq special-due)
@@ -605,21 +850,55 @@
        (empty? due-set) "raro"
 
        (and (seq special-due)
-            (or starved? in-reserve?
+            (or starved? in-reserve? prefer-slot?
                 (not day?) (seq special-overdue)))
        (first special-due)
 
        day?
-       (or (when (contains? due-set "epico") "epico")
-           (when (contains? due-set "raro") "raro")
+       (or (common-pick due-set)
            (first special-due)
            "raro")
 
        :else
        (or (first special-due)
-           (when (contains? due-set "epico") "epico")
-           (when (contains? due-set "raro") "raro")
+           (common-pick due-set)
            "raro")))))
+
+(defn resolve-categoria
+  "Seleciona categoria elegível. Se `preferred` inelegível, faz fallback comum
+   sem inflar especiais. Retorna {:categoria :fallback-from? :fallback-reason?}."
+  [preferred agora last-by-cat opts]
+  (let [intervals (normalize-category-intervals
+                   (or (:category-intervals opts) category-interval-ms-default))
+        preferred (when preferred (str preferred))
+        picked (pick-categoria agora last-by-cat opts)
+        due? (fn [c] (category-due? c agora last-by-cat intervals))
+        reserve (normalize-special-reserve
+                 (or (:special-reserve opts) default-special-reserve)
+                 (or (:daily-limit opts) default-daily-limit))
+        specials-today (long (or (:specials-today opts) 0))
+        special-ok? (fn [c]
+                      (or (not (special-category? c))
+                          (< specials-today reserve)))]
+    (cond
+      (and preferred (due? preferred) (special-ok? preferred))
+      {:categoria preferred}
+
+      (and preferred (not (due? preferred)))
+      (let [fb (if (and (due? picked) (special-ok? picked))
+                 picked
+                 (common-pick (set (filter due? ["epico" "raro"]))))]
+        {:categoria (str fb)
+         :fallback-from preferred
+         :fallback-reason :category-cooldown})
+
+      (and preferred (special-category? preferred) (not (special-ok? preferred)))
+      {:categoria (common-pick (set (filter due? ["epico" "raro"])))
+       :fallback-from preferred
+       :fallback-reason :special-reserve-exhausted}
+
+      :else
+      {:categoria (str (or picked "raro"))})))
 
 (defn force-category-weights
   "Pesos 100% em uma categoria (seleção dinâmica ainda usa o catálogo)."
@@ -631,11 +910,16 @@
    Usado no pós-spawn/skip (slot seguinte) e no planejamento antecipado 12.7.3
    (slot atual)."
   [next-at last-by-cat opts]
-  (let [cat (or (:preserve-categoria opts)
-                (pick-categoria next-at last-by-cat opts))]
-    {:next-at (long next-at)
-     :categoria (str cat)
-     :reminders? (special-category? cat)}))
+  (let [resolved (if-let [p (:preserve-categoria opts)]
+                   (resolve-categoria p next-at last-by-cat opts)
+                   (resolve-categoria nil next-at last-by-cat opts))
+        cat (:categoria resolved)]
+    (cond-> {:next-at (long next-at)
+             :categoria (str cat)
+             :reminders? (special-category? cat)}
+      (:fallback-reason resolved)
+      (assoc :fallback-from (:fallback-from resolved)
+             :fallback-reason (:fallback-reason resolved)))))
 
 (defn intent-matches-next-at?
   "True se o receipt de intent aponta para o mesmo next-at da agenda."
@@ -702,9 +986,33 @@
        (special-category? preserve)
        (assoc :preserve-categoria (str preserve))))))
 
+(defn- intent-after
+  [next-at last-by cat-opts preserve]
+  (plan-next-intent
+   next-at last-by
+   (cond-> cat-opts
+     (special-category? preserve)
+     (assoc :preserve-categoria (str preserve)))))
+
+(defn- skip-plan
+  "Resultado comum de skip (não altera last-spawn-id no store)."
+  [acao schedule due next-at' intent extra]
+  (merge
+   {:acao acao
+    :schedule schedule
+    :spawn-id (spawn-id (:chat-id schedule) due)
+    :due-at due
+    :next-at next-at'
+    :next-categoria (:categoria intent)
+    :next-reminders? (:reminders? intent)
+    :intent intent
+    :skip-reason acao}
+   extra))
+
 (defn plan-spawn
   "Decide o que o tick deve fazer. Puro — store aplica CAS.
-   Retorna {:acao :spawn|:skip-busy|:skip-daily-cap|:skip-disabled|:noop ...}.
+   Retorna {:acao :spawn|:skip-busy|:skip-daily-cap|:skip-outside-window|
+                   :skip-missed|:skip-disabled|:noop ...}.
    Opts: :rng, :recent-species, :catalog, :category-weights,
          :last-by-categoria, :forced-categoria, :category-intervals,
          :spawns-today, :specials-today, :daily-limit, :special-reserve,
@@ -726,7 +1034,13 @@
                               (special-category? forced-or-planned)
                               (category-due? forced-or-planned agora last-by
                                              (:category-intervals cat-opts))
-                              (zero? (:specials-today cat-opts)))]
+                              (zero? (:specials-today cat-opts))
+                              (< (:specials-today cat-opts)
+                                 (:special-reserve cat-opts)))
+         due (long (:next-at schedule 0))
+         uniform? (uniform-distribution? schedule)
+         preserve (or (:preserve-next-categoria opts)
+                      (:next-categoria schedule))]
      (cond
        (not (:enabled schedule))
        {:acao :skip-disabled :schedule schedule}
@@ -734,57 +1048,47 @@
        (not (due? schedule agora))
        {:acao :noop :schedule schedule}
 
-       (ocupa-slot-contra-spawn? active-raid)
-       (let [due (long (:next-at schedule))
-             next-at' (advance-next-at schedule due)
-             preserve (or (:preserve-next-categoria opts)
-                          (:next-categoria schedule))
-             intent (plan-next-intent
-                     next-at' last-by
-                     (cond-> cat-opts
-                       (special-category? preserve)
-                       (assoc :preserve-categoria preserve)))]
-         {:acao :skip-busy
-          :schedule schedule
-          :spawn-id (spawn-id (:chat-id schedule) due)
-          :due-at due
-          :next-at next-at'
-          :next-categoria (:categoria intent)
-          :next-reminders? (:reminders? intent)
-          :intent intent
-          :active-raid-id (:raid-id active-raid)
-          :active-origem (:origem active-raid)
-          :active-fase (:fase active-raid)})
+       ;; 12.8.2 uniform: fora da janela não abre nem consome orçamento.
+       ;; Modo interval (legado): permite especiais noturnos como antes.
+       (and uniform? (not (day-window-brt? due schedule)))
+       (let [next-at' (next-slot-at-or-after agora schedule)
+             intent (intent-after next-at' last-by cat-opts preserve)]
+         (skip-plan :skip-outside-window schedule due next-at' intent {}))
 
-       ;; Cap diário: salta para 08:00 BRT do dia seguinte (sem fila).
+       ;; Slot velho demais (restart/downtime): sem catch-up — pula ao futuro.
+       (and uniform? (> (- agora due) slot-stale-grace-ms))
+       (let [next-at' (next-slot-at-or-after agora schedule)
+             intent (intent-after next-at' last-by cat-opts preserve)]
+         (skip-plan :skip-missed schedule due next-at' intent
+                    {:stale-by-ms (- agora due)}))
+
+       (ocupa-slot-contra-spawn? active-raid)
+       (let [next-at' (advance-next-at schedule due)
+             intent (intent-after next-at' last-by cat-opts preserve)]
+         (skip-plan :skip-busy schedule due next-at' intent
+                    {:active-raid-id (:raid-id active-raid)
+                     :active-origem (:origem active-raid)
+                     :active-fase (:fase active-raid)}))
+
+       ;; Cap diário: salta para início da janela do dia seguinte (sem fila).
        ;; Exceção anti-starvation: 1 especial due ainda sem especial hoje.
        (and cap-reached? (not special-bypass?))
-       (let [due (long (:next-at schedule))
-             next-at' (max (advance-next-at schedule due)
-                           (next-day-morning-brt agora))
-             preserve (or (:preserve-next-categoria opts)
-                          (:next-categoria schedule))
-             intent (plan-next-intent
+       (let [next-at' (if uniform?
+                        (long (first (day-slots
+                                      (next-day-morning-brt agora schedule)
+                                      (assoc schedule :spawns-today 0))))
+                        (max (advance-next-at schedule due)
+                             (next-day-morning-brt agora schedule)))
+             intent (intent-after
                      next-at' last-by
-                     (cond-> (assoc cat-opts :spawns-today 0 :specials-today 0)
-                       (special-category? preserve)
-                       (assoc :preserve-categoria preserve)))]
-         {:acao :skip-daily-cap
-          :schedule schedule
-          :spawn-id (spawn-id (:chat-id schedule) due)
-          :due-at due
-          :next-at next-at'
-          :next-categoria (:categoria intent)
-          :next-reminders? (:reminders? intent)
-          :intent intent
-          :spawns-today spawns-today
-          :daily-limit daily-limit})
+                     (assoc cat-opts :spawns-today 0 :specials-today 0)
+                     preserve)]
+         (skip-plan :skip-daily-cap schedule due next-at' intent
+                    {:spawns-today spawns-today :daily-limit daily-limit}))
 
        :else
-       (let [due (long (:next-at schedule))
-             cat (str (or forced-or-planned
-                          (pick-categoria due last-by cat-opts)
-                          "raro"))
+       (let [resolved (resolve-categoria forced-or-planned due last-by cat-opts)
+             cat (str (or (:categoria resolved) "raro"))
              weights (or (:category-weights opts)
                          (force-category-weights cat))
              gym (pick-ginasio (:ginasio-index schedule))
@@ -814,31 +1118,34 @@
                      (assoc cat-opts
                             :spawns-today (inc spawns-today)
                             :specials-today specials-today'))]
-         {:acao :spawn
-          :schedule (assoc schedule :recent-bosses recent')
-          :spawn-id sid
-          :due-at due
-          :next-at next-at'
-          :next-categoria (:categoria intent)
-          :next-reminders? (:reminders? intent)
-          :intent intent
-          :next-ginasio-index (:next-ginasio-index gym)
-          :raid-id raid-id
-          :ginasio (:ginasio boss)
-          :nome-ginasio (:nome-ginasio boss)
-          :nivel-ginasio (:nivel-ginasio boss)
-          :liga (:liga boss)
-          :chefe (:chefe boss)
-          :boss-categoria actual-cat
-          :boss-tipo (:boss-tipo boss)
-          :lobby lobby
-          :duracao-ms (:duracao-ms lobby)
-          :min-jogadores (:min-jogadores lobby)
-          :recomendados (:recomendados lobby)
-          :max-jogadores (:max-jogadores lobby)
-          :recent-bosses recent'
-          :spawns-today spawns-today
-          :daily-limit daily-limit})))))
+         (cond-> {:acao :spawn
+                  :schedule (assoc schedule :recent-bosses recent')
+                  :spawn-id sid
+                  :due-at due
+                  :next-at next-at'
+                  :next-categoria (:categoria intent)
+                  :next-reminders? (:reminders? intent)
+                  :intent intent
+                  :next-ginasio-index (:next-ginasio-index gym)
+                  :raid-id raid-id
+                  :ginasio (:ginasio boss)
+                  :nome-ginasio (:nome-ginasio boss)
+                  :nivel-ginasio (:nivel-ginasio boss)
+                  :liga (:liga boss)
+                  :chefe (:chefe boss)
+                  :boss-categoria actual-cat
+                  :boss-tipo (:boss-tipo boss)
+                  :lobby lobby
+                  :duracao-ms (:duracao-ms lobby)
+                  :min-jogadores (:min-jogadores lobby)
+                  :recomendados (:recomendados lobby)
+                  :max-jogadores (:max-jogadores lobby)
+                  :recent-bosses recent'
+                  :spawns-today spawns-today
+                  :daily-limit daily-limit}
+           (:fallback-reason resolved)
+           (assoc :fallback-from (:fallback-from resolved)
+                  :fallback-reason (:fallback-reason resolved))))))))
 
 (defn estimate-wa-messages
   "Estimativa de mensagens WA por dia dado mix de categorias.
@@ -852,35 +1159,92 @@
      :started-or-cancelled (+ easy special)
      :total-est (+ (* easy 2) (* special 5))}))
 
+(defn schedule-diagnostics
+  "Snapshot administrativo puro (GET / observabilidade). Sem PII além de chat-id."
+  [schedule agora opts]
+  (let [schedule (normalize-schedule schedule (:chat-id schedule) agora)
+        agora (long agora)
+        win (window-config schedule)
+        spawns (long (or (:spawns-today opts) 0))
+        specials (long (or (:specials-today opts) 0))
+        limit (long (:daily-limit schedule))
+        reserve (long (:special-reserve schedule))
+        due (long (:next-at schedule 0))
+        slots (when (uniform-distribution? schedule)
+                (day-slots agora schedule))]
+    {:chat-id (:chat-id schedule)
+     :enabled (boolean (:enabled schedule))
+     :revision (long (:revision schedule 0))
+     :distribution (:distribution schedule)
+     :timezone (:timezone win)
+     :window-start-hour (:start win)
+     :window-end-hour (:end win)
+     :window-open? (day-window-brt? agora schedule)
+     :daily-limit limit
+     :special-reserve reserve
+     :spawns-today spawns
+     :specials-today specials
+     :slots-remaining (max 0 (- limit spawns))
+     :special-remaining (max 0 (- reserve specials))
+     :next-at due
+     :next-categoria (:next-categoria schedule)
+     :next-reminders? (boolean (:next-reminders? schedule))
+     :last-spawn-id (:last-spawn-id schedule)
+     :last-raid-id (:last-raid-id schedule)
+     :slots-today slots
+     :next-slot-index (slot-index-on-day due schedule)
+     :last-skip-reason (:last-skip-reason opts)
+     :last-tick-at (:last-tick-at opts)}))
+
 (defn simulate-cadence
   "Simula N dias de spawns em memória (sem Datomic). Retorna distribuição.
-   Assume slot sempre livre (pior caso de volume)."
-  [{:keys [start-ms days daily-limit special-reserve interval-ms]
+   Assume slot sempre livre (pior caso de volume).
+   12.8.2: passe :distribution \"uniform\" + window-* para a nova política."
+  [{:keys [start-ms days daily-limit special-reserve interval-ms
+           distribution window-start-hour window-end-hour timezone]
     :or {days 7
          daily-limit default-daily-limit
          special-reserve default-special-reserve
-         interval-ms default-interval-ms}}]
+         interval-ms default-interval-ms
+         distribution default-distribution}}]
   (let [start (long start-ms)
         end (+ start (* (long days) 24 60 60 1000))
         sch0 (normalize-schedule
-              {:enabled true
-               :interval-ms interval-ms
-               :next-at start
-               :daily-limit daily-limit
-               :special-reserve special-reserve
-               :ginasio-index 0}
-              "sim@g.us" start)]
+              (cond-> {:enabled true
+                       :interval-ms interval-ms
+                       :next-at start
+                       :daily-limit daily-limit
+                       :special-reserve special-reserve
+                       :distribution distribution
+                       :ginasio-index 0}
+                (some? window-start-hour)
+                (assoc :window-start-hour window-start-hour)
+                (some? window-end-hour)
+                (assoc :window-end-hour window-end-hour)
+                (some? timezone) (assoc :timezone timezone))
+              "sim@g.us" start)
+        ;; Uniform: ancora no primeiro slot do dia se start cair fora/antes.
+        sch0 (if (uniform-distribution? sch0)
+               (assoc sch0 :next-at (next-slot-at-or-after
+                                     (window-start-ms start sch0) sch0))
+               sch0)
+        skips (atom [])]
     (loop [sch sch0
-           agora start
+           agora (long (:next-at sch0))
            last-by {}
            events []
            spawn-cats []]
       (if (>= agora end)
         (let [by-cat (frequencies (map :boss-categoria events))
               by-day (->> events
-                          (group-by #(day-key-brt (:due-at %)))
+                          (group-by #(day-key-brt (:due-at %) (zone-id sch0)))
                           (map (fn [[d xs]] [d (count xs)]))
                           (into (sorted-map)))
+              by-hour (->> events
+                           (map (fn [e]
+                                  (hour-of-day-brt (:due-at e) (zone-id sch0))))
+                           frequencies
+                           (into (sorted-map)))
               wa (estimate-wa-messages
                   {:raro (get by-cat "raro" 0)
                    :epico (get by-cat "epico" 0)
@@ -888,9 +1252,16 @@
                    :mitico (get by-cat "mitico" 0)})]
           {:days (long days)
            :daily-limit daily-limit
+           :distribution (:distribution sch0)
+           :window-start-hour (:window-start-hour sch0)
+           :window-end-hour (:window-end-hour sch0)
+           :timezone (:timezone sch0)
            :total-spawns (count events)
            :por-categoria by-cat
            :por-dia by-day
+           :por-hora-brt by-hour
+           :skips @skips
+           :skip-counts (frequencies (map :acao @skips))
            :max-por-dia (if (seq by-day) (apply max (vals by-day)) 0)
            :avg-por-dia (if (pos? (long days))
                           (/ (double (count events)) (double days))
@@ -901,6 +1272,7 @@
                  (map (fn [[k v]]
                         [k (long (Math/round (/ (double v) (double days))))])
                       wa))
+           :sample-day-slots (day-slots start sch0)
            :events events})
         (let [today-spawns (count-spawns-on-day (map :at spawn-cats) agora)
               today-specials (specials-spawned-on-day spawn-cats agora)
@@ -930,12 +1302,15 @@
                      (conj events row)
                      (conj spawn-cats {:at (:due-at plan) :categoria cat})))
 
-            (:skip-daily-cap :skip-busy)
+            (:skip-daily-cap :skip-busy :skip-outside-window :skip-missed)
             (let [sch' (assoc sch
                               :next-at (:next-at plan)
                               :next-categoria (:next-categoria plan)
                               :next-reminders? (:next-reminders? plan)
                               :revision (inc (long (:revision sch 0))))]
+              (swap! skips conj {:acao (:acao plan)
+                                 :due-at (:due-at plan)
+                                 :next-at (:next-at plan)})
               (recur sch' (:next-at plan) last-by events spawn-cats))
 
             ;; noop / disabled — salta para next-at ou +1 min
