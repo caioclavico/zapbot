@@ -275,6 +275,8 @@ Sequência futura, ainda não autorizada: contenção externa verificável → d
 - Gate durável e integração Node/JVM: `4c068bcaa0c77e619cc436330bc95e5cd522b5b1`.
 - Snapshot/restore Datomic e admission guard: `e1f22f2aafb9a6f5a6d48fd95d3d983869c86b55`.
 - Fixture de elegibilidade de captura com dano zero: `e1713a821821445c2c371a086a2c422fb3fb6a0a`.
-- Relatório final desta revisão será um commit documental separado. Nenhuma imagem foi reconstruída; não há content-tree ou Image ID novo.
+- Relatório final desta revisão: `bca855994411864949b58afee15205c44d4fe5bb` (commit documental separado). Nenhuma imagem foi reconstruída; não há content-tree ou Image ID novo.
+
+As mudanças de gate afetam Node e JVM; portanto as imagens A6 existentes não contêm estes commits e não podem ser reutilizadas como artefatos desta implementação. Uma futura homologação e preparação de deploy exigiria reconstruir/verificar ambas as imagens contra o commit de código correspondente. O fixture de captura altera somente testes e não exige imagem.
 
 O único item local ainda não rastreado é `node_modules`, symlink preexistente e fora do escopo; não foi staged. O clone não foi publicado nem integrado ao workspace original.
