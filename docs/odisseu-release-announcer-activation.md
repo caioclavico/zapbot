@@ -2,9 +2,9 @@
 
 **Status:** CONDITIONAL · harness físico agora passa sem shim; quatro falhas legadas da suíte ampla permanecem iguais à base limpa. Sem deploy / migration em produção / envio real.\
 **Branch:** `rc/a6-release-announcer`\
-**Worktree:** `/private/tmp/zapbot-announcer-a6-rc`\
+**Clone independente homologado:** `/private/tmp/zapbot-announcer-a6-rc-final` (o caminho `/private/tmp/zapbot-announcer-a6-rc` abaixo é o worktree histórico anterior)\
 **Base de produção (trocas A6):** código `f4e0972046d360f29081c36184beaa23cd590e09`, tree `a76b14aeb865e677ac4cf867ee6419acee287402`; tip documental posterior `197bf0c06806145aa491b73a9654e5bb22677b90`\
-**Commit do código/imagens RC:** `fdf6c5932e2cd30fbef9682a589888ace712c615`, tree `6e5604d425bc85ea33970e424c2ee55aefc7b620`\
+**Commit original do código/imagens RC (antes do fix de cleanup):** `fdf6c5932e2cd30fbef9682a589888ace712c615`, tree `6e5604d425bc85ea33970e424c2ee55aefc7b620`\
 **Pacote de imagens:** `/Users/caioclavico/odisseu-recovery/a6-announcer-rc-20261104T144313Z/`
 
 ---
@@ -120,7 +120,7 @@ Harness físico (sem prod): `scripts/test-release-physical-harness.cjs` — só 
 
 ---
 
-## 5. Imagens AMD64
+## 5. Imagens AMD64 anteriores ao fix de cleanup (referência histórica)
 
 | Item | Valor |
 |------|-------|
