@@ -5,8 +5,10 @@
    Um único writer por storage via FileLock em <storage>/.odisseu-writer.lock."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [datomic.client.api :as d]
             [odisseu.persistence.datomic :as persistence]
             [odisseu.platform.infrastructure.datomic.store :as platform-store]
+            [pokemon.infrastructure.http.maintenance-gate :as maintenance-gate]
             [pokemon.application.collection :as coll-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.recovery-catalog :as recovery-catalog]
@@ -84,6 +86,12 @@
   (when channel
     (try (.close channel) (catch Exception _))))
 
+(defn- connect-existing-db!
+  [client db-name]
+  (when-not (some #{db-name} (d/list-databases client {}))
+    (throw (ex-info "maintenance_database_missing" {:db db-name})))
+  (d/connect client {:db-name db-name}))
+
 (defn- seed-demo!
   "Dados sintéticos in-process — nunca exposto como rota HTTP."
   [s]
@@ -123,6 +131,16 @@
         ;; Kill switch global do tick de raides auto (default OFF).
         ;; Só ligar em lab sintético (ex.: odisseu-a6-staging).
         raid-auto-tick? (env-bool "ODISSEU_BRIDGE_RAID_AUTO_TICK" false)
+        maintenance-dir (env "ODISSEU_BRIDGE_MAINTENANCE_DIR"
+                             (str storage "/.a6-maintenance"))
+        canonical-maintenance-dir (.getCanonicalPath (io/file storage ".a6-maintenance"))
+        configured-maintenance-dir (.getCanonicalPath (io/file maintenance-dir))
+        _ (when-not (= canonical-maintenance-dir configured-maintenance-dir)
+            (throw (ex-info "maintenance_marker_must_share_datomic_storage"
+                            {:expected canonical-maintenance-dir})))
+        maintenance-token (env "ODISSEU_BRIDGE_MAINTENANCE_TOKEN")
+        maintenance-state (odisseu.persistence.datomic/maintenance-state storage)
+        maintenance-active? (not= :open (:phase maintenance-state))
         recovery-dump (env "ODISSEU_RECOVERY_DUMP_PATH")
         recovery-import-token (env "ODISSEU_RECOVERY_IMPORT_TOKEN")
         recovery-cat (try
@@ -139,16 +157,24 @@
             (throw (ex-info "private_bind_required"
                             {:hint "Defina ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND=true para 0.0.0.0."})))
         writer-lock (acquire-writer-lock! storage)
-        client (persistence/client {:system system :storage-dir storage})
+        client (persistence/client {:system system :storage-dir storage
+                                    :maintenance-control? true})
+        _ (when (and maintenance-active? (or reset? seed?))
+            (throw (ex-info "maintenance_mutating_bootstrap_forbidden" {})))
         _ (when reset?
             (println "[odisseu-bridge] RESET — apagando db" db-name platform-db)
             (persistence/delete-db! client db-name)
             (persistence/delete-db! client platform-db))
-        conn (persistence/ensure-db! client db-name)
-        s (doto (store/make-store conn) trainer/bootstrap!)
+        conn (if maintenance-active?
+               (connect-existing-db! client db-name)
+               (persistence/ensure-db! client db-name))
+        s (store/make-store conn)
+        _ (when-not maintenance-active? (trainer/bootstrap! s))
         platform (when platform-enabled?
                    (platform-store/make-store
-                    (persistence/ensure-db! client platform-db)))
+                    (if maintenance-active?
+                      (connect-existing-db! client platform-db)
+                      (persistence/ensure-db! client platform-db))))
         demo (when seed? (seed-demo! s))
         http (bridge/start! {:host host
                              :port port
@@ -158,6 +184,8 @@
                              :allow-test-rng allow-rng?
                              :allow-private-bind private-bind?
                              :recovery-catalog recovery-cat
+                             :maintenance-dir maintenance-dir
+                             :maintenance-token maintenance-token
                              :raid-auto-tick-enabled? raid-auto-tick?})
         stopped (atom false)
         stop! (fn []
@@ -174,6 +202,7 @@
              "db=" db-name
              "platform-db=" (when platform platform-db)
              "raid-auto-tick=" raid-auto-tick?
+             "maintenance-gate=" (boolean (:maintenance-gate http))
              "writer-lock=" (:path writer-lock)
              (when demo (str "seed=" (pr-str demo))))
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable stop!))

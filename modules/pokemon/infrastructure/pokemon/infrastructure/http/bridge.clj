@@ -12,12 +12,14 @@
             [pokemon.application.thematic-events :as thematic]
             [pokemon.application.recovery-catalog :as recovery-catalog]
             [pokemon.application.ports :as ports]
+            [pokemon.infrastructure.http.maintenance-gate :as maintenance-gate]
             [pokemon.domain.events :as events]
             [pokemon.domain.errors :as err]
             [pokemon.infrastructure.http.json :as json])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress URLDecoder]
            [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
            [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
 
 (def ^:private loopback-hosts #{"127.0.0.1" "localhost" "::1"})
@@ -176,6 +178,41 @@
     (when-not (contains? allowed m)
       (throw (err/error :method_not_allowed {:method m :allowed (vec allowed)})))))
 
+(declare long-or-nil)
+
+(defn- maintenance-auth! [^HttpExchange ex expected]
+  (let [actual (or (header ex "X-A6-Maintenance-Token") "")
+        a (.getBytes ^String actual StandardCharsets/UTF_8)
+        b (.getBytes ^String (or expected "") StandardCharsets/UTF_8)]
+    (when-not (and (string? expected) (not (str/blank? expected))
+                   (MessageDigest/isEqual a b))
+      (throw (err/error :unauthorized {})))))
+
+(defn- maintenance-control!
+  [^HttpExchange ex method path qs gate token]
+  (maintenance-auth! ex token)
+  (cond
+    (= path "/ops/maintenance/status")
+    (do (require-method! ex #{"GET"}) (ok! ex (maintenance-gate/status gate)))
+
+    (= path "/ops/maintenance/enter")
+    (do (require-method! ex #{"POST"})
+        (let [timeout-ms (or (long-or-nil (get qs "timeoutMs")) 30000)
+              result (maintenance-gate/enter! gate (max 0 (min 900000 timeout-ms)))]
+          (send-json! ex (if (:quiescent? result) 200 409)
+                      (if (:quiescent? result)
+                        {:ok true :data result}
+                        {:ok false :error {:code "maintenance_drain_timeout"
+                                           :message "A ponte ainda está concluindo operações. Manutenção permanece ativa."
+                                           :details (select-keys result [:active-requests])}}))))
+
+    (= path "/ops/maintenance/resume")
+    (do (require-method! ex #{"POST"})
+        (ok! ex (maintenance-gate/resume! gate)))
+
+    :else
+    (send-json! ex 404 {:ok false :error {:code "not_found" :message "Rota inexistente."}})))
+
 (defn- with-operation!
   [operation-id f]
   (let [id (str operation-id)]
@@ -229,7 +266,7 @@
    :platform-hooks mapa M8.7 (set-bot-blocked! / block-commands! / …)"
   [store token allow-test-rng? platform-store
    & [{:keys [credit-coins! score-point! platform-hooks recovery-catalog
-              raid-auto-tick-enabled?]
+              raid-auto-tick-enabled? maintenance-gate maintenance-token]
        :or {credit-coins! tx/credit-coins!
             platform-hooks {}
             raid-auto-tick-enabled? false}}]]
@@ -249,6 +286,9 @@
                        :allowTestRng (boolean allow-test-rng?)
                        :raidAutoTickEnabled (boolean raid-auto-tick-enabled?)
                        :platformEnabled (boolean platform-store)
+                       :maintenance (when maintenance-gate
+                                      (select-keys (maintenance-gate/status maintenance-gate)
+                                                   [:phase :active-requests]))
                        :recoveryCatalogReady (boolean (and recovery-catalog
                                                            (recovery-catalog/available? recovery-catalog)))
                        :capabilities (cond-> ["trainer-read" "collection-read" "active-save-read"
@@ -302,10 +342,20 @@
                         {:ok false
                          :error {:code "not_found" :message "Rota inexistente."}})
 
+            (str/starts-with? path "/ops/maintenance/")
+            (if (and maintenance-gate maintenance-token)
+              (maintenance-control! ex method path qs maintenance-gate maintenance-token)
+              (send-json! ex 404 {:ok false :error {:code "not_found" :message "Rota inexistente."}}))
+
             :else
             (do
               (require-auth! token ex)
-              (cond
+              (if (and maintenance-gate (not (maintenance-gate/acquire! maintenance-gate)))
+                (send-json! ex 503
+                            {:ok false :error {:code "maintenance_active"
+                                               :message "O sistema está em manutenção. Tente novamente quando o serviço for retomado."}})
+                (try
+                  (cond
                 (str/starts-with? path "/v1/platform")
                 (if-not platform-store
                   (send-json! ex 503
@@ -2302,15 +2352,18 @@
                                               agora (assoc :agora agora)))
                                      :ok true))))
 
-                :else
-                (send-json! ex 404
-                            {:ok false
-                             :error {:code "not_found" :message "Rota inexistente."}})))))
+                    :else
+                    (send-json! ex 404
+                                {:ok false
+                                 :error {:code "not_found" :message "Rota inexistente."}}))
+                  (finally
+                    (when maintenance-gate
+                      (maintenance-gate/release! maintenance-gate))))))))
         (catch Throwable t
           (handle-error! ex t))))))
 
 (defn- start-idle-sweeper!
-  [store]
+  [store maintenance-gate]
   (let [sched (Executors/newSingleThreadScheduledExecutor
                (reify java.util.concurrent.ThreadFactory
                  (newThread [_ r]
@@ -2321,11 +2374,15 @@
      sched
      ^Runnable
      (fn []
-       (try
-         (ports/expire-idle-battles! store {:limit 32})
-         (catch Throwable t
-           (binding [*out* *err*]
-             (println "[bridge] idle-sweeper:" (ex-message t))))))
+       (when (or (nil? maintenance-gate) (maintenance-gate/acquire! maintenance-gate))
+         (try
+           (ports/expire-idle-battles! store {:limit 32})
+           (catch Throwable t
+             (binding [*out* *err*]
+               (println "[bridge] idle-sweeper:" (ex-message t))))
+           (finally
+             (when maintenance-gate
+               (maintenance-gate/release! maintenance-gate))))))
      interval interval TimeUnit/MILLISECONDS)
     sched))
 
@@ -2336,7 +2393,7 @@
   `:allow-test-rng true` só para smoke/dev — nunca no caminho WhatsApp."
   [{:keys [host port token store platform-store allow-test-rng allow-private-bind
            credit-coins! score-point! platform-hooks recovery-catalog
-           raid-auto-tick-enabled?]
+           raid-auto-tick-enabled? maintenance-dir maintenance-token]
     :or {host "127.0.0.1" port 18090 allow-test-rng false allow-private-bind false
          raid-auto-tick-enabled? false}}]
   (let [allowed (cond-> loopback-hosts
@@ -2350,18 +2407,27 @@
       (throw (ex-info "bridge_token_required" {})))
     (when (nil? store)
       (throw (ex-info "bridge_store_required" {})))
-    (let [addr (InetSocketAddress. ^String host (int port))
+    (when (and (or maintenance-dir maintenance-token)
+               (not (and maintenance-dir maintenance-token
+                         (not (str/blank? maintenance-token)))))
+      (throw (ex-info "maintenance_gate_configuration_incomplete"
+                      {:hint "Configure maintenance-dir e maintenance-token juntos."})))
+    (let [maintenance-gate (when maintenance-dir (maintenance-gate/create maintenance-dir))
+          addr (InetSocketAddress. ^String host (int port))
           server (HttpServer/create addr 0)
+          executor (Executors/newFixedThreadPool 8)
           handler (make-handler store token (boolean allow-test-rng) platform-store
                                 (cond-> {:raid-auto-tick-enabled?
                                          (boolean raid-auto-tick-enabled?)}
+                                  maintenance-gate (assoc :maintenance-gate maintenance-gate)
+                                  maintenance-token (assoc :maintenance-token maintenance-token)
                                   credit-coins! (assoc :credit-coins! credit-coins!)
                                   score-point! (assoc :score-point! score-point!)
                                   (seq platform-hooks) (assoc :platform-hooks platform-hooks)
                                   recovery-catalog (assoc :recovery-catalog recovery-catalog)))
-          sweeper (start-idle-sweeper! store)]
+          sweeper (start-idle-sweeper! store maintenance-gate)]
       (.createContext server "/" handler)
-      (.setExecutor server (Executors/newFixedThreadPool 8))
+      (.setExecutor server executor)
       (.start server)
       (let [bound (.getPort (.getAddress server))
             ;; URL interna: em 0.0.0.0 use 127.0.0.1 para health local
@@ -2378,9 +2444,13 @@
          :durable-rank? (boolean score-point!)
          :durable-blocks-admins? (boolean (seq platform-hooks))
          :idle-sweeper sweeper
+         :maintenance-gate maintenance-gate
          :stop! (fn []
                   (try (.shutdownNow sweeper) (catch Exception _))
-                  (.stop server 1))}))))
+                  (try (.awaitTermination sweeper 2 TimeUnit/SECONDS) (catch Exception _))
+                  (.stop server 1)
+                  (try (.shutdownNow executor) (catch Exception _))
+                  (try (.awaitTermination executor 2 TimeUnit/SECONDS) (catch Exception _)))}))))
 
 (defn stop!
   [{:keys [stop!]}]

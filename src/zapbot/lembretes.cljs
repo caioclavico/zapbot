@@ -8,6 +8,8 @@
             [zapbot.config :as config]
             [zapbot.platform-jvm :as platform]))
 
+(def ^:private ^js node-maintenance (js/require "../scripts/lib/a6-maintenance.cjs"))
+
 (defn- normalizar-lembretes [dados]
   (into {}
         (map (fn [[id item]]
@@ -198,19 +200,21 @@
          (:texto item))))
 
 (defn- verificar-cassandra! [client]
-  (doseq [[id item] @lembretes
-          :when (and (<= (:em item) (.now js/Date))
-                     (not (contains? @enviando id))
-                     (config/chat-autorizado? (:chat item))
-                     (config/usuario-autorizado? (or (:criador item) (:chat item))))]
-    (swap! enviando conj id)
-    (let [criador (:criador item)
-          texto (texto-envio item)]
-      (-> (if criador
-            (.sendMessage client (:chat item) texto #js {:mentions #js [criador]})
-            (.sendMessage client (:chat item) texto))
-          (p/then (fn [_] (swap! lembretes dissoc id) (salvar-cassandra!) (swap! enviando disj id)))
-          (p/catch (fn [err] (js/console.error "Erro ao enviar lembrete:" err) (swap! enviando disj id)))))))
+  (p/all
+   (mapv (fn [[id item]]
+           (when (and (<= (:em item) (.now js/Date))
+                      (not (contains? @enviando id))
+                      (config/chat-autorizado? (:chat item))
+                      (config/usuario-autorizado? (or (:criador item) (:chat item))))
+             (swap! enviando conj id)
+             (let [criador (:criador item)
+                   texto (texto-envio item)]
+               (-> (if criador
+                     (.sendMessage client (:chat item) texto #js {:mentions #js [criador]})
+                     (.sendMessage client (:chat item) texto))
+                   (p/then (fn [_] (swap! lembretes dissoc id) (salvar-cassandra!) (swap! enviando disj id)))
+                   (p/catch (fn [err] (js/console.error "Erro ao enviar lembrete:" err) (swap! enviando disj id)))))))
+         @lembretes)))
 
 (def ^:private lease-ms 30000)
 
@@ -280,14 +284,24 @@
       (p/catch (fn [err]
                  (js/console.error "lembretes(datomic): due falhou:" err)))))
 
+(defn- verificar! [client]
+  ;; Toda a rodada (claim, transporte e complete/fail) é uma operação drainável.
+  (when (.begin node-maintenance)
+    (try
+      (let [result (if (platform/enabled?)
+                     (verificar-datomic! client)
+                     (verificar-cassandra! client))]
+        (if (and result (fn? (.-then ^js result)))
+          (p/finally result (fn [] (.end node-maintenance)))
+          (do (.end node-maintenance) result)))
+      (catch :default err
+        (.end node-maintenance)
+        (js/console.error "lembretes: poller falhou de forma isolada:" (or (.-code err) "POLL"))
+        nil))))
+
 (defn iniciar! [client]
   "Inicia uma única checagem periódica após o WhatsApp estar conectado.
    Em datomic: só o poller com claim/lease (Cassandra poller desligado)."
   (when-not @verificador
-    (if (platform/enabled?)
-      (do
-        (verificar-datomic! client)
-        (reset! verificador (js/setInterval #(verificar-datomic! client) 1000)))
-      (do
-        (verificar-cassandra! client)
-        (reset! verificador (js/setInterval #(verificar-cassandra! client) 1000))))))
+    (verificar! client)
+    (reset! verificador (js/setInterval #(verificar! client) 1000))))

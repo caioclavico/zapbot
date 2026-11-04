@@ -32,6 +32,7 @@
 (def ^:private startup (js/require "../scripts/lib/whatsapp-startup.cjs"))
 (def ^:private group-discovery (js/require "../scripts/lib/bootstrap-group-discovery.cjs"))
 (def ^:private release-bootstrap (js/require "../scripts/lib/release-bootstrap.cjs"))
+(def ^:private ^js node-maintenance (js/require "../scripts/lib/a6-maintenance.cjs"))
 
 (defn configurar-envio-seguro!
   "Desativa o sendSeen quebrado do WhatsApp Web antes de qualquer envio.
@@ -477,7 +478,10 @@
                         ;; uma string simples - todo o resto continua string normal
                         (string? resposta) (.reply message resposta)
                         :else (.reply message (:texto resposta) nil #js {:mentions (clj->js (:mentions resposta))}))))))
-        (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" (clj->js (err-diag err))))))))
+        (p/catch (fn [err]
+                   (if (= "MAINTENANCE_ACTIVE" (some-> err .-code str/upper-case))
+                     (.reply message "O Odisseu está em manutenção operacional. Tente novamente quando o serviço for retomado.")
+                     (js/console.error "Erro ao processar mensagem:" (clj->js (err-diag err)))))))))
 
 (defn- on-message [message]
   (let [despachar (fn [is-group?]
@@ -495,21 +499,31 @@
                       (despachar tipo)))
         ;; O evento WhatsApp ignora o retorno do dispatcher; absorver aqui
         ;; somente rejeições já tratadas evita unhandledRejection no processo.
-        executar-seguro #(try
-                           (let [resultado (executar)]
-                             (if (and resultado (fn? (.-then ^js resultado)))
-                               (-> (js/Promise.resolve resultado)
-                                   (p/catch (fn [err]
-                                              (js/console.error
-                                               "[dispatch] rejeição de comando isolada:"
-                                               (clj->js (err-diag err)))
-                                              nil)))
-                               resultado))
-                           (catch :default err
-                             (js/console.error
-                              "[dispatch] exceção de comando isolada:"
-                              (clj->js (err-diag err)))
-                             nil))]
+        executar-seguro #(if-not (.begin node-maintenance)
+                           (when (str/starts-with? (str/trim (or (.-body message) "")) config/prefix)
+                             (-> (js/Promise.resolve
+                                  (.reply message "O Odisseu está em manutenção operacional. Tente novamente quando o serviço for retomado."))
+                                 (p/catch (fn [err]
+                                            (js/console.warn "[maintenance] não foi possível enviar aviso de manutenção"
+                                                             (clj->js (err-diag err)))
+                                            nil))))
+                           (try
+                             (let [resultado (executar)]
+                               (if (and resultado (fn? (.-then ^js resultado)))
+                                 (-> (js/Promise.resolve resultado)
+                                     (p/catch (fn [err]
+                                                (js/console.error
+                                                 "[dispatch] rejeição de comando isolada:"
+                                                 (clj->js (err-diag err)))
+                                                nil))
+                                     (p/finally (fn [] (.end node-maintenance))))
+                                 (do (.end node-maintenance) resultado)))
+                             (catch :default err
+                               (.end node-maintenance)
+                               (js/console.error
+                                "[dispatch] exceção de comando isolada:"
+                                (clj->js (err-diag err)))
+                               nil))) ]
     (executar-seguro)))
 
 (defn opcoes-puppeteer []
@@ -530,8 +544,17 @@
 ;; vivo (ver zapbot.bloqueio), então funciona mesmo em grupos onde aquele
 ;; falha persistentemente.
 (defn- on-group-admin-changed [notification]
-  (when (config/chat-autorizado? (.-chatId notification))
-    (admins/processar-evento-promocao! notification)))
+  (when (and (config/chat-autorizado? (.-chatId notification))
+             (.begin node-maintenance))
+    (try
+      (let [result (admins/processar-evento-promocao! notification)]
+        (if (and result (fn? (.-then ^js result)))
+          (p/finally result #(.end node-maintenance))
+          (do (.end node-maintenance) result)))
+      (catch :default err
+        (.end node-maintenance)
+        (js/console.error "[maintenance] admin event failed" (clj->js (err-diag err)))
+        nil))))
 
 (defonce ^:private iniciado? (atom false))
 
@@ -597,6 +620,7 @@
         server (saude/servir!
                 diagnostico nil
                 {:bind-host config/health-bind-host
+                 :maintenance node-maintenance
                  :on-jvm-health (fn [] @jvm-probe-cache*)})
         encerrando? (atom false)]
     (doseq [sinal ["SIGTERM" "SIGINT"]]
@@ -692,7 +716,8 @@
               nil))
           server (saude/servir!
                   diagnostico client
-                  (cond-> {:bind-host config/health-bind-host}
+                  (cond-> {:bind-host config/health-bind-host
+                           :maintenance node-maintenance}
                     config/staging-bootstrap-group?
                     (assoc :on-discover-groups
                            (fn []

@@ -39,6 +39,8 @@ services:
       ODISSEU_BRIDGE_SYSTEM: odisseu-m90-core
       ODISSEU_BRIDGE_STORAGE: /data/datomic-local
       ODISSEU_BRIDGE_DB: core
+      ODISSEU_BRIDGE_MAINTENANCE_DIR: /data/datomic-local/.a6-maintenance
+      ODISSEU_BRIDGE_MAINTENANCE_TOKEN: ${ODISSEU_BRIDGE_MAINTENANCE_TOKEN:?Defina token operacional dedicado de manutenção}
       ODISSEU_PLATFORM_DB: platform
       ODISSEU_PLATFORM_ENABLED: "true"
       # Seed só na primeira subida controlada; default false em core.
@@ -98,6 +100,8 @@ services:
       POKEMON_ADAPTER: jvm
       POKEMON_JVM_URL: http://odisseu-jvm:18090
       POKEMON_JVM_TOKEN: ${ODISSEU_BRIDGE_TOKEN:?Defina ODISSEU_BRIDGE_TOKEN}
+      ODISSEU_NODE_MAINTENANCE_FILE: /app/data/a6-maintenance.json
+      ODISSEU_NODE_MAINTENANCE_TOKEN: ${ODISSEU_NODE_MAINTENANCE_TOKEN:?Defina token operacional dedicado de manutenção Node}
       # Opt-in staging: allowlist estrita http://odisseu-jvm:18090 (não loopback).
       POKEMON_JVM_ALLOW_DOCKER_HOST: "true"
       POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS: ${POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS:-300}

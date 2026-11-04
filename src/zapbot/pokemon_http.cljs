@@ -15,6 +15,7 @@
 (def ^:private jvm-transport (js/require "../scripts/lib/pokemon-jvm-client.cjs"))
 (def ^:private jvm-present (js/require "../scripts/lib/pokemon-jvm-present.cjs"))
 (def ^:private jvm-media (js/require "../scripts/lib/pokemon-jvm-media.cjs"))
+(def ^:private ^js node-maintenance (js/require "../scripts/lib/a6-maintenance.cjs"))
 (def ^:private pokeapi (js/require "../scripts/lib/pokemon-pokeapi.cjs"))
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 (def ^:private versao-bot (.-version (js/require "../package.json")))
@@ -3046,7 +3047,7 @@
                    (js/console.warn "[PokemonJVM] Tick thematic-events falhou:"
                                     (or (.-code erro) "TICK") (.-message erro)))))))
 
-(defn- consultar-eventos! []
+(defn- consultar-eventos-interno! []
   (cond
     (jvm-configurado?)
     (do (tick-raid-auto-jvm!)
@@ -3081,6 +3082,20 @@
                    (js/console.warn "[PokemonHTTP] Eventos pendentes, nova tentativa no próximo ciclo:"
                                     (or (.-code erro) "DELIVERY"))))
         (p/finally #(reset! consultando-eventos? false)))))
+
+(defn- consultar-eventos! []
+  ;; O poller de raids/eventos também é produtor assíncrono. O lease local cobre
+  ;; toda a consulta, envio e ACK, permitindo o drain antes do gate Datomic.
+  (when (.begin node-maintenance)
+    (try
+      (let [result (consultar-eventos-interno!)]
+        (if (and result (fn? (.-then ^js result)))
+          (p/finally result #(.end node-maintenance))
+          (do (.end node-maintenance) result)))
+      (catch :default err
+        (.end node-maintenance)
+        (js/console.warn "[PokemonHTTP] Poller falhou de forma isolada:" (or (.-code err) "POLL"))
+        nil))))
 
 (defn parar! []
   (reset! cliente-whatsapp nil)
