@@ -1,10 +1,11 @@
 # Odisseu A6 — storage readiness · trocas Pokémon
 
-**Status:** CONDITIONAL  
-**Gerado:** 2026-11-04T14:10Z (UTC)  
+**Status:** SUCCESS (limpeza seletiva executada)  
+**Auditoria:** 2026-11-04T14:10Z (UTC)  
+**Limpeza:** 2026-11-04T14:11:10Z → 14:12:36Z (UTC)  
 **Host:** `odisseu-core` (`x86_64`)  
-**Escopo:** desbloquear capacidade de disco para o RC de trocas **sem** apagar dados de jogo.  
-**Nesta etapa:** somente auditoria — **nenhuma exclusão**, deploy, migration, recreate ou restart.
+**Escopo:** exclusão seletiva da lista fechada `docs/assets/a6-trades-disposable-paths.txt` (49 paths).  
+**Não executado:** deploy das trocas, migration 033, restart/recreate, alteração Node/JVM/saves/grupos/raides/Announcer.
 
 ---
 
@@ -150,33 +151,83 @@ Não há necessidade de apagar Datomic, sessão ou imagens ativas para caber o R
 
 ---
 
-## 5. Próxima operação recomendada
+## 5. Execução da limpeza (autorizada)
 
-**Operação seguinte (ainda sem deploy):**  
-pedido explícito de **GO DE LIMPEZA** dos paths descartáveis listados na §3.3 (ou subconjunto prioritário dos ~620 MiB×N até liberar ≥6 GiB).
+### 5.1 Preflight
 
-Depois da limpeza verificada: retomar `docs/pokemon-a6-trades-deployment-readiness.md` e solicitar GO de implantação.
-
----
-
-## 6. Riscos
-
-| Risco | Mitigação |
+| Gate | Resultado |
 | --- | --- |
-| Apagar tar/imagem ainda necessária ao rollback | Manter §3.1–3.2; checklist pré-rm |
-| `df` 92% durante load simultâneo | Evitar cenário C; sequencial ou limpar antes |
-| Confundir session-backup com RC | Nunca incluir `*whatsapp-session*` na limpeza |
-| Prune agressivo Docker | Proibido nesta linha |
-| Liberar pouco e seguir ao deploy | Abortar se livres &lt; 6 GiB no pré-GO (meta do readiness) |
+| Hostname | `odisseu-core` |
+| FS `/` | ext4 · livres **3.99 GiB** (4 181 608 KiB) · 92% |
+| Inodes | 8% |
+| Node | healthy · `a6-critical-5088b5b` · WA **READY** |
+| JVM | healthy · `raidAutoTickEnabled=false` |
+| Datomic vol | `odisseu-a6-cutover-datomic` presente |
+| Essentials | session-backup 1.4 G · hotfix tar 5088b5b · `a6-fase12832-deploy-authorized` · runtime · session bind |
+| Inventário | lista aprovada = 49 paths exatos (`a6-trades-disposable-paths.txt`) |
+
+### 5.2 Verificação individual
+
+- **49/49 approve** · 0 reject · 0 missing  
+- Sem symlinks · todos sob `/home/caiohclavico/odisseu-recovery/` · sem overlap com mounts ativos  
+- Bytes medidos pré-rm: **13 502 281 684** (~12.57 GiB)
+
+### 5.3 Exclusão
+
+- Método: `rm -rf --one-file-system` / `rm -f` path a path (sem glob)  
+- Exceção: `a64-preflight` tinha leftovers `ubuntu:ubuntu` (cópias RO históricas) → esvaziado via `docker run --network=none -v <path>:/target alpine rm` **somente nesse path aprovado**, depois `rmdir`  
+- Log: `/tmp/a6-cleanup-delete.jsonl` (49 linhas `deleted*`)  
+- **49/49 removidos** · remain=0
+
+### 5.4 Espaço medido
+
+| | KiB | GiB |
+| --- | ---: | ---: |
+| Livres **antes** | 4 181 608 | **3.99** |
+| Livres **depois** | 17 392 912 | **16.59** |
+| **Recuperado (df)** | 13 211 304 | **12.60** |
+| Uso `/` depois | 31 G usados / 48 G · **65%** | |
+
+### 5.5 Preservados (amostra)
+
+- `a6-whatsapp-session-backup-20261104T004608Z.tar.gz`  
+- `odisseu-node-hotfix-5088b5b-amd64.tar`  
+- `a6-fase12832-deploy-authorized/`  
+- `a6-cutover-runtime-20261101T141408Z/`  
+- `a6-cutover-session-from-core/`  
+- Imagens Docker Node `508021e8…` / JVM `e18c20cb…`  
+- Volume Datomic live  
+
+### 5.6 Pós-check operacional
+
+Node healthy + WA READY · JVM up · raid OFF · volume Datomic intacto · sem restart/recreate.
 
 ---
 
-## 7. Status
+## 6. Próxima operação recomendada
 
-**CONDITIONAL**
+Armazenamento **preparado** (≥16 GiB livres) para o próximo **preflight do RC de trocas**.
 
-- Espaço **recuperável comprovado** (~**12.6 GiB** em RCs/tars históricos) torna o deploy viável **após limpeza autorizada**.  
-- Com **4.0 GiB** livres hoje, o pico pessimista simultâneo **não** deixa margem segura.  
-- Sem bloqueio estrutural de dados de jogo; **não** é necessário expandir disco se a limpeza seletiva for aprovada.
+**Não iniciar deploy nesta etapa.** Aguardar GO explícito referenciando `docs/pokemon-a6-trades-deployment-readiness.md`.
 
-**Nenhuma exclusão ou mudança live foi executada nesta auditoria.**
+---
+
+## 7. Riscos residuais
+
+| Risco | Nota |
+| --- | --- |
+| Build cache Docker (~7 GB) intacto | não podado (fora do escopo) |
+| Imagens Docker históricas unused | não removidas; rollback preservado |
+| Periodics antigos | não estavam na lista de 49; permanecem |
+| `a64-preflight` exigiu remoção via Docker root | só cópias históricas; live volume não tocado |
+
+---
+
+## 8. Status
+
+**SUCCESS**
+
+- Limpeza seletiva concluída com segurança.  
+- Espaço livre medido: **3.99 GiB → 16.59 GiB** (recuperados **12.60 GiB** via `df`).  
+- Integridade operacional preservada.  
+- Disco pronto para preflight/load do RC de trocas; **deploy/migration não iniciados**.
