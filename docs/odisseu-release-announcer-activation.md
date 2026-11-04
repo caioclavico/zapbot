@@ -233,7 +233,7 @@ O código do Announcer foi versionado em três commits temáticos:
 | `365236d4e336e94bc5fe138c7688f1ecc6b4434f` | Cliente Node, bootstrap opt-in, runtime/adapter WhatsApp e harness físico |
 | `fdf6c5932e2cd30fbef9682a589888ace712c615` | Testes Node e Clojure de releases, store, gates, ACK e fences |
 
-Commit do código congelado: `fdf6c5932e2cd30fbef9682a589888ace712c615`; content-tree: `6e5604d425bc85ea33970e424c2ee55aefc7b620`. Esta revisão documental/fixture será um commit posterior separado. Os Image IDs abaixo foram construídos da árvore `6e5604d…`; correspondem ao commit de código `fdf6c59…`, não ao tree posterior que incluirá a documentação final.
+Commit do código congelado antes da correção do cleanup: `fdf6c5932e2cd30fbef9682a589888ace712c615`; content-tree: `6e5604d425bc85ea33970e424c2ee55aefc7b620`. Os Image IDs listados nesta seção são históricos, construídos da árvore `6e5604d…`; o commit e a imagem Node atuais após o fix estão registrados na atualização final ao fim deste documento.
 
 No clone `/private/tmp/zapbot-announcer-a6-rc`, a branch é `rc/a6-release-announcer`. Antes do commit documental, o conteúdo não rastreado era este relatório, `docs/fixtures/release-announcement-intent.example.json` e `node_modules/`. A pasta `node_modules/` é dependência local e será excluída do commit. A comparação `rc/a6-trades-ux..fdf6c59` contém 25 arquivos do Announcer (1.325 inserções, 4 remoções); não altera arquivos `modules/pokemon`, migrations Pokémon, saves, economia ou scheduler. O commit de produção `f4e0972` e o tip documental `197bf0c` foram verificados no histórico local; não foi feita nova inspeção remota nesta homologação.
 
