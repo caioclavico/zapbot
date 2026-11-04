@@ -152,9 +152,10 @@
     (doseq [[source target ^BasicFileAttributes attrs] (reverse @dirs)]
       (when (and (Files/getFileStore source) (Files/getFileStore target))
         (Files/setLastModifiedTime target (.lastModifiedTime attrs))
-        (try
-          (Files/setPosixFilePermissions target (Files/getPosixFilePermissions source (make-array LinkOption 0)))
-          (catch UnsupportedOperationException _))))))
+        (when (not= source from)
+          (try
+            (Files/setPosixFilePermissions target (Files/getPosixFilePermissions source (make-array LinkOption 0)))
+            (catch UnsupportedOperationException _)))))))
 
 (defn- write-manifest! [^Path root entries]
   (let [manifest {:format "odisseu-datomic-cold-backup"
@@ -304,6 +305,8 @@
              (unlock-file! {:lock lock :channel channel :registry-key (str (.toAbsolutePath publication-lock))}))))))
 
 (defn- publish-atomic! [^Path stage ^Path target]
+  (when (exists? target)
+    (fail! "backup_destination_exists" {:target (str target)}))
   (try
     (Files/move stage target (into-array StandardCopyOption [StandardCopyOption/ATOMIC_MOVE]))
     (force-directory! (.getParent target))

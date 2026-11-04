@@ -214,6 +214,21 @@
       (doseq [stage (staging-paths (.toPath root) ".manifest-failed.staging-")]
         (backup/discard-staging! (str root) (str stage))))
 
+    ;; A destination appearing during copy is rejected at publication time.
+    (let [surprise (str (io/file root "surprise-destination"))
+          hook-var (ns-resolve 'pokemon.migration.backup '*test-hook*)
+          create-surprise (fn [event _]
+                            (when (= event :after-manifest-write)
+                              (.mkdirs (io/file surprise))
+                              (spit (io/file surprise "operator-file") "preserve-me")))]
+      (ensure! (expect-throw! #(with-redefs-fn {hook-var create-surprise}
+                                 (fn [] (backup/snapshot-storage! storage surprise))))
+               "unexpected-publication-destination-was-replaced")
+      (ensure! (= "preserve-me" (slurp (io/file surprise "operator-file")))
+               "unexpected-publication-destination-was-modified")
+      (doseq [stage (staging-paths (.toPath root) ".surprise-destination.staging-")]
+        (backup/discard-staging! (str root) (str stage))))
+
     (let [hook-var (ns-resolve 'pokemon.migration.backup '*test-hook*)
           fail-restore (fn [event _] (when (= event :after-restore-copy-file)
                                        (throw (ex-info "injected-restore-interruption" {}))))]
@@ -248,7 +263,7 @@
       (ensure! (not (.exists (io/file root "corrupt-restore")))
                "corrupt-restore-created-destination"))
 
-    {:ok true :scenario-count 11 :admission-guard admission-guard
+    {:ok true :scenario-count 12 :admission-guard admission-guard
      :backup-entries (:entry-count (backup/verify-backup! backup-path))}))
 
 (defn -main [& args]
