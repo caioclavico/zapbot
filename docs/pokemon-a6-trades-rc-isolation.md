@@ -56,8 +56,8 @@ Integração no RC: patches **cirúrgicos** sobre `5088b5b`, fundindo public-id 
 | --- | --- |
 | `02f6d5f` | migration 033 + domain/store/ports/bridge + testes Clojure |
 | `1d8f794` | pokemon_http + present + router + testes UX/CLJS |
-| `f4e0972` | `docs/pokemon-a6-trades-rc-isolation.md` (rascunho) |
-| `dd6755e` | digests AMD64 + status READY |
+| `f4e0972` | relatório de isolamento |
+| docs tip | digests AMD64 + status READY (commits docs após as imagens) |
 
 SHA final e content-tree: ver §7.
 
@@ -143,8 +143,8 @@ Cobertura transacional exercitada via suites Clojure (create concorrente / publi
 | Worktree | `/private/tmp/zapbot-trades-rc-a6` |
 | Git SHA (código + doc base nas imagens) | `f4e0972046d360f29081c36184beaa23cd590e09` |
 | Content-tree (labels das imagens) | `a76b14aeb865e677ac4cf867ee6419acee287402` |
-| Git SHA (HEAD branch, docs digests) | `dd6755e6866e2f43d69ab00d907b65a6ee77c6f0` |
-| Content-tree HEAD | `2ec1f8f1bc31508340e7545ca59718f4c42a71d2` |
+| Branch tip | `rc/a6-trades-ux` (docs pós-imagem; código nas labels = `f4e0972`) |
+| Content-tree (imagens) | `a76b14aeb865e677ac4cf867ee6419acee287402` |
 | RC dir | `/Users/caioclavico/odisseu-recovery/a6-trades-rc-20261104T132934Z/` |
 | Node tag | `odisseu-node:a6-trades-20261104T132934Z-f4e0972046d3-amd64` |
 | Node Image ID | `sha256:62414ffebb0c0ba55196617fafa334c51b8a72e48c39c1d12a73146ea429d4f6` |
