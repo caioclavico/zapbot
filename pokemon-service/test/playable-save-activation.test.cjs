@@ -245,7 +245,7 @@ test('real eligibility gate blocks each impediment and isolates the peer', async
     {states:{battles:{x:{pid:'p'}}}, code:'activity_battle_active'},
     {states:{hunts:{x:{jogador:'p'}}}, code:'activity_hunt_active'},
     {states:{raids:{x:{participantes:{p:{}},fase:'combate'}}}, code:'activity_raid_active'},
-    {states:{raids:{x:{participantes:{p:{}},fase:'vitoria',expira:Date.now()+1000}}},
+    {states:{raids:{x:{participantes:{p:{dano:1}},fase:'vitoria',expira:Date.now()+1000}}},
       code:'activity_raid_capture_pending'},
     {states:{trades:{x:{a:'p',b:'peer'}}}, code:'activity_trade_pending'},
     {states:{moveOffers:{x:{player:'p'}}}, code:'activity_move_offer_pending'},

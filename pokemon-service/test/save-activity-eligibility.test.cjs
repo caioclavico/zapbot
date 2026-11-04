@@ -42,6 +42,13 @@ test('activity eligibility accepts a single raid partition value and captura-exp
   assert.equal(expired.eligible, true);
 });
 
+test('victory without participant damage has no pending raid capture to block save activation', () => {
+  const report = evaluate({...base(), now:50, states:{
+    raids:{fase:'vitoria', participantes:{'player-a':{dano:0}}, 'captura-expira':100, capturas:{}}}});
+  assert.equal(report.eligible, true);
+  assert.deepEqual(codes(report), []);
+});
+
 test('activity eligibility blocks Joy timers and incomplete journals but ignores its own reservation', () => {
   const options = {...base(), now:100, account:{enfermaria:[{'pronto-em':101,pokemon:{nome:'Machop'}}]},
     transition:{operationId:'transition-a',complete:false}};
