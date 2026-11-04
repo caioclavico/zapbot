@@ -95,3 +95,30 @@ A revisão estática local confirma que `006-bugs-participantes` precede `007-re
 Para liberar apenas a transferência: obter um backup consistente e verificável conforme procedimento operacional já aprovado e um método de leitura autorizado para confirmar o schema live sem iniciar outro writer. Repetir os gates. Então exportar exatamente as imagens locais acima, gerar SHA-256 dos tarballs, transferir com o SSH histórico, verificar checksum, carregar e conferir IDs/arquitetura/labels. Ainda assim, não executar deploy nem migration sem GO específico.
 
 **Status final desta tentativa: BLOCKED.** SSH foi restabelecido e os artefatos locais/estado geral foram verificados, mas backup atual verificável e prova direta de ausência de platform/007 não foram estabelecidos. Nenhuma transferência ou alteração de produção ocorreu.
+
+## Atualização — gates de backup e schema, 2026-11-04 16:23 UTC
+
+### Preflight atual
+
+Nova leitura read-only confirmou `odisseu-core`, `x86_64`, Node/JVM `healthy`, JVM bridge `status=up`, WhatsApp `READY`, `/` com 16 GB livres, `POKEMON_RAID_AUTO_TICK=false`, `ODISSEU_BRIDGE_RAID_AUTO_TICK=false`, `ALLOW_ALL_GROUPS=true` e mounts da sessão/dados/Datomic presentes. A implementação live foi exercitada somente com JIDs sintéticos: grupo `@g.us` permitido, privado `@c.us` negado, `@lid` sem metadata de grupo negado e LID com indicação confiável de grupo permitido. Pokémon 033 continua indicado como aplicado no relatório do deploy A6 atualmente ativo. Nenhuma ação de jogo foi executada.
+
+O Announcer permanece ausente no Node/JVM ativos: flag `RELEASE_ANNOUNCER_ENABLED` não configurada, bootstrap Node ausente e arquivo migration 007 ausente da imagem JVM. Isso confirma que o boot atual não aplica 007; não é prova de que alguém não tenha transacionado atributos manualmente.
+
+### BACKUP: BLOCKED
+
+O procedimento A6 encontrado na VM é `/home/caiohclavico/odisseu-recovery/a6-periodic-backup-a6.sh`. O próprio script documenta:
+
+- `A6_BACKUP_MODE=cold`: para o `odisseu-a6-jvm`, copia Datomic/journal/maint e reinicia a JVM por trap; produz manifesto SHA-256 e hash do manifesto.
+- `A6_BACKUP_MODE=warm`: copia com JVM ativa, mas declara risco de “tear” se houver escrita durante a cópia.
+
+O requisito desta fase é um snapshot consistente. O modo cold exige parar/reiniciar a JVM, operação sem autorização específica nesta etapa; o modo warm não dá a garantia exigida. Não executei nenhum modo, não parei serviço e não criei arquivos. O backup frio anterior continua anterior à migration Pokémon 033 e não serve como backup atual para esta validação. **Resultado: BACKUP = BLOCKED.**
+
+### SCHEMA 007: UNKNOWN
+
+O endpoint de health prova que a bridge e o store platform estão ativos, mas não retorna os `:db/ident` e propriedades do schema. O processo JVM ativo mantém o writer lock do Datomic Local. Abrir um segundo cliente Datomic no mesmo storage ou copiar o storage ativo não é um caminho read-only comprovadamente seguro; não o fiz. A imagem ativa não contém a migration 007, portanto o boot atual não a aplicou. Ainda assim, sem consulta direta aos atributos live não é possível excluir uma transação manual prévia. Pokémon 033 está confirmado pelo estado operacional documentado; os atributos 006/007 e suas propriedades não foram inventariados diretamente nesta execução. **Resultado: SCHEMA 007 = UNKNOWN.**
+
+A revisão local permanece válida: `platform/007-release-announcements.edn` é aditiva, declara 20 atributos `:platform.delivery/*`, é registrada após `006-bugs-participantes`, não inclui a migration econômica 033 e não modifica saves/economia/Pokémon.
+
+### Decisão
+
+Os serviços seguem saudáveis, mas os dois gates pedidos não passaram: backup consistente requer parada JVM não autorizada; schema 007 requer mecanismo de consulta read-only que não está exposto. Nenhuma imagem foi exportada/transferida e nenhuma migration foi executada. Para avançar, é necessário um GO específico para a janela de backup cold, ou disponibilizar snapshot/consulta read-only de schema que não abra outro writer. **Status geral permanece BLOCKED para transferência.**
