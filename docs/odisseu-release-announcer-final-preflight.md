@@ -122,3 +122,33 @@ A revisão local permanece válida: `platform/007-release-announcements.edn` é 
 ### Decisão
 
 Os serviços seguem saudáveis, mas os dois gates pedidos não passaram: backup consistente requer parada JVM não autorizada; schema 007 requer mecanismo de consulta read-only que não está exposto. Nenhuma imagem foi exportada/transferida e nenhuma migration foi executada. Para avançar, é necessário um GO específico para a janela de backup cold, ou disponibilizar snapshot/consulta read-only de schema que não abra outro writer. **Status geral permanece BLOCKED para transferência.**
+
+## Manutenção autorizada — interrompida antes do cold backup, 2026-11-04 16:27 UTC
+
+### Preflight e mecanismo de suspensão
+
+O SSH histórico foi usado para verificar novamente `odisseu-core` / `x86_64`. Node e JVM estavam `healthy`; healthcheck Node: WhatsApp `READY`, Chromium ativo; bridge JVM: `status=up`, `platformEnabled=true`, `raidAutoTickEnabled=false`. Disco: 16 GB livres e 8% de inodes usados. As flags de scheduler permanecem OFF e `ALLOW_ALL_GROUPS=true` foi confirmado na inspeção anterior desta mesma janela. Não parei serviços.
+
+Li o procedimento A6 da VM. `A6_BACKUP_MODE=cold` interrompe apenas `odisseu-a6-jvm`, copia volumes `odisseu-a6-cutover-*` e cria manifesto SHA-256; `warm` copia com JVM ativa e admite risco de tear. O cold só é seguro depois de impedir novas mutações e drenar operações dependentes da JVM.
+
+Procurei no código/runtime atual e na configuração efetiva do Node um mecanismo existente de manutenção, drain ou read-only. Não há flag de suspensão configurada; a inspeção dos nomes das variáveis relevantes não encontrou `MAINT`, `FREEZE`, `READ_ONLY`, `WRITE`, `COMMANDS_ENABLED` ou `DISABLE_COMMANDS`. Os mecanismos `enter-maintenance!` encontrados no código são drills sintéticos locais, não um controle operacional conectado ao dispatcher live. Não usei `docker pause`, não parei Node, não alterei configuração e não introduzi um mecanismo novo.
+
+### Resultado dos gates
+
+| Gate | Resultado | Evidência |
+|---|---|---|
+| Host/arquitetura e capacidade | PASS | `odisseu-core`, `x86_64`, 16 GB livres, 8% inodes |
+| Node/JVM/WhatsApp/Datomic bridge | PASS | ambos containers healthy; WhatsApp READY; bridge `up` |
+| Raides automáticas | PASS | health JVM `false`; flags previamente verificadas `false` |
+| Suspensão/drenagem de mutações Node→JVM | **BLOCKED** | nenhum mecanismo operacional homologado disponível/configurado |
+| Backup cold atual | **BLOCKED — não iniciado** | exige quiescência; não parei JVM sem freeze/drain |
+| Restauração isolada | Não executada | nenhum backup novo foi criado |
+| Schema Pokémon 033 | Estado documentado como aplicado | nenhuma consulta nova ao DB feita |
+| Schema platform/006 e 007 | **UNKNOWN** | sem cópia consistente e sem interface schema read-only; 007 não está na imagem ativa |
+| Imagens RC | Não transferidas | sem `docker save`, checksum de tar, SCP ou `docker load` |
+
+### Estado final da operação
+
+Não houve parada, restart, pausa, cópia de volumes, transação Datomic, alteração de schema, alteração de saves ou mudança de configuração. Node, JVM, Datomic bridge e WhatsApp permaneceram saudáveis na última observação. Backup anterior não foi sobrescrito. Nenhum checksum de novo backup existe.
+
+Classificação: **BACKUP = BLOCKED**; **SCHEMA 007 = UNKNOWN**; **OPERAÇÃO = BLOCKED** (manutenção não iniciada; produção permaneceu saudável). O bloqueio é a ausência de um mecanismo existente para suspender e drenar mutações Node→JVM antes de parar a JVM. Para retomar com segurança, é necessária uma janela operacional que disponibilize esse gate já suportado ou autorização para aplicar um procedimento operacional existente que suspenda o Node e defina como manter a sessão/WhatsApp, além da validação de ausência de operações críticas. Não implantei nem alterei código para criar tal mecanismo.
