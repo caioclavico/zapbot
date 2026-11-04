@@ -1,9 +1,9 @@
 # Odisseu A6 — homologação final · trocas Pokémon (deployment readiness)
 
-**Status:** CONDITIONAL  
-**Gerado:** 2026-11-04T13:50Z (UTC)  
-**Escopo:** RC `rc/a6-trades-ux` auditado contra produção `odisseu-core`  
-**Proibições respeitadas nesta etapa:** sem deploy, sem migration/backfill live, sem restart/recreate, sem alteração de saves, sem Chromium/perfil WA, sem raid-auto ON, sem mudança de grupos, sem Announcer, sem mensagens reais.
+**Status:** SUPERSEDED pelo deploy — ver `docs/pokemon-a6-trades-production-deploy.md`  
+**Homologação:** 2026-11-04T13:50Z (UTC) · **Deploy produção:** 2026-11-04T14:25Z–14:33Z (UTC)  
+**Escopo original:** RC `rc/a6-trades-ux` auditado contra produção `odisseu-core`  
+**Pós-GO:** JVM/Node RC ativos · schema **033** · WhatsApp READY · classificação **SUCCESS técnico**
 
 ---
 
@@ -199,15 +199,9 @@ Abortar **antes** ou **durante** o GO se:
 
 ---
 
-## 10. Decisão
+## 10. Decisão (homologação) → deploy
 
-**CONDITIONAL**
+Homologação estava **CONDITIONAL** (disco/imagens). Após limpeza + load + **GO explícito**, o deploy foi executado.
 
-Pronto para GO **após**:
-
-1. Headroom de disco reforçado (meta ≥6 GiB livres) **ou** GO consciente com monitoramento de espaço; e  
-2. Autorização explícita de deploy + migration 033.
-
-Bloqueadores de código/schema/identidade de imagens: **nenhum**.  
-Identidade RC ↔ imagens: **OK** (tip só docs).  
-Produção **não** foi alterada nesta homologação.
+**Resultado produção:** SUCCESS técnico — detalhes e evidências em `docs/pokemon-a6-trades-production-deploy.md`.  
+Pendente apenas smoke de troca real entre jogadores (não autorizado nesta janela).
