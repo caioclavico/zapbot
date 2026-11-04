@@ -2,7 +2,7 @@
 
 **Data:** 2026-11-04 16:11 UTC
 
-**Status:** **BLOCKED** — preflight remoto não concluído; nenhuma imagem foi exportada ou transferida.
+**Status:** **BLOCKED** — SSH foi recuperado pelo método histórico; faltam comprovação de backup atual íntegro e leitura direta do schema Datomic para confirmar platform/007 ausente. Nenhuma imagem foi exportada ou transferida.
 
 ## Escopo e revisão local
 
@@ -18,7 +18,7 @@ O acesso autorizado foi tentado somente para leitura. Artefatos conferidos no cl
 
 A imagem JVM não contém mudanças desde a revisão indicada pelo seu label. Não reconstruí nenhuma das imagens. Nenhum tarball foi criado; portanto, não há checksum de tarball a registrar.
 
-## Resultado do acesso remoto
+## Resultado da primeira tentativa de acesso remoto
 
 - `ssh -G odisseu-core` não encontrou configuração específica: `hostname` permaneceu `odisseu-core`, sem resolução para endereço conhecido.
 - Comando read-only `ssh -o BatchMode=yes -o ConnectTimeout=8 odisseu-core 'hostname && uname -m'` falhou: `Could not resolve hostname odisseu-core`.
@@ -37,7 +37,7 @@ Para retomar, primeiro restabelecer um método SSH/GCloud já autorizado que ide
 
 Rollback futuro deve restaurar apenas as imagens anteriores compatíveis, mantendo o schema 007 se ele vier a ser aplicado. Não restaurar banco antigo sobre dados novos. Announcer deve permanecer desabilitado e sem intent até autorização própria.
 
-**Decisão: BLOCKED.** O gate bloqueador é falta de conectividade autenticada/read-only à VM e, consequentemente, impossibilidade de verificar estado, backups e espaço antes de transferir. Não contornei essa restrição.
+**Decisão da primeira tentativa: BLOCKED.** Naquele momento, o gate era falta de conectividade autenticada/read-only à VM. A atualização abaixo registra a recuperação pelo comando SSH histórico. Não contornei controles de acesso.
 
 ## Atualização — preflight remoto histórico, 2026-11-04 16:20 UTC
 
