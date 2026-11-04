@@ -235,6 +235,7 @@ Arquivos voláteis de lock Datomic e o lock do writer não entram no conteúdo r
 | Outro processo tenta conectar/escrever banco existente durante cópia | Negado; probe registrou `external-lock-denied=true` e `external-denied=true` |
 | Cópia cold para diretório novo, manifesto e verificação | PASS; manifesto conferido, 5 entradas no fixture sintético |
 | Destino de backup já existente | Recusado; backup válido anterior continuou verificável |
+| Destino inesperado criado durante a cópia, antes da publicação | Recusado no ponto de rename; arquivo do destino concorrente preservado |
 | Interrupção injetada após cópia de arquivo / falha simulada de disco | Não publicado; staging incompleto permaneceu isolado para descarte explícito |
 | Interrupção injetada após escrita temporária do manifesto | Não publicado; staging permaneceu isolado |
 | Restore interrompido depois de copiar arquivo | Não publicado; diretório operacional não foi substituído |
@@ -249,7 +250,7 @@ O cenário de falha de disco foi simulado por exceção injetada no ponto de có
 ### Regressões executadas nesta revisão
 
 - `clojure -M -e "(require 'pokemon.migration.backup 'odisseu.persistence.datomic 'odisseu.bridge.http-server)"`: namespaces carregados.
-- `clojure -M:smoke-a6-cold-backup`: PASS, 11 cenários reportados, banco descartável e processos separados.
+- `clojure -M:smoke-a6-cold-backup`: PASS, 12 cenários reportados, banco descartável e processos separados.
 - Smoke HTTP de manutenção JVM/bridge: PASS; marker/drain/restart/resume em loopback, Datomic descartável, sem transporte WhatsApp.
 - `node --test test/a6-maintenance.test.cjs`: PASS, 6/6.
 - `npm run test:http`: PASS, 287/287.
@@ -274,8 +275,9 @@ Sequência futura, ainda não autorizada: contenção externa verificável → d
 
 - Gate durável e integração Node/JVM: `4c068bcaa0c77e619cc436330bc95e5cd522b5b1`.
 - Snapshot/restore Datomic e admission guard: `e1f22f2aafb9a6f5a6d48fd95d3d983869c86b55`.
+- Corrida de criação do destino de backup coberta no ponto de publicação: `5450e49aa4ea46403d89214cc2dffd88359efa13`.
 - Fixture de elegibilidade de captura com dano zero: `e1713a821821445c2c371a086a2c422fb3fb6a0a`.
-- Relatório final desta revisão: `bca855994411864949b58afee15205c44d4fe5bb` (commit documental separado). Nenhuma imagem foi reconstruída; não há content-tree ou Image ID novo.
+- Relatório versionado em commit documental separado após os commits de código. Nenhuma imagem foi reconstruída; não há content-tree ou Image ID novo.
 
 As mudanças de gate afetam Node e JVM; portanto as imagens A6 existentes não contêm estes commits e não podem ser reutilizadas como artefatos desta implementação. Uma futura homologação e preparação de deploy exigiria reconstruir/verificar ambas as imagens contra o commit de código correspondente. O fixture de captura altera somente testes e não exige imagem.
 
