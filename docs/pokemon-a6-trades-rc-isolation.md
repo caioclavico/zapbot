@@ -1,6 +1,6 @@
 # Odisseu A6 — RC isolado: trocas Pokémon (UX + public-id)
 
-**Status:** CONDITIONAL  
+**Status:** READY  
 **Gerado:** 2026-11-04  
 **Escopo:** exclusivamente o sistema de trocas (`#N` público, mensagens amigáveis, migration aditiva).  
 **Proibições respeitadas:** sem deploy, sem migration/backfill em produção, sem alteração de saves, sem restart/recreate, sem mexer em raid-auto / regras de grupo / Announcer / perfil WhatsApp / mensagens reais.  
@@ -54,9 +54,10 @@ Integração no RC: patches **cirúrgicos** sobre `5088b5b`, fundindo public-id 
 
 | Commit | Conteúdo |
 | --- | --- |
-| _(JVM)_ | migration 033 + domain/store/ports/bridge + testes Clojure |
-| _(Node)_ | pokemon_http + present + router + testes UX/CLJS |
-| _(docs)_ | `docs/pokemon-a6-trades-rc-isolation.md` |
+| `02f6d5f` | migration 033 + domain/store/ports/bridge + testes Clojure |
+| `1d8f794` | pokemon_http + present + router + testes UX/CLJS |
+| `f4e0972` | `docs/pokemon-a6-trades-rc-isolation.md` (rascunho) |
+| `1f2b395` | digests AMD64 + status READY |
 
 SHA final e content-tree: ver §7.
 
@@ -140,11 +141,17 @@ Cobertura transacional exercitada via suites Clojure (create concorrente / publi
 | --- | --- |
 | Branch | `rc/a6-trades-ux` |
 | Worktree | `/private/tmp/zapbot-trades-rc-a6` |
-| Git SHA (HEAD RC) | _preencher após commits_ |
-| Content-tree | _preencher após commits_ |
-| Imagem Node AMD64 | _pendente build_ |
-| Imagem JVM AMD64 | _pendente build_ |
-| Image IDs | _pendente_ |
+| Git SHA (código + doc base nas imagens) | `f4e0972046d360f29081c36184beaa23cd590e09` |
+| Content-tree (labels das imagens) | `a76b14aeb865e677ac4cf867ee6419acee287402` |
+| Git SHA (HEAD branch, docs digests) | `5e351111939da806271b9c1985b8cdc8a5d7cc03` |
+| Content-tree HEAD | `adfa5401eacbbbe9b290318da5323545d7f5d13f` |
+| RC dir | `/Users/caioclavico/odisseu-recovery/a6-trades-rc-20261104T132934Z/` |
+| Node tag | `odisseu-node:a6-trades-20261104T132934Z-f4e0972046d3-amd64` |
+| Node Image ID | `sha256:62414ffebb0c0ba55196617fafa334c51b8a72e48c39c1d12a73146ea429d4f6` |
+| JVM tag | `odisseu-jvm:a6-trades-20261104T132934Z-f4e0972046d3-amd64` |
+| JVM Image ID | `sha256:d07a379eb634e64ab7670252ff7e3a2a513e26c571c1c7028e3e2a5644408570` |
+| Arch | linux/amd64 · labels `fase=a6-trades-ux` · mesmo git-sha/content-tree |
+| Tar SHA-256 | ver `checksums/IMAGES.sha256` (Node `226a0171…`, JVM `cf0f30e5…`) |
 
 Produção atual (rollback app):
 
@@ -182,19 +189,18 @@ Produção atual (rollback app):
 | Contador vs propostas históricas sem `#N` | Sem backfill automático — evita colisão |
 | Create concorrente no mesmo chat | CAS em `trade-seq/next` + unique `public-key` |
 | Confirmação concorrente / retry | revision CAS + `operation-receipt` idempotente |
-| Imagens AMD64 ainda não produzidas neste host | Status **CONDITIONAL** até digests registrados |
+| Cutover sem migration 033 | JVM nova + Node criando `#N` falhariam create — migration obrigatória no GO |
 | E2E bridge HTTP não re-rodado neste isolamento | Domínio+UX+CLJS cobertos; recomendar e2e antes do GO |
 
 ---
 
 ## 10. Decisão
 
-**CONDITIONAL**
+**READY**
 
-Motivos para não READY absoluto:
+RC isolado, reproduzível e testado, contendo somente trocas. Imagens AMD64 Node/JVM geradas com labels `git-sha`/`content-tree` alinhados a `f4e0972`.
 
-1. Imagens Node/JVM AMD64 deste content-tree ainda não geradas/registradas neste ciclo.  
-2. E2E Node→JVM→Datomic completo recomendado como gate pré-GO (domínio já verde).
+Antes do GO de produção (autorização explícita separada): smoke E2E Node→bridge→Datomic em ambiente descartável e migration 033 no storage operacional.
 
-Bloqueadores de produto/código de trocas: **nenhum** identificado nos testes isolados.  
-Pronto para build de imagens e GO de migration+deploy **somente** após autorização explícita.
+Bloqueadores de código: **nenhum**.  
+**Nenhum deploy / migration / restart foi executado neste isolamento.**
