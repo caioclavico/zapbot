@@ -31,6 +31,7 @@
 (def ^:private LocalAuth (.-LocalAuth wwjs))
 (def ^:private startup (js/require "../scripts/lib/whatsapp-startup.cjs"))
 (def ^:private group-discovery (js/require "../scripts/lib/bootstrap-group-discovery.cjs"))
+(def ^:private release-bootstrap (js/require "../scripts/lib/release-bootstrap.cjs"))
 
 (defn configurar-envio-seguro!
   "Desativa o sendSeen quebrado do WhatsApp Web antes de qualquer envio.
@@ -338,7 +339,7 @@
         (assoc st :accepted true
                :note "Descoberta agendada; veja logs [bootstrap] e groups.json.")))))
 
-(defn- on-ready [client]
+(defn- on-ready [client release-coordinator]
   (js/console.log (str "✅ " config/bot-name " conectado e pronto para uso!"))
   ;; Não logar número telefônico (PII).
   (js/console.log "📞 Conta autenticada (número omitido).")
@@ -351,7 +352,19 @@
       (descobrir-grupos! client {:reason "ready"}))
     (do
       (pokemon/iniciar! client)
-      (lembretes/iniciar! client))))
+      (lembretes/iniciar! client)
+      ;; READY é só gate operacional. Announcer exige intent confirmado + piloto + gates.
+      (when release-coordinator
+        (-> (.onWhatsAppReady release-coordinator)
+            (p/then (fn [resultado]
+                      (when-not (#{"disabled" "no-release-intent" "already-completed"}
+                                  (some-> resultado .-status))
+                        (js/console.log "[release-announcer]" (or (some-> resultado .-status) "attempted")))
+                      nil))
+            (p/catch (fn [err]
+                       (js/console.warn "[release-announcer] isolated failure"
+                                        (or (.-code err) "announcement_error"))
+                       nil)))))))
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -651,6 +664,32 @@
                         (or config/staging-bootstrap-group?
                             config/staging-allow-qr?)
                         (assoc :restoreOnly false))))
+          release-coordinator
+          (try
+            (when (and config/release-announcer-enabled?
+                       (not config/staging-bootstrap-group?)
+                       (platform/enabled?))
+              (.createReleaseBootstrap release-bootstrap
+                #js {:enabled config/release-announcer-enabled?
+                     :intentPath config/release-announcement-intent-path
+                     :pilotChatId config/release-pilot-chat-id
+                     ;; Allowlist própria — NÃO usa chat-autorizado?/ALLOW_ALL_GROUPS.
+                     :isChatAuthorized (fn [chat-id]
+                                         (boolean (config/release-chat-autorizado? chat-id)))
+                     :client client
+                     :platform (platform/release-client)
+                     :checkJvmHealth (fn []
+                                       (-> (probe-jvm-health)
+                                           (p/then (fn [result] (boolean (:ok result))))))
+                     :isWhatsAppReady (fn [] (.acceptingReady recovery))
+                     :isNodeHealthy (fn []
+                                      (= "ok" (:status (saude/resposta diagnostico client))))
+                     :logger (fn [event]
+                               (js/console.log "[release-announcer]" (js/JSON.stringify event)))}))
+            (catch :default err
+              (js/console.warn "[release-announcer] coordinator unavailable"
+                               (or (.-code err) "configuration_error"))
+              nil))
           server (saude/servir!
                   diagnostico client
                   (cond-> {:bind-host config/health-bind-host}
@@ -668,7 +707,7 @@
         (recursos/iniciar! client))
       (encerrar-com-sessao! recovery diagnostico server)
       (.on client "qr" (fn [qr] (when (.acceptingQR recovery) (on-qr qr))))
-      (.on client "ready" (fn [] (when (.acceptingReady recovery) (on-ready client))))
+      (.on client "ready" (fn [] (when (.acceptingReady recovery) (on-ready client release-coordinator))))
       (.on client "disconnected" (fn [& _]
                                   (when-not config/staging-bootstrap-group?
                                     (pokemon/parar!))))

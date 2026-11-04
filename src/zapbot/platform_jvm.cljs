@@ -22,6 +22,11 @@
         (reset! client* c)
         c)))
 
+(defn release-client
+  "Cliente canônico Datomic da plataforma, somente com adapter Datomic opt-in."
+  []
+  (when (enabled?) (client!)))
+
 (defn op-id [prefix]
   (.newOperationId (client!) prefix))
 

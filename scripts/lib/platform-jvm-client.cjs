@@ -349,6 +349,35 @@ function createClient(config = {}) {
     failReminder(id, claimant, fence, error) {
       return request('POST', '/v1/platform/reminders/fail', { id, claimant, fence, error });
     },
+    getReleaseAnnouncement(idempotencyKey) {
+      return request('GET', `/v1/platform/releases?key=${encodeURIComponent(idempotencyKey)}`)
+        .then((data) => ({ announcement: data.announcement || null }));
+    },
+    createReleaseAnnouncement(announcement, operationId) {
+      return request('POST', '/v1/platform/releases/create', Object.assign({}, announcement, { operationId }));
+    },
+    claimReleaseAnnouncement(idempotencyKey, claimant, leaseMs, now) {
+      return request('POST', '/v1/platform/releases/claim', { idempotencyKey, claimant, leaseMs, now });
+    },
+    beginReleaseAnnouncementSend(idempotencyKey, claimant, fence) {
+      return request('POST', '/v1/platform/releases/send-started', { idempotencyKey, claimant, fence });
+    },
+    associateReleaseMessage(idempotencyKey, claimant, fence, messageId) {
+      return request('POST', '/v1/platform/releases/message', { idempotencyKey, claimant, fence, messageId });
+    },
+    getReleaseByMessageId(messageId) {
+      return request('GET', `/v1/platform/releases/message?messageId=${encodeURIComponent(messageId)}`)
+        .then((data) => ({ announcement: data.announcement || null }));
+    },
+    ackReleaseMessage(messageId, ack, claimant, fence) {
+      return request('POST', '/v1/platform/releases/ack', { messageId, ack, claimant, fence });
+    },
+    completeReleaseAnnouncement(idempotencyKey, claimant, fence) {
+      return request('POST', '/v1/platform/releases/complete', { idempotencyKey, claimant, fence });
+    },
+    failReleaseAnnouncement(idempotencyKey, claimant, fence, error) {
+      return request('POST', '/v1/platform/releases/fail', { idempotencyKey, claimant, fence, error });
+    },
     getBugs(version) {
       const qs = version ? `?version=${encodeURIComponent(version)}` : '';
       return request('GET', `/v1/platform/bugs${qs}`).then((data) => ({

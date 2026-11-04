@@ -256,6 +256,21 @@
 (def platform-datomic-enabled?
   (= "datomic" platform-adapter))
 
+;; Release Announcer opt-in: exige intent JSON confirmado + piloto.
+;; Default false — READY sozinho NÃO anuncia. ALLOW_ALL_GROUPS NÃO autoriza anúncios.
+(def release-announcer-enabled?
+  (= "true" (str/lower-case (str/trim (env "RELEASE_ANNOUNCER_ENABLED" "false")))))
+(def release-announcement-intent-path (env "RELEASE_ANNOUNCEMENT_INTENT_PATH" ""))
+(def release-pilot-chat-id (env "RELEASE_PILOT_CHAT_ID" ""))
+
+(defn release-chat-autorizado?
+  "Allowlist independente do Release Announcer (piloto only nesta etapa).
+   NÃO consulta ALLOW_ALL_GROUPS / chat-autorizado?."
+  [cid]
+  (and (string? release-pilot-chat-id)
+       (not (str/blank? release-pilot-chat-id))
+       (= (str cid) release-pilot-chat-id)))
+
 ;; M7.7 — staging/dev com Platform Datomic + Pokémon JVM: sem boot Cassandra.
 ;; Produção nunca entra aqui (adapters forçados a cassandra/legacy).
 (def cassandra-boot-enabled?
