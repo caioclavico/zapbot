@@ -1,0 +1,21 @@
+{
+  "status": "confirmed",
+  "deployedVersion": "a6-announcer-homolog",
+  "confirmedVersion": "a6-announcer-homolog",
+  "rollbackComplete": true,
+  "chatId": "SUBSTITUA_PELO_PILOTO@g.us",
+  "release": {
+    "botName": "Odisseu",
+    "version": "a6-announcer-homolog",
+    "contentHash": "approved-notes-hash-not-a-git-sha",
+    "highlights": [
+      "Anúncios automáticos de changelog após release confirmada",
+      "Allowlist independente do piloto (sem ALLOW_ALL_GROUPS)"
+    ],
+    "fixes": [
+      "Evita reenvio em reinícios e retries"
+    ],
+    "newCommands": [],
+    "announcementPolicy": { "enabled": true }
+  }
+}
