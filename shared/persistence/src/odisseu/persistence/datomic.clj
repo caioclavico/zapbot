@@ -2,6 +2,7 @@
   "Helpers de conexão Datomic Local (dev). Sem lógica de domínio."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [datomic.client.api :as d]))
 
 (defn project-root
@@ -19,8 +20,42 @@
        f
        (io/file (project-root) relative-or-absolute)))))
 
+(defn maintenance-state
+  "Reads the durable A6 bridge marker colocated with the Datomic storage.
+   Unknown/corrupt state fails closed for ordinary client constructors."
+  [storage-dir]
+  (let [root (io/file (resolve-storage-dir storage-dir))
+        dir (io/file root ".a6-maintenance")
+        state-file (io/file dir "bridge-maintenance.edn")
+        listing (when (.exists dir)
+                  (try {:files (.listFiles dir)} (catch Throwable _ {:error true})))
+        abandoned? (or (:error listing)
+                       (and listing (nil? (:files listing)))
+                       (some #(and (str/starts-with? (.getName %) ".bridge-maintenance-")
+                                   (str/ends-with? (.getName %) ".tmp"))
+                             (:files listing)))]
+    (cond
+      abandoned? {:phase :draining :reason :interrupted-marker-write}
+      (not (.exists state-file)) {:phase :open}
+      :else
+      (try
+        (let [state (edn/read-string (slurp state-file))]
+          (if (contains? #{:open :draining :quiescent} (:phase state))
+            state
+            {:phase :quiescent :reason :invalid-marker}))
+        (catch Throwable _ {:phase :quiescent :reason :unreadable-marker})))))
+
+(defn- assert-client-admitted!
+  [storage-dir maintenance-control?]
+  (when-not maintenance-control?
+    (let [state (maintenance-state storage-dir)]
+      (when-not (= :open (:phase state))
+        (throw (ex-info "datomic_maintenance_active"
+                        {:phase (:phase state)}))))))
+
 (defn client
-  [{:keys [system storage-dir]}]
+  [{:keys [system storage-dir maintenance-control?]}]
+  (assert-client-admitted! storage-dir maintenance-control?)
   (d/client {:server-type :datomic-local
              :system system
              :storage-dir (resolve-storage-dir storage-dir)}))
