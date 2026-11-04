@@ -282,3 +282,75 @@ Sequência futura, ainda não autorizada: contenção externa verificável → d
 As mudanças de gate afetam Node e JVM; portanto as imagens A6 existentes não contêm estes commits e não podem ser reutilizadas como artefatos desta implementação. Uma futura homologação e preparação de deploy exigiria reconstruir/verificar ambas as imagens contra o commit de código correspondente. O fixture de captura altera somente testes e não exige imagem.
 
 O único item local ainda não rastreado é `node_modules`, symlink preexistente e fora do escopo; não foi staged. O clone não foi publicado nem integrado ao workspace original.
+
+---
+
+## Revisão final de contenção operacional — 2026-11-04
+
+Esta revisão aplica o modelo de ameaça A/B/C solicitado. Ela acrescenta prova do host Docker local descartável e não altera a conclusão sobre produção: **BLOCKED para backup cold, bootstrap ou deploy em produção**. O ambiente disponível é o Docker Desktop desta estação, não a VM `odisseu-core`; não houve acesso remoto nem mudança em serviços, volumes ou credenciais de produção.
+
+### Modelo e fronteira observada
+
+| Grupo | Identidade/capacidade | Resultado e limite |
+|---|---|---|
+| A — aplicação e scripts conhecidos | Entry points que usam `odisseu.persistence.datomic/client`, bridge, jobs e scripts identificados no repositório | O marker canônico recusa novas construções durante `draining`/`quiescent`; a bridge drena requests já admitidos. Isso cobre somente entry points cooperativos. Um client criado antes do marker não é revogado pelo marker; por isso o procedimento exige drain e encerramento ordenado do writer antes do snapshot. |
+| B — processos sem privilégio administrativo | Processo com UID separado, sem acesso ao socket Docker e sem mount/permissão de escrita no storage | Na estação local, o socket é `srwxr-xr-x`, pertencente ao usuário operacional, sem permissão para `other`; o probe como UID 65534 recebeu `DOCKER_SOCKET_CONNECT_DENIED_BY_ACL` ao tentar conectar. Container adicional sem mount não encontrou o storage sintético, e mount read-only rejeitou escrita. Isso demonstra a ACL e isolamento do host local, não a configuração da VM. |
+| C — root, usuário com acesso ao socket Docker ou controle equivalente do supervisor | Pode lançar container privilegiado, montar o volume ou alterar o próprio supervisor | Grupo confiável da janela. Não se reivindica proteção contra esse grupo. A contenção exige exclusividade operacional: o executor C declara/retém a janela e não inicia outro writer até retomada. |
+
+Inventário local observado:
+
+- `docker context show` retornou `desktop-linux`; daemon Docker Desktop local, arquitetura `aarch64`, Docker 29.8.2. Isso não é evidência da VM AMD64.
+- O usuário local é membro de `admin` e dono do socket Docker. Portanto, nesta máquina ele pertence ao grupo C. O teste de UID 65534 foi separado e limitado a um `connect()` ao socket; não enviou requisição Docker.
+- Havia um container pré-existente chamado `festive_lehmann`, com volume Datomic montado em RW. Não foi iniciado, parado, alterado nem removido. Sua presença reforça que inventário e ownership do host precisam preceder qualquer manutenção; ele não é atribuído à produção.
+- O workflow de deploy contém `concurrency: production-odisseu`; `scripts/deploy-service.py` usa lock exclusivo não bloqueante sob diretório privado do serviço. Isso serializa chamadas pelo deployer conhecido, mas não impede comandos Docker diretos de C. Não foi encontrado `schedule:` no workflow auditado. Os scripts locais `odisseu-core-backup.sh`/`restore.sh` não formam uma fronteira por si: o restore legado remove o destino com `rm -rf` e não deve ser usado para esta operação.
+- Não foi possível inspecionar nesta fase membros do socket Docker, units systemd, timers/cron, processos e ACLs da VM. Esses pontos permanecem desconhecidos, não presumidos ausentes.
+
+### Procedimento mínimo de contenção
+
+Para a topologia observada, sem pretender proteger contra C:
+
+1. O operador C adquire a janela operacional e pausa pelo supervisor existente as pipelines de deploy e todos os jobs/scripts conhecidos que possam criar writers. Registrar quais foram pausados e como serão retomados; não alterar ACL permanente.
+2. Fechar a admissão na aplicação/bridge instalada e aguardar `activeRequests=0`/`quiescent`; timeout ou marker inconsistente aborta.
+3. Parar ordenadamente Node e demais produtores. Confirmar que processos que usam o storage terminaram; manter os schedulers/pipelines pausados.
+4. Parar a JVM writer. Confirmar processos e mounts conhecidos, locks Datomic livres e volume correto. Como C controla Docker, o lock advisory não impede C de iniciar outro container; a exclusividade da janela pelo supervisor/operador é parte necessária da garantia.
+5. Executar snapshot cold pelo helper para destino novo; validar manifesto/checksums. Fazer restore apenas em volume isolado e validar leitura/estado canônico. Nunca restaurar backup antigo por cima do volume operacional.
+6. Manter manutenção fechada até a verificação. Retomar JVM primeiro, confirmar health e schema/estado; então Node e pollers. Reabrir admissão explicitamente. Liberar pipelines e jobs por último.
+7. Em qualquer writer não inventariado, lock ativo, divergência de volume, falha/timeout, checksum inválido ou estado incerto, abortar antes de copiar/retomar e manter a janela fechada até reconciliação.
+
+Esse procedimento é executável no ambiente local descartável e define os passos para a primeira manutenção, mas sua aplicação na produção depende de uma inspeção read-only do supervisor e dos principals da VM. A produção atual ainda não tem comprovadamente o gate instalado; portanto o primeiro fechamento deve usar somente contenção externa do supervisor e drain operacional comprovado. Parar Node isoladamente não prova quiescência.
+
+### Evidência Docker descartável desta revisão
+
+Todos os volumes e containers listados aqui foram criados com prefixo exclusivo `a6-maint-20261104` e foram removidos ao final. A verificação final não encontrou containers ou volumes com esse prefixo. O container preexistente `festive_lehmann` não foi tocado.
+
+| Cenário | Evidência | Resultado |
+|---|---|---|
+| Writer cooperativo durante manutenção | Novo processo JVM usando o construtor central e o mesmo storage recebeu `datomic_maintenance_active` | PASS |
+| Processo adicional sem acesso autorizado ao socket | Probe UID 65534 não conectou ao socket Docker; container sem mount não acessou o storage sintético | PASS no host local |
+| Mount explicitamente read-only | Tentativa de escrita no volume sintético foi recusada | PASS |
+| Principal writer encerrado e novo writer | JVM HTTP real foi parada; novo processo com mesmo volume foi iniciado e health passou | PASS |
+| Marker atravessa restart físico | Após restart no mesmo volume, status HTTP autenticado retornou `quiescent`, `activeRequests=0` | PASS |
+| Tentativa de client Datomic de baixo nível durante cold snapshot | Processo JVM separado que ignorava o marker foi bloqueado pelo lock nativo Datomic mantido pelo helper durante snapshot | PASS para DB existente enquanto lock adquirido; não é controle de launch |
+| Cold snapshot | Helper executado dentro de container contra volume Datomic descartável, com lock mantido; cópia e manifesto verificaram 8 entradas | PASS |
+| Restore isolado | Restore para diretório novo dentro de volume separado; JVM real abriu o storage restaurado e passou health | PASS |
+| Retomada controlada | Estado restaurado consultado como `quiescent`; endpoint de manutenção autenticado mudou para `open`; status subsequente confirmou `open`, `activeRequests=0` | PASS |
+| Tentativa de iniciar writer adicional sob contenção | Construtor central bloqueado pelo marker; processo direto bloqueado pelo lock enquanto o helper segurava o snapshot | PASS dentro desses limites |
+| Reentrada de deployer/root ou processo com Docker socket durante janela | Não foi bloqueada por ACL de volume; pertence ao grupo C | Fora da garantia declarada; exclusividade do operador/supervisor é obrigatória |
+
+O lock Datomic é uma proteção de concorrência sobre bancos existentes enquanto adquirido; não bloqueia um principal C de criar outro container nem protege contra escrita direta no volume. A prova não usa o lock como substituto do supervisor. Não foram testados host de produção, systemd/cron da VM, falha física de disco/host nem ENOSPC real.
+
+Houve duas falhas no harness por montagem em caminhos que colidiam com `VOLUME /data/datomic-local` da imagem. Foram corrigidos os mounts e o destino de restore (`.../dbroot` dentro do volume); não se perdeu nem alterou dado de origem. O restore final foi verificado e retomado como acima. Esses incidentes foram falhas de configuração do harness, não aprovação omitida.
+
+### Código e artefatos locais
+
+- Código congelado: commit `7d55616a35a927bcf1a0efe98848913faa6a6e32`; content-tree `1a03ad0bc8769ddcf08b0b7c90210ee79cf95b33`.
+- Imagem JVM construída do código desse commit/tree: `sha256:efc7e4578209984ee2d80d8e3c1cc2f4d4f3c70e8f259747018c96ceeb9d27d5`, `linux/amd64`.
+- Imagem Node construída do mesmo código/tree: `sha256:dd27dc57b34c7ba30eec58db64ed9529a483d50b47f3013f7f99d2e1cacec1bd`, `linux/amd64`.
+- Smoke JVM da imagem, smoke Node (`node --check` e import de `whatsapp-web.js`), build e suítes listadas acima passaram. O build AMD64 do Node precisou limitar os processadores ativos da JVM de build via Dockerfile temporário fora do repositório; o Dockerfile do projeto e a árvore de código não mudaram. A auditoria npm do build reportou vulnerabilidades no conjunto de dependências; nenhuma atualização foi feita nesta fase.
+- As imagens são artefatos locais apenas; não foram publicadas, transferidas ou implantadas. Seus labels não contêm Git SHA/content-tree, então a relação é sustentada pelo comando/contexto de build registrado, não por uma label criptográfica dentro da imagem.
+
+### Decisão e gates restantes
+
+**Local A/B: PASS dentro do modelo de confiança e topologia descartável descritos. Produção/bootstrap: BLOCKED.** Antes de autorizar manutenção/backup/deploy na VM, ainda é necessário read-only confirmar: principal do serviço; todos os usuários/grupos com acesso ao Docker socket; mounts e containers Datomic; unidades/timers/cron e scripts de escrita; pipelines e mecanismo para pausá-los; capacidade de impedir que B lance processos com acesso ao storage; e operador C responsável pela janela exclusiva. Se algum writer não puder ser suspenso ou se a janela exclusiva de C não puder ser garantida, abortar.
+
+Não foi executado deploy, restart, migration, backup cold nem restore em produção; não houve mudança em saves, volumes, configurações, sessão WhatsApp, grupos, raides ou Release Announcer. O Announcer permanece sem ativação. As imagens existentes anteriores não incluem estes commits, portanto não são substitutas dos artefatos locais acima.
