@@ -30,7 +30,8 @@
                 "migrations/platform/003-quiz-historico.edn"
                 "migrations/platform/004-rank.edn"
                 "migrations/platform/005-lembretes.edn"
-                "migrations/platform/006-bugs-participantes.edn"]]
+                "migrations/platform/006-bugs-participantes.edn"
+                "migrations/platform/007-release-announcements.edn"]]
     (let [f (io/file (persistence/project-root) path)
           tx (edn/read-string (slurp f))]
       (d/transact conn {:tx-data tx})))

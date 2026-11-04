@@ -8,6 +8,7 @@
             [odisseu.platform.domain.lembretes :as lembretes]
             [odisseu.platform.domain.bugs :as bugs]
             [odisseu.platform.domain.participantes :as parts]
+            [odisseu.platform.infrastructure.datomic.release-store :as release-store]
             [pokemon.domain.errors :as err]))
 
 (defn- g [m & ks]
@@ -20,6 +21,36 @@
 
 (defn- require-op! [body]
   (require-str! (g body "operationId" :operationId) "operationId"))
+
+
+(defn- release-pilot? [chat]
+  (and (= (str chat) (or (System/getenv "RELEASE_PILOT_CHAT_ID") ""))
+       (not (str/blank? (System/getenv "RELEASE_PILOT_CHAT_ID")))))
+
+(defn- release-announcement->wire [a]
+  (when a
+    {"type" (some-> (:type a) name)
+     "version" (:release-version a) "contentHash" (:content-hash a)
+     "chatId" (:chat-id a) "idempotencyKey" (:idempotency-key a)
+     "eligibility" (some-> (:eligibility a) name) "status" (some-> (:status a) name)
+     "claimant" (:claimant a) "leaseUntil" (:lease-until a) "fence" (:fence a)
+     "failCount" (:fail-count a) "lastError" (:last-error a)
+     "deliveryId" (:delivery-id a) "messageId" (:message-id a)
+     "messageClaimant" (:message-claimant a) "messageFence" (:message-fence a)
+     "sendStartedAt" (:send-started-at a) "sentAt" (:sent-at a) "confirmedAt" (:confirmed-at a)}))
+
+(defn- release-result->wire [result]
+  (cond-> {"claimed" (boolean (:claimed result))
+           "started" (boolean (:started result))
+           "completed" (boolean (:completed result))
+           "confirmed" (boolean (:confirmed result))
+           "failed" (boolean (:failed result))
+           "duplicate" (boolean (:duplicate result))}
+    (:reason result) (assoc "reason" (:reason result))
+    (:fence result) (assoc "fence" (:fence result))
+    (:claimant result) (assoc "claimant" (:claimant result))
+    (:lease-until result) (assoc "leaseUntil" (:lease-until result))
+    (:announcement result) (assoc "announcement" (release-announcement->wire (:announcement result)))))
 
 (defn- block->wire
   [cid {:keys [bot? comandos]}]
@@ -388,6 +419,92 @@
           {:status 200
            :data {"duplicate" (boolean (:duplicate res))
                   "resultado" (boolean (:resultado res))}}))
+
+
+      (= path "/v1/platform/releases")
+      (do
+        (when (not= "GET" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [key (not-empty (g qs "key" :key))
+              found (when key (release-store/find-release-announcement (:conn platform-store) key))]
+          {:status 200 :data {"announcement" (release-announcement->wire found)}}))
+
+      (= path "/v1/platform/releases/create")
+      (do
+        (when (not= "POST" method)
+          (throw (err/error :method_not_allowed {:method method})))
+        (let [chat (require-str! (g body "chatId" :chatId) "chatId")
+              _ (when-not (release-pilot? chat)
+                  (throw (err/error :operation_forbidden {:reason "release_group_not_authorized"})))
+              announcement {:type :release
+                            :release-version (require-str! (g body "version" :version) "version")
+                            :content-hash (require-str! (g body "contentHash" :contentHash) "contentHash")
+                            :chat-id chat
+                            :idempotency-key (require-str! (g body "idempotencyKey" :idempotencyKey) "idempotencyKey")
+                            :eligibility :eligible}]
+          {:status 200
+           :data (release-result->wire (release-store/create-release-announcement! (:conn platform-store) announcement))}))
+
+      (= path "/v1/platform/releases/claim")
+      (do
+        (when (not= "POST" method) (throw (err/error :method_not_allowed {:method method})))
+        (let [key (require-str! (g body "idempotencyKey" :idempotencyKey) "idempotencyKey")
+              who (require-str! (g body "claimant" :claimant) "claimant")]
+          {:status 200
+           :data (release-result->wire
+                  (release-store/claim-release-announcement! (:conn platform-store) key who
+                                                               (long (or (g body "leaseMs" :leaseMs) 30000))
+                                                               (long (or (g body "now" :now) (System/currentTimeMillis)))))}))
+
+      (= path "/v1/platform/releases/send-started")
+      (do
+        (when (not= "POST" method) (throw (err/error :method_not_allowed {})))
+        (let [key (require-str! (g body "idempotencyKey" :idempotencyKey) "idempotencyKey")
+              who (require-str! (g body "claimant" :claimant) "claimant")
+              fence (long (or (g body "fence" :fence) -1))]
+          {:status 200 :data (release-result->wire
+                              (release-store/begin-release-announcement-send! (:conn platform-store) key who fence))}))
+
+      (= path "/v1/platform/releases/message")
+      (cond
+        (= "GET" method)
+        (let [mid (require-str! (g qs "messageId" :messageId) "messageId")]
+          {:status 200 :data {"announcement" (release-announcement->wire (release-store/find-by-message-id (:conn platform-store) mid))}})
+
+        (= "POST" method)
+        (let [key (require-str! (g body "idempotencyKey" :idempotencyKey) "idempotencyKey")
+              who (require-str! (g body "claimant" :claimant) "claimant")
+              fence (long (or (g body "fence" :fence) -1))
+              mid (require-str! (g body "messageId" :messageId) "messageId")]
+          {:status 200 :data {"announcement" (release-announcement->wire (release-store/associate-message! (:conn platform-store) key who fence mid))}})
+
+        :else (throw (err/error :method_not_allowed {})))
+
+      (= path "/v1/platform/releases/ack")
+      (do
+        (when (not= "POST" method) (throw (err/error :method_not_allowed {})))
+        (let [mid (require-str! (g body "messageId" :messageId) "messageId")
+              ack (long (or (g body "ack" :ack) -1))
+              who (require-str! (g body "claimant" :claimant) "claimant")
+              fence (long (or (g body "fence" :fence) -1))]
+          {:status 200 :data (release-result->wire (release-store/confirm-message! (:conn platform-store) mid ack who fence))}))
+
+      (= path "/v1/platform/releases/complete")
+      (do
+        (when (not= "POST" method) (throw (err/error :method_not_allowed {:method method})))
+        (let [key (require-str! (g body "idempotencyKey" :idempotencyKey) "idempotencyKey")
+              who (require-str! (g body "claimant" :claimant) "claimant")
+              fence (long (or (g body "fence" :fence) -1))]
+          {:status 200 :data (release-result->wire (release-store/complete-release-announcement! (:conn platform-store) key who fence))}))
+
+      (= path "/v1/platform/releases/fail")
+      (do
+        (when (not= "POST" method) (throw (err/error :method_not_allowed {:method method})))
+        (let [key (require-str! (g body "idempotencyKey" :idempotencyKey) "idempotencyKey")
+              who (require-str! (g body "claimant" :claimant) "claimant")
+              fence (long (or (g body "fence" :fence) -1))
+              reason (str (or (g body "error" :error) "send_failed"))]
+          {:status 200 :data (release-result->wire (release-store/fail-release-announcement! (:conn platform-store) key who fence reason))}))
 
       (= path "/v1/platform/reminders")
       (do
