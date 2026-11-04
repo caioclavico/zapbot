@@ -356,3 +356,67 @@ Houve duas falhas no harness por montagem em caminhos que colidiam com `VOLUME /
 **Local A/B: PASS dentro do modelo de confiança e topologia descartável descritos. Produção/bootstrap: BLOCKED.** Antes de autorizar manutenção/backup/deploy na VM, ainda é necessário read-only confirmar: principal do serviço; todos os usuários/grupos com acesso ao Docker socket; mounts e containers Datomic; unidades/timers/cron e scripts de escrita; pipelines e mecanismo para pausá-los; capacidade de impedir que B lance processos com acesso ao storage; e operador C responsável pela janela exclusiva. Se algum writer não puder ser suspenso ou se a janela exclusiva de C não puder ser garantida, abortar.
 
 Não foi executado deploy, restart, migration, backup cold nem restore em produção; não houve mudança em saves, volumes, configurações, sessão WhatsApp, grupos, raides ou Release Announcer. O Announcer permanece sem ativação. As imagens existentes anteriores não incluem estes commits, portanto não são substitutas dos artefatos locais acima.
+
+---
+
+## Auditoria read-only do supervisor real — 2026-11-04
+
+**Decisão: BLOCKED para bootstrap de manutenção, backup cold e deploy.** A conexão histórica read-only foi restabelecida; os resultados abaixo substituem qualquer inferência baseada apenas no Docker Desktop local. Nenhum container, serviço, volume, ACL, migration ou dado foi alterado. Nenhum comando de jogo foi executado.
+
+### Identidade e acesso
+
+- `hostname=odisseu-core`, `uname -m=x86_64`; metadata GCE também confirmou a instância `odisseu-core`, IP externo `35.192.113.146`.
+- Docker Engine `29.9.1`, `x86_64`, root dir `/var/lib/docker`; `docker.service` está ativo e habilitado. `LiveRestore=false`.
+- Socket Docker: `root:docker`, modo `0660`. O grupo `docker` tem `caiohclavico`; esse usuário não é membro de `sudo`, mas acesso ao Docker equivale ao controle administrativo do supervisor e pertence ao grupo C. `ubuntu` é membro de `sudo`, também grupo C. O usuário operacional não tem sudo sem senha. O serviço `zapbot-deploy` não existe localmente nesta VM.
+- A leitura direta dos mountpoints de volume foi negada ao usuário operacional. Isso é coerente com a proteção de arquivos para B, mas não limita C: um membro de `docker` pode iniciar container e montar os volumes. Não alterei ACLs nem fiz uma tentativa de escrita em produção.
+
+### Containers, processos e mounts
+
+| Container | Estado/health | Imagem e Image ID | Restart | Mounts relevantes |
+|---|---|---|---|---|
+| `odisseu-a6-node` | running / healthy | `odisseu-node:a6-trades-20261104T132934Z-f4e0972046d3-amd64`, `sha256:62414ffebb0c0ba55196617fafa334c51b8a72e48c39c1d12a73146ea429d4f6` | `no` | Sessão WhatsApp bind RW e volume de dados RW; sem mount Datomic |
+| `odisseu-a6-jvm` | running / healthy | `odisseu-jvm:a6-trades-20261104T132934Z-f4e0972046d3-amd64`, `sha256:d07a379eb634e64ab7670252ff7e3a2a513e26c571c1c7028e3e2a5644408570` | `no` | Único container ativo com volume `odisseu-a6-cutover-datomic` RW; também journal e maintenance RW |
+| `odisseu-core-node` | exited 0 | tag A64 antiga, imagem preservada | `unless-stopped` | Sessão e volume de dados legados, separados do A6 ativo |
+| `odisseu-core-jvm` | exited 143 | tag A64 antiga, imagem preservada | `unless-stopped` | Volume Datomic legado `odisseu-core-a56-datomic`, separado do A6 ativo |
+
+Os containers não estão em modo privileged e não declaram `CapAdd`, mas executam como root dentro dos respectivos namespaces. O processo Java observado corresponde à JVM ativa; Node/Chromium correspondem ao container Node ativo. Não apareceu segundo processo Java/JVM no inventário de processos. O Node estava healthy; este preflight não confirmou independentemente o estado funcional `WhatsApp READY` (o health check Docker não prova essa condição, e a busca booleana por sinal recente no log não encontrou correspondência).
+
+Os volumes ativos A6 e os volumes do par A64 parado são distintos; não há mount compartilhado do Datomic atual entre os containers listados. Volumes `odisseu-core-*` também continuam cadastrados, mas não aparecem montados nos containers listados. Isso não impede C de montar qualquer volume ou criar outro container.
+
+Variáveis não secretas consultadas seletivamente: `ALLOW_ALL_GROUPS=true`, `POKEMON_RAID_AUTO_TICK=false` e `ODISSEU_BRIDGE_RAID_AUTO_TICK=false`. Não imprimi valores de outras variáveis. Nenhuma flag foi alterada.
+
+### Supervisores, cron, deploy e entrypoints de escrita
+
+- Serviços ativos incluem `docker.service`, `containerd.service`, `cron.service`, `google-guest-agent.service`, `google-osconfig-agent.service` e `unattended-upgrades.service`. Não há unit/timer com nome Odisseu/Zapbot na lista consultada. Timers observados são de manutenção do sistema/Google (apt, sysstat, logrotate, fstrim, OS Login etc.) e não identificam um writer do jogo. O timer de usuário observado é `launchpadlib-cache-clean`.
+- A crontab do usuário operacional não foi observada. O conteúdo da crontab root não é legível sem privilégios; `sudo -n` falhou por exigir senha. Os arquivos de cron de sistema visíveis são os jobs padrão `e2scrub_all` e `sysstat`, além de `/etc/crontab`. **Não é possível excluir jobs root ou de outros usuários sem completar essa inspeção privilegiada.**
+- A aplicação ativa tem um writer Datomic JVM. As rotas Node mutáveis chegam a ele pelo bridge. O Node não monta Datomic. Scripts operacionais como `scripts/a6_batch_rehearsal.clj`, `scripts/a6_recovery_rehearsal.clj`, rotinas de cutover/migration e `scripts/odisseu-core-backup.sh` podem abrir JVM/clientes ou containers auxiliares; alguns contornam o bridge. `scripts/odisseu-core-restore.sh` e os helpers de staging contêm operações de remoção/substituição de storage; não são mecanismo de contenção e não devem ser usados como restore de manutenção. Esses entrypoints são executáveis por C e não existe ACL que impeça C de iniciá-los.
+- O workflow no checkout da VM declara `push`, `pull_request` e `workflow_dispatch`; jobs de produção usam o environment `production` e concorrência `production-odisseu`. Push pode implantar se `AUTO_DEPLOY_ENABLED=true`; o estado dessa variável e as regras de aprovação do environment não foram acessíveis por SSH. A concorrência serializa jobs do GitHub, mas não bloqueia Docker direto nem scripts locais.
+- O workflow aponta SSH para `35.238.24.225` e usuário `zapbot-deploy`, enquanto o metadata desta VM confirma `35.192.113.146`; `zapbot-deploy` está ausente localmente. Não conectei ao endereço divergente. A identidade do alvo CI/CD precisa ser reconciliada antes da janela. O helper `deploy-service.py` espera diretórios privados `/etc/zapbot-deploy/odisseu` e `/var/lib/zapbot-deploy/odisseu`, que estão ausentes nesta VM; portanto seu lock `deploy.lock` não foi comprovado como lock operacional efetivo aqui.
+- Os containers A6 atuais têm restart policy `no`; o Docker daemon não os iniciaria segundo essa política após saída/reboot. Os dois containers A64 parados mantêm `unless-stopped`; seu histórico de parada manual não foi recuperado (eventos Docker não estavam disponíveis), então comportamento após reinício do daemon não pode ser certificado. Atualizações/serviços de sistema e principals C são caminhos de controle que devem ser coordenados. Nenhum restart foi executado.
+
+### Classificação A/B/C e cobertura
+
+| Grupo | Evidência na VM | Cobertura/limite |
+|---|---|---|
+| A — aplicação/scripts conhecidos | Node e JVM A6 ativos; scripts de migração, recovery, backup e restore presentes | O gate novo não está comprovadamente instalado na versão ativa. Scripts diretos podem contornar o bridge; precisam ser suspensos pelo operador e o writer encerrado depois de drain. |
+| B — processos sem privilégios administrativos | Socket `0660 root:docker`; principal Docker explicitamente enumerado; mountpoints não legíveis pelo usuário operacional | DAC impede acesso direto sem root/grupo Docker, e B sem socket não pode criar container autorizado. A conclusão é por ACLs e memberships; não foi feita escrita de teste no host. |
+| C — operadores administrativos confiáveis | `caiohclavico` no grupo Docker; `ubuntu` no sudo; agentes root/supervisor | Podem contornar marker/ACL, montar o volume ou lançar writers. A garantia depende da exclusividade operacional de C durante a janela; não há defesa técnica contra C. |
+
+### Bootstrap da primeira manutenção
+
+A versão ativa não fornece o gate/contador de drain novo. Não há sinal observado que permita provar que os handlers WhatsApp e requests mutáveis já aceitos terminaram. Health `healthy`, silêncio em logs, container parado ou lock Datomic livre não equivalem a drain. Também não foi comprovado controle de todas as crontabs nem do pipeline configurado para o endereço divergente.
+
+Uma janela futura só poderá começar após um método suportado, externo e verificável para: (1) suspender novos ingressos mutáveis sem descartar trabalho já aceito; (2) observar o término de todo o trabalho Node/bridge em voo; (3) pausar polls, scripts, CI/CD e updates do sistema; (4) confirmar que somente o operador C designado pode iniciar containers; (5) parar Node/produtores e JVM em ordem segura; e (6) manter essa contenção até acabar snapshot e restore isolado. O procedimento não pode usar `docker stop` imediato como substituto de drain. Se a versão atual não tiver contador ou mecanismo upstream que preserve/termine o trabalho aceito, é necessária uma janela de contenção coordenada com observabilidade de operações; sem isso, não se para a JVM nem se copia o volume.
+
+**Critérios de aborto:** pipeline não pausado ou alvo ainda ambíguo; crontab root/usuários relevantes não auditada; container legado com possibilidade de restart não resolvida; writer/client externo em execução; ausência de prova de zero operações em voo; volume/mount inesperado; ou impossibilidade de assegurar exclusividade do operador C. Não iniciar backup warm como substituto de backup cold consistente.
+
+### RC e decisão
+
+O RC local foi verificado sem alterações de código nesta fase:
+
+- Código: `7d55616a35a927bcf1a0efe98848913faa6a6e32`; content-tree `1a03ad0bc8769ddcf08b0b7c90210ee79cf95b33`.
+- As imagens locais correspondentes continuam `linux/amd64`: Node `sha256:dd27dc57b34c7ba30eec58db64ed9529a483d50b47f3013f7f99d2e1cacec1bd`; JVM `sha256:efc7e4578209984ee2d80d8e3c1cc2f4d4f3c70e8f259747018c96ceeb9d27d5`.
+- O commit `5088b5b` do dispatcher corrigido e `b9dd584` de autorização de trocas são ancestrais do código RC; os commits de base das trocas, UX e migration `033` também estão na árvore. Domínio/store de troca, rotas, testes e migrations `020`/`033` estão presentes. Inspeção do `on-message` no RC confirmou o catch de exceções síncronas e de promises rejeitadas introduzido pelo dispatcher; o arquivo também contém diferenças posteriores esperadas de integração do Announcer e do gate de manutenção, portanto não é byte-a-byte igual ao commit `5088b5b`.
+- As imagens ativas na VM são diferentes das imagens locais de manutenção/Announcer. Nenhuma imagem RC foi transferida ou implantada; não houve migration 007 nem ativação do Announcer.
+
+**Status final: BLOCKED.** A contenção de B pela ACL observada é plausível e o inventário identifica o writer atual, mas não existe bootstrap comprovado contra os caminhos A/C na janela inicial. Faltam drain mensurável da versão ativa, leitura autorizada das crontabs/controle root, reconciliação do alvo CI/CD e um lock operacional efetivo. Não modificar produção até esses gates serem resolvidos em procedimento autorizado.
