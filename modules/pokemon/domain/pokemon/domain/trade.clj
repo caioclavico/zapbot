@@ -1,6 +1,7 @@
 (ns pokemon.domain.trade
   "Máquina de estados canônica para propostas bilaterais. Sem I/O."
-  (:require [pokemon.domain.errors :as err]))
+  (:require [clojure.string :as str]
+            [pokemon.domain.errors :as err]))
 
 (def expiry-ms (* 5 60 1000))
 (def terminal-states #{:completed :refused :cancelled :expired :invalidated})
@@ -29,3 +30,22 @@
     (when-not (contains? (get transitions state #{}) next-state)
       (throw (err/error :invalid_trade_transition {:from state :to next-state})))
     (assoc trade :state next-state :revision (inc (long (:revision trade))))))
+
+(defn parse-public-token
+  "Aceita `84`, `#84` ou espaços. Retorna long ou nil (não é token público)."
+  [token]
+  (when (string? token)
+    (let [t (-> token str/trim (str/replace #"^#" ""))]
+      (when (re-matches #"[1-9][0-9]{0,8}" t)
+        (Long/parseLong t)))))
+
+(defn format-public-id
+  "Rótulo amigável `#N` a partir do public-id numérico."
+  [public-id]
+  (when public-id
+    (str "#" (long public-id))))
+
+(defn open-states
+  "Estados ainda negociáveis (não terminais)."
+  []
+  #{:invited :accepted :selecting :awaiting-confirmations})

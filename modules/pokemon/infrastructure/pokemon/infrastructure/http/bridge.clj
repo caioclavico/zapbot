@@ -75,7 +75,7 @@
   [code]
   (case code
     (:player_not_found :no_active_save :save_not_found :operation_not_found
-     :encounter_not_found :battle_not_found) 404
+     :encounter_not_found :battle_not_found :trade_not_found) 404
     (:invalid_query :missing_operation_id :missing_reward_identity
      :missing_writer_context :missing_fence_generation :invalid_coins_delta
      :unknown_shop_item :item_not_for_sale :item_use_unsupported
@@ -96,7 +96,8 @@
      :recovery_catalog_unavailable :recovery_request_not_found
      :recovery_request_owner_mismatch :recovery_request_not_confirmed
      :recovery_confirmation_mismatch :recovery_selection_invalid
-     :recovery_save_not_found) 400
+     :recovery_save_not_found
+     :invalid_trade :invalid_trade_transition :trade_expired) 400
     :recovery_import_unauthorized 401
     (:invalid_team :invalid_destination :team_not_found :team_pokemon_missing :invalid_league
      :league_not_selected :team_league_ineligible :team_pokemon_unhealthy) 400
@@ -121,7 +122,8 @@
      :frambo_already_prepared :raid_combatant_locked
      :starter_unavailable :mission_period_conflict :mission_event_identity_conflict
      :mission_event_already_processed :gift_target_changed
-     :save_name_taken :save_already_exists) 409
+     :save_name_taken :save_already_exists
+     :trade_forbidden :trade_action_forbidden :trade_save_mismatch) 409
     :operation_pending 409
     :datomic_value_too_large 500
     (:durability_compromised :durability_maintenance
@@ -515,13 +517,18 @@
                       src (if (= method "GET") qs body)
                       chat (g src "chatId") player (g src "playerId")
                       actor (header ex "X-Actor-Player-Id")
-                      op (g src "operationId") trade-id (g src "tradeId")
+                      op (g src "operationId") trade-ref (g src "tradeId")
+                      resolved (when (and (not (str/blank? chat)) (not (str/blank? trade-ref)))
+                                 (ports/resolve-trade-id store chat trade-ref))
+                      trade-id (or resolved trade-ref)
                       request (cond-> {:operation-id op :chat-id chat :player-id player
                                        :trade-id trade-id :save-id (g src "saveId")
                                        :fence-generation (long-or-nil (g src "fenceGeneration"))
                                        :now (long (or (long-or-nil (g src "now")) (System/currentTimeMillis)))}
                                 (g src "pokemonA") (assoc :pokemon-a (g src "pokemonA"))
-                                (g src "pokemonB") (assoc :pokemon-b (g src "pokemonB")))]
+                                (g src "pokemonB") (assoc :pokemon-b (g src "pokemonB"))
+                                (g src "pokemonAName") (assoc :pokemon-a-name (g src "pokemonAName"))
+                                (g src "pokemonBName") (assoc :pokemon-b-name (g src "pokemonBName")))]
                   (if (and (= path "/v1/trades") (= method "GET"))
                     (do (require-method! ex #{"GET"})
                         (when (or (str/blank? chat) (str/blank? player)
@@ -531,9 +538,16 @@
                     (do (require-method! ex #{"POST"})
                         (when (or (str/blank? chat) (str/blank? player) (str/blank? actor)
                                   (not= actor player) (str/blank? op)
-                                  (and (not= path "/v1/trades") (str/blank? trade-id))
+                                  (and (not= path "/v1/trades") (str/blank? trade-ref))
+                                  (and (not= path "/v1/trades") (str/blank? (str trade-id)))
                                   (nil? (:fence-generation request)))
-                          (throw (err/error :invalid_query {})))
+                          (throw (err/error (if (and (not= path "/v1/trades")
+                                                     (not (str/blank? trade-ref))
+                                                     (nil? resolved)
+                                                     (nil? (ports/get-trade store trade-ref)))
+                                              :trade_not_found
+                                              :invalid_query)
+                                            {})))
                         (ok! ex
                              (if (= path "/v1/trades")
                                (ports/create-trade! store (assoc request

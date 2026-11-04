@@ -1543,6 +1543,8 @@
     (trade-store/create! conn request))
   (get-trade [_ trade-id]
     (trade-store/get-trade conn trade-id))
+  (resolve-trade-id [_ chat-id trade-ref]
+    (trade-store/resolve-trade-id conn chat-id trade-ref))
   (list-trades [_ chat-id player-id]
     (trade-store/list-trades conn chat-id player-id))
   (accept-trade! [_ request]

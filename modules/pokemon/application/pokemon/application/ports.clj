@@ -244,6 +244,8 @@
 
   (create-trade! [this request] "Cria proposta canônica de negociação.")
   (get-trade [this trade-id] "Consulta proposta canônica.")
+  (resolve-trade-id [this chat-id trade-ref]
+    "Resolve `#N`/N ou id canônico legado no chat; nil se inexistente.")
   (list-trades [this chat-id player-id] "Lista propostas visíveis ao participante.")
   (accept-trade! [this request] "Aceita proposta.")
   (refuse-trade! [this request] "Recusa proposta.")
