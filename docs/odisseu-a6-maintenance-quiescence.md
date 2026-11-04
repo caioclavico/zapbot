@@ -319,6 +319,8 @@ Para a topologia observada, sem pretender proteger contra C:
 
 Esse procedimento é executável no ambiente local descartável e define os passos para a primeira manutenção, mas sua aplicação na produção depende de uma inspeção read-only do supervisor e dos principals da VM. A produção atual ainda não tem comprovadamente o gate instalado; portanto o primeiro fechamento deve usar somente contenção externa do supervisor e drain operacional comprovado. Parar Node isoladamente não prova quiescência.
 
+Para o bootstrap especificamente, não se deve chamar um endpoint/marker que ainda não existe na versão ativa. A sequência externa é: C pausa deploy e jobs de escrita no supervisor; bloqueia novas entradas no ponto de ingresso sem descartar mensagens já aceitas; observa e drena o trabalho em voo por mecanismo operacional verificável; para ordenadamente os produtores; inventaria e para a JVM; comprova que não restou processo com o volume aberto; só então roda o helper cold. **Não há nesta execução evidência de uma fila/contador externo que prove o drain da versão atualmente implantada.** Se a inspeção read-only não encontrar esse sinal e um mecanismo de suspensão do ingresso, o bootstrap permanece BLOCKED e não se para/copia o Datomic. O gate novo passa a cobrir manutenção subsequente após sua instalação, não prova retroativamente o estado anterior.
+
 ### Evidência Docker descartável desta revisão
 
 Todos os volumes e containers listados aqui foram criados com prefixo exclusivo `a6-maint-20261104` e foram removidos ao final. A verificação final não encontrou containers ou volumes com esse prefixo. O container preexistente `festive_lehmann` não foi tocado.
