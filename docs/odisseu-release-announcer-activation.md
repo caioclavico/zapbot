@@ -1,6 +1,6 @@
 # Odisseu A6 — Ativação do Release Announcer (changelog automático)
 
-**Status:** CONDITIONAL · código homologado em ambiente descartável; quatro falhas legadas da suíte ampla permanecem iguais à base limpa e o harness físico requer shim de cleanup. Sem deploy / migration em produção / envio real.\
+**Status:** CONDITIONAL · harness físico agora passa sem shim; quatro falhas legadas da suíte ampla permanecem iguais à base limpa. Sem deploy / migration em produção / envio real.\
 **Branch:** `rc/a6-release-announcer`\
 **Worktree:** `/private/tmp/zapbot-announcer-a6-rc`\
 **Base de produção (trocas A6):** código `f4e0972046d360f29081c36184beaa23cd590e09`, tree `a76b14aeb865e677ac4cf867ee6419acee287402`; tip documental posterior `197bf0c06806145aa491b73a9654e5bb22677b90`\
@@ -200,6 +200,35 @@ Env relevantes (exemplos atualizados): `.env.example`, `.env.odisseu-core.exampl
 
 ## 10. Homologação final e congelamento — 2026-11-04
 
+### Correção do contrato de cleanup e E2E sem shim — 2026-11-04
+
+O harness criava `platform-jvm-client` via `createClient()`. Esse cliente possui um recurso gerenciado: um `http.Agent` com `keepAlive`, que mantém sockets persistentes. Portanto o cleanup pertence ao cliente; não era correto remover a chamada de encerramento do harness nem simular `close()` com shim. `createClient()` agora expõe `close()` que chama `agent.destroy()`. Um teste de loopback abre uma requisição keep-alive, chama `close()` duas vezes e confirma o fechamento do socket.
+
+O harness fecha o cliente em `finally`, fecha o cliente temporário se a inicialização/health check da JVM falhar e encerra processos filhos que ele próprio criou. Cada worker fecha seu cliente no próprio `finally`. Os cenários continuam usando JVM HTTP real, Datomic Local descartável, processos Node independentes e transporte simulado; nenhum mock substitui o bridge/store e não existe shim, monkey patch ou bypass de validação.
+
+E2E físico sem shim: **PASS**, comando `node scripts/test-release-physical-harness.cjs`; porta loopback dinâmica `49559`, processos JVM observados `68931` e `68972`, diretório descartável `/var/folders/nk/g45_sr2x3dx4y0q84dwf9q4h0000gn/T/zapbot-release-physical-tJYc9I`. Evidências: READY sem intent → zero envios; intent confirmada → uma mensagem sintética ao piloto, `ACK_SERVER`, estado Datomic `completed` e repetição `already-completed`; timeout → `uncertain`, retry não reivindicado e sem segundo envio; morte Node antes de associate → `uncertain`, sem `messageId` e sem retry; morte após associate → restart recupera correlação/ACK e conclui sem novo envio; ACK antecipado conclui após correlação; dois workers disputam claim com um único vencedor; evento concluído sobrevive restart JVM/Node e não reenvia. Os processos criados pelo harness encerraram ao final. IDs e payloads são sintéticos.
+
+O cleanup foi a única mudança em código runtime. O cliente `platform-jvm-client.cjs` é copiado para a imagem Node; portanto a imagem Node anterior **não** representa esta revisão. Uma nova imagem Node deve ser reconstruída após o commit/tree abaixo. O harness/teste/documentação não são copiados para imagem. JVM e migration/schema não mudaram e a imagem JVM existente continua correspondente ao código JVM congelado.
+
+#### Regressões após a correção
+
+| Verificação | Resultado |
+|---|---|
+| Testes direcionados (release, transporte, cliente HTTP, dispatcher, grupos, trocas) | PASS — 68/68 |
+| `node scripts/test-release-physical-harness.cjs` sem shim | PASS — cenários acima |
+| `npm run build` | PASS — 854 warnings conhecidos do compilador/dependências |
+| `npm test` no RC | 236 testes / 1.407 asserções; 1 falha + 3 erros, mesmas quatro falhas da base limpa `197bf0c06806145aa491b73a9654e5bb22677b90` (3 `re-find must match against a string` em `pokemon_http_test.cljs:183,185,187`; expectativa `Cartões` vs `cartoes` em `pokemon_http_test.cljs:505`) |
+
+Não alterei expectativas nem a implementação Pokémon para mascarar essas falhas. Elas já foram reproduzidas na base limpa em execução anterior documentada; nesta repetição continuam nas mesmas asserções e não há falha nova no circuito do Announcer. A saída integral das suítes Node/Shadow está disponível no histórico local desta homologação.
+
+#### Estado de congelamento
+
+Esta correção modifica `scripts/lib/platform-jvm-client.cjs`, por isso exige commit de código/tree novos e reconstrução apenas da imagem Node AMD64. O build ainda não foi registrado para essa nova árvore; o Image ID Node anterior (`sha256:3d2961a15bc301ab023a44454fc0a50fe835bb2acfceced26dd246b1f8e6b91c`) fica apenas como artefato histórico e não deve ser usado como imagem correspondente à correção. A imagem JVM permanece `sha256:9bf811fc47488a534848bc0628c3b5b0f6bacdb7b1662774bd60c376339576bb`, sem alteração de código JVM.
+
+O código e este relatório precisam ser congelados em commits separados após a revisão final do diff. Não houve deploy, migration ou envio real.
+
+### Linhagem Git e produção
+
 ### Linhagem Git e produção
 
 O código operacional das trocas implantado em `odisseu-core` é o commit `f4e0972046d360f29081c36184beaa23cd590e09`, tree `a76b14aeb865e677ac4cf867ee6419acee287402`, conforme o relatório do deploy de produção. O tip `197bf0c06806145aa491b73a9654e5bb22677b90` é posterior e contém documentação de pós-deploy e um script de ensaio; não altera os arquivos de runtime implantados. A migration Pokémon `033-trade-public-id` está aplicada. A migration econômica `033` não está neste RC.
@@ -248,7 +277,7 @@ Ensaio descartável em Datomic Local: schema platform aplicado por `make-store` 
 
 As falhas comuns à base são: três `TypeError: re-find must match against a string` em `comandos-de-missoes-preservam-o-filtro-de-apresentacao` (`pokemon_http_test.cljs:183,185,187`), e a expectativa `Cartões` em `perfil-professor-titulo-amizade-rota-evento-whatsapp` (`pokemon_http_test.cljs:505`) quando a saída existente oferece o alias `cartoes`. A comparação não encontrou falha nova introduzida pelo Announcer. Estas falhas permanecem como dívida da base de produção; não foram alteradas nem mascaradas.
 
-O harness físico foi executado com JVM HTTP real em porta loopback dinâmica, Datomic Local novo e processos Node filhos com transporte WhatsApp simulado. A invocação original revelou um defeito do próprio harness: ele chama `platform.close()`, método que `platform-jvm-client` não fornece. Sem alterar arquivos do RC, uma shim temporária apenas tornou essa chamada de cleanup no-op; então todos os cenários passaram: Node encerrado antes de associate (`uncertain`, sem messageId e sem reclaim); morte após associate e ACK após restart sem segundo send; ACK antecipado; claims concorrentes com um único vencedor; ACK durante tentativa de reclaim e conclusão apenas pelo fence atual; restart após complete sem novo envio. A janela send→associate mantém o risco documentado de duplicação visual; não há exactly-once. Corrigir o cleanup e tornar a chamada do harness executável sem shim é recomendado antes de usar este script como gate automatizado futuro.
+Registro histórico: a execução inicial do harness falhou porque chamou `platform.close()` inexistente; uma execução intermediária usou shim temporária. Esse resultado foi substituído pela homologação sem shim documentada na seção “Correção do contrato de cleanup e E2E sem shim”.
 
 ### Política de anúncio verificada
 
@@ -275,4 +304,14 @@ Nenhuma etapa de rollout foi realizada aqui: sem deploy, migration em produção
 
 ### Decisão
 
-**CONDITIONAL — código e imagens do Announcer homologados em ambiente descartável e sem regressão nova em relação à base; não classificar o repositório inteiro como totalmente verde.** Antes de READY final para implantação, tratar as quatro falhas já presentes na base conforme decisão de release e corrigir o cleanup do harness para executá-lo sem shim. O futuro deploy continua dependendo de GO operacional específico; Announcer permanece opt-in e desabilitado por padrão.
+**CONDITIONAL — E2E físico sem shim, build e gates direcionados aprovados, sem regressão nova; a suíte completa conserva quatro falhas idênticas à base limpa.** O Announcer permanece opt-in e desabilitado por padrão. Nenhuma operação de produção foi feita.
+
+### Atualização de congelamento após correção do cleanup
+
+- Commit de código final: `c948b29195a6c29ae6a12120b2ca378ab3e8ebf6`; content-tree: `7da5d84749a6b09fa3cff31b75e8d4eaa03fab24`.
+- Commit documental anterior à atualização final: `103a193adee78b0028775a1a1063e4bc09778ccf`. Esta atualização deve ser registrada em commit documental separado; seu tree não deve ser apresentado como o tree do código.
+- Imagem Node reconstruída somente para o novo código: tag `odisseu-node:a6-announcer-20261104T1558Z-7da5d84749a6-amd64`, Image ID completo `sha256:69a7a9624ea190e6c2e2578d4a89a24b29884811b22f24762c2c92be71466dd1`, `linux/amd64`, label `git-tree=7da5d84749a6b09fa3cff31b75e8d4eaa03fab24`. Foi feito smoke isolado `--network none` confirmando `createClient().close()`; Docker reportou host ARM64 e executou a imagem AMD64 por emulação. Nenhum container persistente foi iniciado.
+- A imagem JVM não precisou ser reconstruída: `sha256:9bf811fc47488a534848bc0628c3b5b0f6bacdb7b1662774bd60c376339576bb`, `linux/amd64`, label tree `6e5604d425bc85ea33970e424c2ee55aefc7b620`; nenhuma fonte JVM/schema foi alterada.
+- A imagem Node anterior (`sha256:3d2961a15bc301ab023a44454fc0a50fe835bb2acfceced26dd246b1f8e6b91c`) é histórica e não representa o cleanup corrigido. Não reutilizar esse ID para a nova árvore.
+- `npm run build`: PASS, 854 warnings do compilador/dependências. Testes direcionados: 68/68 PASS. `npm test`: 236 testes/1.407 asserções, com 1 falha e 3 erros nas mesmas quatro asserções já reproduzidas na base limpa `197bf0c06806145aa491b73a9654e5bb22677b90`; sem falhas novas identificadas.
+- A build da imagem concluiu e o smoke do método de cleanup passou. Não houve deploy, migration, restart live, ativação de announcer ou envio real.
