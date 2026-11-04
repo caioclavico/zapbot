@@ -11,7 +11,8 @@
   (:require [clojure.java.io :as io]
             [clojure.pprint :as pprint]
             [clojure.string :as str]
-            [datomic.client.api :as d])
+            [datomic.client.api :as d]
+            [odisseu.persistence.datomic :as persistence])
   (:import [java.lang.management ManagementFactory]
            [java.time Instant]))
 
@@ -94,16 +95,10 @@
           '[:treinador/id :treinador/nome :treinador/moedas :treinador/nivel]
           [:treinador/id treinador-id]))
 
-(defn- client-cfg
-  [storage]
-  {:server-type :datomic-local
-   :system      "odisseu-m1-smoke"
-   :storage-dir storage})
-
 (defn- phase-write!
   "Cria banco, schema, treinador e atualização. Retorna mapa de verificação."
   [storage db-name treinador-id]
-  (let [client (d/client (client-cfg storage))]
+  (let [client (persistence/client {:system "odisseu-m1-smoke" :storage-dir storage})]
     (when (some #{db-name} (d/list-databases client {}))
       (d/delete-database client {:db-name db-name}))
     (assert! (d/create-database client {:db-name db-name})
@@ -128,7 +123,7 @@
 (defn- phase-reopen!
   "Novo client: reabre o mesmo storage e confirma persistência."
   [storage db-name treinador-id]
-  (let [client (d/client (client-cfg storage))
+  (let [client (persistence/client {:system "odisseu-m1-smoke" :storage-dir storage})
         conn (d/connect client {:db-name db-name})
         encontrado (find-treinador (d/db conn) treinador-id)]
     (assert! (= treinador-id (:treinador/id encontrado)) "id persistido")
