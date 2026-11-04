@@ -427,7 +427,8 @@ function createClient(config = {}) {
     },
     newOperationId(prefix) {
       return `${prefix || 'op'}:${crypto.randomUUID()}`;
-    }
+    },
+    close: () => agent.destroy()
   };
 }
 
