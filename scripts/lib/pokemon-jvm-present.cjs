@@ -1134,6 +1134,11 @@ function formatError(err) {
       return '📦 Armazenamento Pokémon cheio: libere ou compre vagas (!pk espaco) antes de capturar.';
     })(),
     BATTLE_PENDING: '⚠️ Há batalha/encontro em andamento neste save — não dá para alternar A↔B agora.',
+    TRADE_NOT_FOUND: '❓ Não encontrei essa proposta de troca. Confira `!pk trocas`.',
+    TRADE_FORBIDDEN: '🚫 Você não pode fazer isso nesta proposta de troca.',
+    TRADE_EXPIRED: '⏰ Essa proposta de troca expirou. Peça uma nova com `!pk troca`.',
+    INVALID_TRADE: '⚠️ Não foi possível concluir a troca. Verifique se os Pokémon ainda estão disponíveis.',
+    INVALID_TRADE_TRANSITION: '⚠️ Essa proposta não aceita esta ação no estado atual.',
     BATTLE_SAVE_MISMATCH: '⚠️ Encontro pertence a outro save — callback antigo rejeitado.',
     BATTLE_ALREADY_ACTIVE: '⚔️ Já existe uma batalha/encontro seu em andamento.',
     BATTLE_BUSY: '🚫 Termine a batalha/caça antes de trocar o ativo, evoluir, alterar golpes ou usar o professor.',
@@ -2876,6 +2881,137 @@ function formatGift(data, prefix = '!presente') {
   return lines.join('\n');
 }
 
+function mentionHandle(jid) {
+  const raw = String(jid || '').trim();
+  if (!raw) return '@treinador';
+  return `@${raw.split('@')[0]}`;
+}
+
+function tradePublicLabel(data) {
+  if (!data) return null;
+  if (data.publicLabel) return String(data.publicLabel);
+  if (data.publicId != null && data.publicId !== '') return `#${data.publicId}`;
+  return null;
+}
+
+function tradePokemonLabel(data, side) {
+  const key = side === 'a' ? 'pokemonAName' : 'pokemonBName';
+  const alt = side === 'a' ? 'pokemon-a-name' : 'pokemon-b-name';
+  const name = (data && (data[key] || data[alt])) || null;
+  if (typeof name === 'string' && name.trim()) return name.trim();
+  return null;
+}
+
+function formatTradeState(state) {
+  switch (String(state || '').toLowerCase()) {
+    case 'invited': return 'aguardando aceite';
+    case 'accepted': return 'aguardando confirmação';
+    case 'selecting': return 'selecionando';
+    case 'awaiting-confirmations':
+    case 'awaiting_confirmations': return 'aguardando confirmações';
+    case 'completed': return 'concluída';
+    case 'refused': return 'recusada';
+    case 'cancelled': return 'cancelada';
+    case 'expired': return 'expirada';
+    case 'invalidated': return 'invalidada';
+    default: return String(state || 'pendente');
+  }
+}
+
+function formatTradeCreated(data, opts = {}) {
+  const prefix = opts.prefix || '!pk';
+  const label = tradePublicLabel(data) || '#?';
+  const from = mentionHandle(opts.fromPlayerId || data.playerA || data['player-a']);
+  const to = mentionHandle(opts.toPlayerId || data.playerB || data['player-b']);
+  const offers = tradePokemonLabel(data, 'a');
+  const wants = tradePokemonLabel(data, 'b');
+  const num = String(label).replace(/^#/, '');
+  const lines = [
+    `🤝 *PROPOSTA DE TROCA ${label}*`,
+    '',
+    `👤 *Oferecida por:* ${from}`,
+    `🎯 *Destinatário:* ${to}`
+  ];
+  if (offers) lines.push('', `📤 *Oferece:* ${offers}`);
+  if (wants) lines.push(`📥 *Recebe:* ${wants}`);
+  lines.push(
+    '',
+    '✅ Para aceitar:',
+    `\`${prefix} troca aceitar ${num}\``,
+    '',
+    '❌ Para recusar:',
+    `\`${prefix} troca recusar ${num}\``
+  );
+  return lines.join('\n');
+}
+
+function formatTradeAccepted(data, opts = {}) {
+  const prefix = opts.prefix || '!pk';
+  const label = tradePublicLabel(data) || '#?';
+  const num = String(label).replace(/^#/, '');
+  return [
+    `✅ *Proposta ${label} aceita!*`,
+    `Aguardando confirmação do autor com \`${prefix} troca confirmar ${num}\`.`
+  ].join('\n');
+}
+
+function formatTradeCompleted(data, opts = {}) {
+  const label = tradePublicLabel(data);
+  const evolutions = Array.isArray(data && data.evolutions) ? data.evolutions.filter(Boolean) : [];
+  const lines = [label ? `🤝 *Troca ${label} concluída!*` : '🤝 *Troca concluída!*'];
+  const offers = tradePokemonLabel(data, 'a');
+  const wants = tradePokemonLabel(data, 'b');
+  if (offers && wants) lines.push(`📤 ${offers} ⇄ 📥 ${wants}`);
+  if (evolutions.length) lines.push(`✨ Evoluíram: ${evolutions.join(', ')}`);
+  return lines.join('\n');
+}
+
+function formatTradeRefused(data) {
+  const label = tradePublicLabel(data);
+  return label ? `🚫 Proposta ${label} recusada.` : '🚫 Proposta de troca recusada.';
+}
+
+function formatTradeCancelled(data) {
+  const label = tradePublicLabel(data);
+  return label ? `🚪 Proposta ${label} cancelada.` : '🚪 Proposta de troca cancelada.';
+}
+
+function formatTradeList(trades, opts = {}) {
+  const prefix = opts.prefix || '!pk';
+  const list = Array.isArray(trades) ? trades : [];
+  const open = list.filter((tr) => {
+    const st = String((tr && tr.state) || '').toLowerCase();
+    return ['invited', 'accepted', 'selecting', 'awaiting-confirmations', 'awaiting_confirmations'].includes(st);
+  });
+  if (!open.length) {
+    return [
+      '🤝 Nenhuma proposta pendente.',
+      `Crie com \`${prefix} troca <seu nº> <nº do outro> @treinador\`.`
+    ].join('\n');
+  }
+  const lines = ['🤝 *Propostas pendentes*', ''];
+  for (const tr of open) {
+    const label = tradePublicLabel(tr) || '?—';
+    const offers = tradePokemonLabel(tr, 'a');
+    const wants = tradePokemonLabel(tr, 'b');
+    const pair = (offers || wants)
+      ? ` — ${offers || '?'} ⇄ ${wants || '?'}`
+      : '';
+    lines.push(`• *${label}* (${formatTradeState(tr.state)})${pair}`);
+  }
+  lines.push(
+    '',
+    `\`${prefix} troca aceitar <n>\` · \`${prefix} troca confirmar <n>\``,
+    `\`${prefix} troca recusar <n>\` · \`${prefix} troca cancelar <n>\``
+  );
+  return lines.join('\n');
+}
+
+function tradeMentions(...ids) {
+  return [...new Set(ids.filter((id) => typeof id === 'string' && id.trim()))];
+}
+
+
 function formatMissionPending(data, prefix = '!mochila') {
   const result = missionResult(data);
   if (result.empty) return '🎒 Nenhuma recompensa pendente coube na mochila agora.';
@@ -3204,6 +3340,15 @@ module.exports = {
   formatMissions,
   formatMissionClaim,
   formatGift,
+  formatTradeCreated,
+  formatTradeAccepted,
+  formatTradeCompleted,
+  formatTradeRefused,
+  formatTradeCancelled,
+  formatTradeList,
+  tradePublicLabel,
+  tradeMentions,
+  mentionHandle,
   formatMissionPending,
   formatMissionItems,
   missionScope,

@@ -291,6 +291,50 @@
        (aset extras "mentions" (clj->js (vec mentions))))
      (.envelope jvm-present (:requestId pedido) texto extras))))
 
+
+(defn- nome-pokemon-colecao [p]
+  (or (some-> p .-nome str not-empty)
+      (some-> p .-nickname str not-empty)
+      (when-let [sp (some-> p .-species str not-empty)]
+        (str (str/upper-case (subs sp 0 1)) (subs sp 1)))
+      nil))
+
+(defn- trade-token-publico [data]
+  (let [label (or (some-> data .-publicLabel str not-empty)
+                  (when-let [n (some-> data .-publicId)]
+                    (str "#" n)))]
+    (when label (str/replace label #"^#" ""))))
+
+(defn- trade-ref-arg [raw]
+  (let [tok (-> (str (or raw "")) str/trim (str/replace #"^#" ""))]
+    (when-not (str/blank? tok) tok)))
+
+(defn- trades-abertas [trades]
+  (->> (array-seq (or trades #js []))
+       (filter (fn [tr]
+                 (contains? #{"invited" "accepted" "selecting"
+                              "awaiting-confirmations" "awaiting_confirmations"}
+                            (str/lower-case (str (or (.-state tr) ""))))))))
+
+(defn- escolher-trade-unica [trades player-id acao]
+  (let [abertas (trades-abertas trades)
+        elegiveis
+        (filter
+         (fn [tr]
+           (let [st (str/lower-case (str (or (.-state tr) "")))
+                 a (str (or (.-playerA tr) (.-player-a tr) ""))
+                 b (str (or (.-playerB tr) (.-player-b tr) ""))]
+             (case acao
+               "aceitar" (and (= st "invited") (= player-id b))
+               "recusar" (and (= st "invited") (= player-id b))
+               "confirmar" (and (= st "accepted") (= player-id a))
+               "cancelar" (and (contains? #{"invited" "accepted" "selecting"
+                                            "awaiting-confirmations" "awaiting_confirmations"} st)
+                               (or (= player-id a) (= player-id b)))
+               false)))
+         abertas)]
+    (when (= 1 (count elegiveis)) (first elegiveis))))
+
 (defn- render-seguro!
   "Render de mídia pós-TX. Qualquer falha → nil (nunca reexecuta gameplay)."
   [ctx metrica f]
@@ -1079,14 +1123,15 @@
         primeiro (str (or (first args) ""))
         ;; !pk 1‥4 → atacar com o índice preservado em resto.
         primeiro-arg (str/lower-case (str (or (first args) "")))
-        trade? (= "troca" primeiro-arg)
+        trade? (contains? #{"troca" "trocas"} primeiro-arg)
         recovery? (= "recuperar" primeiro-arg)
         save-management? (contains? #{"novo" "renomear"} primeiro-arg)
-        ;; A negociação só é exposta por !pk troca. O token já vem nos args
+        ;; A negociação só é exposta por !pk troca(s). O token já vem nos args
         ;; recebidos de pokemon/jogar e não integra o contrato HTTP.
-        trade-args (if trade?
-                     (vec (rest args))
-                     args)
+        trade-args (cond
+                     (= "trocas" primeiro-arg) []
+                     trade? (vec (rest args))
+                     :else args)
         resolved-cmd (cond
                        trade? nil
                        recovery? nil
@@ -1161,82 +1206,111 @@
         (entregar-envelope-jvm! message ctx pedido (envelope-jvm pedido texto)))
       (if trade?
       (p/let [envelope
-              (let [sub (str/lower-case (str (or (first trade-args) "")))
-            rest-args (vec (rest trade-args))
-            op-id (fn [suffix] (.stableOperationId jvm-transport (:requestId pedido) suffix))
-            ativo! #(.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-            col! #(.getCollection jvm #js {:chatId chat-id :playerId player-id})
-            indice! (fn [texto col]
-                       (let [arr (or (.-collection col) #js [])
-                             idx (parse-indice-1based texto (alength arr))]
-                         (when (nil? idx) (throw (erro-contrato "❓ Índice de Pokémon inválido.")))
-                         (let [p (aget arr idx)]
-                           (or (.-pokemonId p) (.-id p) (.-uuid p)))))
-            body-op (fn [action trade-id]
-                      (p/let [a (ativo!)]
-                        #js {:chatId chat-id :playerId player-id :tradeId trade-id
-                             :saveId (.-activeSaveId a) :fenceGeneration (.-fenceGeneration a)
-                             :operationId (op-id action)}))]
-        (cond
-          (str/blank? sub)
-          (p/let [data (.listTrades jvm #js {:chatId chat-id :playerId player-id})
-                  trades (or (.-trades data) #js [])]
-            (envelope-jvm pedido (if (zero? (alength trades))
-                                  "🤝 Nenhuma proposta pendente."
-                                  (str "🤝 Propostas pendentes: " (alength trades)
-                                       ". Use !pk troca aceitar <id> ou !pk troca cancelar <id>."))))
-          (= sub "aceitar")
-          (p/let [b (body-op "trade-accept" (first rest-args))
-                  data (.acceptTrade jvm b)]
-            (envelope-jvm pedido
-                          (str "✅ Proposta aceita: " (.-tradeId data)
-                               ". Agora quem criou a proposta deve usar !pk troca confirmar "
-                               (.-tradeId data) ".")))
-          (= sub "confirmar")
-          (p/let [b (body-op "trade-complete" (first rest-args))
-                  listed (.listTrades jvm #js {:chatId chat-id :playerId player-id})
-                  trades (array-seq (or (.-trades listed) #js []))
-                  found (some #(when (= (str (or (.-tradeId %) (.-id %))) (str (first rest-args))) %) trades)]
-            (when found
-              (aset b "pokemonA" (or (.-pokemonA found) (.-pokemon-a found)))
-              (aset b "pokemonB" (or (.-pokemonB found) (.-pokemon-b found))))
-            (let [data (.completeTrade jvm b)]
-              (p/then data
-                      (fn [result]
-                        (let [evolucoes (array-seq (or (.-evolutions result) #js []))
-                              detalhe (when (seq evolucoes)
-                                        (str " Evoluíram: " (str/join ", " evolucoes)))]
-                          (envelope-jvm pedido
-                                        (str "🤝 Troca concluída: "
-                                             (or (.-tradeId result) (first rest-args))
-                                             detalhe)))))))
-          (= sub "recusar")
-          (p/let [b (body-op "trade-refuse" (first rest-args))
-                  data (.refuseTrade jvm b)] (envelope-jvm pedido (str "🚫 Proposta recusada: " (.-tradeId data))))
-          (= sub "cancelar")
-          (p/let [b (body-op "trade-cancel" (first rest-args))
-                  data (.cancelTrade jvm b)] (envelope-jvm pedido (str "🚫 Proposta cancelada: " (.-tradeId data))))
-          (and (= 3 (count trade-args)) (re-matches #"[1-9][0-9]*" (first trade-args)))
-          (let [[meu outro menc] trade-args
-                mentions (vec (get-in pedido [:context :mentionedIds]))
-                target (first mentions)]
-            (when-not (= 1 (count mentions))
-              (throw (erro-contrato "❓ Mencione exatamente um treinador.")))
-            (p/let [a (ativo!) ca (col!) at (.getActiveSave jvm #js {:chatId chat-id :playerId target})
-                    ct (.getCollection jvm #js {:chatId chat-id :playerId target})
-                    pokemon-a (indice! meu ca) pokemon-b (indice! outro ct)
-                    data (.createTrade jvm #js {:chatId chat-id :playerId player-id :playerA player-id :playerB target
-                                                :saveA (.-activeSaveId a) :saveB (.-activeSaveId at)
-                                                :fenceGeneration (.-fenceGeneration a)
-                                                :fenceA (.-fenceGeneration a) :fenceB (.-fenceGeneration at)
-                                                :pokemonA pokemon-a :pokemonB pokemon-b
-                                                :operationId (op-id (str "trade-create:" target ":" meu ":" outro))})]
-              (let [trade-id (or (.-tradeId data) (.-id data))]
-                (envelope-jvm pedido
-                              (str "🤝 Proposta criada: " trade-id
-                                   ". O treinador mencionado deve usar !pk troca aceitar " trade-id
-                                   "; depois você confirma com !pk troca confirmar " trade-id ".")))))
-          :else (throw (erro-contrato "❓ Use !pk troca <meu índice> <índice do outro> @treinador ou !pk troca aceitar|confirmar|recusar|cancelar <id>."))))]
+              (let [prefix (str config/prefix "pk")
+                    sub (str/lower-case (str (or (first trade-args) "")))
+                    rest-args (vec (rest trade-args))
+                    op-id (fn [suffix] (.stableOperationId jvm-transport (:requestId pedido) suffix))
+                    ativo! #(.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                    col! #(.getCollection jvm #js {:chatId chat-id :playerId player-id})
+                    indice-poke! (fn [texto col]
+                                   (let [arr (or (.-collection col) #js [])
+                                         idx (parse-indice-1based texto (alength arr))]
+                                     (when (nil? idx)
+                                       (throw (erro-contrato "❓ Índice de Pokémon inválido.")))
+                                     (aget arr idx)))
+                    resolver-ref! (fn [acao raw]
+                                    (p/let [listed (.listTrades jvm #js {:chatId chat-id :playerId player-id})
+                                            trades (or (.-trades listed) #js [])
+                                            token (trade-ref-arg raw)]
+                                      (if token
+                                        token
+                                        (if-let [unica (escolher-trade-unica trades player-id acao)]
+                                          (or (trade-token-publico unica)
+                                              (str (or (.-id unica) (.-tradeId unica))))
+                                          (throw (erro-contrato
+                                                  (str "❓ Informe o número da proposta: `"
+                                                       prefix " troca " acao " <n>`.\n"
+                                                       "Veja as pendentes com `" prefix " trocas`.")))))))
+                    body-op (fn [action trade-id]
+                              (p/let [a (ativo!)]
+                                #js {:chatId chat-id :playerId player-id :tradeId trade-id
+                                     :saveId (.-activeSaveId a) :fenceGeneration (.-fenceGeneration a)
+                                     :operationId (op-id action)}))]
+                (cond
+                  (or (str/blank? sub) (= sub "lista") (= sub "listar"))
+                  (p/let [data (.listTrades jvm #js {:chatId chat-id :playerId player-id})]
+                    (envelope-jvm pedido (.formatTradeList jvm-present (.-trades data) #js {:prefix prefix})))
+
+                  (= sub "aceitar")
+                  (p/let [ref (resolver-ref! "aceitar" (first rest-args))
+                          b (body-op "trade-accept" ref)
+                          data (.acceptTrade jvm b)
+                          texto (.formatTradeAccepted jvm-present data #js {:prefix prefix})]
+                    (envelope-jvm pedido texto nil
+                                  (array-seq (.tradeMentions jvm-present
+                                                             (or (.-playerA data) (.-player-a data))
+                                                             (or (.-playerB data) (.-player-b data))
+                                                             player-id))))
+
+                  (= sub "confirmar")
+                  (p/let [ref (resolver-ref! "confirmar" (first rest-args))
+                          b (body-op "trade-complete" ref)
+                          data (.completeTrade jvm b)
+                          texto (.formatTradeCompleted jvm-present data #js {:prefix prefix})]
+                    (envelope-jvm pedido texto nil
+                                  (array-seq (.tradeMentions jvm-present
+                                                             (or (.-playerA data) (.-player-a data))
+                                                             (or (.-playerB data) (.-player-b data))
+                                                             player-id))))
+
+                  (= sub "recusar")
+                  (p/let [ref (resolver-ref! "recusar" (first rest-args))
+                          b (body-op "trade-refuse" ref)
+                          data (.refuseTrade jvm b)]
+                    (envelope-jvm pedido (.formatTradeRefused jvm-present data)))
+
+                  (= sub "cancelar")
+                  (p/let [ref (resolver-ref! "cancelar" (first rest-args))
+                          b (body-op "trade-cancel" ref)
+                          data (.cancelTrade jvm b)]
+                    (envelope-jvm pedido (.formatTradeCancelled jvm-present data)))
+
+                  (and (= 3 (count trade-args)) (re-matches #"[1-9][0-9]*" (first trade-args)))
+                  (let [[meu outro] trade-args
+                        mentions (vec (get-in pedido [:context :mentionedIds]))
+                        target (first mentions)]
+                    (when-not (= 1 (count mentions))
+                      (throw (erro-contrato "❓ Mencione exatamente um treinador.")))
+                    (p/let [a (ativo!) ca (col!)
+                            at (.getActiveSave jvm #js {:chatId chat-id :playerId target})
+                            ct (.getCollection jvm #js {:chatId chat-id :playerId target})
+                            poke-a (indice-poke! meu ca)
+                            poke-b (indice-poke! outro ct)
+                            pokemon-a (or (.-pokemonId poke-a) (.-id poke-a) (.-uuid poke-a))
+                            pokemon-b (or (.-pokemonId poke-b) (.-id poke-b) (.-uuid poke-b))
+                            nome-a (nome-pokemon-colecao poke-a)
+                            nome-b (nome-pokemon-colecao poke-b)
+                            body (clj->js {:chatId chat-id :playerId player-id
+                                           :playerA player-id :playerB target
+                                           :saveA (.-activeSaveId a) :saveB (.-activeSaveId at)
+                                           :fenceGeneration (.-fenceGeneration a)
+                                           :fenceA (.-fenceGeneration a) :fenceB (.-fenceGeneration at)
+                                           :pokemonA pokemon-a :pokemonB pokemon-b
+                                           :operationId (op-id (str "trade-create:" target ":" meu ":" outro))})
+                            _ (when nome-a (aset body "pokemonAName" nome-a))
+                            _ (when nome-b (aset body "pokemonBName" nome-b))
+                            data (.createTrade jvm body)
+                            texto (.formatTradeCreated jvm-present data
+                                                       #js {:prefix prefix
+                                                            :fromPlayerId player-id
+                                                            :toPlayerId target})]
+                      (envelope-jvm pedido texto nil [player-id target])))
+
+                  :else
+                  (throw (erro-contrato
+                          (str "❓ Use `" prefix " troca <seu nº> <nº do outro> @treinador`\n"
+                               "ou `" prefix " troca aceitar|confirmar|recusar|cancelar <n>`\n"
+                               "ou `" prefix " trocas`.")))))]
         (entregar-envelope-jvm! message ctx pedido envelope))
       (if-not cmd
       (entregar-envelope-jvm!

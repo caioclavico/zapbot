@@ -357,15 +357,22 @@
                    :getCollection (fn [_] (p/resolved #js {:collection #js [#js {:pokemonId "p1"}]}))
                    :listTrades (fn [_] (p/resolved #js {:trades #js []}))
                    :createTrade (fn [body] (swap! chamadas conj ["create" body])
-                                      (p/resolved #js {:tradeId "t1"}))
+                                      (p/resolved #js {:tradeId "t1" :id "t1" :publicId 1
+                                                       :publicLabel "#1" :state "invited"
+                                                       :playerA "ash@lid" :playerB "misty@lid"
+                                                       :pokemonAName "Pikachu" :pokemonBName "Eevee"}))
                    :acceptTrade (fn [body] (swap! chamadas conj ["accept" body])
-                                      (p/resolved #js {:tradeId "t1"}))
+                                      (p/resolved #js {:tradeId "t1" :publicId 1 :publicLabel "#1"
+                                                       :state "accepted" :playerA "ash@lid" :playerB "misty@lid"}))
                    :completeTrade (fn [body] (swap! chamadas conj ["complete" body])
-                                        (p/resolved #js {:tradeId "t1"}))
+                                        (p/resolved #js {:tradeId "t1" :publicId 1 :publicLabel "#1"
+                                                         :state "completed" :evolutions #js []}))
                    :refuseTrade (fn [body] (swap! chamadas conj ["refuse" body])
-                                      (p/resolved #js {:tradeId "t1"}))
+                                      (p/resolved #js {:tradeId "t1" :publicId 1 :publicLabel "#1"
+                                                       :state "refused"}))
                    :cancelTrade (fn [body] (swap! chamadas conj ["cancel" body])
-                                      (p/resolved #js {:tradeId "t1"}))})
+                                      (p/resolved #js {:tradeId "t1" :publicId 1 :publicLabel "#1"
+                                                       :state "cancelled"}))})
           mensagem (fn [id player mentions]
                      #js {:id #js {:_serialized id} :from "grupo@g.us" :author player
                           :mentionedIds mentions
@@ -423,7 +430,9 @@
                       :createTrade (fn [body]
                                      (swap! chamadas inc)
                                      (swap! operacoes conj (.-operationId body))
-                                     (p/resolved #js {:tradeId "t1"}))}]
+                                     (p/resolved #js {:tradeId "t1" :publicId 7 :publicLabel "#7"
+                                                      :playerA "ash@lid" :playerB "misty@lid"
+                                                      :pokemonAName "A" :pokemonBName "B"}))}]
       (set! http/jvm-configurado? (fn [] true))
       (reset! http/cliente-jvm client)
       (-> (isolado! #(http/executar message "pokemon" "troca 1 1 @misty"))
@@ -431,7 +440,9 @@
                     ;; Uma falha de transporte não reexecuta a criação.
                     (is (= 1 @chamadas))
                     (is (= 1 (count @operacoes)))
-                    (is (= 1 (count @envios)))))
+                    (is (= 1 (count @envios)))
+                    (is (re-find #"#7" (first @envios)))
+                    (is (not (re-find #"trade-create" (first @envios))))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally (fn []
                        (set! http/jvm-configurado? original-config)
@@ -450,7 +461,9 @@
                       :getCollection (fn [_] (p/resolved #js {:collection #js [#js {:pokemonId "p1"}]}))
                       :createTrade (fn [body]
                                      (swap! operacoes conj (.-operationId body))
-                                     (p/resolved #js {:tradeId "t1"}))}]
+                                     (p/resolved #js {:tradeId "t1" :publicId 3 :publicLabel "#3"
+                                                      :playerA "ash@lid" :playerB "misty@lid"
+                                                      :pokemonAName "A" :pokemonBName "B"}))}]
       (set! http/jvm-configurado? (fn [] true))
       (reset! http/cliente-jvm client)
       (-> (isolado!
@@ -461,7 +474,8 @@
                ;; não duplica a mensagem já confirmada.
                (is (= 2 (count @operacoes)))
                (is (= 1 (count (set @operacoes))))
-               (is (= 1 (count @envios))))))
+               (is (= 1 (count @envios)))
+               (is (re-find #"#3" (first @envios))))))
           (p/catch (fn [erro] (is false (str erro))))
           (p/finally (fn []
                        (set! http/jvm-configurado? original-config)
