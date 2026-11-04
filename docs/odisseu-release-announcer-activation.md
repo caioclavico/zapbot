@@ -208,7 +208,7 @@ O harness fecha o cliente em `finally`, fecha o cliente temporário se a inicial
 
 E2E físico sem shim: **PASS**, comando `node scripts/test-release-physical-harness.cjs`; porta loopback dinâmica `49559`, processos JVM observados `68931` e `68972`, diretório descartável `/var/folders/nk/g45_sr2x3dx4y0q84dwf9q4h0000gn/T/zapbot-release-physical-tJYc9I`. Evidências: READY sem intent → zero envios; intent confirmada → uma mensagem sintética ao piloto, `ACK_SERVER`, estado Datomic `completed` e repetição `already-completed`; timeout → `uncertain`, retry não reivindicado e sem segundo envio; morte Node antes de associate → `uncertain`, sem `messageId` e sem retry; morte após associate → restart recupera correlação/ACK e conclui sem novo envio; ACK antecipado conclui após correlação; dois workers disputam claim com um único vencedor; evento concluído sobrevive restart JVM/Node e não reenvia. Os processos criados pelo harness encerraram ao final. IDs e payloads são sintéticos.
 
-O cleanup foi a única mudança em código runtime. O cliente `platform-jvm-client.cjs` é copiado para a imagem Node; portanto a imagem Node anterior **não** representa esta revisão. Uma nova imagem Node deve ser reconstruída após o commit/tree abaixo. O harness/teste/documentação não são copiados para imagem. JVM e migration/schema não mudaram e a imagem JVM existente continua correspondente ao código JVM congelado.
+O cleanup foi a única mudança em código runtime. O cliente `platform-jvm-client.cjs` é copiado para a imagem Node; portanto a imagem Node anterior **não** representa esta revisão. A nova imagem Node foi reconstruída para o commit/tree abaixo. O harness/teste/documentação não são copiados para imagem. JVM e migration/schema não mudaram e a imagem JVM existente continua correspondente ao código JVM congelado.
 
 #### Regressões após a correção
 
@@ -220,14 +220,6 @@ O cleanup foi a única mudança em código runtime. O cliente `platform-jvm-clie
 | `npm test` no RC | 236 testes / 1.407 asserções; 1 falha + 3 erros, mesmas quatro falhas da base limpa `197bf0c06806145aa491b73a9654e5bb22677b90` (3 `re-find must match against a string` em `pokemon_http_test.cljs:183,185,187`; expectativa `Cartões` vs `cartoes` em `pokemon_http_test.cljs:505`) |
 
 Não alterei expectativas nem a implementação Pokémon para mascarar essas falhas. Elas já foram reproduzidas na base limpa em execução anterior documentada; nesta repetição continuam nas mesmas asserções e não há falha nova no circuito do Announcer. A saída integral das suítes Node/Shadow está disponível no histórico local desta homologação.
-
-#### Estado de congelamento
-
-Esta correção modifica `scripts/lib/platform-jvm-client.cjs`, por isso exige commit de código/tree novos e reconstrução apenas da imagem Node AMD64. O build ainda não foi registrado para essa nova árvore; o Image ID Node anterior (`sha256:3d2961a15bc301ab023a44454fc0a50fe835bb2acfceced26dd246b1f8e6b91c`) fica apenas como artefato histórico e não deve ser usado como imagem correspondente à correção. A imagem JVM permanece `sha256:9bf811fc47488a534848bc0628c3b5b0f6bacdb7b1662774bd60c376339576bb`, sem alteração de código JVM.
-
-O código e este relatório precisam ser congelados em commits separados após a revisão final do diff. Não houve deploy, migration ou envio real.
-
-### Linhagem Git e produção
 
 ### Linhagem Git e produção
 
@@ -309,7 +301,7 @@ Nenhuma etapa de rollout foi realizada aqui: sem deploy, migration em produção
 ### Atualização de congelamento após correção do cleanup
 
 - Commit de código final: `c948b29195a6c29ae6a12120b2ca378ab3e8ebf6`; content-tree: `7da5d84749a6b09fa3cff31b75e8d4eaa03fab24`.
-- Commit documental anterior à atualização final: `103a193adee78b0028775a1a1063e4bc09778ccf`. Esta atualização deve ser registrada em commit documental separado; seu tree não deve ser apresentado como o tree do código.
+- Commit documental anterior à atualização final: `103a193adee78b0028775a1a1063e4bc09778ccf`; a atualização final foi registrada em commit documental separado, sem alterar o tree do código.
 - Imagem Node reconstruída somente para o novo código: tag `odisseu-node:a6-announcer-20261104T1558Z-7da5d84749a6-amd64`, Image ID completo `sha256:69a7a9624ea190e6c2e2578d4a89a24b29884811b22f24762c2c92be71466dd1`, `linux/amd64`, label `git-tree=7da5d84749a6b09fa3cff31b75e8d4eaa03fab24`. Foi feito smoke isolado `--network none` confirmando `createClient().close()`; Docker reportou host ARM64 e executou a imagem AMD64 por emulação. Nenhum container persistente foi iniciado.
 - A imagem JVM não precisou ser reconstruída: `sha256:9bf811fc47488a534848bc0628c3b5b0f6bacdb7b1662774bd60c376339576bb`, `linux/amd64`, label tree `6e5604d425bc85ea33970e424c2ee55aefc7b620`; nenhuma fonte JVM/schema foi alterada.
 - A imagem Node anterior (`sha256:3d2961a15bc301ab023a44454fc0a50fe835bb2acfceced26dd246b1f8e6b91c`) é histórica e não representa o cleanup corrigido. Não reutilizar esse ID para a nova árvore.
