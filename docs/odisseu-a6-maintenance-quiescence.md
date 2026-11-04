@@ -1,0 +1,280 @@
+# Odisseu A6 — manutenção e quiescência
+
+**Decisão: CONDITIONAL**
+**Escopo executado:** implementação e homologação local, no clone `/private/tmp/zapbot-announcer-a6-rc-final`. Nenhuma conexão ou alteração em produção foi realizada. Não houve backup cold, parada/restart live, migration, deploy ou envio WhatsApp real.
+
+## Resultado
+
+Foi implementado um gate durável de admissão e drain no bridge JVM e um tracker de operações do lado Node. Em ambiente descartável, a JVM HTTP real recusou operações enquanto estava em manutenção, preservou Datomic durante restart e só reabriu após comando explícito de retomada. Os testes locais de recursos e os smokes de bridge, lembretes, raid e scheduler passaram.
+
+O gate ainda não basta para certificar quiescência global em produção: o contador de operações Node é local ao processo; clientes Datomic diretos que contornem o bridge não são bloqueados; e o cold backup/restore operacional não foi executado nem homologado nesta fase. Portanto, não usar a implementação como autorização para backup ou cutover sem satisfazer as pré-condições abaixo.
+
+## Entradas mutáveis mapeadas
+
+| Entrada/fluxo | Início e rastreamento | Limite de persistência/proteção |
+|---|---|---|
+| Mensagens e comandos WhatsApp (incluindo caçadas, batalhas, captura, recompensas e trocas) | `message_create` é rastreado no Node desde o início do processamento assíncrono até a conclusão; comando novo durante drain recebe resposta amigável | Mutação passa pelo bridge JVM; todas as rotas autenticadas, exceto health e manutenção, são recusadas antes do dispatch quando o gate está fechado |
+| Mudanças administrativas WhatsApp tratadas pelo Node | Handler acompanhado pelo tracker Node | Drenadas antes de confirmar entrada do Node em manutenção |
+| Eventos/polls de raid, evento temático e entrega relacionada | Tick completo, incluindo claim/envio/ack, acompanhado pelo tracker Node | Mutação persistente no bridge também fica bloqueada; não houve alteração no scheduler ou na política de raides |
+| Lembretes Datomic e Cassandra | Ciclo de poll, claim, envio e conclusão acompanhado pelo tracker; ticks assíncronos aguardados | Bridge fecha novas operações durante drain; semântica e receipts de lembretes permanecem separados dos anúncios |
+| Sweeper JVM de batalha ociosa | Operação usa o mesmo gate de requests da JVM | Aguarda ou é recusado quando a JVM está em drain |
+| Chamadas internas Node → JVM/bridge | Contadas como requests ativos na JVM; requests iniciados pelo Node são abrangidos pelo tracker dos respectivos fluxos | O gate JVM é autoritativo para rotas do bridge |
+| Outros produtores JVM/Datomic | Um writer JVM por armazenamento é esperado no arranjo atual; o lock de writer existe no servidor configurado | **Não comprovado para clientes Datomic que conectem diretamente e escrevam fora do bridge**; devem ser excluídos por preflight |
+
+O inventário de chamadas e seus limites está restrito ao código local deste clone e não prova ausência de outros processos ou clientes na VM.
+
+## Mecanismo implementado
+
+### JVM
+
+Novo `maintenance_gate.clj` grava `open`, `draining` ou `quiescent` em `bridge-maintenance.edn`, com escrita temporária, `fsync` do arquivo e rename atômico. A admissão fecha antes de aguardar requests já ativos. Se o timeout vencer, permanece `draining` e não declara quiescência. Na inicialização, estado persistido é respeitado; estado malformado ou temporário abandonado falha fechado.
+
+Rotas internas do bridge:
+
+- `GET /ops/maintenance/status`
+- `POST /ops/maintenance/enter?timeoutMs=...`
+- `POST /ops/maintenance/resume`
+
+Controle requer token dedicado `X-A6-Maintenance-Token`, distinto do token normal do bridge. Logs não registram seu valor. Enquanto fechado, requests autenticados de jogo recebem 503 antes de parse/dispatch; `/health` e endpoints de manutenção permanecem acessíveis. Leitura de jogo também fica temporariamente indisponível, por segurança.
+
+### Node
+
+Novo `scripts/lib/a6-maintenance.cjs` mantém marker durável separado, em `ODISSEU_NODE_MAINTENANCE_FILE`, e controle com `ODISSEU_NODE_MAINTENANCE_TOKEN`. O endpoint de controle no servidor local de saúde usa `X-A6-Node-Maintenance-Token`. O tracker cobre dispatcher WhatsApp, eventos administrativos, pollers de Pokémon/raids/eventos e lembretes.
+
+O compose local monta os markers nos volumes de dados/manutenção já existentes e exige tokens dedicados. O `.env.odisseu-core.example` contém apenas placeholders vazios. Essa configuração foi preparada no clone e não aplicada em nenhum ambiente.
+
+## Recuperação e garantias
+
+1. Fechar admissão e persistir `draining`.
+2. Aguardar o contador ativo chegar a zero. Timeout mantém estado fechado; operador aborta o backup.
+3. Persistir `quiescent` somente depois do drain.
+4. Após crash/restart, o estado fechado é mantido e exige retomada explícita.
+5. Retomar JVM primeiro e Node depois, somente após validação do estado e do fim da operação de manutenção.
+
+Operações já aceitas são aguardadas, não descartadas nem confirmadas antecipadamente. O gate não repete operações e recusa novas chamadas antes da transação. Transações Datomic continuam atômicas; se o processo cair antes de confirmar quiescência, o procedimento deve parar e reconciliar os IDs idempotentes existentes, sem replay automático.
+
+**Limitação importante:** contador Node é por processo. A leitura do marker compartilhado faz outros processos observarem o fechamento, mas não agrega operações já ativas em todos eles. A garantia exige exatamente uma instância Node/WhatsApp no perfil e uma JVM writer, sem produtores Datomic externos. Escalar Node requer contador/lease distribuído durável antes de considerar o gate global.
+
+Os writes fazem `fsync` do arquivo temporário e rename atômico, mas não sincronizam o diretório pai; durabilidade perante perda abrupta de energia/filesystem não foi demonstrada. Foram testados crashes/restarts de processos, não falha física do host.
+
+## Testes executados
+
+| Verificação | Resultado |
+|---|---|
+| `node --test test/a6-maintenance.test.cjs` — estado ativo, drain, timeout fail-closed, restart de processo, marker inválido/temporário e segundo processo | PASS, 6/6 |
+| `npm run test:resources` | PASS, 69/69 |
+| Build `npm run build` após as alterações | PASS, build concluído (105 arquivos; avisos de compilação registrados) |
+| Smoke JVM HTTP real + Datomic Local descartável: token incorreto, health, enter/drain, recusas 503, contagem Datomic invariável, restart e resume explícito | PASS |
+| JVM filha com PID distinto reutilizando o mesmo estado Datomic/marker | PASS; estado fechado persistiu após restart físico de processo |
+| `clojure -M:test-m4-bridge` | PASS |
+| `clojure -M:test-m7-5-lembretes` | PASS; lembretes M7 e smoke bridge sem falhas |
+| `clojure -M:test-m4-raid` | PASS; regressões de raid/gym e smoke HTTP |
+| `clojure -M:test-raid-auto-cadence-fase1282` | PASS; 66 testes, 361 assertions, zero falhas/erros |
+| `npm run test:http` | **FAIL parcial:** 285/286 passaram; `playable-save-activation.test.cjs`, “real eligibility gate blocks each impediment and isolates the peer”, falhou com `Missing expected rejection`. Não houve alteração de saves nesta tarefa; permanece regressão impeditiva a investigar, sem evidência aqui para atribuir sua origem ao gate de manutenção. |
+| `git diff --check` | PASS |
+
+O teste HTTP amplo não ficou verde; não se declara regressão preexistente sem comparação reproduzida contra uma base limpa nesta execução. O E2E WhatsApp/Node real não foi feito: transporte real não foi utilizado e o harness não enviou mensagens.
+
+## Relação com backup cold e schema 007
+
+Nenhum backup foi criado nesta fase. Não foi executado o script operacional de cold backup, parada de JVM, cópia/restore de volumes ou verificação da schema 007 na produção. Também não foi aplicada migration. Schema 007 continua fora da validação operacional desta entrega.
+
+### Procedimento proposto para homologação futura (não executado)
+
+1. Confirmar host, saúde, volumes, backup anterior e ausência de operações críticas pendentes.
+2. Confirmar uma instância Node e uma JVM writer; excluir conexões Datomic diretas ou produtores externos.
+3. Colocar Node em `draining`; verificar contador zero e status persistido.
+4. Colocar JVM em `draining`; aguardar requests/sweeper ativos; exigir estado `quiescent`.
+5. Se qualquer timeout, marker inconsistente ou divergência ocorrer, abortar sem parar processos nem iniciar cópia cold.
+6. Seguir o procedimento de backup Datomic homologado, com janela/parada explicitamente autorizada, manifesto, checksums e restore em cópia isolada. Não copiar arquivos ativos de forma inconsistente.
+7. Consultar schema 007 somente na cópia isolada e comparar atributos; não aplicar schema durante essa inspeção.
+8. Validar backup/restore e health. Manter Announcer desabilitado e allowlist piloto intacta.
+9. Retomar JVM primeiro e Node depois; confirmar health e ausência de replay/duplicação.
+
+Isso é um plano, não uma autorização para executar. A operação cold concreta precisa ser compatível com a semântica de backup do Datomic instalado e ter procedimento de restauração validado.
+
+## Rollback
+
+- Antes de entrar em manutenção: nenhuma mudança operacional; abortar livremente.
+- Timeout ou falha ao entrar: manter gates fechados, não iniciar backup, investigar requests e operações idempotentes.
+- Durante manutenção: não remover marker manualmente nem iniciar segundo writer. Corrigir causa e usar endpoint autenticado de resume após confirmar que JVM e Node estão consistentes.
+- Falha após atualização futura: restaurar imagens/configuração anteriores somente após validar compatibilidade e sem restaurar um banco antigo sobre dados novos. Preservar markers e evidências até reconciliação.
+
+## Arquivos locais alterados
+
+- `.env.odisseu-core.example`
+- `docker-compose.odisseu-core.yml`
+- `package.json`
+- `apps/odisseu/src/odisseu/bridge/http_server.clj`
+- `apps/odisseu/src/odisseu/smoke/maintenance_quiescence.clj`
+- `modules/pokemon/infrastructure/pokemon/infrastructure/http/bridge.clj`
+- `modules/pokemon/infrastructure/pokemon/infrastructure/http/maintenance_gate.clj`
+- `scripts/lib/a6-maintenance.cjs`
+- `src/zapbot/core.cljs`
+- `src/zapbot/lembretes.cljs`
+- `src/zapbot/pokemon_http.cljs`
+- `src/zapbot/whatsapp_saude.cljs`
+- `test/a6-maintenance.test.cjs`
+
+Não houve mudança de schema ou migration, regras econômicas, saves, grupos, sessão WhatsApp ou configuração live. No momento daquele registro, as mudanças estavam locais e sem commit; os commits temáticos foram criados na revisão de 2026-11-04 abaixo. `node_modules` aparece como symlink não rastreado preexistente no clone; não foi incluído no trabalho.
+
+## Gates para avançar
+
+Status permanece **CONDITIONAL** até: (1) a falha de save na suíte HTTP ser explicada; (2) pré-flight operacional confirmar topologia de writer único e ausência de Datomic bypass; (3) homologação do procedimento cold com restore em cópia isolada; (4) teste integrado do endpoint de manutenção Node no processo/compose real descartável; e (5) revisão/integração do gate no protocolo operacional de quiescência. Não há base para declarar READY para backup cold ou deploy.
+
+---
+
+## Homologação complementar — auditoria de writers e backup cold
+
+**Resultado desta revisão: BLOCKED para quiescência global e backup cold homologado.** O bloqueio é arquitetural/operacional; não é resolvido pela correção do fixture nem pelo teste de cópia bem-sucedido.
+
+### Inventário de writers Datomic
+
+| Caminho | Capacidade de escrita | Cobertura pelo gate |
+|---|---|---|
+| JVM principal (`odisseu.bridge.http-server`) | Abre o storage Datomic Local, cria Pokémon e platform stores, e mantém o lock writer `.odisseu-writer.lock` | O lock impede uma segunda instância do entrypoint que usa esse mecanismo. As rotas autenticadas da bridge e o sweeper de batalha usam `maintenance_gate` |
+| Rotas HTTP da bridge | Chamam funções dos stores Pokémon e platform, cujos módulos fazem `d/transact` | Coberto antes do dispatch de rotas e por request ativo; tick interno do sweeper também adquire o gate |
+| Schedulers e pollers do runtime Node | Raids/eventos/lembretes produzem chamadas ao bridge | Pollers instrumentados pelo tracker Node e persistência protegida pela bridge JVM. O tracker Node não agrega contadores de múltiplos processos |
+| Scripts operacionais com `datomic.client.api` | `scripts/a64_apply_028_schema_only.clj`, `a6_032_thematic_rehearsal.clj`, `a6_033_trade_public_rehearsal.clj` e `a6_fase7_schema_rehearsal.clj` contêm escrita Datomic direta | **Não consultam nem adquirem o marker da manutenção.** São utilitários que devem operar exclusivamente em banco descartável; se apontados ao storage ativo após a parada da JVM, podem escrever |
+| Pipelines/drills de cutover, import e migration | Namespaces em `apps/odisseu/src/odisseu/cutover/` e `modules/*/migration/` criam clientes/conexões e têm transações diretas | Não integrados ao gate; não são iniciados pelo runtime normal, mas continuam writers possíveis se executados com o storage live |
+| Clientes Datomic independentes | Um processo Datomic Local adicional pode conectar diretamente | Teste descartável: a segunda JVM não conectou enquanto outra mantinha o `.lock` nativo do banco. Após encerramento do writer, o lock é liberado e uma nova conexão torna-se possível. O marker da bridge não controla essa conexão |
+| Serviço opcional `pokemon-service`/Cassandra | Stores Node próprios possuem operações CQL de escrita | A URL do serviço está vazia no compose local auditado; configuração efetiva de produção não foi lida nesta fase. Não usar isso como evidência do estado remoto |
+
+Os módulos de store concentram `d/transact`, mas não fazem aquisição do gate por conta própria. Sua proteção depende do chamador. Há portanto caminhos locais de ferramenta que contornam o gate. O lock Datomic por database protege contra concorrência enquanto uma conexão writer continua aberta; ele não substitui manutenção durante a janela após encerramento do writer.
+
+### Falha `playable-save-activation.test.cjs`
+
+Reproduzida no clone e em archive limpo do commit-base `79ec9ac8fa3b8ac4688ddc4271e3e3f732746efb`: ambos falhavam no teste `real eligibility gate blocks each impediment and isolates the peer`, com `Missing expected rejection` na asserção para `activity_raid_capture_pending`.
+
+A promise esperada rejeitar era `service.activate('g','p','b', ...)`. O resultado real era resolução bem-sucedida, porque o fixture de raid em fase `vitoria` tinha `participantes.p = {}`. A regra canônica só considera captura pendente quando o participante causou dano positivo, ainda tem tentativas e a janela está aberta. Essa regra aparece tanto em `save-activity-eligibility.cjs` como no domínio de raids; o módulo e o teste já eram iguais à base antes deste trabalho, e o gate de manutenção não participa de `PlayableSaveActivation`.
+
+Correção: fixture agora representa participação elegível com `dano: 1`; foi adicionado teste negativo explícito para vitória com `dano: 0`. Não houve alteração de código de produção, save, saldo ou estado de raide.
+
+Resultado: `node --test pokemon-service/test/playable-save-activation.test.cjs pokemon-service/test/save-activity-eligibility.test.cjs` passou 26/26. `npm run test:http` passou 287/287 quando executado com permissão de loopback local. A execução sob sandbox restrito não é evidência válida para as suítes que abrem sockets.
+
+### Ensaio Datomic Local de snapshot/restore
+
+Foi executado um ensaio limitado e descartável, sem operação de produção:
+
+1. O smoke Datomic Local criou dados sintéticos e encerrou sua JVM.
+2. Após o processo escritor sair, `snapshot-storage!` copiou o storage para outro diretório temporário.
+3. `restore-storage!` restaurou para um terceiro diretório novo.
+4. Uma JVM nova consultou o banco restaurado e confirmou os mesmos campos sintéticos (`moedas=250`, `nivel=3`).
+5. Foi calculado manifesto SHA-256 para 3 arquivos; hash do manifesto: `dc2131f8a596ebd7f5a1576bb1700dca4a1b3401a02867ea1c4dca310f5fa35b`.
+
+Esse resultado prova apenas cópia cold simples e leitura após restore em diretório isolado. Uma nova JVM também conseguiu abrir o storage original após o processo criador encerrar, confirmando que clientes voltam a poder conectar quando o writer libera o lock. **Não** inclui operação concorrente real drenada pelo gate, comparação canônica abrangente, checksum/manifesto produzido pelo helper, falha/interrupção no meio de snapshot ou restore, nem validação de backup do volume de produção.
+
+O helper atual `pokemon.migration.backup/snapshot-storage!` remove recursivamente o destino anterior antes de copiar. `restore-storage!` remove recursivamente o destino de restauração antes de copiar. Ambos copiam diretamente para o destino final, sem estágio atômico, manifesto interno ou verificação pós-cópia. Por isso não foi induzida uma interrupção destrutiva: o helper não oferece isolamento/recuperação adequados para afirmar que backup incompleto ou restore interrompido falham com segurança. Este é um gate pendente, não um PASS.
+
+### Bootstrap e contenção da primeira implantação
+
+A produção atual não possui os novos endpoints/markers; portanto não se pode chamar o gate antes de instalar a versão que o contém. Um plano futuro exigiria contenção externa antes do primeiro deploy:
+
+1. Bloquear ingressos de comandos no nível do transporte/proxy e impedir novos jobs/polls; preservar as mensagens aceitas em fila durável ou provar que nenhuma foi aceita em voo.
+2. Parar schedulers e produtores independentes e inventariar os processos/conexões com acesso ao volume Datomic. Parar apenas Node não prova que todos os writers cessaram.
+3. Aguardar drenagem verificável de requisições existentes; a produção atual não fornece o novo contador persistido, então esse critério ainda não está operacionalizado.
+4. Se não houver prova de zero operações, abortar. Não parar a JVM nem copiar storage.
+5. Com uma versão que ofereça o gate instalada e validada, fechar Node e bridge, aguardar drain/quiescent, impedir clientes operacionais, encerrar o writer e só então executar o cold snapshot.
+6. Verificar manifesto e restaurar para storage isolado; auditar schema 007 somente nessa cópia.
+7. Retomar JVM e validar health antes de reabrir Node; Announcer permanece desabilitado.
+
+Os passos 1–4 ainda carecem de mecanismo/procedimento comprovado para o bootstrap sem gate. Esta versão não autoriza a primeira implantação nem o backup cold.
+
+### Gates de falha ainda sem homologação
+
+| Cenário solicitado | Resultado |
+|---|---|
+| Cliente secundário tenta abrir o mesmo DB enquanto Datomic Local writer mantém lock | FAIL-CLOSED comprovado em duas JVMs descartáveis |
+| Cliente/script após writer ser encerrado | Pode conectar; scripts ignoram marker. Requer contenção externa; gate atual não garante bloqueio |
+| Processo interno ativo e drain | Tracker/gate testados; não foi acoplado a uma transação Datomic real lenta durante snapshot |
+| Timeout de drain/restart durante manutenção | Marcador permanece `draining`; smoke anterior aprovado |
+| Interrupção em backup/restore, backup parcial e manifesto inválido | Não homologado; helper não tem staging/manifesto e sobrescreve destino |
+| Reinício inesperado durante a janela cold | Persistência dos markers em restart de processo demonstrada; recovery após crash de host/energia não demonstrada |
+
+### Artefatos e decisão
+
+Naquele complemento ainda não havia commit, content-tree ou imagens. O ajuste de fixture foi justificado e limitado a teste; código de produção do Announcer/gate permaneceu sem mudança naquele passo.
+
+**Decisão final: BLOCKED para READY de quiescência, backup cold e deploy consolidado.** Para desbloquear, é necessária uma estratégia de exclusão verificável de todo acesso ao storage durante o período sem writer, além de um backup/restore com staging, manifesto, validação e ensaios de interrupção. A primeira implantação também precisa de contenção externa e drain comprovado antes de qualquer substituição da JVM atual.
+
+---
+
+## Fechamento local da Fase — 2026-11-04
+
+Esta seção substitui as descrições anteriores do helper de backup: o helper foi endurecido depois da revisão complementar. A decisão de produção continua **BLOCKED** porque os mecanismos locais não são uma fronteira de segurança contra qualquer processo que tenha acesso direto ao volume Datomic.
+
+### Contenção implementada e limite comprovado
+
+- `odisseu.persistence.datomic/client` agora lê o marker canônico `<storage>/.a6-maintenance/bridge-maintenance.edn` antes de admitir novos clientes do repositório. `draining`, `quiescent`, EDN inválido, diretório ilegível e escrita temporária abandonada falham fechados. A bridge usa uma opção de controle explícita para iniciar em manutenção; nesse estado ela só conecta bancos existentes e rejeita `RESET`/seed.
+- A bridge exige que seu diretório de marker seja o diretório canônico dentro do storage, evitando que a configuração operacional e os scripts observem markers diferentes. O Compose local foi alinhado. Isso não altera configuração live.
+- Os scripts/rehearsals encontrados usam em geral `persistence/client` e, portanto, são recusados quando iniciados com o marker fechado. Há utilitários de baixo nível e código que chama `datomic.client.api` diretamente; um processo que já construiu um client antes do marker, um processo que deliberadamente contorne o construtor central, um writer externo ou uma escrita direta de arquivos não é revogado pelo marker.
+- O helper de snapshot adquire `.odisseu-writer.lock` quando presente e todos os locks `.lock` de bancos Datomic encontrados, mantém esses locks durante a cópia e falha se encontrar writer ativo ou inventário vazio/instável. Um processo JVM concorrente que tenta abrir o banco existente durante a cópia foi negado pelo lock Datomic. Os locks são advisory e não bloqueiam processos com permissão para editar arquivos do volume diretamente; tampouco provam que ninguém criará um banco novo fora dos entrypoints conhecidos.
+- Portanto, a prova local cobre entrypoints do repositório que respeitam o construtor central e clientes Datomic Local concorrentes para os bancos existentes. Ela **não prova contenção global de todos os processos da VM** nem bootstrap seguro da primeira manutenção. O supervisor/ACL da produção ainda precisa impedir launch de scripts/containers e acesso de escrita ao volume durante a janela. Sem essa barreira, não parar a JVM e não iniciar backup.
+
+### Backup e restore
+
+`pokemon.migration.backup/snapshot-storage!` agora:
+
+1. recusa origem ausente, paths sobrepostos e destino já existente;
+2. usa um staging sibling único e não publica staging incompleto;
+3. obtém locks do writer e dos bancos antes de copiar;
+4. recusa links simbólicos e arquivos especiais;
+5. copia permissões/mtime, força arquivos e diretórios quando suportado, gera manifesto EDN com inventário, tamanhos, permissões e SHA-256;
+6. valida o staging contra o manifesto e publica somente com rename atômico; filesystem sem rename atômico é rejeitado;
+7. preserva backups anteriores e deixa staging incompleto para inspeção/remoção explícita.
+
+Arquivos voláteis de lock Datomic e o lock do writer não entram no conteúdo restaurável nem no manifesto. São locks de runtime, não estado de banco; copiá-los poderia interferir com locks do processo atual.
+
+`restore-storage!` valida manifesto e hashes, restaura primeiro em staging e só publica em destino ausente ou vazio. Destino não vazio é recusado, nunca apagado. A restauração para um storage operacional ocupado ou sobre saves mais novos não é suportada pelo helper; exige procedimento separado, serviços parados, contenção externa e revisão humana. O destino vazio é publicado atomicamente, sem remoção prévia. `discard-staging!` é explícito e limita a limpeza a um staging filho direto com nome esperado.
+
+### Ensaios descartáveis executados
+
+| Cenário | Resultado observado |
+|---|---|
+| JVM Datomic independente mantém conexão ativa; snapshot tenta começar | Recusado por lock ativo |
+| Outro processo tenta conectar/escrever banco existente durante cópia | Negado; probe registrou `external-lock-denied=true` e `external-denied=true` |
+| Cópia cold para diretório novo, manifesto e verificação | PASS; manifesto conferido, 5 entradas no fixture sintético |
+| Destino de backup já existente | Recusado; backup válido anterior continuou verificável |
+| Interrupção injetada após cópia de arquivo / falha simulada de disco | Não publicado; staging incompleto permaneceu isolado para descarte explícito |
+| Interrupção injetada após escrita temporária do manifesto | Não publicado; staging permaneceu isolado |
+| Restore interrompido depois de copiar arquivo | Não publicado; diretório operacional não foi substituído |
+| Checksum adulterado | Verificação e restore recusados; destino não foi criado |
+| Restore em destino novo | PASS; processo JVM independente consultou o valor sintético `77` |
+| Restore sobre destino não vazio | Recusado; valor persistido `77` no destino não foi alterado |
+| Marker `draining`, inválido ou temporário abandonado | Novo `persistence/client` recusado; bypass de controle usado apenas pelo bootstrap da bridge no smoke |
+| Bridge fecha admissão, reinicia com mesmo storage, continua fechada e retoma por endpoint autenticado | PASS no smoke HTTP loopback descartável |
+
+O cenário de falha de disco foi simulado por exceção injetada no ponto de cópia; não foi provocado ENOSPC real. Não houve backup, restore, acesso ou escrita em produção.
+
+### Regressões executadas nesta revisão
+
+- `clojure -M -e "(require 'pokemon.migration.backup 'odisseu.persistence.datomic 'odisseu.bridge.http-server)"`: namespaces carregados.
+- `clojure -M:smoke-a6-cold-backup`: PASS, 11 cenários reportados, banco descartável e processos separados.
+- Smoke HTTP de manutenção JVM/bridge: PASS; marker/drain/restart/resume em loopback, Datomic descartável, sem transporte WhatsApp.
+- `node --test test/a6-maintenance.test.cjs`: PASS, 6/6.
+- `npm run test:http`: PASS, 287/287.
+- `clojure -M:test-m4-bridge`: PASS, bridge JVM + Datomic local/HTTP.
+- `clojure -M:test-m7-5-lembretes`: PASS; M7.0–M7.5, receipts/restart e smoke sem envio real.
+- `clojure -M:test-m4-raid`: PASS, regressões de raid/gym e smoke HTTP.
+- `clojure -M:test-raid-auto-cadence-fase1282`: PASS, 66 testes, 361 assertions.
+- `npm run build`: PASS, 105 arquivos; compilador emitiu 856 avisos de inferência/depreciação, sem erro.
+- `git diff --check`: PASS.
+
+A primeira tentativa dos smokes JVM sem autorização de socket foi bloqueada pelo sandbox (`Operation not permitted`); a repetição autorizada usou somente loopback e passou. Um primeiro processo do smoke de manutenção imprimiu PASS, mas não encerrou prontamente por executor/future; o cleanup passou a chamar `shutdown-agents`, e a execução repetida imprimiu PASS e encerrou normalmente.
+
+### Bootstrap da primeira manutenção e decisão
+
+A produção ainda não tem o marker/gate em todas as imagens. A primeira instalação precisa começar com contenção fora da aplicação: bloquear o ingresso de novas mutações e pollers no supervisor, impedir inicialização de quaisquer jobs/scripts/containers com acesso ao volume e restringir a escrita no volume Datomic a um executor operacional de manutenção. Em seguida, inventariar processos/conexões, drenar o que foi aceito, parar a JVM e só então usar o helper cold. O ambiente desta execução não contém o supervisor da VM nem evidência de ACL capaz de impedir um processo root/Docker ou ferramenta direta de acessar o volume. Esse gate não pode ser inferido dos testes locais.
+
+Sequência futura, ainda não autorizada: contenção externa verificável → drain → parada confirmada da JVM → backup cold e manifesto → restore de verificação em storage isolado → auditoria somente leitura de schema 007 na cópia → autorização operacional separada para transferência/migration/deploy → atualização mantendo `RELEASE_ANNOUNCER_ENABLED=false` → validação → retomada. Qualquer writer não inventariado, lock ativo, volume inesperado, hash divergente ou timeout aborta antes da cópia/deploy.
+
+**Status final: BLOCKED para backup cold, bootstrap e deploy em produção.** A cópia/restore segura está homologada no Datomic descartável; contenção global do host, primeira implantação sem gate e estado live do schema 007 não estão comprovados. Nenhuma migration, imagem, deploy, backup ou restore de produção foi executado. `node_modules` não foi incluído.
+
+### Commits locais auditáveis
+
+- Gate durável e integração Node/JVM: `4c068bcaa0c77e619cc436330bc95e5cd522b5b1`.
+- Snapshot/restore Datomic e admission guard: `e1f22f2aafb9a6f5a6d48fd95d3d983869c86b55`.
+- Fixture de elegibilidade de captura com dano zero: `e1713a821821445c2c371a086a2c422fb3fb6a0a`.
+- Relatório final desta revisão será um commit documental separado. Nenhuma imagem foi reconstruída; não há content-tree ou Image ID novo.
+
+O único item local ainda não rastreado é `node_modules`, symlink preexistente e fora do escopo; não foi staged. O clone não foi publicado nem integrado ao workspace original.
