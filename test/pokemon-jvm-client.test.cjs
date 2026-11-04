@@ -99,6 +99,31 @@ test('erro de negócio estruturado sem retry com novo operationId', async () => 
   }
 });
 
+test('BATTLE_PENDING HTTP 409 é rejeitado uma vez, sem retry ou sucesso falso', async () => {
+  let calls = 0;
+  const f = await fixture((req, res) => {
+    calls += 1;
+    res.statusCode = 409;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      ok: false,
+      error: { code: 'battle_pending', message: 'battle active' }
+    }));
+  });
+  try {
+    await assert.rejects(
+      () => f.client.startHunt({
+        chatId: 'c', playerId: 'p', saveId: 'a', fenceGeneration: 0,
+        operationId: 'hunt:message-1', candidates: []
+      }),
+      err => err.code === 'BATTLE_PENDING' && err.status === 409
+    );
+    assert.equal(calls, 1);
+  } finally {
+    await f.close();
+  }
+});
+
 test('erro HTTP 500 é rejeitado sem fabricar sucesso', async () => {
   let calls = 0;
   const f = await fixture((req, res) => {

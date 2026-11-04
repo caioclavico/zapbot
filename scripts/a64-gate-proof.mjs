@@ -21,13 +21,18 @@ function makeGates(env) {
   const devGroup = env.DEV_GROUP_ID || "";
   const allowed = new Set(envList(env.STAGING_ALLOWED_USERS));
 
-  function chatAutorizado(cid) {
+  function chatAutorizado(cid, isGroup) {
     if (bootstrap) return false;
-    if (!stagingLike) return true;
+    if (typeof cid !== "string" || cid.length === 0) return false;
     if (allowAll) {
-      return typeof cid === "string" && (cid.endsWith("@g.us") || cid.endsWith("@c.us"));
+      if (cid.endsWith("@g.us")) return true;
+      if (cid.endsWith("@c.us")) return false;
+      return isGroup === true;
     }
-    return typeof cid === "string" && !!devGroup && cid === devGroup;
+    if (!stagingLike) return true;
+    if (cid.endsWith("@g.us")) return allowAll || (!!devGroup && cid === devGroup);
+    if (cid.endsWith("@c.us")) return false;
+    return false;
   }
 
   function usuarioAutorizado(uid) {
@@ -74,6 +79,12 @@ const cases = [
     const x = makeGates({ ...pilotEnv, ALLOW_ALL_GROUPS: "true" });
     return x.chatAutorizado(otherChat) && !x.usuarioAutorizado(otherUser);
   })(), true],
+  ["allow_all_blocks_private_chat", makeGates({ ...pilotEnv, ALLOW_ALL_GROUPS: "true" }).chatAutorizado(dm), false],
+  ["ambiguous_lid_fails_closed", makeGates({ ...pilotEnv, ALLOW_ALL_GROUPS: "true" }).chatAutorizado(pilot), false],
+  ["lid_requires_group_metadata", makeGates({ ...pilotEnv, ALLOW_ALL_GROUPS: "true" }).chatAutorizado(pilot, true), true],
+  ["production_allow_all_group", makeGates({ APP_ENV: "production", ALLOW_ALL_GROUPS: "true" }).chatAutorizado(otherChat), true],
+  ["production_allow_all_denies_dm", makeGates({ APP_ENV: "production", ALLOW_ALL_GROUPS: "true" }).chatAutorizado(dm), false],
+  ["production_allow_all_lid_requires_metadata", makeGates({ APP_ENV: "production", ALLOW_ALL_GROUPS: "true" }).chatAutorizado(pilot, true), true],
 ];
 
 let fail = 0;

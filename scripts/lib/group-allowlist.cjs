@@ -70,6 +70,7 @@ function buildAuthorizedGroups(opts = {}) {
  *   stagingLike: boolean,
  *   bootstrap?: boolean,
  *   allowAllGroups?: boolean,
+ *   isGroup?: boolean,
  *   authorized: ReturnType<typeof buildAuthorizedGroups>
  * }} opts
  */
@@ -79,23 +80,34 @@ function chatAuthorized(opts) {
     stagingLike,
     bootstrap = false,
     allowAllGroups = false,
+    isGroup,
     authorized
   } = opts;
 
   if (bootstrap) return false;
+  if (typeof chatId !== 'string' || chatId === '') return false;
+
+  // A flag de abertura é uma política group-only em qualquer APP_ENV.
+  if (allowAllGroups) {
+    if (chatId.endsWith('@g.us')) return true;
+    if (chatId.endsWith('@c.us')) return false;
+    return isGroup === true;
+  }
+
+  // Preserva o comportamento amplo legado de produção quando a flag está OFF.
   if (!stagingLike) return true;
 
   if (!authorized || authorized.ok === false) return false;
 
-  if (allowAllGroups) {
-    return (
-      typeof chatId === 'string' &&
-      (chatId.endsWith('@g.us') || chatId.endsWith('@c.us'))
-    );
+  // Sufixo canônico distingue grupos e conversas privadas sem metadados.
+  if (chatId.endsWith('@g.us')) {
+    return authorized.groupSet.has(chatId);
   }
+  if (chatId.endsWith('@c.us')) return false;
 
-  if (typeof chatId !== 'string' || chatId === '') return false;
-  return authorized.groupSet.has(chatId);
+  // @lid e sufixos desconhecidos não identificam o tipo de conversa.
+  // Em staging-like, IDs ambíguos permanecem negados sem autorização explícita.
+  return false;
 }
 
 /**

@@ -74,7 +74,15 @@
   [err]
   (let [msg (or (some-> err .-message) (str err))
         name (or (some-> err .-name) "Error")
-        safe (if (> (count msg) 120) (str (subs msg 0 117) "...") msg)]
+        sanitized (-> msg
+                      (str/replace #"(?i)Bearer\s+\S+" "Bearer [redacted]")
+                      (str/replace #"(?i)(token|password|secret|authorization)\s*[:=]\s*[^\s,;]+" "$1=[redacted]")
+                      (str/replace #"(?i)https?://\S+" "[url]")
+                      (str/replace #"[\w.+-]+@(c\.us|g\.us|lid)" "[jid]")
+                      (str/replace #"\b\d{8,}\b" "[id]"))
+        safe (if (> (count sanitized) 120)
+               (str (subs sanitized 0 117) "...")
+               sanitized)]
     {:name name :message safe}))
 
 (def ^:private bootstrap-client (atom nil))
@@ -354,9 +362,26 @@
   (or (.-author message)
       (when-not (.-fromMe message) (.-from message))))
 
-(defn- permitido-pelo-ambiente? [message]
-  (and (config/chat-autorizado? (chat-id message))
+(defn- permitido-pelo-ambiente? [message is-group?]
+  (and (config/chat-autorizado? (chat-id message) is-group?)
        (config/usuario-autorizado? (remetente-id message))))
+
+(defn- tipo-grupo-do-chat [message cid]
+  (cond
+    (and (string? cid) (str/ends-with? cid "@g.us")) true
+    (and (string? cid) (str/ends-with? cid "@c.us")) false
+    (and message (fn? (.-getChat ^js message)))
+    (-> (.getChat message)
+        (p/then (fn [chat]
+                  (let [is-group (.-isGroup ^js chat)]
+                    (when (or (true? is-group) (false? is-group))
+                      is-group))))
+        (p/catch (fn [err]
+                   (js/console.warn
+                    "[authorization] Chat metadata unavailable; message denied:"
+                    (clj->js (err-diag err)))
+                   nil)))
+    :else nil))
 
 (def ^:private limite-legenda-midia 900)
 
@@ -390,9 +415,9 @@
                      (desempenho/medir! ctx "envio_texto_fallback"
                        #(enviar-texto-estruturado message texto mentions))))))))
 
-(defn- processar-mensagem [message ctx]
+(defn- processar-mensagem [message ctx is-group?]
   (whatsapp-reply/preparar! message)
-  (when (permitido-pelo-ambiente? message)
+  (when (permitido-pelo-ambiente? message is-group?)
     (adedonha/capturar-resposta! message)
     ;; Aguarda a fila do histórico: assim !pk bug sempre encontra exatamente
     ;; a mensagem anterior, mesmo quando os eventos chegam muito próximos.
@@ -423,7 +448,8 @@
                                                   (map-indexed vector medias))
                                                  (p/catch
                                                   (fn [erro]
-                                                    (js/console.error "Erro ao enviar cartões; usando lista em texto:" erro)
+                                                    (js/console.error "Erro ao enviar cartões; usando lista em texto:"
+                                                                      (clj->js (err-diag erro)))
                                                     (enviar-texto-estruturado message (:texto resposta) (:mentions resposta))))))
                         ;; documento (ex.: !pokemon time csv): manda o texto primeiro e o
                         ;; arquivo em seguida - legenda em documento não aparece de forma
@@ -438,13 +464,22 @@
                         ;; uma string simples - todo o resto continua string normal
                         (string? resposta) (.reply message resposta)
                         :else (.reply message (:texto resposta) nil #js {:mentions (clj->js (:mentions resposta))}))))))
-        (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" err))))))
+        (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" (clj->js (err-diag err))))))))
 
 (defn- on-message [message]
-  (let [executar #(if (and (permitido-pelo-ambiente? message)
-                          (desempenho/pokemon? (.-body message)))
-                   (desempenho/acompanhar-mensagem! message (fn [ctx] (processar-mensagem message ctx)))
-                   (processar-mensagem message nil))
+  (let [despachar (fn [is-group?]
+                    (when (permitido-pelo-ambiente? message is-group?)
+                      (let [executar #(if (and (desempenho/pokemon? (.-body message)))
+                                       (desempenho/acompanhar-mensagem!
+                                        message (fn [ctx] (processar-mensagem message ctx is-group?)))
+                                       (processar-mensagem message nil is-group?))]
+                        (if (str/starts-with? (str/trim (or (.-body message) "")) config/prefix)
+                          (recursos/medir-comando! executar)
+                          (executar)))))
+        executar #(let [tipo (tipo-grupo-do-chat message (chat-id message))]
+                    (if (and tipo (fn? (.-then ^js tipo)))
+                      (p/then tipo despachar)
+                      (despachar tipo)))
         ;; O evento WhatsApp ignora o retorno do dispatcher; absorver aqui
         ;; somente rejeições já tratadas evita unhandledRejection no processo.
         executar-seguro #(try
@@ -455,17 +490,14 @@
                                               (js/console.error
                                                "[dispatch] rejeição de comando isolada:"
                                                (clj->js (err-diag err)))
-                                              nil))
+                                              nil)))
                                resultado))
                            (catch :default err
                              (js/console.error
                               "[dispatch] exceção de comando isolada:"
                               (clj->js (err-diag err)))
-                             nil)))]
-    (if (and (permitido-pelo-ambiente? message)
-             (str/starts-with? (str/trim (or (.-body message) "")) config/prefix))
-      (recursos/medir-comando! executar-seguro)
-      (executar-seguro))))
+                             nil))]
+    (executar-seguro)))
 
 (defn opcoes-puppeteer []
   (cond-> {:protocolTimeout 300000

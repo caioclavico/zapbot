@@ -167,6 +167,20 @@ test('comandos simulados: treinador e coleção formatados', async () => {
   });
 });
 
+test('comando inválido retorna orientação sem chamar o bridge', async () => {
+  const msg = fakeMessage({
+    chatId: 'g@g.us', playerId: 'p', requestId: 'r-invalid', args: 'inexistente'
+  });
+  let chamadasBridge = 0;
+  const resposta = await dispatch({
+    getTrainer: async () => { chamadasBridge += 1; throw new Error('não deveria chamar'); }
+  }, msg, ['inexistente']);
+
+  assert.match(resposta.messages[0].text, /comando ainda não está disponível/i);
+  assert.match(resposta.messages[0].text, /inexistente/);
+  assert.equal(chamadasBridge, 0);
+});
+
 test('A→B→A por comando com isolamento de jogador na identidade', async () => {
   const state = {
     'g@g.us|ash': { active: 'a', fence: 0 },

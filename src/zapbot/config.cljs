@@ -136,15 +136,18 @@
                     (pr-str (js->clj (.-invalid authorized-groups-js)))))
 
 (defn chat-autorizado?
-  "Em staging-like: membros de ALLOWED_GROUP_IDS ∪ DEV_GROUP_ID, salvo ALLOW_ALL_GROUPS.
-   Bootstrap de grupo: nunca autoriza. Config de grupo inválida: nega todos."
-  [cid]
-  (.chatAuthorized group-allowlist-lib
-                   #js {:chatId cid
-                        :stagingLike staging-like?
-                        :bootstrap staging-bootstrap-group?
-                        :allowAllGroups allow-all-groups?
-                        :authorized authorized-groups-js}))
+  "Em staging-like: membros de ALLOWED_GROUP_IDS ∪ DEV_GROUP_ID.
+   ALLOW_ALL_GROUPS=true libera grupos em qualquer ambiente, nunca chats privados.
+   IDs ambíguos exigem is-group? true obtido dos metadados do Chat."
+  ([cid] (chat-autorizado? cid nil))
+  ([cid is-group?]
+   (.chatAuthorized group-allowlist-lib
+                    #js {:chatId cid
+                         :isGroup is-group?
+                         :stagingLike staging-like?
+                         :bootstrap staging-bootstrap-group?
+                         :allowAllGroups allow-all-groups?
+                         :authorized authorized-groups-js})))
 (defn usuario-autorizado?
   "Allowlist de remitentes em staging-like — separada da de grupo.
    STRICT=1 (STAGING_STRICT_USER_ALLOWLIST|STRICT_USER_ALLOWLIST) + lista vazia → nega todos.

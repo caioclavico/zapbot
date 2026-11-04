@@ -1,5 +1,6 @@
 (ns zapbot.core-test
   (:require [cljs.test :refer-macros [async deftest is]]
+            [clojure.string :as str]
             [zapbot.recursos :as recursos]
             [zapbot.desempenho :as desempenho]
             [zapbot.config :as config]
@@ -200,18 +201,107 @@
   (let [medidos (atom 0) processados (atom []) ctx #js {:teste true}]
     (with-redefs [zapbot.config/app-env "development"
                   zapbot.config/dev-group-id "teste@g.us"
-                  zapbot.config/chat-autorizado? #(= % "teste@g.us")
+                  zapbot.config/chat-autorizado?
+                  (fn
+                    ([cid] (= cid "teste@g.us"))
+                    ([cid _is-group?] (= cid "teste@g.us")))
                   zapbot.config/prefix "!"
                   recursos/medir-comando! (fn [executar] (swap! medidos inc) (executar))
                   desempenho/acompanhar-mensagem! (fn [_ executar] (executar ctx))
-                  core/processar-mensagem (fn [message contexto]
+                  core/processar-mensagem (fn [message contexto _is-group?]
                                             (swap! processados conj [(.-body message) contexto])
                                             "resultado")]
       (doseq [body ["!pk treinador" "  !ping" "mensagem normal" nil]]
         (is (= "resultado" (core/on-message #js {:from "teste@g.us" :body body}))))
-      (is (= "resultado" (core/on-message #js {:from "outro@g.us" :body "!pk treinador"})))
+      (is (nil? (core/on-message #js {:from "outro@g.us" :body "!pk treinador"})))
       (is (= 2 @medidos))
       (if zapbot.config/performance-metrics-enabled
         (is (identical? ctx (second (first @processados))))
         (is (nil? (second (first @processados)))))
       (is (every? nil? (map second (rest @processados)))))))
+
+(deftest dispatcher-isola-falhas-sincronas-e-async-e-continua
+  (async done
+    (let [chamadas (atom 0)
+          mensagem #js {:from "teste@g.us" :body "!pk treinador"}]
+      (with-redefs [zapbot.config/app-env "development"
+                    zapbot.config/dev-group-id "teste@g.us"
+                    zapbot.config/chat-autorizado?
+                    (fn
+                      ([cid] (= cid "teste@g.us"))
+                      ([cid _is-group?] (= cid "teste@g.us")))
+                    zapbot.config/usuario-autorizado? (constantly true)
+                    zapbot.config/prefix "!"
+                    recursos/medir-comando! (fn [executar] (executar))
+                    desempenho/acompanhar-mensagem! (fn [_ executar] (executar nil))
+                    core/processar-mensagem
+                    (fn [& _]
+                      (case (swap! chamadas inc)
+                        1 (throw (js/Error. "erro síncrono controlado"))
+                        2 (js/Promise.reject (js/Error. "BATTLE_PENDING"))
+                        "resposta posterior"))]
+        (is (nil? (core/on-message mensagem)))
+        (let [rejeitada (core/on-message mensagem)]
+          (is (= "resposta posterior" (core/on-message mensagem)))
+          (is (= 3 @chamadas))
+          (-> (js/Promise.resolve rejeitada)
+              (.then (fn [resultado-rejeitado]
+                       (is (nil? resultado-rejeitado))
+                       (done)))
+            (.catch (fn [erro]
+                      (is false (str "Falha escapou do dispatcher: " erro))
+                      (done)))))))))
+
+(deftest metadata-do-chat-classifica-lid-sem-inferir-tipo
+  (async done
+    (let [grupo #js {:from "grupo-lid@lid"
+                     :getChat (fn [] (js/Promise.resolve #js {:isGroup true}))}
+          privado #js {:from "privado-lid@lid"
+                       :getChat (fn [] (js/Promise.resolve #js {:isGroup false}))}
+          desconhecido #js {:from "incerto@lid"
+                            :getChat (fn [] (js/Promise.resolve #js {}))}]
+      (-> (js/Promise.all
+           #js [(core/tipo-grupo-do-chat grupo (.-from grupo))
+                (core/tipo-grupo-do-chat privado (.-from privado))
+                (core/tipo-grupo-do-chat desconhecido (.-from desconhecido))])
+          (.then (fn [tipos]
+                   (is (true? (aget tipos 0)))
+                   (is (false? (aget tipos 1)))
+                   (is (nil? (aget tipos 2)))
+                   (done)))
+          (.catch (fn [erro]
+                    (is false (str "Falha ao resolver metadados de chat: " erro))
+                    (done)))))))
+
+(deftest diagnostico-do-dispatcher-redige-dados-sensiveis
+  (let [diag (core/err-diag
+              (js/Error. (str "token=segredo user@c.us https://host.invalid/?token=outro "
+                              (apply str (repeat 140 "x")))))
+        mensagem (:message diag)]
+    (is (not (str/includes? mensagem "segredo")))
+    (is (not (str/includes? mensagem "user@c.us")))
+    (is (not (str/includes? mensagem "host.invalid")))
+    (is (<= (count mensagem) 120))))
+
+(deftest allow-all-groups-nao-despacha-chat-privado
+  (let [processados (atom 0)
+        mensagem #js {:from "private@c.us" :body "!pk treinador"}]
+    (with-redefs [zapbot.config/staging-like? true
+                  zapbot.config/allow-all-groups? true
+                  zapbot.config/prefix "!"
+                  zapbot.config/usuario-autorizado? (constantly true)
+                  recursos/medir-comando! (fn [executar] (executar))
+                  core/processar-mensagem (fn [& _] (swap! processados inc) "não deveria")]
+      (is (nil? (core/on-message mensagem)))
+      (is (zero? @processados)))))
+
+(deftest allow-all-groups-em-producao-nega-chat-privado
+  (let [processados (atom 0)
+        mensagem #js {:from "private@c.us" :body "!pk treinador"}]
+    (with-redefs [zapbot.config/staging-like? false
+                  zapbot.config/allow-all-groups? true
+                  zapbot.config/prefix "!"
+                  recursos/medir-comando! (fn [executar] (executar))
+                  core/processar-mensagem (fn [& _] (swap! processados inc) "não deveria")]
+      (is (nil? (core/on-message mensagem)))
+      (is (zero? @processados)))))

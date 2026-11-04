@@ -130,7 +130,7 @@ describe('group-allowlist — chatAuthorized', () => {
     );
   });
 
-  it('ALLOW_ALL_GROUPS=true aceita @g.us/@c.us (não @lid solto)', () => {
+  it('ALLOW_ALL_GROUPS=true aceita grupos @g.us não listados', () => {
     assert.equal(
       al.chatAuthorized({
         chatId: ANTIGO,
@@ -140,9 +140,44 @@ describe('group-allowlist — chatAuthorized', () => {
       }),
       true
     );
+  });
+
+  it('ALLOW_ALL_GROUPS não libera chats privados @c.us', () => {
     assert.equal(
       al.chatAuthorized({
         chatId: CUS,
+        stagingLike: true,
+        allowAllGroups: true,
+        authorized: auth
+      }),
+      false
+    );
+  });
+
+  it('@lid exige metadado confiável indicando grupo', () => {
+    assert.equal(
+      al.chatAuthorized({
+        chatId: LID,
+        stagingLike: true,
+        allowAllGroups: true,
+        authorized: auth
+      }),
+      false
+    );
+    assert.equal(
+      al.chatAuthorized({
+        chatId: LID,
+        isGroup: false,
+        stagingLike: true,
+        allowAllGroups: true,
+        authorized: auth
+      }),
+      false
+    );
+    assert.equal(
+      al.chatAuthorized({
+        chatId: LID,
+        isGroup: true,
         stagingLike: true,
         allowAllGroups: true,
         authorized: auth
@@ -152,8 +187,9 @@ describe('group-allowlist — chatAuthorized', () => {
     assert.equal(
       al.chatAuthorized({
         chatId: LID,
+        isGroup: true,
         stagingLike: true,
-        allowAllGroups: true,
+        allowAllGroups: false,
         authorized: auth
       }),
       false
@@ -169,6 +205,21 @@ describe('group-allowlist — chatAuthorized', () => {
       }),
       true
     );
+  });
+
+  it('ALLOW_ALL_GROUPS mantém a política group-only também em produção', () => {
+    assert.equal(al.chatAuthorized({
+      chatId: ANTIGO, stagingLike: false, allowAllGroups: true, authorized: auth
+    }), true);
+    assert.equal(al.chatAuthorized({
+      chatId: CUS, stagingLike: false, allowAllGroups: true, authorized: auth
+    }), false);
+    assert.equal(al.chatAuthorized({
+      chatId: LID, stagingLike: false, allowAllGroups: true, authorized: auth
+    }), false);
+    assert.equal(al.chatAuthorized({
+      chatId: LID, isGroup: true, stagingLike: false, allowAllGroups: true, authorized: auth
+    }), true);
   });
 });
 
