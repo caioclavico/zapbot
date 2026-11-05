@@ -1,0 +1,5 @@
+pokemon_id,numero_pokedex,nome,especie,nivel,xp_total,xp_nivel_atual,xp_proximo_nivel,progresso_xp_percentual,proxima_evolucao,nivel_proxima_evolucao,tipos,situacao,raridade,hp_atual,hp_maximo,status,item,golpes,collection_index
+id-charm,,Charmeleon,charmeleon,34,,5,9,55.6,Charizard,36,fire,No time,incomum,70,80,,,Ember|Scratch,1
+id-pika,,Pikachu,pikachu,22,,3,9,33.3,,,electric,No time,comum,60,60,,,Thunder Shock,2
+id-max,,Mewtwo,mewtwo,100,,,,,,,psychic,No time,lendario,200,200,,,,3
+"'=CMD()",,Injected,rattata,5,,0,9,0.0,,,normal,No time,comum,20,20,,,,4

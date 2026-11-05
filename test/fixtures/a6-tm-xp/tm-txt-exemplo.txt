@@ -1,0 +1,15 @@
+🎴 *Máquinas Técnicas — Meus Pokémon* · Página 1/1
+🧑‍🎓 Nível de treinador: 4 • Save: a
+📦 Coleção: 1 Pokémon
+Total: 1
+👉 1. *Charmeleon* — Nv. 34 • ⚪ comum
+   [█████████░] 70/80
+   ✨ XP 5/9 (55,6%)
+   🧬 Próxima evolução: Charizard — Nv. 36
+Use !pk escolher <número> pra trocar o ativo (👉), ou !pk joy para enviar os feridos à Enfermeira Joy.
+Veja a ficha do ativo com !pk time ativo.
+Favorito: !pk favorito <número>.
+Combine filtros com !pk time [tipo] [raridade] [nome] [nivel N] [repetidos].
+Ordene por força: !pk time > ou <.
+Card visual: !pk tm · CSV: !pk tm csv
++50 vagas: !pk espaco comprar

@@ -169,6 +169,11 @@
   {:main-opts ["-m" "odisseu.smoke.a5-4-evolution-moves"]
    :jvm-opts ["-Xms64m" "-Xmx512m" "-XX:+UseG1GC"]}
 
+  ;; A6 — !pk tm XP/evolução/CSV (domínio + Datomic local)
+  :test-a6-tm-xp-evolution
+  {:main-opts ["-m" "odisseu.smoke.a6-tm-xp-evolution"]
+   :jvm-opts ["-Xms64m" "-Xmx512m" "-XX:+UseG1GC"]}
+
   ;; M4.9 — raids no adaptador JVM + regressões
   :test-m4-raid
   {:main-opts ["-m" "odisseu.smoke.m4-raid"]
