@@ -496,11 +496,17 @@
              :tentativas-captura (long (:tentativas-captura battle 0))
              :somente-batalha (boolean (:somente-batalha? battle))
              :gym-resolve (when gym-res
-                            {:venceu (boolean (:venceu? gym-res))
-                             :premio (when-let [p (:premio gym-res)] (name p))
-                             :occupied (boolean (:occupied? gym-res))
-                             :pe-delta (:pe-delta gym-res)
-                             :reward (:reward gym-res)})
+                            (let [perm (:permanencia gym-res {})]
+                              (cond-> {:venceu (boolean (:venceu? gym-res))
+                                       :premio (when-let [p (:premio gym-res)] (name p))
+                                       :occupied (boolean (:occupied? gym-res))
+                                       :pe-delta (:pe-delta gym-res)
+                                       :reward (:reward gym-res)}
+                                (seq perm)
+                                (assoc :permanencia
+                                       {:moedas (long (:moedas-permanencia perm 0))
+                                        :bruta (long (:permanencia-bruta perm 0))
+                                        :xp (long (:xp-permanencia perm 0))}))))
              :save-id save-id
              :fence-generation (long fence-generation)}
       (some? inv) (assoc :inventory inv))))
@@ -605,11 +611,11 @@
               :reservas-x (count (get-in battle [:reservas :x] []))
               :reservas-o (count (get-in battle [:reservas :o] []))
               :pokemon-x (when px
-                           (select-keys px [:nome :species :hp :nivel :imagem
+                           (select-keys px [:nome :species :hp :hp-atual :nivel :imagem
                                             :imagem-shiny :altura :tipos :golpes
                                             :status :shiny :shiny?]))
               :pokemon-o (when po
-                           (select-keys po [:nome :species :hp :nivel :imagem
+                           (select-keys po [:nome :species :hp :hp-atual :nivel :imagem
                                             :imagem-shiny :altura :tipos :golpes
                                             :status :shiny :shiny?
                                             :motivacao-ginasio]))}}))

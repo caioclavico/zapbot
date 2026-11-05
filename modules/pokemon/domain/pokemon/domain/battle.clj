@@ -62,7 +62,7 @@
    id-pokemon é obrigatório em raide: liquidação de XP do mon participante."
   #{:id-pokemon :species :nome :shiny :nivel :level :hp :hp-atual :status
     :ataque :defesa :atq-esp :def-esp :veloc :tipos :habilidade :golpes :item
-    :taxa-captura :imagem :imagem-shiny})
+    :taxa-captura :imagem :imagem-shiny :altura :motivacao-ginasio})
 
 (defn- kw-status [s] (status/->kw s))
 
@@ -684,6 +684,16 @@
 
       (throw (err/error :unknown_battle_action {:action action})))))
 
+(defn- battle-start-hp
+  "HP de abertura: nil → max; 0 legítimo permanece; nunca > max."
+  [p]
+  (let [mx (max 0 (long (or (:hp p) 0)))
+        cur (:hp-atual p)]
+    (cond
+      (nil? cur) mx
+      (neg? (long cur)) 0
+      :else (min (long cur) (max mx 0)))))
+
 (defn create-gym-battle
   "Combate 3×3 de ginásio. `team-x` = 3 mapas com :collection-index;
   `team-o` = 3 Pokémon (NPC ou ocupação já com motivação)."
@@ -721,8 +731,8 @@
               :fence-generation fence-generation
               :team-x-indices (mapv :collection-index xs)
               :pokemons {:x first-x :o first-o}
-              :hp {:x (long (or (:hp-atual first-x) (:hp first-x) 0))
-                   :o (long (or (:hp-atual first-o) (:hp first-o) 0))}
+              :hp {:x (battle-start-hp first-x)
+                   :o (battle-start-hp first-o)}
               :status {:x (kw-status (:status first-x)) :o (kw-status (:status first-o))}
               :estagios {:x {} :o {}}
               :defendendo {:x false :o false}

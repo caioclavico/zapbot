@@ -1993,15 +1993,26 @@
                                   texto (.formatGymChallengeStart jvm-present data
                                                                   (str config/prefix "pk"))
                                   battle (.-battle data)
+                                  hp-map (some-> battle .-hp)
+                                  px (some-> battle .-pokemonX)
+                                  po (some-> battle .-pokemonO)
                                   img (render-seguro! ctx "pokemon_jvm_media_gym"
                                         #(.renderHuntArena jvm-media
                                             #js {:area nil
-                                                 :pokemonX (some-> battle .-pokemonX)
-                                                 :pokemonO (some-> battle .-pokemonO)
+                                                 :pokemonX px
+                                                 :pokemonO po
                                                  :fugiu false
                                                  :aguardandoCaptura false
                                                  :caption texto
-                                                 :mostrarEntrada true}))]
+                                                 :mostrarEntrada true
+                                                 :hpX (when hp-map
+                                                        #js {:atual (.-x hp-map)
+                                                             :max (or (some-> px .-hp)
+                                                                      (.-x hp-map))})
+                                                 :hpO (when hp-map
+                                                        #js {:atual (.-o hp-map)
+                                                             :max (or (some-> po .-hp)
+                                                                      (.-o hp-map))})}))]
                             (envelope-jvm pedido texto img)))))
 
                     (contains? #{"ranking" "historico"} sub)
