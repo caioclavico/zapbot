@@ -584,6 +584,63 @@ async function renderSpriteCard(pokemon, { filename = 'pokemon.png', size = 320 
 }
 
 /**
+ * Cartão visual estilo Pokédex: corpo vermelho, tela clara e sprite com alpha.
+ * Evita caixa preta em artworks transparentes (ensureAlpha + contain transparente
+ * via spriteProporcional, depois composite sobre fundo claro da tela).
+ */
+function svgPokedexShell(width, height, screen) {
+  const { x, y, w, h, rx } = screen;
+  const ledCx = 42;
+  const ledCy = 38;
+  // Fundo retangular opaco (sem rx) evita cantos transparentes → caixa preta no Sharp.
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">`
+      + `<rect width="${width}" height="${height}" fill="#B71C1C"/>`
+      + `<rect x="8" y="8" width="${width - 16}" height="${height - 16}" rx="22" fill="#D32F2F"/>`
+      + `<rect x="8" y="70" width="${width - 16}" height="10" fill="#8B0000"/>`
+      + `<circle cx="${ledCx}" cy="${ledCy}" r="18" fill="#1565C0" stroke="#0D47A1" stroke-width="3"/>`
+      + `<circle cx="${ledCx - 5}" cy="${ledCy - 5}" r="5" fill="#90CAF9" opacity="0.85"/>`
+      + `<circle cx="84" cy="30" r="6" fill="#C62828" stroke="#7F0000" stroke-width="2"/>`
+      + `<circle cx="104" cy="30" r="6" fill="#F9A825" stroke="#F57F17" stroke-width="2"/>`
+      + `<circle cx="124" cy="30" r="6" fill="#2E7D32" stroke="#1B5E20" stroke-width="2"/>`
+      + `<rect x="${x - 6}" y="${y - 6}" width="${w + 12}" height="${h + 12}" rx="${rx + 4}" fill="#7F0000"/>`
+      + `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="#E8EEF5"/>`
+      + `<rect x="${Math.round(width * 0.18)}" y="${height - 36}" width="${Math.round(width * 0.28)}" height="10" rx="4" fill="#8B0000"/>`
+      + `<circle cx="${Math.round(width * 0.72)}" cy="${height - 31}" r="10" fill="#8B0000"/>`
+      + '</svg>'
+  );
+}
+
+async function renderPokedexCard(pokemon, {
+  filename = 'pokedex.png',
+  width = 360,
+  height = 420,
+  spriteMax = 240
+} = {}) {
+  try {
+    if (!pokemon) return null;
+    const screen = { x: 28, y: 92, w: width - 56, h: height - 150, rx: 16 };
+    const { buffer: spriteBuf, tamanho } = await spriteProporcional(pokemon, spriteMax);
+    const left = Math.round(screen.x + (screen.w - tamanho) / 2);
+    const top = Math.round(screen.y + (screen.h - tamanho) / 2);
+    const buffer = await sharp(svgPokedexShell(width, height, screen))
+      .ensureAlpha()
+      .composite([{ input: spriteBuf, left, top }])
+      .png()
+      .toBuffer();
+    return {
+      base64: buffer.toString('base64'),
+      mimeType: 'image/png',
+      filename
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] pokedex:', err.message || err);
+    return null;
+  }
+}
+
+/**
  * Tema de cartão estático da Joy — espelha tema-evento-da-resposta do legado.
  * null = sem imagem (erro / bloqueio).
  */
@@ -1095,6 +1152,7 @@ module.exports = {
   renderHuntArena,
   renderCaptureBall,
   renderSpriteCard,
+  renderPokedexCard,
   renderStartersCard,
   renderTeamGrid,
   renderStaticAsset,
@@ -1112,6 +1170,7 @@ module.exports = {
   idCenario,
   svgArenaCacada,
   svgBolaCaptura,
+  svgPokedexShell,
   candidatosUrl,
   baixarBuffer,
   tiposPt

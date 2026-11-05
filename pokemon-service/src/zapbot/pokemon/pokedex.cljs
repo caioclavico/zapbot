@@ -223,11 +223,21 @@
        "\n🔺 Evolução: " (formatar-evolucoes pokemon)
        (when-not (str/blank? descricao-pt) (str "\n\n📜 _" descricao-pt "_"))))
 
+(def ^:private jvm-media
+  ;; Resolvido a partir de pokemon-service/target/domain.cjs → ../../scripts/...
+  (js/require "../../scripts/lib/pokemon-jvm-media.cjs"))
+
 (defn- enviar-cartao [contexto pokemon legenda]
   (if (:imagem pokemon)
-    (-> (p/let [original (imagens/baixar! (:imagem pokemon))
-                buffer (imagens/sprite! original 360 360 1)
-                media (boundary/midia "image/png" buffer "pokedex.png")
+    (-> (p/let [framed (.renderPokedexCard jvm-media (clj->js pokemon)
+                                           #js {:filename "pokedex.png"})
+                buffer (if framed
+                         (js/Buffer.from (.-base64 framed) "base64")
+                         ;; Fallback: sprite isolado (sem moldura) se o render falhar.
+                         (p/let [original (imagens/baixar! (:imagem pokemon))]
+                           (imagens/sprite! original 360 360 1)))
+                mime (if framed (or (.-mimeType framed) "image/png") "image/png")
+                media (boundary/midia mime buffer "pokedex.png")
                 _     (boundary/emitir! contexto media nil #js {:caption legenda})]
           nil)
         (p/catch (fn [err]
