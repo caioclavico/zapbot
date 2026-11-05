@@ -12,6 +12,7 @@
             [pokemon.domain.collection :as coll]
             [pokemon.domain.errors :as err]
             [pokemon.domain.evolution :as evo]
+            [pokemon.domain.level-evolution :as level-evo]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.hunt :as hunt]
             [pokemon.domain.identities :as id]
@@ -352,27 +353,67 @@
       :inventory-item/item-id item-id
       :inventory-item/qty next-qty}]))
 
+(defn- evolution-tx-fragments
+  "TX de troca de espécie no mesmo id-pokemon (preserva identidade)."
+  [lookup poke evoluido]
+  (let [old-tipos (set (:tipos poke))
+        new-tipos (set (:tipos evoluido))
+        tipo-tx (concat
+                 (map (fn [t] [:db/retract lookup :pokemon/tipos t])
+                      (remove new-tipos old-tipos))
+                 (map (fn [t] [:db/add lookup :pokemon/tipos t])
+                      (remove old-tipos new-tipos)))]
+    (cond-> (into (vec tipo-tx)
+                  [[:db/add lookup :pokemon/species (:species evoluido)]
+                   [:db/add lookup :pokemon/nickname (:nome evoluido)]
+                   [:db/add lookup :pokemon/hp (long (:hp evoluido))]
+                   [:db/add lookup :pokemon/hp-atual (long (:hp-atual evoluido))]
+                   [:db/add lookup :pokemon/ataque (long (:ataque evoluido))]
+                   [:db/add lookup :pokemon/defesa (long (:defesa evoluido))]
+                   [:db/add lookup :pokemon/atq-esp (long (:atq-esp evoluido))]
+                   [:db/add lookup :pokemon/def-esp (long (:def-esp evoluido))]
+                   [:db/add lookup :pokemon/veloc (long (:veloc evoluido))]
+                   [:db/add lookup :pokemon/golpes-edn (pr-str (:golpes evoluido))]])
+      (:habilidade evoluido)
+      (conj [:db/add lookup :pokemon/habilidade (:habilidade evoluido)])
+      (:imagem evoluido)
+      (conj [:db/add lookup :pokemon/imagem (:imagem evoluido)])
+      (:imagem-shiny evoluido)
+      (conj [:db/add lookup :pokemon/imagem-shiny (:imagem-shiny evoluido)]))))
+
 (defn- apply-pokemon-xp-tx
-  "TX fragments para conceder XP a um Pokémon (por id-pokemon)."
+  "TX fragments para conceder XP a um Pokémon (por id-pokemon).
+  Após subidas, tenta evolução por nível via catálogo canônico (sem I/O);
+  ramificadas/especiais não entram no catálogo e não evoluem automaticamente."
   [poke quantidade]
   (let [applied (xp/aplicar-xp-pokemon poke quantidade)
-        r (:registro applied)
-        lookup [:pokemon/id-pokemon (:id-pokemon poke)]]
-    {:tx [[:db/add lookup :pokemon/level (long (:nivel r))]
-          [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
-          [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
-          [:db/add lookup :pokemon/hp (long (:hp r))]
-          [:db/add lookup :pokemon/hp-atual (long (:hp-atual r))]
-          [:db/add lookup :pokemon/ataque (long (:ataque r))]
-          [:db/add lookup :pokemon/defesa (long (:defesa r))]
-          [:db/add lookup :pokemon/atq-esp (long (:atq-esp r))]
-          [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
-          [:db/add lookup :pokemon/veloc (long (:veloc r))]
-          [:db/add lookup :pokemon/amizade (long (:amizade r))]]
+        r0 (:registro applied)
+        prepared (level-evo/prepare r0)
+        r (if prepared (level-evo/apply-prepared r0 prepared) r0)
+        lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+        base-tx [[:db/add lookup :pokemon/level (long (:nivel r))]
+                 [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
+                 [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
+                 [:db/add lookup :pokemon/hp (long (:hp r))]
+                 [:db/add lookup :pokemon/hp-atual (long (:hp-atual r))]
+                 [:db/add lookup :pokemon/ataque (long (:ataque r))]
+                 [:db/add lookup :pokemon/defesa (long (:defesa r))]
+                 [:db/add lookup :pokemon/atq-esp (long (:atq-esp r))]
+                 [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
+                 [:db/add lookup :pokemon/veloc (long (:veloc r))]
+                 [:db/add lookup :pokemon/amizade (long (:amizade r))]]
+        evo-tx (when prepared (evolution-tx-fragments lookup poke r))]
+    {:tx (into base-tx (or evo-tx []))
      :subida (when (pos? (:subidas applied))
-               {:nome (:nome applied)
+               {:nome (or (:nome r) (:nome applied))
                 :nivel (:nivel-final applied)
-                :niveis-subidos (:subidas applied)})}))
+                :niveis-subidos (:subidas applied)})
+     :evolucao (when prepared
+                 {:nome-antigo (or (:nome poke) (:species poke))
+                  :nome-novo (:nome r)
+                  :species (:species r)
+                  :nivel (:nivel r)
+                  :catalog-version (:catalog-version prepared)})}))
 
 (defn- pokemon-hp-status-tx
   ([poke hp-atual st]
@@ -1729,27 +1770,13 @@
              colecao (query-collection db sk)
              _ (coll/validate-index! idx (count colecao))
              poke (nth colecao idx)
-             applied (xp/aplicar-xp-pokemon poke quantidade)
-             r (:registro applied)
-             lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+             xp-part (apply-pokemon-xp-tx poke quantidade)
              rev (long (:save/revision save 0))
-             tx [[:db/add lookup :pokemon/level (long (:nivel r))]
-                 [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
-                 [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
-                 [:db/add lookup :pokemon/hp (long (:hp r))]
-                 [:db/add lookup :pokemon/hp-atual (long (:hp-atual r))]
-                 [:db/add lookup :pokemon/ataque (long (:ataque r))]
-                 [:db/add lookup :pokemon/defesa (long (:defesa r))]
-                 [:db/add lookup :pokemon/atq-esp (long (:atq-esp r))]
-                 [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
-                 [:db/add lookup :pokemon/veloc (long (:veloc r))]
-                 [:db/add lookup :pokemon/amizade (long (:amizade r))]
-                 [:db/cas [:save/key sk] :save/revision rev (inc rev)]]]
+             tx (into (:tx xp-part)
+                      [[:db/cas [:save/key sk] :save/revision rev (inc rev)]])]
          {:tx tx
-          :result (when (pos? (:subidas applied))
-                    {:nome (:nome applied)
-                     :nivel (:nivel-final applied)
-                     :niveis-subidos (:subidas applied)})}))))
+          :result (cond-> (or (:subida xp-part) {})
+                    (:evolucao xp-part) (assoc :evolucao (:evolucao xp-part)))}))))
 
   (register-trainer-victory! [_ writer-ctx]
     (transact-with-writer!

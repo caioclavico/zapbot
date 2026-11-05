@@ -50,7 +50,12 @@
                                                :league-id "master"})))
     (is (:deleted (ports/delete-named-team! s ctx {:operation-id "team-del-1" :name "Liga 1"})))
     (is (empty? (ports/list-named-teams s "chat" "ash" "a")))
-    (let [csv (reads/team-csv s "chat" "ash" "a")]
+    (let [csv (reads/team-csv s "chat" "ash" "a")
+          body (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 csv))
+                        java.nio.charset.StandardCharsets/UTF_8)]
       (is (= "text/csv" (:mime-type csv)))
-      (is (= "meu-time-pokemon.csv" (:filename csv)))
-      (is (.startsWith ^String (:base64 csv) "77u/")))))
+      (is (= "odisseu-mt-pokemon.csv" (:filename csv)))
+      (is (.startsWith ^String (:base64 csv) "77u/"))
+      (is (str/includes? body "pokemon_id"))
+      (is (str/includes? body "xp_nivel_atual"))
+      (is (str/includes? body "proxima_evolucao")))))
