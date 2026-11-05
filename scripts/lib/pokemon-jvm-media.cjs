@@ -611,6 +611,34 @@ function svgPokedexShell(width, height, screen) {
   );
 }
 
+/**
+ * Sprite em tamanho fixo p/ tela da Pokédex (paridade master: contain ~360,
+ * sem escala por altura — Diglett/Wailord ficam legíveis na mesma moldura).
+ */
+async function spriteFixoPokedex(pokemon, tamanho) {
+  const buf = await baixarBuffer(spriteUrl(pokemon));
+  if (!buf) {
+    const out = await sharp(svgPlaceholder(tamanho)).png().toBuffer();
+    return { buffer: out, tamanho, placeholder: true };
+  }
+  try {
+    const out = await sharp(buf)
+      .ensureAlpha()
+      .resize(tamanho, tamanho, {
+        fit: 'contain',
+        background: { r: 0, g: 0, b: 0, alpha: 0 }
+      })
+      .png()
+      .toBuffer();
+    return { buffer: out, tamanho };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[pokemon-jvm-media] pokedex sprite inválido:', err.message || err);
+    const out = await sharp(svgPlaceholder(tamanho)).png().toBuffer();
+    return { buffer: out, tamanho, placeholder: true };
+  }
+}
+
 async function renderPokedexCard(pokemon, {
   filename = 'pokedex.png',
   width = 360,
@@ -620,7 +648,8 @@ async function renderPokedexCard(pokemon, {
   try {
     if (!pokemon) return null;
     const screen = { x: 28, y: 92, w: width - 56, h: height - 150, rx: 16 };
-    const { buffer: spriteBuf, tamanho } = await spriteProporcional(pokemon, spriteMax);
+    const tamanho = Math.min(spriteMax, screen.w - 16, screen.h - 16);
+    const { buffer: spriteBuf } = await spriteFixoPokedex(pokemon, tamanho);
     const left = Math.round(screen.x + (screen.w - tamanho) / 2);
     const top = Math.round(screen.y + (screen.h - tamanho) / 2);
     const buffer = await sharp(svgPokedexShell(width, height, screen))
