@@ -1,7 +1,8 @@
 # A6 Time Pokémon — RC Node+JVM e homologação WhatsApp
 
 **Branch RC:** `rc/a6-time-pokemon`  
-**Commit:** `d677429069e04f24913eb4622b1595acb881f1cd`  
+**Commit imagens:** `d677429069e04f24913eb4622b1595acb881f1cd`  
+**Tip docs/auditoria:** `0186846` (testes de idempotência + manifests; runtime = mesmo código das imagens)  
 **Pacote:** `rc-artifacts/a6-time-pokemon-rc-20261105T193639Z/`  
 **Data:** 2026-11-05  
 **Status:** **READY FOR PILOT** (sem deploy nesta sessão; smoke WA real aguarda GO)
