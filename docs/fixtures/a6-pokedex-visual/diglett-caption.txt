@@ -1,0 +1,12 @@
+📖 *Pokédex do tio Odisseu*
+
+#050 *Diglett*
+🏷️ Tipo: Terra
+📏 Altura: 0.2 m | ⚖️ Peso: 0.8 kg
+✨ Habilidades: véu de areia, armadilha de arena, força de areia (oculto)
+
+❤️ HP: 10 | ⚔️ Ataque: 55 | 🛡️ Defesa: 25
+🔮 Atq. Especial: 35 | 🌀 Def. Especial: 45 | 💨 Velocidade: 95
+🔺 Evolução: Dugtrio — nível 26
+
+📜 _Vive cerca de um metro abaixo do solo, onde se alimenta de raízes de plantas. Às vezes aparece acima do solo._

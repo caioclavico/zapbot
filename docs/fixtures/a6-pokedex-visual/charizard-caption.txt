@@ -1,0 +1,12 @@
+📖 *Pokédex do tio Odisseu*
+
+#006 *Charizard*
+🏷️ Tipo: Fogo/Voador
+📏 Altura: 1.7 m | ⚖️ Peso: 90.5 kg
+✨ Habilidades: chama, energia solar (escondido)
+
+❤️ HP: 78 | ⚔️ Ataque: 84 | 🛡️ Defesa: 78
+🔮 Atq. Especial: 109 | 🌀 Def. Especial: 85 | 💨 Velocidade: 100
+🔺 Evolução: forma final — não evolui
+
+📜 _Cospe fogo quente o suficiente para derreter pedras. Conhecido por causar incêndios florestais involuntariamente._

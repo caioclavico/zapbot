@@ -1,0 +1,12 @@
+📖 *Pokédex do tio Odisseu*
+
+#001 *Bulbasaur*
+🏷️ Tipo: Planta/Venenoso
+📏 Altura: 0.7 m | ⚖️ Peso: 6.9 kg
+✨ Habilidades: crescer demais, clorofila (escondida)
+
+❤️ HP: 45 | ⚔️ Ataque: 49 | 🛡️ Defesa: 49
+🔮 Atq. Especial: 65 | 🌀 Def. Especial: 65 | 💨 Velocidade: 45
+🔺 Evolução: Ivysaur — nível 16
+
+📜 _Uma estranha semente foi plantada nas suas costas ao nascer. A planta brota e cresce com este POKéMON._

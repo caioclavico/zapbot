@@ -1,0 +1,12 @@
+📖 *Pokédex do tio Odisseu*
+
+#150 *Mewtwo*
+🏷️ Tipo: Psíquico
+📏 Altura: 2.0 m | ⚖️ Peso: 122.0 kg
+✨ Habilidades: pressão, enervante (escondido)
+
+❤️ HP: 106 | ⚔️ Ataque: 110 | 🛡️ Defesa: 90
+🔮 Atq. Especial: 154 | 🌀 Def. Especial: 90 | 💨 Velocidade: 130
+🔺 Evolução: forma final — não evolui
+
+📜 _Foi criado por um cientista após anos de horríveis experimentos de emenda de genes e engenharia de DNA._

@@ -1,0 +1,12 @@
+📖 *Pokédex do tio Odisseu*
+
+#025 *Pikachu*
+🏷️ Tipo: Elétrico
+📏 Altura: 0.4 m | ⚖️ Peso: 6.0 kg
+✨ Habilidades: estático, pára-raios (oculto)
+
+❤️ HP: 35 | ⚔️ Ataque: 55 | 🛡️ Defesa: 40
+🔮 Atq. Especial: 50 | 🌀 Def. Especial: 50 | 💨 Velocidade: 90
+🔺 Evolução: Raichu — Pedra do Trovão (pedra-trovao)
+
+📜 _Quando vários desses POKéMON se reúnem, sua eletricidade pode aumentar e causar tempestades com raios._
