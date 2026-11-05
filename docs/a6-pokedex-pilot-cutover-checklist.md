@@ -42,17 +42,16 @@ Com `POKEDEX_SPECIES_PILOT_ONLY=true` (default) + chat piloto: **só o piloto** 
 | ID | `sha256:bc6c73c117840405f635563189df2b3adb35e1c38dcfa83f1098f77cdd2c89ad` |
 | Motivo | Expõe espécie a **todos** os grupos |
 
-### RC com gate (obrigatório antes do GO)
+### RC com gate (usar esta para o GO)
 
-Rebuild a partir do tip que contém `pokedex-species-pilot.cjs` + wiring.  
-Preencher após build:
+Tip `5e6f9ca` · pacote `/Users/caioclavico/odisseu-recovery/a6-pokedex-rc-20261105T180900Z/` (`BUILD_OK`)
 
 | Campo | Valor |
 | --- | --- |
-| Tag | _(preencher)_ |
-| Image ID | _(preencher)_ |
-| Tar SHA-256 | _(preencher)_ |
-| Pacote | `/Users/caioclavico/odisseu-recovery/a6-pokedex-rc-<TS>/` |
+| Tag | `odisseu-node:a6-pokedex-20261105T180900Z-5e6f9caea073-amd64` |
+| Image ID | `sha256:6c22cc067d39bc0336715c58d06061f0fe0bf626897728f6924cb181c35a8f4f` |
+| Tar SHA-256 | `c009f8c149b6a843e94e921fb5563a6d4e7d940c28881402694687ffa1dcf6f2` |
+| Smoke isolado | `GATE_OK` + `SMOKE_OK` (`--network none`) |
 
 ### Env no recreate (Node)
 
