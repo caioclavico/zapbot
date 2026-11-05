@@ -7,6 +7,85 @@
 
 const PAGE_SIZE = 12;
 
+/** Canônico JVM (`pokemon.domain.xp/xp-por-nivel`). Não inventar outra fórmula. */
+const XP_POR_NIVEL_POKEMON = 9;
+const NIVEL_MAXIMO_POKEMON = 100;
+
+/**
+ * Progresso de XP do Pokémon a partir do DTO canônico.
+ * Não inventa zero quando o campo está ausente.
+ */
+function pokemonXpProgress(p) {
+  if (!p || typeof p !== 'object') {
+    return { known: false, max: false, atual: null, necessario: null, pct: null, label: 'XP ?' };
+  }
+  const nivel = Number(p.nivel) || 1;
+  const maxFlag = p.nivelMaximo === true || nivel >= NIVEL_MAXIMO_POKEMON;
+  const knownFlag = p.xpConhecido;
+  const hasCampo = p.xpDesdeNivel != null
+    || p.xpNivelAtual != null
+    || (p.xp != null && (p.xpNecessario != null || p.xpProximoNivel != null))
+    || knownFlag === true;
+  if (knownFlag === false || (!hasCampo && knownFlag !== true)) {
+    return {
+      known: false,
+      max: maxFlag,
+      atual: null,
+      necessario: null,
+      pct: null,
+      label: maxFlag ? 'NÍVEL MÁXIMO' : 'XP ?'
+    };
+  }
+  if (maxFlag) {
+    return {
+      known: true, max: true, atual: 0, necessario: null, pct: null, label: 'NÍVEL MÁXIMO'
+    };
+  }
+  const atual = Number(
+    p.xpNivelAtual != null ? p.xpNivelAtual
+      : (p.xpDesdeNivel != null ? p.xpDesdeNivel : p.xp)
+  );
+  const necessario = Number(
+    p.xpProximoNivel != null ? p.xpProximoNivel
+      : (p.xpNecessario != null ? p.xpNecessario : XP_POR_NIVEL_POKEMON)
+  );
+  if (!Number.isFinite(atual) || !Number.isFinite(necessario) || necessario <= 0) {
+    return { known: false, max: false, atual: null, necessario: null, pct: null, label: 'XP ?' };
+  }
+  const pct = Math.min(100, Math.round((atual / necessario) * 1000) / 10);
+  return {
+    known: true,
+    max: false,
+    atual: Math.floor(atual),
+    necessario: Math.floor(necessario),
+    pct,
+    label: `XP ${Math.floor(atual)}/${Math.floor(necessario)}`
+  };
+}
+
+function barraXpPokemon(p) {
+  const prog = pokemonXpProgress(p);
+  if (prog.max) return 'NÍVEL MÁXIMO';
+  if (!prog.known) return 'XP ?';
+  const filled = Math.min(10, Math.round((prog.atual / prog.necessario) * 10));
+  return `[${'█'.repeat(filled)}${'░'.repeat(10 - filled)}] ${prog.atual}/${prog.necessario}`;
+}
+
+function textoProximaEvolucao(p) {
+  if (!p) return null;
+  const nome = p.proximaEvolucao || p.proxima_evolucao;
+  const nv = p.nivelProximaEvolucao != null
+    ? p.nivelProximaEvolucao
+    : p.nivel_proxima_evolucao;
+  if (!nome) return null;
+  if (nv != null) return `Próxima evolução: ${nome} — Nv. ${nv}`;
+  return `Próxima evolução: ${nome}`;
+}
+
+function textoXp(p) {
+  return pokemonXpProgress(p).label;
+}
+
 function envelope(requestId, text, extras = {}) {
   const mentions = Array.isArray(extras.mentions)
     ? extras.mentions.filter(m => typeof m === 'string' && m)
@@ -234,12 +313,6 @@ const RARIDADE_FILTRO = {
 const RARIDADE_EMOJI = {
   comum: '⚪', incomum: '🟢', raro: '🔵', epico: '🟣', lendario: '🟡', mitico: '🔴'
 };
-
-function textoXp(p) {
-  const atual = Number(p.xpDesdeNivel != null ? p.xpDesdeNivel : (p.xp || 0)) || 0;
-  const nec = 9;
-  return `XP ${atual}/${nec}`;
-}
 
 /** Aliases pt/en → id canônico (inglês). Lookup sempre via normalizar(). */
 const TIPO_ALIASES = {
@@ -513,24 +586,33 @@ function formatTrainer(data, playerName, prefix = '!pk') {
   return lines.join('\n');
 }
 
-function formatCollection(data, tokens, prefix = '!pk') {
-  const { items, list, slice, filtros, page, pages, valida } = collectionPageSlice(data, tokens);
-  if (!valida && list.length) {
-    return `❓ Página inválida. Escolha de 1 a ${pages}: ${prefix} time 1`;
-  }
+/**
+ * Modelo canônico compartilhado entre card (`!pk tm`), texto (`!pk tm txt`) e CSV.
+ * A listagem textual e o PNG devem representar o mesmo estado.
+ */
+function buildTeamPresentationModel(data, tokens, prefix = '!pk') {
+  const pageSlice = collectionPageSlice(data, tokens);
+  const { items, list, slice, filtros, page, pages, valida } = pageSlice;
   const ativoIdx = data.ativoIndex;
   const favId = (data.favorito && data.favorito.id)
     || data.favoritoIdPokemon
     || null;
-  const linhas = slice.map(p => {
-    const idx = p.collectionIndex;
-    const marker = idx === ativoIdx ? '👉 ' : '';
-    const star = (favId && p.idPokemon === favId) ? '⭐ ' : '';
-    const rar = p.raridade || 'comum';
-    return `${marker}${star}${(idx != null ? idx + 1 : '?')}. ${shinyMark(p)}*${nomePokemon(p)}* Nv.${p.nivel || 1}`
-      + ` • ${(RARIDADE_EMOJI[rar] || '')} ${rar}`
-      + `\n   ${barraHp(p.hpAtual, p.hp)}`
-      + `\n   ✨ ${textoXp(p)}`;
+  const entries = slice.map((p) => {
+    const prog = pokemonXpProgress(p);
+    const evo = textoProximaEvolucao(p);
+    return {
+      pokemon: p,
+      index: p.collectionIndex,
+      displayIndex: p.collectionIndex != null ? p.collectionIndex + 1 : null,
+      ativo: p.collectionIndex === ativoIdx,
+      favorito: !!(favId && p.idPokemon === favId),
+      nome: nomePokemon(p),
+      nivel: p.nivel || 1,
+      raridade: p.raridade || 'comum',
+      xp: prog,
+      evolucao: evo,
+      tipos: p.tipos || []
+    };
   });
   const filtroDesc = [];
   if (filtros.shiny) filtroDesc.push('✨ shiny');
@@ -544,23 +626,89 @@ function formatCollection(data, tokens, prefix = '!pk') {
     filtroDesc.push(`raridade ${filtros.raridades.join('/')}`);
   }
   if (filtros.nome) filtroDesc.push(`nome “${filtros.nome}”`);
+  return {
+    prefix,
+    items,
+    list,
+    slice,
+    entries,
+    filtros,
+    filtroDesc,
+    page,
+    pages,
+    valida,
+    trainerLevel: data.trainerLevel || 1,
+    saveLabel: publicSaveLabel({
+      displayName: data.displayName || data.saveDisplayName,
+      saveId: data.saveId
+    }) || '?',
+    storageLine: formatPokemonStorageLine(data),
+    total: data.count || items.length,
+    data
+  };
+}
+
+/** Legenda curta do card — sem listagem de Pokémon/XP/ataques. */
+function formatCollectionCardCaption(modelOrData, tokens, prefix = '!pk') {
+  const model = modelOrData && modelOrData.entries
+    ? modelOrData
+    : buildTeamPresentationModel(modelOrData, tokens, prefix);
+  const p = model.prefix || prefix;
+  const nav = [];
+  if (model.page > 1) nav.push(`⬅️ ${p} tm ${model.page - 1}`);
+  if (model.page < model.pages) nav.push(`➡️ ${p} tm ${model.page + 1}`);
+  return [
+    `🎴 *Máquinas Técnicas* · Página ${Math.min(model.page, model.pages)}/${model.pages}`,
+    nav.length ? nav.join(' · ') : null,
+    `Texto: ${p} tm txt · CSV: ${p} tm csv`
+  ].filter(Boolean).join('\n');
+}
+
+function formatCollection(data, tokens, prefix = '!pk') {
+  const model = buildTeamPresentationModel(data, tokens, prefix);
+  if (!model.valida && model.list.length) {
+    return `❓ Página inválida. Escolha de 1 a ${model.pages}: ${prefix} time 1`;
+  }
+  const linhas = model.entries.map((e) => {
+    const p = e.pokemon;
+    const marker = e.ativo ? '👉 ' : '';
+    const star = e.favorito ? '⭐ ' : '';
+    const rar = e.raridade;
+    const xpLinha = e.xp.max
+      ? '   ✨ NÍVEL MÁXIMO'
+      : (e.xp.known
+        ? `   ✨ ${e.xp.label}${e.xp.pct != null ? ` (${String(e.xp.pct).replace('.', ',')}%)` : ''}`
+        : '   ✨ XP ?');
+    const evoLinha = e.evolucao ? `\n   🧬 ${e.evolucao}` : '';
+    return `${marker}${star}${(e.displayIndex != null ? e.displayIndex : '?')}. ${shinyMark(p)}*${e.nome}* — Nv. ${e.nivel}`
+      + ` • ${(RARIDADE_EMOJI[rar] || '')} ${rar}`
+      + `\n   ${barraHp(p.hpAtual, p.hp)}`
+      + `\n${xpLinha}`
+      + evoLinha;
+  });
 
   return [
-    `🎒 *Seu time:* • Página ${Math.min(page, pages)}/${pages}`,
-    `🧑‍🎓 Nível de treinador: ${data.trainerLevel || 1} • Save: ${publicSaveLabel({ displayName: data.displayName || data.saveDisplayName, saveId: data.saveId }) || '?'}`,
-    formatPokemonStorageLine(data),
-    filtroDesc.length ? `🔎 Filtros: ${filtroDesc.join(' + ')} — ${list.length} Pokémon` : `Total: ${data.count || items.length}`,
+    `🎴 *Máquinas Técnicas — Meus Pokémon* · Página ${Math.min(model.page, model.pages)}/${model.pages}`,
+    `🧑‍🎓 Nível de treinador: ${model.trainerLevel} • Save: ${model.saveLabel}`,
+    model.storageLine,
+    model.filtroDesc.length
+      ? `🔎 Filtros: ${model.filtroDesc.join(' + ')} — ${model.list.length} Pokémon`
+      : `Total: ${model.total}`,
     '',
-    linhas.length ? linhas.join('\n') : (items.length ? 'Nenhum Pokémon do time corresponde a esse filtro.' : 'Coleção vazia. Use !pk iniciar.'),
+    linhas.length
+      ? linhas.join('\n')
+      : (model.items.length
+        ? 'Nenhum Pokémon do time corresponde a esse filtro.'
+        : 'Coleção vazia. Use !pk iniciar.'),
     '',
-    page > 1 ? `⬅️ Anterior: ${prefix} time ${page - 1}` : null,
-    page < pages ? `➡️ Próxima: ${prefix} time ${page + 1}` : null,
+    model.page > 1 ? `⬅️ Anterior: ${prefix} time ${model.page - 1}` : null,
+    model.page < model.pages ? `➡️ Próxima: ${prefix} time ${model.page + 1}` : null,
     `Use ${prefix} escolher <número> pra trocar o ativo (👉), ou ${prefix} joy para enviar os feridos à Enfermeira Joy.`,
     `Veja a ficha do ativo com ${prefix} time ativo.`,
     `Favorito: ${prefix} favorito <número>.`,
     `Combine filtros com ${prefix} time [tipo] [raridade] [nome] [nivel N] [repetidos].`,
     `Ordene por força: ${prefix} time > ou <.`,
-    `Modo texto: ${prefix} time txt.`,
+    `Card visual: ${prefix} tm · CSV: ${prefix} tm csv`,
     `+50 vagas: ${prefix} espaco comprar`
   ].filter(Boolean).join('\n');
 }
@@ -640,6 +788,7 @@ function formatPokedex(data, tokens, prefix = '!pk') {
 
 function formatStorage(data, tokens, prefix = '!pk') {
   return formatCollection(data, tokens, prefix)
+    .replace('🎴 *Máquinas Técnicas — Meus Pokémon*', '💻 *PC Pokémon*')
     .replace('🎒 *Seu time:*', '💻 *PC Pokémon:*')
     .replace('Nenhum Pokémon do time corresponde', 'Nenhum Pokémon armazenado corresponde');
 }
@@ -3126,11 +3275,19 @@ function resolveCommand(tokens) {
 module.exports = {
   formatDurationPt,
   barraXp,
+  barraXpPokemon,
+  pokemonXpProgress,
+  textoXp,
+  textoProximaEvolucao,
+  XP_POR_NIVEL_POKEMON,
+  NIVEL_MAXIMO_POKEMON,
   PAGE_SIZE,
   envelope,
   formatTrainer,
   formatPokemonStorageLine,
   formatCollection,
+  formatCollectionCardCaption,
+  buildTeamPresentationModel,
   formatStorage,
   formatTeams,
   formatSpace,

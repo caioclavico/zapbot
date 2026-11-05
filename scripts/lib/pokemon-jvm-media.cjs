@@ -985,56 +985,115 @@ const CORES_TIPO_TIME = {
 };
 
 /**
- * Grade do time (até 12) — espelha criar-cartao-time da master.
+ * Progresso XP no card — espelha pokemonXpProgress do present (DTO canônico).
+ * Não inventa zero quando XP está ausente.
+ */
+function xpProgressoCard(p) {
+  const nivel = Number(p && p.nivel) || 1;
+  const maximo = p && (p.nivelMaximo === true || nivel >= 100);
+  const knownFlag = p && p.xpConhecido;
+  const hasCampo = p && (
+    p.xpDesdeNivel != null
+    || p.xpNivelAtual != null
+    || (p.xp != null && (p.xpNecessario != null || p.xpProximoNivel != null))
+    || knownFlag === true
+  );
+  if (!p || knownFlag === false || (!hasCampo && knownFlag !== true)) {
+    return { known: false, max: !!maximo, atual: 0, necessario: 9, ratio: 0, label: maximo ? 'NÍVEL MÁXIMO' : 'XP ?' };
+  }
+  if (maximo) {
+    return { known: true, max: true, atual: 0, necessario: 9, ratio: 1, label: 'NÍVEL MÁXIMO' };
+  }
+  const atual = Number(
+    p.xpNivelAtual != null ? p.xpNivelAtual
+      : (p.xpDesdeNivel != null ? p.xpDesdeNivel : p.xp)
+  );
+  const necessario = Number(
+    p.xpProximoNivel != null ? p.xpProximoNivel
+      : (p.xpNecessario != null ? p.xpNecessario : 9)
+  );
+  if (!Number.isFinite(atual) || !Number.isFinite(necessario) || necessario <= 0) {
+    return { known: false, max: false, atual: 0, necessario: 9, ratio: 0, label: 'XP ?' };
+  }
+  return {
+    known: true,
+    max: false,
+    atual: Math.floor(atual),
+    necessario: Math.floor(necessario),
+    ratio: Math.min(1, Math.max(0, atual / necessario)),
+    label: `XP ${Math.floor(atual)}/${Math.floor(necessario)}`
+  };
+}
+
+/**
+ * Grade do time (até 12) — espelha criar-cartao-time da master + XP/evolução.
  * Índices exibidos = collectionIndex+1 (mesmos de !pk escolher).
  */
 async function renderTeamGrid(pokemons, {
   filename = 'meu-time-pokemon.png',
   trainerLevel = 1,
   ativoIndex = 0,
-  title = 'Seu time Pokémon'
+  title = 'Máquinas Técnicas'
 } = {}) {
   try {
     const list = Array.isArray(pokemons) ? pokemons.slice(0, 12) : [];
     if (!list.length) return null;
+    const rowH = 230;
+    const cardH = 210;
     const largura = 1000;
-    const altura = 120 + (Math.ceil(list.length / 2) * 205) + 20;
+    const altura = 120 + (Math.ceil(list.length / 2) * rowH) + 20;
     const cards = list.map((p, idx) => {
       const coluna = idx % 2;
       const linha = Math.floor(idx / 2);
       const x = 20 + coluna * 480;
-      const y = 120 + linha * 205;
+      const y = 120 + linha * rowH;
       const tipos = p.tipos || [];
       const cor = CORES_TIPO_TIME[tipos[0]] || '#78909c';
       const hpMax = Math.max(1, Number(p.hp) || 1);
       const hpAtual = Math.max(0, Number(p.hpAtual != null ? p.hpAtual : hpMax) || 0);
       const hpLargura = Math.round(270 * Math.min(1, hpAtual / hpMax));
+      const xp = xpProgressoCard(p);
+      const xpLargura = Math.round(270 * xp.ratio);
       const numero = (p.collectionIndex != null ? p.collectionIndex : idx) + 1;
       const ativo = Number(p.collectionIndex) === Number(ativoIndex);
-      const nome = escapeXml(String(p.nome || p.species || '?').slice(0, 20));
+      const nome = escapeXml(String(p.nome || p.species || '?').slice(0, 18));
       const tiposTxt = escapeXml(tiposPt(tipos));
       const rar = escapeXml(p.raridade || 'comum');
+      const evoNome = p.proximaEvolucao || p.proxima_evolucao;
+      const evoNv = p.nivelProximaEvolucao != null
+        ? p.nivelProximaEvolucao
+        : p.nivel_proxima_evolucao;
+      const evoTxt = evoNome
+        ? escapeXml(`Evo: ${String(evoNome).slice(0, 14)}${evoNv != null ? ` Nv.${evoNv}` : ''}`)
+        : '';
+      const xpFill = xp.max ? '#a78bfa' : (xp.known ? '#38bdf8' : '#64748b');
       return `<g>`
-        + `<rect x="${x}" y="${y}" width="460" height="185" rx="18" fill="#172033" `
+        + `<rect x="${x}" y="${y}" width="460" height="${cardH}" rx="18" fill="#172033" `
         + `stroke="${ativo ? '#facc15' : '#2d3b55'}" stroke-width="${ativo ? 5 : 2}"/>`
-        + `<rect x="${x}" y="${y}" width="12" height="185" rx="6" fill="${cor}"/>`
+        + `<rect x="${x}" y="${y}" width="12" height="${cardH}" rx="6" fill="${cor}"/>`
         + (ativo
-          ? `<text x="${x + 28}" y="${y + 28}" font-size="16" font-family="Arial,sans-serif" `
+          ? `<text x="${x + 28}" y="${y + 26}" font-size="15" font-family="Arial,sans-serif" `
             + `font-weight="bold" fill="#facc15">ATIVO</text>`
           : '')
-        + `<text x="${x + 430}" y="${y + 38}" font-size="24" font-family="Arial,sans-serif" `
+        + `<text x="${x + 430}" y="${y + 34}" font-size="22" font-family="Arial,sans-serif" `
         + `font-weight="bold" fill="#94a3b8" text-anchor="end">#${numero}</text>`
-        + `<text x="${x + 165}" y="${y + 58}" font-size="27" font-family="Arial,sans-serif" `
+        + `<text x="${x + 165}" y="${y + 48}" font-size="24" font-family="Arial,sans-serif" `
         + `font-weight="bold" fill="#f8fafc">${nome}</text>`
-        + `<text x="${x + 165}" y="${y + 88}" font-size="18" font-family="Arial,sans-serif" `
+        + `<text x="${x + 165}" y="${y + 74}" font-size="16" font-family="Arial,sans-serif" `
         + `fill="#cbd5e1">Nv. ${p.nivel || 1} • ${tiposTxt}</text>`
-        + `<text x="${x + 165}" y="${y + 118}" font-size="17" font-family="Arial,sans-serif" `
+        + `<text x="${x + 165}" y="${y + 100}" font-size="15" font-family="Arial,sans-serif" `
         + `fill="#e2e8f0">HP ${hpAtual}/${hpMax}</text>`
-        + `<rect x="${x + 165}" y="${y + 133}" width="270" height="18" rx="9" fill="#334155"/>`
-        + `<rect x="${x + 165}" y="${y + 133}" width="${hpLargura}" height="18" rx="9" `
+        + `<rect x="${x + 165}" y="${y + 108}" width="270" height="14" rx="7" fill="#334155"/>`
+        + `<rect x="${x + 165}" y="${y + 108}" width="${hpLargura}" height="14" rx="7" `
         + `fill="${(hpAtual / hpMax) > 0.3 ? '#4ade80' : '#f87171'}"/>`
-        + `<text x="${x + 165}" y="${y + 174}" font-size="15" font-family="Arial,sans-serif" `
-        + `fill="#cbd5e1">${rar}</text>`
+        + `<text x="${x + 165}" y="${y + 140}" font-size="15" font-family="Arial,sans-serif" `
+        + `fill="#e2e8f0">${escapeXml(xp.label)}</text>`
+        + `<rect x="${x + 165}" y="${y + 148}" width="270" height="14" rx="7" fill="#334155"/>`
+        + (xp.known || xp.max
+          ? `<rect x="${x + 165}" y="${y + 148}" width="${xp.max ? 270 : xpLargura}" height="14" rx="7" fill="${xpFill}"/>`
+          : '')
+        + `<text x="${x + 165}" y="${y + 180}" font-size="14" font-family="Arial,sans-serif" `
+        + `fill="#94a3b8">${rar}${evoTxt ? ` · ${evoTxt}` : ''}</text>`
         + `</g>`;
     }).join('');
 
@@ -1050,7 +1109,7 @@ async function renderTeamGrid(pokemons, {
 
     const sprites = await Promise.all(list.map(async (p) => {
       try {
-        const { buffer } = await spriteProporcional(p, 145);
+        const { buffer } = await spriteProporcional(p, 130);
         return buffer;
       } catch (_) {
         return null;
@@ -1063,7 +1122,7 @@ async function renderTeamGrid(pokemons, {
         return {
           input: buf,
           left: 28 + ((idx % 2) * 480),
-          top: 140 + (Math.floor(idx / 2) * 205)
+          top: 145 + (Math.floor(idx / 2) * rowH)
         };
       })
       .filter(Boolean);
