@@ -2,7 +2,7 @@
 
 **Branch RC:** `rc/a6-gym-motivation-rewards`  
 **Tree imagens:** `2ec5f97649ef32a320007dbb4a36b6eb9bf9612a` (runtime Node+JVM)  
-**Tip docs/RC:** `64b5d6a` (manifests + este relatório; sem mudança de runtime vs imagens)  
+**Tip docs/RC:** tip desta branch (docs-only após `2ec5f97`; runtime = tree das imagens)  
 **Pacote:** `rc-artifacts/a6-gym-rc-20261105T222938Z/`  
 **Data:** 2026-11-05  
 **Status:** **READY FOR PILOT** (sem deploy / sem migration em produção / sem flip de flag nesta sessão)
