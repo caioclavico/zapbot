@@ -37,7 +37,8 @@
    "migrations/pokemon/030-raid-auto.edn"
    "migrations/pokemon/031-raid-capture-frambo.edn"
    "migrations/pokemon/032-thematic-events.edn"
-   "migrations/pokemon/033-trade-public-id.edn"])
+   "migrations/pokemon/033-trade-public-id.edn"
+   "migrations/pokemon/034-gym-permanence-daily.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id

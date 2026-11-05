@@ -1,17 +1,92 @@
 (ns pokemon.domain.gym
   "Ginásios — catálogo, motivação, recompensas e ocupação (puro).
   Espelha aventuras.cljs + ginasios.cljs + finalizar-ginasio do core."
-  (:require [pokemon.domain.errors :as err]
-            [pokemon.domain.xp :as xp]))
+  (:require [clojure.string :as str]
+            [pokemon.domain.errors :as err]
+            [pokemon.domain.xp :as xp])
+  (:import [java.time Instant ZoneId]
+           [java.time.format DateTimeFormatter]))
 
 (def motivacao-maxima 100)
 (def motivacao-minima 20)
 (def perda-motivacao-por-hora 5)
 (def perda-motivacao-por-defesa 12)
 
+;; --- Permanência / moedas (política homologável; crédito gated por flag) ---
+(def ^:private minuto-ms (* 60 1000))
+(def permanencia-slot-ms (* 10 minuto-ms))           ;; 1 moeda / 10 min completos
+(def permanencia-minima-ms (* 30 minuto-ms))         ;; elegível só com ≥ 30 min
+(def permanencia-teto-diario 100)                    ;; por treinador, todos os ginásios
+(def permanencia-tz-padrao "America/Campo_Grande")
+
+;; Legado (pré-política 10min): mantido só como referência documental / compat leituras.
 (def permanencia-moedas-ms (* 6 60 60 1000))
 (def permanencia-moedas 50)
+
 (def xp-permanencia-slot-ms (* 30 60 1000))
+
+(defn permanence-rewards-enabled?
+  "Kill-switch econômico. Default false até homologação em produção."
+  []
+  (= "true"
+     (some-> (System/getenv "POKEMON_GYM_PERMANENCE_REWARDS_ENABLED")
+             str/lower-case
+             str/trim)))
+
+(defn permanence-timezone
+  []
+  (or (some-> (System/getenv "POKEMON_GYM_PERMANENCE_TZ") str/trim not-empty)
+      permanencia-tz-padrao))
+
+(defn day-key
+  "Chave do teto diário no fuso da política (default America/Campo_Grande)."
+  ([agora-ms] (day-key agora-ms (permanence-timezone)))
+  ([agora-ms tz]
+   (-> (Instant/ofEpochMilli (long agora-ms))
+       (.atZone (ZoneId/of tz))
+       (.toLocalDate)
+       (.format DateTimeFormatter/ISO_LOCAL_DATE))))
+
+(defn occupation-reward-id
+  "Identidade estável da recompensa de uma ocupação (não reutiliza pokemon-id)."
+  [occupation-key desde-ms]
+  (str "gym-reward:" (str occupation-key) ":" (long desde-ms)))
+
+(defn permanencia-bruta-moedas
+  "Moedas brutas pela duração (sem teto diário, sem flag).
+   < 30 min → 0; senão floor(minutos / 10)."
+  [duration-ms]
+  (let [ms (max 0 (long (or duration-ms 0)))]
+    (if (< ms permanencia-minima-ms)
+      0
+      (long (Math/floor (/ (double ms) permanencia-slot-ms))))))
+
+(defn aplicar-teto-diario
+  "Aplica teto compartilhado entre ginásios do mesmo treinador no dia."
+  [bruta ja-hoje]
+  (let [bruta (max 0 (long (or bruta 0)))
+        ja (max 0 (long (or ja-hoje 0)))
+        restante (max 0 (- permanencia-teto-diario ja))]
+    (min bruta restante)))
+
+(defn plano-recompensa-permanencia
+  "Plano determinístico de pagamento (puro).
+   :payable é 0 quando a flag econômica está off."
+  [{:keys [duration-ms already-today economy-enabled?]}]
+  (let [bruta (permanencia-bruta-moedas duration-ms)
+        capped (aplicar-teto-diario bruta already-today)
+        enabled? (if (nil? economy-enabled?)
+                   (permanence-rewards-enabled?)
+                   (boolean economy-enabled?))
+        eligible? (and enabled? (pos? capped))]
+    {:gross bruta
+     :capped capped
+     :payable (if eligible? capped 0)
+     :eligible? eligible?
+     :below-minimum? (and (pos? (long (or duration-ms 0)))
+                          (< (long duration-ms) permanencia-minima-ms))
+     :daily-remaining (max 0 (- permanencia-teto-diario (max 0 (long (or already-today 0)))))
+     :economy-enabled? enabled?}))
 
 (def ginasios
   [{:id "pedra" :nome "🪨 Pedra" :lider "Brock" :nivel 10 :item "pedra-lua"
@@ -132,17 +207,26 @@
                         "motivacao" novas "motivacao-em" agora)
        :antes antes :depois depois})))
 
-(defn recompensa-permanencia
-  [ocupacao agora]
-  (let [desde (or (:desde ocupacao) (get ocupacao "desde") agora)]
-    (if (and ocupacao (> (- (long agora) (long desde)) permanencia-moedas-ms))
-      permanencia-moedas
-      0)))
-
 (defn duracao-ms
   [ocupacao agora]
   (let [desde (or (:desde ocupacao) (get ocupacao "desde") agora)]
     (max 0 (- (long agora) (long desde)))))
+
+(defn recompensa-permanencia
+  "Bruta pela duração (≥30 min → 1 moeda/10 min). Sem teto diário.
+   Pagamento real e teto ficam em `plano-recompensa-permanencia` + gym-store."
+  [ocupacao agora]
+  (if ocupacao
+    (permanencia-bruta-moedas (duracao-ms ocupacao agora))
+    0))
+
+(defn recompensa-permanencia-pagamento
+  "Valor a creditar no encerramento (0 se flag off ou abaixo do mínimo)."
+  [ocupacao agora already-today]
+  (:payable (plano-recompensa-permanencia
+             {:duration-ms (duracao-ms ocupacao agora)
+              :already-today already-today
+              :economy-enabled? (permanence-rewards-enabled?)})))
 
 (defn xp-permanencia
   [ocupacao agora]

@@ -219,8 +219,30 @@
                              (= (:save-id ocupacao) save-id))
                     (throw (err/error :cannot_challenge_own_gym
                                       {:save-id save-id :player-id player-id})))
-                moedas-ant (if ocupacao (gym/recompensa-permanencia ocupacao agora) 0)
                 xp-ant (if ocupacao (gym/xp-permanencia ocupacao agora) 0)
+                ;; Permanência: bruta → teto diário → flag (default off).
+                permanence-plan
+                (when ocupacao
+                  (let [prev (id/parse-player-key (:player-key ocupacao))
+                        prev-save (save-entity db (:chat-id prev) (:player-id prev)
+                                               (:save-id ocupacao))
+                        day (gym/day-key agora)
+                        daily (or (some-> (:save/gym-permanence-daily-edn prev-save)
+                                          edn/read-string)
+                                  {})
+                        already (long (get daily day 0))]
+                    (assoc (gym/plano-recompensa-permanencia
+                            {:duration-ms (gym/duracao-ms ocupacao agora)
+                             :already-today already
+                             :economy-enabled? (gym/permanence-rewards-enabled?)})
+                           :day day
+                           :daily daily
+                           :already already
+                           :prev-save prev-save
+                           :prev-parsed prev
+                           :reward-op (gym/occupation-reward-id
+                                       gk (or (:desde ocupacao) agora)))))
+                moedas-ant (long (:payable permanence-plan 0))
                 nova (gym/nova-ocupacao
                       {:player-id player-id :save-id save-id
                        :nome (or (:nome request) player-id)
@@ -250,16 +272,26 @@
                                            (+ start i)))
                      (:time ocupacao))))
                 prev-coins-tx
-                (when (and ocupacao (pos? moedas-ant))
-                  (let [prev (id/parse-player-key (:player-key ocupacao))
+                (when (and permanence-plan (pos? moedas-ant))
+                  (let [prev (:prev-parsed permanence-plan)
                         prev-sk (id/save-key (:chat-id prev) (:player-id prev)
                                              (:save-id ocupacao))
-                        prev-save (save-entity db (:chat-id prev) (:player-id prev)
-                                               (:save-id ocupacao))]
-                    (:tx (economy-store/apply-delta-tx
-                          {:sk prev-sk :save prev-save :delta moedas-ant
-                           :operation-id operation-id
-                           :source "gym-permanence" :role "permanence"}))))
+                        prev-save (:prev-save permanence-plan)
+                        day (:day permanence-plan)
+                        daily' (assoc (:daily permanence-plan) day
+                                      (+ (:already permanence-plan) moedas-ant))
+                        old-daily (:save/gym-permanence-daily-edn prev-save)
+                        coin-tx (:tx (economy-store/apply-delta-tx
+                                      {:sk prev-sk :save prev-save :delta moedas-ant
+                                       :operation-id (:reward-op permanence-plan)
+                                       :source "gym-permanence" :role "permanence"
+                                       :agora agora}))
+                        daily-cas (if (nil? old-daily)
+                                    [[:db/cas [:save/key prev-sk]
+                                      :save/gym-permanence-daily-edn nil (pr-str daily')]]
+                                    [[:db/cas [:save/key prev-sk]
+                                      :save/gym-permanence-daily-edn old-daily (pr-str daily')]])]
+                    (into (vec coin-tx) daily-cas)))
                 occ-entity {:gym-occupation/key gk
                             :gym-occupation/chat-id chat-id
                             :gym-occupation/gym-id gym-id
@@ -288,7 +320,10 @@
             {:tx (concat remove-tx reindex-tx (or return-tx [])
                          (or prev-coins-tx []) occ-tx
                          (or prev-defense-tx []) challenger-defense)
-             :meta {:moedas-permanencia moedas-ant :xp-permanencia xp-ant}}))
+             :meta {:moedas-permanencia moedas-ant
+                    :xp-permanencia xp-ant
+                    :permanencia-bruta (long (:gross permanence-plan 0))
+                    :permanencia-teto (long (:capped permanence-plan 0))}}))
         stats-part (build-statistics-tx
                     {:statistics-entity statistics-entity
                      :chat-id chat-id :gym-id gym-id :agora agora

@@ -1,0 +1,8 @@
+;; Teto diário de moedas por permanência em ginásio (aditivo).
+;; NÃO aplicar em produção sem GO — ensaios/testes locais via schema/install!.
+[
+ {:db/ident       :save/gym-permanence-daily-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "EDN map day-key (America/Campo_Grande) → moedas de permanência já creditadas no dia. Teto 100/treinador."}
+]
