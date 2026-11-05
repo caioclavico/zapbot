@@ -186,9 +186,10 @@ function spriteUrl(pokemon) {
 }
 
 /**
- * Redimensiona preservando alpha. JPEG/WebP sem transparência: não inventa
- * fundo preto — mantém o bitmap e deixa o composite sobre o ginásio.
- * PNG com alpha: ensureAlpha + contain com fundo transparente (evita caixa preta).
+ * Redimensiona preservando alpha real.
+ * PNG/WebP com alpha: ensureAlpha + contain transparente (sem caixa opaca).
+ * JPEG/artwork sem alpha: NÃO força ensureAlpha (evita quadrado preto/branco
+ * no padding); sai PNG com padding alpha 0 sobre a arena.
  */
 async function spriteProporcional(pokemon, maximo) {
   const tamanho = tamanhoVisual(pokemon, maximo);
@@ -199,7 +200,10 @@ async function spriteProporcional(pokemon, maximo) {
   }
   try {
     const meta = await sharp(buf).metadata();
-    const pipeline = sharp(buf).ensureAlpha();
+    let pipeline = sharp(buf);
+    if (meta.hasAlpha) {
+      pipeline = pipeline.ensureAlpha();
+    }
     const out = await pipeline
       .resize(tamanho, tamanho, {
         fit: 'contain',
@@ -505,14 +509,16 @@ async function renderHuntArena({
       layers.push({
         input: meu.buffer,
         left: centroMeu - Math.floor(meu.tamanho / 2),
-        top: 365 - meu.tamanho
+        top: 365 - meu.tamanho,
+        blend: 'over'
       });
     }
     if (selvagem) {
       layers.push({
         input: selvagem.buffer,
         left: centroSelvagem - Math.floor(selvagem.tamanho / 2),
-        top: 350 - selvagem.tamanho
+        top: 350 - selvagem.tamanho,
+        blend: 'over'
       });
     }
     let base = await sharp(Buffer.from(svgArenaCacada(area || {}, fugiu)))
