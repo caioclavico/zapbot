@@ -1480,8 +1480,8 @@
                     (p/let [d (.getTeamCsv jvm #js {:chatId chat-id :playerId player-id})
                             doc #js {:base64 (.-base64 d)
                                      :mimeType (or (.-mimeType d) "text/csv")
-                                     :filename (or (.-filename d) "meu-time-pokemon.csv")}
-                            texto (or (.-text d) "🎒 Seu time em CSV.")]
+                                     :filename (or (.-filename d) "odisseu-mt-pokemon.csv")}
+                            texto (or (.-text d) "🎒 Seu time em CSV (odisseu-mt-pokemon.csv).")]
                       (.envelope jvm-present (:requestId pedido) texto
                                   #js {:document doc :effects #js []}))
 
@@ -1510,8 +1510,10 @@
                     :else
                     (p/let [data (desempenho/medir! ctx "pokemon_jvm_collection"
                                     #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))
-                            texto (.formatCollection jvm-present data (clj->js resto*) prefix)
-                            page (.collectionPageSlice jvm-present data (clj->js resto*))
+                            tokens (clj->js resto*)
+                            texto-completo (.formatCollection jvm-present data tokens prefix)
+                            caption-curta (.formatCollectionCardCaption jvm-present data tokens prefix)
+                            page (.collectionPageSlice jvm-present data tokens)
                             slice (.-slice page)
                             img (when (and (not modo-texto?)
                                            slice
@@ -1519,8 +1521,15 @@
                                   (render-seguro! ctx "pokemon_jvm_media_time"
                                     #(.renderTeamGrid jvm-media slice
                                                       #js {:filename "meu-time-pokemon.png"
+                                                           :title "Máquinas Técnicas"
                                                            :trainerLevel (or (.-trainerLevel data) 1)
-                                                           :ativoIndex (or (.-ativoIndex data) 0)})))]
+                                                           :ativoIndex (or (.-ativoIndex data) 0)})))
+                            ;; Card-only: legenda curta (sem listagem). Texto completo só em `txt`
+                            ;; ou quando o PNG falhar (fallback).
+                            texto (cond
+                                    modo-texto? texto-completo
+                                    img caption-curta
+                                    :else texto-completo)]
                       (envelope-jvm pedido texto img))))
 
                 "shiny"
