@@ -1,123 +1,87 @@
-# A6 — `!pk tm`: card, texto, XP, evolução e CSV
+# A6 — `!pk tm`: Time Pokémon, XP, evolução e CSV
 
-**Status:** CONDITIONAL (pronto localmente; sem deploy / sem alteração de saves reais)
+**Status:** READY (homologação local; sem deploy / sem alteração de saves reais)
 
 ## Escopo e nomenclatura
 
-No A6, `!pk tm` é alias de **`time`** (coleção/time do treinador), **não** da Máquina Técnica de item (`!pk mt` / `!pk aprender`).
+`!pk tm` é alias de **`time`** (coleção / **Meu Time Pokémon**).
 
-Esta entrega reformula a apresentação e os DTOs da listagem do time, rebatizada visualmente como **Máquinas Técnicas** no card/texto, preservando aliases `tm` / `time` / `meus` / `equipe`.
+**Não** é Máquina Técnica. O sistema de MT item permanece em `!pk mt` / `!pk aprender` (separado).
 
-Não misturar com a Pokédex de espécies (`!pokedex`).
+Aliases preservados: `tm` / `time` / `meus` / `equipe`.
 
 ## Comandos
 
 | Comando | Resposta |
 |---|---|
-| `!pk tm` / `!pk time` | **Somente card** PNG (paginação preservada). Legenda curta: `🎴 Máquinas Técnicas` + nav/atalhos. Sem listagem na caption. |
-| `!pk tm txt` / `!pk time txt` | **Somente texto** (sem PNG). Mesmo modelo canônico do card (nível, XP, evolução, filtros). |
-| `!pk tm csv` / `!pk time csv` | Documento CSV `odisseu-mt-pokemon.csv` (UTF-8 BOM). Sem PNG. |
+| `!pk tm` / `!pk time` | **Somente card** PNG. Legenda curta: `🎮 Meu Time Pokémon` + nav/atalhos. Sem listagem na caption. |
+| `!pk tm txt` | **Somente texto** (sem PNG). Mesmo modelo canônico do card. |
+| `!pk tm csv` | Documento CSV `odisseu-time-pokemon.csv` (UTF-8 BOM). Sem PNG. |
 | `!pk tm ativo` | Inalterado (ficha do ativo). |
-| Aplicação de MT (`!pk mt`, aprender, etc.) | Fora desta entrega (regras de uso preservadas). |
 
-Argumentos de filtro/página (`tipo`, `raridade`, `nivel N`, `>`, `<`, número de página) continuam válidos em card e texto.
+## Fórmula de XP canônica (confirmada)
 
-## Comportamento anterior → novo
+Fonte: `pokemon.domain.xp` ≡ `zapbot.pokemon.treinador` (master/legado) ≡ fixtures `legacy_xp.edn`.
 
-| Aspecto | Antes | Depois |
-|---|---|---|
-| `!pk tm` | PNG + legenda = listagem completa (`formatCollection`) | PNG + legenda curta; listagem só no PNG |
-| XP no PNG | Só barra de HP | HP + XP (atual/necessário) + barra; `NÍVEL MÁXIMO` no cap |
-| XP no texto | `XP a/9` (zero inventado se ausente) | Modelo canônico; `XP ?` se não confiável |
-| Evolução na listagem | Ausente | Próxima evo por nível (catálogo) quando linear |
-| CSV | `;` + colunas PT; XP lia `:xp`/`:xp-necessario` → **0;0** | `,` RFC4180 + colunas estáveis; XP via `xp-desde-nivel` / `xp-por-nivel=9` |
-| Filename CSV | `meu-time-pokemon.csv` | `odisseu-mt-pokemon.csv` |
-| Evolução pós-XP (JVM) | Só `evolve!` manual | Auto por nível via catálogo linear (sem ramificadas/especiais) |
+| Constante | Valor |
+|---|---|
+| `xp-por-nivel` | **9** |
+| `fator-crescimento-por-nivel` | 1.03 |
+| `nivel-maximo` | 100 |
+| Campo persistido | `xp-desde-nivel` = progresso **parcial** no nível atual (não total acumulado) |
+| Vitória / derrota | +3 / +1 XP |
 
-## Fórmula de XP canônica
+Node espelha `XP_POR_NIVEL_POKEMON = 9` só como fallback quando o DTO já marca XP conhecido.  
+`XP ?` = dados desconhecidos; **leituras não mutam** Datomic (teste `leitura-progresso-nao-muta-datomic`).
 
-Fonte: `pokemon.domain.xp`
+## Evolução automática (auditoria TX)
 
-- `xp-por-nivel` = **9** (Pokémon)
-- `fator-crescimento-por-nivel` = **1.03**
-- `nivel-maximo` = **100**
-- Persistido: `xp-desde-nivel` (XP **dentro** do nível atual, não total acumulado)
-- Treinador: custos 5, 7, 9, 11… (`progresso-treinador`) — **não** usado no card de MT
+### Comportamento
 
-Leitura: `xp/progresso-pokemon` → DTO (`xpNivelAtual`, `xpProximoNivel`, `progressoXpPercentual`, `nivelMaximo?`, `xpConhecido?`).
+Após `apply-pokemon-xp-tx` / `grant-pokemon-xp!`, se o registro for elegível no catálogo linear `pokemon.domain.level-evolution`, evolui **na mesma TX Datomic**, no **mesmo `id-pokemon`**.
 
-Node **não** inventa fórmula: usa o DTO; fallback do denominador 9 só quando o DTO já marcou XP conhecido.
+### Proteções
 
-## Regras de evolução
+Catálogo **omite** pedra, troca, amizade, chuva, golpe conhecido e ramificadas (Eevee, etc.).  
+Testes Datomic: Pikachu / Eevee / Kadabra **não** mudam de espécie com XP.
 
-### Legado (master CLJS)
+### Paridade com legado
 
-`verificar-evolucao!` → `tentar-evoluir!` → PokeAPI chain + `proxima-evolucao` (level-up simples).
+Um evento de XP → **no máximo uma etapa** evolutiva (igual `verificar-evolucao!` chamado uma vez).  
+Charmander que sobe vários níveis vira Charmeleon; Charizard exige evento seguinte.
 
-### A6 JVM (antes)
+### Idempotência
 
-- `elegivel-nivel?` / `aplicar-evolucao` / `evolve!` (manual, pedra/item)
-- `apply-pokemon-xp-tx` **não** evoluía
+| Caminho | Idempotência |
+|---|---|
+| Captura / ginásio / raide / reward com `operation-id` + receipt | Retry → `:duplicate true`; XP/evo **não** reaplicados |
+| `ganhar-xp-pokemon!` (sem receipt) | Cada chamada aplica XP de novo (API interna de teste/admin) |
 
-### A6 JVM (depois)
+Identidade preservada: `id-pokemon`, shiny, XP residual, nível, índice na coleção, golpes (normalizados).
 
-Catálogo versionado `pokemon.domain.level-evolution` (`catalog-version: pokeapi-level-evolutions-2026-11`):
+### Divergência intencional vs master
 
-- Somente cadeias **lineares** por nível
-- **Omitidas:** pedra, troca, amizade pura, chuva, golpe conhecido, ramificadas (Eevee, etc.)
-- Após XP (`apply-pokemon-xp-tx` / `grant-pokemon-xp!`): se elegível no catálogo → evolui **no mesmo id-pokemon** (preserva shiny, XP, nível, dono, golpes normalizados)
+Master resolve cadeia via PokeAPI em runtime. A6 usa catálogo versionado offline (`pokeapi-level-evolutions-2026-11`). Espécies fora do catálogo **não** auto-evoluem e **não** inventam próxima evo no card.
 
-Display no card/CSV: `proxima-evolucao` + `nivel-proxima-evolucao` via `level-evo/proxima` (mesmo catálogo).
+## Apresentação (card / txt / csv)
 
-## Bugs identificados e corrigidos
+Mesma fonte: `GET collection` → DTO enriquecido → `buildTeamPresentationModel` / CSV `team-csv`.
 
-1. **CSV XP sempre 0** — lia `:xp`/`:xp-necessario` inexistentes no registro; corrigido para `xp-desde-nivel` + `xp-por-nivel`.
-2. **Card sem XP** — `renderTeamGrid` só tinha HP; portado progresso canônico.
-3. **Legenda duplicava listagem** — `!pk tm` agora usa caption curta.
-4. **XP ausente virava 0** — agora `XP ?` / `xpConhecido? false`.
-5. **Sem auto-evo pós-XP no JVM** — restaurada para espécies do catálogo linear (paridade parcial com master; sem PokeAPI no hot path).
+| Formato | PNG | Listagem | XP / evo |
+|---|---|---|---|
+| `!pk tm` | sim | só na imagem | no PNG |
+| `!pk tm txt` | não | texto WhatsApp | no texto |
+| `!pk tm csv` | não | arquivo | colunas |
 
-### Fora de escopo / preexistente
+## CSV
 
-- `team-a552b` falha em `use-named-team!` ineligible (liga) — não relacionada a TM/XP.
-- `formatError` trade gate — falha preexistente em `pokemon-jvm-present.test.cjs`.
-- Catálogo level-evo não cobre todas as espécies PokeAPI (só lineares versionadas).
-- `!pk mt` (item) ainda ausente de `ALIASES` no present JVM (dead code path) — não alterado nesta entrega.
-
-## Contratos Node ↔ JVM
-
-```
-!pk tm|time|meus|equipe
-  → resolveCommand = time
-  → GET collection (DTO enriquecido)
-  → buildTeamPresentationModel / formatCollection / formatCollectionCardCaption
-  → renderTeamGrid (Sharp) | texto | getTeamCsv
-```
-
-DTO aditivo em `pokemon-dto`:
-
-- `xp-conhecido?`, `nivel-maximo?`, `xp-nivel-atual`, `xp-proximo-nivel`, `xp-necessario`
-- `progresso-xp-percentual`
-- `proxima-evolucao`, `proxima-evolucao-species`, `nivel-proxima-evolucao`
-
-JSON bridge: kebab → camelCase.
-
-## Colunas CSV
-
-Ordem estável (vírgula, UTF-8 BOM para Excel):
-
-`pokemon_id, numero_pokedex, nome, especie, nivel, xp_total, xp_nivel_atual, xp_proximo_nivel, progresso_xp_percentual, proxima_evolucao, nivel_proxima_evolucao, tipos, situacao, raridade, hp_atual, hp_maximo, status, item, golpes, collection_index`
-
-- Campos ausentes ficam vazios (não fabricados): `numero_pokedex`, `xp_total`
+- Filename: `odisseu-time-pokemon.csv`
+- UTF-8 com BOM (Excel)
+- Separador `,` (RFC 4180)
+- Anti formula-injection (`'` em `= + - @`)
+- Campos ausentes vazios (`numero_pokedex`, `xp_total`)
 - `pokemon_id` = id público da entidade (não JID)
-- Formula injection: prefixo `'` em células iniciadas por `= + - @`
-
-## Segurança
-
-- Export só do save/jogador autenticado na bridge
-- Sem JID/telefone/tokens/caminhos de servidor
-- Sem dual-write; leituras não concedem XP
-- Renderer Sharp não consulta Datomic
+- Somente leitura; sem importação
 
 ## Testes
 
@@ -126,30 +90,33 @@ node --test test/pokemon-jvm-tm-xp.characterization.test.cjs test/pokemon-jvm-tm
 ./scripts/test-a6-tm-xp-evolution.sh
 ```
 
-Cobertura: card-only, txt, CSV, XP parcial/máximo/ausente, evolução linear/exata/acima/sem evo/ramificada omitida, identidade preservada, injection CSV, equivalência XP legado.
+Datomic descartável cobre: XP canônico, auto-evo, especiais protegidas, multi-nível uma etapa, ultrapassado, nível máx, CSV BOM/injection, sync card/txt/csv, leitura sem mutação.
+
+### Preexistentes (fora de escopo)
+
+- `formatError` trade gate em `pokemon-jvm-present.test.cjs`
+- `team-a552b` falha liga bronze / `use-named-team!` ineligible (CSV filename já alinhado)
 
 ## Evidências
 
-Em `test/fixtures/a6-tm-xp/`:
+`test/fixtures/a6-tm-xp/`:
 
 - `team-grid-xp.png`, `xp-baixo.png`, `xp-quase.png`, `sem-evo.png`, `nivel-max.png`, `lista-longa.png`
-- `tm-txt-exemplo.txt`
-- `odisseu-mt-pokemon.sample.csv`
+- `tm-txt-exemplo.txt`, `tm-card-caption.txt`
+- `odisseu-time-pokemon.sample.csv`
 
-## Compatibilidade com master
+## Commits desta finalização
 
-- Alias `tm→time` igual à master
-- XP Pokémon 9/nível igual
-- Auto-evo por nível: master via PokeAPI; A6 via catálogo versionado (subconjunto)
-- CSV filename/colunas mudam (breaking cosmético do anexo; comando igual)
+(além dos 6 commits anteriores `bb32fd7`…`9e24fa1`)
 
-## Riscos e pendências
+- Nomenclatura Time Pokémon + CSV `odisseu-time-pokemon.csv`
+- Testes TX Datomic de evolução / XP / CSV
+- Docs READY
 
-1. Espécies fora do catálogo não auto-evoluem nem mostram próxima evo (CONDITIONAL).
-2. Kirlia→Gardevoir no catálogo; Gallade (pedra) continua manual — correto.
-3. Sem WA smoke manual nesta entrega.
-4. **Não executado:** deploy, migration, backfill, restart, alteração de saves reais.
+## Restrições respeitadas
+
+Sem deploy, migration, backfill, restart, alteração de saves reais, raids automáticas ou Announcer.
 
 ## Classificação
 
-**CONDITIONAL** — aceito localmente com evidências e testes verdes no escopo; catálogo de evo incompleto vs PokeAPI total e smoke WhatsApp pendente.
+**READY** — nomenclatura correta; três comandos consistentes; XP canônico 9; auto-evo transacional com especiais protegidas e uma etapa por evento; CSV válido; testes locais verdes no escopo.
