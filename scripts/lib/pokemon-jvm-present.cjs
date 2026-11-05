@@ -1601,7 +1601,9 @@ function formatGymResolve(gymResolve, battle) {
         : (gymResolve.premio === 'revanche'
           ? 'Revanche diária concluída.'
           : 'Você já recebeu a recompensa diária; o XP de combate continua valendo.'),
-      rew.moedas != null ? `💰 +${rew.moedas} moedas.` : null,
+      (rew.moedas != null && Number(rew.moedas) > 0)
+        ? `💰 +${rew.moedas} moedas.`
+        : null,
       gymResolve.peDelta != null ? `⭐ +${gymResolve.peDelta} PE.` : null,
       gymResolve.occupied ? '🏛️ Você é o novo líder — time reservado no ginásio.' : null
     ].filter(Boolean).join('\n');
@@ -1614,6 +1616,21 @@ function formatGymResolve(gymResolve, battle) {
     'Recupere seu time e tente novamente! Suas insígnias foram mantidas.',
     gymResolve.peDelta != null ? `⭐ +${gymResolve.peDelta} PE.` : null
   ].filter(Boolean).join('\n');
+}
+
+/** Mensagem ao dono quando o time volta do ginásio (crédito já no ledger). */
+function formatGymDefenderReturn(data) {
+  const nome = (data && (data.pokemonNome || data.nome)) || 'Pokémon';
+  const tempo = (data && data.tempoDefesa) || null;
+  const moedas = data && data.moedasRecebidas;
+  const lines = [
+    `🏟️ Seu *${nome}* voltou do ginásio!`,
+    tempo ? `⏱️ Tempo defendido: ${tempo}` : null,
+    (moedas != null && Number(moedas) > 0)
+      ? `🪙 Moedas recebidas: ${moedas}`
+      : null
+  ];
+  return lines.filter(Boolean).join('\n');
 }
 
 function formatGymChallengeStart(data, prefix = '!pk') {
@@ -1901,30 +1918,47 @@ function formatGymsOverview(data, prefix = '!pk') {
   return lines.filter(v => v !== null).join('\n');
 }
 
+function barraMotivacao(pct) {
+  const n = Math.max(0, Math.min(100, Number(pct) || 0));
+  const filled = Math.round(n / 10);
+  return `${'█'.repeat(filled)}${'░'.repeat(10 - filled)}`;
+}
+
 function formatGymDetail(data, prefix = '!pk') {
   const g = data.gym || {};
   if (!g.id) return '❓ Ginásio desconhecido. Use pedra, agua, eletrico, planta ou fogo.';
   const ocup = g.ocupacao;
   const lines = [
-    `${g.nome} — Nv.${g.nivel}`,
+    `🏟️ *GINÁSIO* ${g.nome} — Nv.${g.nivel}`,
     g.desbloqueado ? null : '🔒 Vença os ginásios anteriores primeiro.',
     ocup
       ? `Líder: *${ocup.nome || ocup.playerId}* (save ${ocup.saveId})`
       : `Líder NPC: *${g.liderNpc}* · equipe ${((g.timeNpc) || []).join(', ')}`,
-    `Recompensa: ${g.item}`,
+    `Insígnia / pedra: ${g.item}`,
     data.desafioHabilitado === false
       ? `🚧 Desafiar bloqueado: ${data.desafioBloqueio || 'combate 3×3 pendente no JVM.'}`
       : `Desafiar: ${prefix} gin desafiar ${g.id}`
   ];
   if (ocup && Array.isArray(ocup.time) && ocup.time.length) {
     lines.push('');
+    if (ocup.tempoDefesa) {
+      lines.push(`⏱️ Defendendo: ${ocup.tempoDefesa}`);
+    }
     lines.push('*Defensores*');
     ocup.time.forEach((p, i) => {
       const mot = (ocup.motivacao && ocup.motivacao[i] != null)
         ? ocup.motivacao[i]
         : (p.motivacaoGinasio != null ? p.motivacaoGinasio : '?');
-      lines.push(`${i + 1}. ${p.nome || '?'} · motivação ${mot}%`);
+      const nivel = p.nivel != null ? p.nivel : (p.level != null ? p.level : '?');
+      lines.push(`${i + 1}. ${p.nome || '?'} — Nv. ${nivel}`);
+      lines.push(`   ❤️ Motivação: ${mot}%`);
+      if (Number.isFinite(Number(mot))) {
+        lines.push(`   ${barraMotivacao(mot)}`);
+      }
     });
+    if (ocup.economiaPermanenciaAtiva && ocup.recompensaEstimada != null) {
+      lines.push(`🪙 Recompensa estimada: ${ocup.recompensaEstimada} moedas`);
+    }
   }
   return lines.filter(Boolean).join('\n');
 }
@@ -3452,6 +3486,7 @@ module.exports = {
   formatGymHistory,
   formatGymChallengeStart,
   formatGymResolve,
+  formatGymDefenderReturn,
   resolveRaidSubcommand,
   resolveRaidGym,
   RAID_GYMS,

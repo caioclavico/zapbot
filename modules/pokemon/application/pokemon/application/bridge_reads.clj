@@ -595,22 +595,40 @@
                                             (get-in battle [:hp :o]))
           :inventory (or inv [])}}))))
 
+(defn- format-duracao-curta
+  [ms]
+  (let [ms (max 0 (long (or ms 0)))
+        h (quot ms (* 60 60 1000))
+        m (quot (rem ms (* 60 60 1000)) (* 60 1000))]
+    (cond
+      (and (pos? h) (pos? m)) (str h "h" m "m")
+      (pos? h) (str h "h")
+      (pos? m) (str m "min")
+      :else "<1min")))
+
 (defn- occupation-dto
   [ocup agora]
   (when ocup
     (let [mots (gym/motivacoes ocup agora)
-          time (gym/time-defensor ocup agora)]
-      {:gym-id (:gym-id ocup)
-       :player-id (:pid ocup)
-       :save-id (:save-id ocup)
-       :nome (:nome ocup)
-       :desde (:desde ocup)
-       :revision (:revision ocup 0)
-       :motivacao mots
-       :motivacao-em (:motivacao-em ocup)
-       :time (mapv #(-> (encounter-pokemon-dto %)
-                        (assoc :motivacao-ginasio (:motivacao-ginasio %)))
-                   time)})))
+          time (gym/time-defensor ocup agora)
+          dur (gym/duracao-ms ocup agora)
+          bruta (gym/permanencia-bruta-moedas dur)
+          enabled? (gym/permanence-rewards-enabled?)]
+      (cond-> {:gym-id (:gym-id ocup)
+               :player-id (:pid ocup)
+               :save-id (:save-id ocup)
+               :nome (:nome ocup)
+               :desde (:desde ocup)
+               :revision (:revision ocup 0)
+               :motivacao mots
+               :motivacao-em (:motivacao-em ocup)
+               :tempo-defesa-ms dur
+               :tempo-defesa (format-duracao-curta dur)
+               :time (mapv #(-> (encounter-pokemon-dto %)
+                                (assoc :motivacao-ginasio (:motivacao-ginasio %)))
+                           time)}
+        enabled? (assoc :recompensa-estimada bruta
+                        :economia-permanencia-ativa true)))))
 
 (defn- gym-catalog-row
   [g insignias ocup agora]

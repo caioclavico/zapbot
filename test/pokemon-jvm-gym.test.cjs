@@ -52,10 +52,27 @@ test('formatGymChallengeStart e resolve vitória', () => {
     }
   }, '!pk'), /Desafio contra/);
 
-  assert.match(present.formatGymResolve({
+  const win = present.formatGymResolve({
     venceu: true, premio: 'primeira', peDelta: 5, occupied: true,
-    reward: { moedas: 100 }
-  }, { gymNome: '🪨 Pedra' }), /venceu o ginásio/);
+    reward: { moedas: 0 }
+  }, { gymNome: '🪨 Pedra' });
+  assert.match(win, /venceu o ginásio/);
+  assert.doesNotMatch(win, /moedas/);
+  assert.match(present.formatGymDefenderReturn({
+    pokemonNome: 'Charizard', tempoDefesa: '4h', moedasRecebidas: 50
+  }), /50/);
+  assert.match(present.formatGymDetail({
+    desafioHabilitado: true,
+    gym: {
+      id: 'pedra', nome: '🪨 Pedra', nivel: 10, item: 'pedra-lua', desbloqueado: true,
+      ocupacao: {
+        nome: 'Ash', playerId: 'ash', saveId: 'a', tempoDefesa: '4h',
+        economiaPermanenciaAtiva: true, recompensaEstimada: 50,
+        motivacao: [60, 60, 60],
+        time: [{ nome: 'Charizard', nivel: 36, motivacaoGinasio: 60 }]
+      }
+    }
+  }, '!pk'), /Motivação: 60%/);
 });
 
 test('formatBattleTurn ginásio em andamento', () => {
