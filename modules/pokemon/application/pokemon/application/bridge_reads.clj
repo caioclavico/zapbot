@@ -20,7 +20,8 @@
             [pokemon.domain.capture :as capture]
             [pokemon.domain.raid :as raid]
             [pokemon.domain.shop :as shop]
-            [pokemon.domain.xp :as xp])
+            [pokemon.domain.xp :as xp]
+            [pokemon.domain.level-evolution :as level-evo])
   (:import [java.nio.charset StandardCharsets]
            [java.util Base64]))
 
@@ -42,13 +43,31 @@
     slot))
 
 (defn- pokemon-dto
+  "DTO de leitura. Campos de XP/evolução são aditivos e derivados das
+  regras canônicas (`xp/progresso-pokemon`, `level-evo/proxima`) — sem
+  inventar XP ausente e sem mutar o registro."
   [p]
-  (select-keys p [:collection-index :id-pokemon :species :nome :nickname
-                  :shiny :nivel :hp :hp-atual :status :in-party :tipos
-                  :raridade :xp-desde-nivel :ataque :defesa :atq-esp :def-esp
-                  :veloc :amizade :imagem :imagem-shiny :altura :golpes
-                  :habilidade :ofertas-golpes :golpes-oferecidos
-                  :historico-golpes :golpes-removidos]))
+  (let [base (select-keys p [:collection-index :id-pokemon :species :nome :nickname
+                             :shiny :nivel :hp :hp-atual :status :in-party :tipos
+                             :raridade :xp-desde-nivel :ataque :defesa :atq-esp :def-esp
+                             :veloc :amizade :imagem :imagem-shiny :altura :golpes
+                             :habilidade :ofertas-golpes :golpes-oferecidos
+                             :historico-golpes :golpes-removidos :item])
+        prog (xp/progresso-pokemon p)
+        evo (level-evo/proxima p)
+        pct (when (and (:conhecido? prog) (number? (:progresso-percentual prog)))
+              (-> (* 100.0 (:progresso-percentual prog))
+                  (* 10.0) Math/round (/ 10.0)))]
+    (cond-> (assoc base
+                   :xp-conhecido? (boolean (:conhecido? prog))
+                   :nivel-maximo? (boolean (:nivel-maximo? prog))
+                   :xp-nivel-atual (:xp-nivel-atual prog)
+                   :xp-proximo-nivel (:xp-proximo-nivel prog)
+                   :xp-necessario (:xp-proximo-nivel prog)
+                   :progresso-xp-percentual pct)
+      evo (assoc :proxima-evolucao (:nome evo)
+                 :proxima-evolucao-species (:species evo)
+                 :nivel-proxima-evolucao (:nivel-min evo)))))
 
 (defn- save-profile
   [save]
@@ -243,38 +262,100 @@
                       :colecao-cheia (:cheio? storage)
                       :expansoes-pokemon-50 (:expansoes-pokemon-50 storage)}))))
 (def ^:private csv-columns
-  ["Nº" "Situação" "Nome" "Nível" "Raridade" "Tipos" "HP atual" "HP máximo"
-   "Status" "Item" "XP atual" "XP necessário"])
+  ["pokemon_id" "numero_pokedex" "nome" "especie" "nivel"
+   "xp_total" "xp_nivel_atual" "xp_proximo_nivel" "progresso_xp_percentual"
+   "proxima_evolucao" "nivel_proxima_evolucao" "tipos"
+   "situacao" "raridade" "hp_atual" "hp_maximo" "status" "item"
+   "golpes" "collection_index"])
+
+(defn- csv-neutralize
+  "Previne CSV/formula injection em planilhas (Excel/Sheets/Calc)."
+  [^String s]
+  (if (and (pos? (.length s))
+           (#{\= \+ \- \@ \tab \return} (.charAt s 0)))
+    (str "'" s)
+    s))
 
 (defn- csv-field [value]
-  (let [s (str (or value ""))]
-    (if (re-find #"[;\"\n\r]" s)
-      (str "\"" (str/replace s "\"" "\"\"") "\"") s)))
+  (let [s (csv-neutralize (str (or value "")))]
+    (if (re-find #"[;,\"\n\r]" s)
+      (str "\"" (str/replace s "\"" "\"\"") "\"")
+      s)))
 
 (defn- csv-line [values]
-  (str/join ";" (map csv-field values)))
+  (str/join "," (map csv-field values)))
+
+(defn- csv-num [v]
+  (cond
+    (nil? v) ""
+    (number? v) (str v)
+    :else (str v)))
+
+(defn- golpes-csv [p]
+  (->> (or (:golpes p) [])
+       (map (fn [g]
+              (or (:nome-exibicao g) (:nome g) (:slug g) "")))
+       (remove str/blank?)
+       (str/join "|")))
+
+(defn- team-csv-row
+  [situation p number-or-blank]
+  (let [dto (pokemon-dto p)
+        prog (xp/progresso-pokemon p)
+        ;; id público já usado na coleção (não JID/telefone)
+        public-id (or (:id-pokemon p) "")
+        xp-atual (when (:conhecido? prog) (:xp-nivel-atual prog))
+        xp-prox (when (:conhecido? prog) (:xp-proximo-nivel prog))
+        pct (when (and (:conhecido? prog) (number? (:progresso-percentual prog))
+                       (not (:nivel-maximo? prog)))
+              (format "%.1f" (double (* 100.0 (:progresso-percentual prog)))))]
+    (csv-line [public-id
+               "" ;; numero_pokedex — não fabricar se ausente no registro
+               (:nome dto)
+               (or (:species dto) "")
+               (:nivel dto 1)
+               "" ;; xp_total acumulado não é persistido canonicamente
+               (csv-num xp-atual)
+               (csv-num xp-prox)
+               (or pct "")
+               (or (:proxima-evolucao dto) "")
+               (csv-num (:nivel-proxima-evolucao dto))
+               (str/join "/" (:tipos dto))
+               situation
+               (or (:raridade dto) "comum")
+               (:hp-atual dto)
+               (:hp dto)
+               (or (:status dto) "")
+               (or (:item dto) "")
+               (golpes-csv p)
+               (or number-or-blank
+                   (when (some? (:collection-index p))
+                     (inc (long (:collection-index p)))))])))
 
 (defn team-csv
-  "Exportação somente leitura equivalente ao `time csv` legado.
-   O conteúdo é derivado do save autorizado e nunca aceita linhas do cliente."
+  "Exportação somente leitura do time autorizado (`!pk tm csv` / `time csv`).
+   UTF-8 com BOM para Excel; RFC 4180 (vírgula); sem dados de terceiros."
   [store chat-id player-id save-id]
   (require-player! store chat-id player-id)
   (let [slot (resolve-save-id! store chat-id player-id save-id)
         items (ports/list-collection store chat-id player-id slot)
         beds (ports/list-enfermaria store chat-id player-id slot)
-        row (fn [number situation p]
-              (let [xp (long (:xp p 0))]
-                (csv-line [number situation (:nome p) (:nivel p 1) (:raridade p "comum")
-                           (str/join "/" (:tipos p)) (:hp-atual p) (:hp p) (:status p)
-                           (or (:item p) "") xp (long (:xp-necessario p 0))])))
-        content (str "\uFEFF" (str/join "\n"
-                                          (cons (csv-line csv-columns)
-                                                (concat (map-indexed #(row (inc %1) "No time" %2) items)
-                                                        (map #(row "" "Enfermaria" (:pokemon %)) beds)))) "\n")
+        content (str "\uFEFF"
+                     (str/join "\n"
+                               (cons (csv-line csv-columns)
+                                     (concat
+                                      (map-indexed
+                                       (fn [i p] (team-csv-row "No time" p (inc i)))
+                                       items)
+                                      (map (fn [bed]
+                                             (team-csv-row "Enfermaria" (:pokemon bed) ""))
+                                           beds))))
+                     "\n")
         encoded (.encodeToString (Base64/getEncoder) (.getBytes content StandardCharsets/UTF_8))]
     {:chat-id chat-id :player-id player-id :save-id slot
-     :filename "meu-time-pokemon.csv" :mime-type "text/csv"
-     :text (str "🎒 Seu time: " (+ (count items) (count beds)) " Pokémon na planilha em anexo.")
+     :filename "odisseu-mt-pokemon.csv" :mime-type "text/csv"
+     :text (str "🎒 Seu time: " (+ (count items) (count beds))
+                " Pokémon na planilha em anexo (odisseu-mt-pokemon.csv).")
      :base64 encoded}))
 
 (defn- species-key

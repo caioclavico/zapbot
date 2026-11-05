@@ -65,6 +65,41 @@
                                  (- xp (* subidas xp-por-nivel))))
         (dissoc :vitorias-desde-nivel "vitorias-desde-nivel"))))
 
+(defn progresso-pokemon
+  "Progresso de XP dentro do nível atual (canônico). Não inventa XP ausente.
+
+  Retorna mapa com :conhecido? false quando xp-desde-nivel não está presente
+  e não há fallback legado confiável; :nivel-maximo? true no cap."
+  [registro]
+  (let [nivel (long (get registro :nivel (get registro "nivel" 1)))
+        has-xp? (or (contains? registro :xp-desde-nivel)
+                    (contains? registro "xp-desde-nivel")
+                    (contains? registro :xp)
+                    (contains? registro "xp")
+                    (contains? registro :vitorias-desde-nivel)
+                    (contains? registro "vitorias-desde-nivel"))
+        xp (when has-xp?
+             (max 0 (long (get registro :xp-desde-nivel
+                               (get registro "xp-desde-nivel"
+                                    (or (get registro :xp (get registro "xp"))
+                                        (* xp-por-vitoria
+                                           (long (get registro :vitorias-desde-nivel
+                                                      (get registro "vitorias-desde-nivel" 0))))))))))]
+    (cond
+      (not has-xp?)
+      {:conhecido? false :nivel nivel :nivel-maximo? (>= nivel nivel-maximo)
+       :xp-nivel-atual nil :xp-proximo-nivel nil :progresso-percentual nil}
+
+      (>= nivel nivel-maximo)
+      {:conhecido? true :nivel nivel :nivel-maximo? true
+       :xp-nivel-atual 0 :xp-proximo-nivel nil :progresso-percentual nil}
+
+      :else
+      {:conhecido? true :nivel nivel :nivel-maximo? false
+       :xp-nivel-atual xp
+       :xp-proximo-nivel xp-por-nivel
+       :progresso-percentual (double (/ (double xp) (double xp-por-nivel)))})))
+
 (defn aplicar-xp-pokemon
   "Concede `quantidade` de XP ao registro; retorna {:registro :subidas :nivel-final}."
   [registro quantidade]
