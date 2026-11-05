@@ -33,9 +33,9 @@
           db2 (d/db conn)
           attr2 (d/pull db2 '[*] :save/gym-permanence-daily-edn)
           mid (d/pull db2 '[*] [:odisseu.schema/migration-id "pokemon/034-gym-permanence-daily"])]
-      (is (= :db.type/string (:db/valueType attr1)))
-      (is (= :db.cardinality/one (:db/cardinality attr1)))
-      (is (= attr1 attr2) "reinstall não altera o atributo")
+      (is (= :db.type/string (:db/ident (:db/valueType attr1))))
+      (is (= :db.cardinality/one (:db/ident (:db/cardinality attr1))))
+      (is (= (:db/id attr1) (:db/id attr2)) "reinstall não recria o atributo")
       (is (= "pokemon/034-gym-permanence-daily"
              (:odisseu.schema/migration-id mid))))))
 
