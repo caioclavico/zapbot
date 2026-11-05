@@ -109,13 +109,13 @@
           inv (ports/list-inventory s chat player "a")]
       (is (false? (:duplicate r)))
       (is (= :primeira (:premio r)))
-      (is (= 100 (get-in r [:reward :moedas])))
+      (is (= 0 (get-in r [:reward :moedas])))
       (is (= 5 (:pe-delta r)))
       (is (true? (:occupied? r)))
       (is (= "pedra-lua" (:item-id (first (filter #(= "pedra-lua" (:item-id %)) inv)))))
       (is (= {"pedra" "2026-10-17"} (:ginasios save)))
       (is (= 5 (:pe-ginasios save)))
-      (is (= 100 (:coins save)))
+      (is (= 0 (:coins save)))
       (is (= player (:pid occ)))
       (is (= "a" (:save-id occ)))
       (is (= 0 (count (ports/list-collection s chat player "a"))))
@@ -174,8 +174,8 @@
       (is (= "a" (:save-id occ)))
       (is (= 3 (count misty-col)))
       (is (every? zero? (map :hp-atual misty-col)))
-      ;; Flag POKEMON_GYM_PERMANENCE_REWARDS_ENABLED default false → só 100 da 1ª vitória.
-      (is (= 100 (:coins misty-save)))
+      ;; Vitória sem moedas; flag permanência off → 0.
+      (is (= 0 (:coins misty-save)))
       (is (= 0 (:gym-defense-count (ports/get-player s chat "misty"))))
       (is (= 1 (:gym-defense-count (ports/get-player s chat "ash")))))))
 
@@ -236,7 +236,7 @@
           r2 (gym-app/resolve-challenge! s chat player req)]
       (is (false? (:duplicate r1)))
       (is (true? (:duplicate r2)))
-      (is (= 100 (:coins (ports/get-save s chat player "a")))))))
+      (is (= 0 (:coins (ports/get-save s chat player "a")))))))
 
 (deftest concorrencia-ocupacao
   (let [s (fresh-store! "g-conc")

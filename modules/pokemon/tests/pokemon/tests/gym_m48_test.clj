@@ -122,7 +122,7 @@
       (is (= "2026-10-17" (get (:ginasios save) "pedra")))
       (is (some? ocup))
       (is (= player (:pid ocup)))
-      (is (= 100 (:coins save 0))))
+      (is (= 0 (:coins save 0))))
     ;; Start idempotente: não reabre batalha nem dobra recompensa.
     (let [coins-antes (:coins (ports/get-save s chat player "a"))
           dup (gym-app/start-challenge!

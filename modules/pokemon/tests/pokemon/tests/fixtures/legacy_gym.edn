@@ -18,10 +18,11 @@
   {:venceu? true :premio :revanche :nocautes 1 :xp 5}
   {:venceu? true :premio nil :nocautes 0 :xp 2}]
 
+ ;; Economia A6: vitória/conquista NÃO concede moedas (só PE/pedra/insígnia).
  :recompensa-vitoria
- [{:premio :primeira :pedra-roll 99 :moedas 100 :pe 5 :pedra? true}
-  {:premio :revanche :pedra-roll 10 :moedas 25 :pe 2 :pedra? true}
-  {:premio :revanche :pedra-roll 50 :moedas 25 :pe 2 :pedra? false}]
+ [{:premio :primeira :pedra-roll 99 :moedas 0 :pe 5 :pedra? true}
+  {:premio :revanche :pedra-roll 10 :moedas 0 :pe 2 :pedra? true}
+  {:premio :revanche :pedra-roll 50 :moedas 0 :pe 2 :pedra? false}]
 
  :motivacao
  [{:base [100 100 100] :horas 0 :expect [100 100 100]}
@@ -34,15 +35,18 @@
  [{:motivacao 100 :fator 1.0}
   {:motivacao 20 :fator 0.6}]
 
- ;; Política A6: 1 moeda / 10 min completos; mín. 30 min; bruta sem teto diário.
+ ;; Política canônica A6: min(100, floor(seg*100/28800)); mín. 30 min; teto ocupação 100.
  :permanencia
  [{:ms 0 :moedas 0 :xp 0}
   {:ms 1 :moedas 0 :xp 1}
-  {:ms 540000 :moedas 0 :xp 1}     ;; 9 min
-  {:ms 1200000 :moedas 0 :xp 1}    ;; 20 min
-  {:ms 1800000 :moedas 3 :xp 1}    ;; 30 min → 3
-  {:ms 3600000 :moedas 6 :xp 2}    ;; 1 h → 6
-  {:ms 10800000 :moedas 18 :xp 6}  ;; 3 h → 18
-  {:ms 30000000 :moedas 50 :xp 16} ;; 8h20 → 50
-  {:ms 43200000 :moedas 72 :xp 24}] ;; 12 h → 72 (teto 100/dia aplicado no store)
+  {:ms 540000 :moedas 0 :xp 1}      ;; 9 min
+  {:ms 1200000 :moedas 0 :xp 1}     ;; 20 min
+  {:ms 1740000 :moedas 0 :xp 1}     ;; 29 min
+  {:ms 1800000 :moedas 6 :xp 1}     ;; 30 min → 6
+  {:ms 3600000 :moedas 12 :xp 2}    ;; 1 h → 12
+  {:ms 7200000 :moedas 25 :xp 4}    ;; 2 h → 25
+  {:ms 14400000 :moedas 50 :xp 8}   ;; 4 h → 50
+  {:ms 21600000 :moedas 75 :xp 12}  ;; 6 h → 75
+  {:ms 28800000 :moedas 100 :xp 16} ;; 8 h → 100
+  {:ms 43200000 :moedas 100 :xp 24}] ;; 12 h → 100 (cap 8h)
 }

@@ -86,7 +86,7 @@
         (is (empty? (:ginasios ls {})))
         (is (= 0 (:gym-defense-count (ports/get-player s chat loser)))))
       (is (= 1 (:gym-defense-count (ports/get-player s chat winner))))
-      (is (= 100 (:coins (ports/get-save s chat winner "a")))))))
+      (is (= 0 (:coins (ports/get-save s chat winner "a")))))))
 
 (deftest destronar-concorrente-mesma-revisao
   (let [s (fresh-store! "g36-dethrone")

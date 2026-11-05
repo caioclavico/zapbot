@@ -12,16 +12,18 @@
 (def perda-motivacao-por-hora 5)
 (def perda-motivacao-por-defesa 12)
 
-;; --- Permanência / moedas (política homologável; crédito gated por flag) ---
-(def ^:private minuto-ms (* 60 1000))
-(def permanencia-slot-ms (* 10 minuto-ms))           ;; 1 moeda / 10 min completos
-(def permanencia-minima-ms (* 30 minuto-ms))         ;; elegível só com ≥ 30 min
-(def permanencia-teto-diario 100)                    ;; por treinador, todos os ginásios
+;; --- Permanência / moedas (política canônica; crédito gated por flag) ---
+(def ^:private segundo-ms 1000)
+(def permanencia-minima-ms (* 30 60 segundo-ms))    ;; 30 min
+(def permanencia-max-remunerada-ms (* 8 60 60 segundo-ms)) ;; 8 h
+(def permanencia-teto-ocupacao 100)                 ;; moedas / ocupação
+(def permanencia-teto-diario 100)                   ;; moedas / dia / treinador
 (def permanencia-tz-padrao "America/Campo_Grande")
 
-;; Legado (pré-política 10min): mantido só como referência documental / compat leituras.
+;; Legado (docs/compat): antiga política flat 6h→50 e slot 10min.
 (def permanencia-moedas-ms (* 6 60 60 1000))
 (def permanencia-moedas 50)
+(def permanencia-slot-ms (* 10 60 1000))
 
 (def xp-permanencia-slot-ms (* 30 60 1000))
 
@@ -53,13 +55,17 @@
   (str "gym-reward:" (str occupation-key) ":" (long desde-ms)))
 
 (defn permanencia-bruta-moedas
-  "Moedas brutas pela duração (sem teto diário, sem flag).
-   < 30 min → 0; senão floor(minutos / 10)."
+  "Moedas brutas por ocupação (sem teto diário, sem flag).
+   < 30 min → 0;
+   senão min(100, floor(segundos * 100 / 28800)) — 8h = 100; além de 8h não sobe."
   [duration-ms]
   (let [ms (max 0 (long (or duration-ms 0)))]
     (if (< ms permanencia-minima-ms)
       0
-      (long (Math/floor (/ (double ms) permanencia-slot-ms))))))
+      (let [seg (quot (min ms permanencia-max-remunerada-ms) segundo-ms)
+            ;; floor(seg * 100 / 28800) com aritmética inteira
+            bruta (quot (* seg permanencia-teto-ocupacao) 28800)]
+        (min permanencia-teto-ocupacao (long bruta))))))
 
 (defn aplicar-teto-diario
   "Aplica teto compartilhado entre ginásios do mesmo treinador no dia."
@@ -148,12 +154,15 @@
   (+ 0.5 (* 0.5 (/ (double motivacao) motivacao-maxima))))
 
 (defn aplicar-motivacao-pokemon
-  "Cópia de combate; não altera coleção do dono."
+  "Cópia de combate; não altera coleção do dono.
+   HP efetivo de defesa = max motivado; hp-atual da cópia começa cheio nesse max
+   (evita barras vazias quando o snapshot tinha hp-atual 0/stale)."
   [pokemon motivacao]
   (let [fator (fator-motivacao motivacao)
-        scale (fn [v] (max 1 (Math/round (* (double (or v 0)) fator))))]
+        scale (fn [v] (max 1 (Math/round (* (double (or v 0)) fator))))
+        hp' (scale (:hp pokemon))]
     (-> pokemon
-        (update :hp scale)
+        (assoc :hp hp' :hp-atual hp')
         (update :ataque scale)
         (update :defesa scale)
         (update :atq-esp scale)
@@ -213,7 +222,7 @@
     (max 0 (- (long agora) (long desde)))))
 
 (defn recompensa-permanencia
-  "Bruta pela duração (≥30 min → 1 moeda/10 min). Sem teto diário.
+  "Bruta pela duração (fórmula 8h→100). Sem teto diário.
    Pagamento real e teto ficam em `plano-recompensa-permanencia` + gym-store."
   [ocupacao agora]
   (if ocupacao
@@ -258,11 +267,12 @@
       (if anterior :revanche :primeira))))
 
 (defn recompensa-vitoria
-  "Moedas/PE/pedra conforme premio. pedra-roll 0–99 injetável."
+  "PE/pedra/insígnia conforme premio — **sem moedas** (economia só por permanência).
+   pedra-roll 0–99 injetável."
   [premio pedra-roll]
   (when premio
     (let [primeira? (= premio :primeira)]
-      {:moedas (if primeira? 100 25)
+      {:moedas 0
        :pe (if primeira? 5 2)
        :vitoria-treinador? true
        :pedra? (or primeira? (< (long (or pedra-roll 100)) 25))})))
