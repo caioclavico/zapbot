@@ -18,6 +18,7 @@
 (def ^:private ^js node-maintenance (js/require "../scripts/lib/a6-maintenance.cjs"))
 (def ^:private pokeapi (js/require "../scripts/lib/pokemon-pokeapi.cjs"))
 (def ^:private pokedex-species (js/require "../scripts/lib/pokemon-pokedex-species.cjs"))
+(def ^:private pokedex-pilot (js/require "../scripts/lib/pokedex-species-pilot.cjs"))
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 (def ^:private versao-bot (.-version (js/require "../package.json")))
 (def ^:private chave-entregas "pokemon-http-deliveries")
@@ -298,19 +299,30 @@
   [comando]
   (contains? #{"pokedex" "dex" "pdx"} (str/lower-case (str comando))))
 
+(defn- especie-pokedex-autorizada?
+  [message]
+  (.pilotAuthorized pokedex-pilot (chat-id message)
+                    #js {:pilotOnly config/pokedex-species-pilot-only?
+                         :pilotChatId config/pokedex-species-pilot-chat-id}))
+
 (defn- executar-especie-pokedex!
-  "Pokédex de espécie via PokeAPI no Node (paridade master) + moldura vermelha."
+  "Pokédex de espécie via PokeAPI no Node (paridade master) + moldura vermelha.
+   Respeita POKEDEX_SPECIES_PILOT_ONLY (default true) — demais chats recebem aviso."
   [message ctx pedido entrada]
-  (p/let [resultado (desempenho/medir! ctx "pokemon_jvm_species_pokedex"
-                       #(.lookup pokedex-species (str (or entrada "")) config/bot-name))
-          texto (or (.-text resultado) "")
-          poke (.-pokemon resultado)
-          img (when poke
-                (render-seguro! ctx "pokemon_jvm_media_pokedex"
-                  #(.renderPokedexCard jvm-media poke
-                                       #js {:filename "pokedex.png"})))
-          envelope (envelope-jvm pedido texto img)]
-    (entregar-envelope-jvm! message ctx pedido envelope)))
+  (if-not (especie-pokedex-autorizada? message)
+    (entregar-envelope-jvm! message ctx pedido
+                            (envelope-jvm pedido
+                                          (.foraDoPilotoMessage pokedex-pilot config/prefix)))
+    (p/let [resultado (desempenho/medir! ctx "pokemon_jvm_species_pokedex"
+                         #(.lookup pokedex-species (str (or entrada "")) config/bot-name))
+            texto (or (.-text resultado) "")
+            poke (.-pokemon resultado)
+            img (when poke
+                  (render-seguro! ctx "pokemon_jvm_media_pokedex"
+                    #(.renderPokedexCard jvm-media poke
+                                         #js {:filename "pokedex.png"})))
+            envelope (envelope-jvm pedido texto img)]
+      (entregar-envelope-jvm! message ctx pedido envelope))))
 
 
 (defn- nome-pokemon-colecao [p]

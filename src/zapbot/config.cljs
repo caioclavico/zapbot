@@ -271,6 +271,24 @@
        (not (str/blank? release-pilot-chat-id))
        (= (str cid) release-pilot-chat-id)))
 
+;; Pokédex de espécie (top-level !pokedex/!dex/!pdx) — homologação restrita ao piloto.
+;; Default true: sem allowlist explícita a feature não vaza para outros grupos.
+;; !pk pokedex (coleção pessoal) NÃO usa este gate.
+(def pokedex-species-pilot-only?
+  (= "true" (str/lower-case (str/trim (env "POKEDEX_SPECIES_PILOT_ONLY" "true")))))
+(def pokedex-species-pilot-chat-id
+  (let [raw (env "POKEDEX_SPECIES_PILOT_CHAT_ID" "")]
+    (if (str/blank? raw) release-pilot-chat-id raw)))
+
+(defn pokedex-species-chat-autorizado?
+  "Quando pilot-only: só o chat piloto. Quando false: todos (GA futuro)."
+  [cid]
+  (if-not pokedex-species-pilot-only?
+    true
+    (and (string? pokedex-species-pilot-chat-id)
+         (not (str/blank? pokedex-species-pilot-chat-id))
+         (= (str cid) pokedex-species-pilot-chat-id))))
+
 ;; M7.7 — staging/dev com Platform Datomic + Pokémon JVM: sem boot Cassandra.
 ;; Produção nunca entra aqui (adapters forçados a cassandra/legacy).
 (def cassandra-boot-enabled?
