@@ -17,6 +17,7 @@
 (def ^:private jvm-media (js/require "../scripts/lib/pokemon-jvm-media.cjs"))
 (def ^:private ^js node-maintenance (js/require "../scripts/lib/a6-maintenance.cjs"))
 (def ^:private pokeapi (js/require "../scripts/lib/pokemon-pokeapi.cjs"))
+(def ^:private pokedex-species (js/require "../scripts/lib/pokemon-pokedex-species.cjs"))
 (def ^:private MessageMedia (.-MessageMedia wwjs))
 (def ^:private versao-bot (.-version (js/require "../package.json")))
 (def ^:private chave-entregas "pokemon-http-deliveries")
@@ -291,6 +292,25 @@
      (when (seq mentions)
        (aset extras "mentions" (clj->js (vec mentions))))
      (.envelope jvm-present (:requestId pedido) texto extras))))
+
+(defn- especie-pokedex-top-level?
+  "Top-level !pokedex/!dex/!pdx = ficha de espécie (master). !pk pokedex = coleção."
+  [comando]
+  (contains? #{"pokedex" "dex" "pdx"} (str/lower-case (str comando))))
+
+(defn- executar-especie-pokedex!
+  "Pokédex de espécie via PokeAPI no Node (paridade master) + moldura vermelha."
+  [message ctx pedido entrada]
+  (p/let [resultado (desempenho/medir! ctx "pokemon_jvm_species_pokedex"
+                       #(.lookup pokedex-species (str (or entrada "")) config/bot-name))
+          texto (or (.-text resultado) "")
+          poke (.-pokemon resultado)
+          img (when poke
+                (render-seguro! ctx "pokemon_jvm_media_pokedex"
+                  #(.renderPokedexCard jvm-media poke
+                                       #js {:filename "pokedex.png"})))
+          envelope (envelope-jvm pedido texto img)]
+    (entregar-envelope-jvm! message ctx pedido envelope)))
 
 
 (defn- nome-pokemon-colecao [p]
@@ -2885,9 +2905,12 @@
      (fn []
        (if (jvm-configurado?)
          ;; Adaptador JVM: fail-closed; sem fallback Cassandra/legado em falha.
+         ;; Top-level !pokedex é espécie (PokeAPI no Node), não a coleção pessoal.
          (-> (p/let [pedido (contexto-pedido message comando argumentos)
-                     args (tokens-para-jvm comando argumentos)
-                     _ (executar-jvm! message ctx pedido args)]
+                     _ (if (especie-pokedex-top-level? comando)
+                         (executar-especie-pokedex! message ctx pedido argumentos)
+                         (executar-jvm! message ctx pedido
+                                        (tokens-para-jvm comando argumentos)))]
                nil)
              (p/catch (fn [erro]
                         (js/console.warn "[PokemonJVM] Falha:" (or (.-code erro) "DELIVERY")
@@ -2896,7 +2919,7 @@
                                            (js/JSON.stringify (.-details erro))))
                         (let [texto (mensagem-falha erro)]
                           (.reply message texto)))))
-         ;; Adaptador legado (default / produção).
+         ;; Adaptador legado: pokemon-service trata !pokedex como espécie.
          (-> (p/let [pedido (contexto-pedido message comando argumentos)
                      http (cliente!)
                      resposta (desempenho/medir! ctx "pokemon_http"
