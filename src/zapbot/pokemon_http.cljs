@@ -1480,8 +1480,8 @@
                     (p/let [d (.getTeamCsv jvm #js {:chatId chat-id :playerId player-id})
                             doc #js {:base64 (.-base64 d)
                                      :mimeType (or (.-mimeType d) "text/csv")
-                                     :filename (or (.-filename d) "odisseu-mt-pokemon.csv")}
-                            texto (or (.-text d) "🎒 Seu time em CSV (odisseu-mt-pokemon.csv).")]
+                                     :filename (or (.-filename d) "odisseu-time-pokemon.csv")}
+                            texto (or (.-text d) "🎒 Seu time em CSV (odisseu-time-pokemon.csv).")]
                       (.envelope jvm-present (:requestId pedido) texto
                                   #js {:document doc :effects #js []}))
 
@@ -1521,7 +1521,7 @@
                                   (render-seguro! ctx "pokemon_jvm_media_time"
                                     #(.renderTeamGrid jvm-media slice
                                                       #js {:filename "meu-time-pokemon.png"
-                                                           :title "Máquinas Técnicas"
+                                                           :title "Meu Time Pokémon"
                                                            :trainerLevel (or (.-trainerLevel data) 1)
                                                            :ativoIndex (or (.-ativoIndex data) 0)})))
                             ;; Card-only: legenda curta (sem listagem). Texto completo só em `txt`

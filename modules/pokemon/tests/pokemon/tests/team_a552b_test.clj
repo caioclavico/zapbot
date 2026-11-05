@@ -54,7 +54,7 @@
           body (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 csv))
                         java.nio.charset.StandardCharsets/UTF_8)]
       (is (= "text/csv" (:mime-type csv)))
-      (is (= "odisseu-mt-pokemon.csv" (:filename csv)))
+      (is (= "odisseu-time-pokemon.csv" (:filename csv)))
       (is (.startsWith ^String (:base64 csv) "77u/"))
       (is (str/includes? body "pokemon_id"))
       (is (str/includes? body "xp_nivel_atual"))

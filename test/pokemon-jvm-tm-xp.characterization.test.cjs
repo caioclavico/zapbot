@@ -60,7 +60,8 @@ test('caracterização: tm/meus/equipe resolvem para time', () => {
 
 test('caracterização: formatCollection lista Pokémon com XP canônico', () => {
   const text = present.formatCollection(sampleCollection, [], '!pk');
-  assert.match(text, /Máquinas Técnicas/);
+  assert.match(text, /Meu Time Pokémon/);
+  assert.doesNotMatch(text, /Máquinas Técnicas/);
   assert.match(text, /Charmeleon/);
   assert.match(text, /Pikachu/);
   assert.match(text, /XP 5\/9/);

@@ -658,7 +658,7 @@ function formatCollectionCardCaption(modelOrData, tokens, prefix = '!pk') {
   if (model.page > 1) nav.push(`⬅️ ${p} tm ${model.page - 1}`);
   if (model.page < model.pages) nav.push(`➡️ ${p} tm ${model.page + 1}`);
   return [
-    `🎴 *Máquinas Técnicas* · Página ${Math.min(model.page, model.pages)}/${model.pages}`,
+    `🎮 *Meu Time Pokémon* · Página ${Math.min(model.page, model.pages)}/${model.pages}`,
     nav.length ? nav.join(' · ') : null,
     `Texto: ${p} tm txt · CSV: ${p} tm csv`
   ].filter(Boolean).join('\n');
@@ -688,7 +688,7 @@ function formatCollection(data, tokens, prefix = '!pk') {
   });
 
   return [
-    `🎴 *Máquinas Técnicas — Meus Pokémon* · Página ${Math.min(model.page, model.pages)}/${model.pages}`,
+    `🎮 *Meu Time Pokémon* · Página ${Math.min(model.page, model.pages)}/${model.pages}`,
     `🧑‍🎓 Nível de treinador: ${model.trainerLevel} • Save: ${model.saveLabel}`,
     model.storageLine,
     model.filtroDesc.length
@@ -788,6 +788,7 @@ function formatPokedex(data, tokens, prefix = '!pk') {
 
 function formatStorage(data, tokens, prefix = '!pk') {
   return formatCollection(data, tokens, prefix)
+    .replace('🎮 *Meu Time Pokémon*', '💻 *PC Pokémon*')
     .replace('🎴 *Máquinas Técnicas — Meus Pokémon*', '💻 *PC Pokémon*')
     .replace('🎒 *Seu time:*', '💻 *PC Pokémon:*')
     .replace('Nenhum Pokémon do time corresponde', 'Nenhum Pokémon armazenado corresponde');

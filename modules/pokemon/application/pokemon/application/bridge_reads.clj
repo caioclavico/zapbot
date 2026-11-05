@@ -353,9 +353,9 @@
                      "\n")
         encoded (.encodeToString (Base64/getEncoder) (.getBytes content StandardCharsets/UTF_8))]
     {:chat-id chat-id :player-id player-id :save-id slot
-     :filename "odisseu-mt-pokemon.csv" :mime-type "text/csv"
+     :filename "odisseu-time-pokemon.csv" :mime-type "text/csv"
      :text (str "🎒 Seu time: " (+ (count items) (count beds))
-                " Pokémon na planilha em anexo (odisseu-mt-pokemon.csv).")
+                " Pokémon na planilha em anexo (odisseu-time-pokemon.csv).")
      :base64 encoded}))
 
 (defn- species-key

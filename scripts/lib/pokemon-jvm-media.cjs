@@ -1033,7 +1033,7 @@ async function renderTeamGrid(pokemons, {
   filename = 'meu-time-pokemon.png',
   trainerLevel = 1,
   ativoIndex = 0,
-  title = 'Máquinas Técnicas'
+  title = 'Meu Time Pokémon'
 } = {}) {
   try {
     const list = Array.isArray(pokemons) ? pokemons.slice(0, 12) : [];
