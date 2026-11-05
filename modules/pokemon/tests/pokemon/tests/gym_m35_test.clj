@@ -174,8 +174,8 @@
       (is (= "a" (:save-id occ)))
       (is (= 3 (count misty-col)))
       (is (every? zero? (map :hp-atual misty-col)))
-      ;; 100 da 1ª vitória + 50 de permanência (>6h)
-      (is (= 150 (:coins misty-save)))
+      ;; Flag POKEMON_GYM_PERMANENCE_REWARDS_ENABLED default false → só 100 da 1ª vitória.
+      (is (= 100 (:coins misty-save)))
       (is (= 0 (:gym-defense-count (ports/get-player s chat "misty"))))
       (is (= 1 (:gym-defense-count (ports/get-player s chat "ash")))))))
 

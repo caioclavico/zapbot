@@ -34,11 +34,15 @@
  [{:motivacao 100 :fator 1.0}
   {:motivacao 20 :fator 0.6}]
 
+ ;; Política A6: 1 moeda / 10 min completos; mín. 30 min; bruta sem teto diário.
  :permanencia
  [{:ms 0 :moedas 0 :xp 0}
   {:ms 1 :moedas 0 :xp 1}
-  {:ms 1800000 :moedas 0 :xp 1}   ;; 30 min
-  {:ms 21600000 :moedas 0 :xp 12} ;; 6h exatamente — moedas exigem >6h
-  {:ms 21600001 :moedas 50 :xp 12}
-  {:ms 43200000 :moedas 50 :xp 24}] ;; 12h → XP cap 24
+  {:ms 540000 :moedas 0 :xp 1}     ;; 9 min
+  {:ms 1200000 :moedas 0 :xp 1}    ;; 20 min
+  {:ms 1800000 :moedas 3 :xp 1}    ;; 30 min → 3
+  {:ms 3600000 :moedas 6 :xp 2}    ;; 1 h → 6
+  {:ms 10800000 :moedas 18 :xp 6}  ;; 3 h → 18
+  {:ms 30000000 :moedas 50 :xp 16} ;; 8h20 → 50
+  {:ms 43200000 :moedas 72 :xp 24}] ;; 12 h → 72 (teto 100/dia aplicado no store)
 }
