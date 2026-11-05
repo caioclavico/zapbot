@@ -647,8 +647,10 @@
       (.on js/process sinal
            (fn []
              (when (compare-and-set! encerrando? false true)
-               (.close server)
-               (js/process.exit 0)))))
+               (-> (drenar-antes-de-encerrar!)
+                   (p/finally (fn []
+                                (.close server)
+                                (js/process.exit 0))))))))
     (letfn [(refresh-probe! []
               (-> (probe-jvm-health)
                   (p/then (fn [r] (reset! jvm-probe-cache* r) nil))
