@@ -558,19 +558,39 @@
 
 (defonce ^:private iniciado? (atom false))
 
+(defn- drenar-antes-de-encerrar!
+  "Fecha admissão e aguarda operações em voo quando o gate Node está configurado.
+   Sem FILE/TOKEN, segue o encerramento legado (sem prova de drain)."
+  []
+  (if-not (.-enabled node-maintenance)
+    (p/resolved #js {:quiescent true :phase "open" :drainSkipped true})
+    (-> (.enter node-maintenance 30000)
+        (p/catch (fn [err]
+                   (js/console.error "[maintenance] drain no shutdown falhou:"
+                                     (or (.-code err) (.-message err)))
+                   #js {:quiescent false :phase "draining" :drainError true})))))
+
 (defn- encerrar-com-sessao! [^js recovery diagnostico ^js server]
   (let [encerrando? (atom false)]
     (doseq [sinal ["SIGTERM" "SIGINT"]]
       (.on js/process sinal
            (fn []
              (when (compare-and-set! encerrando? false true)
-               (recursos/parar!)
-               (saude/atualizar! diagnostico "DISCONNECTED" "Encerrando navegador; preservando sessão.")
-               (pokemon/parar!)
-               (.close server)
                ;; Limite apenas para uma parada solicitada, nunca para startup lento.
                (js/setTimeout #(js/process.exit 1) 45000)
-               (-> (p/resolved nil)
+               (-> (drenar-antes-de-encerrar!)
+                   (p/then (fn [state]
+                             (when-not (.-quiescent ^js state)
+                               (saude/log! (str "Shutdown sem quiescência Node: "
+                                                (or (.-phase ^js state) "?")
+                                                " active="
+                                                (or (aget state "activeOperations") "?"))))
+                             (recursos/parar!)
+                             (saude/atualizar! diagnostico "DISCONNECTED"
+                                               "Encerrando navegador; preservando sessão.")
+                             (pokemon/parar!)
+                             (.close server)
+                             nil))
                    (p/then (fn [_] (.close recovery)))
                    (p/then (fn [_] (js/process.exit 0)))
                    (p/catch (fn [err]
