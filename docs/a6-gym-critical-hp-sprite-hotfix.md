@@ -151,13 +151,18 @@ Reverter os três arquivos de código acima. Schema 034 e imagens de produção 
 
 ---
 
-## 9. Imagens RC
+## 9. Commit
+
+`5461375` — `fix(a6): derrota de ginásio não zera a box; sprites do líder sem URL`  
+Branch: `rc/a6-gym-motivation-rewards`
+
+## 10. Imagens RC
 
 **Não geradas nesta sessão** (sem deploy). Próximo passo operacional: build Node+JVM a partir do tip com este hotfix, mesmo tree, AMD64, checklist de cutover.
 
 ---
 
-## 10. Resumo executivo
+## 11. Resumo executivo
 
 1. **HP:** bug de persistência na derrota — wipe da coleção inteira; corrigido para só o time 3×3.  
 2. **Sprite do líder:** ocupação sem URL de imagem; corrigido (gravar URL + rehydrate no Node).  
