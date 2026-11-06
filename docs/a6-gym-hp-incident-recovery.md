@@ -1,8 +1,9 @@
 # Incidente P0 — wipe de HP em ginásios + plano de recuperação
 
-**Status operacional:** CONTENÇÃO **proposta** (não aplicada em produção) · HOTFIX **validado localmente** · REPARO **ensaiado em Datomic descartável** · DEPLOY/REPARO PROD **aguardam GO**  
-**Produção viva:** Node/JVM `a6-gym-20261105T222938Z-2ec5f97649ef-amd64` (ainda com o bug)  
-**Período do incidente:** desde cutover `2026-11-05T22:56:56Z` até contenção efetiva (pendente)  
+**Status operacional:** CONTENÇÃO **proposta** (não aplicada) · HOTFIX **validado** · REPARO **ensaiado** · RC **pronto** · DEPLOY/REPARO PROD **aguardam GO**  
+**Produção viva:** Node/JVM `a6-gym-20261105T222938Z-2ec5f97649ef-amd64` (ainda vulnerável)  
+**RC hotfix:** `a6-gym-hp-hotfix-20261106T094456Z-bf8f5c66e492-amd64` (Node+JVM; sem deploy)  
+**Período do incidente:** cutover `2026-11-05T22:56:56Z` → contenção efetiva (pendente)  
 **Wipe principal observado:** TX `13194139535629` @ `2026-11-06T09:18:21Z`
 
 Evidências host:  
@@ -79,7 +80,7 @@ Varredura: 73 saves no Datomic (cópia live RO). Critério de suspeita: `zero_sh
 | --- | --- |
 | `5461375` | sync HP só no time 3×3; team-edn com imagens; rehydrate Node |
 | `b97a52f` | docs commit hash |
-| tip atual (+commits desta sessão) | gate `POKEMON_GYM_CHALLENGES_ENABLED` + testes + ensaio reparo |
+| `bf8f5c6` | gate `POKEMON_GYM_CHALLENGES_ENABLED` + testes + ensaio reparo |
 
 ### Testes
 
@@ -128,10 +129,24 @@ Não restaurar cold antigo sobre live. Não curar `hpmax` às cegas. Flag econô
 
 ---
 
-## 6. RC
+## 6. RC preparado (sem deploy)
 
-Ver secção RC abaixo / artefatos em `rc-artifacts/` quando o build concluir.  
-Rollback de imagens: par Time Pokémon / ginásio anterior documentado no cutover report.
+Dir: `rc-artifacts/a6-gym-hp-hotfix-rc-20261106T094456Z/`  
+Tree: `bf8f5c66e492f96a5bc12fd9b0425c8abc01487b` · platform `linux/amd64`
+
+| Artefato | Tag | Image ID |
+| --- | --- | --- |
+| Node | `odisseu-node:a6-gym-hp-hotfix-20261106T094456Z-bf8f5c66e492-amd64` | `sha256:5023873836935272c7fcea4a58a7b00de683121cf571c329a6e2e4081277a42b` |
+| JVM | `odisseu-jvm:a6-gym-hp-hotfix-20261106T094456Z-bf8f5c66e492-amd64` | `sha256:f63800695178bfb8d7295ae035c4f9497a728d6ef67eda09924e30a189b4969d` |
+
+| Tarball | SHA-256 |
+| --- | --- |
+| `odisseu-node-amd64.tar` | `75d44f48ca7b667fc190fdb0b3ec55abb853a125e12f2e5401dac220d5e73a14` |
+| `odisseu-jvm-amd64.tar` | `84a9e8f6c11274047269f8eaa6a1934798d436c35fef5b639b1a48477d630a6b` |
+
+Manifesto: `MANIFEST.md` · meta: `BUILD_META.env` · fontes: `checksums/sources/sources.sha256`.
+
+**Rollback:** tags prod `a6-gym-20261105T222938Z-2ec5f97649ef-amd64`. Preferir manter `POKEMON_GYM_CHALLENGES_ENABLED=false` se rollback de código for necessário antes do reparo.
 
 ---
 
