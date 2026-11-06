@@ -20,7 +20,8 @@
            [java.net InetSocketAddress URLDecoder]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
-           [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
+           [java.util.concurrent Callable ExecutionException Executors ScheduledExecutorService
+            Semaphore TimeUnit TimeoutException]))
 
 (def ^:private loopback-hosts #{"127.0.0.1" "localhost" "::1"})
 ;; 0.0.0.0 só com flag explícita (rede privada Docker). Nunca publicar a porta.
@@ -57,13 +58,86 @@
          (= auth (str "Bearer " expected)))))
 
 (defn- send-json!
-  [^HttpExchange ex status body]
-  (let [bytes (.getBytes ^String (json/write-str body) StandardCharsets/UTF_8)]
-    (.set (.getResponseHeaders ex) "Content-Type" "application/json; charset=utf-8")
-    (.set (.getResponseHeaders ex) "Cache-Control" "no-store")
-    (.sendResponseHeaders ex status (alength bytes))
-    (with-open [os (.getResponseBody ex)]
-      (.write os bytes))))
+  ([^HttpExchange ex status body]
+   (send-json! ex status body nil))
+  ([^HttpExchange ex status body max-bytes]
+   (let [bytes (.getBytes ^String (json/write-str body) StandardCharsets/UTF_8)]
+     (if (and max-bytes (> (alength bytes) (long max-bytes)))
+       (send-json! ex 500 {:ok false :error {:code "audit_response_limit"}})
+       (do
+         (.set (.getResponseHeaders ex) "Content-Type" "application/json; charset=utf-8")
+         (.set (.getResponseHeaders ex) "Cache-Control" "no-store")
+         (.sendResponseHeaders ex status (alength bytes))
+         (with-open [os (.getResponseBody ex)]
+           (.write os bytes)))))))
+
+(defn- bounded-gym-audit!
+  [gate ^java.util.concurrent.ExecutorService executor ^Semaphore slot audit-fn timeout-ms]
+  (cond
+    (not (.tryAcquire slot))
+    {:status 429 :body {:ok false :error {:code "audit_busy"}}}
+
+    (not (maintenance-gate/acquire! gate))
+    (do (.release slot)
+        {:status 503 :body {:ok false :error {:code "maintenance_active"}}})
+
+    :else
+    (let [guard (Object.)
+          started? (atom false)
+          canceled-before-start? (atom false)
+          released? (atom false)
+          release! (fn []
+                     (when (compare-and-set! released? false true)
+                       (maintenance-gate/release! gate)
+                       (.release slot)))
+          task (reify Callable
+                 (call [_]
+                   (let [run? (locking guard
+                                (if @canceled-before-start?
+                                  false
+                                  (do (reset! started? true) true)))]
+                     (when run?
+                       (try (let [result (audit-fn)]
+                              (when-not (map? result)
+                                (throw (ex-info "audit_result_must_be_aggregate_map" {})))
+                              (assoc result :runtime
+                                     (select-keys (maintenance-gate/status gate)
+                                                  [:phase :active-requests])))
+                            (finally (release!)))))))]
+      (try
+        (let [future (.submit executor ^Callable task)]
+          (try
+            {:status 200 :body {:ok true :data (.get future (long timeout-ms) TimeUnit/MILLISECONDS)}}
+            (catch TimeoutException _
+              (locking guard
+                (if @started?
+                  (.cancel future true)
+                  (do (reset! canceled-before-start? true)
+                      (.cancel future false)
+                      (release!))))
+              {:status 504 :body {:ok false :error {:code "audit_timeout"}}})
+            (catch ExecutionException _
+              {:status 503 :body {:ok false :error {:code "audit_unavailable"}}})
+            (catch InterruptedException _
+              (.interrupt (Thread/currentThread))
+              (locking guard
+                (if @started?
+                  (.cancel future true)
+                  (do (reset! canceled-before-start? true)
+                      (.cancel future false)
+                      (release!))))
+              {:status 503 :body {:ok false :error {:code "audit_interrupted"}}})))
+        (catch java.util.concurrent.RejectedExecutionException _
+          (release!)
+          {:status 503 :body {:ok false :error {:code "audit_unavailable"}}})))))
+
+(defn- require-empty-body!
+  [^HttpExchange ex]
+  (let [length (header ex "Content-Length")
+        transfer-encoding (header ex "Transfer-Encoding")]
+    (when (or transfer-encoding
+              (and length (not= "0" length)))
+      (throw (err/error :invalid_query {})))))
 
 (defn- read-body
   [^HttpExchange ex]
@@ -189,22 +263,19 @@
       (throw (err/error :unauthorized {})))))
 
 (defn- maintenance-control!
-  [^HttpExchange ex method path qs gate token gym-audit!]
+  [^HttpExchange ex method path qs gate token gym-audit! gym-audit-run!]
   (maintenance-auth! ex token)
   (cond
     (= path "/ops/maintenance/status")
     (do (require-method! ex #{"GET"}) (ok! ex (maintenance-gate/status gate)))
 
     (= path "/ops/maintenance/a6-gym-state-audit")
-    (if (fn? gym-audit!)
+    (if (and (fn? gym-audit!) (fn? gym-audit-run!))
       (do
         (require-method! ex #{"GET"})
-        (if-not (maintenance-gate/acquire! gate)
-          (send-json! ex 503 {:ok false :error {:code "maintenance_active"
-                                               :message "A auditoria está indisponível durante a manutenção."}})
-          (try
-            (ok! ex (gym-audit!))
-            (finally (maintenance-gate/release! gate)))))
+        (require-empty-body! ex)
+        (let [{:keys [status body]} (gym-audit-run! gate gym-audit!)]
+          (send-json! ex status body 16384)))
       (send-json! ex 404 {:ok false :error {:code "not_found" :message "Rota inexistente."}}))
 
     (= path "/ops/maintenance/enter")
@@ -278,7 +349,7 @@
    :platform-hooks mapa M8.7 (set-bot-blocked! / block-commands! / …)"
   [store token allow-test-rng? platform-store
    & [{:keys [credit-coins! score-point! platform-hooks recovery-catalog
-              raid-auto-tick-enabled? maintenance-gate maintenance-token gym-audit!]
+              raid-auto-tick-enabled? maintenance-gate maintenance-token gym-audit! gym-audit-run!]
        :or {credit-coins! tx/credit-coins!
             platform-hooks {}
             raid-auto-tick-enabled? false}}]]
@@ -356,7 +427,8 @@
 
             (str/starts-with? path "/ops/maintenance/")
             (if (and maintenance-gate maintenance-token)
-              (maintenance-control! ex method path qs maintenance-gate maintenance-token gym-audit!)
+              (maintenance-control! ex method path qs maintenance-gate maintenance-token
+                                    gym-audit! gym-audit-run!)
               (send-json! ex 404 {:ok false :error {:code "not_found" :message "Rota inexistente."}}))
 
             :else
@@ -2405,7 +2477,8 @@
   `:allow-test-rng true` só para smoke/dev — nunca no caminho WhatsApp."
   [{:keys [host port token store platform-store allow-test-rng allow-private-bind
            credit-coins! score-point! platform-hooks recovery-catalog
-           raid-auto-tick-enabled? maintenance-dir maintenance-token gym-audit!]
+           raid-auto-tick-enabled? maintenance-dir maintenance-token gym-audit!
+           gym-audit-timeout-ms]
     :or {host "127.0.0.1" port 18090 allow-test-rng false allow-private-bind false
          raid-auto-tick-enabled? false}}]
   (let [allowed (cond-> loopback-hosts
@@ -2425,15 +2498,23 @@
       (throw (ex-info "maintenance_gate_configuration_incomplete"
                       {:hint "Configure maintenance-dir e maintenance-token juntos."})))
     (let [maintenance-gate (when maintenance-dir (maintenance-gate/create maintenance-dir))
+          audit-timeout (max 100 (min 15000 (long (or gym-audit-timeout-ms 5000))))
           addr (InetSocketAddress. ^String host (int port))
           server (HttpServer/create addr 0)
           executor (Executors/newFixedThreadPool 8)
+          audit-executor (Executors/newSingleThreadExecutor)
+          audit-slot (Semaphore. 1)
+          gym-audit-run! (when gym-audit!
+                           (fn [gate audit-fn]
+                             (bounded-gym-audit! gate audit-executor audit-slot
+                                                 audit-fn audit-timeout)))
           handler (make-handler store token (boolean allow-test-rng) platform-store
                                 (cond-> {:raid-auto-tick-enabled?
                                          (boolean raid-auto-tick-enabled?)}
                                   maintenance-gate (assoc :maintenance-gate maintenance-gate)
                                   maintenance-token (assoc :maintenance-token maintenance-token)
                                   gym-audit! (assoc :gym-audit! gym-audit!)
+                                  gym-audit-run! (assoc :gym-audit-run! gym-audit-run!)
                                   credit-coins! (assoc :credit-coins! credit-coins!)
                                   score-point! (assoc :score-point! score-point!)
                                   (seq platform-hooks) (assoc :platform-hooks platform-hooks)
@@ -2463,7 +2544,9 @@
                   (try (.awaitTermination sweeper 2 TimeUnit/SECONDS) (catch Exception _))
                   (.stop server 1)
                   (try (.shutdownNow executor) (catch Exception _))
-                  (try (.awaitTermination executor 2 TimeUnit/SECONDS) (catch Exception _)))}))))
+                  (try (.awaitTermination executor 2 TimeUnit/SECONDS) (catch Exception _))
+                  (try (.shutdownNow audit-executor) (catch Exception _))
+                  (try (.awaitTermination audit-executor 2 TimeUnit/SECONDS) (catch Exception _)))}))))
 
 (defn stop!
   [{:keys [stop!]}]
