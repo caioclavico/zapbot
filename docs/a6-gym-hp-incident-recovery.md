@@ -1,9 +1,9 @@
 # Incidente P0 — wipe de HP em ginásios + plano de recuperação
 
-**Status operacional:** CONTENÇÃO **proposta** (não aplicada) · HOTFIX **validado** · REPARO **ensaiado** · RC **pronto** · DEPLOY/REPARO PROD **aguardam GO**  
-**Produção viva:** Node/JVM `a6-gym-20261105T222938Z-2ec5f97649ef-amd64` (ainda vulnerável)  
-**RC hotfix:** `a6-gym-hp-hotfix-20261106T094456Z-bf8f5c66e492-amd64` (Node+JVM; sem deploy)  
-**Período do incidente:** cutover `2026-11-05T22:56:56Z` → contenção efetiva (pendente)  
+**Status operacional:** CONTENÇÃO **aplicada** · HOTFIX **implantado** · REPARO lote 1 **concluído** · desafios **OFF**  
+**Produção viva:** Node/JVM `a6-gym-hp-hotfix-20261106T094456Z-bf8f5c66e492-amd64`  
+**Relatório P0:** `docs/a6-gym-hp-p0-production-recovery-report.md` (**SUCCESS**)  
+**Período do incidente:** cutover `2026-11-05T22:56:56Z` → contenção `2026-11-06T09:53:26Z`  
 **Wipe principal observado:** TX `13194139535629` @ `2026-11-06T09:18:21Z`
 
 Evidências host:  
