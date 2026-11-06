@@ -428,19 +428,22 @@
          (conj [:db/retract lookup :pokemon/status previous-status]))))))
 
 (defn- sync-colecao-from-gym-battle
-  "Atualiza HP/status em memória a partir do estado 3×3 (antes do occupy)."
+  "Atualiza HP/status em memória a partir do estado 3×3 (antes do occupy).
+
+  Na derrota, só os índices do time de ginásio (3) ficam a 0 — nunca a coleção
+  inteira. Pokémon fora do desafio preservam hp-atual/status."
   [colecao battle]
   (let [fainted (set (map long (or (:fainted-x battle) #{})))
         active-idx (when-let [i (get-in battle [:indices-ativos :x])] (long i))
+        team-idxs (set (map long (or (:team-x-indices battle) [])))
         hp-x (long (get-in battle [:hp :x] 0))
         st-x (get-in battle [:status :x])
         defeated? (= :lose (:outcome battle))]
     (mapv (fn [poke]
             (let [idx (long (:collection-index poke))]
               (cond
-                ;; Ao perder o ginásio, toda a equipe foi nocauteada. O estado
-                ;; canônico não pode manter status residuais de antes da luta.
-                defeated?
+                ;; Derrota: só o time 3×3 (nunca a box/coleção inteira).
+                (and defeated? (contains? team-idxs idx))
                 (assoc poke :hp-atual 0 :status nil)
                 (contains? fainted idx)
                 (assoc poke :hp-atual 0 :status nil)

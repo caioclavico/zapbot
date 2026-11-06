@@ -186,6 +186,37 @@ function spriteUrl(pokemon) {
 }
 
 /**
+ * Ocupações gravadas com keep-images?=false chegam sem URL → caixa preta na arena.
+ * Rehidrata via PokeAPI pela espécie/nome quando a imagem falta (somente leitura).
+ */
+async function ensurePokemonSprite(pokemon) {
+  if (!pokemon || spriteUrl(pokemon)) return pokemon;
+  const raw = pokemon.species || pokemon.nome || pokemon.name || pokemon.speciesId;
+  const species = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+  if (!species) return pokemon;
+  try {
+    // Lazy require: evita ciclo e custo no boot quando sprites já vêm na batalha.
+    // eslint-disable-next-line global-require
+    const pokeapi = require('./pokemon-pokeapi.cjs');
+    const full = await pokeapi.fetchPokemonByName(species);
+    if (!full || !full.imagem) return pokemon;
+    return Object.assign({}, pokemon, {
+      imagem: full.imagem,
+      imagemShiny: full.imagemShiny || pokemon.imagemShiny,
+      'imagem-shiny': full.imagemShiny || pokemon['imagem-shiny']
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[pokemon-jvm-media] rehydrate sprite falhou:', species, err.message || err);
+    return pokemon;
+  }
+}
+
+/**
  * Redimensiona preservando alpha real.
  * PNG/WebP com alpha: ensureAlpha + contain transparente (sem caixa opaca).
  * JPEG/artwork sem alpha: NÃO força ensureAlpha (evita quadrado preto/branco
@@ -500,9 +531,13 @@ async function renderHuntArena({
     const mostrarMeu = !captura;
     const centroMeu = 165;
     const centroSelvagem = captura ? 380 : 595;
+    const [px, po] = await Promise.all([
+      mostrarMeu && pokemonX ? ensurePokemonSprite(pokemonX) : null,
+      !fugiu && pokemonO ? ensurePokemonSprite(pokemonO) : null
+    ]);
     const [meu, selvagem] = await Promise.all([
-      mostrarMeu && pokemonX ? spriteProporcional(pokemonX, SPRITE_CACADA) : null,
-      !fugiu && pokemonO ? spriteProporcional(pokemonO, SPRITE_CACADA) : null
+      px ? spriteProporcional(px, SPRITE_CACADA) : null,
+      po ? spriteProporcional(po, SPRITE_CACADA) : null
     ]);
     const layers = [];
     if (meu) {
@@ -525,18 +560,18 @@ async function renderHuntArena({
       .composite(layers)
       .png()
       .toBuffer();
-    const shiny = isShiny(pokemonO);
+    const shiny = isShiny(po || pokemonO);
     base = await aplicarSobreposicao(base, {
       texto: caption,
       shiny,
       efeito,
       mostrarEntrada,
-      hpX: hpX || hpFromPokemon(pokemonX),
-      hpO: hpO || hpFromPokemon(pokemonO),
+      hpX: hpX || hpFromPokemon(px || pokemonX),
+      hpO: hpO || hpFromPokemon(po || pokemonO),
       mostrarHpX: mostrarMeu,
       mostrarHpO: !fugiu,
-      rotuloX: rotuloX != null ? rotuloX : nomeCurtoPokemon(pokemonX),
-      rotuloO: rotuloO != null ? rotuloO : nomeCurtoPokemon(pokemonO)
+      rotuloX: rotuloX != null ? rotuloX : nomeCurtoPokemon(px || pokemonX),
+      rotuloO: rotuloO != null ? rotuloO : nomeCurtoPokemon(po || pokemonO)
     });
     return {
       base64: base.toString('base64'),
@@ -1267,5 +1302,7 @@ module.exports = {
   svgPokedexShell,
   candidatosUrl,
   baixarBuffer,
-  tiposPt
+  tiposPt,
+  ensurePokemonSprite,
+  spriteProporcional
 };

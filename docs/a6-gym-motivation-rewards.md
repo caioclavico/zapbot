@@ -1,9 +1,9 @@
 # A6 — Ginásios completos: HP, sprites, motivação e economia por permanência
 
-**Status:** CONDITIONAL (pronto localmente; **crédito econômico e migration 034 desligados em produção**)  
+**Status:** CONDITIONAL em produção (cutover Node+JVM + migration 034 aplicados; **crédito econômico ainda OFF** — ver `docs/a6-gym-production-cutover-report.md`)  
 **Branch:** `feat/a6-gym-motivation-rewards`  
 **Flag:** `POKEMON_GYM_PERMANENCE_REWARDS_ENABLED` (default `false`)  
-**Migration aditiva:** `migrations/pokemon/034-gym-permanence-daily.edn` — **não aplicar em produção sem GO**
+**Migration aditiva:** `migrations/pokemon/034-gym-permanence-daily.edn` — aplicada em produção no cutover 2026-11-05 (flag econômica permanece OFF)
 
 ---
 
@@ -142,4 +142,4 @@ node scripts/a6-gym-visual-evidence.cjs
 
 ## 9. Classificação
 
-**CONDITIONAL** — implementação e testes locais OK; HP/sprites/motivação/remoção de moedas por vitória READY; crédito de permanência e schema 034 aguardam GO operacional (flag default false).
+**CONDITIONAL** — cutover produção Node+JVM + migration 034 feitos (`docs/a6-gym-production-cutover-report.md`); crédito de permanência permanece OFF até GO econômico; smoke WA visual ainda pendente.

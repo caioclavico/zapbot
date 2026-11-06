@@ -8,30 +8,32 @@
 
 ## Preflight
 
-- [ ] Confirmar tags live = par Time Pokémon (`d677429…`)
-- [ ] Node/JVM healthy · WA READY
-- [ ] Raids auto ON · sem raid ativa
-- [ ] Announcer `false` · Pokédex gate piloto
-- [ ] `POKEMON_GYM_PERMANENCE_REWARDS_ENABLED` ausente ou `false`
-- [ ] Tars + SHA-256 conferidos
+- [x] Confirmar tags live = par Time Pokémon (`d677429…`)
+- [x] Node/JVM healthy · WA READY
+- [x] Raids auto ON · sem raid ativa
+- [x] Announcer `false` · Pokédex gate piloto
+- [x] `POKEMON_GYM_PERMANENCE_REWARDS_ENABLED` ausente ou `false`
+- [x] Tars + SHA-256 conferidos
 
 ## Cutover
 
-- [ ] Drain Node → quiescent
-- [ ] Quiescência JVM writers
-- [ ] Backup cold + restore isolado OK
-- [ ] Aceite explícito migration 034 (aditiva)
-- [ ] Load + recreate **JVM** tag RC
-- [ ] Load + recreate **Node** tag RC (mesmo tree)
-- [ ] Health + WA READY
-- [ ] Maintenance `open`
+- [x] Drain Node → quiescent
+- [x] Quiescência JVM writers
+- [x] Backup cold + restore isolado OK
+- [x] Aceite explícito migration 034 (aditiva)
+- [x] Load + recreate **JVM** tag RC
+- [x] Load + recreate **Node** tag RC (mesmo tree)
+- [x] Health + WA READY
+- [x] Maintenance `open`
 
 ## Homologação piloto (flag off)
 
-- [ ] `!pk gin` / detalhe com motivação
-- [ ] Desafio: HP inicial correto · sprites sem caixa
-- [ ] Vitória: 0 moedas · PE/insígnia OK
-- [ ] Regressão: `!pk tm` · Pokédex · troca · raid
+- [x] Motivação/tempo/HP via bridge RO (`homolog-gyms.json`) — ver relatório CONDITIONAL
+- [ ] Desafio: HP inicial correto · sprites sem caixa (**WA manual**)
+- [ ] Vitória: 0 moedas · PE/insígnia OK (**WA manual**)
+- [x] Regressão RO: teams/csv · Pokédex · trades · thematic/raid flags
+
+Relatório: `docs/a6-gym-production-cutover-report.md` (**CONDITIONAL**)
 
 ## Pós-cutover (GO separado)
 

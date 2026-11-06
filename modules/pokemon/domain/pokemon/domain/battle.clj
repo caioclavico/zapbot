@@ -222,11 +222,12 @@
 
 (defn encode-gym-team-edn
   "Snapshot de ocupação (:gym-occupation/team-edn) — mesmos drops da batalha.
-   Histórico canônico permanece nos attrs :pokemon/* da coleção (quando aplicável)."
+   Mantém :imagem/:imagem-shiny (URLs curtas): sem elas a arena do desafiante
+   renderiza caixa preta no lado do líder. Histórico canônico fica em :pokemon/*."
   [team]
   (encode-value-edn
    :gym-occupation/team-edn
-   (mapv #(slim-pokemon-for-battle % {:keep-images? false}) (or team []))))
+   (mapv #(slim-pokemon-for-battle % {:keep-images? true}) (or team []))))
 
 (defn create-wild-battle
   "Cria estado inicial de caçada. Intimidate aplica-se na criação."
