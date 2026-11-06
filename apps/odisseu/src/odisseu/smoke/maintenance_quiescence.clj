@@ -5,6 +5,7 @@
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.trainer :as trainer]
             [pokemon.infrastructure.datomic.store :as store]
+            [pokemon.infrastructure.datomic.gym-audit :as gym-audit]
             [pokemon.infrastructure.http.bridge :as bridge]
             [pokemon.infrastructure.http.maintenance-gate :as gate]
             [pokemon.infrastructure.http.json :as json])
@@ -40,7 +41,8 @@
         datoms-before (:datoms (d/db-stats (d/db conn)))
         operator-token "maintenance-smoke-operator-token"
         opts {:host "127.0.0.1" :port 0 :token "maintenance-smoke-bridge-token"
-              :store s :maintenance-dir maint :maintenance-token operator-token}
+              :store s :maintenance-dir maint :maintenance-token operator-token
+              :gym-audit! #(gym-audit/summarize (d/db conn) nil)}
         http-client (HttpClient/newHttpClient)
         srv (bridge/start! opts)
         base (:base-url srv)]
@@ -91,8 +93,21 @@
                "health must remain available" nil)
       (assert! (= 401 (:status (request! http-client base "GET" "/ops/maintenance/status" "wrong-token")))
                "maintenance control must require its own token" nil)
+      (assert! (= 401 (:status (request! http-client base "GET"
+                                           "/ops/maintenance/a6-gym-state-audit" "wrong-token")))
+               "aggregate audit must require the maintenance token" nil)
+      (let [audit (request! http-client base "GET" "/ops/maintenance/a6-gym-state-audit" operator-token)
+            data (get-in audit [:body "data"])]
+        (assert! (= 200 (:status audit)) "aggregate audit route must be available" audit)
+        (assert! (and (map? data) (map? (get data "battles")) (map? (get data "pokemon")))
+                 "audit route must return aggregate sections" audit)
+        (assert! (= datoms-before (:datoms (d/db-stats (d/db conn))))
+                 "aggregate audit must not write Datomic" nil))
       (assert! (= 200 (:status (request! http-client base "POST" "/ops/maintenance/enter?timeoutMs=1000" operator-token)))
                "enter must reach quiescence" nil)
+      (assert! (= 503 (:status (request! http-client base "GET"
+                                         "/ops/maintenance/a6-gym-state-audit" operator-token)))
+               "audit route must not start after maintenance has closed admission" nil)
       (assert! (= 503 (:status (request! http-client base "GET" "/v1/trainer?chatId=test&playerId=test" operator-token)))
                "authenticated bridge requests must fail closed during maintenance" nil)
       (assert! (= 503 (:status (request! http-client base "POST" "/v1/hunt/start" operator-token)))

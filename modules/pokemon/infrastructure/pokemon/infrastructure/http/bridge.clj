@@ -189,11 +189,23 @@
       (throw (err/error :unauthorized {})))))
 
 (defn- maintenance-control!
-  [^HttpExchange ex method path qs gate token]
+  [^HttpExchange ex method path qs gate token gym-audit!]
   (maintenance-auth! ex token)
   (cond
     (= path "/ops/maintenance/status")
     (do (require-method! ex #{"GET"}) (ok! ex (maintenance-gate/status gate)))
+
+    (= path "/ops/maintenance/a6-gym-state-audit")
+    (if (fn? gym-audit!)
+      (do
+        (require-method! ex #{"GET"})
+        (if-not (maintenance-gate/acquire! gate)
+          (send-json! ex 503 {:ok false :error {:code "maintenance_active"
+                                               :message "A auditoria está indisponível durante a manutenção."}})
+          (try
+            (ok! ex (gym-audit!))
+            (finally (maintenance-gate/release! gate)))))
+      (send-json! ex 404 {:ok false :error {:code "not_found" :message "Rota inexistente."}}))
 
     (= path "/ops/maintenance/enter")
     (do (require-method! ex #{"POST"})
@@ -266,7 +278,7 @@
    :platform-hooks mapa M8.7 (set-bot-blocked! / block-commands! / …)"
   [store token allow-test-rng? platform-store
    & [{:keys [credit-coins! score-point! platform-hooks recovery-catalog
-              raid-auto-tick-enabled? maintenance-gate maintenance-token]
+              raid-auto-tick-enabled? maintenance-gate maintenance-token gym-audit!]
        :or {credit-coins! tx/credit-coins!
             platform-hooks {}
             raid-auto-tick-enabled? false}}]]
@@ -344,7 +356,7 @@
 
             (str/starts-with? path "/ops/maintenance/")
             (if (and maintenance-gate maintenance-token)
-              (maintenance-control! ex method path qs maintenance-gate maintenance-token)
+              (maintenance-control! ex method path qs maintenance-gate maintenance-token gym-audit!)
               (send-json! ex 404 {:ok false :error {:code "not_found" :message "Rota inexistente."}}))
 
             :else
@@ -2393,7 +2405,7 @@
   `:allow-test-rng true` só para smoke/dev — nunca no caminho WhatsApp."
   [{:keys [host port token store platform-store allow-test-rng allow-private-bind
            credit-coins! score-point! platform-hooks recovery-catalog
-           raid-auto-tick-enabled? maintenance-dir maintenance-token]
+           raid-auto-tick-enabled? maintenance-dir maintenance-token gym-audit!]
     :or {host "127.0.0.1" port 18090 allow-test-rng false allow-private-bind false
          raid-auto-tick-enabled? false}}]
   (let [allowed (cond-> loopback-hosts
@@ -2421,6 +2433,7 @@
                                          (boolean raid-auto-tick-enabled?)}
                                   maintenance-gate (assoc :maintenance-gate maintenance-gate)
                                   maintenance-token (assoc :maintenance-token maintenance-token)
+                                  gym-audit! (assoc :gym-audit! gym-audit!)
                                   credit-coins! (assoc :credit-coins! credit-coins!)
                                   score-point! (assoc :score-point! score-point!)
                                   (seq platform-hooks) (assoc :platform-hooks platform-hooks)

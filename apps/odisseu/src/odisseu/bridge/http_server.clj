@@ -14,6 +14,7 @@
             [pokemon.application.recovery-catalog :as recovery-catalog]
             [pokemon.application.trainer :as trainer]
             [pokemon.infrastructure.datomic.store :as store]
+            [pokemon.infrastructure.datomic.gym-audit :as gym-audit]
             [pokemon.infrastructure.http.bridge :as bridge])
   (:import [java.lang.management ManagementFactory]
            [java.nio.channels FileChannel FileLock]
@@ -186,6 +187,10 @@
                              :recovery-catalog recovery-cat
                              :maintenance-dir maintenance-dir
                              :maintenance-token maintenance-token
+                             ;; Audit read-only through the already-open writer connection.
+                             ;; The route is maintenance-token protected and never creates a client.
+                             :gym-audit! #(gym-audit/summarize (d/db conn)
+                                                               (some-> (env "A6_P0_HOTFIX_AT_MS") Long/parseLong))
                              :raid-auto-tick-enabled? raid-auto-tick?})
         stopped (atom false)
         stop! (fn []
