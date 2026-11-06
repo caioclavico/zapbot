@@ -1329,6 +1329,7 @@ function formatError(err) {
     CANNOT_CHALLENGE_OWN_GYM: '🏛️ Você já lidera este ginásio.',
     INVALID_GYM_TEAM: '❓ Escale três Pokémon saudáveis: !pk gin time auto ou !pk gin time 1,2,3.',
     GYM_TEAM_UNHEALTHY: '❓ Escale três Pokémon saudáveis: !pk gin time auto ou !pk gin time 1,2,3.',
+    GYM_CHALLENGES_DISABLED: '🚧 Desafios de ginásio temporariamente suspensos para manutenção. Consultas e outros comandos seguem normais.',
     INVALID_GYM_NPC_TEAM: '❌ Não consegui montar o time do líder. Tente de novo.',
     UNKNOWN_GYM: '❓ Ginásio desconhecido. Use pedra, agua, eletrico, planta ou fogo.',
     RAID_NOT_FOUND: '❓ Nenhuma raid ativa neste chat.',

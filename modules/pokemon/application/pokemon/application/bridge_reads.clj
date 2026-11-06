@@ -662,8 +662,9 @@
      :fence-generation (:fence-generation player 0)
      :gym-defense-count (:gym-defense-count player 0)
      :insignias insignias
-     :desafio-habilitado true
-     :desafio-bloqueio nil
+     :desafio-habilitado (gym/challenges-enabled?)
+     :desafio-bloqueio (when-not (gym/challenges-enabled?)
+                         "desafios temporariamente suspensos (manutenção)")
      :gyms rows}))
 
 (defn gym-detail

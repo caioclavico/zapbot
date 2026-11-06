@@ -24,6 +24,7 @@
             [pokemon.domain.shop :as shop-domain]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.gym :as gym]
             [pokemon.domain.hunt :as hunt]
             [pokemon.domain.identities :as id]
             [pokemon.domain.joy :as joy]
@@ -576,6 +577,9 @@
   (model/validate-save-slot! save-id)
   (when (str/blank? (str gym-id))
     (throw (err/error :invalid_query {:required ["gymId"]})))
+  (when-not (gym/challenges-enabled?)
+    (throw (err/error :gym_challenges_disabled
+                      {:message "desafios de ginásio temporariamente suspensos"})))
   (let [writer-ctx {:chat-id chat-id
                     :player-id player-id
                     :save-id save-id

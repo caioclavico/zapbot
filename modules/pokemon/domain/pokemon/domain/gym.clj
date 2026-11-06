@@ -35,6 +35,16 @@
              str/lower-case
              str/trim)))
 
+(defn challenges-enabled?
+  "Gate de contenção para novos desafios 3×3. Default true.
+  Contenção: POKEMON_GYM_CHALLENGES_ENABLED=false|0|off|no.
+  Consultas, ranking, histórico, raids e temáticos não usam este gate."
+  []
+  (let [v (some-> (System/getenv "POKEMON_GYM_CHALLENGES_ENABLED")
+                  str/lower-case
+                  str/trim)]
+    (not (#{"0" "false" "no" "off"} v))))
+
 (defn permanence-timezone
   []
   (or (some-> (System/getenv "POKEMON_GYM_PERMANENCE_TZ") str/trim not-empty)
