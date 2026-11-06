@@ -6,6 +6,7 @@
             [pokemon.application.trainer :as trainer]
             [pokemon.infrastructure.datomic.store :as store]
             [pokemon.infrastructure.datomic.gym-audit :as gym-audit]
+            [pokemon.infrastructure.datomic.schema :as pokemon-schema]
             [pokemon.infrastructure.http.bridge :as bridge]
             [pokemon.infrastructure.http.maintenance-gate :as gate]
             [pokemon.infrastructure.http.json :as json])
@@ -40,7 +41,44 @@
         client-db (persistence/client {:system (str "a6-maint-smoke-" (System/nanoTime))
                                        :storage-dir storage})
         conn (persistence/ensure-db! client-db "smoke")
+        _schema (pokemon-schema/install! conn)
         s (doto (store/make-store conn) trainer/bootstrap!)
+        _fixtures (d/transact conn
+                              {:tx-data [{:raid-auto-schedule/chat-id "audit-fixture-group-a"
+                                          :raid-auto-schedule/enabled true
+                                          :raid-auto-schedule/next-at 1000
+                                          :raid-auto-schedule/last-raid-id "audit-fixture-raid"}
+                                         {:raid-auto-schedule/chat-id "audit-fixture-group-b"
+                                          :raid-auto-schedule/enabled true
+                                          :raid-auto-schedule/next-at 2000
+                                          :raid-auto-schedule/last-raid-id "audit-fixture-raid"}
+                                         {:thematic-event-schedule/chat-id "audit-fixture-group-a"
+                                          :thematic-event-schedule/enabled true
+                                          :thematic-event-schedule/next-at 3000
+                                          :thematic-event-schedule/last-occurrence-id "audit-fixture-occurrence"
+                                          :thematic-event-schedule/last-start-ms 500}
+                                         {:thematic-event-occurrence/id "audit-fixture-occurrence"
+                                          :thematic-event-occurrence/chat-id "audit-fixture-group-a"
+                                          :thematic-event-occurrence/catalog-id "fixture"
+                                          :thematic-event-occurrence/inicio-ms 500
+                                          :thematic-event-occurrence/fim-ms 4000
+                                          :thematic-event-occurrence/status "active"}
+                                         {:save/key "audit-fixture-save"
+                                          :save/ultimo-bonus-diario "2026-11-06"
+                                          :save/sequencia-bonus-diario 1
+                                          :save/kit-inicial-resgatado true}
+                                         {:pokemon/key "audit-fixture-pokemon"
+                                          :pokemon/hp 20 :pokemon/hp-atual 0
+                                          :pokemon/species "fixture" :pokemon/level 5 :pokemon/xp 12}
+                                         {:battle/id "audit-fixture-battle"
+                                          :battle/kind "gym" :battle/active? true
+                                          :battle/phase "active" :battle/idle-expired? false
+                                          :battle/last-activity-at 1000 :battle/state-edn "{}"}
+                                         {:operation-receipt/id "audit-fixture-receipt"
+                                          :operation-receipt/kind "gym-challenge-start"
+                                          :operation-receipt/summary "{:battle-id \"audit-fixture-battle\"}"}
+                                         {:gym-occupation/key "audit-fixture-occupation"
+                                          :gym-occupation/team-edn "[]"}]})
         datoms-before (:datoms (d/db-stats (d/db conn)))
         operator-token "maintenance-smoke-operator-token"
         opts {:host "127.0.0.1" :port 0 :token "maintenance-smoke-bridge-token"
@@ -113,6 +151,26 @@
         (assert! (not (re-find #"(?i)(player.?id|chat.?id|pokemon.?key|save.?id|battle.?id|@c\\.us|@lid)"
                                (pr-str data)))
                  "audit response must not contain identifiers" nil)
+        (assert! (= true (get-in data ["migrations" "pokemon034"]))
+                 "audit should report the disposable schema 034 marker" nil)
+        (assert! (= "available" (get-in data ["schedulers" "raids" "status"]))
+                 "raid scheduler aggregates should be schema-aware" nil)
+        (assert! (= "available" (get-in data ["schedulers" "thematicEvents" "status"]))
+                 "thematic event aggregates should be schema-aware" nil)
+        (assert! (= 1 (get-in data ["battles" "gymOpenOrResumable"]))
+                 "open gym battles should be counted without returning their identifiers" nil)
+        (assert! (= 1 (get-in data ["gymStartReceipts" "committed"]))
+                 "gym receipts should be aggregated" nil)
+        (assert! (= 1 (get-in data ["pokemon" "hpZero"]))
+                 "HP integrity should be aggregated" nil)
+        (assert! (= 1 (get-in data ["gymOccupations" "invalidDefenderTeamCount"]))
+                 "invalid gym occupation teams should be aggregated" nil)
+        (assert! (= 1 (get-in data ["schedulers" "raids" "duplicateMarkerGroups"]))
+                 "duplicate raid markers should be reported as counts" nil)
+        (assert! (= 1 (get-in data ["schedulers" "thematicEvents" "activeOccurrences"]))
+                 "active thematic events should be aggregated" nil)
+        (assert! (= "unknown" (get-in data ["bagDaily" "dailyKitStatus"]))
+                 "unsupported daily kit state must remain UNKNOWN" nil)
         (assert! (= datoms-before (:datoms (d/db-stats (d/db conn))))
                  "aggregate audit must not write Datomic" nil))
 
@@ -179,6 +237,16 @@
             (assert! (< (count (pr-str (:body response))) 200)
                      "oversized response must be replaced with a bounded error" nil))
           (finally (bridge/stop! large))))
+
+      (let [unknown-client (persistence/client
+                            {:system (str "a6-audit-unknown-" (System/nanoTime))
+                             :storage-dir (str (io/file root "audit-unknown"))})
+            unknown-conn (persistence/ensure-db! unknown-client "unknown")
+            unknown (gym-audit/summarize (d/db unknown-conn) nil)]
+        (assert! (= :unknown (get-in unknown [:battles :status]))
+                 "missing battle schema must be reported UNKNOWN" nil)
+        (assert! (= :unknown (get-in unknown [:schedulers :raids :status]))
+                 "missing raid scheduler schema must be reported UNKNOWN" nil))
 
       (assert! (= 200 (:status (request! http-client base "POST" "/ops/maintenance/enter?timeoutMs=1000" operator-token)))
                "enter must reach quiescence" nil)
