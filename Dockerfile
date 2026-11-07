@@ -4,7 +4,8 @@ FROM eclipse-temurin:21-jdk-jammy AS build
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get install -y --no-install-recommends nodejs=22.23.4-1nodesource1 \
+    && test "$(node --version)" = "v22.23.4" \
     && rm -rf /var/lib/apt/lists/*
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 WORKDIR /app
@@ -15,9 +16,34 @@ COPY shadow-cljs.edn ./
 COPY src ./src
 RUN npm run build && npm prune --omit=dev
 
-FROM node:22-bookworm-slim
-LABEL io.zapbot.service="odisseu" io.zapbot.persistence-version="1" io.zapbot.restore-protocol="1"
-RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates tini \
+FROM node:22.23.4-bookworm-slim@sha256:aaa4b5baf1ecff3b283486bb1f90405cdda225a3e6f79660d2c559fa510a7292
+LABEL io.zapbot.service="odisseu" \
+      io.zapbot.persistence-version="1" \
+      io.zapbot.restore-protocol="1" \
+      io.zapbot.runtime.node="22.23.4" \
+      io.zapbot.runtime.chromium="157.0.8103.38-1" \
+      io.zapbot.runtime.brotli="1.0.9-2+deb12u1"
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl gnupg ca-certificates \
+    && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o /tmp/google-linux-signing-key.pub \
+    && gpg --show-keys --with-colons --fingerprint /tmp/google-linux-signing-key.pub \
+      | awk -F: '$1 == "fpr" { print $10 }' \
+      | grep -Fxq 'EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796' \
+    && gpg --dearmor -o /usr/share/keyrings/google-linux-packages.gpg /tmp/google-linux-signing-key.pub \
+    && printf '%s\n' 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-packages.gpg] https://dl.google.com/linux/chrome/deb/ stable main' \
+      > /etc/apt/sources.list.d/google-chrome.list \
+    && printf '%s\n' 'deb http://security.debian.org/debian-security bookworm-security main' \
+      > /etc/apt/sources.list.d/bookworm-security.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      google-chrome-stable=157.0.8103.38-1 \
+      libbrotli1=1.0.9-2+deb12u1 \
+      fonts-liberation ca-certificates tini \
+    && ln -s /usr/bin/google-chrome-stable /usr/bin/chromium \
+    && rm -f /tmp/google-linux-signing-key.pub \
+    && rm -rf /usr/local/lib/node_modules/npm \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx \
+    && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
     PERFORMANCE_METRICS=false \
@@ -25,23 +51,20 @@ ENV NODE_ENV=production \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     CHROMIUM_DISABLE_GPU=true
 WORKDIR /app
+RUN test "$(node --version)" = "v22.23.4"
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/target/main.js ./target/main.js
 COPY package*.json ./
-COPY assets/abujamra.png ./assets/abujamra.png
-COPY assets/ash.png ./assets/ash.png
-COPY assets/centro-pokemon.png ./assets/centro-pokemon.png
-COPY assets/enfermeira-joy.png ./assets/enfermeira-joy.png
-COPY assets/enfermeira-joy-tratando.png ./assets/enfermeira-joy-tratando.png
-COPY assets/loja-pokemon.png ./assets/loja-pokemon.png
-COPY assets/professor-carvalho.png ./assets/professor-carvalho.png
-# Fase 12.7.1 — lembretes de raid automática (ovo no ginásio)
-COPY assets/raid-egg-30min.png ./assets/raid-egg-30min.png
-COPY assets/raid-egg-15min.png ./assets/raid-egg-15min.png
-COPY assets/raid-egg-5min.png ./assets/raid-egg-5min.png
+COPY assets ./assets
 COPY scripts/lib ./scripts/lib
+# O drain de produção tem de viajar com a imagem. Falha o build se sumir
+# ou se o bundle voltar a desligar o sandbox do Chromium.
+RUN node -e 'const fs=require("fs"); const files=["scripts/lib/a6-maintenance.cjs","scripts/lib/a6-shutdown.cjs"]; for (const f of files) { if (!fs.existsSync(f)) { console.error("missing "+f); process.exit(1); } } const js=fs.readFileSync("target/main.js","utf8"); const banned=["--no-"+"sandbox","--disable-"+"setuid-sandbox"]; for (const flag of banned) { if (js.indexOf(flag) !== -1) { console.error("sandbox flags reappeared in target/main.js"); process.exit(1); } }'
 ENTRYPOINT ["/usr/bin/tini", "--"]
 # LocalAuth usa /app/.wwebjs_auth, persistido pelo Compose. Nunca limpar locks.
 COPY scripts/healthcheck.js ./scripts/healthcheck.js
 HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 CMD ["node", "scripts/healthcheck.js"]
+RUN install -d -o node -g node \
+      /app/.wwebjs_auth /app/.wwebjs_auth_core /app/.wwebjs_auth_staging /app/data
+USER 1000:1000
 CMD ["node", "target/main.js"]

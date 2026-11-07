@@ -305,3 +305,8 @@
   (when-not @verificador
     (verificar! client)
     (reset! verificador (js/setInterval #(verificar! client) 1000))))
+
+(defn parar! []
+  (when-let [timer @verificador]
+    (js/clearInterval timer)
+    (reset! verificador nil)))

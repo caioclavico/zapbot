@@ -180,8 +180,7 @@
                               zapbot.config/chromium-disable-gpu gpu?
                               zapbot.config/puppeteer-executable-path executavel]
                    (core/opcoes-puppeteer))
-          esperado (cond-> ["--no-sandbox" "--disable-setuid-sandbox"
-                             "--disable-quic" "--disable-features=Quic"]
+          esperado (cond-> ["--disable-quic" "--disable-features=Quic"]
                      modo? (into ["--disable-extensions" "--disable-default-apps" "--no-first-run"])
                      gpu? (conj "--disable-gpu"))]
       (is (js/Array.isArray (:args opcoes)))

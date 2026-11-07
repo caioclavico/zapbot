@@ -33,6 +33,7 @@
 (def ^:private group-discovery (js/require "../scripts/lib/bootstrap-group-discovery.cjs"))
 (def ^:private release-bootstrap (js/require "../scripts/lib/release-bootstrap.cjs"))
 (def ^:private ^js node-maintenance (js/require "../scripts/lib/a6-maintenance.cjs"))
+(def ^:private shutdown-control (js/require "../scripts/lib/a6-shutdown.cjs"))
 
 (defn configurar-envio-seguro!
   "Desativa o sendSeen quebrado do WhatsApp Web antes de qualquer envio.
@@ -341,6 +342,9 @@
                :note "Descoberta agendada; veja logs [bootstrap] e groups.json.")))))
 
 (defn- on-ready [client release-coordinator]
+  (if (.shuttingDown node-maintenance)
+    (js/console.log "[shutdown] ignorando READY durante encerramento")
+    (do
   (js/console.log (str "✅ " config/bot-name " conectado e pronto para uso!"))
   ;; Não logar número telefônico (PII).
   (js/console.log "📞 Conta autenticada (número omitido).")
@@ -355,7 +359,7 @@
       (pokemon/iniciar! client)
       (lembretes/iniciar! client)
       ;; READY é só gate operacional. Announcer exige intent confirmado + piloto + gates.
-      (when release-coordinator
+      (when (and release-coordinator (.begin node-maintenance))
         (-> (.onWhatsAppReady release-coordinator)
             (p/then (fn [resultado]
                       (when-not (#{"disabled" "no-release-intent" "already-completed"}
@@ -365,7 +369,8 @@
             (p/catch (fn [err]
                        (js/console.warn "[release-announcer] isolated failure"
                                         (or (.-code err) "announcement_error"))
-                       nil)))))))
+                       nil))
+            (p/finally #(.end node-maintenance)))))))))
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
@@ -500,7 +505,8 @@
         ;; O evento WhatsApp ignora o retorno do dispatcher; absorver aqui
         ;; somente rejeições já tratadas evita unhandledRejection no processo.
         executar-seguro #(if-not (.begin node-maintenance)
-                           (when (str/starts-with? (str/trim (or (.-body message) "")) config/prefix)
+                           (when (and (not (.shuttingDown node-maintenance))
+                                      (str/starts-with? (str/trim (or (.-body message) "")) config/prefix))
                              (-> (js/Promise.resolve
                                   (.reply message "O Odisseu está em manutenção operacional. Tente novamente quando o serviço for retomado."))
                                  (p/catch (fn [err]
@@ -532,8 +538,7 @@
            ;; padrão do Puppeteer competem com ele e podem enviar SIGKILL.
            :handleSIGTERM false
            :handleSIGINT false
-           :args (clj->js (cond-> ["--no-sandbox" "--disable-setuid-sandbox"
-                                   "--disable-quic" "--disable-features=Quic"]
+           :args (clj->js (cond-> ["--disable-quic" "--disable-features=Quic"]
                            config/chromium-low-resource-mode
                            (into ["--disable-extensions" "--disable-default-apps" "--no-first-run"])
                            config/chromium-disable-gpu (conj "--disable-gpu")))}
@@ -559,43 +564,57 @@
 (defonce ^:private iniciado? (atom false))
 
 (defn- drenar-antes-de-encerrar!
-  "Fecha admissão e aguarda operações em voo quando o gate Node está configurado.
-   Sem FILE/TOKEN, segue o encerramento legado (sem prova de drain)."
+  "Fecha admissão e aguarda operações em voo. Sem marker durável, falha fechado."
   []
-  (if-not (.-enabled node-maintenance)
-    (p/resolved #js {:quiescent true :phase "open" :drainSkipped true})
-    (-> (.enter node-maintenance 30000)
-        (p/catch (fn [err]
-                   (js/console.error "[maintenance] drain no shutdown falhou:"
-                                     (or (.-code err) (.-message err)))
-                   #js {:quiescent false :phase "draining" :drainError true})))))
+  (-> (.enter node-maintenance 30000)
+      (p/then (fn [state]
+                (if (and (.-quiescent state) (.-durable state))
+                  state
+                  (throw (js/Error. (if-not (.-durable state)
+                                          "NODE_MAINTENANCE_MARKER_NOT_DURABLE"
+                                          "NODE_DRAIN_INCOMPLETE"))))))))
+
+(defn- fechar-servidor! [^js server]
+  (js/Promise.
+   (fn [resolve reject]
+     (if-not (.-listening server)
+       (resolve true)
+       (.close server (fn [err]
+                        (if err (reject err) (resolve true))))))))
+
+(defn- criar-controlador-shutdown [^js server recovery diagnostico & [stop-sources]]
+  (.createShutdown shutdown-control
+                    #js {:drain drenar-antes-de-encerrar!
+                         :beforeDrain (fn []
+                                        (.startShutdown node-maintenance)
+                                        (saude/atualizar! diagnostico "MAINTENANCE"
+                                                          "Admission closed; waiting for accepted operations."))
+                         :stopAdmissionSources (or stop-sources (fn []
+                                                                  (pokemon/parar!)
+                                                                  (lembretes/parar!)))
+                         :stopResources (fn [] (recursos/parar!))
+                         :updateHealth (fn []
+                                         (saude/atualizar! diagnostico "DISCONNECTED"
+                                                           "Encerramento coordenado; sessão preservada."))
+                         :stopPokemon (fn [] (platform/close!))
+                         :closeServer (fn [] (fechar-servidor! server))
+                         :closeRecovery (fn [] (when recovery (.close recovery)))
+                         :exit (fn [code] (js/process.exit code))
+                         :deadlineMs 330000
+                         :log (fn [event details]
+                                (js/console.error "[shutdown]" event
+                                                  (js/JSON.stringify details)))}))
 
 (defn- encerrar-com-sessao! [^js recovery diagnostico ^js server]
-  (let [encerrando? (atom false)]
+  (let [shutdown (criar-controlador-shutdown server recovery diagnostico)]
     (doseq [sinal ["SIGTERM" "SIGINT"]]
       (.on js/process sinal
            (fn []
-             (when (compare-and-set! encerrando? false true)
-               ;; Limite apenas para uma parada solicitada, nunca para startup lento.
-               (js/setTimeout #(js/process.exit 1) 45000)
-               (-> (drenar-antes-de-encerrar!)
-                   (p/then (fn [state]
-                             (when-not (.-quiescent ^js state)
-                               (saude/log! (str "Shutdown sem quiescência Node: "
-                                                (or (.-phase ^js state) "?")
-                                                " active="
-                                                (or (aget state "activeOperations") "?"))))
-                             (recursos/parar!)
-                             (saude/atualizar! diagnostico "DISCONNECTED"
-                                               "Encerrando navegador; preservando sessão.")
-                             (pokemon/parar!)
-                             (.close server)
-                             nil))
-                   (p/then (fn [_] (.close recovery)))
-                   (p/then (fn [_] (js/process.exit 0)))
-                   (p/catch (fn [err]
-                              (saude/log! (str "Erro ao encerrar: " (.-message err)))
-                              (js/process.exit 1))))))))))
+             (-> (.request shutdown sinal)
+                 (p/catch (fn [err]
+                            (js/console.error "[shutdown] attempt failed; resources remain open"
+                                              (or (.-code err) "shutdown_error"))
+                            nil))))))))
 
 (defn- local-auth-opts
   "LocalAuth com path/clientId configuráveis — staging isolado da produção."
@@ -642,15 +661,17 @@
                 {:bind-host config/health-bind-host
                  :maintenance node-maintenance
                  :on-jvm-health (fn [] @jvm-probe-cache*)})
-        encerrando? (atom false)]
+        probe-timer (atom nil)
+        shutdown (criar-controlador-shutdown
+                  server nil diagnostico
+                  (fn [] (when-let [timer @probe-timer]
+                           (js/clearInterval timer)
+                           (reset! probe-timer nil))))]
     (doseq [sinal ["SIGTERM" "SIGINT"]]
       (.on js/process sinal
            (fn []
-             (when (compare-and-set! encerrando? false true)
-               (-> (drenar-antes-de-encerrar!)
-                   (p/finally (fn []
-                                (.close server)
-                                (js/process.exit 0))))))))
+             (-> (.request shutdown sinal)
+                 (p/catch (fn [_] nil))))))
     (letfn [(refresh-probe! []
               (-> (probe-jvm-health)
                   (p/then (fn [r] (reset! jvm-probe-cache* r) nil))
@@ -658,7 +679,7 @@
                              (reset! jvm-probe-cache*
                                      {:ok false :error (or (.-message err) "probe_failed")})))))]
       (refresh-probe!)
-      (js/setInterval refresh-probe! 15000)
+      (reset! probe-timer (js/setInterval refresh-probe! 15000))
       (when config/pokemon-jvm-enabled?
         (js/console.log "[boot] HTTP-only: bridge JVM=" config/pokemon-jvm-url
                         " allowDockerHost=" config/pokemon-jvm-allow-docker-host?))

@@ -27,6 +27,11 @@ services:
 
   odisseu-node:
     image: odisseu-node:a6-cutover-REPLACE_STAMP-amd64
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/chromium-seccomp.json
     # image: odisseu-node@sha256:REPLACE_NODE_DIGEST
     environment:
       ALLOW_ALL_GROUPS: "false"

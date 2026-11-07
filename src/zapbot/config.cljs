@@ -43,6 +43,19 @@
 (def gemini-model (env "GEMINI_MODEL" "gemini-3.5-flash-lite"))
 (def groq-api-key (env "GROQ_API_KEY"))
 (def groq-model (env "GROQ_MODEL" "llama-3.1-8b-instant"))
+(defn- bounded-positive-int [key default min-value max-value]
+  (let [parsed (js/parseInt (env key (str default)) 10)]
+    (if (and (js/Number.isSafeInteger parsed) (<= min-value parsed max-value))
+      parsed
+      default)))
+(def ai-content-history-window
+  (bounded-positive-int "AI_CONTENT_HISTORY_WINDOW" 120 20 200))
+(def ai-content-generation-attempts
+  (bounded-positive-int "AI_CONTENT_GENERATION_ATTEMPTS" 2 1 2))
+(def ai-content-max-output-tokens
+  (bounded-positive-int "AI_CONTENT_MAX_OUTPUT_TOKENS" 320 64 512))
+(def ai-content-history-path
+  (env "AI_CONTENT_HISTORY_PATH" "/app/data/ai-content-history.json"))
 ;; credenciais gratuitas em https://developer.spotify.com/dashboard (usadas pelo !musica)
 (def spotify-client-id (env "SPOTIFY_CLIENT_ID"))
 (def spotify-client-secret (env "SPOTIFY_CLIENT_SECRET"))

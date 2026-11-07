@@ -27,6 +27,13 @@
   []
   (when (enabled?) (client!)))
 
+(defn close!
+  "Destroy the owned HTTP keep-alive agent after the Node operation drain."
+  []
+  (when-let [client @client*]
+    (reset! client* nil)
+    (.close client)))
+
 (defn op-id [prefix]
   (.newOperationId (client!) prefix))
 

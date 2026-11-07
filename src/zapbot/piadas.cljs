@@ -1,60 +1,7 @@
 (ns zapbot.piadas
-  "Comando !piada - piadas curtas em português. Gera uma piada nova via IA
-  (Gemini) quando configurado; senão (ou se a IA falhar), usa o banco estático."
-  (:require [promesa.core :as p]
-            [clojure.string :as str]
-            [zapbot.config :as config]
-            [zapbot.gemini :as gemini]))
-
-(def ^:private piadas
-  ["Por que o livro de matemática se sentiu triste? Porque tinha muitos problemas."
-   "O que o zero disse para o oito? Belo cinto!"
-   "Por que o computador foi ao médico? Porque estava com vírus."
-   "O que é um TCP/IP quando está bêbado? Um SUCA/BOSTA/PORRA/IP."
-   "Por que a galinha atravessou a rua? Para fugir do Bino."
-   "O que o pato disse pra namorada? Vem quá!"
-   "Por que o Batman não pesca? Porque o Robin (robim) sempre come as iscas."
-   "O que é um cachorro sem pernas? Não importa, ele não vem."
-   "Por que o esqueleto não brigou com ninguém? Porque não tinha estômago para isso."
-   "O que a impressora disse para a outra impressora? Essa folha é sua ou é impressão minha?"
-   "Por que os pássaros voam para o sul no inverno? Porque é longe demais para ir a pé."
-   "O que um oceano disse para o outro? Nada, eles só acenaram."
-   "Por que o programador confundiu Halloween com o Natal? Porque Oct 31 == Dec 25."
-   "O que uma parede disse para a outra? Te encontro na esquina!"
-   "Por que o café foi preso? Porque estava sendo espresso demais."
-   "Por que o livro de geografia foi ao psicólogo? Porque tinha muitos problemas de identidade... territorial."
-   "Como se chama um cachorro mágico? Labracadabrador."
-   "Por que a bicicleta não conseguia ficar em pé sozinha? Porque estava exausta (two-tired)."
-   "O que o jacaré disse quando viu a namorada de biquíni novo? Ihh vou te comer!"
-   "Por que a abelha estava com o cabelo grudento? Porque usou mel de cabelo."
-   "Qual é o contrário de volátil? Vem, Tântil!"
-   "O que o tomate foi fazer no banco? Tirar extrato."
-   "Por que o número 6 tem medo do número 7? Porque 7, 8 (comeu), 9!"
-   "Qual o cúmulo da sorte? Cair de um prédio e capotar num colchão de ar."
-   "Por que o fantasma entrou no bar? Para pedir um Boo-hemia."
-   "O que o girassol disse pro sol? Nossa, você brilha muito, mas eu que dou as caras."
-   "Por que a Terra terminou o namoro com o Sol? Porque ele precisava de espaço."])
-
-(defn- gerar-piada-ia []
-  (if (not (gemini/disponivel?))
-    (p/resolved nil)
-    (-> (gemini/gerar-texto
-         (str "Conte uma piada curta e engaçada em português do Brasil, original "
-              "(evite piadas muito famosas/clichês), em 1 a 3 frases. Pode ser "
-              "trocadilho, piada de matemático, ciência, tecnologia ou humor bem "
-              "brasileiro. Responda só com o texto da piada, sem introdução, sem "
-              "aspas ao redor, sem explicar a piada depois."))
-        (p/then (fn [texto] (when-not (str/blank? texto) (str/trim texto))))
-        (p/catch (fn [err]
-                   (js/console.error "Erro ao gerar piada via IA.")
-                   nil)))))
+  "Comando !piada: humor brasileiro variado com histórico antirrepetição."
+  (:require [zapbot.conteudo-dinamico :as conteudo]))
 
 (defn piada-aleatoria
-  "Retorna uma promise com uma piada: tenta gerar uma piada nova via IA e,
-  se não houver GEMINI_API_KEY configurada ou a IA falhar, cai no banco
-  estático de piadas prontas."
-  []
-  (p/let [piada-ia (gerar-piada-ia)]
-    (str "🤡 *Piada do tio " config/bot-name ":*\n\n" (or piada-ia (rand-nth piadas))
-         (when-not piada-ia
-           (str "\n\n_(banco local - configure GEMINI_API_KEY pra piadas sempre novas via IA)_")))))
+  ([] (piada-aleatoria ""))
+  ([tema] (conteudo/gerar! :piada tema)))

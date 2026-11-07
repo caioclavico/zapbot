@@ -31,8 +31,8 @@
             [zapbot.rank :as rank]))
 
 (def ^:private comandos
-  [{:emoji "🤡" :uso "piada"              :desc "Conta uma piada aleatória"}
-   {:emoji "🧠" :uso "curiosidade"        :desc "Conta uma curiosidade aleatória"}
+  [{:emoji "🤡" :uso "piada [assunto]"   :desc "Conta uma piada variada, opcionalmente sobre um assunto"}
+   {:emoji "🧠" :uso "curiosidade [assunto]" :desc "Conta uma curiosidade variada, opcionalmente sobre um assunto"}
    {:emoji "📰" :uso "noticias"           :desc "Mostra as últimas notícias"}
    {:emoji "💱" :uso "cotacao [PAR ...]"  :desc "Cotação de moedas (padrão: USD-BRL, EUR-BRL, BTC-BRL)"}
    {:emoji "🌦️" :uso "previsao [cidade]"  :desc "Previsão do tempo (também funciona como !tempo, !clima)"}
@@ -98,8 +98,8 @@
 
 (defn- despachar [message cmd args]
   (case cmd
-    "piada"     (piadas/piada-aleatoria)
-    "curiosidade" (p/resolved (curiosidades/curiosidade-aleatoria))
+    "piada"     (piadas/piada-aleatoria (str/join " " args))
+    "curiosidade" (curiosidades/curiosidade-aleatoria (str/join " " args))
     "noticias"  (noticias/buscar-noticias)
     "cotacao"   (if (seq args)
                   (cotacao/buscar-cotacoes (map str/upper-case args))

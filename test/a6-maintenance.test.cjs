@@ -79,6 +79,14 @@ test('malformed persisted marker fails closed', () => {
   } finally { t.dispose(); }
 });
 
+test('shutdown closes local admission even when the persistent marker is unavailable', () => {
+  const gate = create();
+  assert.equal(gate.configured, false);
+  gate.startShutdown();
+  assert.equal(gate.begin(), false);
+  assert.equal(gate.shuttingDown(), true);
+});
+
 test('interrupted atomic marker write is recovered as draining', () => {
   const t = temporary();
   try {

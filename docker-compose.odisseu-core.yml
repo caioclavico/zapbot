@@ -84,6 +84,11 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: odisseu-core-node
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/chromium-seccomp.json
     restart: unless-stopped
     stop_grace_period: 60s
     depends_on:

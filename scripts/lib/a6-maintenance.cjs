@@ -8,6 +8,7 @@ const crypto = require('node:crypto');
 function create({ file = null, token = '' } = {}) {
   let active = 0;
   let state = { phase: 'open' };
+  let shutdownRequested = false;
   const waiters = new Set();
 
   function load() {
@@ -35,17 +36,22 @@ function create({ file = null, token = '' } = {}) {
   }
   function persist(next) {
     if (file) {
-      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      const dir = path.dirname(file);
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(next), { mode: 0o600, flag: 'wx' });
       const fd = fs.openSync(tmp, 'r');
       try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
       fs.renameSync(tmp, file);
+      // Persist the rename itself; successful file fsync alone does not make
+      // the directory entry durable across a host crash.
+      const dirFd = fs.openSync(dir, 'r');
+      try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
     }
     state = next;
     return snapshot();
   }
-  function snapshot() { return { ...state, activeOperations: active }; }
+  function snapshot() { return { ...state, activeOperations: active, durable: !!file }; }
 
   load();
   return {
@@ -53,7 +59,7 @@ function create({ file = null, token = '' } = {}) {
       // All Node replicas must share this file. Refreshing before admission
       // makes a marker written by another instance visible immediately.
       load();
-      if (state.phase !== 'open') return false;
+      if (shutdownRequested || state.phase !== 'open') return false;
       active += 1;
       return true;
     },
@@ -95,11 +101,16 @@ function create({ file = null, token = '' } = {}) {
       return persist({ phase: 'open', resumedAt: new Date().toISOString() });
     },
     snapshot,
+    startShutdown() { shutdownRequested = true; return snapshot(); },
+    shuttingDown() { return shutdownRequested; },
     authorized(value) {
       const a = Buffer.from(String(value || ''));
       const b = Buffer.from(token);
       return !!token && a.length === b.length && crypto.timingSafeEqual(a, b);
     },
+    // `configured` is the durable local gate. `enabled` means its optional HTTP
+    // operator endpoints have a separate shared-secret credential.
+    configured: !!file,
     enabled: !!file && !!token
   };
 }

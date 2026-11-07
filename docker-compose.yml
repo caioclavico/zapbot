@@ -25,6 +25,11 @@ services:
   bot:
     build: .
     container_name: zapbot
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/chromium-seccomp.json
     stop_grace_period: 60s
     # Também impede limpeza de locks no CMD de imagens antigas em rollback.
     command: ["node", "target/main.js"]
