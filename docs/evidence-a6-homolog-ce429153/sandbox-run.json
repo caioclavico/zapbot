@@ -1,0 +1,37 @@
+{
+  "host": "odisseu-core",
+  "arch": "x86_64",
+  "docker": "amd64 29.9.1",
+  "image_id": "sha256:ce429153851799cc77f7e40c1f3bc328d963d891a9a1dc38ec9ceb4a3c7fb377",
+  "tar_sha256": "ff3c6f2ee385783212b3c14f4a7271aea0bd20ec72c0e0d4adca4f9993046cb6",
+  "result": "PASS",
+  "proof": {
+    "chrome": "Chrome/157.0.8103.38",
+    "uid": 1000,
+    "browserStatus": {
+      "Uid": "1000 1000 1000 1000",
+      "CapEff": "0000000000000000",
+      "NoNewPrivs": "1",
+      "Seccomp": "2",
+      "Seccomp_filters": "1"
+    },
+    "rendererStatus": {
+      "Uid": "1000 1000 1000 1000",
+      "CapEff": "0000000000000000",
+      "NoNewPrivs": "1",
+      "Seccomp": "2",
+      "Seccomp_filters": "2"
+    },
+    "noSandboxFlag": false,
+    "sandboxReport": "Sandbox Status\nLayer 1 Sandbox\tNamespace\nPID namespaces\tYes\nNetwork namespaces\tYes\nSeccomp-BPF sandbox\tYes\nSeccomp-BPF sandbox supports TSYNC\tYes\nPtrace Protection with Yama LSM (Broker)\tYes\nPtrace Protection with Yama LSM (Non-broker)\tNo\n\nYou are adequately sandboxed."
+  },
+  "persistence_across_recreate": "PASS",
+  "drain_hashes": {
+    "a6-maintenance.cjs": "04b5b61d082a5dc8669c3633f0c8e611fa7e2740c7dab714f21964e90e7e4d80",
+    "a6-shutdown.cjs": "16dae2a86eb98437316bdc67406c230095e395fb9cfaf048ad79ec6c2383ad68"
+  },
+  "prod_untouched": [
+    "odisseu-a6-node healthy a6-drain-breakglass-20261106-1d00dd01",
+    "odisseu-a6-jvm healthy a6-drain-breakglass-20261106-ad0b7c1b"
+  ]
+}

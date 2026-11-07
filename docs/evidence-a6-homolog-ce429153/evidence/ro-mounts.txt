@@ -1,0 +1,50 @@
+=== docker inspect mounts ===
+[
+    {
+        "Type": "bind",
+        "Source": "/home/caiohclavico/odisseu-recovery/a6-cutover-session-from-core",
+        "Destination": "/app/.wwebjs_auth_a6_cutover",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": "rprivate"
+    },
+    {
+        "Type": "volume",
+        "Name": "odisseu-a6-cutover-data",
+        "Source": "/var/lib/docker/volumes/odisseu-a6-cutover-data/_data",
+        "Destination": "/app/data",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": ""
+    }
+]
+=== image id active ===
+sha256:1d00dd01cdcabeb6a714d3df3e6715ebac4502bc104cfd5d61a64098de35a390 odisseu-node:a6-drain-breakglass-20261106-1d00dd01 User=
+=== session root stat ===
+SESSION_SRC=/home/caiohclavico/odisseu-recovery/a6-cutover-session-from-core
+DATA_SRC=/var/lib/docker/volumes/odisseu-a6-cutover-data/_data
+f: /home/caiohclavico/odisseu-recovery/a6-cutover-session-from-core
+drwxr-xr-x root         root         /
+drwxr-xr-x root         root         home
+drwxr-x--- caiohclavico caiohclavico caiohclavico
+drwx------ caiohclavico caiohclavico odisseu-recovery
+drwx------ caiohclavico caiohclavico a6-cutover-session-from-core
+path=/home/caiohclavico/odisseu-recovery/a6-cutover-session-from-core owner=1001:1002 mode=700 type=directory
+SESSION_AGG
+12384 ('file', 0, 0, '0o600')
+143 ('dir', 0, 0, '0o700')
+7 ('file', 0, 0, '0o644')
+3 ('lnk', 0, 0, '0o777')
+1 ('dir', 0, 0, '0o755')
+path=/var/lib/docker/volumes/odisseu-a6-cutover-data/_data owner=0:0 mode=755 type=directory
+total 12
+drwxr-xr-x 2 root root 4096 Nov  7 04:06 .
+drwx-----x 3 root root 4096 Nov  1 14:16 ..
+-rw------- 1 root root   55 Nov  7 04:06 a6-maintenance <redacted-name-only>
+maint path=/var/lib/docker/volumes/odisseu-a6-cutover-data/_data/a6-maintenance.json owner=0:0 mode=600
+{'phase': 'open', 'startedAt': None, 'quiescentAt': None, 'resumedAt': '2026-11-07T04:06:55.091Z'}
+HISTORY_ABSENT
+=== acl tools ===
+un  acl            <none>       <none>       (no description available)
+	libacl.so.1 (libc6,x86-64) => /lib/x86_64-linux-gnu/libacl.so.1

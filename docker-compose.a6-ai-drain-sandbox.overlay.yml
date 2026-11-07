@@ -1,0 +1,27 @@
+# Overlay Node-only — NÃO aplicar sem autorização da janela.
+# Alvo live observado: projeto Compose `odisseu-a6-cutover`, serviço `odisseu-a6-node`,
+# working_dir `/home/caiohclavico/odisseu-recovery/a6-cutover-runtime-20261101T141408Z`.
+#
+# Uso futuro (somente na janela):
+#   1) Copiar `docker/chromium-seccomp.json` para o working_dir (ou ajustar o path abaixo).
+#   2) Pré-drenar via gate/token já existente.
+#   3) docker compose --env-file .env.a6-cutover --env-file .env.node-maintenance \
+#        -f docker-compose.a6-cutover-runtime.yml \
+#        -f docker-compose.a6-ai-drain-sandbox.overlay.yml \
+#        up -d odisseu-a6-node
+#
+# Este overlay NÃO redefine flags Pokémon/raids/eventos/allowlist.
+# Volumes e env_file do base permanecem.
+
+services:
+  odisseu-a6-node:
+    image: odisseu-node:a6-ai-drain-sandbox-20261107T204141Z-fefab4c-amd64
+    # Preferir pin por digest na janela:
+    # image: odisseu-node@sha256:ce429153851799cc77f7e40c1f3bc328d963d891a9a1dc38ec9ceb4a3c7fb377
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/chromium-seccomp.json
+    stop_grace_period: 60s
+    # Preserva restart "no" do base live; não forçar unless-stopped aqui.

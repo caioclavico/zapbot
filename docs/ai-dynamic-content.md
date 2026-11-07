@@ -1,6 +1,37 @@
 # Imagem combinada A6 — drain, conteúdo dinâmico e sandbox
 
-**Decisão: NO-GO operacional.** A imagem AMD64 abaixo existe só na engine local. Não houve deploy, push, alteração de Datomic, saves, ginásios, economia, raids, eventos, CI/CD ou deploy hold. Nenhum ACL foi aplicado no host de produção. Nenhum token de manutenção foi criado, lido ou registrado.
+**Decisão: READY FOR DEPLOY — condicionada somente à autorização final da janela de cutover.** Homologação dos quatro gates restantes concluída em 2026-11-07T21:00Z. Não houve deploy, restart live, ACL live, alteração de Datomic/saves/ginásios/economia/raids/eventos, nem mudança de CI/CD ou deploy hold. Nenhum token de manutenção foi criado, lido ou registrado. A imagem só de IA (`sha256:2bbca089…`) permanece proibida.
+
+## Homologação final (gates)
+
+| Gate | Resultado | Evidência |
+| --- | --- | --- |
+| Sandbox AMD64 nativo neste Image ID | **PASS** | `odisseu-core` `x86_64`, Docker `amd64 29.9.1`; tar `ff3c6f2e…` → Image ID `sha256:ce429153…`; `chrome://sandbox` = Namespace + Seccomp-BPF **Yes** + “You are adequately sandboxed”; renderer `Seccomp_filters=2` > browser `1`; UID 1000; `CapEff=0`; `NoNewPrivs=1`; CDP/Puppeteer; recreate de volumes descartáveis; drain hashes idênticos à produção. Prod `odisseu-a6-node`/`odisseu-a6-jvm` permaneceram healthy sem recreate. |
+| ACL UID 1000 | **PRONTA (não aplicada live)** | RO dos mounts reais: sessão bind `…/a6-cutover-session-from-core` raiz `1001:1002`/`0700`, descendentes majoritariamente `0:0` `0700`/`0600`; data volume `odisseu-a6-cutover-data` `0:0`/`0755`; marker `a6-maintenance.json` `0:0`/`0600` phase `open`; histórico IA ausente. Ensaio descartável com ownership equivalente: negado antes da ACL → PASS após `setfacl` → histórico `0600` uid 1000 → revert nega de novo. Host sem pacote `acl` (só `libacl.so.1`); instalar `acl` na janela. Comandos em `docs/evidence-a6-homolog-ce429153/evidence/acl-commands.sh`. |
+| Compose produção/cutover | **PRONTO (não aplicado live)** | Live usa projeto `odisseu-a6-cutover`, arquivo `…/a6-cutover-runtime-20261101T141408Z/docker-compose.a6-cutover-runtime.yml` (sem user/seccomp/cap_drop/stop_grace). Overlay mínimo: `docker-compose.a6-ai-drain-sandbox.overlay.yml` (user 1000, cap_drop ALL, NNP, seccomp, stop_grace 60s, imagem combinada). Check isolado `scripts/homolog-compose-overlay-check.sh` **PASS** (flags Pokémon preservadas). `docker-compose.production.yml` do repo também recebeu a estrofe de segurança; não é o compose live da VM Core. |
+| GitHub | **PASS (reverificar imediatamente antes do deploy)** | `ODISSEU_PRODUCTION_DEPLOY_HOLD=true`; workflow `CI/CD` (`.github/workflows/deploy.yml`) `disabled_manually`; `Pokémon storage progression CI` ativo; runs `in_progress`/`queued`/`waiting`/`pending` = **0**. Nada foi alterado no GitHub. |
+
+### Riscos residuais
+
+- Trivy da imagem combinada: 4 CRITICAL / 95 HIGH (já registrados; não zerados).
+- Pacote `acl` precisa ser instalado no host antes do `setfacl` live.
+- `docker/chromium-seccomp.json` precisa existir no working_dir do compose live (ou ajustar o path do overlay).
+- Reiniciar a verificação GitHub e o preflight de exclusividade de janela no momento do cutover.
+- Overlay não altera flags Pokémon; o operador não deve reabrir desafios/raids/eventos nesta janela Node-only.
+
+### Plano de rollback
+
+Voltar o serviço `odisseu-a6-node` para `odisseu-node:a6-drain-breakglass-20261106-1d00dd01` / `sha256:1d00dd01cdcabeb6a714d3df3e6715ebac4502bc104cfd5d61a64098de35a390`, sem apagar `.wwebjs_auth_a6_cutover` nem `odisseu-a6-cutover-data`. Restaurar ACL a partir do snapshot `getfacl` se a janela as tiver aplicado. JVM/Datomic fora do rollback.
+
+### GO / NO-GO
+
+**READY FOR DEPLOY**, condicionado somente à autorização final da janela de cutover Node-only. Bloqueios técnicos dos quatro gates estão fechados. Não executar deploy nesta entrega documental.
+
+---
+
+# Registro anterior — imagem combinada (pré-homologação)
+
+**Decisão histórica: NO-GO operacional (substituída pela homologação acima).** A imagem AMD64 abaixo foi construída localmente antes da prova nativa. Não houve deploy naquela etapa.
 
 As seções anteriores a este bloco, preservadas mais abaixo, descrevem a linhagem só de IA (`sha256:2bbca08946d957190ef710ecda8d0889ecfc7af8e492933f75170264e1d16865` e candidatas anteriores). Essa imagem não contém `a6-maintenance`/`a6-shutdown` e **não deve seguir sozinha**.
 
@@ -116,7 +147,7 @@ Voltar o container Node para `a6-drain-breakglass-node:20261106-local` / `sha256
 
 ## GO / NO-GO
 
-**NO-GO.** Falta, no mínimo: prova `chrome://sandbox` neste Image ID na VM AMD64 nativa, ACL do UID 1000 nos volumes reais, estrofe de seccomp/capabilities no compose de produção (não aplicada), contenção do deploy hold e uma janela nomeada. A imagem só de IA não substitui esta. A imagem ativa não deve ser trocada com o que está neste worktree até esses gates.
+**SUPERADO.** Os quatro gates foram homologados; a decisão vigente está no topo: READY FOR DEPLOY condicionada à autorização da janela.
 
 ---
 
