@@ -8,7 +8,11 @@ As seções anteriores a este bloco, preservadas mais abaixo, descrevem a linhag
 
 | Campo | Valor |
 | --- | --- |
-| Tag local provisória | `odisseu-node:a6-ai-drain-sandbox-20261107T204141Z-pending-amd64` |
+| Tag | `odisseu-node:a6-ai-drain-sandbox-20261107T204141Z-fefab4c-amd64` |
+| Commit do runtime | `fefab4c2abbecf3aedd84f13df6a355a4b00dd5c` |
+| Tree desse commit | `71e1f15c671416ebf7a045de140bb78a6fad6b3c` |
+| Tar local | `/tmp/odisseu-node-a6-ai-drain-sandbox-20261107T204141Z-fefab4c-amd64.tar` (371 MB) |
+| SHA-256 do tar | `ff3c6f2ee385783212b3c14f4a7271aea0bd20ec72c0e0d4adca4f9993046cb6` |
 | Image ID (`docker image inspect`) | `sha256:ce429153851799cc77f7e40c1f3bc328d963d891a9a1dc38ec9ceb4a3c7fb377` |
 | Manifesto da plataforma no build | `sha256:0602766f50103af024a9f8789a3a0bef6f5c6e2240f74e5e888efecbbdd86e78` |
 | Config do build | `sha256:7c90627516de67929a90d17eaf8ead434354043bed39a352e7131965967dd82d` |
@@ -25,7 +29,7 @@ As seções anteriores a este bloco, preservadas mais abaixo, descrevem a linhag
 | `a6-maintenance.cjs` | SHA-256 `04b5b61d082a5dc8669c3633f0c8e611fa7e2740c7dab714f21964e90e7e4d80` |
 | `a6-shutdown.cjs` | SHA-256 `16dae2a86eb98437316bdc67406c230095e395fb9cfaf048ad79ec6c2383ad68` |
 
-O Dockerfile não copia `docs/`. O Image ID acima é o da imagem carregada por `docker buildx build --platform linux/amd64 --load`. A tag canônica com o shortsha do commit entra no registro seguinte deste arquivo, sem reconstruir as camadas.
+O Dockerfile não copia `docs/`. O Image ID é o de `docker buildx build --platform linux/amd64 --load`. O commit `fefab4c` (tree `71e1f15c671416ebf7a045de140bb78a6fad6b3c`) contém o runtime copiado para a imagem. A tag canônica e o tar foram registrados depois, com `docker tag` no mesmo Image ID, sem rebuild.
 
 ## Diferença contra a imagem ativa `1d00dd01`
 
@@ -33,7 +37,7 @@ Produção consultada só para leitura. Container de produção não foi recriad
 
 | | Ativa `sha256:1d00dd01cdcabeb6a714d3df3e6715ebac4502bc104cfd5d61a64098de35a390` | Combinada `sha256:ce429153851799cc77f7e40c1f3bc328d963d891a9a1dc38ec9ceb4a3c7fb377` |
 | --- | --- | --- |
-| Tag observada | `a6-drain-breakglass-node:20261106-local` | tag provisória acima |
+| Tag observada | `a6-drain-breakglass-node:20261106-local` | `odisseu-node:a6-ai-drain-sandbox-20261107T204141Z-fefab4c-amd64` |
 | Label `io.zapbot.source-base` | `03a3dc7ec2acb6d75e6e95390fabe69bd21f0a92` | ausente; a base Git é a mesma, sem esse label |
 | Usuário efetivo | vazio na imagem; smoke `uid=0` | `1000:1000` |
 | Node | `v22.23.3` | `v22.23.4` |
