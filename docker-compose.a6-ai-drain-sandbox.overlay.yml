@@ -1,29 +1,30 @@
-# Overlay Node — NÃO aplicar sem autorização da janela Node+JVM.
-# Alvo live observado: projeto Compose `odisseu-a6-cutover`, serviço `odisseu-a6-node`,
-# working_dir `/home/caiohclavico/odisseu-recovery/a6-cutover-runtime-20261101T141408Z`.
+# Overlay Node+JVM — NÃO aplicar sem autorização da janela.
+# Alvo: projeto Compose `odisseu-a6-cutover`, working_dir
+# `/home/caiohclavico/odisseu-recovery/a6-cutover-runtime-20261101T141408Z`.
 #
-# RC candidata A+B+C+P0 (Chromium Debian 156 + hasSynced listeners + gameplay P0):
-#   Tag: odisseu-node:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64
-#   Image ID: sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade
-#   JVM Tag: odisseu-jvm:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64
-#   JVM Image ID: sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c
-#   Labels: git-sha=c5ab41dfcbf2f12602b13a6718ecbc8bc79f68e7
-#            content-tree=8428d03b5c7ce7c7654a5416af7fd6cf3ae2c854
+# RC candidata Proposta A + UX raid (tip 043b84697c0a):
+#   Node Tag: odisseu-node:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64
+#   Node Image ID: sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a
+#   JVM Tag: odisseu-jvm:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64
+#   JVM Image ID: sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94
+#   Labels: git-sha=043b84697c0a2771b855e9e0c8d4781ccf5cfeae
+#            content-tree=eed2f0cfd30b2a580a3a47163c9b8f6007023b43
 #   HEALTH_BIND_HOST=0.0.0.0 obrigatório (health host).
 #
-# NÃO reaplicar: e7488e4f (Chrome 157); Node sem listeners (74118090).
-#
-# Rollback Node live (sem apagar sessão/data):
-#   sha256:05b36c5aebeff40875c2a3b4545e368aa2dfffe7d93a3fc7a02c05b0d3b3a18c
-# Rollback JVM live:
-#   sha256:ad0b7c1b265cb52eee221ea6458ea6bdaad7c5c230cd8ec6dfe7e2474b2acd5c
-# Breakglass Node (só se autorizado): sha256:1d00dd01…
+# Rollback desta RC (= live atual P0 HP/UI):
+#   Node sha256:bec910bf80b8fe5e3fdbfa385b81b4caf9dff3f1f6c1ccd22c2933e0c0e65305
+#   JVM  sha256:9e87bb6f0d48e964ad4f8eaa001913f7811da05c0365bb65bd9a309858050d60
+# Rollback cutover anterior (A+B+C):
+#   Node sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade
+#   JVM  sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c
 #
 # Este overlay NÃO redefine flags Pokémon/raids/eventos/allowlist/temáticos.
 
 services:
+  odisseu-a6-jvm:
+    image: odisseu-jvm:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64
   odisseu-a6-node:
-    image: odisseu-node:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64
+    image: odisseu-node:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64
     user: "1000:1000"
     environment:
       HEALTH_BIND_HOST: "0.0.0.0"
@@ -33,5 +34,3 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-      - seccomp=./docker/chromium-seccomp.json
-    stop_grace_period: 60s

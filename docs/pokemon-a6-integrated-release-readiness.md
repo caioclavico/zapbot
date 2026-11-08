@@ -14,10 +14,18 @@
 
 | Campo | Valor |
 |-------|-------|
-| Escopo | `hp-por-jogador` 220→**320**; variação dano **85–100%** (RNG injetável, 1×/ataque); lifecycle/faint/golpes/UI já corrigidos |
-| Homolog local | A+B+C+P0 · homolog-abc · m4-raid+HTTP · lobby · Node P0 · `npm run test:http` — **PASS** |
+| Escopo | `hp-por-jogador` 220→**320**; variação dano **85–100%** (RNG injetável, 1×/ataque); lifecycle/faint/golpes/UI |
+| Commit integrado | `043b84697c0a2771b855e9e0c8d4781ccf5cfeae` (PR [#40](https://github.com/caioclavico/zapbot/pull/40)) |
+| Content tree | `eed2f0cfd30b2a580a3a47163c9b8f6007023b43` |
+| Node | `odisseu-node:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64` · `sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a` |
+| JVM | `odisseu-jvm:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64` · `sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94` |
+| Tar SHA256 Node | `b4ee6f1c5a00e8f424910c4bc04007d85c74b9699508908f830a02016bdc1c5c` |
+| Tar SHA256 JVM | `fbae335e0e18baafaa36153c03c43fa97a2a73814fca20aa33d7bcc9f81f89f8` |
+| Artefatos locais | `artifacts/a6-raid-balance-a-20261108T091954Z/` |
+| Homolog local | A+B+C+P0 · homolog-abc · m4-raid+HTTP · lobby · Node P0 · `npm run test:http` · `VERIFY_A6_GAMEPLAY_RC_IMAGES` — **PASS** |
+| Overlay | pin candidata (sem apply) |
 | Deploy | **NÃO** executado; hold/CI/flags/saves intocados |
-| Pedido de janela | **NO-GO** até Image IDs novos pinados no overlay e revisão humana |
+| Pedido de janela | **NO-GO** até revisão humana |
 
 Parâmetros/simulações: `docs/pokemon-a6-gameplay-audit.md` §Balanceamento.
 
