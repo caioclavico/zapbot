@@ -167,30 +167,37 @@ Evidência HP: ataque → `hp-atual` ↓; leave preserva; vitória+XP `hp-atual`
 
 ### 10.4 Imagens candidatas / pins
 
-Preenchido após build do commit integrado (labels `io.zapbot.git-sha` / `content-tree`).
-
 | Campo | Valor |
 |-------|-------|
-| Commit P0 | _(após commit)_ |
-| Commit integrado (tip RC) | _(após merge PR)_ |
-| Tree | _(git rev-parse HEAD^{tree})_ |
-| Node Image ID | _(pendente build amd64)_ |
-| JVM Image ID | _(pendente build amd64)_ |
-| Overlay / verify / rollback | pin candidatas; rollback = **live atual** `289a0407`/`7bc8f341` |
+| PR | [#38](https://github.com/caioclavico/zapbot/pull/38) **MERGED** |
+| Commit P0 | `400a5ffda862e409d62197a772bd7e6e123ec366` |
+| Commit integrado (tip RC) | `6cef8f43b0dce617af0ecf0b0374f6a541388104` |
+| Tree | `50babd2f4dc1e4bd1e83ca5b91a7ad2628773304` |
+| Node tag | `odisseu-node:a6-p0-hp-ui-20261108T072116Z-6cef8f43b0dc-amd64` |
+| JVM tag | `odisseu-jvm:a6-p0-hp-ui-20261108T072116Z-6cef8f43b0dc-amd64` |
+| Node Image ID | `sha256:bec910bf80b8fe5e3fdbfa385b81b4caf9dff3f1f6c1ccd22c2933e0c0e65305` |
+| JVM Image ID | `sha256:9e87bb6f0d48e964ad4f8eaa001913f7811da05c0365bb65bd9a309858050d60` |
+| Labels | `git-sha=6cef8f43…` · `content-tree=50babd2f…` · platform `linux/amd64` |
+| Node checks | UID **1000** · Chromium **156.0.8078.79** · sem `--no-sandbox` · `HEALTH_BIND` no bundle |
+| JVM checks | Temurin **21.0.13** · curl health · modules presentes |
+| Overlay / verify | `scripts/verify-a6-gameplay-rc-images.sh` pinado às candidatas |
+| Rollback desta RC | **live atual** Node `289a0407…` / JVM `7bc8f341…` |
 
 ### 10.5 Riscos residuais (candidata)
 
 - Parties de raid **já** em combate mantêm golpes slim antigos até leave/rejoin.
 - Débito alias consome o primeiro ID com qty suficiente (canônico preferido).
 - Sem smoke destrutivo em saves reais nesta etapa.
+- ACL pós-stop / CapEff / NNP: revalidar na janela (mesmo procedimento do cutover §4–6); não reexecutado com restart aqui.
 
 ### 10.6 GO/NO-GO para solicitar janela
 
 | Critério | Estado |
 |----------|--------|
 | Código + testes A+B+C+P0 local | **GO** |
-| PR integrado na RC | _(pendente)_ |
-| Image IDs Node+JVM do mesmo commit | _(pendente build)_ |
-| Overlay/verify/rollback atualizados | _(pendente pins)_ |
-| Deploy hold / CI/CD intocados | **GO** (não alterar) |
-| **Pedido de janela agora** | **NO-GO** até Image IDs + verify PASS |
+| PR #38 integrado na RC | **GO** (`6cef8f4`) |
+| Image IDs Node+JVM do mesmo commit | **GO** (`bec910bf` / `9e87bb6f`) |
+| Overlay/verify/rollback documentados | **GO** (verify script; rollback=live) |
+| Deploy hold / CI/CD intocados | **GO** (não alterados) |
+| Tars carregados no host de produção | **PENDENTE** (ops de carga na janela) |
+| **Pedido de janela** | **GO CONDICIONAL** — autorizar cutover só após `verify-a6-gameplay-rc-images.sh` PASS no host e ACL/preflight iguais ao §3–4 |
