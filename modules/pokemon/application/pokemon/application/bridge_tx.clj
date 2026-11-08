@@ -35,16 +35,20 @@
 
 (defn- present-pokemon
   "DTO de apresentação para Node (HP atual/máx, golpes, sprites).
-   Não inventa atributos — só projeta o que já está no estado de batalha."
+   Raridade canônica via `assegurar-raridade` (legado/classificação explícita)."
   [p hp-atual]
   (when p
-    (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
-                            :raridade :tipos :ataque :defesa :atq-esp :def-esp
-                            :veloc :imagem :imagem-shiny :altura :golpes
-                            :status :habilidade :collection-index
-                            :motivacao-ginasio])
-      true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0)))
-      (:shiny? p) (assoc :shiny true))))
+    (let [p (capture/assegurar-raridade p)
+          resolved (capture/resolver-raridade p)]
+      (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
+                              :raridade :tipos :ataque :defesa :atq-esp :def-esp
+                              :veloc :imagem :imagem-shiny :altura :golpes
+                              :status :habilidade :collection-index
+                              :motivacao-ginasio])
+        true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0))
+                    :raridade (:raridade resolved)
+                    :raridade-fonte (name (:fonte resolved)))
+        (:shiny? p) (assoc :shiny true)))))
 
 (defn- present-battle
   "Fatia de batalha com HP, golpes e área visual para UI de caça/turno."
@@ -958,12 +962,18 @@
      :player-id player-id
      :dano (:dano result)
      :multiplicador (:multiplicador result)
+     :base (:base result)
+     :hp-chefe-antes (:hp-chefe-antes result)
      :revide (:revide result)
      :venceu (boolean (:venceu? result))
      :derrota (boolean (:derrota? result))
      :trocou (boolean (:trocou? result))
      :autodesmaio (boolean (:autodesmaio? result))
      :hp-ativo (:hp-ativo result)
+     :pokemon-atacante (when-let [p (:pokemon-atacante result)]
+                         (select-keys p [:nome :species]))
+     :pokemon-ativo (when-let [p (:pokemon-ativo result)]
+                      (select-keys p [:nome :species]))
      :golpe (when-let [g (:golpe result)]
               {:slug (or (:slug g) (get g "slug"))
                :nome-exibicao (or (:nome-exibicao g) (get g "nome-exibicao")

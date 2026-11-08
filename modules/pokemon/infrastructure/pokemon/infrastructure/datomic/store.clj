@@ -2988,13 +2988,16 @@
                             (nth colecao idx))
                      save-m (->save save)
                      next-state (if (:aguardando-captura? next-state)
-                                  (assoc next-state
-                                         :tentativas-captura 0
-                                         :chance-base-captura
-                                         (capture/chance-base-pos-batalha
-                                          (get-in next-state [:pokemons :o])
-                                          (get-in next-state [:status :o])
-                                          (:sequencia-capturas save-m 0)))
+                                  (let [o' (capture/assegurar-raridade
+                                            (get-in next-state [:pokemons :o]))
+                                        st' (assoc-in next-state [:pokemons :o] o')]
+                                    (assoc st'
+                                           :tentativas-captura 0
+                                           :chance-base-captura
+                                           (capture/chance-base-pos-batalha
+                                            o'
+                                            (get-in st' [:status :o])
+                                            (:sequencia-capturas save-m 0))))
                                   next-state)
                      ;; Bolsa cheia na vitória (somente-batalha ou capacidade esgotada):
                      ;; libera selvagem + XP raridade+1 — espelha preparar-captura master.
@@ -3010,9 +3013,8 @@
                      ;; Master: vitória sem captura → raridade+1 XP Pokémon, 0 moedas.
                      rew (if (:selvagem-liberado-bolsa-cheia? next-state)
                            (let [r (capture/recompensa-vitoria-sem-captura
-                                    {:raridade (or (get-in next-state [:pokemons :o :raridade])
-                                                   (get-in next-state [:pokemons :o "raridade"])
-                                                   "comum")})]
+                                    {:raridade (capture/raridade-de
+                                                (get-in next-state [:pokemons :o]))})]
                              {:pokemon-xp (long (:xp r)) :coins 0
                               :bonus-xp (:bonus-xp r)})
                            (battle/reward-for-outcome (:outcome next-state)))

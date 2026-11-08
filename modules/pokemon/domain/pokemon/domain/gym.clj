@@ -3,6 +3,7 @@
   Espelha aventuras.cljs + ginasios.cljs + finalizar-ginasio do core."
   (:require [clojure.string :as str]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.rng :as rng]
             [pokemon.domain.xp :as xp])
   (:import [java.time Instant ZoneId]
            [java.time.format DateTimeFormatter]))
@@ -105,20 +106,66 @@
      :economy-enabled? enabled?}))
 
 (def ginasios
+  "Catálogo de ginásios controlados pelo jogo.
+   `:time` = time de referência (UI/legado); `:pool` = espécies elegíveis ao sorteio
+   de desafio NPC (não se aplica a ginásios ocupados por jogadores)."
   [{:id "pedra" :nome "🪨 Pedra" :lider "Brock" :nivel 10 :item "pedra-lua"
-    :time ["geodude" "sandshrew" "onix"]}
+    :time ["geodude" "sandshrew" "onix"]
+    :pool ["geodude" "sandshrew" "onix" "graveler" "rhyhorn" "cubone"]}
    {:id "agua" :nome "💧 Água" :lider "Misty" :nivel 20 :item "pedra-agua"
-    :time ["psyduck" "staryu" "starmie"]}
+    :time ["psyduck" "staryu" "starmie"]
+    :pool ["psyduck" "staryu" "starmie" "goldeen" "seaking" "horsea" "seadra"]}
    {:id "eletrico" :nome "⚡ Elétrico" :lider "Lt. Surge" :nivel 30 :item "pedra-trovao"
-    :time ["voltorb" "pikachu" "raichu"]}
+    :time ["voltorb" "pikachu" "raichu"]
+    :pool ["voltorb" "pikachu" "raichu" "magnemite" "magneton" "electabuzz"]}
    {:id "planta" :nome "🍃 Planta" :lider "Erika" :nivel 40 :item "pedra-folha"
-    :time ["tangela" "weepinbell" "vileplume"]}
+    :time ["tangela" "weepinbell" "vileplume"]
+    :pool ["tangela" "weepinbell" "vileplume" "oddish" "gloom" "bellsprout" "victreebel"]}
    {:id "fogo" :nome "🔥 Fogo" :lider "Blaine" :nivel 50 :item "pedra-fogo"
-    :time ["ponyta" "magmar" "arcanine"]}])
+    :time ["ponyta" "magmar" "arcanine"]
+    :pool ["ponyta" "magmar" "arcanine" "vulpix" "growlithe" "charmander" "charmeleon"]}])
 
 (defn obter-ginasio
   [id]
   (some #(when (= id (:id %)) %) ginasios))
+
+(defn pool-npc
+  "Espécies elegíveis para desafio NPC. Fallback = `:time` de referência."
+  [ginasio-or-id]
+  (let [g (if (map? ginasio-or-id)
+            ginasio-or-id
+            (obter-ginasio (str ginasio-or-id)))
+        pool (or (seq (:pool g)) (seq (:time g)))]
+    (mapv str pool)))
+
+(defn sortear-especies-npc
+  "Sorteia 3 espécies distintas do pool do ginásio (desafio NPC).
+   RNG injetável via `pokemon.domain.rng` (chaves :npc-pick-0..2).
+   Não usar para ginásios ocupados por jogadores."
+  ([ginasio-or-id] (sortear-especies-npc ginasio-or-id nil))
+  ([ginasio-or-id rng]
+   (let [pool (vec (distinct (pool-npc ginasio-or-id)))]
+     (when (< (count pool) 3)
+       (throw (err/error :invalid_gym_npc_pool
+                         {:pool pool :need 3})))
+     (loop [restantes pool
+            acc []
+            i 0]
+       (if (= 3 (count acc))
+         (vec acc)
+         (let [idx (rng/roll rng (keyword (str "npc-pick-" i)) (count restantes))
+               escolhido (nth restantes idx)
+               restantes' (into [] (concat (subvec restantes 0 idx)
+                                          (subvec restantes (inc idx))))]
+           (recur restantes' (conj acc escolhido) (inc i))))))))
+
+(defn seed->npc-rng
+  "Deriva mapa de RNG determinístico a partir de seed (ex.: operationId)."
+  [seed]
+  (let [h (long (hash (str seed)))]
+    {:npc-pick-0 (Math/abs h)
+     :npc-pick-1 (Math/abs (bit-xor h (unchecked-int 0x9e3779b9)))
+     :npc-pick-2 (Math/abs (bit-xor h (unchecked-int 0x85ebca6b)))}))
 
 (defn desbloqueado?
   "Insígnias = conjunto/mapa de ids já conquistados."

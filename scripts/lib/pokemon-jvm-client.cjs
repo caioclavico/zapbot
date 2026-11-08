@@ -361,6 +361,8 @@ function createClient(config = {}) {
     setGymTeam: (body) => mutateOnce('/v1/gyms/team', body),
     healGym: (body) => mutateOnce('/v1/gyms/heal', body),
     startGymChallenge: (body) => mutateOnce('/v1/gyms/challenge', body),
+    rollGymNpcSpecies: ({ gymId, seed, operationId }) =>
+      request('GET', `/v1/gyms/npc-roll${q({ gymId, seed: seed || operationId || '' })}`),
     getActiveRaid: ({ chatId, playerId, agoraMs }) =>
       request('GET', `/v1/raids/active${q({ chatId, playerId, agoraMs })}`),
     getRaidEligible: ({ chatId, playerId }) =>

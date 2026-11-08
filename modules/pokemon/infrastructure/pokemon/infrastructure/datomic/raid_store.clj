@@ -847,6 +847,8 @@
               :duplicate false
               :dano (:dano outcome)
               :multiplicador (:multiplicador outcome)
+              :base (:base outcome)
+              :hp-chefe-antes (:hp-chefe-antes outcome)
               :revide (:revide outcome)
               :venceu? (:venceu? outcome)
               :derrota? (:derrota? outcome)
@@ -854,6 +856,8 @@
               :autodesmaio? (boolean (:autodesmaio? outcome))
               :hp-ativo (:hp-ativo outcome)
               :golpe (:golpe outcome)
+              :pokemon-atacante (:pokemon-atacante outcome)
+              :pokemon-ativo (:pokemon-ativo outcome)
               :raid raid'
               :rewards (mapv #(select-keys % [:player-id :moedas :pe :xp-pokemon
                                               :pokemon-id :outcome])

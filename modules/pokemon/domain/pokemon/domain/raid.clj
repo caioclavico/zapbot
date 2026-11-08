@@ -593,10 +593,11 @@
                 (nth golpes move-index))]
     (when-not (golpe-dano? golpe)
       (throw (err/error :invalid_raid_move {:move-index move-index})))
-    (let [{:keys [dano multiplicador]} (calcular-dano golpe pokemon raid)
+    (let [hp-chefe-antes (long (:hp-chefe raid 0))
+          {:keys [dano multiplicador base]} (calcular-dano golpe pokemon raid)
           ;; Autodesmaio (Explosion): após hit válido, HP do ativo → 0.
           autodesmaio? (boolean (or (:autodesmaio golpe) (get golpe "autodesmaio")))
-          hp' (max 0 (- (long (:hp-chefe raid)) dano))
+          hp' (max 0 (- hp-chefe-antes dano))
           venceu? (zero? hp')
           max-hp-ativo (long (or (:hp pokemon) (get pokemon "hp") 100))
           revide (if venceu? 0 (max 1 (long (Math/ceil (/ (double max-hp-ativo) 5)))))
@@ -628,12 +629,15 @@
       {:raid raid''
        :dano dano
        :multiplicador multiplicador
+       :base base
+       :hp-chefe-antes hp-chefe-antes
        :revide revide
        :venceu? venceu?
        :derrota? derrota?
        :trocou? trocou?
        :autodesmaio? (boolean (and autodesmaio? (pos? dano)))
        :golpe golpe
+       :pokemon-atacante pokemon
        :pokemon-ativo (:pokemon part-final)
        :hp-ativo (:hp part-final)})))
 

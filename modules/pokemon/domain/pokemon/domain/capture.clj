@@ -1,7 +1,11 @@
 (ns pokemon.domain.capture
   "Probabilidade e resolução de captura — Fase 12.8: raridade ancora a chance.
-  RNG injetável para testes."
-  (:require [pokemon.domain.errors :as err]))
+  RNG injetável para testes.
+  Política A6: nunca cair silenciosamente em `comum` quando a raridade falta —
+  recuperar via classificação canônica da espécie; se impossível, usar
+  taxa de `mitico` (mais dura) para não inflar chance."
+  (:require [clojure.string :as str]
+            [pokemon.domain.errors :as err]))
 
 ;; Faixas-base (Pokébola, sem status/seqüência) — Fase 12.8.
 ;; Valores centrais das faixas pedidas; leve variação por poder dentro da faixa.
@@ -64,13 +68,33 @@
 
 (def bonus-base-vitoria-sem-captura 1)
 
+(def raridades-validas
+  #{"comum" "incomum" "raro" "epico" "lendario" "mitico"})
+
+(def ^:private raridade-aliases
+  {"épico" "epico" "lendário" "lendario" "mítico" "mitico"})
+
+(defn normalizar-raridade
+  "Slug canônico sem acento, ou nil se vazio/ inválido."
+  [r]
+  (when (and r (not (str/blank? (str r))))
+    (let [s (-> (str r) str/lower-case str/trim)
+          s (or (get raridade-aliases s) s)
+          s (-> s
+                (str/replace #"é" "e")
+                (str/replace #"á" "a")
+                (str/replace #"í" "i"))]
+      (when (contains? raridades-validas s) s))))
+
 (defn recompensa-pos-captura
-  "Espelha encerrar-cacada! quando capturou? ou fugiu? (sem vitória-sem-captura)."
+  "Espelha encerrar-cacada! quando capturou? ou fugiu? (sem vitória-sem-captura).
+   XP: slug inválido/ausente → comum (não infla recompensa)."
   [{:keys [raridade sequencia-nova primeira-tentativa? capturou?]}]
   (if capturou?
     (let [bonus-seq (bonus-xp-sequencia sequencia-nova)
           bonus-primeira (if primeira-tentativa? 1 0)
-          base (get xp-base-raridade (or raridade "comum") 2)]
+          r (or (normalizar-raridade raridade) "comum")
+          base (get xp-base-raridade r 2)]
       {:xp (+ base bonus-seq bonus-primeira)
        :bonus-xp bonus-seq
        :bonus-primeira bonus-primeira
@@ -81,7 +105,8 @@
 (defn recompensa-vitoria-sem-captura
   "Bolsa cheia / somente-batalha: raridade + 1 XP; sem moedas; sequência intacta."
   [{:keys [raridade]}]
-  (let [base (get xp-base-raridade (or raridade "comum") 2)]
+  (let [r (or (normalizar-raridade raridade) "comum")
+        base (get xp-base-raridade r 2)]
     {:xp (+ base bonus-base-vitoria-sem-captura)
      :bonus-xp bonus-base-vitoria-sem-captura
      :bonus-primeira 0
@@ -92,19 +117,95 @@
   (let [g (fn [k] (long (or (get pokemon k) (get pokemon (name k)) 0)))]
     (+ (g :hp) (g :ataque) (g :defesa) (g :atq-esp) (g :def-esp) (g :veloc))))
 
-(defn- raridade-de
+(defn- peso-raridade
+  [r]
+  (get {"comum" 0 "incomum" 1 "raro" 2 "epico" 3 "lendario" 4 "mitico" 5} r 0))
+
+(defn- maior-raridade
+  [a b]
+  (if (> (peso-raridade b) (peso-raridade a)) b a))
+
+(defn classificar-raridade
+  "Classificação canônica A6 (stats suavizados / flags API / taxa-captura).
+  Mesma regra usada em caça (`hunt/com-raridade`)."
   [pokemon]
-  (or (:raridade pokemon) (get pokemon "raridade") "comum"))
+  (cond
+    (or (:mitico-api? pokemon) (get pokemon "mitico-api?")) "mitico"
+    (or (:lendario-api? pokemon) (get pokemon "lendario-api?")
+        (:paradox-api? pokemon) (get pokemon "paradox-api?")) "lendario"
+    :else
+    (let [poder-original (- (* 2 (poder-total pokemon)) 450)
+          por-poder (cond (<= poder-original 400) "comum"
+                          (<= poder-original 480) "incomum"
+                          (<= poder-original 540) "raro"
+                          :else "epico")
+          taxa (or (:taxa-captura pokemon) (get pokemon "taxa-captura"))
+          por-captura (cond (nil? taxa) nil
+                            (<= (long taxa) 10) "epico"
+                            (<= (long taxa) 45) "raro"
+                            (<= (long taxa) 120) "incomum"
+                            :else "comum")]
+      (if por-captura
+        (maior-raridade por-poder por-captura)
+        por-poder))))
+
+(defn classificavel?
+  "Há sinais suficientes para classificar sem inventar `comum`."
+  [pokemon]
+  (boolean
+   (or (:mitico-api? pokemon) (get pokemon "mitico-api?")
+       (:lendario-api? pokemon) (get pokemon "lendario-api?")
+       (:paradox-api? pokemon) (get pokemon "paradox-api?")
+       (some? (:taxa-captura pokemon)) (some? (get pokemon "taxa-captura"))
+       (pos? (poder-total pokemon)))))
+
+(defn resolver-raridade
+  "Resolve raridade com fonte explícita.
+   :snapshot — campo presente e válido
+   :classificado — recuperado da espécie (legado sem :raridade)
+   :desconhecida — sem sinais; chance usará faixa mítica (não comum)."
+  [pokemon]
+  (let [norm (normalizar-raridade (or (:raridade pokemon) (get pokemon "raridade")))]
+    (cond
+      norm
+      {:raridade norm :fonte :snapshot :recuperada? false}
+
+      (classificavel? pokemon)
+      {:raridade (classificar-raridade pokemon)
+       :fonte :classificado
+       :recuperada? true}
+
+      :else
+      {:raridade "mitico" :fonte :desconhecida :recuperada? false})))
+
+(defn raridade-de
+  "Slug canônico para chance/fuga/XP. Nunca retorna nil."
+  [pokemon]
+  (:raridade (resolver-raridade pokemon)))
+
+(defn assegurar-raridade
+  "Garante `:raridade` canônica no mapa (recupera legado se preciso).
+   Anexa `:raridade-fonte` para diagnóstico (não afeta slim de combate)."
+  [pokemon]
+  (when pokemon
+    (let [{:keys [raridade fonte recuperada?]} (resolver-raridade pokemon)]
+      (cond-> (assoc pokemon :raridade raridade :raridade-fonte (name fonte))
+        recuperada? (assoc :raridade-recuperada? true)))))
 
 (defn chance-captura
-  "Taxa da espécie ancorada na raridade (faixas 12.8), com leve variação por poder."
+  "Taxa da espécie ancorada na raridade (faixas 12.8), com leve variação por poder.
+  Desconhecida → faixa `mitico` (não infla)."
   [pokemon]
-  (let [raridade (raridade-de pokemon)
-        centro (get raridade-chance-base raridade 65)
-        lo (get raridade-chance-min raridade chance-captura-minima)
-        hi (get raridade-chance-max raridade chance-captura-maxima)
+  (let [{:keys [raridade fonte]} (resolver-raridade pokemon)
+        ;; Faixa mitico se desconhecida — nunca centro genérico 65/comum.
+        raridade (if (= fonte :desconhecida) "mitico" raridade)
+        centro (get raridade-chance-base raridade
+                    (get raridade-chance-base "mitico"))
+        lo (get raridade-chance-min raridade
+               (get raridade-chance-min "mitico"))
+        hi (get raridade-chance-max raridade
+               (get raridade-chance-max "mitico"))
         poder (poder-total pokemon)
-        ;; Poder alto → um pouco mais difícil dentro da faixa.
         delta (-> (- (double poder) poder-referencia-captura)
                   (/ poder-variacao-ref)
                   (* poder-variacao-pp)
@@ -122,9 +223,9 @@
   "Pós-batalha: status × espécie + bônus moderado de sequência.
   Sem o +25 legado — preserva ordenação por raridade (comuns ≫ lendários)."
   [pokemon status sequencia-capturas]
-  (let [bonus (get bonus-captura-status status 1)
-        base (chance-captura pokemon)
-        ;; Sequência ajuda no máximo +10 (antes: +25 flat + até +20 seq).
+  (let [poke (assegurar-raridade pokemon)
+        bonus (get bonus-captura-status status 1)
+        base (chance-captura poke)
         seq-bonus (min 10 (long sequencia-capturas))]
     (-> (Math/round (* (double bonus) base))
         (+ seq-bonus)

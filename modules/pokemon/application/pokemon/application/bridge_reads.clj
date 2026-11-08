@@ -495,16 +495,21 @@
      :inventory (:inventory snap)}))
 
 (defn- encounter-pokemon-dto
-  "DTO de apresentação (HP atual/máx + golpes). `hp-atual` vem do mapa de batalha."
+  "DTO de apresentação (HP atual/máx + golpes). `hp-atual` vem do mapa de batalha.
+   Raridade: canônica do motor (`assegurar-raridade`) — nunca inventa `?`/`comum` silencioso."
   ([p] (encounter-pokemon-dto p nil))
   ([p hp-atual]
    (when p
-     (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
-                             :raridade :tipos :ataque :defesa :atq-esp :def-esp :veloc
-                             :imagem :imagem-shiny :altura :golpes :status :habilidade
-                             :motivacao-ginasio :collection-index])
-       true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0)))
-       (:shiny? p) (assoc :shiny true)))))
+     (let [p (capture/assegurar-raridade p)
+           resolved (capture/resolver-raridade p)]
+       (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
+                               :raridade :tipos :ataque :defesa :atq-esp :def-esp :veloc
+                               :imagem :imagem-shiny :altura :golpes :status :habilidade
+                               :motivacao-ginasio :collection-index])
+         true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0))
+                     :raridade (:raridade resolved)
+                     :raridade-fonte (name (:fonte resolved)))
+         (:shiny? p) (assoc :shiny true))))))
 
 (defn- area-visual
   "Cores/emoji do bioma para composição de arena no Node (sem Cassandra)."
@@ -542,10 +547,12 @@
                                 (:sequencia-capturas
                                  (ports/get-save store chat-id player-id slot)))
                               0))
+            poke-o (when-let [p (get-in battle [:pokemons :o])]
+                     (capture/assegurar-raridade p))
             chance-base (or (:chance-base-captura battle)
-                            (when-let [poke (get-in battle [:pokemons :o])]
+                            (when poke-o
                               (capture/chance-base-pos-batalha
-                               poke (get-in battle [:status :o]) seq-cap)))
+                               poke-o (get-in battle [:status :o]) seq-cap)))
             aguardando? (boolean (:aguardando-captura? battle))
             frambo-prep? (boolean (:frambo-preparada battle))
             frambo-qty (long (or (some #(when (= capture/frambo-item-id
@@ -554,46 +561,49 @@
                                        inv)
                                  0))
             chances (when (and aguardando? chance-base)
-                      (capture/chances-painel chance-base frambo-prep?))]
+                      (capture/chances-painel chance-base frambo-prep?))
+            resolved (when poke-o (capture/resolver-raridade poke-o))]
         {:chat-id chat-id
          :player-id player-id
          :active-save-id (:active-save-id player)
          :fence-generation (:fence-generation player)
          :encounter
-         {:battle-id (:battle-id battle)
-          :save-id (:save-id battle)
-          :kind (name (:kind battle :wild))
-          :gym-id (:gym-id battle)
-          :gym-nome (:gym-nome battle)
-          :lider-nome (:lider-nome battle)
-          :active (boolean (:active? battle))
-          :aguardando-captura aguardando?
-          :phase (:phase battle)
-          :outcome (:outcome battle)
-          :turn-index (:turn-index battle 0)
-          :tentativas-captura (long (:tentativas-captura battle 0))
-          :chance-base-captura chance-base
-          :frambo frambo-qty
-          :frambo-preparada frambo-prep?
-          :chances chances
-          :hp (:hp battle)
-          :status (:status battle)
-          :bioma (:bioma battle)
-          :clima (let [c (:clima battle)]
-                   (cond
-                     (map? c) (hunt/clima-dto c)
-                     c (some-> (mundo/obter-clima (str c)) hunt/clima-dto)
-                     :else nil))
-          :area (area-visual (:bioma battle))
-          :somente-batalha (boolean (:somente-batalha? battle))
-          :last-switch (:last-switch battle)
-          :reservas-x (count (get-in battle [:reservas :x] []))
-          :reservas-o (count (get-in battle [:reservas :o] []))
-          :pokemon-x (encounter-pokemon-dto (get-in battle [:pokemons :x])
-                                            (get-in battle [:hp :x]))
-          :pokemon-o (encounter-pokemon-dto (get-in battle [:pokemons :o])
-                                            (get-in battle [:hp :o]))
-          :inventory (or inv [])}}))))
+         (cond-> {:battle-id (:battle-id battle)
+                  :save-id (:save-id battle)
+                  :kind (name (:kind battle :wild))
+                  :gym-id (:gym-id battle)
+                  :gym-nome (:gym-nome battle)
+                  :lider-nome (:lider-nome battle)
+                  :active (boolean (:active? battle))
+                  :aguardando-captura aguardando?
+                  :phase (:phase battle)
+                  :outcome (:outcome battle)
+                  :turn-index (:turn-index battle 0)
+                  :tentativas-captura (long (:tentativas-captura battle 0))
+                  :chance-base-captura chance-base
+                  :frambo frambo-qty
+                  :frambo-preparada frambo-prep?
+                  :chances chances
+                  :hp (:hp battle)
+                  :status (:status battle)
+                  :bioma (:bioma battle)
+                  :clima (let [c (:clima battle)]
+                           (cond
+                             (map? c) (hunt/clima-dto c)
+                             c (some-> (mundo/obter-clima (str c)) hunt/clima-dto)
+                             :else nil))
+                  :area (area-visual (:bioma battle))
+                  :somente-batalha (boolean (:somente-batalha? battle))
+                  :last-switch (:last-switch battle)
+                  :reservas-x (count (get-in battle [:reservas :x] []))
+                  :reservas-o (count (get-in battle [:reservas :o] []))
+                  :pokemon-x (encounter-pokemon-dto (get-in battle [:pokemons :x])
+                                                    (get-in battle [:hp :x]))
+                  :pokemon-o (encounter-pokemon-dto poke-o
+                                                    (get-in battle [:hp :o]))
+                  :inventory (or inv [])}
+           resolved (assoc :raridade (:raridade resolved)
+                           :raridade-fonte (name (:fonte resolved))))}))))
 
 (defn- format-duracao-curta
   [ms]
@@ -640,6 +650,7 @@
      :nivel (:nivel g)
      :item (:item g)
      :time-npc (:time g)
+     :pool-npc (gym/pool-npc g)
      :desbloqueado unlocked?
      :insignia (get insignias id)
      :ocupacao (when ocup (occupation-dto ocup agora))}))
@@ -678,6 +689,19 @@
                                   :fence-generation :gym-defense-count
                                   :insignias :desafio-habilitado :desafio-bloqueio])
            {:gym row})))
+
+(defn gym-npc-roll
+  "Sorteio determinístico de 3 espécies NPC (puro). Seed tipicamente = operationId.
+   Não altera ocupação de jogadores — só catálogo do ginásio do jogo."
+  [gym-id seed]
+  (let [g (or (gym/obter-ginasio (str gym-id))
+              (throw (err/error :unknown_gym {:gym-id gym-id})))
+        rng (gym/seed->npc-rng (or seed (:id g)))
+        species (gym/sortear-especies-npc g rng)]
+    {:gym-id (:id g)
+     :seed (str (or seed ""))
+     :species species
+     :pool (gym/pool-npc g)}))
 
 (defn gym-team
   "Escalação de ginásio do save ativo (índices + Pokémon)."
