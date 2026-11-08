@@ -5,19 +5,21 @@
 
 ;; Faixas-base (Pokébola, sem status/seqüência) — Fase 12.8.
 ;; Valores centrais das faixas pedidas; leve variação por poder dentro da faixa.
+;; Rebalance caça A6 (auditoria): raros+ mais duros; comuns ainda generosos.
+;; Bola/Frambo aplicam-se depois, com cap por bola (95).
 (def raridade-chance-base
-  {"comum" 82
-   "incomum" 65
-   "raro" 40
-   "epico" 22
-   "lendario" 8
-   "mitico" 5})
+  {"comum" 78
+   "incomum" 58
+   "raro" 28
+   "epico" 14
+   "lendario" 5
+   "mitico" 3})
 
 (def raridade-chance-min
-  {"comum" 75 "incomum" 55 "raro" 30 "epico" 15 "lendario" 5 "mitico" 3})
+  {"comum" 70 "incomum" 48 "raro" 18 "epico" 8 "lendario" 2 "mitico" 1})
 
 (def raridade-chance-max
-  {"comum" 90 "incomum" 75 "raro" 50 "epico" 30 "lendario" 12 "mitico" 8})
+  {"comum" 88 "incomum" 68 "raro" 38 "epico" 22 "lendario" 9 "mitico" 6})
 
 ;; Compat: mapa antigo ainda consultado por código legado de peso.
 (def raridades

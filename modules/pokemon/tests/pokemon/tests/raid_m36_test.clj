@@ -81,11 +81,12 @@
   (is (= 6 raid/recompensa-xp-pokemon))
   (is (= 35 (raid/chance-captura "raro")))
   (is (= 8 (raid/chance-captura "lendario")))
-  (let [dano (raid/calcular-dano
-              {:poder 80 :classe :fisico}
-              {:ataque 80}
-              {:hp-chefe 440 :defesa 50.0})]
-    (is (<= 10 dano 160))))
+  (let [r (raid/calcular-dano
+           {:poder 80 :classe :fisico :tipo "normal"}
+           {:ataque 80}
+           {:hp-chefe 440 :defesa 50.0 :chefe {:tipos ["normal"]}})]
+    (is (<= 10 (:dano r) 160))
+    (is (= 1.0 (:multiplicador r)))))
 
 (deftest ciclo-vitoria-e-recompensa
   (let [s (fresh-store! "r-win")

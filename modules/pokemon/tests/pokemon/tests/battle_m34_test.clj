@@ -93,8 +93,8 @@
            :errou? false :esquivou? false :acertos 1 :impulso 1.0}
         msg (dmg/mensagem-ataque golpe atk def r false)]
     (is (re-find #"causou 42 de dano" msg))
-    (is (re-find #"Foi super efetivo" msg))
-    (is (re-find #"golpe crítico" msg)))
+    (is (re-find #"É super efetivo" msg))
+    (is (re-find #"Acerto crítico" msg)))
   (let [msg (dmg/mensagem-ataque
              {:tipo "normal" :classe :fisico :nome-exibicao "Investida"
               :min-acertos 2 :max-acertos 5}

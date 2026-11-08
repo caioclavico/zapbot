@@ -291,6 +291,7 @@
     :else x))
 
 (defn- normalize-ball
+  "Aliases canônicos → IDs de inventário. Inclui super/great (UI 'Super Bola')."
   [raw]
   (let [chave (-> (or raw "")
                   str/trim
@@ -298,10 +299,15 @@
                   (str/replace #"\s+" "-"))
         mapped (get {"1" "pokebola" "normal" "pokebola" "poke" "pokebola"
                      "pokebola" "pokebola" "pokébola" "pokebola"
+                     "poke-ball" "pokebola" "pokeball" "pokebola"
                      "2" "grande-bola" "grande" "grande-bola"
                      "grande-bola" "grande-bola"
+                     "super" "grande-bola" "super-bola" "grande-bola"
+                     "superbola" "grande-bola" "great" "grande-bola"
+                     "great-ball" "grande-bola" "greatball" "grande-bola"
                      "3" "ultra-bola" "ultra" "ultra-bola"
-                     "ultra-bola" "ultra-bola"}
+                     "ultra-bola" "ultra-bola"
+                     "ultra-ball" "ultra-bola" "ultraball" "ultra-bola"}
                     chave)]
     (or mapped
         (when (contains? capture/bolas chave) chave))))
@@ -484,7 +490,12 @@
         ;; Inventário no DTO de vitória → Node mostra menu de bolas como no master
         ;; (sem etapa extra de "carimbada"). Sem mutação; leitura do save ativo.
         inv (when (and aguardando? chat-id player-id save-id)
-              (ports/list-inventory store chat-id player-id save-id))]
+              (ports/list-inventory store chat-id player-id save-id))
+        ;; Chances canônicas do motor — Node não recalcula %.
+        chances (when aguardando?
+                  (capture/chances-painel
+                   (long (or (:chance-base-captura battle) 0))
+                   (boolean (:frambo-preparada battle))))]
     (cond-> {:operation-id (:operation-id result)
              :duplicate (boolean (:duplicate result))
              :battle (assoc presented
@@ -510,7 +521,8 @@
                                         :xp (long (:xp-permanencia perm 0))}))))
              :save-id save-id
              :fence-generation (long fence-generation)}
-      (some? inv) (assoc :inventory inv))))
+      (some? inv) (assoc :inventory inv)
+      (some? chances) (assoc :chances chances))))
 
 (def ^:private heal-by-item
   "Pontos de motivação derivados do item — nunca do cliente."
@@ -945,9 +957,20 @@
      :duplicate (boolean (:duplicate result))
      :player-id player-id
      :dano (:dano result)
+     :multiplicador (:multiplicador result)
      :revide (:revide result)
      :venceu (boolean (:venceu? result))
      :derrota (boolean (:derrota? result))
+     :trocou (boolean (:trocou? result))
+     :autodesmaio (boolean (:autodesmaio? result))
+     :hp-ativo (:hp-ativo result)
+     :golpe (when-let [g (:golpe result)]
+              {:slug (or (:slug g) (get g "slug"))
+               :nome-exibicao (or (:nome-exibicao g) (get g "nome-exibicao")
+                                  (get g "nomeExibicao"))
+               :tipo (or (:tipo g) (get g "tipo"))
+               :poder (or (:poder g) (get g "poder"))
+               :classe (or (:classe g) (get g "classe"))})
      :rewards (mapv (fn [rw]
                       (cond-> {:player-id (:player-id rw)
                                :moedas (:moedas rw)

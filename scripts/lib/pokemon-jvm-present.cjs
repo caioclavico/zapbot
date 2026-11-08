@@ -1652,6 +1652,39 @@ function formatGymChallengeStart(data, prefix = '!pk') {
   ].filter(Boolean).join('\n');
 }
 
+/**
+ * Monta linha de ataque só com campos canônicos do motor (sem recalcular dano).
+ * Usado quando `lastAction.mensagem` falta (DTO parcial / legado).
+ */
+function formatCanonicalAttackLine(la, pokemonX, pokemonO) {
+  const nomeGolpe = la.golpeNome || la['golpe-nome'] || la.golpe || 'golpe';
+  const nomeAtk = (pokemonX && (pokemonX.nome || pokemonX.species)) || 'Pokémon';
+  const nomeDef = (pokemonO && (pokemonO.nome || pokemonO.species)) || 'adversário';
+  const dano = la.dano != null ? Number(la.dano) : null;
+  const lines = [];
+  if (la.errou || la.errou === true) {
+    lines.push(`⚔️ *${nomeGolpe}* de *${nomeAtk}* errou o alvo!`);
+  } else if (la.esquivou || la.esquivou === true) {
+    lines.push(`💨 *${nomeDef}* esquivou de *${nomeGolpe}*!`);
+  } else if (dano != null) {
+    lines.push(`⚔️ *${nomeGolpe}* de *${nomeAtk}* causou ${dano} de dano em *${nomeDef}*!`);
+  } else {
+    lines.push(`⚔️ *${nomeGolpe}* de *${nomeAtk}*!`);
+  }
+  const eff = effectivenessLine(la.multiplicador != null ? la.multiplicador : la.effectiveness);
+  if (eff) lines.push(eff);
+  if (la.critico || la.critico === true || la['critico?']) lines.push('🎯 Acerto crítico!');
+  if (la.hpAntes != null && la.hpDepois != null) {
+    lines.push(`❤️ HP *${nomeDef}*: ${la.hpAntes}→${la.hpDepois}`);
+  } else if (la['hp-antes'] != null && la['hp-depois'] != null) {
+    lines.push(`❤️ HP *${nomeDef}*: ${la['hp-antes']}→${la['hp-depois']}`);
+  }
+  if (la.autodesmaio || la.autodesmaio === true || la['autodesmaio?']) {
+    lines.push('💀 Seu Pokémon desmaiou após o golpe!');
+  }
+  return lines.join('\n');
+}
+
 function formatBattleTurn(data, prefix = '!pk') {
   const b = (data && data.battle) || {};
   const o = b.pokemonO || (b.pokemons && b.pokemons.o) || {};
@@ -1698,12 +1731,23 @@ function formatBattleTurn(data, prefix = '!pk') {
         tentativasCaptura: data.tentativasCaptura != null
           ? data.tentativasCaptura
           : (b.tentativasCaptura || 0),
-        inventory: data.inventory || b.inventory || []
+        inventory: data.inventory || b.inventory || [],
+        // Preferir chances do motor (confirm-turn / active-encounter).
+        chances: data.chances || b.chances || null,
+        framboPreparada: Boolean(data.framboPreparada || b.framboPreparada
+          || data['frambo-preparada'] || b['frambo-preparada'])
       }
     }, prefix);
     return `${header}\n\n${menu}`;
   }
   if (b.outcome === 'lose' || data.outcome === 'lose') {
+    const laLose = b.lastAction || {};
+    if (laLose.autodesmaio || laLose.autodesmaio === true
+        || laLose['autodesmaio?'] || (laLose.mensagem && /desmaiou após o golpe/i.test(laLose.mensagem))) {
+      return gym
+        ? formatGymResolve({ venceu: false, peDelta: 1 }, b)
+        : '💀 Seu Pokémon desmaiou após o golpe. A caçada acabou.';
+    }
     return gym
       ? formatGymResolve({ venceu: false, peDelta: 1 }, b)
       : '💀 Seu Pokémon desmaiou. A caçada acabou.';
@@ -1732,8 +1776,9 @@ function formatBattleTurn(data, prefix = '!pk') {
     } else {
       acaoLinha = `🧪 Usou item \`${la.itemId || '?'}\`.`;
     }
-  } else if (la.dano != null) {
-    acaoLinha = `Último golpe: ${la.dano} de dano.`;
+  } else if (la.dano != null || la.golpeNome || la['golpe-nome']) {
+    // Fallback canônico: campos do motor, sem recalcular dano/efetividade.
+    acaoLinha = formatCanonicalAttackLine(la, x, o);
   }
   const rivalLinha = la.mensagemRival || null;
   const cabeçalhoTurno = [
@@ -1754,8 +1799,16 @@ const BOLA_LABEL = {
 };
 
 function qtyBall(inv, id) {
-  const row = (inv || []).find(i => i.itemId === id);
-  return row ? Number(row.qty) || 0 : 0;
+  const aliases = {
+    pokebola: ['pokebola', 'poke-ball', 'pokeball'],
+    'grande-bola': ['grande-bola', 'super-bola', 'superbola', 'great-ball', 'greatball', 'great'],
+    'ultra-bola': ['ultra-bola', 'ultra-ball', 'ultraball'],
+    fruta: ['fruta']
+  };
+  const ids = new Set(aliases[id] || [id]);
+  return (inv || []).reduce((n, row) => (
+    ids.has(row && row.itemId) ? n + (Number(row.qty) || 0) : n
+  ), 0);
 }
 
 function chanceComBola(chanceBase, bolaId, frambo) {
@@ -1782,13 +1835,17 @@ function formatCaptureMenu(encounterData, prefix = '!pk') {
   const framboQty = enc.frambo != null ? Number(enc.frambo)
     : qtyBall(inv, 'fruta');
   const chances = enc.chances || {};
+  // Preferir mapa canônico do motor; fallback local só se o DTO não trouxe chances.
   const pct = (id) => (chances[id] != null
     ? Number(chances[id])
     : chanceComBola(base, id, framboPrep));
+  const qPoke = qtyBall(inv, 'pokebola');
+  const qGrande = qtyBall(inv, 'grande-bola');
+  const qUltra = qtyBall(inv, 'ultra-bola');
   const linhasChance = [
-    `🔴 Poké Bola: ${pct('pokebola')}%`,
-    `🔵 Super Bola: ${pct('grande-bola')}%`,
-    `🟡 Ultra Bola: ${pct('ultra-bola')}%`
+    `🔴 Pokébola: ${qPoke} · chance ${pct('pokebola')}%`,
+    `🔵 Grande Bola: ${qGrande} · chance ${pct('grande-bola')}%`,
+    `🟡 Ultra Bola: ${qUltra} · chance ${pct('ultra-bola')}%`
   ];
   if (framboPrep) {
     return [
@@ -1802,7 +1859,7 @@ function formatCaptureMenu(encounterData, prefix = '!pk') {
       `🍓 Frutas Frambo restantes: ${Math.max(0, framboQty)}`,
       '🍓 Bônus ativo para a próxima tentativa!',
       '',
-      '🎯 Escolha sua Poké Bola.',
+      '🎯 *Escolha sua Pokébola*',
       `${prefix} capturar 1 · ${prefix} capturar 2 · ${prefix} capturar 3`,
       `Tentativas restantes: ${3 - tent} de 3.`
     ].join('\n');
@@ -2452,6 +2509,15 @@ function formatRaidDefeat(data, _prefix = '!pk') {
   return { text: lines.join('\n'), mentions: mentionSet };
 }
 
+function effectivenessLine(mult) {
+  const m = Number(mult);
+  if (!Number.isFinite(m)) return null;
+  if (m === 0) return '🚫 Não teve efeito...';
+  if (m > 1) return '💥 É super efetivo!';
+  if (m < 1) return '🛡️ Não é muito efetivo...';
+  return null;
+}
+
 function formatRaidAttack(data, prefix = '!pk') {
   if (data && data.venceu) {
     return formatRaidVictory(data, prefix);
@@ -2460,12 +2526,33 @@ function formatRaidAttack(data, prefix = '!pk') {
     return formatRaidDefeat(data, prefix);
   }
   const r = (data && data.raid) || {};
-  return [
-    `💥 Dano ${data && data.dano != null ? data.dano : '?'} · revide ${data && data.revide != null ? data.revide : 0}`,
-    `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`,
-    ...formatRaidTurnBlock(r, prefix),
-    data && data.duplicate ? '_idempotente: mesmo operationId_' : null
-  ].filter(Boolean).join('\n');
+  const golpe = (data && (data.golpe || data.move)) || {};
+  const nomeGolpe = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome || golpe.slug;
+  const mult = data && (data.multiplicador != null ? data.multiplicador : data.effectiveness);
+  const eff = effectivenessLine(mult);
+  const dano = data && data.dano != null ? Number(data.dano) : null;
+  const hpChefe = r.hpChefe != null ? Number(r.hpChefe) : null;
+  const hpMax = r.hpMax != null ? Number(r.hpMax) : null;
+  const hpAntes = (hpChefe != null && dano != null) ? hpChefe + dano : null;
+  const lines = [];
+  if (nomeGolpe) lines.push(`⚔️ Usou *${nomeGolpe}*!`);
+  if (eff) lines.push(eff);
+  if (data && data.trocou) lines.push('🔄 Seu Pokémon desmaiou — próximo da party entrou!');
+  if (data && data.autodesmaio) lines.push('💀 Seu Pokémon desmaiou após o golpe!');
+  lines.push(
+    `💥 Dano ${dano != null ? dano : '?'} · revide ${data && data.revide != null ? data.revide : 0}`
+  );
+  if (hpAntes != null && hpChefe != null) {
+    lines.push(`❤️ Chefe: ${hpAntes}→${hpChefe}${hpMax != null ? ` / ${hpMax}` : ''}`);
+  } else {
+    lines.push(`❤️ Chefe: ${hpChefe != null ? hpChefe : '?'} / ${hpMax != null ? hpMax : '?'}`);
+  }
+  if (data && data.hpAtivo != null) {
+    lines.push(`🐾 Seu ativo: HP ${data.hpAtivo}`);
+  }
+  lines.push(...formatRaidTurnBlock(r, prefix));
+  if (data && data.duplicate) lines.push('_idempotente: mesmo operationId_');
+  return lines.filter(Boolean).join('\n');
 }
 
 /** Normaliza retorno de formatRaidAttack (string | {text,mentions}). */
@@ -2522,7 +2609,7 @@ function formatRaidCaptureUi(data, prefix = '!pk', opts = {}) {
     'Escolha sua Poké Bola:',
     '',
     `1️⃣ Poké Bola — ${pct('pokebola')} · estoque ${bolas.pokebola || 0}`,
-    `2️⃣ Super Bola — ${pct('grande-bola')} · estoque ${bolas['grande-bola'] || 0}`,
+    `2️⃣ Grande Bola — ${pct('grande-bola')} · estoque ${bolas['grande-bola'] || 0}`,
     `3️⃣ Ultra Bola — ${pct('ultra-bola')} · estoque ${bolas['ultra-bola'] || 0}`,
     '',
     // Estoque real atual (prepare não debita; consumo só na tentativa).
@@ -2885,7 +2972,7 @@ function formatMissionReward(mission) {
   const parts = [];
   if (mission.xp) parts.push(`+${mission.xp} PE do treinador`);
   if (mission.moedas) parts.push(`+${mission.moedas} moedas`);
-  for (const [key, label] of [['pokebolas', 'Pokébolas'], ['grandes', 'Super Bolas'],
+  for (const [key, label] of [['pokebolas', 'Pokébolas'], ['grandes', 'Grande Bolas'],
     ['ultras', 'Ultra Bolas'], ['frutas', 'Frutas Frambo'],
     ['presentesItem', 'Cartão-presente'], ['presentes-item', 'Cartão-presente'],
     ['catalisadores', 'Catalisador Evolutivo']]) {
@@ -2922,7 +3009,7 @@ function formatMissionRewards(mission) {
   const qty = (id) => Number(rewards[id] || 0);
   if (qty('fruta')) parts.push(`${qty('fruta')} Frambo`);
   if (qty('pokebola')) parts.push(`${qty('pokebola')} Poké Bolas`);
-  if (qty('grande-bola')) parts.push(`${qty('grande-bola')} Super Bolas`);
+  if (qty('grande-bola')) parts.push(`${qty('grande-bola')} Grande Bolas`);
   if (qty('ultra-bola')) parts.push(`${qty('ultra-bola')} Ultra Bolas`);
   if (qty('cartao-presente')) parts.push(`${qty('cartao-presente')} cartão-presente`);
   const doces = mission.doces || {};

@@ -12,21 +12,52 @@
             [pokemon.domain.raid-auto :as raid-auto]
             [pokemon.infrastructure.datomic.battle-idle-store :as battle-idle-store]
             [pokemon.infrastructure.datomic.economy-store :as economy-store]))
+(defn- decode-participant-bundle
+  "Compat: edn legado = mapa do Pokémon; v2 = {:__raid-party-v1 ...}."
+  [raw hp-attr collection-index]
+  (let [edn (or raw {})]
+    (if (:__raid-party-v1 edn)
+      (let [party (mapv (fn [s]
+                          {:pokemon (or (:pokemon s) {})
+                           :hp (long (:hp s 0))
+                           :collection-index (long (:collection-index s 0))})
+                        (or (:party edn) []))
+            idx (long (:active-idx edn 0))
+            slot (nth party idx (first party))
+            poke (or (:active edn) (:pokemon slot) {})]
+        {:pokemon poke
+         :party (if (seq party)
+                  party
+                  [{:pokemon poke :hp (long hp-attr) :collection-index (long collection-index)}])
+         :active-party-idx idx
+         :hp (long (or (:hp slot) hp-attr 0))
+         :collection-index (long (or (:collection-index slot) collection-index 0))})
+      {:pokemon edn
+       :party [{:pokemon edn
+                :hp (long hp-attr)
+                :collection-index (long collection-index)}]
+       :active-party-idx 0
+       :hp (long hp-attr)
+       :collection-index (long collection-index)})))
+
 (defn participant->map
   [e edn-read present?]
   (when (present? e)
-    {:key (:raid-participant/key e)
-     :raid-id (:raid-participant/raid-id e)
-     :player-key (:raid-participant/player-key e)
-     :player-id (when-let [pk (:raid-participant/player-key e)]
-                  (:player-id (id/parse-player-key pk)))
-     :save-id (:raid-participant/save-id e)
-     :fence-generation (long (:raid-participant/fence-generation e 0))
-     :nome (:raid-participant/nome e)
-     :pokemon (or (edn-read (:raid-participant/pokemon-edn e)) {})
-     :hp (long (:raid-participant/hp e 0))
-     :dano (long (:raid-participant/dano e 0))
-     :collection-index (long (:raid-participant/collection-index e 0))}))
+    (let [hp (long (:raid-participant/hp e 0))
+          idx (long (:raid-participant/collection-index e 0))
+          decoded (decode-participant-bundle
+                   (edn-read (:raid-participant/pokemon-edn e))
+                   hp idx)]
+      (merge {:key (:raid-participant/key e)
+              :raid-id (:raid-participant/raid-id e)
+              :player-key (:raid-participant/player-key e)
+              :player-id (when-let [pk (:raid-participant/player-key e)]
+                           (:player-id (id/parse-player-key pk)))
+              :save-id (:raid-participant/save-id e)
+              :fence-generation (long (:raid-participant/fence-generation e 0))
+              :nome (:raid-participant/nome e)
+              :dano (long (:raid-participant/dano e 0))}
+             decoded))))
 
 (defn raid->map
   [e participantes capturas edn-read present?]
@@ -187,13 +218,24 @@
     (:last-raid-id s) (assoc :raid-auto-schedule/last-raid-id (:last-raid-id s))))
 
 (defn- encode-participant-pokemon-edn
-  "Snapshot de combate no participante — sem historico/ofertas/legado.
-   Mesma estratégia de caça/ginásio/Joy: slim + gzip se plain > limite Local (~4096).
-   Coleção canônica permanece em :pokemon/*; não truncamos identificadores."
-  [pokemon]
-  (battle/encode-value-edn
-   :raid-participant/pokemon-edn
-   (battle/slim-pokemon-for-battle pokemon {:keep-images? true})))
+  "Snapshot de combate — party v2 embutida no edn (sem migration de schema)."
+  [p]
+  (let [slim-slot (fn [s]
+                    {:pokemon (battle/slim-pokemon-for-battle
+                               (:pokemon s) {:keep-images? true})
+                     :hp (long (:hp s 0))
+                     :collection-index (long (:collection-index s 0))})
+        party (mapv slim-slot
+                    (or (:party p)
+                        [{:pokemon (:pokemon p)
+                          :hp (:hp p)
+                          :collection-index (:collection-index p 0)}]))
+        bundle {:__raid-party-v1 true
+                :active (battle/slim-pokemon-for-battle
+                         (:pokemon p) {:keep-images? true})
+                :party party
+                :active-idx (long (:active-party-idx p 0))}]
+    (battle/encode-value-edn :raid-participant/pokemon-edn bundle)))
 
 (defn- participant-entity
   [raid-id player-id chat-id p]
@@ -203,7 +245,7 @@
    :raid-participant/save-id (:save-id p)
    :raid-participant/fence-generation (long (:fence-generation p))
    :raid-participant/nome (:nome p)
-   :raid-participant/pokemon-edn (encode-participant-pokemon-edn (:pokemon p))
+   :raid-participant/pokemon-edn (encode-participant-pokemon-edn p)
    :raid-participant/hp (long (:hp p))
    :raid-participant/dano (long (:dano p 0))
    :raid-participant/collection-index (long (:collection-index p 0))})
@@ -571,6 +613,22 @@
                      (when (and (<= 0 idx) (< idx (count colecao)))
                        (nth colecao idx)))
             _ (when-not poke (throw (err/error :pokemon_not_found {:idx idx})))
+            ;; Selva até 3: índice pedido + próximos vivos da coleção.
+            extras (into []
+                         (comp (filter #(let [ci (long (or (:collection-index %)
+                                                           (get % "collection-index") -1))
+                                              golpes (or (:golpes %) (get % "golpes"))]
+                                          (and (not= ci idx)
+                                               (pos? (long (or (:hp-atual %) (get % "hp-atual")
+                                                               (:hp %) (get % "hp") 0)))
+                                               (seq golpes))))
+                               (take (dec raid/max-party)))
+                         colecao)
+            party (into [{:pokemon poke :collection-index idx}]
+                        (map (fn [p]
+                               {:pokemon p
+                                :collection-index (long (:collection-index p 0))})
+                             extras))
             nome (or (:nome request) (:nome old) player-id)
             raid' (raid/entrar raid
                                {:player-id player-id
@@ -578,7 +636,8 @@
                                 :save-id save-id
                                 :fence-generation fence
                                 :pokemon poke
-                                :collection-index idx}
+                                :collection-index idx
+                                :party party}
                                agora)
             p (get-in raid' [:participantes player-id])
             sk (id/save-key chat-id player-id save-id)
@@ -778,16 +837,23 @@
                    :operation-receipt/save-id (:save-id writer-ctx)
                    :operation-receipt/summary
                    (pr-str {:dano (:dano outcome)
+                            :multiplicador (:multiplicador outcome)
                             :venceu? (:venceu? outcome)
-                            :derrota? (:derrota? outcome)})}]
+                            :derrota? (:derrota? outcome)
+                            :trocou? (:trocou? outcome)})}]
                  other-parts)]
     {:tx (into (vec raid-tx) (mapcat :tx reward-bundles))
      :result {:operation-id operation-id
               :duplicate false
               :dano (:dano outcome)
+              :multiplicador (:multiplicador outcome)
               :revide (:revide outcome)
               :venceu? (:venceu? outcome)
               :derrota? (:derrota? outcome)
+              :trocou? (boolean (:trocou? outcome))
+              :autodesmaio? (boolean (:autodesmaio? outcome))
+              :hp-ativo (:hp-ativo outcome)
+              :golpe (:golpe outcome)
               :raid raid'
               :rewards (mapv #(select-keys % [:player-id :moedas :pe :xp-pokemon
                                               :pokemon-id :outcome])

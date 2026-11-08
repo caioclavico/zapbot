@@ -167,11 +167,26 @@ async function carregarGolpe(nome) {
       return { ...base, poder: 0, classe: 'transform' };
     }
     if (d.power && (classe === 'physical' || classe === 'special')) {
-      return {
+      const meta = d.meta || {};
+      const drain = Number(meta.drain || 0);
+      const effectEntries = d.effect_entries || [];
+      const effectText = effectEntries
+        .filter(e => e.language && e.language.name === 'en')
+        .map(e => (e.short_effect || e.effect || '').toLowerCase())
+        .join(' ');
+      const autodesmaio = /user faints/.test(effectText)
+        || d.name === 'explosion'
+        || d.name === 'self-destruct'
+        || d.name === 'misty-explosion';
+      const out = {
         ...base,
         poder: d.power,
         classe: classe === 'physical' ? 'fisico' : 'especial'
       };
+      if (drain < 0) out.recuo = Math.abs(drain);
+      if (drain > 0) out.dreno = drain;
+      if (autodesmaio) out.autodesmaio = true;
+      return out;
     }
     if (classe === 'status') {
       return { ...base, poder: 0, classe: 'status' };

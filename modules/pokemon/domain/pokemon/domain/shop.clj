@@ -78,7 +78,11 @@
    "persim" "confuso"})
 
 (def aliases-item
-  {"normal" "pokebola" "grande" "grande-bola" "ultra" "ultra-bola"
+  {"normal" "pokebola" "poke" "pokebola" "poke-ball" "pokebola" "pokeball" "pokebola"
+   "grande" "grande-bola" "super" "grande-bola" "super-bola" "grande-bola"
+   "superbola" "grande-bola" "great" "grande-bola" "great-ball" "grande-bola"
+   "greatball" "grande-bola"
+   "ultra" "ultra-bola" "ultra-ball" "ultra-bola" "ultraball" "ultra-bola"
    "maxima" "pocao-maxima" "maxima-pocao" "pocao-maxima"
    "poção" "pocao" "poção-maxima" "pocao-maxima"
    "óculos" "oculos" "oculos-sabios" "oculos"

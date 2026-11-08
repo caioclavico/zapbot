@@ -221,3 +221,54 @@
         raw (get (or (:historico-golpes registro) {}) id
                  (get (or (:historico-golpes registro) {}) slug))]
     (when raw (registro->golpe raw))))
+
+(def niveis-por-golpe 5)
+
+(defn- marco-nivel?
+  [nivel]
+  (and (pos? (long nivel)) (zero? (mod (long nivel) niveis-por-golpe))))
+
+(defn marcos-cruzados
+  "Níveis múltiplos de 5 estritamente após `de` até `ate` (inclusive)."
+  [de ate]
+  (let [de (long de) ate (long ate)]
+    (filterv marco-nivel? (range (inc de) (inc ate)))))
+
+(defn candidato-nivel
+  "Primeiro golpe elegível ainda não conhecido/oferecido.
+  Preferência: `:golpes-candidatos` no registro; senão ataque básico do tipo."
+  [registro]
+  (let [conhecidos (set (map chave (or (:golpes registro) (get registro "golpes") [])))
+        oferecidos (set (map chave (ofertas registro)))
+        ja (into conhecidos oferecidos)
+        tipos (or (:tipos registro) (get registro "tipos") ["normal"])
+        candidatos (or (seq (:golpes-candidatos registro))
+                       (seq (get registro "golpes-candidatos"))
+                       (when-let [[nome poder classe] (get ataques-iniciais (first tipos))]
+                         [{:slug (identificador nome)
+                           :nome-exibicao nome
+                           :tipo (first tipos)
+                           :poder poder
+                           :classe classe}]))]
+    (first (remove #(contains? ja (chave %)) candidatos))))
+
+(defn aplicar-ofertas-por-nivel
+  "Para cada marco 5/10/... cruzado na subida, oferece uma oferta (idempotente
+  via `:nivel-oferta-verificado`). Sem candidato → só avança o marco.
+  `oferecer-golpe` devolve `{:resultado :registro}` — unwrap obrigatório."
+  [registro nivel-antes nivel-depois]
+  (let [verificado (long (or (:nivel-oferta-verificado registro)
+                             (get registro "nivel-oferta-verificado") 0))]
+    (reduce
+     (fn [reg nivel]
+       (if (<= (long nivel) (long (or (:nivel-oferta-verificado reg)
+                                      (get reg "nivel-oferta-verificado") 0)))
+         reg
+         (let [cand (candidato-nivel reg)
+               reg' (if-not cand
+                      reg
+                      (let [out (oferecer-golpe reg cand)]
+                        (or (:registro out) out)))]
+           (assoc reg' :nivel-oferta-verificado (long nivel)))))
+     registro
+     (filter #(> (long %) verificado) (marcos-cruzados nivel-antes nivel-depois)))))

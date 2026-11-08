@@ -386,10 +386,14 @@
   Após subidas, tenta evolução por nível via catálogo canônico (sem I/O);
   ramificadas/especiais não entram no catálogo e não evoluem automaticamente."
   [poke quantidade]
-  (let [applied (xp/aplicar-xp-pokemon poke quantidade)
+  (let [nivel-antes (long (or (:nivel poke) 1))
+        applied (xp/aplicar-xp-pokemon poke quantidade)
         r0 (:registro applied)
         prepared (level-evo/prepare r0)
-        r (if prepared (level-evo/apply-prepared r0 prepared) r0)
+        r1 (if prepared (level-evo/apply-prepared r0 prepared) r0)
+        r (if (pos? (long (:subidas applied 0)))
+            (moves/aplicar-ofertas-por-nivel r1 nivel-antes (:nivel r1))
+            r1)
         lookup [:pokemon/id-pokemon (:id-pokemon poke)]
         base-tx [[:db/add lookup :pokemon/level (long (:nivel r))]
                  [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
@@ -402,12 +406,22 @@
                  [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
                  [:db/add lookup :pokemon/veloc (long (:veloc r))]
                  [:db/add lookup :pokemon/amizade (long (:amizade r))]]
+        oferta-tx (when (not= (or (:ofertas-golpes r) (:golpes-oferecidos r) [])
+                              (or (:ofertas-golpes poke) (:golpes-oferecidos poke) []))
+                    [[:db/add lookup :pokemon/ofertas-golpes-edn
+                      (pr-str (or (:ofertas-golpes r) (:golpes-oferecidos r) []))]])
+        golpes-tx (when (not= (or (:golpes r) []) (or (:golpes poke) []))
+                    [[:db/add lookup :pokemon/golpes-edn (pr-str (or (:golpes r) []))]])
         evo-tx (when prepared (evolution-tx-fragments lookup poke r))]
-    {:tx (into base-tx (or evo-tx []))
+    {:tx (-> base-tx
+             (into (or oferta-tx []))
+             (into (or golpes-tx []))
+             (into (or evo-tx [])))
      :subida (when (pos? (:subidas applied))
                {:nome (or (:nome r) (:nome applied))
                 :nivel (:nivel-final applied)
-                :niveis-subidos (:subidas applied)})
+                :niveis-subidos (:subidas applied)
+                :ofertas (or (:ofertas-golpes r) (:golpes-oferecidos r) [])})
      :evolucao (when prepared
                  {:nome-antigo (or (:nome poke) (:species poke))
                   :nome-novo (:nome r)
@@ -1988,7 +2002,8 @@
                      prepared-frambo? (boolean (:frambo-preparada state))
                      request-frambo? (boolean (:frambo request))
                      frambo? (or prepared-frambo? request-frambo?)
-                     frambo-tx (when (and frambo? (not prepared-frambo?))
+                     ;; Consome Frambo na captura (prepare só marca; alinhado à raid).
+                     frambo-tx (when frambo?
                                  (inventory-adjust-tx db sk capture/frambo-item-id -1))
                      ball-tx (into (or frambo-tx []) (inventory-adjust-tx db sk bola -1))
                      tentativas-ant (long (:tentativas-captura state 0))
@@ -2206,7 +2221,8 @@
                      _ (when (:frambo-preparada state)
                          (throw (err/error :frambo_already_prepared
                                            {:battle-id battle-id})))
-                     frambo-tx (inventory-adjust-tx db sk capture/frambo-item-id -1)
+                     ;; Valida estoque sem debitar — consumo só na captura.
+                     _ (inventory-adjust-tx db sk capture/frambo-item-id -1)
                      save-m (->save save)
                      chance-base (or (:chance-base-captura state)
                                      (capture/chance-base-pos-batalha
@@ -2217,27 +2233,26 @@
                                        :frambo-preparada true
                                        :chance-base-captura chance-base)
                      rev (long (:save/revision save 0))
-                     inv-after (query-inventory db sk)
+                     inv-now (query-inventory db sk)
                      frambo-left (long (or (some #(when (= capture/frambo-item-id (:item-id %))
                                                     (:qty %))
-                                                 inv-after)
+                                                 inv-now)
                                            0))
                      summary {:frambo-preparada true
                               :battle-id battle-id
                               :chance-base chance-base
                               :chances (capture/chances-painel chance-base true)
                               :frambo frambo-left}]
-                 {:tx (into frambo-tx
-                            [[:db/add [:battle/id battle-id] :battle/state-edn
-                              (battle/encode-state-edn next-state)]
-                             [:db/cas [:save/key sk] :save/revision rev (inc rev)]
-                             {:operation-receipt/id operation-id
-                              :operation-receipt/kind "encounter-frambo-prep"
-                              :operation-receipt/channel "gameplay"
-                              :operation-receipt/payload-hash phash
-                              :operation-receipt/player-key pk
-                              :operation-receipt/save-id (:save-id writer-ctx)
-                              :operation-receipt/summary (pr-str summary)}])
+                 {:tx [[:db/add [:battle/id battle-id] :battle/state-edn
+                        (battle/encode-state-edn next-state)]
+                       [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                       {:operation-receipt/id operation-id
+                        :operation-receipt/kind "encounter-frambo-prep"
+                        :operation-receipt/channel "gameplay"
+                        :operation-receipt/payload-hash phash
+                        :operation-receipt/player-key pk
+                        :operation-receipt/save-id (:save-id writer-ctx)
+                        :operation-receipt/summary (pr-str summary)}]
                   :result (assoc summary
                                  :operation-id operation-id
                                  :duplicate false
