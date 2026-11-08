@@ -72,8 +72,15 @@
               "golpes" [{"slug" "splash" "nome-exibicao" "Splash" "tipo" "normal"
                          "poder" 0 "classe" "status"}]}]
     (try
-      (let [plan (get! (str "/v1/hunt/plan?chatId=" chat "&playerId=" player
-                            "&areaId=praia&rollTipos=50&rollSurto=99"))
+      ;; Rotação climática bloqueia áreas por dia/horário — tenta até achar uma aberta.
+      (let [plan (or (some (fn [area]
+                             (let [r (get! (str "/v1/hunt/plan?chatId=" chat
+                                                "&playerId=" player
+                                                "&areaId=" area
+                                                "&rollTipos=50&rollSurto=99"))]
+                               (when (= 200 (:status r)) r)))
+                           ["lago" "cidade" "caverna" "praia" "floresta" "vulcao"])
+                     (throw (ex-info "plan: nenhuma área disponível no smoke" {})))
             _ (assert! (= 200 (:status plan)) (str "plan " plan))
             data (get-in plan [:body "data"])
             fence (get data "fenceGeneration")

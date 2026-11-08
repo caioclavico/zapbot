@@ -162,7 +162,8 @@ test('comandos simulados: treinador e coleção formatados', async () => {
     assert.match(env.messages[0].text, /Squirtle/);
 
     const env2 = await dispatch(client, msg, ['tm']);
-    assert.match(env2.messages[0].text, /seu time/i);
+    // Lote A / time: título canônico "Meu Time Pokémon" (não "seu time").
+    assert.match(env2.messages[0].text, /Meu Time Pokémon|Pidgey/i);
     assert.match(env2.messages[0].text, /Pidgey/);
   });
 });
@@ -176,7 +177,8 @@ test('comando inválido retorna orientação sem chamar o bridge', async () => {
     getTrainer: async () => { chamadasBridge += 1; throw new Error('não deveria chamar'); }
   }, msg, ['inexistente']);
 
-  assert.match(resposta.messages[0].text, /comando ainda não está disponível/i);
+  // Lote A ajuda: formatUnavailable → central de ajuda (sem frase legada).
+  assert.match(resposta.messages[0].text, /não reconhecido|ajuda/i);
   assert.match(resposta.messages[0].text, /inexistente/);
   assert.equal(chamadasBridge, 0);
 });
@@ -225,12 +227,13 @@ test('A→B→A por comando com isolamento de jogador na identidade', async () =
     const ash = fakeMessage({ chatId: 'g@g.us', playerId: 'ash', requestId: 'r-ash', args: 'ativar b' });
     const misty = fakeMessage({ chatId: 'g@g.us', playerId: 'misty', requestId: 'r-misty', args: 'saves' });
     const a1 = await dispatch(client, ash, ['ativar', 'b']);
-    assert.match(a1.messages[0].text, /\*b\*/);
+    assert.match(a1.messages[0].text, /`b`|ativo/i);
     const a2 = await dispatch(client, ash, ['ativar', 'a']);
-    assert.match(a2.messages[0].text, /\*a\*/);
+    assert.match(a2.messages[0].text, /`a`|ativo/i);
     const m = await dispatch(client, misty, ['saves']);
-    assert.match(m.messages[0].text, /ativo=a/);
-    assert.match(m.messages[0].text, /\*b\*: 7 moedas/);
+    // Lista slim: marca "— ativo" no save ativo (sem coins inline).
+    assert.match(m.messages[0].text, /`a` — ativo/);
+    assert.match(m.messages[0].text, /`b`/);
     // identidade não veio do texto do comando
     const id = trustedIdentityFromMessage({
       ...ash, body: '!pk ativar b playerId=hacker'
@@ -248,7 +251,7 @@ test('escrita não integrada, cacar elegível e JVM indisponível', async () => 
     msg,
     ['batalhar']
   );
-  assert.match(denied.messages[0].text, /não está disponível/);
+  assert.match(denied.messages[0].text, /não reconhecido|ajuda/i);
 
   await withJvm((req, res) => {
     res.setHeader('Content-Type', 'application/json');

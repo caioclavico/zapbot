@@ -161,8 +161,12 @@
       (is (= "Charmeleon" (:nome poke)))
       (is (true? (:shiny poke)))
       (is (= "charmeleon-s.png" (:imagem poke)))
-      (is (= 70 (:hp poke)))
-      (is (= 60 (:hp-atual poke))) ;; 40 + (70-50)
+      ;; Species-HP v1: base oficial Charmeleon=58 @ Nv.16 → hp-max 95;
+      ;; política proporcional preserva 40/50 → 76 (não o Δ legado 70/60).
+      (is (= 95 (:hp poke)))
+      (is (= 76 (:hp-atual poke)))
+      (is (= 58 (:hp-base poke)))
+      (is (= "species-hp-v1" (:hp-formula-version poke)))
       (is (= 2 pedras))
       (is (seq (:golpes poke))))))
 
