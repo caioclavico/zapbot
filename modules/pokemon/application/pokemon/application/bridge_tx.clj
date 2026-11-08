@@ -22,6 +22,7 @@
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.pvp :as pvp-domain]
             [pokemon.domain.shop :as shop-domain]
+            [pokemon.domain.battle :as battle]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
@@ -36,19 +37,24 @@
 
 (defn- present-pokemon
   "DTO de apresentação para Node (HP atual/máx, golpes, sprites).
-   Raridade canônica via `assegurar-raridade` (legado/classificação explícita)."
+   Raridade canônica via `assegurar-raridade` (legado/classificação explícita).
+   Golpes re-normalizados (string-keys / slug) — mesmo canônico do encounter-dto."
   [p hp-atual]
   (when p
     (let [p (capture/assegurar-raridade p)
-          resolved (capture/resolver-raridade p)]
+          resolved (capture/resolver-raridade p)
+          golpes (->> (or (:golpes p) (get p "golpes") [])
+                      (mapv battle/golpe-normalizado)
+                      (filterv map?))]
       (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
                               :raridade :tipos :ataque :defesa :atq-esp :def-esp
-                              :veloc :imagem :imagem-shiny :altura :golpes
+                              :veloc :imagem :imagem-shiny :altura
                               :status :habilidade :collection-index
                               :motivacao-ginasio])
         true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0))
                     :raridade (:raridade resolved)
-                    :raridade-fonte (name (:fonte resolved)))
+                    :raridade-fonte (name (:fonte resolved))
+                    :golpes golpes)
         (:shiny? p) (assoc :shiny true)))))
 
 (defn- present-battle
@@ -753,9 +759,8 @@
        :vez-nome (:nome vp)
        :vez-hp (:hp vp)
        :vez-valida (boolean (raid-domain/vez-valida? raid))
-       :vez-pokemon (when poke
-                      (select-keys poke [:nome :species :hp :hp-atual :imagem
-                                         :imagem-shiny :nivel :tipos :golpes]))
+       ;; Mesmo DTO canônico do encounter (golpes normalizados + raridade + sprites).
+       :vez-pokemon (present-pokemon poke (:hp vp))
        :proxima-vez proxima
        :proxima-vez-nome (when proxima (get-in parts [proxima :nome]))
        :turn-index (:turn-index raid 0)
@@ -774,9 +779,9 @@
                                (select-keys poke
                                             [:nome :species :nivel :hp-atual])))))
              (:ordem raid []))
-       :chefe (select-keys (or (:chefe raid) {})
-                           [:nome :species :raridade :hp :tipos :imagem
-                            :imagem-shiny :nivel])
+       :chefe (when-let [c (:chefe raid)]
+                (when (or (:nome c) (:species c) (get c "nome") (get c "species"))
+                  (present-pokemon c (or (:hp-chefe raid) (:hp c)))))
        :expira (:expira raid)
        :captura-expira (:captura-expira raid)
        :rewards-paid (boolean (:rewards-paid? raid))})))

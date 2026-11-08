@@ -25,3 +25,36 @@
   (testing "sem chefe → nil"
     (is (nil? (raid-store/opened-media-from-raid {})))
     (is (nil? (raid-store/opened-media-from-raid nil)))))
+
+(deftest started-combat-from-raid-anexa-snapshot
+  (let [raid {:fase "combate"
+              :raid-id "raid-1"
+              :nome-ginasio "🔥 Fogo"
+              :ginasio "fogo"
+              :hp-chefe 100
+              :hp-max 100
+              :vez "ash"
+              :turn-index 0
+              :ordem ["ash"]
+              :chefe {:nome "Magmar" :species "magmar" :tipos ["fire"]
+                      :raridade "raro" :hp 100
+                      :imagem "https://example/magmar.png"}
+              :participantes
+              {"ash" {:nome "Ash" :hp 80
+                      :pokemon {:nome "Wartortle" :species "wartortle"
+                                :hp 100 :tipos ["water"] :raridade "incomum"
+                                :imagem "https://example/wartortle.png"
+                                :golpes [{:nome-exibicao "Water Gun" :tipo "water"
+                                          :poder 40 :classe :especial}
+                                         {:nome "Bite" :tipo "dark" :poder 60}]}}}}
+        snap (raid-store/started-combat-from-raid raid)]
+    (is (= "combate" (:fase snap)))
+    (is (true? (:auto snap)))
+    (is (= "Magmar" (get-in snap [:chefe :nome])))
+    (is (= "Wartortle" (get-in snap [:vez-pokemon :nome])))
+    (is (seq (get-in snap [:vez-pokemon :golpes])))
+    (is (= "water" (get-in snap [:vez-pokemon :golpes 0 :tipo])))
+    (is (some? (get-in snap [:chefe :imagem])))
+    (is (some? (get-in snap [:vez-pokemon :raridade]))))
+  (testing "lobby não gera snapshot de combate"
+    (is (nil? (raid-store/started-combat-from-raid {:fase "inscricoes"})))))

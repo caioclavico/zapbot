@@ -3903,10 +3903,13 @@
                        (raid-store/started-raid-id (:id ev))
                        (let [rid (raid-store/started-raid-id (:id ev))
                              raid (load-raid db rid)
-                             vez (when (map? raid) (:vez raid))]
+                             vez (when (map? raid) (:vez raid))
+                             combat (raid-store/started-combat-from-raid raid)]
                          (cond-> ev
                            (and (string? vez) (seq vez))
-                           (assoc :mentions [vez])))
+                           (assoc :mentions [vez])
+                           (map? combat)
+                           (assoc :raid combat)))
 
                        :else ev))))
            (take (long (or limit 20)))

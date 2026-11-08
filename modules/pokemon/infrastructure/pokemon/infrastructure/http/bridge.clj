@@ -1461,6 +1461,9 @@
                                                   (assoc :tipo (get-in e [:media :tipo]))
                                                   (seq (get-in e [:media :tipos]))
                                                   (assoc :tipos (get-in e [:media :tipos]))))
+                                         ;; Snapshot de combate no raid-started (1º frame canônico).
+                                         (map? (:raid e))
+                                         (assoc :raid (:raid e))
                                          (seq (:mentions e))
                                          (assoc :mentions (vec (:mentions e)))))
                                      events)})))

@@ -180,6 +180,18 @@ const TIPOS_PT = {
   steel: 'Aço', fairy: 'Fada'
 };
 
+const TIPO_EMOJI = {
+  normal: '⚪', fire: '🔥', water: '💧', electric: '⚡', grass: '🍃', ice: '❄️',
+  fighting: '👊', poison: '☠️', ground: '🌍', flying: '🕊️', psychic: '🔮',
+  bug: '🐛', rock: '🪨', ghost: '👻', dragon: '🐉', dark: '🌑', steel: '⚙️',
+  fairy: '✨'
+};
+
+function emojiTipo(tipo) {
+  const k = String(tipo || '').toLowerCase().trim();
+  return TIPO_EMOJI[k] || '';
+}
+
 const TABELA_TIPOS = {
   normal: { rock: 0.5, steel: 0.5, ghost: 0 },
   fire: { grass: 2, ice: 2, bug: 2, steel: 2, fire: 0.5, water: 0.5, rock: 0.5, dragon: 0.5 },
@@ -313,7 +325,8 @@ function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
   const precisao = golpe.precisao != null ? golpe.precisao : golpe.accuracy;
   const prec = precisao != null ? `, precisão ${precisao}%` : '';
   const mark = mult === 0 ? ' 🚫' : (mult > 1 ? ' 🔥' : (mult < 1 ? ' 😕' : ''));
-  const linha = `${idx + 1}. ${emojiGolpe(golpe)} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
+  const tipoEmoji = emojiTipo(tipo);
+  const linha = `${idx + 1}. ${emojiGolpe(golpe)}${tipoEmoji ? ` ${tipoEmoji}` : ''} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
   if (isExplosionGolpe(golpe) && mult === 0) {
     return `${linha}\n   ⚠️ Sem efeito neste alvo — o Pokémon *não* desmaia se o golpe não causar dano.`;
   }
@@ -2350,18 +2363,24 @@ function formatRaidMoveLines(pokemon, prefix = '!pk', tiposDefesa, habilidadeDef
   }
   return golpes.slice(0, 4).map((g, i) => {
     const nome = nomeGolpeUi(g, i);
-    const classe = String(g.classe || g.class || '').toLowerCase();
     const poder = Number(g.poder != null ? g.poder : (g.power != null ? g.power : 0));
+    // Paridade linhaGolpe: classe ausente + poder>0 → físico ofensivo (legado).
+    const classeRaw = g.classe != null ? g.classe : (g.class != null ? g.class : null);
+    const classe = String(
+      classeRaw != null ? classeRaw : (poder > 0 ? 'fisico' : 'status')
+    ).toLowerCase().replace(/^:/, '');
     const ofensivo = (classe === 'fisico' || classe === 'especial'
       || classe === 'físico' || classe === 'physical' || classe === 'special')
       && poder > 0;
     // Status/transform válidos: nome + classe — não confundir com ref quebrada (?).
     if (!ofensivo) {
-      const emoji = emojiGolpe(g);
-      return `${i + 1}. ${emoji} *${nome}* — _indisponível na raid_`;
+      const emoji = emojiGolpe(Object.assign({}, g, { classe }));
+      const tipoEmoji = emojiTipo(g.tipo || g.type);
+      return `${i + 1}. ${emoji}${tipoEmoji ? ` ${tipoEmoji}` : ''} *${nome}* — _indisponível na raid_`;
     }
-    // Paridade caça: emoji de classe + marca de efetividade vs chefe.
-    const linha = linhaGolpe(i, g, tiposDefesa || [], habilidadeDefensor);
+    // Paridade caça: emoji de classe/tipo + marca de efetividade vs chefe.
+    const gNorm = classeRaw != null ? g : Object.assign({}, g, { classe: 'fisico' });
+    const linha = linhaGolpe(i, gNorm, tiposDefesa || [], habilidadeDefensor);
     return `${linha} → \`${prefix} raid atacar ${i + 1}\``;
   });
 }
@@ -2570,11 +2589,19 @@ function formatLeaveResult(data, prefix = '!pk') {
 
 function formatRaidStart(data, prefix = '!pk') {
   const r = (data && data.raid) || {};
-  // Sem barra extra: formatRaidTurnBlock já mostra chefe + ativo.
-  return [
-    `🔥 Combate iniciado! Chefe com ${r.hpChefe || r.hpMax || '?'} HP.`,
-    ...formatRaidTurnBlock(r, prefix)
-  ].join('\n');
+  const auto = Boolean(data && (data.auto || data.automatica || r.auto));
+  const chefeNome = (r.chefe && (r.chefe.nome || r.chefe.species)) || 'Chefe';
+  // Pipeline único 1º frame (manual e automático) → formatRaidTurnBlock.
+  const header = auto
+    ? [
+      '⚔️ *RAID INICIADA AUTOMATICAMENTE!*',
+      `🏛️ ${r.nomeGinasio || r.ginasio || 'ginásio'}`,
+      `🔥 Chefe: *${chefeNome}*`,
+      `❤️ HP do chefe: ${r.hpChefe != null ? r.hpChefe : '?'}/${r.hpMax != null ? r.hpMax : (r.hpChefe != null ? r.hpChefe : '?')}`,
+      ''
+    ]
+    : [`🔥 Combate iniciado! Chefe com ${r.hpChefe || r.hpMax || '?'} HP.`];
+  return [...header, ...formatRaidTurnBlock(r, prefix)].join('\n');
 }
 
 /** Rodapé de vitória / captura — estados mutuamente exclusivos. */
@@ -2760,13 +2787,6 @@ function effectivenessLine(mult) {
   if (m < 1) return 'Pouco efetivo!🛡️';
   return null;
 }
-
-const TIPO_EMOJI = {
-  normal: '⚪', fire: '🔥', water: '💧', electric: '⚡', grass: '🍃', ice: '❄️',
-  fighting: '👊', poison: '☠️', ground: '🌍', flying: '🕊️', psychic: '🔮',
-  bug: '🐛', rock: '🪨', ghost: '👻', dragon: '🐉', dark: '🌑', steel: '⚙️',
-  fairy: '✨'
-};
 
 function formatRaidAttack(data, prefix = '!pk') {
   if (data && data.venceu) {
@@ -4285,6 +4305,8 @@ module.exports = {
   resolveHelpRequest,
   formatHelp,
   TIPOS_PT,
+  TIPO_EMOJI,
+  emojiTipo,
   tipoLabelPt,
   formatCanonicalAttackLine,
   normalizeGymToken,
