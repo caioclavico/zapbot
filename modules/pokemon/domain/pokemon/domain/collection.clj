@@ -48,7 +48,10 @@
       (g :imagem) (assoc :imagem (g :imagem))
       (g :imagem-shiny) (assoc :imagem-shiny (g :imagem-shiny))
       (g :habilidade) (assoc :habilidade (g :habilidade))
-      (g :ivs) (assoc :ivs (g :ivs)))))
+      (g :ivs) (assoc :ivs (g :ivs))
+      (number? (g :hp-base)) (assoc :hp-base (long (g :hp-base)))
+      (string? (g :hp-formula-version))
+      (assoc :hp-formula-version (str (g :hp-formula-version))))))
 
 (defn validate-index!
   [idx colecao-count]

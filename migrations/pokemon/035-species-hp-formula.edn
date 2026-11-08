@@ -1,0 +1,13 @@
+;; Species HP v1 — metadados de fórmula (não altera saves automaticamente).
+;; Aplicação em produção exige GO + processo transacional idempotente separado.
+[
+ {:db/ident       :pokemon/hp-base
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "HP base oficial da espécie (PokeAPI). Usado por species-hp-v1."}
+
+ {:db/ident       :pokemon/hp-formula-version
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Versão da fórmula de HP máximo (ex.: species-hp-v1). Ausente = legado suavizar-0.5+1.03."}
+]

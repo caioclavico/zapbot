@@ -1,8 +1,8 @@
 # Pokémon A6 — Auditoria de jogabilidade
 
 **Worktree:** `/private/tmp/zapbot-a6-gameplay-audit`
-**Branch:** `fix/a6-raid-one-mon-ux` (base tip integrada `b9ae76c`)
-**Escopo:** A+B+C+P0 + Balance A + revisão 1-mon/UX/catálogo. Live RO auditado antes das mudanças. **Sem deploy/migrations/backfill/saves/flags.** HP de espécie: proposta quantitativa pendente de aprovação.
+**Branch:** `feature/a6-species-hp-realistic` (base `rc/a6-abc-p0-integrated` @ `3f9edc3`)
+**Escopo:** A+B+C+P0 + Balance A + One-Mon + **species-hp-v1** (local; riscos clamp+Node fechados). **Sem deploy/migrations live/backfill/saves/flags.** Relatório: `docs/pokemon-a6-species-hp-balance.md` — **GO** integrar RC / **NO-GO** deploy.
 
 ## Caminho canônico
 
@@ -456,8 +456,10 @@ HP chefe **não** reduzido. Simulação (`raid-balance-one-mon-sim-a6-test`):
 |----------|--------|
 | 1-mon + UX + Frambo + catálogo + regressões | **GO** — merged PR [#43](https://github.com/caioclavico/zapbot/pull/43) @ `b0f0677` |
 | Imagens Node+JVM AMD64 | **GO** — `617525d9…` / `4a75eaa2…` (tree `f3866c5e…`) |
-| Pedido de janela de deploy | **GO para preparar** (overlay pinado; **sem** apply) |
+| Pedido de janela de deploy | **GO** executado |
+| Cutover produção One-Mon | **SUCCESS** — live Node `617525d9…` / JVM `4a75eaa2…` · `STABILITY_20M_PASS` |
 | Fórmula global de HP de espécie | **NO-GO** (proposta só; aguarda aprovação) |
-| Deploy / migrations / saves / flags | **NO-GO** (proibido neste ciclo) |
+| Migrations / backfill / saves / flags / hold / CI | **não** alterados nesta janela |
 
-**Rollback live (RO 2026-11-08):** Node `002c83e8…` / JVM `e044cce1…` (Balance A).
+**Cutover:** evidência `a6-raid-one-mon-cutover-20261108T111814Z` · READY `2026-11-08T11:25:09Z` · observe 41/41 · seccomp+SingletonLock mid-fix.  
+**Rollback Balance A:** Node `002c83e8…` / JVM `e044cce1…` — imagens presentes (não usadas).

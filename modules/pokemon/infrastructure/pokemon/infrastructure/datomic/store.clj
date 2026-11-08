@@ -15,6 +15,7 @@
             [pokemon.domain.level-evolution :as level-evo]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.hunt :as hunt]
+            [pokemon.domain.species-base :as species-base]
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]
             [pokemon.domain.moves :as moves]
@@ -275,6 +276,9 @@
              :golpes (vec (or (edn-read (:pokemon/golpes-edn e)) []))
              :golpes-removidos (vec (or (edn-read (:pokemon/golpes-removidos-edn e)) []))
              :historico-golpes (or (edn-read (:pokemon/historico-golpes-edn e)) {})}
+      (some? (:pokemon/hp-base e)) (assoc :hp-base (:pokemon/hp-base e))
+      (some? (:pokemon/hp-formula-version e))
+      (assoc :hp-formula-version (:pokemon/hp-formula-version e))
       (:pokemon/habilidade e) (assoc :habilidade (:pokemon/habilidade e))
       (:pokemon/imagem e) (assoc :imagem (:pokemon/imagem e))
       (:pokemon/imagem-shiny e) (assoc :imagem-shiny (:pokemon/imagem-shiny e))
@@ -289,7 +293,6 @@
       (some? (:pokemon/taxa-captura e)) (assoc :taxa-captura (:pokemon/taxa-captura e))
       (:pokemon/legado-edn e) (assoc :legado (edn-read (:pokemon/legado-edn e)))
       (:pokemon/origin-edn e) (assoc :origin-edn (:pokemon/origin-edn e)))))
-
 (defn- pokemon-entity-map
   "Mapa de atributos Datomic a partir do registro de domínio.
    Joy collect / readmit: location=equipe; não copia pronto-em."
@@ -336,7 +339,11 @@
       (number? (:taxa-captura registro))
       (assoc :pokemon/taxa-captura (long (:taxa-captura registro)))
       (and (contains? registro :item) (some? (:item registro)))
-      (assoc :pokemon/item (str (:item registro))))))
+      (assoc :pokemon/item (str (:item registro)))
+      (number? (:hp-base registro))
+      (assoc :pokemon/hp-base (long (:hp-base registro)))
+      (string? (:hp-formula-version registro))
+      (assoc :pokemon/hp-formula-version (str (:hp-formula-version registro))))))
 
 (defn- inventory-qty
   [db sk item-id]
@@ -497,14 +504,34 @@
             colecao
             synced)))
 
+(defn- enrich-hp-base
+  "Completa `:hp-base` pelo catálogo só quando ausente.
+  DTOs de teste com HP artificial (ex.: hostile 500) e sem `hp-base` ficam
+  intactos — produção Node sempre envia `hp-base` oficial."
+  [pokemon]
+  (cond
+    (and (number? (:hp-base pokemon)) (pos? (long (:hp-base pokemon))))
+    pokemon
+    ;; Override explícito de combate/teste: não forçar catálogo.
+    (true? (:species-hp-skip? pokemon))
+    pokemon
+    :else
+    (let [sp (or (:species pokemon) (:slug-especie pokemon) (:nome pokemon))]
+      (if (and sp (species-base/base-hp-known? sp))
+        (assoc pokemon :hp-base (species-base/base-hp sp))
+        pokemon))))
+
 (defn- scale-npc-team
   [candidates gym]
   (mapv (fn [raw]
           (let [base (-> raw
                          (update :golpes #(or % []))
-                         (assoc :status nil))
-                scaled (gym/escalar-nivel base (:nivel gym))]
-            (assoc scaled :hp-atual (:hp scaled))))
+                         (assoc :status nil)
+                         enrich-hp-base)
+                ;; Atk/def: escala legada 1.03; HP: species-hp-v1 no nível do ginásio.
+                scaled (gym/escalar-nivel base (:nivel gym))
+                canon (hunt/canonizar-hp-candidato scaled)]
+            (assoc canon :hp-atual (:hp canon))))
         candidates))
 
 (defn- ->item
@@ -2343,10 +2370,12 @@
                                     ;; para (long) — ver NPE doubleValue no !pk caçar.
                                     com-shiny (if (some? (:shiny-roll request))
                                                 (hunt/sortear-shiny base (:shiny-roll request))
-                                                (hunt/sortear-shiny base))]
-                                (update com-shiny :golpes
-                                        #(moves/garantir-ataque-do-tipo
-                                          (or % []) (:tipos com-shiny))))
+                                                (hunt/sortear-shiny base))
+                                    com-golpes (update com-shiny :golpes
+                                                       #(moves/garantir-ataque-do-tipo
+                                                         (or % []) (:tipos com-shiny)))]
+                                ;; HP canônico JVM (species-hp-v1); atk/def do Node.
+                                (-> com-golpes enrich-hp-base hunt/canonizar-hp-candidato))
                      somente-batalha? (not (capacity/cabe-pokemon? (count colecao) save-m))
                      battle-id (or (:battle-id request) operation-id)
                      state (battle/create-wild-battle
@@ -2483,7 +2512,12 @@
                           (:imagem evoluido)
                           (conj [:db/add lookup :pokemon/imagem (:imagem evoluido)])
                           (:imagem-shiny evoluido)
-                          (conj [:db/add lookup :pokemon/imagem-shiny (:imagem-shiny evoluido)]))]
+                          (conj [:db/add lookup :pokemon/imagem-shiny (:imagem-shiny evoluido)])
+                          (number? (:hp-base evoluido))
+                          (conj [:db/add lookup :pokemon/hp-base (long (:hp-base evoluido))])
+                          (string? (:hp-formula-version evoluido))
+                          (conj [:db/add lookup :pokemon/hp-formula-version
+                                 (str (:hp-formula-version evoluido))]))]
                  {:tx tx
                   :result {:operation-id operation-id
                            :duplicate false

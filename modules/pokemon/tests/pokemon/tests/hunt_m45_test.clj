@@ -450,8 +450,10 @@
           chat "chat-zero-defeat"
           player "ash"
           agora 1700000500000
+          ;; HP artificial de cenário — não aplicar species-hp-v1 do catálogo.
           hostile (assoc magikarp-cand :hp 500 :ataque 999 :atq-esp 999
                           :defesa 999 :def-esp 999
+                          :species-hp-skip? true
                           :golpes [{:slug "crush" :nome-exibicao "Crush"
                                     :tipo "normal" :poder 500 :classe :fisico}])]
       (boot! s chat player)
@@ -479,7 +481,8 @@
         chat "chat-full-bag"
         player "ash"
         agora 1700000700000
-        frail (assoc magikarp-cand :hp 1 :defesa 1 :def-esp 1)]
+        frail (assoc magikarp-cand :hp 1 :defesa 1 :def-esp 1
+                     :species-hp-skip? true)]
     (boot! s chat player)
     (dotimes [i 49]
       (collection/adicionar-pokemon!

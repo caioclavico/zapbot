@@ -6,7 +6,8 @@
             [pokemon.domain.collection :as coll]
             [pokemon.domain.errors :as err]
             [pokemon.domain.hunt :as hunt]
-            [pokemon.domain.moves :as moves]))
+            [pokemon.domain.moves :as moves]
+            [pokemon.domain.species-hp :as species-hp]))
 
 (def kit-item-id "pokebola")
 (def kit-qty 10)
@@ -50,8 +51,10 @@
             :poder 40 :classe :especial :precisao 100}}])
 
 (defn- com-stats-suavizados
+  "Ataque/defesa/etc. seguem suavizar legado; HP usa species-hp-v1."
   [{:keys [base] :as s}]
-  (let [hp (hunt/suavizar-stat (:hp base))
+  (let [hp-base (long (:hp base))
+        hp-fields (species-hp/aplicar-hp-especie {:base-hp hp-base :nivel 1 :full? true})
         atk (hunt/suavizar-stat (:ataque base))
         def (hunt/suavizar-stat (:defesa base))
         spa (hunt/suavizar-stat (:atq-esp base))
@@ -59,11 +62,11 @@
         spe (hunt/suavizar-stat (:veloc base))]
     (-> s
         (dissoc :base :golpe)
-        (assoc :hp hp :ataque atk :defesa def :atq-esp spa :def-esp spd :veloc spe
+        (merge hp-fields)
+        (assoc :ataque atk :defesa def :atq-esp spa :def-esp spd :veloc spe
                :nivel 1 :taxa-captura 45 :raridade "comum"
                :imagem (get sprites (:species s))
                :golpes [(:golpe s)]))))
-
 (def starters
   "Catálogo público dos 3 iniciais (stats já suavizados)."
   (mapv com-stats-suavizados starters-raw))

@@ -2,7 +2,9 @@
 
 /**
  * Cliente PokeAPI para caça JVM (M4.5).
- * Stats suavizados e golpes espelham o legado; sem Cassandra.
+ * Atk/def/spa/spd/spe: suavizados (legado) para seleção por poder.
+ * HP oficial bruto vai em `hp-base` / `hpBase`; a JVM aplica species-hp-v1
+ * como fonte canônica de HP de combate/coleção (não depender do HP suavizado).
  */
 
 const MEDIA = 75;
@@ -100,9 +102,12 @@ function escalarNivel(pokemon, nivel) {
   };
 }
 
-/** Dados canônicos para POST /v1/pokemon/evolve. */
+/** Dados para POST /v1/pokemon/evolve (HP final é canônico na JVM). */
 function dadosEvolucao(evoluido) {
-  return {
+  const hpBase = evoluido.hpBase != null
+    ? evoluido.hpBase
+    : (evoluido['hp-base'] != null ? evoluido['hp-base'] : null);
+  const out = {
     nomeNovo: evoluido.nome,
     imagem: evoluido.imagem || null,
     imagemShiny: evoluido.imagemShiny || evoluido['imagem-shiny'] || null,
@@ -115,6 +120,11 @@ function dadosEvolucao(evoluido) {
     defEsp: evoluido.defEsp != null ? evoluido.defEsp : evoluido['def-esp'],
     veloc: evoluido.veloc
   };
+  if (Number.isFinite(Number(hpBase)) && Number(hpBase) > 0) {
+    out.hpBase = Number(hpBase);
+    out['hp-base'] = Number(hpBase);
+  }
+  return out;
 }
 
 function suavizarStat(valor) {
@@ -228,6 +238,7 @@ async function escolherGolpes(movesBrutos, tipos, nivel = 1) {
 
 function pokemonDeDados(data) {
   const tipos = (data.types || []).map(t => t.type.name);
+  const hpOfficial = statBase(data, 'hp');
   return {
     nome: data.name ? data.name[0].toUpperCase() + data.name.slice(1) : '?',
     species: data.species && data.species.name,
@@ -242,7 +253,10 @@ function pokemonDeDados(data) {
     habilidade: (data.abilities || []).find(a => !a.is_hidden)?.ability?.name
       || data.abilities?.[0]?.ability?.name || null,
     movesBrutos: data.moves || [],
-    hp: suavizarStat(statBase(data, 'hp')),
+    // HP suavizado só para poder-total/seleção; JVM sobrescreve via hp-base.
+    hp: suavizarStat(hpOfficial),
+    hpBase: hpOfficial,
+    'hp-base': hpOfficial,
     ataque: suavizarStat(statBase(data, 'attack')),
     defesa: suavizarStat(statBase(data, 'defense')),
     atqEsp: suavizarStat(statBase(data, 'special-attack')),

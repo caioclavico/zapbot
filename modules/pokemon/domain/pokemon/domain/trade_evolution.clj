@@ -6,6 +6,7 @@
   efeitos continua em `pokemon.domain.evolution`, sem I/O."
   (:require [clojure.string :as str]
             [pokemon.domain.evolution :as evolution]
+            [pokemon.domain.species-hp :as species-hp]
             [pokemon.domain.xp :as xp]))
 
 (def catalog-version "pokeapi-trade-evolutions-2026-10")
@@ -115,21 +116,25 @@
     (let [[hp atk def spat spdef speed] (get base-stats target)
           level (long (:nivel registro 1))
           factor (Math/pow xp/fator-crescimento-por-nivel (dec level))
-          scale #(long (Math/round (* (double %) factor)))]
+          scale #(long (Math/round (* (double %) factor)))
+          hp-novo (species-hp/hp-max hp level)]
       (let [dex-id (get dex-ids target)
             artwork (str "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/" dex-id ".png")
             shiny-artwork (str "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/" dex-id ".png")]
         {:dados {:nome-novo (str/capitalize (str/replace target #"-" " "))
-               :imagem artwork
-               :imagem-shiny shiny-artwork
-               :tipos (get types target)
-               :habilidade (get abilities target)
-               :hp (scale hp) :ataque (scale atk) :defesa (scale def)
-               :atq-esp (scale spat) :def-esp (scale spdef) :veloc (scale speed)}
-       :target target
-       :consumed-item consumed-item
-       :catalog-version catalog-version}))))
-
+                 :imagem artwork
+                 :imagem-shiny shiny-artwork
+                 :tipos (get types target)
+                 :habilidade (get abilities target)
+                 :hp hp-novo
+                 :hp-base (long hp)
+                 :hp-formula-version species-hp/formula-version
+                 :politica-hp :proporcional
+                 :ataque (scale atk) :defesa (scale def)
+                 :atq-esp (scale spat) :def-esp (scale spdef) :veloc (scale speed)}
+         :target target
+         :consumed-item consumed-item
+         :catalog-version catalog-version}))))
 (defn apply-prepared
   [registro prepared]
   (when prepared
