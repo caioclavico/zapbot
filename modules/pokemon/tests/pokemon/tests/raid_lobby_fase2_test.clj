@@ -236,13 +236,14 @@
 
 (deftest expiracao-eager-com-quorum-inicia-combate
   (let [[s _] (fresh! "f2-exp2")
-        chat "chat-e2"]
+        chat "chat-e2"
+        boss (:chefe (raid/boss-do-ginasio "pedra"))]
     (boot! s chat "ash")
     (boot! s chat "misty")
     (tx/open-raid!
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
-        :operation-id "o" :ginasio "pedra" :agora-ms 1000})
+        :operation-id "o" :ginasio "pedra" :chefe boss :agora-ms 1000})
     (tx/join-raid!
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
@@ -251,9 +252,11 @@
      s {:chat-id chat :player-id "misty" :save-id "a"
         :fence-generation (fence s chat "misty")
         :operation-id "jm" :collection-index 0 :nome "Misty" :agora-ms 1002})
-    (let [after (raid-app/expire-lobby! s chat (+ 1000 raid/duracao-inscricoes))]
+    (let [after (raid-app/expire-lobby! s chat (+ 1000 raid/duracao-inscricoes))
+          fator (double (or (:fator-dificuldade (:chefe after)) 1.0))
+          expected (long (Math/round (* 320.0 2 fator)))]
       (is (= "combate" (:fase after)))
-      (is (= 640 (:hp-chefe after))))))
+      (is (= expected (:hp-chefe after))))))
 
 (deftest reinicio-recupera-ponteiro
   (let [db-name "f2-restart"
@@ -337,13 +340,14 @@
 (deftest reinicio-durante-combate
   (let [db-name "f2-restart-combat"
         [s _] (fresh! db-name)
-        chat "chat-rc"]
+        chat "chat-rc"
+        boss (:chefe (raid/boss-do-ginasio "pedra"))]
     (boot! s chat "ash")
     (boot! s chat "misty")
     (tx/open-raid!
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
-        :operation-id "o" :ginasio "pedra" :agora-ms 1000})
+        :operation-id "o" :ginasio "pedra" :chefe boss :agora-ms 1000})
     (tx/join-raid!
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
@@ -357,9 +361,11 @@
         :fence-generation (fence s chat "ash")
         :operation-id "st" :agora-ms 1003})
     (let [s2 (reopen! db-name)
-          r (raid-app/active-raid s2 chat)]
+          r (raid-app/active-raid s2 chat)
+          fator (double (or (:fator-dificuldade (:chefe r)) 1.0))
+          expected (long (Math/round (* 320.0 2 fator)))]
       (is (= "combate" (:fase r)))
-      (is (= 640 (:hp-chefe r)))
+      (is (= expected (:hp-chefe r)))
       (is (= 2 (count (:ordem r)))))))
 
 (deftest comando-apos-expiracao-cancelada
@@ -433,13 +439,14 @@
 
 (deftest inicio-antecipado-com-dois
   (let [[s _] (fresh! "f2-early")
-        chat "chat-early"]
+        chat "chat-early"
+        boss (:chefe (raid/boss-do-ginasio "pedra"))]
     (boot! s chat "ash")
     (boot! s chat "misty")
     (tx/open-raid!
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
-        :operation-id "o" :ginasio "pedra" :agora-ms 1000})
+        :operation-id "o" :ginasio "pedra" :chefe boss :agora-ms 1000})
     (tx/join-raid!
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
@@ -451,9 +458,11 @@
     (let [st (tx/start-raid!
               s {:chat-id chat :player-id "ash" :save-id "a"
                  :fence-generation (fence s chat "ash")
-                 :operation-id "st" :agora-ms 1003})]
+                 :operation-id "st" :agora-ms 1003})
+          fator (double (or (get-in st [:raid :chefe :fator-dificuldade]) 1.0))
+          expected (long (Math/round (* 320.0 2 fator)))]
       (is (= "combate" (get-in st [:raid :fase])))
-      (is (= 640 (get-in st [:raid :hp-chefe])))
+      (is (= expected (get-in st [:raid :hp-chefe])))
       ;; Lobby não paga recompensa
       (is (false? (boolean (get-in st [:raid :rewards-paid])))))))
 

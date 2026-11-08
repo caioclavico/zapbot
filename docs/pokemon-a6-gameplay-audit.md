@@ -1,8 +1,8 @@
 # Pokémon A6 — Auditoria de jogabilidade
 
 **Worktree:** `/private/tmp/zapbot-a6-gameplay-audit`
-**Branch:** `fix/a6-gameplay-audit-impl` (base `rc/a6-ai-drain-sandbox` @ `16b5987`)
-**Escopo:** correções A+B+C+P0. Produção atualizada em 2026-11-08 (cutover P0 HP/UI/captura). **Sem migrations live, backfill ou alteração de saves/flags.**
+**Branch:** `fix/a6-raid-one-mon-ux` (base tip integrada `b9ae76c`)
+**Escopo:** A+B+C+P0 + Balance A + revisão 1-mon/UX/catálogo. Live RO auditado antes das mudanças. **Sem deploy/migrations/backfill/saves/flags.** HP de espécie: proposta quantitativa pendente de aprovação.
 
 ## Caminho canônico
 
@@ -18,7 +18,7 @@ STAB: **ausente no dano** por desenho A6 (só preferência de moveset). Document
 
 | Risco | Impacto | Mitigação atual | Ação futura |
 |-------|---------|-----------------|-------------|
-| **Raids legadas com party de 1** | Joins já em combate decodificam como party unitária; desmaio único ainda encerra aquela raid. | Novos joins selam até 3; legado só até o fim da raid aberta. | Nenhuma migration; esperar raids expirarem. |
+| **Raids legadas com party >1** | Dados da party preservados; `avancar-party` **não** promove reservas; faint do ativo elimina o treinador. | Novos joins selam `max-party=1`; legado só até o fim da raid aberta. | Nenhuma migration; esperar raids expirarem. |
 | **Estoque legado `great-ball` / `super-bola`** | Debito de captura usa ID canônico `grande-bola`; qty só em ID legado não é consumida. | Aliases de input + `qtyBall` soma aliases na UI. | Remap opcional de inventário (não executado). |
 | **Mochila cheia → pending** | Recompensa vai para pending; indisponível na captura até resgate. | `!pk mochila resgatar`. | Sem backfill. |
 | **Eventos temáticos off / schedule / tick** | UI vazia se flag off — dados Datomic **não** se perdem. | Default **false** preservado; `.env.example` documenta. | GO humano: flag + schedule + tick. |
@@ -32,7 +32,7 @@ STAB: **ausente no dano** por desenho A6 (só preferência de moveset). Document
 
 | Item | IMPLEMENTADO | TESTADO | PENDENTE |
 |------|--------------|---------|----------|
-| **A1** Raid party / faint | Party ≤3, auto-troca | domínio + Datomic | Joins legados 1 mon |
+| **A1** Raid party / faint | **1 mon/treinador**, sem auto-troca | domínio + Datomic + one-mon | Legado party>1 preservado, sem promover |
 | **A2** Grande Bola | aliases + UI + qtyBall | present + claim→captura | Remap `great-ball` |
 | **A3** Eventos pós-restart | Persistência OK; flag doc | reopen + fase1281 | Ativação env/tick |
 | **A4** Claim evento | Idempotente | claim+captura | Backfill histórico |
@@ -306,10 +306,154 @@ Construir Node+JVM a partir do **mesmo commit** integrado na RC (labels `io.zapb
 - Mons fracos vs chefes tanque ficam um pouco mais longos (intencional); perfis extremos ainda podem perder.
 - Sem smoke destrutivo em saves reais; **sem deploy**.
 
-### GO/NO-GO
+### GO/NO-GO (Proposta A — histórico)
 
 | Critério | Estado |
 |----------|--------|
 | Bugs objetivos + Proposta A no código | **GO** para integrar/build RC |
 | Pedir janela de deploy produção | **NO-GO** até revisão humana dos Image IDs + hold |
 | Deploy / migrations / flags / saves | **NO-GO** (proibido neste ciclo) |
+
+---
+
+## Revisão raids — 1 Pokémon / UX / catálogo / HP (2026-11-08)
+
+**Branch:** `fix/a6-raid-one-mon-ux` (base integrada `b9ae76c` / RC `rc/a6-abc-p0-integrated`)  
+**Live RO inspecionado antes das mudanças:** Node `002c83e8…` / JVM `e044cce1…` @ `043b846` (Balance A live).  
+**Escopo:** bugs objetivos + regra 1-mon + catálogo manual + UX. **Fórmula global de HP de espécie: proposta quantitativa apenas — não aplicada.**  
+**Sem deploy / migrations / backfill / saves / flags / WA / hold / CI.**
+
+### Causas-raiz
+
+| Item | Causa |
+|------|-------|
+| Troca automática / 3 mons | `max-party=3` + `avancar-party` promovendo próximo HP>0 |
+| 3 barras de HP | Composição DTO + `formatRaidAttack`/`formatRaidStart` re-renderizando barra do chefe além de `formatRaidTurnBlock` |
+| Raridade só no chefe / `?` | UI omitia raridade do jogador; fallbacks literais |
+| Vitória presa / rodapé fraco | Footer não lia `data.capturaPendente`; copy incompleta |
+| Empty `!pk raid` | Mensagem curta/sem inventário real de comandos |
+| Frambo → cartão-presente | `INSUFFICIENT_ITEM` sempre usava copy de presente |
+| Chefes manuais repetitivos | `open-raid!` caía no asé fixo `boss-do-ginasio` (5 templates) |
+| HP espécie “igual” | `suavizar-stat` com compressão **0.5** empurra tudo para ~75 antes do nível |
+
+### Alterações implementadas
+
+| Área | Mudança |
+|------|---------|
+| Domínio | `max-party=1`; `montar-party` só 1º slot; `avancar-party` no-op; faint → `:eliminado?`; coop continua se outro vivo; HP partido persiste; sem auto-cura pós-raid |
+| Legado | Party>1 preservada no Datomic; **não** promove reservas; novas raids não criam multi |
+| Open manual | `select-boss-for-ginasio` (catálogo A6) com fallback legado; chefe explícito nos testes |
+| Present | 2 barras via `barraHp`; raridade chefe+jogador; `formatRaidEmpty`; footer captura (pendente/concluída/expirada/sem direito); Frambo item-aware |
+| Catálogo | Elegíveis **571** (raro 423 / épico 34 / lendário 91 / mítico 23) vs **5** templates fixos |
+
+### Exemplos reais de mensagem
+
+**Turno (exatamente 2 barras + raridades):**
+```
+👾 *Onix* — 🔵 Raro
+[██████░░░░] 140/220
+🐾 *Wartortle* — 🟢 Incomum
+[███████░░░] 67/100
+👉 Vez de *Ash*
+1. 🔮 *Water Gun* (Água, poder 40) 🔥 → `!pk raid atacar 1`
+```
+
+**Vitória + captura pendente:**
+```
+🎯 *CAPTURA DISPONÍVEL*
+`!pk raid capturar` — ver bolas / chances
+`!pk raid capturar 1|2|3` — Poké / Grande / Ultra
+`!pk raid fruta` — preparar Frambo (+chance)
+📌 *Próximos comandos*
+`!pk raid capturar`
+`!pk mochila`
+```
+
+**Sem raid ativa:**
+```
+🏛️ *Nenhuma raid em andamento neste grupo.*
+📌 *Comandos*
+`!pk raid` · `!pk raid abrir` · `!pk raid abrir <ginasio>`
+`!pk raid entrar` · `!pk raid entrar auto` · `!pk raid entrar <n>`
+`!pk raid iniciar` · `!pk time` · `!pk mochila`
+```
+
+**Frambo indisponível:**
+```
+🍓 *Você não possui Frutas Frambo!*
+🎒 Confira sua mochila com `!pk mochila`.
+```
+
+### HP por espécie — auditoria + proposta (**não aplicada**)
+
+Fórmula atual: `HP = round(suavizar(base) × 1.03^(nível−1))` com  
+`suavizar(v) = round(75 + 0.5×(v−75))`.
+
+| Espécie | Base | Nv | Perfil | HP atual | HP prop (comp **0.85**) | Δ |
+|---------|-----:|---:|--------|---------:|------------------------:|--:|
+| Magikarp | 20 | 10 | frágil | 63 | 37 | −26 |
+| Pidgey | 40 | 10 | frágil | 76 | 59 | −17 |
+| Pikachu | 35 | 10 | frágil | 72 | 53 | −19 |
+| Eevee | 55 | 10 | equilibrado | 85 | 76 | −9 |
+| Wartortle | 59 | 15 | equilibrado | 101 | 92 | −9 |
+| Charizard | 78 | 25 | equilibrado | 157 | 159 | +2 |
+| Gyarados | 95 | 20 | resistente | 149 | 161 | +12 |
+| Snorlax | 160 | 20 | resistente | 207 | 258 | +51 |
+| Chansey | 250 | 20 | tanque | 286 | 393 | +107 |
+| Shedinja | 1 | 20 | especial | 67 | 21 | −46 |
+| Mewtwo | 106 | 30 | lendário | 214 | 238 | +24 |
+
+Spread nv10 Magikarp→Chansey: **atual 63→213** · **proposta 37→292**.
+
+**Política se aprovada:** não reescrever HP de saves; aplicar só em **novos** encontros/starters; evolução/level-up continuam `×1.03` sobre o valor persistido; sem bônus por raridade; impacto em caça/raid/ginásio/PvP/cura documentado antes do GO. **Aguardando aprovação humana.**
+
+### Balanceamento 1-mon × Proposta A (HP 320, var 85–100%)
+
+HP chefe **não** reduzido. Simulação (`raid-balance-one-mon-sim-a6-test`):
+
+| Cenário | Vitória? | Turnos (est.) |
+|---------|----------|---------------|
+| Solo frágil SE @85% | sim* | ~3 |
+| Solo equilibrado SE @100% | sim | ~2 |
+| Solo tanque SE @85% | sim | ~3 |
+| Solo neutro @85% | sim | ~5 |
+| Coop 2 / 3 / 5 SE @85% | sim | ~5 / 7 / 11 |
+| Coop 3 neutro @85% | sim | ~13 |
+| Lendário fator 1.4 · coop 3 SE @85% | fechável | ~9 hits (HP 1344) |
+
+\*Perfil extremo frágil+neutro ainda pode perder — intencional.
+
+### Chefes manuais
+
+| | Antes | Depois |
+|--|------:|-------:|
+| Fonte | 5 templates `chefes-ginasio` | `raid_boss_catalog.edn` via `select-boss-for-ginasio` |
+| Elegíveis | 5 | **571** |
+| Captura | taxas aprovadas intactas | intactas (sem mudança) |
+
+### Compatibilidade
+
+- Raids em andamento: sem swap novo; dados multi preservados até expirar.
+- Saves: HP/inventário **não** alterados.
+- Flags / IA dinâmica / drain / sandbox / hold / CI: intocados.
+- Reconstrução **Node + JVM** necessária (present + domínio Clojure).
+
+### Testes (esta revisão)
+
+| Suite | Resultado |
+|-------|-----------|
+| `:test-a6-lote-a` (+ one-mon) | PASS (21 testes / 116 asserts) |
+| `:test-a6-lote-b` (+ one-mon-sim) | PASS |
+| `:test-a6-lote-c` | PASS |
+| `:test-a6-homolog-abc` | PASS (**42** / **247**) |
+| `:test-m4-raid` + HTTP | PASS |
+| `:test-raid-lobby-fase2` | PASS (24 / 80) |
+| Node `pokemon-a6-raid-gym-capture-p0` + `pokemon-a6-raid-one-mon-ux` | PASS (**17**/17) |
+
+### GO/NO-GO integração
+
+| Critério | Estado |
+|----------|--------|
+| 1-mon + UX + Frambo + catálogo + regressões | **GO** para merge/build RC integrada |
+| Fórmula global de HP de espécie | **NO-GO** (proposta só; aguarda aprovação) |
+| Deploy / migrations / saves / flags | **NO-GO** |

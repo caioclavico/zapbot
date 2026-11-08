@@ -31,7 +31,8 @@
             [pokemon.domain.model :as model]
             [pokemon.domain.moves :as moves]
             [pokemon.domain.mundo :as mundo]
-            [pokemon.domain.raid :as raid-domain]))
+            [pokemon.domain.raid :as raid-domain]
+            [pokemon.domain.raid-boss :as raid-boss]))
 
 (defn- present-pokemon
   "DTO de apresentação para Node (HP atual/máx, golpes, sprites).
@@ -747,13 +748,24 @@
    :fence-generation (long fence-generation)})
 
 (defn open-raid!
-  "Abre lobby. Se `chefe`/`liga` omitidos, deriva do ginásio A6."
+  "Abre lobby. Se `chefe`/`liga` omitidos, sorteia do catálogo A6 completo
+  (via `raid-boss/select-boss-for-ginasio`) — não mais o asé fixo do ginásio.
+  Chefe explícito (harness/testes) preservado sem re-sorteio."
   [store {:keys [chat-id player-id save-id fence-generation operation-id
-                 raid-id ginasio nome-ginasio nivel-ginasio liga chefe agora-ms]
+                 raid-id ginasio nome-ginasio nivel-ginasio liga chefe agora-ms
+                 recent-species rng]
           :as req}]
   (let [writer-ctx (require-writer! req)
         derived (when (and ginasio (or (nil? chefe) (empty? chefe)))
-                  (raid-domain/boss-do-ginasio ginasio))
+                  (try
+                    (raid-boss/select-boss-for-ginasio
+                     ginasio
+                     (cond-> {}
+                       (seq recent-species) (assoc :recent-species recent-species)
+                       rng (assoc :rng rng)))
+                    (catch Exception _
+                      ;; Fallback legado se catálogo indisponível.
+                      (raid-domain/boss-do-ginasio ginasio))))
         chefe-m (keywordize-keys (or (when (seq chefe) chefe) (:chefe derived) {}))
         _ (when-not (seq (str (or (:nome chefe-m) "")))
             (throw (err/error :raid_config_invalid {:need :chefe})))
@@ -772,7 +784,9 @@
      :duplicate (boolean (:duplicate result))
      :save-id save-id
      :fence-generation (long fence-generation)
-     :raid (raid-summary (:raid result))}))
+     :raid (raid-summary (:raid result))
+     :boss-categoria (:categoria derived)
+     :catalog-version (:catalog-version derived)}))
 
 (defn cancel-raid!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
@@ -971,6 +985,7 @@
      :venceu (boolean (:venceu? result))
      :derrota (boolean (:derrota? result))
      :trocou (boolean (:trocou? result))
+     :eliminado (boolean (:eliminado? result))
      :autodesmaio (boolean (:autodesmaio? result))
      :hp-ativo (:hp-ativo result)
      :pokemon-atacante (when-let [p (:pokemon-atacante result)]

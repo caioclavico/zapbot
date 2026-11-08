@@ -620,22 +620,8 @@
                      (when (and (<= 0 idx) (< idx (count colecao)))
                        (nth colecao idx)))
             _ (when-not poke (throw (err/error :pokemon_not_found {:idx idx})))
-            ;; Selva até 3: índice pedido + próximos vivos da coleção.
-            extras (into []
-                         (comp (filter #(let [ci (long (or (:collection-index %)
-                                                           (get % "collection-index") -1))
-                                              golpes (or (:golpes %) (get % "golpes"))]
-                                          (and (not= ci idx)
-                                               (pos? (long (or (:hp-atual %) (get % "hp-atual")
-                                                               (:hp %) (get % "hp") 0)))
-                                               (seq golpes))))
-                               (take (dec raid/max-party)))
-                         colecao)
-            party (into [{:pokemon poke :collection-index idx}]
-                        (map (fn [p]
-                               {:pokemon p
-                                :collection-index (long (:collection-index p 0))})
-                             extras))
+            ;; Regra 1-mon: exatamente o índice pedido — sem reservas automáticas.
+            party [{:pokemon poke :collection-index idx}]
             nome (or (:nome request) (:nome old) player-id)
             raid' (raid/entrar raid
                                {:player-id player-id
@@ -914,7 +900,8 @@
                             :variacao-pct (:variacao-pct outcome)
                             :venceu? (:venceu? outcome)
                             :derrota? (:derrota? outcome)
-                            :trocou? (:trocou? outcome)})}]
+                            :trocou? (:trocou? outcome)
+                            :eliminado? (:eliminado? outcome)})}]
                  other-parts
                  (or hp-sync [])
                  (or clear-ptr []))]
@@ -931,6 +918,7 @@
               :venceu? (:venceu? outcome)
               :derrota? (:derrota? outcome)
               :trocou? (boolean (:trocou? outcome))
+              :eliminado? (boolean (:eliminado? outcome))
               :autodesmaio? (boolean (:autodesmaio? outcome))
               :hp-ativo (:hp-ativo outcome)
               :golpe (:golpe outcome)

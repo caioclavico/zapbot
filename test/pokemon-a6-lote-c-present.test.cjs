@@ -6,24 +6,31 @@ const assert = require('assert');
 const present = require('../scripts/lib/pokemon-jvm-present.cjs');
 const media = require('../scripts/lib/pokemon-jvm-media.cjs');
 
-// --- Raid: golpe traduzido, efetividade, troca, autodesmaio, HP antes→depois ---
+// --- Raid: golpe traduzido, efetividade, 1-mon (sem troca), autodesmaio, HP antes→depois ---
 const raidMsg = present.formatRaidAttack({
   dano: 42,
   revide: 10,
   multiplicador: 2,
   golpe: { nomeExibicao: 'Lança-Chamas' },
-  trocou: true,
+  trocou: false,
+  eliminado: true,
   autodesmaio: true,
-  hpAtivo: 88,
-  raid: { hpChefe: 100, hpMax: 200, vez: 'ash', ordem: ['ash'] }
+  hpAtivo: 0,
+  pokemonAtacante: { nome: 'Charizard' },
+  raid: {
+    fase: 'combate',
+    hpChefe: 100, hpMax: 200, vez: 'misty', ordem: ['ash', 'misty'],
+    chefe: { nome: 'Boss', raridade: 'raro' },
+    vezPokemon: { nome: 'Starmie', raridade: 'raro', hp: 100 }
+  }
 }, '!pk');
 
 assert.match(raidMsg, /Lança-Chamas|Lanca-Chamas/);
 assert.match(raidMsg, /super efetivo/i);
-assert.match(raidMsg, /próximo da party|proximo da party|party|entrou na batalha/i);
-assert.match(raidMsg, /desmaiou após o golpe/i);
+assert.match(raidMsg, /desmaiou|ficou fora/i);
+assert.doesNotMatch(raidMsg, /entrou na batalha/);
 assert.match(raidMsg, /142\s*→\s*100|Chefe: 142/);
-assert.match(raidMsg, /A raid continua/i);
+assert.match(raidMsg, /raid continua|ficou fora/i);
 assert.doesNotMatch(raidMsg, /Super Bola/);
 
 // --- Wild turn: mensagem canônica do motor (não recalcula) ---

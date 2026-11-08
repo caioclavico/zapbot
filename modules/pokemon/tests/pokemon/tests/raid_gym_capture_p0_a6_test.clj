@@ -65,23 +65,14 @@
           (is (= 27 legacy-base))
           (is (not= 27 (:dano out))))))))
 
-(deftest solo-reserva-terceira-opcao
-  (let [party [{:pokemon (mon "A" 40) :collection-index 0}
-               {:pokemon (mon "B" 40) :collection-index 1}
-               {:pokemon (mon "C" 100) :collection-index 2}]
+(deftest solo-um-mon-faint-derrota
+  (let [party [{:pokemon (mon "A" 40) :collection-index 0}]
         r0 (-> (raid-com [["ash" party]]) (forcar-hp "ash" 1))
-        out1 (raid/atacar r0 "ash" 0 (+ agora 10))
-        _ (is (false? (:derrota? out1)))
-        _ (is (true? (:trocou? out1)))
-        _ (is (= "B" (get-in out1 [:raid :participantes "ash" :pokemon :nome])))
-        r1 (forcar-hp (:raid out1) "ash" 1)
-        ;; vez pode ter voltado ao ash (solo)
-        r1 (assoc r1 :vez "ash")
-        out2 (raid/atacar r1 "ash" 0 (+ agora 20))]
-    (is (false? (:derrota? out2)))
-    (is (true? (:trocou? out2)))
-    (is (= "C" (get-in out2 [:raid :participantes "ash" :pokemon :nome])))
-    (is (= "combate" (:fase (:raid out2))))))
+        out1 (raid/atacar r0 "ash" 0 (+ agora 10))]
+    (is (true? (:derrota? out1)))
+    (is (false? (:trocou? out1)))
+    (is (true? (:eliminado? out1)))
+    (is (= "derrota" (:fase (:raid out1))))))
 
 (deftest coop-um-derrotado-outro-continua
   (let [party-ash [{:pokemon (mon "A" 30) :collection-index 0}]

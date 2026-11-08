@@ -54,34 +54,44 @@ test('contrato captura: raridade ausente → fallback explícito (não ?)', () =
   }
 });
 
-test('raid UI: efetividade + desmaio com reserva continua', () => {
+test('raid UI: efetividade + desmaio 1-mon (sem reserva)', () => {
   const text = present.formatRaidAttack({
     dano: 27,
     multiplicador: 2,
     revide: 10,
-    trocou: true,
+    trocou: false,
+    eliminado: true,
+    hpAtivo: 0,
     hpChefeAntes: 142,
     pokemonAtacante: { nome: 'Blastoise' },
-    pokemonAtivo: { nome: 'Gyarados' },
     golpe: { nomeExibicao: "Jato d'Água", tipo: 'water', poder: 40, classe: 'especial' },
     raid: {
       turnIndex: 4,
       hpChefe: 115,
       hpMax: 200,
       fase: 'combate',
-      ordem: ['ash'],
-      vez: 'ash',
-      chefe: { nome: 'Charizard', tipos: ['fire'] }
+      ordem: ['ash', 'misty'],
+      vez: 'misty',
+      vezNome: 'Misty',
+      suaVez: false,
+      vezHp: 90,
+      chefe: { nome: 'Charizard', tipos: ['fire'], raridade: 'raro' },
+      vezPokemon: {
+        nome: 'Starmie', raridade: 'raro', hp: 100,
+        golpes: [{ nomeExibicao: 'Water Gun', tipo: 'water', poder: 40, classe: 'especial' }]
+      }
     }
   }, '!pk');
   assert.match(text, /RAID — TURNO 4/);
   assert.match(text, /Jato d'Água.*Blastoise.*causou 27 de dano/);
-  assert.match(text, /🔮/); // emoji classe especial (caça)
+  assert.match(text, /🔮/);
   assert.match(text, /É super efetivo/);
   assert.match(text, /142→115/);
   assert.match(text, /Blastoise desmaiou/);
-  assert.match(text, /Gyarados.*entrou/);
-  assert.match(text, /A raid continua/);
+  assert.match(text, /ficou fora|raid continua/i);
+  assert.doesNotMatch(text, /entrou na batalha/);
+  const barLines = text.split('\n').filter((l) => /[█░]/.test(l));
+  assert.equal(barLines.length, 2);
 });
 
 test('raid captura UI: camelCase wire + aliases de estoque', () => {
@@ -142,7 +152,7 @@ test('caça: raridade só no adversário; barras HP nos dois', () => {
   assert.match(text, /\[█+░*\] 90\/90/);
 });
 
-test('raid UI: barras HP + raridade só do chefe + golpe sem ?', () => {
+test('raid UI: exatamente 2 barras + raridade chefe e jogador', () => {
   const text = present.formatRaidTurnBlock({
     fase: 'combate',
     vez: 'ash',
@@ -154,6 +164,7 @@ test('raid UI: barras HP + raridade só do chefe + golpe sem ?', () => {
     chefe: { nome: 'Onix', raridade: 'raro', tipos: ['rock', 'ground'] },
     vezPokemon: {
       nome: 'Wartortle',
+      raridade: 'incomum',
       hp: 100,
       hpAtual: 67,
       golpes: [
@@ -163,10 +174,11 @@ test('raid UI: barras HP + raridade só do chefe + golpe sem ?', () => {
     }
   }, '!pk').join('\n');
   assert.match(text, /Onix.*Raro/);
+  assert.match(text, /Wartortle.*Incomum/);
   assert.match(text, /\[█+░*\] 140\/220/);
-  assert.match(text, /Wartortle/);
   assert.match(text, /\[█+░*\] 67\/100/);
-  assert.doesNotMatch(text, /Wartortle[^\n]*Raro/);
+  const barLines = text.split('\n').filter((l) => /[█░]/.test(l));
+  assert.equal(barLines.length, 2);
   assert.match(text, /Water Gun/);
   assert.doesNotMatch(text, /\*\\?\*/);
   assert.match(text, /Golpe Normal|indisponível na raid/);

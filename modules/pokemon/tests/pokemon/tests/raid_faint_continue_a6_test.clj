@@ -1,5 +1,5 @@
 (ns pokemon.tests.raid-faint-continue-a6-test
-  "P0: desmaio de um mon da party NAO encerra a raid se ha reserva viva."
+  "Regra 1-mon: desmaio encerra a participação individual; coop continua."
   (:require [clojure.test :refer [deftest is testing]]
             [pokemon.domain.raid :as raid]))
 
@@ -32,18 +32,21 @@
                   (assoc :hp hp))]
     (assoc-in raid [:participantes pid] part')))
 
-(deftest solo-com-reserva-continua-apos-desmaio
-  (testing "ativo desmaia troca fase permanece combate"
+(deftest solo-com-reserva-legada-nao-troca
+  (testing "party legada com reserva: faint NÃO promove — derrota solo"
     (let [party [{:pokemon (mon "A" 50) :collection-index 0}
                  {:pokemon (mon "B" 100) :collection-index 1}]
-          r0 (-> (raid-combate party) (forcar-hp-ativo "ash" 1))
+          ;; entrar só selva 1; forçamos party legada depois
+          r-base (raid-combate [{:pokemon (mon "A" 50) :collection-index 0}])
+          part (get-in r-base [:participantes "ash"])
+          part' (assoc part :party [{:pokemon (mon "A" 1) :collection-index 0 :hp 1}
+                                    {:pokemon (mon "B" 100) :collection-index 1 :hp 100}]
+                       :hp 1 :active-party-idx 0 :pokemon (mon "A" 1))
+          r0 (assoc-in r-base [:participantes "ash"] part')
           out (raid/atacar r0 "ash" 0 (+ agora 10))]
-      (is (false? (:derrota? out)))
-      (is (= "combate" (:fase (:raid out))))
-      (is (true? (:trocou? out)))
-      (is (pos? (get-in out [:raid :participantes "ash" :hp])))
-      (is (= 1 (get-in out [:raid :participantes "ash" :active-party-idx])))
-      (is (= "B" (get-in out [:raid :participantes "ash" :pokemon :nome]))))))
+      (is (false? (:trocou? out)))
+      (is (true? (:derrota? out)))
+      (is (= "derrota" (:fase (:raid out)))))))
 
 (deftest solo-sem-reserva-derrota
   (let [party [{:pokemon (mon "Solo" 50) :collection-index 0}]
