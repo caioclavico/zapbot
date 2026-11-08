@@ -12,7 +12,7 @@
 
 (defn- anon-sample [e]
   {:species (or (not-empty (str (:pokemon/species e))) "unknown")
-   :nivel (long (:pokemon/nivel e 1))
+   :nivel (long (:pokemon/level e 1))
    :hp (long (:pokemon/hp e 0))
    :hp-atual (long (:pokemon/hp-atual e 0))
    :has-hp-base? (let [b (:pokemon/hp-base e)]
@@ -33,7 +33,7 @@
         db (d/db conn)
         eids (mapv first (d/q '[:find ?e :where [?e :pokemon/id-pokemon]] db))
         entities (mapv #(d/pull db
-                                '[:pokemon/hp :pokemon/hp-atual :pokemon/nivel
+                                '[:pokemon/hp :pokemon/hp-atual :pokemon/level
                                   :pokemon/species :pokemon/hp-base
                                   :pokemon/hp-formula-version]
                                 %)
