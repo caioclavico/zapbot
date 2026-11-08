@@ -1646,10 +1646,9 @@
                                 texto (.formatFicha jvm-present ficha prefix)
                                 poke (.-pokemon ficha)
                                 img (when poke
-                                      (render-seguro! ctx "pokemon_jvm_media_ficha"
-                                        #(.renderSpriteCard jvm-media poke
-                                                            #js {:filename "ficha-pokemon.png"
-                                                                 :size 320})))]
+                                      (render-seguro! ctx "pokemon_jvm_media_pokedex"
+                                        #(.renderPokedexCard jvm-media poke
+                                                             #js {:filename "pokedex.png"})))]
                           (envelope-jvm pedido texto img))))
 
                     :else

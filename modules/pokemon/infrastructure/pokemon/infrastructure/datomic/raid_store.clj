@@ -715,6 +715,57 @@
            :operation-receipt/summary (pr-str {:raid-id (:raid-id raid) :n (count (:ordem raid'))})}]
      :result {:operation-id operation-id :duplicate false :raid raid'}}))
 
+(defn- party-slots-of
+  [part]
+  (or (seq (:party part))
+      (when (:pokemon part)
+        [{:pokemon (:pokemon part)
+          :hp (long (:hp part 0))
+          :collection-index (long (:collection-index part 0))}])))
+
+(defn- slot-hp-for-id
+  [part id-poke]
+  (when id-poke
+    (some (fn [s]
+            (when (= id-poke (or (get-in s [:pokemon :id-pokemon])
+                                 (get-in s [:pokemon "id-pokemon"])))
+              (long (:hp s 0))))
+          (party-slots-of part))))
+
+(defn raid-party-hp-txs
+  "Espelha HP da party do snapshot → `:pokemon/hp-atual` (paridade wild/gym).
+  Sem isso `!pk time` permanece no HP da inscrição."
+  [db sk party query-collection pokemon-hp-status-tx]
+  (when (and query-collection pokemon-hp-status-tx (seq party))
+    (let [colecao (query-collection db sk)
+          by-id (into {}
+                      (keep (fn [p]
+                              (when-let [id (:id-pokemon p)]
+                                [id p]))
+                            colecao))]
+      (vec
+       (mapcat
+        (fn [slot]
+          (let [id (or (get-in slot [:pokemon :id-pokemon])
+                       (get-in slot [:pokemon "id-pokemon"]))
+                live (get by-id id)
+                hp (long (:hp slot 0))]
+            (when (and live (not= (long (or (:hp-atual live) 0)) hp))
+              (pokemon-hp-status-tx live hp nil (:status live)))))
+        party)))))
+
+(defn- raid-all-parties-hp-txs
+  "Sincroniza party de todos os participantes (ataque / fim de combate)."
+  [db raid' query-collection pokemon-hp-status-tx]
+  (when (and query-collection pokemon-hp-status-tx)
+    (vec
+     (mapcat
+      (fn [[pid p]]
+        (let [sk (id/save-key (:chat-id raid') pid (:save-id p))]
+          (raid-party-hp-txs db sk (party-slots-of p)
+                             query-collection pokemon-hp-status-tx)))
+      (:participantes raid')))))
+
 (defn- reward-tx-for-participant
   "Liquida PE/XP/(moedas) para um elegível. `outcome` ∈ #{:vitoria :derrota}.
   Recibo determinístico `raid-reward|raid-id|player-id` — uma concessão por raid.
@@ -733,9 +784,14 @@
         receipt-id (str "raid-reward|" (:raid-id raid) "|" player-id)
         id-poke (or (get-in part [:pokemon :id-pokemon])
                     (get-in part [:pokemon "id-pokemon"]))
-        live (when id-poke
-               (some #(when (= (:id-pokemon %) id-poke) %)
-                     (query-collection db sk)))
+        live0 (when id-poke
+                (some #(when (= (:id-pokemon %) id-poke) %)
+                      (query-collection db sk)))
+        ;; Preserva HP do snapshot na coleção antes do XP (nível-up não “cura” raid).
+        live (when live0
+               (if-let [hp (slot-hp-for-id part id-poke)]
+                 (assoc live0 :hp-atual hp)
+                 live0))
         xp-qtd (if live xp-base 0)
         xp-part (when (and live (pos? xp-qtd))
                   (apply-pokemon-xp-tx live xp-qtd))
@@ -773,7 +829,8 @@
 
 (defn build-attack-tx
   [{:keys [db save writer-ctx request raid
-           apply-pokemon-xp-tx save-entity query-collection]}]
+           apply-pokemon-xp-tx save-entity query-collection
+           pokemon-hp-status-tx]}]
   (let [player-id (:player-id writer-ctx)
         part (get-in raid [:participantes player-id])
         _ (raid/assert-participant-fence! part writer-ctx)
@@ -804,6 +861,8 @@
                          (:derrota? outcome) :derrota
                          :else nil)
         pay-rewards? (and reward-outcome (not (:rewards-paid? raid)))
+        ;; HP da coleção antes das recompensas (XP não deve restaurar full HP).
+        hp-sync (raid-all-parties-hp-txs db raid' query-collection pokemon-hp-status-tx)
         reward-bundles (when pay-rewards?
                          (mapv (fn [[pid p]]
                                  (reward-tx-for-participant
@@ -841,7 +900,8 @@
                             :venceu? (:venceu? outcome)
                             :derrota? (:derrota? outcome)
                             :trocou? (:trocou? outcome)})}]
-                 other-parts)]
+                 other-parts
+                 (or hp-sync []))]
     {:tx (into (vec raid-tx) (mapcat :tx reward-bundles))
      :result {:operation-id operation-id
               :duplicate false

@@ -1,148 +1,196 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0
 
-**Atualizado:** 2026-11-08T06:25Z  
-**Host alvo de build/homolog:** `odisseu-core` (linux/amd64)  
-**Branch:** `rc/a6-abc-p0-integrated` (base `rc/a6-ai-drain-sandbox` @ `89321bd` + P0 `9d2a345` + ops `c5ab41d`)
+**Atualizado:** 2026-11-08T06:40Z  
+**Host:** `odisseu-core` (linux/amd64)  
+**Branch integrada:** `rc/a6-ai-drain-sandbox` @ `18fa15f` (merge PR #37)  
+**Evidência cutover:** `/home/caiohclavico/odisseu-recovery/a6-abc-p0-cutover-20261108T063319Z`
 
 ---
 
-## 0. Veredito — preparação RC integrada
+## 0. Veredito operacional
 
 | Campo | Valor |
 |-------|-------|
-| Base RC | `rc/a6-ai-drain-sandbox` — A+B+C (`21771ec`/`ca06cff`), IA dinâmica, graceful drain, manutenção |
-| P0 gameplay | Commit `9d2a345` — raridade/captura, ginásio NPC, UI raid |
-| Ops integrado | Commit `c5ab41d` — Chromium 156, hasSynced listeners, overlay HEALTH_BIND |
-| Pins imagens | Commit de pin (este tip) — Image IDs inéditos Node+JVM |
-| Chromium | Debian **156** (não Chrome 157) |
-| HEALTH_BIND | `HEALTH_BIND_HOST=0.0.0.0` no overlay |
-| hasSynced listeners | `whatsapp-startup.cjs` catch-up + `attachEventListeners` |
-| Produção live (rollback) | Node `05b36c5a…` · JVM `ad0b7c1b…` — **não** alterada nesta prep |
-| Deploy / hold / CI / flags | **Intocados** |
-| **GO solicitar janela Node+JVM** | **GO** (imagens + sandbox + JVM descartável PASS) |
+| Resultado | **SUCCESS — ODISSEU A6 GAMEPLAY A+B+C+P0 EM PRODUÇÃO** |
+| PR | [#37](https://github.com/caioclavico/zapbot/pull/37) **MERGED** (`18fa15f`) |
+| Node ativo | `sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade` |
+| JVM ativa | `sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c` |
+| WhatsApp | **READY** (listeners `hasSynced_*`) |
+| Chromium | Debian **156.0.8078.79** · UID **1000** · CapEff **0** · NoNewPrivs **1** |
+| Datomic | Volume `odisseu-a6-cutover-datomic` preservado (cold backup feito) |
+| Flags | Temáticos/raids/ginásios/kit/permanência **preservados** (`true`; `STAGING_ALLOW_QR=0`) |
+| Deploy hold / CI/CD | `ODISSEU_PRODUCTION_DEPLOY_HOLD=true` · workflow CI/CD `disabled_manually` (**não** alterados) |
+| Migrations / backfill | **Não** executados |
 
 ---
 
-## 1. Commits e dependências
+## 1. Commits
 
 | Commit | Papel |
 |--------|-------|
-| `89321bd` | Tip `rc/a6-ai-drain-sandbox` (docs incidente WA) |
-| `21771ec` / `ca06cff` | Merge A+B+C (raid party, captura, present) |
-| `16b5987`…`fefab4c` | Drain + IA dinâmica + sandbox Chromium |
-| `9d2a345` | **P0** raridade/ginásio/raid UI |
-| `c5ab41d` | Dockerfile Chromium 156, startup catch-up, overlay HEALTH_BIND, docs/verify base |
-| *(pin tip)* | Overlay/verify/docs com Image IDs homologados |
+| `9d2a345` | P0 raridade/captura, ginásio NPC, UI raid |
+| `c5ab41d` | Chromium 156, hasSynced+listeners, HEALTH_BIND |
+| `1a8eaf8` | Pins Image IDs + docs/verify |
+| `18fa15f` | Merge PR #37 → `rc/a6-ai-drain-sandbox` |
 
-**Não reaplicar:** `e7488e4f` (Chrome 157), Node sem listeners (`74118090`).
+Labels das imagens: `git-sha=c5ab41d…` · `content-tree=8428d03b…` (conteúdo executável homologado; tip merge é documental + pins).
 
 ---
 
-## 2. Produção live (somente leitura — rollback)
+## 2. Rollback registrado (pré-cutover)
 
-| Camada | Image ID | Nota |
-|--------|----------|------|
-| Node | `sha256:05b36c5aebeff40875c2a3b4545e368aa2dfffe7d93a3fc7a02c05b0d3b3a18c` | Chromium 156 + listeners; **sem** P0 present/ginásio roll do tip |
-| JVM | `sha256:ad0b7c1b265cb52eee221ea6458ea6bdaad7c5c230cd8ec6dfe7e2474b2acd5c` | `source-base=03a3dc7e` — **sem** A+B+C/P0 |
-
----
-
-## 3. Imagens candidatas RC (mesmo git-sha/tree)
-
-| Camada | Tag | Image ID |
-|--------|-----|----------|
-| Node | `odisseu-node:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64` | `sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade` |
-| JVM | `odisseu-jvm:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64` | `sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c` |
-
-**Labels (ambas):** `io.zapbot.git-sha=c5ab41dfcbf2f12602b13a6718ecbc8bc79f68e7` · `io.zapbot.content-tree=8428d03b5c7ce7c7654a5416af7fd6cf3ae2c854` · USER `1000:1000` · Chromium Debian **156.0.8078.79**.
-
-IDs **≠** live (`05b36c5a` / `ad0b7c1b`) e **≠** bases thin (`446dfc2b` / `cf9a029c`).
+| Camada | Image ID |
+|--------|----------|
+| Node | `sha256:05b36c5aebeff40875c2a3b4545e368aa2dfffe7d93a3fc7a02c05b0d3b3a18c` |
+| JVM | `sha256:ad0b7c1b265cb52eee221ea6458ea6bdaad7c5c230cd8ec6dfe7e2474b2acd5c` |
 
 ---
 
-## 4. Conteúdo da candidata RC (código)
+## 3. Preflight (PASS)
 
-- Gameplay A+B+C + P0 (domínio JVM + present/HTTP Node)
-- `scripts/lib/whatsapp-startup.cjs` hasSynced + listeners
-- Dockerfile Node: Debian chromium 156 + sandbox
-- Overlay: `HEALTH_BIND_HOST=0.0.0.0`, UID 1000, seccomp, **sem** override de flags Pokémon
-- Drain/maint (`a6-maintenance` / `a6-shutdown`) + IA dinâmica
-
----
-
-## 5. Schemas / migrations
-
-| Item | Status |
-|------|--------|
-| Novas migrations Datomic | **Não** (P0 usa party v2 EDN + slim raridade) |
-| Compatibilidade save legado | Raridade ausente → classificar ou chance mítica |
-| Backfill | **Não** |
-| Reinício JVM descartável | Caps idênticos (88); sem linhas de schema duplicado |
+- PR integrado; Image IDs RC íntegros no host; live = rollback IDs acima.
+- WA READY sustentado; Node/JVM healthy; maint `open`.
+- Hold `true`; CI/CD `disabled_manually`; runs ativos = 0.
+- Disco liberado (76% após prune seguro de imagens a64 legadas).
+- Sem migrations obrigatórias; temáticos ON compatíveis.
 
 ---
 
-## 6. Checklist de homologação
+## 4. Backup / drain / ACL
+
+| Etapa | Resultado |
+|-------|-----------|
+| Backup compose/meta/flags/AI history | PASS (`…/backup/`) |
+| Cold sessão WA (1058 arquivos) | PASS pós-stop Node |
+| Cold Datomic | PASS pós-stop JVM |
+| Node drain → quiescent/durable | PASS |
+| JVM drain → quiescent (`X-A6-Maintenance-Token`) | PASS |
+| ACL u:1000 apply + probe rw | PASS |
+| Writers simultâneos | Nenhum no mid-cutover |
+
+---
+
+## 5. Cutover
+
+1. Overlay runtime pin Node `289a0407…` + JVM `7bc8f341…` + `HEALTH_BIND_HOST=0.0.0.0` (sem override de flags Pokémon).
+2. JVM recriada → healthy / bridge up / 89 caps / flags `true`.
+3. Resume JVM `open` **antes** do Node definitivo (evita `platform` fail-closed).
+4. Node recriado → READY `2026-11-08T06:38:05Z` com `hasSynced_listeners_attached`.
+5. Resume Node `open`.
+
+---
+
+## 6. Validação pós-cutover
 
 | Check | Resultado |
 |-------|-----------|
-| `clojure -M:test-a6-lote-a` | PASS |
-| `clojure -M:test-a6-lote-b` (P0 + flow Datomic) | PASS (incl. 11/64 P0 + 1/11 flow) |
-| `clojure -M:test-a6-lote-c` | PASS |
-| `clojure -M:test-a6-homolog-abc` | **32 / 213** PASS |
-| `clojure -M:test-m4-raid` | PASS |
-| Node P0/lote-c/startup/health-bind/drain | **60/60** PASS |
-| `npm run test:http` | **287/287** PASS |
-| Imagens Node+JVM mesmo git-sha/tree | PASS |
-| Sandbox AMD64 UID 1000 / CapEff 0 / NNP / sem `--no-sandbox` | PASS |
-| HEALTH_BIND host só com `0.0.0.0` | PASS |
-| ACL grant + pós-stop revert | PASS |
-| JVM Datomic descartável + temáticos `true` + reopen | PASS |
-| Contrato raridade/captura/ginásio (`npc-roll` GET, present, símbolos) | PASS |
-| Overlay + verify pins | PASS (pins no tip) |
-| Produção live intocada durante prep | PASS (`READY` + Image IDs live) |
+| Caps raid/capture/gym/learn/thematic | PASS (89; needs presentes) |
+| `GET /v1/gyms` | PASS |
+| `GET /v1/gyms/npc-roll` | Rota auth OK (`unknown_gym` com id fixture) |
+| `GET /v1/raids/active` | Rota OK (`invalid_query` sem chat/player — esperado) |
+| Present raridade/raid/npc-roll / sem `--no-sandbox` | PASS |
+| AI history file | PASS |
+| Sandbox CapEff/NNP/Chromium 156 | PASS |
 
-**Nota residual de suite:** `npm run test:m4-jvm` tem **3** falhas de formatação legado (`seu time` / gates de troca) **fora** do escopo P0; não bloqueiam a RC A+B+C+P0 (present P0 e contratos HTTP verdes).
+Observação de estabilidade ≥20 min: ver §7 / evidência `logs/stability-20m.log`.
 
 ---
 
-## 7. Evidências staging (descartável)
+## 7. Estabilidade
 
-| Item | Valor |
-|------|-------|
-| Host | `odisseu-core` |
-| Evidência local VM | `/tmp/a6-abc-p0-rc-homolog/` |
-| Chromium | `Chrome/156.0.8078.79` · CapEff `0` · NoNewPrivs `1` · uid `1000` |
-| JVM caps | 88 · restart CAPS_EQUAL |
-| `GET /v1/gyms/npc-roll` | rota autenticada (400 `unknown_gym` com id de fixture; unauth 401; POST 405) |
+| Campo | Valor |
+|-------|-------|
+| READY_AT | `2026-11-08T06:38:05Z` |
+| Observação | `2026-11-08T06:39:20Z` → `06:59:04Z` (40× / 30 s) |
+| Resultado | **STABILITY_20M_PASS** (`2026-11-08T06:59:34Z`) |
+| Critério | READY + status ok + Image IDs RC + JVM healthy · sem QR · sem restart inesperado |
+| Node | `sha256:289a0407…` · healthy · restarts=0 |
+| JVM | `sha256:7bc8f341…` · healthy · restarts=0 |
+| Health final | `{"status":"ok","whatsapp":"READY","chromium":true}` |
+| Evidência | `…/logs/stability-20m.log`, `stability-ok-at.txt`, `health-after-20m.json` |
 
 ---
 
-## 8. Riscos residuais
+## 8. Riscos residuais (live atual)
 
-| Risco | Mitigação |
+- Raids party-1 abertas na JVM antiga expiram; joins novos usam party ≤3.
+- Janela exigiu resume JVM antes do Node final (marker quiescent persistido).
+- Validação de gameplay foi **não destrutiva** (sem mutar saves/inventários de jogadores).
+- Live ainda **não** inclui HP sync / bolas alias-debit / UI caça / moldura pokedex pessoal (candidata §10).
+
+---
+
+## 9. Referências
+
+- Audit P0: `docs/pokemon-a6-raid-gym-capture-audit.md` · `docs/pokemon-a6-gameplay-audit.md` §P0
+- Evidência: `a6-abc-p0-cutover-20261108T063319Z`
+- Overlay runtime: `…/a6-cutover-runtime-20261101T141408Z/docker-compose.a6-ai-drain-sandbox.overlay.yml`
+
+---
+
+## 10. RC seguinte — HP/golpes/bolas/UI + Pokédex moldura (candidata)
+
+**Status:** código homologado localmente; **sem deploy**. Live permanece `289a0407` / `7bc8f341`.
+
+### 10.1 Escopo integrado
+
+| Item | Incluído |
+|------|----------|
+| A+B+C+P0 cutover (base) | sim (ancestral `1a8eaf8` / live) |
+| HP raid → coleção + leave + XP sem cura full | sim |
+| Golpes string-key (Wartortle) + status válido | sim |
+| `inv-qty` / débito alias (`great-ball`) + % motor | sim |
+| UI raid = caça (emoji/mensagem) | sim |
+| Pokédex pessoal = moldura espécie | sim |
+| Drain / IA dinâmica / sandbox / hold | preservados (sem alteração) |
+
+### 10.2 Homologação descartável
+
+| Suite | Resultado |
 |-------|-----------|
-| JVM live ainda pré-A+B+C | Cutover **coordenado** Node+JVM |
-| Raids abertas party-1 | Expiram; joins novos selam ≤3 |
-| READY WA / Chromium | Manter 156 + listeners; não regressar a 157 |
-| Flags temáticas | Overlay não redefine; default/env live preservados |
-| Drift m4-jvm present legado | Fora do P0; acompanhar em follow-up de UX |
+| `:test-a6-lote-a` | PASS |
+| `:test-a6-lote-b` (+ `raid-hp-sync-p0-a6-test`) | PASS |
+| `:test-a6-lote-c` | PASS |
+| `:test-a6-homolog-abc` | PASS (213 asserts) |
+| Node P0 / raid / pokedex | PASS |
 
----
+Evidência HP: ataque → `hp-atual` ↓; leave preserva; vitória+XP `hp-atual` = snapshot (≠ max).
 
-## 9. GO / NO-GO solicitar janela
+### 10.3 Produção (somente leitura)
 
-| Pedido | Veredito |
-|--------|----------|
-| Preparar RC A+B+C+P0 (código+imagens) | **GO** (pronto) |
-| Deploy / cutover agora | **NO-GO** |
-| Solicitar janela **Node+JVM juntos** | **GO** |
-| Janela só Node ou só JVM | **NO-GO** (P0 depende dos dois) |
+| Campo | Valor (inspecionado) |
+|-------|----------------------|
+| Node live | `sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade` · healthy · restarts=0 |
+| JVM live | `sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c` · healthy · restarts=0 |
+| Health | `{"status":"ok","whatsapp":"READY","chromium":true}` |
+| Rollback cutover | Node `05b36c5a…` · JVM `ad0b7c1b…` (§2) |
 
----
+### 10.4 Imagens candidatas / pins
 
-## 10. Referências
+Preenchido após build do commit integrado (labels `io.zapbot.git-sha` / `content-tree`).
 
-- P0 audit: `docs/pokemon-a6-raid-gym-capture-audit.md`
-- Incidente WA: `docs/a6-whatsapp-recovering-incident.md`
-- Verify: `scripts/verify-a6-gameplay-rc-images.sh`
-- Overlay: `docker-compose.a6-ai-drain-sandbox.overlay.yml`
+| Campo | Valor |
+|-------|-------|
+| Commit P0 | _(após commit)_ |
+| Commit integrado (tip RC) | _(após merge PR)_ |
+| Tree | _(git rev-parse HEAD^{tree})_ |
+| Node Image ID | _(pendente build amd64)_ |
+| JVM Image ID | _(pendente build amd64)_ |
+| Overlay / verify / rollback | pin candidatas; rollback = **live atual** `289a0407`/`7bc8f341` |
+
+### 10.5 Riscos residuais (candidata)
+
+- Parties de raid **já** em combate mantêm golpes slim antigos até leave/rejoin.
+- Débito alias consome o primeiro ID com qty suficiente (canônico preferido).
+- Sem smoke destrutivo em saves reais nesta etapa.
+
+### 10.6 GO/NO-GO para solicitar janela
+
+| Critério | Estado |
+|----------|--------|
+| Código + testes A+B+C+P0 local | **GO** |
+| PR integrado na RC | _(pendente)_ |
+| Image IDs Node+JVM do mesmo commit | _(pendente build)_ |
+| Overlay/verify/rollback atualizados | _(pendente pins)_ |
+| Deploy hold / CI/CD intocados | **GO** (não alterar) |
+| **Pedido de janela agora** | **NO-GO** até Image IDs + verify PASS |

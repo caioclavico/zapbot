@@ -697,9 +697,11 @@ async function renderPokedexCard(pokemon, {
 } = {}) {
   try {
     if (!pokemon) return null;
+    // Coleção pessoal pode chegar sem URL (keep-images?=false); rehidrata como a espécie.
+    const hydrated = await ensurePokemonSprite(pokemon);
     const screen = { x: 28, y: 92, w: width - 56, h: height - 150, rx: 16 };
     const tamanho = Math.min(spriteMax, screen.w - 16, screen.h - 16);
-    const { buffer: spriteBuf } = await spriteFixoPokedex(pokemon, tamanho);
+    const { buffer: spriteBuf } = await spriteFixoPokedex(hydrated, tamanho);
     const left = Math.round(screen.x + (screen.w - tamanho) / 2);
     const top = Math.round(screen.y + (screen.h - tamanho) / 2);
     const buffer = await sharp(svgPokedexShell(width, height, screen))

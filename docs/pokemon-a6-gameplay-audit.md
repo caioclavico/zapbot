@@ -161,3 +161,33 @@ node --test test/pokemon-a6-sprite-placeholder.test.cjs  PASS
 ## Preservação produção
 
 Nenhuma imagem trocada, nenhum restart JVM/Node/WhatsApp, nenhum save alterado, nenhuma flag de produção mudada nesta etapa.
+
+---
+
+## P0 pós-cutover (2026-11-08)
+
+Escopo: correções locais. **Sem deploy / migration / backfill / flags / saves live.**
+
+| Bug | IMPLEMENTADO | TESTADO | PENDENTE |
+|-----|--------------|---------|----------|
+| **HP raid → `!pk time`** | `raid-party-hp-txs` em ataque + leave; XP com HP do snapshot (sem full heal) | `raid-hp-sync-p0-a6-test` (ataque/leave/vitória) | Deploy JVM; smoke prod |
+| **`? — Poder 0`** | `golpe-normalizado` sempre; Wartortle string-keys; status 0 ≠ ref quebrada | slim Wartortle + status | Parties já seladas: rejoin |
+| **UI raid = caça** | emoji classe + “causou N” + `linhaGolpe` | Node P0 + fase12 + lote-c | Deploy Node |
+| **Grande/Ultra qty + %** | `bola-aliases` + `inv-qty` + `inventory-adjust-ball-tx`; `ballMapGet`; % motor | UI camelCase + débito `great-ball` | Deploy Node+JVM |
+| **Pokédex moldura** | `!pk pokedex N` → `renderPokedexCard` | pokedex species tests | Deploy Node |
+
+### Arquivos
+
+| Papel | Path |
+|-------|------|
+| HP sync | `raid_store.clj`, `battle_leave_store.clj`, `store.clj` |
+| Golpes | `battle.clj` |
+| Estoque/débito | `capture.clj`, `bridge_reads.clj`, `store.clj` |
+| Present / pokedex | `pokemon-jvm-present.cjs`, `pokemon-jvm-media.cjs`, `pokemon_http.cljs` |
+| Testes | `raid_hp_sync_p0_a6_test.clj`, `pokemon-a6-raid-gym-capture-p0.test.cjs` |
+
+### Homologação local
+
+`clojure -M:test-a6-lote-a|b|c` + `homolog-abc` PASS · Node P0/raid/pokedex PASS.
+
+Drain / IA / sandbox / hold: **inalterados**. Imagens candidatas: ver readiness §10.

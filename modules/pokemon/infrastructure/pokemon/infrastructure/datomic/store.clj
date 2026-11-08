@@ -338,12 +338,17 @@
       (and (contains? registro :item) (some? (:item registro)))
       (assoc :pokemon/item (str (:item registro))))))
 
+(defn- inventory-qty
+  [db sk item-id]
+  (let [ik (id/inventory-item-key sk item-id)
+        cur (d/pull db '[:inventory-item/qty] [:inventory-item/key ik])]
+    (long (:inventory-item/qty cur 0))))
+
 (defn- inventory-adjust-tx
   "Retorna tx-data para delta de item; lança se qty ficaria negativa."
   [db sk item-id delta]
   (let [ik (id/inventory-item-key sk item-id)
-        cur (d/pull db '[:inventory-item/qty] [:inventory-item/key ik])
-        old-qty (long (:inventory-item/qty cur 0))
+        old-qty (inventory-qty db sk item-id)
         next-qty (+ old-qty (long delta))]
     (when (neg? next-qty)
       (throw (err/error :insufficient_item
@@ -352,6 +357,21 @@
       :inventory-item/save [:save/key sk]
       :inventory-item/item-id item-id
       :inventory-item/qty next-qty}]))
+
+(defn- inventory-adjust-ball-tx
+  "Débito de bola/fruta: consome canônico primeiro; senão alias legado
+  (`great-ball` → `grande-bola`). Crédito (+n) sempre no ID canônico.
+  Alinha UI `inv-qty`/`qtyBall` com o que a captura realmente consome."
+  [db sk item-id delta]
+  (let [canonical (str item-id)
+        d (long delta)]
+    (if (pos? d)
+      (inventory-adjust-tx db sk canonical d)
+      (let [ids (capture/bola-alias-ids canonical)
+            ordered (into [canonical] (disj ids canonical))
+            need (Math/abs d)
+            chosen (first (filter #(>= (inventory-qty db sk %) need) ordered))]
+        (inventory-adjust-tx db sk (or chosen canonical) d)))))
 
 (defn- evolution-tx-fragments
   "TX de troca de espécie no mesmo id-pokemon (preserva identidade)."
@@ -1828,7 +1848,7 @@
                                             :capacidade (:capacidade storage)
                                             :excesso (:excesso storage)
                                             :nivel (:nivel storage)})))
-                     ball-tx (inventory-adjust-tx db sk bola -1)
+                     ball-tx (inventory-adjust-ball-tx db sk bola -1)
                      attempt (capture/attempt-capture
                               {:pokemon pokemon
                                :status (:status request)
@@ -2004,8 +2024,8 @@
                      frambo? (or prepared-frambo? request-frambo?)
                      ;; Consome Frambo na captura (prepare só marca; alinhado à raid).
                      frambo-tx (when frambo?
-                                 (inventory-adjust-tx db sk capture/frambo-item-id -1))
-                     ball-tx (into (or frambo-tx []) (inventory-adjust-tx db sk bola -1))
+                                 (inventory-adjust-ball-tx db sk capture/frambo-item-id -1))
+                     ball-tx (into (or frambo-tx []) (inventory-adjust-ball-tx db sk bola -1))
                      tentativas-ant (long (:tentativas-captura state 0))
                      chance-base (or (:chance-base-captura state)
                                      (capture/chance-base-pos-batalha
@@ -3910,7 +3930,8 @@
                    :raid raid
                    :apply-pokemon-xp-tx apply-pokemon-xp-tx
                    :save-entity save-entity
-                   :query-collection query-collection}))))
+                   :query-collection query-collection
+                   :pokemon-hp-status-tx pokemon-hp-status-tx}))))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)
@@ -3940,7 +3961,7 @@
                    :request (assoc request :payload-hash phash)
                    :raid raid :colecao colecao
                    :pokemon-entity-map pokemon-entity-map
-                   :inventory-adjust-tx inventory-adjust-tx}))))
+                   :inventory-adjust-tx inventory-adjust-ball-tx}))))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)
@@ -4833,7 +4854,9 @@
                    (and in-raid? (= "combate" (str (:fase raid))))
                    (battle-leave-store/build-leave-raid-combat-tx
                     {:db db :save save :writer-ctx writer-ctx
-                     :request req' :raid raid})
+                     :request req' :raid raid
+                     :query-collection query-collection
+                     :pokemon-hp-status-tx pokemon-hp-status-tx})
 
                    (and battle (not open-battle?))
                    {:tx [[:db/cas [:save/key sk] :save/revision
