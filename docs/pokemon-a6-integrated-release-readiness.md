@@ -1,14 +1,40 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0 + One-Mon + species-hp
 
-**Atualizado:** 2026-11-08T17:05Z  
+**Atualizado:** 2026-11-08T19:15Z  
 **Host:** `odisseu-core` (linux/amd64)  
-**Live executável (Species-HP Final):** Node `sha256:17520a1ec6fcb88687c2f208b8cd276c384944f01cde57a3b0793c217532e2a0` / JVM `sha256:c13140fa9965b8cb78faa7edc1d95a95a5abc3ed1287203554e65748e52683ee` @ `72bffdb` — **intacta**  
-**RC candidata (Combat UX + Eventos 25%):** carregada no host · VERIFY PASS · overlay pinado · **não** aplicada  
-**Evidência prep:** `/home/caiohclavico/odisseu-recovery/a6-combat-ux-events-prep-20261108T165411Z`  
-**Inbox tars:** `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-combat-ux-events-3bc5076/`  
-**Artefatos locais:** `artifacts/a6-combat-ux-events-20261108T164301Z/`  
-**PRs:** #51 · #52 · #53 · #54  
-**Veredito:** **GO** solicitar janela de deploy · **NO-GO** cutover até autorização explícita
+**Live:** Combat UX + Eventos `3bc5076` — Species-HP/035/One-Mon/HP 320 intactos  
+**Base RC integrada:** `github/rc/a6-abc-p0-integrated` @ `7caf43e`  
+**PRs desta fatia:** [#56](https://github.com/caioclavico/zapbot/pull/56) UX Lote A · [#57](https://github.com/caioclavico/zapbot/pull/57) raridade oficial · este PR readiness  
+**Docs:** `docs/pokemon-a6-official-rarity-model.md` · `docs/pokemon-a6-rarity-raid-gym-help-audit.md`  
+**Veredito:** Lote A **GO** integração · Lote B raridade oficial **NO-GO** ativação (`:legado`) · **NO-GO** deploy/migrations/backfill
+
+---
+
+## 0p. Lote A UX + modelo oficial de raridade (2026-11-08) — PRs #56 / #57
+
+| Campo | Valor |
+|-------|-------|
+| Base | `7caf43e74e0b2acfab306d3511f4810355d91127` (`rc/a6-abc-p0-integrated`) |
+| PR1 commit | `c5744c3` — `feature/a6-lote-a-ux` → [#56](https://github.com/caioclavico/zapbot/pull/56) |
+| PR2 commit | `fe2a2a3` — `feature/a6-official-rarity` → [#57](https://github.com/caioclavico/zapbot/pull/57) |
+| PR1 escopo | 💰 · efetividade `Super efetivo!🔥` · `!pk ajuda` + testes |
+| PR2 escopo | catálogo oficial v1 · `rarity.clj` · hook `capture` · default **`:legado`** |
+| Dependência PR1↔PR2 | **nenhuma** (arquivos disjuntos) |
+| Testes PR1 | ux-help-coins · gameplay-present · lote-c · raid-gym-capture + fase12 (**20 pass**) |
+| Testes PR2 | `official_rarity_a6_test` — **10 tests / 59 asserts / 0 fail**; `politica-ativa=:legado` |
+| Compatibilidade | Species-HP / schema 035 / One-Mon / HP chefe 320 / economia / chance-surto 25% — **preservados** |
+| Ativação raridade oficial | **NO-GO** (requer aprovação; `:oficial-a`/`:oficial-b` só sob binding) |
+| Deploy / migrations / backfill / saves | **NÃO** |
+| Riscos | mensagens JVM legadas até rebuild; UBs/sublendários na calibração B; PR3 docs após merge #56+#57 |
+
+### Veredito próxima RC
+
+| Item | Status |
+|------|--------|
+| Integrar Lote A (#56) na RC | **GO** |
+| Homologar WhatsApp (💰 / efetividade / ajuda) | **GO** (pendente visual) |
+| Ativar política oficial de raridade | **NO-GO** |
+| Pedir janela de deploy desta fatia | **NO-GO** até merge + homolog |
 
 ---
 
