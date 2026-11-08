@@ -260,9 +260,10 @@ Cobertura extra pós-risco: DTO Node suavizado→JVM, evo pedra canonizada, clam
 |------|----------|
 | Implementação + riscos residuais | **GO** |
 | Integração RC (PR #45) | **GO** (feito) |
-| Build imagens + overlay pins | **GO** (feito; overlay **não** aplicado) |
-| **Preparação operacional / cutover** | **GO condicional** — exige janela autorizada, load tars no host, VERIFY no odisseu-core |
-| Deploy / migration live / backfill | **NO-GO** |
+| Build imagens + overlay pins | **GO** (feito; overlay **não** aplicado em produção até cutover) |
+| Prep operacional host (load/VERIFY/pin) | **GO** (feito — evid `a6-species-hp-prep-20261108T134333Z`) |
+| **Cutover / deploy** | **NO-GO** até GO operacional (disco 93%) |
+| Migration/backfill de saves | **NO-GO** (ver `pokemon-a6-species-hp-migration-plan.md`) |
 | Alterar HP de chefes de raid | **NO-GO** |
 
 ### Critério de conclusão
