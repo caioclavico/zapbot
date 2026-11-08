@@ -6,11 +6,14 @@
   pela inversa linear (erro típico ±1 por arredondamento) e permite overrides
   explícitos para espécies de simulação/auditoria.
 
+  Formas (ex.: `wishiwashi-solo`) resolvem via aliases explícitos em
+  `species-form-aliases` — sem strip heurístico de sufixos.
+
   Sem PokeAPI em runtime. Dados ausentes → erro explícito (não inventa HP)."
   (:require [clojure.string :as str]
             [pokemon.domain.errors :as err]
-            [pokemon.domain.raid-boss :as raid-boss]))
-
+            [pokemon.domain.raid-boss :as raid-boss]
+            [pokemon.domain.species-form-aliases :as form-aliases]))
 (def media-stat-referencia 75.0)
 (def fator-compressao-legado 0.5)
 
@@ -58,26 +61,36 @@
     (some #(when (= s (slug (:species %))) %) rows)))
 
 (defn base-hp
-  "HP base oficial da espécie. Preferência: override → catálogo (unsmooth).
-  Lança se a espécie não existir no catálogo A6."
+  "HP base oficial da espécie/forma.
+  Ordem: override de forma distinta → override de espécie → catálogo (via alias canônico).
+  Lança se não houver resolução confiável (não inventa HP)."
   [species]
-  (let [s (slug species)]
-    (or (get official-hp-overrides s)
-        (when-let [row (catalog-row s)]
+  (let [raw-slug (slug species)
+        form-ov (get form-aliases/form-hp-overrides raw-slug)
+        resolved (form-aliases/resolve-catalog-species raw-slug)]
+    (or form-ov
+        (get official-hp-overrides raw-slug)
+        (get official-hp-overrides resolved)
+        (when-let [row (catalog-row resolved)]
           (let [raw (:hp row)]
             (when (nil? raw)
               (throw (err/error :species_hp_base_missing
-                                {:species s :reason :catalog-hp-nil})))
+                                {:species raw-slug :resolved resolved
+                                 :reason :catalog-hp-nil})))
             (unsmooth-stat raw)))
         (throw (err/error :species_hp_base_missing
-                          {:species s :reason :not-in-catalog})))))
+                          {:species raw-slug :resolved resolved
+                           :reason :not-in-catalog})))))
 
 (defn base-hp-known?
   [species]
   (boolean
-   (or (contains? official-hp-overrides (slug species))
-       (catalog-row species))))
-
+   (let [raw-slug (slug species)
+         resolved (form-aliases/resolve-catalog-species raw-slug)]
+     (or (contains? form-aliases/form-hp-overrides raw-slug)
+         (contains? official-hp-overrides raw-slug)
+         (contains? official-hp-overrides resolved)
+         (catalog-row resolved)))))
 (defn catalog-hp-table
   "Tabela {species → {:hp-suavizado :hp-base :fonte}} para simulações.
   Não usa PokeAPI."

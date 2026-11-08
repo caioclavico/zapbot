@@ -1,139 +1,116 @@
 # Pokémon A6 — Plano de migração Species-HP (futuro)
 
-**Status:** proposta + ensaio descartável concluído — **NÃO executar em produção**.  
-**Base:** código `5ed39b0` · imagens Node `57a828ca…` / JVM `e1bb8ac5…`.  
-**Ensaio:** 2026-11-08T14:17Z · evidência local `artifacts/a6-species-hp-migrate-rehearsal/` · host audit `…/a6-species-hp-storage-audit-20261108T140316Z`.
+**Status:** bloqueios de forma fechados em homologação local — **NÃO executar em produção**.  
+**Base:** código species-hp + `species-form-aliases` · imagens candidatas Node `57a828ca…` / JVM `e1bb8ac5…` (RC anterior; nova RC após merge).  
+**Ensaio v2:** 2026-11-08T14:26Z · `artifacts/a6-species-hp-migrate-rehearsal/`.
 
-## Auditoria RO atualizada (cópia Datomic, sem writes live)
+## Auditoria RO (dataset do ensaio)
+
+Export anonimizado de cópia Datomic (sem writes live). Contagem **não** é garantia do live atual.
 
 | Métrica | Valor |
 |---------|-------|
-| Pokémon totais | **984** |
-| `legacy-unset` | **984** (100%) |
-| `species-hp-v1` / com `hp-base` | **0** / **0** |
-| HP cheio / parcial / desmaiado | **952** / **12** / **20** |
-| Raids ativas | **0** |
-| Batalhas ativas | **0** |
+| Pokémon no dataset | **984** |
+| Antes | 100% `legacy-unset` |
+| Raids/batalhas no export | 0 / 0 |
 
 ---
 
-## Resultados do ensaio (Datomic descartável)
+## Formas — quarentena resolvida
+
+Aliases explícitos em `pokemon.domain.species-form-aliases` (sem strip heurístico).
+
+| Resultado | Qtd |
+|-----------|-----|
+| Formas do ensaio resolvidas | **22/22** (16 identificadores) |
+| Quarentena restante no ensaio | **0** |
+| Formas com HP distinto (overrides, não alias) | `indeedee-female`, `zygarde-10/complete`, `gourgeist-{small,large,super}`, `pumpkaboo-{small,large,super}` |
+
+Exemplos resolvidos via canônico: `wishiwashi-solo`→`wishiwashi`, `pyroar-male`→`pyroar`, `gourgeist-average`→`gourgeist`, …
+
+---
+
+## Ensaio v2 (Datomic descartável)
 
 | Item | Resultado |
 |------|-----------|
-| Dataset | export RO anonimizado da cópia do volume live (`984` registros) |
-| Convertidos | **960** |
-| Quarentena | **22** (formas/variantes fora do catálogo canônico) |
-| Skip combate (injetados no ensaio) | **2** |
-| Tempo lotes (40/reg) | **~0,28 s** |
-| 2ª passagem | `convert=0` · idempotente |
-| Retomada pós-falha simulada | **PASS** |
-| Persistência amostra (30) | v1 + faint=0 + integridade stats **PASS** |
-| Unit species-hp | **19/1337 PASS** |
-| Raid boss HP | **320** preservado |
-
-### Quarentena (agregado — sem PII)
-
-Formas/variantes sem alias no catálogo (exemplo): `wishiwashi-solo`, `pyroar-male`, `gourgeist-average`, `tatsugiri-curly`, `frillish-male`, `mimikyu-disguised`, `indeedee-male`, `enamorus-incarnate`, `jellicent-male`, `lycanroc-midday`, `zygarde-50`, `pumpkaboo-average`, `darmanitan-standard`, `deoxys-normal`, `meowstic-male`, `minior-red-meteor`.
-
-**Bloqueio residual:** antes da migração live, acrescentar aliases de forma no catálogo (sem inventar base).
+| Convertidos | **982** |
+| Skip combate (injetados) | **2** |
+| Quarentena | **0** |
+| Idempotência 2ª passagem | `convert=0` |
+| Retomada pós-falha | **PASS** |
+| Persistência amostra | **PASS** · faint=0 · raid boss 320 |
+| Unit species-hp | **22 tests / 1421 asserts PASS** |
+| Schema 035 (descartável) | **PASS** (`:ok true`) |
+| Freeze + maintenance-gate | **PASS** |
 
 ---
 
-## 1. Pré-requisitos (produção futura)
+## Schema 035 (só descartável)
 
-1. Cutover Node+JVM species-hp estável (WA READY, healthy, ≥20 m).
-2. Schema **035** aplicado **uma vez** com GO explícito.
-3. Aliases de forma para as 22 quarentenas (ou lista aceita de quarantine permanente).
-4. Backup cold Datomic + sessão + overlay/flags **antes** dos lotes.
-5. Revalidar `active-raids` / `active-battles` = 0 (ou exclusão confiável por `id-pokemon`).
-6. Margem de disco ≥8–10 G (atingida em 2026-11-08 após limpeza `/tmp`; revalidar).
+Arquivo: `migrations/pokemon/035-species-hp-formula.edn`
 
----
+| Check | Resultado |
+|-------|-----------|
+| Attrs | `:pokemon/hp-base` (long) · `:pokemon/hp-formula-version` (string) |
+| Cardinalidade | one |
+| Índice / unique | **ausentes** (legado sem attrs OK) |
+| Destrutivo | **não** (só add) |
+| Reaplicação | idempotente via `:odisseu.schema/migration-id` |
+| Produção | **NÃO aplicado** |
 
-## 2. Backup
-
-| Artefato | Ação |
-|----------|------|
-| Datomic hot→cold | `cp -a` volume `odisseu-a6-cutover-datomic` |
-| Sessão WA | cold copy (sem locks live) |
-| Overlay/flags | snapshot compose + env (sem secrets em logs) |
-| Checksums | `sha256sum` |
-
-Rollback de volume **somente** na mesma janela sem progresso pós-migração significativo + GO humano.
+Smoke: `clojure -M:test-a6-species-hp-schema035`
 
 ---
 
-## 3. Lotes + idempotência
+## Freeze de combates
 
-1. Lotes **25–50** (`migrar-lote` / `plano-seguro`).
-2. Status: `:convert` · `:noop` · `:quarantine` · `:skip-combat`.
-3. `:convert` inclui upgrade só de metadados (`hp-base` / `hp-formula-version`) quando números coincidem.
-4. Retry → `:noop` se já `species-hp-v1`.
-5. Nunca inventar `hp-base`.
+Módulo: `pokemon.domain.species-hp-freeze` + reuse do **maintenance-gate** existente.
 
----
+1. `enter` → draining → quiescent (não mata TX em voo).  
+2. Bridge `acquire!` falha → 503 `maintenance_active` (bloqueia hunt/raid/pvp/gym/evo/…).  
+3. Classificação pura: `hp-mutating-op?` / `allowed-during-freeze?`.  
+4. Revalidar RO: battles/raids ativas = 0.  
+5. Schema 035 + batches.  
+6. `resume` só após verify.
 
-## 4. Política de HP
-
-| Caso | Regra |
-|------|-------|
-| Cheio | `hp-atual = hp-max` novo |
-| Parcial | proporção preservada (±1 arredondamento) |
-| Desmaiado | permanece **0** |
-| Combate/raid | `:skip-combat` até leave/fim |
-
-Fórmula (inalterável sem GO):  
-`hp-max = round(hp-ref(n) × clamp((hp-base/80)^0.85, 0.60, 2.20))`
+**Não** altera o gate de produção nesta tarefa. Smoke: `clojure -M:test-a6-species-hp-freeze` + `odisseu.smoke.maintenance-quiescence`.
 
 ---
 
-## 5. Proteção de combates
+## Compatibilidade de versões / rollback
 
-1. Query RO raids `lobby|combate|captura` + `battle/active?=true`.
-2. Filtrar `id-pokemon` ocupados; se identificação não for confiável → **abortar** migração.
-3. Snapshots de combate não são reescritos mid-fight.
+| Estado | Leitura | Escrita nova |
+|--------|---------|--------------|
+| Pré-cutover (One-Mon) | legado; **sem** conversão na leitura | HP legado |
+| Pós-cutover, pré-backfill | legado intacto; v1 se já marcado | v1 (Node+JVM species-hp) |
+| Pós-backfill | v1 | v1 |
+| Rollback de **código** para One-Mon | registros v1: attrs `hp-base`/`hp-formula-version` ignorados se código antigo não lê; **HP numérico permanece** — risco de inconsistência se fórmula antiga recalcular | evitar recalcular max sem checar versão |
 
-No ensaio: identificação por flag injetada **PASS**; em produção exige wiring confiável save↔battle/raid.
+Regras:
 
----
-
-## 6. Falha e retomada
-
-Recibo por lote `{batch-id, offset, convert, noop, quarantine, skip-combat}`.  
-Falha → não avançar cursor; reexecutar (idempotente). Ensaio de falha no 3º lote + retomada: **PASS**.
-
----
-
-## 7. Verificação pós-migração
-
-| Check | Esperado |
-|-------|----------|
-| Versões | quase tudo `species-hp-v1` + quarantine explícita |
-| Fainted | `hp-atual=0` |
-| Partial | razão ≈ pré |
-| Owner/XP/golpes/nível | intactos |
-| Raid boss | 320 |
+- Leitura **nunca** converte.  
+- Backfill parcial: retomar lotes (idempotente); quarantine explícita.  
+- Rollback de **dados**: cold Datomic só na mesma janela sem progresso significativo + GO.  
+- Evitar cutover Node sem JVM (ou vice-versa) na janela species-hp.
 
 ---
 
-## 8. Janela operacional futura (proposta — não executar)
+## Pré-requisitos produção futura
 
-1. Maintenance/drain → cutover Node+JVM species-hp → observe READY.  
-2. Schema 035.  
-3. Novos spawns já nascem em v1; legados ainda legados na leitura (sem conversão implícita).  
-4. Batch migrate com freeze de combates.  
-5. Verify + reopen.  
-6. Evitar janela longa mista sem plano de leitura legado (já garantido: leitura não converte).
+1. Nova RC com aliases + freeze docs (após merge).  
+2. Cutover Node+JVM estável ≥20 m.  
+3. Schema 035 com GO.  
+4. Freeze via maintenance-gate + zero combates ativos.  
+5. Backup cold.  
+6. Batches 25–50.
 
 ---
 
-## 9. GO futuro
+## GO futuro
 
 | Item | Veredito |
 |------|----------|
-| Ensaio descartável | **GO** (mecanismo validado) |
-| Executar migração live agora | **NO-GO** |
-| Pedir janela cutover+migração | **GO condicional** — aliases de forma + schema 035 + freeze combates + GO humano |
-
-Este documento **não** autoriza cutover, deploy, schema live nem backfill.
+| Homologação local bloqueios | **GO** |
+| Nova RC (build/pin) | **GO** (sem deploy) |
+| Cutover / schema live / backfill | **NO-GO** até GO operacional |
