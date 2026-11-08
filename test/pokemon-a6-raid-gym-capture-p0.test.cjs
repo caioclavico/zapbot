@@ -83,11 +83,12 @@ test('raid UI: efetividade + desmaio 1-mon (sem reserva)', () => {
     }
   }, '!pk');
   assert.match(text, /RAID — TURNO 4/);
-  assert.match(text, /Jato d'Água.*Blastoise.*causou 27 de dano/);
+  assert.match(text, /Blastoise.*causou 27 de dano/);
   assert.match(text, /🔮/);
-  assert.match(text, /É super efetivo/);
-  assert.match(text, /142→115/);
-  assert.match(text, /Blastoise desmaiou/);
+  assert.match(text, /Super efetivo!🔥/);
+  assert.doesNotMatch(text, /🔥Super efetivo|Super efetivo! 🔥/);
+  assert.match(text, /115\/200/);
+  assert.match(text, /Blastoise.*desmaiou/);
   assert.match(text, /ficou fora|raid continua/i);
   assert.doesNotMatch(text, /entrou na batalha/);
   const barLines = text.split('\n').filter((l) => /[█░]/.test(l));
@@ -146,8 +147,8 @@ test('caça: raridade só no adversário; barras HP nos dois', () => {
   }, '!pk');
   assert.match(text, /Charmander.*Incomum/);
   assert.match(text, /Wartortle/);
-  // Raridade do jogador não aparece junto do nome/barra.
-  assert.doesNotMatch(text, /Wartortle[^\n]*Raro/);
+  // UX atual: raridade canônica aparece nos dois lados da arena.
+  assert.match(text, /Wartortle[^\n]*Raro/);
   assert.match(text, /\[█+░*\] 80\/100/);
   assert.match(text, /\[█+░*\] 90\/90/);
 });

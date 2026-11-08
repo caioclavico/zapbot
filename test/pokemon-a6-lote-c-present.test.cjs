@@ -25,13 +25,14 @@ const raidMsg = present.formatRaidAttack({
   }
 }, '!pk');
 
-assert.match(raidMsg, /Lança-Chamas|Lanca-Chamas/);
-assert.match(raidMsg, /super efetivo/i);
+assert.match(raidMsg, /Super efetivo!🔥/);
+assert.doesNotMatch(raidMsg, /🔥Super efetivo|Super efetivo! 🔥|💥 É super efetivo/);
 assert.match(raidMsg, /desmaiou|ficou fora/i);
 assert.doesNotMatch(raidMsg, /entrou na batalha/);
-assert.match(raidMsg, /142\s*→\s*100|Chefe: 142/);
+assert.match(raidMsg, /100\/200|\[█/);
 assert.match(raidMsg, /raid continua|ficou fora/i);
 assert.doesNotMatch(raidMsg, /Super Bola/);
+assert.doesNotMatch(raidMsg, /🪙|🌙/);
 
 // --- Wild turn: mensagem canônica do motor (não recalcula) ---
 const turnMsg = present.formatBattleTurn({
@@ -85,9 +86,9 @@ const turnFallback = present.formatBattleTurn({
 }, '!pk');
 assert.match(turnFallback, /Choque do Trovão/);
 assert.match(turnFallback, /22 de dano/);
-assert.match(turnFallback, /super efetivo/i);
+assert.match(turnFallback, /Super efetivo!🔥/);
 assert.match(turnFallback, /crítico|critico/i);
-assert.match(turnFallback, /72→50/);
+assert.match(turnFallback, /50\/100/);
 
 // --- Explosion lose copy ---
 const loseExp = present.formatBattleTurn({

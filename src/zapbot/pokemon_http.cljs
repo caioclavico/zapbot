@@ -861,10 +861,13 @@
                                    :fugiu false}))]
               (envelope-jvm pedido (.formatRaidCapture jvm-present data prefix) img)))))
 
+      (or (= "ajuda" sub) (= "help" sub) (= "?" sub))
+      (envelope-jvm pedido (.formatHelp jvm-present "raid" prefix))
+
       :else
       (envelope-jvm pedido
-                    (.formatUnavailable jvm-present
-                                        (str "raide " (str/join " " args-raid)))))))
+                    (str "❓ Comando de raid não reconhecido.\n"
+                         "Use " prefix " ajuda raid para consultar os comandos disponíveis.")))))
 
 (defn- lado-pvp
   "Retorna \"x\"|\"o\"|nil a partir de jogadores no DTO da batalha."
@@ -1165,9 +1168,11 @@
                      (= "trocas" primeiro-arg) []
                      trade? (vec (rest args))
                      :else args)
+        help-req (.resolveHelpRequest jvm-present (clj->js args))
         resolved-cmd (cond
                        trade? nil
                        recovery? nil
+                       help-req "ajuda"
                        save-management? "save-management"
                        :else (.resolveCommand jvm-present (clj->js args)))
         cmd (if (and (= "time" resolved-cmd)
@@ -1178,6 +1183,13 @@
         resto (if (re-matches #"[1-4]" primeiro)
                 [primeiro]
                 (vec (rest args)))]
+    (if (and help-req (not recovery?))
+      (entregar-envelope-jvm!
+       message ctx pedido
+       (envelope-jvm pedido
+                     (.formatHelp jvm-present
+                                  (or (.-topic help-req) "")
+                                  (str config/prefix "pk"))))
     (if recovery?
       (p/let [sub (str/lower-case (str (or (second args) "")))
               texto
@@ -1351,6 +1363,12 @@
        (envelope-jvm pedido (.formatUnavailable jvm-present (str/join " " args))))
       (p/let [envelope
               (case cmd
+                "ajuda"
+                (envelope-jvm pedido
+                              (.formatHelp jvm-present
+                                           (str (or (first resto) ""))
+                                           (str config/prefix "pk")))
+
                 "amizade"
                 (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
                         texto (first resto)
@@ -1907,8 +1925,12 @@
 
                 "ginasio"
                 (let [sub (.resolveGymSubcommand jvm-present (or (first resto) ""))
-                      args-gin (vec (rest resto))]
+                      args-gin (vec (rest resto))
+                      prefix-pk (str config/prefix "pk")]
                   (cond
+                    (contains? #{"ajuda" "help" "?"} (str/lower-case (str (or (first resto) ""))))
+                    (envelope-jvm pedido (.formatHelp jvm-present "ginasio" prefix-pk))
+
                     (or (nil? sub) (str/blank? (str sub))
                         (contains? #{"pedra" "agua" "eletrico" "elétrico" "planta" "fogo"}
                                    (str/lower-case (str (or (first resto) "")))))
@@ -2149,6 +2171,9 @@
 
                 "cacar"
                 (let [area-pedida (not-empty (str/join " " resto))]
+                  (if (contains? #{"ajuda" "help" "?"} (str/lower-case (str (or area-pedida ""))))
+                    (envelope-jvm pedido
+                                  (.formatHelp jvm-present "cacar" (str config/prefix "pk")))
                   (p/let [plano (desempenho/medir! ctx "pokemon_jvm_hunt_plan"
                                    #(.getHuntPlan jvm
                                       #js {:chatId chat-id
@@ -2184,7 +2209,7 @@
                                                  :aguardandoCaptura false
                                                  :caption texto
                                                  :mostrarEntrada true}))]
-                            (envelope-jvm pedido texto img)))))))
+                            (envelope-jvm pedido texto img))))))))
 
                 "fruta"
                 (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
@@ -2465,6 +2490,10 @@
                 "mochila"
                 (let [sub (str/lower-case (str (or (first resto) "")))]
                   (cond
+                    (contains? #{"ajuda" "help" "?"} sub)
+                    (envelope-jvm pedido
+                                  (.formatHelp jvm-present "mochila" (str config/prefix "pk")))
+
                     (= "resgatar" sub)
                     (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
                             op-id (.stableOperationId jvm-transport (:requestId pedido)
@@ -2932,7 +2961,7 @@
 
                 (envelope-jvm pedido
                               (.formatUnavailable jvm-present (str/join " " args))))]
-        (entregar-envelope-jvm! message ctx pedido envelope)))))))
+        (entregar-envelope-jvm! message ctx pedido envelope))))))))
 
 (defn executar [message comando argumentos]
   (let [ctx (desempenho/contexto-de message)
