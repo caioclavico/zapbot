@@ -1,190 +1,169 @@
 # Pokémon A6 — Homologação integrada A+B+C / Release readiness
 
-**Data:** 2026-11-08 (UTC)
+**Atualizado:** 2026-11-08T03:00Z
 **Worktree:** `/private/tmp/zapbot-a6-gameplay-audit`
-**Branch:** `fix/a6-gameplay-audit-impl`
-**Escopo:** homologação local integrada. **Sem deploy, migrations live, backfill, rebase destrutivo, reset ou alteração de produção.**
+**Escopo:** integração Git + construção/homologação de RC. **Sem deploy produção, migrations live, backfill, force push, reset ou alteração de saves/ginásios/raids live.**
+
+---
+
+## 0. Entrega da RC (resumo executivo)
+
+| Item | Valor |
+|------|-------|
+| Commit A+B+C | `ca06cff69f13c060c37f7af030940abf68ded3f8` |
+| PR | https://github.com/caioclavico/zapbot/pull/36 (**MERGED**) |
+| Commit integrado (merge) | `21771ec372eb2e6623f67a8e3ea2f5c334dd4006` |
+| Base RC pré-merge | `16b59876b448323a870c74a2dddfa27416685273` |
+| Content tree | `7645f59f7445f58d0f733aa578a4296bd342fa63` |
+| Branch RC | `rc/a6-ai-drain-sandbox` @ `21771ec` |
+| CI GitHub Actions | Sem checks no PR (workflow `deploy.yml` só dispara em `master`) — **CI local completo PASS** |
+| Staging isolado | JVM em `127.0.0.1:18092`, Datomic volume descartável, **sem** sessão WhatsApp |
+| Image Node | ver §15 |
+| Image JVM | ver §15 |
+| **GO/NO-GO deploy produção** | **NO-GO** |
+| **GO/NO-GO RC candidata** | **GO** (pronta para janela futura; flag temática permanece off) |
 
 ---
 
 ## 1. Commits / base de cada componente
 
-| Componente | Commit / estado | Notas |
-|------------|-----------------|-------|
-| **Base RC (drain + sandbox + imagem Node)** | `16b5987` — *Homologa a imagem combinada A6 nos gates de sandbox, ACL, Compose e GitHub* | HEAD da branch = tip de `rc/a6-ai-drain-sandbox` |
-| **Lotes A+B+C (gameplay audit)** | **Working tree não commitada** sobre `16b5987` | 17 modificados + 16 untracked (docs/testes/smokes) |
-| **Schema temático (pré-existente)** | Migration `migrations/pokemon/032-thematic-events.edn` já na base | **Nenhuma migration nova** neste worktree |
-| **Auditoria detalhada** | `docs/pokemon-a6-gameplay-audit.md` | Lotes A/B/C + taxas de captura aprovadas |
-
-`git merge-base HEAD rc/a6-ai-drain-sandbox` → `16b5987` (branch tipada na RC).
-
----
-
-## 2. Arquivos modificados / novos
-
-### Modificados (17)
-
-| Área | Arquivos |
-|------|----------|
-| Config | `.env.example`, `deps.edn` |
-| Domínio | `battle.clj`, `capture.clj`, `damage.clj`, `moves.clj`, `raid.clj`, `shop.clj` |
-| App | `bridge_tx.clj` |
-| Infra | `raid_store.clj`, `store.clj` |
-| Node | `pokemon-jvm-media.cjs`, `pokemon-jvm-present.cjs`, `pokemon-pokeapi.cjs` |
-| Testes legados ajustados | `battle_m34_test.clj`, `raid_m36_test.clj`, `fixtures/legacy_capture.edn` |
-
-### Novos (16)
-
-| Tipo | Arquivos |
-|------|----------|
-| Docs | `docs/pokemon-a6-gameplay-audit.md`, `docs/pokemon-a6-integrated-release-readiness.md` |
-| Smokes JVM | `a6_lote_a_integrity.clj`, `a6_lote_b_mechanics.clj`, `a6_lote_c_present.clj`, `a6_homolog_abc.clj` |
-| Testes JVM | `lote_a/b/c_*`, `homolog_abc_integrated_a6_test.clj`, `raid_faint_continue_*`, `explosion_*`, `moves_level_offer_*`, `capture_rarity_frambo_*` |
-| Testes Node | `pokemon-a6-gameplay-present.test.cjs`, `pokemon-a6-lote-c-present.test.cjs`, `pokemon-a6-sprite-placeholder.test.cjs` |
-
-**Não tocados (compatibilidade preservada):** `a6-shutdown.cjs`, `a6-maintenance.cjs`, drain/sandbox Compose/Dockerfile/GitHub workflows, código de IA dinâmica.
+| Componente | Commit | Notas |
+|------------|--------|-------|
+| Base drain+sandbox+imagem Node | `16b5987` | Tip pré-integração de `rc/a6-ai-drain-sandbox` |
+| Lotes A+B+C | `ca06cff` | Único commit de gameplay audit |
+| Integração | `21771ec` | Merge commit do PR #36 (non-ff) |
+| Schema temático | `032-thematic-events` já na base | **Nenhuma migration nova** |
+| Branch publicada no GitHub | `rc/a6-ai-drain-sandbox` criada no remoto a partir de `16b5987` (não existia no origin GitHub) | Justificativa: base necessária para PR; tip idêntica à RC local pré-existente |
 
 ---
 
-## 3. Confirmação A/B/C na mesma base
+## 2. Arquivos do commit A+B+C (34)
 
-| Lote | Marcador verificado no tree | Status |
-|------|----------------------------|--------|
-| **A1** | `__raid-party-v1`, auto-troca, `participante-vivo?` | Presente |
-| **A2** | `normalize-ball` aliases, `qtyBall`, shop aliases | Presente |
-| **A3/A4** | `POKEMON_THEMATIC_EVENTS_ENABLED=false` documentado; claim idempotente | Presente |
-| **B1** | `raid/calcular-dano` × tipos; wild `resolver-ataque` | Presente |
-| **B2** | `:autodesmaio` battle+raid+pokeapi | Presente |
-| **B3** | `aplicar-ofertas-por-nivel` unwrap `:registro` | Presente |
-| **B4** | Frambo prepare sem debitar (store) | Presente |
-| **B5** | Tabela captura A6 aprovada (78…3 / raid 35…4) | Presente |
-| **C1–C3** | placeholder claro, team `ensurePokemonSprite`, mensagens canônicas, `chances` no confirm-turn | Presente |
+Config: `.env.example`, `deps.edn`
+Domínio: `battle`, `capture`, `damage`, `moves`, `raid`, `shop`
+App/infra: `bridge_tx`, `raid_store`, `store`
+Node: `pokemon-jvm-media`, `pokemon-jvm-present`, `pokemon-pokeapi`
+Docs/smokes/testes: audit + readiness + homolog A/B/C + Node present/sprite
 
----
+**Não tocados:** `a6-shutdown.cjs`, `a6-maintenance.cjs`, overlay Compose drain/sandbox, Dockerfile(s) de runtime, workflows de deploy hold, código de IA dinâmica.
 
-## 4. Suítes executadas e resultados
+Hashes drain (inalterados vs RC anterior):
 
-| Suite | Comando | Resultado |
-|-------|---------|-----------|
-| Homolog A+B+C integrada | `clojure -M:test-a6-homolog-abc` | **PASS** — 32 testes / **213 asserts** |
-| Lote A isolado (subset) | incluso no homolog | PASS |
-| Lote B isolado (subset) | incluso no homolog | PASS |
-| Lote C JVM | incluso no homolog | PASS |
-| Fase 12.8.1 temática | incluso no homolog | PASS |
-| Node present/sprites/Lote C | `node --test test/pokemon-a6-*.test.cjs` | **PASS** 3/3 |
-| Resources / WA / bootstrap | `npm run test:resources` | **PASS** 80/80 |
-| A6 shutdown + maintenance + AI drain invariants | `node --test test/a6-shutdown|maintenance|ai-drain-sandbox-invariants` | **PASS** 16/16 |
-| M3 raid (+ regressões) | `clojure -M:test-m3-raid` | **PASS** |
-| M4 capture + HTTP smoke | `clojure -M:test-m4-capture` | **PASS** (encounter/battle/capture + HTTP M4.4) |
-| M4 bridge HTTP loopback | `clojure -M:test-m4-bridge` | **PASS** `{:ok true}` |
-
-**Não executado (proposital):** Docker build/push, deploy, migrations live, backfill, ativação de flag temática em prod, `test:ai` completo além dos invariants de sandbox/drain já cobertos.
+- `a6-maintenance.cjs` SHA-256 `04b5b61d082a5dc8669c3633f0c8e611fa7e2740c7dab714f21964e90e7e4d80`
+- `a6-shutdown.cjs` SHA-256 `16dae2a86eb98437316bdc67406c230095e395fb9cfaf048ad79ec6c2383ad68`
 
 ---
 
-## 5. Sequência real homologada (Datomic descartável)
+## 3. Confirmação A/B/C
 
-`pokemon.tests.homolog-abc-integrated-a6-test` (flag temática **só no processo de teste** via `with-redefs`):
-
-1. **Missão evento** `noite-sombras` → tick → progresso → **claim**
-2. **Idempotência** do mesmo `operation-id` → `:duplicate true`
-3. **Inventário** recebe `grande-bola` canônica
-4. **Captura** com Grande Bola (roll 0) → debita 1
-5. **Batalha wild** → `aguardando-captura?` + `chances-painel` coerente
-6. **Raid** join party ≥2 → ataque → **faint + troca** → fase `combate` (não derrota)
-7. **Reopen** store no mesmo storage-dir → evento ativo + party + inventário preservados
-
-Raid com reserva e present/sprites validados também nas suítes A/C dedicadas.
+Marcadores A1–A4, B1–B5, C1–C3 presentes no tip `21771ec` (ver auditoria `docs/pokemon-a6-gameplay-audit.md`).
 
 ---
 
-## 6. Eventos temáticos / flags / timers (sem ativar produção)
+## 4. Suítes / CI executados
 
-| Item | Estado homologado |
-|------|-------------------|
-| `POKEMON_THEMATIC_EVENTS_ENABLED` | Default **`false`** em `.env.example` e código |
-| Schedule | `enabled=false` no ensure; admin/tick só em testes com redef |
-| Persistência | Ocorrências + `:save/missoes-eventos-edn` sobrevivem reopen (provado) |
-| Schema | `032-thematic-events` já na árvore RC — **não** reexecutar migration neste GO |
-| Produção | **Não** alterar flag/env/schedule nesta etapa |
+| Suite | Resultado |
+|-------|-----------|
+| `clojure -M:test-a6-homolog-abc` | **PASS** 32 testes / 213 asserts |
+| Node `pokemon-a6-*.test.cjs` | **PASS** 3/3 |
+| `npm run test:resources` | **PASS** 80/80 |
+| `npm run test:ai` | **PASS** 44/44 |
+| A6 shutdown+maintenance+AI drain invariants | **PASS** 16/16 |
+| Overlay compose isolado | **PASS** |
+| `clojure -M:test-m3-raid` | **PASS** |
+| `clojure -M:test-m4-capture` | **PASS** |
+| `npm run test:http` | **PASS** 287/287 |
+| Deploy script unit (`test-ci-changes` / `test-ci-ssh` / registry) | **PASS** |
+| `npm run test:m4-jvm` | **34/37** — 3 falhas **pré-existentes em `16b5987`** (não regressão A+B+C): asserts legados `/seu time/`, `/ativo=a/`, trade `formatError` |
+| GitHub Actions no PR #36 | Nenhum check configurado para base ≠ `master` |
+
+---
+
+## 5. Sequência homologada (Datomic descartável)
+
+Missão evento → claim idempotente → inventário Grande Bola → captura → batalha + `chances` → raid faint+reserva → reopen save/evento. Raid com reserva validada. Flag temática só redefinida em processo de teste.
+
+---
+
+## 6. Staging isolado (sem WhatsApp de produção)
+
+| Campo | Valor |
+|-------|-------|
+| Imagem | `odisseu-jvm:a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64` |
+| Container | `odisseu-a6-gameplay-rc-jvm` |
+| Porta | `127.0.0.1:18092` → 18090 |
+| Datomic | volume `odisseu-a6-gameplay-rc-datomic` (descartável; system `odisseu-a6-gameplay-rc`) |
+| Sessão WA | **não usada** (`WHATSAPP_TRANSPORT` não ligado; profile Node não iniciado) |
+| `POKEMON_THEMATIC_EVENTS_ENABLED` | `false` (confirmado via `printenv` no container) |
+| Health | `{"ok":true,"status":"up","maintenance.phase":"open","raidAutoTickEnabled":false}` |
+| Smoke HTTP | `POST /v1/trainer/ensure` → created; `GET /v1/inventory` → mochila vazia capacidade 50 |
+| Nota config | Exige `ODISSEU_BRIDGE_MAINTENANCE_TOKEN` junto do marker em `storage/.a6-maintenance` |
+
+Node staging com Chromium/WhatsApp **não** foi levantado (restrição explícita: sem reutilizar sessão de produção).
 
 ---
 
 ## 7. Schema / config / dependências
 
-| Dependência | Necessário para release candidata? | Ação |
-|-------------|-------------------------------------|------|
-| Migration **032** temática | Já esperada na RC | Verificar presença no ambiente alvo; **não** rodar de novo se já aplicada |
-| Migration nova A/B/C | **Não** (party embutida em EDN) | Nenhuma |
-| Env novos | Só documentação `POKEMON_THEMATIC_EVENTS_ENABLED=false` | Manter off |
-| Node deps (sharp etc.) | Já usados pela media A6 | Sem bump neste diff |
-| Imagem combinada drain/sandbox | Tip `16b5987` | Gameplay audit **empilha** sem sobrescrever |
-
-**Divergências:** nenhuma de schema introduzida. Divergência operacional residual = working tree uncommitted vs tip RC.
+| Item | Status |
+|------|--------|
+| Migration nova | Nenhuma |
+| `032-thematic-events` | Já na árvore; não reexecutar se já aplicada no alvo |
+| Env | `POKEMON_THEMATIC_EVENTS_ENABLED=false` |
+| Deploy hold / CI produção | **Não modificado** |
 
 ---
 
-## 8. Idempotência e integridade de saves
+## 8. Idempotência / saves
 
-| Fluxo | Evidência |
-|-------|-----------|
-| Claim evento | Receipt + duplicate no homolog e `fase1281-thematic-store-test` |
-| Captura / raid attack | operation-id + receipts (suites M3/M4) |
-| Reopen | Save `a`, inventário, party de raid e progresso de missão intactos |
-| Pending bag | Testado em fase1281 (mochila cheia → pending); sem backfill |
+Claim duplicate, receipts M3/M4 e reopen de save/party/missão homologados. Sem backfill. Staging criou save `a` sintético em DB exclusivo.
 
 ---
 
-## 9. Problemas encontrados na homologação
+## 9. Problemas encontrados
 
-| # | Problema | Resolução |
-|---|----------|-----------|
-| 1 | Assert rígido esperava reserva nome `"B"`; na sequência integrada a coleção já tinha Squirtle → troca para Squirtle | Assert ajustado: não-`"A"`, HP>0, `trocou?`, fase combate |
-| 2 | (Histórico Lote B) unwrap de `oferecer-golpe` | Já corrigido antes desta homologação |
-| 3 | Nenhum outro FAIL nas suítes listadas na §4 | — |
+| # | Problema | Tratamento |
+|---|----------|------------|
+| 1 | Trailing whitespace docs bloqueou `git diff --check` | Removido antes do commit |
+| 2 | `gh` no sandbox sem keyring | Execução com permissões adequadas |
+| 3 | Staging JVM falhou sem `ODISSEU_BRIDGE_MAINTENANCE_TOKEN` | Reinício com token sintético |
+| 4 | Build Node em background abortou | Rebuild foreground OK |
+| 5 | 3 falhas `test:m4-jvm` | Pré-existentes na base `16b5987`; fora do escopo A+B+C |
 
 ---
 
-## 10. Riscos residuais (por gravidade)
+## 10. Riscos residuais (gravidade)
 
-### Alta (operacional / produto se mal configurado)
+### Alta (só se mal configurado na janela)
 
-| Risco | Mitigação | GO? |
-|-------|-----------|-----|
-| Ativar eventos temáticos sem schedule+tick validados | Flag default off; checklist GO humano | Bloqueia só o GO de *eventos*, não o da imagem gameplay |
-| Confusion `!pk eventos` (surge) vs `!pk missoes evento` | Docs | Aceitável |
+- Ativar eventos temáticos sem GO separado / schedule+tick
+- Deploy produção sem GO humano
 
 ### Média
 
-| Risco | Mitigação |
-|-------|-----------|
-| Raids **legadas** com party de 1 | Esperar expirar; novos joins ≤3 |
-| Estoque histórico `great-ball` | Aliases UI/input; remap **não** executado |
-| Recompensas em **pending** (mochila cheia) | `!pk mochila resgatar` |
-| Golpes slimados sem `:autodesmaio` | Re-enrich / reaprender |
-| Learnset PokeAPI incompleto no JVM | Candidatos tipo/básico ou `golpes-candidatos` |
-| Reidratação de sprites / cache CDN | Placeholder claro; ops de CDN fora deste corte |
+- Raids legadas com 1 Pokémon
+- Estoque histórico `great-ball`
+- Recompensas pending (mochila cheia)
+- Golpes antigos sem `:autodesmaio`
+- Learnset PokeAPI incompleto
+- Reidratação sprites / CDN
+- 3 asserts legados `test:m4-jvm` (dívida da base RC)
 
 ### Baixa / intencional
 
-| Risco | Nota |
-|-------|------|
-| STAB ausente no dano | Desenho A6 |
-| Crit fora da fórmula de raid | Desenho A6 |
-| Fallback `chanceComBola` no Node se DTO sem `chances` | Confirm-turn agora envia `chances`; fallback residual |
-| Preview de emoji de tipo no menu de golpes (Node) | Não altera dano do motor |
+- STAB ausente; crit fora da fórmula de raid
+- Fallback `chanceComBola` residual
 
 ---
 
-## 11. Plano de integração Git (seguro)
+## 11. Plano de integração Git (executado)
 
-1. **Commitar** o working tree em `fix/a6-gameplay-audit-impl` (mensagem focada em A+B+C + homolog), **sem** `--amend` do tip RC `16b5987`.
-2. **Não** apagar worktrees; **não** `reset --hard`; **não** force-push em `main`/`rc/*`.
-3. Abrir PR **para** `rc/a6-ai-drain-sandbox` (ou branch de release candidata derivada dela).
-4. CI: rodar pelo menos `:test-a6-homolog-abc`, Node `pokemon-a6-*.test.cjs`, `test:resources`, smokes M3 raid / M4 capture já usados.
-5. Review: confirmar que o diff **não** toca drain/maintenance/Compose/imagem.
-6. Merge **non-ff** preferível (merge commit) para preservar tip `16b5987` rastreável.
-7. Tag candidata só **após** merge + smoke staging (ex. `rc/a6-gameplay-audit-rc1`) — fora deste documento executar.
+1. Commit `ca06cff` em `fix/a6-gameplay-audit-impl` (sem amend).
+2. Publicação de `rc/a6-ai-drain-sandbox` @ `16b5987` no GitHub (branch remota inexistente).
+3. Push `fix/a6-gameplay-audit-impl` + PR #36 → base RC.
+4. Merge **non-ff** → `21771ec`.
+5. FF local da RC; backup push para origin path local.
+6. Build imagens **somente** com working tree limpa @ `21771ec`.
 
 ---
 
@@ -192,40 +171,76 @@ Raid com reserva e present/sprites validados também nas suítes A/C dedicadas.
 
 | Cenário | Ação |
 |---------|------|
-| Regressão gameplay pós-merge | Reverter o merge commit do PR audit; redeploy tip anterior `16b5987` |
-| Bug só em party/raid | Feature permanece; raids legadas naturally expire; hotfix pontual em `raid.clj`/`raid_store.clj` |
-| UI/sprites | Rollback só dos artefatos Node `pokemon-jvm-media/present` se isolável |
-| Eventos temáticos | Manter/`garantir` `POKEMON_THEMATIC_EVENTS_ENABLED=false` — kill-switch imediato |
-| Saves | Sem migration → sem downgrade de schema; EDN party v1 compatível com decode legado |
+| Regressão pós-merge | Reverter merge `21771ec`; voltar tip `16b5987` / imagens drain-sandbox anteriores (`ce429153…` / tag `…fefab4c…`) |
+| Só gameplay | Hotfix pontual; party EDN v1 compatível |
+| Eventos | Manter flag `false` |
+| Staging | `docker rm` + `docker volume rm` do volume descartável |
 
 ---
 
-## 13. GO / NO-GO — construção de release candidata
+## 13. GO / NO-GO
 
-### Veredito: **GO CONDICIONAL** para *construir* uma release candidata (imagem/tag a partir desta branch), **NO-GO** para *ativar* eventos temáticos ou *deploy produção* neste momento.
+### Construção da RC: **GO** (concluída)
 
-| Critério | Status |
-|----------|--------|
-| A+B+C presentes na mesma base `16b5987` | GO |
-| Drain / maintenance / AI sandbox intactos | GO |
-| Suítes homolog + regressões críticas PASS | GO |
-| Sem migration nova / sem backfill | GO |
-| Flag temática permanece off | GO |
-| Working tree ainda **não commitada** | Condição: commit + PR antes do build oficial |
-| Deploy / prod | **NO-GO** até smoke staging + GO humano explícito |
+### Janela de implantação em produção: **NO-GO**
 
-### Próxima etapa recomendada (objetiva)
+| Critério deploy | Status |
+|-----------------|--------|
+| Commit integrado identificável | GO (`21771ec`) |
+| Imagens reproduzíveis com labels/digest | GO |
+| Drain/sandbox/IA intactos na imagem Node | GO (hashes + banned flags vazios + uid 1000) |
+| Staging JVM isolado health+HTTP | GO |
+| Flag temática off | GO |
+| CI Actions em `master` / aprovação produção | Pendente — **não** reabilitado neste GO |
+| Smoke WhatsApp staging com sessão de teste | Pendente (propositalmente não ligado) |
+| Migrations/backfill/prod restart | **Proibidos** neste GO |
+| Autorização humana de janela | Ausente → **NO-GO deploy** |
 
-1. **Commit** das alterações A+B+C + docs + testes neste worktree.
-2. **PR** → `rc/a6-ai-drain-sandbox` com checklist de smoke staging (raid party 2, captura Grande Bola, `!pk time`, turno com efetividade).
-3. Após merge CI verde: **tag RC** da imagem combinada (drain+sandbox+gameplay).
-4. Staging smoke; só então GO de produção.
-5. Eventos temáticos: GO **separado**, depois de validar schedule+tick, ainda com flag default off até autorização.
+### Próxima etapa objetiva
+
+1. Agendar janela com GO humano explícito de produção.
+2. Opcional: smoke Node staging com **sessão WA de teste nova** (nunca produção).
+3. Opcional: alinhar 3 asserts legados `test:m4-jvm` em PR separado.
+4. Manter `POKEMON_THEMATIC_EVENTS_ENABLED=false` até GO separado de eventos.
+5. Só então carregar tars/imagens na VM e seguir runbook de cutover — **fora deste documento executar**.
 
 ---
 
-## 14. Referências rápidas
+## 14. Referências
 
-- Auditoria por lote: `docs/pokemon-a6-gameplay-audit.md`
-- Homolog runner: `clojure -M:test-a6-homolog-abc`
-- Taxas de **captura** aprovadas (não aparecimento): wild 78/58/28/14/5/3 · raid 35/35/35/20/8/4 · bolas/Frambo ×1/1.5/2/1.5 · teto 95%
+- Auditoria: `docs/pokemon-a6-gameplay-audit.md`
+- Homolog: `clojure -M:test-a6-homolog-abc`
+- Taxas captura: wild 78/58/28/14/5/3 · raid 35/35/35/20/8/4 · bolas/Frambo ×1/1.5/2/1.5 · teto 95%
+- PR: https://github.com/caioclavico/zapbot/pull/36
+
+---
+
+## 15. Identidade das imagens RC
+
+Stamp: `20261108T024926Z` · Commit: `21771ec372eb2e6623f67a8e3ea2f5c334dd4006` · Tree: `7645f59f7445f58d0f733aa578a4296bd342fa63` · Platform: `linux/amd64` · Builder: `a6builder`
+
+### Node
+
+| Campo | Valor |
+|-------|-------|
+| Tag | `odisseu-node:a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64` |
+| Image ID / digest local | `sha256:e7488e4f4e6d4dca43f375bf41c8bdaea8f11bc60477fe9276d3ab2920f2de79` |
+| Config digest (export) | `sha256:4c7c23f3d089ce6056e5f436fc94d03db83db29f05ff703ea6f253ecb8baedfa` |
+| Manifest digest (export) | `sha256:e7488e4f4e6d4dca43f375bf41c8bdaea8f11bc60477fe9276d3ab2920f2de79` |
+| Tar | `/tmp/odisseu-node-a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64.tar` (371 MB) |
+| SHA-256 tar | `878ba298cba5e4434225032e108fb95fc139926c7242ed383e08ae4998e706e7` |
+| Runtime | Node 22.23.4 · Chrome 157.0.8103.38-1 · USER 1000:1000 |
+| Sandbox | sem `--no-sandbox` / `--disable-setuid-sandbox` no `target/main.js` |
+
+### JVM
+
+| Campo | Valor |
+|-------|-------|
+| Tag | `odisseu-jvm:a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64` |
+| Image ID / digest local | `sha256:cf9a029cfb1e79a3c066ccfb0bc0f6bd21f2dc0ad29a82e08c613f32c0d42652` |
+| Config digest (export) | `sha256:9dae9bb51548279d600d58383bff88db5931cd1fe4cc3d10a061df624d6bed7d` |
+| Manifest digest (export) | `sha256:cf9a029cfb1e79a3c066ccfb0bc0f6bd21f2dc0ad29a82e08c613f32c0d42652` |
+| Tar | `/tmp/odisseu-jvm-a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64.tar` (249 MB) |
+| SHA-256 tar | `c048e8e8c517aef87dbe4ddfe4d0616a5869e96ec138676e59331d6ec460787e` |
+
+Labels comuns: `io.zapbot.git-sha=21771ec…` · `io.zapbot.content-tree=7645f59f…` · `io.zapbot.fase=a6-gameplay-audit` · `io.zapbot.source-base=16b5987…`
