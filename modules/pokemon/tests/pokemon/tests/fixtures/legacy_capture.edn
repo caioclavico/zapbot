@@ -1,4 +1,4 @@
-;; Fixtures Fase 12.8 — captura ancorada em raridade (faixas).
+;; Fixtures A6 captura — faixas rebalanceadas (auditoria gameplay).
 ;; chance-captura = clamp na faixa da raridade ± variação leve por poder
 ;; chance-base-pos-batalha = min(95, round(bonus_status * chance) + min(10, seq))
 ;; chance-com-bola = min(95, round(chance-base * mult))  ; pokébola lim 95
@@ -6,33 +6,34 @@
  {:id "magikarp-comum-neutro"
   :pokemon {:nome "Magikarp" :raridade "comum"
             :hp 20 :ataque 10 :defesa 55 :atq-esp 15 :def-esp 20 :veloc 80}
-  ;; poder=200; centro 82; delta = -round((200-450)/200*4) = -round(-5)=5 → 87
-  ;; clamp faixa comum [75,90] → 87
-  :chance-especie 87
+  ;; poder=200; centro 78; delta = -round((200-450)/200*4) = 5 → 83
+  ;; clamp faixa comum [70,88] → 83
+  :chance-especie 83
   :status nil
   :sequencia 0
-  ;; base = round(1*87)+0 = 87
-  :chance-base 87
+  ;; base = round(1*83)+0 = 83
+  :chance-base 83
   :bola "pokebola"
-  :chance-bola 87}
+  :chance-bola 83}
 
  {:id "onix-raro-paralisado-seq3"
   :pokemon {:nome "Onix" :raridade "raro"
             :hp 80 :ataque 70 :defesa 120 :atq-esp 40 :def-esp 50 :veloc 70}
-  ;; poder=430; centro 40; delta = -round((430-450)/200*4)= -round(-0.4)=0 → 40
-  :chance-especie 40
+  ;; poder=430; centro 28; delta ≈ 0 → 28; faixa raro [18,38]
+  :chance-especie 28
   :status :paralisado
   :sequencia 3
-  ;; base = round(1.5*40)+min(10,3) = 60+3 = 63
-  :chance-base 63
+  ;; base = round(1.5*28)+min(10,3) = 42+3 = 45
+  :chance-base 45
   :bola "ultra-bola"
-  ;; min(95, round(63*2)) = 95? 126 → 95
-  :chance-bola 95}
+  ;; min(95, round(45*2)) = 90
+  :chance-bola 90}
 
  {:id "mewtwo-mitico-sem-status"
   :pokemon {:nome "Mewtwo" :raridade "mitico"
             :hp 120 :ataque 110 :defesa 90 :atq-esp 154 :def-esp 90 :veloc 130}
-  ;; poder=694; centro 5; delta = -round((694-450)/200*4)= -round(4.88)=-5 → 0 → lo=3
+  ;; poder=694; centro 3; delta negativo → clamp lo=1 → 1? wait actual=3
+  ;; runtime: chance-especie 3 (centro 3, clamp [1,6])
   :chance-especie 3
   :status nil
   :sequencia 0

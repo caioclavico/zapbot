@@ -158,13 +158,18 @@ function escapeXml(s) {
 }
 
 function svgPlaceholder(tamanho) {
+  const t = Math.max(32, Number(tamanho) || 96);
+  // Neutro claro xadrez — evita "caixa preta" quando o download falha.
   return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${tamanho}" height="${tamanho}">`
-      + `<rect width="${tamanho}" height="${tamanho}" rx="28" fill="#0f172a"/>`
-      + `<circle cx="${tamanho / 2}" cy="${tamanho / 2}" r="${Math.round(tamanho * 0.28)}" `
-      + `fill="#f8fafc" stroke="#94a3b8" stroke-width="10"/>`
-      + `<path d="M${tamanho * 0.22} ${tamanho / 2}h${tamanho * 0.56}" stroke="#111827" stroke-width="12"/>`
-      + '</svg>'
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${t}" height="${t}" viewBox="0 0 ${t} ${t}">`
+    + `<defs><pattern id="p" width="16" height="16" patternUnits="userSpaceOnUse">`
+    + `<rect width="8" height="8" fill="#e5e7eb"/><rect x="8" y="8" width="8" height="8" fill="#e5e7eb"/>`
+    + `<rect x="8" width="8" height="8" fill="#f3f4f6"/><rect y="8" width="8" height="8" fill="#f3f4f6"/>`
+    + `</pattern></defs>`
+    + `<rect width="${t}" height="${t}" fill="url(#p)"/>`
+    + `<text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" `
+    + `font-family="sans-serif" font-size="${Math.max(10, Math.floor(t/8))}" fill="#6b7280">?</text>`
+    + `</svg>`
   );
 }
 
@@ -232,7 +237,11 @@ async function spriteProporcional(pokemon, maximo) {
   try {
     const meta = await sharp(buf).metadata();
     let pipeline = sharp(buf);
-    if (meta.hasAlpha) {
+    const treatAsAlpha = Boolean(meta.hasAlpha) || meta.channels === 4 || meta.format === 'webp';
+    if (treatAsAlpha) {
+      pipeline = pipeline.ensureAlpha();
+    } else {
+      // JPEG/opaco: força canal alpha 0 no padding do contain (sem flatten preto).
       pipeline = pipeline.ensureAlpha();
     }
     const out = await pipeline
@@ -1148,9 +1157,11 @@ async function renderTeamGrid(pokemons, {
       + cards
       + `</svg>`;
 
+    // Rehidrata espécie sem URL (paridade caça/raid) — evita caixa preta em !pk time.
     const sprites = await Promise.all(list.map(async (p) => {
       try {
-        const { buffer } = await spriteProporcional(p, 130);
+        const hydrated = await ensurePokemonSprite(p);
+        const { buffer } = await spriteProporcional(hydrated, 130);
         return buffer;
       } catch (_) {
         return null;
@@ -1163,7 +1174,8 @@ async function renderTeamGrid(pokemons, {
         return {
           input: buf,
           left: 28 + ((idx % 2) * 480),
-          top: 145 + (Math.floor(idx / 2) * rowH)
+          top: 145 + (Math.floor(idx / 2) * rowH),
+          blend: 'over'
         };
       })
       .filter(Boolean);

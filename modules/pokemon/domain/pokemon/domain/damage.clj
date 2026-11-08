@@ -115,13 +115,14 @@
 (defn- texto-efetividade
   [multiplicador]
   (cond
-    (> (double multiplicador) 1.0) "\n🔥 Foi super efetivo!"
-    (< (double multiplicador) 1.0) "\n😕 Não foi muito efetivo..."
+    (zero? (double multiplicador)) "\n🚫 Não teve efeito..."
+    (> (double multiplicador) 1.0) "\n💥 É super efetivo!"
+    (< (double multiplicador) 1.0) "\n🛡️ Não é muito efetivo..."
     :else ""))
 
 (defn- texto-critico
   [critico?]
-  (if critico? "\n💢 Foi um golpe crítico!" ""))
+  (if critico? "\n🎯 Acerto crítico!" ""))
 
 (defn- texto-impulso
   [impulso nome-habilidade]
@@ -164,10 +165,17 @@
            (when (> acertos 1) (str "\n🎯 Acertou " acertos " vezes!"))))))
 
 (defn last-action-ataque
-  "Payload de :last-action para turno ofensivo (present/UI)."
-  [golpe atacante defensor resolved defendendo? & {:keys [move-index side]}]
+  "Payload de :last-action para turno ofensivo (present/UI).
+  Campos canônicos do motor — o Node só exibe, não recalcula dano."
+  [golpe atacante defensor resolved defendendo?
+   & {:keys [move-index side hp-antes hp-depois hp-atk-antes hp-atk-depois
+             autodesmaio?]}]
   (let [golpe (or golpe {})
-        resolved (or resolved {})]
+        resolved (or resolved {})
+        auto? (boolean autodesmaio?)
+        msg0 (mensagem-ataque golpe atacante defensor resolved defendendo?)
+        msg (cond-> msg0
+              auto? (str "\n💀 Seu Pokémon desmaiou após o golpe!"))]
     (cond-> {:action :attack
              :dano (long (:dano resolved 0))
              :acertou? (boolean (:acertou? resolved))
@@ -178,6 +186,11 @@
              :acertos (long (:acertos resolved 1))
              :tipo-golpe (:tipo golpe)
              :golpe-nome (or (:nome-exibicao golpe) (:slug golpe))
-             :mensagem (mensagem-ataque golpe atacante defensor resolved defendendo?)}
+             :autodesmaio? auto?
+             :mensagem msg}
       (some? move-index) (assoc :move-index move-index)
-      (some? side) (assoc :side side))))
+      (some? side) (assoc :side side)
+      (some? hp-antes) (assoc :hp-antes (long hp-antes))
+      (some? hp-depois) (assoc :hp-depois (long hp-depois))
+      (some? hp-atk-antes) (assoc :hp-atk-antes (long hp-atk-antes))
+      (some? hp-atk-depois) (assoc :hp-atk-depois (long hp-atk-depois)))))

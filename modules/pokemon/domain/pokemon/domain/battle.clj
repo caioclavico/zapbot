@@ -89,6 +89,7 @@
        :cura (golpe-get g :cura "cura")
        :dreno (golpe-get g :dreno "dreno")
        :recuo (golpe-get g :recuo "recuo")
+       :autodesmaio (or (golpe-get g :autodesmaio "autodesmaio") false)
        :min-acertos (golpe-get g :min-acertos "min-acertos" :minAcertos "minAcertos")
        :max-acertos (golpe-get g :max-acertos "max-acertos" :maxAcertos "maxAcertos")
        :alteracoes (golpe-get g :alteracoes "alteracoes")
@@ -101,6 +102,7 @@
   [[k v]]
   (or (nil? v)
       (and (#{:cura :dreno :recuo :chance-status} k) (number? v) (zero? (long v)))
+      (and (= :autodesmaio k) (not v))
       (and (= :alteracoes k) (or (nil? v) (and (sequential? v) (empty? v))))
       (and (= :precisao k) (number? v) (= 100 (long v)))
       (and (= :alvo k) (or (= :adversario v) (= "adversario" v)))))
@@ -113,7 +115,7 @@
     (let [n (golpe-normalizado g)
           combat (select-keys n [:slug :nome-exibicao :tipo :poder :classe
                                  :precisao :status-causado :chance-status
-                                 :cura :dreno :recuo :min-acertos :max-acertos
+                                 :cura :dreno :recuo :autodesmaio :min-acertos :max-acertos
                                  :alteracoes :alvo])]
       (into {} (remove slim-golpe-default? combat)))))
 
@@ -478,17 +480,29 @@
                  novo-status (assoc-in [:status def-marca] novo-status))
         dreno (when (and (:acertou? resolved) (:dreno golpe))
                 (max 1 (quot (* (:dano resolved) (long (:dreno golpe))) 100)))
-        recuo (when (and (:acertou? resolved) (:recuo golpe))
+        recuo (when (and (:acertou? resolved) (:recuo golpe)
+                         (not (:autodesmaio golpe)))
                 (max 1 (quot (* (:dano resolved) (long (:recuo golpe))) 100)))
+        ;; Explosion/Self-Destruct: após hit válido, usuário desmaia (HP→0).
+        autodesmaio? (and (:acertou? resolved)
+                          (or (:autodesmaio golpe) (get golpe "autodesmaio"))
+                          (pos? (long (:dano resolved 0))))
         max-atk (get-in battle [:pokemons atk-marca :hp])
         battle (cond-> battle
                  dreno (update-in [:hp atk-marca] #(min max-atk (+ % dreno)))
-                 recuo (update-in [:hp atk-marca] #(max 0 (- % recuo))))
+                 recuo (update-in [:hp atk-marca] #(max 0 (- % recuo)))
+                 autodesmaio? (assoc-in [:hp atk-marca] 0))
         battle (if (and (:acertou? resolved) (seq (:alteracoes golpe)))
                  (let [alvo (if (= :proprio (:alvo golpe)) atk-marca def-marca)]
                    (aplicar-alteracoes battle alvo (:alteracoes golpe)))
                  battle)]
-    {:battle battle :resolved resolved :status-aplicado novo-status}))
+    {:battle battle
+     :resolved resolved
+     :status-aplicado novo-status
+     :autodesmaio? (boolean autodesmaio?)
+     :hp-antes (long hp-antes)
+     :hp-depois (long (get-in battle [:hp def-marca] 0))
+     :hp-atk-depois (long (get-in battle [:hp atk-marca] 0))}))
 
 (defn- pick-wild-move
   [selvagem rng]
@@ -640,6 +654,8 @@
                   b0 (:battle gate)
                   atk (get-in b0 [:pokemons :x])
                   def (get-in b0 [:pokemons :o])
+                  hp-o-antes (get-in b0 [:hp :o])
+                  hp-x-antes (get-in b0 [:hp :x])
                   b (if (and (= :status classe) (:cura golpe))
                       (let [max-hp (get-in b0 [:pokemons :x :hp])
                             cura (max 1 (quot (* max-hp (long (:cura golpe))) 100))]
@@ -651,10 +667,19 @@
                                    (let [alvo (if (= :adversario (:alvo golpe)) :o :x)]
                                      (aplicar-alteracoes b alvo (:alteracoes golpe)))
                                    b)
-                         :resolved {:dano 0 :acertou? true :multiplicador 1 :acertos 1}})
+                         :resolved {:dano 0 :acertou? true :multiplicador 1 :acertos 1}
+                         :autodesmaio? false
+                         :hp-antes hp-o-antes
+                         :hp-depois hp-o-antes
+                         :hp-atk-depois hp-x-antes})
                   player-la (if (contains? #{:fisico :especial} classe)
                               (dmg/last-action-ataque golpe atk def (:resolved hit) false
-                                                      :move-index idx)
+                                                      :move-index idx
+                                                      :hp-antes (:hp-antes hit hp-o-antes)
+                                                      :hp-depois (:hp-depois hit)
+                                                      :hp-atk-antes hp-x-antes
+                                                      :hp-atk-depois (:hp-atk-depois hit)
+                                                      :autodesmaio? (:autodesmaio? hit))
                               {:action :attack :move-index idx :dano 0 :acertou? true
                                :golpe-nome (or (:nome-exibicao golpe) (:slug golpe))
                                :tipo-golpe (:tipo golpe)
