@@ -1,12 +1,54 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0 + One-Mon + species-hp
 
-**Atualizado:** 2026-11-08T13:56Z  
+**Atualizado:** 2026-11-08T14:20Z  
 **Host:** `odisseu-core` (linux/amd64)  
 **Live executável (One-Mon):** Node `617525d9…` / JVM `4a75eaa2…` @ `b0f0677` — **intacta**  
 **RC candidata (species-hp):** Node `57a828ca…` / JVM `e1bb8ac5…` @ `5ed39b0` — carregada, **não** aplicada  
 **Evidência prep species-hp:** `/home/caiohclavico/odisseu-recovery/a6-species-hp-prep-20261108T134333Z`  
+**Evidência storage+ensaio:** `/home/caiohclavico/odisseu-recovery/a6-species-hp-storage-audit-20261108T140316Z`  
 **Inbox tars:** `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-species-hp-5ed39b0/`  
 **Evidência cutover One-Mon:** `/home/caiohclavico/odisseu-recovery/a6-raid-one-mon-cutover-20261108T111814Z`
+
+---
+
+## 0h. Storage + ensaio migração Species-HP (2026-11-08T14:03Z→14:17Z) — **sem cutover/live migrate**
+
+### A. Armazenamento
+
+| Campo | Valor |
+|-------|-------|
+| Disco antes | **93%** · ~3,7 G livres |
+| Limpeza segura | **4,79 GiB** — apenas `/tmp` staging tars/build ctx + containers `Created` de comparação + dangling 0-unique |
+| Disco depois | **81%** · **9,3 G** livres |
+| Meta 8–10 G | **atingida** |
+| Produção após limpeza | WA **READY** · Node/JVM **healthy** · Started **inalterado** · Restarts=0 · flags intactas |
+| Hold / CI | `ODISSEU_PRODUCTION_DEPLOY_HOLD=true` · `deploy.yml` **`disabled_manually`** · in_progress=0 |
+| Não removido | imagens One-Mon / Species-HP / Balance A · volumes Datomic · sessão WA · rc-inbox protegido · backups · recovery sessions |
+| Proposta humana (extra) | rc-inbox antigos (`gym-hp`, `gameplay-audit`, `ai-drain` ≈1,6 G) + dirs de sessão de recovery (classificação incerta) — **não apagados** |
+| Expansão disco VM | **opcional** agora; **recomendada** antes de cutover se quiser margem >15 G para cold dump + rollback simultâneos |
+
+### B. Ensaio Species-HP (Datomic descartável)
+
+| Campo | Valor |
+|-------|-------|
+| Dataset | export RO anonimizado (cópia volume; **0 writes live**) |
+| Testados | **984** |
+| Convertidos | **960** |
+| Quarentena | **22** (formas/variantes) |
+| Skip combate (ensaio) | **2** |
+| Tempo lotes | ~0,28 s |
+| Idempotência / retomada | **PASS** |
+| Integridade amostra persistida | **PASS** · faint=0 **PASS** |
+| Unit species-hp | **19/1337 PASS** |
+| Raid boss | **320** |
+| Live saves | **não** alterados |
+
+| Veredito | |
+|----------|--|
+| Pedir janela cutover+migração futura | **GO condicional** (aliases de forma + schema 035 + freeze combates) |
+| Cutover / migrate agora | **NO-GO** |
+
+Detalhes: `docs/pokemon-a6-species-hp-migration-plan.md`.
 
 ---
 

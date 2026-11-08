@@ -214,6 +214,14 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=768"]}
 
+  ;; A6 — ensaio migração Species-HP (Datomic descartável; sem produção)
+  :test-a6-species-hp-migrate-rehearsal
+  {:main-opts ["-m" "odisseu.smoke.a6-species-hp-migrate-rehearsal"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx1024m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=1024"]}
+
   ;; M4.9 — raids no adaptador JVM + regressões
   :test-m4-raid
   {:main-opts ["-m" "odisseu.smoke.m4-raid"]

@@ -1,18 +1,53 @@
 # Pokémon A6 — Plano de migração Species-HP (futuro)
 
-**Status:** proposta apenas — **NÃO executar**.  
-**Base:** prep operacional 2026-11-08 · código `5ed39b0` · RC tip `6747bee`.  
-**Auditoria RO:** 983 Pokémon, 100% `legacy-unset`, 0 com `hp-base` / `species-hp-v1`.
+**Status:** proposta + ensaio descartável concluído — **NÃO executar em produção**.  
+**Base:** código `5ed39b0` · imagens Node `57a828ca…` / JVM `e1bb8ac5…`.  
+**Ensaio:** 2026-11-08T14:17Z · evidência local `artifacts/a6-species-hp-migrate-rehearsal/` · host audit `…/a6-species-hp-storage-audit-20261108T140316Z`.
+
+## Auditoria RO atualizada (cópia Datomic, sem writes live)
+
+| Métrica | Valor |
+|---------|-------|
+| Pokémon totais | **984** |
+| `legacy-unset` | **984** (100%) |
+| `species-hp-v1` / com `hp-base` | **0** / **0** |
+| HP cheio / parcial / desmaiado | **952** / **12** / **20** |
+| Raids ativas | **0** |
+| Batalhas ativas | **0** |
 
 ---
 
-## 1. Pré-requisitos
+## Resultados do ensaio (Datomic descartável)
 
-1. Cutover das imagens species-hp já estável (WA READY, healthy, observação ≥20m).
-2. Schema 035 aplicado **uma vez** com GO explícito (atributos `hp-base` / `hp-formula-version`).
-3. Backup cold Datomic + cold sessão + overlay/flags **antes** de qualquer batch.
-4. Janela sem raids em combate (auditoria: `active-raids-approx=0` no momento da prep; revalidar).
-5. Batalhas wild/PvP/ginásio ativas: drain graceful ou esperar término (`active-battles` revalidar).
+| Item | Resultado |
+|------|-----------|
+| Dataset | export RO anonimizado da cópia do volume live (`984` registros) |
+| Convertidos | **960** |
+| Quarentena | **22** (formas/variantes fora do catálogo canônico) |
+| Skip combate (injetados no ensaio) | **2** |
+| Tempo lotes (40/reg) | **~0,28 s** |
+| 2ª passagem | `convert=0` · idempotente |
+| Retomada pós-falha simulada | **PASS** |
+| Persistência amostra (30) | v1 + faint=0 + integridade stats **PASS** |
+| Unit species-hp | **19/1337 PASS** |
+| Raid boss HP | **320** preservado |
+
+### Quarentena (agregado — sem PII)
+
+Formas/variantes sem alias no catálogo (exemplo): `wishiwashi-solo`, `pyroar-male`, `gourgeist-average`, `tatsugiri-curly`, `frillish-male`, `mimikyu-disguised`, `indeedee-male`, `enamorus-incarnate`, `jellicent-male`, `lycanroc-midday`, `zygarde-50`, `pumpkaboo-average`, `darmanitan-standard`, `deoxys-normal`, `meowstic-male`, `minior-red-meteor`.
+
+**Bloqueio residual:** antes da migração live, acrescentar aliases de forma no catálogo (sem inventar base).
+
+---
+
+## 1. Pré-requisitos (produção futura)
+
+1. Cutover Node+JVM species-hp estável (WA READY, healthy, ≥20 m).
+2. Schema **035** aplicado **uma vez** com GO explícito.
+3. Aliases de forma para as 22 quarentenas (ou lista aceita de quarantine permanente).
+4. Backup cold Datomic + sessão + overlay/flags **antes** dos lotes.
+5. Revalidar `active-raids` / `active-battles` = 0 (ou exclusão confiável por `id-pokemon`).
+6. Margem de disco ≥8–10 G (atingida em 2026-11-08 após limpeza `/tmp`; revalidar).
 
 ---
 
@@ -20,24 +55,22 @@
 
 | Artefato | Ação |
 |----------|------|
-| Datomic hot→cold | `cp -a` volume `odisseu-a6-cutover-datomic` para evidência timestamped |
-| Sessão WA | cold copy `.wwebjs_auth*` (sem tocar locks live) |
-| Overlay/flags | snapshot compose + `printenv` Node/JVM |
-| Checksums | `sha256sum` dos dumps |
+| Datomic hot→cold | `cp -a` volume `odisseu-a6-cutover-datomic` |
+| Sessão WA | cold copy (sem locks live) |
+| Overlay/flags | snapshot compose + env (sem secrets em logs) |
+| Checksums | `sha256sum` |
 
-Rollback de migração = restaurar cold Datomic **somente** se cutover de dados for revertido na mesma janela; nunca sobrescrever progresso pós-migração sem GO.
+Rollback de volume **somente** na mesma janela sem progresso pós-migração significativo + GO humano.
 
 ---
 
-## 3. Lotes pequenos + idempotência
+## 3. Lotes + idempotência
 
-1. Selecionar até N Pokémon por TX (sugerido **25–50**), ordenados por `id-pokemon`.
-2. Para cada entidade: `species-hp-migrate/plano-registro`.
-   - `:noop` se já `species-hp-v1` → skip.
-   - `:convert` → transact `hp`, `hp-atual`, `hp-base`, `hp-formula-version`.
-3. Sem `hp-base` no registro: resolver via `species-base/base-hp` (catálogo); se espécie desconhecida → **quarantine list** (não inventar).
-4. Retry: releitura; se versão já v1 → `:noop` (idempotente).
-5. Não escrever em paths de leitura (`list-collection` / GET).
+1. Lotes **25–50** (`migrar-lote` / `plano-seguro`).
+2. Status: `:convert` · `:noop` · `:quarantine` · `:skip-combat`.
+3. `:convert` inclui upgrade só de metadados (`hp-base` / `hp-formula-version`) quando números coincidem.
+4. Retry → `:noop` se já `species-hp-v1`.
+5. Nunca inventar `hp-base`.
 
 ---
 
@@ -45,27 +78,30 @@ Rollback de migração = restaurar cold Datomic **somente** se cutover de dados 
 
 | Caso | Regra |
 |------|-------|
-| HP cheio | novo max; `hp-atual = hp-max` |
-| HP parcial | `converter-proporcional` (razão preservada) |
-| Desmaiado (`hp-atual=0`) | permanece **0**; max recalculado |
-| Em combate / raid party | **excluir** do lote até leave/fim |
+| Cheio | `hp-atual = hp-max` novo |
+| Parcial | proporção preservada (±1 arredondamento) |
+| Desmaiado | permanece **0** |
+| Combate/raid | `:skip-combat` até leave/fim |
+
+Fórmula (inalterável sem GO):  
+`hp-max = round(hp-ref(n) × clamp((hp-base/80)^0.85, 0.60, 2.20))`
 
 ---
 
-## 5. Proteção de raids / batalhas
+## 5. Proteção de combates
 
-1. Query RO: raids `lobby|combate|captura` e `battle/active?=true`.
-2. Se >0: abortar lote ou filtrar `id-pokemon` presentes em snapshots.
-3. Snapshots de combate usam HP do encontro — não reescrever mid-fight.
+1. Query RO raids `lobby|combate|captura` + `battle/active?=true`.
+2. Filtrar `id-pokemon` ocupados; se identificação não for confiável → **abortar** migração.
+3. Snapshots de combate não são reescritos mid-fight.
+
+No ensaio: identificação por flag injetada **PASS**; em produção exige wiring confiável save↔battle/raid.
 
 ---
 
 ## 6. Falha e retomada
 
-1. Cada lote = uma TX Datomic com receipt/`operation-id` opcional.
-2. Logar `{batch-id, converted, noop, quarantine, errors}`.
-3. Falha → não avançar cursor; reexecutar mesmo batch (idempotente).
-4. Timeout → retry com backoff; nunca “force write” sem plano.
+Recibo por lote `{batch-id, offset, convert, noop, quarantine, skip-combat}`.  
+Falha → não avançar cursor; reexecutar (idempotente). Ensaio de falha no 3º lote + retomada: **PASS**.
 
 ---
 
@@ -73,23 +109,31 @@ Rollback de migração = restaurar cold Datomic **somente** se cutover de dados 
 
 | Check | Esperado |
 |-------|----------|
-| `by-hp-formula-version` | quase tudo `species-hp-v1` |
-| Quarantine | lista explícita; 0 writes inventados |
-| Sample fainted | `hp-atual=0` |
-| Sample partial | razão ≈ pré-migração (±1 por arredondamento) |
-| Raid boss HP | continua 320 (fora do batch) |
-| WA / containers | sem restart implícito |
+| Versões | quase tudo `species-hp-v1` + quarantine explícita |
+| Fainted | `hp-atual=0` |
+| Partial | razão ≈ pré |
+| Owner/XP/golpes/nível | intactos |
+| Raid boss | 320 |
 
 ---
 
-## 8. Rollback sem apagar progresso
+## 8. Janela operacional futura (proposta — não executar)
 
-1. Preferir **forward-fix** quarantine + reprocess.
-2. Rollback de volume só se a janela ainda não teve jogabilidade significativa **e** GO humano.
-3. Não restaurar cold sobre saves que já receberam captura/XP pós-migração.
+1. Maintenance/drain → cutover Node+JVM species-hp → observe READY.  
+2. Schema 035.  
+3. Novos spawns já nascem em v1; legados ainda legados na leitura (sem conversão implícita).  
+4. Batch migrate com freeze de combates.  
+5. Verify + reopen.  
+6. Evitar janela longa mista sem plano de leitura legado (já garantido: leitura não converte).
 
 ---
 
 ## 9. GO futuro
 
-Este documento **não** autoriza execução. Exige GO separado de migração de dados após cutover de imagens.
+| Item | Veredito |
+|------|----------|
+| Ensaio descartável | **GO** (mecanismo validado) |
+| Executar migração live agora | **NO-GO** |
+| Pedir janela cutover+migração | **GO condicional** — aliases de forma + schema 035 + freeze combates + GO humano |
+
+Este documento **não** autoriza cutover, deploy, schema live nem backfill.
