@@ -454,6 +454,10 @@ HP chefe **não** reduzido. Simulação (`raid-balance-one-mon-sim-a6-test`):
 
 | Critério | Estado |
 |----------|--------|
-| 1-mon + UX + Frambo + catálogo + regressões | **GO** para merge/build RC integrada |
+| 1-mon + UX + Frambo + catálogo + regressões | **GO** — merged PR [#43](https://github.com/caioclavico/zapbot/pull/43) @ `b0f0677` |
+| Imagens Node+JVM AMD64 | **GO** — `617525d9…` / `4a75eaa2…` (tree `f3866c5e…`) |
+| Pedido de janela de deploy | **GO para preparar** (overlay pinado; **sem** apply) |
 | Fórmula global de HP de espécie | **NO-GO** (proposta só; aguarda aprovação) |
-| Deploy / migrations / saves / flags | **NO-GO** |
+| Deploy / migrations / saves / flags | **NO-GO** (proibido neste ciclo) |
+
+**Rollback live (RO 2026-11-08):** Node `002c83e8…` / JVM `e044cce1…` (Balance A).

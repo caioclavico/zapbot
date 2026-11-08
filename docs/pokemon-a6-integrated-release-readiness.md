@@ -9,20 +9,25 @@
 
 ---
 
-## 0c. Candidata 1-mon + UX raid + catálogo (pré-build)
+## 0c. Candidata 1-mon + UX raid + catálogo (RC pronta)
 
 | Campo | Valor |
 |-------|-------|
 | Escopo | `max-party=1` (sem auto-troca); 2 barras HP; raridade chefe+jogador; empty/footer captura; Frambo≠presente; chefes manuais via catálogo (5→**571**); Proposta A intacta (HP 320 / var 85–100%) |
-| Base | tip integrado `b9ae76c` (Balance A pins) |
-| Branch | `fix/a6-raid-one-mon-ux` (ainda sem Image IDs — **precisa rebuild Node+JVM**) |
-| HP espécie | **Proposta só** (compressão 0.5→0.85); **não** aplicada; ver audit §HP |
-| Homolog local (tip desta branch) | homolog-abc **42/247** · lobby **24/80** · homolog-f4 **13/114** · auto-fase3 **19/81** · m4-raid+HTTP · Node UX/lote-c/ops **36/36** — **PASS** |
-| Live RO (rollback) | Node `002c83e8…` / JVM `e044cce1…` · WA **READY** · healthy |
-| Overlay / deploy | **NÃO**; hold/CI/flags/saves/WA intocados |
-| Integração (merge/build RC) | **GO** |
-| Pedido de janela produção | **NO-GO** |
-| Fórmula HP global | **NO-GO** até aprovação da tabela |
+| PR código | [#43](https://github.com/caioclavico/zapbot/pull/43) **MERGED** |
+| Commit integrado | `b0f0677786c44177478852db60bb4e1da6b2c5a1` |
+| Content tree | `f3866c5eb008d56b8f22154711bc41b1d708af50` |
+| Node | `odisseu-node:a6-raid-one-mon-20261108T105345Z-b0f0677786c4-amd64` · `sha256:617525d90f3022455b71d81f4cf063924861f5bbc048b3cdbe0287b54dd304b1` |
+| JVM | `odisseu-jvm:a6-raid-one-mon-20261108T105345Z-b0f0677786c4-amd64` · `sha256:4a75eaa241c0c6ce45d541dada52e5966b456989f19ecd71e3b409661111816b` |
+| Tar SHA256 Node | `77a4cda15d207b66da4502ba828a69719d3b3d3d88fd7cc928571b71e5234435` |
+| Tar SHA256 JVM | `a12227cd56b077e139cb65be9bceb55daee258cf2292f10fa22c7b37f0adf6dc` |
+| Artefatos | `artifacts/a6-raid-one-mon-20261108T105345Z/` |
+| Homolog local | homolog-abc **42/247** · lobby **24/80** · homolog-f4 **13/114** · auto-fase3 **19/81** · m4-raid+HTTP · Node **36/36** — **PASS** |
+| Verify host | **PASS** (labels git-sha/tree/amd64) · live **UNTOUCHED** |
+| Overlay | pin candidata (**sem apply**) |
+| Deploy | **NÃO** |
+| Pedido de janela | **GO para preparar** (hold intacto; sem deploy automático) |
+| Fórmula HP global | **NO-GO** (proposta só) |
 
 Detalhes: `docs/pokemon-a6-gameplay-audit.md` §Revisão raids.
 
