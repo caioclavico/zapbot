@@ -5,8 +5,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-NODE_TAG='odisseu-node:a6-gameplay-chromium156-p1-20261108T043525Z-21771ec372eb-amd64'
-NODE_ID='sha256:446dfc2bdd7aba4f79c1e9e1e27590373ae4539be46a71aaefd69635743a6043'
+NODE_TAG='odisseu-node:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64'
+NODE_ID='sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade'
 BREAKGLASS_TAG='odisseu-node:a6-drain-breakglass-20261106-1d00dd01'
 
 mkdir -p "$TMP/docker"
@@ -84,6 +84,10 @@ checks = {
   'volume_data': 'odisseu-a6-cutover-data' in text,
   'volume_session': '.wwebjs_auth_a6_cutover' in text,
   'breakglass_mentioned_for_rollback': '1d00dd01' in ov,
+  'live_node_rollback_pin': '05b36c5a' in ov,
+  'live_jvm_rollback_pin': 'ad0b7c1b' in ov,
+  'health_bind_host': 'HEALTH_BIND_HOST: "0.0.0.0"' in text or 'HEALTH_BIND_HOST: 0.0.0.0' in text,
+  'jvm_candidate_documented': '7bc8f341' in ov,
 }
 failed = [k for k, v in checks.items() if not v]
 print({k: ('PASS' if v else 'FAIL') for k, v in checks.items()})

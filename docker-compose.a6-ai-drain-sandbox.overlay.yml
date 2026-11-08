@@ -3,7 +3,12 @@
 # working_dir `/home/caiohclavico/odisseu-recovery/a6-cutover-runtime-20261101T141408Z`.
 #
 # RC candidata A+B+C+P0 (Chromium Debian 156 + hasSynced listeners + gameplay P0):
-#   Tag / Image ID: preenchidos após build AMD64 (scripts/verify-a6-gameplay-rc-images.sh).
+#   Tag: odisseu-node:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64
+#   Image ID: sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade
+#   JVM Tag: odisseu-jvm:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64
+#   JVM Image ID: sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c
+#   Labels: git-sha=c5ab41dfcbf2f12602b13a6718ecbc8bc79f68e7
+#            content-tree=8428d03b5c7ce7c7654a5416af7fd6cf3ae2c854
 #   HEALTH_BIND_HOST=0.0.0.0 obrigatório (health host).
 #
 # NÃO reaplicar: e7488e4f (Chrome 157); Node sem listeners (74118090).
@@ -18,8 +23,7 @@
 
 services:
   odisseu-a6-node:
-    # Substituir pela tag RC A+B+C+P0 após `docker build` + verify.
-    image: odisseu-node:a6-abc-p0-PLACEHOLDER-amd64
+    image: odisseu-node:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64
     user: "1000:1000"
     environment:
       HEALTH_BIND_HOST: "0.0.0.0"

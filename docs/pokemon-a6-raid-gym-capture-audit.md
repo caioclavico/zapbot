@@ -1,7 +1,8 @@
 # Pokémon A6 — Auditoria P0: raids, ginásios e captura
 
 **Worktree:** `/private/tmp/zapbot-a6-gameplay-audit`  
-**Atualizado:** 2026-11-08  
+**Atualizado:** 2026-11-08T06:25Z  
+**Branch RC:** `rc/a6-abc-p0-integrated` (`9d2a345` P0 + `c5ab41d` ops)  
 **Restrições:** sem deploy, migration, backfill, flags, sessão WA ou alteração de produção.
 
 ---
@@ -10,33 +11,34 @@
 
 | Item | IMPLEMENTADO | TESTADO | PENDENTE |
 |------|--------------|---------|----------|
-| Preservar `:raridade` slim→encode/decode→KO→DTO | Sim (`battle` keep + `assegurar-raridade`) | P0 + flow Datomic | — |
-| Sem fallback silencioso → `comum` na **chance** | Sim (`resolver-raridade`: snapshot / classificado / desconhecida→**mitico**) | P0 domínio | — |
+| Preservar `:raridade` slim→encode/decode→KO→DTO | Sim (`battle` keep + `assegurar-raridade`) | P0 + flow Datomic | Cutover live |
+| Sem fallback silencioso → `comum` na **chance** | Sim (`resolver-raridade`: snapshot / classificado / desconhecida→**mitico**) | P0 domínio | Cutover live |
 | Taxas raro/épico/lendário/mítico pós-reopen | Sim (carimbo + reopen store) | `capture_rarity_flow_a6_test` | Cutover JVM live |
-| UI `Raridade: ?` | Sim (`formatCaptureMenu` canônico / indisponível) | Node P0 + lote-c | Rebuild Node RC |
-| Ginásio NPC sorteado (pool + RNG) | Sim (`gym/sortear` + `/v1/gyms/npc-roll`) | P0 domínio | Node+JVM RC |
+| UI `Raridade: ?` | Sim (`formatCaptureMenu` canônico / indisponível) | Node P0 + lote-c + imagem `289a0407` | Cutover Node live |
+| Ginásio NPC sorteado (pool + RNG) | Sim (`gym/sortear` + `/v1/gyms/npc-roll`) | P0 + JVM RC `7bc8f341` | Cutover Node+JVM |
 | Raid man/auto mesmo motor (faint/eff/dano/UI) | Sim (já A+B+C + UI turno) | faint + P0 + homolog | JVM live ainda `03a3dc7e` |
 | Lotes A+B+C preservados | Sim | smokes PASS | — |
+| Imagens RC Node+JVM | Sim (thin AMD64) | sandbox + Datomic descartável | Janela autorizada |
 
 ### RC necessária
 
-| Camada | Precisa RC nova? | Motivo |
-|--------|------------------|--------|
-| **JVM** | **Sim** | Domínio captura/raridade, ginásio pool, raid party/eff (desde `ca06cff` + este P0) |
-| **Node** | **Sim** | `pokemon-jvm-present` (captura/raid UI), `pokemon_http` (npc-roll), client `rollGymNpcSpecies` |
-| Só Node | Não resolve | Chance/faint/sorteio exigem JVM |
-| Só JVM | Parcial | UI `?`/raid texto/npc-roll ficam velhos |
+| Camada | Precisa RC nova? | Motivo | Image ID candidata |
+|--------|------------------|--------|--------------------|
+| **JVM** | **Sim** | Domínio captura/raridade, ginásio pool, raid party/eff | `sha256:7bc8f341…` |
+| **Node** | **Sim** | present/HTTP npc-roll + Chromium 156 + listeners | `sha256:289a0407…` |
+| Só Node | Não resolve | Chance/faint/sorteio exigem JVM | — |
+| Só JVM | Parcial | UI `?`/raid texto/npc-roll ficam velhos | — |
 
-**Produção hoje (RO):** Node `05b36c5a` (`21771ec`) · JVM `ad0b7c1b` (`source-base=03a3dc7e`) — JVM **sem** A+B+C nem este P0.
+**Produção hoje (RO):** Node `05b36c5a` · JVM `ad0b7c1b` (`source-base=03a3dc7e`) — JVM **sem** A+B+C nem este P0.
 
 ---
 
 ## 0. Identidade produção vs RC
 
-| Camada | Live | Código worktree |
-|--------|------|-----------------|
-| Node | `05b36c5a…` / `21771ec` | + present/raridade/ginásio roll (ainda não em imagem) |
-| JVM | `ad0b7c1b…` / `03a3dc7e` | `ca06cff` A+B+C + P0 raridade/ginásio |
+| Camada | Live | RC candidata (`c5ab41d` / tree `8428d03b`) |
+|--------|------|-------------------------------------------|
+| Node | `05b36c5a…` | `289a0407…` · tag `a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64` |
+| JVM | `ad0b7c1b…` / `03a3dc7e` | `7bc8f341…` · mesma stamp/tag curto |
 
 ---
 
@@ -115,6 +117,9 @@ XP com slug ausente continua `comum` (não infla recompensa). UI nunca imprime `
 | `clojure -M:test-a6-lote-c` | PASS |
 | `clojure -M:test-a6-homolog-abc` | **32 tests / 213 asserts** PASS |
 | Node `pokemon-a6-raid-gym-capture-p0` + lote-c present | **4/4** PASS |
+| Sandbox AMD64 + HEALTH_BIND + ACL | PASS em `odisseu-core` |
+| JVM descartável temáticos `true` + restart | PASS (88 caps, sem dup) |
+| Contrato `npc-roll` / present / raridade | PASS |
 
 ---
 
@@ -128,7 +133,7 @@ XP com slug ausente continua `comum` (não infla recompensa). UI nunca imprime `
 | Ginásios ocupados / batalhas ativas | Não sorteados / não alterados |
 | Hold/CI/flags/WA | Intocados |
 
-**Risco residual:** produção só melhora após **cutover JVM+Node** com este worktree (ou RC equivalente). Node live atual já tem WA listeners, mas **não** este present/ginásio roll.
+**Risco residual:** produção só melhora após **cutover JVM+Node** com as Image IDs acima. Node live atual já tem WA listeners, mas **não** este present/ginásio roll.
 
 ---
 
@@ -136,7 +141,8 @@ XP com slug ausente continua `comum` (não infla recompensa). UI nunca imprime `
 
 | Pedido | Veredito |
 |--------|----------|
-| Código P0 + A+B+C no worktree | **GO** (testes verdes) |
+| Código P0 + A+B+C no worktree | **GO** |
+| Imagens Node+JVM homologadas juntas | **GO** |
 | Deploy agora | **NO-GO** |
-| Próxima RC **JVM + Node** | **GO a solicitar** |
+| Solicitar janela **JVM + Node** | **GO** |
 | RC só Node ou só JVM | **NO-GO** para fechar o P0 completo |
