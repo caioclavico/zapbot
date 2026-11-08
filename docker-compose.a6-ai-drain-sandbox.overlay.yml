@@ -1,18 +1,18 @@
-# Overlay pinado — Combat UX + Eventos RC (NÃO aplicado em produção nesta tarefa).
-#   Stamp: 20261108T164301Z
-#   Commit: 3bc507679a4511aa850e5dd015e6bde56e38fca3
-#   Content-tree: 452ff59358a9530a2c358239eba3d1ac8510c2d6
-#   Node Tag: odisseu-node:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64
-#   Node Image ID: sha256:619b4756b3bf0b92f75f5ac4e75d8b6d11783219f98faacc8328dd4423a03d1e
-#   JVM Tag: odisseu-jvm:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64
-#   JVM Image ID: sha256:09e7605e94e6c01217df2366c3729470ff4bc7a73aaf23e289f72d8817129d40
-#   Labels: io.zapbot.git-sha / io.zapbot.content-tree / io.zapbot.fase=a6-combat-ux-events
+# Overlay pinado — Explosion/Hunt/Raid 1º frame RC (NÃO aplicar em produção nesta tarefa).
+#   Stamp: 20261108T203624Z
+#   Commit: 2afd9975ef695163a4d8f98eed632c644431c72f
+#   Content-tree: ad8a3cf41c4851237b535b15fad82e8e024b92f0
+#   Node Tag: odisseu-node:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
+#   Node Image ID: sha256:77d0d9a255125c74d59168713dc025c42d9d189d9bd7278bf1813be981464d2b
+#   JVM Tag: odisseu-jvm:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
+#   JVM Image ID: sha256:9443b80134bf5f2bb47009354b705785f065ff438c31de10496621a35d2198d1
+#   Labels: io.zapbot.git-sha / io.zapbot.content-tree / io.zapbot.fase=a6-explosion-hunt-raid-integrated
 #   Arch: linux/amd64
-#   Rollback live Species-HP Final: Node 17520a1e… / JVM c13140fa…
-#   Source-base: 72bffdb63be62d8b35e61bcc75c0436949b6f189
-#   Proibido reutilizar: 57a828ca… / e1bb8ac5… (species-hp pré-aliases)
+#   Chromium: 156.0.8078.79-1~deb12u1 · UID 1000
+#   Source-base (PR #59 merge): 09dc5b50f4b94e4ba540e6bc62e8df5ad7c62fb6
+#   Homolog tests: PR #60 (7b6dfdf)
 services:
   odisseu-jvm:
-    image: odisseu-jvm:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64
+    image: odisseu-jvm:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
   odisseu-node:
-    image: odisseu-node:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64
+    image: odisseu-node:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
