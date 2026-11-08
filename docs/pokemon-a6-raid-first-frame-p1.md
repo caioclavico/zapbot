@@ -67,17 +67,60 @@ Gerados em `docs/previews/raid-first-frame/`:
 
 Com rede: sprites Magmar/Wartortle via official-artwork (`hasAlpha=true`, `placeholder=false`).
 
+### Homologação pós-`npm install` (sharp) — `b477c34`
+
+Script: `node scripts/homolog-raid-first-frame-b477c34.cjs`  
+Artefatos: `docs/previews/raid-first-frame/homolog-b477c34/` · `REPORT.json`
+
+| Check | Resultado |
+| --- | --- |
+| Texto manual (golpe+emoji tipo/classe+efetividade+raridade+HP) | **PASS** — pré-ataque sem narrativa de dano |
+| Texto auto (`formatRaidStart` + mesmo turn block) | **PASS** |
+| Texto frame2 (`formatRaidAttack` + menu) | **PASS** — dano + `Super efetivo!🔥` + menu idêntico |
+| Pipeline compartilhado | **PASS** — `formatRaidTurnBlock` |
+| Cache frio (miss) → silhueta sem xadrez | **PASS** |
+| Cache aquecido (2º render) | **PASS** — `source=url`, sem placeholder |
+| Cards frame1/frame2/auto 760×400 | **PASS** — `looksLikeCheckerboard=false`, checkerish ≤0,2% |
+| Sprites individuais alpha (Magmar/Wartortle) | **PASS** — `hasAlpha=true`, milhares de px transparentes |
+| Forma alternativa (deoxys-attack) | **PASS** — artwork URL |
+| Artwork indisponível | **PASS** — silhueta indigo `?` |
+| Detector xadrez (controle positivo) | **PASS** |
+| Inspeção visual frame1 vs frame2 | **PASS** — artwork limpo sobre arena, sem xadrez |
+
+Exemplo 1º frame (mensagem):
+
+```
+🔥 Combate iniciado! Chefe com 440 HP.
+👾 *Magmar* · 🟡 Lendário
+[██████████] 440/440
+🐾 *Wartortle* · 🟢 Incomum
+[████████░░] 120/150
+1. 🔮 💧 *Water Gun* (Água, poder 40) 🔥 → `!pk raid atacar 1`
+```
+
 ---
 
 ## Testes
 
 ```bash
-node --test test/pokemon-a6-raid-first-frame.test.cjs
-node test/pokemon-a6-sprite-placeholder.test.cjs
-# Clojure: pokemon.tests.raid-opened-media-test (started-combat-from-raid)
+node scripts/homolog-raid-first-frame-b477c34.cjs
+node --test test/pokemon-a6-raid-first-frame.test.cjs \
+  test/pokemon-a6-sprite-placeholder.test.cjs \
+  test/pokemon-jvm-raid-fase12.test.cjs \
+  test/pokemon-a6-raid-one-mon-ux.test.cjs \
+  test/pokemon-jvm-raid-hotfix-fase1231.test.cjs
+# Clojure: pokemon.tests.raid-opened-media-test
 ```
 
+| Suite | Resultado |
+| --- | --- |
+| Homolog script | **12/12 PASS** |
+| Node regressão raid (incl. first-frame) | **38/38 PASS** |
+| JVM `raid-opened-media-test` | **19/19 PASS** |
+
 Cobertura: 20 cenários pedidos (manual/auto, 2º frame, alpha, xadrez, cache, artwork, forma, ofensivo/status/legado Wartortle, SE/NVE/imune, emojis, raridade, HP, lobby→combate, download fail).
+
+Commit `b477c34` permanece HEAD íntegro (working tree só com artefatos de homologação).
 
 ---
 
@@ -93,8 +136,10 @@ Cobertura: 20 cenários pedidos (manual/auto, 2º frame, alpha, xadrez, cache, a
 
 | Critério | |
 | --- | --- |
-| 1º frame = qualidade do 2º (texto) | **GO** |
+| Homologação visual+textual `b477c34` | **PASS** |
+| 1º frame = qualidade do 2º (texto + mídia) | **GO** |
 | Sem xadrez no card / fallback | **GO** |
 | Auto e manual unificados | **GO** |
+| Sem regressão Node/JVM afetada | **GO** |
 | Sem deploy neste lote | respeitado |
-| Integrar na RC Explosion/caçadas | **GO** (commit independente) |
+| Integrar na RC Explosion/caçadas | **GO** |
