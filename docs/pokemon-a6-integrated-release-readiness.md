@@ -1,16 +1,16 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0 + One-Mon + species-hp
 
-**Atualizado:** 2026-11-08T20:40Z  
+**Atualizado:** 2026-11-08T22:10Z  
 **Host build:** local macOS → imagens `linux/amd64` via `a6builder`  
-**Live:** Combat UX + Eventos `3bc5076` — Species-HP/035/One-Mon/HP 320 intactos  
+**Live:** Combat UX + Eventos `3bc5076` (`619b4756`/`09e7605e`) — Species-HP/035/One-Mon/HP 320 intactos · StartedAt inalterado  
 **Base RC integrada:** `github/rc/a6-abc-p0-integrated` @ `2afd997`  
 **PRs desta fatia:** [#59](https://github.com/caioclavico/zapbot/pull/59) Explosion/liberar/1º frame · [#60](https://github.com/caioclavico/zapbot/pull/60) homolog testes  
 **Docs:** `docs/pokemon-a6-explosion-wild-battle-rewards.md` · `docs/pokemon-a6-raid-first-frame-p1.md`  
-**Veredito:** conteúdo+imagens RC **GO** prep operacional · **NO-GO** deploy/cutover/migrations/backfill neste passo
+**Veredito:** prep operacional host **GO** (SCP/load/VERIFY/pin) · **NO-GO** deploy/cutover/migrations/backfill/WA/hold/CI
 
 ---
 
-## 0q. RC Explosion + Hunt + Raid 1º frame (2026-11-08T20:36Z) — build + homolog (**sem** deploy)
+## 0q. RC Explosion + Hunt + Raid 1º frame (2026-11-08T20:36Z→22:10Z) — build + prep host (**sem** deploy)
 
 | Campo | Valor |
 |-------|-------|
@@ -23,9 +23,10 @@
 | Tar SHA256 Node | `739e61fb04c1625a7f48afcab1e51be5ea020e85374d82942d502a11f137a100` |
 | Tar SHA256 JVM | `152d5523faf06ebd65501db96976bca6197fdcbb401d603d1fe80cdd5b753f7c` |
 | Chromium / UID | `156.0.8078.79-1~deb12u1` · `USER 1000:1000` · CapEff=`0` |
-| VERIFY | **PASS** (candidata ≠ live Combat UX) |
-| Overlay | pinado em `docker-compose.a6-ai-drain-sandbox.overlay.yml` + `artifacts/a6-explosion-hunt-raid-integrated-20261108T203624Z/` · **não** aplicado |
-| Artefatos | `artifacts/a6-explosion-hunt-raid-integrated-20261108T203624Z/` |
+| VERIFY host | **PASS** (candidata ≠ live Combat UX) |
+| Overlay | pinado candidata · bak `…overlay.yml.bak-pre-explosion-hunt-prep-20261108T220453Z` · prepared `…prepared-explosion-hunt-2afd997` · **não** aplicado |
+| Artefatos locais | `artifacts/a6-explosion-hunt-raid-integrated-20261108T203624Z/` |
+| Inbox host | `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-explosion-hunt-raid-2afd997/` |
 
 ### Testes (homolog integrada)
 
@@ -48,13 +49,33 @@
 - `chance-surto = 25` · `raid/hp-por-jogador = 320` · raridade default `:legado`
 - Species-HP v1 / schema 035 / One-Mon intactos
 
+### Prep operacional odisseu-core (2026-11-08T20:53Z→22:10Z) — **sem cutover**
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | GO prep only (SCP→sha→inbox→load→VERIFY→pin) — **sem** deploy/drain/restart/migrations/backfill/flags/WA/hold/CI |
+| Preflight (já concluído; **não** refeito) | Live Combat UX `619b4756`/`09e7605e` · WA READY · hold `true` · `deploy.yml` `disabled_manually` · rollbacks presentes · disco ~7G |
+| SCP | staging `/tmp/a6-explosion-hunt-raid-2afd997-staging` · pid **826730** concluído · staging limpo |
+| SHA256 inbox | **OK** (`IMAGES.sha256` + `REMOTE.sha256` — Node+JVM) |
+| `docker load` | **PASS** — IDs `77d0d9a2…464d2b` / `9443b801…2198d1` |
+| VERIFY | **PASS** · amd64 · labels `2afd997` / `ad8a3cf4` / `a6-explosion-hunt-raid-integrated` |
+| Disco pós-load | **6.5G** livres · **87%** |
+| Live Node | StartedAt=`2026-11-08T17:17:51.337099983Z` · Restarts=0 · Image=`619b4756…` · healthy |
+| Live JVM | StartedAt=`2026-11-08T17:16:32.699831734Z` · Restarts=0 · Image=`09e7605e…` · healthy |
+| Health | `{"status":"ok","whatsapp":"READY","chromium":true}` |
+| Overlay pin | active == prepared (`…2afd9975ef69-amd64`) · bak Combat UX `…bak-pre-explosion-hunt-prep-20261108T220453Z` · **compose up NÃO executado** |
+| Rollback imediato | Combat UX live (imagens + bak overlay) |
+| Evidências | `artifacts/…/prep-evidence/` (scp · checksum · load · verify · overlay · inbox-sha) |
+| Cutover / restart / migrations / WA / hold / CI | **NÃO executados** |
+
 ### Riscos residuais
 
 | Risco | Notas |
 |-------|-------|
 | Live ainda Combat UX | cutover requer GO operacional separado |
+| Disco ~6.5G | margem justa; staging limpo; inbox ~636 MB ainda no host |
+| Overlay on-disk já candidata | apply = `compose up` apenas; rollback = restaurar bak Combat UX |
 | Homolog sprites | precisa rede (PokeAPI); fallback silhueta OK offline |
-| CapBnd não-zero na imagem | esperado no runtime Docker; CapEff=0 no processo UID 1000 |
 
 ### Veredito
 
@@ -62,7 +83,7 @@
 |------|--------|
 | RC integrada reproduzível (Explosion + liberar + streak + 1º frame) | **GO** |
 | Prep operacional no servidor (SCP/load/VERIFY/pin) | **GO** |
-| Deploy / drain / restart / migrations / backfill / WA / flags | **NO-GO** |
+| Deploy / drain / restart / migrations / backfill / WA / flags / hold / CI | **NO-GO** |
 
 ---
 
