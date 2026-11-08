@@ -1,8 +1,8 @@
 # Pokémon A6 — HP realista por espécie (species-hp-v1)
 
-**Atualizado:** 2026-11-08  
-**Branch:** `feature/a6-species-hp-realistic` (base `rc/a6-abc-p0-integrated` @ `3f9edc3`)  
-**Escopo:** implementação + homologação **local** + fechamento dos riscos residuais (clamp + Node).  
+**Atualizado:** 2026-11-08T13:40Z  
+**RC integrada:** `rc/a6-abc-p0-integrated` @ `5ed39b0` (PR #45 ← `53a6b95`)  
+**Escopo:** integração RC + build imagens amd64 + overlay pins (**sem** apply/prod).  
 **Sem** deploy / migration live / backfill / saves reais / flags / WA / hold / CI.  
 **Chefes de raid:** **não** alterados (Proposta A: 320 HP/jogador, var 85–100%).
 
@@ -223,15 +223,48 @@ Cobertura extra pós-risco: DTO Node suavizado→JVM, evo pedra canonizada, clam
 
 ---
 
-## 9. GO/NO-GO
+## 9. Integração RC + imagens
+
+| Campo | Valor |
+|-------|-------|
+| Feature commit | `53a6b9539a24d0063a1f532c7a38eb4587b0e15f` |
+| PR | [#45](https://github.com/caioclavico/zapbot/pull/45) |
+| Commit integrado | `5ed39b0306addeaf96d4cbb3ad8480268adb3ae0` |
+| Content-tree | `80546bd3a04663b80a2e09750f48c5fa2a4cecf9` |
+| Node tag | `odisseu-node:a6-species-hp-20261108T133538Z-5ed39b0306ad-amd64` |
+| Node Image ID | `sha256:57a828ca6b6187b1415e0a5ea6f71c8b7ec12dd7ffc7fc63e5e6563c2aee5332` |
+| JVM tag | `odisseu-jvm:a6-species-hp-20261108T133538Z-5ed39b0306ad-amd64` |
+| JVM Image ID | `sha256:e1bb8ac5df0ab5ea81b1ab96ca689a602d47e14d41daf07fd0429fafd9df44a8` |
+| Arch | **linux/amd64** |
+| VERIFY images | **PASS** |
+| Overlay pins | preparado em `docker-compose.a6-ai-drain-sandbox.overlay.yml` (**não** aplicado) |
+
+### Regressões pós-merge
+
+| Suite | Resultado |
+|-------|-----------|
+| `:test-a6-species-hp` | PASS 19 / 1337 |
+| `:test-a6-homolog-abc` | PASS 42 / 247 |
+| `:test-a6-tm-xp-evolution` | PASS |
+| hunt unit + encounter | PASS |
+| `:test-m4-raid` (+ gym) | PASS + smoke HTTP OK |
+| `:test-m4-bridge` | PASS |
+| Node hunt/a2/gym | PASS 18 |
+| Smoke hunt HTTP `praia` | bloqueado por rotação diária (`area_unavailable`) — **não** regressão species-hp |
+
+---
+
+## 10. GO/NO-GO
 
 | Item | Veredito |
 |------|----------|
-| Implementação local + riscos residuais fechados | **GO** |
-| **Integrar na próxima RC** (`rc/a6-abc-p0-integrated`) | **GO** |
+| Implementação + riscos residuais | **GO** |
+| Integração RC (PR #45) | **GO** (feito) |
+| Build imagens + overlay pins | **GO** (feito; overlay **não** aplicado) |
+| **Preparação operacional / cutover** | **GO condicional** — exige janela autorizada, load tars no host, VERIFY no odisseu-core |
 | Deploy / migration live / backfill | **NO-GO** |
 | Alterar HP de chefes de raid | **NO-GO** |
 
 ### Critério de conclusão
 
-**HP REALISTA POR ESPÉCIE IMPLEMENTADO E HOMOLOGADO LOCALMENTE** — fórmula final com clamp mantido, Node alinhado à JVM, evolução/caça/ginásio consistentes, saves legados protegidos na leitura, Datomic descartável OK, produção intocada. **Apto para merge na próxima RC** (sem deploy).
+**HP REALISTA POR ESPÉCIE INTEGRADO NA RC E HOMOLOGADO** — fórmula com clamp mantido, Node→JVM canônico, imagens amd64 pinned, saves legados protegidos na leitura, produção intocada.
