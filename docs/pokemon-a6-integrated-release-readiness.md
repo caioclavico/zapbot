@@ -1,15 +1,58 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0 + One-Mon + species-hp
 
-**Atualizado:** 2026-11-08T16:50Z  
+**Atualizado:** 2026-11-08T17:05Z  
 **Host:** `odisseu-core` (linux/amd64)  
-**Live executável (Species-HP Final):** Node `17520a1e…` / JVM `c13140fa…` @ `72bffdb` — **intacta** (sem cutover nesta janela)  
-**RC candidata (Combat UX + Eventos 25%):** Node `328dd4423a03d1e…` / JVM `9f72d8817129d40…` @ `3bc5076` — build+VERIFY, **não** aplicada  
+**Live executável (Species-HP Final):** Node `sha256:17520a1ec6fcb88687c2f208b8cd276c384944f01cde57a3b0793c217532e2a0` / JVM `sha256:c13140fa9965b8cb78faa7edc1d95a95a5abc3ed1287203554e65748e52683ee` @ `72bffdb` — **intacta**  
+**RC candidata (Combat UX + Eventos 25%):** carregada no host · VERIFY PASS · overlay pinado · **não** aplicada  
+**Evidência prep:** `/home/caiohclavico/odisseu-recovery/a6-combat-ux-events-prep-20261108T165411Z`  
+**Inbox tars:** `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-combat-ux-events-3bc5076/`  
 **Artefatos locais:** `artifacts/a6-combat-ux-events-20261108T164301Z/`  
-**PRs:** #51 Combat UX · #52 eventos 25% · #53 integração RC  
-**Veredito prep:** **GO** para preparação operacional · **NO-GO** deploy/cutover sem autorização
+**PRs:** #51 · #52 · #53 · #54  
+**Veredito:** **GO** solicitar janela de deploy · **NO-GO** cutover até autorização explícita
 
 ---
 
+## 0o. Prep operacional Combat UX + Eventos (2026-11-08T16:54Z→17:05Z) — **sem cutover**
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | GO preparação operacional (transfer/load/VERIFY/overlay) — **sem** deploy/restart/migrations |
+| Live Node/JVM | Final `17520a1e…` / `c13140fa…` · healthy · Restarts=0 · WA **READY** |
+| Commit executável RC | `3bc507679a4511aa850e5dd015e6bde56e38fca3` |
+| Content-tree | `452ff59358a9530a2c358239eba3d1ac8510c2d6` |
+| Node tag / ID host | `odisseu-node:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64` · `sha256:619b4756b3bf0b92f75f5ac4e75d8b6d11783219f98faacc8328dd4423a03d1e` |
+| JVM tag / ID host | `odisseu-jvm:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64` · `sha256:09e7605e94e6c01217df2366c3729470ff4bc7a73aaf23e289f72d8817129d40` |
+| SHA256 Node tar | `83796ce12151b5ed39050da7f293ee5c5e12053fb1665c72796b15c0974a537f` |
+| SHA256 JVM tar | `48cb0e87c1712bc3a09e0719be83c0045d30048dd4d2ba722799dbd9e97ce22d` |
+| SHA256 host | **OK** (bateu com local) |
+| VERIFY host | **PASS** · amd64 · labels `3bc5076` / `452ff593` / `a6-combat-ux-events` |
+| Disco antes → pós-load → final | **8.2G → 7.0G → 7.6G** livres (83%→86%→85%) |
+| Hold / CI | `ODISSEU_PRODUCTION_DEPLOY_HOLD=true` · `deploy.yml` **`disabled_manually`** · sem deploy concorrente |
+| Overlay | pinado candidata · bak `…overlay.yml.bak-pre-combat-ux-events-prep-20261108T165411Z` · **não** aplicado |
+| Rollback imediato | Species-HP Final (live atual) |
+| Rollback extras | One-Mon + Balance A **preservados** no host |
+| Schema 035 | **aplicado** (`migration-035? true`) |
+| Saves | total **989** · `species-hp-v1` **984** · `legacy-unset` **5** · invalid-hp **0** |
+| Combates ativos | batalhas **0** · raids **0** |
+| Flags | preservadas (thematic/raid-auto/bag-kit/QR off) — sem mudança |
+| Homolog candidata (sem volumes reais) | Wartortle legado · Explosion · surto 25% · 🪙 · revide · raid HP **320** · Chromium **156** · UID **1000** · **PASS** |
+| Cutover / restart / migrations | **NÃO executados** |
+
+### Riscos residuais (pré-janela)
+
+- **5** Pokémon `legacy-unset` (sem `hp-formula-version` / sem `hp-base`) apareceram após o cutover Final — avaliar política na janela (converter aditivo vs. aceitar leitura legado).
+- Disco ~7.6G livres — margem justa para cold backup + dual image no cutover; considerar liberar staging `/tmp` ou inbox antigos **só com GO**.
+- Eevee ainda nos 4 pools de surto sob 25%.
+
+### Veredito janela
+
+| Item | Status |
+|------|--------|
+| Prep host completa | **GO** |
+| Solicitar janela de deploy | **GO** (pronto para agenda) |
+| Executar cutover agora | **NO-GO** (não autorizado) |
+
+---
 ## 0n. RC Combat UX + Eventos 25% (2026-11-08T16:43Z→16:50Z) — **sem deploy**
 
 | Campo | Valor |

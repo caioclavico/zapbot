@@ -226,3 +226,13 @@ Respeita `chefeOculto` quando o DTO pedir.
 - Eevee permanece nos 4 pools — diversificação = GO futuro
 - Sem mudança de frequência global / calendário
 
+## 18. Prep operacional host (2026-11-08T16:54Z)
+
+- Inbox: `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-combat-ux-events-3bc5076/`
+- Evidência: `/home/caiohclavico/odisseu-recovery/a6-combat-ux-events-prep-20261108T165411Z`
+- SHA256 Node/JVM: `83796ce1…537f` / `48cb0e87…e22d` (local=host)
+- Image IDs host confirmados; VERIFY PASS; overlay pinado **sem** apply
+- Live Final intacta (WA READY)
+- Auditoria snapshot: 035=true · v1=984 · legacy-unset=5 · invalid=0 · battles/raids=0
+- Homolog candidata sem volumes: PASS
+- **GO** solicitar janela · **NO-GO** cutover até autorização
