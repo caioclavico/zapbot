@@ -97,6 +97,54 @@ test('formatHuntStart e formatBattleTurn', () => {
   assert.doesNotMatch(win, /carimbada/i);
 });
 
+test('vitória mostra dano canônico do golpe final', () => {
+  const win = present.formatBattleTurn({
+    aguardandoCaptura: true,
+    chanceBaseCaptura: 45,
+    inventory: [{ itemId: 'pokebola', qty: 2 }],
+    reward: { pokemonXp: 12, pe: 1 },
+    battle: {
+      aguardandoCaptura: true,
+      pokemonX: { nome: 'Wartortle', hp: 90, hpAtual: 70 },
+      pokemonO: { nome: 'Abra', hp: 40, hpAtual: 0, tipos: ['psychic'] },
+      hp: { x: 70, o: 0 },
+      lastAction: {
+        golpeNome: 'Water Gun',
+        dano: 40,
+        multiplicador: 2,
+        desmaiou: true
+      }
+    }
+  });
+  assert.match(win, /Wartortle/);
+  assert.match(win, /Water Gun|40/);
+  assert.match(win, /desmaiou|VITÓRIA/i);
+  assert.match(win, /capturar|Liberar/i);
+  assert.match(win, /Super efetivo|super efetivo|🔥/i);
+});
+
+test('Explosion na vitória preserva autodesmaio do atacante', () => {
+  const win = present.formatBattleTurn({
+    aguardandoCaptura: true,
+    chanceBaseCaptura: 30,
+    inventory: [{ itemId: 'pokebola', qty: 1 }],
+    battle: {
+      aguardandoCaptura: true,
+      pokemonX: { nome: 'Golem', hp: 100, hpAtual: 0 },
+      pokemonO: { nome: 'Rattata', hp: 30, hpAtual: 0 },
+      hp: { x: 0, o: 0 },
+      lastAction: {
+        golpeNome: 'Explosion',
+        dano: 250,
+        autodesmaio: true,
+        desmaiou: true
+      }
+    }
+  });
+  assert.match(win, /Explosion|250/);
+  assert.match(win, /próprio golpe|desmaiou/i);
+});
+
 test('aliases numéricos 1–4 → atacar', () => {
   assert.equal(present.resolveCommand(['1']), 'atacar');
   assert.equal(present.resolveCommand(['4']), 'atacar');
