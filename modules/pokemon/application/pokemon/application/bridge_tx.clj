@@ -943,7 +943,7 @@
 
 (defn raid-attack!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
-                 raid-id expected-turn-index move-index agora-ms]
+                 raid-id expected-turn-index move-index agora-ms rng]
           :as req}]
   (let [writer-ctx (require-writer! req)
         raid (or (when raid-id (raid-app/get-raid store raid-id))
@@ -951,18 +951,21 @@
                  (throw (err/error :raid_not_found {})))
         result (raid-app/attack!
                 store writer-ctx
-                {:operation-id (str operation-id)
-                 :raid-id (:raid-id raid)
-                 :expected-turn-index (long (or expected-turn-index
-                                                (:turn-index raid 0)))
-                 :move-index (long (or move-index 0))
-                 :agora (or agora-ms (System/currentTimeMillis))})]
+                (cond-> {:operation-id (str operation-id)
+                         :raid-id (:raid-id raid)
+                         :expected-turn-index (long (or expected-turn-index
+                                                        (:turn-index raid 0)))
+                         :move-index (long (or move-index 0))
+                         :agora (or agora-ms (System/currentTimeMillis))}
+                  (map? rng) (assoc :rng (keywordize-keys rng))))]
     {:operation-id (:operation-id result)
      :duplicate (boolean (:duplicate result))
      :player-id player-id
      :dano (:dano result)
      :multiplicador (:multiplicador result)
      :base (:base result)
+     :base-variada (:base-variada result)
+     :variacao-pct (:variacao-pct result)
      :hp-chefe-antes (:hp-chefe-antes result)
      :revide (:revide result)
      :venceu (boolean (:venceu? result))

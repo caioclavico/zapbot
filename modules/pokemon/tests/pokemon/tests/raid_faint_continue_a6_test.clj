@@ -53,20 +53,23 @@
     (is (= "derrota" (:fase (:raid out))))))
 
 (deftest efetividade-super-aumenta-dano
-  (let [neutro (raid/calcular-dano
+  (let [rng {:raid-damage-var 15}
+        neutro (raid/calcular-dano
                 {:poder 80 :classe :fisico :tipo "normal"}
                 {:ataque 80}
                 {:hp-chefe 1000 :defesa 50.0
-                 :chefe {:tipos ["normal"]}})
+                 :chefe {:tipos ["normal"]}}
+                rng)
         super (raid/calcular-dano
                {:poder 80 :classe :fisico :tipo "fire"}
                {:ataque 80}
                {:hp-chefe 1000 :defesa 50.0
-                :chefe {:tipos ["grass"]}})]
+                :chefe {:tipos ["grass"]}}
+               rng)]
     (is (= 1.0 (:multiplicador neutro)))
     (is (= 2.0 (:multiplicador super)))
     (is (= (:base neutro) (:base super)))
-    (is (= (* 2 (:base super)) (:dano super)))
+    (is (= (* 2 (:base-variada super)) (:dano super)))
     (is (> (:dano super) (:dano neutro)))))
 
 (deftest imunidade-zera-dano
@@ -74,6 +77,7 @@
            {:poder 80 :classe :fisico :tipo "normal"}
            {:ataque 80}
            {:hp-chefe 1000 :defesa 50.0
-            :chefe {:tipos ["ghost"]}})]
+            :chefe {:tipos ["ghost"]}}
+           {:raid-damage-var 15})]
     (is (zero? (:multiplicador r)))
     (is (zero? (:dano r)))))

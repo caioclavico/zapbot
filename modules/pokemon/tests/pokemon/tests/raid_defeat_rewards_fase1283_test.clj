@@ -29,7 +29,7 @@
       {:s s :conn conn})))
 
 ;; Mon frágil + ataque baixo: morre pelo revide antes de zerar o chefe
-;; (hp-chefe ≈ 220×n; dano ~20/hit; 5 hits até KO do mon).
+;; (hp-chefe ≈ 320×n; dano ~20/hit; 5 hits até KO do mon).
 (def ^:private mon-fraco
   {:nome "Magikarp" :hp 10 :ataque 10 :defesa 20 :atq-esp 10 :def-esp 20 :veloc 80
    :tipos ["water"] :nivel 5 :raridade "comum" :xp-desde-nivel 0

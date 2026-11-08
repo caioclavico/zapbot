@@ -72,20 +72,44 @@
            (when (some? v) v))
         ks))
 
-(defn- golpe-normalizado
+(defn- nome-golpe-exibivel
+  "Nome canônico para UI. Nunca devolve `?`/`\"\"` se houver slug/tipo recuperável.
+   Movimento irrecuperável (nil total) → nil (caller marca pendência, sem inventar poder)."
+  [nome-ex slug tipo]
+  (let [n (some-> nome-ex str str/trim)
+        s (some-> slug str str/trim)
+        t (some-> tipo str str/trim)]
+    (cond
+      (and n (not= n "?") (seq n)) n
+      (and s (not= s "?") (seq s)) s
+      (and t (seq t)) (str "Golpe " t)
+      :else nil)))
+
+(defn golpe-normalizado
   "Normaliza golpe com chaves keyword OU string (EDN legado / migração).
   Sem gate em :slug — maps só com \"nome\"/\"poder\" deixavam slim-golpe vazio
-  (select-keys em keywords) → UI `? — Poder 0`."
+  (select-keys em keywords) → UI `? — Poder 0`.
+  Strings/números soltos no vetor :golpes → mapa mínimo com slug (sem inventar poder)."
   [g]
-  (if-not (map? g)
+  (cond
+    (string? g)
+    (let [s (str/trim g)]
+      (when (seq s)
+        {:slug s :nome-exibicao s :poder 0 :classe :status}))
+
+    (not (map? g))
     g
+
+    :else
     (let [classe (golpe-get g :classe "classe")
           status (golpe-get g :status-causado "status-causado" :statusCausado "statusCausado")
           alvo (golpe-get g :alvo "alvo")
           slug (golpe-get g :slug "slug")
-          nome-ex (golpe-get g :nome-exibicao "nome-exibicao" :nomeExibicao "nomeExibicao" :nome "nome")]
+          tipo (golpe-get g :tipo "tipo")
+          nome-bruto (golpe-get g :nome-exibicao "nome-exibicao" :nomeExibicao "nomeExibicao" :nome "nome")
+          nome-ex (nome-golpe-exibivel nome-bruto slug tipo)]
       (cond-> {:nome-exibicao nome-ex
-               :tipo (golpe-get g :tipo "tipo")
+               :tipo tipo
                :poder (or (golpe-get g :poder "poder") 0)
                :classe (keyword (or classe "fisico"))
                :precisao (golpe-get g :precisao "precisao")
@@ -99,7 +123,9 @@
                :max-acertos (golpe-get g :max-acertos "max-acertos" :maxAcertos "maxAcertos")
                :alteracoes (golpe-get g :alteracoes "alteracoes")
                :alvo (when alvo (keyword alvo))}
-        slug (assoc :slug slug)))))
+        slug (assoc :slug slug)
+        (and (nil? nome-ex) (nil? slug) (nil? tipo))
+        (assoc :golpe-irrecuperavel? true)))))
 
 (defn- slim-golpe-default?
   "Defaults V1 (0/[]/precisao 100/alvo adversário) — ausente = mesmo efeito no loop."
@@ -115,13 +141,13 @@
   "Mantém só campos usados em dano/status/UI de menu — descarta descricao/efeitos/defaults.
    Também usado em leitos Joy / snapshots fora de batalha."
   [g]
-  (when g
-    (let [n (golpe-normalizado g)
-          combat (select-keys n [:slug :nome-exibicao :tipo :poder :classe
-                                 :precisao :status-causado :chance-status
-                                 :cura :dreno :recuo :autodesmaio :min-acertos :max-acertos
-                                 :alteracoes :alvo])]
-      (into {} (remove slim-golpe-default? combat)))))
+  (when-let [n (golpe-normalizado g)]
+    (when (map? n)
+      (let [combat (select-keys n [:slug :nome-exibicao :tipo :poder :classe
+                                   :precisao :status-causado :chance-status
+                                   :cura :dreno :recuo :autodesmaio :min-acertos :max-acertos
+                                   :alteracoes :alvo :golpe-irrecuperavel?])]
+        (into {} (remove slim-golpe-default? combat))))))
 
 (defn slim-pokemon-for-battle
   "Remove blobs de coleção do Pokémon embutido no estado de batalha."

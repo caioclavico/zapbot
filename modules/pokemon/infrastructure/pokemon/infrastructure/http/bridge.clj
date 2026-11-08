@@ -1713,7 +1713,8 @@
                           expected (long-or-nil (g body "expectedTurnIndex"
                                                    "expected-turn-index"))
                           move-index (long-or-nil (g body "moveIndex" "move-index"))
-                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                          agora (long-or-nil (g body "agoraMs" "agora"))
+                          rng (when allow-test-rng? (g body "rng"))]
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? save-id) (nil? fence)
                                 (str/blank? operation-id) (nil? expected)
@@ -1732,7 +1733,8 @@
                                                  :expected-turn-index expected
                                                  :move-index move-index}
                                           raid-id (assoc :raid-id raid-id)
-                                          (some? agora) (assoc :agora-ms agora)))))))
+                                          (some? agora) (assoc :agora-ms agora)
+                                          (map? rng) (assoc :rng rng)))))))
 
                 (= path "/v1/raids/capture")
                 (do (require-method! ex #{"POST"})

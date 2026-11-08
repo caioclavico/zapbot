@@ -119,3 +119,89 @@ test('raid captura UI: camelCase wire + aliases de estoque', () => {
   assert.match(viaInv, /Grande Bola — 53% · estoque 4/);
   assert.match(viaInv, /Ultra Bola — 70% · estoque 1/);
 });
+
+test('caça: raridade só no adversário; barras HP nos dois', () => {
+  const text = present.formatBattleState({
+    pokemonX: {
+      nome: 'Wartortle', species: 'wartortle', hp: 100, hpAtual: 80,
+      raridade: 'raro',
+      golpes: [{ nomeExibicao: 'Water Gun', tipo: 'water', poder: 40, classe: 'especial' }]
+    },
+    pokemonO: {
+      nome: 'Charmander', species: 'charmander', hp: 90, hpAtual: 90,
+      raridade: 'incomum', tipos: ['fire']
+    },
+    hp: { x: 80, o: 90 },
+    status: {}
+  }, '!pk');
+  assert.match(text, /Charmander.*Incomum/);
+  assert.match(text, /Wartortle/);
+  // Raridade do jogador não aparece junto do nome/barra.
+  assert.doesNotMatch(text, /Wartortle[^\n]*Raro/);
+  assert.match(text, /\[█+░*\] 80\/100/);
+  assert.match(text, /\[█+░*\] 90\/90/);
+});
+
+test('raid UI: barras HP + raridade só do chefe + golpe sem ?', () => {
+  const text = present.formatRaidTurnBlock({
+    fase: 'combate',
+    vez: 'ash',
+    vezNome: 'Ash',
+    suaVez: true,
+    vezHp: 67,
+    hpChefe: 140,
+    hpMax: 220,
+    chefe: { nome: 'Onix', raridade: 'raro', tipos: ['rock', 'ground'] },
+    vezPokemon: {
+      nome: 'Wartortle',
+      hp: 100,
+      hpAtual: 67,
+      golpes: [
+        { nome: 'Water Gun', tipo: 'water', poder: 40, classe: 'especial' },
+        { classe: 'status', poder: 0, tipo: 'normal' }
+      ]
+    }
+  }, '!pk').join('\n');
+  assert.match(text, /Onix.*Raro/);
+  assert.match(text, /\[█+░*\] 140\/220/);
+  assert.match(text, /Wartortle/);
+  assert.match(text, /\[█+░*\] 67\/100/);
+  assert.doesNotMatch(text, /Wartortle[^\n]*Raro/);
+  assert.match(text, /Water Gun/);
+  assert.doesNotMatch(text, /\*\\?\*/);
+  assert.match(text, /Golpe Normal|indisponível na raid/);
+});
+
+test('vitória: rodapé captura pendente vs resolvida', () => {
+  const pend = present.formatRaidVictory({
+    capturaPendente: true,
+    raid: {
+      fase: 'vitoria',
+      chefe: { nome: 'Onix' },
+      participantes: [{ playerId: 'ash@lid', nome: 'Ash', pokemon: { nome: 'Wartortle' } }]
+    },
+    rewards: [{ playerId: 'ash@lid', nome: 'Ash', moedas: 50, pe: 6, xpPokemon: 6 }]
+  }, '!pk');
+  assert.match(pend.text, /RAID CONCLUÍDA/);
+  assert.match(pend.text, /CAPTURA DISPONÍVEL/);
+  assert.match(pend.text, /raid capturar/);
+  assert.match(pend.text, /Próximos comandos/);
+
+  const done = present.formatRaidVictory({
+    raid: {
+      fase: 'vitoria',
+      chefe: { nome: 'Onix' },
+      participantes: []
+    },
+    rewards: []
+  }, '!pk');
+  assert.match(done.text, /Próximos comandos/);
+  assert.match(done.text, /!pk raid/);
+  assert.doesNotMatch(done.text, /CAPTURA DISPONÍVEL/);
+});
+
+test('status sem raid: mensagem limpa (não vitória presa)', () => {
+  const text = present.formatRaidStatus({ raid: null }, '!pk');
+  assert.match(text, /Nenhuma raid em andamento/);
+  assert.match(text, /raid abrir/);
+});

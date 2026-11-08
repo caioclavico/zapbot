@@ -37,25 +37,31 @@
 ;; ── B1 dano / efetividade ────────────────────────────────────────────────────
 
 (deftest b1-raid-super-efetivo-multiplica-dano
-  (let [neutro (raid/calcular-dano
+  ;; RNG fixo em 100% para isolar efetividade da variação 85–100%.
+  (let [rng {:raid-damage-var 15}
+        neutro (raid/calcular-dano
                 {:poder 80 :classe :fisico :tipo "normal"}
                 {:ataque 80}
-                {:hp-chefe 1000 :defesa 50.0 :chefe {:tipos ["normal"]}})
+                {:hp-chefe 1000 :defesa 50.0 :chefe {:tipos ["normal"]}}
+                rng)
         super (raid/calcular-dano
                {:poder 80 :classe :fisico :tipo "fire"}
                {:ataque 80}
-               {:hp-chefe 1000 :defesa 50.0 :chefe {:tipos ["grass"]}})
+               {:hp-chefe 1000 :defesa 50.0 :chefe {:tipos ["grass"]}}
+               rng)
         imune (raid/calcular-dano
                {:poder 80 :classe :fisico :tipo "normal"}
                {:ataque 80}
-               {:hp-chefe 1000 :defesa 50.0 :chefe {:tipos ["ghost"]}})
+               {:hp-chefe 1000 :defesa 50.0 :chefe {:tipos ["ghost"]}}
+               rng)
         fraco (raid/calcular-dano
                {:poder 80 :classe :fisico :tipo "fire"}
                {:ataque 80}
-               {:hp-chefe 1000 :defesa 50.0 :chefe {:tipos ["water"]}})]
+               {:hp-chefe 1000 :defesa 50.0 :chefe {:tipos ["water"]}}
+               rng)]
     (is (= 1.0 (:multiplicador neutro)))
     (is (= 2.0 (:multiplicador super)))
-    (is (= (* 2 (:base super)) (:dano super)))
+    (is (= (* 2 (:base-variada super)) (:dano super)))
     (is (> (:dano super) (:dano neutro)))
     (is (zero? (:multiplicador imune)))
     (is (zero? (:dano imune)))

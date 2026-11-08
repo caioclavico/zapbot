@@ -3,8 +3,10 @@
   Party: até `max-party` combatentes por jogador; desmaio troca reserva
   automaticamente. Dano de raid aplica efetividade de tipos uma vez."
   (:require [clojure.string :as str]
+            [pokemon.domain.battle :as battle]
             [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
+            [pokemon.domain.rng :as rng]
             [pokemon.domain.types :as types]))
 
 (def max-party 3)
@@ -21,7 +23,10 @@
 (def duracao-combate (* 30 60 1000))
 (def duracao-captura (* 30 60 1000))
 (def intervalo-proxima (* 6 60 60 1000))
-(def hp-por-jogador 220)
+;; Proposta A (aprovada): HP por jogador 220→320; variação 85–100% na base.
+(def hp-por-jogador 320)
+(def dano-variacao-min-pct 85)
+(def dano-variacao-span 16) ; 85..100 inclusive → roll [0,16)
 (def max-tentativas-captura 3)
 (def recompensa-moedas 50)
 (def recompensa-pe 6)
@@ -164,15 +169,55 @@
   [participante]
   (pos? (long (:dano participante 0))))
 
+(defn captura-janela-aberta?
+  "Vitória ainda dentro do prazo de captura (independente do jogador)."
+  [raid agora]
+  (and (= "vitoria" (str (:fase raid)))
+       (< (long agora) (long (:captura-expira raid 0)))))
+
 (defn captura-pendente?
   [raid pid agora]
   (let [p (get-in raid [:participantes pid])
         cap (get-in raid [:capturas pid])]
-    (and (= "vitoria" (str (:fase raid)))
-         (< (long agora) (long (:captura-expira raid 0)))
+    (and (captura-janela-aberta? raid agora)
          (elegivel-recompensa? p)
          (< (long (:tentativas cap 0)) max-tentativas-captura)
          (not (:capturou cap)))))
+
+(defn algum-captura-pendente?
+  "True se algum participante ainda pode capturar nesta janela."
+  [raid agora]
+  (boolean
+   (some #(captura-pendente? raid % agora)
+         (keys (:participantes raid {})))))
+
+(defn slot-ativo-ocupado?
+  "Ponteiro do chat ainda bloqueia nova raid de combate/lobby.
+   Vitória só ocupa enquanto houver captura pendente (não trava o menu
+   `!pk raid` após o jogador resolver a captura)."
+  [raid agora]
+  (boolean
+   (and raid
+        (or (lobby-ou-combate-vivo? raid agora)
+            (algum-captura-pendente? raid agora)))))
+
+(defn visivel-para?
+  "O que `!pk raid` deve mostrar a este jogador.
+   Vitória só aparece se *ele* ainda tem captura pendente."
+  [raid agora player-id]
+  (boolean
+   (and raid
+        (or (ativa? raid agora)
+            (and player-id (captura-pendente? raid player-id agora))))))
+
+(defn deve-liberar-ponteiro?
+  "Após vitória/derrota/abandono: limpa ponteiro quando não há combate vivo
+   nem captura pendente de ninguém (idempotente)."
+  [raid agora]
+  (boolean
+   (and raid
+        (not (lobby-ou-combate-vivo? raid agora))
+        (not (algum-captura-pendente? raid agora)))))
 
 (defn- golpe-dano?
   [golpe]
@@ -182,32 +227,43 @@
        (pos? (long (or (:poder golpe) (get golpe "poder") 0)))))
 
 (defn calcular-dano
-  "Fórmula de raid: floor(15+0.6*poder*(atk/def)) clamp [10,160], depois
-  × efetividade de tipos (uma vez). Mult 0 → dano 0 (imune). Sem STAB."
-  [golpe pokemon raid]
-  (let [classe (or (:classe golpe) (get golpe "classe"))
-        especial? (contains? #{"especial" :especial} classe)
-        ataque (long (or ((if especial? :atq-esp :ataque) pokemon)
-                         (get pokemon (if especial? "atq-esp" "ataque"))
-                         50))
-        defesa (max 1 (long (or ((if especial? :def-esp :defesa) raid)
-                                50)))
-        poder (long (or (:poder golpe) (get golpe "poder") 0))
-        tipo-golpe (or (:tipo golpe) (get golpe "tipo"))
-        chefe (:chefe raid)
-        tipos-def (or (:tipos chefe) (get chefe "tipos") [])
-        hab-def (or (:habilidade chefe) (get chefe "habilidade"))
-        multiplicador (types/multiplicador-vs-tipos tipo-golpe tipos-def hab-def)
-        raw (long (Math/floor (+ 15 (* 0.6 poder (/ (double ataque) defesa)))))
-        base (max 10 (min 160 raw))
-        com-tipo (long (Math/round (* (double base) multiplicador)))
-        dano (cond
-               (zero? (double multiplicador)) 0
-               (pos? com-tipo) com-tipo
-               :else 1)]
-    {:dano (min (long (:hp-chefe raid 0)) dano)
-     :multiplicador multiplicador
-     :base base}))
+  "Fórmula de raid: floor(15+0.6*poder*(atk/def)) clamp [10,160],
+  depois × variação 85–100% (uma vez, RNG injetável), depois × efetividade
+  de tipos (integral). Mult 0 → dano 0 (imune). Sem STAB.
+  Só para golpes ofensivos (fisico/especial com poder>0) — status/fixos
+  não passam por aqui (`golpe-dano?` no `atacar`).
+  `rng` opcional: mapa com `:raid-damage-var` ∈ [0,16) → pct 85..100."
+  ([golpe pokemon raid]
+   (calcular-dano golpe pokemon raid nil))
+  ([golpe pokemon raid rng]
+   (let [classe (or (:classe golpe) (get golpe "classe"))
+         especial? (contains? #{"especial" :especial} classe)
+         ataque (long (or ((if especial? :atq-esp :ataque) pokemon)
+                          (get pokemon (if especial? "atq-esp" "ataque"))
+                          50))
+         defesa (max 1 (long (or ((if especial? :def-esp :defesa) raid)
+                                 50)))
+         poder (long (or (:poder golpe) (get golpe "poder") 0))
+         tipo-golpe (or (:tipo golpe) (get golpe "tipo"))
+         chefe (:chefe raid)
+         tipos-def (or (:tipos chefe) (get chefe "tipos") [])
+         hab-def (or (:habilidade chefe) (get chefe "habilidade"))
+         multiplicador (types/multiplicador-vs-tipos tipo-golpe tipos-def hab-def)
+         raw (long (Math/floor (+ 15 (* 0.6 poder (/ (double ataque) defesa)))))
+         base (max 10 (min 160 raw))
+         var-roll (long (rng/roll (or rng {}) :raid-damage-var dano-variacao-span))
+         variacao-pct (+ dano-variacao-min-pct var-roll)
+         base-variada (max 1 (long (Math/round (* (double base) (/ variacao-pct 100.0)))))
+         com-tipo (long (Math/round (* (double base-variada) multiplicador)))
+         dano (cond
+                (zero? (double multiplicador)) 0
+                (pos? com-tipo) com-tipo
+                :else 1)]
+     {:dano (min (long (:hp-chefe raid 0)) dano)
+      :multiplicador multiplicador
+      :base base
+      :base-variada base-variada
+      :variacao-pct variacao-pct})))
 
 (defn- media-stat
   [participantes stat]
@@ -350,18 +406,23 @@
        (pos? (long (:hp part 0))))))
 
 (defn- avancar-party
-  "Após desmaio do ativo: promove o próximo slot com HP>0. Nil se esgotou."
+  "Após desmaio do ativo: promove a *próxima* reserva na ordem de entrada
+  (após o índice atual, com wrap). Nunca escolhe um mon arbitrário fora da
+  party nem salta a ordem. Nil se esgotou."
   [part]
   (let [slots (vec (:party part))
+        n (count slots)
         cur (long (:active-party-idx part 0))
         ;; Marca o ativo atual como 0 se ainda não estiver.
         slots' (if (seq slots)
                  (assoc-in slots [cur :hp] 0)
                  slots)
-        next-idx (first (keep-indexed
-                         (fn [i s]
-                           (when (and (not= i cur) (pos? (long (:hp s 0)))) i))
-                         slots'))]
+        next-idx (when (pos? n)
+                   (first
+                    (for [k (range 1 n)
+                          :let [i (mod (+ cur k) n)]
+                          :when (pos? (long (:hp (nth slots' i) 0)))]
+                      i)))]
     (when next-idx
       (sync-active (assoc part :party slots' :active-party-idx next-idx
                           :trocou-por-desmaio? true)))))
@@ -573,73 +634,83 @@
 
 (defn atacar
   "Aplica um ataque. Retorna {:raid :dano :revide :venceu? :derrota? :multiplicador
-   :trocou? :golpe}. Desmaio do ativo com reserva → troca, raid continua.
-   Derrota só quando nenhum participante tem party utilizável."
-  [raid player-id move-index agora]
-  (when-not (and (ativa? raid agora) (= "combate" (str (:fase raid))))
-    (throw (err/error :raid_not_in_combat {:fase (:fase raid)})))
-  (when-not (vez-valida? raid)
-    (throw (err/error :raid_turn_invalid
-                      {:vez (:vez raid)
-                       :ordem (:ordem raid)
-                       :player-id player-id})))
-  (when-not (= player-id (:vez raid))
-    (throw (err/error :raid_not_your_turn {:vez (:vez raid) :player-id player-id})))
-  (let [part (get-in raid [:participantes player-id])
-        pokemon (:pokemon part)
-        golpes (vec (or (:golpes pokemon) []))
-        golpe (when (and (integer? move-index) (<= 0 move-index 3)
-                         (< move-index (count golpes)))
-                (nth golpes move-index))]
-    (when-not (golpe-dano? golpe)
-      (throw (err/error :invalid_raid_move {:move-index move-index})))
-    (let [hp-chefe-antes (long (:hp-chefe raid 0))
-          {:keys [dano multiplicador base]} (calcular-dano golpe pokemon raid)
-          ;; Autodesmaio (Explosion): após hit válido, HP do ativo → 0.
-          autodesmaio? (boolean (or (:autodesmaio golpe) (get golpe "autodesmaio")))
-          hp' (max 0 (- hp-chefe-antes dano))
-          venceu? (zero? hp')
-          max-hp-ativo (long (or (:hp pokemon) (get pokemon "hp") 100))
-          revide (if venceu? 0 (max 1 (long (Math/ceil (/ (double max-hp-ativo) 5)))))
-          part-apos-dano (-> part
-                             (update :dano #(+ (long %) dano))
-                             (aplicar-revide-part revide))
-          part-final (if (and autodesmaio? (not venceu?) (pos? dano))
-                       (or (avancar-party (assoc-in part-apos-dano
-                                                    [:party (:active-party-idx part-apos-dano 0) :hp]
-                                                    0))
-                           (sync-active (assoc part-apos-dano :hp 0)))
-                       part-apos-dano)
-          trocou? (boolean (:trocou-por-desmaio? part-final))
-          part-final (dissoc part-final :trocou-por-desmaio?)
-          raid' (-> raid
-                    (assoc :hp-chefe hp')
-                    (assoc-in [:participantes player-id] part-final)
-                    (update :turn-index (fnil inc 0)))
-          vivos (filter #(participante-vivo? (get-in raid' [:participantes %]))
-                        (:ordem raid'))
-          derrota? (and (not venceu?) (empty? vivos))
-          raid'' (cond
-                   venceu? (assoc raid'
-                                  :fase "vitoria"
-                                  :captura-expira (+ (long agora) duracao-captura)
-                                  :vez nil)
-                   derrota? (assoc raid' :fase "derrota" :vez nil)
-                   :else (assoc raid' :vez (proxima-vez raid' player-id)))]
-      {:raid raid''
-       :dano dano
-       :multiplicador multiplicador
-       :base base
-       :hp-chefe-antes hp-chefe-antes
-       :revide revide
-       :venceu? venceu?
-       :derrota? derrota?
-       :trocou? trocou?
-       :autodesmaio? (boolean (and autodesmaio? (pos? dano)))
-       :golpe golpe
-       :pokemon-atacante pokemon
-       :pokemon-ativo (:pokemon part-final)
-       :hp-ativo (:hp part-final)})))
+   :trocou? :golpe :variacao-pct :base-variada}.
+   Desmaio do ativo com reserva → troca, raid continua.
+   Derrota só quando nenhum participante tem party utilizável.
+   `rng` opcional — variação de dano sorteada **uma vez** aqui; retries HTTP
+   reutilizam o receipt (não re-rolam)."
+  ([raid player-id move-index agora]
+   (atacar raid player-id move-index agora nil))
+  ([raid player-id move-index agora rng]
+   (when-not (and (ativa? raid agora) (= "combate" (str (:fase raid))))
+     (throw (err/error :raid_not_in_combat {:fase (:fase raid)})))
+   (when-not (vez-valida? raid)
+     (throw (err/error :raid_turn_invalid
+                       {:vez (:vez raid)
+                        :ordem (:ordem raid)
+                        :player-id player-id})))
+   (when-not (= player-id (:vez raid))
+     (throw (err/error :raid_not_your_turn {:vez (:vez raid) :player-id player-id})))
+   (let [part (get-in raid [:participantes player-id])
+         pokemon (:pokemon part)
+         golpes (mapv battle/golpe-normalizado (or (:golpes pokemon) []))
+         golpe (when (and (integer? move-index) (<= 0 move-index 3)
+                          (< move-index (count golpes)))
+                 (nth golpes move-index))]
+     (when-not (golpe-dano? golpe)
+       (throw (err/error :invalid_raid_move {:move-index move-index})))
+     (let [hp-chefe-antes (long (:hp-chefe raid 0))
+           calc (calcular-dano golpe pokemon raid rng)
+           dano (:dano calc)
+           multiplicador (:multiplicador calc)
+           base (:base calc)
+           ;; Autodesmaio (Explosion): após hit válido, HP do ativo → 0.
+           autodesmaio? (boolean (or (:autodesmaio golpe) (get golpe "autodesmaio")))
+           hp' (max 0 (- hp-chefe-antes dano))
+           venceu? (zero? hp')
+           max-hp-ativo (long (or (:hp pokemon) (get pokemon "hp") 100))
+           revide (if venceu? 0 (max 1 (long (Math/ceil (/ (double max-hp-ativo) 5)))))
+           part-apos-dano (-> part
+                              (update :dano #(+ (long %) dano))
+                              (aplicar-revide-part revide))
+           part-final (if (and autodesmaio? (not venceu?) (pos? dano))
+                        (or (avancar-party (assoc-in part-apos-dano
+                                                     [:party (:active-party-idx part-apos-dano 0) :hp]
+                                                     0))
+                            (sync-active (assoc part-apos-dano :hp 0)))
+                        part-apos-dano)
+           trocou? (boolean (:trocou-por-desmaio? part-final))
+           part-final (dissoc part-final :trocou-por-desmaio?)
+           raid' (-> raid
+                     (assoc :hp-chefe hp')
+                     (assoc-in [:participantes player-id] part-final)
+                     (update :turn-index (fnil inc 0)))
+           vivos (filter #(participante-vivo? (get-in raid' [:participantes %]))
+                         (:ordem raid'))
+           derrota? (and (not venceu?) (empty? vivos))
+           raid'' (cond
+                    venceu? (assoc raid'
+                                   :fase "vitoria"
+                                   :captura-expira (+ (long agora) duracao-captura)
+                                   :vez nil)
+                    derrota? (assoc raid' :fase "derrota" :vez nil)
+                    :else (assoc raid' :vez (proxima-vez raid' player-id)))]
+       {:raid raid''
+        :dano dano
+        :multiplicador multiplicador
+        :base base
+        :base-variada (:base-variada calc)
+        :variacao-pct (:variacao-pct calc)
+        :hp-chefe-antes hp-chefe-antes
+        :revide revide
+        :venceu? venceu?
+        :derrota? derrota?
+        :trocou? trocou?
+        :autodesmaio? (boolean (and autodesmaio? (pos? dano)))
+        :golpe golpe
+        :pokemon-atacante pokemon
+        :pokemon-ativo (:pokemon part-final)
+        :hp-ativo (:hp part-final)}))))
 
 (defn assert-participant-fence!
   "Bloqueia callback com save/fence diferente do carimbo na inscrição."

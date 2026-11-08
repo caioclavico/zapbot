@@ -75,7 +75,9 @@
    {:operation-id (str "start-" rid) :raid-id rid :agora 1003}))
 
 (deftest equivalencia-constantes-raid
-  (is (= 220 raid/hp-por-jogador))
+  (is (= 320 raid/hp-por-jogador))
+  (is (= 85 raid/dano-variacao-min-pct))
+  (is (= 16 raid/dano-variacao-span))
   (is (= 50 raid/recompensa-moedas))
   (is (= 6 raid/recompensa-pe))
   (is (= 6 raid/recompensa-xp-pokemon))
@@ -84,9 +86,11 @@
   (let [r (raid/calcular-dano
            {:poder 80 :classe :fisico :tipo "normal"}
            {:ataque 80}
-           {:hp-chefe 440 :defesa 50.0 :chefe {:tipos ["normal"]}})]
+           {:hp-chefe 640 :defesa 50.0 :chefe {:tipos ["normal"]}}
+           {:raid-damage-var 15})]
     (is (<= 10 (:dano r) 160))
-    (is (= 1.0 (:multiplicador r)))))
+    (is (= 1.0 (:multiplicador r)))
+    (is (= 100 (:variacao-pct r)))))
 
 (deftest ciclo-vitoria-e-recompensa
   (let [s (fresh-store! "r-win")
@@ -95,7 +99,7 @@
     (open-and-join2! s chat rid)
     (let [r0 (raid-app/get-raid s rid)]
       (is (= "combate" (:fase r0)))
-      (is (= 440 (:hp-chefe r0)))
+      (is (= 640 (:hp-chefe r0)))
       (is (= "ash" (:vez r0))))
     ;; ataca até vencer (ataque forte)
     (loop [n 0]
@@ -131,12 +135,20 @@
         rid "raid-idem"]
     (open-and-join2! s chat rid)
     (let [req {:operation-id "atk-once" :raid-id rid
-               :expected-turn-index 0 :move-index 0 :agora 3000}
+               :expected-turn-index 0 :move-index 0 :agora 3000
+               ;; Retry com RNG diferente NÃO deve alterar o dano persistido.
+               :rng {:raid-damage-var 0}}
           r1 (raid-app/attack! s chat "ash" req)
-          r2 (raid-app/attack! s chat "ash" req)
+          r2 (raid-app/attack! s chat "ash"
+                               (assoc req :rng {:raid-damage-var 15}))
           raid (raid-app/get-raid s rid)]
       (is (false? (:duplicate r1)))
       (is (true? (:duplicate r2)))
+      (is (some? (:variacao-pct r1)))
+      (is (= 85 (:variacao-pct r1)))
+      (is (= (:dano r1) (:dano r2)))
+      (is (= (:variacao-pct r1) (:variacao-pct r2)))
+      (is (= (:base-variada r1) (:base-variada r2)))
       (is (= (:dano r1) (get-in raid [:participantes "ash" :dano])))
       (is (= "misty" (:vez raid))))))
 
