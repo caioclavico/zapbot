@@ -11,6 +11,8 @@
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.errors :as errors]
             [pokemon.domain.evolution :as domain-evolution]
+            [pokemon.domain.species-base :as species-base]
+            [pokemon.domain.species-hp :as species-hp]
             [pokemon.domain.trade-evolution :as trade-evolution]
             [pokemon.infrastructure.datomic.store :as store]
             [pokemon.infrastructure.datomic.trade-store :as trades])
@@ -84,9 +86,14 @@
         (is (false? (:duplicate first-result)))
         (is (true? (:duplicate retry)))))
     (let [s (reopen-store db)
-          poke (first (ports/list-collection s chat player "a"))]
+          poke (first (ports/list-collection s chat player "a"))
+          ;; adicionar-pokemon! grava hp-atual=20; evo pedra → species-hp-v1 proporcional.
+          hp-novo (species-hp/hp-max (species-base/base-hp "jolteon") 20)
+          esperado (:hp-atual (species-hp/converter-proporcional 20 55 hp-novo))]
       (is (= "Jolteon" (:nome poke)))
-      (is (= 30 (:hp-atual poke))))))
+      (is (= species-hp/formula-version (:hp-formula-version poke)))
+      (is (= hp-novo (:hp poke)))
+      (is (= esperado (:hp-atual poke))))))
 
 (deftest ciclo-de-golpes-preserva-historico-e-idempotencia
   (let [s (fresh-store! "a54-moves") chat "a54-moves-chat" player "misty"]

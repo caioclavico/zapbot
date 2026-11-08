@@ -3,7 +3,8 @@
 
   Pokémon: xp-por-nivel=9, fator=1.03, nível máximo=100.
   Treinador: progresso com custos 5, 7, 9, 11… (progresso-treinador)."
-  (:require [pokemon.domain.errors :as err]))
+  (:require [pokemon.domain.errors :as err]
+            [pokemon.domain.species-hp :as species-hp]))
 
 (def nivel-maximo 100)
 (def fator-crescimento-por-nivel 1.03)
@@ -17,25 +18,39 @@
   (Math/round (* (double n) fator-crescimento-por-nivel)))
 
 (defn- subir-registro
-  "Um nível: cresce stats; hp-atual sobe pelo incremento se > 0."
+  "Um nível: cresce stats ofensivos/defensivos (*1.03).
+  HP: se `hp-formula-version=species-hp-v1` e `hp-base` presente, recalcula
+  canonicamente e preserva proporção; senão, legado (crescer + incremento)."
   [registro]
-  (let [hp-antigo (long (get registro :hp (get registro "hp" 0)))
-        hp-novo (crescer hp-antigo)
-        incremento (- hp-novo hp-antigo)
+  (let [nivel-novo (inc (long (get registro :nivel (get registro "nivel" 1))))
+        hp-antigo (long (get registro :hp (get registro "hp" 0)))
         hp-atual (long (get registro :hp-atual (get registro "hp-atual" 0)))
+        base (or (get registro :hp-base) (get registro "hp-base"))
+        versao (str (or (get registro :hp-formula-version)
+                        (get registro "hp-formula-version")
+                        ""))
+        v1? (and (= versao species-hp/formula-version) (some? base))
         grow (fn [k]
                (let [v (long (get registro k (get registro (name k) 0)))]
-                 (crescer v)))]
+                 (crescer v)))
+        hp-fields
+        (if v1?
+          (species-hp/aplicar-hp-especie
+           {:base-hp base :nivel nivel-novo
+            :hp-atual hp-atual :hp-max-antigo hp-antigo
+            :proporcional? true})
+          (let [hp-novo (crescer hp-antigo)
+                incremento (- hp-novo hp-antigo)]
+            {:hp hp-novo
+             :hp-atual (if (pos? hp-atual) (+ hp-atual incremento) 0)}))]
     (-> registro
-        (assoc :nivel (inc (long (get registro :nivel (get registro "nivel" 1))))
-               :hp hp-novo
-               :hp-atual (if (pos? hp-atual) (+ hp-atual incremento) 0)
+        (assoc :nivel nivel-novo
                :ataque (grow :ataque)
                :defesa (grow :defesa)
                :atq-esp (grow :atq-esp)
                :def-esp (grow :def-esp)
-               :veloc (grow :veloc)))))
-
+               :veloc (grow :veloc))
+        (merge hp-fields))))
 (defn normalizar-xp-registro
   "Converte excesso de XP em subidas (legado normalizar-xp-registro)."
   [registro]

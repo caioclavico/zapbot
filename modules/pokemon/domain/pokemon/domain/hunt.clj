@@ -1,11 +1,15 @@
 (ns pokemon.domain.hunt
   "Regras de caça selvagem — espelho de core/cacar + shiny + surtos.
-  Sem I/O; candidatos já vêm da PokeAPI via Node."
+  Sem I/O; candidatos já vêm da PokeAPI via Node.
+  HP de combate/coleção: canônico JVM (`species-hp-v1`) quando `:hp-base`
+  oficial está no DTO (Node ou enricher no adapter). Sem require de
+  `species-base` aqui — evita ciclo hunt↔raid-boss."
   (:require [clojure.string :as str]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.errors :as err]
             [pokemon.domain.events :as events]
-            [pokemon.domain.mundo :as mundo])
+            [pokemon.domain.mundo :as mundo]
+            [pokemon.domain.species-hp :as species-hp])
   (:import [java.time Instant]))
 
 (def total-pokemons 1025)
@@ -156,14 +160,39 @@
   [ultima-cacada-at agora-ms]
   (zero? (cooldown-restante-ms ultima-cacada-at agora-ms)))
 
+(defn- g-campo
+  [p k]
+  (or (get p k)
+      (get p (keyword k))
+      (when (keyword? k) (get p (name k)))
+      (when (= k :hp-base)
+        (or (get p "hpBase") (get p :hpBase)))))
+
+(defn resolver-hp-base-candidato
+  "Lê `:hp-base` / `hpBase` do DTO. Não consulta catálogo (ver adapter)."
+  [p]
+  (let [explicit (g-campo p :hp-base)]
+    (when (and (number? explicit) (pos? (long explicit)))
+      (long explicit))))
+
+(defn canonizar-hp-candidato
+  "Fonte canônica JVM: substitui `:hp`/`:hp-atual` por species-hp-v1 quando
+  `:hp-base` está presente. Ataque/defesa do Node permanecem. Sem base →
+  preserva HP do DTO (legado) sem inventar valor."
+  [p]
+  (let [nivel (max 1 (long (or (:nivel p) (g-campo p "nivel") 1)))
+        base (resolver-hp-base-candidato p)]
+    (if-not base
+      p
+      (let [fields (species-hp/aplicar-hp-especie
+                    {:base-hp base :nivel nivel :full? true})]
+        (merge p fields)))))
+
 (defn validar-candidato-basico!
   "Rejeita DTO incompleto vindo do Node/PokeAPI.
    `taxa-captura` é opcional (species pode falhar); raridade cai no fallback."
   [p]
-  (let [g (fn [k]
-            (or (get p k)
-                (get p (keyword k))
-                (when (keyword? k) (get p (name k)))))
+  (let [g (fn [k] (g-campo p k))
         num? (fn [k] (number? (g k)))]
     (when-not (and (map? p)
                     (string? (or (:nome p) (:species p) (g "nome") (g "species")))

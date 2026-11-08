@@ -108,6 +108,32 @@ test('suavizarStat espelha legado', () => {
   assert.equal(pokeapi.suavizarStat(105), 90);
 });
 
+test('pokemonDeDados expõe hp-base oficial sem alterar suavizar de atk/def', () => {
+  const poke = pokeapi.pokemonDeDados({
+    name: 'snorlax',
+    species: { name: 'snorlax' },
+    types: [{ type: { name: 'normal' } }],
+    abilities: [{ ability: { name: 'immunity' }, is_hidden: false }],
+    moves: [],
+    stats: [
+      { base_stat: 160, stat: { name: 'hp' } },
+      { base_stat: 110, stat: { name: 'attack' } },
+      { base_stat: 65, stat: { name: 'defense' } },
+      { base_stat: 65, stat: { name: 'special-attack' } },
+      { base_stat: 110, stat: { name: 'special-defense' } },
+      { base_stat: 30, stat: { name: 'speed' } }
+    ],
+    sprites: {}
+  });
+  assert.equal(poke.hpBase, 160);
+  assert.equal(poke['hp-base'], 160);
+  assert.equal(poke.hp, pokeapi.suavizarStat(160));
+  assert.equal(poke.ataque, pokeapi.suavizarStat(110));
+  const dados = pokeapi.dadosEvolucao(pokeapi.escalarNivel(poke, 20));
+  assert.equal(dados.hpBase, 160);
+  assert.equal(dados['hp-base'], 160);
+});
+
 test('finalizeWild omite taxa-captura quando species falha', async () => {
   const poke = await pokeapi.finalizeWild({
     nome: 'Fantasma',

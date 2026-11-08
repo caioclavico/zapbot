@@ -9,6 +9,7 @@
   Stats-base e dex-ids alinhados ao catálogo PokeAPI usado pelo legado."
   (:require [clojure.string :as str]
             [pokemon.domain.evolution :as evolution]
+            [pokemon.domain.species-hp :as species-hp]
             [pokemon.domain.xp :as xp]))
 
 (def catalog-version "pokeapi-level-evolutions-2026-11")
@@ -136,6 +137,10 @@
             level (long (:nivel registro 1))
             factor (Math/pow xp/fator-crescimento-por-nivel (dec level))
             scale #(long (Math/round (* (double %) factor)))
+            ;; HP: fórmula species-hp-v1 (base oficial da regra × nível).
+            ;; Ataque/defesa/etc. permanecem no escalonamento legado 1.03.
+            hp-base (long (:hp rule))
+            hp-novo (species-hp/hp-max hp-base level)
             dex-id (:dex-id rule)
             artwork (str "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/" dex-id ".png")
             shiny-artwork (str "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/" dex-id ".png")]
@@ -144,7 +149,10 @@
                  :imagem-shiny shiny-artwork
                  :tipos (:tipos rule)
                  :habilidade (:habilidade rule)
-                 :hp (scale (:hp rule))
+                 :hp hp-novo
+                 :hp-base hp-base
+                 :hp-formula-version species-hp/formula-version
+                 :politica-hp :proporcional
                  :ataque (scale (:ataque rule))
                  :defesa (scale (:defesa rule))
                  :atq-esp (scale (:atq-esp rule))
@@ -153,7 +161,6 @@
          :target target
          :nivel-min (:nivel-min rule)
          :catalog-version catalog-version}))))
-
 (defn apply-prepared
   "Aplica evolução preparada preservando id/dono/xp/nível/shiny/golpes via domain."
   [registro prepared]

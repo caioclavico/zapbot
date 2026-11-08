@@ -1,11 +1,70 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0 + HP/UI/captura
 
-**Atualizado:** 2026-11-08T10:45Z  
+**Atualizado:** 2026-11-08T11:47Z  
 **Host:** `odisseu-core` (linux/amd64)  
-**Live executável (Balance A):** Node `002c83e8…` / JVM `e044cce1…` @ `043b846`  
-**Candidata local (1-mon + UX + catálogo):** branch `fix/a6-raid-one-mon-ux` — ver §0c  
-**Evidência cutover Balance A:** STABILITY_20M_PASS (janela anterior)  
-**Evidência cutover P0:** `/home/caiohclavico/odisseu-recovery/a6-p0-hp-ui-cutover-20261108T074953Z`
+**Live executável (One-Mon):** Node `617525d9…` / JVM `4a75eaa2…` @ `b0f0677`  
+**Rollback Balance A:** Node `002c83e8…` / JVM `e044cce1…` (imagens **presentes**)  
+**Evidência cutover One-Mon:** `/home/caiohclavico/odisseu-recovery/a6-raid-one-mon-cutover-20261108T111814Z`  
+**Inbox tars:** `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-raid-one-mon-b0f0677/`
+
+---
+
+## 0e. Cutover One-Mon (2026-11-08T11:18Z→11:47Z) — **SUCCESS**
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | **GO PRODUÇÃO** (cutover coordenado Node+JVM; sem migrations/backfill/flags/hold/CI/HP-espécie) |
+| Resultado | **ODISSEU A6 ONE-MON EM PRODUÇÃO** · `CUTOVER_RESULT=SUCCESS` · `STABILITY_20M_PASS` |
+| Commit | `b0f0677786c44177478852db60bb4e1da6b2c5a1` |
+| Content-tree | `f3866c5eb008d56b8f22154711bc41b1d708af50` |
+| Node final | `sha256:617525d90f3022455b71d81f4cf063924861f5bbc048b3cdbe0287b54dd304b1` |
+| JVM final | `sha256:4a75eaa241c0c6ce45d541dada52e5966b456989f19ecd71e3b409661111816b` |
+| Tags | `odisseu-node:a6-raid-one-mon-20261108T105345Z-b0f0677786c4-amd64` · `odisseu-jvm:…-b0f0677786c4-amd64` |
+| Preflight | **PASS** — live pré=`002c83e8`/`e044cce1`; WA READY; maint open; VERIFY PASS; overlay pin; disco 4.7 G (após builder prune); hold GitHub **`true`**; CI/CD **`disabled_manually`**; runs in_progress=0 |
+| Backup | **PASS** — compose/flags/AI history; Datomic hot **20**; cold sessão **1231**; cold Datomic **20** |
+| Drain/ACL | **PASS** — Node+JVM quiescent/durable; stop ordenado; writers=0; `APPLY_DONE` u:1000 |
+| Cutover | Overlay One-Mon + seccomp Chromium; JVM→resume→Node; flags preservadas |
+| Incidente mid-cutover | (1) overlay sem `seccomp=` → Chromium setuid fail → **SECCOMP_FIX**; (2) Node boot com JVM quiescent → `maintenance_active`; (3) `SingletonLock` residual → **SINGLETON_CLEAR** · READY `2026-11-08T11:25:09Z` |
+| Validação RO | **PASS** — caps **89**; `max-party=1`; `hp-por-jogador=320`; `select-boss-for-ginasio`; `formatRaidAttack`/`barraHp`/`Frambo`/`Ultra Bola`; CapEff=0; NNP=1; Chromium **156**; UID **1000**; sem `--no-sandbox`; restarts 0/0 |
+| Observação | `11:26:22Z`→`11:47:10Z` · **41/41** READY · FAIL=0 · sem QR · sem restart |
+| WhatsApp final | `{"status":"ok","whatsapp":"READY","chromium":true}` |
+| Datomic / saves / flags | Preservados · temáticos/raids/ginásios/kit **true** · `STAGING_ALLOW_QR=0` |
+| Hold / CI/CD | **não** alterados (`ODISSEU_PRODUCTION_DEPLOY_HOLD=true` · `disabled_manually`) |
+| Migrations / backfill / HP espécie | **Não** executados |
+| Rollback | **não** necessário · imagens Balance A intactas |
+
+---
+
+## 0d. Prep operacional One-Mon (2026-11-08T11:08Z) — sem cutover
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | **GO prep only** (load/verify/pin overlay; **sem** deploy/drain/restart) |
+| Commit executável | `b0f0677786c44177478852db60bb4e1da6b2c5a1` |
+| Content-tree | `f3866c5eb008d56b8f22154711bc41b1d708af50` |
+| Node Image ID | `sha256:617525d90f3022455b71d81f4cf063924861f5bbc048b3cdbe0287b54dd304b1` |
+| JVM Image ID | `sha256:4a75eaa241c0c6ce45d541dada52e5966b456989f19ecd71e3b409661111816b` |
+| Tar Node | `odisseu-node-a6-raid-one-mon-b0f0677786c4-amd64.tar` |
+| Tar JVM | `odisseu-jvm-a6-raid-one-mon-b0f0677786c4-amd64.tar` |
+| SHA256 Node | `77a4cda15d207b66da4502ba828a69719d3b3d3d88fd7cc928571b71e5234435` |
+| SHA256 JVM | `a12227cd56b077e139cb65be9bceb55daee258cf2292f10fa22c7b37f0adf6dc` |
+| Arch | **linux/amd64** (ambos) |
+| Labels | `git-sha=b0f0677…` · `content-tree=f3866c5e…` · `fase=a6-raid-one-mon` |
+| `sha256sum -c` local | **OK** |
+| `sha256sum -c` host | **OK** |
+| `docker load` | **PASS** (ambas tags carregadas) |
+| `VERIFY_A6_GAMEPLAY_RC_IMAGES` | **PASS** |
+| Overlay host | pin One-Mon (**não** aplicado; bak `…bak-pre-one-mon-prep-20261108T110904Z`) |
+| Live Node/JVM | ainda Balance A `002c83e8…` / `e044cce1…` · Started inalterado · healthy |
+| WhatsApp | **READY** (`{"status":"ok","whatsapp":"READY","chromium":true}`) |
+| JVM bridge | **ok** via `docker exec` `/health` (host :18090 não publicado) |
+| Datomic | volume `odisseu-a6-cutover-datomic` montado · preservado |
+| Flags amostradas | temáticos/raids/kit **true** · `STAGING_ALLOW_QR=0` |
+| CI/CD deploy.yml | **`disabled_manually`** (não reativado) |
+| Rollback Balance A | imagens **presentes** no engine (`002c83e8` / `e044cce1`) |
+| HP espécie global | **não** aplicada |
+| Pedido de janela cutover | **GO** (prep completa) → executado em §0e |
+| Cutover agora | ver §0e (**SUCCESS**) |
 
 ---
 
@@ -15,25 +74,26 @@
 |-------|-------|
 | Escopo | `max-party=1` (sem auto-troca); 2 barras HP; raridade chefe+jogador; empty/footer captura; Frambo≠presente; chefes manuais via catálogo (5→**571**); Proposta A intacta (HP 320 / var 85–100%) |
 | PR código | [#43](https://github.com/caioclavico/zapbot/pull/43) **MERGED** |
+| PR pins | [#44](https://github.com/caioclavico/zapbot/pull/44) **MERGED** |
 | Commit integrado | `b0f0677786c44177478852db60bb4e1da6b2c5a1` |
 | Content tree | `f3866c5eb008d56b8f22154711bc41b1d708af50` |
 | Node | `odisseu-node:a6-raid-one-mon-20261108T105345Z-b0f0677786c4-amd64` · `sha256:617525d90f3022455b71d81f4cf063924861f5bbc048b3cdbe0287b54dd304b1` |
 | JVM | `odisseu-jvm:a6-raid-one-mon-20261108T105345Z-b0f0677786c4-amd64` · `sha256:4a75eaa241c0c6ce45d541dada52e5966b456989f19ecd71e3b409661111816b` |
 | Tar SHA256 Node | `77a4cda15d207b66da4502ba828a69719d3b3d3d88fd7cc928571b71e5234435` |
 | Tar SHA256 JVM | `a12227cd56b077e139cb65be9bceb55daee258cf2292f10fa22c7b37f0adf6dc` |
-| Artefatos | `artifacts/a6-raid-one-mon-20261108T105345Z/` |
+| Artefatos locais | `artifacts/a6-raid-one-mon-20261108T105345Z/` |
 | Homolog local | homolog-abc **42/247** · lobby **24/80** · homolog-f4 **13/114** · auto-fase3 **19/81** · m4-raid+HTTP · Node **36/36** — **PASS** |
-| Verify host | **PASS** (labels git-sha/tree/amd64) · live **UNTOUCHED** |
+| Prep host (§0d) | **PASS** |
 | Overlay | pin candidata (**sem apply**) |
 | Deploy | **NÃO** |
-| Pedido de janela | **GO para preparar** (hold intacto; sem deploy automático) |
+| Pedido de janela | **GO** |
 | Fórmula HP global | **NO-GO** (proposta só) |
 
 Detalhes: `docs/pokemon-a6-gameplay-audit.md` §Revisão raids.
 
 ---
 
-## 0b. Live Proposta A (já em produção)
+## 0b. Rollback Balance A (pré-One-Mon)
 
 | Campo | Valor |
 |-------|-------|
@@ -41,7 +101,7 @@ Detalhes: `docs/pokemon-a6-gameplay-audit.md` §Revisão raids.
 | Commit | `043b84697c0a2771b855e9e0c8d4781ccf5cfeae` |
 | Node | `sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a` |
 | JVM | `sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94` |
-| Status | **LIVE** pós-cutover Balance A · STABILITY_20M_PASS |
+| Status | **rollback disponível** (foi live até cutover One-Mon) |
 
 ---
 
@@ -49,17 +109,17 @@ Detalhes: `docs/pokemon-a6-gameplay-audit.md` §Revisão raids.
 
 | Campo | Valor |
 |-------|-------|
-| Resultado | **SUCCESS — ODISSEU A6 P0 EM PRODUÇÃO** (live; candidata §0b ainda sem deploy) |
-| PR base | [#38](https://github.com/caioclavico/zapbot/pull/38) **MERGED** (`6cef8f43`) |
-| Node ativo | `sha256:bec910bf80b8fe5e3fdbfa385b81b4caf9dff3f1f6c1ccd22c2933e0c0e65305` |
-| JVM ativa | `sha256:9e87bb6f0d48e964ad4f8eaa001913f7811da05c0365bb65bd9a309858050d60` |
-| Labels | `git-sha=6cef8f43…` · `content-tree=50babd2f…` · `linux/amd64` |
-| WhatsApp | **READY** sustentado (`hasSynced_listeners_attached`) |
-| Chromium | Debian **156.0.8078.79** · UID **1000** · CapEff **0** · NoNewPrivs **1** |
-| Datomic | Volume `odisseu-a6-cutover-datomic` preservado (hot+cold backup) |
-| Flags | Temáticos/raids/ginásios/kit/permanência **preservados** (`true`; `STAGING_ALLOW_QR=0`) |
+| Resultado | **SUCCESS** — **LIVE = One-Mon** @ `b0f0677` · `STABILITY_20M_PASS` |
+| Node ativo | `sha256:617525d90f3022455b71d81f4cf063924861f5bbc048b3cdbe0287b54dd304b1` |
+| JVM ativa | `sha256:4a75eaa241c0c6ce45d541dada52e5966b456989f19ecd71e3b409661111816b` |
+| WhatsApp | **READY** sustentado (≥20 min) |
+| Chromium | Debian **156** · UID **1000** · seccomp host + CapEff=0 + NNP |
+| Datomic | Volume `odisseu-a6-cutover-datomic` preservado |
+| Flags | Temáticos/raids/kit **true** · `STAGING_ALLOW_QR=0` |
+| CI/CD | workflow `deploy.yml` **`disabled_manually`** |
 | Deploy hold / CI/CD | `ODISSEU_PRODUCTION_DEPLOY_HOLD=true` · workflow CI/CD `disabled_manually` (**não** alterados) |
 | Migrations / backfill / saves | **Não** executados / **não** alterados |
+| HP espécie global | **não** aplicada |
 
 ---
 
