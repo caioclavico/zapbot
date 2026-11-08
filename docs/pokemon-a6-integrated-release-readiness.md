@@ -1,31 +1,40 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0 + HP/UI/captura
 
-**Atualizado:** 2026-11-08T09:30Z  
+**Atualizado:** 2026-11-08T09:45Z  
 **Host:** `odisseu-core` (linux/amd64)  
-**Live executável:** `6cef8f43b0dce617af0ecf0b0374f6a541388104` (P0 HP/UI)  
-**Candidata RC (Proposta A + UX raid):** ver §0b após merge/build  
+**Live executável:** tip P0 `6cef8f43…` imagens `bec910bf` / `9e87bb6f`  
+**Candidata preparada no host:** Raid Balance A `043b846…` imagens `002c83e8` / `e044cce1`  
+**Evidência prep:** `/home/caiohclavico/odisseu-recovery/a6-raid-balance-a-prep-20261108T094200Z`  
+**Inbox tars:** `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-raid-balance-a-043b846`  
 **Evidência cutover P0:** `/home/caiohclavico/odisseu-recovery/a6-p0-hp-ui-cutover-20261108T074953Z`  
-**Artefatos P0:** `/home/caiohclavico/odisseu-recovery/a6-p0-hp-ui-artifacts-20261108T072116Z`  
-**Evidência cutover anterior (A+B+C):** `/home/caiohclavico/odisseu-recovery/a6-abc-p0-cutover-20261108T063319Z`
+**Artefatos P0:** `/home/caiohclavico/odisseu-recovery/a6-p0-hp-ui-artifacts-20261108T072116Z`
 
 ---
 
-## 0b. Candidata Proposta A + correções raid (pré-janela)
+## 0b. RC A6 RAID BALANCE A — PREPARADA NO HOST (sem cutover)
 
 | Campo | Valor |
 |-------|-------|
-| Escopo | `hp-por-jogador` 220→**320**; variação dano **85–100%** (RNG injetável, 1×/ataque); lifecycle/faint/golpes/UI |
-| Commit integrado | `043b84697c0a2771b855e9e0c8d4781ccf5cfeae` (PR [#40](https://github.com/caioclavico/zapbot/pull/40)) |
+| Resultado prep | **RC A6 RAID BALANCE A PREPARADA NO HOST** |
+| Commit executável | `043b84697c0a2771b855e9e0c8d4781ccf5cfeae` |
 | Content tree | `eed2f0cfd30b2a580a3a47163c9b8f6007023b43` |
-| Node | `odisseu-node:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64` · `sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a` |
-| JVM | `odisseu-jvm:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64` · `sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94` |
-| Tar SHA256 Node | `b4ee6f1c5a00e8f424910c4bc04007d85c74b9699508908f830a02016bdc1c5c` |
-| Tar SHA256 JVM | `fbae335e0e18baafaa36153c03c43fa97a2a73814fca20aa33d7bcc9f81f89f8` |
-| Artefatos locais | `artifacts/a6-raid-balance-a-20261108T091954Z/` |
-| Homolog local | A+B+C+P0 · homolog-abc · m4-raid+HTTP · lobby · Node P0 · `npm run test:http` · `VERIFY_A6_GAMEPLAY_RC_IMAGES` — **PASS** |
-| Overlay | pin candidata (sem apply) |
-| Deploy | **NÃO** executado; hold/CI/flags/saves intocados |
-| Pedido de janela | **NO-GO** até revisão humana |
+| Node candidata | `odisseu-node:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64` · `sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a` |
+| JVM candidata | `odisseu-jvm:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64` · `sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94` |
+| Tar Node | `odisseu-node-a6-raid-balance-a-043b84697c0a-amd64.tar` · SHA256 `b4ee6f1c5a00e8f424910c4bc04007d85c74b9699508908f830a02016bdc1c5c` |
+| Tar JVM | `odisseu-jvm-a6-raid-balance-a-043b84697c0a-amd64.tar` · SHA256 `fbae335e0e18baafaa36153c03c43fa97a2a73814fca20aa33d7bcc9f81f89f8` |
+| Arch | **linux/amd64** (local + host) |
+| Transferência | SCP → `/tmp` → inbox; `sha256sum -c` OK local e remoto |
+| `docker load` | OK; containers **não** recriados (IDs `ad1768a38d72` / `a8d391405e41` estáveis) |
+| Verify host | `VERIFY_A6_GAMEPLAY_RC_IMAGES PASS` |
+| Overlay aplicado (live) | ainda P0 `bec910bf` / `9e87bb6f` + `HEALTH_BIND_HOST=0.0.0.0` + UID 1000 |
+| Overlay preparado | inbox + `…overlay.yml.prepared-raid-balance-a-043b846` (**não** aplicado) |
+| Live Node | `sha256:bec910bf80b8fe5e3fdbfa385b81b4caf9dff3f1f6c1ccd22c2933e0c0e65305` · WA **READY** · healthy |
+| Live JVM | `sha256:9e87bb6f0d48e964ad4f8eaa001913f7811da05c0365bb65bd9a309858050d60` · healthy · maint `open` |
+| Rollback | live P0 imagens **presentes** no Docker Engine |
+| Flags amostradas | temáticos/raids/ginasios/kit `true`; `STAGING_ALLOW_QR=0`; `allowTestRng=false` |
+| CI/CD | workflow `CI/CD` = `disabled_manually` (API GitHub; **não** alterado) |
+| Deploy hold | política operacional documentada; **não** alterada neste prep (sem env `HOLD` nos containers — igual ao padrão P0) |
+| Pedido de janela cutover | **GO para solicitar** (prep completa) — **cutover ainda NO-GO** sem nova autorização |
 
 Parâmetros/simulações: `docs/pokemon-a6-gameplay-audit.md` §Balanceamento.
 

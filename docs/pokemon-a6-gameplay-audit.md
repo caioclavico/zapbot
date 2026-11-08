@@ -295,21 +295,31 @@ Simulação local (`raid-balance-sim-a6-test`): solo/duo SE e neutro **vencívei
 | Node `pokemon-a6-raid-gym-capture-p0.test.cjs` | PASS (8) |
 | `npm run test:http` | PASS (287) |
 
-### Imagens
+### Imagens / prep no host (2026-11-08)
 
-Construir Node+JVM a partir do **mesmo commit** integrado na RC (labels `io.zapbot.git-sha` + `content-tree`). Overlay pin atualizado **sem** apply/deploy.
+| Item | Valor |
+|------|-------|
+| Commit | `043b84697c0a2771b855e9e0c8d4781ccf5cfeae` · tree `eed2f0cf…` |
+| Node | `sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a` |
+| JVM | `sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94` |
+| Tar Node SHA256 | `b4ee6f1c5a00e8f424910c4bc04007d85c74b9699508908f830a02016bdc1c5c` |
+| Tar JVM SHA256 | `fbae335e0e18baafaa36153c03c43fa97a2a73814fca20aa33d7bcc9f81f89f8` |
+| Host inbox | `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-raid-balance-a-043b846` |
+| Evidência prep | `/home/caiohclavico/odisseu-recovery/a6-raid-balance-a-prep-20261108T094200Z` |
+| Live (inalterada) | Node `bec910bf…` · JVM `9e87bb6f…` · WA READY |
+
+`docker load` + verify no host **PASS**. Overlay candidata preparada em disco; **não** aplicada. Containers não reiniciados.
 
 ### Riscos residuais
 
 - Parties de raid **já abertas** na live podem ainda exibir golpes antigos até leave/rejoin.
-- Golpe verdadeiramente irrecuperável (sem nome/slug/tipo) fica marcado — sem backfill.
-- Mons fracos vs chefes tanque ficam um pouco mais longos (intencional); perfis extremos ainda podem perder.
-- Sem smoke destrutivo em saves reais; **sem deploy**.
+- Mons fracos vs chefes tanque ficam um pouco mais longos (intencional).
+- Cutover ainda exige autorização explícita (drain/restart coordenado).
 
 ### GO/NO-GO
 
 | Critério | Estado |
 |----------|--------|
-| Bugs objetivos + Proposta A no código | **GO** para integrar/build RC |
-| Pedir janela de deploy produção | **NO-GO** até revisão humana dos Image IDs + hold |
-| Deploy / migrations / flags / saves | **NO-GO** (proibido neste ciclo) |
+| Prep host (load/verify/rollback) | **GO** — RC preparada |
+| Solicitar janela de cutover | **GO para solicitar** (revisão humana) |
+| Executar cutover / deploy agora | **NO-GO** (sem autorização de janela) |
