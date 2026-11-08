@@ -2,29 +2,29 @@
 # Alvo: projeto Compose `odisseu-a6-cutover`, working_dir
 # `/home/caiohclavico/odisseu-recovery/a6-cutover-runtime-20261101T141408Z`.
 #
-# RC candidata Proposta A + UX raid (tip 043b84697c0a):
-#   Node Tag: odisseu-node:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64
-#   Node Image ID: sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a
-#   JVM Tag: odisseu-jvm:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64
-#   JVM Image ID: sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94
-#   Labels: git-sha=043b84697c0a2771b855e9e0c8d4781ccf5cfeae
-#            content-tree=eed2f0cfd30b2a580a3a47163c9b8f6007023b43
+# RC candidata 1-mon + UX + catálogo (merge PR #43 @ b0f0677786c4):
+#   Node Tag: odisseu-node:a6-raid-one-mon-20261108T105345Z-b0f0677786c4-amd64
+#   Node Image ID: sha256:617525d90f3022455b71d81f4cf063924861f5bbc048b3cdbe0287b54dd304b1
+#   JVM Tag: odisseu-jvm:a6-raid-one-mon-20261108T105345Z-b0f0677786c4-amd64
+#   JVM Image ID: sha256:4a75eaa241c0c6ce45d541dada52e5966b456989f19ecd71e3b409661111816b
+#   Labels: git-sha=b0f0677786c44177478852db60bb4e1da6b2c5a1
+#            content-tree=f3866c5eb008d56b8f22154711bc41b1d708af50
 #   HEALTH_BIND_HOST=0.0.0.0 obrigatório (health host).
 #
-# Rollback desta RC (= live atual P0 HP/UI):
+# Rollback desta RC (= live atual Balance A, inspecionado RO 2026-11-08):
+#   Node sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a
+#   JVM  sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94
+# Rollback P0 HP/UI (anterior):
 #   Node sha256:bec910bf80b8fe5e3fdbfa385b81b4caf9dff3f1f6c1ccd22c2933e0c0e65305
 #   JVM  sha256:9e87bb6f0d48e964ad4f8eaa001913f7811da05c0365bb65bd9a309858050d60
-# Rollback cutover anterior (A+B+C):
-#   Node sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade
-#   JVM  sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c
 #
 # Este overlay NÃO redefine flags Pokémon/raids/eventos/allowlist/temáticos.
 
 services:
   odisseu-a6-jvm:
-    image: odisseu-jvm:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64
+    image: odisseu-jvm:a6-raid-one-mon-20261108T105345Z-b0f0677786c4-amd64
   odisseu-a6-node:
-    image: odisseu-node:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64
+    image: odisseu-node:a6-raid-one-mon-20261108T105345Z-b0f0677786c4-amd64
     user: "1000:1000"
     environment:
       HEALTH_BIND_HOST: "0.0.0.0"
