@@ -1,10 +1,13 @@
 # Pokémon A6 — HP realista por espécie (species-hp-v1)
 
-**Atualizado:** 2026-11-08T13:40Z  
-**RC integrada:** `rc/a6-abc-p0-integrated` @ `5ed39b0` (PR #45 ← `53a6b95`)  
-**Escopo:** integração RC + build imagens amd64 + overlay pins (**sem** apply/prod).  
+**Atualizado:** 2026-11-08T14:45Z  
+**RC final executável:** `rc/a6-abc-p0-integrated` @ `72bffdb` (PRs #45+#46+#50)  
+**Branch local de build:** `rc/a6-species-hp-final` (mesmo tip)  
+**Content-tree:** `8b793ae169ace916ec37c0b7350ce68e8404d3fa`  
+**Escopo:** RC Species-HP Final — aliases de forma + schema035 + freeze + imagens amd64 + overlay pin (**sem** apply/prod).  
 **Sem** deploy / migration live / backfill / saves reais / flags / WA / hold / CI.  
-**Chefes de raid:** **não** alterados (Proposta A: 320 HP/jogador, var 85–100%).
+**Chefes de raid:** **não** alterados (Proposta A: 320 HP/jogador, var 85–100%).  
+**Proibido reutilizar Image IDs:** `57a828ca…` / `e1bb8ac5…` (species-hp pré-aliases).
 
 ---
 
@@ -186,17 +189,23 @@ Exemplo: 40/100 → max 160 → 64/160.
 
 ---
 
-## 6. Testes
+## 6. Testes (RC Final @ `72bffdb`)
 
 | Suite | Resultado |
 |-------|-----------|
-| `:test-a6-species-hp` | **PASS** 19 / 1337 |
-| `:test-a6-homolog-abc` | **PASS** 42 / 247 |
-| `:test-a6-tm-xp-evolution` | **PASS** (incl. A5.4 reopen) |
-| unit hunt M4.5 | **PASS** 18 / 127 |
-| Node `pokemon-jvm-hunt` + `a2` | **PASS** 11 |
+| `:test-a6-species-hp` | **PASS** 22 / 1421 |
+| `:test-a6-homolog-abc` (+ One-Mon) | **PASS** 42 / 247 |
+| `:test-a6-tm-xp-evolution` | **PASS** |
+| `:test-a6-species-hp-schema035` | **PASS** |
+| `:test-a6-species-hp-freeze` | **PASS** |
+| Migração descartável (export RO) | **PASS** · convert 982 · quarantine 0 · noop 982 |
+| unit hunt M4.5 + encounter | **PASS** 18/127 + 10/42 |
+| Smoke hunt HTTP | **PASS** com área `lago` (rotação 2026-11-08; `praia` → `area_unavailable` ≠ falha HP) |
+| `:test-m4-raid` / gym / bridge | **PASS** |
+| A5.2 gym/PvP · A5.3 raid/eggs | **PASS** |
+| Node hunt/a2/gym + One-Mon + maint | **PASS** 34 + 19 |
 
-Cobertura extra pós-risco: DTO Node suavizado→JVM, evo pedra canonizada, clamp Chansey=Blissey + defesa, `hp-base` no pokeapi, reopen Datomic com `hp-formula-version`.
+Cobertura: aliases de forma, overrides HP distinto, evo proporcional, faint=0, schema 035 aditivo, freeze↔maintenance-gate, DTO Node `hp-base`→JVM.
 
 ---
 
@@ -223,34 +232,30 @@ Cobertura extra pós-risco: DTO Node suavizado→JVM, evo pedra canonizada, clam
 
 ---
 
-## 9. Integração RC + imagens
+## 9. Integração RC Final + imagens (`72bffdb`)
 
 | Campo | Valor |
 |-------|-------|
-| Feature commit | `53a6b9539a24d0063a1f532c7a38eb4587b0e15f` |
-| PR | [#45](https://github.com/caioclavico/zapbot/pull/45) |
-| Commit integrado | `5ed39b0306addeaf96d4cbb3ad8480268adb3ae0` |
-| Content-tree | `80546bd3a04663b80a2e09750f48c5fa2a4cecf9` |
-| Node tag | `odisseu-node:a6-species-hp-20261108T133538Z-5ed39b0306ad-amd64` |
-| Node Image ID | `sha256:57a828ca6b6187b1415e0a5ea6f71c8b7ec12dd7ffc7fc63e5e6563c2aee5332` |
-| JVM tag | `odisseu-jvm:a6-species-hp-20261108T133538Z-5ed39b0306ad-amd64` |
-| JVM Image ID | `sha256:e1bb8ac5df0ab5ea81b1ab96ca689a602d47e14d41daf07fd0429fafd9df44a8` |
-| Arch | **linux/amd64** |
+| PRs | [#45](https://github.com/caioclavico/zapbot/pull/45) + [#46](https://github.com/caioclavico/zapbot/pull/46) + [#50](https://github.com/caioclavico/zapbot/pull/50) |
+| Commit executável | `72bffdb63be62d8b35e61bcc75c0436949b6f189` |
+| Content-tree | `8b793ae169ace916ec37c0b7350ce68e8404d3fa` |
+| Source-base | `3f9edc38b1d0987db7d781317350e146b9c5b82e` |
+| Stamp | `20261108T144109Z` |
+| Node tag | `odisseu-node:a6-species-hp-final-20261108T144109Z-72bffdb63be6-amd64` |
+| Node Image ID | `sha256:17520a1ec6fcb88687c2f208b8cd276c384944f01cde57a3b0793c217532e2a0` |
+| JVM tag | `odisseu-jvm:a6-species-hp-final-20261108T144109Z-72bffdb63be6-amd64` |
+| JVM Image ID | `sha256:c13140fa9965b8cb78faa7edc1d95a95a5abc3ed1287203554e65748e52683ee` |
+| Node tar SHA256 | `37d36b152903d59e675006cabceb1a983ae0be66b4de698b8439303e03edcae8` |
+| JVM tar SHA256 | `c17706cf0b0dc885559228e95ec51ba521520dcfbff3d03b2793fa5ca906f399` |
+| Artifacts | `artifacts/a6-species-hp-final-20261108T144109Z/` |
+| Arch / UID / Chromium | **linux/amd64** · UID **1000** · Chromium **156.0.8078.79** · sandbox setuid |
+| Labels | `git-sha=72bffdb…` · `content-tree=8b793ae1…` · `fase=a6-species-hp-final` |
 | VERIFY images | **PASS** |
-| Overlay pins | preparado em `docker-compose.a6-ai-drain-sandbox.overlay.yml` (**não** aplicado) |
+| Overlay pins | `docker-compose.a6-ai-drain-sandbox.overlay.yml` (**não** aplicado) |
+| Preservado | CapEff=0 / NNP / seccomp / health / bridge / drain / flags / IA dinâmica / One-Mon |
+| Rollback live | Node `617525d9…` / JVM `4a75eaa2…` |
 
-### Regressões pós-merge
-
-| Suite | Resultado |
-|-------|-----------|
-| `:test-a6-species-hp` | PASS 19 / 1337 |
-| `:test-a6-homolog-abc` | PASS 42 / 247 |
-| `:test-a6-tm-xp-evolution` | PASS |
-| hunt unit + encounter | PASS |
-| `:test-m4-raid` (+ gym) | PASS + smoke HTTP OK |
-| `:test-m4-bridge` | PASS |
-| Node hunt/a2/gym | PASS 18 |
-| Smoke hunt HTTP `praia` | bloqueado por rotação diária (`area_unavailable`) — **não** regressão species-hp |
+RC pré-aliases (histórico, **não** usar): Node `57a828ca…` / JVM `e1bb8ac5…` @ `5ed39b0`.
 
 ---
 
@@ -259,16 +264,15 @@ Cobertura extra pós-risco: DTO Node suavizado→JVM, evo pedra canonizada, clam
 | Item | Veredito |
 |------|----------|
 | Implementação + riscos residuais | **GO** |
-| Integração RC (PR #45) | **GO** (feito) |
-| Build imagens + overlay pins | **GO** (feito; overlay **não** aplicado em produção até cutover) |
-| Prep operacional host (load/VERIFY/pin) | **GO** (feito — evid `a6-species-hp-prep-20261108T134333Z`) |
-| Aliases de forma + ensaio v2 (quarentena 0) | **GO** (homolog local) |
-| Schema 035 + freeze (descartável) | **GO** (homolog local; **não** em prod) |
-| **Nova RC** (rebuild com aliases) | **GO** (sem deploy) |
-| **Cutover / deploy** | **NO-GO** até GO operacional |
-| Migration/backfill de saves | **NO-GO** (ver `pokemon-a6-species-hp-migration-plan.md`) |
+| Integração RC (PRs #45+#46+#50) | **GO** (feito @ `72bffdb`) |
+| Build imagens Final + overlay pins | **GO** (feito; overlay **não** aplicado) |
+| Prep operacional host (load/VERIFY) | **GO** para preparação — **sem** cutover |
+| Aliases + ensaio (quarentena 0) | **GO** |
+| Schema 035 + freeze (descartável) | **GO** (homolog; **não** em prod) |
+| **Cutover / deploy** | **NO-GO** |
+| Migration/backfill live | **NO-GO** (ver `pokemon-a6-species-hp-migration-plan.md`) |
 | Alterar HP de chefes de raid | **NO-GO** |
 
 ### Critério de conclusão
 
-**HP REALISTA POR ESPÉCIE INTEGRADO NA RC E HOMOLOGADO** — fórmula com clamp mantido, Node→JVM canônico, imagens amd64 pinned, saves legados protegidos na leitura, produção intocada.
+**RC SPECIES-HP FINAL HOMOLOGADA E EMPACOTADA** — fórmula+formas+schema035+freeze, imagens amd64 novas (não reutilizam IDs antigos), overlay pinado sem apply, produção intocada.

@@ -1,8 +1,9 @@
 # Pokémon A6 — Auditoria Combate / Golpes / Eventos / UX
 
-**Atualizado:** 2026-11-08T16:30Z  
+**Atualizado:** 2026-11-08T16:50Z  
 **Escopo:** investigação + implementação local + testes. **Sem deploy / cutover / migrations / backfill / prod.**  
-**Produção (RO):** Species-HP Final live — Node `17520a1e…` / JVM `c13140fa…` · READY · healthy (confirmado sem interferir).
+**Produção (RO):** Species-HP Final live — Node `17520a1e…` / JVM `c13140fa…` @ `72bffdb` · **intacta**.
+**RC candidata:** Combat UX+Eventos @ `3bc5076` · imagens buildadas · **não** aplicadas.
 
 ---
 
@@ -204,3 +205,24 @@ Respeita `chefeOculto` quando o DTO pedir.
 - `scripts/lib/pokemon-jvm-media.cjs`
 - `src/zapbot/pokemon_http.cljs`
 - `apps/odisseu/src/odisseu/smoke/a6_lote_b_mechanics.clj`
+
+## 17. Identidade da RC Combat UX + Eventos
+
+| Campo | Valor |
+|-------|-------|
+| Commit integrado | `3bc507679a4511aa850e5dd015e6bde56e38fca3` |
+| Content-tree | `452ff59358a9530a2c358239eba3d1ac8510c2d6` |
+| Branch | `rc/a6-combat-ux-events` / `rc/a6-abc-p0-integrated` |
+| PRs | #51 · #52 · #53 |
+| Node | `odisseu-node:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64` · `sha256:619b4756b3bf0b92f75f5ac4e75d8b6d11783219f98faacc8328dd4423a03d1e` |
+| JVM | `odisseu-jvm:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64` · `sha256:09e7605e94e6c01217df2366c3729470ff4bc7a73aaf23e289f72d8817129d40` |
+| Stamp | `20261108T164301Z` |
+| VERIFY | PASS |
+| Deploy | **NO-GO** (prep only) |
+
+### Simulação surtos (10k)
+
+- `chance-surto=25` → pct efetivo **0.25** (assert 0.22–0.28)
+- Eevee permanece nos 4 pools — diversificação = GO futuro
+- Sem mudança de frequência global / calendário
+
