@@ -1,12 +1,41 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0 + One-Mon + species-hp
 
-**Atualizado:** 2026-11-08T13:40Z  
+**Atualizado:** 2026-11-08T13:56Z  
 **Host:** `odisseu-core` (linux/amd64)  
-**Live executável (One-Mon):** Node `617525d9…` / JVM `4a75eaa2…` @ `b0f0677`  
-**RC candidata (species-hp):** Node `57a828ca…` / JVM `e1bb8ac5…` @ `5ed39b0` — **não** aplicada  
-**Rollback One-Mon:** imagens **presentes** (`617525d9` / `4a75eaa2`)  
-**Evidência cutover One-Mon:** `/home/caiohclavico/odisseu-recovery/a6-raid-one-mon-cutover-20261108T111814Z`  
-**Artefatos species-hp (local):** `artifacts/a6-species-hp-20261108T133538Z/`
+**Live executável (One-Mon):** Node `617525d9…` / JVM `4a75eaa2…` @ `b0f0677` — **intacta**  
+**RC candidata (species-hp):** Node `57a828ca…` / JVM `e1bb8ac5…` @ `5ed39b0` — carregada, **não** aplicada  
+**Evidência prep species-hp:** `/home/caiohclavico/odisseu-recovery/a6-species-hp-prep-20261108T134333Z`  
+**Inbox tars:** `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-species-hp-5ed39b0/`  
+**Evidência cutover One-Mon:** `/home/caiohclavico/odisseu-recovery/a6-raid-one-mon-cutover-20261108T111814Z`
+
+---
+
+## 0g. Prep operacional Species-HP (2026-11-08T13:42Z→13:56Z) — **sem cutover**
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | **GO prep only** (load/verify/pin overlay; **sem** deploy/drain/restart/migration) |
+| Live Node/JVM | `617525d9…` / `4a75eaa2…` · healthy · Started **inalterado** |
+| WhatsApp | **READY** `{"status":"ok","whatsapp":"READY","chromium":true}` |
+| Hold / CI | `ODISSEU_PRODUCTION_DEPLOY_HOLD=true` · `deploy.yml` **`disabled_manually`** · runs in_progress=0 |
+| Disco antes | **91%** · avail **4 576 432 KB** (~4.4 G) |
+| Disco após SCP | **94%** · avail **3 302 396 KB** (pico com stage+inbox) |
+| Disco após load | **93%** · avail **3 891 820 KB** (layers compartilhadas; Δ≈46 MB) |
+| Disco final | **93%** · avail **3 872 160 KB** |
+| `sha256sum -c` local/host | **OK** |
+| `docker load` | **PASS** (Node+JVM) |
+| Image IDs carregados | Node `sha256:57a828ca…5332` · JVM `sha256:e1bb8ac5…44a8` |
+| Labels | `git-sha=5ed39b0…` · `content-tree=80546bd3…` · `fase=a6-species-hp` · **amd64** |
+| `VERIFY_A6_GAMEPLAY_RC_IMAGES` | **PASS** |
+| Overlay | pinado species-hp + seccomp · bak `…bak-pre-species-hp-prep-20261108T135118Z` · **não** aplicado |
+| Auditoria Datomic RO | **983** Pokémon · **100%** `legacy-unset` · `hp-base=0` · partial **13** · fainted **20** · full **950** · raids ativas **0** · battles **1** |
+| Migração de saves | **não** executada (plano em `docs/pokemon-a6-species-hp-migration-plan.md`) |
+| Pedido de cutover | **GO condicional** (disco 93% — monitorar; preferir prune **não destrutivo** só com GO) |
+| Cutover agora | **NO-GO** |
+
+Checksums tars:
+- Node `5f3c6abeaa0c43f14127b2bbc72f0d8e43e00282634ccfd8fb8b787098d480d8`
+- JVM `708c5c509ba00cf7d21ac595a341632e39d8f94c12829431702a7ffcf7f6a3e0`
 
 ---
 
