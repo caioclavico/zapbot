@@ -65,33 +65,31 @@
     (is (true? (raid/deve-liberar-ponteiro? r (+ agora 10))))
     (is (false? (raid/visivel-para? r (+ agora 10) "ash")))))
 
-(deftest faint-escolhe-proxima-reserva-na-ordem
-  (testing "party A B C: A desmaia → B (não C)"
+(deftest faint-um-mon-nao-promove-reserva
+  (testing "entrar com party>1 só sela 1; faint → derrota solo"
     (let [party [{:pokemon (mon "A" 50) :collection-index 0}
                  {:pokemon (mon "B" 100) :collection-index 1}
                  {:pokemon (mon "C" 100) :collection-index 2}]
           r0 (-> (raid-combate party) (forcar-hp-ativo "ash" 1))
           out (raid/atacar r0 "ash" 0 (+ agora 10))]
-      (is (true? (:trocou? out)))
-      (is (= 1 (get-in out [:raid :participantes "ash" :active-party-idx])))
-      (is (= "B" (get-in out [:raid :participantes "ash" :pokemon :nome])))))
-  (testing "party A B C: B desmaia → C (não A)"
-    (let [party [{:pokemon (mon "A" 50) :collection-index 0}
-                 {:pokemon (mon "B" 50) :collection-index 1}
-                 {:pokemon (mon "C" 100) :collection-index 2}]
-          r0 (raid-combate party)
-          ;; Marca A já desmaiado e B ativo com 1 HP
+      (is (= 1 (count (get-in r0 [:participantes "ash" :party]))))
+      (is (false? (:trocou? out)))
+      (is (true? (:derrota? out)))
+      (is (= "A" (get-in out [:raid :participantes "ash" :pokemon :nome])))))
+  (testing "party legada multi: faint do ativo NÃO promove C"
+    (let [r0 (raid-combate [{:pokemon (mon "A" 50) :collection-index 0}])
           part (get-in r0 [:participantes "ash"])
-          part' (-> part
-                    (assoc-in [:party 0 :hp] 0)
-                    (assoc :active-party-idx 1)
-                    (assoc-in [:party 1 :hp] 1)
-                    (assoc :hp 1 :pokemon (get-in part [:party 1 :pokemon])))
+          part' (assoc part
+                       :party [{:pokemon (mon "A" 1) :collection-index 0 :hp 1}
+                               {:pokemon (mon "B" 50) :collection-index 1 :hp 50}
+                               {:pokemon (mon "C" 100) :collection-index 2 :hp 100}]
+                       :active-party-idx 0 :hp 1 :pokemon (mon "A" 1))
           r1 (assoc-in r0 [:participantes "ash"] part')
           out (raid/atacar r1 "ash" 0 (+ agora 10))]
-      (is (true? (:trocou? out)))
-      (is (= 2 (get-in out [:raid :participantes "ash" :active-party-idx])))
-      (is (= "C" (get-in out [:raid :participantes "ash" :pokemon :nome]))))))
+      (is (false? (:trocou? out)))
+      (is (true? (:derrota? out)))
+      (is (= 0 (get-in out [:raid :participantes "ash" :active-party-idx])))
+      (is (= 3 (count (get-in out [:raid :participantes "ash" :party])))))))
 
 (deftest golpe-string-keys-sem-interrogao
   (let [g (battle/golpe-normalizado

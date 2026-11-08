@@ -1274,7 +1274,21 @@ function formatError(err) {
     ENCOUNTER_NOT_READY: '⚔️ Derrote o Pokémon selvagem antes de capturar.',
     ENCOUNTER_OWNER_MISMATCH: '🚫 Essa caçada pertence a outro treinador.',
     UNKNOWN_BALL: '❓ Bola desconhecida. Use !pk capturar para ver o menu.',
-    INSUFFICIENT_ITEM: '🎒 Você não tem o item necessário. Cartões de presente custam 20 moedas: !loja comprar cartao-presente.',
+    INSUFFICIENT_ITEM: (() => {
+      const det = (err && err.details) || {};
+      const itemId = String(det.itemId || det['item-id'] || det.item_id || '').toLowerCase();
+      if (itemId === 'fruta' || itemId === 'fruta-dourada' || itemId === 'frambo') {
+        return [
+          '🍓 *Você não possui Frutas Frambo!*',
+          '',
+          '🎒 Confira sua mochila com `!pk mochila`.'
+        ].join('\n');
+      }
+      if (itemId === 'cartao-presente' || itemId === 'presente') {
+        return '🎒 Você não tem Cartão-presente. Compre com `!loja comprar cartao-presente` (20 moedas).';
+      }
+      return '🎒 Você não tem o item necessário. Confira `!pk mochila`.';
+    })(),
     INVALID_GIFT_TARGET: '🎁 Marque um amigo válido: !presente @amigo.',
     GIFT_TARGET_CHANGED: '🎁 O save do destinatário mudou durante o envio. Confira e tente novamente.',
     MISSION_PERIOD_CONFLICT: '📋 O período de missões mudou. Consulte !missoes e tente novamente.',
@@ -2268,12 +2282,14 @@ function formatRaidTurnBlock(r, prefix = '!pk') {
   const hpChefe = r.hpChefe != null ? r.hpChefe : r.hp_chefe;
   const hpChefeMax = r.hpMax != null ? r.hpMax : r.hp_max;
   const rarChefe = chefe.raridade ? ` — ${textoRaridade(chefe)}` : '';
+  const rarPoke = poke.raridade ? ` — ${textoRaridade(poke)}` : '';
+  // Exatamente 2 barras: chefe + ativo. Mesmo `barraHp` da caçada.
   const lines = [
     `👾 *${chefe.nome || chefe.species || 'Chefe'}*${rarChefe}`,
     (hpChefe != null && hpChefeMax != null)
       ? barraHp(hpChefe, hpChefeMax)
       : `❤️ Chefe: ${hpChefe != null ? hpChefe : '?'}/${hpChefeMax != null ? hpChefeMax : '?'}`,
-    `🐾 *${pokeNome}*`,
+    `🐾 *${pokeNome}*${rarPoke}`,
     (hpAtual != null && hpMax != null) ? barraHp(hpAtual, hpMax) : `❤️ HP ${hpAtual != null ? hpAtual : '?'}`,
     `👉 Vez de *${nome}*`,
     ...formatRaidMoveLines(poke, prefix, tiposChefe, habChefe)
@@ -2335,14 +2351,24 @@ function resolveRaidSubcommand(token) {
   return RAID_SUB[raw] || raw || null;
 }
 
+function formatRaidEmpty(prefix = '!pk') {
+  return [
+    '🏛️ *Nenhuma raid em andamento neste grupo.*',
+    '',
+    '📌 *Comandos*',
+    `\`${prefix} raid\` — consultar raid ativa`,
+    `\`${prefix} raid abrir\` — ver ginásios / abrir manual`,
+    `\`${prefix} raid abrir <ginasio>\` — abrir no ginásio (ex.: pedra)`,
+    `\`${prefix} raid entrar\` · \`${prefix} raid entrar auto\` · \`${prefix} raid entrar <n>\``,
+    `\`${prefix} raid iniciar\` — começar (criador; 1+ inscrito)`,
+    `\`${prefix} time\` · \`${prefix} mochila\``
+  ].join('\n');
+}
+
 function formatRaidStatus(data, prefix = '!pk') {
   const r = data && data.raid;
   if (!r) {
-    return [
-      '🏛️ Nenhuma raid em andamento neste chat.',
-      `Abrir: ${prefix} raid abrir   ·   direto: ${prefix} raid abrir 1`,
-      `Time: ${prefix} time   ·   Mochila: ${prefix} mochila`
-    ].join('\n');
+    return formatRaidEmpty(prefix);
   }
   const chefe = r.chefe || {};
   const rarChefe = chefe.raridade ? ` — ${textoRaridade(chefe)}` : '';
@@ -2353,31 +2379,28 @@ function formatRaidStatus(data, prefix = '!pk') {
   const lines = [
     `⚔️ *Raid — ${chefe.nome || 'Chefe'}*${rarChefe} / ${r.liga || '?'}`,
     `🏛️ ${r.nomeGinasio || r.ginasio || 'Ginásio'} · fase *${r.fase}*`,
-    r.fase === 'combate' || r.fase === 'vitoria'
+    // Em combate as 2 barras vêm só de formatRaidTurnBlock (sem duplicar aqui).
+    r.fase === 'vitoria'
       ? ((r.hpChefe != null && r.hpMax != null)
-        ? `❤️ Chefe\n${barraHp(r.hpChefe, r.hpMax)}`
+        ? barraHp(r.hpChefe, r.hpMax)
         : `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`)
-      : `Inscritos: ${r.nParticipantes || 0}/5`,
+      : (r.fase === 'combate'
+        ? null
+        : `Inscritos: ${r.nParticipantes || 0}/5`),
     prazo,
     capturaPend
-      ? `🎯 Captura aberta — ${prefix} raid capturar  ·  ${prefix} raid fruta`
+      ? `🎯 Captura aberta — \`${prefix} raid capturar\`  ·  \`${prefix} raid fruta\``
       : null,
     '',
     r.fase === 'inscricoes'
-      ? `${prefix} raid entrar auto · ${prefix} raid iniciar · ${prefix} raid sair · ${prefix} raid cancelar`
+      ? `\`${prefix} raid entrar auto\` · \`${prefix} raid iniciar\` · \`${prefix} raid sair\` · \`${prefix} raid cancelar\``
       : null
   ];
   if (r.fase === 'combate') {
     lines.push(...formatRaidTurnBlock(r, prefix));
   }
-  if (r.fase === 'vitoria' && capturaPend) {
-    lines.push(
-      '',
-      '📌 *Próximos comandos*',
-      `\`${prefix} raid capturar\``,
-      `\`${prefix} raid fruta\``,
-      `\`${prefix} mochila\``
-    );
+  if (r.fase === 'vitoria') {
+    lines.push(...formatRaidVictoryFooter(r, data, prefix));
   }
   if (Array.isArray(r.participantes) && r.participantes.length) {
     lines.push('', '*Participantes*');
@@ -2450,11 +2473,70 @@ function formatLeaveResult(data, prefix = '!pk') {
 
 function formatRaidStart(data, prefix = '!pk') {
   const r = (data && data.raid) || {};
+  // Sem barra extra: formatRaidTurnBlock já mostra chefe + ativo.
   return [
     `🔥 Combate iniciado! Chefe com ${r.hpChefe || r.hpMax || '?'} HP.`,
-    `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`,
     ...formatRaidTurnBlock(r, prefix)
   ].join('\n');
+}
+
+/** Rodapé de vitória / captura — estados mutuamente exclusivos. */
+function formatRaidVictoryFooter(r, data, prefix = '!pk') {
+  const cap = (r && r.captura) || (data && data.captura) || {};
+  const capturaPend = Boolean(
+    (r && (r.capturaPendente || r['capturaPendente?']))
+    || (data && (data.capturaPendente || data.capturaUi || data['capturaPendente?']))
+  );
+  const capturou = Boolean(cap.capturou || cap.captured);
+  const inscrito = Boolean(r && (r.inscrito || r.Inscrito));
+  const agora = (data && data.agora) != null ? Number(data.agora) : Date.now();
+  const expira = r && (r.capturaExpira != null ? r.capturaExpira
+    : (r.captura_expira != null ? r.captura_expira : r['captura-expira']));
+  const expirada = expira != null && Number(expira) <= agora;
+  if (capturou) {
+    return [
+      '',
+      '✅ *Captura concluída!*',
+      '📌 *Próximos comandos*',
+      `\`${prefix} time\``,
+      `\`${prefix} mochila\``,
+      `\`${prefix} raid\``
+    ];
+  }
+  if (capturaPend) {
+    return [
+      '',
+      '🎯 *CAPTURA DISPONÍVEL*',
+      `\`${prefix} raid capturar\` — ver bolas / chances`,
+      `\`${prefix} raid capturar 1|2|3\` — Poké / Grande / Ultra`,
+      `\`${prefix} raid fruta\` — preparar Frambo (+chance)`,
+      '',
+      '📌 *Próximos comandos*',
+      `\`${prefix} raid capturar\``,
+      `\`${prefix} mochila\``
+    ];
+  }
+  if (expirada) {
+    return [
+      '',
+      '⌛ *Janela de captura encerrada.*',
+      `\`${prefix} raid\` · \`${prefix} time\` · \`${prefix} mochila\``
+    ];
+  }
+  if (inscrito) {
+    return [
+      '',
+      'ℹ️ Você participou, mas não há captura pendente para você.',
+      `\`${prefix} raid\` · \`${prefix} time\` · \`${prefix} mochila\``
+    ];
+  }
+  return [
+    '',
+    '📌 *Próximos comandos*',
+    `\`${prefix} raid\``,
+    `\`${prefix} time\``,
+    `\`${prefix} mochila\``
+  ];
 }
 
 function formatRaidRewardLines(rewards, viewerId, mentionRoster) {
@@ -2509,26 +2591,7 @@ function formatRaidVictory(data, prefix = '!pk') {
   for (const m of [...roster.mentions, ...rewards.mentions]) {
     if (m && !mentionSet.includes(m)) mentionSet.push(m);
   }
-  const capturaPend = Boolean(r.capturaPendente || r['capturaPendente?']
-    || (data && (data.capturaPendente || data.capturaUi)));
-  const nextCmds = capturaPend
-    ? [
-      '🎯 *CAPTURA DISPONÍVEL*',
-      `\`${prefix} raid capturar\` — ver bolas / chances`,
-      `\`${prefix} raid capturar 1|2|3\` — Poké / Grande / Ultra`,
-      `\`${prefix} raid fruta\` — Frambo (+chance)`,
-      '',
-      '📌 *Próximos comandos*',
-      `\`${prefix} raid capturar\``,
-      `\`${prefix} mochila\``,
-      `\`${prefix} time\``
-    ]
-    : [
-      '📌 *Próximos comandos*',
-      `\`${prefix} raid\``,
-      `\`${prefix} time\``,
-      `\`${prefix} mochila\``
-    ];
+  const nextCmds = formatRaidVictoryFooter(r, data, prefix);
   const text = [
     '🏆 *RAID CONCLUÍDA!*',
     `👾 Chefe derrotado: *${chefe}*`,
@@ -2536,7 +2599,6 @@ function formatRaidVictory(data, prefix = '!pk') {
     ...partLines,
     '',
     ...rewards.lines,
-    '',
     ...nextCmds
   ].join('\n');
   return { text, mentions: mentionSet };
@@ -2652,20 +2714,15 @@ function formatRaidAttack(data, prefix = '!pk') {
     }
   }
   if (eff) lines.push(eff);
-  if (hpAntes != null && hpChefe != null && hpMax != null) {
-    lines.push(`❤️ *${nomeChefe}* ${hpAntes}→${hpChefe}`);
-    lines.push(barraHp(hpChefe, hpMax));
-  } else if (hpChefe != null && hpMax != null) {
-    lines.push(`❤️ *${nomeChefe}*`);
-    lines.push(barraHp(hpChefe, hpMax)
+  // Narrativa numérica do golpe — barras ficam só no turn block (2 no total).
+  if (hpAntes != null && hpChefe != null) {
+    lines.push(`❤️ *${nomeChefe}* ${hpAntes}→${hpChefe}`
       + (data && data.revide != null ? ` · revide ${data.revide}` : ''));
-  } else {
-    lines.push(
-      `❤️ Chefe: ${hpChefe != null ? hpChefe : '?'} / ${hpMax != null ? hpMax : '?'}`
-      + (data && data.revide != null ? ` · revide ${data.revide}` : '')
-    );
+  } else if (data && data.revide != null) {
+    lines.push(`💢 Revide: ${data.revide}`);
   }
   if (data && data.trocou) {
+    // Legado: troca de reserva (não ocorre na regra 1-mon).
     if (data.autodesmaio) {
       lines.push(`💀 ${nomeAtacante || 'Seu Pokémon'} desmaiou após o golpe!`);
     } else if (nomeAtacante) {
@@ -2674,13 +2731,11 @@ function formatRaidAttack(data, prefix = '!pk') {
       lines.push('💀 Seu Pokémon desmaiou!');
     }
     if (nomeEntrou) lines.push(`🔄 *${nomeEntrou}* entrou na batalha!`);
-    else lines.push('🔄 *Próximo da party entrou!*');
-    lines.push('⚔️ *A raid continua!*');
-  } else if (data && data.autodesmaio) {
-    lines.push(`💀 ${nomeAtacante || 'Seu Pokémon'} desmaiou após o golpe!`);
-  }
-  if (data && data.hpAtivo != null && !data.trocou) {
-    lines.push(`🐾 Seu ativo: HP ${data.hpAtivo}`);
+  } else if (data && !data.venceu && (data.autodesmaio || data.eliminado || data.hpAtivo === 0)) {
+    lines.push(`💀 ${nomeAtacante || 'Seu Pokémon'} desmaiou!`);
+    if (!data.derrota && r.fase === 'combate') {
+      lines.push('⚔️ Você ficou fora — a raid continua com os outros treinadores.');
+    }
   }
   lines.push(...formatRaidTurnBlock(r, prefix));
   if (data && data.duplicate) lines.push('_idempotente: mesmo operationId_');
@@ -3751,6 +3806,8 @@ module.exports = {
   formatRaidStart,
   formatRaidAttack,
   formatRaidVictory,
+  formatRaidVictoryFooter,
+  formatRaidEmpty,
   formatRaidDefeat,
   formatRaidCapture,
   formatRaidCaptureUi,

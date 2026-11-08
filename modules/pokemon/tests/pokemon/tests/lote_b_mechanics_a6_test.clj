@@ -131,14 +131,10 @@
     (is (pos? (long (get-in out [:hp :x]))) "sem dano no alvo → sem autodesmaio")
     (is (= 100 (long (get-in out [:hp :o]))))))
 
-(deftest b2-explosion-raid-troca-reserva
+(deftest b2-explosion-raid-elimina-sem-reserva
   (let [agora 1000000
         party [{:pokemon (assoc (mon-exp "A" ["normal"]) :hp 80 :hp-atual 80)
-                :collection-index 0}
-               {:pokemon {:nome "B" :hp 100 :hp-atual 100 :ataque 80 :defesa 40
-                          :atq-esp 40 :def-esp 40 :veloc 50 :tipos ["normal"] :nivel 20
-                          :golpes [{:nome-exibicao "Hit" :tipo "normal" :poder 80 :classe :fisico}]}
-                :collection-index 1}]
+                :collection-index 0}]
         base (raid/nova-raid {:raid-id "r-exp" :chat-id "c" :ginasio "pedra"
                               :nome-ginasio "Pedra" :nivel-ginasio 10 :liga "bronze"
                               :chefe {:nome "Boss" :tipos ["normal"] :defesa 40 :def-esp 40
@@ -149,11 +145,11 @@
                (raid/iniciar "ash" (inc agora)))
         out (raid/atacar r0 "ash" 0 (+ agora 10))]
     (is (true? (:autodesmaio? out)))
-    (is (true? (:trocou? out)))
-    (is (false? (:derrota? out)))
-    (is (= "combate" (:fase (:raid out))))
-    (is (= "B" (get-in out [:raid :participantes "ash" :pokemon :nome])))
-    (is (zero? (get-in out [:raid :participantes "ash" :party 0 :hp])))))
+    (is (false? (:trocou? out)))
+    (is (true? (:eliminado? out)))
+    (is (true? (:derrota? out)) "solo 1-mon: explosion → derrota")
+    (is (= "derrota" (:fase (:raid out))))
+    (is (zero? (get-in out [:raid :participantes "ash" :hp])))))
 
 (deftest b2-explosion-persiste-hp-zero-datomic
   (let [s (fresh)

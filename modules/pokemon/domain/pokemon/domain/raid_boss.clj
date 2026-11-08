@@ -345,23 +345,51 @@
       :catalog-version (:version cat)
       :rolls {:categoria cat-roll :especie sp-roll}})))
 
+(def weights-por-liga
+  "Dificuldade manual alinhada à liga do ginásio (não altera taxas de captura)."
+  {"iniciante" {"raro" 0.70 "epico" 0.25 "lendario" 0.05 "mitico" 0.00}
+   "bronze"    {"raro" 0.55 "epico" 0.30 "lendario" 0.12 "mitico" 0.03}
+   "prata"     {"raro" 0.35 "epico" 0.35 "lendario" 0.22 "mitico" 0.08}
+   "ouro"      {"raro" 0.20 "epico" 0.35 "lendario" 0.30 "mitico" 0.15}
+   "diamante"  {"raro" 0.10 "epico" 0.25 "lendario" 0.40 "mitico" 0.25}})
+
 (defn select-boss-for-ginasio
-  "Combina ginásio A6 (liga/nível) + seleção dinâmica do catálogo."
+  "Combina ginásio A6 (liga/nível) + seleção dinâmica do catálogo completo.
+  Prefere espécies do `:pool`/`:time` do ginásio quando elegíveis; senão
+  sorteia entre todas as elegíveis com pesos da liga."
   [ginasio-id opts]
   (let [g (gym/obter-ginasio (str/lower-case (str/trim (str ginasio-id))))]
     (when-not g
       (throw (err/error :raid_gym_unknown {:ginasio ginasio-id})))
     (let [nivel (long (:nivel g))
           liga (raid/liga-para-nivel nivel)
-          picked (select-boss (assoc opts :nivel nivel))]
+          liga-id (:id liga)
+          weights (or (get weights-por-liga liga-id) category-weights-default)
+          theme (set (map str (concat (or (:pool g) []) (or (:time g) []))))
+          cat (or (:catalog opts) (catalog))
+          elig (eligible-species cat)
+          theme-elig (filterv #(contains? theme (str (:species %))) elig)
+          ;; Soft-bias: se o tema tem elegíveis (raro+), 60% sorteia só nesse pool.
+          rng* (or (:rng opts) rand)
+          theme-roll (double (rng*))
+          use-theme? (and (seq theme-elig) (< theme-roll 0.60))
+          catalog* (if use-theme?
+                     (assoc cat :species (mapv #(dissoc % :raridade) theme-elig))
+                     cat)
+          picked (select-boss (merge (dissoc opts :rng)
+                                     {:nivel nivel
+                                      :catalog catalog*
+                                      :category-weights weights
+                                      :rng rng*}))]
       {:ginasio (:id g)
        :nome-ginasio (:nome g)
        :nivel-ginasio nivel
-       :liga (:id liga)
+       :liga liga-id
        :chefe (:chefe picked)
        :categoria (:categoria picked)
        :catalog-version (:catalog-version picked)
-       :rolls (:rolls picked)})))
+       :rolls (:rolls picked)
+       :theme-pool? use-theme?})))
 
 (defn simulate-distribution
   "Simula N sorteios em memória (sem criar raids). Retorna frequências."

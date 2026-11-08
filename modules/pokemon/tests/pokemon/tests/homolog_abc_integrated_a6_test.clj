@@ -138,7 +138,7 @@
           (is (= (capture/chance-com-bola base "grande-bola")
                  (get (capture/chances-painel base false) "grande-bola")))))
 
-      (testing "4) raid: desmaio com reserva NÃO encerra"
+      (testing "4) raid 1-mon: join sela 1; faint solo → derrota; sem troca"
         (collection/adicionar-pokemon! store chat player mon-fragile 1 nil)
         (collection/adicionar-pokemon! store chat player mon-reserve 120 nil)
         (let [col (ports/list-collection store chat player "a")
@@ -154,7 +154,7 @@
                     store chat player
                     {:operation-id "h-join" :raid-id rid
                      :collection-index idx :nome "Ash" :agora 1001})
-              _ (is (>= (count (:party (:participant join))) 2))
+              _ (is (= 1 (count (:party (:participant join)))))
               _ (raid-app/start-raid!
                  store chat player
                  {:operation-id "h-raid-start" :raid-id rid :agora 1002})
@@ -163,15 +163,15 @@
                    {:operation-id "h-atk" :raid-id rid
                     :expected-turn-index 0 :move-index 0 :agora 1010})
               raid (raid-app/get-raid store rid)]
-          (is (false? (:derrota? atk)))
-          (is (true? (:trocou? atk)))
-          (is (= "combate" (:fase raid)))
-          ;; Reserva = próximo vivo da coleção (pode ser Squirtle da etapa 2, não só B).
-          (is (not= "A" (get-in raid [:participantes player :pokemon :nome])))
-          (is (pos? (long (get-in raid [:participantes player :hp] 0))))
+          (is (true? (:derrota? atk)))
+          (is (false? (:trocou? atk)))
+          (is (true? (:eliminado? atk)))
+          (is (= "derrota" (:fase raid)))
+          (is (= "A" (get-in raid [:participantes player :pokemon :nome])))
+          (is (zero? (long (get-in raid [:participantes player :hp] 0))))
           (is (pos? (double (:multiplicador atk 1.0))))))
 
-      (testing "5) reopen JVM — evento/missões + raid party sobrevivem"
+      (testing "5) reopen JVM — evento/missões + estado da raid sobrevivem"
         (let [env2 (reopen env)
               s2 (:store env2)
               snap (missions/read-missions s2 chat player "a"
@@ -185,9 +185,9 @@
               inv2 (ports/list-inventory s2 chat player "a")]
           (is (some? ev) "missão temática visível após restart")
           (is (= "active" (:status ev)))
-          (is (= "combate" (:fase raid2)))
-          (is (>= (count (:party ash)) 2))
-          (is (= 1 (long (:active-party-idx ash 0))))
+          (is (= "derrota" (:fase raid2)))
+          (is (= 1 (count (:party ash))))
+          (is (zero? (long (:hp ash 0))))
           (is (= 1 (count occs)))
           (is (= "a" (:save-id save "a")))
           (is (sequential? inv2)))))))

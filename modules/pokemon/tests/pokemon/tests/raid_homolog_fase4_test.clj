@@ -38,17 +38,18 @@
     [s conn]))
 
 (def ^:private mon
-  "Liga iniciante (ginásio pedra niv.10); stats altos para fechar combate."
-  {:nome "Snorlax" :hp 220 :ataque 120 :defesa 60 :atq-esp 60 :def-esp 60 :veloc 50
-   :tipos ["normal"] :nivel 10 :raridade "raro"
-   :golpes [{:nome-exibicao "Body Slam" :tipo "normal" :poder 90 :classe :fisico}]})
+  "Stats altos p/ fechar combate sob regra 1-mon + HP chefe 320×n×fator.
+   Revide ≈ hp/5 ⇒ ~5 hits/treinador; duo precisa de dano alto/turno."
+  {:nome "Snorlax" :hp 280 :ataque 200 :defesa 60 :atq-esp 200 :def-esp 60 :veloc 50
+   :tipos ["water"] :nivel 30 :raridade "raro"
+   :golpes [{:nome-exibicao "Hydro Pump" :tipo "water" :poder 110 :classe :especial}]})
 
 (defn- fence [s chat player]
   (long (:fence-generation (ports/get-player s chat player) 0)))
 
 (defn- boot! [s chat player]
   (trainer/create-trainer! s {:chat-id chat :player-id player})
-  (collection/adicionar-pokemon! s chat player mon 220 nil)
+  (collection/adicionar-pokemon! s chat player mon 280 nil)
   (reward-app/admin-seed-reward!
    s {:operation-id (str "seed-ball-" chat "-" player)
       :chat-id chat :player-id player :save-id "a"
@@ -69,11 +70,14 @@
         {:ret ret :log (str sw)}))))
 
 (defn- fight-to-victory!
+  "Empurra o combate até vitória. Usa variação máxima (100%) para
+   determinismo sob 1-mon + Proposta A (HP 320×n×fator)."
   [s chat rid]
   (loop [n 0]
     (let [r (raid-app/get-raid s rid)]
       (cond
-        (>= n 80) (throw (ex-info "combate não encerrou" {:fase (:fase r)}))
+        (>= n 120) (throw (ex-info "combate não encerrou" {:fase (:fase r)
+                                                           :hp-chefe (:hp-chefe r)}))
         (= "vitoria" (:fase r)) r
         (= "combate" (:fase r))
         (let [pid (:vez r)]
@@ -82,9 +86,11 @@
               :fence-generation (fence s chat pid)
               :operation-id (str "atk-" rid "-" n)
               :expected-turn-index (:turn-index r)
-              :move-index 0 :agora-ms (+ 50000 n)})
+              :move-index 0 :agora-ms (+ 50000 n)
+              :rng {:raid-damage-var 15}})
           (recur (inc n)))
-        :else (throw (ex-info "fase inesperada" {:fase (:fase r)}))))))
+        :else (throw (ex-info "fase inesperada" {:fase (:fase r)
+                                                 :hp-chefe (:hp-chefe r)}))))))
 
 ;;;; 1. Auditoria de schema / cadeia A6
 
@@ -126,6 +132,7 @@
         t0 1000000]
     (boot! s chat "ash")
     (boot! s chat "misty")
+    (boot! s chat "brock")
     ;; 1. Agenda
     (enable! s chat t0 {:interval-ms (* 60 60 1000)})
     (is (true? (:enabled (raid-auto/get-schedule s chat))))
@@ -145,17 +152,14 @@
       ;; Entrega WA simulada (ack)
       (is (true? (:acked (raid-auto/ack-event! s (:id opened) (+ t0 1)))))
       ;; 4. Inscrições
-      (tx/join-raid!
-       s {:chat-id chat :player-id "ash" :save-id "a"
-          :fence-generation (fence s chat "ash")
-          :operation-id "j-ash" :collection-index 0 :nome "Ash" :agora-ms (+ t0 2)})
-      (tx/join-raid!
-       s {:chat-id chat :player-id "misty" :save-id "a"
-          :fence-generation (fence s chat "misty")
-          :operation-id "j-misty" :collection-index 0 :nome "Misty" :agora-ms (+ t0 3)})
+      (doseq [[pid op ms] [["ash" "j-ash" 2] ["misty" "j-misty" 3] ["brock" "j-brock" 4]]]
+        (tx/join-raid!
+         s {:chat-id chat :player-id pid :save-id "a"
+            :fence-generation (fence s chat pid)
+            :operation-id op :collection-index 0 :nome pid :agora-ms (+ t0 ms)}))
       (let [rid (:raid-id raid)
-            lobby-end (+ t0 raid/duracao-inscricoes)
-            ;; 5–6. Encerrar lobby → combate
+            lobby-end (inc (long (:expira (raid-app/active-raid s chat))))
+            ;; 5–6. Encerrar lobby → combate (expira real da categoria)
             {:keys [ret log]} (capture-logs
                                #(raid-auto/tick!
                                  s {:agora-ms lobby-end :global-enabled? true :chat-id chat}))
@@ -242,8 +246,9 @@
        s2 {:chat-id chat :player-id "misty" :save-id "a"
            :fence-generation (fence s2 chat "misty")
            :operation-id "jm" :collection-index 0 :nome "Misty" :agora-ms (+ t0 2)})
-      (let [r (raid-auto/tick!
-               s2 {:agora-ms (+ t0 raid/duracao-inscricoes)
+      (let [lobby-end (inc (long (:expira (raid-app/active-raid s2 chat))))
+            r (raid-auto/tick!
+               s2 {:agora-ms lobby-end
                    :global-enabled? true :chat-id chat})]
         (is (some #(= :combate (:acao %)) (:expired r)))
         (is (= "combate" (:fase (raid-app/active-raid s2 chat))))))))
@@ -255,36 +260,36 @@
         t0 3000]
     (boot! s chat "ash")
     (boot! s chat "misty")
+    (boot! s chat "brock")
     (enable! s chat t0)
     (raid-auto/tick! s {:agora-ms t0 :global-enabled? true :chat-id chat})
     (let [rid (:raid-id (raid-app/active-raid s chat))]
-      (tx/join-raid!
-       s {:chat-id chat :player-id "ash" :save-id "a"
-          :fence-generation (fence s chat "ash")
-          :operation-id "ja" :collection-index 0 :nome "Ash" :agora-ms (inc t0)})
-      (tx/join-raid!
-       s {:chat-id chat :player-id "misty" :save-id "a"
-          :fence-generation (fence s chat "misty")
-          :operation-id "jm" :collection-index 0 :nome "Misty" :agora-ms (+ t0 2)})
-      (raid-auto/tick!
-       s {:agora-ms (+ t0 raid/duracao-inscricoes) :global-enabled? true :chat-id chat})
-      (let [r0 (raid-app/get-raid s rid)
-            pid (:vez r0)]
-        (tx/raid-attack!
+      (doseq [[pid op ms] [["ash" "ja" 1] ["misty" "jm" 2] ["brock" "jb" 3]]]
+        (tx/join-raid!
          s {:chat-id chat :player-id pid :save-id "a"
             :fence-generation (fence s chat pid)
-            :operation-id "atk-pre-restart"
-            :expected-turn-index (:turn-index r0)
-            :move-index 0 :agora-ms (+ t0 raid/duracao-inscricoes 10)})
-        (let [mid (raid-app/get-raid s rid)
-              [s2 _] (reopen! db)
-              after (raid-app/get-raid s2 rid)]
-          (is (= "combate" (:fase after)))
-          (is (= (:turn-index mid) (:turn-index after)))
-          (is (= (:hp-chefe mid) (:hp-chefe after)))
-          (is (false? (:rewards-paid? after)))
-          (fight-to-victory! s2 chat rid)
-          (is (= "vitoria" (:fase (raid-app/get-raid s2 rid)))))))))
+            :operation-id op :collection-index 0 :nome pid :agora-ms (+ t0 ms)}))
+      (let [lobby-end (inc (long (:expira (raid-app/active-raid s chat))))]
+        (raid-auto/tick!
+         s {:agora-ms lobby-end :global-enabled? true :chat-id chat})
+        (let [r0 (raid-app/get-raid s rid)
+              pid (:vez r0)]
+          (tx/raid-attack!
+           s {:chat-id chat :player-id pid :save-id "a"
+              :fence-generation (fence s chat pid)
+              :operation-id "atk-pre-restart"
+              :expected-turn-index (:turn-index r0)
+              :move-index 0 :agora-ms (+ lobby-end 10)
+              :rng {:raid-damage-var 15}})
+          (let [mid (raid-app/get-raid s rid)
+                [s2 _] (reopen! db)
+                after (raid-app/get-raid s2 rid)]
+            (is (= "combate" (:fase after)))
+            (is (= (:turn-index mid) (:turn-index after)))
+            (is (= (:hp-chefe mid) (:hp-chefe after)))
+            (is (false? (:rewards-paid? after)))
+            (fight-to-victory! s2 chat rid)
+            (is (= "vitoria" (:fase (raid-app/get-raid s2 rid))))))))))
 
 (deftest datomic-indisponivel-nao-avanca-agenda
   (let [[s _] (fresh! "f4-datomic-down")
@@ -394,8 +399,9 @@
       ;; Pausa novas aparições sem matar lobby
       (raid-auto/upsert-schedule!
        s {:chat-id chat :enabled false :agora-ms (+ t0 3)})
-      (let [r (raid-auto/tick!
-               s {:agora-ms (+ t0 raid/duracao-inscricoes)
+      (let [lobby-end (inc (long (:expira (raid-app/active-raid s chat))))
+            r (raid-auto/tick!
+               s {:agora-ms lobby-end
                   :global-enabled? true :chat-id chat})
             active (raid-app/active-raid s chat)
             sch (raid-auto/get-schedule s chat)]
@@ -449,29 +455,30 @@
         t0 11000]
     (boot! s chat "ash")
     (boot! s chat "misty")
+    (boot! s chat "brock")
     (enable! s chat t0)
     (raid-auto/tick! s {:agora-ms t0 :global-enabled? true :chat-id chat})
-    (tx/join-raid!
-     s {:chat-id chat :player-id "ash" :save-id "a"
-        :fence-generation (fence s chat "ash")
-        :operation-id "ja" :collection-index 0 :nome "Ash" :agora-ms (inc t0)})
-    (tx/join-raid!
-     s {:chat-id chat :player-id "misty" :save-id "a"
-        :fence-generation (fence s chat "misty")
-        :operation-id "jm" :collection-index 0 :nome "Misty" :agora-ms (+ t0 2)})
-    (raid-auto/tick!
-     s {:agora-ms (+ t0 raid/duracao-inscricoes) :global-enabled? true :chat-id chat})
-    (is (= "combate" (:fase (raid-app/active-raid s chat))))
-    ;; Procedimento: enabled=false OU kill switch global — combate segue.
-    (raid-auto/upsert-schedule!
-     s {:chat-id chat :enabled false :agora-ms (+ t0 raid/duracao-inscricoes 1)})
-    (let [rid (:raid-id (raid-app/active-raid s chat))]
-      (fight-to-victory! s chat rid)
-      (is (= "vitoria" (:fase (raid-app/get-raid s rid))))
-      (is (nil?
-           (->> (raid-auto/tick!
-                 s {:agora-ms (+ t0 (* 2 60 60 1000))
-                    :global-enabled? true :chat-id chat})
-                :spawned
-                (filter #(= :spawn (:acao %)))
-                seq))))))
+    (doseq [[pid op ms] [["ash" "ja" 1] ["misty" "jm" 2] ["brock" "jb" 3]]]
+      (tx/join-raid!
+       s {:chat-id chat :player-id pid :save-id "a"
+          :fence-generation (fence s chat pid)
+          :operation-id op :collection-index 0 :nome pid :agora-ms (+ t0 ms)}))
+    ;; Lobby auto varia por categoria (5–30 min) — usar :expira da raid.
+    (let [lobby (raid-app/active-raid s chat)
+          lobby-end (inc (long (:expira lobby)))]
+      (raid-auto/tick!
+       s {:agora-ms lobby-end :global-enabled? true :chat-id chat})
+      (is (= "combate" (:fase (raid-app/active-raid s chat))))
+      ;; Procedimento: enabled=false — combate segue.
+      (raid-auto/upsert-schedule!
+       s {:chat-id chat :enabled false :agora-ms (inc lobby-end)})
+      (let [rid (:raid-id (raid-app/active-raid s chat))]
+        (fight-to-victory! s chat rid)
+        (is (= "vitoria" (:fase (raid-app/get-raid s rid))))
+        (is (nil?
+             (->> (raid-auto/tick!
+                   s {:agora-ms (+ t0 (* 2 60 60 1000))
+                      :global-enabled? true :chat-id chat})
+                  :spawned
+                  (filter #(= :spawn (:acao %)))
+                  seq)))))))

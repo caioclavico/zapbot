@@ -1,7 +1,9 @@
 (ns pokemon.domain.raid
   "Raids cooperativas — regras puras (lobby Fase 2 + combate M3.6).
-  Party: até `max-party` combatentes por jogador; desmaio troca reserva
-  automaticamente. Dano de raid aplica efetividade de tipos uma vez."
+  Party: exatamente `max-party` = 1 combatente por treinador. Desmaio
+  encerra a participação individual (sem troca automática de reserva).
+  Raids legadas com party>1: dados preservados, mas novas trocas são
+  bloqueadas — só o ativo combate; faint = fora. Dano aplica efetividade."
   (:require [clojure.string :as str]
             [pokemon.domain.battle :as battle]
             [pokemon.domain.errors :as err]
@@ -9,7 +11,9 @@
             [pokemon.domain.rng :as rng]
             [pokemon.domain.types :as types]))
 
-(def max-party 3)
+;; Regra A6 vigente: 1 Pokémon por treinador. Constante nomeada para
+;; joins/montagem; `avancar-party` nunca promove reservas.
+(def max-party 1)
 
 ;; Lobby Fase 2 (abertura manual cooperativa).
 ;; Fase 12: duração padrão 5 min (raides já abertas preservam :expira gravado).
@@ -399,36 +403,27 @@
            :party slots)))
 
 (defn participante-vivo?
-  "True se algum membro da party (ou HP legado) ainda tem HP > 0."
+  "True se o combatente ativo (slot atual) ainda tem HP > 0.
+  Reservas legadas NÃO contam — regra 1-mon: só o ativo participa."
   [part]
-  (boolean
-   (or (some #(pos? (long (:hp % 0))) (:party part))
-       (pos? (long (:hp part 0))))))
+  (let [idx (long (:active-party-idx part 0))
+        slots (vec (:party part))]
+    (boolean
+     (cond
+       (seq slots)
+       (pos? (long (:hp (nth slots idx (first slots)) 0)))
+       :else
+       (pos? (long (:hp part 0)))))))
 
 (defn- avancar-party
-  "Após desmaio do ativo: promove a *próxima* reserva na ordem de entrada
-  (após o índice atual, com wrap). Nunca escolhe um mon arbitrário fora da
-  party nem salta a ordem. Nil se esgotou."
-  [part]
-  (let [slots (vec (:party part))
-        n (count slots)
-        cur (long (:active-party-idx part 0))
-        ;; Marca o ativo atual como 0 se ainda não estiver.
-        slots' (if (seq slots)
-                 (assoc-in slots [cur :hp] 0)
-                 slots)
-        next-idx (when (pos? n)
-                   (first
-                    (for [k (range 1 n)
-                          :let [i (mod (+ cur k) n)]
-                          :when (pos? (long (:hp (nth slots' i) 0)))]
-                      i)))]
-    (when next-idx
-      (sync-active (assoc part :party slots' :active-party-idx next-idx
-                          :trocou-por-desmaio? true)))))
+  "LEGADO / NO-OP sob a regra 1-mon: nunca promove reserva.
+  Sempre retorna nil (treinador fora). Slots extras persistidos não são usados."
+  [_part]
+  nil)
 
 (defn- montar-party
-  "Até `max-party` slots. Aceita `:party` explícita ou um único `:pokemon`."
+  "Exatamente 1 slot (`max-party`). Aceita `:party` (usa só o 1º) ou `:pokemon`.
+  Slots extras em `party` são ignorados (não entram no combate)."
   [raid player-id {:keys [pokemon collection-index party]}]
   (let [slots (cond
                 (seq party)
@@ -448,8 +443,8 @@
     slots))
 
 (defn entrar
-  "Inscrição. Selva até 3 combatentes (party). Em lobby, reinscrição troca a party.
-   Em combate, combatente fica travado."
+  "Inscrição. Exatamente 1 combatente por treinador. Em lobby, reinscrição
+   troca o Pokémon escolhido. Em combate, combatente fica travado."
   [raid {:keys [player-id nome save-id fence-generation] :as opts} agora]
   (when-not (inscricoes-abertas? raid agora)
     (throw (err/error :raid_not_open {:fase (:fase raid)})))
@@ -615,7 +610,7 @@
     (first (filter vivos depois))))
 
 (defn- aplicar-revide-part
-  "Aplica revide no ativo; se desmaiar e houver reserva, troca automaticamente."
+  "Aplica revide no ativo. Desmaio → HP 0, sem promoção de reserva (1-mon)."
   [part revide]
   (let [idx (long (:active-party-idx part 0))
         slots (vec (or (:party part)
@@ -629,14 +624,15 @@
                                   :trocou-por-desmaio? false))]
     (if (pos? hp')
       part'
-      (or (avancar-party part')
-          (sync-active (assoc part' :party slots' :hp 0))))))
+      ;; Sem avancar-party: treinador eliminado; slots legados preservados em 0 no ativo.
+      (sync-active (assoc part' :party slots' :hp 0)))))
 
 (defn atacar
   "Aplica um ataque. Retorna {:raid :dano :revide :venceu? :derrota? :multiplicador
    :trocou? :golpe :variacao-pct :base-variada}.
-   Desmaio do ativo com reserva → troca, raid continua.
-   Derrota só quando nenhum participante tem party utilizável.
+   Desmaio do ativo → treinador fora; raid continua se houver outros vivos.
+   Derrota quando nenhum participante tem combatente ativo com HP > 0.
+   `trocou?` permanece sempre false na regra 1-mon (sem substituição).
    `rng` opcional — variação de dano sorteada **uma vez** aqui; retries HTTP
    reutilizam o receipt (não re-rolam)."
   ([raid player-id move-index agora]
@@ -674,13 +670,12 @@
                               (update :dano #(+ (long %) dano))
                               (aplicar-revide-part revide))
            part-final (if (and autodesmaio? (not venceu?) (pos? dano))
-                        (or (avancar-party (assoc-in part-apos-dano
-                                                     [:party (:active-party-idx part-apos-dano 0) :hp]
-                                                     0))
-                            (sync-active (assoc part-apos-dano :hp 0)))
+                        (let [idx (long (:active-party-idx part-apos-dano 0))
+                              slots' (assoc-in (vec (:party part-apos-dano)) [idx :hp] 0)]
+                          (sync-active (assoc part-apos-dano :party slots' :hp 0)))
                         part-apos-dano)
-           trocou? (boolean (:trocou-por-desmaio? part-final))
            part-final (dissoc part-final :trocou-por-desmaio?)
+           eliminado? (not (participante-vivo? part-final))
            raid' (-> raid
                      (assoc :hp-chefe hp')
                      (assoc-in [:participantes player-id] part-final)
@@ -705,7 +700,8 @@
         :revide revide
         :venceu? venceu?
         :derrota? derrota?
-        :trocou? trocou?
+        :trocou? false
+        :eliminado? eliminado?
         :autodesmaio? (boolean (and autodesmaio? (pos? dano)))
         :golpe golpe
         :pokemon-atacante pokemon

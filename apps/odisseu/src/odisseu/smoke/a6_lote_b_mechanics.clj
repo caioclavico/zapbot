@@ -10,6 +10,7 @@
             [pokemon.tests.raid-hp-sync-p0-a6-test]
             [pokemon.tests.raid-lifecycle-balance-a6-test]
             [pokemon.tests.raid-balance-sim-a6-test]
+            [pokemon.tests.raid-balance-one-mon-sim-a6-test]
             [pokemon.tests.capture-rarity-flow-a6-test]))
 
 (defn -main [& _]
@@ -22,6 +23,7 @@
                    (test/run-tests 'pokemon.tests.raid-hp-sync-p0-a6-test)
                    (test/run-tests 'pokemon.tests.raid-lifecycle-balance-a6-test)
                    (test/run-tests 'pokemon.tests.raid-balance-sim-a6-test)
+                   (test/run-tests 'pokemon.tests.raid-balance-one-mon-sim-a6-test)
                    (test/run-tests 'pokemon.tests.capture-rarity-flow-a6-test)]
         failed (reduce + (map #(+ (:fail %) (:error %)) summaries))]
     (println {:ok (zero? failed) :summaries summaries})

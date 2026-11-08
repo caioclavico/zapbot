@@ -1,33 +1,42 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0 + HP/UI/captura
 
-**Atualizado:** 2026-11-08T09:30Z  
+**Atualizado:** 2026-11-08T10:45Z  
 **Host:** `odisseu-core` (linux/amd64)  
-**Live executável:** `6cef8f43b0dce617af0ecf0b0374f6a541388104` (P0 HP/UI)  
-**Candidata RC (Proposta A + UX raid):** ver §0b após merge/build  
-**Evidência cutover P0:** `/home/caiohclavico/odisseu-recovery/a6-p0-hp-ui-cutover-20261108T074953Z`  
-**Artefatos P0:** `/home/caiohclavico/odisseu-recovery/a6-p0-hp-ui-artifacts-20261108T072116Z`  
-**Evidência cutover anterior (A+B+C):** `/home/caiohclavico/odisseu-recovery/a6-abc-p0-cutover-20261108T063319Z`
+**Live executável (Balance A):** Node `002c83e8…` / JVM `e044cce1…` @ `043b846`  
+**Candidata local (1-mon + UX + catálogo):** branch `fix/a6-raid-one-mon-ux` — ver §0c  
+**Evidência cutover Balance A:** STABILITY_20M_PASS (janela anterior)  
+**Evidência cutover P0:** `/home/caiohclavico/odisseu-recovery/a6-p0-hp-ui-cutover-20261108T074953Z`
 
 ---
 
-## 0b. Candidata Proposta A + correções raid (pré-janela)
+## 0c. Candidata 1-mon + UX raid + catálogo (pré-build)
 
 | Campo | Valor |
 |-------|-------|
-| Escopo | `hp-por-jogador` 220→**320**; variação dano **85–100%** (RNG injetável, 1×/ataque); lifecycle/faint/golpes/UI |
-| Commit integrado | `043b84697c0a2771b855e9e0c8d4781ccf5cfeae` (PR [#40](https://github.com/caioclavico/zapbot/pull/40)) |
-| Content tree | `eed2f0cfd30b2a580a3a47163c9b8f6007023b43` |
-| Node | `odisseu-node:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64` · `sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a` |
-| JVM | `odisseu-jvm:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64` · `sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94` |
-| Tar SHA256 Node | `b4ee6f1c5a00e8f424910c4bc04007d85c74b9699508908f830a02016bdc1c5c` |
-| Tar SHA256 JVM | `fbae335e0e18baafaa36153c03c43fa97a2a73814fca20aa33d7bcc9f81f89f8` |
-| Artefatos locais | `artifacts/a6-raid-balance-a-20261108T091954Z/` |
-| Homolog local | A+B+C+P0 · homolog-abc · m4-raid+HTTP · lobby · Node P0 · `npm run test:http` · `VERIFY_A6_GAMEPLAY_RC_IMAGES` — **PASS** |
-| Overlay | pin candidata (sem apply) |
-| Deploy | **NÃO** executado; hold/CI/flags/saves intocados |
-| Pedido de janela | **NO-GO** até revisão humana |
+| Escopo | `max-party=1` (sem auto-troca); 2 barras HP; raridade chefe+jogador; empty/footer captura; Frambo≠presente; chefes manuais via catálogo (5→**571**); Proposta A intacta (HP 320 / var 85–100%) |
+| Base | tip integrado `b9ae76c` (Balance A pins) |
+| Branch | `fix/a6-raid-one-mon-ux` (ainda sem Image IDs — **precisa rebuild Node+JVM**) |
+| HP espécie | **Proposta só** (compressão 0.5→0.85); **não** aplicada; ver audit §HP |
+| Homolog local (tip desta branch) | homolog-abc **42/247** · lobby **24/80** · homolog-f4 **13/114** · auto-fase3 **19/81** · m4-raid+HTTP · Node UX/lote-c/ops **36/36** — **PASS** |
+| Live RO (rollback) | Node `002c83e8…` / JVM `e044cce1…` · WA **READY** · healthy |
+| Overlay / deploy | **NÃO**; hold/CI/flags/saves/WA intocados |
+| Integração (merge/build RC) | **GO** |
+| Pedido de janela produção | **NO-GO** |
+| Fórmula HP global | **NO-GO** até aprovação da tabela |
 
-Parâmetros/simulações: `docs/pokemon-a6-gameplay-audit.md` §Balanceamento.
+Detalhes: `docs/pokemon-a6-gameplay-audit.md` §Revisão raids.
+
+---
+
+## 0b. Live Proposta A (já em produção)
+
+| Campo | Valor |
+|-------|-------|
+| Escopo | `hp-por-jogador` **320**; variação dano **85–100%**; lifecycle/faint/golpes/UI pré-1-mon |
+| Commit | `043b84697c0a2771b855e9e0c8d4781ccf5cfeae` |
+| Node | `sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a` |
+| JVM | `sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94` |
+| Status | **LIVE** pós-cutover Balance A · STABILITY_20M_PASS |
 
 ---
 

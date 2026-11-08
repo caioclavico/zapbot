@@ -30,6 +30,7 @@
          conn (persistence/ensure-db! client db-name)
          s (trainer/bootstrap! (store/make-store conn))]
      (trainer/create-trainer! s {:chat-id "chat-a" :player-id "ash"})
+     (trainer/create-trainer! s {:chat-id "chat-a" :player-id "misty"})
      {:conn conn :store s :dir dir :client client :db-name db-name})))
 
 (defn- reopen
@@ -54,16 +55,19 @@
    :fator-dificuldade 1.0 :nivel 10
    :golpes [{:nome-exibicao "Vine" :tipo "grass" :poder 40 :classe :especial}]})
 
-(deftest a1-raid-party-faint-persiste-e-continua
-  (testing "desmaio do ativo com reserva não encerra; party sobrevive a reopen"
+(deftest a1-raid-one-mon-faint-coop-continua
+  (testing "join sela 1 mon; faint elimina ash; misty mantém combate; reopen OK"
     (let [{:keys [store] :as env} (fresh "raid-party")
           chat "chat-a"
           rid "raid-party-1"
           ;; 3º arg = hp-atual selado na coleção (assert-combatente usa hp-atual).
           _ (collection/adicionar-pokemon! store chat "ash" mon-a 1 nil)
           _ (collection/adicionar-pokemon! store chat "ash" mon-b 120 nil)
+          _ (collection/adicionar-pokemon! store chat "misty" (assoc mon-b :nome "M") 100 nil)
           col (ports/list-collection store chat "ash" "a")
           idx0 (long (:collection-index (first col) 0))
+          col-m (ports/list-collection store chat "misty" "a")
+          idx-m (long (:collection-index (first col-m) 0))
           _ (raid-app/open-raid!
              store chat "ash"
              {:operation-id "open-1" :raid-id rid :ginasio "pedra" :nome-ginasio "Pedra"
@@ -73,8 +77,12 @@
                 store chat "ash"
                 {:operation-id "join-1" :raid-id rid
                  :collection-index idx0 :nome "Ash" :agora 1001})
+          _ (raid-app/join-raid!
+             store chat "misty"
+             {:operation-id "join-2" :raid-id rid
+              :collection-index idx-m :nome "Misty" :agora 1001})
           part0 (:participant join)
-          _ (is (>= (count (:party part0)) 2) "join sela party com reserva")
+          _ (is (= 1 (count (:party part0))) "join sela exatamente 1 mon")
           _ (is (= 1 (long (:hp part0))) "ativo entra com 1 HP")
           _ (raid-app/start-raid!
              store chat "ash"
@@ -86,15 +94,17 @@
           raid1 (raid-app/get-raid store rid)
           env2 (reopen env)
           raid2 (raid-app/get-raid (:store env2) rid)
-          ash2 (get-in raid2 [:participantes "ash"])]
+          ash2 (get-in raid2 [:participantes "ash"])
+          misty2 (get-in raid2 [:participantes "misty"])]
       (is (false? (:derrota? atk)))
-      (is (true? (:trocou? atk)))
+      (is (false? (:trocou? atk)))
+      (is (true? (:eliminado? atk)))
       (is (= "combate" (:fase raid1)))
       (is (= "combate" (:fase raid2)))
-      (is (>= (count (:party ash2)) 2))
-      (is (= 1 (long (:active-party-idx ash2 0))))
-      (is (pos? (long (:hp ash2 0))))
-      (is (= "B" (get-in ash2 [:pokemon :nome]))))))
+      (is (= 1 (count (:party ash2))))
+      (is (zero? (long (:hp ash2 0))))
+      (is (pos? (long (:hp misty2 0))))
+      (is (= "misty" (:vez raid2))))))
 
 (deftest a2-normalize-ball-aliases-e-shop
   (is (= "grande-bola" (#'tx/normalize-ball "2")))
