@@ -121,7 +121,7 @@
          "⭐ *PE do treinador:* 5 na primeira vitória, 2 na revanche premiada e 1 na derrota. PE é separado do XP recebido pelos Pokémon.\n"
          "Quem vence assume a liderança. Os três Pokémon ficam fora da coleção disponível, inativos e reservados até outro jogador vencer. A motivação começa em 100%, cai 5 pontos por hora e 12 após cada defesa, enfraquecendo a resistência de combate até o mínimo de 20% (HP persistido não muda).\n"
          "O coração aparece apenas nos defensores de jogadores e mostra a motivação restante; NPCs não têm esse indicador. O líder pode recuperar 40 pontos com " (comando "ginasio pocao pedra 1") ", 20 com " (comando "ginasio fruta pedra 1") " ou tudo com uma fruta dourada. Ao ser derrotado, o time retorna desmaiado à equipe ou ao PC se ela estiver cheia.\n"
-         "🪙 Moedas de ginásio vêm só do tempo defendendo (mín. 30 min; até 100 por ocupação em 8 h; teto 100/dia/treinador), creditadas no retorno — não por vencer o líder.\n"
+         "💰 Moedas de ginásio vêm só do tempo defendendo (mín. 30 min; até 100 por ocupação em 8 h; teto 100/dia/treinador), creditadas no retorno — não por vencer o líder.\n"
          "Ranking por defesas e tempo: " (comando "ginasio ranking pedra") ". Últimas batalhas: " (comando "ginasio historico pedra") ". Sem nome, mostra todos os ginásios. Defesas começam a ser registradas nesta atualização.\n"
          "Para recuperar o time, consulte " (comando "ajuda time") ".")
 

@@ -918,8 +918,9 @@
 
 (defn- texto-efetividade [multiplicador]
   (cond
-    (> multiplicador 1) "\n🔥 Foi super efetivo!"
-    (< multiplicador 1) "\n😕 Não foi muito efetivo..."
+    (zero? multiplicador) "\nSem efeito!🚫"
+    (> multiplicador 1) "\nSuper efetivo!🔥"
+    (< multiplicador 1) "\nPouco efetivo!🛡️"
     :else ""))
 
 (defn- texto-critico [critico?]

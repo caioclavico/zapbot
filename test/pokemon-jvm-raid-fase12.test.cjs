@@ -41,10 +41,19 @@ test('abrir direto por índice/id/nome sem menu prévio', () => {
   assert.match(help, /Sem argumento/);
 });
 
-test('lobby messaging usa 5 minutos', () => {
-  assert.match(present.formatRaidOpened({
-    raid: { nomeGinasio: 'Pedra', liga: 'iniciante', chefe: { nome: 'Onix' } }
-  }, '!pk'), /5 minutos/);
+test('lobby messaging usa prazo dinâmico (expira)', () => {
+  const agora = Date.now();
+  const msg = present.formatRaidOpened({
+    agora,
+    raid: {
+      nomeGinasio: 'Pedra',
+      liga: 'iniciante',
+      chefe: { nome: 'Onix' },
+      expira: agora + (5 * 60 * 1000)
+    }
+  }, '!pk');
+  assert.match(msg, /5 minutos|5m|Entrada aberta/);
+  assert.match(msg, /raid entrar/);
 });
 
 test('contrato JSON: sua-vez? → suaVez (incidente todos bloqueados)', () => {
@@ -210,6 +219,7 @@ test('vitória lista recompensas reais e captura; fruta aliases', () => {
     ],
     raid: {
       chefe: { nome: 'Onix' },
+      capturaPendente: true,
       participantes: [
         { playerId: '121212@lid', nome: 'Jogador1', pokemon: { nome: 'Charizard' } },
         { playerId: '5511999999999@c.us', nome: 'Jogador2', pokemon: { nome: 'Blastoise' } }
@@ -229,6 +239,7 @@ test('vitória lista recompensas reais e captura; fruta aliases', () => {
   assert.deepEqual(win.mentions, ['121212@lid', '5511999999999@c.us']);
   assert.match(win.text, /raid fruta/);
   assert.match(win.text, /capturar/);
+  assert.doesNotMatch(win.text, /🪙|🌙|🌕/);
   const fruta = present.formatRaidFrambo({
     capturaUi: {
       chefe: 'Onix',
@@ -332,7 +343,7 @@ test('derrota lista PE/XP persistidos sem captura (12.8.3)', () => {
   assert.match(msg.text, /Recompensas de participação/);
   assert.match(msg.text, /@Ash\n👤 Treinador: \+3 PE/);
   assert.match(msg.text, /⚔️ Pokémon participante: \+3 XP/);
-  assert.match(msg.text, /🪙 Moedas: 0/);
+  assert.match(msg.text, /💰 Moedas: 0/);
   assert.match(msg.text, /@Misty\n👤 Treinador: \+3 PE/);
   assert.doesNotMatch(msg.text, /CAPTURA DO CHEFE/);
   assert.doesNotMatch(msg.text, /Sem recompensas/);

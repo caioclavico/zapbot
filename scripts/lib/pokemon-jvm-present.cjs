@@ -1453,10 +1453,16 @@ function formatError(err) {
 }
 
 function formatUnavailable(commandHint) {
+  const hint = String(commandHint || '').trim();
+  const first = hint.split(/\s+/)[0] || '';
+  const topic = first ? resolveHelpTopic(first) : null;
+  const helpHint = topic && topic !== '_index'
+    ? `Use \`!pk ajuda ${topic}\` para consultar os comandos disponíveis.`
+    : 'Use `!pk ajuda` para ver a central de ajuda.';
   return [
-    '❓ Esse comando ainda não está disponível por aqui.',
-    commandHint ? `Você pediu: \`${commandHint}\`` : null,
-    'Tente: `treinador`, `meus`, `escolher`, `evoluir`, `aprender`, `cacar`, `capturar`, `ginasio`, `raide`, `joy`, `ovos`, `loja`, `mochila`, `saves`.'
+    '❓ Comando não reconhecido.',
+    hint ? `Você pediu: \`${hint}\`` : null,
+    `❓ ${helpHint}`
   ].filter(Boolean).join('\n');
 }
 
@@ -1660,7 +1666,7 @@ function formatGymResolve(gymResolve, battle) {
           ? 'Revanche diária concluída.'
           : 'Você já recebeu a recompensa diária; o XP de combate continua valendo.'),
       (rew.moedas != null && Number(rew.moedas) > 0)
-        ? (textoMoedas(rew.moedas) || `🪙 +${rew.moedas} moedas.`)
+        ? (textoMoedas(rew.moedas) || `💰 +${rew.moedas} moedas.`)
         : null,
       gymResolve.peDelta != null ? `⭐ +${gymResolve.peDelta} PE.` : null,
       gymResolve.occupied ? '🏛️ Você é o novo líder — time reservado no ginásio.' : null
@@ -1685,7 +1691,7 @@ function formatGymDefenderReturn(data) {
     `🏟️ Seu *${nome}* voltou do ginásio!`,
     tempo ? `⏱️ Tempo defendido: ${tempo}` : null,
     (moedas != null && Number(moedas) > 0)
-      ? `🪙 Moedas recebidas: ${moedas}`
+      ? `💰 Moedas recebidas: ${moedas}`
       : null
   ];
   return lines.filter(Boolean).join('\n');
@@ -1992,7 +1998,7 @@ function formatCaptureResult(data, prefix = '!pk') {
       `✅ ${meta.nome} lançada: captura concluída! (${chance}% de chance)`,
       `📚 Registrado na Pokédex e adicionado à coleção como nº ${idx}.`,
       `🔥 Sequência de capturas: ${rew.sequencia != null ? rew.sequencia : data.sequenciaCapturas || 0}`,
-      `✨ +${rew.xp || 0} XP • ${textoMoedas(rew.moedas || 0) || '🪙 +0 moedas'}`,
+      `✨ +${rew.xp || 0} XP • ${textoMoedas(rew.moedas || 0) || '💰 +0 moedas'}`,
       data.subida
         ? `🌟 *${data.subida.nome}* subiu para o nível ${data.subida.nivel}!`
         : null,
@@ -2099,7 +2105,7 @@ function formatGymDetail(data, prefix = '!pk') {
       }
     });
     if (ocup.economiaPermanenciaAtiva && ocup.recompensaEstimada != null) {
-      lines.push(`🪙 Recompensa estimada: ${ocup.recompensaEstimada} moedas`);
+      lines.push(`💰 Recompensa estimada: ${ocup.recompensaEstimada} moedas`);
     }
   }
   return lines.filter(Boolean).join('\n');
@@ -2615,7 +2621,7 @@ function formatRaidRewardLines(rewards, viewerId, mentionRoster) {
     const x = rw.xpPokemon != null ? rw.xpPokemon : rw['xp-pokemon'];
     lines.push(
       tag,
-      textoMoedas(rw.moedas != null ? rw.moedas : 0) || `🪙 +0 moedas`,
+      textoMoedas(rw.moedas != null ? rw.moedas : 0) || `💰 +0 moedas`,
       `🏅 +${rw.pe != null ? rw.pe : 0} PE`,
       x != null ? `⭐ +${x} XP` : null,
       ''
@@ -2698,7 +2704,7 @@ function formatRaidDefeat(data, _prefix = '!pk') {
         tag,
         `👤 Treinador: +${pe} PE`,
         `⚔️ Pokémon participante: +${xp} XP`,
-        `🪙 Moedas: ${moedas}`,
+        `💰 Moedas: ${moedas}`,
         ''
       );
     }
@@ -2715,9 +2721,10 @@ function formatRaidDefeat(data, _prefix = '!pk') {
 function effectivenessLine(mult) {
   const m = Number(mult);
   if (!Number.isFinite(m)) return null;
-  if (m === 0) return '🚫 Não teve efeito...';
-  if (m > 1) return '💥 É super efetivo!';
-  if (m < 1) return '🛡️ Não é muito efetivo...';
+  // Emoji no FINAL, colado ao texto — evita quebra solitária no WhatsApp.
+  if (m === 0) return 'Sem efeito!🚫';
+  if (m > 1) return 'Super efetivo!🔥';
+  if (m < 1) return 'Pouco efetivo!🛡️';
   return null;
 }
 
@@ -3229,12 +3236,15 @@ function tipoLabelPt(t) {
   return TIPOS_PT[k] || TYPE_LABEL_PT[k] || t;
 }
 
-/** Recompensa de moedas — sempre 🪙 (nunca 🌙). */
+/** Emoji oficial de moedas do Odisseu. */
+const COIN_EMOJI = '💰';
+
+/** Recompensa de moedas — emoji oficial 💰 (nunca 🪙/🌙/🌕). */
 function textoMoedas(n, { prefixo = '+' } = {}) {
   const v = Number(n);
   if (!Number.isFinite(v) || v === 0) return null;
   const sinal = prefixo == null ? '' : String(prefixo);
-  return `🪙 ${sinal}${v} moedas`;
+  return `${COIN_EMOJI} ${sinal}${v} moedas`;
 }
 
 function candyLabel(family, qty) {
@@ -3406,7 +3416,7 @@ function formatMissionClaim(data, kind, prefix = '!pk') {
   }
   const lines = [`✅ ${result.ids && result.ids.length || 0} missão(ões) resgatada(s)!`];
   if (result.xp) lines.push(`✨ +${result.xp} PE do treinador`);
-  if (result.coins) lines.push(textoMoedas(result.coins) || `🪙 +${result.coins} moedas`);
+  if (result.coins) lines.push(textoMoedas(result.coins) || `💰 +${result.coins} moedas`);
   const doces = result.doces || {};
   Object.keys(doces).forEach((fam) => {
     const n = Number(doces[fam] || 0);
@@ -3610,8 +3620,345 @@ function formatRaidEligible(data, prefix = '!pk') {
   ].join('\n');
 }
 
+/** Tokens que pedem ajuda (central ou contextual). */
+const HELP_TOKENS = new Set(['ajuda', 'help', '?', 'ajd']);
+
+function isHelpToken(token) {
+  return HELP_TOKENS.has(String(token || '').toLowerCase());
+}
+
+/**
+ * Registro declarativo de ajuda A6 (espelha comandos reais do router).
+ * Não anunciar módulos inexistentes; sem IDs internos/admin.
+ */
+const HELP_TOPICS = {
+  _index: {
+    titulo: '📖 *ODISSEU — CENTRAL DE AJUDA*',
+    grupos: [
+      {
+        emoji: '🐾',
+        nome: 'AVENTURA',
+        itens: [
+          ['cacar', 'Caçadas e captura'],
+          ['raid', 'Raids cooperativas'],
+          ['ginasio', 'Ginásios e líderes']
+        ]
+      },
+      {
+        emoji: '🎒',
+        nome: 'TREINADOR',
+        itens: [
+          ['pokemon', 'Time, PC e ativo'],
+          ['mochila', 'Itens e recompensas'],
+          ['evoluir', 'Evolução e pedras'],
+          ['treinador', 'Perfil, XP e títulos']
+        ]
+      },
+      {
+        emoji: '🤝',
+        nome: 'INTERAÇÃO',
+        itens: [
+          ['troca', 'Trocas entre treinadores'],
+          ['presentes', 'Presentes diários']
+        ]
+      },
+      {
+        emoji: '🎉',
+        nome: 'EVENTOS',
+        itens: [
+          ['eventos', 'Clima, surtos e missões']
+        ]
+      }
+    ]
+  },
+  cacar: {
+    aliases: ['cacada', 'cacadas', 'hunt', 'captura', 'capturar'],
+    titulo: '🌿 *Ajuda — Caçadas*',
+    corpo: (p) => [
+      'Encontre Pokémon selvagens, lute e capture.',
+      '',
+      '*Começar*',
+      `1. \`${p} inicial\` — escolha seu inicial (primeira vez)`,
+      `2. \`${p} clima\` — veja áreas e clima do dia`,
+      `3. \`${p} cacar\` ou \`${p} cacar <área>\` — inicia a caçada`,
+      '',
+      '*Durante o combate*',
+      `\`${p} atacar 1\` … \`${p} 4\` — use um golpe`,
+      `\`${p} defender\` · \`${p} pocao\` · \`${p} sair\``,
+      `\`${p} escolher <n>\` — troca o ativo (1× por caçada)`,
+      '',
+      '*Após vencer*',
+      `\`${p} capturar\` — menu de bolas e chances`,
+      `\`${p} capturar pokebola|grande-bola|ultra-bola\``,
+      `\`${p} fruta\` — Frambo (+chance na próxima tentativa)`,
+      '',
+      '*Restrições*',
+      '• Cooldown entre caçadas (veja a mensagem de espera)',
+      '• 1 caçada por chat; aja em ~5 minutos',
+      '• Mochila cheia: pode lutar, mas não captura',
+      '• Até 3 tentativas de captura; o selvagem pode fugir',
+      '',
+      `Status: \`${p} clima\` · \`${p} mochila\` · \`${p} time\``
+    ].join('\n')
+  },
+  raid: {
+    aliases: ['raide', 'raides', 'raids'],
+    titulo: '⚔️ *Ajuda — Raids*',
+    corpo: (p) => [
+      'Derrote um chefe em grupo. Cada treinador usa *1 Pokémon*.',
+      '',
+      '*Participar*',
+      `\`${p} raid\` — status da raid ativa`,
+      `\`${p} raid abrir\` — lista ginásios / abrir manual`,
+      `\`${p} raid abrir <ginasio>\` — ex.: pedra, agua, fogo`,
+      `\`${p} raid entrar\` — entra com o Pokémon ativo`,
+      `\`${p} raid entrar auto\` — escolhe o melhor apto`,
+      `\`${p} raid entrar <n>\` — índice da coleção`,
+      `\`${p} raid time\` — lista aptos`,
+      `\`${p} raid iniciar\` — começa (criador; 1+ inscrito)`,
+      `\`${p} raid atacar 1\` … — golpe na sua vez`,
+      `\`${p} raid sair\` — sai do lobby (antes do combate)`,
+      `\`${p} raid cancelar\` — cancela (criador, em inscrição)`,
+      '',
+      '*Captura do chefe*',
+      `\`${p} raid capturar\` — menu`,
+      `\`${p} raid capturar pokebola|grande-bola|ultra-bola\``,
+      `\`${p} raid frambo\` — prepara Frambo`,
+      '',
+      '*Regras*',
+      '• Um Pokémon por treinador; se desmaiar, você fica fora',
+      '• Explosion/Self-Destruct: dano alto e autodesmaio',
+      '• Chefe permanece o mesmo do anúncio até o fim',
+      '• Raids automáticas e manuais compartilham as mesmas regras de combate',
+      '',
+      `Ajuda rápida: \`${p} ajuda raid\``
+    ].join('\n')
+  },
+  ginasio: {
+    aliases: ['ginasios', 'gin', 'gym'],
+    titulo: '🏛️ *Ajuda — Ginásios*',
+    corpo: (p) => [
+      'Desafie líderes NPC ou jogadores e dispute a ocupação.',
+      '',
+      '*Consultar*',
+      `\`${p} ginasio\` — visão geral`,
+      `\`${p} ginasio pedra|agua|eletrico|planta|fogo\``,
+      `\`${p} ginasio ranking [ginasio]\` · \`${p} ginasio historico [ginasio]\``,
+      '',
+      '*Desafiar*',
+      `\`${p} ginasio time\` — monta/vê time de 3`,
+      `\`${p} ginasio time 1,2,3\` — escolhe pelos números da coleção`,
+      `\`${p} ginasio desafiar <ginasio>\` — inicia o combate`,
+      `\`${p} atacar 1\` … — na sua vez`,
+      '',
+      '*Líder (ocupação)*',
+      `\`${p} ginasio pocao <ginasio> <n>\` · \`${p} ginasio fruta <ginasio> <n>\``,
+      'Moedas de defesa vêm do *tempo* defendendo (não da vitória).',
+      '',
+      '*Notas*',
+      '• Raridade da espécie ≠ dificuldade do ginásio',
+      '• Defensores de jogadores não são substituídos pelo sorteio NPC',
+      '• Desbloqueie ginásios na ordem das insígnias',
+      '',
+      `Também: \`${p} gin ajuda\``
+    ].join('\n')
+  },
+  pokemon: {
+    aliases: ['time', 'tm', 'equipe', 'pc', 'colecao', 'coleção'],
+    titulo: '🎒 *Ajuda — Pokémon / Time*',
+    corpo: (p) => [
+      'Gerencie sua coleção, o ativo e o espaço.',
+      '',
+      `\`${p} time\` / \`${p} tm\` — coleção (páginas e filtros)`,
+      `\`${p} time 2\` · \`${p} time fogo >\` · \`${p} time shiny\``,
+      `\`${p} escolher <n>\` — define o Pokémon ativo`,
+      `\`${p} favorito <n>\` · \`${p} favorito remover\``,
+      `\`${p} pokedex\` / \`${p} dex\` — Pokédex e descobertas`,
+      `\`${p} espaco\` · \`${p} espaco comprar\` — +50 vagas`,
+      `\`${p} joy <n,n>\` — Enfermeira Joy`,
+      `\`${p} professor enviar <n>\` — troca por Doces (definitivo)`,
+      '',
+      `Comece com \`${p} inicial\` se ainda não tiver treinador.`
+    ].join('\n')
+  },
+  mochila: {
+    aliases: ['inventario', 'inventário', 'mch', 'itens', 'recompensas'],
+    titulo: '🎒 *Ajuda — Mochila*',
+    corpo: (p) => [
+      'Itens, bolas, poções e recompensas pendentes.',
+      '',
+      `\`${p} mochila\` ou \`!mochila\` — inventário`,
+      `\`${p} mochila resgatar\` — coleta recompensas pendentes`,
+      '`!loja` · `!loja comprar <item>` — comprar',
+      `\`${p} pocao [n]\` · \`${p} pocao-maxima [n]\` · \`${p} curar\``,
+      `\`${p} reviver [n]\` — revive um desmaiado`,
+      '',
+      'Bolas: Pokébola, Grande Bola, Ultra Bola.',
+      'Frambo aumenta a chance da próxima captura.',
+      '',
+      `Também: \`${p} mochila ajuda\``
+    ].join('\n')
+  },
+  evoluir: {
+    aliases: ['evolucao', 'evolução', 'evo'],
+    titulo: '💎 *Ajuda — Evolução*',
+    corpo: (p) => [
+      'Evolua por nível, pedra, troca ou condições especiais.',
+      '',
+      `\`${p} pokedex <n|nome>\` — vê requisitos na ficha`,
+      `\`${p} evoluir <n> [item]\` — ex.: \`${p} evoluir 1 pedra-trovao\``,
+      `\`${p} evoluir <n> especial [destino]\` — Catalisador`,
+      `\`${p} professor usar <n>\` — Doce (+3 XP)`,
+      `\`${p} amizade [n]\` — amizade do Pokémon`,
+      '',
+      'Pedras vêm de ginásios/missões. Equipe itens de troca antes de negociar.',
+      `Itens: \`!loja detalhes <item>\``
+    ].join('\n')
+  },
+  troca: {
+    aliases: ['trocas', 'negociar'],
+    titulo: '🤝 *Ajuda — Trocas*',
+    corpo: (p) => [
+      'Troque Pokémon com outro treinador do chat.',
+      '',
+      `\`${p} troca <seu nº> <nº dele> @treinador\` — propõe`,
+      `\`${p} trocas\` — lista pendentes`,
+      `\`${p} troca aceitar <n>\` · \`${p} troca confirmar <n>\``,
+      `\`${p} troca recusar <n>\` · \`${p} troca cancelar <n>\``,
+      '',
+      'Ambos precisam estar fora de combate. Mencione exatamente um treinador.'
+    ].join('\n')
+  },
+  presentes: {
+    aliases: ['presente', 'gift'],
+    titulo: '🎁 *Ajuda — Presentes*',
+    corpo: (p) => [
+      'Envie um presente diário a um amigo.',
+      '',
+      '`!loja comprar cartao-presente` — obtém o cartão',
+      '`!presente @amigo` — envia',
+      `\`${p} missoes\` — progresso relacionado`,
+      '',
+      'Limites diários e estoque valem; confira a mochila após enviar.'
+    ].join('\n')
+  },
+  eventos: {
+    aliases: ['evento', 'clima', 'missoes', 'missões', 'surto'],
+    titulo: '🎉 *Ajuda — Eventos e clima*',
+    corpo: (p) => [
+      'Clima, áreas do dia, surtos e missões.',
+      '',
+      `\`${p} clima\` — áreas e tipos favorecidos`,
+      `\`${p} eventos\` — eventos temáticos ativos`,
+      `\`${p} missoes\` · \`${p} missoes diaria|semanal|evento\``,
+      `\`${p} missoes resgatar\` — quando completo`,
+      '',
+      'Surtos aumentam encontros de certas espécies enquanto ativos.',
+      'Recompensas de missão vão à mochila / pendências.'
+    ].join('\n')
+  },
+  treinador: {
+    aliases: ['perfil', 'tre', 'save', 'saves'],
+    titulo: '👤 *Ajuda — Treinador*',
+    corpo: (p) => [
+      'Perfil, progresso e saves.',
+      '',
+      `\`${p} treinador\` / \`${p} perfil\` — resumo`,
+      `\`${p} titulo\` · \`${p} titulo <n>\` — títulos`,
+      `\`${p} saves\` · \`${p} save <nome>\` — saves`,
+      `\`${p} novo save [nome]\` — cria save`,
+      `\`${p} iniciar\` — começa a jornada`,
+      '',
+      `Menu geral: \`${p}\` ou \`${p} menu\``
+    ].join('\n')
+  },
+  recompensas: {
+    aliases: ['moedas', 'xp', 'economia'],
+    titulo: '💰 *Ajuda — Recompensas*',
+    corpo: (p) => [
+      'Moedas (💰), XP e itens vêm de caçadas, raids, ginásios e missões.',
+      '',
+      '• Vitória de caça / raid: XP + moedas conforme o resultado',
+      '• Ginásio: moedas pelo *tempo* defendendo (mín. 30 min)',
+      `• Missões: resgate em \`${p} missoes\` / mochila`,
+      '',
+      `\`${p} mochila\` — itens · \`!loja\` — gastar moedas`,
+      'O emoji oficial de moedas é sempre 💰.'
+    ].join('\n')
+  }
+};
+
+function resolveHelpTopic(raw) {
+  const key = String(raw || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  if (!key) return '_index';
+  if (HELP_TOPICS[key] && key !== '_index') return key;
+  for (const [id, meta] of Object.entries(HELP_TOPICS)) {
+    if (id === '_index') continue;
+    if ((meta.aliases || []).some((a) => a === key
+      || a.normalize('NFD').replace(/[\u0300-\u036f]/g, '') === key)) {
+      return id;
+    }
+  }
+  // Mapear aliases de comando → tópico
+  const cmd = ALIASES[key];
+  if (cmd && HELP_TOPICS[cmd]) return cmd;
+  if (cmd === 'time' || cmd === 'pokedex' || cmd === 'pc' || cmd === 'espaco') return 'pokemon';
+  if (cmd === 'eventos' || cmd === 'clima' || cmd === 'missoes') return 'eventos';
+  if (cmd === 'treinador' || cmd === 'save' || cmd === 'saves') return 'treinador';
+  if (cmd === 'presente') return 'presentes';
+  if (cmd === 'evoluir') return 'evoluir';
+  if (cmd === 'capturar' || cmd === 'fruta') return 'cacar';
+  return null;
+}
+
+function formatHelp(topicRaw, prefix = '!pk') {
+  const p = prefix || '!pk';
+  const topic = resolveHelpTopic(topicRaw);
+  if (!topic) {
+    return [
+      '❓ Não encontrei esse módulo de ajuda.',
+      '',
+      formatHelp(null, p)
+    ].join('\n');
+  }
+  if (topic === '_index') {
+    const idx = HELP_TOPICS._index;
+    const lines = [idx.titulo, ''];
+    for (const g of idx.grupos) {
+      lines.push(`${g.emoji} *${g.nome}*`);
+      for (const [slug, desc] of g.itens) {
+        lines.push(`\`${p} ajuda ${slug}\` — ${desc}`);
+      }
+      lines.push('');
+    }
+    lines.push('_Escolha uma categoria para ver os comandos._');
+    lines.push(`Também: \`${p} raid ajuda\` · \`${p} ginasio ajuda\` · \`${p} mochila ajuda\``);
+    return lines.join('\n');
+  }
+  const meta = HELP_TOPICS[topic];
+  const body = typeof meta.corpo === 'function' ? meta.corpo(p) : meta.corpo;
+  return `${meta.titulo}\n\n${body}`;
+}
+
+function resolveHelpRequest(tokens) {
+  const toks = (tokens || []).map((t) => String(t || '').toLowerCase()).filter(Boolean);
+  if (!toks.length) return null;
+  if (isHelpToken(toks[0])) {
+    return { topic: toks[1] || null };
+  }
+  if (toks.length >= 2 && isHelpToken(toks[1])) {
+    return { topic: toks[0] };
+  }
+  return null;
+}
+
 /** Aliases alinhados ao legado (ajuda.cljs / core). */
 const ALIASES = {
+  ajuda: 'ajuda', help: 'ajuda', '?': 'ajuda', ajd: 'ajuda',
   professor: 'professor', prof: 'professor',
   titulo: 'titulo', título: 'titulo', titulos: 'titulo', 'títulos': 'titulo',
   amizade: 'amizade', happy: 'amizade',
@@ -3884,7 +4231,15 @@ module.exports = {
   formatRaidMoveLines,
   descricaoExplosion,
   isExplosionGolpe,
+  COIN_EMOJI,
   textoMoedas,
+  effectivenessLine,
+  isHelpToken,
+  HELP_TOKENS,
+  HELP_TOPICS,
+  resolveHelpTopic,
+  resolveHelpRequest,
+  formatHelp,
   TIPOS_PT,
   tipoLabelPt,
   formatCanonicalAttackLine,
@@ -3995,7 +4350,7 @@ function formatPvpRewards(rewards, prefix = '!pk') {
     return null;
   }
   const lines = [];
-  if (r.moedas) lines.push(`${textoMoedas(r.moedas) || `🪙 +${r.moedas} moedas`} (confira com ${prefix} loja)`);
+  if (r.moedas) lines.push(`${textoMoedas(r.moedas) || `💰 +${r.moedas} moedas`} (confira com ${prefix} loja)`);
   if (r.pe) lines.push(`⭐ +${r.pe} PE de treinador (vitória)`);
   if (r.bola) lines.push(`🎒 +1 ${r.bola}`);
   const pokes = Array.isArray(r.pokemon) ? r.pokemon : [];
@@ -4049,7 +4404,7 @@ function formatPvpBattle(battle, prefix = '!pk', opts = {}) {
       lines.push(`🏆 *${winName}* venceu!`);
       const rewTxt = formatPvpRewards(rewards, prefix);
       if (rewTxt) lines.push(rewTxt);
-      else lines.push('🪙 +10 moedas');
+      else lines.push('💰 +10 moedas');
     }
     return lines.join('\n');
   }

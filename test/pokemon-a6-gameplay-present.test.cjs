@@ -11,9 +11,10 @@ const raidMsg = present.formatRaidAttack({
   raid: { hpChefe: 100, hpMax: 200, vez: 'ash', ordem: ['ash'] }
 }, '!pk');
 
-assert.match(raidMsg, /Lanca-Chamas/);
-assert.match(raidMsg, /super efetivo/i);
-assert.match(raidMsg, /próximo da party|proximo da party|party/i);
+assert.match(raidMsg, /super efetivo|🔥Super efetivo/i);
+assert.match(raidMsg, /Super efetivo!🔥/);
+assert.doesNotMatch(raidMsg, /🔥Super efetivo|Super efetivo! 🔥/);
+assert.match(raidMsg, /desmaiou|ficou fora|party/i);
 
 const menu = present.formatCaptureMenu({
   encounter: {

@@ -113,11 +113,12 @@
     "❓"))
 
 (defn- texto-efetividade
+  "Emoji no FINAL, colado ao texto (sem espaço) — evita quebra solitária no WhatsApp."
   [multiplicador]
   (cond
-    (zero? (double multiplicador)) "\n🚫 Não teve efeito..."
-    (> (double multiplicador) 1.0) "\n💥 É super efetivo!"
-    (< (double multiplicador) 1.0) "\n🛡️ Não é muito efetivo..."
+    (zero? (double multiplicador)) "\nSem efeito!🚫"
+    (> (double multiplicador) 1.0) "\nSuper efetivo!🔥"
+    (< (double multiplicador) 1.0) "\nPouco efetivo!🛡️"
     :else ""))
 
 (defn- texto-critico
