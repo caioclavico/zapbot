@@ -295,3 +295,75 @@
       (is (nil? (ports/active-battle s chat player)))
       (is (= 300 (idle/idle-timeout-segundos))
           "timer padrão permanece 5 minutos"))))
+
+(deftest timeout-antigo-nao-encerra-apos-renovacao
+  "Scheduler atrasado com expires-at observado antigo perde CAS e não finaliza."
+  (with-redefs [idle/environment (fn [k]
+                                   ({"POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS" "300"
+                                     "APP_ENV" "staging"} k))]
+    (let [s (fresh-store! "idle-race-renew")
+          chat "chat-race" player "ash"
+          _ (boot! s chat player)
+          t0 8000000000000
+          started (ports/start-wild-battle!
+                   s (wctx s chat player)
+                   {:operation-id "start-race"
+                    :battle-id "race-b"
+                    :pokemon-x squirtle :pokemon-o magikarp
+                    :hp-x 100 :hp-o 20 :collection-index 0 :agora t0})
+          bid (get-in started [:battle :battle-id])
+          expires0 (:idle-expires-at (ports/get-battle s bid))
+          ;; Renova prazo com ação válida.
+          _ (ports/confirm-battle-turn!
+             s (wctx s chat player)
+             {:operation-id "renew-race"
+              :battle-id bid
+              :expected-turn-index 0
+              :action :defend
+              :agora (+ t0 290000)
+              :rng {:accuracy 0 :crit 99 :damage-var 0 :flee 99
+                    :impede-para 99}})
+          b-renewed (ports/get-battle s bid)
+          ;; Expire no instante do prazo *antigo* — CAS de expires-at deve abortar.
+          r (idle-store/expire-battle! (:conn s) bid expires0)
+          b-final (ports/get-battle s bid)
+          notes (ports/list-battle-idle-notifications s {:limit 10})]
+      (is (= (+ t0 290000 300000) (:idle-expires-at b-renewed)))
+      (is (not= expires0 (:idle-expires-at b-renewed)))
+      (is (= "deadline-not-due" (:skipped r)))
+      (is (true? (:active? b-final))
+          "batalha renovada permanece ativa")
+      (is (not= :idle-timeout (:outcome b-final)))
+      (is (empty? notes)
+          "sem notificação de timeout falso"))))
+(deftest ataque-apos-timeout-recebe-idle-expired
+  (with-redefs [idle/environment (fn [k]
+                                   ({"POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS" "300"
+                                     "APP_ENV" "staging"} k))]
+    (let [s (fresh-store! "idle-after")
+          chat "chat-after" player "ash"
+          _ (boot! s chat player)
+          t0 9000000000000
+          started (ports/start-wild-battle!
+                   s (wctx s chat player)
+                   {:operation-id "start-after"
+                    :battle-id "after-b"
+                    :pokemon-x squirtle :pokemon-o magikarp
+                    :hp-x 100 :hp-o 20 :collection-index 0 :agora t0})
+          bid (get-in started [:battle :battle-id])
+          _ (ports/expire-idle-battles! s {:agora (+ t0 300000) :limit 4})
+          notes (ports/list-battle-idle-notifications s {:limit 5})
+          code (try
+                 (ports/confirm-battle-turn!
+                  s (wctx s chat player)
+                  {:operation-id "late-atk"
+                   :battle-id bid
+                   :expected-turn-index 0
+                   :action :attack :move-index 0
+                   :agora (+ t0 300001)
+                   :rng {:accuracy 0 :crit 99 :damage-var 0 :flee 99}})
+                 :ok
+                 (catch Exception ex (err/error-code ex)))]
+      (is (= 1 (count notes)))
+      (is (re-find #"inatividade" (str (:text (first notes)))))
+      (is (= :battle_idle_expired code)))))
