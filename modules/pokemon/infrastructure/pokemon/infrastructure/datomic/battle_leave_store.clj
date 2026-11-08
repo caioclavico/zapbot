@@ -155,9 +155,10 @@
                  (nth colecao-x (get-in battle [:indices-ativos :x] 0) nil))
         poke-o (when (and colecao-o (get-in battle [:indices-ativos :o]))
                  (nth colecao-o (get-in battle [:indices-ativos :o]) nil))
-        sync-x (when (and poke-x pokemon-sync-tx (get-in next [:hp :x]))
+        ;; HP 0 (Explosion/nocaute) deve sincronizar — `some?`, não truthiness.
+        sync-x (when (and poke-x pokemon-sync-tx (some? (get-in next [:hp :x])))
                  (pokemon-sync-tx poke-x (get-in next [:hp :x]) (get-in next [:status :x])))
-        sync-o (when (and poke-o pokemon-sync-tx (get-in next [:hp :o]))
+        sync-o (when (and poke-o pokemon-sync-tx (some? (get-in next [:hp :o])))
                  (pokemon-sync-tx poke-o (get-in next [:hp :o]) (get-in next [:status :o])))
         clear-x [[:db/retract
                   [:player/key (id/player-key chat-id (get-in battle [:jogadores :x]))]

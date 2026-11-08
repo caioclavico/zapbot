@@ -292,8 +292,21 @@
               :fence-generation fence-generation
               :collection-index (long (or collection-index 0))
               :pokemons {:x pokemon-x :o pokemon-o}
-              :hp {:x (long (or hp-x (:hp pokemon-x) 0))
-                   :o (long (or hp-o (:hp pokemon-o) 0))}
+              ;; `or` trata 0 como ausente — HP 0 legítimo (desmaio) deve permanecer.
+              :hp {:x (long (if (some? hp-x)
+                              hp-x
+                              (let [mx (max 0 (long (or (:hp pokemon-x) 0)))
+                                    cur (:hp-atual pokemon-x)]
+                                (cond (nil? cur) mx
+                                      (neg? (long cur)) 0
+                                      :else (min (long cur) mx)))))
+                   :o (long (if (some? hp-o)
+                              hp-o
+                              (let [mx (max 0 (long (or (:hp pokemon-o) 0)))
+                                    cur (:hp-atual pokemon-o)]
+                                (cond (nil? cur) mx
+                                      (neg? (long cur)) 0
+                                      :else (min (long cur) mx)))))}
               :status {:x (kw-status status-x) :o (kw-status status-o)}
               :estagios {:x {} :o {}}
               :defendendo {:x false :o false}
@@ -438,7 +451,11 @@
 
 (defn- resolve-faint
   "Após HP 0: em caça encerra; em ginásio troca reserva ou encerra o match;
-   em PvP 1×1 define vencedor (:x|:o) ou empate."
+   em PvP 1×1 define vencedor (:x|:o) ou empate.
+
+  Ginásio + Explosion: se X e O caem no mesmo golpe, marcar o índice de X em
+  `fainted-x` *antes* de `enviar-proximo` — senão o sync pós-vitória não zera
+  o HP do mon que explodiu (causa-raiz P0)."
   [battle fainted-side]
   (cond
     (= :pvp (:kind battle))
@@ -462,7 +479,9 @@
           both-down? (and (zero? (long (get-in b [:hp :x] 0)))
                           (zero? (long (get-in b [:hp :o] 0))))]
       (if both-down?
-        (let [bx (or (when (zero? (get-in b [:hp :x])) (enviar-proximo b :x)) b)
+        ;; Marca X desmaiado mesmo quando o nocaute reportado foi :o (Explosion).
+        (let [b (cond-> b (zero? (long (get-in b [:hp :x] 0))) mark-fainted-x)
+              bx (or (when (zero? (get-in b [:hp :x])) (enviar-proximo b :x)) b)
               bo (or (when (zero? (get-in bx [:hp :o])) (enviar-proximo bx :o)) bx)
               still-x (pos? (long (get-in bo [:hp :x] 0)))
               still-o (pos? (long (get-in bo [:hp :o] 0)))]
@@ -535,7 +554,9 @@
         battle (cond-> battle
                  dreno (update-in [:hp atk-marca] #(min max-atk (+ % dreno)))
                  recuo (update-in [:hp atk-marca] #(max 0 (- % recuo)))
-                 autodesmaio? (assoc-in [:hp atk-marca] 0))
+                 autodesmaio? (assoc-in [:hp atk-marca] 0)
+                 ;; Snapshot embutido acompanha o HP de combate (evita UI/resync com HP cheio).
+                 autodesmaio? (assoc-in [:pokemons atk-marca :hp-atual] 0))
         battle (if (and (:acertou? resolved) (seq (:alteracoes golpe)))
                  (let [alvo (if (= :proprio (:alvo golpe)) atk-marca def-marca)]
                    (aplicar-alteracoes battle alvo (:alteracoes golpe)))
