@@ -116,10 +116,17 @@ function cacheSet(key, value) {
   }
 }
 
-async function baixarBuffer(url) {
+async function baixarBuffer(url, { rejectCheckerboard = true } = {}) {
   if (!url) return null;
   const cached = cacheGet(url);
-  if (cached) return cached;
+  if (cached) {
+    if (rejectCheckerboard && await looksLikeCheckerboard(cached)) {
+      spriteCache.delete(url);
+      logSpriteDiag('cache_reject_checkerboard', { cache: 'hit', urlHost: safeUrlHost(url) });
+    } else {
+      return cached;
+    }
+  }
   let lastErr = null;
   for (const u of candidatosUrl(url)) {
     try {
@@ -129,6 +136,11 @@ async function baixarBuffer(url) {
         continue;
       }
       const buf = Buffer.from(await res.arrayBuffer());
+      if (rejectCheckerboard && await looksLikeCheckerboard(buf)) {
+        logSpriteDiag('download_reject_checkerboard', { cache: 'miss', urlHost: safeUrlHost(u) });
+        lastErr = new Error('checkerboard_sprite');
+        continue;
+      }
       cacheSet(url, buf);
       return buf;
     } catch (err) {
@@ -140,6 +152,14 @@ async function baixarBuffer(url) {
     console.warn('[pokemon-jvm-media] sprite indisponível:', url, lastErr.message || lastErr);
   }
   return null;
+}
+
+function safeUrlHost(url) {
+  try {
+    return new URL(String(url)).host || null;
+  } catch (_) {
+    return null;
+  }
 }
 
 function tiposPt(tipos) {
@@ -159,18 +179,90 @@ function escapeXml(s) {
 
 function svgPlaceholder(tamanho) {
   const t = Math.max(32, Number(tamanho) || 96);
-  // Neutro claro xadrez — evita "caixa preta" quando o download falha.
+  const r = Math.floor(t * 0.38);
+  // Silhueta sólida determinística — NUNCA xadrez (confundia com "transparência").
   return Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${t}" height="${t}" viewBox="0 0 ${t} ${t}">`
-    + `<defs><pattern id="p" width="16" height="16" patternUnits="userSpaceOnUse">`
-    + `<rect width="8" height="8" fill="#e5e7eb"/><rect x="8" y="8" width="8" height="8" fill="#e5e7eb"/>`
-    + `<rect x="8" width="8" height="8" fill="#f3f4f6"/><rect y="8" width="8" height="8" fill="#f3f4f6"/>`
-    + `</pattern></defs>`
-    + `<rect width="${t}" height="${t}" fill="url(#p)"/>`
-    + `<text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" `
-    + `font-family="sans-serif" font-size="${Math.max(10, Math.floor(t/8))}" fill="#6b7280">?</text>`
+    + `<circle cx="${t / 2}" cy="${t / 2}" r="${r}" fill="#6366f1" fill-opacity="0.85"/>`
+    + `<text x="50%" y="52%" text-anchor="middle" dominant-baseline="middle" `
+    + `font-family="sans-serif" font-size="${Math.max(12, Math.floor(t / 5))}" `
+    + `font-weight="700" fill="#e0e7ff">?</text>`
     + `</svg>`
   );
+}
+
+/**
+ * Detecta PNG/WebP com xadrez cinza claro embutido (placeholder de transparência
+ * ou asset inválido). Amostra blocos 8×8 nos cantos/centro.
+ */
+async function looksLikeCheckerboard(buf) {
+  if (!buf || !Buffer.isBuffer(buf) || buf.length < 64) return false;
+  try {
+    const { data, info } = await sharp(buf)
+      .ensureAlpha()
+      .resize(64, 64, { fit: 'fill' })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const ch = info.channels;
+    const cell = 8;
+    const samples = [];
+    for (let cy = 0; cy < 64; cy += cell) {
+      for (let cx = 0; cx < 64; cx += cell) {
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        let n = 0;
+        for (let y = cy; y < cy + cell; y += 2) {
+          for (let x = cx; x < cx + cell; x += 2) {
+            const i = (y * 64 + x) * ch;
+            r += data[i];
+            g += data[i + 1];
+            b += data[i + 2];
+            n += 1;
+          }
+        }
+        samples.push([Math.round(r / n), Math.round(g / n), Math.round(b / n)]);
+      }
+    }
+    // Dois tons cinza claros típicos de xadrez de transparência.
+    const isLightGray = ([rr, gg, bb]) => {
+      const max = Math.max(rr, gg, bb);
+      const min = Math.min(rr, gg, bb);
+      return max - min < 18 && rr >= 200 && rr <= 250 && gg >= 200 && gg <= 250;
+    };
+    const light = samples.filter(isLightGray);
+    if (light.length < samples.length * 0.55) return false;
+    // Alternância: células vizinhas com delta médio pequeno mas não idêntico.
+    let alternations = 0;
+    let pairs = 0;
+    const idx = (x, y) => y * 8 + x;
+    for (let y = 0; y < 8; y += 1) {
+      for (let x = 0; x < 8; x += 1) {
+        if (x + 1 < 8) {
+          pairs += 1;
+          const a = samples[idx(x, y)];
+          const b = samples[idx(x + 1, y)];
+          const d = Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+          if (d >= 12 && d <= 90) alternations += 1;
+        }
+      }
+    }
+    return pairs > 0 && (alternations / pairs) >= 0.35;
+  } catch (_) {
+    return false;
+  }
+}
+
+function logSpriteDiag(phase, fields) {
+  try {
+    // Diagnóstico técnico — sem dados pessoais / sem bytes da imagem.
+    // eslint-disable-next-line no-console
+    console.warn(JSON.stringify(Object.assign({
+      event: 'pokemon_sprite_diag',
+      phase: String(phase || ''),
+      ts: Date.now()
+    }, fields || {})));
+  } catch (_) { /* ignore */ }
 }
 
 function tamanhoVisual(pokemon, maximo) {
@@ -227,23 +319,28 @@ async function ensurePokemonSprite(pokemon) {
  * JPEG/artwork sem alpha: NÃO força ensureAlpha (evita quadrado preto/branco
  * no padding); sai PNG com padding alpha 0 sobre a arena.
  */
-async function spriteProporcional(pokemon, maximo) {
+async function spriteProporcional(pokemon, maximo, diagPhase = 'sprite') {
   const tamanho = tamanhoVisual(pokemon, maximo);
-  const buf = await baixarBuffer(spriteUrl(pokemon));
+  const url = spriteUrl(pokemon);
+  const buf = await baixarBuffer(url);
   if (!buf) {
     const out = await sharp(svgPlaceholder(tamanho)).png().toBuffer();
-    return { buffer: out, tamanho, placeholder: true };
+    logSpriteDiag(diagPhase, {
+      source: 'silhouette_fallback',
+      cache: url ? 'miss' : 'no_url',
+      width: tamanho,
+      height: tamanho,
+      hasAlpha: true,
+      placeholder: true,
+      species: pokemon && (pokemon.species || pokemon.nome) || null
+    });
+    return { buffer: out, tamanho, placeholder: true, source: 'silhouette_fallback' };
   }
   try {
     const meta = await sharp(buf).metadata();
     let pipeline = sharp(buf);
-    const treatAsAlpha = Boolean(meta.hasAlpha) || meta.channels === 4 || meta.format === 'webp';
-    if (treatAsAlpha) {
-      pipeline = pipeline.ensureAlpha();
-    } else {
-      // JPEG/opaco: força canal alpha 0 no padding do contain (sem flatten preto).
-      pipeline = pipeline.ensureAlpha();
-    }
+    // JPEG/opaco ou PNG/WebP com alpha: ensureAlpha + contain transparente.
+    pipeline = pipeline.ensureAlpha();
     const out = await pipeline
       .resize(tamanho, tamanho, {
         fit: 'contain',
@@ -251,17 +348,33 @@ async function spriteProporcional(pokemon, maximo) {
       })
       .png()
       .toBuffer();
+    logSpriteDiag(diagPhase, {
+      source: 'url',
+      width: meta.width || null,
+      height: meta.height || null,
+      hasAlpha: Boolean(meta.hasAlpha),
+      channels: meta.channels || null,
+      placeholder: false,
+      species: pokemon && (pokemon.species || pokemon.nome) || null
+    });
     return {
       buffer: out,
       tamanho,
       hasAlpha: Boolean(meta.hasAlpha),
-      channels: meta.channels
+      channels: meta.channels,
+      source: 'url',
+      placeholder: false
     };
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn('[pokemon-jvm-media] sprite inválido, placeholder:', err.message || err);
     const out = await sharp(svgPlaceholder(tamanho)).png().toBuffer();
-    return { buffer: out, tamanho, placeholder: true };
+    logSpriteDiag(diagPhase, {
+      source: 'silhouette_fallback',
+      error: String(err && err.message || err).slice(0, 120),
+      placeholder: true
+    });
+    return { buffer: out, tamanho, placeholder: true, source: 'silhouette_fallback' };
   }
 }
 
@@ -1212,19 +1325,38 @@ async function renderRaidBattleCard({
   hpMax = null,
   hpAtacante = null,
   fase = 'combate',
-  turnIndex = 0
+  turnIndex = 0,
+  renderPhase = 'raid-battle'
 } = {}) {
   try {
     const SPRITE = 220;
+    const phase = String(renderPhase || 'raid-battle');
     // Paridade caça: rehidrata sprites ausentes no 1º frame (slim/legado sem URL).
     const [chefeHydrated, atkHydrated] = await Promise.all([
-      chefe ? ensurePokemonSprite(chefe) : null,
-      atacante ? ensurePokemonSprite(atacante) : null
+      chefe && (chefe.nome || chefe.species || chefe.imagem || chefe['imagem-shiny'])
+        ? ensurePokemonSprite(chefe)
+        : null,
+      atacante && (atacante.nome || atacante.species || atacante.imagem || atacante['imagem-shiny'])
+        ? ensurePokemonSprite(atacante)
+        : null
     ]);
     const [bossSp, atkSp] = await Promise.all([
-      chefeHydrated ? spriteProporcional(chefeHydrated, SPRITE) : null,
-      atkHydrated ? spriteProporcional(atkHydrated, SPRITE) : null
+      chefeHydrated ? spriteProporcional(chefeHydrated, SPRITE, `${phase}:chefe`) : null,
+      atkHydrated ? spriteProporcional(atkHydrated, SPRITE, `${phase}:atacante`) : null
     ]);
+    logSpriteDiag(phase, {
+      formatter: 'renderRaidBattleCard',
+      chefeSource: bossSp && bossSp.source || (chefeHydrated ? 'empty' : 'absent'),
+      atkSource: atkSp && atkSp.source || (atkHydrated ? 'empty' : 'absent'),
+      chefePlaceholder: Boolean(bossSp && bossSp.placeholder),
+      atkPlaceholder: Boolean(atkSp && atkSp.placeholder),
+      golpesAtacante: Array.isArray(atkHydrated && atkHydrated.golpes)
+        ? atkHydrated.golpes.length
+        : 0,
+      tiposChefe: Array.isArray(chefeHydrated && chefeHydrated.tipos)
+        ? chefeHydrated.tipos.length
+        : 0
+    });
     const nomeTre = String(treinador || '').replace(/@.*/g, '').trim() || 'Treinador';
     const nomeBoss = (chefeHydrated && (chefeHydrated.nome || chefeHydrated.species))
       || (chefe && (chefe.nome || chefe.species)) || 'Chefe';
@@ -1293,7 +1425,13 @@ async function renderRaidBattleCard({
     return {
       base64: buf.toString('base64'),
       mimeType: 'image/png',
-      filename: 'raid-batalha.png'
+      filename: 'raid-batalha.png',
+      meta: {
+        chefePlaceholder: Boolean(bossSp && bossSp.placeholder),
+        atkPlaceholder: Boolean(atkSp && atkSp.placeholder),
+        chefeSource: bossSp && bossSp.source || null,
+        atkSource: atkSp && atkSp.source || null
+      }
     };
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -1327,6 +1465,9 @@ module.exports = {
   svgPokedexShell,
   candidatosUrl,
   baixarBuffer,
+  looksLikeCheckerboard,
+  svgPlaceholder,
+  logSpriteDiag,
   tiposPt,
   ensurePokemonSprite,
   spriteProporcional

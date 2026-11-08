@@ -22,6 +22,7 @@
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.pvp :as pvp-domain]
             [pokemon.domain.shop :as shop-domain]
+            [pokemon.domain.battle :as battle]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.errors :as err]
             [pokemon.domain.gym :as gym]
@@ -36,19 +37,24 @@
 
 (defn- present-pokemon
   "DTO de apresentação para Node (HP atual/máx, golpes, sprites).
-   Raridade canônica via `assegurar-raridade` (legado/classificação explícita)."
+   Raridade canônica via `assegurar-raridade` (legado/classificação explícita).
+   Golpes re-normalizados (string-keys / slug) — mesmo canônico do encounter-dto."
   [p hp-atual]
   (when p
     (let [p (capture/assegurar-raridade p)
-          resolved (capture/resolver-raridade p)]
+          resolved (capture/resolver-raridade p)
+          golpes (->> (or (:golpes p) (get p "golpes") [])
+                      (mapv battle/golpe-normalizado)
+                      (filterv map?))]
       (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
                               :raridade :tipos :ataque :defesa :atq-esp :def-esp
-                              :veloc :imagem :imagem-shiny :altura :golpes
+                              :veloc :imagem :imagem-shiny :altura
                               :status :habilidade :collection-index
                               :motivacao-ginasio])
         true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0))
                     :raridade (:raridade resolved)
-                    :raridade-fonte (name (:fonte resolved)))
+                    :raridade-fonte (name (:fonte resolved))
+                    :golpes golpes)
         (:shiny? p) (assoc :shiny true)))))
 
 (defn- present-battle
@@ -391,6 +397,45 @@
                                               :imagem :imagem-shiny :altura
                                               :tipos :shiny :shiny?])})})))
 
+(defn encounter-release!
+  "POST liberar selvagem após vitória (sem captura)."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id battle-id]
+          :as _req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        raw (capture-app/encounter-release!
+             store writer-ctx
+             (cond-> {:operation-id (str operation-id)}
+               battle-id (assoc :battle-id battle-id)))
+        result (merge-capture-receipt raw)
+        save (ports/get-save store chat-id player-id save-id)]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :channel (:channel result "gameplay")
+     :payload-hash (:payload-hash result)
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle-id (:battle-id result)
+     :liberou (boolean (:liberou? result))
+     :capturou false
+     :fugiu false
+     :sequencia-capturas (:sequencia-capturas save 0)
+     :sequencia-antes (:sequencia-antes result 0)
+     :coins (:coins save 0)
+     :encounter (when-let [enc (:encounter result)]
+                  {:battle-id (:battle-id enc)
+                   :aguardando-captura false
+                   :phase (:phase enc)
+                   :bioma (:bioma enc)})}))
+
 (defn start-wild-battle!
   "Harness/e2e: inicia batalha selvagem no save congelado (dev)."
   [store {:keys [chat-id player-id save-id fence-generation operation-id]
@@ -512,6 +557,14 @@
              :chance-base-captura (:chance-base-captura battle)
              :tentativas-captura (long (:tentativas-captura battle 0))
              :somente-batalha (boolean (:somente-batalha? battle))
+             :reward (when-let [rew (:reward result)]
+                       (cond-> {:pokemon-xp (long (:pokemon-xp rew 0))
+                                :pe (long (:pe rew 0))
+                                :coins (long (:coins rew 0))}
+                         (some? (:bonus-xp rew))
+                         (assoc :bonus-xp (:bonus-xp rew))
+                         (true? (:battle-reward? rew))
+                         (assoc :battle-reward true)))
              :gym-resolve (when gym-res
                             (let [perm (:permanencia gym-res {})]
                               (cond-> {:venceu (boolean (:venceu? gym-res))
@@ -706,9 +759,8 @@
        :vez-nome (:nome vp)
        :vez-hp (:hp vp)
        :vez-valida (boolean (raid-domain/vez-valida? raid))
-       :vez-pokemon (when poke
-                      (select-keys poke [:nome :species :hp :hp-atual :imagem
-                                         :imagem-shiny :nivel :tipos :golpes]))
+       ;; Mesmo DTO canônico do encounter (golpes normalizados + raridade + sprites).
+       :vez-pokemon (present-pokemon poke (:hp vp))
        :proxima-vez proxima
        :proxima-vez-nome (when proxima (get-in parts [proxima :nome]))
        :turn-index (:turn-index raid 0)
@@ -727,9 +779,9 @@
                                (select-keys poke
                                             [:nome :species :nivel :hp-atual])))))
              (:ordem raid []))
-       :chefe (select-keys (or (:chefe raid) {})
-                           [:nome :species :raridade :hp :tipos :imagem
-                            :imagem-shiny :nivel])
+       :chefe (when-let [c (:chefe raid)]
+                (when (or (:nome c) (:species c) (get c "nome") (get c "species"))
+                  (present-pokemon c (or (:hp-chefe raid) (:hp c)))))
        :expira (:expira raid)
        :captura-expira (:captura-expira raid)
        :rewards-paid (boolean (:rewards-paid? raid))})))

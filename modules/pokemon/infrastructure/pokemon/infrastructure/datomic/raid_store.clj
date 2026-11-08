@@ -205,6 +205,59 @@
           tipo (assoc :tipo (str/lower-case (str tipo)))
           (seq tipos) (assoc :tipos (mapv #(str/lower-case (str %)) tipos)))))))
 
+(defn- present-poke-for-frame
+  "DTO mínimo do 1º frame de combate (golpes normalizados + sprite + raridade)."
+  [p hp-atual]
+  (when p
+    (let [p (capture/assegurar-raridade (renorm-poke p))
+          resolved (capture/resolver-raridade p)
+          golpes (->> (or (:golpes p) (get p "golpes") [])
+                      (mapv battle/golpe-normalizado)
+                      (filterv map?))]
+      (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
+                              :raridade :tipos :imagem :imagem-shiny :altura
+                              :status :habilidade])
+        true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0))
+                    :raridade (:raridade resolved)
+                    :raridade-fonte (name (:fonte resolved))
+                    :golpes golpes)
+        (:shiny? p) (assoc :shiny true)))))
+
+(defn started-combat-from-raid
+  "Snapshot de combate anexado ao outbox raid-started (sem migration).
+   Mesmo formato consumido por formatRaidStart / renderRaidBattleCard no Node."
+  [raid]
+  (when (and (map? raid) (= "combate" (str (:fase raid))))
+    (let [parts (:participantes raid {})
+          vez (:vez raid)
+          vp (when vez (get parts vez))
+          poke (:pokemon vp)
+          vivos (filterv #(pos? (long (get-in parts [% :hp] 0))) (:ordem raid []))
+          proxima (when (and vez (seq vivos))
+                    (first (concat (rest (drop-while #(not= % vez) vivos))
+                                   (take-while #(not= % vez) vivos))))
+          chefe (:chefe raid)]
+      {:raid-id (:raid-id raid)
+       :fase "combate"
+       :ginasio (:ginasio raid)
+       :nome-ginasio (:nome-ginasio raid)
+       :liga (:liga raid)
+       :hp-chefe (:hp-chefe raid)
+       :hp-max (:hp-max raid)
+       :vez vez
+       :vez-nome (:nome vp)
+       :vez-hp (:hp vp)
+       :vez-pokemon (present-poke-for-frame poke (:hp vp))
+       :proxima-vez proxima
+       :proxima-vez-nome (when proxima (get-in parts [proxima :nome]))
+       :turn-index (:turn-index raid 0)
+       :chefe (when (and (map? chefe)
+                         (or (:nome chefe) (:species chefe)
+                             (get chefe "nome") (get chefe "species")))
+                (present-poke-for-frame chefe
+                                        (or (:hp-chefe raid) (:hp chefe))))
+       :auto true})))
+
 (defn- outbox-tx
   [{:keys [id chat-id kind texto created-at]}]
   {:pokemon-outbox/id id

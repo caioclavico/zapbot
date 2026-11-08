@@ -738,7 +738,8 @@
                             :hpMax (.-hpMax (.-raid data))
                             :hpAtacante (.-vezHp (.-raid data))
                             :fase (.-fase (.-raid data))
-                            :turnIndex (.-turnIndex (.-raid data))}))]
+                            :turnIndex (.-turnIndex (.-raid data))
+                            :renderPhase "raid-start-manual"}))]
         (envelope-jvm pedido (.formatRaidStart jvm-present data prefix) img))
 
       (= "atacar" sub)
@@ -786,7 +787,8 @@
                             :hpAtacante (or (.-vezHp (.-raid data))
                                             (.-vezHp raid))
                             :fase (.-fase (.-raid data))
-                            :turnIndex (.-turnIndex (.-raid data))}))
+                            :turnIndex (.-turnIndex (.-raid data))
+                            :renderPhase "raid-attack"}))
               present (.coerceRaidPresent jvm-present
                                           (.formatRaidAttack jvm-present data prefix))]
         (envelope-jvm pedido (.-text present) img
@@ -2244,6 +2246,36 @@
                                                       (str config/prefix "pk"))]
                       (envelope-jvm pedido texto))))
 
+                "liberar"
+                (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
+                               #(.getEncounter jvm #js {:chatId chat-id :playerId player-id}))
+                        encontro (.-encounter enc)]
+                  (cond
+                    (nil? encontro)
+                    (envelope-jvm pedido "❓ Não há encontro para liberar.")
+
+                    (not (.-aguardandoCaptura encontro))
+                    (envelope-jvm pedido
+                                  (str "⚔️ Só é possível liberar após vencer. "
+                                       "Durante o combate use " config/prefix "pk sair."))
+
+                    :else
+                    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            op-id (.stableOperationId jvm-transport (:requestId pedido)
+                                                      (str "encounter-release:"
+                                                           (.-battleId encontro)))
+                            data (desempenho/medir! ctx "pokemon_jvm_release"
+                                   #(.releaseEncounter jvm
+                                      #js {:chatId chat-id
+                                           :playerId player-id
+                                           :saveId (.-activeSaveId ativo)
+                                           :fenceGeneration (.-fenceGeneration ativo)
+                                           :operationId op-id
+                                           :battleId (.-battleId encontro)}))
+                            texto (.formatReleaseResult jvm-present data
+                                                        (str config/prefix "pk"))]
+                      (envelope-jvm pedido texto))))
+
                 "capturar"
                 (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
                                #(.getEncounter jvm #js {:chatId chat-id :playerId player-id}))]
@@ -3071,27 +3103,63 @@
                                         (or (.-message erro) erro))
                        (.sendMessage whatsapp (:chatId evento) texto opts))))
 
-        ;; raid-started: cartão visual desde o 1º frame (sprites rehidratados no media).
+        ;; raid-started: mesmo pipeline do iniciar manual (formatRaidStart + card).
         (= "raid-started" kind)
-        (-> (p/let [payload (or (:payload evento) {})
-                    raid (or (:raid payload) (:raid evento) {})
-                    media-info (.renderRaidBattleCard jvm-media
-                                 #js {:ginasio (or (:nomeGinasio raid) (:nome-ginasio raid)
-                                                   (:ginasio raid) "")
-                                      :chefe (clj->js (or (:chefe raid) {}))
-                                      :atacante (clj->js (or (:vezPokemon raid) (:vez-pokemon raid) {}))
-                                      :treinador (or (:vezNome raid) (:vez-nome raid) "")
-                                      :hpChefe (:hpChefe raid)
-                                      :hpMax (:hpMax raid)
-                                      :hpAtacante (or (:vezHp raid) (:vez-hp raid))
-                                      :fase (or (:fase raid) "combate")
-                                      :turnIndex (or (:turnIndex raid) (:turn-index raid) 0)})
-                    _ (enviar-imagem! media-info "raid-batalha.png")]
-              nil)
-            (p/catch (fn [erro]
-                       (js/console.warn "[PokemonJVM] raid-started imagem falhou; texto:"
-                                        (or (.-message erro) erro))
-                       (.sendMessage whatsapp (:chatId evento) texto opts))))
+        (let [prefix (str config/prefix "pk")
+              raid (or (:raid evento)
+                       (get-in evento [:payload :raid])
+                       {})
+              tem-snapshot? (or (map? (:chefe raid))
+                                (map? (:vezPokemon raid))
+                                (map? (:vez-pokemon raid))
+                                (some? (or (:hpChefe raid) (:hp-chefe raid))))
+              raid-js (clj->js (assoc raid :auto true))
+              caption (if tem-snapshot?
+                        (.formatRaidStart jvm-present
+                                          #js {:raid raid-js :auto true}
+                                          prefix)
+                        texto)]
+          (-> (p/let [_ (log-raid-auto-delivery!
+                         "raid-started-render"
+                         {:phase "raid-start-auto"
+                          :formatter (if tem-snapshot? "formatRaidStart" "outbox-texto")
+                          :hasChefe (boolean (or (map? (:chefe raid))
+                                                 (some? (or (:hpChefe raid)
+                                                            (:hp-chefe raid)))))
+                          :hasAtacante (boolean (or (map? (:vezPokemon raid))
+                                                    (map? (:vez-pokemon raid))))
+                          :golpes (count (or (get-in raid [:vezPokemon :golpes])
+                                             (get-in raid [:vez-pokemon :golpes])
+                                             []))
+                          :tiposChefe (count (or (get-in raid [:chefe :tipos]) []))})
+                      media-info (.renderRaidBattleCard jvm-media
+                                   #js {:ginasio (or (:nomeGinasio raid) (:nome-ginasio raid)
+                                                     (:ginasio raid) "")
+                                        :chefe (clj->js (or (:chefe raid) {}))
+                                        :atacante (clj->js (or (:vezPokemon raid)
+                                                               (:vez-pokemon raid) {}))
+                                        :treinador (or (:vezNome raid) (:vez-nome raid) "")
+                                        :hpChefe (or (:hpChefe raid) (:hp-chefe raid))
+                                        :hpMax (or (:hpMax raid) (:hp-max raid))
+                                        :hpAtacante (or (:vezHp raid) (:vez-hp raid))
+                                        :fase (or (:fase raid) "combate")
+                                        :turnIndex (or (:turnIndex raid)
+                                                       (:turn-index raid) 0)
+                                        :renderPhase "raid-start-auto"})
+                      media (when media-info
+                              (MessageMedia. (or (.-mimeType media-info) "image/png")
+                                             (.-base64 media-info)
+                                             (or (.-filename media-info) "raid-batalha.png")))
+                      _ (if media
+                          (.sendMessage whatsapp (:chatId evento) media
+                                        (js/Object.assign #js {} opts
+                                                          #js {:caption caption}))
+                          (.sendMessage whatsapp (:chatId evento) caption opts))]
+                nil)
+              (p/catch (fn [erro]
+                         (js/console.warn "[PokemonJVM] raid-started imagem falhou; texto:"
+                                          (or (.-message erro) erro))
+                         (.sendMessage whatsapp (:chatId evento) caption opts)))))
 
         :else
         (.sendMessage whatsapp (:chatId evento) texto opts)))

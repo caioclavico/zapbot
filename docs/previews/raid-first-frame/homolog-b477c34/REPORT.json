@@ -1,0 +1,146 @@
+{
+  "commit": "b477c34",
+  "at": "2026-11-08T19:26:08.760Z",
+  "outDir": "/private/tmp/zapbot-a6-explosion-hunt/docs/previews/raid-first-frame/homolog-b477c34",
+  "results": [
+    {
+      "id": "texto-manual",
+      "pass": true,
+      "detail": "golpes+emoji+efetividade+raridade+HP; sem narrativa de dano"
+    },
+    {
+      "id": "texto-auto",
+      "pass": true,
+      "detail": "mesmo formatRaidTurnBlock do manual"
+    },
+    {
+      "id": "texto-frame2",
+      "pass": true,
+      "detail": "narrativa de ataque + mesmo menu de turno"
+    },
+    {
+      "id": "pipeline",
+      "pass": true,
+      "detail": "formatRaidStart/Attack → formatRaidTurnBlock compartilhado"
+    },
+    {
+      "id": "cache-frio-miss",
+      "pass": true,
+      "detail": "silhueta sem xadrez"
+    },
+    {
+      "id": "sem-xadrez",
+      "pass": true,
+      "detail": "frame1/2/auto/warm limpos (checkerish≤0.2%)"
+    },
+    {
+      "id": "sprites-reais",
+      "pass": true,
+      "detail": "sources=url/url"
+    },
+    {
+      "id": "paridade-visual",
+      "pass": true,
+      "detail": "ambos 760x400 png alpha=true"
+    },
+    {
+      "id": "alpha-sprites",
+      "pass": true,
+      "detail": "boss t=16220 atk t=13160 hasAlpha=true"
+    },
+    {
+      "id": "forma-alt",
+      "pass": true,
+      "detail": "artwork source=url"
+    },
+    {
+      "id": "fallback-indisponivel",
+      "pass": true,
+      "detail": "silhueta determinística"
+    },
+    {
+      "id": "detector-xadrez",
+      "pass": true,
+      "detail": "controle positivo"
+    }
+  ],
+  "analyses": {
+    "frame1": {
+      "label": "frame1",
+      "width": 760,
+      "height": 400,
+      "hasAlpha": true,
+      "channels": 4,
+      "format": "png",
+      "opaque": 303404,
+      "transparent": 596,
+      "checkerishRatio": 0.001512834372651646,
+      "looksLikeCheckerboard": false,
+      "bytes": 80010
+    },
+    "frame1Warm": {
+      "label": "frame1-warm",
+      "width": 760,
+      "height": 400,
+      "hasAlpha": true,
+      "channels": 4,
+      "format": "png",
+      "opaque": 303404,
+      "transparent": 596,
+      "checkerishRatio": 0.001512834372651646,
+      "looksLikeCheckerboard": false,
+      "bytes": 80010
+    },
+    "frame2": {
+      "label": "frame2",
+      "width": 760,
+      "height": 400,
+      "hasAlpha": true,
+      "channels": 4,
+      "format": "png",
+      "opaque": 303404,
+      "transparent": 596,
+      "checkerishRatio": 0.001575457146247248,
+      "looksLikeCheckerboard": false,
+      "bytes": 80288
+    },
+    "frame1Auto": {
+      "label": "frame1-auto",
+      "width": 760,
+      "height": 400,
+      "hasAlpha": true,
+      "channels": 4,
+      "format": "png",
+      "opaque": 303404,
+      "transparent": 596,
+      "checkerishRatio": 0.001512834372651646,
+      "looksLikeCheckerboard": false,
+      "bytes": 80010
+    }
+  },
+  "cardMeta": {
+    "frame1": {
+      "chefePlaceholder": false,
+      "atkPlaceholder": false,
+      "chefeSource": "url",
+      "atkSource": "url"
+    },
+    "frame2": {
+      "chefePlaceholder": false,
+      "atkPlaceholder": false,
+      "chefeSource": "url",
+      "atkSource": "url"
+    },
+    "auto": {
+      "chefePlaceholder": false,
+      "atkPlaceholder": false,
+      "chefeSource": "url",
+      "atkSource": "url"
+    }
+  },
+  "summary": {
+    "pass": 12,
+    "fail": 0,
+    "verdict": "PASS"
+  }
+}

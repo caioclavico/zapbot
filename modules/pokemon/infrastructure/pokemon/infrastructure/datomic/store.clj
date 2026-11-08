@@ -1911,15 +1911,17 @@
                              entity (pokemon-entity-map sk registro idx)
                              seq-nova (inc seq-atual)
                              rew (capture/recompensa-pos-captura
-                                  {:raridade (or (:raridade pokemon) "comum")
-                                   :sequencia-nova seq-nova
-                                   :primeira-tentativa? (zero? (long (:tentativas-anteriores request 0)))
+                                  {:sequencia-nova seq-nova
                                    :capturou? true})
                              ativo-idx (min (long (:ativo-index save-m 0))
                                             (max 0 (dec (count colecao))))
                              ativo (when (seq colecao) (nth colecao ativo-idx))
                              xp-part (when (and ativo (pos? (:xp rew)))
                                        (apply-pokemon-xp-tx ativo (:xp rew)))
+                             pe-tx (when (pos? (long (:pe rew 0)))
+                                     (let [v (long (:save/vitorias-treinador save 0))]
+                                       [[:db/add [:save/key sk] :save/vitorias-treinador
+                                         (+ v (long (:pe rew)))]]))
                              coin-part (economy-store/apply-delta-tx
                                         {:sk sk :save save :delta (long (:moedas rew 0))
                                          :operation-id operation-id :source "capture"
@@ -1931,6 +1933,7 @@
                                                 [:db/add [:save/key sk] :save/maior-sequencia-capturas
                                                  (max maior seq-nova)]
                                                 (pokedex-caught-tx db sk registro)]
+                                               (or pe-tx [])
                                                (:tx coin-part)))
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
@@ -1948,10 +1951,9 @@
                                    :registro (assoc registro :collection-index idx)}})
 
                        (:fugiu? attempt)
+                       ;; Fuga involuntária: não zera sequência.
                        (let [rew (capture/recompensa-pos-captura
-                                  {:raridade (or (:raridade pokemon) "comum")
-                                   :sequencia-nova 0
-                                   :primeira-tentativa? false
+                                  {:sequencia-nova seq-atual
                                    :capturou? false})
                              ativo-idx (min (long (:ativo-index save-m 0))
                                             (max 0 (dec (count colecao))))
@@ -1960,8 +1962,7 @@
                                        (apply-pokemon-xp-tx ativo (:xp rew)))
                              tx (cond-> (into base-tx
                                               [[:db/add [:save/key sk] :save/maior-sequencia-capturas
-                                                (max maior seq-atual)]
-                                               [:db/add [:save/key sk] :save/sequencia-capturas 0]])
+                                                (max maior seq-atual)]])
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
                           :result {:operation-id operation-id
@@ -2136,15 +2137,24 @@
                              entity (pokemon-entity-map sk registro idx)
                              seq-nova (inc seq-atual)
                              rew (capture/recompensa-pos-captura
-                                  {:raridade (or (:raridade pokemon) "comum")
-                                   :sequencia-nova seq-nova
-                                   :primeira-tentativa? (zero? tentativas-ant)
+                                  {:sequencia-nova seq-nova
                                    :capturou? true})
-                             ativo-idx (min (long (:ativo-index save-m 0))
-                                            (max 0 (dec (count colecao))))
-                             ativo (when (seq colecao) (nth colecao ativo-idx))
-                             xp-part (when (and ativo (pos? (:xp rew)))
-                                       (apply-pokemon-xp-tx ativo (:xp rew)))
+                             ;; Fighter da batalha (não só ativo-index) — preserva HP 0 Explosion.
+                             fighter-idx (long (or (:collection-index state)
+                                                   (get-in state [:indices-ativos :x])
+                                                   (:ativo-index save-m 0)))
+                             fighter (when (and (seq colecao) (< fighter-idx (count colecao)))
+                                       (nth colecao fighter-idx))
+                             fighter (when fighter
+                                       (assoc fighter :hp-atual
+                                              (long (or (get-in state [:hp :x])
+                                                        (:hp-atual fighter) 0))))
+                             xp-part (when (and fighter (pos? (:xp rew)))
+                                       (apply-pokemon-xp-tx fighter (:xp rew)))
+                             pe-tx (when (pos? (long (:pe rew 0)))
+                                     (let [v (long (:save/vitorias-treinador save 0))]
+                                       [[:db/add [:save/key sk] :save/vitorias-treinador
+                                         (+ v (long (:pe rew)))]]))
                              coin-part (economy-store/apply-delta-tx
                                         {:sk sk :save save :delta (long (:moedas rew 0))
                                          :operation-id operation-id :source "capture"
@@ -2156,6 +2166,7 @@
                                                 [:db/add [:save/key sk] :save/maior-sequencia-capturas
                                                  (max maior seq-nova)]
                                                 (pokedex-caught-tx db sk registro)]
+                                               (or pe-tx [])
                                                (:tx coin-part)))
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
@@ -2179,20 +2190,24 @@
                                           :encounter next-state})})
 
                        (:fugiu? attempt)
+                       ;; Fuga involuntária: NÃO zera sequência (política A6 streak).
                        (let [rew (capture/recompensa-pos-captura
-                                  {:raridade (or (:raridade pokemon) "comum")
-                                   :sequencia-nova 0
-                                   :primeira-tentativa? false
+                                  {:sequencia-nova seq-atual
                                    :capturou? false})
-                             ativo-idx (min (long (:ativo-index save-m 0))
-                                            (max 0 (dec (count colecao))))
-                             ativo (when (seq colecao) (nth colecao ativo-idx))
-                             xp-part (when (and ativo (pos? (:xp rew)))
-                                       (apply-pokemon-xp-tx ativo (:xp rew)))
+                             fighter-idx (long (or (:collection-index state)
+                                                   (get-in state [:indices-ativos :x])
+                                                   (:ativo-index save-m 0)))
+                             fighter (when (and (seq colecao) (< fighter-idx (count colecao)))
+                                       (nth colecao fighter-idx))
+                             fighter (when fighter
+                                       (assoc fighter :hp-atual
+                                              (long (or (get-in state [:hp :x])
+                                                        (:hp-atual fighter) 0))))
+                             xp-part (when (and fighter (pos? (:xp rew)))
+                                       (apply-pokemon-xp-tx fighter (:xp rew)))
                              tx (cond-> (into base-tx
                                               [[:db/add [:save/key sk] :save/maior-sequencia-capturas
-                                                (max maior seq-atual)]
-                                               [:db/add [:save/key sk] :save/sequencia-capturas 0]])
+                                                (max maior seq-atual)]])
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
                           :result (merge frambo-fields
@@ -2227,6 +2242,96 @@
                                         :bola bola
                                         :encounter next-state})})]
                  resultado)))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (encounter-release! [_ writer-ctx request]
+    (let [payload (ops/encounter-release-payload
+                   {:battle-id (or (:battle-id request) "active")})
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [chat-id (:chat-id writer-ctx)
+                     player-id (:player-id writer-ctx)
+                     sk (id/save-key chat-id player-id (:save-id writer-ctx))
+                     pk (id/player-key chat-id player-id)
+                     battle-id (or (:battle-id request)
+                                   (active-battle-id-for db chat-id player-id))
+                     _ (when-not battle-id
+                         (throw (err/error :encounter_not_found
+                                           {:chat-id chat-id :player-id player-id})))
+                     be (battle-entity db battle-id)
+                     _ (when-not (present? be)
+                         (throw (err/error :encounter_not_found {:battle-id battle-id})))
+                     _ (when-not (= (:battle/save-id be) (:save-id writer-ctx))
+                         (throw (err/error :battle_save_mismatch
+                                           {:battle (:battle/save-id be)
+                                            :writer (:save-id writer-ctx)})))
+                     state (->battle be)
+                     _ (when-not (= player-id (:player-id state))
+                         (throw (err/error :encounter_owner_mismatch
+                                           {:owner (:player-id state)
+                                            :player-id player-id})))
+                     _ (when-not (:aguardando-captura? state)
+                         (throw (err/error :encounter_not_ready
+                                           {:battle-id battle-id
+                                            :phase (:phase state)
+                                            :active? (:active? state)})))
+                     save-m (->save save)
+                     seq-atual (long (:sequencia-capturas save-m 0))
+                     maior (long (:maior-sequencia-capturas save-m 0))
+                     rev (long (:save/revision save 0))
+                     turn-now (long (:turn-index state 0))
+                     next-state (assoc state
+                                       :aguardando-captura? false
+                                       :phase :finished
+                                       :active? false
+                                       :capture-outcome :released
+                                       :selvagem-liberado? true
+                                       :turn-index (inc turn-now))
+                     clear-active (into [[:db/retract [:player/key pk] :player/active-battle-id battle-id]]
+                                        (or (clear-chat-wild-tx db chat-id battle-id) []))
+                     summary {:liberou? true
+                              :battle-id battle-id
+                              :sequencia-antes seq-atual
+                              :sequencia-depois 0}]
+                 {:tx (into [[:db/cas [:battle/id battle-id] :battle/turn-index
+                              turn-now (inc turn-now)]
+                             [:db/add [:battle/id battle-id] :battle/active? false]
+                             [:db/add [:battle/id battle-id] :battle/phase "finished"]
+                             [:db/add [:battle/id battle-id] :battle/state-edn
+                              (battle/encode-state-edn next-state)]
+                             [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                             [:db/add [:save/key sk] :save/sequencia-capturas 0]
+                             [:db/add [:save/key sk] :save/maior-sequencia-capturas
+                              (max maior seq-atual)]
+                             {:operation-receipt/id operation-id
+                              :operation-receipt/kind "encounter-release"
+                              :operation-receipt/channel "gameplay"
+                              :operation-receipt/payload-hash phash
+                              :operation-receipt/player-key pk
+                              :operation-receipt/save-id (:save-id writer-ctx)
+                              :operation-receipt/summary (pr-str summary)}]
+                            clear-active)
+                  :result {:operation-id operation-id
+                           :duplicate false
+                           :channel "gameplay"
+                           :payload-hash phash
+                           :battle-id battle-id
+                           :liberou? true
+                           :capturou? false
+                           :fugiu? false
+                           :sequencia-capturas 0
+                           :sequencia-antes seq-atual
+                           :encounter next-state}})))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)
@@ -3054,7 +3159,7 @@
                                             (:sequencia-capturas save-m 0))))
                                   next-state)
                      ;; Bolsa cheia na vitória (somente-batalha ou capacidade esgotada):
-                     ;; libera selvagem + XP raridade+1 — espelha preparar-captura master.
+                     ;; libera selvagem — recompensa de batalha abaixo; sequência zera.
                      next-state (if (and (:aguardando-captura? next-state)
                                          (or (:somente-batalha? next-state)
                                              (not (capacity/cabe-pokemon?
@@ -3064,20 +3169,51 @@
                                          :phase :finished
                                          :selvagem-liberado-bolsa-cheia? true)
                                   next-state)
-                     ;; Master: vitória sem captura → raridade+1 XP Pokémon, 0 moedas.
-                     rew (if (:selvagem-liberado-bolsa-cheia? next-state)
-                           (let [r (capture/recompensa-vitoria-sem-captura
-                                    {:raridade (capture/raridade-de
-                                                (get-in next-state [:pokemons :o]))})]
-                             {:pokemon-xp (long (:xp r)) :coins 0
-                              :bonus-xp (:bonus-xp r)})
+                     ;; Vitória de caça: XP/PE de batalha na hora (capturar ou liberar).
+                     ;; Flag no estado evita duplicar em retry/captura.
+                     grant-battle?
+                     (and (not gym?)
+                          (= :win (:outcome next-state))
+                          (not (true? (:recompensas-batalha-concedidas? state)))
+                          (or (:aguardando-captura? next-state)
+                              (:selvagem-liberado-bolsa-cheia? next-state)))
+                     battle-rew (when grant-battle?
+                                  (capture/recompensa-batalha-caca
+                                   {:raridade (capture/raridade-de
+                                               (get-in next-state [:pokemons :o]))}))
+                     rew (cond
+                           grant-battle?
+                           {:pokemon-xp (long (:xp battle-rew))
+                            :pe (long (:pe battle-rew 0))
+                            :coins 0
+                            :bonus-xp (:bonus-xp battle-rew)
+                            :battle-reward? true}
+                           :else
                            (battle/reward-for-outcome (:outcome next-state)))
+                     next-state (cond-> next-state
+                                  grant-battle?
+                                  (assoc :recompensas-batalha-concedidas? true))
+                     ;; XP de batalha também com aguardando-captura (antes era deferido).
                      xp-part (when (and (not gym?) poke (pos? (long (:pokemon-xp rew 0)))
                                         (not (:active? next-state))
-                                        (not (:aguardando-captura? next-state)))
+                                        (or (not (:aguardando-captura? next-state))
+                                            (:battle-reward? rew)))
                                (apply-pokemon-xp-tx
                                 (assoc poke :hp-atual (get-in next-state [:hp :x]))
                                 (long (:pokemon-xp rew 0))))
+                     pe-batalha-tx
+                     (when (and grant-battle? (pos? (long (:pe rew 0))))
+                       (let [v (long (:save/vitorias-treinador save 0))]
+                         [[:db/add [:save/key sk] :save/vitorias-treinador
+                           (+ v (long (:pe rew)))]]))
+                     ;; Liberação automática (bolsa cheia) zera sequência de capturas.
+                     seq-liberar-tx
+                     (when (:selvagem-liberado-bolsa-cheia? next-state)
+                       (let [seq-atual (long (:sequencia-capturas save-m 0))
+                             maior (long (:maior-sequencia-capturas save-m 0))]
+                         [[:db/add [:save/key sk] :save/sequencia-capturas 0]
+                          [:db/add [:save/key sk] :save/maior-sequencia-capturas
+                           (max maior seq-atual)]]))
                      hp-sync (if gym?
                                (gym-battle-hp-txs colecao next-state)
                                (pokemon-hp-status-tx
@@ -3171,6 +3307,8 @@
                      tx (into (into battle-core (or rev-tx []))
                               (concat (or inv-tx [])
                                       (or hp-sync [])
+                                      (or pe-batalha-tx [])
+                                      (or seq-liberar-tx [])
                                       (or clear-active [])
                                       (or (:tx xp-part) [])
                                       (or (:tx resolve-part) [])))]
@@ -3765,10 +3903,13 @@
                        (raid-store/started-raid-id (:id ev))
                        (let [rid (raid-store/started-raid-id (:id ev))
                              raid (load-raid db rid)
-                             vez (when (map? raid) (:vez raid))]
+                             vez (when (map? raid) (:vez raid))
+                             combat (raid-store/started-combat-from-raid raid)]
                          (cond-> ev
                            (and (string? vez) (seq vez))
-                           (assoc :mentions [vez])))
+                           (assoc :mentions [vez])
+                           (map? combat)
+                           (assoc :raid combat)))
 
                        :else ev))))
            (take (long (or limit 20)))
@@ -4460,10 +4601,11 @@
                               (nth colecao-x (get-in state [:indices-ativos :x] 0) nil))
                      poke-o (when (and colecao-o (get-in state [:indices-ativos :o]))
                               (nth colecao-o (get-in state [:indices-ativos :o]) nil))
-                     sync-x (when (and poke-x (get-in next [:hp :x]))
+                     ;; HP 0 é legítimo (Explosion/nocaute) — não usar truthiness.
+                     sync-x (when (and poke-x (some? (get-in next [:hp :x])))
                               (pvp-store/pokemon-sync-tx
                                poke-x (get-in next [:hp :x]) (get-in next [:status :x])))
-                     sync-o (when (and poke-o (get-in next [:hp :o]))
+                     sync-o (when (and poke-o (some? (get-in next [:hp :o])))
                               (pvp-store/pokemon-sync-tx
                                poke-o (get-in next [:hp :o]) (get-in next [:status :o])))
                      clear-x [[:db/retract

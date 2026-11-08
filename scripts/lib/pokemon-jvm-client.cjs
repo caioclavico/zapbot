@@ -339,6 +339,7 @@ function createClient(config = {}) {
     getEncounter: ({ chatId, playerId }) =>
       request('GET', `/v1/encounter${q({ chatId, playerId })}`),
     attemptEncounterCapture: (body) => mutateOnce('/v1/encounter/capture', body),
+    releaseEncounter: (body) => mutateOnce('/v1/encounter/release', body),
     prepareEncounterFrambo: (body) => mutateOnce('/v1/encounter/frambo', body),
     startBattle: (body) => mutateOnce('/v1/battles/start', body),
     confirmBattleTurn: (body) => mutateOnce('/v1/battles/turn', body),
