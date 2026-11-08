@@ -1163,6 +1163,30 @@
                                           (some? roll) (assoc :roll roll)
                                           (some? fuga-roll) (assoc :fuga-roll fuga-roll)))))))
 
+                (= path "/v1/encounter/release")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          player-id (g body "playerId" "player-id")
+                          save-id (g body "saveId" "save-id")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId" "operation-id")
+                          battle-id (g body "battleId" "battle-id")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (str/blank? operation-id)
+                                (nil? fence))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/encounter-release!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id}
+                                          battle-id (assoc :battle-id battle-id)))))))
+
                 (= path "/v1/encounter/frambo")
                 (do (require-method! ex #{"POST"})
                     (let [body (read-body ex)

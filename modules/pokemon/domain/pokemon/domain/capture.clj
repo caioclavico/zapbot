@@ -77,11 +77,16 @@
   {"comum" 2 "incomum" 3 "raro" 4 "epico" 5 "lendario" 6 "mitico" 7})
 
 (defn bonus-xp-sequencia
-  "Primeira captura +0, segunda +1, terceira em diante +2."
+  "Legado: primeira captura +0, segunda +1, terceira em diante +2.
+  Mantido para compat/leituras; recompensa canônica usa `faixa-sequencia-captura`."
   [sequencia]
   (min 2 (max 0 (dec (long sequencia)))))
 
 (def bonus-base-vitoria-sem-captura 1)
+
+(def pe-batalha-caca 1)
+
+(def politica-recompensa-captura-versao "streak-unit-v1")
 
 (def raridades-validas
   #{"comum" "incomum" "raro" "epico" "lendario" "mitico"})
@@ -101,31 +106,59 @@
                 (str/replace #"í" "i"))]
       (when (contains? raridades-validas s) s))))
 
-(defn recompensa-pos-captura
-  "Espelha encerrar-cacada! quando capturou? ou fugiu? (sem vitória-sem-captura).
-   XP: slug inválido/ausente → comum (não infla recompensa)."
-  [{:keys [raridade sequencia-nova primeira-tentativa? capturou?]}]
-  (if capturou?
-    (let [bonus-seq (bonus-xp-sequencia sequencia-nova)
-          bonus-primeira (if primeira-tentativa? 1 0)
-          r (or (normalizar-raridade raridade) "comum")
-          base (get xp-base-raridade r 2)]
-      {:xp (+ base bonus-seq bonus-primeira)
-       :bonus-xp bonus-seq
-       :bonus-primeira bonus-primeira
-       :moedas (+ 2 (min 10 (long sequencia-nova)))
-       :sequencia sequencia-nova})
-    {:xp 1 :bonus-xp 0 :bonus-primeira 0 :moedas 0 :sequencia 0}))
+(defn faixa-sequencia-captura
+  "Recompensa unitária total da captura na sequência já incrementada.
+  Sem base de moedas: moedas só a partir da 5ª. Teto na 30ª (valores 30+)."
+  [sequencia-nova]
+  (let [s (max 0 (long sequencia-nova))]
+    (cond
+      (<= s 0) {:xp 0 :pe 0 :moedas 0 :faixa "0"}
+      (<= s 2) {:xp 2 :pe 1 :moedas 0 :faixa "1-2"}
+      (<= s 4) {:xp 3 :pe 2 :moedas 0 :faixa "3-4"}
+      (<= s 9) {:xp 5 :pe 3 :moedas 1 :faixa "5-9"}
+      (<= s 19) {:xp 8 :pe 5 :moedas 3 :faixa "10-19"}
+      (<= s 29) {:xp 12 :pe 7 :moedas 6 :faixa "20-29"}
+      :else {:xp 15 :pe 9 :moedas 10 :faixa "30+"})))
 
-(defn recompensa-vitoria-sem-captura
-  "Bolsa cheia / somente-batalha: raridade + 1 XP; sem moedas; sequência intacta."
+(defn recompensa-pos-captura
+  "Recompensa de captura (streak-unit-v1): XP/PE/moedas unitários pela sequência.
+  Não inclui XP/PE de batalha (creditados na vitória). Sem capturou? → consolação
+  leve sem zerar sequência no caller (fuga involuntária)."
+  [{:keys [sequencia-nova capturou?]}]
+  (if capturou?
+    (let [faixa (faixa-sequencia-captura sequencia-nova)]
+      {:xp (long (:xp faixa))
+       :pe (long (:pe faixa))
+       :moedas (long (:moedas faixa))
+       :bonus-xp 0
+       :bonus-primeira 0
+       :sequencia (long sequencia-nova)
+       :faixa (:faixa faixa)
+       :politica politica-recompensa-captura-versao})
+    {:xp 1 :pe 0 :moedas 0 :bonus-xp 0 :bonus-primeira 0
+     :sequencia (long (or sequencia-nova 0))
+     :faixa "fuga"
+     :politica politica-recompensa-captura-versao}))
+
+(defn recompensa-batalha-caca
+  "XP Pokémon + PE treinador ao vencer a caçada (capturar ou liberar).
+  Sem moedas. Independente da sequência."
   [{:keys [raridade]}]
   (let [r (or (normalizar-raridade raridade) "comum")
         base (get xp-base-raridade r 2)]
     {:xp (+ base bonus-base-vitoria-sem-captura)
+     :pe (long pe-batalha-caca)
+     :moedas 0
      :bonus-xp bonus-base-vitoria-sem-captura
-     :bonus-primeira 0
-     :moedas 0}))
+     :politica politica-recompensa-captura-versao}))
+
+(defn recompensa-vitoria-sem-captura
+  "Alias histórico (bolsa cheia / liberar): mesma política de batalha."
+  [opts]
+  (let [r (recompensa-batalha-caca opts)]
+    (-> r
+        (assoc :bonus-primeira 0)
+        (dissoc :pe :politica))))
 
 (defn poder-total
   [pokemon]

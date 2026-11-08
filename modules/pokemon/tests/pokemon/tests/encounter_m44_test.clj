@@ -117,16 +117,23 @@
       (is (= 2 (count colecao)))
       (is (= "Magikarp" (:nome (second colecao))))
       (is (= 1 (:sequencia-capturas save)))
-      (is (> (:coins save) coins0))
+      ;; Faixa 1–2: XP/PE de captura, sem moedas de sequência.
+      (is (= coins0 (:coins save)))
+      (is (= 2 (long (get-in r [:recompensa :xp] 0))))
+      (is (= 1 (long (get-in r [:recompensa :pe] 0))))
       (is (nil? (battle-app/active-battle s chat player))))))
 
-(deftest captura-fuga-quebra-sequencia
+(deftest captura-fuga-preserva-sequencia
+  "Fuga involuntária NÃO zera a sequência (política streak A6)."
   (let [s (fresh-store! "enc-flee")
         chat "chat-flee"
         player "misty"]
     (boot! s chat player)
+    ;; Sequência prévia via captura bem-sucedida anterior não é pré-requisito:
+    ;; basta assertar que fuga não força 0 a partir do estado atual.
     (force-win! s chat player "bid-flee")
-    (let [r (capture-app/attempt-encounter-capture!
+    (let [seq-antes (long (:sequencia-capturas (ports/get-save s chat player "a") 0))
+          r (capture-app/attempt-encounter-capture!
              s chat player
              {:operation-id "cap-flee"
               :battle-id "bid-flee"
@@ -135,7 +142,7 @@
               :fuga-roll 0})]
       (is (false? (:capturou? r)))
       (is (true? (:fugiu? r)))
-      (is (= 0 (:sequencia-capturas (ports/get-save s chat player "a"))))
+      (is (= seq-antes (:sequencia-capturas (ports/get-save s chat player "a"))))
       (is (= 1 (count (ports/list-collection s chat player "a"))))
       (is (nil? (battle-app/active-battle s chat player))))))
 

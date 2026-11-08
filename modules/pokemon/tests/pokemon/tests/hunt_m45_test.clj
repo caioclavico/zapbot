@@ -512,7 +512,7 @@
       (is (nil? (:active-wild-battle-id (ports/get-group s chat))))
       (is (= 50 (count (ports/list-collection s chat player "a")))
           "sem captura com bolsa cheia")
-      ;; Master: comum → 2+1 XP; 0 moedas; sequência intacta.
+      ;; Vitória+liberação (bolsa cheia): comum → 2+1 XP; 0 moedas; sequência zera.
       (let [ativo (first (ports/list-collection s chat player "a"))
             save (ports/get-save s chat player "a")]
         (is (= 3 (long (:xp-desde-nivel ativo 0))))

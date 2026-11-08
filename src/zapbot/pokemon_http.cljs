@@ -2244,6 +2244,36 @@
                                                       (str config/prefix "pk"))]
                       (envelope-jvm pedido texto))))
 
+                "liberar"
+                (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
+                               #(.getEncounter jvm #js {:chatId chat-id :playerId player-id}))
+                        encontro (.-encounter enc)]
+                  (cond
+                    (nil? encontro)
+                    (envelope-jvm pedido "❓ Não há encontro para liberar.")
+
+                    (not (.-aguardandoCaptura encontro))
+                    (envelope-jvm pedido
+                                  (str "⚔️ Só é possível liberar após vencer. "
+                                       "Durante o combate use " config/prefix "pk sair."))
+
+                    :else
+                    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                            op-id (.stableOperationId jvm-transport (:requestId pedido)
+                                                      (str "encounter-release:"
+                                                           (.-battleId encontro)))
+                            data (desempenho/medir! ctx "pokemon_jvm_release"
+                                   #(.releaseEncounter jvm
+                                      #js {:chatId chat-id
+                                           :playerId player-id
+                                           :saveId (.-activeSaveId ativo)
+                                           :fenceGeneration (.-fenceGeneration ativo)
+                                           :operationId op-id
+                                           :battleId (.-battleId encontro)}))
+                            texto (.formatReleaseResult jvm-present data
+                                                        (str config/prefix "pk"))]
+                      (envelope-jvm pedido texto))))
+
                 "capturar"
                 (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
                                #(.getEncounter jvm #js {:chatId chat-id :playerId player-id}))]

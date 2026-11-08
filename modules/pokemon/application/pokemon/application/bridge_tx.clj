@@ -391,6 +391,45 @@
                                               :imagem :imagem-shiny :altura
                                               :tipos :shiny :shiny?])})})))
 
+(defn encounter-release!
+  "POST liberar selvagem após vitória (sem captura)."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id battle-id]
+          :as _req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        raw (capture-app/encounter-release!
+             store writer-ctx
+             (cond-> {:operation-id (str operation-id)}
+               battle-id (assoc :battle-id battle-id)))
+        result (merge-capture-receipt raw)
+        save (ports/get-save store chat-id player-id save-id)]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :channel (:channel result "gameplay")
+     :payload-hash (:payload-hash result)
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle-id (:battle-id result)
+     :liberou (boolean (:liberou? result))
+     :capturou false
+     :fugiu false
+     :sequencia-capturas (:sequencia-capturas save 0)
+     :sequencia-antes (:sequencia-antes result 0)
+     :coins (:coins save 0)
+     :encounter (when-let [enc (:encounter result)]
+                  {:battle-id (:battle-id enc)
+                   :aguardando-captura false
+                   :phase (:phase enc)
+                   :bioma (:bioma enc)})}))
+
 (defn start-wild-battle!
   "Harness/e2e: inicia batalha selvagem no save congelado (dev)."
   [store {:keys [chat-id player-id save-id fence-generation operation-id]
@@ -512,6 +551,14 @@
              :chance-base-captura (:chance-base-captura battle)
              :tentativas-captura (long (:tentativas-captura battle 0))
              :somente-batalha (boolean (:somente-batalha? battle))
+             :reward (when-let [rew (:reward result)]
+                       (cond-> {:pokemon-xp (long (:pokemon-xp rew 0))
+                                :pe (long (:pe rew 0))
+                                :coins (long (:coins rew 0))}
+                         (some? (:bonus-xp rew))
+                         (assoc :bonus-xp (:bonus-xp rew))
+                         (true? (:battle-reward? rew))
+                         (assoc :battle-reward true)))
              :gym-resolve (when gym-res
                             (let [perm (:permanencia gym-res {})]
                               (cond-> {:venceu (boolean (:venceu? gym-res))

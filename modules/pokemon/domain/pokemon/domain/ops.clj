@@ -47,6 +47,13 @@
    {:battle-id (str battle-id)
     :action "encounter-frambo-prep"}))
 
+(defn encounter-release-payload
+  "Payload canônico de liberar selvagem após vitória (sem captura)."
+  [{:keys [battle-id]}]
+  (reward/canonicalize
+   {:battle-id (str battle-id)
+    :action "encounter-release"}))
+
 (defn hunt-start-payload
   "Payload canônico do início de caça (M4.5). Candidatos entram no hash
   para idempotência; rolls de shiny/tipos ficam no plano validado."

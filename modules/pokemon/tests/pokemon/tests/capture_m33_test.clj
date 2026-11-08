@@ -109,7 +109,10 @@
       (is (false? (:fugiu? fail)))
       (is (= 2 (count (:colecao vista))))
       (is (= 1 (:sequencia-capturas (:save vista))))
-      (is (pos? (:coins (:save vista))))
+      ;; Faixa 1–2: sem moedas de sequência.
+      (is (= 0 (long (:coins (:save vista) 0))))
+      (is (= 2 (long (get-in ok [:recompensa :xp]))))
+      (is (= 1 (long (get-in ok [:recompensa :pe]))))
       (let [karp (second (:colecao vista))]
         (is (= "Magikarp" (:nome karp)))
         (is (some? (:id-pokemon karp)))
@@ -120,7 +123,8 @@
         chat "chat-c2"
         player "misty"]
     (boot! s chat player)
-    (let [r (capture-app/attempt-capture!
+    (let [seq-antes (long (:sequencia-capturas (ports/get-save s chat player "a") 0))
+          r (capture-app/attempt-capture!
              s chat player
              {:operation-id "cap-flee-1"
               :pokemon magikarp
@@ -130,7 +134,7 @@
               :fuga-roll 0})]
       (is (false? (:capturou? r)))
       (is (true? (:fugiu? r)))
-      (is (= 0 (:sequencia-capturas (ports/get-save s chat player "a"))))
+      (is (= seq-antes (:sequencia-capturas (ports/get-save s chat player "a"))))
       (is (= 0 (count (ports/list-collection s chat player "a")))))))
 
 (deftest evolucao-consome-item-preserva-shiny
@@ -388,10 +392,20 @@
                " sucessos em 100 rolls, obteve " sucessos)))))
 
 (deftest recompensa-vitoria-sem-captura-master
-  "Bolsa cheia: raridade + 1 XP, 0 moedas (legado encerrar-cacada!)."
+  "Bolsa cheia / liberar: raridade + 1 XP, 0 moedas (batalha)."
   (is (= {:xp 3 :bonus-xp 1 :bonus-primeira 0 :moedas 0}
          (capture/recompensa-vitoria-sem-captura {:raridade "comum"})))
   (is (= {:xp 8 :bonus-xp 1 :bonus-primeira 0 :moedas 0}
          (capture/recompensa-vitoria-sem-captura {:raridade "mitico"})))
   (is (= 1 (:xp (capture/recompensa-pos-captura
-                 {:raridade "comum" :capturou? false :sequencia-nova 0})))))
+                 {:capturou? false :sequencia-nova 0}))))
+  (is (= {:xp 2 :pe 1 :moedas 0}
+         (select-keys (capture/recompensa-pos-captura
+                       {:capturou? true :sequencia-nova 1})
+                      [:xp :pe :moedas])))
+  (is (= {:xp 8 :pe 5 :moedas 3}
+         (select-keys (capture/faixa-sequencia-captura 10)
+                      [:xp :pe :moedas])))
+  (is (= {:xp 15 :pe 9 :moedas 10}
+         (select-keys (capture/faixa-sequencia-captura 30)
+                      [:xp :pe :moedas]))))
