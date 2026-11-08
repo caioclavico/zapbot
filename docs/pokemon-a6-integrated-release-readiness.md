@@ -1,11 +1,40 @@
-# Pokémon A6 — Release readiness / RC A+B+C+P0 + HP/UI/captura
+# Pokémon A6 — Release readiness / RC A+B+C+P0 + One-Mon + species-hp
 
-**Atualizado:** 2026-11-08T11:47Z  
+**Atualizado:** 2026-11-08T13:40Z  
 **Host:** `odisseu-core` (linux/amd64)  
 **Live executável (One-Mon):** Node `617525d9…` / JVM `4a75eaa2…` @ `b0f0677`  
-**Rollback Balance A:** Node `002c83e8…` / JVM `e044cce1…` (imagens **presentes**)  
+**RC candidata (species-hp):** Node `57a828ca…` / JVM `e1bb8ac5…` @ `5ed39b0` — **não** aplicada  
+**Rollback One-Mon:** imagens **presentes** (`617525d9` / `4a75eaa2`)  
 **Evidência cutover One-Mon:** `/home/caiohclavico/odisseu-recovery/a6-raid-one-mon-cutover-20261108T111814Z`  
-**Inbox tars:** `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-raid-one-mon-b0f0677/`
+**Artefatos species-hp (local):** `artifacts/a6-species-hp-20261108T133538Z/`
+
+---
+
+## 0f. RC species-hp-v1 (2026-11-08T13:35Z) — integração + build (**sem** cutover)
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | **GO integração/build/homolog RC** (sem deploy/migration/backfill/flags/hold/CI) |
+| Feature commit | `53a6b9539a24d0063a1f532c7a38eb4587b0e15f` |
+| PR | [#45](https://github.com/caioclavico/zapbot/pull/45) merged |
+| Commit integrado | `5ed39b0306addeaf96d4cbb3ad8480268adb3ae0` |
+| Content-tree | `80546bd3a04663b80a2e09750f48c5fa2a4cecf9` |
+| Source-base | `3f9edc38b1d0987db7d781317350e146b9c5b82e` |
+| Fórmula | `hp-max = round(hp-ref(n) × clamp((base/80)^0.85, 0.60, 2.20))` |
+| Node Image ID | `sha256:57a828ca6b6187b1415e0a5ea6f71c8b7ec12dd7ffc7fc63e5e6563c2aee5332` |
+| JVM Image ID | `sha256:e1bb8ac5df0ab5ea81b1ab96ca689a602d47e14d41daf07fd0429fafd9df44a8` |
+| Tags | `odisseu-node:a6-species-hp-20261108T133538Z-5ed39b0306ad-amd64` · `odisseu-jvm:…-5ed39b0306ad-amd64` |
+| Arch / UID / sandbox | **amd64** · Node `1000:1000` · sem `--no-sandbox` · Chromium 156 |
+| Health | Node `scripts/healthcheck.js` · JVM `127.0.0.1:18090/health` · overlay `HEALTH_BIND_HOST=0.0.0.0` |
+| VERIFY_A6_GAMEPLAY_RC_IMAGES | **PASS** |
+| Overlay | pins species-hp + seccomp Chromium (**não** aplicado em produção) |
+| Testes | species-hp 19/1337 · homolog 42/247 · tm-xp · hunt · raid+gym smoke · bridge · Node 18 |
+| Raid boss HP | **320** intacto |
+| Saves / flags / WA / hold / CI | **não** alterados |
+| Prep operacional | **GO condicional** (load tars + VERIFY no host) |
+| Cutover / deploy | **NO-GO** até autorização operacional |
+
+Relatório detalhado: `docs/pokemon-a6-species-hp-balance.md`.
 
 ---
 
