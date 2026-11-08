@@ -166,6 +166,9 @@
         chat "c-xp"
         player "ash"
         rid "raid-hp-xp"
+        ;; Fator baixo: HP chefe ~96 (Proposta A 320×0.3) — vence em 2–3 hits
+        ;; com revide, sem morrer antes (regressão do HP 220→320).
+        chefe-xp (assoc (chefe) :fator-dificuldade 0.3)
         mon-xp (assoc (mon "Wartortle" 200)
                       :golpes [{"nome-exibicao" "Jato d'Água" "tipo" "water"
                                 "poder" 40 "classe" "especial"}])]
@@ -174,7 +177,7 @@
     (raid-app/open-raid!
      s chat player
      {:operation-id "open-xp" :raid-id rid :ginasio "fogo" :nome-ginasio "Fogo"
-      :nivel-ginasio 20 :liga "bronze" :chefe (chefe)
+      :nivel-ginasio 20 :liga "bronze" :chefe chefe-xp
       :min-jogadores 1 :agora 3000})
     (raid-app/join-raid!
      s chat player
@@ -190,7 +193,8 @@
            s chat player
            {:operation-id (str "atk-xp-" n) :raid-id rid
             :expected-turn-index (:turn-index r)
-            :move-index 0 :agora (+ 3010 n)})
+            :move-index 0 :agora (+ 3010 n)
+            :rng {:raid-damage-var 15}})
           (recur (inc n)))))
     (let [r (raid-app/get-raid s rid)
           after (first (ports/list-collection s chat player "a"))

@@ -3915,8 +3915,17 @@
     (let [payload (ops/raid-attack-payload request)
           phash (ops/payload-hash payload)
           operation-id (:operation-id request)
+          ;; Retry: devolve dano/variação já persistidos — NÃO re-rola RNG.
+          expand-dup (fn [r]
+                       (when r
+                         (let [s (:summary r)]
+                           (merge (dissoc r :summary)
+                                  (select-keys s [:dano :multiplicador :base
+                                                  :base-variada :variacao-pct
+                                                  :venceu? :derrota? :trocou?])
+                                  {:duplicate true}))))
           existing (receipt-entity (d/db conn) operation-id)]
-      (or (resolve-receipt existing phash operation-id)
+      (or (expand-dup (resolve-receipt existing phash operation-id))
           (try
             (transact-with-writer!
              conn writer-ctx
@@ -3935,7 +3944,7 @@
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)
-                  (resolve-receipt dup phash operation-id)
+                  (expand-dup (resolve-receipt dup phash operation-id))
                   (throw ex))))))))
 
   (raid-capture! [_ writer-ctx request]

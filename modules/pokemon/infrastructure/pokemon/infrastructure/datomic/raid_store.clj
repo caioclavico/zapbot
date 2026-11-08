@@ -12,19 +12,25 @@
             [pokemon.domain.raid-auto :as raid-auto]
             [pokemon.infrastructure.datomic.battle-idle-store :as battle-idle-store]
             [pokemon.infrastructure.datomic.economy-store :as economy-store]))
+(defn- renorm-poke
+  "Reaplica slim/normalização ao carregar snapshot (golpes string-key → UI válida)."
+  [p]
+  (when p
+    (or (battle/slim-pokemon-for-battle p {:keep-images? true}) p)))
+
 (defn- decode-participant-bundle
   "Compat: edn legado = mapa do Pokémon; v2 = {:__raid-party-v1 ...}."
   [raw hp-attr collection-index]
   (let [edn (or raw {})]
     (if (:__raid-party-v1 edn)
       (let [party (mapv (fn [s]
-                          {:pokemon (or (:pokemon s) {})
+                          {:pokemon (renorm-poke (or (:pokemon s) {}))
                            :hp (long (:hp s 0))
                            :collection-index (long (:collection-index s 0))})
                         (or (:party edn) []))
             idx (long (:active-idx edn 0))
             slot (nth party idx (first party))
-            poke (or (:active edn) (:pokemon slot) {})]
+            poke (renorm-poke (or (:active edn) (:pokemon slot) {}))]
         {:pokemon poke
          :party (if (seq party)
                   party
@@ -32,13 +38,14 @@
          :active-party-idx idx
          :hp (long (or (:hp slot) hp-attr 0))
          :collection-index (long (or (:collection-index slot) collection-index 0))})
-      {:pokemon edn
-       :party [{:pokemon edn
-                :hp (long hp-attr)
-                :collection-index (long collection-index)}]
-       :active-party-idx 0
-       :hp (long hp-attr)
-       :collection-index (long collection-index)})))
+      (let [poke (renorm-poke edn)]
+        {:pokemon poke
+         :party [{:pokemon poke
+                  :hp (long hp-attr)
+                  :collection-index (long collection-index)}]
+         :active-party-idx 0
+         :hp (long hp-attr)
+         :collection-index (long collection-index)}))))
 
 (defn participant->map
   [e edn-read present?]
@@ -843,7 +850,8 @@
         agora (long (or (:agora request) (System/currentTimeMillis)))
         _ (battle-idle-store/assert-battle-not-idle-expired! raid agora)
         move-index (long (:move-index request))
-        outcome (raid/atacar raid player-id move-index agora)
+        ;; Variação sorteada UMA vez no domínio; receipt/idempotência não re-rola.
+        outcome (raid/atacar raid player-id move-index agora (:rng request))
         raid' (:raid outcome)
         still-combat? (= "combate" (str (:fase raid')))
         idle (when still-combat? (battle-idle-store/raid-touch-attrs agora))
@@ -875,6 +883,10 @@
         other-parts (for [[pid p] (:participantes raid')
                           :when (not= pid player-id)]
                       (participant-entity (:raid-id raid) pid (:chat-id writer-ctx) p))
+        ;; Derrota: libera ponteiro. Vitória: mantém enquanto captura pendente.
+        clear-ptr (when (raid/deve-liberar-ponteiro? raid' agora)
+                    [[:db/retract [:chat-active-raid/chat-id (:chat-id writer-ctx)]
+                      :chat-active-raid/raid-id (:raid-id raid)]])
         raid-tx (concat
                  [(cond-> (raid-entity-tx (assoc raid' :revision (inc expected-rev)
                                                  :rewards-paid? (or (:rewards-paid? raid)
@@ -897,17 +909,23 @@
                    :operation-receipt/summary
                    (pr-str {:dano (:dano outcome)
                             :multiplicador (:multiplicador outcome)
+                            :base (:base outcome)
+                            :base-variada (:base-variada outcome)
+                            :variacao-pct (:variacao-pct outcome)
                             :venceu? (:venceu? outcome)
                             :derrota? (:derrota? outcome)
                             :trocou? (:trocou? outcome)})}]
                  other-parts
-                 (or hp-sync []))]
+                 (or hp-sync [])
+                 (or clear-ptr []))]
     {:tx (into (vec raid-tx) (mapcat :tx reward-bundles))
      :result {:operation-id operation-id
               :duplicate false
               :dano (:dano outcome)
               :multiplicador (:multiplicador outcome)
               :base (:base outcome)
+              :base-variada (:base-variada outcome)
+              :variacao-pct (:variacao-pct outcome)
               :hp-chefe-antes (:hp-chefe-antes outcome)
               :revide (:revide outcome)
               :venceu? (:venceu? outcome)
@@ -1013,7 +1031,18 @@
                                       :nome (or (:nome chefe) (get chefe "nome") "Chefe")
                                       :species (or (:species chefe) (:nome chefe)
                                                    (get chefe "nome"))))]
-                   [(pokemon-entity-map sk reg (count colecao))]))]
+                   [(pokemon-entity-map sk reg (count colecao))]))
+        capturou? (or sucesso?
+                      (boolean (get-in raid [:capturas player-id :capturou])))
+        raid-pos (-> raid
+                     (assoc-in [:capturas player-id]
+                               {:tentativas (inc tentativas)
+                                :capturou capturou?
+                                :frambo-preparada false}))
+        liberar? (raid/deve-liberar-ponteiro? raid-pos agora)
+        clear-ptr (when liberar?
+                    [[:db/retract [:chat-active-raid/chat-id chat-id]
+                      :chat-active-raid/raid-id (:raid-id raid)]])]
     {:tx (concat item-tx
                  (or frambo-tx [])
                  (or add-tx [])
@@ -1021,8 +1050,7 @@
                    :raid-capture/raid-id (:raid-id raid)
                    :raid-capture/player-id player-id
                    :raid-capture/tentativas (inc tentativas)
-                   :raid-capture/capturou (or sucesso?
-                                              (boolean (get-in raid [:capturas player-id :capturou])))
+                   :raid-capture/capturou capturou?
                    :raid-capture/frambo-preparada false}
                   [:db/cas [:save/key sk] :save/revision rev (inc rev)]
                   {:operation-receipt/id operation-id
@@ -1033,7 +1061,8 @@
                    :operation-receipt/save-id save-id
                    :operation-receipt/summary
                    (pr-str {:sucesso? sucesso? :chance chance :roll roll
-                            :frambo? frambo?})}])
+                            :frambo? frambo? :pointer-cleared liberar?})}]
+                 (or clear-ptr []))
      :result {:operation-id operation-id
               :duplicate false
               :sucesso? sucesso?
@@ -1042,4 +1071,5 @@
               :roll roll
               :frambo? frambo?
               :bola bola
-              :tentativas (inc tentativas)}}))
+              :tentativas (inc tentativas)
+              :pointer-cleared (boolean liberar?)}}))

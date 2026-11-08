@@ -17,6 +17,7 @@
             [pokemon.domain.hunt :as hunt]
             [pokemon.domain.joy :as joy]
             [pokemon.domain.mundo :as mundo]
+            [pokemon.domain.battle :as battle]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.raid :as raid]
             [pokemon.domain.shop :as shop]
@@ -496,19 +497,24 @@
 
 (defn- encounter-pokemon-dto
   "DTO de apresentação (HP atual/máx + golpes). `hp-atual` vem do mapa de batalha.
-   Raridade: canônica do motor (`assegurar-raridade`) — nunca inventa `?`/`comum` silencioso."
+   Raridade: canônica do motor (`assegurar-raridade`) — nunca inventa `?`/`comum` silencioso.
+   Golpes re-normalizados (string-keys / slug) para UI não mostrar `? — Poder 0`."
   ([p] (encounter-pokemon-dto p nil))
   ([p hp-atual]
    (when p
      (let [p (capture/assegurar-raridade p)
-           resolved (capture/resolver-raridade p)]
+           resolved (capture/resolver-raridade p)
+           golpes (->> (or (:golpes p) (get p "golpes") [])
+                       (mapv battle/golpe-normalizado)
+                       (filterv map?))]
        (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
                                :raridade :tipos :ataque :defesa :atq-esp :def-esp :veloc
-                               :imagem :imagem-shiny :altura :golpes :status :habilidade
+                               :imagem :imagem-shiny :altura :status :habilidade
                                :motivacao-ginasio :collection-index])
          true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0))
                      :raridade (:raridade resolved)
-                     :raridade-fonte (name (:fonte resolved)))
+                     :raridade-fonte (name (:fonte resolved))
+                     :golpes golpes)
          (:shiny? p) (assoc :shiny true))))))
 
 (defn- area-visual
@@ -778,7 +784,9 @@
   [raid player-id agora]
   (when raid
     (let [fase (str (:fase raid))
-          ativa (or (raid/ativa? raid agora) (= "vitoria" fase))
+          ;; Vitória só conta como "ativa" se este jogador ainda tem captura pendente.
+          ativa (or (raid/ativa? raid agora)
+                    (boolean (and player-id (raid/captura-pendente? raid player-id agora))))
           parts (:participantes raid {})
           viewer (get parts player-id)
           cap (get-in raid [:capturas player-id])
@@ -854,27 +862,16 @@
          (map #(long (:qty % 0)))
          (reduce + 0))))
 
-(defn- raid-visivel?
-  "Inscrições/combate não expirados, ou vitória ainda na janela de captura."
-  [raid agora]
-  (when raid
-    (let [fase (str (:fase raid))]
-      (or (raid/ativa? raid agora)
-          (and (= "vitoria" fase)
-               (some-> (:captura-expira raid)
-                       (as-> t (< (long agora) (long t)))))))))
-
 (defn active-raid
-  "Raid ativa (inscrições/combate) ou janela de captura pós-vitória."
+  "Raid ativa (inscrições/combate) ou captura pendente *deste* jogador.
+   Vitória já resolvida para o viewer não ocupa mais o menu `!pk raid`."
   [store chat-id player-id {:keys [agora-ms]}]
   (let [player (require-player! store chat-id player-id)
         agora (long (or agora-ms (System/currentTimeMillis)))
         ;; Eager expire materializa cancelada/combate sem timer em memória.
         _ (raid-app/expire-lobby! store chat-id agora)
-        raid0 (or (raid-app/active-raid store chat-id)
-                  ;; captura pós-vitória: ponteiro pode ter sido limpo — busca via get se houver
-                  nil)
-        raid (when (raid-visivel? raid0 agora) raid0)
+        raid0 (raid-app/active-raid store chat-id)
+        raid (when (raid/visivel-para? raid0 agora player-id) raid0)
         inv (when-let [slot (:active-save-id player)]
               (ports/list-inventory store chat-id player-id slot))
         dto (raid-dto raid player-id agora)
@@ -910,9 +907,9 @@
          agora (long (or agora-ms (System/currentTimeMillis)))
          _ (raid-app/expire-lobby! store chat-id agora)
          raid0 (raid-app/active-raid store chat-id)
-         raid (when (raid-visivel? raid0 agora) raid0)
-         _ (when-not (and raid (= "inscricoes" (str (:fase raid))))
-             (throw (err/error :raid_not_open {:fase (:fase raid)})))
+         raid (when (raid/inscricoes-abertas? raid0 agora) raid0)
+         _ (when-not raid
+             (throw (err/error :raid_not_open {:fase (:fase raid0)})))
          colecao (when slot (ports/list-collection store chat-id player-id slot))
          aptos (filterv
                 (fn [p]

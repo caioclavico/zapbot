@@ -115,7 +115,7 @@
     (is (= "combate" (get-in solo [:raid :fase])))
     (is (= :combate (:acao combate)))
     (is (= "combate" (get-in combate [:raid :fase])))
-    (is (= 440 (get-in combate [:raid :hp-chefe])))))
+    (is (= 640 (get-in combate [:raid :hp-chefe])))))
 
 (deftest dominio-cancelar-criador
   (let [boss (:chefe (raid/boss-do-ginasio "pedra"))
@@ -253,7 +253,7 @@
         :operation-id "jm" :collection-index 0 :nome "Misty" :agora-ms 1002})
     (let [after (raid-app/expire-lobby! s chat (+ 1000 raid/duracao-inscricoes))]
       (is (= "combate" (:fase after)))
-      (is (= 440 (:hp-chefe after))))))
+      (is (= 640 (:hp-chefe after))))))
 
 (deftest reinicio-recupera-ponteiro
   (let [db-name "f2-restart"
@@ -359,7 +359,7 @@
     (let [s2 (reopen! db-name)
           r (raid-app/active-raid s2 chat)]
       (is (= "combate" (:fase r)))
-      (is (= 440 (:hp-chefe r)))
+      (is (= 640 (:hp-chefe r)))
       (is (= 2 (count (:ordem r)))))))
 
 (deftest comando-apos-expiracao-cancelada
@@ -453,7 +453,7 @@
                  :fence-generation (fence s chat "ash")
                  :operation-id "st" :agora-ms 1003})]
       (is (= "combate" (get-in st [:raid :fase])))
-      (is (= 440 (get-in st [:raid :hp-chefe])))
+      (is (= 640 (get-in st [:raid :hp-chefe])))
       ;; Lobby não paga recompensa
       (is (false? (boolean (get-in st [:raid :rewards-paid])))))))
 

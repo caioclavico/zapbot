@@ -262,10 +262,20 @@ function resumoEfeitosGolpe(golpe) {
   return partes.length ? partes.join(', ') : 'efeito especial';
 }
 
+function nomeGolpeUi(golpe, idx) {
+  const raw = golpe && (golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome || golpe.slug);
+  const n = raw != null ? String(raw).trim() : '';
+  if (n && n !== '?') return n;
+  const tipo = golpe && (golpe.tipo || golpe.type);
+  if (tipo) return `Golpe ${TIPOS_PT[tipo] || tipo}`;
+  if (golpe && golpe.golpeIrrecuperavel) return `Golpe ${idx + 1} (irrecuperável)`;
+  return `Golpe ${idx + 1}`;
+}
+
 function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
-  const nome = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome || golpe.slug || '?';
-  const tipo = golpe.tipo || '?';
-  const classe = golpe.classe || golpe.class || 'fisico';
+  const nome = nomeGolpeUi(golpe, idx);
+  const tipo = (golpe && (golpe.tipo || golpe.type)) || 'normal';
+  const classe = (golpe && (golpe.classe || golpe.class)) || 'fisico';
   const especial = classe === 'status' || classe === 'transform';
   const mult = especial ? 1 : multiplicadorVsTipos(tipo, tiposDefesa, habilidadeDefensor);
   let corpo;
@@ -275,7 +285,8 @@ function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
     const alvo = golpe.alvo || golpe.target;
     corpo = `${alvo === 'proprio' || alvo === 'próprio' ? 'em si: ' : 'no rival: '}${resumoEfeitosGolpe(golpe)}`;
   } else {
-    corpo = `poder ${golpe.poder != null ? golpe.poder : '?'}`;
+    const poder = golpe && golpe.poder != null ? golpe.poder : (golpe && golpe.power);
+    corpo = `poder ${poder != null ? poder : 0}`;
   }
   const precisao = golpe.precisao != null ? golpe.precisao : golpe.accuracy;
   const prec = precisao != null ? `, precisão ${precisao}%` : '';
@@ -1480,10 +1491,11 @@ function formatBattleState(battle, prefix = '!pk', opts = {}) {
   const reservas = gym && (b.reservasX != null || b.reservasO != null)
     ? `Reservas: você ${b.reservasX != null ? b.reservasX : '?'} · líder ${b.reservasO != null ? b.reservasO : '?'}`
     : null;
+  // Caçada/ginásio: raridade só no adversário (nunca no mon do jogador).
   return [
     cabecalho || null,
     '',
-    `🐾 *${nomePokemon(x)}*${emojiStatus(status.x)} —`,
+    `🐾 *${nomePokemon(x)}*${emojiStatus(status.x)}`,
     barraHp(hpX.atual, hpX.max),
     `👾 *${nomePokemon(o)}*${emojiStatus(status.o)}${o.raridade ? ` — ${textoRaridade(o)}` : ''}`,
     barraHp(hpO.atual, hpO.max),
@@ -2226,7 +2238,7 @@ function formatRaidMoveLines(pokemon, prefix = '!pk', tiposDefesa, habilidadeDef
     return ['(sem golpes)'];
   }
   return golpes.slice(0, 4).map((g, i) => {
-    const nome = g.nomeExibicao || g['nome-exibicao'] || g.nome || g.slug || `Golpe ${i + 1}`;
+    const nome = nomeGolpeUi(g, i);
     const classe = String(g.classe || g.class || '').toLowerCase();
     const poder = Number(g.poder != null ? g.poder : (g.power != null ? g.power : 0));
     const ofensivo = (classe === 'fisico' || classe === 'especial'
@@ -2235,10 +2247,7 @@ function formatRaidMoveLines(pokemon, prefix = '!pk', tiposDefesa, habilidadeDef
     // Status/transform válidos: nome + classe — não confundir com ref quebrada (?).
     if (!ofensivo) {
       const emoji = emojiGolpe(g);
-      if (classe === 'status' || classe === 'transform') {
-        return `${i + 1}. ${emoji} *${nome}* — _indisponível_`;
-      }
-      return `${i + 1}. ${emoji} *${nome}* — _indisponível_`;
+      return `${i + 1}. ${emoji} *${nome}* — _indisponível na raid_`;
     }
     // Paridade caça: emoji de classe + marca de efetividade vs chefe.
     const linha = linhaGolpe(i, g, tiposDefesa || [], habilidadeDefensor);
@@ -2251,12 +2260,22 @@ function formatRaidTurnBlock(r, prefix = '!pk') {
   const nome = displayTrainerName(r.vezNome || r.vez_nome, r.vez);
   const poke = r.vezPokemon || r.vez_pokemon || {};
   const pokeNome = poke.nome || poke.species || '?';
-  const hp = r.vezHp != null ? r.vezHp : (r.vez_hp != null ? r.vez_hp : '?');
+  const hpAtual = r.vezHp != null ? r.vezHp : (r.vez_hp != null ? r.vez_hp : poke.hpAtual);
+  const hpMax = poke.hp != null ? poke.hp : hpAtual;
   const chefe = r.chefe || {};
   const tiposChefe = chefe.tipos || chefe.types || [];
   const habChefe = chefe.habilidade || chefe.ability || null;
+  const hpChefe = r.hpChefe != null ? r.hpChefe : r.hp_chefe;
+  const hpChefeMax = r.hpMax != null ? r.hpMax : r.hp_max;
+  const rarChefe = chefe.raridade ? ` — ${textoRaridade(chefe)}` : '';
   const lines = [
-    `👉 Vez de *${nome}* — ${pokeNome} (HP ${hp})`,
+    `👾 *${chefe.nome || chefe.species || 'Chefe'}*${rarChefe}`,
+    (hpChefe != null && hpChefeMax != null)
+      ? barraHp(hpChefe, hpChefeMax)
+      : `❤️ Chefe: ${hpChefe != null ? hpChefe : '?'}/${hpChefeMax != null ? hpChefeMax : '?'}`,
+    `🐾 *${pokeNome}*`,
+    (hpAtual != null && hpMax != null) ? barraHp(hpAtual, hpMax) : `❤️ HP ${hpAtual != null ? hpAtual : '?'}`,
+    `👉 Vez de *${nome}*`,
     ...formatRaidMoveLines(poke, prefix, tiposChefe, habChefe)
   ];
   const proxNome = r.proximaVezNome || r.proxima_vez_nome;
@@ -2320,22 +2339,27 @@ function formatRaidStatus(data, prefix = '!pk') {
   const r = data && data.raid;
   if (!r) {
     return [
-      '🏛️ Nenhuma raid ativa neste chat.',
-      `Abrir: ${prefix} raid abrir   ·   direto: ${prefix} raid abrir 1`
+      '🏛️ Nenhuma raid em andamento neste chat.',
+      `Abrir: ${prefix} raid abrir   ·   direto: ${prefix} raid abrir 1`,
+      `Time: ${prefix} time   ·   Mochila: ${prefix} mochila`
     ].join('\n');
   }
   const chefe = r.chefe || {};
+  const rarChefe = chefe.raridade ? ` — ${textoRaridade(chefe)}` : '';
   const prazo = r.fase === 'inscricoes'
     ? formatRaidPrazo(r.expira, data && data.agora)
     : null;
+  const capturaPend = Boolean(r.capturaPendente || r['capturaPendente?']);
   const lines = [
-    `⚔️ *Raid — ${chefe.nome || 'Chefe'}* / ${r.liga || '?'}`,
+    `⚔️ *Raid — ${chefe.nome || 'Chefe'}*${rarChefe} / ${r.liga || '?'}`,
     `🏛️ ${r.nomeGinasio || r.ginasio || 'Ginásio'} · fase *${r.fase}*`,
     r.fase === 'combate' || r.fase === 'vitoria'
-      ? `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`
+      ? ((r.hpChefe != null && r.hpMax != null)
+        ? `❤️ Chefe\n${barraHp(r.hpChefe, r.hpMax)}`
+        : `❤️ Chefe: ${r.hpChefe != null ? r.hpChefe : '?'} / ${r.hpMax != null ? r.hpMax : '?'}`)
       : `Inscritos: ${r.nParticipantes || 0}/5`,
     prazo,
-    r.capturaPendente || r['capturaPendente?']
+    capturaPend
       ? `🎯 Captura aberta — ${prefix} raid capturar  ·  ${prefix} raid fruta`
       : null,
     '',
@@ -2346,13 +2370,25 @@ function formatRaidStatus(data, prefix = '!pk') {
   if (r.fase === 'combate') {
     lines.push(...formatRaidTurnBlock(r, prefix));
   }
+  if (r.fase === 'vitoria' && capturaPend) {
+    lines.push(
+      '',
+      '📌 *Próximos comandos*',
+      `\`${prefix} raid capturar\``,
+      `\`${prefix} raid fruta\``,
+      `\`${prefix} mochila\``
+    );
+  }
   if (Array.isArray(r.participantes) && r.participantes.length) {
     lines.push('', '*Participantes*');
     for (const p of r.participantes) {
       const nome = displayTrainerName(p);
       const voce = raidFlag(p, 'voce');
+      const poke = p.pokemon || {};
+      const pokeNome = poke.nome || poke.species || null;
       lines.push(
         `• ${voce ? '👉 ' : ''}${nome}`
+        + (pokeNome ? ` — ${pokeNome}` : '')
         + (p.hp != null ? ` · HP ${p.hp}` : '')
         + (p.dano ? ` · dano ${p.dano}` : '')
       );
@@ -2473,6 +2509,26 @@ function formatRaidVictory(data, prefix = '!pk') {
   for (const m of [...roster.mentions, ...rewards.mentions]) {
     if (m && !mentionSet.includes(m)) mentionSet.push(m);
   }
+  const capturaPend = Boolean(r.capturaPendente || r['capturaPendente?']
+    || (data && (data.capturaPendente || data.capturaUi)));
+  const nextCmds = capturaPend
+    ? [
+      '🎯 *CAPTURA DISPONÍVEL*',
+      `\`${prefix} raid capturar\` — ver bolas / chances`,
+      `\`${prefix} raid capturar 1|2|3\` — Poké / Grande / Ultra`,
+      `\`${prefix} raid fruta\` — Frambo (+chance)`,
+      '',
+      '📌 *Próximos comandos*',
+      `\`${prefix} raid capturar\``,
+      `\`${prefix} mochila\``,
+      `\`${prefix} time\``
+    ]
+    : [
+      '📌 *Próximos comandos*',
+      `\`${prefix} raid\``,
+      `\`${prefix} time\``,
+      `\`${prefix} mochila\``
+    ];
   const text = [
     '🏆 *RAID CONCLUÍDA!*',
     `👾 Chefe derrotado: *${chefe}*`,
@@ -2481,11 +2537,7 @@ function formatRaidVictory(data, prefix = '!pk') {
     '',
     ...rewards.lines,
     '',
-    '🎯 *CAPTURA DO CHEFE*',
-    `${prefix} raid capturar          — ver bolas / chances`,
-    `${prefix} raid capturar 1|2|3    — Poké / Super / Ultra`,
-    `${prefix} raid fruta             — Frambo (+chance)`,
-    `${prefix} mochila`
+    ...nextCmds
   ].join('\n');
   return { text, mentions: mentionSet };
 }
@@ -2565,7 +2617,7 @@ function formatRaidAttack(data, prefix = '!pk') {
   }
   const r = (data && data.raid) || {};
   const golpe = (data && (data.golpe || data.move)) || {};
-  const nomeGolpe = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome || golpe.slug;
+  const nomeGolpe = nomeGolpeUi(golpe, 0);
   const emojiClasse = emojiGolpe(golpe);
   const mult = data && (data.multiplicador != null ? data.multiplicador : data.effectiveness);
   const eff = effectivenessLine(mult);
@@ -2600,8 +2652,13 @@ function formatRaidAttack(data, prefix = '!pk') {
     }
   }
   if (eff) lines.push(eff);
-  if (hpAntes != null && hpChefe != null) {
-    lines.push(`❤️ HP *${nomeChefe}*: ${hpAntes}→${hpChefe}`);
+  if (hpAntes != null && hpChefe != null && hpMax != null) {
+    lines.push(`❤️ *${nomeChefe}* ${hpAntes}→${hpChefe}`);
+    lines.push(barraHp(hpChefe, hpMax));
+  } else if (hpChefe != null && hpMax != null) {
+    lines.push(`❤️ *${nomeChefe}*`);
+    lines.push(barraHp(hpChefe, hpMax)
+      + (data && data.revide != null ? ` · revide ${data.revide}` : ''));
   } else {
     lines.push(
       `❤️ Chefe: ${hpChefe != null ? hpChefe : '?'} / ${hpMax != null ? hpMax : '?'}`

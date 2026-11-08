@@ -54,9 +54,10 @@
           ;; def-esp do chefe = 80 → raw = floor(15+0.6*40*(50/80)) = floor(15+15)=30
           raid {:hp-chefe 1000 :defesa 80 :def-esp 80
                 :chefe {:tipos ["fire"]}}
-          out (raid/calcular-dano golpe poke raid)]
+          out (raid/calcular-dano golpe poke raid {:raid-damage-var 15})]
       (is (= 2.0 (:multiplicador out)))
       (is (= 30 (:base out)))
+      (is (= 100 (:variacao-pct out)))
       (is (= 60 (:dano out)))
       (testing "sem efetividade (JVM live pré-A+B+C) a fórmula devolve só a base"
         (let [legacy-base (let [raw (long (Math/floor (+ 15 (* 0.6 40 (/ 40.0 80.0)))))]

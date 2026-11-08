@@ -2,7 +2,7 @@
 
 **Worktree:** `/private/tmp/zapbot-a6-gameplay-audit`
 **Branch:** `fix/a6-gameplay-audit-impl` (base `rc/a6-ai-drain-sandbox` @ `16b5987`)
-**Escopo:** correções locais homologadas. **Sem deploy, migrations live, backfill ou alteração de saves/flags de produção.**
+**Escopo:** correções A+B+C+P0. Produção atualizada em 2026-11-08 (cutover P0 HP/UI/captura). **Sem migrations live, backfill ou alteração de saves/flags.**
 
 ## Caminho canônico
 
@@ -160,21 +160,22 @@ node --test test/pokemon-a6-sprite-placeholder.test.cjs  PASS
 
 ## Preservação produção
 
-Nenhuma imagem trocada, nenhum restart JVM/Node/WhatsApp, nenhum save alterado, nenhuma flag de produção mudada nesta etapa.
+Cutover P0 já em produção (ver §P0). Nesta etapa de balanceamento/UX: **nenhum** deploy/restart/save/flag/migration/backfill; hold/CI intocados.
 
 ---
 
 ## P0 pós-cutover (2026-11-08)
 
-Escopo: correções locais. **Sem deploy / migration / backfill / flags / saves live.**
+**Produção:** **SUCCESS** — Node `bec910bf…` · JVM `9e87bb6f…` · commit `6cef8f43…` · READY ≥20 min.  
+Evidência: `a6-p0-hp-ui-cutover-20261108T074953Z`. Migrations/backfill/flags/saves **não** alterados.
 
-| Bug | IMPLEMENTADO | TESTADO | PENDENTE |
+| Bug | IMPLEMENTADO | TESTADO | PRODUÇÃO |
 |-----|--------------|---------|----------|
-| **HP raid → `!pk time`** | `raid-party-hp-txs` em ataque + leave; XP com HP do snapshot (sem full heal) | `raid-hp-sync-p0-a6-test` (ataque/leave/vitória) | Deploy JVM; smoke prod |
-| **`? — Poder 0`** | `golpe-normalizado` sempre; Wartortle string-keys; status 0 ≠ ref quebrada | slim Wartortle + status | Parties já seladas: rejoin |
-| **UI raid = caça** | emoji classe + “causou N” + `linhaGolpe` | Node P0 + fase12 + lote-c | Deploy Node |
-| **Grande/Ultra qty + %** | `bola-aliases` + `inv-qty` + `inventory-adjust-ball-tx`; `ballMapGet`; % motor | UI camelCase + débito `great-ball` | Deploy Node+JVM |
-| **Pokédex moldura** | `!pk pokedex N` → `renderPokedexCard` | pokedex species tests | Deploy Node |
+| **HP raid → `!pk time`** | `raid-party-hp-txs` em ataque + leave; XP com HP do snapshot (sem full heal) | `raid-hp-sync-p0-a6-test` | JVM live `9e87bb6f` |
+| **`? — Poder 0`** | `golpe-normalizado` sempre; Wartortle string-keys; status 0 ≠ ref quebrada | slim Wartortle + status | JVM live; parties já seladas: rejoin |
+| **UI raid = caça** | emoji classe + “causou N” + `linhaGolpe` | Node P0 + fase12 + lote-c | Node live `bec910bf` |
+| **Grande/Ultra qty + %** | `bola-aliases` + `inv-qty` + `inventory-adjust-ball-tx`; `ballMapGet`; % motor | UI camelCase + débito `great-ball` | Node+JVM live |
+| **Pokédex moldura** | `!pk pokedex N` → `renderPokedexCard` | pokedex species tests | Node live |
 
 ### Arquivos
 
@@ -186,8 +187,129 @@ Escopo: correções locais. **Sem deploy / migration / backfill / flags / saves 
 | Present / pokedex | `pokemon-jvm-present.cjs`, `pokemon-jvm-media.cjs`, `pokemon_http.cljs` |
 | Testes | `raid_hp_sync_p0_a6_test.clj`, `pokemon-a6-raid-gym-capture-p0.test.cjs` |
 
-### Homologação local
+### Homologação / cutover
 
-`clojure -M:test-a6-lote-a|b|c` + `homolog-abc` PASS · Node P0/raid/pokedex PASS.
+Local: `clojure -M:test-a6-lote-a|b|c` + `homolog-abc` PASS · Node P0/raid/pokedex PASS.  
+Produção: drain → cold WA/Datomic → ACL → JVM→resume→Node → RO contracts → **STABILITY_20M_PASS**.  
+Hold/CI-CD inalterados. Detalhes: `docs/pokemon-a6-integrated-release-readiness.md`.
 
-Drain / IA / sandbox / hold: **inalterados**. Imagens candidatas: ver readiness §10.
+---
+
+## Balanceamento geral + UX combate (pós-P0 live)
+
+**Atualizado:** 2026-11-08  
+**Live auditado:** Node `bec910bf…` / JVM `9e87bb6f…` @ `6cef8f43` (cutover P0 **confirmado** READY/healthy).  
+**Escopo desta entrega:** bugs de estado/UI/golpes/faint **implementados localmente**. **Sem deploy.** Parâmetros amplos de dificuldade: **proposta quantitativa — aguardando aprovação**.
+
+### Diagnóstico live vs RC
+
+| Item | Estado |
+|------|--------|
+| Deploy P0 | **Em produção** (`bec910bf`/`9e87bb6f`) |
+| Bugs novos (não cobertos pelo P0) | Vitória presa em `!pk raid`; barras HP ausentes na raid; raridade do jogador na caça; ordem de reserva no faint; golpes `?` residuais em snapshots/UI |
+| Já corrigido no P0 mas ainda visível | Parties de raid seladas **antes** do P0 mantêm golpes slim antigos até leave/rejoin |
+
+### Causas-raiz confirmadas
+
+| Bug | Causa |
+|-----|-------|
+| `!pk raid` preso em vitória | `raid-dto`/`raid-visivel?` tratavam fase `vitoria` como ativa durante **toda** a janela `captura-expira`, mesmo após captura resolvida; ponteiro não era limpo |
+| Golpe `?` | Normalização incompleta (nome vazio/`?`); Node `linhaGolpe` fallback literal `?`; snapshots de raid não re-normalizavam no decode/DTO |
+| Faint “mon errado” | `avancar-party` escolhia o **primeiro** índice com HP>0, não o próximo na ordem de entrada |
+| Barras HP / UI raid ≠ caça | `formatRaidTurnBlock` usava `HP N` textual; sem `barraHp`; raridade do chefe inconsistente |
+| Raridade do jogador na caça | Layout com traço residual; reforçado para omitir raridade em `pokemonX` |
+| Dano SE “explodindo” raids | Fórmula raid **sem variação** + clamp base≤160 × efetividade **depois** do clamp; solo raro HP=220 → hit SE típico (~182) ≈ **83%** do chefe |
+| Dano “sempre igual” | Caça: `U{0..10}` em `damage.clj`. Raid: **determinística** (sem RNG) |
+
+### Correções implementadas (código local)
+
+| Área | Mudança |
+|------|---------|
+| Lifecycle | `visivel-para?` / `captura-pendente?` / `deve-liberar-ponteiro?`; vitória só no menu se **este** jogador tem captura pendente; retract do ponteiro em captura resolvida / derrota |
+| Faint | `avancar-party` percorre a ordem de entrada com wrap |
+| Golpes | `golpe-normalizado` público + nomes sem `?`; renorm no decode da party e no DTO; Node `nomeGolpeUi` |
+| UI | Barras `barraHp` na raid; raridade só no chefe/adversário; rodapé de vitória condicional (`capturar` vs `raid`/`time`/`mochila`) |
+
+### Exemplos finais (trechos)
+
+**Raid turno (unificado):**
+```
+👾 *Onix* — Raro
+[██████░░░░] 140/220
+🐾 *Wartortle*
+[███████░░░] 67/100
+👉 Vez de *Ash*
+1. 🔮 *Water Gun* (Água, poder 40) 🔥 → `!pk raid atacar 1`
+```
+
+**Vitória com captura pendente:**
+```
+🏆 *RAID CONCLUÍDA!*
+…
+🎯 *CAPTURA DISPONÍVEL*
+`!pk raid capturar`
+📌 *Próximos comandos*
+`!pk raid capturar` · `!pk mochila` · `!pk time`
+```
+
+**Sem raid ativa:**
+```
+🏛️ Nenhuma raid em andamento neste chat.
+Abrir: !pk raid abrir
+```
+
+### Balanceamento — Proposta A **aplicada** (aprovada 2026-11-08)
+
+Parâmetros efetivos no domínio:
+
+| Parâmetro | Valor |
+|-----------|-------|
+| `hp-por-jogador` | **320** (era 220) |
+| Variação de dano | **85–100%** da base (`:raid-damage-var` ∈ `[0,16)`) |
+| Ordem | base clamp → × variação → × efetividade (tipos **integrais**) |
+| RNG | `pokemon.domain.rng/roll` injetável; produção sorteia 1× por ataque |
+| Idempotência | receipt persiste `dano`/`variacao-pct`/`base-variada`; retry **não** re-rola |
+| Fora de escopo | golpes fixos/%/status; STAB; caça (`damage-var` U{0..10} inalterado) |
+
+Fórmula: `floor(15+0.6*poder*(atk/def))` clamp `[10,160]`, × pct, × efetividade (sem STAB).  
+HP chefe: `320 × n_jogadores × fator` (duo raro = **640**).
+
+| Cenário (solo, atk80 def50 poder80) | Neutro | Super×2 | % HP chefe (SE) | Turnos est. (só SE) |
+|-------------------------------------|--------|---------|-----------------|--------------------|
+| Antes HP 220 @100% | 91 | 182 | **83%** | ~2 |
+| Depois HP 320 @100% | 91 | 182 | 57% | 2 |
+| Depois HP 320 @85% | 77 | 154 | 48% | 3 |
+
+Simulação local (`raid-balance-sim-a6-test`): solo/duo SE e neutro **vencíveis**; neutro alonga (~+1–2 turns); SE solo @85% fecha em &lt;8 turns. HP extra **não** torna raids impossíveis no perfil típico.
+
+### Testes (homologação local pós-Proposta A)
+
+| Suite | Resultado |
+|-------|-----------|
+| `:test-a6-lote-a` | PASS |
+| `:test-a6-lote-b` (+ lifecycle + balance-sim) | PASS |
+| `:test-a6-lote-c` | PASS |
+| `:test-a6-homolog-abc` | PASS (32 / 213) |
+| `:test-m4-raid` (JVM + smoke HTTP) | PASS |
+| `:test-raid-lobby-fase2` | PASS (24 / 80) |
+| Node `pokemon-a6-raid-gym-capture-p0.test.cjs` | PASS (8) |
+| `npm run test:http` | PASS (287) |
+
+### Imagens
+
+Construir Node+JVM a partir do **mesmo commit** integrado na RC (labels `io.zapbot.git-sha` + `content-tree`). Overlay pin atualizado **sem** apply/deploy.
+
+### Riscos residuais
+
+- Parties de raid **já abertas** na live podem ainda exibir golpes antigos até leave/rejoin.
+- Golpe verdadeiramente irrecuperável (sem nome/slug/tipo) fica marcado — sem backfill.
+- Mons fracos vs chefes tanque ficam um pouco mais longos (intencional); perfis extremos ainda podem perder.
+- Sem smoke destrutivo em saves reais; **sem deploy**.
+
+### GO/NO-GO
+
+| Critério | Estado |
+|----------|--------|
+| Bugs objetivos + Proposta A no código | **GO** para integrar/build RC |
+| Pedir janela de deploy produção | **NO-GO** até revisão humana dos Image IDs + hold |
+| Deploy / migrations / flags / saves | **NO-GO** (proibido neste ciclo) |
