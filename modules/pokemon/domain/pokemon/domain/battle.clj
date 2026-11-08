@@ -73,29 +73,33 @@
         ks))
 
 (defn- golpe-normalizado
+  "Normaliza golpe com chaves keyword OU string (EDN legado / migração).
+  Sem gate em :slug — maps só com \"nome\"/\"poder\" deixavam slim-golpe vazio
+  (select-keys em keywords) → UI `? — Poder 0`."
   [g]
-  (if (and (map? g) (or (contains? g "slug") (contains? g :slug)))
+  (if-not (map? g)
+    g
     (let [classe (golpe-get g :classe "classe")
           status (golpe-get g :status-causado "status-causado" :statusCausado "statusCausado")
-          alvo (golpe-get g :alvo "alvo")]
-      {:slug (golpe-get g :slug "slug")
-       :nome-exibicao (golpe-get g :nome-exibicao "nome-exibicao" :nomeExibicao "nomeExibicao" :nome "nome")
-       :tipo (golpe-get g :tipo "tipo")
-       :poder (or (golpe-get g :poder "poder") 0)
-       :classe (keyword (or classe "fisico"))
-       :precisao (golpe-get g :precisao "precisao")
-       :status-causado (when status (keyword status))
-       :chance-status (golpe-get g :chance-status "chance-status" :chanceStatus "chanceStatus")
-       :cura (golpe-get g :cura "cura")
-       :dreno (golpe-get g :dreno "dreno")
-       :recuo (golpe-get g :recuo "recuo")
-       :autodesmaio (or (golpe-get g :autodesmaio "autodesmaio") false)
-       :min-acertos (golpe-get g :min-acertos "min-acertos" :minAcertos "minAcertos")
-       :max-acertos (golpe-get g :max-acertos "max-acertos" :maxAcertos "maxAcertos")
-       :alteracoes (golpe-get g :alteracoes "alteracoes")
-       :alvo (when alvo (keyword alvo))})
-    (cond-> g
-      (string? (:classe g)) (update :classe keyword))))
+          alvo (golpe-get g :alvo "alvo")
+          slug (golpe-get g :slug "slug")
+          nome-ex (golpe-get g :nome-exibicao "nome-exibicao" :nomeExibicao "nomeExibicao" :nome "nome")]
+      (cond-> {:nome-exibicao nome-ex
+               :tipo (golpe-get g :tipo "tipo")
+               :poder (or (golpe-get g :poder "poder") 0)
+               :classe (keyword (or classe "fisico"))
+               :precisao (golpe-get g :precisao "precisao")
+               :status-causado (when status (keyword status))
+               :chance-status (golpe-get g :chance-status "chance-status" :chanceStatus "chanceStatus")
+               :cura (golpe-get g :cura "cura")
+               :dreno (golpe-get g :dreno "dreno")
+               :recuo (golpe-get g :recuo "recuo")
+               :autodesmaio (or (golpe-get g :autodesmaio "autodesmaio") false)
+               :min-acertos (golpe-get g :min-acertos "min-acertos" :minAcertos "minAcertos")
+               :max-acertos (golpe-get g :max-acertos "max-acertos" :maxAcertos "maxAcertos")
+               :alteracoes (golpe-get g :alteracoes "alteracoes")
+               :alvo (when alvo (keyword alvo))}
+        slug (assoc :slug slug)))))
 
 (defn- slim-golpe-default?
   "Defaults V1 (0/[]/precisao 100/alvo adversário) — ausente = mesmo efeito no loop."

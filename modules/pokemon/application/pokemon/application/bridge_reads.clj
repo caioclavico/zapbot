@@ -846,11 +846,13 @@
        :rewards-paid (boolean (:rewards-paid? raid))})))
 
 (defn- inv-qty
+  "Soma qty canônica + aliases legados (mesma regra do débito em store)."
   [inv item-id]
-  (->> (or inv [])
-       (filter #(= (str (:item-id %)) (str item-id)))
-       (map #(long (:qty % 0)))
-       (reduce + 0)))
+  (let [ids (capture/bola-alias-ids item-id)]
+    (->> (or inv [])
+         (filter #(contains? ids (str (:item-id %))))
+         (map #(long (:qty % 0)))
+         (reduce + 0))))
 
 (defn- raid-visivel?
   "Inscrições/combate não expirados, ou vitória ainda na janela de captura."
@@ -883,6 +885,9 @@
                       :frambo (inv-qty inv capture/frambo-item-id)
                       :frambo-preparada (boolean (get-in dto [:captura :frambo-preparada]))
                       :chances (get-in dto [:captura :chances])
+                      ;; Base kebab-free number — Node fallback se camelCase perder chaves.
+                      :chance-base (or (get-in dto [:captura :chance-base])
+                                       (get-in dto [:captura :chanceBase]))
                       :tentativas (get-in dto [:captura :tentativas] 0)
                       :max-tentativas raid/max-tentativas-captura
                       :chefe (get-in dto [:chefe :nome])})]

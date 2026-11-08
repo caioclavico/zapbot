@@ -221,9 +221,9 @@ function multiplicadorVsTipos(tipoAtaque, tiposDefesa, habilidadeDefensor) {
 }
 
 function emojiGolpe(golpe) {
-  const c = golpe && (golpe.classe || golpe.class);
-  if (c === 'fisico' || c === 'físico') return '💥';
-  if (c === 'especial') return '🔮';
+  const c = String((golpe && (golpe.classe || golpe.class)) || 'fisico').toLowerCase();
+  if (c === 'fisico' || c === 'físico' || c === 'physical') return '💥';
+  if (c === 'especial' || c === 'special') return '🔮';
   if (c === 'status') return '📊';
   if (c === 'transform') return '🧬';
   return '❓';
@@ -2220,7 +2220,7 @@ function buildRaidMentionRoster(participants) {
   return { mentions, labels, byPlayerId };
 }
 
-function formatRaidMoveLines(pokemon, prefix = '!pk') {
+function formatRaidMoveLines(pokemon, prefix = '!pk', tiposDefesa, habilidadeDefensor) {
   const golpes = (pokemon && (pokemon.golpes || pokemon.moves)) || [];
   if (!golpes.length) {
     return ['(sem golpes)'];
@@ -2228,13 +2228,21 @@ function formatRaidMoveLines(pokemon, prefix = '!pk') {
   return golpes.slice(0, 4).map((g, i) => {
     const nome = g.nomeExibicao || g['nome-exibicao'] || g.nome || g.slug || `Golpe ${i + 1}`;
     const classe = String(g.classe || g.class || '').toLowerCase();
-    const poder = Number(g.poder || g.power || 0);
-    const ofensivo = (classe === 'fisico' || classe === 'especial' || classe === 'physical' || classe === 'special')
+    const poder = Number(g.poder != null ? g.poder : (g.power != null ? g.power : 0));
+    const ofensivo = (classe === 'fisico' || classe === 'especial'
+      || classe === 'físico' || classe === 'physical' || classe === 'special')
       && poder > 0;
+    // Status/transform válidos: nome + classe — não confundir com ref quebrada (?).
     if (!ofensivo) {
-      return `${i + 1}. ${nome} — _indisponível_`;
+      const emoji = emojiGolpe(g);
+      if (classe === 'status' || classe === 'transform') {
+        return `${i + 1}. ${emoji} *${nome}* — _indisponível_`;
+      }
+      return `${i + 1}. ${emoji} *${nome}* — _indisponível_`;
     }
-    return `${i + 1}. ${nome} (${poder}) → \`${prefix} raid atacar ${i + 1}\``;
+    // Paridade caça: emoji de classe + marca de efetividade vs chefe.
+    const linha = linhaGolpe(i, g, tiposDefesa || [], habilidadeDefensor);
+    return `${linha} → \`${prefix} raid atacar ${i + 1}\``;
   });
 }
 
@@ -2244,9 +2252,12 @@ function formatRaidTurnBlock(r, prefix = '!pk') {
   const poke = r.vezPokemon || r.vez_pokemon || {};
   const pokeNome = poke.nome || poke.species || '?';
   const hp = r.vezHp != null ? r.vezHp : (r.vez_hp != null ? r.vez_hp : '?');
+  const chefe = r.chefe || {};
+  const tiposChefe = chefe.tipos || chefe.types || [];
+  const habChefe = chefe.habilidade || chefe.ability || null;
   const lines = [
     `👉 Vez de *${nome}* — ${pokeNome} (HP ${hp})`,
-    ...formatRaidMoveLines(poke, prefix)
+    ...formatRaidMoveLines(poke, prefix, tiposChefe, habChefe)
   ];
   const proxNome = r.proximaVezNome || r.proxima_vez_nome;
   if (proxNome) {
@@ -2555,8 +2566,7 @@ function formatRaidAttack(data, prefix = '!pk') {
   const r = (data && data.raid) || {};
   const golpe = (data && (data.golpe || data.move)) || {};
   const nomeGolpe = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome || golpe.slug;
-  const tipoGolpe = golpe.tipo || golpe.type || null;
-  const emojiTipo = (tipoGolpe && TIPO_EMOJI[String(tipoGolpe).toLowerCase()]) || '⚔️';
+  const emojiClasse = emojiGolpe(golpe);
   const mult = data && (data.multiplicador != null ? data.multiplicador : data.effectiveness);
   const eff = effectivenessLine(mult);
   const dano = data && data.dano != null ? Number(data.dano) : null;
@@ -2569,39 +2579,48 @@ function formatRaidAttack(data, prefix = '!pk') {
   const atacante = (data && (data.pokemonAtacante || data.pokemonAnterior))
     || {};
   const nomeAtacante = atacante.nome || atacante.species || null;
+  const chefe = r.chefe || {};
+  const nomeChefe = (chefe && (chefe.nome || chefe.species)) || 'chefe';
   const entrou = (data && (data.pokemonEntrou || data.pokemonAtivo)) || {};
   const nomeEntrou = entrou.nome || entrou.species || null;
   const lines = [];
   if (turno != null && Number.isFinite(turno) && turno > 0) {
     lines.push(`⚔️ *RAID — TURNO ${turno}*`, '');
   }
+  // Paridade caça (`mensagem-ataque` / formatCanonicalAttackLine): classe + causou N.
   if (nomeGolpe) {
-    lines.push(nomeAtacante
-      ? `${emojiTipo} *${nomeAtacante}* usou *${nomeGolpe}*!`
-      : `${emojiTipo} Usou *${nomeGolpe}*!`);
+    if (dano != null && Number.isFinite(dano) && dano === 0 && mult === 0) {
+      lines.push(`${emojiClasse} *${nomeGolpe}* de *${nomeAtacante || 'Pokémon'}* não teve efeito em *${nomeChefe}*! 🚫`);
+    } else if (dano != null && Number.isFinite(dano)) {
+      lines.push(`${emojiClasse} *${nomeGolpe}* de *${nomeAtacante || 'Pokémon'}* causou ${dano} de dano em *${nomeChefe}*!`);
+    } else {
+      lines.push(nomeAtacante
+        ? `${emojiClasse} *${nomeGolpe}* de *${nomeAtacante}*!`
+        : `${emojiClasse} *${nomeGolpe}*!`);
+    }
   }
   if (eff) lines.push(eff);
   if (hpAntes != null && hpChefe != null) {
-    lines.push(`❤️ Chefe: ${hpAntes} → ${hpChefe}${Number.isFinite(dano) ? ` (-${dano} HP)` : ''}`);
+    lines.push(`❤️ HP *${nomeChefe}*: ${hpAntes}→${hpChefe}`);
   } else {
     lines.push(
-      `💥 Dano ${dano != null ? dano : '?'} · revide ${data && data.revide != null ? data.revide : 0}`,
       `❤️ Chefe: ${hpChefe != null ? hpChefe : '?'} / ${hpMax != null ? hpMax : '?'}`
+      + (data && data.revide != null ? ` · revide ${data.revide}` : '')
     );
   }
   if (data && data.trocou) {
     if (data.autodesmaio) {
-      lines.push(`💀 *${nomeAtacante || 'Seu Pokémon'} desmaiou após o golpe!*`);
+      lines.push(`💀 ${nomeAtacante || 'Seu Pokémon'} desmaiou após o golpe!`);
     } else if (nomeAtacante) {
-      lines.push(`💀 *Seu ${nomeAtacante} desmaiou!*`);
+      lines.push(`💀 Seu ${nomeAtacante} desmaiou!`);
     } else {
-      lines.push('💀 *Seu Pokémon desmaiou!*');
+      lines.push('💀 Seu Pokémon desmaiou!');
     }
-    if (nomeEntrou) lines.push(`🔄 *${nomeEntrou} entrou na batalha!*`);
+    if (nomeEntrou) lines.push(`🔄 *${nomeEntrou}* entrou na batalha!`);
     else lines.push('🔄 *Próximo da party entrou!*');
     lines.push('⚔️ *A raid continua!*');
   } else if (data && data.autodesmaio) {
-    lines.push(`💀 *${nomeAtacante || 'Seu Pokémon'} desmaiou após o golpe!*`);
+    lines.push(`💀 ${nomeAtacante || 'Seu Pokémon'} desmaiou após o golpe!`);
   }
   if (data && data.hpAtivo != null && !data.trocou) {
     lines.push(`🐾 Seu ativo: HP ${data.hpAtivo}`);
@@ -2627,6 +2646,15 @@ function coerceRaidPresent(result) {
  * Chances vêm do domínio (`captura-ui.chances`) — nunca fixas na UI.
  * opts.afterFrambo: banner de Frambo *preparada* (ainda não consumida).
  */
+/** Lê chave kebab ou camelCase (wire JVM `json/camel-key`). */
+function ballMapGet(map, id) {
+  if (!map || id == null) return undefined;
+  if (map[id] != null) return map[id];
+  const camel = String(id).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  if (map[camel] != null) return map[camel];
+  return undefined;
+}
+
 function formatRaidCaptureUi(data, prefix = '!pk', opts = {}) {
   const ui = (data && (data.capturaUi || data['captura-ui'])) || null;
   const r = (data && data.raid) || {};
@@ -2639,12 +2667,33 @@ function formatRaidCaptureUi(data, prefix = '!pk', opts = {}) {
     ? ui.maxTentativas
     : (cap.maxTentativas || cap['max-tentativas'] || 3);
   const bolas = (ui && ui.bolas) || {};
-  const framboQty = ui && ui.frambo != null ? ui.frambo : '?';
+  const inv = (data && data.inventory) || (ui && ui.inventory) || [];
+  const framboQty = ui && ui.frambo != null ? ui.frambo
+    : (qtyBall(inv, 'fruta') || '?');
   const prepared = Boolean(ui && (ui.framboPreparada || ui['frambo-preparada']))
     || Boolean(cap.framboPreparada || cap['frambo-preparada'])
     || Boolean(opts && opts.afterFrambo);
   const chances = (ui && ui.chances) || cap.chances || {};
-  const pct = (id) => (chances[id] != null ? `${chances[id]}%` : '?%');
+  const baseChance = (ui && (ui.chanceBase != null ? ui.chanceBase : ui['chance-base']))
+    || (cap.chanceBase != null ? cap.chanceBase : cap['chance-base'])
+    || (cap.chanceBaseCaptura != null ? cap.chanceBaseCaptura : null);
+  const pctNum = (id) => {
+    // Preferir motor (kebab ou camelCase). Fallback local só se o painel veio vazio.
+    const fromMap = ballMapGet(chances, id);
+    if (fromMap != null) return Number(fromMap);
+    const hasAnyMotor = chances && Object.keys(chances).length > 0;
+    if (hasAnyMotor) return NaN; // não inventar % divergente do motor
+    return chanceComBola(baseChance, id, prepared);
+  };
+  const pct = (id) => {
+    const n = pctNum(id);
+    return Number.isFinite(n) ? `${n}%` : '?%';
+  };
+  const stock = (id) => {
+    const fromUi = ballMapGet(bolas, id);
+    if (fromUi != null) return Number(fromUi) || 0;
+    return qtyBall(inv, id);
+  };
   const afterFrambo = Boolean(opts && opts.afterFrambo);
   const lines = [];
   if (afterFrambo) {
@@ -2664,9 +2713,9 @@ function formatRaidCaptureUi(data, prefix = '!pk', opts = {}) {
     '',
     'Escolha sua Poké Bola:',
     '',
-    `1️⃣ Poké Bola — ${pct('pokebola')} · estoque ${bolas.pokebola || 0}`,
-    `2️⃣ Grande Bola — ${pct('grande-bola')} · estoque ${bolas['grande-bola'] || 0}`,
-    `3️⃣ Ultra Bola — ${pct('ultra-bola')} · estoque ${bolas['ultra-bola'] || 0}`,
+    `1️⃣ Poké Bola — ${pct('pokebola')} · estoque ${stock('pokebola')}`,
+    `2️⃣ Grande Bola — ${pct('grande-bola')} · estoque ${stock('grande-bola')}`,
+    `3️⃣ Ultra Bola — ${pct('ultra-bola')} · estoque ${stock('ultra-bola')}`,
     '',
     // Estoque real atual (prepare não debita; consumo só na tentativa).
     `🍓 Frutas no estoque: ${framboQty}${prepared ? ' (1 será consumida na próxima tentativa)' : ''}`,

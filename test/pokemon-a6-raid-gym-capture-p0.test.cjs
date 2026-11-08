@@ -63,21 +63,59 @@ test('raid UI: efetividade + desmaio com reserva continua', () => {
     hpChefeAntes: 142,
     pokemonAtacante: { nome: 'Blastoise' },
     pokemonAtivo: { nome: 'Gyarados' },
-    golpe: { nomeExibicao: "Jato d'Água", tipo: 'water', poder: 40 },
+    golpe: { nomeExibicao: "Jato d'Água", tipo: 'water', poder: 40, classe: 'especial' },
     raid: {
       turnIndex: 4,
       hpChefe: 115,
       hpMax: 200,
       fase: 'combate',
       ordem: ['ash'],
-      vez: 'ash'
+      vez: 'ash',
+      chefe: { nome: 'Charizard', tipos: ['fire'] }
     }
   }, '!pk');
   assert.match(text, /RAID — TURNO 4/);
-  assert.match(text, /Blastoise.*Jato d'Água/);
+  assert.match(text, /Jato d'Água.*Blastoise.*causou 27 de dano/);
+  assert.match(text, /🔮/); // emoji classe especial (caça)
   assert.match(text, /É super efetivo/);
-  assert.match(text, /142 → 115/);
+  assert.match(text, /142→115/);
   assert.match(text, /Blastoise desmaiou/);
-  assert.match(text, /Gyarados entrou/);
+  assert.match(text, /Gyarados.*entrou/);
   assert.match(text, /A raid continua/);
+});
+
+test('raid captura UI: camelCase wire + aliases de estoque', () => {
+  // JVM json/camel-key: grande-bola → grandeBola; estoque via capturaUi.bolas ou inventory.
+  const text = present.formatRaidCaptureUi({
+    capturaUi: {
+      bolas: { pokebola: 5, grandeBola: 3, ultraBola: 1 },
+      chances: { pokebola: 35, grandeBola: 52, ultraBola: 70 },
+      frambo: 2,
+      tentativas: 0,
+      maxTentativas: 3,
+      chefe: 'Onix'
+    }
+  }, '!pk');
+  assert.match(text, /Grande Bola — 52% · estoque 3/);
+  assert.match(text, /Ultra Bola — 70% · estoque 1/);
+  assert.match(text, /Poké Bola — 35% · estoque 5/);
+  assert.doesNotMatch(text, /\?%/);
+
+  const viaInv = present.formatRaidCaptureUi({
+    capturaUi: {
+      bolas: {},
+      chances: {},
+      chanceBase: 35,
+      tentativas: 0,
+      maxTentativas: 3,
+      chefe: 'Onix'
+    },
+    inventory: [
+      { itemId: 'pokebola', qty: 2 },
+      { itemId: 'great-ball', qty: 4 },
+      { itemId: 'ultra-bola', qty: 1 }
+    ]
+  }, '!pk');
+  assert.match(viaInv, /Grande Bola — 53% · estoque 4/);
+  assert.match(viaInv, /Ultra Bola — 70% · estoque 1/);
 });

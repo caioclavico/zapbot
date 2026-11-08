@@ -6,7 +6,8 @@
             [pokemon.domain.identities :as id]
             [pokemon.domain.pvp :as pvp]
             [pokemon.domain.raid :as raid]
-            [pokemon.infrastructure.datomic.pvp-store :as pvp-store]))
+            [pokemon.infrastructure.datomic.pvp-store :as pvp-store]
+            [pokemon.infrastructure.datomic.raid-store :as raid-store]))
 
 (defn- present? [e] (boolean (:db/id e)))
 
@@ -207,11 +208,14 @@
               :payload-hash phash}}))
 
 (defn build-leave-raid-combat-tx
-  "Remove só o jogador do combate. Encerra raid só se ninguém restar."
-  [{:keys [db save writer-ctx request raid]}]
+  "Remove só o jogador do combate. Encerra raid só se ninguém restar.
+  Persiste HP da party do snapshot na coleção antes de retract (paridade wild)."
+  [{:keys [db save writer-ctx request raid
+           query-collection pokemon-hp-status-tx]}]
   (let [chat-id (:chat-id writer-ctx)
         player-id (:player-id writer-ctx)
         agora (long (or (:agora request) (System/currentTimeMillis)))
+        part (get-in raid [:participantes player-id])
         raid' (raid/sair-combate raid player-id agora)
         expected-rev (long (:revision raid 0))
         sk (id/save-key chat-id player-id (:save-id writer-ctx))
@@ -224,7 +228,16 @@
                     (let [e (d/pull db '[*] [:chat-active-raid/chat-id chat-id])]
                       (when (and (present? e)
                                  (= (:raid-id raid) (:chat-active-raid/raid-id e)))
-                        [[:db/retractEntity (:db/id e)]])))]
+                        [[:db/retractEntity (:db/id e)]])))
+        hp-sync (when part
+                  (raid-store/raid-party-hp-txs
+                   db sk
+                   (or (:party part)
+                       (when (:pokemon part)
+                         [{:pokemon (:pokemon part)
+                           :hp (long (:hp part 0))
+                           :collection-index (long (:collection-index part 0))}]))
+                   query-collection pokemon-hp-status-tx))]
     {:tx (into (cond-> [(cond-> {:raid/id (:raid-id raid)
                                  :raid/fase (str (:fase raid'))
                                  :raid/ordem-edn (pr-str (:ordem raid'))
@@ -232,7 +245,8 @@
                           (:vez raid') (assoc :raid/vez (:vez raid')))]
                  (and (nil? (:vez raid')) (:vez raid))
                  (conj [:db/retract [:raid/id (:raid-id raid)] :raid/vez (:vez raid)]))
-               (concat [[:db/cas [:raid/id (:raid-id raid)] :raid/revision
+               (concat (or hp-sync [])
+                       [[:db/cas [:raid/id (:raid-id raid)] :raid/revision
                          expected-rev (inc expected-rev)]
                         [:db/retractEntity [:raid-participant/key part-key]]
                         [:db/cas [:save/key sk] :save/revision rev (inc rev)]

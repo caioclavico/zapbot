@@ -52,6 +52,18 @@
    "grande-bola" {:nome "Grande Bola" :multiplicador-captura 1.5 :limite-captura 95}
    "ultra-bola" {:nome "Ultra Bola" :multiplicador-captura 2 :limite-captura 95}})
 
+(def bola-aliases
+  "IDs legados que somam no estoque/débito do canônico (UI + inventory-adjust)."
+  {"pokebola" #{"pokebola" "poke-ball" "pokeball"}
+   "grande-bola" #{"grande-bola" "super-bola" "superbola" "great-ball" "greatball" "great"}
+   "ultra-bola" #{"ultra-bola" "ultra-ball" "ultraball"}
+   "fruta" #{"fruta"}})
+
+(defn bola-alias-ids
+  "Conjunto de IDs inventário equivalentes ao canônico (canônico incluso)."
+  [item-id]
+  (get bola-aliases (str item-id) #{(str item-id)}))
+
 ;; Caps de bola: Pokébola sobe a 95 para não truncar comuns (~82–90) artificialmente.
 ;; Grande/Ultra mantêm 95. Chance nunca > 100 após frambo (re-capada no limite).
 

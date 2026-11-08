@@ -44,8 +44,11 @@ test('formatRaidAttack vitória, derrota e turno', () => {
   assert.match(lose.text, /\+3 PE/);
   assert.match(lose.text, /Moedas: 0/);
   assert.match(present.formatRaidAttack({
-    dano: 40, revide: 10, raid: { hpChefe: 100, hpMax: 440, vez: 'misty' }
-  }, '!pk'), /Dano 40/);
+    dano: 40, revide: 10,
+    golpe: { nomeExibicao: 'Investida', classe: 'fisico' },
+    pokemonAtacante: { nome: 'Snorlax' },
+    raid: { hpChefe: 100, hpMax: 440, vez: 'misty', chefe: { nome: 'Onix' } }
+  }, '!pk'), /causou 40 de dano/);
 });
 
 test('abrir/cancelar de raide saíram do formatGymBlocked (Fase 2)', () => {
