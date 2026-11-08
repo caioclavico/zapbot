@@ -1,9 +1,15 @@
 # A6 — Explosion P0 + Caçadas livres com sequência de capturas
 
-**Branch:** `feature/a6-explosion-hunt-rewards`  
-**Base:** `rc/a6-abc-p0-integrated` (`284c87c`)  
+**RC integrada:** `github/rc/a6-abc-p0-integrated` @ `2afd997` (tree `ad8a3cf4…`)  
+**PRs:** [#59](https://github.com/caioclavico/zapbot/pull/59) feature · [#60](https://github.com/caioclavico/zapbot/pull/60) homolog testes  
+**Feature tip histórico:** `8f3c271` (sobre base `284c87c` → merge `09dc5b5`)  
 **Política de raridade:** inalterada (`:legado`)  
-**Sem deploy / migrations / backfill / cutover.**
+**Imagens:** `odisseu-node/jvm:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64`  
+**Sem deploy / migrations / backfill / cutover neste passo.**
+
+### Simulação 10k (homolog RC)
+
+`hunt-streak-sim-a6-test` PASS — política `streak-unit-v1` com valores inteiros; capturador médio ~17.98 XP / ~9.98 💰 (teto 30+); liberador 0 moedas; sem bônus percentuais.
 
 ## 1. Explosion — causa-raiz e correção
 

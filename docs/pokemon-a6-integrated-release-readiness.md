@@ -1,12 +1,68 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0 + One-Mon + species-hp
 
-**Atualizado:** 2026-11-08T19:15Z  
-**Host:** `odisseu-core` (linux/amd64)  
+**Atualizado:** 2026-11-08T20:40Z  
+**Host build:** local macOS → imagens `linux/amd64` via `a6builder`  
 **Live:** Combat UX + Eventos `3bc5076` — Species-HP/035/One-Mon/HP 320 intactos  
-**Base RC integrada:** `github/rc/a6-abc-p0-integrated` @ `7caf43e`  
-**PRs desta fatia:** [#56](https://github.com/caioclavico/zapbot/pull/56) UX Lote A · [#57](https://github.com/caioclavico/zapbot/pull/57) raridade oficial · este PR readiness  
-**Docs:** `docs/pokemon-a6-official-rarity-model.md` · `docs/pokemon-a6-rarity-raid-gym-help-audit.md`  
-**Veredito:** Lote A **GO** integração · Lote B raridade oficial **NO-GO** ativação (`:legado`) · **NO-GO** deploy/migrations/backfill
+**Base RC integrada:** `github/rc/a6-abc-p0-integrated` @ `2afd997`  
+**PRs desta fatia:** [#59](https://github.com/caioclavico/zapbot/pull/59) Explosion/liberar/1º frame · [#60](https://github.com/caioclavico/zapbot/pull/60) homolog testes  
+**Docs:** `docs/pokemon-a6-explosion-wild-battle-rewards.md` · `docs/pokemon-a6-raid-first-frame-p1.md`  
+**Veredito:** conteúdo+imagens RC **GO** prep operacional · **NO-GO** deploy/cutover/migrations/backfill neste passo
+
+---
+
+## 0q. RC Explosion + Hunt + Raid 1º frame (2026-11-08T20:36Z) — build + homolog (**sem** deploy)
+
+| Campo | Valor |
+|-------|-------|
+| Commit executável | `2afd9975ef695163a4d8f98eed632c644431c72f` (merge #60 sobre #59/`09dc5b5`) |
+| Content-tree | `ad8a3cf41c4851237b535b15fad82e8e024b92f0` |
+| PR #59 | Explosion HP0 · liberar · streak-unit-v1 · 1º frame raid · homolog visual |
+| PR #60 | asserts Species-HP/Lote A · flake `:dodge` hunt-m45 · smoke área climática |
+| Node tag / ID | `odisseu-node:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64` · `sha256:77d0d9a255125c74d59168713dc025c42d9d189d9bd7278bf1813be981464d2b` |
+| JVM tag / ID | `odisseu-jvm:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64` · `sha256:9443b80134bf5f2bb47009354b705785f065ff438c31de10496621a35d2198d1` |
+| Tar SHA256 Node | `739e61fb04c1625a7f48afcab1e51be5ea020e85374d82942d502a11f137a100` |
+| Tar SHA256 JVM | `152d5523faf06ebd65501db96976bca6197fdcbb401d603d1fe80cdd5b753f7c` |
+| Chromium / UID | `156.0.8078.79-1~deb12u1` · `USER 1000:1000` · CapEff=`0` |
+| VERIFY | **PASS** (candidata ≠ live Combat UX) |
+| Overlay | pinado em `docker-compose.a6-ai-drain-sandbox.overlay.yml` + `artifacts/a6-explosion-hunt-raid-integrated-20261108T203624Z/` · **não** aplicado |
+| Artefatos | `artifacts/a6-explosion-hunt-raid-integrated-20261108T203624Z/` |
+
+### Testes (homolog integrada)
+
+| Suite | Resultado |
+|-------|-----------|
+| Explosion win-persist + autodesmaio | PASS |
+| Hunt streak sim 10k (`streak-unit-v1`) | PASS — tabela inteira; moedas só ≥5ª |
+| hunt-m45 unit 10× + smoke HTTP M4.5 | PASS (flake dodge eliminado; área climática) |
+| capture-m33 (Species-HP Charmeleon 95/76) | PASS após assert alinhado |
+| present formatError/Unavailable + commands | PASS após asserts Lote A |
+| Raid first-frame Node + homolog sharp | PASS · **12/12** (com rede) |
+| Species-HP / schema035 / freeze | PASS |
+| One-Mon / opened-media / lote A+B+C / raridade `:legado` | PASS |
+| Economy / bridge / gym / raid / PvP smokes | PASS |
+
+### Economia / políticas preservadas
+
+- `politica-recompensa-captura-versao = streak-unit-v1` (sem alteração vs docs homologados)
+- Moedas UI exclusivamente **💰** (`textoMoedas`)
+- `chance-surto = 25` · `raid/hp-por-jogador = 320` · raridade default `:legado`
+- Species-HP v1 / schema 035 / One-Mon intactos
+
+### Riscos residuais
+
+| Risco | Notas |
+|-------|-------|
+| Live ainda Combat UX | cutover requer GO operacional separado |
+| Homolog sprites | precisa rede (PokeAPI); fallback silhueta OK offline |
+| CapBnd não-zero na imagem | esperado no runtime Docker; CapEff=0 no processo UID 1000 |
+
+### Veredito
+
+| Item | Status |
+|------|--------|
+| RC integrada reproduzível (Explosion + liberar + streak + 1º frame) | **GO** |
+| Prep operacional no servidor (SCP/load/VERIFY/pin) | **GO** |
+| Deploy / drain / restart / migrations / backfill / WA / flags | **NO-GO** |
 
 ---
 
