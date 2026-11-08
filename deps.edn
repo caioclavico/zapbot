@@ -222,6 +222,14 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=1024"]}
 
+  :test-a6-species-hp-schema035
+  {:main-opts ["-m" "odisseu.smoke.a6-species-hp-schema035"]
+   :jvm-opts ["-Xms64m" "-Xmx512m" "-XX:+UseG1GC"]}
+
+  :test-a6-species-hp-freeze
+  {:main-opts ["-m" "odisseu.smoke.a6-species-hp-freeze-rehearsal"]
+   :jvm-opts ["-Xms64m" "-Xmx256m" "-XX:+UseG1GC"]}
+
   ;; M4.9 — raids no adaptador JVM + regressões
   :test-m4-raid
   {:main-opts ["-m" "odisseu.smoke.m4-raid"]

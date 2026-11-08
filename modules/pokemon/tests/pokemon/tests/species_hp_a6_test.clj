@@ -11,7 +11,9 @@
             [pokemon.domain.onboarding :as onboarding]
             [pokemon.domain.raid :as raid]
             [pokemon.domain.species-base :as species-base]
+            [pokemon.domain.species-form-aliases :as form-aliases]
             [pokemon.domain.species-hp :as species-hp]
+            [pokemon.domain.species-hp-freeze :as freeze]
             [pokemon.domain.species-hp-migrate :as migrate]
             [pokemon.domain.xp :as xp]
             [pokemon.infrastructure.datomic.store :as store]))
@@ -71,6 +73,30 @@
   (is (true? (species-base/base-hp-known? "wartortle")))
   (is (thrown? Exception (species-base/base-hp "zzz-nao-existe-xyz"))))
 
+(deftest form-aliases-ensaio-quarantine-20261108
+  "Os 16 identificadores (22 entidades) do ensaio — aliases explícitos, sem strip."
+  (let [forms ["wishiwashi-solo" "pyroar-male" "gourgeist-average" "tatsugiri-curly"
+               "frillish-male" "mimikyu-disguised" "indeedee-male" "enamorus-incarnate"
+               "jellicent-male" "lycanroc-midday" "zygarde-50" "pumpkaboo-average"
+               "darmanitan-standard" "deoxys-normal" "meowstic-male" "minior-red-meteor"]]
+    (doseq [f forms]
+      (is (true? (species-base/base-hp-known? f)) f)
+      (is (pos? (species-base/base-hp f)) f)
+      (let [p (migrate/plano-seguro {:species f :nivel 5 :hp 80 :hp-atual 40})]
+        (is (#{:convert :noop} (:status p)) (str f " status=" (:status p)))
+        (is (not= :quarantine (:status p)) f))))
+  (testing "formas com HP distinto NÃO aliasam ao canônico"
+    (is (= 70 (species-base/base-hp "indeedee-female")))
+    (is (= 54 (species-base/base-hp "zygarde-10")))
+    (is (= 216 (species-base/base-hp "zygarde-complete")))
+    (is (= 55 (species-base/base-hp "gourgeist-small")))
+    (is (= 44 (species-base/base-hp "pumpkaboo-small")))
+    (is (not= (species-base/base-hp "indeedee-male")
+              (species-base/base-hp "indeedee-female"))))
+  (testing "wishiwashi/pyroar/gourgeist-average resolvem"
+    (is (= (species-base/base-hp "wishiwashi") (species-base/base-hp "wishiwashi-solo")))
+    (is (= (species-base/base-hp "pyroar") (species-base/base-hp "pyroar-male")))
+    (is (= (species-base/base-hp "gourgeist") (species-base/base-hp "gourgeist-average")))))
 (deftest onboarding-starters-v1
   (let [s (first (filter #(= "bulbasaur" (:species %)) onboarding/starters))]
     (is (= species-hp/formula-version (:hp-formula-version s)))
@@ -224,3 +250,18 @@
         hp50 (species-hp/hp-max 250 50)]
     (is (< def-c def-b))
     (is (< (* hp50 def-c) (* hp50 def-b)))))
+(deftest form-aliases-explicito-sem-heuristica
+  (is (= "wishiwashi" (form-aliases/resolve-catalog-species "wishiwashi-solo")))
+  (is (= "gourgeist-small" (form-aliases/resolve-catalog-species "gourgeist-small"))
+      "forma com HP distinto não resolve para gourgeist canônico")
+  (is (nil? (:canonical (form-aliases/lookup "zygarde-complete"))))
+  (is (true? (form-aliases/known-form? "minior-red-meteor"))))
+
+(deftest freeze-classification-disjoint
+  (is (true? (freeze/assert-disjoint-classification)))
+  (is (true? (freeze/hp-mutating-op? :battle-start)))
+  (is (true? (freeze/hp-mutating-op? "raid_attack")))
+  (is (false? (freeze/allowed-during-freeze? :hunt-start)))
+  (is (true? (freeze/allowed-during-freeze? :collection-read)))
+  (is (false? (freeze/allowed-during-freeze? :unknown-op-xyz)))
+  (is (seq (:steps (freeze/freeze-plan)))))

@@ -255,12 +255,14 @@
         unit (test/run-tests 'pokemon.tests.species-hp-a6-test
                              'pokemon.tests.species-hp-sim-a6-test)
         unit-ok? (and (zero? (:fail unit 0)) (zero? (:error unit 0)))]
-    {:ok (and unit-ok?
+    {     :ok (and unit-ok?
               (zero? (:convert second-pass))
               (:all-v1? persist)
               (:integrity-ok? persist)
               (= 320 (:raid-boss-hp persist))
-              (= 2 (:skip-combat first-pass)))
+              (= 2 (:skip-combat first-pass))
+              ;; após aliases de forma: quarentena deve ser 0 no dataset atual
+              (zero? (:quarantine first-pass)))
      :dataset-source source
      :dataset-count (count dataset)
      :note (if export-rows

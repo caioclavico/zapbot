@@ -1,13 +1,32 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0 + One-Mon + species-hp
 
-**Atualizado:** 2026-11-08T14:20Z  
+**Atualizado:** 2026-11-08T14:30Z  
 **Host:** `odisseu-core` (linux/amd64)  
 **Live executável (One-Mon):** Node `617525d9…` / JVM `4a75eaa2…` @ `b0f0677` — **intacta**  
 **RC candidata (species-hp):** Node `57a828ca…` / JVM `e1bb8ac5…` @ `5ed39b0` — carregada, **não** aplicada  
+**Homolog local bloqueios:** form-aliases + schema035 + freeze — **PASS** (sem deploy)  
 **Evidência prep species-hp:** `/home/caiohclavico/odisseu-recovery/a6-species-hp-prep-20261108T134333Z`  
 **Evidência storage+ensaio:** `/home/caiohclavico/odisseu-recovery/a6-species-hp-storage-audit-20261108T140316Z`  
 **Inbox tars:** `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-species-hp-5ed39b0/`  
 **Evidência cutover One-Mon:** `/home/caiohclavico/odisseu-recovery/a6-raid-one-mon-cutover-20261108T111814Z`
+
+---
+
+## 0i. Bloqueios migração fechados (2026-11-08T14:22Z→14:30Z) — **só local**
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | **GO implementação/homolog local** (sem deploy/cutover/schema live/backfill) |
+| Formas resolvidas | **22/22** via `species-form-aliases` (explícito) |
+| Quarentena restante (ensaio) | **0** |
+| Ensaio v2 | 984 dataset · convert **982** · skip **2** · idempotente **PASS** |
+| Schema 035 | validado em Datomic descartável · **não** em prod |
+| Freeze | maintenance-gate + `species-hp-freeze` · **PASS** |
+| Regressão | species-hp 1421 · homolog 247 · raid/gym/bridge/tm-xp/maint **PASS** · hunt HTTP `area_unavailable` (rotação; unit hunt PASS) |
+| Nova RC | **GO** (build/pin; sem deploy) |
+| Cutover / migrate live | **NO-GO** |
+
+Detalhes: `docs/pokemon-a6-species-hp-migration-plan.md`.
 
 ---
 
