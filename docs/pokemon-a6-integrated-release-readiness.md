@@ -6,7 +6,8 @@
 **Base RC integrada:** `github/rc/a6-abc-p0-integrated` @ `2afd997`  
 **PRs desta fatia:** [#59](https://github.com/caioclavico/zapbot/pull/59) Explosion/liberar/1º frame · [#60](https://github.com/caioclavico/zapbot/pull/60) homolog testes  
 **Docs:** `docs/pokemon-a6-explosion-wild-battle-rewards.md` · `docs/pokemon-a6-raid-first-frame-p1.md`  
-**Veredito:** prep operacional host **GO** (SCP/load/VERIFY/pin) · **NO-GO** deploy/cutover/migrations/backfill/WA/hold/CI
+**Veredito:** cutover Explosion/Hunt/Raid **SUCCESS** (`20261108T222347Z`) — live `77d0d9a2`/`9443b801` · WA READY · estabilidade 20m PASS  
+**Deploy report:** `docs/pokemon-a6-explosion-hunt-deploy-report.md` · **Cutover readiness:** `docs/pokemon-a6-explosion-hunt-cutover-readiness.md`
 
 ---
 

@@ -1784,9 +1784,21 @@ function formatBattleTurn(data, prefix = '!pk') {
         && (data.aguardandoCaptura || b.aguardandoCaptura
             || b.outcome === 'win' || data.outcome === 'win'))
   );
+  // Narrativa do golpe final (motor JVM) — reutiliza formatter de turno normal.
+  const lastActionNarrative = (laSrc) => {
+    const la = laSrc || {};
+    if (la.mensagem) return String(la.mensagem);
+    if (la.dano != null || la.golpeNome || la['golpe-nome']
+        || la.autodesmaio || la['autodesmaio?'] || la.desmaiou || la['desmaiou?']) {
+      return formatCanonicalAttackLine(la, x, o);
+    }
+    return null;
+  };
   if (bolsaCheiaLiberou) {
     const hpX = hpPair(x, (b.hp || {}).x);
+    const golpeFinal = lastActionNarrative(b.lastAction || data.lastAction);
     const header = [
+      golpeFinal,
       `🏁 *${nome}* foi derrotado!`,
       area.nome ? `${area.emoji || '🗺️'} ${area.nome}` : null,
       hpX ? `🐾 *${nomePokemon(x)}* — ${barraHp(hpX.atual, hpX.max)}` : null
@@ -1799,7 +1811,9 @@ function formatBattleTurn(data, prefix = '!pk') {
   if (data.aguardandoCaptura || b.aguardandoCaptura) {
     const hpX = hpPair(x, (b.hp || {}).x);
     const rew = data.reward || data.recompensa || {};
+    const golpeFinal = lastActionNarrative(b.lastAction || data.lastAction);
     const header = [
+      golpeFinal,
       '🏆 *VITÓRIA NA CAÇADA!*',
       `Você venceu a batalha contra *${nome}*!`,
       area.nome ? `${area.emoji || '🗺️'} ${area.nome}` : null,

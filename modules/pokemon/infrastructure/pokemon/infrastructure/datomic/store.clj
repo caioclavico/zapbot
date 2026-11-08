@@ -74,6 +74,10 @@
   (boolean (re-find #"(?i)item too large|value too large"
                     (str (ex-message ex) " " (ex-data ex)))))
 
+(defn- datoms-conflict-ex?
+  [ex]
+  (err/datoms-conflict? ex))
+
 (defn- player-entity
   [db chat-id player-id]
   (d/pull db '[*] [:player/key (id/player-key chat-id player-id)]))
@@ -411,50 +415,61 @@
 (defn- apply-pokemon-xp-tx
   "TX fragments para conceder XP a um Pokémon (por id-pokemon).
   Após subidas, tenta evolução por nível via catálogo canônico (sem I/O);
-  ramificadas/especiais não entram no catálogo e não evoluem automaticamente."
-  [poke quantidade]
-  (let [nivel-antes (long (or (:nivel poke) 1))
-        applied (xp/aplicar-xp-pokemon poke quantidade)
-        r0 (:registro applied)
-        prepared (level-evo/prepare r0)
-        r1 (if prepared (level-evo/apply-prepared r0 prepared) r0)
-        r (if (pos? (long (:subidas applied 0)))
-            (moves/aplicar-ofertas-por-nivel r1 nivel-antes (:nivel r1))
-            r1)
-        lookup [:pokemon/id-pokemon (:id-pokemon poke)]
-        base-tx [[:db/add lookup :pokemon/level (long (:nivel r))]
-                 [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
-                 [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
-                 [:db/add lookup :pokemon/hp (long (:hp r))]
-                 [:db/add lookup :pokemon/hp-atual (long (:hp-atual r))]
-                 [:db/add lookup :pokemon/ataque (long (:ataque r))]
-                 [:db/add lookup :pokemon/defesa (long (:defesa r))]
-                 [:db/add lookup :pokemon/atq-esp (long (:atq-esp r))]
-                 [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
-                 [:db/add lookup :pokemon/veloc (long (:veloc r))]
-                 [:db/add lookup :pokemon/amizade (long (:amizade r))]]
-        oferta-tx (when (not= (or (:ofertas-golpes r) (:golpes-oferecidos r) [])
-                              (or (:ofertas-golpes poke) (:golpes-oferecidos poke) []))
-                    [[:db/add lookup :pokemon/ofertas-golpes-edn
-                      (pr-str (or (:ofertas-golpes r) (:golpes-oferecidos r) []))]])
-        golpes-tx (when (not= (or (:golpes r) []) (or (:golpes poke) []))
-                    [[:db/add lookup :pokemon/golpes-edn (pr-str (or (:golpes r) []))]])
-        evo-tx (when prepared (evolution-tx-fragments lookup poke r))]
-    {:tx (-> base-tx
-             (into (or oferta-tx []))
-             (into (or golpes-tx []))
-             (into (or evo-tx [])))
-     :subida (when (pos? (:subidas applied))
-               {:nome (or (:nome r) (:nome applied))
-                :nivel (:nivel-final applied)
-                :niveis-subidos (:subidas applied)
-                :ofertas (or (:ofertas-golpes r) (:golpes-oferecidos r) [])})
-     :evolucao (when prepared
-                 {:nome-antigo (or (:nome poke) (:species poke))
-                  :nome-novo (:nome r)
-                  :species (:species r)
-                  :nivel (:nivel r)
-                  :catalog-version (:catalog-version prepared)})}))
+  ramificadas/especiais não entram no catálogo e não evoluem automaticamente.
+
+  `opts`:
+  - `:hp-atual-override` — HP canônico pós-combate (vitória/Explosion). Sem isso,
+    level-up recalcula `:hp-atual` e conflita com `pokemon-hp-status-tx` na mesma TX
+    (`:db.error/datoms-conflict`). Produção: WRITER_FENCE_CONFLICT após 12 retries."
+  ([poke quantidade] (apply-pokemon-xp-tx poke quantidade nil))
+  ([poke quantidade {:keys [hp-atual-override] :as _opts}]
+   (let [nivel-antes (long (or (:nivel poke) 1))
+         applied (xp/aplicar-xp-pokemon poke quantidade)
+         r0 (:registro applied)
+         prepared (level-evo/prepare r0)
+         r1 (if prepared (level-evo/apply-prepared r0 prepared) r0)
+         r (if (pos? (long (:subidas applied 0)))
+             (moves/aplicar-ofertas-por-nivel r1 nivel-antes (:nivel r1))
+             r1)
+         hp-atual (long (if (some? hp-atual-override)
+                          hp-atual-override
+                          (:hp-atual r)))
+         ;; Evolução também escrevia hp-atual recalculado — alinhar ao override.
+         r (cond-> r (some? hp-atual-override) (assoc :hp-atual hp-atual))
+         lookup [:pokemon/id-pokemon (:id-pokemon poke)]
+         base-tx [[:db/add lookup :pokemon/level (long (:nivel r))]
+                  [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
+                  [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
+                  [:db/add lookup :pokemon/hp (long (:hp r))]
+                  [:db/add lookup :pokemon/hp-atual hp-atual]
+                  [:db/add lookup :pokemon/ataque (long (:ataque r))]
+                  [:db/add lookup :pokemon/defesa (long (:defesa r))]
+                  [:db/add lookup :pokemon/atq-esp (long (:atq-esp r))]
+                  [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
+                  [:db/add lookup :pokemon/veloc (long (:veloc r))]
+                  [:db/add lookup :pokemon/amizade (long (:amizade r))]]
+         oferta-tx (when (not= (or (:ofertas-golpes r) (:golpes-oferecidos r) [])
+                               (or (:ofertas-golpes poke) (:golpes-oferecidos poke) []))
+                     [[:db/add lookup :pokemon/ofertas-golpes-edn
+                       (pr-str (or (:ofertas-golpes r) (:golpes-oferecidos r) []))]])
+         golpes-tx (when (not= (or (:golpes r) []) (or (:golpes poke) []))
+                     [[:db/add lookup :pokemon/golpes-edn (pr-str (or (:golpes r) []))]])
+         evo-tx (when prepared (evolution-tx-fragments lookup poke r))]
+     {:tx (-> base-tx
+              (into (or oferta-tx []))
+              (into (or golpes-tx []))
+              (into (or evo-tx [])))
+      :subida (when (pos? (:subidas applied))
+                {:nome (or (:nome r) (:nome applied))
+                 :nivel (:nivel-final applied)
+                 :niveis-subidos (:subidas applied)
+                 :ofertas (or (:ofertas-golpes r) (:golpes-oferecidos r) [])})
+      :evolucao (when prepared
+                  {:nome-antigo (or (:nome poke) (:species poke))
+                   :nome-novo (:nome r)
+                   :species (:species r)
+                   :nivel (:nivel r)
+                   :catalog-version (:catalog-version prepared)})})))
 
 (defn- pokemon-hp-status-tx
   ([poke hp-atual st]
@@ -673,6 +688,13 @@
               (cond
                 (value-too-large? ex)
                 (throw (err/error :datomic_value_too_large
+                                  {:cause (ex-message ex)
+                                   :attempt attempt
+                                   :writer writer-ctx}))
+                ;; Datoms contraditórios na mesma TX: retry não reconstrói a TX
+                ;; (build-tx é puro sobre o mesmo db) — falha imediata e rastreável.
+                (datoms-conflict-ex? ex)
+                (throw (err/error :tx_datoms_conflict
                                   {:cause (ex-message ex)
                                    :attempt attempt
                                    :writer writer-ctx}))
@@ -2145,12 +2167,13 @@
                                                    (:ativo-index save-m 0)))
                              fighter (when (and (seq colecao) (< fighter-idx (count colecao)))
                                        (nth colecao fighter-idx))
+                             fighter-hp (long (or (get-in state [:hp :x])
+                                                  (:hp-atual fighter) 0))
                              fighter (when fighter
-                                       (assoc fighter :hp-atual
-                                              (long (or (get-in state [:hp :x])
-                                                        (:hp-atual fighter) 0))))
+                                       (assoc fighter :hp-atual fighter-hp))
                              xp-part (when (and fighter (pos? (:xp rew)))
-                                       (apply-pokemon-xp-tx fighter (:xp rew)))
+                                       (apply-pokemon-xp-tx fighter (:xp rew)
+                                                            {:hp-atual-override fighter-hp}))
                              pe-tx (when (pos? (long (:pe rew 0)))
                                      (let [v (long (:save/vitorias-treinador save 0))]
                                        [[:db/add [:save/key sk] :save/vitorias-treinador
@@ -2199,12 +2222,13 @@
                                                    (:ativo-index save-m 0)))
                              fighter (when (and (seq colecao) (< fighter-idx (count colecao)))
                                        (nth colecao fighter-idx))
+                             fighter-hp (long (or (get-in state [:hp :x])
+                                                  (:hp-atual fighter) 0))
                              fighter (when fighter
-                                       (assoc fighter :hp-atual
-                                              (long (or (get-in state [:hp :x])
-                                                        (:hp-atual fighter) 0))))
+                                       (assoc fighter :hp-atual fighter-hp))
                              xp-part (when (and fighter (pos? (:xp rew)))
-                                       (apply-pokemon-xp-tx fighter (:xp rew)))
+                                       (apply-pokemon-xp-tx fighter (:xp rew)
+                                                            {:hp-atual-override fighter-hp}))
                              tx (cond-> (into base-tx
                                               [[:db/add [:save/key sk] :save/maior-sequencia-capturas
                                                 (max maior seq-atual)]])
@@ -3194,13 +3218,17 @@
                                   grant-battle?
                                   (assoc :recompensas-batalha-concedidas? true))
                      ;; XP de batalha também com aguardando-captura (antes era deferido).
+                     battle-hp-x (long (get-in next-state [:hp :x] 0))
                      xp-part (when (and (not gym?) poke (pos? (long (:pokemon-xp rew 0)))
                                         (not (:active? next-state))
                                         (or (not (:aguardando-captura? next-state))
                                             (:battle-reward? rew)))
+                               ;; Override: HP pós-golpe (incl. 0 Explosion) vence o
+                               ;; recalculo de level-up — evita datoms-conflict na TX.
                                (apply-pokemon-xp-tx
-                                (assoc poke :hp-atual (get-in next-state [:hp :x]))
-                                (long (:pokemon-xp rew 0))))
+                                (assoc poke :hp-atual battle-hp-x)
+                                (long (:pokemon-xp rew 0))
+                                {:hp-atual-override battle-hp-x}))
                      pe-batalha-tx
                      (when (and grant-battle? (pos? (long (:pe rew 0))))
                        (let [v (long (:save/vitorias-treinador save 0))]
@@ -3217,7 +3245,7 @@
                      hp-sync (if gym?
                                (gym-battle-hp-txs colecao next-state)
                                (pokemon-hp-status-tx
-                                poke (get-in next-state [:hp :x])
+                                poke battle-hp-x
                                 (get-in next-state [:status :x])
                                 (:status poke)))
                      clear-active (when (and (not (:active? next-state))
@@ -3278,26 +3306,32 @@
                                   idle-touch
                                   (assoc :last-activity-at (:battle/last-activity-at idle-touch)
                                          :idle-expires-at (:battle/idle-expires-at idle-touch)))
-                     battle-core (cond-> [[:db/cas [:battle/id battle-id] :battle/turn-index
-                                           expected (long (:turn-index next-state))]
-                                          [:db/add [:battle/id battle-id] :battle/active?
-                                           (boolean (:active? next-state))]
-                                          [:db/add [:battle/id battle-id] :battle/phase
-                                           (name (:phase next-state))]
-                                          [:db/add [:battle/id battle-id] :battle/state-edn
-                                           (battle/encode-state-edn next-state)]
-                                          {:operation-receipt/id operation-id
-                                           :operation-receipt/kind "battle-turn"
-                                           :operation-receipt/channel "gameplay"
-                                           :operation-receipt/payload-hash phash
-                                           :operation-receipt/player-key pk
-                                           :operation-receipt/save-id (:save-id writer-ctx)
-                                           :operation-receipt/summary
-                                           (pr-str {:battle-id battle-id
-                                                    :turn (:turn-index next-state)
-                                                    :outcome (:outcome next-state)
-                                                    :kind (:kind next-state)
-                                                    :gym-id (:gym-id next-state)})}]
+                     ;; CAS idle-expired? só quando o attr já é false (legado nil
+                     ;; falharia CAS false→false). Expire usa CAS em expires-at.
+                     idle-cas (when (false? (:battle/idle-expired? be))
+                                [[:db/cas [:battle/id battle-id] :battle/idle-expired?
+                                  false false]])
+                     battle-core (cond-> (into [[:db/cas [:battle/id battle-id] :battle/turn-index
+                                                 expected (long (:turn-index next-state))]
+                                                [:db/add [:battle/id battle-id] :battle/active?
+                                                 (boolean (:active? next-state))]
+                                                [:db/add [:battle/id battle-id] :battle/phase
+                                                 (name (:phase next-state))]
+                                                [:db/add [:battle/id battle-id] :battle/state-edn
+                                                 (battle/encode-state-edn next-state)]
+                                                {:operation-receipt/id operation-id
+                                                 :operation-receipt/kind "battle-turn"
+                                                 :operation-receipt/channel "gameplay"
+                                                 :operation-receipt/payload-hash phash
+                                                 :operation-receipt/player-key pk
+                                                 :operation-receipt/save-id (:save-id writer-ctx)
+                                                 :operation-receipt/summary
+                                                 (pr-str {:battle-id battle-id
+                                                          :turn (:turn-index next-state)
+                                                          :outcome (:outcome next-state)
+                                                          :kind (:kind next-state)
+                                                          :gym-id (:gym-id next-state)})}]
+                                          (or idle-cas []))
                                    idle-touch (into (map (fn [[k v]]
                                                            [:db/add [:battle/id battle-id] k v])
                                                          idle-touch)))

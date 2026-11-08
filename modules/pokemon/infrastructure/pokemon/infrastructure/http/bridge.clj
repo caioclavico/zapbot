@@ -177,7 +177,7 @@
     :recovery_import_unauthorized 401
     (:invalid_team :invalid_destination :team_not_found :team_pokemon_missing :invalid_league
      :league_not_selected :team_league_ineligible :team_pokemon_unhealthy) 400
-    (:stale_writer_fence :writer_fence_conflict :activate_conflict
+    (:stale_writer_fence :writer_fence_conflict :tx_datoms_conflict :activate_conflict
      :receipt_payload_mismatch :reward_conflict :reward_save_mismatch
      :operation_forbidden :battle_pending :battle_already_active
      :battle_busy :battle_save_mismatch :encounter_owner_mismatch
