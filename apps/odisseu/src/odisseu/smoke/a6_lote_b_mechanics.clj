@@ -4,6 +4,7 @@
             [pokemon.tests.lote-b-mechanics-a6-test]
             [pokemon.tests.capture-rarity-frambo-a6-test]
             [pokemon.tests.explosion-autodesmaio-a6-test]
+            [pokemon.tests.moves-audit-a6-test]
             [pokemon.tests.moves-level-offer-a6-test]
             [pokemon.tests.raid-faint-continue-a6-test]
             [pokemon.tests.raid-gym-capture-p0-a6-test]
@@ -17,6 +18,7 @@
   (let [summaries [(test/run-tests 'pokemon.tests.lote-b-mechanics-a6-test)
                    (test/run-tests 'pokemon.tests.capture-rarity-frambo-a6-test)
                    (test/run-tests 'pokemon.tests.explosion-autodesmaio-a6-test)
+                   (test/run-tests 'pokemon.tests.moves-audit-a6-test)
                    (test/run-tests 'pokemon.tests.moves-level-offer-a6-test)
                    (test/run-tests 'pokemon.tests.raid-faint-continue-a6-test)
                    (test/run-tests 'pokemon.tests.raid-gym-capture-p0-a6-test)
