@@ -13,11 +13,33 @@ function fixture(inject=async()=>{},options={}){
   const logs=[],states=[],page=new EventEmitter(),client=new EventEmitter();
   const frame={url:()=> 'https://web.whatsapp.com/'};
   page.isClosed=()=>!live;page.mainFrame=()=>frame;
+  // Default: already synced without WWebJS — exercises hasSynced catch-up after inject.
+  let syncedProbe={hasSynced:true,socket_state:'CONNECTED',has_catchup_fn:true,has_wwebjs:false};
+  let catchupCalls=0;
+  page.evaluate=async(fn)=>{
+    if(typeof fn==='function'&&fn.constructor.name==='AsyncFunction'){
+      catchupCalls++;return undefined;
+    }
+    // LoadUtils assigns window.WWebJS = {}; probes only read typeof WWebJS.
+    if(typeof fn==='function'&&/\bwindow\.WWebJS\s*=/.test(String(fn))){
+      syncedProbe={...syncedProbe,has_wwebjs:true};
+      return undefined;
+    }
+    return syncedProbe;
+  };
+  Object.defineProperty(page,'zapbotCatchupCalls',{get:()=>catchupCalls});
+  Object.defineProperty(page,'zapbotSetSyncedProbe',{value:(v)=>{syncedProbe=v;}});
+  async function settle(){
+    for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));
+  }
+  Object.defineProperty(page,'zapbotSettle',{value:settle});
   const child=new EventEmitter();child.exitCode=null;child.signalCode=null;
   const browser={isConnected:()=>live,process:()=>child};
+  let listenersAttached=0;
   Object.assign(client,{pupPage:page,pupBrowser:browser,
     authStrategy:{logout:async()=>{logouts++;}},
     inject:async()=>{calls++;return inject(client);},
+    attachEventListeners:async()=>{listenersAttached++;},
     initialize:async()=>{
       initializations++;await client.inject();
       page.on('framenavigated',async current=>{
@@ -31,7 +53,8 @@ function fixture(inject=async()=>{},options={}){
   const recovery=installStartupRecovery(client,{backoff:[1,2],timeoutMs:10000,injectTimeoutMs:1000,
     logger:s=>logs.push(JSON.parse(s)),onState:s=>states.push(s),...options});
   return {client,recovery,page,frame,logs,states,get calls(){return calls;},get closed(){return closed;},
-    get logouts(){return logouts;},get initializations(){return initializations;}};
+    get logouts(){return logouts;},get initializations(){return initializations;},
+    get listenersAttached(){return listenersAttached;}};
 }
 test('transient inject retries the same browser, reaches READY and never initializes twice',async()=>{
   let count=0;const f=fixture(async()=>{if(++count===1)throw contextError();});
@@ -39,7 +62,9 @@ test('transient inject retries the same browser, reaches READY and never initial
   await f.recovery.initialize();await f.recovery.initialize();
   assert.equal(f.calls,2);assert.equal(f.initializations,1);assert.equal(f.client.pupBrowser,browser);
   assert.equal(f.closed,0);assert.equal(f.logouts,0);assert.equal(f.recovery.acceptingReady(),true);
-  assert.deepEqual(f.logs.map(x=>x.event),['whatsapp_inject_retry']);
+  assert.deepEqual(f.logs.filter(x=>x.event==='whatsapp_inject_retry').map(x=>x.event),['whatsapp_inject_retry']);
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='inject_retry'));
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='ready_accepted'));
   await f.recovery.close();assert.equal(f.closed,1);
 });
 // Independent process metadata lets destroy() finish before Node reports exit.
@@ -158,6 +183,8 @@ test('concurrent injections share one Promise and one attempt',async()=>{
 test('navigation rejection is handled and subframes do not inject',async()=>{
   let bad=false;const f=fixture(async()=>{if(bad)throw contextError();});
   await f.recovery.initialize();bad=true;
+  // Simulate pre-READY navigation (hasSynced catch-up race window).
+  f.client.zapbotStartupState='recovering';
   const navigate=f.page.listeners('framenavigated')[0];
   await navigate({url:()=> 'https://irrelevant-frame.example/'});assert.equal(f.calls,1);
   await navigate(f.frame);assert.equal(f.calls,4);assert.equal(f.closed,1);
@@ -291,4 +318,88 @@ test('a detached main frame cannot throw outside the navigation failure handler'
   await f.page.listeners('framenavigated')[0](f.frame);
   assert.equal(f.recovery.acceptingReady(),false);assert.equal(f.closed,1);assert.equal(f.logouts,0);
   assert.equal(f.logs.at(-1).phase,'navigation');await f.recovery.close();
+});
+
+test('hung inject hits STARTUP_TIMEOUT, leaves error (not indefinite RECOVERING), and emits stages',async()=>{
+  const hung=deferred(),timers=[];
+  const f=fixture(async()=>hung.promise,{
+    injectTimeoutMs:50,timeoutMs:5000,
+    schedule(fn,ms){const t={fn,ms};timers.push(t);return t;},cancel(t){t.cancelled=true;}
+  });
+  const checked=assert.rejects(f.recovery.initialize(),e=>e.code==='STARTUP_TIMEOUT');
+  await new Promise(setImmediate);
+  const injectTimer=timers.find(t=>t.ms===50);
+  assert.ok(injectTimer);
+  assert.equal(f.client.zapbotStartupState,'recovering');
+  injectTimer.fn();
+  await checked;
+  assert.equal(f.client.zapbotStartupState,'error');
+  assert.equal(f.recovery.acceptingReady(),false);
+  assert.equal(f.closed,1);
+  const stages=f.logs.filter(x=>x.event==='whatsapp_startup_stage').map(x=>x.stage);
+  assert.ok(stages.includes('inject_enter'));
+  assert.ok(stages.includes('inject_attempt'));
+  assert.ok(stages.includes('inject_timeout'));
+  assert.ok(stages.includes('failed'));
+  assert.ok(!JSON.stringify(f.logs).includes('Cookie'));
+  hung.resolve();
+  await f.recovery.close();
+});
+
+test('READY deferred during inject is re-emitted only after inject succeeds',async()=>{
+  const gate=deferred();
+  const f=fixture(async client=>{
+    client.emit('ready');
+    assert.equal(f.recovery.acceptingReady(),false);
+    assert.equal(f.client.zapbotStartupState,'recovering');
+    await gate.promise;
+  });
+  const starting=f.recovery.initialize();
+  await new Promise(setImmediate);
+  assert.equal(f.recovery.acceptingReady(),false);
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='ready_deferred_during_inject'));
+  gate.resolve();
+  await starting;
+  assert.equal(f.recovery.acceptingReady(),true);
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='ready_reemit_after_inject'));
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='ready_accepted'));
+  await f.recovery.close();
+});
+
+test('after inject, already-synced WA without WWebJS wires listeners then READY',async()=>{
+  const f=fixture();
+  // Avoid fixture initialize emitting ready before catch-up asserts listeners.
+  f.client.initialize=async()=>{await f.client.inject();};
+  await f.recovery.initialize();
+  await f.page.zapbotSettle();
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='hasSynced_probe'));
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='hasSynced_loadutils_inject'));
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='hasSynced_listeners_attached'));
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='hasSynced_catchup_ready_emit'));
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='hasSynced_catchup_done'));
+  assert.equal(f.listenersAttached,1);
+  assert.equal(f.recovery.acceptingReady(),true);
+  await f.recovery.close();
+});
+
+test('navigation after READY does not re-enter inject',async()=>{
+  const f=fixture();
+  await f.recovery.initialize();
+  assert.equal(f.recovery.acceptingReady(),true);
+  const before=f.calls;
+  const navigate=f.page.listeners('framenavigated')[0];
+  await navigate(f.frame);
+  assert.equal(f.calls,before);
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='inject_skip_after_ready'));
+  await f.recovery.close();
+});
+
+test('hasSynced false skips catch-up invoke',async()=>{
+  const f=fixture();
+  f.page.zapbotSetSyncedProbe({hasSynced:false,has_catchup_fn:true,has_wwebjs:false});
+  await f.recovery.initialize();
+  await f.page.zapbotSettle();
+  assert.ok(f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='hasSynced_probe'));
+  assert.ok(!f.logs.some(x=>x.event==='whatsapp_startup_stage'&&x.stage==='hasSynced_catchup_invoke'));
+  await f.recovery.close();
 });

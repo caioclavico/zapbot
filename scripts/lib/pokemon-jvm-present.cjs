@@ -1827,7 +1827,17 @@ function formatCaptureMenu(encounterData, prefix = '!pk') {
   }
   const poke = enc.pokemonO || {};
   const nome = poke.nome || poke.species || 'selvagem';
-  const raridade = poke.raridade || poke.rarity || '?';
+  // Preferir raridade canônica do motor (encounter.raridade ou pokemonO.raridade).
+  const raridadeRaw = enc.raridade || poke.raridade || poke.rarity || null;
+  const raridadeCanon = raridadeRaw
+    ? String(raridadeRaw).toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')
+      .replace(/[^\w]/g, '')
+    : null;
+  const raridadeMeta = raridadeCanon && RARIDADE[raridadeCanon];
+  const raridadeLabel = raridadeMeta
+    ? raridadeMeta.nome
+    : null;
+  const raridadeFonte = enc.raridadeFonte || poke.raridadeFonte || null;
   const inv = enc.inventory || [];
   const base = enc.chanceBaseCaptura;
   const tent = Number(enc.tentativasCaptura) || 0;
@@ -1864,11 +1874,21 @@ function formatCaptureMenu(encounterData, prefix = '!pk') {
       `Tentativas restantes: ${3 - tent} de 3.`
     ].join('\n');
   }
+  const raridadeLinha = raridadeLabel
+    ? `⭐ Raridade: ${raridadeLabel}`
+    : (raridadeFonte === 'desconhecida'
+      ? '⭐ Raridade: indisponível (classificação ausente — taxa conservadora)'
+      : '⭐ Raridade: indisponível (classificação ausente no encontro)');
+  if (!raridadeLabel) {
+    console.error('[pokemon-present] capture menu missing canonical raridade', {
+      nome, species: poke.species || null, raridadeFonte
+    });
+  }
   return [
     '🌿 *UM POKÉMON SELVAGEM APARECEU!*',
     '',
     `🐾 Pokémon: ${nome}`,
-    `⭐ Raridade: ${String(raridade).charAt(0).toUpperCase()}${String(raridade).slice(1)}`,
+    raridadeLinha,
     '',
     '🎯 *CHANCES DE CAPTURA*',
     ...linhasChance,
@@ -2518,6 +2538,13 @@ function effectivenessLine(mult) {
   return null;
 }
 
+const TIPO_EMOJI = {
+  normal: '⚪', fire: '🔥', water: '💧', electric: '⚡', grass: '🍃', ice: '❄️',
+  fighting: '👊', poison: '☠️', ground: '🌍', flying: '🕊️', psychic: '🔮',
+  bug: '🐛', rock: '🪨', ghost: '👻', dragon: '🐉', dark: '🌑', steel: '⚙️',
+  fairy: '✨'
+};
+
 function formatRaidAttack(data, prefix = '!pk') {
   if (data && data.venceu) {
     return formatRaidVictory(data, prefix);
@@ -2528,26 +2555,55 @@ function formatRaidAttack(data, prefix = '!pk') {
   const r = (data && data.raid) || {};
   const golpe = (data && (data.golpe || data.move)) || {};
   const nomeGolpe = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome || golpe.slug;
+  const tipoGolpe = golpe.tipo || golpe.type || null;
+  const emojiTipo = (tipoGolpe && TIPO_EMOJI[String(tipoGolpe).toLowerCase()]) || '⚔️';
   const mult = data && (data.multiplicador != null ? data.multiplicador : data.effectiveness);
   const eff = effectivenessLine(mult);
   const dano = data && data.dano != null ? Number(data.dano) : null;
   const hpChefe = r.hpChefe != null ? Number(r.hpChefe) : null;
   const hpMax = r.hpMax != null ? Number(r.hpMax) : null;
-  const hpAntes = (hpChefe != null && dano != null) ? hpChefe + dano : null;
+  const hpAntes = data && data.hpChefeAntes != null
+    ? Number(data.hpChefeAntes)
+    : ((hpChefe != null && dano != null) ? hpChefe + dano : null);
+  const turno = r.turnIndex != null ? Number(r.turnIndex) : null;
+  const atacante = (data && (data.pokemonAtacante || data.pokemonAnterior))
+    || {};
+  const nomeAtacante = atacante.nome || atacante.species || null;
+  const entrou = (data && (data.pokemonEntrou || data.pokemonAtivo)) || {};
+  const nomeEntrou = entrou.nome || entrou.species || null;
   const lines = [];
-  if (nomeGolpe) lines.push(`⚔️ Usou *${nomeGolpe}*!`);
-  if (eff) lines.push(eff);
-  if (data && data.trocou) lines.push('🔄 Seu Pokémon desmaiou — próximo da party entrou!');
-  if (data && data.autodesmaio) lines.push('💀 Seu Pokémon desmaiou após o golpe!');
-  lines.push(
-    `💥 Dano ${dano != null ? dano : '?'} · revide ${data && data.revide != null ? data.revide : 0}`
-  );
-  if (hpAntes != null && hpChefe != null) {
-    lines.push(`❤️ Chefe: ${hpAntes}→${hpChefe}${hpMax != null ? ` / ${hpMax}` : ''}`);
-  } else {
-    lines.push(`❤️ Chefe: ${hpChefe != null ? hpChefe : '?'} / ${hpMax != null ? hpMax : '?'}`);
+  if (turno != null && Number.isFinite(turno) && turno > 0) {
+    lines.push(`⚔️ *RAID — TURNO ${turno}*`, '');
   }
-  if (data && data.hpAtivo != null) {
+  if (nomeGolpe) {
+    lines.push(nomeAtacante
+      ? `${emojiTipo} *${nomeAtacante}* usou *${nomeGolpe}*!`
+      : `${emojiTipo} Usou *${nomeGolpe}*!`);
+  }
+  if (eff) lines.push(eff);
+  if (hpAntes != null && hpChefe != null) {
+    lines.push(`❤️ Chefe: ${hpAntes} → ${hpChefe}${Number.isFinite(dano) ? ` (-${dano} HP)` : ''}`);
+  } else {
+    lines.push(
+      `💥 Dano ${dano != null ? dano : '?'} · revide ${data && data.revide != null ? data.revide : 0}`,
+      `❤️ Chefe: ${hpChefe != null ? hpChefe : '?'} / ${hpMax != null ? hpMax : '?'}`
+    );
+  }
+  if (data && data.trocou) {
+    if (data.autodesmaio) {
+      lines.push(`💀 *${nomeAtacante || 'Seu Pokémon'} desmaiou após o golpe!*`);
+    } else if (nomeAtacante) {
+      lines.push(`💀 *Seu ${nomeAtacante} desmaiou!*`);
+    } else {
+      lines.push('💀 *Seu Pokémon desmaiou!*');
+    }
+    if (nomeEntrou) lines.push(`🔄 *${nomeEntrou} entrou na batalha!*`);
+    else lines.push('🔄 *Próximo da party entrou!*');
+    lines.push('⚔️ *A raid continua!*');
+  } else if (data && data.autodesmaio) {
+    lines.push(`💀 *${nomeAtacante || 'Seu Pokémon'} desmaiou após o golpe!*`);
+  }
+  if (data && data.hpAtivo != null && !data.trocou) {
     lines.push(`🐾 Seu ativo: HP ${data.hpAtivo}`);
   }
   lines.push(...formatRaidTurnBlock(r, prefix));

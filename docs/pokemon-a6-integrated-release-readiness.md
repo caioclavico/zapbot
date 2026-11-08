@@ -1,177 +1,148 @@
-# Pokémon A6 — Homologação integrada A+B+C / Release readiness
+# Pokémon A6 — Release readiness / RC A+B+C+P0
 
-**Atualizado:** 2026-11-08T03:22Z
-**Worktree:** `/private/tmp/zapbot-a6-gameplay-audit`
-**Escopo:** fechar pré-requisitos operacionais da RC gameplay. **Sem deploy produção, migrations, backfill, alteração de saves, remoção de deploy hold ou reabilitação de CI/CD.**
-
----
-
-## 0. Veredito
-
-| Pergunta | Resposta |
-|----------|----------|
-| Overlay aponta para RC gameplay `e7488e4f`? | **SIM** |
-| Sandbox Chromium comprovado em AMD64 **nativo** neste Image ID? | **SIM** (`odisseu-core` x86_64) |
-| Ensaio descartável deploy/rollback (compose, ACL, JVM health, pin rollback)? | **PASS** |
-| Sessão WhatsApp de teste independente? | **`WA_READY_TEST_NOT_AVAILABLE`** |
-| Pedir autorização de janela de produção? | **GO CONDICIONAL** — único pendente operacional documentado é a ausência de READY em sessão WA de teste; não bloqueia indefinidamente a decisão administrativa |
-| Executar deploy agora? | **NO-GO** (exige GO humano da janela + hold ainda ativo) |
-
-Hold/CI: `ODISSEU_PRODUCTION_DEPLOY_HOLD=true` · workflow `CI/CD` = `disabled_manually` (**intocados**).
-`POKEMON_THEMATIC_EVENTS_ENABLED=false`. Overlay **não** redefine ginásios/raids/eventos.
+**Atualizado:** 2026-11-08T06:25Z  
+**Host alvo de build/homolog:** `odisseu-core` (linux/amd64)  
+**Branch:** `rc/a6-abc-p0-integrated` (base `rc/a6-ai-drain-sandbox` @ `89321bd` + P0 `9d2a345` + ops `c5ab41d`)
 
 ---
 
-## 1. Artefatos aprovados (inalterados — sem rebuild)
-
-| Artefato | Valor |
-|----------|-------|
-| Commit integrado | `21771ec372eb2e6623f67a8e3ea2f5c334dd4006` |
-| Content tree | `7645f59f7445f58d0f733aa578a4296bd342fa63` |
-| Node tag | `odisseu-node:a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64` |
-| Node Image ID | `sha256:e7488e4f4e6d4dca43f375bf41c8bdaea8f11bc60477fe9276d3ab2920f2de79` |
-| Node tar SHA-256 | `878ba298cba5e4434225032e108fb95fc139926c7242ed383e08ae4998e706e7` |
-| JVM tag | `odisseu-jvm:a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64` |
-| JVM Image ID | `sha256:cf9a029cfb1e79a3c066ccfb0bc0f6bd21f2dc0ad29a82e08c613f32c0d42652` |
-| JVM tar SHA-256 | `c048e8e8c517aef87dbe4ddfe4d0616a5869e96ec138676e59331d6ec460787e` |
-
-**Não** há digest de registry verificado. O overlay **não** usa `image: …@sha256:…`. A janela deve `docker load` o tar e exigir `docker image inspect <tag> --format '{{.Id}}'` == Image ID acima (`scripts/verify-a6-gameplay-rc-images.sh`).
-
-Rollback Node breakglass preservado na documentação do overlay:
-
-- Tag `odisseu-node:a6-drain-breakglass-20261106-1d00dd01`
-- Image ID `sha256:1d00dd01cdcabeb6a714d3df3e6715ebac4502bc104cfd5d61a64098de35a390`
-
----
-
-## 2. Overlay corrigido
-
-Arquivo: `docker-compose.a6-ai-drain-sandbox.overlay.yml`
-
-| Requisito | Status |
-|-----------|--------|
-| Tag RC gameplay | `…21771ec372eb-amd64` |
-| Image ID documentado (local, não registry) | `e7488e4f…` |
-| Sem pin `fefab4c` / `ce429153` | Removidos |
-| Sem `image: odisseu-node@sha256:…` inventado | Garantido + check |
-| UID 1000 + cap_drop ALL + NNP + seccomp + stop_grace 60s | Preservados |
-| Volumes/sessão WhatsApp | Não redefinidos (herdam base) |
-| Flags ginásio/raid/temático | Ausentes no overlay |
-| Rollback breakglass `1d00dd01` | Mencionado no cabeçalho |
-
-Verificador: `scripts/homolog-compose-overlay-check.sh` → **PASS** (inclui `thematic_stays_false`, `no_legacy_fefab4c_tag`, `no_fake_registry_digest_pin`, `breakglass_mentioned_for_rollback`).
-`scripts/verify-a6-gameplay-rc-images.sh` → **PASS** (recusa IDs legados ce429153 / 2bbca089 / 1d00dd01 como candidata).
-
----
-
-## 3. Sandbox AMD64 nativo (`e7488e4f`)
+## 0. Veredito — preparação RC integrada
 
 | Campo | Valor |
 |-------|-------|
-| Host | `odisseu-core` · `uname -m=x86_64` · Docker `amd64` 29.9.1 |
-| Image ID carregado | `sha256:e7488e4f…` (**match** exato) |
-| Harness | `scripts/test-chromium-sandbox.cjs` |
-| Isolamento | `--network none`, volumes descartáveis, sem mount de sessão WA / Datomic |
-| Seccomp file SHA-256 | `4e4980dbebe8f2853a3e1df17489a00cf027237bfc044516e4b7e84fc610fa10` |
-| Chrome | `Chrome/157.0.8103.38` |
-| `chrome://sandbox` | Layer1 Namespace · PID/Net **Yes** · Seccomp-BPF **Yes** · **“You are adequately sandboxed.”** |
-| UID | 1000 |
-| CapEff | `0` |
-| NoNewPrivs | 1 |
-| Seccomp_filters | browser `1` · renderer `2` |
-| `--no-sandbox` | ausente (`noSandboxFlag: false`) |
-| Persistência recreate | **PASS** |
-| Produção | `odisseu-a6-node` / `odisseu-a6-jvm` **não** recriados; imagem candidata **removida** após o ensaio |
-
-Evidências: `docs/evidence-a6-gameplay-rc-e7488e4f/`.
-
-Nota: emulação macOS AMD64 permanece **inválida** como substituto (já documentado). A prova autoritativa é esta.
-
-Correção mínima de *harness* no ensaio (não na imagem): tmpfs `/home/node` com `uid=1000,gid=1000` para crashpad/HOME — falha inicial foi só operacional do probe `--read-only`/HOME root-owned.
+| Base RC | `rc/a6-ai-drain-sandbox` — A+B+C (`21771ec`/`ca06cff`), IA dinâmica, graceful drain, manutenção |
+| P0 gameplay | Commit `9d2a345` — raridade/captura, ginásio NPC, UI raid |
+| Ops integrado | Commit `c5ab41d` — Chromium 156, hasSynced listeners, overlay HEALTH_BIND |
+| Pins imagens | Commit de pin (este tip) — Image IDs inéditos Node+JVM |
+| Chromium | Debian **156** (não Chrome 157) |
+| HEALTH_BIND | `HEALTH_BIND_HOST=0.0.0.0` no overlay |
+| hasSynced listeners | `whatsapp-startup.cjs` catch-up + `attachEventListeners` |
+| Produção live (rollback) | Node `05b36c5a…` · JVM `ad0b7c1b…` — **não** alterada nesta prep |
+| Deploy / hold / CI / flags | **Intocados** |
+| **GO solicitar janela Node+JVM** | **GO** (imagens + sandbox + JVM descartável PASS) |
 
 ---
 
-## 4. WhatsApp de teste
+## 1. Commits e dependências
 
-**`WA_READY_TEST_NOT_AVAILABLE`**
+| Commit | Papel |
+|--------|-------|
+| `89321bd` | Tip `rc/a6-ai-drain-sandbox` (docs incidente WA) |
+| `21771ec` / `ca06cff` | Merge A+B+C (raid party, captura, present) |
+| `16b5987`…`fefab4c` | Drain + IA dinâmica + sandbox Chromium |
+| `9d2a345` | **P0** raridade/ginásio/raid UI |
+| `c5ab41d` | Dockerfile Chromium 156, startup catch-up, overlay HEALTH_BIND, docs/verify base |
+| *(pin tip)* | Overlay/verify/docs com Image IDs homologados |
 
-Paths verificados (local + `odisseu-core`): ausentes.
-Nenhuma sessão de produção foi copiada, montada ou usada. Nenhum QR de produção solicitado.
-READY / injeção whatsapp-web.js / restart com sessão de teste **não** executados.
-
-Risco residual explícito para a janela: validar autenticação+READY com sessão de **teste** nova/autorizada **ou** aceitar formalmente o risco de primeiro READY só na cutover (com preflight SESSION_ACCESS_DENIED/ACL já ensaiados).
+**Não reaplicar:** `e7488e4f` (Chrome 157), Node sem listeners (`74118090`).
 
 ---
 
-## 5. Ensaio descartável execução + rollback
+## 2. Produção live (somente leitura — rollback)
 
-`scripts/a6-gameplay-rc-disposable-rehearsal.sh` → **PASS**
+| Camada | Image ID | Nota |
+|--------|----------|------|
+| Node | `sha256:05b36c5aebeff40875c2a3b4545e368aa2dfffe7d93a3fc7a02c05b0d3b3a18c` | Chromium 156 + listeners; **sem** P0 present/ginásio roll do tip |
+| JVM | `sha256:ad0b7c1b265cb52eee221ea6458ea6bdaad7c5c230cd8ec6dfe7e2474b2acd5c` | `source-base=03a3dc7e` — **sem** A+B+C/P0 |
 
-| Etapa | Resultado |
+---
+
+## 3. Imagens candidatas RC (mesmo git-sha/tree)
+
+| Camada | Tag | Image ID |
+|--------|-----|----------|
+| Node | `odisseu-node:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64` | `sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade` |
+| JVM | `odisseu-jvm:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64` | `sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c` |
+
+**Labels (ambas):** `io.zapbot.git-sha=c5ab41dfcbf2f12602b13a6718ecbc8bc79f68e7` · `io.zapbot.content-tree=8428d03b5c7ce7c7654a5416af7fd6cf3ae2c854` · USER `1000:1000` · Chromium Debian **156.0.8078.79**.
+
+IDs **≠** live (`05b36c5a` / `ad0b7c1b`) e **≠** bases thin (`446dfc2b` / `cf9a029c`).
+
+---
+
+## 4. Conteúdo da candidata RC (código)
+
+- Gameplay A+B+C + P0 (domínio JVM + present/HTTP Node)
+- `scripts/lib/whatsapp-startup.cjs` hasSynced + listeners
+- Dockerfile Node: Debian chromium 156 + sandbox
+- Overlay: `HEALTH_BIND_HOST=0.0.0.0`, UID 1000, seccomp, **sem** override de flags Pokémon
+- Drain/maint (`a6-maintenance` / `a6-shutdown`) + IA dinâmica
+
+---
+
+## 5. Schemas / migrations
+
+| Item | Status |
+|------|--------|
+| Novas migrations Datomic | **Não** (P0 usa party v2 EDN + slim raridade) |
+| Compatibilidade save legado | Raridade ausente → classificar ou chance mítica |
+| Backfill | **Não** |
+| Reinício JVM descartável | Caps idênticos (88); sem linhas de schema duplicado |
+
+---
+
+## 6. Checklist de homologação
+
+| Check | Resultado |
 |-------|-----------|
-| Verify Image IDs | PASS |
-| Compose overlay check | PASS |
-| SESSION_ACCESS_DENIED pré-ACL | PASS |
-| ACL inválida ainda nega | PASS |
-| Máscara efetiva + pós-stop revert | PASS |
-| Persistência de marker após revert ACL | PASS |
-| JVM RC health/bridge (`:18093`, Datomic descartável) | PASS |
-| Temática `false` no container JVM | PASS |
-| Node probe UID 1000 sem sessão WA | PASS |
-| Simulação pin rollback → breakglass `1d00dd01` | PASS |
+| `clojure -M:test-a6-lote-a` | PASS |
+| `clojure -M:test-a6-lote-b` (P0 + flow Datomic) | PASS (incl. 11/64 P0 + 1/11 flow) |
+| `clojure -M:test-a6-lote-c` | PASS |
+| `clojure -M:test-a6-homolog-abc` | **32 / 213** PASS |
+| `clojure -M:test-m4-raid` | PASS |
+| Node P0/lote-c/startup/health-bind/drain | **60/60** PASS |
+| `npm run test:http` | **287/287** PASS |
+| Imagens Node+JVM mesmo git-sha/tree | PASS |
+| Sandbox AMD64 UID 1000 / CapEff 0 / NNP / sem `--no-sandbox` | PASS |
+| HEALTH_BIND host só com `0.0.0.0` | PASS |
+| ACL grant + pós-stop revert | PASS |
+| JVM Datomic descartável + temáticos `true` + reopen | PASS |
+| Contrato raridade/captura/ginásio (`npc-roll` GET, present, símbolos) | PASS |
+| Overlay + verify pins | PASS (pins no tip) |
+| Produção live intocada durante prep | PASS (`READY` + Image IDs live) |
 
-Drain unitário (código): `a6-shutdown`/`a6-maintenance`/invariants **16/16** (suíte prévia mantida).
-
----
-
-## 6. Observação RO em produção (não alterada)
-
-No momento do ensaio AMD64, `odisseu-core` listava:
-
-- `odisseu-a6-node` — **unhealthy**, imagem `…chromium155-getchatfix-…16b5987…` (≠ RC gameplay)
-- `odisseu-a6-jvm` — healthy, breakglass `ad0b7c1b`
-
-Nenhum recreate/restart/deploy foi feito por esta tarefa. A unhealthy do Node live é **contexto operacional** para a janela futura, não regressão desta RC.
+**Nota residual de suite:** `npm run test:m4-jvm` tem **3** falhas de formatação legado (`seu time` / gates de troca) **fora** do escopo P0; não bloqueiam a RC A+B+C+P0 (present P0 e contratos HTTP verdes).
 
 ---
 
-## 7. Sequência de janela (preparada — não executada)
+## 7. Evidências staging (descartável)
 
-1. Confirmar hold + workflow disabled.
-2. Snapshot ACL; backup volumes.
-3. `docker load` tars · `verify-a6-gameplay-rc-images.sh`.
-4. Pré-drain Node (token existente).
-5. Overlay já pinado na tag gameplay; conferir Id.
-6. Up Node → health/UID/READY (sessão autorizada).
-7. JVM só se a janela incluir · Image `cf9a029c…` · sem migration/reset.
-8. Rollback Node → breakglass `1d00dd01…` sem apagar sessão/data.
-
----
-
-## 8. Pendências restantes
-
-| # | Pendência | Bloqueia pedido de janela? |
-|---|-----------|---------------------------|
-| 1 | `WA_READY_TEST_NOT_AVAILABLE` | **Não** (risco explícito; decisão administrativa) |
-| 2 | Node live atualmente unhealthy (imagem distinta) | Contexto da janela — investigar no preflight live |
-| 3 | Disco `/` em `odisseu-core` (~85% após prune de **build cache** apenas) | Ops de capacidade antes do load dos tars |
-| 4 | 3 fails legados `test:m4-jvm` (base `16b5987`) | Não |
+| Item | Valor |
+|------|-------|
+| Host | `odisseu-core` |
+| Evidência local VM | `/tmp/a6-abc-p0-rc-homolog/` |
+| Chromium | `Chrome/156.0.8078.79` · CapEff `0` · NoNewPrivs `1` · uid `1000` |
+| JVM caps | 88 · restart CAPS_EQUAL |
+| `GET /v1/gyms/npc-roll` | rota autenticada (400 `unknown_gym` com id de fixture; unauth 401; POST 405) |
 
 ---
 
-## 9. GO / NO-GO
+## 8. Riscos residuais
 
-- **GO CONDICIONAL para solicitar autorização** de uma futura janela de implantação (pré-requisitos overlay + sandbox nativo + ensaio rollback fechados).
-- **NO-GO para executar** a implantação até GO humano da janela, com hold ainda ativo e temática off.
-- Risco WA de teste ausente deve constar no pedido de autorização.
+| Risco | Mitigação |
+|-------|-----------|
+| JVM live ainda pré-A+B+C | Cutover **coordenado** Node+JVM |
+| Raids abertas party-1 | Expiram; joins novos selam ≤3 |
+| READY WA / Chromium | Manter 156 + listeners; não regressar a 157 |
+| Flags temáticas | Overlay não redefine; default/env live preservados |
+| Drift m4-jvm present legado | Fora do P0; acompanhar em follow-up de UX |
+
+---
+
+## 9. GO / NO-GO solicitar janela
+
+| Pedido | Veredito |
+|--------|----------|
+| Preparar RC A+B+C+P0 (código+imagens) | **GO** (pronto) |
+| Deploy / cutover agora | **NO-GO** |
+| Solicitar janela **Node+JVM juntos** | **GO** |
+| Janela só Node ou só JVM | **NO-GO** (P0 depende dos dois) |
 
 ---
 
 ## 10. Referências
 
-- Evidência sandbox: `docs/evidence-a6-gameplay-rc-e7488e4f/`
-- Overlay: `docker-compose.a6-ai-drain-sandbox.overlay.yml`
+- P0 audit: `docs/pokemon-a6-raid-gym-capture-audit.md`
+- Incidente WA: `docs/a6-whatsapp-recovering-incident.md`
 - Verify: `scripts/verify-a6-gameplay-rc-images.sh`
-- Homolog overlay: `scripts/homolog-compose-overlay-check.sh`
-- Rehearsal: `scripts/a6-gameplay-rc-disposable-rehearsal.sh`
-- PR gameplay: https://github.com/caioclavico/zapbot/pull/36
+- Overlay: `docker-compose.a6-ai-drain-sandbox.overlay.yml`

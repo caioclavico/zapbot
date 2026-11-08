@@ -1393,6 +1393,14 @@
                                           (some? agora) (assoc :agora-ms agora)
                                           dia (assoc :dia dia)))))))
 
+                (= path "/v1/gyms/npc-roll")
+                (do (require-method! ex #{"GET"})
+                    (let [gym-id (g qs "gymId")
+                          seed (or (g qs "seed") (g qs "operationId") "")]
+                      (when (str/blank? gym-id)
+                        (throw (err/error :invalid_query {:required ["gymId"]})))
+                      (ok! ex (reads/gym-npc-roll gym-id seed))))
+
                 (str/starts-with? path "/v1/gyms/")
                 (do (require-method! ex #{"GET"})
                     (let [gym-id (subs path (count "/v1/gyms/"))
@@ -1401,7 +1409,7 @@
                           agora (long-or-nil (g qs "agoraMs" "agora"))]
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? gym-id)
-                                (#{"team" "heal" "challenge"} gym-id))
+                                (#{"team" "heal" "challenge" "npc-roll"} gym-id))
                         (throw (err/error :invalid_query
                                           {:required ["chatId" "playerId" "gymId"]})))
                       (ok! ex (reads/gym-detail store chat-id player-id gym-id

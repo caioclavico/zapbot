@@ -17,33 +17,31 @@ COPY src ./src
 RUN npm run build && npm prune --omit=dev
 
 FROM node:22.23.4-bookworm-slim@sha256:aaa4b5baf1ecff3b283486bb1f90405cdda225a3e6f79660d2c559fa510a7292
+# Browser: Debian Chromium (não Google Chrome).
+# Produção operacional (eefacb92) usa pacote `chromium` 155; a RC e7488e4f usava
+# `google-chrome-stable` 157 e autenticou/loading 100% sem READY (RECOVERING),
+# com whatsapp-startup + package-lock idênticos. O 155 saiu do apt; pin no
+# sucessor security `156.0.8078.79-1~deb12u1` (mesma família Debian chromium).
 LABEL io.zapbot.service="odisseu" \
       io.zapbot.persistence-version="1" \
       io.zapbot.restore-protocol="1" \
       io.zapbot.runtime.node="22.23.4" \
-      io.zapbot.runtime.chromium="157.0.8103.38-1" \
-      io.zapbot.runtime.brotli="1.0.9-2+deb12u1"
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl gnupg ca-certificates \
-    && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o /tmp/google-linux-signing-key.pub \
-    && gpg --show-keys --with-colons --fingerprint /tmp/google-linux-signing-key.pub \
-      | awk -F: '$1 == "fpr" { print $10 }' \
-      | grep -Fxq 'EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796' \
-    && gpg --dearmor -o /usr/share/keyrings/google-linux-packages.gpg /tmp/google-linux-signing-key.pub \
-    && printf '%s\n' 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-packages.gpg] https://dl.google.com/linux/chrome/deb/ stable main' \
-      > /etc/apt/sources.list.d/google-chrome.list \
-    && printf '%s\n' 'deb http://security.debian.org/debian-security bookworm-security main' \
+      io.zapbot.runtime.chromium="156.0.8078.79-1~deb12u1" \
+      io.zapbot.runtime.brotli="1.0.9-2+deb12u1" \
+      io.zapbot.runtime.browser-package="chromium"
+RUN printf '%s\n' 'deb http://security.debian.org/debian-security bookworm-security main' \
       > /etc/apt/sources.list.d/bookworm-security.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-      google-chrome-stable=157.0.8103.38-1 \
+      chromium=156.0.8078.79-1~deb12u1 \
+      chromium-common=156.0.8078.79-1~deb12u1 \
+      chromium-sandbox=156.0.8078.79-1~deb12u1 \
       libbrotli1=1.0.9-2+deb12u1 \
       fonts-liberation ca-certificates tini \
-    && ln -s /usr/bin/google-chrome-stable /usr/bin/chromium \
-    && rm -f /tmp/google-linux-signing-key.pub \
+    && test -x /usr/bin/chromium \
+    && ! test -e /usr/bin/google-chrome-stable \
     && rm -rf /usr/local/lib/node_modules/npm \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx \
-    && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
     PERFORMANCE_METRICS=false \

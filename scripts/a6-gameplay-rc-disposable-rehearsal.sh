@@ -5,11 +5,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-NODE_TAG='odisseu-node:a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64'
-JVM_TAG='odisseu-jvm:a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64'
-NODE_ID='sha256:e7488e4f4e6d4dca43f375bf41c8bdaea8f11bc60477fe9276d3ab2920f2de79'
-JVM_ID='sha256:cf9a029cfb1e79a3c066ccfb0bc0f6bd21f2dc0ad29a82e08c613f32c0d42652'
+NODE_TAG='odisseu-node:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64'
+JVM_TAG='odisseu-jvm:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64'
+NODE_ID='sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade'
+JVM_ID='sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c'
 BREAKGLASS_ID='sha256:1d00dd01cdcabeb6a714d3df3e6715ebac4502bc104cfd5d61a64098de35a390'
+# Rollback operacional live (produção atual), usado só na simulação de pin:
+OPERATIONAL_NODE_ID='sha256:05b36c5aebeff40875c2a3b4545e368aa2dfffe7d93a3fc7a02c05b0d3b3a18c'
+OPERATIONAL_JVM_ID='sha256:ad0b7c1b265cb52eee221ea6458ea6bdaad7c5c230cd8ec6dfe7e2474b2acd5c'
 PROJ="a6-rc-rehearsal-$$"
 TOKEN="$(openssl rand -hex 24)"
 MAINT="$(openssl rand -hex 16)"
@@ -144,11 +147,14 @@ echo "INFO breakglass_rollback_target=$BREAKGLASS_ID (não aplicado)"
 echo "==> rollback simulation (compose pin swap only in fixture file)"
 TMP=$(mktemp -d)
 cp docker-compose.a6-ai-drain-sandbox.overlay.yml "$TMP/overlay-rc.yml"
-# Simulate rollback overlay pointing to breakglass tag string (not applied live)
-sed "s|image: odisseu-node:a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64|image: odisseu-node:a6-drain-breakglass-20261106-1d00dd01|" \
+# Simulate rollback overlay pointing to operacional live tag (não aplicado)
+sed "s|image: odisseu-node:a6-abc-p0-20261108T061445Z-c5ab41dfcbf2-amd64|image: odisseu-node:a6-gameplay-chromium156-hasynced-p1-20261108T052337Z-21771ec372eb-amd64|" \
   "$TMP/overlay-rc.yml" > "$TMP/overlay-rollback.yml"
-grep -q '1d00dd01' "$TMP/overlay-rollback.yml" && echo ROLLBACK_OVERLAY_PIN=PASS
-grep -q 'a6-gameplay-audit' "$TMP/overlay-rc.yml" && echo RC_OVERLAY_PIN=PASS
+grep -q '05b36c5a\|hasynced-p1-20261108T052337Z\|1d00dd01' "$TMP/overlay-rollback.yml"
+grep -q 'hasynced-p1-20261108T052337Z' "$TMP/overlay-rollback.yml" && echo ROLLBACK_OVERLAY_PIN=PASS
+grep -q 'a6-abc-p0-20261108T061445Z' "$TMP/overlay-rc.yml" && echo RC_OVERLAY_PIN=PASS
+echo "INFO operational_node_rollback_id=$OPERATIONAL_NODE_ID"
+echo "INFO operational_jvm_rollback_id=$OPERATIONAL_JVM_ID"
 # Persist marker survived ACL revert above
 docker run --rm -v "${PROJ}-data:/data" alpine:3.20 test -f /data/persist-marker \
   && echo DATA_SURVIVED_ACL_REVERT=PASS

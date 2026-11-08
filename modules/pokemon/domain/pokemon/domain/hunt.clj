@@ -54,37 +54,14 @@
            :fim (* (inc periodo) duracao-evento-ms)
            :chance chance-surto)))
 
-(defn- peso-raridade
-  [r]
-  (get {"comum" 0 "incomum" 1 "raro" 2 "epico" 3 "lendario" 4 "mitico" 5} r 0))
-
-(defn- maior-raridade
-  [a b]
-  (if (> (peso-raridade b) (peso-raridade a)) b a))
-
-(defn classificar-raridade
-  "Espelha core/classificar-raridade (stats já suavizados)."
-  [pokemon]
-  (cond
-    (:mitico-api? pokemon) "mitico"
-    (or (:lendario-api? pokemon) (:paradox-api? pokemon)) "lendario"
-    :else
-    (let [poder-original (- (* 2 (capture/poder-total pokemon)) 450)
-          por-poder (cond (<= poder-original 400) "comum"
-                          (<= poder-original 480) "incomum"
-                          (<= poder-original 540) "raro"
-                          :else "epico")
-          taxa (:taxa-captura pokemon)
-          por-captura (cond (nil? taxa) "comum"
-                            (<= (long taxa) 10) "epico"
-                            (<= (long taxa) 45) "raro"
-                            (<= (long taxa) 120) "incomum"
-                            :else "comum")]
-      (maior-raridade por-poder por-captura))))
+(def classificar-raridade
+  "Delegado canônico — ver `pokemon.domain.capture/classificar-raridade`."
+  capture/classificar-raridade)
 
 (defn com-raridade
+  "Carimba raridade canônica (+ fonte) no candidato de caça."
   [pokemon]
-  (assoc pokemon :raridade (classificar-raridade pokemon)))
+  (capture/assegurar-raridade pokemon))
 
 (defn sortear-shiny
   "1/512. `sorteio` injetável (0 = shiny).

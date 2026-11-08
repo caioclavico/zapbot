@@ -46,7 +46,7 @@
    :amizade "amizade"
    :in-party "in-party"
    :location "location"
-   :raridade "raridade"
+   ;; :raridade permanece — captura/UI de caça leem do snapshot (sem `?`).
    :altura "altura"
    :peso "peso"
    :pronto-em "pronto-em"
@@ -62,7 +62,7 @@
    id-pokemon é obrigatório em raide: liquidação de XP do mon participante."
   #{:id-pokemon :species :nome :shiny :nivel :level :hp :hp-atual :status
     :ataque :defesa :atq-esp :def-esp :veloc :tipos :habilidade :golpes :item
-    :taxa-captura :imagem :imagem-shiny :altura :motivacao-ginasio})
+    :taxa-captura :raridade :imagem :imagem-shiny :altura :motivacao-ginasio})
 
 (defn- kw-status [s] (status/->kw s))
 
@@ -239,7 +239,11 @@
   (when-not battle-id
     (throw (err/error :missing_battle_id {})))
   (let [pokemon-x (slim-pokemon-for-battle pokemon-x)
-        pokemon-o (slim-pokemon-for-battle pokemon-o)
+        ;; Selvagem: raridade canônica obrigatória no snapshot (captura/UI/KO).
+        pokemon-o (-> pokemon-o
+                      capture/assegurar-raridade
+                      slim-pokemon-for-battle
+                      capture/assegurar-raridade)
         base {:battle-id battle-id
               :kind :wild
               :chat-id chat-id
@@ -526,7 +530,7 @@
     (and (not= :gym (:kind battle))
          (< (rng/roll rng :flee 100)
             (get capture/fuga-raridade
-                 (or (get-in battle [:pokemons :o :raridade]) "comum") 8)))
+                 (capture/raridade-de (get-in battle [:pokemons :o])) 8)))
     (finish-flee battle)
 
     :else

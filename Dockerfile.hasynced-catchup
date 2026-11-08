@@ -1,0 +1,9 @@
+# Imagem derivada mínima: só o fix hasSynced catch-up em whatsapp-startup.
+# Base = RC Chromium 156 já homologada (sem rebuild completo / sem apt).
+ARG BASE_IMAGE=odisseu-node:a6-gameplay-chromium156-p1-20261108T043525Z-21771ec372eb-amd64
+FROM ${BASE_IMAGE}
+USER root
+COPY scripts/lib/whatsapp-startup.cjs /app/scripts/lib/whatsapp-startup.cjs
+LABEL io.zapbot.p1-recovering-fix="debian-chromium-not-google-chrome" \
+      io.zapbot.p1-hasynced-catchup="1"
+USER 1000:1000

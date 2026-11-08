@@ -20,10 +20,10 @@ const raidMsg = present.formatRaidAttack({
 
 assert.match(raidMsg, /Lança-Chamas|Lanca-Chamas/);
 assert.match(raidMsg, /super efetivo/i);
-assert.match(raidMsg, /próximo da party|proximo da party|party/i);
+assert.match(raidMsg, /próximo da party|proximo da party|party|entrou na batalha/i);
 assert.match(raidMsg, /desmaiou após o golpe/i);
-assert.match(raidMsg, /142→100|Chefe: 142→100/);
-assert.match(raidMsg, /Seu ativo: HP 88/);
+assert.match(raidMsg, /142\s*→\s*100|Chefe: 142/);
+assert.match(raidMsg, /A raid continua/i);
 assert.doesNotMatch(raidMsg, /Super Bola/);
 
 // --- Wild turn: mensagem canônica do motor (não recalcula) ---

@@ -1972,14 +1972,20 @@
                                   _ (when-not (.-desbloqueado gym)
                                       (throw (erro-contrato "🔒 Vença os ginásios anteriores primeiro.")))
                                   ocup (.-ocupacao gym)
-                                  cands (if ocup
-                                          #js []
-                                          (desempenho/medir! ctx "pokemon_jvm_gym_npc"
-                                            #(.buildGymNpcTeam pokeapi (.-timeNpc gym))))
                                   ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
                                   op-id (.stableOperationId jvm-transport
                                                             (:requestId pedido)
                                                             (str "gym-challenge:" gym-id))
+                                  ;; NPC: sorteio canônico JVM (pool) na criação — não a cada turno.
+                                  ;; Ocupado por jogador: sem candidates (time do defensor no store).
+                                  cands (if ocup
+                                          #js []
+                                          (p/let [rolled (desempenho/medir! ctx "pokemon_jvm_gym_npc_roll"
+                                                           #(.rollGymNpcSpecies jvm
+                                                              #js {:gymId gym-id :seed op-id}))
+                                                  spp (.-species rolled)]
+                                            (desempenho/medir! ctx "pokemon_jvm_gym_npc"
+                                              #(.buildGymNpcTeam pokeapi spp))))
                                   data (desempenho/medir! ctx "pokemon_jvm_gym_challenge"
                                          #(.startGymChallenge jvm
                                             #js {:chatId chat-id
