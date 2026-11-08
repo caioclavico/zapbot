@@ -1589,7 +1589,7 @@ function formatEventInfo(plan, prefix = '!pk') {
   return [
     `🎉 *${ev.nome || 'Evento'}*`,
     `Espécies em destaque: ${especies.join(', ') || '?'}`,
-    '50% das caçadas encontram uma dessas espécies; os demais encontros seguem o bioma.',
+    '25% das caçadas encontram uma dessas espécies; os demais encontros seguem o bioma.',
     `Troca de evento em ${minutos} minutos. Os eventos mudam a cada 6 horas.`,
     `Use ${prefix} cacar. As três tentativas e a chance de fuga continuam valendo.`
   ].join('\n');

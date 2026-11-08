@@ -121,16 +121,19 @@ Números vêm só do DTO canônico.
 
 ---
 
-## 11. Balanceamento dos eventos
+## 11. Balanceamento dos eventos (aprovado nesta RC)
 
-| Parâmetro | Produção live | Candidato | Status |
-|-----------|---------------|-----------|--------|
-| `hunt/chance-surto` | 50 | **25** | Commit companion `feat/a6-events-surto-25` |
+| Parâmetro | Antes | Nesta RC | Status |
+|-----------|-------|----------|--------|
+| `hunt/chance-surto` | 50 | **25** | **APLICADO** |
 | Surto efetivo (sim 10k) | ~50% | ~25% | assert `0.22–0.28` |
+| Demais 75% | — | seleção normal (clima/bioma) | preservado |
 | Eevee | nos **4** surtos | inalterado | diversificar pools = GO futuro |
 | Frequência/calendário global | 6h | inalterado | **sem** pausas nesta RC |
 
-Não alteramos recompensas, cooldown global nem captura neste commit de combate.
+Candidato estrutural (doc only): rotação/intervalos entre surtos — proposta separada.
+
+Não alteramos recompensas, cooldown global nem captura.
 
 ---
 
@@ -170,7 +173,7 @@ Respeita `chefeOculto` quando o DTO pedir.
 
 ## 15. Riscos residuais
 
-- `chance-surto=50` permanece até o commit companion de eventos (25%).
+- Eevee permanece nos 4 pools sob 25% — diversificação = GO futuro.
 - Imagem `raid-started` depende de payload com chefe/vezPokemon no outbox — se ausente, fallback texto.
 - Golpes 100% irrecuperáveis (mapa vazio) ainda precisam reaprender / STAB filler.
 - PvP: formatação alinhada via `formatBattleState`/`formatCanonicalAttackLine`; validar smoke PvP em RC.
@@ -183,7 +186,7 @@ Respeita `chefeOculto` quando o DTO pedir.
 | Item | Veredito |
 |------|----------|
 | Integrar correções de golpes + Explosion UI + UX combate + sprite 1º frame + clima PT + lobby + moedas 🪙 | **GO** (este commit) |
-| `chance-surto` 50→25 | companion commit / PR |
+| `chance-surto` 50→25 | **GO** (este commit) |
 | Deploy/cutover produção | **NO-GO** (não autorizado nesta janela) |
 | Species-HP / One-Mon / raid boss 320 | **preservados** |
 | Migrations / backfill / hold / CI | **intocados** |
