@@ -303,7 +303,14 @@
         chat "chat-a1"
         player "ash"
         agora 1700000500000]
-    (boot! s chat player)
+    (trainer/create-trainer! s {:chat-id chat :player-id player})
+    ;; HP abaixo do máximo: poção deve curar (evita pokemon_full_hp quando
+    ;; o revide do Geodude não fura a defesa — flake pré-existente).
+    (collection/adicionar-pokemon! s chat player squirtle 40 nil)
+    (reward-app/admin-seed-reward!
+     s {:operation-id "seed-balls-a1"
+        :chat-id chat :player-id player :save-id "a"
+        :item {:item-id "pokebola" :qty 10}})
     (reward-app/admin-seed-reward!
      s {:operation-id "seed-pocao-a1"
         :chat-id chat :player-id player :save-id "a"
@@ -455,8 +462,17 @@
                           :defesa 999 :def-esp 999
                           :species-hp-skip? true
                           :golpes [{:slug "crush" :nome-exibicao "Crush"
-                                    :tipo "normal" :poder 500 :classe :fisico}])]
-      (boot! s chat player)
+                                    :tipo "normal" :poder 999 :classe :fisico}])]
+      (trainer/create-trainer! s {:chat-id chat :player-id player})
+      (reward-app/admin-seed-reward!
+       s {:operation-id "seed-balls-zero-defeat"
+          :chat-id chat :player-id player :save-id "a"
+          :item {:item-id "pokebola" :qty 10}})
+      ;; Ativo frágil: evita flake defend×variance×Species-HP (pré-existente).
+      (collection/adicionar-pokemon!
+       s chat player
+       (assoc squirtle :hp 5 :defesa 1 :def-esp 1 :species-hp-skip? true)
+       5 nil)
       (let [started (hunt-app/start-hunt!
                      s chat player
                      {:operation-id "hunt-zero-defeat-1" :area-id "praia"
@@ -467,7 +483,10 @@
                    {:operation-id "hunt-zero-defeat-turn" :battle-id (:battle-id started)
                     :expected-turn-index 0 :action :defend
                     :agora agora
-                    :rng {:flee 99 :damage-var 10 :crit 0 :accuracy 0 :impede-para 99
+                    ;; :dodge 99 — evita esquiva completa no defend (rng/rand-int
+                    ;; era a causa do flake pré-existente nestes testes).
+                    :rng {:flee 99 :damage-var 10 :crit 0 :accuracy 0 :dodge 99
+                          :impede-para 99
                           :cura-sono 99 :cura-gelo 99 :cura-confusao 99 :auto-confusao 99
                           :contagio 99 :status-golpe 99 :wild-move 0}})]
         (is (= :lose (get-in ended [:battle :outcome])))

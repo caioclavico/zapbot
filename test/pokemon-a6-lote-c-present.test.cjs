@@ -142,7 +142,9 @@ const koMenu = present.formatBattleTurn({
 }, '!pk');
 assert.match(koMenu, /Grande Bola: 1/);
 assert.match(koMenu, /chance 60%/);
-assert.match(koMenu, /foi derrotado/i);
+// UX caçada homologada (7970ffc): vitória + menu de captura/liberar.
+assert.match(koMenu, /VITÓRIA NA CAÇADA|foi derrotado/i);
+assert.match(koMenu, /capturar|liberar/i);
 
 // --- Team grid: sem imagem → placeholder claro (não caixa preta) ---
 (async () => {

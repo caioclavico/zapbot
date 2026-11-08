@@ -350,17 +350,19 @@ test('formatError distingue pending local de recibo ausente', () => {
 });
 
 test('formatError explica os gates de troca sem expor dados do outro treinador', () => {
-  assert.match(present.formatError({ code: 'TRADE_FORBIDDEN' }), /não participa|própria conta/i);
+  // Mensagens canônicas (1d8f794 / UX trocas #N) — chave duplicada antiga não vence.
+  assert.match(present.formatError({ code: 'TRADE_FORBIDDEN' }), /não pode fazer isso|proposta de troca/i);
   assert.match(present.formatError({ code: 'TRADE_ACTION_FORBIDDEN' }), /destinatário aceita|criou confirma/i);
   assert.match(present.formatError({ code: 'TRADE_SAVE_MISMATCH' }), /save ativo mudou/i);
   assert.match(present.formatError({ code: 'TRADE_EXPIRED' }), /expirou/i);
-  assert.match(present.formatError({ code: 'INVALID_TRADE_TRANSITION' }), /respondida|concluída/i);
+  assert.match(present.formatError({ code: 'INVALID_TRADE_TRANSITION' }), /não aceita esta ação|estado atual/i);
   assert.doesNotMatch(present.formatError({ code: 'TRADE_FORBIDDEN' }), /@lid|@c\.us|[0-9]{5,}/i);
 });
 
 test('formatUnavailable amigável sem jargão de infra', () => {
+  // Lote A (c5744c3): router de ajuda — sem frase legada "não está disponível".
   const text = present.formatUnavailable('batalhar');
-  assert.match(text, /não está disponível/);
+  assert.match(text, /não reconhecido|ajuda/i);
   assert.match(text, /batalhar/);
   assert.doesNotMatch(text, /Cassandra|POKEMON_ADAPTER|JVM/);
 });
