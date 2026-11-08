@@ -5,7 +5,10 @@
   recuperar via classificação canônica da espécie; se impossível, usar
   taxa de `mitico` (mais dura) para não inflar chance."
   (:require [clojure.string :as str]
-            [pokemon.domain.errors :as err]))
+            [pokemon.domain.errors :as err]
+            [pokemon.domain.rarity :as rarity]))
+
+;; Políticas oficiais (:oficial-a/:oficial-b) via rarity/*politica* — default :legado.
 
 ;; Faixas-base (Pokébola, sem status/seqüência) — Fase 12.8.
 ;; Valores centrais das faixas pedidas; leve variação por poder dentro da faixa.
@@ -137,9 +140,9 @@
   [a b]
   (if (> (peso-raridade b) (peso-raridade a)) b a))
 
-(defn classificar-raridade
-  "Classificação canônica A6 (stats suavizados / flags API / taxa-captura).
-  Mesma regra usada em caça (`hunt/com-raridade`)."
+(defn classificar-raridade-legado
+  "Heurística histórica A6 (stats suavizados / flags API / taxa-captura).
+  Mantida intacta para compatibilidade; ver `classificar-raridade`."
   [pokemon]
   (cond
     (or (:mitico-api? pokemon) (get pokemon "mitico-api?")) "mitico"
@@ -160,6 +163,16 @@
       (if por-captura
         (maior-raridade por-poder por-captura)
         por-poder))))
+
+(defn classificar-raridade
+  "Classificação canônica usada em caça/raid.
+   Default `rarity/*politica* = :legado`. Com `:oficial-a`/`:oficial-b` consulta
+   o catálogo oficial e cai no legado se a espécie não tiver evidência."
+  [pokemon]
+  (let [pol (rarity/politica-ativa)]
+    (if (contains? #{:oficial-a :oficial-b} pol)
+      (rarity/classificar-ou-fallback pokemon pol classificar-raridade-legado)
+      (classificar-raridade-legado pokemon))))
 
 (defn classificavel?
   "Há sinais suficientes para classificar sem inventar `comum`."
