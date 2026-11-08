@@ -3,18 +3,18 @@
 # Sem fallback silencioso. Exit ≠ 0 se tag ausente ou Id divergir.
 set -euo pipefail
 
-NODE_TAG="${A6_RC_NODE_TAG:-odisseu-node:a6-p0-hp-ui-20261108T072116Z-6cef8f43b0dc-amd64}"
-JVM_TAG="${A6_RC_JVM_TAG:-odisseu-jvm:a6-p0-hp-ui-20261108T072116Z-6cef8f43b0dc-amd64}"
-NODE_ID_EXPECTED="${A6_RC_NODE_IMAGE_ID:-sha256:bec910bf80b8fe5e3fdbfa385b81b4caf9dff3f1f6c1ccd22c2933e0c0e65305}"
-JVM_ID_EXPECTED="${A6_RC_JVM_IMAGE_ID:-sha256:9e87bb6f0d48e964ad4f8eaa001913f7811da05c0365bb65bd9a309858050d60}"
-COMMIT_EXPECTED="${A6_RC_GIT_SHA:-6cef8f43b0dce617af0ecf0b0374f6a541388104}"
-TREE_EXPECTED="${A6_RC_CONTENT_TREE:-50babd2f4dc1e4bd1e83ca5b91a7ad2628773304}"
+NODE_TAG="${A6_RC_NODE_TAG:-odisseu-node:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64}"
+JVM_TAG="${A6_RC_JVM_TAG:-odisseu-jvm:a6-raid-balance-a-20261108T091954Z-043b84697c0a-amd64}"
+NODE_ID_EXPECTED="${A6_RC_NODE_IMAGE_ID:-sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a}"
+JVM_ID_EXPECTED="${A6_RC_JVM_IMAGE_ID:-sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94}"
+COMMIT_EXPECTED="${A6_RC_GIT_SHA:-043b84697c0a2771b855e9e0c8d4781ccf5cfeae}"
+TREE_EXPECTED="${A6_RC_CONTENT_TREE:-eed2f0cfd30b2a580a3a47163c9b8f6007023b43}"
 
 # Artefatos de rollback breakglass (somente documentação/checagem opcional).
 BREAKGLASS_NODE_ID="${A6_BREAKGLASS_NODE_IMAGE_ID:-sha256:1d00dd01cdcabeb6a714d3df3e6715ebac4502bc104cfd5d61a64098de35a390}"
-# Produção live observada (rollback desta candidata = cutover A+B+C+P0 atual).
-LIVE_NODE_ID="${A6_LIVE_NODE_IMAGE_ID:-sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade}"
-LIVE_JVM_ID="${A6_LIVE_JVM_IMAGE_ID:-sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c}"
+# Produção live observada (rollback desta candidata = cutover P0 HP/UI atual).
+LIVE_NODE_ID="${A6_LIVE_NODE_IMAGE_ID:-sha256:bec910bf80b8fe5e3fdbfa385b81b4caf9dff3f1f6c1ccd22c2933e0c0e65305}"
+LIVE_JVM_ID="${A6_LIVE_JVM_IMAGE_ID:-sha256:9e87bb6f0d48e964ad4f8eaa001913f7811da05c0365bb65bd9a309858050d60}"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -42,7 +42,9 @@ require_image() {
     sha256:05b36c5aebeff40875c2a3b4545e368aa2dfffe7d93a3fc7a02c05b0d3b3a18c|\
     sha256:ad0b7c1b265cb52eee221ea6458ea6bdaad7c5c230cd8ec6dfe7e2474b2acd5c|\
     sha256:289a0407ad5db946f0433b2d721b29d7f338879483f3e5899b834342dad94ade|\
-    sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c)
+    sha256:7bc8f341f4ee1d273931b283e0c0c3374a5aba6fcb9574fc4920767de816971c|\
+    sha256:bec910bf80b8fe5e3fdbfa385b81b4caf9dff3f1f6c1ccd22c2933e0c0e65305|\
+    sha256:9e87bb6f0d48e964ad4f8eaa001913f7811da05c0365bb65bd9a309858050d60)
       fail "$role resolveu Image ID legado/live/proibido para deploy desta RC: $id"
       ;;
   esac
