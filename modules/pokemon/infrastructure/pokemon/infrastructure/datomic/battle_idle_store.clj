@@ -118,8 +118,12 @@
             (max maior seq-atual)]])))))
 
 (defn build-expire-battle-tx
-  "TX idempotente de expiração. Sem recompensas/rank/derrota de ginásio."
-  [db battle-id agora]
+  "TX idempotente de expiração. Sem recompensas/rank/derrota de ginásio.
+  Sem `:force?`, recusa se `idle-expires-at` ainda não venceu — protege contra
+  scheduler atrasado após renovação (CAS sozinho não basta se o pull já vê o
+  novo deadline)."
+  ([db battle-id agora] (build-expire-battle-tx db battle-id agora nil))
+  ([db battle-id agora {:keys [force?]}]
   (let [be (d/pull db '[*] [:battle/id battle-id])]
     (when-not (present? be)
       (throw (err/error :battle_not_found {:battle-id battle-id})))
@@ -140,7 +144,20 @@
                            (and (false? (:active? state0))
                                 (not (:aguardando-captura? state0))
                                 (= :finished (:phase state0))))
-              state' (idle/expire-battle state0)
+              observed-expires (:battle/idle-expires-at be)
+              still-fresh? (and (not force?)
+                                (not already?)
+                                (some? observed-expires)
+                                (not (idle/expired? observed-expires agora)))]
+          (if still-fresh?
+            {:tx []
+             :result {:operation-id op-id
+                      :duplicate false
+                      :battle-id battle-id
+                      :skipped "deadline-not-due"
+                      :already-expired? false
+                      :idle-expires-at observed-expires}}
+          (let [state' (idle/expire-battle state0)
               kind (:kind state0)
               chat-id (or (:chat-id state0) (:battle/chat-id be))
               ;; Fallback: player-key "chat|player"
@@ -182,17 +199,23 @@
                      :operation-receipt/save-id (or save-id "a")
                      :operation-receipt/summary
                      (pr-str {:battle-id battle-id :outcome :idle-timeout :kind kind})}]
-              ;; CAS só se ainda não marcado — corrida com segundo expire
-              cas (when-not (true? (:battle/idle-expired? be))
-                    [[:db/cas [:battle/id battle-id] :battle/idle-expired?
-                      (:battle/idle-expired? be) true]])]
+              ;; CAS: idle-expired? + idle-expires-at observado.
+              ;; Se um turno válido renovou expires-at, este expire aborta (conflito)
+              ;; e não encerra batalha já prolongada.
+              cas (cond-> []
+                    (not (true? (:battle/idle-expired? be)))
+                    (conj [:db/cas [:battle/id battle-id] :battle/idle-expired?
+                           (:battle/idle-expired? be) true])
+                    (some? observed-expires)
+                    (conj [:db/cas [:battle/id battle-id] :battle/idle-expires-at
+                           observed-expires observed-expires]))]
           {:tx (into [] (concat core cas clear (or seq-break []) notify))
            :result {:operation-id op-id
                     :duplicate false
                     :battle-id battle-id
                     :battle state'
                     :notifications notify
-                    :already-expired? already?}})))))
+                    :already-expired? already?}}))))))))
 
 (defn build-expire-raid-tx
   "Encerra combate por idle. Lobby (`inscricoes`) é no-op — o tick de raid-auto
@@ -344,11 +367,15 @@
        vec))
 
 (defn expire-battle!
-  "Aplica expiração. Idempotente via receipt único + CAS."
-  [conn battle-id agora]
+  "Aplica expiração. Idempotente via receipt único + CAS.
+  Conflito no CAS de idle-expires-at = prazo foi renovado por ação válida —
+  retorna skipped (não encerra).
+  `opts`: `:force?` ignora prazo (admin / force-expire)."
+  ([conn battle-id agora] (expire-battle! conn battle-id agora nil))
+  ([conn battle-id agora {:keys [force?] :as opts}]
   (let [agora (long (or agora (System/currentTimeMillis)))
-        built (build-expire-battle-tx (d/db conn) battle-id agora)]
-    (if (or (empty? (:tx built)) (:duplicate (:result built)))
+        built (build-expire-battle-tx (d/db conn) battle-id agora opts)]
+    (if (or (empty? (:tx built)) (:duplicate (:result built)) (:skipped (:result built)))
       (:result built)
       (try
         (d/transact conn {:tx-data (:tx built)})
@@ -357,14 +384,29 @@
           (if (err/conflict? ex)
             (let [dup (d/pull (d/db conn) '[*]
                               [:operation-receipt/id
-                               (idle/receipt-operation-id battle-id)])]
-              (if (present? dup)
+                               (idle/receipt-operation-id battle-id)])
+                  be2 (d/pull (d/db conn) '[:battle/idle-expired? :battle/idle-expires-at]
+                              [:battle/id battle-id])]
+              (cond
+                (present? dup)
                 {:operation-id (:operation-receipt/id dup)
                  :duplicate true
                  :battle-id battle-id
                  :already-expired? true}
+
+                ;; Prazo renovado ou já expirado por outra TX — não rethrow loop.
+                (or (true? (:battle/idle-expired? be2))
+                    (and (some? (:battle/idle-expires-at be2))
+                         (not (idle/expired? (:battle/idle-expires-at be2) agora))))
+                {:operation-id (idle/receipt-operation-id battle-id)
+                 :duplicate false
+                 :battle-id battle-id
+                 :skipped "deadline-renewed-or-raced"
+                 :already-expired? (boolean (:battle/idle-expired? be2))}
+
+                :else
                 (throw ex)))
-            (throw ex)))))))
+            (throw ex))))))))
 
 (defn expire-raid!
   [conn raid-id agora]
@@ -436,7 +478,7 @@
         db (d/db conn)
         battles (take limit (find-open-battle-ids db))
         raids (take limit (find-open-raid-ids db))
-        battle-results (mapv #(expire-battle! conn % agora) battles)
+        battle-results (mapv #(expire-battle! conn % agora {:force? true}) battles)
         raid-results (mapv #(expire-raid! conn % agora) raids)]
     {:agora agora
      :force true
@@ -445,7 +487,7 @@
      :raids raid-results
      :open-battles (count battles)
      :open-raids (count raids)
-     :expired-battles (count (remove :duplicate battle-results))
+     :expired-battles (count (remove #(or (:duplicate %) (:skipped %)) battle-results))
      :expired-raids (count (remove :duplicate raid-results))}))
 
 (defn expire-due!
@@ -466,7 +508,7 @@
        :backfill backfill
        :battles battle-results
        :raids raid-results
-       :expired-battles (count (remove :duplicate battle-results))
+       :expired-battles (count (remove #(or (:duplicate %) (:skipped %)) battle-results))
        :expired-raids (count (remove :duplicate raid-results))})))
 
 (defn assert-battle-not-idle-expired!
@@ -507,10 +549,16 @@
                   :text (or (:text payload)
                             (when (= "battle-leave" kind)
                               "🏳️ Seu adversário abandonou a batalha. Você venceu por desistência.")
-                            (format
-                             "⏰ A batalha encerrou por inatividade (%ss sem ação válida)."
-                             (long (or (:timeout-seconds payload)
-                                       (idle/idle-timeout-segundos)))))})))))
+                            (let [wild (not-empty (str (:wild-name payload)))
+                                  secs (long (or (:timeout-seconds payload)
+                                                 (idle/idle-timeout-segundos)))]
+                              (str "⌛ Sua batalha terminou por inatividade. "
+                                   (if wild
+                                     (str "O Pokémon selvagem *" wild "* escapou.")
+                                     "O Pokémon selvagem escapou.")
+                                   "\n\n"
+                                   "Você poderá iniciar outra caçada quando seu cooldown terminar."
+                                   "\n_(" secs "s sem ação válida.)_")))})))))
 
 (defn ack-notification!
   "Ack idempotente — segunda chamada é no-op seguro."
