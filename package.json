@@ -10,7 +10,7 @@
     "dev": "shadow-cljs watch app",
     "build": "npm run verify:media-patch && shadow-cljs release app",
     "test": "npm run verify:media-patch && npm run test:ai && npm run test:resources && shadow-cljs compile test && node target/test.js",
-    "test:resources": "node --test test/odisseu-resource-monitor.test.cjs test/whatsapp-startup.test.cjs test/healthcheck.test.cjs test/whatsapp-resource-patch.test.cjs test/bootstrap-group-discovery.test.cjs test/bootstrap-discover-http.test.cjs test/a6-maintenance.test.cjs test/a6-shutdown.test.cjs test/a6-ai-drain-sandbox-invariants.test.cjs",
+    "test:resources": "node --test test/odisseu-resource-monitor.test.cjs test/whatsapp-startup.test.cjs test/healthcheck.test.cjs test/health-bind-host.test.cjs test/whatsapp-resource-patch.test.cjs test/bootstrap-group-discovery.test.cjs test/bootstrap-discover-http.test.cjs test/a6-maintenance.test.cjs test/a6-shutdown.test.cjs test/a6-ai-drain-sandbox-invariants.test.cjs",
     "test:http": "node --test test/pokemon-http-client.test.cjs test/pokemon-jvm-client.test.cjs test/platform-jvm-client.test.cjs scripts/test-pokemon-contract.cjs pokemon-service/test/*.test.cjs",
     "test:m4-jvm": "node --test test/pokemon-jvm-client.test.cjs test/pokemon-jvm-present.test.cjs test/pokemon-jvm-commands.test.cjs && node scripts/test-pokemon-jvm-contract.cjs && node scripts/test-pokemon-jvm-tx-contract.cjs",
     "test:pokedex-species": "node --test test/pokemon-pokedex-species.test.cjs test/pokemon-pokedex-integration.test.cjs test/pokedex-species-pilot.test.cjs test/pokemon-jvm-a42.test.cjs",

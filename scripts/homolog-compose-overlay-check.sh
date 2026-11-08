@@ -5,8 +5,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-NODE_TAG='odisseu-node:a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64'
-NODE_ID='sha256:e7488e4f4e6d4dca43f375bf41c8bdaea8f11bc60477fe9276d3ab2920f2de79'
+NODE_TAG='odisseu-node:a6-gameplay-chromium156-p1-20261108T043525Z-21771ec372eb-amd64'
+NODE_ID='sha256:446dfc2bdd7aba4f79c1e9e1e27590373ae4539be46a71aaefd69635743a6043'
 BREAKGLASS_TAG='odisseu-node:a6-drain-breakglass-20261106-1d00dd01'
 
 mkdir -p "$TMP/docker"
