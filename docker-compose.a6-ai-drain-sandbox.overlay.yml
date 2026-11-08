@@ -2,22 +2,37 @@
 # Alvo live observado: projeto Compose `odisseu-a6-cutover`, serviço `odisseu-a6-node`,
 # working_dir `/home/caiohclavico/odisseu-recovery/a6-cutover-runtime-20261101T141408Z`.
 #
+# RC gameplay (commit integrado 21771ec372eb2e6623f67a8e3ea2f5c334dd4006):
+#   Tag:      odisseu-node:a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64
+#   Image ID: sha256:e7488e4f4e6d4dca43f375bf41c8bdaea8f11bc60477fe9276d3ab2920f2de79
+#   Tar SHA:  878ba298cba5e4434225032e108fb95fc139926c7242ed383e08ae4998e706e7
+#
+# NÃO há digest de registry verificado para esta RC. Não usar `image: …@sha256:…`
+# inventado a partir do Image ID local. Após `docker load` do tar, conferir:
+#   docker image inspect <tag> --format '{{.Id}}'
+# e exigir igualdade exata com o Image ID acima (scripts/verify-a6-gameplay-rc-images.sh).
+#
 # Uso futuro (somente na janela):
 #   1) Copiar `docker/chromium-seccomp.json` para o working_dir (ou ajustar o path abaixo).
 #   2) Pré-drenar via gate/token já existente.
-#   3) docker compose --env-file .env.a6-cutover --env-file .env.node-maintenance \
+#   3) Verificar Image ID da tag abaixo (sem fallback para fefab4c/ce429153/IA-only).
+#   4) docker compose --env-file .env.a6-cutover --env-file .env.node-maintenance \
 #        -f docker-compose.a6-cutover-runtime.yml \
 #        -f docker-compose.a6-ai-drain-sandbox.overlay.yml \
 #        up -d odisseu-a6-node
 #
-# Este overlay NÃO redefine flags Pokémon/raids/eventos/allowlist.
-# Volumes e env_file do base permanecem.
+# Este overlay NÃO redefine flags Pokémon/raids/eventos/allowlist/temáticos.
+# Volumes e env_file do base permanecem (sessão WhatsApp + /app/data).
+#
+# Rollback Node (sem apagar sessão/data): retornar à breakglass aprovada
+#   tag/ID `odisseu-node:a6-drain-breakglass-20261106-1d00dd01`
+#   Image ID `sha256:1d00dd01cdcabeb6a714d3df3e6715ebac4502bc104cfd5d61a64098de35a390`
+# (ou à RC drain+sandbox anterior `ce429153…` se a janela tiver partido dela).
+# Não usar imagem intermediária só-IA / sem graceful drain.
 
 services:
   odisseu-a6-node:
-    image: odisseu-node:a6-ai-drain-sandbox-20261107T204141Z-fefab4c-amd64
-    # Preferir pin por digest na janela:
-    # image: odisseu-node@sha256:ce429153851799cc77f7e40c1f3bc328d963d891a9a1dc38ec9ceb4a3c7fb377
+    image: odisseu-node:a6-gameplay-audit-20261108T024926Z-21771ec372eb-amd64
     user: "1000:1000"
     cap_drop: [ALL]
     security_opt:
