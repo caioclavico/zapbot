@@ -1785,12 +1785,21 @@ function formatBattleTurn(data, prefix = '!pk') {
   }
   if (data.aguardandoCaptura || b.aguardandoCaptura) {
     const hpX = hpPair(x, (b.hp || {}).x);
+    const rew = data.reward || data.recompensa || {};
     const header = [
-      `🏁 *${nome}* foi derrotado!`,
+      '🏆 *VITÓRIA NA CAÇADA!*',
+      `Você venceu a batalha contra *${nome}*!`,
       area.nome ? `${area.emoji || '🗺️'} ${area.nome}` : null,
-      hpX ? `🐾 *${nomePokemon(x)}* — ${barraHp(hpX.atual, hpX.max)}` : null
-    ].filter(Boolean).join('\n');
-    // Paridade master: após o KO, menu de bolas direto — sem etapa "carimbada".
+      hpX ? `🐾 *${nomePokemon(x)}* — ${barraHp(hpX.atual, hpX.max)}` : null,
+      rew.pokemonXp != null || rew.xp != null
+        ? `✨ +${rew.pokemonXp != null ? rew.pokemonXp : rew.xp} XP Pokémon de batalha`
+        : '✨ XP de batalha recebido',
+      rew.pe != null
+        ? `⭐ +${rew.pe} PE treinador de batalha`
+        : '⭐ PE de batalha recebido',
+      '',
+      'Deseja capturar o Pokémon ou deixá-lo ir?'
+    ].filter((line) => line != null).join('\n');
     const menu = formatCaptureMenu({
       encounter: {
         aguardandoCaptura: true,
@@ -1802,13 +1811,12 @@ function formatBattleTurn(data, prefix = '!pk') {
           ? data.tentativasCaptura
           : (b.tentativasCaptura || 0),
         inventory: data.inventory || b.inventory || [],
-        // Preferir chances do motor (confirm-turn / active-encounter).
         chances: data.chances || b.chances || null,
         framboPreparada: Boolean(data.framboPreparada || b.framboPreparada
           || data['frambo-preparada'] || b['frambo-preparada'])
       }
     }, prefix);
-    return `${header}\n\n${menu}`;
+    return `${header}\n\n${menu}\n\n🌿 Liberar: \`${prefix} liberar\``;
   }
   if (b.outcome === 'lose' || data.outcome === 'lose') {
     const laLose = b.lastAction || {};
@@ -1971,6 +1979,19 @@ function formatCaptureMenu(encounterData, prefix = '!pk') {
   ].join('\n');
 }
 
+function formatReleaseResult(data, _prefix = '!pk') {
+  const seqAntes = data.sequenciaAntes != null ? data.sequenciaAntes : 0;
+  return [
+    '🌿 *POKÉMON LIBERADO*',
+    'Você deixou o Pokémon selvagem ir.',
+    'As recompensas da batalha foram preservadas.',
+    seqAntes > 0
+      ? '🔥 Sua sequência de capturas foi encerrada.'
+      : '🔥 Sequência de capturas: já estava em 0.',
+    `Sequência atual: *${data.sequenciaCapturas != null ? data.sequenciaCapturas : 0}*`
+  ].join('\n');
+}
+
 function formatCaptureResult(data, prefix = '!pk') {
   if (data && data.reconciled && data.summary && typeof data.capturou === 'undefined') {
     const s = data.summary;
@@ -1991,28 +2012,40 @@ function formatCaptureResult(data, prefix = '!pk') {
     || (data.registro && (data.registro.nome || data.registro.species))
     || 'Pokémon';
 
+  if (data.liberou) {
+    return formatReleaseResult(data, prefix);
+  }
+
   if (data.capturou) {
     const rew = data.recompensa || {};
+    const seq = rew.sequencia != null ? rew.sequencia : (data.sequenciaCapturas || 0);
     const idx = data.indice != null ? data.indice + 1 : '?';
+    const moedasLinha = (rew.moedas != null && Number(rew.moedas) > 0)
+      ? (textoMoedas(rew.moedas) || `💰 +${rew.moedas} moedas`)
+      : '💰 Nenhuma moeda de sequência nesta faixa.';
     const linhas = [
-      `✅ ${meta.nome} lançada: captura concluída! (${chance}% de chance)`,
-      `📚 Registrado na Pokédex e adicionado à coleção como nº ${idx}.`,
-      `🔥 Sequência de capturas: ${rew.sequencia != null ? rew.sequencia : data.sequenciaCapturas || 0}`,
-      `✨ +${rew.xp || 0} XP • ${textoMoedas(rew.moedas || 0) || '💰 +0 moedas'}`,
+      '🎉 *POKÉMON CAPTURADO!*',
+      `✅ ${meta.nome} · ${chance}% · nº ${idx} · *${selvagem}*`,
+      `🔥 Sequência: ${seq} captura${seq === 1 ? '' : 's'}`,
+      '',
+      '*Recompensa da captura*',
+      `✨ +${rew.xp || 0} XP Pokémon`,
+      `⭐ +${rew.pe != null ? rew.pe : 0} PE treinador`,
+      moedasLinha,
       data.subida
         ? `🌟 *${data.subida.nome}* subiu para o nível ${data.subida.nivel}!`
         : null,
       data.duplicate ? '_idempotente: mesma operação já persistida_' : null
     ];
-    return linhas.filter(Boolean).join('\n');
+    return linhas.filter((line) => line != null).join('\n');
   }
 
   if (data.fugiu) {
     return [
       `💨 A ${meta.nome} falhou e *${selvagem}* fugiu! (${chance}% de chance)`,
       (data.tentativa || 0) >= 3 ? 'As três tentativas de captura acabaram.' : null,
-      '💔 A sequência de capturas foi encerrada.',
-      '✨ +1 XP pela batalha.'
+      '🔥 Sequência de capturas preservada (fuga involuntária).',
+      '✨ +1 XP consolação.'
     ].filter(Boolean).join('\n');
   }
 
@@ -3672,10 +3705,10 @@ const HELP_TOPICS = {
     ]
   },
   cacar: {
-    aliases: ['cacada', 'cacadas', 'hunt', 'captura', 'capturar'],
+    aliases: ['cacada', 'cacadas', 'hunt', 'captura', 'capturar', 'liberar'],
     titulo: '🌿 *Ajuda — Caçadas*',
     corpo: (p) => [
-      'Encontre Pokémon selvagens, lute e capture.',
+      'Encontre Pokémon selvagens, lute e (opcionalmente) capture.',
       '',
       '*Começar*',
       `1. \`${p} inicial\` — escolha seu inicial (primeira vez)`,
@@ -3684,18 +3717,27 @@ const HELP_TOPICS = {
       '',
       '*Durante o combate*',
       `\`${p} atacar 1\` … \`${p} 4\` — use um golpe`,
-      `\`${p} defender\` · \`${p} pocao\` · \`${p} sair\``,
+      `\`${p} defender\` · \`${p} pocao\` · \`${p} sair\` (desiste; zera sequência)`,
       `\`${p} escolher <n>\` — troca o ativo (1× por caçada)`,
       '',
       '*Após vencer*',
+      'Você já recebe XP Pokémon e PE de batalha.',
       `\`${p} capturar\` — menu de bolas e chances`,
       `\`${p} capturar pokebola|grande-bola|ultra-bola\``,
+      `\`${p} liberar\` — deixa o selvagem ir (mantém XP/PE de batalha; zera sequência)`,
       `\`${p} fruta\` — Frambo (+chance na próxima tentativa)`,
+      '',
+      '*Sequência de capturas*',
+      '• Toda captura bem-sucedida dá XP e PE extras desde a 1ª',
+      '• Valores unitários por faixa (1–2, 3–4, 5–9, 10–19, 20–29, 30+)',
+      '• 💰 Moedas só a partir da 5ª captura consecutiva (sem base de moedas)',
+      '• Teto de bônus na 30ª captura (+15 XP, +9 PE, +10 moedas)',
+      '• Liberar ou desistir zera a sequência; falha/fuga involuntária não zera',
       '',
       '*Restrições*',
       '• Cooldown entre caçadas (veja a mensagem de espera)',
       '• 1 caçada por chat; aja em ~5 minutos',
-      '• Mochila cheia: pode lutar, mas não captura',
+      '• Mochila cheia: pode lutar; o selvagem é liberado ao vencer',
       '• Até 3 tentativas de captura; o selvagem pode fugir',
       '',
       `Status: \`${p} clima\` · \`${p} mochila\` · \`${p} time\``
@@ -3911,7 +3953,7 @@ function resolveHelpTopic(raw) {
   if (cmd === 'treinador' || cmd === 'save' || cmd === 'saves') return 'treinador';
   if (cmd === 'presente') return 'presentes';
   if (cmd === 'evoluir') return 'evoluir';
-  if (cmd === 'capturar' || cmd === 'fruta') return 'cacar';
+  if (cmd === 'capturar' || cmd === 'fruta' || cmd === 'liberar') return 'cacar';
   return null;
 }
 
@@ -3979,6 +4021,7 @@ const ALIASES = {
   menu: 'menu',
   ativar: 'ativar',
   capturar: 'capturar', cap: 'capturar',
+  liberar: 'liberar', libera: 'liberar', soltar: 'liberar', leave: 'liberar',
   cacar: 'cacar', caçar: 'cacar', cac: 'cacar', hunt: 'cacar',
   atacar: 'atacar', ataque: 'atacar', atk: 'atacar',
   defender: 'defender', defesa: 'defender', def: 'defender',
@@ -4186,6 +4229,7 @@ module.exports = {
   textoRaridade,
   formatCaptureMenu,
   formatCaptureResult,
+  formatReleaseResult,
   resolveCommand,
   resolveGymSubcommand,
   formatGymsOverview,
