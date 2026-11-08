@@ -31,40 +31,73 @@
   [nome]
   (normalizar-nome nome))
 
+(defn- campo-golpe
+  "Lê keyword OU string (legado Cassandra/EDN com \"nome\"/\"poder\")."
+  [g & ks]
+  (some (fn [k]
+          (let [v (if (string? k)
+                    (get g k)
+                    (or (get g k) (get g (name k))))]
+            (when (some? v) v)))
+        ks))
+
 (defn chave
   [golpe]
-  (identificador (or (:slug golpe) (:nome-exibicao golpe)
-                     (get golpe "slug") (get golpe "nome-exibicao"))))
+  (identificador (or (campo-golpe golpe :slug "slug")
+                     (campo-golpe golpe :nome-exibicao "nome-exibicao")
+                     (campo-golpe golpe :nome "nome")
+                     (campo-golpe golpe :name "name"))))
 
 (defn ataque-do-tipo?
   [golpe tipos]
-  (let [tipo (or (:tipo golpe) (get golpe "tipo"))
-        classe (or (:classe golpe) (get golpe "classe"))
+  (let [tipo (campo-golpe golpe :tipo "tipo")
+        classe (campo-golpe golpe :classe "classe")
         classe (if (keyword? classe) classe (keyword classe))
-        poder (or (:poder golpe) (get golpe "poder") 0)]
+        poder (or (campo-golpe golpe :poder "poder") 0)]
     (and (contains? (set tipos) tipo)
          (contains? #{:fisico :especial} classe)
          (pos? (long poder)))))
 
 (defn golpe->registro
+  "Persiste shape canônico string-keys. Aceita legado `:nome`/`\"nome\"`.
+  Preserva `:autodesmaio` (Explosion) e campos de status."
   [g]
-  (cond-> {"slug" (chave g)
-           "nome-exibicao" (or (:nome-exibicao g) (get g "nome-exibicao") (chave g))
-           "tipo" (or (:tipo g) (get g "tipo"))
-           "poder" (or (:poder g) (get g "poder") 0)
-           "classe" (name (or (:classe g)
-                              (when-let [c (get g "classe")] (keyword c))
-                              :fisico))}
-    (:alvo g) (assoc "alvo" (name (:alvo g)))
-    (:precisao g) (assoc "precisao" (:precisao g))))
+  (let [nome-ex (or (campo-golpe g :nome-exibicao "nome-exibicao")
+                    (campo-golpe g :nome "nome")
+                    (campo-golpe g :name "name")
+                    (chave g))
+        slug (or (when-let [s (campo-golpe g :slug "slug")]
+                   (let [t (str/trim (str s))]
+                     (when (seq t) t)))
+                 (identificador nome-ex))
+        classe (or (campo-golpe g :classe "classe") :fisico)
+        classe-kw (if (keyword? classe) classe (keyword classe))
+        auto? (boolean (or (campo-golpe g :autodesmaio "autodesmaio") false))
+        alvo (campo-golpe g :alvo "alvo")
+        precisao (campo-golpe g :precisao "precisao")]
+    (cond-> {"slug" slug
+             "nome-exibicao" (str nome-ex)
+             "tipo" (campo-golpe g :tipo "tipo")
+             "poder" (or (campo-golpe g :poder "poder") 0)
+             "classe" (name classe-kw)}
+      alvo (assoc "alvo" (name (if (keyword? alvo) alvo (keyword alvo))))
+      precisao (assoc "precisao" precisao)
+      auto? (assoc "autodesmaio" true))))
 
 (defn registro->golpe
   [g]
-  {:slug (get g "slug")
-   :nome-exibicao (get g "nome-exibicao")
-   :tipo (get g "tipo")
-   :poder (get g "poder")
-   :classe (keyword (get g "classe" "fisico"))})
+  (cond-> {:slug (or (get g "slug") (campo-golpe g :slug))
+           :nome-exibicao (or (get g "nome-exibicao")
+                              (campo-golpe g :nome-exibicao :nome "nome"))
+           :tipo (or (get g "tipo") (campo-golpe g :tipo))
+           :poder (or (get g "poder") (campo-golpe g :poder) 0)
+           :classe (keyword (or (get g "classe") (campo-golpe g :classe) "fisico"))}
+    (or (get g "autodesmaio") (campo-golpe g :autodesmaio))
+    (assoc :autodesmaio true)
+    (or (get g "alvo") (campo-golpe g :alvo))
+    (assoc :alvo (keyword (or (get g "alvo") (campo-golpe g :alvo))))
+    (or (get g "precisao") (campo-golpe g :precisao))
+    (assoc :precisao (or (get g "precisao") (campo-golpe g :precisao)))))
 
 (defn unicos
   [golpes]

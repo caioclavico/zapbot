@@ -3002,9 +3002,9 @@
     (let [texto (or (:texto evento)
                     (:text evento)
                     (get-in evento [:payload :text])
-                    (str "⏰ A batalha encerrou por inatividade ("
-                         config/pokemon-battle-idle-timeout-seconds
-                         "s sem ação válida)."))
+                    (str "⏳ Tempo limite atingido! A batalha foi encerrada por inatividade"
+                         " (" config/pokemon-battle-idle-timeout-seconds
+                         "s sem ação válida). Sem recompensas de vitória."))
           mention-ids (or (when-let [xs (:mentions evento)]
                             (when (seq xs) (vec xs)))
                           (when-let [pid (or (:playerId evento) (:player-id evento))]
@@ -3042,7 +3042,28 @@
                                         (or (.-message erro) erro))
                        (.sendMessage whatsapp (:chatId evento) texto opts))))
 
-        ;; raid-started: texto já traz turno/golpes (format-started); mentions = vez.
+        ;; raid-started: cartão visual desde o 1º frame (sprites rehidratados no media).
+        (= "raid-started" kind)
+        (-> (p/let [payload (or (:payload evento) {})
+                    raid (or (:raid payload) (:raid evento) {})
+                    media-info (.renderRaidBattleCard jvm-media
+                                 #js {:ginasio (or (:nomeGinasio raid) (:nome-ginasio raid)
+                                                   (:ginasio raid) "")
+                                      :chefe (clj->js (or (:chefe raid) {}))
+                                      :atacante (clj->js (or (:vezPokemon raid) (:vez-pokemon raid) {}))
+                                      :treinador (or (:vezNome raid) (:vez-nome raid) "")
+                                      :hpChefe (:hpChefe raid)
+                                      :hpMax (:hpMax raid)
+                                      :hpAtacante (or (:vezHp raid) (:vez-hp raid))
+                                      :fase (or (:fase raid) "combate")
+                                      :turnIndex (or (:turnIndex raid) (:turn-index raid) 0)})
+                    _ (enviar-imagem! media-info "raid-batalha.png")]
+              nil)
+            (p/catch (fn [erro]
+                       (js/console.warn "[PokemonJVM] raid-started imagem falhou; texto:"
+                                        (or (.-message erro) erro))
+                       (.sendMessage whatsapp (:chatId evento) texto opts))))
+
         :else
         (.sendMessage whatsapp (:chatId evento) texto opts)))
     (p/rejected (js/Error. "WhatsApp client ausente no envio de evento JVM."))))

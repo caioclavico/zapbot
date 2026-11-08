@@ -104,10 +104,20 @@
     (let [classe (golpe-get g :classe "classe")
           status (golpe-get g :status-causado "status-causado" :statusCausado "statusCausado")
           alvo (golpe-get g :alvo "alvo")
-          slug (golpe-get g :slug "slug")
+          slug-bruto (golpe-get g :slug "slug")
           tipo (golpe-get g :tipo "tipo")
           nome-bruto (golpe-get g :nome-exibicao "nome-exibicao" :nomeExibicao "nomeExibicao" :nome "nome")
-          nome-ex (nome-golpe-exibivel nome-bruto slug tipo)]
+          nome-ex (nome-golpe-exibivel nome-bruto slug-bruto tipo)
+          ;; Slug canônico: legado só com "nome" → deriva do nome (nunca deixa slim sem id).
+          slug (or (when-let [s (some-> slug-bruto str str/trim)]
+                     (when (seq s) s))
+                   (when-let [n (some-> nome-ex str str/trim)]
+                     (when (and (seq n) (not= n "?"))
+                       (-> n str/lower-case
+                           (java.text.Normalizer/normalize java.text.Normalizer$Form/NFD)
+                           (str/replace #"\p{M}" "")
+                           (str/replace #"[ _]+" "-")
+                           (str/replace #"[^a-z0-9\-]" "")))))]
       (cond-> {:nome-exibicao nome-ex
                :tipo tipo
                :poder (or (golpe-get g :poder "poder") 0)
@@ -123,8 +133,8 @@
                :max-acertos (golpe-get g :max-acertos "max-acertos" :maxAcertos "maxAcertos")
                :alteracoes (golpe-get g :alteracoes "alteracoes")
                :alvo (when alvo (keyword alvo))}
-        slug (assoc :slug slug)
-        (and (nil? nome-ex) (nil? slug) (nil? tipo))
+        (seq slug) (assoc :slug slug)
+        (and (nil? nome-ex) (str/blank? (str slug)) (nil? tipo))
         (assoc :golpe-irrecuperavel? true)))))
 
 (defn- slim-golpe-default?

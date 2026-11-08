@@ -1216,17 +1216,28 @@ async function renderRaidBattleCard({
 } = {}) {
   try {
     const SPRITE = 220;
+    // Paridade caça: rehidrata sprites ausentes no 1º frame (slim/legado sem URL).
+    const [chefeHydrated, atkHydrated] = await Promise.all([
+      chefe ? ensurePokemonSprite(chefe) : null,
+      atacante ? ensurePokemonSprite(atacante) : null
+    ]);
     const [bossSp, atkSp] = await Promise.all([
-      chefe ? spriteProporcional(chefe, SPRITE) : null,
-      atacante ? spriteProporcional(atacante, SPRITE) : null
+      chefeHydrated ? spriteProporcional(chefeHydrated, SPRITE) : null,
+      atkHydrated ? spriteProporcional(atkHydrated, SPRITE) : null
     ]);
     const nomeTre = String(treinador || '').replace(/@.*/g, '').trim() || 'Treinador';
-    const nomeBoss = (chefe && (chefe.nome || chefe.species)) || 'Chefe';
-    const nomeAtk = (atacante && (atacante.nome || atacante.species)) || 'Pokémon';
+    const nomeBoss = (chefeHydrated && (chefeHydrated.nome || chefeHydrated.species))
+      || (chefe && (chefe.nome || chefe.species)) || 'Chefe';
+    const nomeAtk = (atkHydrated && (atkHydrated.nome || atkHydrated.species))
+      || (atacante && (atacante.nome || atacante.species)) || 'Pokémon';
     const hpC = Number(hpChefe);
     const hpM = Number(hpMax) || Math.max(1, hpC || 1);
     const hpA = Number(hpAtacante);
-    const hpAMax = Number((atacante && (atacante.hp || atacante.hpMax)) || hpA || 1);
+    const hpAMax = Number(
+      (atkHydrated && (atkHydrated.hp || atkHydrated.hpMax))
+      || (atacante && (atacante.hp || atacante.hpMax))
+      || hpA || 1
+    );
     const svg = Buffer.from(
       `<svg xmlns="http://www.w3.org/2000/svg" width="760" height="400">`
       + `<defs><linearGradient id="raid-bg" x1="0" y1="0" x2="0" y2="1">`

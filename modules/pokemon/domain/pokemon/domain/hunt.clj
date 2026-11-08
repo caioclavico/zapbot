@@ -30,7 +30,9 @@
    {:nome "Floresta em Festa" :especies ["oddish" "bellsprout" "exeggcute" "eevee"]}])
 
 (def duracao-evento-ms (* 6 60 60 1000))
-(def chance-surto 50)
+;; Balanceamento Combat UX+Eventos RC: 50 → 25 (aprovado localmente).
+;; 75% restantes seguem seleção normal (clima/bioma / thematic bias).
+(def chance-surto 25)
 
 (def media-stat-referencia 75)
 (def fator-compressao-stat 0.5)
