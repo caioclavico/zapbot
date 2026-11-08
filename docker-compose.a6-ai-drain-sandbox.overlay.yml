@@ -1,40 +1,18 @@
-# Overlay Node+JVM — NÃO aplicar sem autorização da janela.
-# Alvo: projeto Compose `odisseu-a6-cutover`, working_dir
-# `/home/caiohclavico/odisseu-recovery/a6-cutover-runtime-20261101T141408Z`.
-#
-# RC candidata species-hp-v1 (merge PR #45 @ 5ed39b0306ad):
-#   Node Tag: odisseu-node:a6-species-hp-20261108T133538Z-5ed39b0306ad-amd64
-#   Node Image ID: sha256:57a828ca6b6187b1415e0a5ea6f71c8b7ec12dd7ffc7fc63e5e6563c2aee5332
-#   JVM Tag: odisseu-jvm:a6-species-hp-20261108T133538Z-5ed39b0306ad-amd64
-#   JVM Image ID: sha256:e1bb8ac5df0ab5ea81b1ab96ca689a602d47e14d41daf07fd0429fafd9df44a8
-#   Labels: git-sha=5ed39b0306addeaf96d4cbb3ad8480268adb3ae0
-#            content-tree=80546bd3a04663b80a2e09750f48c5fa2a4cecf9
-#            fase=a6-species-hp
-#   HEALTH_BIND_HOST=0.0.0.0 obrigatório (health host).
-#
-# Rollback desta RC (= live atual One-Mon, inspecionado RO 2026-11-08):
-#   Node sha256:617525d90f3022455b71d81f4cf063924861f5bbc048b3cdbe0287b54dd304b1
-#   JVM  sha256:4a75eaa241c0c6ce45d541dada52e5966b456989f19ecd71e3b409661111816b
-# Rollback Balance A:
-#   Node sha256:002c83e83485ad5ad7fad936ab76dec416b810a4e446ce5ebeda4a3399c21b3a
-#   JVM  sha256:e044cce13d9588691a110ba866743f6450fca5f3b4172553622c11479dbe3d94
-#
-# Este overlay NÃO redefine flags Pokémon/raids/eventos/allowlist/temáticos.
-# NÃO aplicar em produção sem GO operacional separado.
-
+# Overlay pinado — Combat UX + Eventos RC (NÃO aplicado em produção nesta tarefa).
+#   Stamp: 20261108T164301Z
+#   Commit: 3bc507679a4511aa850e5dd015e6bde56e38fca3
+#   Content-tree: 452ff59358a9530a2c358239eba3d1ac8510c2d6
+#   Node Tag: odisseu-node:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64
+#   Node Image ID: sha256:619b4756b3bf0b92f75f5ac4e75d8b6d11783219f98faacc8328dd4423a03d1e
+#   JVM Tag: odisseu-jvm:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64
+#   JVM Image ID: sha256:09e7605e94e6c01217df2366c3729470ff4bc7a73aaf23e289f72d8817129d40
+#   Labels: io.zapbot.git-sha / io.zapbot.content-tree / io.zapbot.fase=a6-combat-ux-events
+#   Arch: linux/amd64
+#   Rollback live Species-HP Final: Node 17520a1e… / JVM c13140fa…
+#   Source-base: 72bffdb63be62d8b35e61bcc75c0436949b6f189
+#   Proibido reutilizar: 57a828ca… / e1bb8ac5… (species-hp pré-aliases)
 services:
-  odisseu-a6-jvm:
-    image: odisseu-jvm:a6-species-hp-20261108T133538Z-5ed39b0306ad-amd64
-  odisseu-a6-node:
-    image: odisseu-node:a6-species-hp-20261108T133538Z-5ed39b0306ad-amd64
-    user: "1000:1000"
-    environment:
-      HEALTH_BIND_HOST: "0.0.0.0"
-      STAGING_ALLOW_QR: "0"
-      STAGING_BOOTSTRAP_GROUP: "0"
-      STAGING_WHATSAPP_CONFIRM: "1"
-    cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
-      # Perfil Chromium homologado (mesmo path do runtime no odisseu-core).
-      - seccomp=/home/caiohclavico/odisseu-recovery/a6-cutover-runtime-20261101T141408Z/docker/chromium-seccomp.json
+  odisseu-jvm:
+    image: odisseu-jvm:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64
+  odisseu-node:
+    image: odisseu-node:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64

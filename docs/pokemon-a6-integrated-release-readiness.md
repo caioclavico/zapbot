@@ -1,14 +1,276 @@
 # Pokémon A6 — Release readiness / RC A+B+C+P0 + One-Mon + species-hp
 
-**Atualizado:** 2026-11-08T14:30Z  
+**Atualizado:** 2026-11-08T16:50Z  
 **Host:** `odisseu-core` (linux/amd64)  
-**Live executável (One-Mon):** Node `617525d9…` / JVM `4a75eaa2…` @ `b0f0677` — **intacta**  
-**RC candidata (species-hp):** Node `57a828ca…` / JVM `e1bb8ac5…` @ `5ed39b0` — carregada, **não** aplicada  
-**Homolog local bloqueios:** form-aliases + schema035 + freeze — **PASS** (sem deploy)  
-**Evidência prep species-hp:** `/home/caiohclavico/odisseu-recovery/a6-species-hp-prep-20261108T134333Z`  
-**Evidência storage+ensaio:** `/home/caiohclavico/odisseu-recovery/a6-species-hp-storage-audit-20261108T140316Z`  
-**Inbox tars:** `/home/caiohclavico/odisseu-recovery/rc-inbox/a6-species-hp-5ed39b0/`  
-**Evidência cutover One-Mon:** `/home/caiohclavico/odisseu-recovery/a6-raid-one-mon-cutover-20261108T111814Z`
+**Live executável (Species-HP Final):** Node `17520a1e…` / JVM `c13140fa…` @ `72bffdb` — **intacta** (sem cutover nesta janela)  
+**RC candidata (Combat UX + Eventos 25%):** Node `328dd4423a03d1e…` / JVM `9f72d8817129d40…` @ `3bc5076` — build+VERIFY, **não** aplicada  
+**Artefatos locais:** `artifacts/a6-combat-ux-events-20261108T164301Z/`  
+**PRs:** #51 Combat UX · #52 eventos 25% · #53 integração RC  
+**Veredito prep:** **GO** para preparação operacional · **NO-GO** deploy/cutover sem autorização
+
+---
+
+## 0n. RC Combat UX + Eventos 25% (2026-11-08T16:43Z→16:50Z) — **sem deploy**
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | GO integração local + build RC (**sem** deploy/restart/migrations) |
+| Base | Species-HP Final `72bffdb` / tree `8b793ae1` (live) |
+| Feature commits | `d35b58b` Combat UX · `8b37460` chance-surto 25% |
+| Commit integrado | `3bc507679a4511aa850e5dd015e6bde56e38fca3` (merge PR #53) |
+| Content-tree | `452ff59358a9530a2c358239eba3d1ac8510c2d6` |
+| Branch RC | `rc/a6-combat-ux-events` ≡ tip `github/rc/a6-abc-p0-integrated` |
+| Node tag / ID | `odisseu-node:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64` · `sha256:619b4756b3bf0b92f75f5ac4e75d8b6d11783219f98faacc8328dd4423a03d1e` |
+| JVM tag / ID | `odisseu-jvm:a6-combat-ux-events-20261108T164301Z-3bc507679a45-amd64` · `sha256:09e7605e94e6c01217df2366c3729470ff4bc7a73aaf23e289f72d8817129d40` |
+| SHA256 tars | ver `artifacts/a6-combat-ux-events-20261108T164301Z/SHA256SUMS.txt` |
+| Labels | `git-sha=3bc507679a45…` · `content-tree=452ff59358a9…` · `fase=a6-combat-ux-events` · **amd64** |
+| Chromium / UID | **156.0.8078.79** · UID **1000** |
+| Species-HP / One-Mon / HP 320 | **preservados** (sem diff em fórmula/schema035/aliases) |
+| `chance-surto` | **25** (sim 10k pct=0.25) |
+| Overlay | pinado em `docker-compose.a6-ai-drain-sandbox.overlay.yml` — **não** aplicado |
+| VERIFY | **PASS** |
+| Deploy / cutover | **NO-GO** |
+
+### Testes
+
+| Suite | Resultado |
+|-------|-----------|
+| `:test-a6-lote-b` (+ moves-audit + event-sim) | **PASS** |
+| `:test-a6-lote-c` | **PASS** |
+| `:test-a6-species-hp` (1421 asserts) | **PASS** |
+| schema035 / freeze | **PASS** |
+| Wartortle legado / present UX / raid 320 | **PASS** |
+
+Detalhes combate/eventos: `docs/pokemon-a6-combat-ux-events-audit.md`.
+
+---
+## 0m. GO produção Species-HP Final (2026-11-08T15:26Z→15:54Z) — **SUCCESS**
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | **GO expresso** cutover + schema 035 + migrate + reopen |
+| T0 | `20261108T151915Z` · 986 legado · 0 combate · hold `true` · deploy `disabled_manually` |
+| Stamp cutover | `20261108T152613Z` |
+| Backup | hot+cold Datomic · cold WA 1483 files · ACL u:1000 · `BACKUP_PRE_DRAIN`/`DRAIN_STOP_ACL` |
+| Schema 035 | `pokemon/035-species-hp-formula` via `schema/install!` (idempotente) |
+| Migrate pass1 | **converted 986** · quarantine **0** · fainted 20 preservados · full 952 · partial 14 |
+| Migrate pass2 | **noop 986** · convert **0** · `IDEMPOTENT_NOOP=PASS` |
+| Pós-migrate | todos `species-hp-v1` · `invalid-hp 0` · raid boss HP **320** · One-Mon `max-party=1` |
+| Live Node/JVM | `sha256:17520a1e…2a0` / `sha256:c13140fa…3ee` |
+| WhatsApp | **READY** @ `2026-11-08T15:32:39Z` · Chromium **156** · UID **1000** · CapEff **0** · NNP **1** |
+| Flags | preservadas (thematic/raid/gym/kit/QR) |
+| Gates | Node reaberto após validate · JVM bridge open · `RESUME=PASS` |
+| Ponto sem retorno | **atingido** em `CHECKPOINT_PRE_V1=2026-11-08T15:28:26Z` — forward-fix Species-HP |
+| Observação | `OBSERVE_START=15:33:49Z` → `15:54:37Z` · **41/41 READY** · fail **0** · `STABILITY_20M_PASS` · `CUTOVER_RESULT=SUCCESS` |
+
+**Nota operacional:** no cutover, a bridge JVM precisa estar `open` antes do boot WhatsApp do Node (platform fail-closed sob maintenance). Gate de jogo ficou no Node até validate. Runbook atualizado.
+
+---
+
+## 0l. Preflight final Species-HP (2026-11-08T15:08Z→15:15Z) — **sem cutover/freeze live**
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | **GO preflight RO + ensaios isolados** |
+| Live Node/JVM | `sha256:617525d9…304b1` / `sha256:4a75eaa2…816b` · healthy · restarts **0** · Started inalterado |
+| RC Node/JVM | `sha256:17520a1e…2a0` / `sha256:c13140fa…3ee` · amd64 · labels `72bffdb` / `8b793ae1` / `a6-species-hp-final` |
+| VERIFY | **PASS** (containers ativos **não** modificados) |
+| Rollback imgs | One-Mon · Balance A · species-hp pré-aliases — **presentes** |
+| WhatsApp / bridge | **READY** · JVM **up** · maint `open` · `activeRequests=0` |
+| Chromium / UID / CapEff / NNP | **156** · UID **1000** · CapEff **0** · NoNewPrivs **1** · seccomp ativo (Node) |
+| Overlay | Final pinado · **não** aplicado |
+
+### GitHub (autenticado; GH_TOKEN env inválido contornado via keyring)
+
+| Check | Resultado |
+|-------|-----------|
+| `ODISSEU_PRODUCTION_DEPLOY_HOLD` | **`true`** (Actions variable; updated 2026-11-05) |
+| `deploy.yml` state | **`disabled_manually`** |
+| Runs `in_progress` / `queued` | **0** / **0** |
+| Residual | `AUTO_DEPLOY_ENABLED=true` — **mitigado** enquanto workflow permanecer `disabled_manually` (pré-condição da janela) |
+
+### Disco e orçamento de pico
+
+| Item | Estimativa |
+|------|------------|
+| Livre agora | **~8.55 GiB** (82% used; inodes 5%) |
+| Cold WA (sessão 297 M ×2 + margem) | ~0.6 G |
+| Cold Datomic (30 M ×2 + margem) | ~0.1 G |
+| Schema 035 + migrate working + evid/logs | ~0.3 G |
+| Margem de segurança | **2.0 G** |
+| **Pico total estimado** | **~3.5 G** |
+| Após pico | ~5 G livres |
+| Veredito disco | **SUFICIENTE** (não exige 10 G arbitrários; expansão = conforto opcional) |
+
+### Auditoria RO atual (hot copy; agregados)
+
+| Métrica | Valor (2026-11-08T15:11Z) |
+|---------|---------------------------|
+| Total Pokémon | **986** (era 984 na prep — reconsultar em T0) |
+| `legacy-unset` / `species-hp-v1` | **986** / **0** |
+| com `hp-base` | **0** |
+| full / partial / fainted | **952** / **14** / **20** |
+| Raids / batalhas ativas | **0** / **0** |
+| Quarentena formas (ensaio) | **0** |
+
+### Freeze / drain (inspeção + ensaio isolado; **não** ativado em prod)
+
+| Item | Resultado |
+|------|-----------|
+| Enforcement operacional | **maintenance-gate** `acquire!` fail-closed em **todas** as rotas da bridge |
+| Background | `raid-auto` tick + idle-sweeper também passam por `acquire!` |
+| Smoke isolado | **PASS** (draining→quiescent→resume; mutating blocked; reads allowed) |
+| Checklist `species-hp-freeze` | classifica subset HP-mutating; ops writeish fora da lista (shop/missions/…) **ainda bloqueadas pelo gate** |
+| Prod | freeze **não** ativado |
+
+### Schema 035 + migração (Datomic descartável)
+
+| Cenário | Resultado |
+|---------|-----------|
+| Schema 035 aditivo / idempotente / legado OK | **PASS** |
+| Ensaio migrate (export anon) | convert **982** · quarantine **0** · skip **2** |
+| **A** falha antes do 1º lote | 100% legado → rollback imagens One-Mon **seguro** |
+| **B** falha mid-backfill | resume **PASS** (78→904) · 2ª passagem `noop=982` · faint=0 · proporção OK · **preferir forward-fix JVM Species-HP** |
+| **C** pós-backfill completo | integridade v1 **PASS** · One-Mon **não** assumido seguro se recalcular max |
+| Regra | **nunca** restaurar cold antigo automaticamente sobre progresso novo |
+
+### Funcional isolado pós-fórmula
+
+species-hp 1421 · homolog A+B+C+One-Mon 247 · tm/xp/evo · raid/gym/bridge · PvP A5.2 — **PASS** · raid boss **320**
+
+### Runbook definitivo (futura janela — não executar agora)
+
+1. Preflight T0 (IDs, hold/CI, disco, RO counts, battles/raids=0)  
+2. Freeze via maintenance enter (draining→quiescent)  
+3. Cold Datomic + cold WA  
+4. Schema 035  
+5. Cutover coordenado JVM+Node (overlay Final)  
+6. Migração lotes idempotente  
+7. Verify agregados + amostra faint/partial  
+8. WA READY + health  
+9. Resume gates  
+10. Observação ≥20 min  
+
+**Ponto sem retorno One-Mon:** após o **primeiro lote** convertendo saves para `species-hp-v1`. Antes disso, rollback = repin One-Mon.
+
+| Veredito | |
+|----------|--|
+| Submeter janela à autorização humana | **GO** |
+| Executar cutover/schema/backfill agora | **NO-GO** |
+
+---
+
+## 0k. Prep operacional Species-HP Final (2026-11-08T14:48Z→15:05Z) — **sem cutover**
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | **GO prep only** (transfer/load/VERIFY/pin; **sem** deploy/drain/restart/schema live/backfill/WA/flags) |
+| Commit / tree | `72bffdb63be62d8b35e61bcc75c0436949b6f189` · `8b793ae169ace916ec37c0b7350ce68e8404d3fa` |
+| Live Node/JVM | `617525d9…` / `4a75eaa2…` · **healthy** · Started **11:24Z / 11:19Z** (inalterado) |
+| WhatsApp | **READY** `{"status":"ok","whatsapp":"READY","chromium":true}` |
+| Bridge | **up** · maintenance `phase=open` · caps intactas |
+| Disco antes | **81%** · avail **9 656 292 KB** (~9.2 G) · **DISK_OK** (≥6 G margem) |
+| Pico (stage+inbox) | **84%** · ~8.0 G (antes do load) |
+| Após `docker load` | **84%** · avail **8 332 416 KB** (Δ layers ~45 MB) |
+| Após limpeza stage | **82%** · avail **8 968 540 KB** (~8.6 G) |
+| SHA256 local=host | **OK** Node `37d36b15…cae8` · JVM `c17706cf…f399` |
+| `docker load` | **PASS** |
+| Image IDs Engine | Node `sha256:17520a1e…2a0` · JVM `sha256:c13140fa…3ee` · **amd64** · labels `72bffdb` / `8b793ae1` / `a6-species-hp-final` |
+| `VERIFY_A6_GAMEPLAY_RC_IMAGES` | **PASS** |
+| Overlay | pinado Final no runtime cutover · bak `…overlay.yml.bak-pre-species-hp-final-prep-20261108T145105Z` · **não** aplicado (containers One-Mon) |
+| Rollback imgs presentes | One-Mon · Balance A · species-hp pré-aliases |
+| Hold / CI | última confirmação prep `134333Z`: hold **true** · CI **`disabled_manually`** · in_progress=0; revalidação gh nesta sessão **401** (não alterado no host) |
+| Schema 035 / backfill / cutover | **não** executados |
+
+### Auditoria RO pré-janela (hot copy; agregados)
+
+| Métrica | Valor |
+|---------|-------|
+| Pokémon | **984** |
+| `legacy-unset` | **984** (100%) |
+| `species-hp-v1` | **0** |
+| com `hp-base` | **0** |
+| full / partial / fainted | **952** / **12** / **20** |
+| Raids ativas / batalhas ativas | **0** / **0** |
+| Quarentena formas (ensaio prévio c/ aliases) | **0** |
+
+### Plano documental de cutover + migração (**não executar**)
+
+1. Preflight RO (health, hold, disco ≥ margem cold+rollback, battles/raids=0).  
+2. Bloquear ops que mutam HP (`species-hp-freeze` via maintenance-gate).  
+3. Drain → quiescent (sem matar TX em voo).  
+4. Backup cold Datomic + snapshot cold WhatsApp.  
+5. Schema **035** (aditivo).  
+6. Cutover coordenado JVM+Node (overlay Final) — sem reabrir jogo se código/schema/HP incompatíveis.  
+7. Migração idempotente saves (`plano-registro`; batches 25–50; skip combate).  
+8. Validar integridade (faint=0, proporção, raid boss 320, noop na reexecução).  
+9. WA READY + health.  
+10. Resume gates + observação ≥20 min.
+
+### Rollback por estágio
+
+| Estágio | Ação | Seguro? |
+|---------|------|---------|
+| **Antes do backfill** (só imagens/código; saves ainda `legacy-unset`) | Repin overlay → One-Mon `617525d9`/`4a75eaa2` + compose up | **Sim** (attrs 035 opcionais ignorados pelo código antigo) |
+| **Backfill parcial** | Retomar lotes (idempotente); **não** restaurar cold automaticamente sobre progresso novo; se abortar: cold da janela **somente** com GO + confirmação de zero progresso útil | Condicional |
+| **Backfill completo** (`species-hp-v1`) | Rollback só de **código** para One-Mon **não** é seguro se o código legado recalcular max sem checar versão — preferir forward-fix ou cold da janela com GO | **Não** assumir One-Mon seguro |
+| Nunca | Restaurar snapshot antigo sobre saves já convertidos sem auditoria | Proibido |
+
+Checksums tars (local = host):
+- Node `37d36b152903d59e675006cabceb1a983ae0be66b4de698b8439303e03edcae8`
+- JVM `c17706cf0b0dc885559228e95ec51ba521520dcfbff3d03b2793fa5ca906f399`
+
+| Veredito | |
+|----------|--|
+| Solicitar autorização da **janela** cutover+migração | **GO condicional** (disco ~8.6 G — preferível ≥10 G antes do cold; revalidar hold/CI via API; battles/raids=0 agora) |
+| Cutover / schema live / backfill agora | **NO-GO** |
+
+Detalhes migração: `docs/pokemon-a6-species-hp-migration-plan.md`.
+
+---
+
+## 0j. RC Species-HP Final (2026-11-08T14:33Z→14:45Z) — build + homolog (**sem** deploy)
+
+| Campo | Valor |
+|-------|-------|
+| Autorização | **GO** integração/build/testes/artefatos locais — **sem** cutover/schema live/backfill/restart/drain/WA |
+| Branch / tip | `rc/a6-species-hp-final` ≡ `github/rc/a6-abc-p0-integrated` @ **`72bffdb`** |
+| PRs | #45 (fórmula) · #46 (pins) · **#50** (form-aliases + schema035/freeze) |
+| Content-tree | `8b793ae169ace916ec37c0b7350ce68e8404d3fa` |
+| Stamp | `20261108T144109Z` |
+| Node tag / ID | `odisseu-node:a6-species-hp-final-20261108T144109Z-72bffdb63be6-amd64` · `sha256:17520a1ec6fcb88687c2f208b8cd276c384944f01cde57a3b0793c217532e2a0` |
+| JVM tag / ID | `odisseu-jvm:a6-species-hp-final-20261108T144109Z-72bffdb63be6-amd64` · `sha256:c13140fa9965b8cb78faa7edc1d95a95a5abc3ed1287203554e65748e52683ee` |
+| Tar SHA256 Node | `37d36b152903d59e675006cabceb1a983ae0be66b4de698b8439303e03edcae8` |
+| Tar SHA256 JVM | `c17706cf0b0dc885559228e95ec51ba521520dcfbff3d03b2793fa5ca906f399` |
+| Labels | `git-sha=72bffdb…` · `content-tree=8b793ae1…` · `fase=a6-species-hp-final` · **amd64** |
+| Chromium / UID | **156.0.8078.79** · UID **1000** · chrome-sandbox setuid · sem `--no-sandbox` |
+| One-Mon / raid boss | `max-party=1` · `hp-por-jogador=320` intactos |
+| Schema 035 | na imagem JVM · homolog descartável **PASS** · **não** live |
+| Freeze | maintenance-gate **PASS** · **não** altera prod |
+| Overlay | pinado Final em `docker-compose.a6-ai-drain-sandbox.overlay.yml` · **não** aplicado |
+| VERIFY | **PASS** (IDs antigos species-hp + live na deny-list) |
+| Disco build local | ~91 G livres · **DISK_OK** (build não em produção) |
+| Hold / CI / flags / WA | **não** alterados |
+
+### Regressões Final
+
+| Suite | Resultado |
+|-------|-----------|
+| species-hp | **PASS** 22 / 1421 |
+| homolog A+B+C+One-Mon | **PASS** 42 / 247 |
+| schema035 / freeze | **PASS** / **PASS** |
+| ensaio migrate (export RO) | convert **982** · quarantine **0** · noop **982** · resume **PASS** · faint=0 · boss 320 |
+| tm-xp / evo | **PASS** |
+| hunt unit + HTTP `lago` | **PASS** (`praia` rotação = `area_unavailable`, não HP) |
+| raid / gym / bridge / PvP / eggs | **PASS** |
+| Node hunt/a2/gym + One-Mon UX + maint | **PASS** |
+
+| Veredito | |
+|----------|--|
+| Prep operacional no servidor (SCP/load/VERIFY/pin) | **GO** |
+| Cutover / schema 035 live / backfill / restart / drain | **NO-GO** |
+
+Detalhes: `docs/pokemon-a6-species-hp-balance.md` · `docs/pokemon-a6-species-hp-migration-plan.md`.
 
 ---
 
@@ -23,7 +285,7 @@
 | Schema 035 | validado em Datomic descartável · **não** em prod |
 | Freeze | maintenance-gate + `species-hp-freeze` · **PASS** |
 | Regressão | species-hp 1421 · homolog 247 · raid/gym/bridge/tm-xp/maint **PASS** · hunt HTTP `area_unavailable` (rotação; unit hunt PASS) |
-| Nova RC | **GO** (build/pin; sem deploy) |
+| Nova RC | **GO** → executada em §0j |
 | Cutover / migrate live | **NO-GO** |
 
 Detalhes: `docs/pokemon-a6-species-hp-migration-plan.md`.
