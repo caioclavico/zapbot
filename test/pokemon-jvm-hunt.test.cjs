@@ -51,6 +51,7 @@ test('aliases cacar/atacar e elegibilidade', () => {
   // Mensagens distintas: Node só retenta STALE (1x); CONFLICT não é auto-retry.
   assert.match(present.formatError({ code: 'STALE_WRITER_FENCE' }), /obsoleto|ativar|saves/i);
   assert.match(present.formatError({ code: 'WRITER_FENCE_CONFLICT' }), /Conflito ao gravar|tente de novo/i);
+  assert.match(present.formatError({ code: 'TX_DATOMS_CONFLICT' }), /falha técnica|não.*consumido|tente o mesmo ataque/i);
   assert.notEqual(
     present.formatError({ code: 'STALE_WRITER_FENCE' }),
     present.formatError({ code: 'WRITER_FENCE_CONFLICT' })
