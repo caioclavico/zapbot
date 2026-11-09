@@ -6,7 +6,8 @@
             [pokemon.domain.battle-idle :as idle]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
-            [pokemon.infrastructure.datomic.pvp-store :as pvp-store]))
+            [pokemon.infrastructure.datomic.pvp-store :as pvp-store]
+            [pokemon.infrastructure.datomic.trainer-progression :as trainer-progression]))
 
 (defn- present? [e] (boolean (:db/id e)))
 
@@ -374,7 +375,9 @@
   ([conn battle-id agora] (expire-battle! conn battle-id agora nil))
   ([conn battle-id agora {:keys [force?] :as opts}]
   (let [agora (long (or agora (System/currentTimeMillis)))
-        built (build-expire-battle-tx (d/db conn) battle-id agora opts)]
+        built (trainer-progression/enrich
+               (d/db conn)
+               (build-expire-battle-tx (d/db conn) battle-id agora opts))]
     (if (or (empty? (:tx built)) (:duplicate (:result built)) (:skipped (:result built)))
       (:result built)
       (try
