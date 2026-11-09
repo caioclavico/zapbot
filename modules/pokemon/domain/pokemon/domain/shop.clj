@@ -7,7 +7,7 @@
 (def ^:private catalogo-venda
   "Itens com :preco — únicos compráveis na loja."
   {"cartao-presente" {:nome "Cartão de presente" :emoji "🎁" :preco 20
-                      :descricao "Presente para outro treinador (fluxo presente ainda bloqueado no JVM)."}
+                      :descricao "Presente para outro treinador — !presente @amigo."}
    "mochila" {:nome "Expansão de Mochila" :emoji "🎒" :preco 200 :expansao? true
               :expansao-tipo :mochila
               :descricao "Aumenta a capacidade da mochila de itens em +50."}

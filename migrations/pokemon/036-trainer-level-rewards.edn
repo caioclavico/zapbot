@@ -1,0 +1,16 @@
+;; Progressão progressiva do treinador e ledger idempotente de prêmios por nível.
+[
+ {:db/ident :save/trainer-xp-level-progress
+  :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :trainer-level-reward/key
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one
+  :db/unique :db.unique/identity}
+ {:db/ident :trainer-level-reward/save
+  :db/valueType :db.type/ref :db/cardinality :db.cardinality/one}
+ {:db/ident :trainer-level-reward/level
+  :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :trainer-level-reward/operation-id
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :trainer-level-reward/reward-edn
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+]

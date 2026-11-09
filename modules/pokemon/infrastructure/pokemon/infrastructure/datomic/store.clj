@@ -51,6 +51,7 @@
             [pokemon.infrastructure.datomic.profile-store :as profile-store]
             [pokemon.infrastructure.datomic.schema :as schema]
             [pokemon.infrastructure.datomic.thematic-event-store :as thematic-store]
+            [pokemon.infrastructure.datomic.trainer-progression :as trainer-progression]
             [pokemon.domain.events :as events]))
 
 (defn- normalize-team-name
@@ -192,12 +193,17 @@
           ;; :save/trainer-xp|level direto quando não há vitórias/PE.
           stored-xp (long (:save/trainer-xp e 0))
           stored-level (long (:save/trainer-level e 1))
-          xp (if (pos? computed) computed stored-xp)
-          perfil (xp/progresso-treinador xp)
-          nivel (if (pos? computed) (:nivel perfil) stored-level)]
+          perfil (xp/perfil-treinador
+                  (assoc base
+                         :trainer-xp (max computed stored-xp)
+                         :trainer-level stored-level
+                         :trainer-xp-level-progress (:save/trainer-xp-level-progress e)))
+          trainer-total (:xp perfil)
+          nivel (:nivel perfil)]
       (assoc base
-             :trainer-xp xp
+             :trainer-xp trainer-total
              :trainer-level nivel
+             :trainer-xp-level-progress (:save/trainer-xp-level-progress e)
              :xp-atual (:xp-atual perfil)
              :xp-necessario (:xp-necessario perfil)
              :sequencia-capturas (long (:save/sequencia-capturas e 0))
@@ -697,7 +703,9 @@
                             {:expected writer-ctx
                              :active (:player/active-save-id player)
                              :fence (:player/fence-generation player)})))
-        (let [built (mission-events/attach db writer-ctx (build-tx db save) mission-instant)
+        (let [built (mission-events/attach db writer-ctx
+                                           (build-tx db save) mission-instant)
+              built (trainer-progression/enrich db built)
               tx (into (writer-fence-tx chat-id player-id writer-ctx) (:tx built))
               result (try
                        (d/transact conn {:tx-data tx})

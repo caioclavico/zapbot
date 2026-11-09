@@ -16,12 +16,16 @@
   (if-let [value (get save attr)] (edn/read-string value) {}))
 
 (defn trainer-level [save]
-  ;; Mesmo perfil usado pela bridge; considera componentes e XP legado.
-  (:nivel (xp/progresso-treinador
-           (max (long (:save/trainer-xp save 0))
-                (xp/xp-treinador-total
-                 (into {} (for [k [:vitorias-treinador :pe-ginasios :pe-raids :xp-insignias :xp-missoes]]
-                            [k (get save (keyword "save" (name k)) 0)])))))))
+  ;; Nível/resíduo persistidos preservam saves migrados de curvas históricas.
+  (let [stored (long (:save/trainer-level save 1))
+        total (max (long (:save/trainer-xp save 0))
+                   (xp/xp-treinador-total
+                    (into {} (for [k [:vitorias-treinador :pe-ginasios :pe-raids :xp-insignias :xp-missoes]]
+                               [k (get save (keyword "save" (name k)) 0)]))))]
+    (if (some? (:save/trainer-xp-level-progress save))
+      stored
+      (max stored (:nivel (xp/progresso-treinador-legado total))
+           (:nivel (xp/progresso-treinador total))))))
 
 (defn- context [db chat player slot]
   (let [p (d/pull db '[*] [:player/key (id/player-key chat player)])]
