@@ -10,7 +10,8 @@
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
             [pokemon.domain.mission-rewards :as rewards]
-            [pokemon.domain.xp :as xp]))
+            [pokemon.domain.xp :as xp]
+            [pokemon.infrastructure.datomic.trainer-progression :as trainer-progression]))
 
 (defn- read-edn [s] (if (string? s) (edn/read-string s) (or s {})))
 
@@ -277,11 +278,15 @@
       (occurrence->map (d/pull (d/db conn) '[*] [:thematic-event-occurrence/id occurrence-id])))))
 
 (defn- trainer-level [save]
-  (:nivel (xp/progresso-treinador
-           (max (long (:save/trainer-xp save 0))
-                (xp/xp-treinador-total
-                 (into {} (for [k [:vitorias-treinador :pe-ginasios :pe-raids :xp-insignias :xp-missoes]]
-                            [k (get save (keyword "save" (name k)) 0)])))))))
+  (let [stored (long (:save/trainer-level save 1))
+        total (max (long (:save/trainer-xp save 0))
+                   (xp/xp-treinador-total
+                    (into {} (for [k [:vitorias-treinador :pe-ginasios :pe-raids :xp-insignias :xp-missoes]]
+                               [k (get save (keyword "save" (name k)) 0)]))))]
+    (if (some? (:save/trainer-xp-level-progress save))
+      stored
+      (max stored (:nivel (xp/progresso-treinador-legado total))
+           (:nivel (xp/progresso-treinador total))))))
 
 (defn- grant-items
   [db save sk ref inventory items base-pending adjust]
@@ -358,7 +363,10 @@
                           [:db/cas [:player/key pk] :player/fence-generation fence fence]
                           [:db/add ref :save/missoes-eventos-edn (pr-str events')]
                           [:db/add ref :save/professor-cards-edn (pr-str cards')]]
-                         (conj (:tx grant) receipt))]
+                         (conj (:tx grant) receipt))
+                progressed (trainer-progression/enrich db {:tx tx :result result})
+                tx (:tx progressed)
+                result (:result progressed)]
             (let [outcome
                   (try
                     (d/transact conn {:tx-data tx})

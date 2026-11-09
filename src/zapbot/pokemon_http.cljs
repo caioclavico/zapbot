@@ -294,6 +294,9 @@
        (aset extras "mentions" (clj->js (vec mentions))))
      (.envelope jvm-present (:requestId pedido) texto extras))))
 
+(defn- append-trainer-level-ups [texto data]
+  (.appendTrainerLevelUps jvm-present (str texto) data))
+
 (defn- especie-pokedex-top-level?
   "Top-level !pokedex/!dex/!pdx = ficha de espécie (master). !pk pokedex = coleção."
   [comando]
@@ -791,7 +794,7 @@
                             :renderPhase "raid-attack"}))
               present (.coerceRaidPresent jvm-present
                                           (.formatRaidAttack jvm-present data prefix))]
-        (envelope-jvm pedido (.-text present) img
+        (envelope-jvm pedido (append-trainer-level-ups (.-text present) data) img
                       (js->clj (or (.-mentions present) #js []))))
 
       ;; fruta / frambo / fruta frambo — espelha caça selvagem: prepare + UI completa
@@ -861,7 +864,9 @@
                               #js {:bola (or (.-bola data) "pokebola")
                                    :capturou (boolean (.-capturou data))
                                    :fugiu false}))]
-              (envelope-jvm pedido (.formatRaidCapture jvm-present data prefix) img)))))
+              (envelope-jvm pedido
+                            (append-trainer-level-ups
+                             (.formatRaidCapture jvm-present data prefix) data) img)))))
 
       (or (= "ajuda" sub) (= "help" sub) (= "?" sub))
       (envelope-jvm pedido (.formatHelp jvm-present "raid" prefix))
@@ -1014,10 +1019,11 @@
               b (.-battle data)
               side (or (lado-pvp b player-id) side0)
               sua-vez? (sua-vez-pvp? b player-id)
-              texto (.formatPvpTurn jvm-present data prefix
+              texto (append-trainer-level-ups
+                     (.formatPvpTurn jvm-present data prefix
                                     #js {:mySide side
                                          :suaVez sua-vez?
-                                         :rewards (.-rewards data)})
+                                         :rewards (.-rewards data)}) data)
               efeito (.efeitoDeTurno jvm-media data)
               img (render-arena-pvp! ctx b side
                                      {:texto texto
@@ -1053,7 +1059,8 @@
                           (some? item-id) (assoc :itemId item-id)))
           data (desempenho/medir! ctx "pokemon_jvm_battle_turn"
                  #(.confirmBattleTurn jvm body))
-          texto (.formatBattleTurn jvm-present data (str config/prefix "pk"))
+          texto (append-trainer-level-ups
+                 (.formatBattleTurn jvm-present data (str config/prefix "pk")) data)
           b (.-battle data)
           fugiu? (= "flee" (or (.-outcome data) (some-> b .-outcome)))
           img (render-seguro! ctx "pokemon_jvm_media_turn"
@@ -1118,7 +1125,9 @@
                                                             :fenceGeneration (.-fenceGeneration ativo)
                                                             :operationId op-id
                                                             :occurrenceId occ-id}))]
-                (envelope-jvm pedido (.formatMissionClaim jvm-present data "event" prefix)))))
+                (envelope-jvm pedido
+                              (append-trainer-level-ups
+                               (.formatMissionClaim jvm-present data "event" prefix) data)))))
           (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
                   weekly? semanais?
                   period (if weekly? (.-period (.-weekly missoes)) (.-period (.-daily missoes)))
@@ -1134,8 +1143,10 @@
                                                           :saveId (.-activeSaveId ativo)
                                                           :fenceGeneration (.-fenceGeneration ativo)
                                                           :operationId op-id :period period})))]
-            (envelope-jvm pedido (.formatMissionClaim jvm-present data
-                                                       (if weekly? "weekly" "daily") prefix))))))))
+            (envelope-jvm pedido
+                          (append-trainer-level-ups
+                           (.formatMissionClaim jvm-present data
+                                               (if weekly? "weekly" "daily") prefix) data))))))))
 
 (defn- executar-presente-jvm!
   [jvm ctx pedido chat-id player-id]
@@ -2310,7 +2321,8 @@
                                       #js {:bola (or (.-bola data) "pokebola")
                                            :capturou (boolean (.-capturou data))
                                            :fugiu (boolean (.-fugiu data))}))]
-                      (envelope-jvm pedido texto img))))
+                      (envelope-jvm pedido
+                                    (append-trainer-level-ups texto data) img))))
 
                 "atacar"
                 (p/let [pvp (.getActivePvp jvm #js {:chatId chat-id})
