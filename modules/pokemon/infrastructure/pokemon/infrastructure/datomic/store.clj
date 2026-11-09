@@ -78,6 +78,23 @@
   [ex]
   (err/datoms-conflict? ex))
 
+(defn- conflicting-add-assertions
+  "Detecta [:db/add e a v] duplicados com valores distintos na mesma TX.
+  Usado para enriquecer :tx_datoms_conflict (diagnóstico; não altera a TX)."
+  [tx]
+  (->> tx
+       (filter #(and (vector? %)
+                     (= :db/add (first %))
+                     (= 4 (count %))))
+       (group-by (fn [[_ e a _]] [e a]))
+       (keep (fn [[[e a] rows]]
+               (let [vs (vec (distinct (map #(nth % 3) rows)))]
+                 (when (> (count vs) 1)
+                   {:entity (pr-str e)
+                    :attr (str a)
+                    :values vs}))))
+       vec))
+
 (defn- player-entity
   [db chat-id player-id]
   (d/pull db '[*] [:player/key (id/player-key chat-id player-id)]))
@@ -385,7 +402,12 @@
         (inventory-adjust-tx db sk (or chosen canonical) d)))))
 
 (defn- evolution-tx-fragments
-  "TX de troca de espécie no mesmo id-pokemon (preserva identidade)."
+  "TX de troca de espécie no mesmo id-pokemon (preserva identidade).
+
+  Não reescreve HP/stats/golpes: `apply-pokemon-xp-tx` já emite esses attrs
+  uma vez a partir do registro pós-evo. Duplicar `:pokemon/hp-atual` (ou stats)
+  com valores divergentes (level-up proporcional × override de combate × evo)
+  causa `:db.error/datoms-conflict` na mesma TX."
   [lookup poke evoluido]
   (let [old-tipos (set (:tipos poke))
         new-tipos (set (:tipos evoluido))
@@ -396,15 +418,7 @@
                       (remove old-tipos new-tipos)))]
     (cond-> (into (vec tipo-tx)
                   [[:db/add lookup :pokemon/species (:species evoluido)]
-                   [:db/add lookup :pokemon/nickname (:nome evoluido)]
-                   [:db/add lookup :pokemon/hp (long (:hp evoluido))]
-                   [:db/add lookup :pokemon/hp-atual (long (:hp-atual evoluido))]
-                   [:db/add lookup :pokemon/ataque (long (:ataque evoluido))]
-                   [:db/add lookup :pokemon/defesa (long (:defesa evoluido))]
-                   [:db/add lookup :pokemon/atq-esp (long (:atq-esp evoluido))]
-                   [:db/add lookup :pokemon/def-esp (long (:def-esp evoluido))]
-                   [:db/add lookup :pokemon/veloc (long (:veloc evoluido))]
-                   [:db/add lookup :pokemon/golpes-edn (pr-str (:golpes evoluido))]])
+                   [:db/add lookup :pokemon/nickname (:nome evoluido)]])
       (:habilidade evoluido)
       (conj [:db/add lookup :pokemon/habilidade (:habilidade evoluido)])
       (:imagem evoluido)
@@ -420,9 +434,11 @@
   `opts`:
   - `:hp-atual-override` — HP canônico pós-combate (vitória/Explosion). Sem isso,
     level-up recalcula `:hp-atual` e conflita com `pokemon-hp-status-tx` na mesma TX
-    (`:db.error/datoms-conflict`). Produção: WRITER_FENCE_CONFLICT após 12 retries."
+    (`:db.error/datoms-conflict`).
+  - `:omit-hp-atual?` — quando true, não emite `:pokemon/hp-atual` (caller já sincroniza
+    via `pokemon-hp-status-tx`). Preferir com override em turnos de batalha."
   ([poke quantidade] (apply-pokemon-xp-tx poke quantidade nil))
-  ([poke quantidade {:keys [hp-atual-override] :as _opts}]
+  ([poke quantidade {:keys [hp-atual-override omit-hp-atual?] :as _opts}]
    (let [nivel-antes (long (or (:nivel poke) 1))
          applied (xp/aplicar-xp-pokemon poke quantidade)
          r0 (:registro applied)
@@ -434,20 +450,22 @@
          hp-atual (long (if (some? hp-atual-override)
                           hp-atual-override
                           (:hp-atual r)))
-         ;; Evolução também escrevia hp-atual recalculado — alinhar ao override.
+         ;; Alinha registro em memória ao override (Explosion HP 0 / combate).
          r (cond-> r (some? hp-atual-override) (assoc :hp-atual hp-atual))
          lookup [:pokemon/id-pokemon (:id-pokemon poke)]
-         base-tx [[:db/add lookup :pokemon/level (long (:nivel r))]
-                  [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
-                  [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
-                  [:db/add lookup :pokemon/hp (long (:hp r))]
-                  [:db/add lookup :pokemon/hp-atual hp-atual]
-                  [:db/add lookup :pokemon/ataque (long (:ataque r))]
-                  [:db/add lookup :pokemon/defesa (long (:defesa r))]
-                  [:db/add lookup :pokemon/atq-esp (long (:atq-esp r))]
-                  [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
-                  [:db/add lookup :pokemon/veloc (long (:veloc r))]
-                  [:db/add lookup :pokemon/amizade (long (:amizade r))]]
+         ;; Um único writer de hp-atual neste fragmento (nunca evo-tx).
+         base-tx (cond-> [[:db/add lookup :pokemon/level (long (:nivel r))]
+                          [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
+                          [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
+                          [:db/add lookup :pokemon/hp (long (:hp r))]
+                          [:db/add lookup :pokemon/ataque (long (:ataque r))]
+                          [:db/add lookup :pokemon/defesa (long (:defesa r))]
+                          [:db/add lookup :pokemon/atq-esp (long (:atq-esp r))]
+                          [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
+                          [:db/add lookup :pokemon/veloc (long (:veloc r))]
+                          [:db/add lookup :pokemon/amizade (long (:amizade r))]]
+                   (not omit-hp-atual?)
+                   (conj [:db/add lookup :pokemon/hp-atual hp-atual]))
          oferta-tx (when (not= (or (:ofertas-golpes r) (:golpes-oferecidos r) [])
                                (or (:ofertas-golpes poke) (:golpes-oferecidos poke) []))
                      [[:db/add lookup :pokemon/ofertas-golpes-edn
@@ -475,10 +493,14 @@
   ([poke hp-atual st]
    (pokemon-hp-status-tx poke hp-atual st (:status poke)))
   ([poke hp-atual st previous-status]
+   (pokemon-hp-status-tx poke hp-atual st previous-status nil))
+  ([poke hp-atual st previous-status {:keys [omit-hp-atual?] :as _opts}]
    (when poke
      (let [lookup [:pokemon/id-pokemon (:id-pokemon poke)]
            st-str (xp/status->str st)]
-       (cond-> [[:db/add lookup :pokemon/hp-atual (long hp-atual)]]
+       (cond-> []
+         (not omit-hp-atual?)
+         (conj [:db/add lookup :pokemon/hp-atual (long hp-atual)])
          st-str (conj [:db/add lookup :pokemon/status st-str])
          (and (nil? st-str) previous-status)
          (conj [:db/retract lookup :pokemon/status previous-status]))))))
@@ -697,7 +719,8 @@
                 (throw (err/error :tx_datoms_conflict
                                   {:cause (ex-message ex)
                                    :attempt attempt
-                                   :writer writer-ctx}))
+                                   :writer writer-ctx
+                                   :conflicts (conflicting-add-assertions tx)}))
                 (and (anomaly-conflict? ex) (< attempt max-cas-attempts))
                 (recur (inc attempt))
                 ;; Após esgotar retries: se o fence mudou, classifica stale
@@ -3223,12 +3246,13 @@
                                         (not (:active? next-state))
                                         (or (not (:aguardando-captura? next-state))
                                             (:battle-reward? rew)))
-                               ;; Override: HP pós-golpe (incl. 0 Explosion) vence o
-                               ;; recalculo de level-up — evita datoms-conflict na TX.
+                               ;; Override + omit: HP de combate fica só em hp-sync
+                               ;; (um writer). XP/evo não reemitem :pokemon/hp-atual.
                                (apply-pokemon-xp-tx
                                 (assoc poke :hp-atual battle-hp-x)
                                 (long (:pokemon-xp rew 0))
-                                {:hp-atual-override battle-hp-x}))
+                                {:hp-atual-override battle-hp-x
+                                 :omit-hp-atual? true}))
                      pe-batalha-tx
                      (when (and grant-battle? (pos? (long (:pe rew 0))))
                        (let [v (long (:save/vitorias-treinador save 0))]
@@ -3242,6 +3266,7 @@
                          [[:db/add [:save/key sk] :save/sequencia-capturas 0]
                           [:db/add [:save/key sk] :save/maior-sequencia-capturas
                            (max maior seq-atual)]]))
+                     ;; Writer canônico de :pokemon/hp-atual nesta TX de turno.
                      hp-sync (if gym?
                                (gym-battle-hp-txs colecao next-state)
                                (pokemon-hp-status-tx
