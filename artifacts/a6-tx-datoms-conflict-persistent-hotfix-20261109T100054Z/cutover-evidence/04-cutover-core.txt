@@ -1,0 +1,84 @@
+==== COMPOSE IMAGES ====
+    container_name: odisseu-a6-jvm
+    image: odisseu-jvm:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
+    container_name: odisseu-a6-node
+    image: odisseu-node:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
+==== MAINTENANCE ENTER ====
+Mon Nov  9 10:45:46 UTC 2026
+{"quiescent":true,"phase":"quiescent","startedAt":"2026-11-09T10:45:46.252Z","quiescentAt":"2026-11-09T10:45:46.269Z","activeOperations":0,"durable":true,"note":null}
+{"ok":true,"data":{"quiescent":true,"activeRequests":0,"state":{"phase":"quiescent","startedAt":"2026-11-09T10:45:46.299306983Z","quiescentAt":"2026-11-09T10:45:46.330188909Z"}}}
+poll1 JVM=[quiescent 0] NODE=[quiescent]
+DRAIN_OK
+==== RECREATE JVM ====
+Mon Nov  9 10:45:46 UTC 2026
+time="2026-11-09T10:45:46Z" level=warning msg="volume \"odisseu-a6-cutover-datomic\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-11-09T10:45:46Z" level=warning msg="volume \"odisseu-a6-cutover-journal\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-11-09T10:45:46Z" level=warning msg="volume \"odisseu-a6-cutover-maint\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+ Container odisseu-a6-jvm Recreate 
+ Container odisseu-a6-jvm Recreated 
+ Container odisseu-a6-jvm Starting 
+ Container odisseu-a6-jvm Started 
+jvm_health_1=starting
+jvm_health_2=starting
+jvm_health_3=starting
+jvm_health_4=starting
+jvm_health_5=starting
+jvm_health_6=starting
+jvm_health_7=starting
+jvm_health_8=starting
+jvm_health_9=starting
+jvm_health_10=starting
+jvm_health_11=starting
+jvm_health_12=starting
+jvm_health_13=starting
+jvm_health_14=starting
+jvm_health_15=starting
+jvm_health_16=starting
+jvm_health_17=starting
+jvm_health_18=healthy
+JVM Image=sha256:e93a0f54c944f97089b61c7b15d2548611bf67cce2823f039708b6bab44b1274 StartedAt=2026-11-09T10:45:48.239374158Z Restarts=0
+SCHEMA035=OK
+JVM up {'phase': 'quiescent', 'activeRequests': 0}
+==== RESUME JVM ====
+{"ok":true,"data":{"phase":"open","resumedAt":"2026-11-09T10:46:44.014910857Z"}}
+up {'phase': 'open', 'activeRequests': 0}
+==== RECREATE NODE ====
+Mon Nov  9 10:46:46 UTC 2026
+time="2026-11-09T10:46:46Z" level=warning msg="volume \"odisseu-a6-cutover-data\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-11-09T10:46:46Z" level=warning msg="volume \"odisseu-a6-cutover-datomic\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-11-09T10:46:46Z" level=warning msg="volume \"odisseu-a6-cutover-journal\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-11-09T10:46:46Z" level=warning msg="volume \"odisseu-a6-cutover-maint\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+ Container odisseu-a6-node Recreate 
+ Container odisseu-a6-node Recreated 
+ Container odisseu-a6-node Starting 
+ Container odisseu-a6-node Started 
+node_health_1=starting
+node_health_2=starting
+node_health_3=starting
+node_health_4=starting
+node_health_5=starting
+node_health_6=starting
+node_health_7=starting
+node_health_8=starting
+node_health_9=starting
+node_health_10=starting
+node_health_11=starting
+node_health_12=starting
+node_health_13=healthy
+NODE Image=sha256:a87abb519681dc5aefbf83feaf295ec4427989f76386a10e5970a6d2d004dbd7 StartedAt=2026-11-09T10:46:49.526855265Z Restarts=0 User=1000:1000
+==== WAIT WA READY ====
+wa_1={"status":"ok","whatsapp":"READY","chromium":true}
+READY_AT=2026-11-09T10:47:28Z
+{"status":"ok","whatsapp":"READY","chromium":true}persist READY
+{"status":"ok","whatsapp":"READY","chromium":true}persist READY
+{"status":"ok","whatsapp":"READY","chromium":true}persist READY
+CapEff:	0000000000000000
+NoNewPrivs:	1
+156.0.8078.79
+uid=1000(node) gid=1000(node) groups=1000(node)
+==== RESUME NODE ====
+{"phase":"open","resumedAt":"2026-11-09T10:48:59.453Z","activeOperations":0,"durable":true}
+{"status":"ok","whatsapp":"READY","chromium":true}
+{"ok":true,"data":{"role":"pokemon-jvm-bridge","capabilities":["trainer-read","collection-read","active-save-read","trainer-ensure","saves-list","save-create","save-rename","save-activate","missions-read","missions-prepare","missions-claim-daily","missions-claim-weekly","missions-claim-event","thematic-events-tick","thematic-events-admin","gift-send","missions-pending-collect","reward-coins","operation-get","encounter-read","encounter-capture","battle-start","battle-turn","hunt-plan","hunt-start","gyms-read","gym-team","gym-heal","gym-challenge","gym-ranking","gym-history","raid-read","raid-join","raid-leave","raid-start","raid-attack","raid-capture","raid-frambo","encounter-frambo","raid-auto-schedule","events-pending","events-ack","joy-read","joy-send","joy-collect","adventure-read","egg-incubate","egg-hatch","shop-read","shop-buy","inventory-read","item-use","pokemon-set-active","pokemon-evolve","pokemon-learn-move","pokemon-forget-move","pokemon-offer-move","pokemon-refuse-offer","pokemon-relearn-move","profile-friendship","profile-titles","profile-title-select","professor-cards","professor-send","professor-confirm","professor-cancel","professor-use","named-teams-read","named-teams-write","team-csv-export","league-select","pvp-open","pvp-accept","pvp-cancel","pvp-turn","pvp-active-read","onboarding-read","onboarding-start","onboarding-kit","onboarding-starter","bag-kit","bag-daily","recovery-available","recovery-request","recovery-confirm","recovery-import","battle-leave","platform-blocks","platform-admins"],"raidAutoTickEnabled":true,"readsOnly":false,"status":"up","maintenance":{"phase":"open","activeRequests":0},"recoveryCatalogReady":false,"platformEnabled":true,"allowTestRng":false}}up {'phase': 'open', 'activeRequests': 0}
+CUTOVER_CORE=PASS
+Mon Nov  9 10:49:01 UTC 2026

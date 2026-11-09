@@ -1,18 +1,17 @@
-# Overlay pinado — Explosion/Hunt/Raid 1º frame RC (NÃO aplicar em produção nesta tarefa).
-#   Stamp: 20261108T203624Z
-#   Commit: 2afd9975ef695163a4d8f98eed632c644431c72f
-#   Content-tree: ad8a3cf41c4851237b535b15fad82e8e024b92f0
-#   Node Tag: odisseu-node:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
-#   Node Image ID: sha256:77d0d9a255125c74d59168713dc025c42d9d189d9bd7278bf1813be981464d2b
-#   JVM Tag: odisseu-jvm:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
-#   JVM Image ID: sha256:9443b80134bf5f2bb47009354b705785f065ff438c31de10496621a35d2198d1
-#   Labels: io.zapbot.git-sha / io.zapbot.content-tree / io.zapbot.fase=a6-explosion-hunt-raid-integrated
+# Overlay pinado — live pós-cutover PR #65 (tx_datoms_conflict persistente).
+#   Stamp: 20261109T100054Z
+#   Commit: 8ef41c8da1c28bfb69d57bade81a5a41e9225d44
+#   Content-tree: 849129daf4cf12d14de69097c23dfebfdb20bebc
+#   Node Tag: odisseu-node:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
+#   Node Image ID: sha256:a87abb519681dc5aefbf83feaf295ec4427989f76386a10e5970a6d2d004dbd7
+#   JVM Tag: odisseu-jvm:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
+#   JVM Image ID: sha256:e93a0f54c944f97089b61c7b15d2548611bf67cce2823f039708b6bab44b1274
+#   Labels: io.zapbot.git-sha / io.zapbot.content-tree / io.zapbot.fase=a6-tx-datoms-conflict-persistent-hotfix
 #   Arch: linux/amd64
-#   Chromium: 156.0.8078.79-1~deb12u1 · UID 1000
-#   Source-base (PR #59 merge): 09dc5b50f4b94e4ba540e6bc62e8df5ad7c62fb6
-#   Homolog tests: PR #60 (7b6dfdf)
+#   Chromium: 156.0.8078.79 · UID 1000
+#   Rollback (#63): Node sha256:2870175c…5396 · JVM sha256:08da9ff2…2784f
 services:
   odisseu-jvm:
-    image: odisseu-jvm:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
+    image: odisseu-jvm:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
   odisseu-node:
-    image: odisseu-node:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
+    image: odisseu-node:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64

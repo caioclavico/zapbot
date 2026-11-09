@@ -1,0 +1,23 @@
+==== JVM DOMAIN SMOKE (fixtures) ====
+Picked up JAVA_TOOL_OPTIONS: -Xms64m -Xmx384m -XX:+UseG1GC
+PASS datoms-conflict classifier
+PASS idle sliding timeout touch/CAS window
+PASS idle notification payload
+store.clj true store__init false
+JVM_DOMAIN_SMOKE_OK
+HIT datoms-conflict in local-1.0.301.jar datomic/core/db$datoms_conflict.class
+HIT idle-expires-at in /app/migrations/pokemon/026-battle-idle.edn
+HIT battle-idle-timeout in /app/modules/pokemon/domain/pokemon/domain/battle_idle.clj
+HIT hp-atual-override in /app/modules/pokemon/infrastructure/pokemon/infrastructure/datomic/store.clj
+FOUND_FINAL {'hp-atual-override': True, 'datoms-conflict': True, 'idle-expires-at': True, 'battle-idle-timeout': True}
+JVM_BINARY_MARKERS_OK
+[pokemon-present] capture menu missing canonical raridade { nome: 'selvagem', species: null, raridadeFonte: null }
+[pokemon-present] capture menu missing canonical raridade { nome: 'selvagem', species: null, raridadeFonte: null }
+PASS final-hit+explosion present
+PRESENT_SMOKE_OK
+SMOKE_FIXTURES=PASS
+HEALTH_GATE=PASS
+==== START 20M OBSERVE ====
+OBSERVE_STARTED pid=3871022
+VALIDATE_SMOKE_BOOTSTRAP=PASS
+Mon Nov  9 00:18:34 UTC 2026

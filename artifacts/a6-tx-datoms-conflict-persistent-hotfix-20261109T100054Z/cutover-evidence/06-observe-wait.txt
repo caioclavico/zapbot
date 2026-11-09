@@ -1,0 +1,108 @@
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_1 10:50:14Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_2 10:50:44Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_3 10:51:14Z lines=0
+wait_4 10:51:44Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_5 10:52:14Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_6 10:52:44Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_7 10:53:14Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_8 10:53:44Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_9 10:54:15Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_10 10:54:45Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_11 10:55:15Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_12 10:55:45Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_13 10:56:15Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_14 10:56:45Z lines=0
+wait_15 10:57:15Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_16 10:57:45Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_17 10:58:15Z lines=0
+wait_18 10:58:46Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_19 10:59:16Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_20 10:59:46Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_21 11:00:16Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_22 11:00:46Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_23 11:01:16Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_24 11:01:46Z lines=0
+wait_25 11:02:16Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_26 11:02:46Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_27 11:03:17Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_28 11:03:47Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_29 11:04:17Z lines=0
+wait_30 11:04:47Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_31 11:05:17Z lines=0
+wait_32 11:05:47Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_33 11:06:17Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_34 11:06:48Z lines=0
+wait_35 11:07:18Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_36 11:07:48Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_37 11:08:18Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_38 11:08:48Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_39 11:09:18Z lines=0
+bash: line 31: /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/samples.tsv: Permission denied
+wait_40 11:09:48Z lines=0
+==== SUMMARY ====
+OBSERVE_END=2026-11-09T11:10:00Z
+SAMPLES=39
+READY_SAMPLES=39
+FAIL_SAMPLES=0
+STABILITY_20M_PASS
+==== TAIL SAMPLES ====
+2026-11-09T11:07:26Z	READY	True	up	open	0	healthy	healthy	0	0	1	1	3
+2026-11-09T11:07:57Z	READY	True	up	open	0	healthy	healthy	0	0	1	1	3
+2026-11-09T11:08:28Z	READY	True	up	open	0	healthy	healthy	0	0	1	1	3
+2026-11-09T11:08:59Z	READY	True	up	open	0	healthy	healthy	0	0	1	1	3
+2026-11-09T11:09:29Z	READY	True	up	open	0	healthy	healthy	0	0	1	1	3
+==== ERR ====
+==== FINAL HEALTH ====
+{"status":"ok","whatsapp":"READY","chromium":true}
+up {'phase': 'open', 'activeRequests': 0}
+NODE=sha256:a87abb519681dc5aefbf83feaf295ec4427989f76386a10e5970a6d2d004dbd7 H=healthy R=0
+JVM=sha256:e93a0f54c944f97089b61c7b15d2548611bf67cce2823f039708b6bab44b1274 H=healthy R=0
+DISK=2.8G
+==== TX SCAN ====
+0 /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/jvm-err-scan.txt
+0 /home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/node-err-scan.txt
+0 total
+/home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/observe/node-err-scan.txt:0
+/home/caiohclavico/odisseu-recovery/a6-tx-datoms-conflict-persistent-cutover-20261109T100054Z/logs:0
+0
+TX_DATOMS_NODE=0
+OBSERVE_COMPLETE

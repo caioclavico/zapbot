@@ -1,0 +1,12 @@
+# truncated: full dump had jar path noise; retained gates
+==== VALIDATE LIVE IMAGES ====
+SCHEMA035=OK
+HEALTH_GATE=PASS
+==== SMOKE FIXTURES (ephemeral datomic via side container / local markers) ====
+PASS formatCanonicalAttackLine
+PASS aguardandoCaptura gate
+PASS lastAction
+PASS dano line
+PASS final-hit present sample
+PRESENT_SMOKE_OK
+PASS datoms-conflict classifier

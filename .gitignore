@@ -29,6 +29,8 @@ data/
 # Pacotes RC locais (tars Docker pesados — não versionar)
 rc-artifacts/**/*.tar
 rc-artifacts/**/logs/
+artifacts/**/*.tar
+artifacts/**/*.tar.gz
 
 # Catálogo estático de chefes (Fase 12.7) — exception to data/
 !modules/pokemon/domain/pokemon/domain/data/
