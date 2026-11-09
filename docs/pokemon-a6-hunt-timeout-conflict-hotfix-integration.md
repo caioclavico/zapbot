@@ -60,32 +60,23 @@ b3f466c5521333279ea45e41a593eeabc486ba760ce554b00b931e58df3b5f80  odisseu-jvm-�
 
 ### Overlay pinado (local)
 
-`artifacts/…/overlay/docker-compose.a6-ai-drain-sandbox.overlay.prepared-hunt-hotfix-1567279.yml`  
-**STATUS=prepared-not-applied** — não copiado para a VM; produção intacta.
+`artifacts/…/overlay/docker-compose.a6-ai-drain-sandbox.overlay.prepared-hunt-hotfix-1567279.yml`
 
-### Rollback live
+### Rollback pré-#63
 
-Node `sha256:77d0d9a2…464d2b` · JVM `sha256:9443b801…2198d1` @ `2afd997` permanecem as imagens em execução.
-
----
-
-## 5. Proibições respeitadas
-
-Sem deploy · sem SCP/load na VM runtime · sem restart/drain · sem migrations/backfill · sem reparo de saves · hold/CI inalterados.
+Node `sha256:77d0d9a2…464d2b` · JVM `sha256:9443b801…2198d1` @ `2afd997`.
 
 ---
 
-## 6. GO/NO-GO prep operacional
+## 5. Cutover #63 (executado)
 
-| Critério | Status |
-|----------|--------|
-| Hotfix integrado na RC | **GO** |
-| Imagens AMD64 + VERIFY | **GO** |
-| Overlay pinado local | **GO** (não aplicado) |
-| Live `2afd997` disponível p/ rollback | **GO** |
-| Deploy/cutover | **NO-GO** (aguardando autorização explícita) |
+**SUCCESS** · stamp evidência `20261108T235854Z` · live passou a Node `2870175c…` / JVM `08da9ff2…` · WA READY · schema 035 · smoke + 20m PASS.
 
-### Veredito
+Posteriormente substituído em produção pelo hotfix #65 (`docs/pokemon-a6-tx-datoms-conflict-persistent-cutover.md`).
 
-**GO para preparação operacional** (inbox/VERIFY/pin offline).  
-**NO-GO cutover/deploy** até nova autorização.
+---
+
+## 6. Proibições da fase de prep (históricas)
+
+Na prep: sem deploy até autorização. Cutover #63 e #65 ocorreram sob GO explícito separado · sem migrations/backfill · sem reparo de saves · hold/CI inalterados.
+

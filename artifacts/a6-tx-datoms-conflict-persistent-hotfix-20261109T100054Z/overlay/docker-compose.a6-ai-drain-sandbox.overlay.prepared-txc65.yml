@@ -1,0 +1,26 @@
+# Overlay Node+JVM — tx_datoms_conflict persistent hotfix (PREPARED, not applied).
+# Commit: 8ef41c8da1c28bfb69d57bade81a5a41e9225d44
+# Content-tree: 849129daf4cf12d14de69097c23dfebfdb20bebc
+# Node: odisseu-node:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
+# Node Image ID: sha256:a87abb519681dc5aefbf83feaf295ec4427989f76386a10e5970a6d2d004dbd7
+# JVM: odisseu-jvm:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
+# JVM Image ID: sha256:e93a0f54c944f97089b61c7b15d2548611bf67cce2823f039708b6bab44b1274
+# Rollback live:
+#   Node sha256:2870175c58b040614d11b9291d48d5c238fe7235cad3a179a6ed53de1bfa5396
+#   JVM  sha256:08da9ff2f4734a255d9ecc035cc41d35a200b642fcd7775fa7e294b62c02784f
+
+services:
+  odisseu-a6-jvm:
+    image: odisseu-jvm:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
+  odisseu-a6-node:
+    image: odisseu-node:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
+    user: "1000:1000"
+    environment:
+      HEALTH_BIND_HOST: "0.0.0.0"
+      STAGING_ALLOW_QR: "0"
+      STAGING_BOOTSTRAP_GROUP: "0"
+      STAGING_WHATSAPP_CONFIRM: "1"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=/home/caiohclavico/odisseu-recovery/a6-cutover-runtime-20261101T141408Z/docker/chromium-seccomp.json

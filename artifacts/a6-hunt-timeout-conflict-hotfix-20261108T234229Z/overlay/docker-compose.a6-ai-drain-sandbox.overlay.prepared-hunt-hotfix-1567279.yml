@@ -1,0 +1,9 @@
+# PINNED HOTFIX — NÃO APLICAR sem GO de cutover.
+# Live rollback: Node 77d0d9a2 / JVM 9443b801 @ 2afd997
+services:
+  odisseu-a6-node:
+    image: odisseu-node:a6-hunt-timeout-conflict-hotfix-20261108T234229Z-156727974b86-amd64
+    # Image ID: sha256:2870175c58b040614d11b9291d48d5c238fe7235cad3a179a6ed53de1bfa5396
+  odisseu-a6-jvm:
+    image: odisseu-jvm:a6-hunt-timeout-conflict-hotfix-20261108T234229Z-156727974b86-amd64
+    # Image ID: sha256:08da9ff2f4734a255d9ecc035cc41d35a200b642fcd7775fa7e294b62c02784f

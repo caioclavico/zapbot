@@ -1,0 +1,19 @@
+==== REMOTE SHA + LOAD ====
+total 622M
+-rw-r--r-- 1 caioclavico caioclavico  267 Nov  9 00:05 IMAGES.sha256
+-rw-r--r-- 1 caioclavico caioclavico  988 Nov  9 00:05 META.txt
+-rw-r--r-- 1 caioclavico caioclavico  860 Nov  9 00:05 VERIFY.txt
+-rw-r--r-- 1 caioclavico caioclavico  902 Nov  9 00:05 build.env
+-rw------- 1 caioclavico caioclavico 250M Nov  9 00:05 odisseu-jvm-a6-hunt-timeout-conflict-hotfix-156727974b86-amd64.tar
+-rw------- 1 caioclavico caioclavico 373M Nov  9 00:02 odisseu-node-a6-hunt-timeout-conflict-hotfix-156727974b86-amd64.tar
+odisseu-node-a6-hunt-timeout-conflict-hotfix-156727974b86-amd64.tar: OK
+odisseu-jvm-a6-hunt-timeout-conflict-hotfix-156727974b86-amd64.tar: OK
+LOAD_NODE
+Loaded image: odisseu-node:a6-hunt-timeout-conflict-hotfix-20261108T234229Z-156727974b86-amd64
+LOAD_JVM
+Loaded image: odisseu-jvm:a6-hunt-timeout-conflict-hotfix-20261108T234229Z-156727974b86-amd64
+INSPECT
+NODE sha256:2870175c58b040614d11b9291d48d5c238fe7235cad3a179a6ed53de1bfa5396 arch=amd64 git=156727974b863b8361c72341bb9f36eefdfd4742 tree=06348d411778effb010bba5e2e35f1292ea76ff4
+JVM sha256:08da9ff2f4734a255d9ecc035cc41d35a200b642fcd7775fa7e294b62c02784f arch=amd64 git=156727974b863b8361c72341bb9f36eefdfd4742 tree=06348d411778effb010bba5e2e35f1292ea76ff4
+LOAD_VERIFY=PASS
+/dev/root        48G   44G  4.1G  92% /

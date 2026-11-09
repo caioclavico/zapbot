@@ -1,0 +1,99 @@
+==== COMPOSE CONFIG IMAGES ====
+    container_name: odisseu-a6-jvm
+    image: odisseu-jvm:a6-hunt-timeout-conflict-hotfix-20261108T234229Z-156727974b86-amd64
+    container_name: odisseu-a6-node
+    image: odisseu-node:a6-hunt-timeout-conflict-hotfix-20261108T234229Z-156727974b86-amd64
+==== MAINTENANCE ENTER ====
+Mon Nov  9 00:09:10 UTC 2026
+{"quiescent":true,"phase":"quiescent","startedAt":"2026-11-09T00:09:10.308Z","quiescentAt":"2026-11-09T00:09:10.317Z","activeOperations":0,"durable":true,"note":null}
+{"ok":true,"data":{"quiescent":true,"activeRequests":0,"state":{"phase":"quiescent","startedAt":"2026-11-09T00:09:10.353226282Z","quiescentAt":"2026-11-09T00:09:10.375307580Z"}}}
+poll1 JVM=[quiescent 0] NODE=[quiescent]
+DRAIN_OK
+==== RECREATE JVM ====
+Mon Nov  9 00:09:10 UTC 2026
+time="2026-11-09T00:09:10Z" level=warning msg="volume \"odisseu-a6-cutover-journal\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-11-09T00:09:10Z" level=warning msg="volume \"odisseu-a6-cutover-maint\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-11-09T00:09:10Z" level=warning msg="volume \"odisseu-a6-cutover-datomic\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+ Container odisseu-a6-jvm Recreate 
+ Container odisseu-a6-jvm Recreated 
+ Container odisseu-a6-jvm Starting 
+ Container odisseu-a6-jvm Started 
+jvm_health_1=starting
+jvm_health_2=starting
+jvm_health_3=starting
+jvm_health_4=starting
+jvm_health_5=starting
+jvm_health_6=starting
+jvm_health_7=starting
+jvm_health_8=starting
+jvm_health_9=starting
+jvm_health_10=starting
+jvm_health_11=starting
+jvm_health_12=starting
+jvm_health_13=starting
+jvm_health_14=starting
+jvm_health_15=healthy
+JVM Image=sha256:08da9ff2f4734a255d9ecc035cc41d35a200b642fcd7775fa7e294b62c02784f StartedAt=2026-11-09T00:09:11.952842319Z Restarts=0
+SCHEMA035=OK
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+/tmp/a6-hunt-hotfix-cutover.sh: line 98: /tmp/jvm-h.json: Permission denied
+==== RESUME JVM ====
+curl: (22) The requested URL returned error: 500

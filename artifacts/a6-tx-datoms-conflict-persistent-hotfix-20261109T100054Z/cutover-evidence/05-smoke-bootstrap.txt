@@ -1,0 +1,21 @@
+==== JVM DOMAIN SMOKE ====
+Picked up JAVA_TOOL_OPTIONS: -Xms64m -Xmx384m -XX:+UseG1GC
+PASS datoms-conflict classifier
+PASS idle sliding timeout
+PASS idle notification
+JVM_DOMAIN_SMOKE_OK
+HIT datoms-conflict /app/modules/pokemon/domain/pokemon/domain/errors.clj
+HIT omit-hp-atual? /app/modules/pokemon/infrastructure/pokemon/infrastructure/datomic/store.clj
+HIT hp-atual-override /app/modules/pokemon/infrastructure/pokemon/infrastructure/datomic/store.clj
+HIT conflicting-add-assertions /app/modules/pokemon/infrastructure/pokemon/infrastructure/datomic/store.clj
+FOUND {'omit-hp-atual?': True, 'hp-atual-override': True, 'conflicting-add-assertions': True, 'datoms-conflict': True}
+JVM_BINARY_MARKERS_OK
+[pokemon-present] capture menu missing canonical raridade { nome: 'selvagem', species: null, raridadeFonte: null }
+[pokemon-present] capture menu missing canonical raridade { nome: 'selvagem', species: null, raridadeFonte: null }
+PASS final-hit+explosion+tx_datoms_msg
+PRESENT_SMOKE_OK
+SMOKE_FIXTURES=PASS
+3948812
+OBSERVE_STARTED
+SMOKE_AND_OBSERVE_BOOTSTRAP=PASS
+Mon Nov  9 10:49:59 UTC 2026

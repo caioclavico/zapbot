@@ -1,0 +1,54 @@
+====TS====
+Sun Nov  8 23:59:03 UTC 2026
+====DISK====
+/dev/root        48G   41G  6.5G  87% /
+====LIVE====
+NODE Image=sha256:77d0d9a255125c74d59168713dc025c42d9d189d9bd7278bf1813be981464d2b Name=odisseu-node:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64 Health=healthy Restarts=0 StartedAt=2026-11-08T22:26:45.028507841Z
+JVM Image=sha256:9443b80134bf5f2bb47009354b705785f065ff438c31de10496621a35d2198d1 Name=odisseu-jvm:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64 Health=healthy Restarts=0 StartedAt=2026-11-08T22:25:07.661018733Z
+====WA====
+{"status":"ok","whatsapp":"READY","chromium":true}
+====JVM====
+{"ok":true,"data":{"role":"pokemon-jvm-bridge","capabilities":["trainer-read","collection-read","active-save-read","trainer-ensure","saves-list","save-create","save-rename","save-activate","missions-read","missions-prepare","missions-claim-daily","missions-claim-weekly","missions-claim-event","thematic-events-tick","thematic-events-admin","gift-send","missions-pending-collect","reward-coins","operation-get","encounter-read","encounter-capture","battle-start","battle-turn","hunt-plan","hunt-start","gyms-read","gym-team","gym-heal","gym-challenge","gym-ranking","gym-history","raid-read","raid-join","raid-leave","raid-start","raid-attack","raid-capture","raid-frambo","encounter-frambo","raid-auto-schedule","events-pending","events-ack","joy-read","joy-send","joy-collect","adventure-read","egg-incubate","egg-hatch","shop-read","shop-buy","inventory-read","item-use","pokemon-set-active","pokemon-evolve","pokemon-learn-move","pokemon-forget-move","pokemon-offer-move","pokemon-refuse-offer","pokemon-relearn-move","profile-friendship","profile-titles","profile-title-select","professor-cards","professor-send","professor-confirm","professor-cancel","professor-use","named-teams-read","named-teams-write","team-csv-export","league-select","pvp-open","pvp-accept","pvp-cancel","pvp-turn","pvp-active-read","onboarding-read","onboarding-start","onboarding-kit","onboarding-starter","bag-kit","bag-daily","recovery-available","recovery-request","recovery-confirm","recovery-import","battle-leave","platform-blocks","platform-admins"],"raidAutoTickEnabled":true,"readsOnly":false,"status":"up","maintenance":{"phase":"open","activeRequests":0},"recoveryCatalogReady":false,"platformEnabled":true,"allowTestRng":false}}
+====SCHEMA====
+/app/migrations/pokemon/035-species-hp-formula.edn
+====HOLD====
+HOLD=true CI=disabled_manually IN_PROGRESS=0 (confirmed via GitHub API during prep)
+====DEPLOY_OPS====
+====OVERLAY_HEAD====
+# Overlay Node+JVM — Explosion/Hunt/Raid 1º frame RC (PREP ONLY — NÃO aplicar/compose up).
+# Stamp: 20261108T220453Z
+# Commit executável: 2afd9975ef695163a4d8f98eed632c644431c72f
+# Content-tree: ad8a3cf41c4851237b535b15fad82e8e024b92f0
+# Node Tag: odisseu-node:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
+# Node Image ID: sha256:77d0d9a255125c74d59168713dc025c42d9d189d9bd7278bf1813be981464d2b
+# JVM Tag: odisseu-jvm:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
+# JVM Image ID: sha256:9443b80134bf5f2bb47009354b705785f065ff438c31de10496621a35d2198d1
+# Fase: a6-explosion-hunt-raid-integrated
+# Arch: linux/amd64 · Chromium 156 · UID 1000
+# Rollback IMMEDIATO (live Combat UX):
+#   Node sha256:619b4756b3bf0b92f75f5ac4e75d8b6d11783219f98faacc8328dd4423a03d1e
+#   JVM  sha256:09e7605e94e6c01217df2366c3729470ff4bc7a73aaf23e289f72d8817129d40
+# Rollback Species-HP Final:
+#   Node sha256:17520a1ec6fcb88687c2f208b8cd276c384944f01cde57a3b0793c217532e2a0
+#   JVM  sha256:c13140fa9965b8cb78faa7edc1d95a95a5abc3ed1287203554e65748e52683ee
+# HEALTH_BIND_HOST=0.0.0.0 obrigatório (health host).
+# Este overlay NÃO redefine flags Pokémon/raids/eventos/allowlist/temáticos.
+# PREP: pinado sem docker compose up/restart/recreate.
+
+services:
+  odisseu-a6-jvm:
+    image: odisseu-jvm:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
+  odisseu-a6-node:
+    image: odisseu-node:a6-explosion-hunt-raid-integrated-20261108T203624Z-2afd9975ef69-amd64
+    user: "1000:1000"
+    environment:
+      HEALTH_BIND_HOST: "0.0.0.0"
+      STAGING_ALLOW_QR: "0"
+      STAGING_BOOTSTRAP_GROUP: "0"
+      STAGING_WHATSAPP_CONFIRM: "1"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=/home/caiohclavico/odisseu-recovery/a6-cutover-runtime-20261101T141408Z/docker/chromium-seccomp.json
+====ACTIVE_OPS====
+status up phase open activeRequests 0

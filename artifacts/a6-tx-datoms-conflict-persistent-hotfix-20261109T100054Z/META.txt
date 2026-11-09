@@ -1,0 +1,14 @@
+GIT_SHA=8ef41c8da1c28bfb69d57bade81a5a41e9225d44
+TREE=849129daf4cf12d14de69097c23dfebfdb20bebc
+STAMP=20261109T100054Z
+FASE=a6-tx-datoms-conflict-persistent-hotfix
+TAG_NODE=odisseu-node:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
+TAG_JVM=odisseu-jvm:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
+NODE_IMAGE_ID=sha256:a87abb519681dc5aefbf83feaf295ec4427989f76386a10e5970a6d2d004dbd7
+JVM_IMAGE_ID=sha256:e93a0f54c944f97089b61c7b15d2548611bf67cce2823f039708b6bab44b1274
+NODE_TAR=odisseu-node-a6-tx-datoms-conflict-persistent-hotfix-8ef41c8da1c2-amd64.tar
+JVM_TAR=odisseu-jvm-a6-tx-datoms-conflict-persistent-hotfix-8ef41c8da1c2-amd64.tar
+PR65=https://github.com/caioclavico/zapbot/pull/65
+MERGE=8ef41c8da1c28bfb69d57bade81a5a41e9225d44
+ROLLBACK_LIVE_NODE=sha256:2870175c58b040614d11b9291d48d5c238fe7235cad3a179a6ed53de1bfa5396
+ROLLBACK_LIVE_JVM=sha256:08da9ff2f4734a255d9ecc035cc41d35a200b642fcd7775fa7e294b62c02784f
