@@ -33,7 +33,7 @@ Imagem candidata construída de `0290229...`, com o Dockerfile live inalterado:
 | OCI manifest digest | `sha256:b7237d056d1da0fdfdb621ead08116197d2753e794829b95dda9382ada6488aa` |
 | Config digest | `sha256:9d2b7419d56e6b1bc49b3d68fef3f0c5dbe432a9312a12999c859a7516fc4299` |
 | SHA-256 do tar `docker save` | `2bc5b3504b9aeca9af7fc2b72e572bbf7e0cb1286568847152b51435b2e58977` |
-| Tag local imutável de trabalho | `zapbot:a6-pr68-live-0290229-amd64` |
+| Tag local de teste (referência mutável) | `zapbot:a6-pr68-live-0290229-amd64` |
 | Node / Chromium | `22.23.4` / `156.0.8078.79-1~deb12u1` |
 | UID/GID | `1000:1000` |
 | Base runtime | `node:22.23.4-bookworm-slim`, digest `sha256:aaa4b5baf1ecff3b283486bb1f90405cdda225a3e6f79660d2c559fa510a7292` |
