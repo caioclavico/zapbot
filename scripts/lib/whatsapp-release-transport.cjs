@@ -89,7 +89,7 @@ function createReleaseTransport({ client, platform, logger = () => {} }) {
         for (const ack of acks) await state.handleAck(id, ack);
       }
     },
-    async sendAndConfirm(chatId, body, key, { timeoutMs = 5000, claimant, fence } = {}) {
+    async sendAndConfirm(chatId, body, key, { timeoutMs = 5000, claimant, fence, beforeSend = async () => {} } = {}) {
       const current = (await platform.getReleaseAnnouncement(key)).announcement;
       if (current?.status === 'completed') return { confirmed: true, duplicate: true, messageId: current.messageId };
 
@@ -102,11 +102,22 @@ function createReleaseTransport({ client, platform, logger = () => {} }) {
         active = { claimant, fence, associated: Boolean(messageId), early: [], resolve: null };
       }
       if (!messageId) {
+        // Check the persistent publication suspension at the transport edge,
+        // immediately before the canonical send-start transaction.
+        await beforeSend();
         const started = await platform.beginReleaseAnnouncementSend(key, claimant, fence);
         if (started?.started !== true) return { confirmed: false, uncertain: true, reason: 'send_claim_stale' };
         let message;
-        try { message = await client.sendMessage(chatId, body); }
+        try {
+          // The cross-process publication lease remains held by the runtime;
+          // a maintenance suspension waits for it before allowing backup.
+          await beforeSend();
+          message = await client.sendMessage(chatId, body);
+        }
         catch (error) {
+          if (error.code === 'publication_suspended' || String(error.code || '').startsWith('control_')) {
+            return { confirmed: false, suspended: error.code === 'publication_suspended', controlUnavailable: String(error.code || '').startsWith('control_') };
+          }
           error.uncertain = true;
           throw error;
         }

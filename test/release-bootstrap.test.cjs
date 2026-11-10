@@ -5,10 +5,13 @@ const os=require('node:os');
 const path=require('node:path');
 const {EventEmitter}=require('node:events');
 const {createReleaseBootstrap}=require('../scripts/lib/release-bootstrap.cjs');
+const {makeControl}=require('../scripts/lib/release-announcer-control.cjs');
 
 function fixture(){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'release-bootstrap-'));
   const intentPath=path.join(dir,'intent.json');
+  const controlPath=path.join(dir,'release-control.json');
+  makeControl(controlPath).initializeOpen();
   const intent={status:'confirmed',deployedVersion:'12.8.31',confirmedVersion:'12.8.31',rollbackComplete:true,chatId:'pilot@g.us',release:{version:'12.8.31',contentHash:'synthetic',highlights:['Ajuda']}};
   fs.writeFileSync(intentPath,JSON.stringify(intent));
   const rows=new Map(),calls=[];let sends=0;
@@ -24,8 +27,8 @@ function fixture(){
     async failReleaseAnnouncement(){calls.push('fail');}
   };
   const client=new EventEmitter();client.sendMessage=async()=>{sends++;const message={id:{_serialized:'wam-bootstrap'}};client.emit('message_ack',message,1);return message;};
-  const options={enabled:true,intentPath,pilotChatId:'pilot@g.us',isChatAuthorized:id=>id==='pilot@g.us',client,platform,checkJvmHealth:async()=>true,isWhatsAppReady:()=>true,isNodeHealthy:()=>true,workerId:'node-test'};
-  return {dir,intentPath,intent,platform,calls,client,options,get sends(){return sends;},rows};
+  const options={enabled:true,intentPath,controlPath,pilotChatId:'pilot@g.us',isChatAuthorized:id=>id==='pilot@g.us',client,platform,checkJvmHealth:async()=>true,isWhatsAppReady:()=>true,isNodeHealthy:()=>true,workerId:'node-test'};
+  return {dir,intentPath,controlPath,intent,platform,calls,client,options,get sends(){return sends;},rows};
 }
 
 test('WhatsApp READY alone and disabled configuration create no announcement',async()=>{
@@ -68,4 +71,82 @@ test('announcer failure is converted to isolated result',async()=>{
   const coordinator=createReleaseBootstrap(f.options);
   assert.equal((await coordinator.onWhatsAppReady()).status,'not-ready');
   assert.equal(f.sends,0);
+});
+
+test('suspension survives Node recreation and repeated WhatsApp READY events without sending',async()=>{
+  const f=fixture();
+  assert.equal((await makeControl(f.controlPath).suspendAndWait({reason:'test-maintenance'})).quiescent,true);
+  const first=createReleaseBootstrap(f.options);
+  assert.equal((await first.onWhatsAppReady()).status,'suspended');
+  const restarted=createReleaseBootstrap(f.options);
+  assert.equal((await restarted.onWhatsAppReady()).status,'suspended');
+  assert.equal((await restarted.onWhatsAppReady()).status,'suspended');
+  assert.equal(f.sends,0);assert.deepEqual(f.calls,[]);
+});
+
+test('suspension racing a claimed send waits for the lease and blocks the transport edge',async()=>{
+  const f=fixture();let enterBegin,continueBegin;
+  const beginEntered=new Promise(resolve=>{enterBegin=resolve;});
+  const beginBarrier=new Promise(resolve=>{continueBegin=resolve;});
+  f.platform.beginReleaseAnnouncementSend=async(key,claimant,fence)=>{
+    const row=f.rows.get(key);
+    Object.assign(row,{status:'uncertain',sendStartedAt:Date.now()});
+    enterBegin();
+    await beginBarrier;
+    return {started:true};
+  };
+
+  const publication=createReleaseBootstrap(f.options).onWhatsAppReady();
+  await beginEntered;
+  const suspending=makeControl(f.controlPath).suspendAndWait({reason:'test-race',timeoutMs:1000});
+  for(let i=0;i<50&&makeControl(f.controlPath).status().state!=='suspended';i++)
+    await new Promise(resolve=>setTimeout(resolve,2));
+  assert.equal(makeControl(f.controlPath).status().state,'suspended');
+  assert.equal(makeControl(f.controlPath).status().publicationInFlight,true);
+  continueBegin();
+
+  assert.equal((await publication).status,'suspended');
+  assert.equal((await suspending).quiescent,true);
+  assert.equal(f.sends,0);
+  assert.equal([...f.rows.values()][0].status,'uncertain');
+  assert.equal(makeControl(f.controlPath).status().publicationInFlight,false);
+});
+
+test('explicit resume restores normal publication for an eligible pending intent',async()=>{
+  const f=fixture();
+  await makeControl(f.controlPath).suspendAndWait({reason:'test-maintenance'});
+  const afterRestart=createReleaseBootstrap(f.options);
+  assert.equal((await afterRestart.onWhatsAppReady()).status,'suspended');
+  makeControl(f.controlPath).resume('maintenance-complete');
+  const resumed=createReleaseBootstrap(f.options);
+  assert.equal((await resumed.onWhatsAppReady()).status,'completed');
+  assert.equal(f.sends,1);
+});
+
+test('missing or unreadable publication control fails closed before reading or sending',async()=>{
+  const f=fixture();fs.unlinkSync(f.controlPath);
+  const missing=createReleaseBootstrap(f.options);
+  assert.equal((await missing.onWhatsAppReady()).status,'control-unavailable');
+  fs.writeFileSync(f.controlPath,'{');
+  const malformed=createReleaseBootstrap(f.options);
+  assert.equal((await malformed.onWhatsAppReady()).status,'control-unavailable');
+  assert.equal(f.sends,0);assert.deepEqual(f.calls,[]);
+});
+
+test('uncertain and completed receipts are never automatically sent again',async()=>{
+  const f=fixture();
+  const key='12.8.31:synthetic:pilot@g.us';
+  f.rows.set(key,{idempotencyKey:key,status:'uncertain',sendStartedAt:Date.now()});
+  const runtime=createReleaseBootstrap(f.options);
+  assert.equal((await runtime.onWhatsAppReady()).status,'uncertain-manual-review');
+  f.rows.set(key,{idempotencyKey:key,status:'completed'});
+  assert.equal((await createReleaseBootstrap(f.options).onWhatsAppReady()).status,'already-completed');
+  assert.equal(f.sends,0);
+});
+
+test('missing intent remains inert under an open control',async()=>{
+  const f=fixture();fs.unlinkSync(f.intentPath);
+  const result=await createReleaseBootstrap(f.options).onWhatsAppReady();
+  assert.equal(result.status,'no-release-intent');
+  assert.equal(f.sends,0);assert.deepEqual(f.calls,[]);
 });
