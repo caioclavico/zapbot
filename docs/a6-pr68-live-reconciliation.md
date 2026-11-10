@@ -126,3 +126,7 @@ O PR permanece em draft, aberto e mergeable. A lista de reviews continua vazia. 
 ### Controles administrativos do branch
 
 A consulta autenticada do GitHub retornou lista vazia de repository rulesets. A consulta específica de branch protection para a base foi recusada pela integração (`403 Resource not accessible by integration`); a sessão local `gh` também está inválida. Assim, a ausência de proteção obrigatória de branch não foi comprovada tecnicamente nesta execução. Nenhuma regra foi alterada. A aprovação administrativa para homologar diretamente sem review independente também não foi concedida nesta solicitação; o PR fica draft até revisão humana ou confirmação administrativa explícita e verificação dos controles aplicáveis.
+
+### Homologação administrativa de integração (2026-11-10)
+
+O responsável autorizou explicitamente a integração administrativa do PR #70 somente em `a6/live-baseline-8ef41c8`, condicionada à confirmação de controles aplicáveis e do HEAD validado. A API de branches confirmou a base em `8ef41c8da1c28bfb69d57bade81a5a41e9225d44` com `protected: false`; a listagem de rulesets retornou `[]`. A integração autenticada não expõe o endpoint detalhado de branch protection (403), mas o indicador do branch e a listagem de rulesets não mostram proteção obrigatória aplicável. A homologação é administrativa; não houve review humano independente. Ela aprova somente merge de código, não aceita os findings residuais e não autoriza deploy, restart, migration ou alteração de produção. O NO-GO de produção permanece.
