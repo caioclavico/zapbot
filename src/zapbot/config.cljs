@@ -274,6 +274,8 @@
 (def release-announcer-enabled?
   (= "true" (str/lower-case (str/trim (env "RELEASE_ANNOUNCER_ENABLED" "false")))))
 (def release-announcement-intent-path (env "RELEASE_ANNOUNCEMENT_INTENT_PATH" ""))
+(def release-announcement-control-path
+  (env "RELEASE_ANNOUNCEMENT_CONTROL_PATH" "/app/data/release-announcer-control.json"))
 (def release-pilot-chat-id (env "RELEASE_PILOT_CHAT_ID" ""))
 
 (defn release-chat-autorizado?
