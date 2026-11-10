@@ -1,6 +1,6 @@
 # Compilação no runner; a VM recebe somente a imagem de execução.
 # Shadow-cljs exige Java 21 (o JDK da etapa final não é usado em runtime Node).
-FROM eclipse-temurin:21-jdk-jammy AS build
+FROM eclipse-temurin:21-jdk-jammy@sha256:4b1a74fbffbe6b4e7b6f0171a472478282fb463790a51edf10e465d578f22b69 AS build
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -15,10 +15,10 @@ COPY shadow-cljs.edn ./
 COPY src ./src
 RUN npm run build && npm prune --omit=dev
 
-FROM node:22-bookworm-slim
+FROM node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
 LABEL io.zapbot.service="odisseu" io.zapbot.persistence-version="1" io.zapbot.restore-protocol="1"
 RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates tini \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 ENV NODE_ENV=production \
     PERFORMANCE_METRICS=false \
     PUPPETEER_SKIP_DOWNLOAD=true \
@@ -44,4 +44,5 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 # LocalAuth usa /app/.wwebjs_auth, persistido pelo Compose. Nunca limpar locks.
 COPY scripts/healthcheck.js ./scripts/healthcheck.js
 HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 CMD ["node", "scripts/healthcheck.js"]
+USER 1000:1000
 CMD ["node", "target/main.js"]
