@@ -122,3 +122,7 @@ Antes de promover: obter CI aplicável e revisão no PR #70, decisão do respons
 O workflow de validação foi executado no GitHub para o commit `2f58e7348a1cd292d41b8bf250878f8f570dda00` (run `42841229610`) e concluiu **success**. A verificação de base/caminhos, instalação, Announcer, recursos/manutenção, HTTP/JVM e build terminou com sucesso. Comentário de homologação e pedido de revisão independente foram registrados no PR (#70, comentário `6770988558`).
 
 O PR permanece em draft, aberto e mergeable. A lista de reviews continua vazia. Mantém-se pendente uma revisão humana independente e a disposição formal dos findings Critical/High. Portanto, não foi marcado ready nem integrado; nenhuma branch foi excluída.
+
+### Controles administrativos do branch
+
+A consulta autenticada do GitHub retornou lista vazia de repository rulesets. A consulta específica de branch protection para a base foi recusada pela integração (`403 Resource not accessible by integration`); a sessão local `gh` também está inválida. Assim, a ausência de proteção obrigatória de branch não foi comprovada tecnicamente nesta execução. Nenhuma regra foi alterada. A aprovação administrativa para homologar diretamente sem review independente também não foi concedida nesta solicitação; o PR fica draft até revisão humana ou confirmação administrativa explícita e verificação dos controles aplicáveis.
