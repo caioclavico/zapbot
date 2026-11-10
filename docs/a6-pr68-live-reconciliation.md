@@ -8,6 +8,8 @@ Data: 2026-11-10
 
 Nenhum container live foi reiniciado ou recriado. Nenhum volume de produção, save, intent ou receipt foi alterado. Nenhuma mensagem foi enviada. O hold e o estado do CI/CD não foram modificados.
 
+Verificação passiva final após os ensaios: health `ok`, WhatsApp `READY`, Chromium `true`; Node/JVM `healthy`, ambos com `RestartCount=0`.
+
 ## Origem e estratégia
 
 - Revisão comprovada da imagem Node ativa: `8ef41c8da1c28bfb69d57bade81a5a41e9225d44`.
