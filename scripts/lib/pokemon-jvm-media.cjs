@@ -10,8 +10,23 @@ const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
 
+// HEIF/AVIF não entram no pipeline A6 (sprites PNG/WebP + SVG interno).
+// Bloqueia o decoder vulnerável herdado em sharp<0.35.4 mesmo se o bump falhar.
+try {
+  sharp.block({ operation: ['VipsForeignLoadHeif'] });
+} catch (_) {
+  // sharp antigo sem block(): segue sem falhar o boot.
+}
+
 const SPRITE_CACADA = 320;
 const TIMEOUT_MS = 6000;
+/** Limite de download remoto (sprites PokeAPI/CDN). */
+const MAX_REMOTE_BYTES = 2 * 1024 * 1024;
+/** Hosts permitidos para sprite remoto — evita SSRF/SVG arbitrário. */
+const ALLOWED_SPRITE_HOSTS = new Set([
+  'raw.githubusercontent.com',
+  'cdn.jsdelivr.net'
+]);
 /** PNGs estáticos do legado (treinador/loja/joy/professor). */
 const ASSETS_DIR = path.join(__dirname, '..', '..', 'assets');
 
@@ -95,8 +110,32 @@ function urlCdn(url) {
   return m ? `https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/${m[1]}` : null;
 }
 
+function hostPermitido(url) {
+  try {
+    const u = new URL(String(url));
+    if (u.protocol !== 'https:') return false;
+    return ALLOWED_SPRITE_HOSTS.has(u.hostname);
+  } catch (_) {
+    return false;
+  }
+}
+
+/** Rejeita buffer que pareça SVG/XML — sprites remotos devem ser raster. */
+function pareceSvgOuXml(buf) {
+  if (!buf || !Buffer.isBuffer(buf) || buf.length < 4) return false;
+  const head = buf.subarray(0, Math.min(buf.length, 256)).toString('utf8').trimStart();
+  const lower = head.toLowerCase();
+  return (
+    lower.startsWith('<?xml')
+    || lower.startsWith('<svg')
+    || lower.startsWith('<!doctype svg')
+    || lower.includes('<svg')
+  );
+}
+
 function candidatosUrl(url) {
-  return [...new Set([urlCdn(url), url].filter(Boolean))];
+  return [...new Set([urlCdn(url), url].filter(Boolean))]
+    .filter((u) => hostPermitido(u));
 }
 
 function cacheGet(key) {
@@ -118,9 +157,16 @@ function cacheSet(key, value) {
 
 async function baixarBuffer(url, { rejectCheckerboard = true } = {}) {
   if (!url) return null;
+  if (!hostPermitido(url) && !candidatosUrl(url).length) {
+    logSpriteDiag('download_reject_host', { urlHost: safeUrlHost(url) });
+    return null;
+  }
   const cached = cacheGet(url);
   if (cached) {
-    if (rejectCheckerboard && await looksLikeCheckerboard(cached)) {
+    if (pareceSvgOuXml(cached)) {
+      spriteCache.delete(url);
+      logSpriteDiag('cache_reject_svg_xml', { cache: 'hit', urlHost: safeUrlHost(url) });
+    } else if (rejectCheckerboard && await looksLikeCheckerboard(cached)) {
       spriteCache.delete(url);
       logSpriteDiag('cache_reject_checkerboard', { cache: 'hit', urlHost: safeUrlHost(url) });
     } else {
@@ -130,12 +176,39 @@ async function baixarBuffer(url, { rejectCheckerboard = true } = {}) {
   let lastErr = null;
   for (const u of candidatosUrl(url)) {
     try {
-      const res = await fetch(u, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+      const res = await fetch(u, {
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        redirect: 'error'
+      });
       if (!res.ok) {
         lastErr = new Error(`HTTP ${res.status}`);
         continue;
       }
-      const buf = Buffer.from(await res.arrayBuffer());
+      const lenHeader = Number(res.headers.get('content-length') || 0);
+      if (lenHeader > MAX_REMOTE_BYTES) {
+        lastErr = new Error('sprite_too_large');
+        logSpriteDiag('download_reject_size', { urlHost: safeUrlHost(u), contentLength: lenHeader });
+        continue;
+      }
+      const ctype = String(res.headers.get('content-type') || '').toLowerCase();
+      const rasterOk = !ctype || /image\/(png|webp|jpe?g|gif)\b/.test(ctype);
+      if (ctype && !rasterOk) {
+        lastErr = new Error('sprite_non_raster_rejected');
+        logSpriteDiag('download_reject_content_type', { urlHost: safeUrlHost(u), contentType: ctype.slice(0, 80) });
+        continue;
+      }
+      const ab = await res.arrayBuffer();
+      if (ab.byteLength > MAX_REMOTE_BYTES) {
+        lastErr = new Error('sprite_too_large');
+        logSpriteDiag('download_reject_size', { urlHost: safeUrlHost(u), bytes: ab.byteLength });
+        continue;
+      }
+      const buf = Buffer.from(ab);
+      if (pareceSvgOuXml(buf)) {
+        lastErr = new Error('sprite_svg_xml_rejected');
+        logSpriteDiag('download_reject_svg_xml', { urlHost: safeUrlHost(u), bytes: buf.length });
+        continue;
+      }
       if (rejectCheckerboard && await looksLikeCheckerboard(buf)) {
         logSpriteDiag('download_reject_checkerboard', { cache: 'miss', urlHost: safeUrlHost(u) });
         lastErr = new Error('checkerboard_sprite');
@@ -1464,6 +1537,10 @@ module.exports = {
   svgBolaCaptura,
   svgPokedexShell,
   candidatosUrl,
+  hostPermitido,
+  pareceSvgOuXml,
+  MAX_REMOTE_BYTES,
+  ALLOWED_SPRITE_HOSTS,
   baixarBuffer,
   looksLikeCheckerboard,
   svgPlaceholder,

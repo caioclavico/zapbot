@@ -1,0 +1,12 @@
+=== persist control across recreate ===
+total 12
+drwxrwxrwx 4 node node  128 Nov 10 20:19 .
+drwxr-xr-x 1 root root 4096 Nov 10 20:15 ..
+-rw-r--r-- 1 node node   10 Nov 10 20:19 marker.txt
+-rw-r--r-- 1 node node  101 Nov 10 20:19 release-announcer-control.json
+persisted
+{
+  "state": "suspended",
+  "reason": "security-homolog",
+  "updatedAt": "2026-11-10T20:19:03.745Z"
+}orphan_lock_preserved
