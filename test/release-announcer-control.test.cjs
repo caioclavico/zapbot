@@ -4,6 +4,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
+const {spawn}=require('node:child_process');
 const {makeControl}=require('../scripts/lib/release-announcer-control.cjs');
 
 function fixture(){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'release-control-'));const file=path.join(dir,'state.json');const control=makeControl(file);return {dir,file,control};}
@@ -72,6 +73,39 @@ test('orphan publication lock remains fail-closed until explicit audited recover
     {code:'publication_suspended'});
   assert.equal(fs.existsSync(lock),true);
   assert.equal(afterRestart.status().state,'suspended');
+});
+
+test('abrupt publisher death leaves a durable orphan lease and cannot resume',async()=>{
+  const f=fixture();f.control.initializeOpen();
+  const modulePath=path.resolve(__dirname,'../scripts/lib/release-announcer-control.cjs');
+  const childCode=`const {makeControl}=require(${JSON.stringify(modulePath)});`+
+    `const c=makeControl(${JSON.stringify(f.file)});`+
+    `c.withPublication(()=>new Promise(()=>{}),'crash-test').catch(()=>{});`+
+    `process.stdout.write('LEASE_HELD\\n');`;
+  const child=spawn(process.execPath,['-e',childCode],{stdio:['ignore','pipe','pipe']});
+  let output='';
+  try{
+    await new Promise((resolve,reject)=>{
+      const timeout=setTimeout(()=>reject(new Error('lease_start_timeout')),3000);
+      child.once('error',reject);
+      child.stdout.on('data',chunk=>{
+        output+=chunk.toString();
+        if(output.includes('LEASE_HELD')){clearTimeout(timeout);resolve();}
+      });
+    });
+    assert.equal(f.control.status().publicationInFlight,true);
+    child.kill('SIGKILL');
+    await new Promise(resolve=>child.once('close',resolve));
+    const afterCrash=makeControl(f.file);
+    const suspended=await afterCrash.suspendAndWait({reason:'crash-recovery',timeoutMs:0});
+    assert.equal(suspended.state,'suspended');
+    assert.equal(suspended.quiescent,false);
+    assert.equal(suspended.publicationInFlight,true);
+    assert.throws(()=>afterCrash.resume(),{code:'publication_inflight'});
+    assert.equal(fs.existsSync(`${f.file}.publication-inflight`),true);
+  }finally{
+    if(child.exitCode===null&&!child.killed)child.kill('SIGKILL');
+  }
 });
 
 test('suspend fails closed if persistent control cannot be written',async()=>{
