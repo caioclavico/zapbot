@@ -78,7 +78,7 @@ Versão: Trivy `0.76.2`. Live e candidata foram escaneadas localmente a partir d
 | Low | 398 | 194 | 0 |
 | Unknown | 22 | 10 | 0 |
 
-Os 343 registros High incluem 84 advisories de Chromium repetidos nos pacotes `chromium`, `chromium-common` e `chromium-sandbox` (252 ocorrências); os restantes são bibliotecas Debian e 11 ocorrências npm. O JSON completo, com advisory, componente, versão, fix/status e comparação, está em [[`docs/evidence/a6-pr68-live-vs-candidate-trivy-20261110.csv`](evidence/a6-pr68-live-vs-candidate-trivy-20261110.csv)](evidence/a6-pr68-live-vs-candidate-trivy-20261110.json).
+Os 343 registros High incluem 84 advisories de Chromium repetidos nos pacotes `chromium`, `chromium-common` e `chromium-sandbox` (252 ocorrências); os restantes são bibliotecas Debian e 11 ocorrências npm. A tabela completa de findings, com advisory, componente, versão, fix/status e delta, está em [`docs/evidence/a6-pr68-live-vs-candidate-trivy-20261110.csv`](evidence/a6-pr68-live-vs-candidate-trivy-20261110.csv). O scan completo não filtrou severidades; a comparação registrou também Medium, Low e Unknown.
 
 Findings Critical e avaliação da exposição:
 
@@ -101,6 +101,6 @@ Rollback de código para o digest live somente com `RELEASE_ANNOUNCER_ENABLED=fa
 
 ## GitHub e próximos gates
 
-Estado desta execução: commit local criado; PR ainda não aberto. O merge não foi autorizado. PR #69 permaneceu intacto. CI/CD e hold de produção não foram alterados. A abertura do PR deve usar uma base que preserve a revisão live `8ef41c8...` (ou branch-base auditável apontando para esse commit), nunca a RC divergente nem `master` sem reconciliação.
+Estado desta execução: PR #70 aberto em draft contra `a6/live-baseline-8ef41c8`, branch-base criada exatamente em `8ef41c8...`. O PR está mergeable, sem conflitos conhecidos, mas ainda não tem workflow run, check de CI ou revisão; esses gates permanecem pendentes. PR #69 permaneceu intacto. CI/CD e hold de produção não foram alterados. Não foi executado merge.
 
-Antes de promover: abrir PR para revisão, obter CI aplicável, obter decisão do responsável de segurança sobre os findings herdados, e preparar overlay com seccomp/UID e mount persistente do controle explicitamente conferidos. Sem essas aprovações, manter NO-GO para produção.
+Antes de promover: obter CI aplicável e revisão no PR #70, decisão do responsável de segurança sobre os findings herdados e preflight do overlay com seccomp/UID e mount persistente do controle explicitamente conferidos. Sem essas aprovações, manter NO-GO para produção.
