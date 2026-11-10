@@ -84,6 +84,6 @@ A candidata deve receber o arquivo `suspended` antes de iniciar. Não limpar nem
 1. Integrar a proteção sobre código correspondente à revisão live atual (sem perder #65 e alterações posteriores), construir e repetir os testes afetados.
 2. Obter avaliação/aceitação administrativa para advisories Critical/High herdados deste digest ou correção compatível.
 3. Verificar schema 035 e hold/CI/run concorrentes no preflight da janela.
-4. Revisão/CI do PR preparado; sem merge ou deploy nesta etapa.
+4. PR #69 está em draft; `RC PR validation` passou, mas ainda não há revisão de código. Sem merge ou deploy nesta etapa.
 
 Nenhuma migration, alteração de save, intent/receipt, restart ou envio foi executado.
