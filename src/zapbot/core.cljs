@@ -518,8 +518,7 @@
            ;; padrão do Puppeteer competem com ele e podem enviar SIGKILL.
            :handleSIGTERM false
            :handleSIGINT false
-           :args (clj->js (cond-> ["--no-sandbox" "--disable-setuid-sandbox"
-                                   "--disable-quic" "--disable-features=Quic"]
+           :args (clj->js (cond-> ["--disable-quic" "--disable-features=Quic"]
                            config/chromium-low-resource-mode
                            (into ["--disable-extensions" "--disable-default-apps" "--no-first-run"])
                            config/chromium-disable-gpu (conj "--disable-gpu")))}
