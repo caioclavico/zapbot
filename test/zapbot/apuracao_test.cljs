@@ -20,6 +20,7 @@
                 :carg [{:cd "1"
                         :agr [{:par [{:sg "PT" :cand [{:n "13" :nmu "LULA" :vap "1000" :pvap "55,56"}]}
                                      {:sg "PL" :cand [{:n "22" :nmu "BOLSONARO" :vap "800" :pvap "44,44"}]}]}]}]})]
+    (is (str/includes? texto "Apuração presidencial 2026 — 2º turno"))
     (is (str/includes? texto "250/500 (50,00%)"))
     (is (str/includes? texto "*Atualização:* 17:30:00 de 04/10/2026"))
     (is (str/includes? texto "1. *LULA* (PT 13): 1.000 votos — 55,56%"))
@@ -113,16 +114,16 @@
                        (js/Promise.resolve (resposta-ok (dados-do-url url))))
                      #(apuracao/buscar-apuracao " Sp "))
           (.then (fn [texto]
-                   (is (= #{(str base "6257/dados/sp/sp-c0001-e006257-u.jws")
-                            (str base "6259/dados/sp/sp-c0003-e006259-u.jws")
+                   (is (= #{(str base "6258/dados/sp/sp-c0001-e006258-u.jws")
+                            (str base "6260/dados/sp/sp-c0003-e006260-u.jws")
                             (str base "6259/dados/sp/sp-c0005-e006259-u.jws")
                             (str base "6259/dados/sp/sp-c0006-e006259-u.jws")
                             (str base "6259/dados/sp/sp-c0007-e006259-u.jws")}
                           (set @urls)))
-                   (is (str/includes? texto "Apuração 2026 — São Paulo (SP)"))
+                   (is (str/includes? texto "Apuração 2026 — 2º turno — São Paulo (SP)"))
                    (let [posicoes (map #(.indexOf texto %)
-                                       ["*Presidente*" "*Governador*" "*Senador*"
-                                        "*Deputado Federal*" "*Deputado Estadual*"])]
+                                       ["*Presidente*" "*Governador*" "*Senador (1º turno)*"
+                                        "*Deputado Federal (1º turno)*" "*Deputado Estadual (1º turno)*"])]
                      (is (every? #(>= % 0) posicoes))
                      (is (= posicoes (sort posicoes))))))
           (.catch (fn [erro] (is false (str erro))))
@@ -138,8 +139,8 @@
           (.then (fn [texto]
                    (is (some #(str/includes? % "df-c0008-e006259") @urls))
                    (is (not-any? #(str/includes? % "-c0007-") @urls))
-                   (is (str/includes? texto "*Deputado Distrital*"))
-                   (is (not (str/includes? texto "*Deputado Estadual*")))))
+                   (is (str/includes? texto "*Deputado Distrital (1º turno)*"))
+                   (is (not (str/includes? texto "*Deputado Estadual (1º turno)*")))))
           (.catch (fn [erro] (is false (str erro))))
           (.finally done)))))
 
@@ -192,8 +193,8 @@
                    (is (str/includes? sem-uf "CAND Presidente"))
                    (com-fetch fetch-falso #(apuracao/buscar-apuracao "BR"))))
           (.then (fn [_]
-                   (is (= [(str base "6257/dados/br/br-c0001-e006257-u.jws")
-                           (str base "6257/dados/br/br-c0001-e006257-u.jws")]
+                   (is (= [(str base "6258/dados/br/br-c0001-e006258-u.jws")
+                           (str base "6258/dados/br/br-c0001-e006258-u.jws")]
                           @urls))))
           (.catch (fn [erro] (is false (str erro))))
           (.finally done)))))
