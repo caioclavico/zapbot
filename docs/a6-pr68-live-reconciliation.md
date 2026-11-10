@@ -78,7 +78,7 @@ Versão: Trivy `0.76.2`. Live e candidata foram escaneadas localmente a partir d
 | Low | 398 | 194 | 0 |
 | Unknown | 22 | 10 | 0 |
 
-Os 343 registros High incluem 84 advisories de Chromium repetidos nos pacotes `chromium`, `chromium-common` e `chromium-sandbox` (252 ocorrências); os restantes são bibliotecas Debian e 11 ocorrências npm. O JSON completo, com advisory, componente, versão, fix/status e comparação, está em [`docs/evidence/a6-pr68-live-vs-candidate-trivy-20261110.json`](evidence/a6-pr68-live-vs-candidate-trivy-20261110.json).
+Os 343 registros High incluem 84 advisories de Chromium repetidos nos pacotes `chromium`, `chromium-common` e `chromium-sandbox` (252 ocorrências); os restantes são bibliotecas Debian e 11 ocorrências npm. O JSON completo, com advisory, componente, versão, fix/status e comparação, está em [[`docs/evidence/a6-pr68-live-vs-candidate-trivy-20261110.csv`](evidence/a6-pr68-live-vs-candidate-trivy-20261110.csv)](evidence/a6-pr68-live-vs-candidate-trivy-20261110.json).
 
 Findings Critical e avaliação da exposição:
 
