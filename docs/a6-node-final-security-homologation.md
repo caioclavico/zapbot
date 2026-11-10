@@ -3,6 +3,8 @@
 Data: 2026-11-10  
 Base integrada: `a6/live-baseline-8ef41c8` @ `9465477e49584db28bf81bb12412325445537a21` (PR #70)  
 Branch de correção: `fix/a6-node-final-security-homolog`
+Commit de correção: `0f448a3400fe09c8c616db30b0b8a635d46a4c8a`  
+Tree de correção: `ab7e296167489f2aa085a51f7979b02f5e73d345`
 
 **Deploy não executado.** Hold de produção preservado. JVM/schema 035/WhatsApp live não foram tocados.
 

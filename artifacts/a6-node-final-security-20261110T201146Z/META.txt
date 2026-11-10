@@ -16,3 +16,6 @@ base_node=node:22.23.4-bookworm-slim@sha256:aaa4b5baf1ecff3b283486bb1f90405cdda2
 base_jdk=eclipse-temurin:21-jdk-jammy@sha256:4b1a74fbffbe6b4e7b6f0171a472478282fb463790a51edf10e465d578f22b69
 live_compare_tag=odisseu-node:a6-tx-datoms-conflict-persistent-hotfix-20261109T100054Z-8ef41c8da1c2-amd64
 trivy=0.76.2
+
+fix_commit=0f448a3400fe09c8c616db30b0b8a635d46a4c8a
+fix_tree=ab7e296167489f2aa085a51f7979b02f5e73d345
