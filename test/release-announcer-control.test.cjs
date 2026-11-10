@@ -16,6 +16,13 @@ test('missing, malformed, and permission-unsafe control fail closed',()=>{
   assert.throws(()=>f.control.read(),{code:'control_permissions_invalid'});
 });
 
+test('symlink control file is rejected without reading its target',()=>{
+  const f=fixture();const target=path.join(f.dir,'outside.json');
+  fs.writeFileSync(target,JSON.stringify({version:1,state:'open',updatedAt:'now',reason:'test'}),{mode:0o600});
+  fs.symlinkSync(target,f.file);
+  assert.throws(()=>f.control.read(),{code:'control_permissions_invalid'});
+});
+
 test('suspend is durable and a newly constructed controller remains closed',async()=>{
   const f=fixture();f.control.initializeOpen();
   const suspended=await f.control.suspendAndWait({reason:'maintenance'});

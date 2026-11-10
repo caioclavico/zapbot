@@ -1,0 +1,51 @@
+name: RC PR validation
+
+on:
+  pull_request:
+    branches: [rc/a6-release-announcer]
+  push:
+    branches: [fix/a6-announcer-maintenance-suspension]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-node-and-backup:
+    name: Node build, announcer tests, and A6 backup helper
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Verify WhatsApp media patch
+        run: npm run verify:media-patch
+      - name: Build Node application
+        run: npm run build
+      - name: Test Release Announcer gates and transport
+        run: npm run test:release-announcer
+      - name: Test cold backup helper
+        run: python3 scripts/test_a6_cutover_backup.py
+      - name: Check Python syntax and patch whitespace
+        run: |
+          python3 -m py_compile scripts/a6_cutover_backup.py scripts/test_a6_cutover_backup.py
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git diff --check "origin/$GITHUB_BASE_REF...HEAD"
+          else
+            git diff --check "$GITHUB_EVENT_BEFORE..$GITHUB_SHA"
+          fi

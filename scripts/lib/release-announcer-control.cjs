@@ -40,18 +40,24 @@ function makeControl(file, { now = () => new Date().toISOString(), sleep = ms =>
   const leasePath = `${controlPath}.publication-inflight`;
 
   function read() {
-    let stat;
-    try { stat = fs.lstatSync(controlPath); }
+    let fd;
+    try { fd = fs.openSync(controlPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); }
     catch (error) {
       if (error.code === 'ENOENT') throw controlError('control_missing');
+      if (error.code === 'ELOOP') throw controlError('control_permissions_invalid');
       throw controlError('control_unavailable');
     }
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 || stat.uid !== process.getuid?.()) {
-      throw controlError('control_permissions_invalid');
-    }
     let state;
-    try { state = JSON.parse(fs.readFileSync(controlPath, 'utf8')); }
-    catch (_) { throw controlError('control_unreadable'); }
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile() || (stat.mode & 0o022) !== 0 || stat.uid !== process.getuid?.()) {
+        throw controlError('control_permissions_invalid');
+      }
+      state = JSON.parse(fs.readFileSync(fd, 'utf8'));
+    } catch (error) {
+      if (error.code) throw error;
+      throw controlError('control_unreadable');
+    } finally { fs.closeSync(fd); }
     if (!state || state.version !== VERSION || !['open', 'suspended'].includes(state.state) ||
         typeof state.updatedAt !== 'string' || typeof state.reason !== 'string' ||
         !/^[a-zA-Z0-9._-]{1,60}$/.test(state.reason)) {
