@@ -56,7 +56,12 @@ node /app/scripts/lib/release-announcer-control.cjs suspend /app/data/release-an
 node /app/scripts/lib/release-announcer-control.cjs status /app/data/release-announcer-control.json
 ```
 
-Before the first start of a candidate that contains this gate, initialize the file explicitly while mounting only the Node data volume into a network-isolated one-off container, using the same image digest and UID 1000. Do not initialize `open` if the maintenance window is underway. During maintenance, require status `suspended` and `publicationInFlight=false`; if the command times out, the lock is malformed/stale, or state cannot be read, abort before stopping Node/JVM. Keep the file suspended through Node stop/start, Chromium reconnect and WhatsApp READY. The READY callback returns before reading the intent, checking receipts, reconciling buffered ACKs or invoking the transport while suspended.
+Before the first start of a candidate that contains this gate, initialize the file explicitly as **suspended** while mounting only the Node data volume into a network-isolated one-off container, using the same image digest and UID 1000. This creates the fail-closed state atomically without any temporary open window. During maintenance, require status `suspended` and `publicationInFlight=false`; if initialization/status fails, the command times out, the lock is malformed/stale, or state cannot be read, abort before starting the candidate or stopping JVM. Keep the file suspended through Node stop/start, Chromium reconnect and WhatsApp READY. The READY callback returns before reading the intent, checking receipts, reconciling buffered ACKs or invoking the transport while suspended.
+
+```sh
+node /app/scripts/lib/release-announcer-control.cjs initialize-suspended /app/data/release-announcer-control.json cold-backup
+node /app/scripts/lib/release-announcer-control.cjs status /app/data/release-announcer-control.json
+```
 
 The `transport_uncertain` receipt is **not** a retry authorization. The candidate performs a read-only canonical receipt check after ACK-buffer reconciliation and returns `uncertain-manual-review`; the JVM store also does not claim an already send-started uncertain record. No receipt, intent or idempotency key is edited by suspend/resume. Only real ACK correlation can complete an uncertain row; manual confirmation remains a separate audited operation. A stale publication lock after an unexpected process death is not auto-deleted: leave suspension in place, inspect the exact process and canonical Datomic receipt, then perform an explicitly reviewed lock recovery. Do not force resume or retry to clear it.
 
@@ -95,13 +100,14 @@ The active Node's three Announcer modules were hashed read-only and exactly matc
 
 The branch adds a persistent, atomic, permission-checked state file on `/app/data`, a cross-process publication lock, explicit status/suspend/resume commands, a READY early gate, runtime serialization, and a final control check at the WhatsApp send boundary. Missing/corrupt/unreadable state, a held lock or timeout never opens the gate. A stale lock is not auto-cleared. Uncertain receipts are read-only checked after buffered ACK reconciliation and never treated as permission to retry. No intent or receipt mutation was added to maintenance operations.
 
-Branch verification:
+Branch verification (same runtime/tool versions for RC base and candidate: Node `v22.23.3`, npm `10.9.9`):
 
-- Announcer/control/bootstrap/transport focused Node tests: **27/27 PASS**, all transports synthetic; no WhatsApp calls.
+- Announcer/control/bootstrap/transport tests are now part of `npm test` through `npm run test:release-announcer`: **30/30 PASS**, all transports synthetic; no WhatsApp calls. Added explicit coverage for first initialization suspended, an orphan publication lock and a suspension racing a claimed send. The orphan is preserved, blocks publication and prevents resume; no auto-cleanup exists.
 - Cold-backup helper tests: **9/9 PASS**; Python syntax check PASS.
 - `npm run build`: PASS; existing ClojureScript inference/deprecation warnings remain.
-- `npm test`: **236 tests, 1 failure and 3 errors**, in untouched `pokemon_http_test.cljs` cases (mission text response type and Professor “Cartões” text); the release-specific and resource tests pass. No Pokémon source/test was changed by this branch.
-- `npm run test:http`: **284/285 PASS**; the single existing failure is `playable-save-activation.test.cjs` (“Missing expected rejection”), unrelated to the files changed here.
+- `npm test` on both RC base and candidate reproduced the same **236 tests / 1,407 assertions: 1 failure and 3 errors**, all in unchanged `pokemon_http_test.cljs` cases (mission text response type and Professor “Cartões” text). The candidate additionally runs and passes the 30 release tests before the ClojureScript suite. No Pokémon source/test was changed by this branch.
+- `npm run test:http` on both RC base and candidate reproduced **284/285 PASS**. The sole failure is `pokemon-service/test/playable-save-activation.test.cjs` with `Missing expected rejection` at the same assertion (line 277; test begins at line 237). It is unchanged by this PR.
+- `git diff --check`: PASS.
 
 Full suite failures remain visible and were not edited or suppressed. Required GitHub checks/review must be inspected on the PR; this report does not claim a green merge gate.
 

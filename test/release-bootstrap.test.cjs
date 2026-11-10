@@ -84,6 +84,34 @@ test('suspension survives Node recreation and repeated WhatsApp READY events wit
   assert.equal(f.sends,0);assert.deepEqual(f.calls,[]);
 });
 
+test('suspension racing a claimed send waits for the lease and blocks the transport edge',async()=>{
+  const f=fixture();let enterBegin,continueBegin;
+  const beginEntered=new Promise(resolve=>{enterBegin=resolve;});
+  const beginBarrier=new Promise(resolve=>{continueBegin=resolve;});
+  f.platform.beginReleaseAnnouncementSend=async(key,claimant,fence)=>{
+    const row=f.rows.get(key);
+    Object.assign(row,{status:'uncertain',sendStartedAt:Date.now()});
+    enterBegin();
+    await beginBarrier;
+    return {started:true};
+  };
+
+  const publication=createReleaseBootstrap(f.options).onWhatsAppReady();
+  await beginEntered;
+  const suspending=makeControl(f.controlPath).suspendAndWait({reason:'test-race',timeoutMs:1000});
+  for(let i=0;i<50&&makeControl(f.controlPath).status().state!=='suspended';i++)
+    await new Promise(resolve=>setTimeout(resolve,2));
+  assert.equal(makeControl(f.controlPath).status().state,'suspended');
+  assert.equal(makeControl(f.controlPath).status().publicationInFlight,true);
+  continueBegin();
+
+  assert.equal((await publication).status,'suspended');
+  assert.equal((await suspending).quiescent,true);
+  assert.equal(f.sends,0);
+  assert.equal([...f.rows.values()][0].status,'uncertain');
+  assert.equal(makeControl(f.controlPath).status().publicationInFlight,false);
+});
+
 test('explicit resume restores normal publication for an eligible pending intent',async()=>{
   const f=fixture();
   await makeControl(f.controlPath).suspendAndWait({reason:'test-maintenance'});

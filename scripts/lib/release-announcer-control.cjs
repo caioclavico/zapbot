@@ -85,12 +85,12 @@ function makeControl(file, { now = () => new Date().toISOString(), sleep = ms =>
     }
   }
 
-  function initializeOpen(reason = 'explicit-initialization') {
+  function initializeState(state, reason) {
     reason = safeReason(reason);
     let fd;
     try {
       fd = fs.openSync(controlPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
-      fs.writeFileSync(fd, `${JSON.stringify({ version: VERSION, state: 'open', updatedAt: now(), reason })}\n`);
+      fs.writeFileSync(fd, `${JSON.stringify({ version: VERSION, state, updatedAt: now(), reason })}\n`);
       fs.fsyncSync(fd);
       fs.closeSync(fd);
       syncDirectory(path.dirname(controlPath));
@@ -101,6 +101,14 @@ function makeControl(file, { now = () => new Date().toISOString(), sleep = ms =>
       if (error.code) throw error;
       throw controlError('control_write_failed');
     }
+  }
+
+  function initializeOpen(reason = 'explicit-initialization') {
+    return initializeState('open', reason);
+  }
+
+  function initializeSuspended(reason = 'maintenance-bootstrap') {
+    return initializeState('suspended', reason);
   }
 
   function assertOpen() {
@@ -176,7 +184,7 @@ function makeControl(file, { now = () => new Date().toISOString(), sleep = ms =>
     return { ...current, publicationInFlight };
   }
 
-  return { read, status, assertOpen, withPublication, initializeOpen, suspendAndWait, resume };
+  return { read, status, assertOpen, withPublication, initializeOpen, initializeSuspended, suspendAndWait, resume };
 }
 
 async function cli(argv) {
@@ -184,6 +192,7 @@ async function cli(argv) {
   if (!command || !file) throw controlError('usage');
   const control = makeControl(file);
   if (command === 'initialize-open') return control.initializeOpen();
+  if (command === 'initialize-suspended') return control.initializeSuspended(rest[0] || 'maintenance-bootstrap');
   if (command === 'status') return control.status();
   if (command === 'suspend') {
     const reason = rest[0] || 'maintenance';

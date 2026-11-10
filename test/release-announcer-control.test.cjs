@@ -24,6 +24,13 @@ test('suspend is durable and a newly constructed controller remains closed',asyn
   await assert.rejects(afterRestart.withPublication(async()=>assert.fail('must not run')),{code:'publication_suspended'});
 });
 
+test('first-run maintenance state can be created suspended without an open window',()=>{
+  const f=fixture();
+  assert.equal(f.control.initializeSuspended('cold-backup').state,'suspended');
+  assert.equal(makeControl(f.file).status().state,'suspended');
+  assert.throws(()=>f.control.initializeOpen(),{code:'control_already_exists'});
+});
+
 test('suspension waits for an admitted publication and prevents later admissions',async()=>{
   const f=fixture();f.control.initializeOpen();let finish;const barrier=new Promise(resolve=>{finish=resolve;});
   const sending=f.control.withPublication(async()=>barrier,'synthetic-key');
@@ -45,6 +52,26 @@ test('timeout keeps suspension active and resume refuses a live lock',async()=>{
   assert.throws(()=>f.control.resume(),{code:'publication_inflight'});
   finish();await sending;
   assert.equal(f.control.resume().state,'open');
+});
+
+test('orphan publication lock remains fail-closed until explicit audited recovery',async()=>{
+  const f=fixture();f.control.initializeOpen();
+  const lock=`${f.file}.publication-inflight`;
+  fs.writeFileSync(lock,JSON.stringify({version:1,pid:999999,startedAt:'synthetic-crash'}),{mode:0o600});
+
+  const afterRestart=makeControl(f.file);
+  assert.equal(afterRestart.status().publicationInFlight,true);
+  await assert.rejects(afterRestart.withPublication(async()=>assert.fail('orphan lock must block')),
+    {code:'publication_inflight'});
+  const suspended=await afterRestart.suspendAndWait({reason:'recovery',timeoutMs:0});
+  assert.equal(suspended.state,'suspended');
+  assert.equal(suspended.quiescent,false);
+  assert.equal(suspended.publicationInFlight,true);
+  assert.throws(()=>afterRestart.resume(),{code:'publication_inflight'});
+  await assert.rejects(afterRestart.withPublication(async()=>assert.fail('suspension must block')),
+    {code:'publication_suspended'});
+  assert.equal(fs.existsSync(lock),true);
+  assert.equal(afterRestart.status().state,'suspended');
 });
 
 test('suspend fails closed if persistent control cannot be written',async()=>{
