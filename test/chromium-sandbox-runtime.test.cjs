@@ -12,6 +12,7 @@ const core = fs.readFileSync(path.join(root, 'src/zapbot/core.cljs'), 'utf8');
 test('Node runtime uses a digest-pinned amd64 base and UID 1000', () => {
   assert.match(dockerfile, /FROM node:22-bookworm-slim@sha256:[a-f0-9]{64}/);
   assert.match(dockerfile, /USER 1000:1000\s*\nCMD/);
+  assert.match(dockerfile, /\/usr\/local\/lib\/node_modules\/npm/);
 });
 
 test('Chromium launch does not disable its namespace or seccomp sandbox', () => {

@@ -18,7 +18,7 @@ RUN npm run build && npm prune --omit=dev
 FROM node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
 LABEL io.zapbot.service="odisseu" io.zapbot.persistence-version="1" io.zapbot.restore-protocol="1"
 RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates tini \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 ENV NODE_ENV=production \
     PERFORMANCE_METRICS=false \
     PUPPETEER_SKIP_DOWNLOAD=true \
