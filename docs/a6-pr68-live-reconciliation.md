@@ -116,3 +116,9 @@ Antes de promover: obter CI aplicável e revisão no PR #70, decisão do respons
 - A análise Trivy não mudou porque workflow e documentação não alteram a imagem nem dependências. Permanecem 4 Critical e 343 ocorrências High (140 advisories únicos) herdados, com delta zero; nenhum risco foi aceito ou reclassificado. O NO-GO de promoção permanece até decisão de segurança específica.
 - Revisões humanas independentes continuam ausentes. Na verificação atual o PR ainda está draft, sem reviews e sem runs/checks GitHub associados ao HEAD. O CI remoto ficará verificável após o push deste workflow; até então os resultados são execuções locais. O PR não foi marcado ready e não foi feito merge.
 - Próxima etapa Git: commit e push do workflow/evidência; aguardar o check remoto e revisão humana. Merge apenas após esses gates e homologação explícita da integração. Nenhuma branch temporária foi excluída.
+
+### Resultado do CI remoto e revisão
+
+O workflow de validação foi executado no GitHub para o commit `2f58e7348a1cd292d41b8bf250878f8f570dda00` (run `42841229610`) e concluiu **success**. A verificação de base/caminhos, instalação, Announcer, recursos/manutenção, HTTP/JVM e build terminou com sucesso. Comentário de homologação e pedido de revisão independente foram registrados no PR (#70, comentário `6770988558`).
+
+O PR permanece em draft, aberto e mergeable. A lista de reviews continua vazia. Mantém-se pendente uma revisão humana independente e a disposição formal dos findings Critical/High. Portanto, não foi marcado ready nem integrado; nenhuma branch foi excluída.
