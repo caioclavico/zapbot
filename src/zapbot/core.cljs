@@ -672,6 +672,7 @@
               (.createReleaseBootstrap release-bootstrap
                 #js {:enabled config/release-announcer-enabled?
                      :intentPath config/release-announcement-intent-path
+                     :controlPath config/release-announcement-control-path
                      :pilotChatId config/release-pilot-chat-id
                      ;; Allowlist própria — NÃO usa chat-autorizado?/ALLOW_ALL_GROUPS.
                      :isChatAuthorized (fn [chat-id]

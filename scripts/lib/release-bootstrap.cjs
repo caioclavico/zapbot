@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const { idempotencyKey } = require('./release-announcer.cjs');
 const { ReleaseAnnouncerRuntime } = require('./release-runtime.cjs');
 const { createReleaseTransport } = require('./whatsapp-release-transport.cjs');
+const { makeControl } = require('./release-announcer-control.cjs');
+const path = require('node:path');
 
 function readIntent(path) {
   if (typeof path !== 'string' || !path.trim()) return null;
@@ -21,12 +23,15 @@ function validIntent(intent) {
 }
 
 function createReleaseBootstrap({
-  enabled = false, intentPath = '', pilotChatId = '', isChatAuthorized = () => false,
+  enabled = false, intentPath = '', controlPath = '', pilotChatId = '', isChatAuthorized = () => false,
   client, platform, checkJvmHealth = async () => false, isWhatsAppReady = () => false,
   isNodeHealthy = () => true, workerId = `release-node-${process.pid}`,
   logger = () => {}
 } = {}) {
-  const runtime = new ReleaseAnnouncerRuntime({ enabled, pilotChatId, isChatAuthorized, logger });
+  const resolvedControlPath = controlPath || process.env.RELEASE_ANNOUNCEMENT_CONTROL_PATH ||
+    path.join(path.dirname(intentPath || '/app/data/release-announcement-intent.json'), 'release-announcer-control.json');
+  const publicationControl = makeControl(resolvedControlPath);
+  const runtime = new ReleaseAnnouncerRuntime({ enabled, pilotChatId, isChatAuthorized, publicationControl, logger });
   const transport = enabled && client && platform
     ? createReleaseTransport({ client, platform, logger })
     : null;
@@ -36,6 +41,13 @@ function createReleaseBootstrap({
     if (!enabled) return { status: 'disabled' };
     if (inFlight) return inFlight;
     inFlight = (async () => {
+      let controlStatus;
+      try { controlStatus = publicationControl.status(); }
+      catch (error) {
+        logger({ event: 'release_publication_control_unavailable', code: error.code || 'control_error' });
+        return { status: 'control-unavailable' };
+      }
+      if (controlStatus.state !== 'open') return { status: 'suspended' };
       const intent = readIntent(intentPath);
       if (!intent) return { status: 'no-release-intent' };
       if (!validIntent(intent)) return { status: 'invalid-release-intent' };
@@ -63,6 +75,20 @@ function createReleaseBootstrap({
       if (found?.status === 'completed') return { status: 'already-completed' };
 
       await transport.reconcileBuffered();
+      // Re-read after ACK reconciliation. An uncertain send is never treated
+      // as a failed attempt that grants permission to send the same key again.
+      try { found = (await platform.getReleaseAnnouncement(key)).announcement; }
+      catch (error) {
+        logger({ event: 'release_store_unavailable', code: error.code || 'bridge_error' });
+        return { status: 'not-ready' };
+      }
+      if (found?.status === 'completed') return { status: 'already-completed' };
+      const foundStatus = String(found?.status || '').replace(/^:/, '');
+      const sendStartedAt = found?.sendStartedAt ?? found?.['send-started-at'] ?? found?.send_started_at;
+      const messageId = found?.messageId ?? found?.['message-id'] ?? found?.message_id;
+      if (foundStatus === 'uncertain' || (foundStatus === 'claimed' && (sendStartedAt || messageId))) {
+        return { status: 'uncertain-manual-review' };
+      }
       const result = await runtime.publishConfirmed({
         intent,
         gates: { jvmHealthy, nodeHealthy, whatsappReady, datomicAccessible: true,
@@ -78,7 +104,7 @@ function createReleaseBootstrap({
     return inFlight;
   }
 
-  return { onWhatsAppReady, transport };
+  return { onWhatsAppReady, transport, publicationControl };
 }
 
 module.exports = { createReleaseBootstrap, readIntent, validIntent };
