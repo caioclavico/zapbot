@@ -4,58 +4,49 @@
 
 | Escopo | O que é | Status |
 |---|---|---|
-| Sintético 759 | Registros gerados cobrindo 6 curvas / vitórias-only / L100 | Executado (cobertura de política) |
-| Offline autorizado M5.3A | Dump `authorized-offline-copy` (histórico) | Executado — **119** Pokémon |
-| Módulos ativos do mesmo export | Contas atuais no arquivo | Executado — **19** Pokémon |
-| Cold live RC#66 (~759) | Restore descartável da produção atual | **Bloqueado** neste ambiente (backup cold tip não montado) |
+| Cold real RC#66 (restore descartável) | `cold-rc66-a6-20261111T135754Z` | **Executado** — **1015** Pokémon |
+| Offline autorizado M5.3A | Dump histórico | Executado — 119 Pokémon |
+| Sintético 759 | Cobertura de política | Executado (não substitui cold real) |
+| Cold “mais recente que a live agora” | Pós-writes após 13:58Z | Capturar na **janela** de cutover |
 
-Nenhuma escrita em volumes live. Nenhum backfill. Conversão apenas em memória (dry-run).
+Nenhuma escrita em volumes live. Nenhum backfill. Dry-run em memória / schema install só no restore descartável.
+
+## Dry-run — cold RC#66 restaurado (1015)
+
+Fonte: `/home/caiohclavico/odisseu-recovery/a6-cold-live-private/cold-rc66-a6-20261111T135754Z`  
+Imagem: tip `9780ecb` growth-037 · evidência host `/tmp/a6-growth037-evid/`
+
+```
+quantidade              1015
+owners                    27
+niveis-reduzidos           0
+niveis-aumentados          0
+hp_alterado                0
+shiny_alterado             0
+golpes_alterado            0
+ivs_alterado               0
+species_blank              0
+sum-nivel-antes         1599
+sum-nivel-depois        1599
+sum-residual-legado      990
+sum-xp-total (proj.)  727797
+curvas  erratic=18 fast=45 fluctuating=15 medium-fast=458 medium-slow=264 slow=215
+legacy-nivel-ok         true
+pokemon-count-stable    true
+036 após install        true
+037 após install        true (idempotente)
+```
+
+Sem PII no repositório — só agregados.
 
 ## Política final de conversão
 
 1. Residual: `xp-desde-nivel` → `xp` → `vitorias-desde-nivel × 3` → 0
 2. `extra = floor(R/9)` (cap 100−L); `rem = R mod 9`
 3. `L' = L + extra`; `xp-total = total(L') + floor((rem/9)×span(L'))`
-4. Auditoria: `:xp-legacy-residual` + `:xp-legacy-nivel` (imutável após 1ª gravação; attr `:pokemon/xp-legacy-nivel` na 037)
+4. Auditoria: `:xp-legacy-residual` + `:xp-legacy-nivel` (imutável)
 5. Nível nunca diminui
 
-## Dry-run — snapshot histórico offline (119)
+## Rollback (resumo)
 
-Fonte: `m8-1-private/pokemon/pokemon-export` · `snapshot-id=m53a-legacy-119-xp127-voltorb`
-`authorized-offline-copy=true` · evidência histórica (não estado live atual).
-
-```
-quantidade                 119
-niveis-reduzidos             0
-niveis-aumentados            0
-sem-progresso-conhecido      7
-species-blank                0
-sum-nivel-antes            297
-sum-nivel-depois           297
-sum-residual-legado        263
-sum-xp-total             19004
-curvas   erratic=1 fast=7 fluctuating=2 medium-fast=51 medium-slow=38 slow=20
-xp-legacy-nivel preservado em 100% das conversões
-```
-
-Sem PII no repositório — só agregados.
-
-## Dry-run — módulos ativos do export (19)
-
-```
-quantidade 19 · niveis-reduzidos 0 · niveis-aumentados 0
-sum-nivel 31→31 · sum-xp-total 539
-```
-
-## Sintético 759 (política / fronteiras)
-
-```
-quantidade 759 · niveis-reduzidos 0 · subiram-residual≥9 63
-sum-nivel 17185→17248 · sum-xp-total 59971033
-```
-
-Não representar como validação dos saves live.
-
-## Cold live RC#66
-
-Não disponível no workspace atual para restore descartável. Quando houver GO + artefato cold tip, repetir o mesmo dry-run e anexar fingerprints sem copiar dados pessoais.
+Após writes growth-v1: somente JVM tip 037+growth. RC #66 036-only = NO-GO.
