@@ -77,7 +77,7 @@
     (not (.tryAcquire slot))
     {:status 429 :body {:ok false :error {:code "audit_busy"}}}
 
-    (not (maintenance-gate/acquire! gate))
+    (not (maintenance-gate/acquire-read! gate))
     (do (.release slot)
         {:status 503 :body {:ok false :error {:code "maintenance_active"}}})
 
@@ -88,7 +88,7 @@
           released? (atom false)
           release! (fn []
                      (when (compare-and-set! released? false true)
-                       (maintenance-gate/release! gate)
+                       (maintenance-gate/release-read! gate)
                        (.release slot)))
           task (reify Callable
                  (call [_]
@@ -287,7 +287,12 @@
                         {:ok true :data result}
                         {:ok false :error {:code "maintenance_drain_timeout"
                                            :message "A ponte ainda está concluindo operações. Manutenção permanece ativa."
-                                           :details (select-keys result [:active-requests])}}))))
+                                           :details (select-keys result [:active-requests :active-writes
+                                                                         :phase])}}))))
+
+    (= path "/ops/maintenance/freeze")
+    (do (require-method! ex #{"POST"})
+        (ok! ex (maintenance-gate/freeze! gate)))
 
     (= path "/ops/maintenance/resume")
     (do (require-method! ex #{"POST"})
@@ -371,7 +376,9 @@
                        :platformEnabled (boolean platform-store)
                        :maintenance (when maintenance-gate
                                       (select-keys (maintenance-gate/status maintenance-gate)
-                                                   [:phase :active-requests]))
+                                                   [:phase :active-requests :active-writes
+                                                    :active-reads :admitted-writes
+                                                    :completed-writes :rejected-writes]))
                        :recoveryCatalogReady (boolean (and recovery-catalog
                                                            (recovery-catalog/available? recovery-catalog)))
                        :capabilities (cond-> ["trainer-read" "collection-read" "active-save-read"
@@ -434,10 +441,13 @@
             :else
             (do
               (require-auth! token ex)
-              (if (and maintenance-gate (not (maintenance-gate/acquire! maintenance-gate)))
+              (if (and maintenance-gate
+                       (not (maintenance-gate/acquire-for! maintenance-gate method path)))
                 (send-json! ex 503
                             {:ok false :error {:code "maintenance_active"
-                                               :message "O sistema está em manutenção. Tente novamente quando o serviço for retomado."}})
+                                               :message "O sistema está em manutenção. Tente novamente quando o serviço for retomado."
+                                               :details (select-keys (maintenance-gate/status maintenance-gate)
+                                                                     [:phase :active-writes :active-reads])}})
                 (try
                   (cond
                 (str/starts-with? path "/v1/platform")
@@ -1541,6 +1551,8 @@
                       (throw (err/error :method_not_allowed {:method method}))))
 
                 (= path "/v1/raids/auto/tick")
+                ;; New ticks are refused by acquire-for! once draining. An already
+                ;; admitted tick must finish (no skip) to preserve receipts/idempotency.
                 (do (require-method! ex #{"POST"})
                     (let [body (read-body ex)
                           agora (long-or-nil (g body "agoraMs" "agora"))
@@ -2479,7 +2491,7 @@
                                  :error {:code "not_found" :message "Rota inexistente."}}))
                   (finally
                     (when maintenance-gate
-                      (maintenance-gate/release! maintenance-gate))))))))
+                      (maintenance-gate/release-for! maintenance-gate method path))))))))
         (catch Throwable t
           (handle-error! ex t))))))
 
