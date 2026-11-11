@@ -127,11 +127,14 @@
     (is (zero? (:hp-atual out)))))
 
 (deftest level-up-v1-recalcula
-  (let [reg {:nome "X" :nivel 10 :xp-desde-nivel 0
+  (let [reg {:nome "X" :species "charizard" :nivel 10 :xp-desde-nivel 0
              :hp (species-hp/hp-max 78 10) :hp-atual (species-hp/hp-max 78 10)
              :hp-base 78 :hp-formula-version species-hp/formula-version
              :ataque 50 :defesa 50 :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70}
-        {:keys [registro subidas]} (xp/aplicar-xp-pokemon reg 9)]
+        ;; medium-slow L10→11
+        need (- (pokemon.domain.growth/total-xp-for-level :medium-slow 11)
+                (pokemon.domain.growth/total-xp-for-level :medium-slow 10))
+        {:keys [registro subidas]} (xp/aplicar-xp-pokemon reg need)]
     (is (= 1 subidas))
     (is (= 11 (:nivel registro)))
     (is (= (species-hp/hp-max 78 11) (:hp registro)))

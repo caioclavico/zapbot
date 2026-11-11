@@ -1,16 +1,23 @@
 (ns pokemon.domain.xp
-  "Regras de XP/nível portadas de zapbot.pokemon.treinador (legado CLJS).
+  "Regras de XP/nível.
 
-  Pokémon: xp-por-nivel=9, fator=1.03, nível máximo=100.
-  Treinador: curva progressiva 10 + 5 por nível; curva 5,7,9 preservada só para inicialização histórica."
+  Pokémon (growth-v1): curvas oficiais PokéAPI via `pokemon.domain.growth`
+  (XP acumulado + residual derivado). Legado residual/limiar 9 só para conversão.
+  Treinador: curva progressiva PE 10 + 5 por nível; curva 5,7,9 preservada só
+  para inicialização histórica. PE do treinador ≠ XP do Pokémon."
   (:require [pokemon.domain.errors :as err]
+            [pokemon.domain.growth :as growth]
             [pokemon.domain.species-hp :as species-hp]))
 
-(def nivel-maximo 100)
+(def nivel-maximo growth/nivel-maximo)
 (def fator-crescimento-por-nivel 1.03)
-(def xp-por-nivel 9)
+(def ^{:doc "Limiar residual legado (pré-growth-v1). Não usar para progressão nova."}
+  xp-por-nivel growth/legacy-xp-por-nivel)
 (def xp-por-vitoria 3)
 (def xp-por-derrota 1)
+(def ^{:doc "Escala explícita de balanceamento: multiplica ganhos de gameplay
+  antes de aplicar às tabelas oficiais. 1 = unidade PokéAPI pura."}
+  pokemon-xp-grant-scale 1)
 (def trainer-xp-inicial-por-nivel 10)
 (def trainer-xp-incremento-por-nivel 5)
 
@@ -59,94 +66,48 @@
                :def-esp (grow :def-esp)
                :veloc (grow :veloc))
         (merge hp-fields))))
-(defn normalizar-xp-registro
-  "Converte excesso de XP em subidas (legado normalizar-xp-registro)."
-  [registro]
-  (let [nivel (long (get registro :nivel (get registro "nivel" 1)))
-        xp (max 0 (long (get registro :xp-desde-nivel
-                              (get registro "xp-desde-nivel"
-                                   (* xp-por-vitoria
-                                      (long (get registro :vitorias-desde-nivel
-                                                 (get registro "vitorias-desde-nivel" 0))))))))
-        subidas (min (long (Math/floor (/ (double xp) xp-por-nivel)))
-                     (- nivel-maximo nivel))
-        final (nth (iterate subir-registro
-                            (assoc registro
-                                   :nivel nivel
-                                   :hp (long (get registro :hp (get registro "hp" 0)))
-                                   :hp-atual (long (get registro :hp-atual (get registro "hp-atual" 0)))
-                                   :ataque (long (get registro :ataque (get registro "ataque" 0)))
-                                   :defesa (long (get registro :defesa (get registro "defesa" 0)))
-                                   :atq-esp (long (get registro :atq-esp (get registro "atq-esp" 0)))
-                                   :def-esp (long (get registro :def-esp (get registro "def-esp" 0)))
-                                   :veloc (long (get registro :veloc (get registro "veloc" 0)))))
-                   subidas)
-        nivel-final (+ nivel subidas)]
-    (-> final
-        (assoc :xp-desde-nivel (if (= nivel-final nivel-maximo)
-                                 0
-                                 (- xp (* subidas xp-por-nivel))))
-        (dissoc :vitorias-desde-nivel "vitorias-desde-nivel"))))
+(defn- aplicar-subidas-stats
+  "Aplica `subidas` vezes a escala de stats 1.03 / HP species-v1."
+  [registro subidas]
+  (nth (iterate subir-registro registro) (max 0 (long subidas))))
 
 (defn progresso-pokemon
-  "Progresso de XP dentro do nível atual (canônico). Não inventa XP ausente.
-
-  Retorna mapa com :conhecido? false quando xp-desde-nivel não está presente
-  e não há fallback legado confiável; :nivel-maximo? true no cap."
+  "Progresso de XP dentro do nível atual (canônico growth-v1).
+  Não inventa XP ausente. Ver `growth/pokemon-progress`."
   [registro]
-  (let [nivel (long (get registro :nivel (get registro "nivel" 1)))
-        has-xp? (or (contains? registro :xp-desde-nivel)
-                    (contains? registro "xp-desde-nivel")
-                    (contains? registro :xp)
-                    (contains? registro "xp")
-                    (contains? registro :vitorias-desde-nivel)
-                    (contains? registro "vitorias-desde-nivel"))
-        xp (when has-xp?
-             (max 0 (long (get registro :xp-desde-nivel
-                               (get registro "xp-desde-nivel"
-                                    (or (get registro :xp (get registro "xp"))
-                                        (* xp-por-vitoria
-                                           (long (get registro :vitorias-desde-nivel
-                                                      (get registro "vitorias-desde-nivel" 0))))))))))]
-    (cond
-      (not has-xp?)
-      {:conhecido? false :nivel nivel :nivel-maximo? (>= nivel nivel-maximo)
-       :xp-nivel-atual nil :xp-proximo-nivel nil :progresso-percentual nil}
-
-      (>= nivel nivel-maximo)
-      {:conhecido? true :nivel nivel :nivel-maximo? true
-       :xp-nivel-atual 0 :xp-proximo-nivel nil :progresso-percentual nil}
-
-      :else
-      {:conhecido? true :nivel nivel :nivel-maximo? false
-       :xp-nivel-atual xp
-       :xp-proximo-nivel xp-por-nivel
-       :progresso-percentual (double (/ (double xp) (double xp-por-nivel)))})))
+  (growth/pokemon-progress registro))
 
 (defn aplicar-xp-pokemon
-  "Concede `quantidade` de XP ao registro; retorna {:registro :subidas :nivel-final}."
+  "Concede XP (unidade oficial × `pokemon-xp-grant-scale`).
+  Converte legado residual→growth-v1 na primeira aplicação.
+  Retorna {:registro :subidas :nivel-final :nome ...}."
   [registro quantidade]
-  (let [nivel-atual (long (get registro :nivel (get registro "nivel" 1)))
-        xp-anterior (long (get registro :xp-desde-nivel
-                               (get registro "xp-desde-nivel"
-                                    (* xp-por-vitoria
-                                       (long (get registro :vitorias-desde-nivel
-                                                  (get registro "vitorias-desde-nivel" 0)))))))
-        xp-total (+ xp-anterior (max 0 (long quantidade)))
-        subidas (if (< nivel-atual nivel-maximo)
-                  (min (long (Math/floor (/ (double xp-total) xp-por-nivel)))
-                       (- nivel-maximo nivel-atual))
-                  0)
-        amizade (min 255 (+ (long (get registro :amizade (get registro "amizade" 70))) 10))
-        registro-novo (-> registro
-                          (assoc :amizade amizade
-                                 :xp-desde-nivel xp-total
-                                 :nivel nivel-atual)
-                          normalizar-xp-registro)]
-    {:registro registro-novo
+  (let [nivel-antes (long (get registro :nivel (get registro "nivel" 1)))
+        scaled (long (Math/floor (* (double (max 0 (long quantidade)))
+                                    (double pokemon-xp-grant-scale))))
+        granted (growth/grant-pokemon-xp registro scaled)
+        r0 (:registro granted)
+        subidas (long (:subidas granted 0))
+        amizade (min 255 (+ (long (get r0 :amizade (get r0 "amizade" 70))) 10))
+        r1 (-> r0
+               (assoc :amizade amizade
+                      ;; stats sobem a partir do nível pré-ganho
+                      :nivel nivel-antes)
+               (dissoc :vitorias-desde-nivel "vitorias-desde-nivel"))
+        r-stats (if (pos? subidas) (aplicar-subidas-stats r1 subidas) r1)
+        r-final (assoc r-stats
+                       :nivel (long (:nivel-final granted))
+                       :xp-total (long (:xp-total r0))
+                       :xp-desde-nivel (long (:xp-desde-nivel r0))
+                       :xp (long (:xp-desde-nivel r0))
+                       :xp-progress-version growth/progress-version
+                       :growth-rate (:growth-rate r0))]
+    {:registro r-final
      :subidas subidas
-     :nivel-final (long (:nivel registro-novo))
-     :nome (get registro-novo :nome (get registro-novo "nome"))}))
+     :nivel-final (long (:nivel-final granted))
+     :nome (get r-final :nome (get r-final "nome"))
+     :xp-total (:xp-total r0)
+     :growth-rate (:growth-rate r0)}))
 
 (defn progresso-treinador-legado
   "Curva histórica 5, 7, 9… para preservar nível e PE residual de saves existentes."

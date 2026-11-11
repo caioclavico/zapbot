@@ -335,28 +335,43 @@
             (when (>= (long (:pokemon/level p 1)) xp/nivel-maximo)
               (throw (err/error :pokemon_max_level {})))
             (let [nivel0 (long (:pokemon/level p 1))
-                  reg {:nivel nivel0
-                       :xp-desde-nivel (long (:pokemon/xp-desde-nivel p 0))
-                       :hp (long (:pokemon/hp p 1))
-                       :hp-atual (long (:pokemon/hp-atual p (:pokemon/hp p 1)))
-                       :ataque (long (:pokemon/ataque p 0))
-                       :defesa (long (:pokemon/defesa p 0))
-                       :atq-esp (long (:pokemon/atq-esp p 0))
-                       :def-esp (long (:pokemon/def-esp p 0))
-                       :veloc (long (:pokemon/veloc p 0))
-                       :amizade (long (:pokemon/amizade p 70))
-                       :nome (or (:pokemon/nickname p) (:pokemon/nome p) (:pokemon/species p))}
+                  reg (cond-> {:nivel nivel0
+                               :xp-desde-nivel (long (:pokemon/xp-desde-nivel p 0))
+                               :hp (long (:pokemon/hp p 1))
+                               :hp-atual (long (:pokemon/hp-atual p (:pokemon/hp p 1)))
+                               :ataque (long (:pokemon/ataque p 0))
+                               :defesa (long (:pokemon/defesa p 0))
+                               :atq-esp (long (:pokemon/atq-esp p 0))
+                               :def-esp (long (:pokemon/def-esp p 0))
+                               :veloc (long (:pokemon/veloc p 0))
+                               :amizade (long (:pokemon/amizade p 70))
+                               :species (:pokemon/species p)
+                               :nome (or (:pokemon/nickname p) (:pokemon/nome p) (:pokemon/species p))}
+                        (some? (:pokemon/xp-total p))
+                        (assoc :xp-total (long (:pokemon/xp-total p)))
+                        (some? (:pokemon/xp-progress-version p))
+                        (assoc :xp-progress-version (:pokemon/xp-progress-version p)))
                   applied (xp/aplicar-xp-pokemon reg 3)
                   n (:registro applied)
-                  nome (:nome applied)]
+                  nome (:nome applied)
+                  lookup [:pokemon/id-pokemon (:pokemon/id-pokemon p)]]
             {:summary {:used true :family fam :id-pokemon (:pokemon/id-pokemon p)
                        :nome nome :level (:nivel-final applied)
                        :leveled-up? (> (long (:nivel-final applied)) nivel0)}
-             :tx [[:db/add [:save/key sk] :save/professor-cards-edn
-                   (pr-str (update cards fam dec))]
-                  [:db/add [:pokemon/id-pokemon (:pokemon/id-pokemon p)] :pokemon/xp-desde-nivel
-                   (long (:xp-desde-nivel n))]
-                  [:db/add [:pokemon/id-pokemon (:pokemon/id-pokemon p)] :pokemon/level (long (:nivel n))]
-                  [:db/add [:pokemon/id-pokemon (:pokemon/id-pokemon p)] :pokemon/hp (long (:hp n))]
-                  [:db/add [:pokemon/id-pokemon (:pokemon/id-pokemon p)] :pokemon/hp-atual (long (:hp-atual n))]
-                  [:db/add [:pokemon/id-pokemon (:pokemon/id-pokemon p)] :pokemon/amizade (long (:amizade n))]]})))))))
+             :tx (cond-> [[:db/add [:save/key sk] :save/professor-cards-edn
+                           (pr-str (update cards fam dec))]
+                          [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel n))]
+                          [:db/add lookup :pokemon/level (long (:nivel n))]
+                          [:db/add lookup :pokemon/hp (long (:hp n))]
+                          [:db/add lookup :pokemon/hp-atual (long (:hp-atual n))]
+                          [:db/add lookup :pokemon/amizade (long (:amizade n))]]
+                   (some? (:xp-total n))
+                   (conj [:db/add lookup :pokemon/xp-total (long (:xp-total n))])
+                   (some? (:xp-progress-version n))
+                   (conj [:db/add lookup :pokemon/xp-progress-version
+                          (str (:xp-progress-version n))])
+                   (some? (:growth-rate n))
+                   (conj [:db/add lookup :pokemon/growth-rate (name (:growth-rate n))])
+                   (some? (:xp-legacy-residual n))
+                   (conj [:db/add lookup :pokemon/xp-legacy-residual
+                          (long (:xp-legacy-residual n))]))})))))))

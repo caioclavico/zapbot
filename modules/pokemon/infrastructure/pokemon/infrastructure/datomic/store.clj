@@ -30,6 +30,7 @@
             [pokemon.domain.reward :as reward]
             [pokemon.domain.shop :as shop]
             [pokemon.domain.xp :as xp]
+            [pokemon.domain.growth :as growth]
             [pokemon.domain.status :as status]
             [pokemon.application.mission-queries :as mission-queries]
             [pokemon.application.mission-economy :as mission-economy-app]
@@ -303,6 +304,13 @@
              :golpes (vec (or (edn-read (:pokemon/golpes-edn e)) []))
              :golpes-removidos (vec (or (edn-read (:pokemon/golpes-removidos-edn e)) []))
              :historico-golpes (or (edn-read (:pokemon/historico-golpes-edn e)) {})}
+      (some? (:pokemon/xp-total e)) (assoc :xp-total (:pokemon/xp-total e))
+      (some? (:pokemon/xp-progress-version e))
+      (assoc :xp-progress-version (:pokemon/xp-progress-version e))
+      (some? (:pokemon/xp-legacy-residual e))
+      (assoc :xp-legacy-residual (:pokemon/xp-legacy-residual e))
+      (some? (:pokemon/growth-rate e))
+      (assoc :growth-rate (keyword (:pokemon/growth-rate e)))
       (some? (:pokemon/hp-base e)) (assoc :hp-base (:pokemon/hp-base e))
       (some? (:pokemon/hp-formula-version e))
       (assoc :hp-formula-version (:pokemon/hp-formula-version e))
@@ -349,6 +357,16 @@
              :pokemon/veloc (long (:veloc registro 0))
              :pokemon/raridade (or (:raridade registro) "comum")
              :pokemon/golpes-edn (pr-str (or (:golpes registro) []))}
+      (some? (:xp-total registro))
+      (assoc :pokemon/xp-total (long (:xp-total registro)))
+      (some? (:xp-progress-version registro))
+      (assoc :pokemon/xp-progress-version (str (:xp-progress-version registro)))
+      (some? (:xp-legacy-residual registro))
+      (assoc :pokemon/xp-legacy-residual (long (:xp-legacy-residual registro)))
+      (some? (:growth-rate registro))
+      (assoc :pokemon/growth-rate
+             (let [gr (:growth-rate registro)]
+               (if (keyword? gr) (name gr) (str gr))))
       (seq (:tipos registro)) (assoc :pokemon/tipos (vec (:tipos registro)))
       (:status registro) (assoc :pokemon/status (:status registro))
       (:habilidade registro) (assoc :pokemon/habilidade (:habilidade registro))
@@ -449,7 +467,10 @@
          applied (xp/aplicar-xp-pokemon poke quantidade)
          r0 (:registro applied)
          prepared (level-evo/prepare r0)
-         r1 (if prepared (level-evo/apply-prepared r0 prepared) r0)
+         r1 (if prepared
+              (-> (level-evo/apply-prepared r0 prepared)
+                  growth/after-evolution)
+              r0)
          r (if (pos? (long (:subidas applied 0)))
              (moves/aplicar-ofertas-por-nivel r1 nivel-antes (:nivel r1))
              r1)
@@ -463,6 +484,11 @@
          base-tx (cond-> [[:db/add lookup :pokemon/level (long (:nivel r))]
                           [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
                           [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
+                          [:db/add lookup :pokemon/xp-total (long (:xp-total r 0))]
+                          [:db/add lookup :pokemon/xp-progress-version
+                           (str (or (:xp-progress-version r) growth/progress-version))]
+                          [:db/add lookup :pokemon/growth-rate
+                           (name (or (:growth-rate r) :medium-fast))]
                           [:db/add lookup :pokemon/hp (long (:hp r))]
                           [:db/add lookup :pokemon/ataque (long (:ataque r))]
                           [:db/add lookup :pokemon/defesa (long (:defesa r))]
@@ -470,6 +496,9 @@
                           [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
                           [:db/add lookup :pokemon/veloc (long (:veloc r))]
                           [:db/add lookup :pokemon/amizade (long (:amizade r))]]
+                   (some? (:xp-legacy-residual r))
+                   (conj [:db/add lookup :pokemon/xp-legacy-residual
+                          (long (:xp-legacy-residual r))])
                    (not omit-hp-atual?)
                    (conj [:db/add lookup :pokemon/hp-atual hp-atual]))
          oferta-tx (when (not= (or (:ofertas-golpes r) (:golpes-oferecidos r) [])

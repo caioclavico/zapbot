@@ -7,11 +7,19 @@
             [pokemon.application.collection :as collection]
             [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
+            [pokemon.domain.growth :as growth]
             [pokemon.domain.level-evolution :as level-evo]
             [pokemon.domain.xp :as xp]
             [pokemon.infrastructure.datomic.store :as store])
   (:import [java.util Base64]
            [java.nio.charset StandardCharsets]))
+
+(defn- xp-to-level
+  "XP oficial necessário para ir do nível `from` (residual 0) até `to`."
+  [species from to]
+  (let [rate (growth/growth-rate-for-species species)]
+    (- (growth/total-xp-for-level rate to)
+       (growth/total-xp-for-level rate from))))
 
 (defn- fresh []
   (let [client (persistence/client {:system (str "a6-levevo-" (java.util.UUID/randomUUID))
@@ -30,28 +38,34 @@
                     :poder 40 :classe :fisico}]}
          m))
 
-(deftest xp-por-nivel-canonicamente-9
-  (is (= 9 xp/xp-por-nivel))
+(deftest xp-legado-limiar-e-growth-v1
+  (is (= 9 xp/xp-por-nivel) "constante legado residual")
   (is (= 100 xp/nivel-maximo))
   (is (= 1.03 xp/fator-crescimento-por-nivel))
+  ;; Geodude = medium-slow: L1→2 exige 9 XP oficiais.
   (let [{:keys [registro subidas]}
         (xp/aplicar-xp-pokemon
-         {:nome "X" :nivel 1 :xp-desde-nivel 0 :hp 100 :hp-atual 100
+         {:nome "Geodude" :species "geodude" :nivel 1 :xp-desde-nivel 0
+          :hp 100 :hp-atual 100
           :ataque 50 :defesa 50 :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70}
          9)]
     (is (= 1 subidas))
     (is (= 2 (:nivel registro)))
     (is (= 0 (:xp-desde-nivel registro)))
-    "xp-desde-nivel é progresso parcial no nível, não total acumulado"))
+    (is (= "growth-v1" (:xp-progress-version registro)))
+    (is (number? (:xp-total registro)))))
 
 (deftest progresso-pokemon-nao-inventa-zero
   (is (false? (:conhecido? (xp/progresso-pokemon {:nivel 10}))))
   (is (nil? (:xp-nivel-atual (xp/progresso-pokemon {:nivel 10}))))
-  (let [p (xp/progresso-pokemon {:nivel 10 :xp-desde-nivel 3})]
+  (let [p (xp/progresso-pokemon {:nivel 10 :species "pikachu" :xp-desde-nivel 3})]
     (is (true? (:conhecido? p)))
-    (is (= 3 (:xp-nivel-atual p)))
-    (is (= 9 (:xp-proximo-nivel p))))
-  (let [m (xp/progresso-pokemon {:nivel 100 :xp-desde-nivel 0})]
+    (is (number? (:xp-nivel-atual p)))
+    (is (number? (:xp-proximo-nivel p)))
+    (is (= :medium-fast (:growth-rate p))))
+  (let [m (xp/progresso-pokemon {:nivel 100 :species "pikachu" :xp-desde-nivel 0
+                                 :xp-progress-version "growth-v1"
+                                 :xp-total 1000000})]
     (is (true? (:nivel-maximo? m)))
     (is (nil? (:xp-proximo-nivel m)))))
 
@@ -111,13 +125,14 @@
               (:golpes out)))))
 
 (deftest grant-xp-evolui-por-nivel-datomic
-  (let [s (fresh)]
+  (let [s (fresh)
+        need (xp-to-level "charmander" 15 16)]
     (collection/adicionar-pokemon!
      s "chat" "ash"
      (base-fire {:id-pokemon "evo-1" :species "charmander" :nome "Charmander"
-                 :nivel 15 :xp-desde-nivel 8})
+                 :nivel 15 :xp-desde-nivel 0})
      20 nil)
-    (collection/ganhar-xp-pokemon! s "chat" "ash" 0 1)
+    (collection/ganhar-xp-pokemon! s "chat" "ash" 0 need)
     (let [after (first (ports/list-collection s "chat" "ash" "a"))]
       (is (= "evo-1" (:id-pokemon after)))
       (is (= 16 (:nivel after)))
@@ -141,14 +156,15 @@
 
 (deftest multiplos-niveis-uma-etapa-por-evento
   "Paridade com legado: um evento de XP → no máximo uma evolução de estágio."
-  (let [s (fresh)]
+  (let [s (fresh)
+        ;; XP oficial suficiente para ≥36 a partir do 15 (medium-slow).
+        need (xp-to-level "charmander" 15 36)]
     (collection/adicionar-pokemon!
      s "chat" "ash"
      (base-fire {:id-pokemon "multi-1" :species "charmander" :nome "Charmander"
                  :nivel 15 :xp-desde-nivel 0})
      20 nil)
-    ;; 21*9 = 189 XP → sobe muitos níveis (≥36) mas só Charmander→Charmeleon
-    (collection/ganhar-xp-pokemon! s "chat" "ash" 0 189)
+    (collection/ganhar-xp-pokemon! s "chat" "ash" 0 need)
     (let [after (first (ports/list-collection s "chat" "ash" "a"))]
       (is (= "multi-1" (:id-pokemon after)))
       (is (>= (:nivel after) 36))
@@ -169,18 +185,19 @@
       (collection/adicionar-pokemon!
        s "chat" "ash"
        {:id-pokemon id :species species :nome nome
-        :nivel 50 :xp-desde-nivel 8 :hp 60 :hp-atual 60
+        :nivel 50 :xp-desde-nivel 0 :hp 60 :hp-atual 60
         :ataque 55 :defesa 50 :atq-esp 50 :def-esp 50 :veloc 90
         :tipos ["normal"] :amizade 255 :golpes []}
        20 nil))
     (dotimes [i 3]
-      (collection/ganhar-xp-pokemon! s "chat" "ash" i 1))
+      (let [poke (nth (ports/list-collection s "chat" "ash" "a") i)
+            need (xp-to-level (:species poke) 50 51)]
+        (collection/ganhar-xp-pokemon! s "chat" "ash" i need)))
     (let [col (ports/list-collection s "chat" "ash" "a")
           by-id (into {} (map (juxt :id-pokemon identity) col))]
       (is (= "pikachu" (str/lower-case (str (:species (by-id "pika"))))))
       (is (= "eevee" (str/lower-case (str (:species (by-id "eev"))))))
       (is (= "kadabra" (str/lower-case (str (:species (by-id "kad"))))))
-      ;; 8+1 XP → sobe para 51, mas espécie permanece (pedra/ramificada/troca)
       (is (= 51 (:nivel (by-id "pika"))))
       (is (= 0 (:xp-desde-nivel (by-id "pika"))))
       (is (= 51 (:nivel (by-id "eev"))))
@@ -205,7 +222,8 @@
       (is (true? (:nivel-maximo? dto))))))
 
 (deftest magikarp-multiplos-niveis-evolui
-  (let [s (fresh)]
+  (let [s (fresh)
+        need (xp-to-level "magikarp" 18 20)]
     (collection/adicionar-pokemon!
      s "chat" "ash"
      {:id-pokemon "karp" :species "magikarp" :nome "Magikarp"
@@ -213,23 +231,23 @@
       :ataque 10 :defesa 55 :atq-esp 15 :def-esp 20 :veloc 80
       :tipos ["water"] :amizade 70 :golpes []}
      20 nil)
-    (collection/ganhar-xp-pokemon! s "chat" "ash" 0 20)
+    (collection/ganhar-xp-pokemon! s "chat" "ash" 0 need)
     (let [after (first (ports/list-collection s "chat" "ash" "a"))]
       (is (= "karp" (:id-pokemon after)))
       (is (>= (:nivel after) 20))
       (is (= "gyarados" (str/lower-case (str (:species after))))))))
 
 (deftest team-csv-xp-e-formula-injection
-  (let [s (fresh)]
-    (collection/adicionar-pokemon!
-     s "chat" "ash"
-     (base-fire {:id-pokemon "csv-1" :species "charmeleon" :nome "=CMD()"
-                 :nivel 34 :xp-desde-nivel 5
-                 :hp 80 :ataque 64 :defesa 58 :atq-esp 80 :def-esp 65 :veloc 80
-                 :raridade "incomum"})
-     20 nil)
+  (let [s (fresh)
+        legado {:id-pokemon "csv-1" :species "charmeleon" :nome "=CMD()"
+                :nivel 34 :xp-desde-nivel 5
+                :hp 80 :ataque 64 :defesa 58 :atq-esp 80 :def-esp 65 :veloc 80
+                :raridade "incomum"}
+        conv (growth/convert-legacy-residual (base-fire legado))]
+    (collection/adicionar-pokemon! s "chat" "ash" (base-fire legado) 20 nil)
     (let [csv (reads/team-csv s "chat" "ash" "a")
-          body (String. (.decode (Base64/getDecoder) ^String (:base64 csv)) StandardCharsets/UTF_8)]
+          body (String. (.decode (Base64/getDecoder) ^String (:base64 csv)) StandardCharsets/UTF_8)
+          prog (xp/progresso-pokemon conv)]
       (is (= "odisseu-time-pokemon.csv" (:filename csv)))
       (is (.startsWith ^String (:base64 csv) "77u/") "UTF-8 BOM")
       (is (str/includes? body "pokemon_id,numero_pokedex,nome"))
@@ -237,46 +255,48 @@
       (is (str/includes? body "proxima_evolucao"))
       (is (str/includes? body "Charizard"))
       (is (str/includes? body "'=CMD()"))
-      (is (re-find #"csv-1,.*,34,.*,5,9," body))
+      (is (re-find (re-pattern (str "csv-1,.*,34,.*,"
+                                    (:xp-nivel-atual prog) ","
+                                    (:xp-proximo-nivel prog) ","))
+                   body))
       (is (not (str/includes? body "chat")))
       (is (not (str/includes? body "@g.us"))))))
 
 (deftest dto-colecao-expoe-xp-e-evolucao
-  (let [s (fresh)]
-    (collection/adicionar-pokemon!
-     s "chat" "ash"
-     (base-fire {:id-pokemon "dto-1" :species "ivysaur" :nome "Ivysaur"
-                 :nivel 30 :xp-desde-nivel 4
-                 :hp 60 :ataque 62 :defesa 63 :atq-esp 80 :def-esp 80 :veloc 60
-                 :tipos ["grass" "poison"]})
-     20 nil)
+  (let [s (fresh)
+        legado (base-fire {:id-pokemon "dto-1" :species "ivysaur" :nome "Ivysaur"
+                           :nivel 30 :xp-desde-nivel 4
+                           :hp 60 :ataque 62 :defesa 63 :atq-esp 80 :def-esp 80 :veloc 60
+                           :tipos ["grass" "poison"]})
+        expected (xp/progresso-pokemon legado)]
+    (collection/adicionar-pokemon! s "chat" "ash" legado 20 nil)
     (let [col (reads/collection s "chat" "ash" "a")
           p (first (:collection col))]
       (is (true? (:xp-conhecido? p)))
-      (is (= 4 (:xp-nivel-atual p)))
-      (is (= 9 (:xp-proximo-nivel p)))
+      (is (= (:xp-nivel-atual expected) (:xp-nivel-atual p)))
+      (is (= (:xp-proximo-nivel expected) (:xp-proximo-nivel p)))
       (is (= "Venusaur" (:proxima-evolucao p)))
       (is (= 32 (:nivel-proxima-evolucao p))))))
 
 (deftest apresentacao-card-txt-csv-mesma-fonte
-  (let [s (fresh)]
-    (collection/adicionar-pokemon!
-     s "chat" "ash"
-     (base-fire {:id-pokemon "sync-1" :species "charmeleon" :nome "Charmeleon"
-                 :nivel 34 :xp-desde-nivel 5
-                 :hp 80 :ataque 64 :defesa 58 :atq-esp 80 :def-esp 65 :veloc 80})
-     20 nil)
+  (let [s (fresh)
+        legado (base-fire {:id-pokemon "sync-1" :species "charmeleon" :nome "Charmeleon"
+                           :nivel 34 :xp-desde-nivel 5
+                           :hp 80 :ataque 64 :defesa 58 :atq-esp 80 :def-esp 65 :veloc 80})
+        expected (xp/progresso-pokemon legado)]
+    (collection/adicionar-pokemon! s "chat" "ash" legado 20 nil)
     (let [col (reads/collection s "chat" "ash" "a")
           p (first (:collection col))
           csv (reads/team-csv s "chat" "ash" "a")
           body (String. (.decode (Base64/getDecoder) ^String (:base64 csv)) StandardCharsets/UTF_8)]
       (is (= "Charmeleon" (:nome p)))
       (is (= 34 (:nivel p)))
-      (is (= 5 (:xp-nivel-atual p)))
-      (is (= 9 (:xp-proximo-nivel p)))
+      (is (= (:xp-nivel-atual expected) (:xp-nivel-atual p)))
+      (is (= (:xp-proximo-nivel expected) (:xp-proximo-nivel p)))
       (is (= "Charizard" (:proxima-evolucao p)))
       (is (= 36 (:nivel-proxima-evolucao p)))
       (is (str/includes? body "sync-1"))
       (is (str/includes? body "Charmeleon"))
-      (is (str/includes? body ",5,9,"))
+      (is (str/includes? body (str "," (:xp-nivel-atual expected) ","
+                                   (:xp-proximo-nivel expected) ",")))
       (is (str/includes? body "Charizard")))))

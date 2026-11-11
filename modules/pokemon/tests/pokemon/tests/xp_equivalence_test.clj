@@ -12,10 +12,10 @@
    (slurp (io/file (persistence/project-root)
                    "modules/pokemon/tests/pokemon/tests/fixtures/legacy_xp.edn"))))
 
-(deftest progresso-treinador-equivale-ao-legado
+(deftest progresso-treinador-legado-equivale-ao-historico
   (doseq [caso (:trainer-progress-cases (load-fixtures))]
     (testing (str "xp=" (:xp caso))
-      (is (= (select-keys (xp/progresso-treinador (:xp caso))
+      (is (= (select-keys (xp/progresso-treinador-legado (:xp caso))
                           [:nivel :xp-atual :xp-necessario])
              (select-keys caso [:nivel :xp-atual :xp-necessario]))))))
 

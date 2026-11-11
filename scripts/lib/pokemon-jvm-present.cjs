@@ -7,9 +7,20 @@
 
 const PAGE_SIZE = 12;
 
-/** Canônico JVM (`pokemon.domain.xp/xp-por-nivel`). Não inventar outra fórmula. */
-const XP_POR_NIVEL_POKEMON = 9;
+/**
+ * Progresso de XP do Pokémon a partir do DTO canônico JVM (growth-v1).
+ * O intervalo do nível vem de `xpNivelAtual`/`xpProximoNivel` calculados na JVM
+ * pelas tabelas oficiais — o presenter NÃO reimplementa curvas.
+ * Fallback residual legado (limiar 9) só quando o DTO ainda não traz o necessário.
+ */
+const XP_POR_NIVEL_POKEMON = 9; // legado; preferir campos JVM
 const NIVEL_MAXIMO_POKEMON = 100;
+
+function pickXpKnown(p) {
+  if (p.xpConhecido != null) return p.xpConhecido;
+  if (p['xp-conhecido?'] != null) return p['xp-conhecido?'];
+  return undefined;
+}
 
 /**
  * Progresso de XP do Pokémon a partir do DTO canônico.
@@ -20,13 +31,17 @@ function pokemonXpProgress(p) {
     return { known: false, max: false, atual: null, necessario: null, pct: null, label: 'XP ?' };
   }
   const nivel = Number(p.nivel) || 1;
-  const maxFlag = p.nivelMaximo === true || nivel >= NIVEL_MAXIMO_POKEMON;
-  const knownFlag = p.xpConhecido;
+  const maxFlag = p.nivelMaximo === true
+    || p['nivel-maximo?'] === true
+    || nivel >= NIVEL_MAXIMO_POKEMON;
+  const known = pickXpKnown(p);
   const hasCampo = p.xpDesdeNivel != null
     || p.xpNivelAtual != null
-    || (p.xp != null && (p.xpNecessario != null || p.xpProximoNivel != null))
-    || knownFlag === true;
-  if (knownFlag === false || (!hasCampo && knownFlag !== true)) {
+    || p['xp-nivel-atual'] != null
+    || (p.xp != null && (p.xpNecessario != null || p.xpProximoNivel != null
+      || p['xp-proximo-nivel'] != null || p['xp-necessario'] != null))
+    || known === true;
+  if (known === false || (!hasCampo && known !== true)) {
     return {
       known: false,
       max: maxFlag,
@@ -43,11 +58,15 @@ function pokemonXpProgress(p) {
   }
   const atual = Number(
     p.xpNivelAtual != null ? p.xpNivelAtual
-      : (p.xpDesdeNivel != null ? p.xpDesdeNivel : p.xp)
+      : (p['xp-nivel-atual'] != null ? p['xp-nivel-atual']
+        : (p.xpDesdeNivel != null ? p.xpDesdeNivel : p.xp))
   );
   const necessario = Number(
     p.xpProximoNivel != null ? p.xpProximoNivel
-      : (p.xpNecessario != null ? p.xpNecessario : XP_POR_NIVEL_POKEMON)
+      : (p['xp-proximo-nivel'] != null ? p['xp-proximo-nivel']
+        : (p.xpNecessario != null ? p.xpNecessario
+          : (p['xp-necessario'] != null ? p['xp-necessario']
+            : XP_POR_NIVEL_POKEMON)))
   );
   if (!Number.isFinite(atual) || !Number.isFinite(necessario) || necessario <= 0) {
     return { known: false, max: false, atual: null, necessario: null, pct: null, label: 'XP ?' };
@@ -65,10 +84,33 @@ function pokemonXpProgress(p) {
 
 function barraXpPokemon(p) {
   const prog = pokemonXpProgress(p);
-  if (prog.max) return 'NÍVEL MÁXIMO';
+  if (prog.max) return '🏆 NÍVEL MÁXIMO';
   if (!prog.known) return 'XP ?';
   const filled = Math.min(10, Math.round((prog.atual / prog.necessario) * 10));
-  return `[${'█'.repeat(filled)}${'░'.repeat(10 - filled)}] ${prog.atual}/${prog.necessario}`;
+  const bar = `${'█'.repeat(filled)}${'░'.repeat(10 - filled)}`;
+  const pct = prog.pct != null ? Math.round(prog.pct) : 0;
+  return `${bar} ${pct}%`;
+}
+
+function blocoXpPokemon(p) {
+  const prog = pokemonXpProgress(p);
+  const nome = (p && (p.nome || p.nickname || p.species)) || 'Pokémon';
+  const nivel = (p && p.nivel) || 1;
+  if (prog.max) {
+    return [
+      `⚡ *${nome}* — Nv. ${nivel}`,
+      '🏆 NÍVEL MÁXIMO'
+    ].join('\n');
+  }
+  if (!prog.known) {
+    return `⚡ *${nome}* — Nv. ${nivel}\n✨ XP: ?`;
+  }
+  return [
+    `⚡ *${nome}* — Nv. ${nivel}`,
+    `✨ XP: ${prog.atual} / ${prog.necessario}`,
+    barraXpPokemon(p),
+    `⬆️ Próximo nível: ${Number(nivel) + 1}`
+  ].join('\n');
 }
 
 function textoProximaEvolucao(p) {
@@ -912,6 +954,7 @@ function formatFicha(data, prefix = '!pk') {
     `🏷️ ${tipos} · ${p.raridade || 'comum'}`,
     `❤️ ${barraHp(p.hpAtual, p.hp)}`,
     `✨ ${textoXp(p)}`,
+    `   ${barraXpPokemon(p)}`,
     '',
     `⚔️ Ataque: ${p.ataque || 0} | 🛡️ Defesa: ${p.defesa || 0}`,
     `🔮 Atq. Especial: ${p.atqEsp || 0} | 🌀 Def. Especial: ${p.defEsp || 0} | 💨 Velocidade: ${p.veloc || 0}`,
@@ -2062,7 +2105,9 @@ function formatCaptureResult(data, prefix = '!pk') {
       `⭐ +${rew.pe != null ? rew.pe : 0} PE treinador`,
       moedasLinha,
       data.subida
-        ? `🌟 *${data.subida.nome}* subiu para o nível ${data.subida.nivel}!`
+        ? (data.subida.niveisSubidos > 1 || data.subida.niveis_subidos > 1
+          ? `🌟 *${data.subida.nome}* subiu ${data.subida.niveisSubidos || data.subida.niveis_subidos} níveis e chegou ao Nv. ${data.subida.nivel}!`
+          : `🌟 *${data.subida.nome}* subiu para o nível ${data.subida.nivel}!`)
         : null,
       data.duplicate ? '_idempotente: mesma operação já persistida_' : null
     ];
@@ -4166,6 +4211,7 @@ module.exports = {
   formatDurationPt,
   barraXp,
   barraXpPokemon,
+  blocoXpPokemon,
   pokemonXpProgress,
   textoXp,
   textoProximaEvolucao,
