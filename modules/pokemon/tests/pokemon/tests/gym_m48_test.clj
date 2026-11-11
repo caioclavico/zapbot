@@ -150,7 +150,8 @@
     (is (nil? (ports/active-battle s chat player)))
     (is (nil? (ports/get-gym-occupation s chat "pedra")))
     (is (nil? (get (:ginasios (ports/get-save s chat player "a")) "pedra")))
-    (is (= 1 (:pe-ginasios (ports/get-save s chat player "a") 0)))))
+    ;; Derrota imediata: base +4 PE (+2 por nocaute causado, se houver).
+    (is (>= (:pe-ginasios (ports/get-save s chat player "a") 0) 4))))
 
 (deftest cliente-nao-forja-vitoria-via-resolve-whatsapp
   "resolve-challenge! existe para harness; bridge WhatsApp não o expõe.

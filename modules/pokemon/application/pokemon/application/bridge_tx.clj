@@ -566,11 +566,29 @@
                          (true? (:battle-reward? rew))
                          (assoc :battle-reward true)))
              :gym-resolve (when gym-res
-                            (let [perm (:permanencia gym-res {})]
+                            (let [perm (:permanencia gym-res {})
+                                  pokes (or (:pokemon-rewards gym-res) [])]
                               (cond-> {:venceu (boolean (:venceu? gym-res))
                                        :premio (when-let [p (:premio gym-res)] (name p))
                                        :occupied (boolean (:occupied? gym-res))
                                        :pe-delta (:pe-delta gym-res)
+                                       :pe-batalha (:pe-batalha gym-res)
+                                       :pe-nocautes (:pe-nocautes gym-res)
+                                       :pe-conquista (:pe-conquista gym-res)
+                                       :pe-defesa (:pe-defesa gym-res)
+                                       :conquistou (boolean (:conquistou? gym-res))
+                                       :defendeu (boolean (:defendeu? gym-res))
+                                       :nocautes-total (long (:nocautes-total gym-res 0))
+                                       :pokemon-rewards
+                                       (mapv (fn [r]
+                                               {:idx (:idx r)
+                                                :nome (:nome r)
+                                                :nocautes (long (:nocautes r 0))
+                                                :atividade (long (:atividade r 0))
+                                                :xp-oficial (long (:xp-oficial r 0))
+                                                :subidas (long (:subidas r 0))
+                                                :nivel-final (long (:nivel-final r 1))})
+                                             pokes)
                                        :reward (:reward gym-res)}
                                 (seq perm)
                                 (assoc :permanencia

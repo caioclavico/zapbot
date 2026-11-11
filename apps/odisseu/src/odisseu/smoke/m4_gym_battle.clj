@@ -11,6 +11,7 @@
             [pokemon.infrastructure.http.bridge :as bridge]
             [pokemon.infrastructure.http.json :as json]
             [pokemon.tests.gym-m48-test]
+            [pokemon.tests.gym-immediate-rewards-a6-test]
             [pokemon.tests.gym-m47-test]
             [pokemon.tests.gym-m35-test])
   (:import [java.net URI]
@@ -113,6 +114,10 @@
   [& _]
   (println "==> Unit M4.8 gym battle")
   (let [sum (t/run-tests 'pokemon.tests.gym-m48-test)]
+    (when (or (pos? (:fail sum 0)) (pos? (:error sum 0)))
+      (System/exit 1)))
+  (println "==> Recompensas imediatas ginásio")
+  (let [sum (t/run-tests 'pokemon.tests.gym-immediate-rewards-a6-test)]
     (when (or (pos? (:fail sum 0)) (pos? (:error sum 0)))
       (System/exit 1)))
   (println "==> Regressão M4.7 gym")

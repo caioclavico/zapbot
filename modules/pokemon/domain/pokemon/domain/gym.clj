@@ -307,14 +307,172 @@
       (assoc :hp-atual 0 :status nil)
       (assoc "hp-atual" 0 "status" nil)))
 
+;; --- Recompensas imediatas por batalha (growth-v1 / schema 036+037) ---
+;; PE e pontos de atividade são centralizados aqui. Conquista/defesa são
+;; bônus separados do resultado da batalha e NÃO reaplicam XP de combate.
+
+(def pe-vitoria-batalha 10)
+(def pe-derrota-batalha 4)
+(def pe-por-nocaute 2)
+(def pe-conquista-ginasio 15)
+(def pe-defesa-sucesso 8)
+
+(def atividade-vitoria-batalha 4)
+(def atividade-derrota-batalha 2)
+(def atividade-por-nocaute 1)
+
+;; Limite canônico 3×3: um mon causa no máximo 3 nocautes (time adversário).
+(def nocautes-max-por-participante 3)
+
+(defn- parse-participacao-idx
+  "Índice canônico ≥0 ou ::invalid."
+  [k]
+  (let [idx (cond
+              (integer? k) (long k)
+              (string? k) (try (Long/parseLong (str/trim k))
+                               (catch Exception _ ::invalid))
+              (keyword? k) (try (Long/parseLong (name k))
+                                (catch Exception _ ::invalid))
+              :else ::invalid)]
+    (cond
+      (= ::invalid idx) ::invalid
+      (neg? (long idx)) ::invalid
+      :else (long idx))))
+
+(defn- parse-participacao-nocautes
+  "Nocautes inteiro 0..max ou ::invalid. Rejeita fracionários/negativos."
+  [v]
+  (if-not (integer? v)
+    ::invalid
+    (let [n (long v)]
+      (if (or (neg? n) (> n nocautes-max-por-participante))
+        ::invalid
+        n))))
+
+(defn assert-participacao!
+  "Valida e normaliza participação. Falha explícita em dados malformados.
+  opts: `:collection-size` — rejeita índice ≥ tamanho da coleção.
+  Chaves duplicadas após normalização (ex. 0 e \"0\"): mesmo valor → uma
+  entrada; valores conflitantes → erro (não soma)."
+  ([participacao] (assert-participacao! participacao nil))
+  ([participacao {:keys [collection-size]}]
+   (let [raw (or participacao {})]
+     (when-not (map? raw)
+       (throw (err/error :invalid_gym_participation
+                         {:reason :not-a-map :value raw})))
+     (reduce-kv
+      (fn [acc k v]
+        (let [idx (parse-participacao-idx k)
+              kos (parse-participacao-nocautes v)]
+          (when (= ::invalid idx)
+            (throw (err/error :invalid_gym_participation
+                              {:reason :invalid-index :key k})))
+          (when (= ::invalid kos)
+            (throw (err/error :invalid_gym_participation
+                              {:reason :invalid-knockouts :key k :value v
+                               :max nocautes-max-por-participante})))
+          (when (and (some? collection-size) (not (neg? (long collection-size)))
+                     (>= idx (long collection-size)))
+            (throw (err/error :invalid_gym_participation
+                              {:reason :index-out-of-bounds
+                               :idx idx :size (long collection-size)})))
+          (if (contains? acc idx)
+            (let [prev (get acc idx)]
+              (if (= prev kos)
+                acc
+                (throw (err/error :invalid_gym_participation
+                                  {:reason :duplicate-index-conflict
+                                   :idx idx :a prev :b kos}))))
+            (assoc acc idx kos))))
+      {}
+      raw))))
+
+(defn normalizar-participacao
+  "Normaliza idx→nocautes. Delega a `assert-participacao!` (falha em inválidos).
+  Compat: 1-arity sem bound de coleção; 2-arity aceita opts ou collection-size."
+  ([participacao]
+   (assert-participacao! participacao nil))
+  ([participacao opts-or-size]
+   (assert-participacao!
+    participacao
+    (cond
+      (map? opts-or-size) opts-or-size
+      (integer? opts-or-size) {:collection-size (long opts-or-size)}
+      (nil? opts-or-size) nil
+      :else (throw (err/error :invalid_gym_participation
+                              {:reason :bad-opts :value opts-or-size}))))))
+
+(defn total-nocautes
+  [participacao]
+  (reduce + 0 (vals (assert-participacao! participacao nil))))
+
+(defn atividade-participante
+  "Pontos de atividade (não XP oficial) para um Pokémon que participou.
+  Base por resultado + bônus por nocautes comprovados do próprio mon.
+  O cap anti-exploit aplica-se ao total via `calcular-ganho-pokemon`."
+  [venceu? nocautes]
+  (+ (if venceu? atividade-vitoria-batalha atividade-derrota-batalha)
+     (* atividade-por-nocaute (max 0 (long (or nocautes 0))))))
+
 (defn xp-ginasio-participante
-  [venceu? premio nocautes]
-  (+ (cond
-       (not venceu?) 3
-       (= premio :primeira) 7
-       (= premio :revanche) 4
-       :else 2)
-     (max 0 (long (or nocautes 0)))))
+  "Pontos de atividade do participante. `premio` é ignorado (compat de assinatura):
+  XP de combate não depende mais de conquista/revanche — só de vitória/derrota + KO."
+  [venceu? _premio nocautes]
+  (atividade-participante venceu? nocautes))
+
+(defn pe-resultado-batalha
+  "PE imediato do resultado da batalha (vitória/derrota + nocautes).
+  Sem bônus de conquista/defesa."
+  [venceu? participacao]
+  (+ (if venceu? pe-vitoria-batalha pe-derrota-batalha)
+     (* pe-por-nocaute (total-nocautes participacao))))
+
+(defn conquista?
+  "Conquista: primeira insígnia do ginásio OU dethrone de outro líder."
+  [premio ocupacao-anterior desafiante-player-key]
+  (or (= premio :primeira)
+      (and ocupacao-anterior
+           (some? (:player-key ocupacao-anterior))
+           (not= (:player-key ocupacao-anterior) desafiante-player-key))))
+
+(defn defesa-sucesso?
+  "Líder jogador defendeu: desafiante perdeu e havia ocupação."
+  [venceu? ocupacao]
+  (and (not venceu?) (some? ocupacao) (some? (:player-key ocupacao))))
+
+(defn plano-recompensa-batalha
+  "Plano puro e determinístico das recompensas de uma batalha de ginásio.
+  Retorna breakdown de PE + atividade por participante (sem XP oficial).
+  `collection-size` opcional: rejeita índices fora da coleção."
+  [{:keys [venceu? participacao premio ocupacao desafiante-player-key
+           collection-size]}]
+  (let [parts (assert-participacao! participacao
+                                    (when (some? collection-size)
+                                      {:collection-size collection-size}))
+        pe-bat (pe-resultado-batalha venceu? parts)
+        pe-ko (* pe-por-nocaute (total-nocautes parts))
+        pe-base (- pe-bat pe-ko)
+        conquistou? (boolean (and venceu? (conquista? premio ocupacao desafiante-player-key)))
+        defendeu? (defesa-sucesso? venceu? ocupacao)
+        pe-conquista (if conquistou? pe-conquista-ginasio 0)
+        pe-defesa (if defendeu? pe-defesa-sucesso 0)
+        participantes
+        (mapv (fn [[idx kos]]
+                {:idx (long idx)
+                 :nocautes (long kos)
+                 :atividade (atividade-participante venceu? kos)})
+              (sort-by key parts))]
+    {:venceu? (boolean venceu?)
+     :participacao parts
+     :participantes participantes
+     :pe-batalha pe-base
+     :pe-nocautes pe-ko
+     :pe-conquista pe-conquista
+     :pe-defesa pe-defesa
+     :pe-desafiante (+ pe-bat pe-conquista)
+     :pe-defensor pe-defesa
+     :conquistou? conquistou?
+     :defendeu? defendeu?}))
 
 (defn registrar-insignia
   "Retorna :primeira | :revanche | nil (já resgatou hoje)."
@@ -324,17 +482,21 @@
       (if anterior :revanche :primeira))))
 
 (defn recompensa-vitoria
-  "PE/pedra/insígnia conforme premio — **sem moedas** (economia só por permanência).
-   pedra-roll 0–99 injetável."
+  "Pedra/insígnia conforme premio — **sem moedas** e **sem PE de batalha**.
+  PE de vitória/conquista vive em `plano-recompensa-batalha`.
+  pedra-roll 0–99 injetável."
   [premio pedra-roll]
   (when premio
     (let [primeira? (= premio :primeira)]
       {:moedas 0
-       :pe (if primeira? 5 2)
+       :pe 0
        :vitoria-treinador? true
        :pedra? (or primeira? (< (long (or pedra-roll 100)) 25))})))
 
-(defn pe-derrota [] 1)
+(defn pe-derrota
+  "Compat: PE base de derrota na batalha (sem nocautes)."
+  []
+  pe-derrota-batalha)
 
 (defn validar-time-ocupacao!
   [indices registros]

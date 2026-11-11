@@ -111,10 +111,34 @@
                   {:atividade :ginasio}))
       base)))
 
+(defn- participacao-lookup
+  "Resolve nocautes para um índice; nil se não participou."
+  [parts idx]
+  (when (contains? parts (long idx))
+    (long (get parts (long idx) 0))))
+
+(defn- pokemon-reward-row
+  [idx poke kos applied]
+  {:idx (long idx)
+   :id-pokemon (:id-pokemon poke)
+   :nome (or (:nome poke) (:species poke))
+   :nocautes (long (or kos 0))
+   :atividade (long (or (:atividade applied) 0))
+   :xp-oficial (long (or (:xp-oficial-aplicado applied) 0))
+   :subidas (long (or (:subidas applied) 0))
+   :nivel-final (long (or (:nivel-final applied)
+                          (:nivel (:registro applied))
+                          (:nivel poke)
+                          1))})
+
 (defn build-resolve-tx
   "Retorna {:tx :result} para resolve-gym-challenge!.
   slot-revision: revisão atual do stub/ocupação (0 se vazio).
-  omit-receipt?: quando true (fim de batalha 3×3), o recibo já veio do turno."
+  omit-receipt?: quando true (fim de batalha 3×3), o recibo já veio do turno.
+
+  Recompensas imediatas (PE + XP dos participantes) são aplicadas nesta TX,
+  independentemente de conquista/defesa. Bônus de conquista/defesa são PE
+  adicionais na mesma transação atômica (idempotente via operation-id)."
   [{:keys [db save writer-ctx request ocupacao colecao slot-revision
            query-collection save-entity player-entity
            pokemon-entity-map apply-pokemon-xp-tx inventory-adjust-tx
@@ -137,9 +161,21 @@
         agora (long (or (:agora request) (System/currentTimeMillis)))
         premio (when venceu? (gym/registrar-insignia insignias gym-id dia))
         vit-rew (when premio (gym/recompensa-vitoria premio (:pedra-roll request)))
-        pe-delta (if venceu? (long (:pe vit-rew 0)) (gym/pe-derrota))
+        participacao-raw (or (:participacao request) {})
+        colecao-size (count colecao)
+        ;; Valida índices/nocautes antes de qualquer crédito (falha explícita).
+        plano (gym/plano-recompensa-batalha
+               {:venceu? venceu?
+                :participacao participacao-raw
+                :premio premio
+                :ocupacao ocupacao
+                :desafiante-player-key pk
+                :collection-size colecao-size})
+        parts (:participacao plano)
+        pe-delta (long (:pe-desafiante plano 0))
         coins-delta (long (:moedas vit-rew 0))
-        participacao (or (:participacao request) {})
+        nivel-adv (long (:nivel g))
+        xp-opts {:unidade :atividade :atividade :ginasio :nivel-adversario nivel-adv}
         rev (long (:save/revision save 0))
         pe (long (:save/pe-ginasios save 0))
         vitorias (long (:save/vitorias-treinador save 0))
@@ -161,22 +197,47 @@
                      (not= (:player-key ocupacao) pk))
             (throw (err/error :gym_cas_conflict
                               {:expected nil :actual (:pid ocupacao)})))
-        xp-txs (mapcat
-                (fn [[idx nocautes]]
-                  (let [i (long idx)
-                        poke (when (< i (count colecao)) (nth colecao i))]
-                    (when (and poke (not (contains? occupy-indices i)))
-                      (:tx (apply-pokemon-xp-tx
-                            poke
-                            (gym/xp-ginasio-participante venceu? premio nocautes)
-                            {:unidade :atividade :atividade :ginasio})))))
-                participacao)
+        ;; XP imediato só para índices com participação canônica registrada.
+        ;; Reserva que nunca entrou NÃO recebe XP (nem na ocupação).
+        xp-grant-parts
+        (keep
+         (fn [[idx nocautes]]
+           (let [i (long idx)
+                 poke (nth colecao i)
+                 atividade (gym/atividade-participante venceu? nocautes)]
+             (when (and poke (not (contains? occupy-indices i)) (pos? atividade))
+               (let [part (apply-pokemon-xp-tx poke atividade xp-opts)
+                     applied (xp/aplicar-xp-atividade poke atividade
+                                                      (dissoc xp-opts :unidade))]
+                 {:tx (:tx part)
+                  :reward (pokemon-reward-row i poke nocautes
+                                              (assoc applied :atividade atividade))}))))
+         parts)
+        xp-txs (mapcat :tx xp-grant-parts)
+        pokemon-rewards-coll (mapv :reward xp-grant-parts)
         insignias' (if premio (assoc insignias gym-id dia) insignias)
+        ;; Defesa: +PE ao líder com CAS de :save/revision (e pe) — evita lost
+        ;; update sob concorrência; retry de transact-with-writer! relê o save.
+        defense-pe-tx
+        (when (and (:defendeu? plano) ocupacao (pos? (long (:pe-defensor plano 0))))
+          (let [prev (id/parse-player-key (:player-key ocupacao))
+                prev-sk (id/save-key (:chat-id prev) (:player-id prev)
+                                     (:save-id ocupacao))
+                prev-save (save-entity db (:chat-id prev) (:player-id prev)
+                                       (:save-id ocupacao))
+                prev-rev (long (:save/revision prev-save 0))
+                prev-pe (long (:save/pe-ginasios prev-save 0))
+                delta (long (:pe-defensor plano))]
+            (when (:save/key prev-save)
+              [[:db/cas [:save/key prev-sk] :save/revision prev-rev (inc prev-rev)]
+               [:db/cas [:save/key prev-sk] :save/pe-ginasios prev-pe (+ prev-pe delta)]])))
         base-tx (cond-> (cond-> []
                           (not omit-revision-cas?)
                           (conj [:db/cas [:save/key sk] :save/revision rev (inc rev)])
-                          true
+                          (pos? pe-delta)
                           (conj [:db/add [:save/key sk] :save/pe-ginasios (+ pe pe-delta)]))
+                  (seq defense-pe-tx)
+                  (into defense-pe-tx)
                   (not omit-receipt?)
                   (conj {:operation-receipt/id operation-id
                          :operation-receipt/kind "gym-resolve"
@@ -185,7 +246,11 @@
                          :operation-receipt/player-key pk
                          :operation-receipt/save-id save-id
                          :operation-receipt/summary
-                         (pr-str {:gym-id gym-id :venceu? venceu? :premio premio})})
+                         (pr-str {:gym-id gym-id :venceu? venceu? :premio premio
+                                  :pe-batalha (:pe-batalha plano)
+                                  :pe-nocautes (:pe-nocautes plano)
+                                  :pe-conquista (:pe-conquista plano)
+                                  :pe-defesa (:pe-defesa plano)})})
                   premio (conj [:db/add [:save/key sk] :save/ginasios-edn (pr-str insignias')])
                   (seq (:tx coin-part))
                   (into (:tx coin-part))
@@ -204,17 +269,24 @@
         occupy-tx
         (when occupy-indices
           (let [indices (mapv long (:indices request))
-                registros
+                occupy-built
                 (mapv (fn [i]
                         (let [poke (nth colecao i)
-                              nk (or (get participacao i)
-                                     (get participacao (str i))
-                                     0)
-                              xp-amt (gym/xp-ginasio-participante venceu? premio nk)]
-                          (if (pos? xp-amt)
-                            (:registro (xp/aplicar-xp-pokemon poke xp-amt))
-                            poke)))
+                              nk (participacao-lookup parts i)]
+                          (if (some? nk)
+                            (let [atividade (gym/atividade-participante venceu? nk)
+                                  applied (if (pos? atividade)
+                                            (xp/aplicar-xp-atividade poke atividade
+                                                                     (dissoc xp-opts :unidade))
+                                            {:registro poke :xp-oficial-aplicado 0
+                                             :subidas 0 :nivel-final (:nivel poke 1)})]
+                              {:registro (:registro applied)
+                               :reward (pokemon-reward-row i poke nk
+                                                           (assoc applied :atividade atividade))})
+                            {:registro poke :reward nil})))
                       indices)
+                registros (mapv :registro occupy-built)
+                occupy-reward-rows (vec (keep :reward occupy-built))
                 _ (gym/validar-time-ocupacao! indices registros)
                 _ (when (and ocupacao
                              (= (:player-key ocupacao) pk)
@@ -325,12 +397,15 @@
              :meta {:moedas-permanencia moedas-ant
                     :xp-permanencia xp-ant
                     :permanencia-bruta (long (:gross permanence-plan 0))
-                    :permanencia-teto (long (:capped permanence-plan 0))}}))
+                    :permanencia-teto (long (:capped permanence-plan 0))}
+             :pokemon-rewards occupy-reward-rows}))
         stats-part (build-statistics-tx
                     {:statistics-entity statistics-entity
                      :chat-id chat-id :gym-id gym-id :agora agora
                      :venceu? venceu? :ocupacao ocupacao
                      :challenger-id player-id :challenger-name (:nome request)})
+        pokemon-rewards (into (vec pokemon-rewards-coll)
+                              (or (:pokemon-rewards occupy-tx) []))
         tx (into (into (into base-tx (concat (or xp-txs []) (or wear-tx [])))
                        (or (:tx occupy-tx) []))
                  (:tx stats-part))]
@@ -343,6 +418,15 @@
               :premio premio
               :reward vit-rew
               :pe-delta pe-delta
+              :pe-batalha (long (:pe-batalha plano 0))
+              :pe-nocautes (long (:pe-nocautes plano 0))
+              :pe-conquista (long (:pe-conquista plano 0))
+              :pe-defesa (long (:pe-defesa plano 0))
+              :pe-defensor (long (:pe-defensor plano 0))
+              :conquistou? (boolean (:conquistou? plano))
+              :defendeu? (boolean (:defendeu? plano))
+              :nocautes-total (gym/total-nocautes parts)
+              :pokemon-rewards pokemon-rewards
               :occupied? (boolean occupy-tx)
               :statistics (:statistics stats-part)
               :permanencia (or (:meta occupy-tx) {})}}))
