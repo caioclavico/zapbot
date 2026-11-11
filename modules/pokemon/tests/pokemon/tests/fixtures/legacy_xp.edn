@@ -1,23 +1,23 @@
-;; Fixtures de equivalência com zapbot.pokemon.treinador (CLJS).
-;; Valores esperados calculados pelas mesmas constantes:
-;; xp-por-nivel=9, fator=1.03, progresso-treinador custos 5,7,9,11…
+;; Fixtures de equivalência.
+;; Pokémon: growth-v1 / tabelas PokéAPI locais.
+;; Treinador: curva histórica 5,7,9… (progresso-treinador-legado).
 
 {:pokemon-xp-cases
- [{:label "9 XP sobe 1 nível a partir do 1"
-   :registro {:nome "Magikarp" :nivel 1 :xp-desde-nivel 0
+ [{:label "Magikarp (slow): 10 XP sobe 1 nível a partir do 1"
+   :registro {:nome "Magikarp" :species "magikarp" :nivel 1 :xp-desde-nivel 0
               :hp 100 :hp-atual 80 :ataque 50 :defesa 50
               :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70}
-   :quantidade 9
+   :quantidade 10
    :expect {:nivel 2 :xp-desde-nivel 0 :subidas 1
             :hp 103 :hp-atual 83}}
-  {:label "8 XP não sobe"
-   :registro {:nome "Magikarp" :nivel 1 :xp-desde-nivel 0
+  {:label "Magikarp (slow): 8 XP não sobe"
+   :registro {:nome "Magikarp" :species "magikarp" :nivel 1 :xp-desde-nivel 0
               :hp 100 :hp-atual 100 :ataque 50 :defesa 50
               :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70}
    :quantidade 8
    :expect {:nivel 1 :xp-desde-nivel 8 :subidas 0 :hp 100 :hp-atual 100}}
-  {:label "desmaiado não recupera HP ao subir"
-   :registro {:nome "Geodude" :nivel 1 :xp-desde-nivel 0
+  {:label "Geodude (medium-slow): desmaiado não recupera HP ao subir"
+   :registro {:nome "Geodude" :species "geodude" :nivel 1 :xp-desde-nivel 0
               :hp 100 :hp-atual 0 :ataque 40 :defesa 80
               :atq-esp 30 :def-esp 30 :veloc 20 :amizade 70}
    :quantidade 9

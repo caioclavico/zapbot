@@ -40,7 +40,8 @@
    "migrations/pokemon/033-trade-public-id.edn"
    "migrations/pokemon/034-gym-permanence-daily.edn"
    "migrations/pokemon/035-species-hp-formula.edn"
-   "migrations/pokemon/036-trainer-level-rewards.edn"])
+   "migrations/pokemon/036-trainer-level-rewards.edn"
+   "migrations/pokemon/037-pokemon-growth-xp.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id

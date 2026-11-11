@@ -30,6 +30,7 @@
             [pokemon.domain.reward :as reward]
             [pokemon.domain.shop :as shop]
             [pokemon.domain.xp :as xp]
+            [pokemon.domain.growth :as growth]
             [pokemon.domain.status :as status]
             [pokemon.application.mission-queries :as mission-queries]
             [pokemon.application.mission-economy :as mission-economy-app]
@@ -303,6 +304,15 @@
              :golpes (vec (or (edn-read (:pokemon/golpes-edn e)) []))
              :golpes-removidos (vec (or (edn-read (:pokemon/golpes-removidos-edn e)) []))
              :historico-golpes (or (edn-read (:pokemon/historico-golpes-edn e)) {})}
+      (some? (:pokemon/xp-total e)) (assoc :xp-total (:pokemon/xp-total e))
+      (some? (:pokemon/xp-progress-version e))
+      (assoc :xp-progress-version (:pokemon/xp-progress-version e))
+      (some? (:pokemon/xp-legacy-residual e))
+      (assoc :xp-legacy-residual (:pokemon/xp-legacy-residual e))
+      (some? (:pokemon/xp-legacy-nivel e))
+      (assoc :xp-legacy-nivel (:pokemon/xp-legacy-nivel e))
+      (some? (:pokemon/growth-rate e))
+      (assoc :growth-rate (keyword (:pokemon/growth-rate e)))
       (some? (:pokemon/hp-base e)) (assoc :hp-base (:pokemon/hp-base e))
       (some? (:pokemon/hp-formula-version e))
       (assoc :hp-formula-version (:pokemon/hp-formula-version e))
@@ -349,6 +359,18 @@
              :pokemon/veloc (long (:veloc registro 0))
              :pokemon/raridade (or (:raridade registro) "comum")
              :pokemon/golpes-edn (pr-str (or (:golpes registro) []))}
+      (some? (:xp-total registro))
+      (assoc :pokemon/xp-total (long (:xp-total registro)))
+      (some? (:xp-progress-version registro))
+      (assoc :pokemon/xp-progress-version (str (:xp-progress-version registro)))
+      (some? (:xp-legacy-residual registro))
+      (assoc :pokemon/xp-legacy-residual (long (:xp-legacy-residual registro)))
+      (some? (:xp-legacy-nivel registro))
+      (assoc :pokemon/xp-legacy-nivel (long (:xp-legacy-nivel registro)))
+      (some? (:growth-rate registro))
+      (assoc :pokemon/growth-rate
+             (let [gr (:growth-rate registro)]
+               (if (keyword? gr) (name gr) (str gr))))
       (seq (:tipos registro)) (assoc :pokemon/tipos (vec (:tipos registro)))
       (:status registro) (assoc :pokemon/status (:status registro))
       (:habilidade registro) (assoc :pokemon/habilidade (:habilidade registro))
@@ -444,12 +466,19 @@
   - `:omit-hp-atual?` — quando true, não emite `:pokemon/hp-atual` (caller já sincroniza
     via `pokemon-hp-status-tx`). Preferir com override em turnos de batalha."
   ([poke quantidade] (apply-pokemon-xp-tx poke quantidade nil))
-  ([poke quantidade {:keys [hp-atual-override omit-hp-atual?] :as _opts}]
+  ([poke quantidade {:keys [hp-atual-override omit-hp-atual? unidade]
+                    :or {unidade :atividade}
+                    :as opts}]
    (let [nivel-antes (long (or (:nivel poke) 1))
-         applied (xp/aplicar-xp-pokemon poke quantidade)
+         xp-opts (cond-> (dissoc (or opts {}) :hp-atual-override :omit-hp-atual?)
+                   true (assoc :unidade unidade))
+         applied (xp/aplicar-xp-pokemon poke quantidade xp-opts)
          r0 (:registro applied)
          prepared (level-evo/prepare r0)
-         r1 (if prepared (level-evo/apply-prepared r0 prepared) r0)
+         r1 (if prepared
+              (-> (level-evo/apply-prepared r0 prepared)
+                  growth/after-evolution)
+              r0)
          r (if (pos? (long (:subidas applied 0)))
              (moves/aplicar-ofertas-por-nivel r1 nivel-antes (:nivel r1))
              r1)
@@ -463,6 +492,11 @@
          base-tx (cond-> [[:db/add lookup :pokemon/level (long (:nivel r))]
                           [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
                           [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
+                          [:db/add lookup :pokemon/xp-total (long (:xp-total r 0))]
+                          [:db/add lookup :pokemon/xp-progress-version
+                           (str (or (:xp-progress-version r) growth/progress-version))]
+                          [:db/add lookup :pokemon/growth-rate
+                           (name (or (:growth-rate r) :medium-fast))]
                           [:db/add lookup :pokemon/hp (long (:hp r))]
                           [:db/add lookup :pokemon/ataque (long (:ataque r))]
                           [:db/add lookup :pokemon/defesa (long (:defesa r))]
@@ -470,6 +504,17 @@
                           [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
                           [:db/add lookup :pokemon/veloc (long (:veloc r))]
                           [:db/add lookup :pokemon/amizade (long (:amizade r))]]
+                   (some? (:xp-legacy-residual r))
+                   (conj [:db/add lookup :pokemon/xp-legacy-residual
+                          (long (:xp-legacy-residual r))])
+                   ;; Nível legado de auditoria: grava na 1ª conversão; retries
+                   ;; preservam o valor já persistido no poke (não sobrescrevem).
+                   (let [legacy-nv (or (:xp-legacy-nivel poke)
+                                       (:xp-legacy-nivel r))]
+                     (some? legacy-nv))
+                   (conj [:db/add lookup :pokemon/xp-legacy-nivel
+                          (long (or (:xp-legacy-nivel poke)
+                                    (:xp-legacy-nivel r)))])
                    (not omit-hp-atual?)
                    (conj [:db/add lookup :pokemon/hp-atual hp-atual]))
          oferta-tx (when (not= (or (:ofertas-golpes r) (:golpes-oferecidos r) [])
@@ -1887,7 +1932,9 @@
              colecao (query-collection db sk)
              _ (coll/validate-index! idx (count colecao))
              poke (nth colecao idx)
-             xp-part (apply-pokemon-xp-tx poke quantidade)
+             ;; API de teste / `ganhar-xp-pokemon!`: unidade oficial.
+             ;; Combate/raid/ginásio usam apply-pokemon-xp-tx direto com :atividade.
+             xp-part (apply-pokemon-xp-tx poke quantidade {:unidade :oficial})
              rev (long (:save/revision save 0))
              tx (into (:tx xp-part)
                       [[:db/cas [:save/key sk] :save/revision rev (inc rev)]])]

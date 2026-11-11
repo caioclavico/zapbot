@@ -105,9 +105,10 @@
               :habilidade (or (:habilidade reg) (get reg "habilidade"))
               :raridade (or (:raridade reg) (get reg "raridade") "comum")}]
     (if (pos? xp-ant)
-      (:registro (xp/aplicar-xp-pokemon
+      (:registro (xp/aplicar-xp-atividade
                   (assoc base :amizade (min 255 (+ (:amizade base) 10)))
-                  xp-ant))
+                  xp-ant
+                  {:atividade :ginasio}))
       base)))
 
 (defn build-resolve-tx
@@ -167,7 +168,8 @@
                     (when (and poke (not (contains? occupy-indices i)))
                       (:tx (apply-pokemon-xp-tx
                             poke
-                            (gym/xp-ginasio-participante venceu? premio nocautes))))))
+                            (gym/xp-ginasio-participante venceu? premio nocautes)
+                            {:unidade :atividade :atividade :ginasio})))))
                 participacao)
         insignias' (if premio (assoc insignias gym-id dia) insignias)
         base-tx (cond-> (cond-> []

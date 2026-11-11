@@ -36,7 +36,18 @@
    :golpes [{:nome-exibicao "Tackle" :tipo "normal" :poder 40 :classe :fisico}]})
 
 (def ^:private mon-quase-nivel
-  (assoc mon-fraco :nome "Feebas" :xp-desde-nivel 7))
+  ;; Feebas = erratic. Residual legado 7/9 não chega a L6 com +3 XP oficial;
+  ;; posiciona 2 XP abaixo do limiar L6 para o grant de derrota (+3) subir.
+  (let [rate :erratic
+        base (pokemon.domain.growth/total-xp-for-level rate 5)
+        next (pokemon.domain.growth/total-xp-for-level rate 6)]
+    (assoc mon-fraco
+           :nome "Feebas"
+           :species "feebas"
+           :xp-progress-version "growth-v1"
+           :growth-rate rate
+           :xp-total (- next 2)
+           :xp-desde-nivel (- (- next 2) base))))
 
 (def ^:private mon-vitoria
   {:nome "Snorlax" :hp 200 :ataque 80 :defesa 50 :atq-esp 50 :def-esp 50 :veloc 40
@@ -397,25 +408,29 @@
   (let [{:keys [s]} (fresh! "poke-lvl")
         chat "c-pl" rid "raid-pl"]
     (boot! s chat "ash" mon-quase-nivel)
-    (let [antes (first (ports/list-collection s chat "ash" "a"))]
+    (let [antes (first (ports/list-collection s chat "ash" "a"))
+          span (- (pokemon.domain.growth/total-xp-for-level :erratic 6)
+                  (pokemon.domain.growth/total-xp-for-level :erratic 5))]
       (is (= 5 (long (:nivel antes))))
-      (is (= 7 (long (:xp-desde-nivel antes)))))
+      (is (= "growth-v1" (:xp-progress-version antes)))
+      (is (= (- span 2) (long (:xp-desde-nivel antes)))
+          "residual = span-2 (2 XP abaixo do limiar L6)"))
     (open! s chat rid chefe-tanque)
     (join-start! s chat rid ["ash"])
     (fight-until! s chat rid #{"derrota"})
     (let [depois (first (ports/list-collection s chat "ash" "a"))]
-      (is (= 6 (long (:nivel depois))) "7+3 XP → sobe (xp-por-nivel=9)")
+      (is (= 6 (long (:nivel depois))) "derrota +3 XP oficiais atravessa L5→L6")
       (is (= 1 (long (:xp-desde-nivel depois)))))))
 
 (deftest treinador-sobe-nivel-na-derrota
   (let [{:keys [s conn]} (fresh! "tr-lvl")
         chat "c-tl" rid "raid-tl"]
     (boot! s chat "ash")
-    ;; PE parcial: 4 → nível 1 (falta 1 para 5). Derrota +3 → total 7 → nível 2.
+    ;; Curva PE progressiva: L1→2 precisa 10. Partir de 8 + derrota 3 = 11 → Nv.2.
     (let [sk (id/save-key chat "ash" "a")
           e (d/pull (d/db conn) '[:save/revision] [:save/key sk])
           rev (long (:save/revision e 0))]
-      (d/transact conn {:tx-data [[:db/add [:save/key sk] :save/pe-raids 4]
+      (d/transact conn {:tx-data [[:db/add [:save/key sk] :save/pe-raids 8]
                                   [:db/cas [:save/key sk] :save/revision rev (inc rev)]]}))
     (let [antes (ports/get-save s chat "ash" "a")
           prog0 (xp/progresso-treinador (xp/xp-treinador-total antes))]
@@ -425,9 +440,8 @@
     (fight-until! s chat rid #{"derrota"})
     (let [depois (ports/get-save s chat "ash" "a")
           prog (xp/progresso-treinador (xp/xp-treinador-total depois))]
-      (is (= 7 (long (:pe-raids depois))))
+      (is (= 11 (long (:pe-raids depois))))
       (is (= 2 (:nivel prog))))))
-
 ;;;; Economia / saves especiais
 
 (deftest unknown-pending-derrota-sem-moedas

@@ -2,6 +2,7 @@
   "Coleção / registro de Pokémon — espelha pokemon->registro do legado
   (campos usados em consulta, HP/status, XP, golpes e evolução). Sem I/O."
   (:require [pokemon.domain.errors :as err]
+            [pokemon.domain.growth :as growth]
             [pokemon.domain.moves :as moves]
             [pokemon.domain.xp :as xp])
   (:import [java.util UUID]))
@@ -51,7 +52,23 @@
       (g :ivs) (assoc :ivs (g :ivs))
       (number? (g :hp-base)) (assoc :hp-base (long (g :hp-base)))
       (string? (g :hp-formula-version))
-      (assoc :hp-formula-version (str (g :hp-formula-version))))))
+      (assoc :hp-formula-version (str (g :hp-formula-version)))
+      (number? (g :xp-total)) (assoc :xp-total (long (g :xp-total)))
+      (string? (g :xp-progress-version))
+      (assoc :xp-progress-version (str (g :xp-progress-version)))
+      (number? (g :xp-legacy-residual))
+      (assoc :xp-legacy-residual (long (g :xp-legacy-residual)))
+      (or (keyword? (g :growth-rate)) (string? (g :growth-rate)))
+      (assoc :growth-rate (keyword (g :growth-rate)))
+      ;; Captura nova sem XP: total coerente com o nível na curva da espécie.
+      (and (nil? (g :xp-total))
+           (nil? (g :xp-progress-version))
+           (zero? (long (or (g :xp-desde-nivel) 0))))
+      (merge (let [seed (growth/ensure-growth-v1
+                         {:species (or (g :species) (g :nome))
+                          :nivel (long (or (g :nivel) 1))})]
+               (select-keys seed [:xp-total :xp-desde-nivel :xp
+                                  :xp-progress-version :growth-rate]))))))
 
 (defn validate-index!
   [idx colecao-count]
