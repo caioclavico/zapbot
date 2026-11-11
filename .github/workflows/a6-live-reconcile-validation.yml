@@ -40,8 +40,8 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin a6/live-baseline-8ef41c8
           base_ref=origin/a6/live-baseline-8ef41c8
-          # Tip atual da live-baseline (pós PR #76 / growth-037). Atualizar só com merge na base.
-          expected=9780ecbed4687f96f583de46c5d15a560bf2bfca
+          # Tip atual da live-baseline (pós PR #77 / cutover homolog). Atualizar só com merge na base.
+          expected=d0267bd6540033dfbafa5f70d601bb9962b24d6c
           test "$(git rev-parse "$base_ref")" = "$expected"
           merge_base="$(git merge-base HEAD "$base_ref")"
           test "$merge_base" = "$expected"
