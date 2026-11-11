@@ -162,12 +162,15 @@
         premio (when venceu? (gym/registrar-insignia insignias gym-id dia))
         vit-rew (when premio (gym/recompensa-vitoria premio (:pedra-roll request)))
         participacao-raw (or (:participacao request) {})
+        colecao-size (count colecao)
+        ;; Valida índices/nocautes antes de qualquer crédito (falha explícita).
         plano (gym/plano-recompensa-batalha
                {:venceu? venceu?
                 :participacao participacao-raw
                 :premio premio
                 :ocupacao ocupacao
-                :desafiante-player-key pk})
+                :desafiante-player-key pk
+                :collection-size colecao-size})
         parts (:participacao plano)
         pe-delta (long (:pe-desafiante plano 0))
         coins-delta (long (:moedas vit-rew 0))
@@ -200,7 +203,7 @@
         (keep
          (fn [[idx nocautes]]
            (let [i (long idx)
-                 poke (when (< i (count colecao)) (nth colecao i))
+                 poke (nth colecao i)
                  atividade (gym/atividade-participante venceu? nocautes)]
              (when (and poke (not (contains? occupy-indices i)) (pos? atividade))
                (let [part (apply-pokemon-xp-tx poke atividade xp-opts)
@@ -213,7 +216,8 @@
         xp-txs (mapcat :tx xp-grant-parts)
         pokemon-rewards-coll (mapv :reward xp-grant-parts)
         insignias' (if premio (assoc insignias gym-id dia) insignias)
-        ;; Defesa bem-sucedida: PE ao líder na mesma TX (idempotente via recibo).
+        ;; Defesa: +PE ao líder com CAS de :save/revision (e pe) — evita lost
+        ;; update sob concorrência; retry de transact-with-writer! relê o save.
         defense-pe-tx
         (when (and (:defendeu? plano) ocupacao (pos? (long (:pe-defensor plano 0))))
           (let [prev (id/parse-player-key (:player-key ocupacao))
@@ -221,10 +225,12 @@
                                      (:save-id ocupacao))
                 prev-save (save-entity db (:chat-id prev) (:player-id prev)
                                        (:save-id ocupacao))
-                prev-pe (long (:save/pe-ginasios prev-save 0))]
+                prev-rev (long (:save/revision prev-save 0))
+                prev-pe (long (:save/pe-ginasios prev-save 0))
+                delta (long (:pe-defensor plano))]
             (when (:save/key prev-save)
-              [[:db/add [:save/key prev-sk] :save/pe-ginasios
-                (+ prev-pe (long (:pe-defensor plano)))]])))
+              [[:db/cas [:save/key prev-sk] :save/revision prev-rev (inc prev-rev)]
+               [:db/cas [:save/key prev-sk] :save/pe-ginasios prev-pe (+ prev-pe delta)]])))
         base-tx (cond-> (cond-> []
                           (not omit-revision-cas?)
                           (conj [:db/cas [:save/key sk] :save/revision rev (inc rev)])

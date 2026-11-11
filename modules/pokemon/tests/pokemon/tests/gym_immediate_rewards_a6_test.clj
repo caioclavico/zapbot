@@ -6,10 +6,12 @@
             [pokemon.application.gym :as gym-app]
             [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
+            [pokemon.domain.errors :as err]
             [pokemon.domain.growth :as growth]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.xp :as xp]
-            [pokemon.infrastructure.datomic.store :as store]))
+            [pokemon.infrastructure.datomic.store :as store])
+  (:import [java.util.concurrent CountDownLatch CyclicBarrier TimeUnit]))
 
 (def ^:private system "odisseu-gym-imm-rew")
 (def ^:private storage-rel ".datomic-local/gym-imm-rew")
@@ -298,3 +300,145 @@
         :dia "2026-11-11" :participacao {0 1 1 0} :agora 1000})
       (is (= antes (count (ports/list-collection s chat "ash" "a"))))
       (is (nil? (ports/get-gym-occupation s chat "pedra"))))))
+
+;; --- Validação de participação ---
+
+(deftest participacao-indices-validos
+  (is (= {0 0} (gym/assert-participacao! {0 0})))
+  (is (= {0 1 2 0} (gym/assert-participacao! {0 1 2 0} {:collection-size 3})))
+  (is (= {2 3} (gym/assert-participacao! {"2" 3} {:collection-size 3})))
+  (is (= {0 1} (gym/assert-participacao! {0 1 "0" 1})))
+  (is (= {} (gym/assert-participacao! {}))))
+
+(deftest participacao-rejeita-invalidos
+  (doseq [[label raw]
+          [["negativo" {-1 0}]
+           ["fora-limite" {3 0}]
+           ["string-invalida" {"x" 0}]
+           ["keyword-invalida" {:foo 0}]
+           ["fracionario-idx" {1.5 0}]
+           ["nocaute-negativo" {0 -1}]
+           ["nocaute-fracionario" {0 1.5}]
+           ["nocaute-acima-max" {0 4}]
+           ["conflito-duplicado" {0 1 "0" 2}]]]
+    (testing label
+      (is (thrown-with-msg? Exception #"invalid_gym_participation"
+            (gym/assert-participacao! raw {:collection-size 3})))))
+  (is (thrown-with-msg? Exception #"invalid_gym_participation"
+        (gym/plano-recompensa-batalha
+         {:venceu? true :participacao {-1 0} :premio :primeira
+          :ocupacao nil :desafiante-player-key "x"}))))
+
+(deftest participacao-invalida-nao-paga-pe-xp
+  (let [s (fresh-store! "imm-bad-idx")
+        chat "c-bad"]
+    (boot! s chat "ash")
+    (seed-team3! s chat "ash")
+    (let [pe0 (:pe-ginasios (ports/get-save s chat "ash" "a") 0)
+          col0 (ports/list-collection s chat "ash" "a")
+          xp0 (mapv #(long (:xp-total % 0)) col0)]
+      (is (thrown? Exception
+            (gym-app/resolve-challenge!
+             s chat "ash"
+             {:operation-id "imm-bad" :gym-id "pedra" :venceu? false
+              :dia "2026-11-11" :participacao {-1 2} :agora 1000})))
+      (is (= pe0 (:pe-ginasios (ports/get-save s chat "ash" "a") 0)))
+      (is (= xp0 (mapv #(long (:xp-total % 0))
+                       (ports/list-collection s chat "ash" "a")))))))
+
+;; --- Concorrência do PE do defensor ---
+
+(deftest defesa-duas-batalhas-distintas-somam
+  (let [s (fresh-store! "imm-def-2")
+        chat "c-d2"]
+    (boot! s chat "brock")
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (seed-team3! s chat "brock")
+    (gym-app/resolve-challenge!
+     s chat "brock"
+     {:operation-id "d2-occ" :gym-id "pedra" :venceu? true
+      :dia "2026-11-10" :indices [0 1 2] :pedra-roll 0 :nome "Brock"
+      :participacao {0 0} :agora 1000})
+    (let [pe0 (:pe-ginasios (ports/get-save s chat "brock" "a"))]
+      (seed-team3! s chat "ash")
+      (gym-app/resolve-challenge!
+       s chat "ash"
+       {:operation-id "d2-ash" :gym-id "pedra" :venceu? false
+        :dia "2026-11-11" :participacao {0 0} :agora 2000})
+      (seed-team3! s chat "misty")
+      (gym-app/resolve-challenge!
+       s chat "misty"
+       {:operation-id "d2-misty" :gym-id "pedra" :venceu? false
+        :dia "2026-11-11" :participacao {0 0} :agora 3000})
+      (is (= (+ pe0 8 8) (:pe-ginasios (ports/get-save s chat "brock" "a")))))))
+
+(deftest defesa-concorrente-preserva-ambos-creditos
+  "Dois desafiantes perdem ao mesmo tempo: CAS+retry deve somar +8+8."
+  (let [s (fresh-store! "imm-def-race")
+        chat "c-dr"]
+    (boot! s chat "brock")
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (seed-team3! s chat "brock")
+    (gym-app/resolve-challenge!
+     s chat "brock"
+     {:operation-id "dr-occ" :gym-id "pedra" :venceu? true
+      :dia "2026-11-10" :indices [0 1 2] :pedra-roll 0 :nome "Brock"
+      :participacao {0 0} :agora 1000})
+    (seed-team3! s chat "ash")
+    (seed-team3! s chat "misty")
+    (let [pe0 (:pe-ginasios (ports/get-save s chat "brock" "a"))
+          rev0 (long (:revision (ports/get-save s chat "brock" "a") 0))
+          barrier (CyclicBarrier. 2)
+          latch (CountDownLatch. 2)
+          results (atom {})]
+      (doseq [[p op] [["ash" "dr-ash"] ["misty" "dr-misty"]]]
+        (.start
+         (Thread.
+          (fn []
+            (try
+              (.await barrier 5 TimeUnit/SECONDS)
+              (let [r (gym-app/resolve-challenge!
+                       s chat p
+                       {:operation-id op :gym-id "pedra" :venceu? false
+                        :dia "2026-11-11" :participacao {0 0}
+                        :agora 2000})]
+                (swap! results assoc p r))
+              (catch Exception ex
+                (swap! results assoc p {:error (err/error-code ex)
+                                        :msg (ex-message ex)}))
+              (finally
+                (.countDown latch)))))))
+      (is (.await latch 20 TimeUnit/SECONDS))
+      (let [rs @results
+            oks (filter (fn [[_ v]] (and (map? v) (nil? (:error v)) (false? (:duplicate v)))) rs)
+            pe1 (:pe-ginasios (ports/get-save s chat "brock" "a"))
+            rev1 (long (:revision (ports/get-save s chat "brock" "a") 0))]
+        (is (= 2 (count oks)) (str "ambos ok: " rs))
+        (is (= (+ pe0 16) pe1) "dois créditos de defesa persistidos")
+        (is (>= rev1 (+ rev0 2)) "revisão do defensor avançou por CAS")))))
+
+(deftest defesa-retry-mesma-operacao-nao-duplica
+  (let [s (fresh-store! "imm-def-retry")
+        chat "c-dret"
+        req {:operation-id "dret-1" :gym-id "pedra" :venceu? false
+             :dia "2026-11-11" :participacao {0 0} :agora 2000}]
+    (boot! s chat "brock")
+    (boot! s chat "ash")
+    (seed-team3! s chat "brock")
+    (gym-app/resolve-challenge!
+     s chat "brock"
+     {:operation-id "dret-occ" :gym-id "pedra" :venceu? true
+      :dia "2026-11-10" :indices [0 1 2] :pedra-roll 0 :nome "Brock"
+      :participacao {0 0} :agora 1000})
+    (seed-team3! s chat "ash")
+    (let [pe0 (:pe-ginasios (ports/get-save s chat "brock" "a"))
+          r1 (gym-app/resolve-challenge! s chat "ash" req)
+          pe1 (:pe-ginasios (ports/get-save s chat "brock" "a"))
+          r2 (gym-app/resolve-challenge! s chat "ash" req)
+          pe2 (:pe-ginasios (ports/get-save s chat "brock" "a"))]
+      (is (false? (:duplicate r1)))
+      (is (true? (:duplicate r2)))
+      (is (= (+ pe0 8) pe1))
+      (is (= pe1 pe2)))))

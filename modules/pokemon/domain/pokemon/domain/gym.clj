@@ -321,26 +321,90 @@
 (def atividade-derrota-batalha 2)
 (def atividade-por-nocaute 1)
 
+;; Limite canônico 3×3: um mon causa no máximo 3 nocautes (time adversário).
+(def nocautes-max-por-participante 3)
+
+(defn- parse-participacao-idx
+  "Índice canônico ≥0 ou ::invalid."
+  [k]
+  (let [idx (cond
+              (integer? k) (long k)
+              (string? k) (try (Long/parseLong (str/trim k))
+                               (catch Exception _ ::invalid))
+              (keyword? k) (try (Long/parseLong (name k))
+                                (catch Exception _ ::invalid))
+              :else ::invalid)]
+    (cond
+      (= ::invalid idx) ::invalid
+      (neg? (long idx)) ::invalid
+      :else (long idx))))
+
+(defn- parse-participacao-nocautes
+  "Nocautes inteiro 0..max ou ::invalid. Rejeita fracionários/negativos."
+  [v]
+  (if-not (integer? v)
+    ::invalid
+    (let [n (long v)]
+      (if (or (neg? n) (> n nocautes-max-por-participante))
+        ::invalid
+        n))))
+
+(defn assert-participacao!
+  "Valida e normaliza participação. Falha explícita em dados malformados.
+  opts: `:collection-size` — rejeita índice ≥ tamanho da coleção.
+  Chaves duplicadas após normalização (ex. 0 e \"0\"): mesmo valor → uma
+  entrada; valores conflitantes → erro (não soma)."
+  ([participacao] (assert-participacao! participacao nil))
+  ([participacao {:keys [collection-size]}]
+   (let [raw (or participacao {})]
+     (when-not (map? raw)
+       (throw (err/error :invalid_gym_participation
+                         {:reason :not-a-map :value raw})))
+     (reduce-kv
+      (fn [acc k v]
+        (let [idx (parse-participacao-idx k)
+              kos (parse-participacao-nocautes v)]
+          (when (= ::invalid idx)
+            (throw (err/error :invalid_gym_participation
+                              {:reason :invalid-index :key k})))
+          (when (= ::invalid kos)
+            (throw (err/error :invalid_gym_participation
+                              {:reason :invalid-knockouts :key k :value v
+                               :max nocautes-max-por-participante})))
+          (when (and (some? collection-size) (not (neg? (long collection-size)))
+                     (>= idx (long collection-size)))
+            (throw (err/error :invalid_gym_participation
+                              {:reason :index-out-of-bounds
+                               :idx idx :size (long collection-size)})))
+          (if (contains? acc idx)
+            (let [prev (get acc idx)]
+              (if (= prev kos)
+                acc
+                (throw (err/error :invalid_gym_participation
+                                  {:reason :duplicate-index-conflict
+                                   :idx idx :a prev :b kos}))))
+            (assoc acc idx kos))))
+      {}
+      raw))))
+
 (defn normalizar-participacao
-  "Mapa idx→nocautes com chaves long. Ignora entradas inválidas.
-  Ausência de chave = não participou (não inventa banco/reserva)."
-  [participacao]
-  (reduce-kv
-   (fn [acc k v]
-     (let [idx (cond
-                 (integer? k) (long k)
-                 (string? k) (try (Long/parseLong (str k)) (catch Exception _ nil))
-                 (keyword? k) (try (Long/parseLong (name k)) (catch Exception _ nil))
-                 :else nil)]
-       (if idx
-         (assoc acc idx (max 0 (long (or v 0))))
-         acc)))
-   {}
-   (or participacao {})))
+  "Normaliza idx→nocautes. Delega a `assert-participacao!` (falha em inválidos).
+  Compat: 1-arity sem bound de coleção; 2-arity aceita opts ou collection-size."
+  ([participacao]
+   (assert-participacao! participacao nil))
+  ([participacao opts-or-size]
+   (assert-participacao!
+    participacao
+    (cond
+      (map? opts-or-size) opts-or-size
+      (integer? opts-or-size) {:collection-size (long opts-or-size)}
+      (nil? opts-or-size) nil
+      :else (throw (err/error :invalid_gym_participation
+                              {:reason :bad-opts :value opts-or-size}))))))
 
 (defn total-nocautes
   [participacao]
-  (reduce + 0 (vals (normalizar-participacao participacao))))
+  (reduce + 0 (vals (assert-participacao! participacao nil))))
 
 (defn atividade-participante
   "Pontos de atividade (não XP oficial) para um Pokémon que participou.
@@ -378,9 +442,13 @@
 
 (defn plano-recompensa-batalha
   "Plano puro e determinístico das recompensas de uma batalha de ginásio.
-  Retorna breakdown de PE + atividade por participante (sem XP oficial)."
-  [{:keys [venceu? participacao premio ocupacao desafiante-player-key]}]
-  (let [parts (normalizar-participacao participacao)
+  Retorna breakdown de PE + atividade por participante (sem XP oficial).
+  `collection-size` opcional: rejeita índices fora da coleção."
+  [{:keys [venceu? participacao premio ocupacao desafiante-player-key
+           collection-size]}]
+  (let [parts (assert-participacao! participacao
+                                    (when (some? collection-size)
+                                      {:collection-size collection-size}))
         pe-bat (pe-resultado-batalha venceu? parts)
         pe-ko (* pe-por-nocaute (total-nocautes parts))
         pe-base (- pe-bat pe-ko)
