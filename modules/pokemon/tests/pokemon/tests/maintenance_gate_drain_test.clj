@@ -120,3 +120,18 @@
     (let [g (gate/create (str dir))]
       (is (= :quiescent (:phase (gate/status g))))
       (is (false? (gate/acquire-write! g))))))
+
+(deftest frozen-marker-survives-restart-and-blocks-until-resume
+  "Rollback note: JVM antiga sem :frozen trata fase desconhecida como :quiescent
+   (ainda fail-closed). Esta JVM preserva :frozen explicitamente."
+  (let [dir (tmp-dir)
+        path (str dir)
+        g (gate/create path)]
+    (is (true? (:quiescent? (gate/enter! g 100))))
+    (gate/freeze! g)
+    (let [restarted (gate/create path)]
+      (is (= :frozen (:phase (gate/status restarted))))
+      (is (false? (gate/acquire-write! restarted)))
+      (is (false? (gate/acquire-read! restarted)))
+      (gate/resume! restarted)
+      (is (= :open (:phase (gate/status restarted)))))))
