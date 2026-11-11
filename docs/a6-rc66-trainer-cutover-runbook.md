@@ -24,8 +24,8 @@
 6. Stop controlado Node → JVM (`docker stop`, sem `-v`, restart=`no`).
 7. Cold backup atualizado da janela (helper `a6_cutover_backup.py`) + verify/checksums.
 8. Start JVM candidata (ainda `frozen` ou quiescent conforme marker).
-9. Aplicar migration **036** apenas com writer único e marker fechado (procedimento de apply homologado; sem backfill).
-10. Validar schema 036 + health bridge.
+9. Aplicar migration **036** de forma explícita e idempotente (`pokemon.infrastructure.datomic.schema/install!` no writer único). Leituras HTTP **não** garantem o apply — confirmar marcador `pokemon/036-trainer-level-rewards` e atributos `:save/trainer-xp-level-progress` / `:trainer-level-reward/*`. Sem backfill: entidades de progresso residual devem permanecer 0 até o primeiro grant de PE.
+10. Validar schema 036 + health bridge. Separar invariantes canônicos (jogadores/saves/Pokémon/moedas/XP armazenado) de campos **derivados** na apresentação PE (nível/capacidade exibidos podem divergir do fingerprint clássico 035 até o residual ser persistido por gameplay).
 11. **Resume JVM → `open`**.
 12. Start/restart Node (Node **não** sobe com JVM `frozen` — platform hydrate precisa de leitura).
 13. Confirmar WhatsApp READY; Node ainda pode estar `quiescent`.
