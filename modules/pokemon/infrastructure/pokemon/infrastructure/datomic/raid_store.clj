@@ -840,7 +840,13 @@
                  live0))
         xp-qtd (if live xp-base 0)
         xp-part (when (and live (pos? xp-qtd))
-                  (apply-pokemon-xp-tx live xp-qtd))
+                  (apply-pokemon-xp-tx live xp-qtd
+                                       {:unidade :atividade
+                                        :atividade :raid
+                                        :categoria-raid (or (:boss-categoria raid)
+                                                            (:categoria raid)
+                                                            (:category raid)
+                                                            (:tier raid))}))
         coin-part (when (pos? moedas)
                     (economy-store/apply-delta-tx
                      {:sk sk :save save :delta moedas

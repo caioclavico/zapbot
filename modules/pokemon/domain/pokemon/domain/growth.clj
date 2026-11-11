@@ -134,49 +134,97 @@
       (- (total-xp-for-level rate (inc n))
          (total-xp-for-level rate n)))))
 
-(defn convert-legacy-residual
-  "Converte registro legado (residual + limiar 9) → growth-v1 preservando nível.
+(defn- registro-get
+  [registro & ks]
+  (some (fn [k]
+          (when (contains? registro k)
+            (get registro k)))
+        ks))
 
-  Fração residual/9 é aplicada ao intervalo oficial do mesmo nível.
+(defn- registro-has?
+  [registro & ks]
+  (boolean (some #(contains? registro %) ks)))
+
+(def ^{:doc "Vitórias legadas × este fator = residual flat-9 (treinador cljs)."}
+  legacy-xp-por-vitoria 3)
+
+(defn legacy-residual-xp
+  "Precedência histórica do residual flat-9:
+  1) `:xp-desde-nivel`  2) `:xp`  3) `vitorias-desde-nivel × 3`  4) 0."
+  [registro]
+  (cond
+    (registro-has? registro :xp-desde-nivel "xp-desde-nivel")
+    (max 0 (long (registro-get registro :xp-desde-nivel "xp-desde-nivel")))
+
+    (registro-has? registro :xp "xp")
+    (max 0 (long (registro-get registro :xp "xp")))
+
+    (registro-has? registro :vitorias-desde-nivel "vitorias-desde-nivel")
+    (max 0 (* legacy-xp-por-vitoria
+              (long (registro-get registro :vitorias-desde-nivel "vitorias-desde-nivel"))))
+
+    :else 0))
+
+(defn convert-legacy-residual
+  "Converte registro legado (residual + limiar 9) → growth-v1.
+
+  Política de fronteira (espelha `normalizar-xp-registro` do cljs):
+  - Nível legado é piso (nunca reduz).
+  - `floor(residual/9)` vira subidas de nível (cap 100).
+  - O resto `(residual rem 9)/9` mapeia para o span oficial do nível resultante.
+  - Residual exatamente múltiplo de 9 → novo nível com residual 0 (sem XP
+    no limiar do próximo nível com nível antigo).
+  - Em L100, XP total = teto da curva; progresso excedente só em metadados.
+
   Idempotente se `:xp-progress-version` já for growth-v1."
   [registro]
-  (let [ver (str (or (get registro :xp-progress-version)
-                     (get registro "xp-progress-version")
+  (let [ver (str (or (registro-get registro :xp-progress-version "xp-progress-version")
                      ""))]
     (if (= ver progress-version)
       registro
-      (let [species (or (get registro :species) (get registro "species")
-                        (get registro :nome) (get registro "nome"))
+      (let [species (or (registro-get registro :species "species" :nome "nome"))
             rate (growth-rate-for-species species)
-            nivel (max 1 (min nivel-maximo
-                              (long (get registro :nivel
-                                         (get registro "nivel"
-                                              (get registro :level
-                                                   (get registro "level" 1)))))))
-            legacy-residual (max 0 (long (get registro :xp-desde-nivel
-                                              (get registro "xp-desde-nivel"
-                                                   (or (get registro :xp)
-                                                       (get registro "xp")
-                                                       0)))))
+            nivel0 (max 1 (min nivel-maximo
+                               (long (or (registro-get registro :nivel "nivel"
+                                                       :level "level")
+                                         1))))
+            legacy-residual (legacy-residual-xp registro)
+            room (max 0 (- nivel-maximo nivel0))
+            extra (if (>= nivel0 nivel-maximo)
+                    0
+                    (min room (quot legacy-residual legacy-xp-por-nivel)))
+            rem (if (>= nivel0 nivel-maximo)
+                  0
+                  (long (mod legacy-residual legacy-xp-por-nivel)))
+            nivel (min nivel-maximo (+ nivel0 extra))
             span (level-span rate nivel)
             frac (if (pos? legacy-xp-por-nivel)
-                   (min 1.0 (/ (double legacy-residual)
-                               (double legacy-xp-por-nivel)))
+                   (/ (double rem) (double legacy-xp-por-nivel))
                    0.0)
-            mapped (long (Math/floor (* frac (double span))))
+            ;; rem ∈ 0..8 ⇒ frac < 1 ⇒ mapped < span (nunca pousa no limiar L+1).
+            mapped (if (or (>= nivel nivel-maximo) (zero? span))
+                     0
+                     (long (Math/floor (* frac (double span)))))
             base (total-xp-for-level rate nivel)
             xp-total (if (>= nivel nivel-maximo)
                        (total-xp-for-level rate nivel-maximo)
                        (+ base mapped))
-            residual (residual-in-level rate nivel xp-total)]
+            residual (residual-in-level rate nivel xp-total)
+            nivel-from-xp (pokemon-level-from-total-xp rate xp-total)
+            ;; Consistência: nível derivado do total nunca abaixo do convertido;
+            ;; se o total implica nível maior (não esperado), sobe.
+            nivel' (max nivel nivel-from-xp)
+            xp-total' (max xp-total (total-xp-for-level rate nivel'))
+            residual' (residual-in-level rate nivel' xp-total')]
         (-> registro
-            (assoc :nivel nivel
-                   :xp-total xp-total
-                   :xp-desde-nivel residual
-                   :xp residual
+            (assoc :nivel nivel'
+                   :xp-total xp-total'
+                   :xp-desde-nivel residual'
+                   :xp residual'
                    :xp-progress-version progress-version
                    :growth-rate rate
-                   :xp-legacy-residual legacy-residual))))))
+                   :xp-legacy-residual legacy-residual
+                   :xp-legacy-nivel nivel0))))))
 
 (defn ensure-growth-v1
   "Garante campos growth-v1; registros novos com só nível recebem total da curva."

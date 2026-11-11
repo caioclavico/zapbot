@@ -46,20 +46,28 @@
   [poke kos treinador-nome]
   (when poke
     (let [xp-amt (pvp/xp-por-nocautes kos)
-          applied (when (pos? xp-amt) (xp/aplicar-xp-pokemon poke xp-amt))
+          applied (when (pos? xp-amt)
+                    (xp/aplicar-xp-atividade poke xp-amt {:atividade :pvp}))
           r (when applied (:registro applied))
           lookup [:pokemon/id-pokemon (:id-pokemon poke)]]
       {:tx (when r
-             [[:db/add lookup :pokemon/level (long (:nivel r))]
-              [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
-              [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
-              [:db/add lookup :pokemon/hp (long (:hp r))]
-              [:db/add lookup :pokemon/ataque (long (:ataque r))]
-              [:db/add lookup :pokemon/defesa (long (:defesa r))]
-              [:db/add lookup :pokemon/atq-esp (long (:atq-esp r))]
-              [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
-              [:db/add lookup :pokemon/veloc (long (:veloc r))]
-              [:db/add lookup :pokemon/amizade (long (:amizade r))]])
+             (cond-> [[:db/add lookup :pokemon/level (long (:nivel r))]
+                      [:db/add lookup :pokemon/xp (long (:xp-desde-nivel r))]
+                      [:db/add lookup :pokemon/xp-desde-nivel (long (:xp-desde-nivel r))]
+                      [:db/add lookup :pokemon/hp (long (:hp r))]
+                      [:db/add lookup :pokemon/ataque (long (:ataque r))]
+                      [:db/add lookup :pokemon/defesa (long (:defesa r))]
+                      [:db/add lookup :pokemon/atq-esp (long (:atq-esp r))]
+                      [:db/add lookup :pokemon/def-esp (long (:def-esp r))]
+                      [:db/add lookup :pokemon/veloc (long (:veloc r))]
+                      [:db/add lookup :pokemon/amizade (long (:amizade r))]]
+               (some? (:xp-total r))
+               (conj [:db/add lookup :pokemon/xp-total (long (:xp-total r))])
+               (some? (:xp-progress-version r))
+               (conj [:db/add lookup :pokemon/xp-progress-version
+                      (str (:xp-progress-version r))])
+               (some? (:growth-rate r))
+               (conj [:db/add lookup :pokemon/growth-rate (name (:growth-rate r))])))
        :summary {:nome (or (:nome poke) (:species poke) "?")
                  :treinador (or treinador-nome "?")
                  :nocautes (long kos)

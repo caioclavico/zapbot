@@ -351,7 +351,7 @@
                         (assoc :xp-total (long (:pokemon/xp-total p)))
                         (some? (:pokemon/xp-progress-version p))
                         (assoc :xp-progress-version (:pokemon/xp-progress-version p)))
-                  applied (xp/aplicar-xp-pokemon reg 3)
+                  applied (xp/aplicar-xp-atividade reg 3 {:atividade :captura})
                   n (:registro applied)
                   nome (:nome applied)
                   lookup [:pokemon/id-pokemon (:pokemon/id-pokemon p)]]

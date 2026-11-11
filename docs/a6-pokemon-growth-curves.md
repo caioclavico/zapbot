@@ -34,11 +34,14 @@ Espécie-base via `growth-rate-for-species` + `species-form-aliases` (formas alt
 
 ## Conversão legado → growth-v1
 
-1. Preserva o **nível** atual.
-2. `fração = min(1, residual_legado / 9)`.
-3. `xp-total = total(nível) + floor(fração × span_oficial(nível))`.
-4. Grava `:xp-legacy-residual`, `:xp-progress-version=growth-v1`.
-5. Idempotente: se a versão já é `growth-v1`, não reconverte.
+Precedência do residual flat-9: `xp-desde-nivel` → `xp` → `vitorias-desde-nivel × 3` → 0.
+
+1. Nível legado é **piso** (nunca reduz).
+2. `extra = floor(residual / 9)` (cap 100) → sobe níveis como o cljs `normalizar-xp-registro`.
+3. `rem = residual mod 9`; `xp-total = total(nível') + floor((rem/9) × span(nível'))`.
+4. Residual múltiplo de 9 → nível seguinte com residual 0 (sem pousar no limiar L+1 com nível antigo).
+5. Grava `:xp-legacy-residual`, `:xp-legacy-nivel`, `:xp-progress-version=growth-v1`.
+6. Idempotente: se a versão já é `growth-v1`, não reconverte.
 
 Não há backfill live nesta entrega — conversão lazy no primeiro grant/leitura de progresso.
 
@@ -49,18 +52,10 @@ Não há backfill live nesta entrega — conversão lazy no primeiro grant/leitu
 
 ## Balanceamento
 
-Com `pokemon-xp-grant-scale=1` e grant típico de 3 XP/vitória (medium-fast):
-
-| Alvo | XP acumulado | Vitórias ≈ |
-|---|---:|---:|
-| Nv.10 | 1 000 | ~333 |
-| Nv.20 | 8 000 | ~2 667 |
-| Nv.30 | 27 000 | ~9 000 |
-| Nv.50 | 125 000 | ~41 667 |
-| Nv.75 | 421 875 | ~140 625 |
-| Nv.100 | 1 000 000 | ~333 333 |
-
-O legado flat (~3 vitórias/nível) era artificialmente rápido nos níveis altos. A política de escala **separada** das tabelas oficiais é `pokemon.domain.xp/pokemon-xp-grant-scale`. Default `1` (autêntico). Aumentar só com GO explícito e testes de ritmo.
+Ver `docs/a6-pokemon-growth-balance.md`. Grants de combate/raid/ginásio usam
+`calcular-ganho-pokemon` (pontos de atividade → fração do span oficial). Ritmo
+alvo ≈ 3 vitórias/nível (~297 vitórias até L100 medium-fast). Tabelas PokéAPI
+intactas.
 
 ## Migration
 

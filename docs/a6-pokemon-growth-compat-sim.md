@@ -4,13 +4,30 @@ Baseline de referência (não imutável): 18 jogadores · 54 saves · 759 Pokém
 
 ## Política aplicada (dry-run lógico)
 
-Para cada Pokémon legado `{nível L, xp-desde-nivel R}`:
+Para cada Pokémon legado:
 
-1. Resolver curva pela espécie-base.
-2. `fração = min(1, R/9)`.
-3. `xp-total' = total_curva(L) + floor(fração × span_curva(L))`.
-4. Nível permanece `L` (nunca diminui).
-5. IVs, golpes, HP, shiny, dono, apelido intactos.
+1. Resolver residual: `xp-desde-nivel` | `xp` | `vitorias×3` | 0.
+2. Resolver curva pela espécie-base.
+3. `extra = floor(R/9)` (cap 100−L); `rem = R mod 9`.
+4. `L' = L + extra`; `xp-total' = total(L') + floor((rem/9)×span(L'))`.
+5. Nível nunca diminui; pode subir se R≥9 (espelha normalização cljs).
+6. IVs, golpes, HP, shiny, dono, apelido intactos na conversão de campos XP.
+
+### Amostra sintética (759 registros, sem PII)
+
+Fingerprints da execução local (conversão pura, sem Datomic):
+
+```
+quantidade              759
+niveis-reduzidos          0
+subiram-residual>=9      63
+sum-nivel-antes       17185
+sum-nivel-depois      17248
+sum-xp-total       59971033
+```
+
+Restore cold de produção: **não executado** nesta correção (sem GO). Script:
+`scripts/a6_growth_compat_dry_run.clj`.
 
 ## Propriedades verificadas em testes
 

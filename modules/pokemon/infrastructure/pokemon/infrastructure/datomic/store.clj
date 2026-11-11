@@ -462,9 +462,13 @@
   - `:omit-hp-atual?` — quando true, não emite `:pokemon/hp-atual` (caller já sincroniza
     via `pokemon-hp-status-tx`). Preferir com override em turnos de batalha."
   ([poke quantidade] (apply-pokemon-xp-tx poke quantidade nil))
-  ([poke quantidade {:keys [hp-atual-override omit-hp-atual?] :as _opts}]
+  ([poke quantidade {:keys [hp-atual-override omit-hp-atual? unidade]
+                    :or {unidade :atividade}
+                    :as opts}]
    (let [nivel-antes (long (or (:nivel poke) 1))
-         applied (xp/aplicar-xp-pokemon poke quantidade)
+         xp-opts (cond-> (dissoc (or opts {}) :hp-atual-override :omit-hp-atual?)
+                   true (assoc :unidade unidade))
+         applied (xp/aplicar-xp-pokemon poke quantidade xp-opts)
          r0 (:registro applied)
          prepared (level-evo/prepare r0)
          r1 (if prepared
@@ -1916,7 +1920,9 @@
              colecao (query-collection db sk)
              _ (coll/validate-index! idx (count colecao))
              poke (nth colecao idx)
-             xp-part (apply-pokemon-xp-tx poke quantidade)
+             ;; API de teste / `ganhar-xp-pokemon!`: unidade oficial.
+             ;; Combate/raid/ginásio usam apply-pokemon-xp-tx direto com :atividade.
+             xp-part (apply-pokemon-xp-tx poke quantidade {:unidade :oficial})
              rev (long (:save/revision save 0))
              tx (into (:tx xp-part)
                       [[:db/cas [:save/key sk] :save/revision rev (inc rev)]])]

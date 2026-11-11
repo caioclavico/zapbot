@@ -65,7 +65,8 @@
         player "misty"]
     (boot-trainer! s chat player)
     (collection/adicionar-pokemon! s chat player magikarp 80 nil)
-    (let [subiu (collection/ganhar-xp-pokemon! s chat player 0 9)
+    ;; Magikarp = slow: L1→2 exige 10 XP oficiais (PokéAPI).
+    (let [subiu (collection/ganhar-xp-pokemon! s chat player 0 10)
           poke (first (:colecao (collection/consultar-treinador s chat player)))]
       (is (= 2 (:nivel subiu)))
       (is (= 2 (:nivel poke)))
@@ -75,10 +76,11 @@
       (collection/registrar-vitoria-treinador! s chat player))
     (let [perfil (:perfil (collection/consultar-treinador s chat player))]
       ;; 5 vitórias + 3 PE da conquista "Primeira vitória" (master deriva xp-insignias).
+      ;; Curva PE progressiva (036): L1→2 exige 10 PE; 8 PE permanece no Nv.1.
       (is (= 5 (:vitorias-treinador perfil)))
       (is (= 3 (:xp-insignias perfil)))
-      (is (= 2 (:nivel perfil)))
-      (is (= 3 (:xp-atual perfil))))))
+      (is (= 1 (:nivel perfil)))
+      (is (= 8 (:xp-atual perfil))))))
 
 (deftest moedas-inventario-idempotentes
   (let [s (fresh-store! "c-eco")

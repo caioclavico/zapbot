@@ -148,3 +148,123 @@
       (is (= "growth-v1" (:xp-progress-version poke)))
       (is (some? (:xp-total poke)))
       (is (= :medium-slow (:growth-rate poke))))))
+
+(deftest legacy-vitorias-desde-nivel-precedence
+  (testing "somente vitórias"
+    (let [r {:species "pikachu" :nivel 10 :vitorias-desde-nivel 2
+             :hp 50 :hp-atual 50 :ataque 40 :defesa 40
+             :atq-esp 40 :def-esp 40 :veloc 40}
+          c (growth/convert-legacy-residual r)]
+      (is (= 6 (:xp-legacy-residual c)))
+      (is (= 10 (:nivel c)))
+      (is (= "growth-v1" (:xp-progress-version c)))
+      (let [span (growth/level-span :medium-fast 10)
+            expected (+ (growth/total-xp-for-level :medium-fast 10)
+                        (long (Math/floor (* (/ 6.0 9.0) span))))]
+        (is (= expected (:xp-total c))))))
+  (testing "xp-desde-nivel tem precedência sobre vitórias"
+    (let [c (growth/convert-legacy-residual
+             {:species "pikachu" :nivel 5 :xp-desde-nivel 1 :vitorias-desde-nivel 9
+              :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})]
+      (is (= 1 (:xp-legacy-residual c)))))
+  (testing "idempotência"
+    (let [c1 (growth/convert-legacy-residual
+              {:species "eevee" :nivel 7 :vitorias-desde-nivel 1
+               :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})
+          c2 (growth/convert-legacy-residual c1)]
+      (is (= (:xp-total c1) (:xp-total c2)))
+      (is (= (:nivel c1) (:nivel c2))))))
+
+(deftest legacy-residual-boundaries
+  (doseq [[res expect-extra]
+          [[0 0] [1 0] [4 0] [8 0] [9 1] [10 1] [18 2]]]
+    (testing (str "residual=" res)
+      (let [c (growth/convert-legacy-residual
+               {:species "pikachu" :nivel 20 :xp-desde-nivel res
+                :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})
+            nivel' (:nivel c)
+            rate :medium-fast]
+        (is (= (+ 20 expect-extra) nivel')
+            "nível sobe só pelo excesso flat-9; nunca desce")
+        (is (<= (growth/total-xp-for-level rate nivel')
+                (:xp-total c)
+                (if (>= nivel' 100)
+                  (growth/total-xp-for-level rate 100)
+                  (dec (growth/total-xp-for-level rate (inc nivel'))))))
+        (is (= nivel' (growth/pokemon-level-from-total-xp rate (:xp-total c)))
+            "nível persistido alinhado ao total"))))
+  (testing "nível 99 com residual 9 sobe a 100"
+    (let [c (growth/convert-legacy-residual
+             {:species "pikachu" :nivel 99 :xp-desde-nivel 9
+              :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})]
+      (is (= 100 (:nivel c)))
+      (is (= (growth/total-xp-for-level :medium-fast 100) (:xp-total c)))
+      (is (zero? (:xp-desde-nivel c)))))
+  (testing "nível 100 não sobe nem acumula residual"
+    (let [c (growth/convert-legacy-residual
+             {:species "pikachu" :nivel 100 :xp-desde-nivel 20
+              :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})]
+      (is (= 100 (:nivel c)))
+      (is (= (growth/total-xp-for-level :medium-fast 100) (:xp-total c)))
+      (is (= 20 (:xp-legacy-residual c))))))
+
+(deftest datomic-vitorias-only-roundtrip
+  (let [client (persistence/client {:system (str "gvic-" (java.util.UUID/randomUUID))
+                                    :storage-dir (str "/tmp/gvic-" (java.util.UUID/randomUUID))})
+        conn (persistence/ensure-db! client "gvic")
+        s (store/make-store conn)]
+    (ports/ensure-schema! s)
+    (trainer/create-trainer! s {:chat-id "c" :player-id "ash"})
+    (collection/adicionar-pokemon!
+     s "c" "ash"
+     {:id-pokemon "v1" :species "pikachu" :nome "Pikachu"
+      :nivel 12 :vitorias-desde-nivel 2
+      :hp 35 :hp-atual 35 :ataque 55 :defesa 40
+      :atq-esp 50 :def-esp 50 :veloc 90 :tipos ["electric"] :amizade 70
+      :golpes [{:slug "thunder-shock" :nome-exibicao "Thunder Shock" :tipo "electric"
+                :poder 40 :classe :especial}]}
+     20 nil)
+    ;; 1 XP oficial força ensure-growth-v1 / conversão lazy sem subir por atividade.
+    (collection/ganhar-xp-pokemon! s "c" "ash" 0 1)
+    (let [poke (first (ports/list-collection s "c" "ash" "a"))
+          again (xp/aplicar-xp-pokemon poke 0)]
+      (is (= 12 (:nivel poke)))
+      (is (= "growth-v1" (:xp-progress-version poke)))
+      (is (pos? (:xp-total poke)))
+      (is (= (:xp-total poke) (get-in again [:registro :xp-total]))
+          "retry não duplica XP de conversão"))))
+
+(deftest balanced-activity-grant-pacing
+  (let [base {:species "pikachu" :nivel 24 :xp-desde-nivel 0
+              :xp-progress-version "growth-v1" :growth-rate :medium-fast
+              :xp-total (growth/total-xp-for-level :medium-fast 24)
+              :hp 100 :hp-atual 100 :ataque 50 :defesa 50
+              :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70}
+        span (growth/level-span :medium-fast 24)
+        win (xp/calcular-ganho-pokemon base xp/xp-por-vitoria)
+        loss (xp/calcular-ganho-pokemon base xp/xp-por-derrota)
+        raid (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "lendario"})]
+    (is (= (long (Math/floor (* span (/ 3.0 9.0)))) win)
+        "vitória ≈ 1/3 do span (3 vitórias/nível)")
+    (is (= (long (Math/floor (* span (/ 1.0 9.0)))) loss))
+    (is (> raid win) "raid lendária > vitória comum")
+    (is (<= raid (long (Math/floor (* span xp/pokemon-xp-grant-span-cap)))))
+    (let [[after n]
+          (loop [r base n 0]
+            (if (or (>= (long (:nivel r)) 25) (> n 6))
+              [r n]
+              (recur (:registro (xp/aplicar-xp-atividade r xp/xp-por-vitoria))
+                     (inc n))))]
+      (is (= 25 (:nivel after)))
+      (is (<= 3 n 4) "≈3–4 vitórias por nível (arredondamento do span)"))))
+
+(deftest balance-simulation-milestones-medium-fast
+  (testing "Vitórias estimadas até marcos com ritmo ~3/nível (não é regra PokéAPI)."
+    (let [wins-to (fn [target]
+                    (* 3 (dec (long target))))]
+      (is (= 27 (wins-to 10)))
+      (is (= 57 (wins-to 20)))
+      (is (= 87 (wins-to 30)))
+      (is (= 147 (wins-to 50)))
+      (is (= 222 (wins-to 75)))
+      (is (= 297 (wins-to 100))))))
