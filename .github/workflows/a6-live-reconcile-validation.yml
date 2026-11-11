@@ -47,8 +47,14 @@ jobs:
             modules/pokemon apps/odisseu pokemon-service migrations
           echo "Verified live base $merge_base; protected gameplay/schema paths unchanged."
 
-      - name: Whitespace / conflict markers
-        run: git diff --check origin/a6/live-baseline-8ef41c8...HEAD
+      - name: Whitespace / conflict markers on code paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Evidências/logs em artifacts/ podem conter trailing spaces de stdout.
+          git diff --check origin/a6/live-baseline-8ef41c8...HEAD -- \
+            .github scripts test package.json package-lock.json Dockerfile docs \
+            ':(exclude)artifacts/**'
 
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

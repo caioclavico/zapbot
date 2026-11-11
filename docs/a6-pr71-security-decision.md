@@ -1,13 +1,13 @@
 # Decisão de segurança — PR #71 (Node final)
 
-Data: 2026-11-10  
-PR: https://github.com/caioclavico/zapbot/pull/71  
+Data: 2026-11-10
+PR: https://github.com/caioclavico/zapbot/pull/71
 Base: `a6/live-baseline-8ef41c8` @ `9465477…` (inclui PR #70)
 
 ## Resumo executivo
 
-O PR #71 reduz superfície npm (sharp/adm-zip) e endurece o download de sprites. **Não elimina** os 4 Critical Debian nem o Chromium 156 High herdados.  
-**Recomendação:** integrar o código à live-baseline (**GO para merge de código**, se CI verde e homologação administrativa).  
+O PR #71 reduz superfície npm (sharp/adm-zip) e endurece o download de sprites. **Não elimina** os 4 Critical Debian nem o Chromium 156 High herdados.
+**Recomendação:** integrar o código à live-baseline (**GO para merge de código**, se CI verde e homologação administrativa).
 **Implantação Node-only permanece NO-GO** até o responsável aceitar formalmente os riscos residuais do digest final — esta decisão **não** registra essa aceitação.
 
 ## Inventário Critical (individual)
