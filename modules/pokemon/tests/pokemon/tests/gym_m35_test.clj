@@ -110,11 +110,15 @@
       (is (false? (:duplicate r)))
       (is (= :primeira (:premio r)))
       (is (= 0 (get-in r [:reward :moedas])))
-      (is (= 5 (:pe-delta r)))
+      ;; Vitória +10, 2 KO ×2 PE, conquista +15 → 29
+      (is (= 29 (:pe-delta r)))
+      (is (= 10 (:pe-batalha r)))
+      (is (= 4 (:pe-nocautes r)))
+      (is (= 15 (:pe-conquista r)))
       (is (true? (:occupied? r)))
       (is (= "pedra-lua" (:item-id (first (filter #(= "pedra-lua" (:item-id %)) inv)))))
       (is (= {"pedra" "2026-10-17"} (:ginasios save)))
-      (is (= 5 (:pe-ginasios save)))
+      (is (= 29 (:pe-ginasios save)))
       (is (= 0 (:coins save)))
       (is (= player (:pid occ)))
       (is (= "a" (:save-id occ)))
@@ -141,9 +145,16 @@
               :agora (+ (:desde antes) 1000)})
           depois (gym-app/get-occupation s chat "pedra")
           save (ports/get-save s chat "ash" "a")]
-      (is (= 1 (:pe-delta r)))
+      ;; Derrota +4 PE + 2 KO ×2 = 8; defesa +8 ao líder
+      (is (= 8 (:pe-delta r)))
+      (is (= 4 (:pe-batalha r)))
+      (is (= 4 (:pe-nocautes r)))
+      (is (true? (:defendeu? r)))
+      (is (= 8 (:pe-defesa r)))
       (is (nil? (:premio r)))
-      (is (= 1 (:pe-ginasios save)))
+      (is (= 8 (:pe-ginasios save)))
+      ;; Brock: vitória anterior 10+15 + defesa 8
+      (is (= 33 (:pe-ginasios (ports/get-save s chat "brock" "a"))))
       (is (= "brock" (:pid depois)))
       (is (= [88 88 88] (mapv long (gym/motivacoes depois (+ (:desde antes) 1000))))))))
 

@@ -12,17 +12,18 @@
   {:insignias #{"pedra"} :gym "agua" :ok true}
   {:insignias #{"pedra" "agua"} :gym "eletrico" :ok true}]
 
+ ;; Atividade growth-v1: vitória=4 / derrota=2 +1 por nocaute. premio ignorado.
  :xp-participante
- [{:venceu? false :premio nil :nocautes 2 :xp 5}
-  {:venceu? true :premio :primeira :nocautes 0 :xp 7}
+ [{:venceu? false :premio nil :nocautes 2 :xp 4}
+  {:venceu? true :premio :primeira :nocautes 0 :xp 4}
   {:venceu? true :premio :revanche :nocautes 1 :xp 5}
-  {:venceu? true :premio nil :nocautes 0 :xp 2}]
+  {:venceu? true :premio nil :nocautes 0 :xp 4}]
 
- ;; Economia A6: vitória/conquista NÃO concede moedas (só PE/pedra/insígnia).
+ ;; Economia A6: vitória/conquista NÃO concede moedas; PE de batalha saiu deste mapa.
  :recompensa-vitoria
- [{:premio :primeira :pedra-roll 99 :moedas 0 :pe 5 :pedra? true}
-  {:premio :revanche :pedra-roll 10 :moedas 0 :pe 2 :pedra? true}
-  {:premio :revanche :pedra-roll 50 :moedas 0 :pe 2 :pedra? false}]
+ [{:premio :primeira :pedra-roll 99 :moedas 0 :pe 0 :pedra? true}
+  {:premio :revanche :pedra-roll 10 :moedas 0 :pe 0 :pedra? true}
+  {:premio :revanche :pedra-roll 50 :moedas 0 :pe 0 :pedra? false}]
 
  :motivacao
  [{:base [100 100 100] :horas 0 :expect [100 100 100]}

@@ -1711,33 +1711,92 @@ function golpesLinha(p) {
   }).join(' · ');
 }
 
+function formatGymPeBreakdown(gymResolve) {
+  if (!gymResolve) return [];
+  const lines = [];
+  const peBat = gymResolve.peBatalha != null ? Number(gymResolve.peBatalha) : null;
+  const peKo = gymResolve.peNocautes != null ? Number(gymResolve.peNocautes) : null;
+  const peConq = gymResolve.peConquista != null ? Number(gymResolve.peConquista) : null;
+  const kos = gymResolve.nocautesTotal != null ? Number(gymResolve.nocautesTotal) : 0;
+  if (peBat != null && peBat > 0) {
+    lines.push(gymResolve.venceu
+      ? `⭐ +${peBat} PE — Vitória`
+      : `⭐ +${peBat} PE — Participação`);
+  }
+  if (peKo != null && peKo > 0) {
+    lines.push(`🥊 +${peKo} PE — ${kos} nocaute${kos === 1 ? '' : 's'}`);
+  }
+  if (peConq != null && peConq > 0) {
+    lines.push(`🏅 +${peConq} PE — Conquista do ginásio`);
+  }
+  if (!lines.length && gymResolve.peDelta != null && Number(gymResolve.peDelta) > 0) {
+    lines.push(`⭐ +${gymResolve.peDelta} PE.`);
+  }
+  return lines;
+}
+
+function formatGymPokemonRewards(gymResolve) {
+  const rows = (gymResolve && gymResolve.pokemonRewards) || [];
+  if (!Array.isArray(rows) || !rows.length) return [];
+  const lines = [];
+  for (const r of rows) {
+    const nome = (r && (r.nome || r.name)) || 'Pokémon';
+    const xp = r && (r.xpOficial != null ? r.xpOficial : r.xp);
+    const subidas = r && r.subidas != null ? Number(r.subidas) : 0;
+    const nivel = r && r.nivelFinal != null ? r.nivelFinal : null;
+    const kos = r && r.nocautes != null ? Number(r.nocautes) : 0;
+    const bits = [];
+    if (xp != null && Number(xp) > 0) bits.push(`✨ +${xp} XP`);
+    if (kos > 0) bits.push(`🥊 ${kos} KO`);
+    if (subidas > 0 && nivel != null) bits.push(`📈 Nv.${nivel}`);
+    if (!bits.length) continue;
+    lines.push(`⚡ *${nome}*`, bits.join(' · '));
+  }
+  return lines;
+}
+
 function formatGymResolve(gymResolve, battle) {
   if (!gymResolve) return null;
   const nome = (battle && battle.gymNome) || 'ginásio';
+  const peLines = formatGymPeBreakdown(gymResolve);
+  const pokeLines = formatGymPokemonRewards(gymResolve);
   if (gymResolve.venceu) {
     const rew = gymResolve.reward || {};
     return [
-      `🏅 Você venceu o ginásio *${nome}*!`,
+      `🏆 *VITÓRIA NO GINÁSIO!*`,
+      `🏛️ *${nome}*`,
       gymResolve.premio === 'primeira'
         ? 'Nova insígnia conquistada e próximo ginásio liberado!'
         : (gymResolve.premio === 'revanche'
           ? 'Revanche diária concluída.'
-          : 'Você já recebeu a recompensa diária; o XP de combate continua valendo.'),
+          : null),
+      '',
+      ...peLines,
+      pokeLines.length ? '' : null,
+      ...pokeLines,
       (rew.moedas != null && Number(rew.moedas) > 0)
         ? (textoMoedas(rew.moedas) || `💰 +${rew.moedas} moedas.`)
         : null,
-      gymResolve.peDelta != null ? `⭐ +${gymResolve.peDelta} PE.` : null,
-      gymResolve.occupied ? '🏛️ Você é o novo líder — time reservado no ginásio.' : null
+      gymResolve.occupied ? '🏛️ Você é o novo líder — time reservado no ginásio.' : null,
+      pokeLines.length || peLines.length ? '📈 *Recompensas recebidas!*' : null
     ].filter(Boolean).join('\n');
   }
   if ((battle && battle.outcome) === 'draw') {
     return `⚖️ Empate no ginásio *${nome}*. Sem ocupação nem recompensa diária.`;
   }
   return [
-    `💀 O líder venceu no ginásio *${nome}*.`,
-    'Recupere seu time e tente novamente! Suas insígnias foram mantidas.',
-    gymResolve.peDelta != null ? `⭐ +${gymResolve.peDelta} PE.` : null
-  ].filter(Boolean).join('\n');
+    `💥 *DERROTA NO GINÁSIO!*`,
+    `🏛️ *${nome}*`,
+    '',
+    ...peLines,
+    pokeLines.length ? '' : null,
+    ...pokeLines,
+    '',
+    '💪 Continue treinando para conquistar o ginásio!'
+  ].filter((line, idx, arr) => {
+    if (line === '' && (idx === 0 || arr[idx - 1] === '')) return false;
+    return line != null;
+  }).join('\n');
 }
 
 /** Mensagem ao dono quando o time volta do ginásio (crédito já no ledger). */

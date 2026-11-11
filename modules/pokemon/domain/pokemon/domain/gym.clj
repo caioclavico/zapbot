@@ -307,14 +307,104 @@
       (assoc :hp-atual 0 :status nil)
       (assoc "hp-atual" 0 "status" nil)))
 
+;; --- Recompensas imediatas por batalha (growth-v1 / schema 036+037) ---
+;; PE e pontos de atividade são centralizados aqui. Conquista/defesa são
+;; bônus separados do resultado da batalha e NÃO reaplicam XP de combate.
+
+(def pe-vitoria-batalha 10)
+(def pe-derrota-batalha 4)
+(def pe-por-nocaute 2)
+(def pe-conquista-ginasio 15)
+(def pe-defesa-sucesso 8)
+
+(def atividade-vitoria-batalha 4)
+(def atividade-derrota-batalha 2)
+(def atividade-por-nocaute 1)
+
+(defn normalizar-participacao
+  "Mapa idx→nocautes com chaves long. Ignora entradas inválidas.
+  Ausência de chave = não participou (não inventa banco/reserva)."
+  [participacao]
+  (reduce-kv
+   (fn [acc k v]
+     (let [idx (cond
+                 (integer? k) (long k)
+                 (string? k) (try (Long/parseLong (str k)) (catch Exception _ nil))
+                 (keyword? k) (try (Long/parseLong (name k)) (catch Exception _ nil))
+                 :else nil)]
+       (if idx
+         (assoc acc idx (max 0 (long (or v 0))))
+         acc)))
+   {}
+   (or participacao {})))
+
+(defn total-nocautes
+  [participacao]
+  (reduce + 0 (vals (normalizar-participacao participacao))))
+
+(defn atividade-participante
+  "Pontos de atividade (não XP oficial) para um Pokémon que participou.
+  Base por resultado + bônus por nocautes comprovados do próprio mon.
+  O cap anti-exploit aplica-se ao total via `calcular-ganho-pokemon`."
+  [venceu? nocautes]
+  (+ (if venceu? atividade-vitoria-batalha atividade-derrota-batalha)
+     (* atividade-por-nocaute (max 0 (long (or nocautes 0))))))
+
 (defn xp-ginasio-participante
-  [venceu? premio nocautes]
-  (+ (cond
-       (not venceu?) 3
-       (= premio :primeira) 7
-       (= premio :revanche) 4
-       :else 2)
-     (max 0 (long (or nocautes 0)))))
+  "Pontos de atividade do participante. `premio` é ignorado (compat de assinatura):
+  XP de combate não depende mais de conquista/revanche — só de vitória/derrota + KO."
+  [venceu? _premio nocautes]
+  (atividade-participante venceu? nocautes))
+
+(defn pe-resultado-batalha
+  "PE imediato do resultado da batalha (vitória/derrota + nocautes).
+  Sem bônus de conquista/defesa."
+  [venceu? participacao]
+  (+ (if venceu? pe-vitoria-batalha pe-derrota-batalha)
+     (* pe-por-nocaute (total-nocautes participacao))))
+
+(defn conquista?
+  "Conquista: primeira insígnia do ginásio OU dethrone de outro líder."
+  [premio ocupacao-anterior desafiante-player-key]
+  (or (= premio :primeira)
+      (and ocupacao-anterior
+           (some? (:player-key ocupacao-anterior))
+           (not= (:player-key ocupacao-anterior) desafiante-player-key))))
+
+(defn defesa-sucesso?
+  "Líder jogador defendeu: desafiante perdeu e havia ocupação."
+  [venceu? ocupacao]
+  (and (not venceu?) (some? ocupacao) (some? (:player-key ocupacao))))
+
+(defn plano-recompensa-batalha
+  "Plano puro e determinístico das recompensas de uma batalha de ginásio.
+  Retorna breakdown de PE + atividade por participante (sem XP oficial)."
+  [{:keys [venceu? participacao premio ocupacao desafiante-player-key]}]
+  (let [parts (normalizar-participacao participacao)
+        pe-bat (pe-resultado-batalha venceu? parts)
+        pe-ko (* pe-por-nocaute (total-nocautes parts))
+        pe-base (- pe-bat pe-ko)
+        conquistou? (boolean (and venceu? (conquista? premio ocupacao desafiante-player-key)))
+        defendeu? (defesa-sucesso? venceu? ocupacao)
+        pe-conquista (if conquistou? pe-conquista-ginasio 0)
+        pe-defesa (if defendeu? pe-defesa-sucesso 0)
+        participantes
+        (mapv (fn [[idx kos]]
+                {:idx (long idx)
+                 :nocautes (long kos)
+                 :atividade (atividade-participante venceu? kos)})
+              (sort-by key parts))]
+    {:venceu? (boolean venceu?)
+     :participacao parts
+     :participantes participantes
+     :pe-batalha pe-base
+     :pe-nocautes pe-ko
+     :pe-conquista pe-conquista
+     :pe-defesa pe-defesa
+     :pe-desafiante (+ pe-bat pe-conquista)
+     :pe-defensor pe-defesa
+     :conquistou? conquistou?
+     :defendeu? defendeu?}))
 
 (defn registrar-insignia
   "Retorna :primeira | :revanche | nil (já resgatou hoje)."
@@ -324,17 +414,21 @@
       (if anterior :revanche :primeira))))
 
 (defn recompensa-vitoria
-  "PE/pedra/insígnia conforme premio — **sem moedas** (economia só por permanência).
-   pedra-roll 0–99 injetável."
+  "Pedra/insígnia conforme premio — **sem moedas** e **sem PE de batalha**.
+  PE de vitória/conquista vive em `plano-recompensa-batalha`.
+  pedra-roll 0–99 injetável."
   [premio pedra-roll]
   (when premio
     (let [primeira? (= premio :primeira)]
       {:moedas 0
-       :pe (if primeira? 5 2)
+       :pe 0
        :vitoria-treinador? true
        :pedra? (or primeira? (< (long (or pedra-roll 100)) 25))})))
 
-(defn pe-derrota [] 1)
+(defn pe-derrota
+  "Compat: PE base de derrota na batalha (sem nocautes)."
+  []
+  pe-derrota-batalha)
 
 (defn validar-time-ocupacao!
   [indices registros]

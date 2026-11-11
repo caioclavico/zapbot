@@ -53,11 +53,28 @@ test('formatGymChallengeStart e resolve vitória', () => {
   }, '!pk'), /Desafio contra/);
 
   const win = present.formatGymResolve({
-    venceu: true, premio: 'primeira', peDelta: 5, occupied: true,
+    venceu: true, premio: 'primeira', peDelta: 29, peBatalha: 10,
+    peNocautes: 4, peConquista: 15, nocautesTotal: 2, occupied: true,
+    pokemonRewards: [
+      { nome: 'Pikachu', xpOficial: 42, nocautes: 1, subidas: 0, nivelFinal: 12 },
+      { nome: 'Charmeleon', xpOficial: 30, nocautes: 1, subidas: 1, nivelFinal: 16 }
+    ],
     reward: { moedas: 0 }
   }, { gymNome: '🪨 Pedra' });
-  assert.match(win, /venceu o ginásio/);
+  assert.match(win, /VITÓRIA NO GINÁSIO/);
+  assert.match(win, /\+10 PE — Vitória/);
+  assert.match(win, /\+4 PE — 2 nocautes/);
+  assert.match(win, /\+15 PE — Conquista/);
+  assert.match(win, /Pikachu/);
+  assert.match(win, /\+42 XP/);
   assert.doesNotMatch(win, /moedas/);
+  const lose = present.formatGymResolve({
+    venceu: false, peDelta: 4, peBatalha: 4,
+    pokemonRewards: [{ nome: 'Pikachu', xpOficial: 12, nocautes: 0 }]
+  }, { gymNome: '🪨 Pedra' });
+  assert.match(lose, /DERROTA NO GINÁSIO/);
+  assert.match(lose, /\+4 PE — Participação/);
+  assert.match(lose, /Continue treinando/);
   assert.match(present.formatGymDefenderReturn({
     pokemonNome: 'Charizard', tempoDefesa: '4h', moedasRecebidas: 50
   }), /50/);

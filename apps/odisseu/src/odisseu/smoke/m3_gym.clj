@@ -4,6 +4,7 @@
             [clojure.string :as str]
             [clojure.test :as test]
             [pokemon.tests.gym-m35-test]
+            [pokemon.tests.gym-immediate-rewards-a6-test]
             [pokemon.tests.battle-m34-test]
             [pokemon.tests.capture-m33-test]
             [pokemon.tests.reward-m32-test]
@@ -38,6 +39,7 @@
   [& _]
   (let [mem-before (assoc (heap-stats) :rss-mb (rss-mb) :at (str (Instant/now)))
         summaries [(test/run-tests 'pokemon.tests.gym-m35-test)
+                   (test/run-tests 'pokemon.tests.gym-immediate-rewards-a6-test)
                    (test/run-tests 'pokemon.tests.battle-m34-test)
                    (test/run-tests 'pokemon.tests.capture-m33-test)
                    (test/run-tests 'pokemon.tests.reward-m32-test)
