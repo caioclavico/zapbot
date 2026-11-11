@@ -1,0 +1,10 @@
+rebuild_image_id=sha256:250155bae3ba5236feb676c289d285967b9867d087fe3d9750adf5e7acd2f476
+rebuild_commit=613e6cad9639d3a08894ebdbd7cee9f81b0beb26
+trivy_critical=4
+trivy_high=393
+media_security=8/8 PASS
+announcer=32/32 PASS
+resources=87/87 PASS
+http_jvm=287/287 PASS
+previous_candidate_b7237d_NOT_reused=true
+digest_6bcb881e_SUPERSEDED_by_rebuild=true

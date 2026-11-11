@@ -72,7 +72,7 @@ Sem alteração de gameplay, economia, raids, saves, contratos JVM ou schema 036
 | Campo | Valor |
 |---|---|
 | Plataforma | `linux/amd64` |
-| Image ID / manifest | `sha256:6bcb881e8c040ba79fb2ec70cacb35ce52f694810fc6418b2604421aa9d286d3` |
+| Image ID / manifest | `sha256:250155bae3ba5236feb676c289d285967b9867d087fe3d9750adf5e7acd2f476 (rebuild pós-harden; substitui 6bcb881e…)` |
 | Config digest | `sha256:35b82523f7f7cae691502c94887406acc1b715c4b3e08d86bc4a32b84d7b9def` |
 | Tag local (mutável) | `zapbot:a6-node-final-security-9465477e4958-amd64` |
 | Tar SHA-256 | `89ba1fe837230dbbf19150123a67c71c14a7f172434a0df8e43235b6eaa3bfce` |
