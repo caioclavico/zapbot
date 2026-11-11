@@ -40,7 +40,7 @@
       :else
       (try
         (let [state (edn/read-string (slurp state-file))]
-          (if (contains? #{:open :draining :quiescent} (:phase state))
+          (if (contains? #{:open :draining :quiescent :frozen} (:phase state))
             state
             {:phase :quiescent :reason :invalid-marker}))
         (catch Throwable _ {:phase :quiescent :reason :unreadable-marker})))))

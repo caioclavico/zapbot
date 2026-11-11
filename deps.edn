@@ -653,6 +653,21 @@
               "-Xmx512m"
               "-XX:+UseG1GC"]}
 
+  ;; A6 — gate de drain/freeze (unitários, sem Datomic)
+  :test-a6-maintenance-drain
+  {:main-opts ["-e" "(require 'clojure.test 'pokemon.tests.maintenance-gate-drain-test) (let [r (clojure.test/run-tests 'pokemon.tests.maintenance-gate-drain-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"]
+   :jvm-opts ["-Xms64m" "-Xmx256m" "-XX:+UseG1GC"]}
+
+  ;; A6 — smoke HTTP do gate (Datomic descartável)
+  :smoke-a6-maintenance-quiescence
+  {:main-opts ["-m" "odisseu.smoke.maintenance-quiescence"]
+   :jvm-opts ["-Xms64m" "-Xmx512m" "-XX:+UseG1GC"]}
+
+  ;; A6 — ensaio drain + cold backup descartável com scheduler
+  :smoke-a6-drain-cold-rehearsal
+  {:main-opts ["-m" "odisseu.smoke.a6-drain-cold-rehearsal"]
+   :jvm-opts ["-Xms64m" "-Xmx512m" "-XX:+UseG1GC"]}
+
   ;; Bridge HTTP longa (dev local). Bind 127.0.0.1.
   :bridge-http
   {:main-opts ["-m" "odisseu.bridge.http-server"]

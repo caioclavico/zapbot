@@ -250,27 +250,36 @@
 
       (assert! (= 200 (:status (request! http-client base "POST" "/ops/maintenance/enter?timeoutMs=1000" operator-token)))
                "enter must reach quiescence" nil)
-      (assert! (= 503 (:status (request! http-client base "GET"
+      (assert! (= 200 (:status (request! http-client base "GET"
                                          "/ops/maintenance/a6-gym-state-audit" operator-token)))
-               "audit route must not start after maintenance has closed admission" nil)
-      (assert! (= 503 (:status (request! http-client base "GET" "/v1/trainer?chatId=test&playerId=test" operator-token)))
-               "authenticated bridge requests must fail closed during maintenance" nil)
+               "safe aggregate audit remains available while quiescent" nil)
+      (assert! (not= 503 (:status (request! http-client base "GET" "/v1/trainer?chatId=test&playerId=test" operator-token)))
+               "classified safe reads remain available while quiescent" nil)
       (assert! (= 503 (:status (request! http-client base "POST" "/v1/hunt/start" operator-token)))
                "mutation endpoint must be blocked before request parsing/dispatch" nil)
+      (assert! (= 503 (:status (request! http-client base "POST" "/v1/raids/auto/tick" operator-token "{}")))
+               "raid scheduler ticks must be refused while quiescent" nil)
       (assert! (= datoms-before (:datoms (d/db-stats (d/db conn))))
                "blocked mutations must not add Datomic datoms" nil)
+      (assert! (= 200 (:status (request! http-client base "POST" "/ops/maintenance/freeze" operator-token)))
+               "freeze must succeed from quiescence" nil)
+      (assert! (= 503 (:status (request! http-client base "GET" "/v1/trainer?chatId=test&playerId=test" operator-token)))
+               "frozen phase must block game reads" nil)
       (bridge/stop! srv)
       (let [restarted (bridge/start! (assoc opts :port 0))]
         (try
-          (let [base2 (:base-url restarted)]
+          (let [base2 (:base-url restarted)
+                st (request! http-client base2 "GET" "/ops/maintenance/status" operator-token)]
+            (assert! (= "frozen" (get-in st [:body "data" "phase"]))
+                     "restart must preserve frozen state" st)
             (assert! (= 503 (:status (request! http-client base2 "GET" "/v1/trainer?chatId=test&playerId=test" operator-token)))
-                     "restart must preserve maintenance state" nil)
+                     "frozen restart must keep game reads closed" nil)
             (assert! (= 200 (:status (request! http-client base2 "POST" "/ops/maintenance/resume" operator-token)))
-                     "explicit resume should reopen a quiescent bridge" nil)
+                     "explicit resume should reopen a frozen bridge" nil)
             (assert! (not= 503 (:status (request! http-client base2 "GET" "/v1/trainer?chatId=test&playerId=test" operator-token)))
                      "bridge should accept requests after resume" nil))
           (finally (bridge/stop! restarted))))
-      (println "PASS maintenance HTTP persistence/restart/resume; isolated Datomic; no external transport")
+      (println "PASS maintenance HTTP drain/freeze/persistence/restart/resume; isolated Datomic; no external transport")
       (finally
         (when srv (try (bridge/stop! srv) (catch Exception _)))
         (shutdown-agents)))))
