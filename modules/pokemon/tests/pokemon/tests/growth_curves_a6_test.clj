@@ -122,7 +122,8 @@
     (schema/install! conn)
     (let [db (d/db conn)
           attrs #{:pokemon/xp-total :pokemon/xp-progress-version
-                  :pokemon/xp-legacy-residual :pokemon/growth-rate}]
+                  :pokemon/xp-legacy-residual :pokemon/xp-legacy-nivel
+                  :pokemon/growth-rate}]
       (doseq [a attrs]
         (is (some? (d/pull db '[:db/ident] a)))))))
 
@@ -268,3 +269,110 @@
       (is (= 147 (wins-to 50)))
       (is (= 222 (wins-to 75)))
       (is (= 297 (wins-to 100))))))
+
+(defn- mon-at
+  [species nivel]
+  (let [rate (growth/growth-rate-for-species species)
+        total (growth/total-xp-for-level rate nivel)]
+    {:species species :nome species :nivel nivel
+     :xp-total total :xp-desde-nivel 0 :xp 0
+     :xp-progress-version "growth-v1" :growth-rate rate
+     :hp 100 :hp-atual 100 :ataque 50 :defesa 50
+     :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70}))
+
+(defn- wins-to-reach
+  "Simula vitórias comuns sucessivas até atingir `target` (máx 20000)."
+  [species target]
+  (loop [r (mon-at species 1) n 0]
+    (cond
+      (>= (long (:nivel r)) (long target)) n
+      (> n 20000) n
+      :else
+      (recur (:registro (xp/aplicar-xp-atividade r xp/xp-por-vitoria
+                                                 {:atividade :batalha}))
+             (inc n)))))
+
+(deftest dynamic-balance-six-curves-milestones
+  (doseq [[species rate] [["pikachu" :medium-fast]
+                          ["bulbasaur" :medium-slow]
+                          ["magikarp" :slow]
+                          ["clefairy" :fast]
+                          ["nincada" :erratic]
+                          ["wailmer" :fluctuating]]]
+    (testing species
+      (is (= rate (growth/growth-rate-for-species species)))
+      (doseq [target [10 20 30 50]]
+        (let [wins (wins-to-reach species target)
+              lo (* 3 (dec target))
+              hi (* 4 (dec target))]
+          (is (<= lo wins hi)
+              (str species " → L" target " wins=" wins " band=[" lo "," hi "]")))))))
+
+(deftest dynamic-balance-high-milestones-medium-fast
+  (is (<= 222 (wins-to-reach "pikachu" 75) 296))
+  (is (<= 297 (wins-to-reach "pikachu" 100) 396)))
+
+(deftest dynamic-balance-activity-variants
+  (let [base (mon-at "pikachu" 30)
+        win (xp/calcular-ganho-pokemon base 3 {:atividade :batalha})
+        loss (xp/calcular-ganho-pokemon base 1 {:atividade :batalha})
+        rare (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "raro"})
+        epic (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "epico"})
+        leg (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "lendario"})
+        myth (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "mitico"})
+        gym (xp/calcular-ganho-pokemon base 3 {:atividade :ginasio})
+        pvp (xp/calcular-ganho-pokemon base 3 {:atividade :pvp})
+        adv-high (xp/calcular-ganho-pokemon base 3 {:nivel-adversario 60})
+        adv-low (xp/calcular-ganho-pokemon base 3 {:nivel-adversario 10})
+        span (growth/level-span :medium-fast 30)
+        cap (long (Math/floor (* span xp/pokemon-xp-grant-span-cap)))]
+    (is (< loss win))
+    (is (<= rare epic leg myth))
+    (is (> gym win))
+    (is (> pvp win))
+    (is (> adv-high win))
+    (is (< adv-low win))
+    (is (<= myth cap) "anti-exploit cap")
+    (let [near (mon-at "pikachu" 99)
+          need (growth/level-span :medium-fast 99)
+          g (xp/aplicar-xp-pokemon near need {:unidade :oficial})
+          mx (xp/aplicar-xp-atividade (:registro g) 3)]
+      (is (= 100 (:nivel-final g)))
+      (is (= 100 (:nivel-final mx)))
+      (is (zero? (:xp-oficial-aplicado mx)) "L100 não recebe XP excedente"))))
+
+(deftest official-tables-untouched-snapshot
+  (is (= 1000000 (growth/total-xp-for-level :medium-fast 100)))
+  (is (= 800000 (growth/total-xp-for-level :fast 100)))
+  (is (= 1250000 (growth/total-xp-for-level :slow 100)))
+  (is (= 1059860 (growth/total-xp-for-level :medium-slow 100)))
+  (is (= 600000 (growth/total-xp-for-level :erratic 100)))
+  (is (= 1640000 (growth/total-xp-for-level :fluctuating 100))))
+
+(deftest datomic-persists-xp-legacy-nivel-immutable
+  (let [client (persistence/client {:system (str "gln-" (java.util.UUID/randomUUID))
+                                    :storage-dir (str "/tmp/gln-" (java.util.UUID/randomUUID))})
+        conn (persistence/ensure-db! client "gln")
+        s (store/make-store conn)]
+    (ports/ensure-schema! s)
+    (trainer/create-trainer! s {:chat-id "c" :player-id "ash"})
+    (collection/adicionar-pokemon!
+     s "c" "ash"
+     {:id-pokemon "leg1" :species "pikachu" :nome "Pikachu"
+      :nivel 7 :xp-desde-nivel 4
+      :hp 35 :hp-atual 35 :ataque 55 :defesa 40
+      :atq-esp 50 :def-esp 50 :veloc 90 :tipos ["electric"] :amizade 70
+      :golpes [{:slug "tackle" :nome-exibicao "Tackle" :tipo "normal"
+                :poder 40 :classe :fisico}]}
+     20 nil)
+    (collection/ganhar-xp-pokemon! s "c" "ash" 0 1)
+    (let [p1 (first (ports/list-collection s "c" "ash" "a"))
+          need (- (growth/total-xp-for-level :medium-fast 8)
+                  (long (:xp-total p1 0)))]
+      (is (= 7 (:xp-legacy-nivel p1)))
+      (is (= 4 (:xp-legacy-residual p1)))
+      (collection/ganhar-xp-pokemon! s "c" "ash" 0 (max 1 need))
+      (let [p2 (first (ports/list-collection s "c" "ash" "a"))]
+        (is (= 7 (:xp-legacy-nivel p2)) "retry/grant não sobrescreve nível legado")
+        (is (= 4 (:xp-legacy-residual p2)))
+        (is (>= (:nivel p2) 8))))))

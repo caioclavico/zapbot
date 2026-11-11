@@ -40,10 +40,11 @@ Precedência do residual flat-9: `xp-desde-nivel` → `xp` → `vitorias-desde-n
 2. `extra = floor(residual / 9)` (cap 100) → sobe níveis como o cljs `normalizar-xp-registro`.
 3. `rem = residual mod 9`; `xp-total = total(nível') + floor((rem/9) × span(nível'))`.
 4. Residual múltiplo de 9 → nível seguinte com residual 0 (sem pousar no limiar L+1 com nível antigo).
-5. Grava `:xp-legacy-residual`, `:xp-legacy-nivel`, `:xp-progress-version=growth-v1`.
-6. Idempotente: se a versão já é `growth-v1`, não reconverte.
+5. Grava `:xp-legacy-residual`, `:xp-legacy-nivel` (persistidos na 037) e `:xp-progress-version=growth-v1`.
+6. Idempotente: se a versão já é `growth-v1`, não reconverte; retries não sobrescrevem `:xp-legacy-nivel`.
 
 Não há backfill live nesta entrega — conversão lazy no primeiro grant/leitura de progresso.
+Compatibilidade: ver `docs/a6-pokemon-growth-compat-sim.md` (offline 119 real + sintético 759; cold live bloqueado aqui).
 
 ## Evolução e troca
 
@@ -64,6 +65,7 @@ intactas.
 - `:pokemon/xp-total`
 - `:pokemon/xp-progress-version`
 - `:pokemon/xp-legacy-residual`
+- `:pokemon/xp-legacy-nivel` (nível na 1ª conversão; imutável em retries)
 - `:pokemon/growth-rate`
 
 ## Drain

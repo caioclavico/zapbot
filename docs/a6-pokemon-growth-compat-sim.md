@@ -1,56 +1,61 @@
-# Simulação de compatibilidade — baseline 759 Pokémon
+# Compatibilidade XP — simulações e dry-runs
 
-Baseline de referência (não imutável): 18 jogadores · 54 saves · 759 Pokémon · 333 moedas.
+## Escopos (não misturar)
 
-## Política aplicada (dry-run lógico)
+| Escopo | O que é | Status |
+|---|---|---|
+| Sintético 759 | Registros gerados cobrindo 6 curvas / vitórias-only / L100 | Executado (cobertura de política) |
+| Offline autorizado M5.3A | Dump `authorized-offline-copy` (histórico) | Executado — **119** Pokémon |
+| Módulos ativos do mesmo export | Contas atuais no arquivo | Executado — **19** Pokémon |
+| Cold live RC#66 (~759) | Restore descartável da produção atual | **Bloqueado** neste ambiente (backup cold tip não montado) |
 
-Para cada Pokémon legado:
+Nenhuma escrita em volumes live. Nenhum backfill. Conversão apenas em memória (dry-run).
 
-1. Resolver residual: `xp-desde-nivel` | `xp` | `vitorias×3` | 0.
-2. Resolver curva pela espécie-base.
-3. `extra = floor(R/9)` (cap 100−L); `rem = R mod 9`.
-4. `L' = L + extra`; `xp-total' = total(L') + floor((rem/9)×span(L'))`.
-5. Nível nunca diminui; pode subir se R≥9 (espelha normalização cljs).
-6. IVs, golpes, HP, shiny, dono, apelido intactos na conversão de campos XP.
+## Política final de conversão
 
-### Amostra sintética (759 registros, sem PII)
+1. Residual: `xp-desde-nivel` → `xp` → `vitorias-desde-nivel × 3` → 0
+2. `extra = floor(R/9)` (cap 100−L); `rem = R mod 9`
+3. `L' = L + extra`; `xp-total = total(L') + floor((rem/9)×span(L'))`
+4. Auditoria: `:xp-legacy-residual` + `:xp-legacy-nivel` (imutável após 1ª gravação; attr `:pokemon/xp-legacy-nivel` na 037)
+5. Nível nunca diminui
 
-Fingerprints da execução local (conversão pura, sem Datomic):
+## Dry-run — snapshot histórico offline (119)
 
-```
-quantidade              759
-niveis-reduzidos          0
-subiram-residual>=9      63
-sum-nivel-antes       17185
-sum-nivel-depois      17248
-sum-xp-total       59971033
-```
-
-Restore cold de produção: **não executado** nesta correção (sem GO). Script:
-`scripts/a6_growth_compat_dry_run.clj`.
-
-## Propriedades verificadas em testes
-
-- Conversão idempotente (`growth-v1` não reconverte).
-- Tabelas L1–L100 monotônicas nas 6 curvas.
-- Totais L100 oficiais (medium-fast 1e6, slow 1.25e6, fast 8e5, medium-slow 1059860, erratic 6e5, fluctuating 1.64e6).
-- Multi-level grant + teto 100 sem XP excedente.
-- Evolução não reduz nível.
-- Migration 037 instalável após 036.
-- Persistência Datomic de `xp-total` / versão / curva.
-- Presenter usa intervalo JVM (sem reinventar curva).
-
-## Backfill live
-
-**Não executado.** Contagens/fingerprints de produção ficam para GO de cutover com dry-run + manifesto.
-
-## Exemplo WhatsApp (valores reais medium-fast L24)
-
-Após conversão de residual legado 4/9:
+Fonte: `m8-1-private/pokemon/pokemon-export` · `snapshot-id=m53a-legacy-119-xp127-voltorb`
+`authorized-offline-copy=true` · evidência histórica (não estado live atual).
 
 ```
-⚡ *Pikachu* — Nv. 24
-✨ XP: <residual mapeado> / <span oficial L24>
-████░░░░░░ <pct>%
-⬆️ Próximo nível: 25
+quantidade                 119
+niveis-reduzidos             0
+niveis-aumentados            0
+sem-progresso-conhecido      7
+species-blank                0
+sum-nivel-antes            297
+sum-nivel-depois           297
+sum-residual-legado        263
+sum-xp-total             19004
+curvas   erratic=1 fast=7 fluctuating=2 medium-fast=51 medium-slow=38 slow=20
+xp-legacy-nivel preservado em 100% das conversões
 ```
+
+Sem PII no repositório — só agregados.
+
+## Dry-run — módulos ativos do export (19)
+
+```
+quantidade 19 · niveis-reduzidos 0 · niveis-aumentados 0
+sum-nivel 31→31 · sum-xp-total 539
+```
+
+## Sintético 759 (política / fronteiras)
+
+```
+quantidade 759 · niveis-reduzidos 0 · subiram-residual≥9 63
+sum-nivel 17185→17248 · sum-xp-total 59971033
+```
+
+Não representar como validação dos saves live.
+
+## Cold live RC#66
+
+Não disponível no workspace atual para restore descartável. Quando houver GO + artefato cold tip, repetir o mesmo dry-run e anexar fingerprints sem copiar dados pessoais.

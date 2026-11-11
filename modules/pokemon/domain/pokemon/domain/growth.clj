@@ -215,7 +215,13 @@
             ;; se o total implica nível maior (não esperado), sobe.
             nivel' (max nivel nivel-from-xp)
             xp-total' (max xp-total (total-xp-for-level rate nivel'))
-            residual' (residual-in-level rate nivel' xp-total')]
+            residual' (residual-in-level rate nivel' xp-total')
+            ;; Auditoria: nível legado original — nunca sobrescrever se já gravado.
+            legacy-nivel (or (when-let [v (registro-get registro
+                                                        :xp-legacy-nivel
+                                                        "xp-legacy-nivel")]
+                               (long v))
+                             nivel0)]
         (-> registro
             (assoc :nivel nivel'
                    :xp-total xp-total'
@@ -224,7 +230,7 @@
                    :xp-progress-version progress-version
                    :growth-rate rate
                    :xp-legacy-residual legacy-residual
-                   :xp-legacy-nivel nivel0))))))
+                   :xp-legacy-nivel legacy-nivel))))))
 
 (defn ensure-growth-v1
   "Garante campos growth-v1; registros novos com só nível recebem total da curva."

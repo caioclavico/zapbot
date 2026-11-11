@@ -16,6 +16,11 @@
   :db/cardinality :db.cardinality/one
   :db/doc         "Residual legado preservado na primeira conversão growth-v1 (auditoria)."}
 
+ {:db/ident       :pokemon/xp-legacy-nivel
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Nível legado no momento da primeira conversão growth-v1 (auditoria). Imutável após a 1ª gravação."}
+
  {:db/ident       :pokemon/growth-rate
   :db/valueType   :db.type/string
   :db/cardinality :db.cardinality/one

@@ -309,6 +309,8 @@
       (assoc :xp-progress-version (:pokemon/xp-progress-version e))
       (some? (:pokemon/xp-legacy-residual e))
       (assoc :xp-legacy-residual (:pokemon/xp-legacy-residual e))
+      (some? (:pokemon/xp-legacy-nivel e))
+      (assoc :xp-legacy-nivel (:pokemon/xp-legacy-nivel e))
       (some? (:pokemon/growth-rate e))
       (assoc :growth-rate (keyword (:pokemon/growth-rate e)))
       (some? (:pokemon/hp-base e)) (assoc :hp-base (:pokemon/hp-base e))
@@ -363,6 +365,8 @@
       (assoc :pokemon/xp-progress-version (str (:xp-progress-version registro)))
       (some? (:xp-legacy-residual registro))
       (assoc :pokemon/xp-legacy-residual (long (:xp-legacy-residual registro)))
+      (some? (:xp-legacy-nivel registro))
+      (assoc :pokemon/xp-legacy-nivel (long (:xp-legacy-nivel registro)))
       (some? (:growth-rate registro))
       (assoc :pokemon/growth-rate
              (let [gr (:growth-rate registro)]
@@ -503,6 +507,14 @@
                    (some? (:xp-legacy-residual r))
                    (conj [:db/add lookup :pokemon/xp-legacy-residual
                           (long (:xp-legacy-residual r))])
+                   ;; Nível legado de auditoria: grava na 1ª conversão; retries
+                   ;; preservam o valor já persistido no poke (não sobrescrevem).
+                   (let [legacy-nv (or (:xp-legacy-nivel poke)
+                                       (:xp-legacy-nivel r))]
+                     (some? legacy-nv))
+                   (conj [:db/add lookup :pokemon/xp-legacy-nivel
+                          (long (or (:xp-legacy-nivel poke)
+                                    (:xp-legacy-nivel r)))])
                    (not omit-hp-atual?)
                    (conj [:db/add lookup :pokemon/hp-atual hp-atual]))
          oferta-tx (when (not= (or (:ofertas-golpes r) (:golpes-oferecidos r) [])

@@ -18,9 +18,19 @@
 
 ## Rollback
 
-- 037 é aditiva. Rollback de **imagem** para tip 036-aware (com PE) é seguro **antes** de writes growth-v1.
-- Após writes com `:pokemon/xp-progress-version=growth-v1`, não voltar a binário que ignore `xp-total` e reaplique limiar 9 sobre residual já convertido.
+- 037 é aditiva (inclui `:pokemon/xp-legacy-nivel`). Rollback de **imagem** para tip 036-aware (PE) é seguro **antes** de writes growth-v1.
+- Após writes `growth-v1`, não voltar a binário que ignore `xp-total` e reaplique limiar 9 sobre residual já convertido.
+- Atributos 037 órfãos em rollback de imagem são inofensivos (aditivos).
 - Forward-fix preferível; cold restore só com GO explícito.
+
+## Não executado (produção)
+
+- Deploy live / migration 037 live / backfill
+- Freeze ou alteração de Node/JVM/Announcer/deploy-hold
+
+## Regressão conhecida (fora de escopo)
+
+`vitoria-preserva-recompensas-anteriores` falha no tip limpo pós-#75 (stash baseline). Não introduzida por growth-v1.
 
 ## Veredito desta entrega
 
