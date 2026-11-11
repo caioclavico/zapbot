@@ -1,0 +1,14 @@
+announcer: 32/32 PASS
+resources: 87/87 PASS
+http_jvm: 287/287 PASS
+media+security: 13/13 PASS
+chromium_amd64_seccomp: PASS
+announcer_suspended_ready: PASS (zero sends)
+persist_orphan_lock: PASS
+sigkill_volumes: PASS
+rollback_live_flag_false: PASS
+schema036_in_bundle: ABSENT
+trivy_delta: 0 added / 6 removed (CRITICAL unchanged=4)
+deploy: NOT EXECUTED
+verdict_A: HOMOLOGADO
+verdict_B: NO-GO (residual risk decision pending)

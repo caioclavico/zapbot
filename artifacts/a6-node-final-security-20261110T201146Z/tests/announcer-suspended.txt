@@ -1,0 +1,6 @@
+{
+  a: { status: 'suspended' },
+  b: { status: 'suspended' },
+  transport: null
+}
+announcer_suspended_zero_sends_ok

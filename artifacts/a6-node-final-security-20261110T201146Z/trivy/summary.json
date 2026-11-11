@@ -1,0 +1,41 @@
+{
+  "final": {
+    "occurrences": 397,
+    "critical": 4,
+    "high": 393,
+    "criticalAdvisories": 4,
+    "highAdvisories": 148,
+    "criticalIds": [
+      "CVE-2026-58016",
+      "CVE-2025-7458",
+      "CVE-2026-6653",
+      "CVE-2023-45853"
+    ]
+  },
+  "live": {
+    "occurrences": 403,
+    "critical": 4,
+    "high": 399,
+    "criticalAdvisories": 4,
+    "highAdvisories": 154,
+    "criticalIds": [
+      "CVE-2026-58016",
+      "CVE-2025-7458",
+      "CVE-2026-6653",
+      "CVE-2023-45853"
+    ]
+  },
+  "delta": {
+    "added": 0,
+    "removed": 6,
+    "addedSample": [],
+    "removedSample": [
+      "CVE-2026-102282|adm-zip",
+      "CVE-2026-77301|adm-zip",
+      "GHSA-8238-w5pm-2374|adm-zip",
+      "GHSA-rcw4-f5rp-g42v|adm-zip",
+      "GHSA-rgj7-g3m4-5g8c|sharp",
+      "GHSA-wq5f-xc86-pv6w|sharp"
+    ]
+  }
+}

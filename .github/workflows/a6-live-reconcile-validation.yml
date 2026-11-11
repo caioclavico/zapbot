@@ -1,9 +1,10 @@
-name: A6 live-based Announcer reconciliation validation
+name: A6 live-based Node security validation
 
 on:
   push:
     branches:
       - fix/a6-pr68-live-reconcile
+      - fix/a6-node-final-security-homolog
   pull_request:
     branches:
       - a6/live-baseline-8ef41c8
@@ -29,19 +30,31 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify exact live base and protected paths
+      - name: Verify live base ancestry and protected gameplay paths
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags origin a6/live-baseline-8ef41c8
           base_ref=origin/a6/live-baseline-8ef41c8
-          expected=8ef41c8da1c28bfb69d57bade81a5a41e9225d44
+          # Tip atual da live-baseline (pós PR #70). Atualizar somente com merge na base.
+          expected=9465477e49584db28bf81bb12412325445537a21
           test "$(git rev-parse "$base_ref")" = "$expected"
           merge_base="$(git merge-base HEAD "$base_ref")"
           test "$merge_base" = "$expected"
+          # Gameplay/schema JVM não podem mudar neste PR de segurança Node.
+          # package-lock.json pode mudar para bumps de segurança justificados (sharp/adm-zip).
           git diff --exit-code "$base_ref...HEAD" -- \
-            modules/pokemon apps/odisseu pokemon-service migrations package-lock.json
-          echo "Verified live base $merge_base; protected gameplay/schema paths and lockfile unchanged."
+            modules/pokemon apps/odisseu pokemon-service migrations
+          echo "Verified live base $merge_base; protected gameplay/schema paths unchanged."
+
+      - name: Whitespace / conflict markers on code paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Evidências/logs em artifacts/ podem conter trailing spaces de stdout.
+          git diff --check origin/a6/live-baseline-8ef41c8...HEAD -- \
+            .github scripts test package.json package-lock.json Dockerfile \
+            ':(exclude)artifacts/**' ':(exclude)docs/**'
 
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -57,6 +70,12 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci
+
+      - name: Media patch verification
+        run: npm run verify:media-patch
+
+      - name: Media security tests
+        run: node --test test/pokemon-jvm-media-security.test.cjs
 
       - name: Announcer, control, restart, and transport tests
         run: npm run test:release-announcer

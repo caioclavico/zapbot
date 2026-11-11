@@ -1,0 +1,33 @@
+=== chromium sandbox probe (tmpfs) ===
+uid=1000(node) gid=1000(node) groups=1000(node)
+chromium_exit=0
+40 /tmp/dom.txt
+<html><head></head><body></body></html>
+
+    PID CMD
+      1 bash -lc  set -e id timeout 40 /usr/bin/chromium --headless=new --disable-gpu --no-first-run \   --user-data-dir=/tmp/chrome-probe \   --dump-dom about:blank >/tmp/dom.txt 2>/tmp/chrome.err echo chromium_exit=$? wc -c /tmp/dom.txt head -c 120 /tmp/dom.txt; echo # namespaces / seccomp from chromium helper if available ps -o pid,cmd | head -5 || true node -e "const fs=require(\"fs\"); const js=fs.readFileSync(\"target/main.js\",\"utf8\"); for (const f of [\"--no-sandbox\",\"--disable-setuid-sandbox\"]) { if (js.includes(f)) { console.error(\"BAD\",f); process.exit(2);} } console.log(\"bundle_sandbox_ok\");" node -e "require(\"sharp\")(Buffer.from(\"<svg xmlns=\\\"http://www.w3.org/2000/svg\\\" width=\\\"8\\\" height=\\\"8\\\"><rect width=\\\"8\\\" height=\\\"8\\\" fill=\\\"#0f0\\\"/></svg>\")).png().toBuffer().then(b=>console.log(\"svg_ok\",b.length));" cat /tmp/chrome.err | tail -20 || true
+    178 node --no-opt -r /proc/.reset scripts/healthcheck.js
+    184 ps -o pid,cmd
+    185 head -5
+bundle_sandbox_ok
+svg_ok 93
+[10:40:1110/201935.928164:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[10:10:1110/201938.719666:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:
+[10:40:1110/201938.722436:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[10:10:1110/201938.728176:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:
+[10:40:1110/201938.730842:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[10:10:1110/201938.747349:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:
+[10:10:1110/201938.868098:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:
+[10:40:1110/201938.869160:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[10:10:1110/201939.347758:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:
+[10:40:1110/201939.391932:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[10:40:1110/201939.392460:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[10:10:1110/201939.402002:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:
+[10:40:1110/201939.402424:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[10:10:1110/201939.532086:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:
+[10:10:1110/201939.855577:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.Properties.GetAll: object_path= /org/freedesktop/UPower/devices/DisplayDevice: unknown error type:
+[10:10:1110/201939.857936:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:
+[10:40:1110/201939.858443:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[10:10:1110/201940.082164:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:
+[10:40:1110/201940.082451:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+[10:10:1110/201940.256218:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:

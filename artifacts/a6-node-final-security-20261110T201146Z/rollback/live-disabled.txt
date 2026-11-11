@@ -1,0 +1,4 @@
+=== rollback live image disabled announcer ===
+env_flag=false
+{ enabled: false }
+rollback_disabled_ok { sends: 0 }
