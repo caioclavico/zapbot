@@ -2,7 +2,7 @@
   "Regras de XP/nível portadas de zapbot.pokemon.treinador (legado CLJS).
 
   Pokémon: xp-por-nivel=9, fator=1.03, nível máximo=100.
-  Treinador: progresso com custos 5, 7, 9, 11… (progresso-treinador)."
+  Treinador: curva progressiva 10 + 5 por nível; curva 5,7,9 preservada só para inicialização histórica."
   (:require [pokemon.domain.errors :as err]
             [pokemon.domain.species-hp :as species-hp]))
 
@@ -11,6 +11,14 @@
 (def xp-por-nivel 9)
 (def xp-por-vitoria 3)
 (def xp-por-derrota 1)
+(def trainer-xp-inicial-por-nivel 10)
+(def trainer-xp-incremento-por-nivel 5)
+
+(defn trainer-xp-necessario
+  "PE necessário para subir do nível `nivel` do treinador, a partir da curva progressiva."
+  [nivel]
+  (+ trainer-xp-inicial-por-nivel
+     (* trainer-xp-incremento-por-nivel (max 0 (dec (long nivel))))))
 
 (defn crescer
   "Espelha js/Math.round(* n 1.03)."
@@ -140,13 +148,33 @@
      :nivel-final (long (:nivel registro-novo))
      :nome (get registro-novo :nome (get registro-novo "nome"))}))
 
-(defn progresso-treinador
-  "Distribui XP total entre níveis com custos 5, 7, 9, 11…"
+(defn progresso-treinador-legado
+  "Curva histórica 5, 7, 9… para preservar nível e PE residual de saves existentes."
   [xp]
   (loop [nivel 1 restante (max 0 (long xp)) necessario 5]
     (if (< restante necessario)
       {:nivel nivel :xp-atual restante :xp-necessario necessario}
       (recur (inc nivel) (- restante necessario) (+ necessario 2)))))
+
+(defn progresso-treinador
+  "Distribui PE acumulado pela curva nova; saves persistidos preservam seu nível anterior."
+  [xp]
+  (loop [nivel 1 restante (max 0 (long xp))]
+    (let [necessario (trainer-xp-necessario nivel)]
+      (if (< restante necessario)
+        {:nivel nivel :xp-atual restante :xp-necessario necessario}
+        (recur (inc nivel) (- restante necessario))))))
+
+(defn avancar-nivel-treinador
+  "Aplica PE a um nível/resíduo já estabelecidos. Retorna todos os níveis cruzados."
+  [nivel-atual xp-residual pe]
+  (loop [nivel (max 1 (long nivel-atual))
+         restante (+ (max 0 (long xp-residual)) (max 0 (long pe)))
+         subidas []]
+    (let [necessario (trainer-xp-necessario nivel)]
+      (if (< restante necessario)
+        {:nivel nivel :xp-atual restante :xp-necessario necessario :subidas subidas}
+        (recur (inc nivel) (- restante necessario) (conj subidas (inc nivel)))))))
 
 (def catalogo-insignias
   "Espelha treinador/catalogo-insignias da master (PE único por marco)."
@@ -220,8 +248,21 @@
 
 (defn perfil-treinador
   [componentes]
-  (let [xp (xp-treinador-total componentes)
-        prog (progresso-treinador xp)]
+  (let [xp (max (xp-treinador-total componentes)
+                (long (:trainer-xp componentes 0)))
+        legado (progresso-treinador-legado xp)
+        curva (progresso-treinador xp)
+        nivel-salvo (max 1 (long (:trainer-level componentes 1)))
+        progress-persisted? (some? (:trainer-xp-level-progress componentes))
+        nivel (if progress-persisted?
+                nivel-salvo
+                (max nivel-salvo (:nivel curva)))
+        progresso (if progress-persisted?
+                    (max 0 (long (:trainer-xp-level-progress componentes)))
+                    (if (> nivel-salvo (:nivel legado)) 0 (:xp-atual legado)))
+        prog {:nivel nivel
+              :xp-atual progresso
+              :xp-necessario (trainer-xp-necessario nivel)}]
     (merge prog {:xp xp
                  :vitorias-treinador (long (:vitorias-treinador componentes 0))
                  :pe-ginasios (long (:pe-ginasios componentes 0))

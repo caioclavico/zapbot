@@ -3477,6 +3477,70 @@ function missionResult(data) {
   return data && data.reconciled && data.summary ? (data.summary.result || data.summary) : (data || {});
 }
 
+const TRAINER_LEVEL_ITEM_LABELS = Object.freeze({
+  pokebola: ['🔴', 'Poké Bola'], 'grande-bola': ['🔵', 'Grande Bola'],
+  'ultra-bola': ['🟡', 'Ultra Bola'], pocao: ['🧪', 'Poção'],
+  'pocao-maxima': ['💖', 'Poção Máxima'], fruta: ['🍓', 'Frambo'],
+  'fruta-dourada': ['🌟', 'Frambo Dourada'], reviver: ['💎', 'Reviver'],
+  'cartao-presente': ['🎁', 'Cartão-presente'], moedas: ['💰', 'Moedas'],
+  coins: ['💰', 'Moedas']
+});
+
+function readEitherKey(value, camel, kebab) {
+  return value && (value[camel] != null ? value[camel] : value[kebab]);
+}
+
+function formatTrainerLevelUps(data) {
+  if (!data || data.duplicate) return '';
+  const events = readEitherKey(data, 'trainerLevelUps', 'trainer-level-ups');
+  if (!Array.isArray(events) || !events.length) return '';
+  const blocks = [];
+  for (const event of events) {
+    if (!event || event.duplicate) continue;
+    const from = Number(readEitherKey(event, 'nivelAnterior', 'nivel-anterior'));
+    const to = Number(readEitherKey(event, 'nivelAtual', 'nivel-atual'));
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) continue;
+    const pe = Number(readEitherKey(event, 'peRecebido', 'pe-recebido') || 0);
+    const next = Number(readEitherKey(event, 'xpNecessario', 'xp-necessario') || 0);
+    const current = Number(readEitherKey(event, 'xpAtual', 'xp-atual') || 0);
+    const trainer = readEitherKey(event, 'trainer', 'trainer') || 'Treinador';
+    const items = event.items || {};
+    const itemLines = Object.entries(items).filter(([, qty]) => Number(qty) > 0)
+      .map(([id, qty]) => {
+        const [emoji, label] = TRAINER_LEVEL_ITEM_LABELS[id] || ['🎁', id];
+        return `${emoji} ${label} ×${Number(qty)}`;
+      });
+    const pending = event.pending || {};
+    const pendingLines = Object.entries(pending).filter(([, qty]) => Number(qty) > 0)
+      .map(([id, qty]) => {
+        const [emoji, label] = TRAINER_LEVEL_ITEM_LABELS[id] || ['🎁', id];
+        return `${emoji} ${label} ×${Number(qty)}`;
+      });
+    const levels = event.niveis || event.levels || [];
+    const expansions = levels.filter((row) => row && readEitherKey(row, 'marcoEspaco', 'marco-espaco'))
+      .map((row) => {
+        const kind = readEitherKey(row, 'marcoEspaco', 'marco-espaco');
+        return kind === 'pokemon' || kind === '"pokemon"'
+          ? `📦 +50 espaços Pokémon (nível ${row.nivel})`
+          : `🎒 +50 espaços na mochila (nível ${row.nivel})`;
+      });
+    blocks.push([
+      `🌟 *${trainer} subiu de nível!*`,
+      `Nível ${from} → ${to} · ✨ +${pe} PE`,
+      ...itemLines,
+      pendingLines.length ? `🎒 Sem espaço; ficou pendente: ${pendingLines.join(', ')}` : null,
+      ...expansions,
+      next > 0 ? `Próximo nível: ${current}/${next} PE` : null
+    ].filter(Boolean).join('\n'));
+  }
+  return blocks.join('\n\n');
+}
+
+function appendTrainerLevelUps(text, data) {
+  const summary = formatTrainerLevelUps(data);
+  return summary ? `${String(text || '').trim()}\n\n${summary}` : String(text || '');
+}
+
 function formatMissionClaim(data, kind, prefix = '!pk') {
   const result = missionResult(data);
   if (result.empty) {
@@ -4342,6 +4406,8 @@ module.exports = {
   formatMissionItemsFromMap,
   formatMissions,
   formatMissionClaim,
+  formatTrainerLevelUps,
+  appendTrainerLevelUps,
   formatGift,
   formatTradeCreated,
   formatTradeAccepted,

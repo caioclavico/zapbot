@@ -54,11 +54,13 @@
         :else {"pokebola" 3}))
 
 (defn allocate
-  "Prioridade original; excedente preservado em pendências, sem perda."
-  [items pending free]
-  (reduce (fn [{:keys [added pending free]} item]
-            (let [qty (get items item 0) n (min qty free) rest (- qty n)]
-              {:added (cond-> added (pos? n) (assoc item n))
-               :pending (cond-> pending (pos? rest) (update item (fnil + 0) rest))
-               :free (- free n)}))
-          {:added {} :pending (or pending {}) :free (max 0 free)} order))
+  "Prioridade original; excedente preservado. Aridade 4 aceita ordem local de outro domínio."
+  ([items pending free]
+   (allocate items pending free order))
+  ([items pending free item-order]
+   (reduce (fn [{:keys [added pending free]} item]
+             (let [qty (get items item 0) n (min qty free) rest (- qty n)]
+               {:added (cond-> added (pos? n) (assoc item n))
+                :pending (cond-> pending (pos? rest) (update item (fnil + 0) rest))
+                :free (- free n)}))
+           {:added {} :pending (or pending {}) :free (max 0 free)} item-order)))

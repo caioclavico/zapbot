@@ -81,9 +81,7 @@
           por-componentes (xp/perfil-treinador save)
           xp-stored (long (:trainer-xp save 0))
           xp (max (long (:xp por-componentes 0)) xp-stored)
-          prog (if (pos? (long (:xp por-componentes 0)))
-                 por-componentes
-                 (xp/progresso-treinador xp))]
+          prog (assoc por-componentes :xp xp)]
       (merge base
              {:nivel (:nivel prog (:trainer-level save 1))
               :xp xp

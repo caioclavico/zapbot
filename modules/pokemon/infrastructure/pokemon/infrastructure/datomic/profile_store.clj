@@ -6,7 +6,8 @@
             [pokemon.domain.identities :as id]
             [pokemon.domain.profile :as profile]
             [pokemon.domain.xp :as xp]
-            [pokemon.domain.reward :as reward]))
+            [pokemon.domain.reward :as reward]
+            [pokemon.infrastructure.datomic.trainer-progression :as trainer-progression]))
 
 (defn- save-key [chat player save] (id/save-key chat player save))
 (defn- save [db chat player slot] (d/pull db '[*] [:save/key (save-key chat player slot)]))
@@ -48,13 +49,16 @@
                          :operation-receipt/channel "gameplay" :operation-receipt/payload-hash ph
                          :operation-receipt/player-key (id/player-key chat-id player-id)
                          :operation-receipt/save-id save-id :operation-receipt/summary (pr-str (:summary built))}]
-                       (:tx built))]
+                       (:tx built))
+              progressed (trainer-progression/enrich db {:tx tx :result (:summary built)})
+              tx (:tx progressed)
+              summary (:result progressed)]
           (let [attempt (try
                           (d/transact conn {:tx-data tx})
                           {:ok true}
                           (catch Exception e {:ok false :error e}))]
             (if (:ok attempt)
-              (result operation-id (:summary built))
+              (result operation-id summary)
               (if (< n 8)
                 (recur (inc n))
                 (throw (err/error :writer_fence_conflict {:cause (ex-message (:error attempt))})))))))))))
