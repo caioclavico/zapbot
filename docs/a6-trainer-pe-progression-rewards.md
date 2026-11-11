@@ -2,9 +2,9 @@
 
 ## Estado
 
-Implementação isolada na branch `feature/trainer-pe-progressive-rewards`, baseada no commit live `8ef41c8da1c28bfb69d57bade81a5a41e9225d44`. Nenhuma alteração foi aplicada à produção ou ao workspace original. A migration `pokemon/036` é aditiva e **não foi aplicada**.
+Reconciliada sobre a tip live com drain JVM completo (`3bbf063` / PR #74), via cherry-pick seletivo de `90efc5c` (RC #66) na branch `feat/a6-rc66-trainer-on-drain-live`. Drain/freeze/schedulers preservados. A migration `pokemon/036` permanece aditiva e **não aplicada em produção** nesta preparação.
 
-Decisão: **GO para integração e build de homologação; NO-GO para deploy até existir imagem compatível de rollback pinada**. A suíte direcionada de progressão e Datomic passou após o ensaio upgrade/rollback compatível/re-upgrade. As falhas amplas conhecidas continuam reproduzidas na base limpa. Esta homologação encontrou e corrigiu duas regressões: datoms conflitantes de inventário e reinterpretação do PE acumulado pela curva antiga após progresso 036 persistido.
+Decisão desta fase: **GO para homologação/merge na live-baseline e build da imagem candidata; NO-GO para cutover live até autorização explícita** com imagem 036-compatível de rollback e cold atualizado da janela. Suíte direcionada de progressão + drain: PASS no tip reconciliado.
 
 ## Implementação
 
