@@ -1501,6 +1501,16 @@ function formatError(err) {
     INVALID_MOVE_SLOT: '❓ Informe um golpe válido (1-4) para substituir ou liberar vaga.',
     MOVE_ALREADY_KNOWN: '❓ Esse golpe já é conhecido (ou já foi oferecido/removido).',
     MUST_KEEP_STAB_MOVE: '🚫 Mantenha pelo menos um ataque ofensivo do próprio tipo.',
+    POKEMON_IDENTITY_MISMATCH:
+      '⚠️ O Pokémon da pendência de MT não corresponde mais à coleção (reordenação/troca/remoção). Use !pk mt usar de novo.',
+    MT_SLOT_CHANGED:
+      '⚠️ O golpe do slot mudou desde a pendência. Use !pk mt usar de novo (nenhuma MT consumida).',
+    MT_MOVE_NOT_IN_CATALOG: '🚫 Golpe não pertence ao catálogo de MT. Operação rejeitada.',
+    MT_MOVE_NOT_ELIGIBLE: '🚫 Esse golpe não é elegível para a espécie/nível (learnset MT).',
+    MT_LEARNSET_UNAVAILABLE: '🚫 Learnset de MT ainda não disponível para esta espécie.',
+    MT_CATALOG_VERSION_MISMATCH:
+      '⚠️ Catálogo de MT desatualizado. Cancele e monte a pendência de novo com !pk mt usar.',
+    INVALID_MT_ITEM: '💿 Consumo de MT inválido neste contexto.',
     NO_MOVE_OFFER: '❓ Não há oferta de golpe pendente. Use !pk aprender após subir de nível.',
     MOVE_NOT_IN_HISTORY: '❓ Esse golpe não está no histórico para reaprender.',
     CANNOT_FORGET_LAST_MOVE: '🚫 Remover deixaria o Pokémon sem golpes suficientes.',

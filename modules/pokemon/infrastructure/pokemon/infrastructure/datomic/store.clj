@@ -19,6 +19,7 @@
             [pokemon.domain.identities :as id]
             [pokemon.domain.model :as model]
             [pokemon.domain.moves :as moves]
+            [pokemon.domain.mt-learnset :as mt-learnset]
             [pokemon.domain.mundo :as mundo]
             [pokemon.domain.onboarding :as onboard]
             [pokemon.domain.ops :as ops]
@@ -2749,7 +2750,7 @@
                            (map? s)
                            (merge (select-keys s [:idx :golpe-anterior :golpe-novo
                                                   :consume-item-id :item-qty-after
-                                                  :id-pokemon])
+                                                  :id-pokemon :catalog-version])
                                   (when (:registro s) {:registro (:registro s)})
                                   {:duplicate true}))))]
       (or (some-> (resolve-receipt existing phash operation-id) enrich-dup)
@@ -2760,9 +2761,30 @@
                (assert-no-busy-battle! db (:chat-id writer-ctx) (:player-id writer-ctx))
                (let [sk (id/save-key (:chat-id writer-ctx) (:player-id writer-ctx) (:save-id writer-ctx))
                      colecao (query-collection db sk)
-                     idx (long (:idx request))
-                     _ (coll/validate-index! idx (count colecao))
-                     poke (nth colecao idx)
+                     want-id (when-not (str/blank? (str (:id-pokemon request)))
+                               (str (:id-pokemon request)))
+                     idx-req (when (some? (:idx request)) (long (:idx request)))
+                     indexed (mapv (fn [i p] (assoc p :collection-index i))
+                                   (range) colecao)
+                     poke (cond
+                            want-id
+                            (or (first (filter #(= (str (:id-pokemon %)) want-id) indexed))
+                                (throw (err/error :pokemon_identity_mismatch
+                                                  {:id-pokemon want-id
+                                                   :reason "not-in-active-collection"})))
+                            (some? idx-req)
+                            (do (coll/validate-index! idx-req (count colecao))
+                                (nth indexed idx-req))
+                            :else
+                            (throw (err/error :invalid_collection_index {:idx idx-req})))
+                     idx (long (:collection-index poke))
+                     ;; Se o cliente ainda manda idx, exige que bata com o id canônico.
+                     _ (when (and want-id (some? idx-req) (not= idx idx-req))
+                         (throw (err/error :pokemon_identity_mismatch
+                                           {:id-pokemon want-id
+                                            :idx idx-req
+                                            :actual-idx idx
+                                            :reason "collection-reordered"})))
                      oferta? (boolean (:oferta? request))
                      slot (:slot request)
                      golpes-antes (mapv moves/registro->golpe (or (:golpes poke) []))
@@ -2771,27 +2793,43 @@
                                                  (<= 0 (long slot))
                                                  (< (long slot) (count golpes-antes)))
                                         (nth golpes-antes (long slot))))
-                     atualizado (moves/aplicar-aprendizado
-                                 poke (:golpe request) slot oferta?)
-                     golpe-novo (moves/registro->golpe
-                                 (moves/golpe->registro (:golpe request)))
+                     expected-slug (when-not (str/blank? (str (:expected-slot-slug request)))
+                                     (moves/identificador (:expected-slot-slug request)))
+                     _ (when (and expected-slug (some? slot))
+                         (let [atual (some-> golpe-anterior moves/chave)]
+                           (when (not= expected-slug atual)
+                             (throw (err/error :mt_slot_changed
+                                               {:slot slot
+                                                :expected expected-slug
+                                                :actual atual})))))
+                     consume-id (when-let [item-id (:consume-item-id request)]
+                                  (str item-id))
+                     mt? (= "mt" consume-id)
+                     golpe* (if mt?
+                              (mt-learnset/assert-mt-eligible!
+                               poke (:golpe request) slot
+                               {:catalog-version (:catalog-version request)
+                                :consume-item-id consume-id})
+                              (:golpe request))
+                     atualizado (moves/aplicar-aprendizado poke golpe* slot oferta?)
+                     golpe-novo (moves/registro->golpe (moves/golpe->registro golpe*))
                      rev (long (:save/revision save 0))
                      pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
                      lookup [:pokemon/id-pokemon (:id-pokemon poke)]
-                     consume-id (when-let [item-id (:consume-item-id request)]
-                                  (str item-id))
                      item-tx (when consume-id
                                (inventory-adjust-tx db sk consume-id -1))
                      item-qty-after (when consume-id
                                       (dec (inventory-qty db sk consume-id)))
+                     catalog-ver (when mt? (mt-learnset/catalog-version*))
                      summary {:idx idx
-                              :slug (moves/chave (:golpe request))
+                              :slug (moves/chave golpe*)
                               :id-pokemon (:id-pokemon poke)
                               :golpe-anterior (when golpe-anterior
                                                 (moves/golpe->registro golpe-anterior))
                               :golpe-novo (moves/golpe->registro golpe-novo)
                               :consume-item-id consume-id
                               :item-qty-after item-qty-after
+                              :catalog-version catalog-ver
                               :registro (select-keys atualizado
                                                      [:id-pokemon :nome :species :nivel
                                                       :golpes :tipos :shiny :hp :hp-atual])}
@@ -2824,6 +2862,7 @@
                            :golpe-novo golpe-novo
                            :consume-item-id consume-id
                            :item-qty-after item-qty-after
+                           :catalog-version catalog-ver
                            :registro atualizado}})))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]

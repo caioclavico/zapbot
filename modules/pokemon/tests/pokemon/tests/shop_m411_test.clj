@@ -204,18 +204,16 @@
     (tx/buy-item! s {:chat-id chat :player-id "ash" :save-id "a"
                      :fence-generation (fence s chat "ash")
                      :operation-id "buy-mt" :item-id "mt"})
-    (let [r (tx/learn-move!
-             s {:chat-id chat :player-id "ash" :save-id "a"
+    (let [id (:id-pokemon (first (ports/list-collection s chat "ash" "a")))
+          base {:chat-id chat :player-id "ash" :save-id "a"
                 :fence-generation (fence s chat "ash")
                 :operation-id "learn-mt" :idx 0 :slot 0 :consume-item-id "mt"
+                :id-pokemon id :expected-slot-slug "tackle"
+                :catalog-version "mt-learnset-v1-2026-11"
                 :golpe {:slug "quick-attack" :nome-exibicao "Ataque Rápido"
-                        :tipo "normal" :poder 40 :classe :fisico}})
-          retry (tx/learn-move!
-                 s {:chat-id chat :player-id "ash" :save-id "a"
-                    :fence-generation (fence s chat "ash")
-                    :operation-id "learn-mt" :idx 0 :slot 0 :consume-item-id "mt"
-                    :golpe {:slug "quick-attack" :nome-exibicao "Ataque Rápido"
-                            :tipo "normal" :poder 40 :classe :fisico}})
+                        :tipo "normal" :poder 40 :classe :fisico}}
+          r (tx/learn-move! s base)
+          retry (tx/learn-move! s base)
           inv (ports/list-inventory s chat "ash" "a")]
       (is (false? (:duplicate r)))
       (is (true? (:duplicate retry)))

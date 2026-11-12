@@ -93,3 +93,25 @@ test('ataqueDoTipo e filtro de STAB básico', () => {
     false
   );
 });
+
+test('listarCandidatosMt usa catálogo local versionado (sem HTTP)', () => {
+  assert.equal(pokeapi.mtCatalogVersion(), 'mt-learnset-v1-2026-11');
+  const cands = pokeapi.listarCandidatosMt('wartortle', {
+    nivel: 16,
+    tipos: ['water'],
+    golpesAtuais: [
+      { slug: 'tackle', tipo: 'normal', classe: 'fisico', poder: 40 },
+      { slug: 'water-gun', tipo: 'water', classe: 'especial', poder: 40 },
+      { slug: 'bite', tipo: 'dark', classe: 'fisico', poder: 60 },
+      { slug: 'rapid-spin', tipo: 'normal', classe: 'fisico', poder: 50 }
+    ],
+    slot: 0
+  });
+  assert.ok(cands.length >= 1);
+  assert.ok(cands.every((g) => g.slug !== 'tackle'));
+  assert.ok(cands.some((g) => g.slug === 'water-pulse' || g.slug === 'bubble'));
+  assert.throws(
+    () => pokeapi.listarCandidatosMt('missingno-xyz', { nivel: 10 }),
+    (err) => err && err.code === 'MT_LEARNSET_UNAVAILABLE'
+  );
+});

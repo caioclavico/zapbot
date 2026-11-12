@@ -2161,19 +2161,24 @@
                           fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
                           operation-id (g body "operationId")
                           idx (long-or-nil (g body "collectionIndex" "idx" "index"))
+                          id-pokemon (g body "idPokemon" "id-pokemon" "pokemonId")
                           golpe (or (g body "golpe") (g body "move") {})
                           slot (long-or-nil (g body "slot" "moveIndex"))
                           oferta? (boolean (g body "oferta" "oferta?" "fromOffer"))
                           consume-item-id (g body "consumeItemId" "consume-item-id"
-                                             "consumeItem")]
+                                             "consumeItem")
+                          expected-slot-slug (g body "expectedSlotSlug"
+                                                "expected-slot-slug")
+                          catalog-version (g body "catalogVersion" "catalog-version")]
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? save-id) (nil? fence)
-                                (str/blank? operation-id) (nil? idx)
+                                (str/blank? operation-id)
+                                (and (nil? idx) (str/blank? (str id-pokemon)))
                                 (empty? golpe))
                         (throw (err/error :invalid_query
                                           {:required ["chatId" "playerId" "saveId"
                                                       "fenceGeneration" "operationId"
-                                                      "collectionIndex" "golpe"]})))
+                                                      "collectionIndex|idPokemon" "golpe"]})))
                       (ok! ex (with-operation! operation-id
                                 #(tx/learn-move!
                                   store (cond-> {:chat-id chat-id
@@ -2181,12 +2186,18 @@
                                                  :save-id save-id
                                                  :fence-generation fence
                                                  :operation-id operation-id
-                                                 :idx idx
                                                  :golpe golpe
                                                  :oferta? oferta?}
+                                          (some? idx) (assoc :idx idx)
                                           (some? slot) (assoc :slot slot)
+                                          (not (str/blank? (str id-pokemon)))
+                                          (assoc :id-pokemon (str id-pokemon))
                                           (not (str/blank? (str consume-item-id)))
-                                          (assoc :consume-item-id (str consume-item-id))))))))
+                                          (assoc :consume-item-id (str consume-item-id))
+                                          (not (str/blank? (str expected-slot-slug)))
+                                          (assoc :expected-slot-slug (str expected-slot-slug))
+                                          (not (str/blank? (str catalog-version)))
+                                          (assoc :catalog-version (str catalog-version))))))))
 
                 (= path "/v1/pokemon/forget-move")
                 (do (require-method! ex #{"POST"})

@@ -10,6 +10,7 @@
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.errors :as err]
             [pokemon.domain.moves :as moves]
+            [pokemon.domain.mt-learnset :as mt-learnset]
             [pokemon.domain.shop :as shop]
             [pokemon.infrastructure.datomic.store :as store]))
 
@@ -66,28 +67,33 @@
                      :fence-generation (fence s chat "owner")
                      :operation-id "buy-mt-w" :item-id "mt"})
     (let [antes (first (ports/list-collection s chat "owner" "a"))
+          id (:id-pokemon antes)
           r (tx/learn-move!
              s {:chat-id chat :player-id "owner" :save-id "a"
                 :fence-generation (fence s chat "owner")
                 :operation-id "mt-learn-w" :idx 0 :slot 0 :consume-item-id "mt"
-                :golpe {:slug "ice-beam" :nome-exibicao "Raio de Gelo"
-                        :tipo "ice" :poder 90 :classe :especial}})
+                :id-pokemon id :expected-slot-slug "tackle"
+                :catalog-version "mt-learnset-v1-2026-11"
+                :golpe {:slug "water-pulse" :nome-exibicao "Pulso d'Água"
+                        :tipo "water" :poder 60 :classe :especial}})
           retry (tx/learn-move!
                  s {:chat-id chat :player-id "owner" :save-id "a"
                     :fence-generation (fence s chat "owner")
                     :operation-id "mt-learn-w" :idx 0 :slot 0 :consume-item-id "mt"
-                    :golpe {:slug "ice-beam" :nome-exibicao "Raio de Gelo"
-                            :tipo "ice" :poder 90 :classe :especial}})
+                    :id-pokemon id :expected-slot-slug "tackle"
+                    :catalog-version "mt-learnset-v1-2026-11"
+                    :golpe {:slug "water-pulse" :nome-exibicao "Pulso d'Água"
+                            :tipo "water" :poder 60 :classe :especial}})
           depois (first (ports/list-collection s chat "owner" "a"))
           inv (ports/list-inventory s chat "owner" "a")
           mt-qty (or (:qty (first (filter #(= "mt" (:item-id %)) inv))) 0)]
       (is (false? (:duplicate r)))
       (is (true? (:duplicate retry)))
       (is (= "tackle" (moves/chave (:golpe-anterior r))))
-      (is (= "ice-beam" (moves/chave (:golpe-novo r))))
+      (is (= "water-pulse" (moves/chave (:golpe-novo r))))
       (is (zero? (:item-qty-after r)))
       (is (zero? mt-qty))
-      (is (= (:id-pokemon antes) (:id-pokemon depois)))
+      (is (= id (:id-pokemon depois)))
       (is (= (:nivel antes) (:nivel depois)))
       (is (= (:hp antes) (:hp depois)))
       (is (= (:ataque antes) (:ataque depois)))
@@ -95,11 +101,11 @@
       (is (= (boolean (:shiny antes)) (boolean (:shiny depois))))
       (is (= "wartortle"
              (str/lower-case (str (or (:species depois) (:nome depois))))))
-      (is (= "ice-beam" (moves/chave (nth (:golpes depois) 0))))
+      (is (= "water-pulse" (moves/chave (nth (:golpes depois) 0))))
       (is (= "water-gun" (moves/chave (nth (:golpes depois) 1))))
       (is (= "bite" (moves/chave (nth (:golpes depois) 2))))
       (is (= "rapid-spin" (moves/chave (nth (:golpes depois) 3))))
-      (is (= "ice-beam" (moves/chave (:golpe-novo retry)))
+      (is (= "water-pulse" (moves/chave (:golpe-novo retry)))
           "retry devolve o mesmo recibo sem reconsumir"))))
 
 (deftest mt-indisponivel-nao-altera-golpes
@@ -112,9 +118,12 @@
                (tx/learn-move!
                 s {:chat-id chat :player-id "ash" :save-id "a"
                    :fence-generation (fence s chat "ash")
-                   :operation-id "mt-fail" :idx 0 :slot 2 :consume-item-id "mt"
-                   :golpe {:slug "surf" :nome-exibicao "Surfar"
-                           :tipo "water" :poder 90 :classe :especial}})
+                   :operation-id "mt-fail" :idx 0 :slot 0 :consume-item-id "mt"
+                   :id-pokemon (:id-pokemon antes)
+                   :expected-slot-slug "tackle"
+                   :catalog-version "mt-learnset-v1-2026-11"
+                   :golpe {:slug "water-pulse" :nome-exibicao "Pulso d'Água"
+                           :tipo "water" :poder 60 :classe :especial}})
                (catch Exception e e))
           depois (first (ports/list-collection s chat "ash" "a"))]
       (is (= :insufficient_item (err/error-code ex)))
@@ -128,28 +137,32 @@
     (tx/buy-item! s {:chat-id chat :player-id "ash" :save-id "a"
                      :fence-generation (fence s chat "ash")
                      :operation-id "buy-mt-s" :item-id "mt"})
-    (testing "slot inválido"
-      (let [ex (try
-                 (tx/learn-move!
-                  s {:chat-id chat :player-id "ash" :save-id "a"
-                     :fence-generation (fence s chat "ash")
-                     :operation-id "mt-bad-slot" :idx 0 :slot 9 :consume-item-id "mt"
-                     :golpe {:slug "surf" :nome-exibicao "Surfar"
-                             :tipo "water" :poder 90 :classe :especial}})
-                 (catch Exception e e))]
-        (is (= :invalid_move_slot (err/error-code ex)))))
-    (testing "golpe já conhecido"
-      (let [ex (try
-                 (tx/learn-move!
-                  s {:chat-id chat :player-id "ash" :save-id "a"
-                     :fence-generation (fence s chat "ash")
-                     :operation-id "mt-known" :idx 0 :slot 0 :consume-item-id "mt"
-                     :golpe {:slug "bite" :nome-exibicao "Mordida"
-                             :tipo "dark" :poder 60 :classe :fisico}})
-                 (catch Exception e e))
-            inv (ports/list-inventory s chat "ash" "a")]
-        (is (= :move_already_known (err/error-code ex)))
-        (is (= 1 (:qty (first (filter #(= "mt" (:item-id %)) inv)))))))))
+    (let [id (:id-pokemon (first (ports/list-collection s chat "ash" "a")))]
+      (testing "slot inválido"
+        (let [ex (try
+                   (tx/learn-move!
+                    s {:chat-id chat :player-id "ash" :save-id "a"
+                       :fence-generation (fence s chat "ash")
+                       :operation-id "mt-bad-slot" :idx 0 :slot 9 :consume-item-id "mt"
+                       :id-pokemon id :catalog-version "mt-learnset-v1-2026-11"
+                       :golpe {:slug "water-pulse" :nome-exibicao "Pulso d'Água"
+                               :tipo "water" :poder 60 :classe :especial}})
+                   (catch Exception e e))]
+          (is (= :invalid_move_slot (err/error-code ex)))))
+      (testing "golpe já conhecido"
+        (let [ex (try
+                   (tx/learn-move!
+                    s {:chat-id chat :player-id "ash" :save-id "a"
+                       :fence-generation (fence s chat "ash")
+                       :operation-id "mt-known" :idx 0 :slot 0 :consume-item-id "mt"
+                       :id-pokemon id :expected-slot-slug "tackle"
+                       :catalog-version "mt-learnset-v1-2026-11"
+                       :golpe {:slug "bite" :nome-exibicao "Mordida"
+                               :tipo "dark" :poder 60 :classe :fisico}})
+                   (catch Exception e e))
+              inv (ports/list-inventory s chat "ash" "a")]
+          (is (= :move_already_known (err/error-code ex)))
+          (is (= 1 (:qty (first (filter #(= "mt" (:item-id %)) inv))))))))))
 
 (deftest mt-nao-remove-ultimo-stab
   (let [s (fresh-store! "mt-stab")
@@ -165,14 +178,109 @@
     (tx/buy-item! s {:chat-id chat :player-id "ash" :save-id "a"
                      :fence-generation (fence s chat "ash")
                      :operation-id "buy-mt-stab" :item-id "mt"})
-    (let [ex (try
+    (let [id (:id-pokemon (first (ports/list-collection s chat "ash" "a")))
+          ex (try
                (tx/learn-move!
                 s {:chat-id chat :player-id "ash" :save-id "a"
                    :fence-generation (fence s chat "ash")
                    :operation-id "mt-stab-fail" :idx 0 :slot 0 :consume-item-id "mt"
-                   :golpe {:slug "hyper-fang" :nome-exibicao "Hiperpresa"
-                           :tipo "normal" :poder 80 :classe :fisico}})
+                   :id-pokemon id :expected-slot-slug "water-gun"
+                   :catalog-version "mt-learnset-v1-2026-11"
+                   :golpe {:slug "bite" :nome-exibicao "Mordida"
+                           :tipo "dark" :poder 60 :classe :fisico}})
                (catch Exception e e))
           inv (ports/list-inventory s chat "ash" "a")]
       (is (= :must_keep_stab_move (err/error-code ex)))
       (is (= 1 (:qty (first (filter #(= "mt" (:item-id %)) inv))))))))
+
+(deftest mt-rejeita-identidade-divergente-e-golpe-forjado
+  (let [s (fresh-store! "mt-id")
+        chat "chat-mt-id"]
+    (boot! s chat "ash" 400)
+    (collection/adicionar-pokemon! s chat "ash" (wartortle) 10 nil)
+    (collection/adicionar-pokemon! s chat "ash"
+                                   (-> (wartortle) (assoc :nome "Wartortle-B")) 10 nil)
+    (tx/buy-item! s {:chat-id chat :player-id "ash" :save-id "a"
+                     :fence-generation (fence s chat "ash")
+                     :operation-id "buy-mt-id1" :item-id "mt"})
+    (tx/buy-item! s {:chat-id chat :player-id "ash" :save-id "a"
+                     :fence-generation (fence s chat "ash")
+                     :operation-id "buy-mt-id2" :item-id "mt"})
+    (let [col (ports/list-collection s chat "ash" "a")
+          a (first col)
+          b (second col)]
+      (testing "idx aponta para outro Pokémon que o id canônico"
+        (let [ex (try
+                   (tx/learn-move!
+                    s {:chat-id chat :player-id "ash" :save-id "a"
+                       :fence-generation (fence s chat "ash")
+                       :operation-id "mt-id-mismatch" :idx 1
+                       :id-pokemon (:id-pokemon a)
+                       :slot 0 :expected-slot-slug "tackle"
+                       :consume-item-id "mt"
+                       :catalog-version "mt-learnset-v1-2026-11"
+                       :golpe {:slug "water-pulse" :nome-exibicao "Pulso d'Água"
+                               :tipo "water" :poder 60 :classe :especial}})
+                   (catch Exception e e))]
+          (is (= :pokemon_identity_mismatch (err/error-code ex)))))
+      (testing "id inexistente / trocado"
+        (let [ex (try
+                   (tx/learn-move!
+                    s {:chat-id chat :player-id "ash" :save-id "a"
+                       :fence-generation (fence s chat "ash")
+                       :operation-id "mt-id-gone" :idx 0
+                       :id-pokemon "pokemon-de-outro-jogador"
+                       :slot 0 :expected-slot-slug "tackle"
+                       :consume-item-id "mt"
+                       :catalog-version "mt-learnset-v1-2026-11"
+                       :golpe {:slug "water-pulse" :nome-exibicao "Pulso d'Água"
+                               :tipo "water" :poder 60 :classe :especial}})
+                   (catch Exception e e))]
+          (is (= :pokemon_identity_mismatch (err/error-code ex)))))
+      (testing "slot mudou desde a pendência"
+        (let [ex (try
+                   (tx/learn-move!
+                    s {:chat-id chat :player-id "ash" :save-id "a"
+                       :fence-generation (fence s chat "ash")
+                       :operation-id "mt-slot-changed" :idx 0
+                       :id-pokemon (:id-pokemon a)
+                       :slot 0 :expected-slot-slug "water-gun"
+                       :consume-item-id "mt"
+                       :catalog-version "mt-learnset-v1-2026-11"
+                       :golpe {:slug "water-pulse" :nome-exibicao "Pulso d'Água"
+                               :tipo "water" :poder 60 :classe :especial}})
+                   (catch Exception e e))]
+          (is (= :mt_slot_changed (err/error-code ex)))))
+      (testing "golpe forjado fora do learnset"
+        (let [ex (try
+                   (tx/learn-move!
+                    s {:chat-id chat :player-id "ash" :save-id "a"
+                       :fence-generation (fence s chat "ash")
+                       :operation-id "mt-forged" :idx 0
+                       :id-pokemon (:id-pokemon a)
+                       :slot 0 :expected-slot-slug "tackle"
+                       :consume-item-id "mt"
+                       :catalog-version "mt-learnset-v1-2026-11"
+                       :golpe {:slug "hyper-beam" :nome-exibicao "Hiperrayo"
+                               :tipo "normal" :poder 150 :classe :especial}})
+                   (catch Exception e e))]
+          (is (#{:mt_move_not_eligible :mt_move_not_in_catalog} (err/error-code ex)))))
+      (testing "aprendizado por id ignora índice stale quando idx omisso"
+        (let [r (tx/learn-move!
+                 s {:chat-id chat :player-id "ash" :save-id "a"
+                    :fence-generation (fence s chat "ash")
+                    :operation-id "mt-by-id" :id-pokemon (:id-pokemon b)
+                    :slot 0 :expected-slot-slug "tackle"
+                    :consume-item-id "mt"
+                    :catalog-version "mt-learnset-v1-2026-11"
+                    :golpe {:slug "water-pulse" :nome-exibicao "Pulso d'Água"
+                            :tipo "water" :poder 60 :classe :especial}})]
+          (is (= (:id-pokemon b) (:id-pokemon r)))
+          (is (= "water-pulse" (moves/chave (:golpe-novo r)))))))))
+
+(deftest mt-catalogo-node-jvm-alinhados
+  (let [c (mt-learnset/catalog)]
+    (is (= "mt-learnset-v1-2026-11" (mt-learnset/catalog-version*)))
+    (is (seq (get-in c ["species" "wartortle"])))
+    (is (mt-learnset/move-entry "water-pulse"))
+    (is (seq (mt-learnset/eligible-move-slugs "wartortle" 16)))))

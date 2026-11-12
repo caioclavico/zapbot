@@ -400,12 +400,24 @@ function ataqueDoTipo(golpe, tipos) {
     && poder > 0;
 }
 
+/** Catálogo versionado compartilhado com a JVM (sem HTTP em runtime). */
+let _mtCatalog;
+function mtLearnsetCatalog() {
+  if (_mtCatalog) return _mtCatalog;
+  // eslint-disable-next-line global-require
+  _mtCatalog = require('./mt-learnset-v1.json');
+  return _mtCatalog;
+}
+
+function mtCatalogVersion() {
+  return String((mtLearnsetCatalog() || {}).version || 'mt-learnset-v1-2026-11');
+}
+
 /**
- * Candidatos de MT genérica: learnset por level-up da espécie (jogos principais /
- * PokeAPI), ofensivos, ainda não conhecidos, que preservam STAB no slot alvo.
- * Não mistura regras de Pokémon GO nem MT ágil/carregada.
+ * Candidatos de MT genérica a partir do catálogo local (mesmo da JVM).
+ * Learnset level-up ofensivo; sem PokeAPI; sem regras de Pokémon GO.
  */
-async function listarCandidatosMt(speciesSlug, {
+function listarCandidatosMt(speciesSlug, {
   nivel = 1,
   tipos = [],
   golpesAtuais = [],
@@ -413,22 +425,39 @@ async function listarCandidatosMt(speciesSlug, {
 } = {}) {
   const slug = String(speciesSlug || '').toLowerCase().trim();
   if (!slug) return [];
-  const data = await fetchJson(`https://pokeapi.co/api/v2/pokemon/${slug}`);
-  const movesBrutos = data.moves || [];
+  const catalog = mtLearnsetCatalog();
+  const entries = (catalog.species && catalog.species[slug]) || [];
+  if (!entries.length) {
+    const err = new Error(`Learnset MT indisponível para ${slug}`);
+    err.code = 'MT_LEARNSET_UNAVAILABLE';
+    err.species = slug;
+    throw err;
+  }
   const nivelMax = Math.max(1, Number(nivel) || 1);
-  const aprendidos = movesBrutos.filter((m) => {
-    const n = nivelAprendizado(m);
-    return n != null && n <= nivelMax;
-  });
-  const nomes = [...new Set(aprendidos.map((m) => m.move && m.move.name).filter(Boolean))];
-  const loaded = (await Promise.all(nomes.map(carregarGolpe))).filter(Boolean);
+  const moves = catalog.moves || {};
   const conhecidos = new Set((golpesAtuais || []).map(slugGolpe).filter(Boolean));
   const tiposArr = Array.isArray(tipos) ? tipos.map(String) : [];
   const slotN = slot == null ? null : Number(slot);
+  const loaded = [];
+  for (const e of entries) {
+    const n = Number(e['nivel-min'] != null ? e['nivel-min'] : e.nivelMin);
+    if (!(n <= nivelMax)) continue;
+    const moveSlug = e.slug;
+    if (!moveSlug || conhecidos.has(String(moveSlug).toLowerCase())) continue;
+    const m = moves[moveSlug];
+    if (!m) continue;
+    loaded.push({
+      slug: m.slug || moveSlug,
+      nomeExibicao: m.nomeExibicao || m['nome-exibicao'] || moveSlug,
+      'nome-exibicao': m['nome-exibicao'] || m.nomeExibicao || moveSlug,
+      tipo: m.tipo,
+      poder: m.poder,
+      classe: m.classe
+    });
+  }
   return loaded.filter((g) => {
     if (!(g.classe === 'fisico' || g.classe === 'especial')) return false;
     if (!(Number(g.poder) > 0)) return false;
-    if (conhecidos.has(slugGolpe(g))) return false;
     if (slotN == null || !Number.isInteger(slotN)) return true;
     const atuais = (golpesAtuais || []).map((x) => ({
       slug: slugGolpe(x),
@@ -476,6 +505,8 @@ module.exports = {
   nivelAprendizado,
   listarCandidatosMt,
   escolherGolpeMtAleatorio,
+  mtLearnsetCatalog,
+  mtCatalogVersion,
   slugGolpe,
   ataqueDoTipo
 };
