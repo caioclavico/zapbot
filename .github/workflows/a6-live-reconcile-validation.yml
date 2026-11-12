@@ -388,13 +388,21 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+
       - name: Node MT + help + egg card presenters
         run: |
           node --test test/a6-maintenance.test.cjs \
             test/pokemon-mt-a6.test.cjs \
+            test/pokemon-a6-ux-help-coins.test.cjs \
             test/pokemon-jvm-present.test.cjs \
             test/pokemon-jvm-egg-cards.test.cjs \
             test/pokemon-jvm-joy-eggs.test.cjs
+
+      - name: HTTP / JVM client contracts
+        run: npm run test:http
+
+      - name: Compile production ClojureScript (handler MT + ajuda)
+        run: npm run build
 
   validate-jvm-pokemon-growth:
     name: Pokémon growth curves + 037 on live tip
