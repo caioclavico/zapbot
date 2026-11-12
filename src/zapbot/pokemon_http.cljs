@@ -569,15 +569,20 @@
       (.formatEggHatch jvm-present data prefix))))
 
 (defn- executar-ovos-jvm!
-  "Fluxo !pk ovos / incubar / incubadoras / incubacao / chocar — sob demanda."
+  "Fluxo !pk ovos / incubar / incubadoras / incubacao / chocar — sob demanda.
+   ovos/incubadoras anexam PNG Sharp (egg-cards); falha de mídia → só texto."
   [jvm ctx pedido chat-id player-id sub args]
   (let [prefix (str config/prefix "pk")
         sub (str/lower-case (str (or sub "")))]
     (cond
       (or (= "incubadoras" sub) (= "incubadora" sub))
       (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
-                       #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))]
-        (envelope-jvm pedido (.formatIncubators jvm-present data prefix)))
+                       #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))
+              texto (.formatIncubators jvm-present data prefix)
+              img (render-seguro! ctx "pokemon_jvm_media_incubators"
+                    #(.renderIncubatorCard jvm-media data
+                                           #js {:filename "incubadoras.png"}))]
+        (envelope-jvm pedido texto img))
 
       (or (= "incubacao" sub) (= "incubação" sub) (= "pi" sub))
       (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
@@ -642,10 +647,14 @@
                       (envelope-jvm pedido (str/join "\n\n" @textos))))))
 
       :else
-      ;; ovos / ovo / ajuda → status
+      ;; ovos / ovo / ajuda → status + card PNG
       (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
-                       #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))]
-        (envelope-jvm pedido (.formatAdventureStatus jvm-present data prefix))))))
+                       #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))
+              texto (.formatAdventureStatus jvm-present data prefix)
+              img (render-seguro! ctx "pokemon_jvm_media_eggs"
+                    #(.renderEggInventoryCard jvm-media data
+                                              #js {:filename "ovos.png"}))]
+        (envelope-jvm pedido texto img)))))
 
 (defn- executar-raid-jvm!
   "Fluxo !pk raide / gin entrar|iniciar|atacar|… — gameplay JVM antes de mídia."

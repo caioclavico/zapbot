@@ -76,3 +76,9 @@ test('resolveEggIndex', () => {
   assert.equal(present.resolveEggIndex(data, 2).eggId, 'c');
   assert.equal(present.resolveEggIndex(data, 9), null);
 });
+
+test('media exports egg/incubator card renderers', () => {
+  const media = require('../scripts/lib/pokemon-jvm-media.cjs');
+  assert.equal(typeof media.renderEggInventoryCard, 'function');
+  assert.equal(typeof media.renderIncubatorCard, 'function');
+});

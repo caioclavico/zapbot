@@ -1583,6 +1583,48 @@ async function renderRaidBattleCard({
   }
 }
 
+/**
+ * Card PNG de inventário de ovos (A6 adventure DTO). Falha → null (fallback texto).
+ * @returns {{ base64, mimeType, filename } | null}
+ */
+async function renderEggInventoryCard(data, { filename = 'ovos.png' } = {}) {
+  try {
+    const eggCards = require('./egg-cards.cjs');
+    const buf = await eggCards.render('eggs', data || {});
+    if (!Buffer.isBuffer(buf) || !buf.length) return null;
+    return {
+      base64: buf.toString('base64'),
+      mimeType: 'image/png',
+      filename: filename || 'ovos.png'
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] egg-inventory:', err.message || err);
+    return null;
+  }
+}
+
+/**
+ * Card PNG de incubadoras (A6 adventure DTO). Falha → null.
+ * @returns {{ base64, mimeType, filename } | null}
+ */
+async function renderIncubatorCard(data, { filename = 'incubadoras.png' } = {}) {
+  try {
+    const eggCards = require('./egg-cards.cjs');
+    const buf = await eggCards.render('incubators', data || {});
+    if (!Buffer.isBuffer(buf) || !buf.length) return null;
+    return {
+      base64: buf.toString('base64'),
+      mimeType: 'image/png',
+      filename: filename || 'incubadoras.png'
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] incubators:', err.message || err);
+    return null;
+  }
+}
+
 module.exports = {
   renderHuntArena,
   renderCaptureBall,
@@ -1595,6 +1637,8 @@ module.exports = {
   renderRaidBattleCard,
   renderRaidEggReminder,
   renderRaidOpenedReveal,
+  renderEggInventoryCard,
+  renderIncubatorCard,
   isRaidReminderKind,
   isRaidOpenedKind,
   resolveJoyTheme,
