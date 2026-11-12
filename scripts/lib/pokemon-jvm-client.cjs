@@ -396,6 +396,10 @@ function createClient(config = {}) {
     grantEgg: (body) => mutateOnce('/v1/adventure/eggs/grant', body),
     incubateEgg: (body) => mutateOnce('/v1/adventure/eggs/incubate', body),
     hatchEgg: (body) => mutateOnce('/v1/adventure/eggs/hatch', body),
+    redeemIncubator: (body) =>
+      mutateOnce('/v1/adventure/incubators/redeem', body),
+    reconcileIncubatorRewards: (body) =>
+      mutateOnce('/v1/adventure/incubators/reconcile', body),
     getShop: ({ chatId, playerId }) =>
       request('GET', `/v1/shop${q({ chatId, playerId })}`),
     getInventory: ({ chatId, playerId }) =>

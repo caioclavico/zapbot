@@ -576,13 +576,35 @@
         sub (str/lower-case (str (or sub "")))]
     (cond
       (or (= "incubadoras" sub) (= "incubadora" sub))
-      (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
-                       #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))
-              texto (.formatIncubators jvm-present data prefix)
-              img (render-seguro! ctx "pokemon_jvm_media_incubators"
-                    #(.renderIncubatorCard jvm-media data
-                                           #js {:filename "incubadoras.png"}))]
-        (envelope-jvm pedido texto img))
+      (let [sub2 (str/lower-case (str (or (first args) "")))]
+        (cond
+          (or (= "recompensas" sub2) (= "recompensa" sub2))
+          (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
+                           #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))]
+            (envelope-jvm pedido (.formatIncubatorRewards jvm-present data prefix)))
+
+          (or (= "resgatar" sub2) (= "resgate" sub2))
+          (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                  op-id (.stableOperationId jvm-transport
+                                            (:requestId pedido)
+                                            "incubator-redeem")
+                  data (desempenho/medir! ctx "pokemon_jvm_incubator_redeem"
+                         #(.redeemIncubator jvm
+                            #js {:chatId chat-id
+                                 :playerId player-id
+                                 :saveId (.-activeSaveId ativo)
+                                 :fenceGeneration (.-fenceGeneration ativo)
+                                 :operationId op-id}))]
+            (envelope-jvm pedido (.formatIncubatorRedeem jvm-present data prefix)))
+
+          :else
+          (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
+                           #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))
+                  texto (.formatIncubators jvm-present data prefix)
+                  img (render-seguro! ctx "pokemon_jvm_media_incubators"
+                        #(.renderIncubatorCard jvm-media data
+                                               #js {:filename "incubadoras.png"}))]
+            (envelope-jvm pedido texto img))))
 
       (or (= "incubacao" sub) (= "incubação" sub) (= "pi" sub))
       (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"

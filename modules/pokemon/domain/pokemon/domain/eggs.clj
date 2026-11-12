@@ -25,7 +25,20 @@
                  :active-egg-id nil}]
    :receipts #{}
    :pending-egg-grants []
+   ;; Fila FIFO de direitos de incubadora (progressão). Ver egg-activity.
+   :pending-incubator-grants []
+   ;; Vitórias canônicas de raid (por jogador / conta Adventure).
+   :raid-wins 0
    :pi-daily nil})
+
+(defn temporary-incubators
+  [estado]
+  (filterv #(#{:extra :especial} (keyword (:kind %))) (:incubators estado)))
+
+(defn free-temporary-slots
+  "Vagas restantes para incubadoras temporárias (máx. 2)."
+  [estado]
+  (max 0 (- max-temporarias (count (temporary-incubators estado)))))
 
 (defn- ovo
   [estado egg-id]
@@ -76,23 +89,40 @@
   (or (>= (long (:points ovo 0)) (long (:points-goal ovo 0)))
       (>= (long (:time-ms ovo 0)) (long (:time-goal-ms ovo 0)))))
 
+(defn resolve-incubator-id
+  "Resolve id canônico. Aceita atalhos `extra`/`especial` → primeira livre do kind."
+  [estado incubator-id]
+  (let [raw (str (or incubator-id "permanente"))
+        want (case raw
+               ("extra" "temporaria" "temporária") :extra
+               "especial" :especial
+               nil)]
+    (if want
+      (or (some #(when (and (= want (keyword (:kind %)))
+                            (nil? (:active-egg-id %)))
+                   (:incubator-id %))
+                (:incubators estado))
+          (throw (err/error :incubator_not_found {:incubator-id raw :kind want})))
+      raw)))
+
 (defn incubar
   "Inicia incubação e carimba save-id + fence (impede entrega em outro save)."
   [estado egg-id incubator-id agora save-id fence-generation]
   (let [o (ovo estado egg-id)
-        incu (some #(when (= incubator-id (:incubator-id %)) %) (:incubators estado))]
+        resolved (resolve-incubator-id estado incubator-id)
+        incu (some #(when (= resolved (:incubator-id %)) %) (:incubators estado))]
     (when-not o (throw (err/error :egg_not_found {:egg-id egg-id})))
-    (when-not incu (throw (err/error :incubator_not_found {:incubator-id incubator-id})))
+    (when-not incu (throw (err/error :incubator_not_found {:incubator-id resolved})))
     (when-not (= :inventory (:state o))
       (throw (err/error :invalid_incubation {:state (:state o)})))
     (when (:active-egg-id incu)
-      (throw (err/error :incubator_busy {:incubator-id incubator-id})))
+      (throw (err/error :incubator_busy {:incubator-id resolved})))
     (when-not (and save-id (integer? fence-generation))
       (throw (err/error :missing_egg_save_seal {})))
     (-> estado
         (atualizar-ovo egg-id
                        #(assoc % :state :incubating
-                               :incubator-id incubator-id
+                               :incubator-id resolved
                                :incubated-at (long agora)
                                :due-at (+ (long agora) (long (:time-goal-ms %)))
                                :save-id save-id
@@ -100,7 +130,7 @@
                                :time-ms 0))
         (update :incubators
                 #(mapv (fn [i]
-                         (if (= incubator-id (:incubator-id i))
+                         (if (= resolved (:incubator-id i))
                            (assoc i :active-egg-id egg-id)
                            i))
                        %)))))

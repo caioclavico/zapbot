@@ -3,6 +3,7 @@
   Espelha o padrão de mission-events/attach — sem fila em memória.
   Raid/PvP creditam **todos** os participantes elegíveis na TX canônica."
   (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [datomic.client.api :as d]
             [pokemon.domain.battle :as battle]
             [pokemon.domain.egg-activity :as egg-activity]
@@ -266,29 +267,88 @@
         enrich (apply-marker enrich (:first-daily-marker opts))]
     enrich))
 
+(defn- level-targets-from-built
+  "Extrai marcos de nível cruzados dos eventos 036 já anexados em :result.
+   Um alvo por jogador (conta Adventure), com :crossed-levels."
+  [writer built]
+  (let [events (vec (or (get-in built [:result :trainer-level-ups]) []))
+        chat-id (:chat-id writer)
+        ;; Eventos públicos não trazem save-key; o jogador da TX é o writer
+        ;; (raids multi-player propagam level-ups no recibo de cada participante
+        ;; via summary — aqui cobrimos o writer + events com :player-id).
+        by-player (reduce
+                   (fn [acc ev]
+                     (let [pid (or (:player-id ev) (:player-id writer))
+                           levels (mapv #(long (:nivel %)) (or (:niveis ev) []))]
+                       (if (and pid (seq levels))
+                         (update acc pid #(into (or % []) levels))
+                         acc)))
+                   {}
+                   events)]
+    (mapv (fn [[pid levels]]
+            {:player-id pid
+             :opts {:activity :incubator-level-reward
+                    :event-id (str "egg-act:incubator-level:" chat-id ":" pid ":"
+                                   (str/join "," (sort (set levels))))
+                    :crossed-levels (vec (sort (set levels)))
+                    :agora (System/currentTimeMillis)}})
+          by-player)))
+
+(defn- merge-targets
+  "Une alvos de atividade + level-up. Se o mesmo player aparece nos dois,
+   preserva activity e anexa :crossed-levels."
+  [activity-targets level-targets]
+  (let [by-pid (into {} (map (juxt :player-id identity) activity-targets))]
+    (reduce
+     (fn [acc lt]
+       (let [pid (:player-id lt)
+             existing (get by-pid pid)]
+         (if existing
+           (assoc acc pid
+                  (update existing :opts
+                          #(assoc % :crossed-levels (get-in lt [:opts :crossed-levels]))))
+           (assoc acc pid lt))))
+     by-pid
+     level-targets)))
+
 (defn attach
-  "Anexa PI/ovos à TX para todos os alvos detectados. Não altera 036/037."
+  "Anexa PI/ovos/recompensas de incubadora à TX. Não altera 036/037."
   [db writer built]
   (if-not (egg-activity/activity-enabled?)
     built
     (let [receipt (some #(when (and (map? %) (:operation-receipt/id %)) %) (:tx built))
           agora (System/currentTimeMillis)
-          targets (when receipt (detect-targets db writer built receipt agora))]
+          activity-targets (when receipt (detect-targets db writer built receipt agora))
+          level-targets (level-targets-from-built writer built)
+          ;; Level-only: precisa de um event-id estável sem PI/ovo.
+          targets (vals (merge-targets (or activity-targets []) level-targets))]
       (if-not (seq targets)
         built
         (let [chat-id (:chat-id writer)
               enrichments (mapv #(enrich-target db chat-id built %) targets)
               summaries (mapv #(get-in % [:result :adventure-activity]) enrichments)
+              incubator-grants (mapcat (fn [e]
+                                         (concat
+                                          (when-let [g (get-in e [:result :incubator-grant])] [g])
+                                          (or (get-in e [:result :level-incubator-grants]) [])))
+                                       enrichments)
               extra-tx (mapcat :tx enrichments)
-              summary0 (read-edn (:operation-receipt/summary receipt))
+              summary0 (when receipt (read-edn (:operation-receipt/summary receipt)))
               summary (assoc (or summary0 {})
-                             :adventure-activity summaries)]
-          (-> built
-              (update :tx #(into (mapv (fn [item]
-                                         (if (= item receipt)
-                                           (assoc item :operation-receipt/summary
-                                                  (pr-str summary))
-                                           item))
-                                       %)
-                                 extra-tx))
-              (assoc-in [:result :adventure-activity] summaries)))))))
+                             :adventure-activity summaries
+                             :incubator-rewards incubator-grants)
+              built' (cond-> built
+                       (seq incubator-grants)
+                       (assoc-in [:result :incubator-rewards] (vec incubator-grants))
+                       true
+                       (assoc-in [:result :adventure-activity] summaries))]
+          (if-not receipt
+            (update built' :tx #(into (vec %) extra-tx))
+            (-> built'
+                (update :tx #(into (mapv (fn [item]
+                                           (if (= item receipt)
+                                             (assoc item :operation-receipt/summary
+                                                    (pr-str summary))
+                                             item))
+                                         %)
+                                   extra-tx)))))))))

@@ -4392,6 +4392,63 @@
                   (resolve-receipt dup phash operation-id)
                   (throw ex))))))))
 
+  (redeem-incubator! [_ writer-ctx request]
+    (let [payload (ops/incubator-redeem-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db _save]
+               (let [ak (id/adventure-account-key (:chat-id writer-ctx)
+                                                  (:player-id writer-ctx))
+                     e (d/pull db '[*] [:adventure-account/key ak])
+                     ensure? (not (present? e))
+                     shell (when-not ensure?
+                             (adventure-store/account-shell e edn-read present?))
+                     eggs (if ensure? [] (load-eggs-for-account db ak))]
+                 (adventure-store/build-redeem-incubators-tx
+                  {:writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :account-shell shell :egg-maps eggs
+                   :ensure-tx? ensure?}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
+  (reconcile-incubator-rewards! [_ writer-ctx request]
+    (let [payload (ops/incubator-reconcile-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db _save]
+               (let [ak (id/adventure-account-key (:chat-id writer-ctx)
+                                                  (:player-id writer-ctx))
+                     e (d/pull db '[*] [:adventure-account/key ak])
+                     ensure? (not (present? e))
+                     shell (when-not ensure?
+                             (adventure-store/account-shell e edn-read present?))
+                     eggs (if ensure? [] (load-eggs-for-account db ak))]
+                 (adventure-store/build-reconcile-incubator-rewards-tx
+                  {:writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :account-shell shell :egg-maps eggs
+                   :ensure-tx? ensure?
+                   :trainer-level (:trainer-level request)}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
   (list-enfermaria [_ chat-id player-id save-id]
     (load-enfermaria (d/db conn) (id/save-key chat-id player-id save-id)))
 

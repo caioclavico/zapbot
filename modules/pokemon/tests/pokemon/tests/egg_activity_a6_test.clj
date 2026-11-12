@@ -127,3 +127,105 @@
     (with-redefs [eggs/categorias (assoc eggs/categorias :comum {:pontos 999 :tempo-ms 1})]
       (is (= 100 (:points-goal ovo'))
           "ovo já concedido mantém meta"))))
+
+(deftest incubator-rewards-nivel-e-pending
+  (testing "nível 1 sem recompensa"
+    (let [r (egg-activity/apply-level-rewards (eggs/estado-inicial) 1)]
+      (is (empty? (:grants r)))
+      (is (= 1 (count (:incubators (:estado r)))))))
+  (testing "9→10 concede extra"
+    (let [r (egg-activity/apply-level-rewards (eggs/estado-inicial) [10])
+          g (first (:grants r))]
+      (is (= :granted (:status g)))
+      (is (= "incubator-reward:level:10" (:reward-id g)))
+      (is (= 2 (count (:incubators (:estado r)))))))
+  (testing "19→20 e fila quando cheio"
+    (let [st (-> (eggs/estado-inicial)
+                 (eggs/adicionar-incubadora "incubator-reward:level:10" :extra)
+                 (eggs/adicionar-incubadora "ocupada-extra" :extra)
+                 (update :receipts #(set (conj (or % #{}) "incubator-reward:level:10"))))
+          r (egg-activity/apply-level-rewards st ["incubator-reward:level:20"])
+          g (first (:grants r))]
+      (is (= :enqueued (:status g)))
+      (is (true? (:pending? g)))
+      (is (= 1 (count (:pending-incubator-grants (:estado r)))))))
+  (testing "level-up cruza vários marcos + legado 30"
+    (let [r (egg-activity/apply-level-rewards (eggs/estado-inicial) 30)
+          ids (mapv :reward-id (:grants r))]
+      (is (= ["incubator-reward:level:10"
+              "incubator-reward:level:20"
+              "incubator-reward:level:30"]
+             ids))
+      ;; 1 permanente + 2 temps; especial fica pendente
+      (is (= 3 (count (:incubators (:estado r)))))
+      (is (= 1 (count (:pending-incubator-grants (:estado r)))))
+      (is (= "incubator-reward:level:30"
+             (:reward-id (first (:pending-incubator-grants (:estado r))))))))
+  (testing "idempotência do marco"
+    (let [st (:estado (egg-activity/apply-level-rewards (eggs/estado-inicial) 10))
+          r2 (egg-activity/apply-level-rewards st 10)]
+      (is (= :duplicate (:status (first (:grants r2)))))
+      (is (= st (:estado r2))))))
+
+(deftest incubator-rewards-raids
+  (let [st (eggs/estado-inicial)]
+    (testing "derrota não conta"
+      (let [r (egg-activity/apply-activity st {:event-id "rd1" :activity :raid-defeat
+                                               :agora 1})]
+        (is (zero? (long (get-in r [:estado :raid-wins] 0))))
+        (is (nil? (:incubator-grant r)))))
+    (testing "10 vitórias canônicas"
+      (let [final
+            (reduce (fn [estado n]
+                      (:estado
+                       (egg-activity/apply-activity
+                        estado
+                        {:event-id (str "rw-" n)
+                         :activity :raid-victory
+                         :raid-category :raro
+                         :agora (* n 1000)})))
+                    st
+                    (range 1 11))
+            retry (egg-activity/apply-activity
+                   final
+                   {:event-id "rw-10" :activity :raid-victory
+                    :raid-category :raro :agora 99999})]
+        (is (= 10 (long (:raid-wins final 0))))
+        (is (egg-activity/reward-already-recorded?
+             final "incubator-reward:raids:10"))
+        (is (true? (get-in retry [:summary :duplicate])))
+        (is (= 10 (long (get-in retry [:estado :raid-wins] 0))))))))
+
+(deftest incubator-redeem-apos-liberar-vaga
+  (let [st0 (:estado (egg-activity/apply-level-rewards (eggs/estado-inicial) 30))
+        ;; consome uma temp (simula hatch com 0 usos restantes)
+        temp-id (:incubator-id (first (eggs/temporary-incubators st0)))
+        st1 (update st0 :incubators
+                    (fn [xs]
+                      (vec (remove #(= temp-id (:incubator-id %)) xs))))
+        redeemed (egg-activity/redeem-next-incubator st1)]
+    (is (= :redeemed (:status redeemed)))
+    (is (= "incubator-reward:level:30" (get-in redeemed [:delivered :reward-id])))
+    (is (zero? (:pending-remaining redeemed)))
+    (is (some #(= :especial (keyword (:kind %)))
+              (:incubators (:estado redeemed))))))
+
+(deftest incubator-reconcile-legado-idempotente
+  (let [st (eggs/estado-inicial)
+        r1 (egg-activity/reconcile-incubator-rewards st {:trainer-level 30})
+        r2 (egg-activity/reconcile-incubator-rewards (:estado r1) {:trainer-level 30})]
+    (is (seq (:level-grants r1)))
+    (is (every? #(= :duplicate (:status %)) (:level-grants r2)))
+    (is (= (:estado r1) (:estado r2)))))
+
+(deftest incubator-redeem-datomic-idempotente
+  (let [s (fresh-store! "egg-inc-redeem")
+        chat "c-inc" player "brock"]
+    (boot! s chat player)
+    (let [rec (adv/reconcile-incubator-rewards!
+               s chat player {:operation-id "rec-1" :trainer-level 30})
+          _ (is (seq (:pending-incubator-grants rec)))
+          r0 (adv/redeem-incubator! s chat player {:operation-id "rdm-full"})
+          _ (is (= :no-slot (:status r0)))
+          r1 (adv/redeem-incubator! s chat player {:operation-id "rdm-full"})]
+      (is (true? (:duplicate r1)) "mesmo operation-id → recibo"))))

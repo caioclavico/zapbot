@@ -47,3 +47,25 @@
                                   [:chat-id :player-id :save-id :fence-generation]))]
      (ops/validate-mutation! full)
      (ports/hatch-egg! store writer-ctx full))))
+
+(defn redeem-incubator!
+  ([store chat-id player-id request]
+   (redeem-incubator! store (writer/freeze-writer store chat-id player-id) request))
+  ([store writer-ctx request]
+   (let [full (merge request
+                     (select-keys writer-ctx
+                                  [:chat-id :player-id :save-id :fence-generation]))]
+     (ops/validate-mutation! full)
+     (ports/redeem-incubator! store writer-ctx full))))
+
+(defn reconcile-incubator-rewards!
+  "Somente harness / GO explícito de reconciliação."
+  ([store chat-id player-id request]
+   (reconcile-incubator-rewards!
+    store (writer/freeze-writer store chat-id player-id) request))
+  ([store writer-ctx request]
+   (let [full (merge request
+                     (select-keys writer-ctx
+                                  [:chat-id :player-id :save-id :fence-generation]))]
+     (ops/validate-mutation! full)
+     (ports/reconcile-incubator-rewards! store writer-ctx full))))
