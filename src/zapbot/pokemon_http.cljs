@@ -550,8 +550,26 @@
                                              #js {:filename (str tema ".png")})))]
           (envelope-jvm pedido texto img))))))
 
+(defn- hatch-egg-jvm!
+  [jvm ctx pedido chat-id player-id egg]
+  (let [prefix (str config/prefix "pk")]
+    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+            op-id (.stableOperationId jvm-transport
+                                      (:requestId pedido)
+                                      (str "egg-hatch:" (.-eggId egg)))
+            data (desempenho/medir! ctx "pokemon_jvm_egg_hatch"
+                   #(.hatchEgg jvm
+                      #js {:chatId chat-id
+                           :playerId player-id
+                           :saveId (.-activeSaveId ativo)
+                           :fenceGeneration (.-fenceGeneration ativo)
+                           :operationId op-id
+                           :eggId (.-eggId egg)
+                           :hatchId (str "hatch:" (.-eggId egg))}))]
+      (.formatEggHatch jvm-present data prefix))))
+
 (defn- executar-ovos-jvm!
-  "Fluxo !pk ovos / ovo / incubar / incubadoras — sob demanda (sem push)."
+  "Fluxo !pk ovos / incubar / incubadoras / incubacao / chocar — sob demanda."
   [jvm ctx pedido chat-id player-id sub args]
   (let [prefix (str config/prefix "pk")
         sub (str/lower-case (str (or sub "")))]
@@ -559,16 +577,21 @@
       (or (= "incubadoras" sub) (= "incubadora" sub))
       (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
                        #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))]
-        (envelope-jvm pedido (.formatAdventureStatus jvm-present data prefix)))
+        (envelope-jvm pedido (.formatIncubators jvm-present data prefix)))
+
+      (or (= "incubacao" sub) (= "incubação" sub) (= "pi" sub))
+      (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
+                       #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))]
+        (envelope-jvm pedido (.formatIncubationHelp jvm-present data prefix)))
 
       (= "incubar" sub)
       (let [n-str (first args)
             kind (str/lower-case (str (or (second args) "permanente")))
             incubator (case kind
                         ("extra" "especial" "temporaria" "temporária") kind
-                        "permanente")]
+                        kind)]
         (when (str/blank? (str n-str))
-          (throw (erro-contrato (str "❓ Use " prefix " incubar <n> [permanente]"))))
+          (throw (erro-contrato (str "❓ Use " prefix " incubar <n> [incubadora]"))))
         (p/let [adv (.getAdventure jvm #js {:chatId chat-id :playerId player-id})
                 egg (.resolveEggIndex jvm-present adv n-str)
                 _ (when-not egg
@@ -587,33 +610,36 @@
                                :fenceGeneration (.-fenceGeneration ativo)
                                :operationId op-id
                                :eggId (.-eggId egg)
-                               :incubatorId (if (= incubator "permanente")
-                                              "permanente"
-                                              incubator)}))]
+                               :incubatorId (or incubator "permanente")}))]
           (envelope-jvm pedido (.formatEggIncubate jvm-present data prefix))))
 
       (or (= "nascer" sub) (= "hatch" sub) (= "chocar" sub))
-      (let [n-str (first args)]
-        (when (str/blank? (str n-str))
-          (throw (erro-contrato (str "❓ Use " prefix " ovo nascer <n>"))))
-        (p/let [adv (.getAdventure jvm #js {:chatId chat-id :playerId player-id})
-                egg (.resolveEggIndex jvm-present adv n-str)
-                _ (when-not egg
-                    (throw (erro-contrato "❓ Índice de ovo inválido.")))
-                ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                op-id (.stableOperationId jvm-transport
-                                          (:requestId pedido)
-                                          (str "egg-hatch:" (.-eggId egg)))
-                data (desempenho/medir! ctx "pokemon_jvm_egg_hatch"
-                       #(.hatchEgg jvm
-                          #js {:chatId chat-id
-                               :playerId player-id
-                               :saveId (.-activeSaveId ativo)
-                               :fenceGeneration (.-fenceGeneration ativo)
-                               :operationId op-id
-                               :eggId (.-eggId egg)
-                               :hatchId (str "hatch:" (.-eggId egg))}))]
-          (envelope-jvm pedido (.formatEggHatch jvm-present data prefix))))
+      (p/let [adv (.getAdventure jvm #js {:chatId chat-id :playerId player-id})
+              n-str (first args)
+              eggs (or (.-eggs adv) #js [])
+              prontos (.filter eggs
+                               (fn [e]
+                                 (let [st (str (.-state e))]
+                                   (or (= st "ready-to-hatch")
+                                       (= st "delivery-pending")))))
+              alvos (if (str/blank? (str n-str))
+                      (vec (array-seq prontos))
+                      (let [egg (.resolveEggIndex jvm-present adv n-str)]
+                        (when-not egg
+                          (throw (erro-contrato "❓ Índice de ovo inválido.")))
+                        [egg]))
+              _ (when (empty? alvos)
+                  (throw (erro-contrato
+                          (str "❓ Nenhum ovo pronto. Use " prefix " ovos."))))
+              textos (atom [])]
+        (-> (reduce (fn [p egg]
+                      (p/then p (fn [_]
+                                  (p/then (hatch-egg-jvm! jvm ctx pedido chat-id player-id egg)
+                                          (fn [txt] (swap! textos conj txt))))))
+                    (p/resolved nil)
+                    alvos)
+            (p/then (fn [_]
+                      (envelope-jvm pedido (str/join "\n\n" @textos))))))
 
       :else
       ;; ovos / ovo / ajuda → status
@@ -2505,6 +2531,14 @@
                 "incubadoras"
                 (executar-ovos-jvm! jvm ctx pedido chat-id player-id
                                     "incubadoras" resto)
+
+                "incubacao"
+                (executar-ovos-jvm! jvm ctx pedido chat-id player-id
+                                    "incubacao" resto)
+
+                "chocar"
+                (executar-ovos-jvm! jvm ctx pedido chat-id player-id
+                                    "chocar" resto)
 
                 "loja"
                 (let [sub (str/lower-case (str (or (first resto) "")))

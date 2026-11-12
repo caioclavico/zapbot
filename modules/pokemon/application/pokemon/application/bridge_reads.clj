@@ -10,6 +10,7 @@
             [pokemon.application.raid :as raid-app]
             [pokemon.application.shop :as shop-app]
             [pokemon.application.trainer :as trainer]
+            [pokemon.domain.egg-activity :as egg-activity]
             [pokemon.domain.eggs :as eggs]
             [pokemon.domain.capacity :as capacity]
             [pokemon.domain.errors :as err]
@@ -966,15 +967,25 @@
         state (name (or (:state o) :inventory))
         due (:due-at o)
         restante (when (and due (= "incubating" state))
-                   (max 0 (- (long due) (long agora))))]
+                   (max 0 (- (long due) (long agora))))
+        pts (long (:points o 0))
+        goal (long (:points-goal o 0))
+        tms (long (:time-ms o 0))
+        tgoal (long (:time-goal-ms o 0))
+        pct-pts (when (pos? goal) (min 100 (long (/ (* pts 100) goal))))
+        pct-time (when (pos? tgoal) (min 100 (long (/ (* tms 100) tgoal))))
+        pct (max (or pct-pts 0) (or pct-time 0))]
     {:egg-id (:egg-id o)
      :category cat
      :state state
-     :species (:species o)
-     :points (:points o 0)
-     :points-goal (:points-goal o 0)
-     :time-ms (:time-ms o 0)
-     :time-goal-ms (:time-goal-ms o 0)
+     ;; Espécie permanece no domínio; DTO público omite até hatch (presenter).
+     :species-hidden true
+     :points pts
+     :points-goal goal
+     :points-restante (max 0 (- goal pts))
+     :time-ms tms
+     :time-goal-ms tgoal
+     :progress-pct pct
      :due-at due
      :restante-ms restante
      :incubator-id (:incubator-id o)
@@ -999,7 +1010,11 @@
         _ (adv/ensure-account! store chat-id player-id)
         acc (or (adv/get-account store chat-id player-id) (eggs/estado-inicial))
         estado (eggs/avancar-tempo acc agora)
-        eggs-l (:eggs estado [])]
+        eggs-l (:eggs estado [])
+        pi-day (:pi-daily estado)
+        pi-used (long (:points pi-day 0))
+        pi-cap (egg-activity/daily-cap)
+        pending (vec (:pending-egg-grants estado []))]
     {:chat-id chat-id
      :player-id player-id
      :active-save-id (:active-save-id player)
@@ -1012,11 +1027,23 @@
      :prontos (count (filter #(contains? #{:ready-to-hatch :delivery-pending}
                                          (:state %))
                              eggs-l))
+     :pending-egg-grants (count pending)
+     :pi-daily {:day (:day pi-day)
+                :points pi-used
+                :cap pi-cap
+                :restante (max 0 (- pi-cap pi-used))}
      :categorias (into {}
                        (map (fn [[k v]]
                               [(name k) {:tempo-ms (:tempo-ms v)
                                          :pontos (:pontos v)}])
-                            eggs/categorias))}))
+                            eggs/categorias))
+     :atividades
+     [{:id "caca" :label "Caça concluída" :pi 5}
+      {:id "vitoria-selvagem" :label "Vitória selvagem" :pi 8}
+      {:id "ginasio-vitoria" :label "Vitória no ginásio" :pi 15}
+      {:id "pvp-vitoria" :label "Vitória PvP" :pi 12}
+      {:id "raid" :label "Raid vencida" :pi "20–45"}
+      {:id "missao" :label "Missão diária" :pi 20}]}))
 
 (defn shop-catalog
   "Catálogo à venda (preços canônicos) + saldo do save ativo."
