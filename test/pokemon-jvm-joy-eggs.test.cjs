@@ -12,6 +12,8 @@ test('aliases joy e ovos', () => {
   assert.equal(present.resolveCommand(['ovo']), 'ovos');
   assert.equal(present.resolveCommand(['incubar']), 'incubar');
   assert.equal(present.resolveCommand(['incubadoras']), 'incubadoras');
+  assert.equal(present.resolveCommand(['incubacao']), 'incubacao');
+  assert.equal(present.resolveCommand(['chocar']), 'chocar');
 });
 
 test('formatJoyStatus e send/collect', () => {
@@ -42,14 +44,24 @@ test('formatAdventureStatus e hatch', () => {
   const text = present.formatAdventureStatus({
     inventarioCount: 1,
     limiteInventario: 9,
-    eggs: [{ eggId: 'e1', category: 'comum', state: 'inventory', species: 'Pichu' }],
+    piDaily: { points: 20, cap: 150, restante: 130 },
+    eggs: [{ eggId: 'e1', category: 'comum', state: 'inventory', pointsGoal: 100, progressPct: 0 }],
     incubators: [{ incubatorId: 'permanente', kind: 'permanente', livre: true }]
   }, '!pk');
-  assert.match(text, /Adventure Sync/);
-  assert.match(text, /sob demanda|notificação automática/i);
+  assert.match(text, /Ovos e incubação/);
+  assert.match(text, /PI hoje/);
+  assert.doesNotMatch(text, /Pichu/);
+  assert.match(text, /espécie só é revelada/i);
   assert.match(present.formatEggHatch({
-    registro: { nome: 'Pichu', nivel: 1 }
+    registro: { nome: 'Pichu', nivel: 1, shiny: true }
   }), /eclodiu/);
+  assert.match(present.formatEggHatch({
+    collectionFull: true, pending: true
+  }), /Coleção cheia/);
+  assert.match(present.formatIncubationHelp({
+    piDaily: { points: 10, cap: 150, restante: 140 },
+    atividades: [{ label: 'Caça concluída', pi: 5 }]
+  }, '!pk'), /Pontos de Incubação/);
 });
 
 test('resolveEggIndex', () => {

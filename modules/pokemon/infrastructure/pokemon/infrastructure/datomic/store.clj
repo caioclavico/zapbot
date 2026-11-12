@@ -53,6 +53,7 @@
             [pokemon.infrastructure.datomic.profile-store :as profile-store]
             [pokemon.infrastructure.datomic.schema :as schema]
             [pokemon.infrastructure.datomic.thematic-event-store :as thematic-store]
+            [pokemon.infrastructure.datomic.adventure-activity :as adventure-activity]
             [pokemon.infrastructure.datomic.trainer-progression :as trainer-progression]
             [pokemon.domain.events :as events]))
 
@@ -752,6 +753,7 @@
         (let [built (mission-events/attach db writer-ctx
                                            (build-tx db save) mission-instant)
               built (trainer-progression/enrich db built)
+              built (adventure-activity/attach db writer-ctx built)
               tx (into (writer-fence-tx chat-id player-id writer-ctx) (:tx built))
               result (try
                        (d/transact conn {:tx-data tx})

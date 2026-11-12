@@ -1,15 +1,19 @@
 (ns pokemon.domain.eggs
   "Adventure Sync — ovos/incubação (puro). Espelha pokemon-service ovos.cljs atividade."
-  (:require [pokemon.domain.errors :as err]))
+  (:require [clojure.string :as str]
+            [pokemon.domain.egg-hatch :as egg-hatch]
+            [pokemon.domain.errors :as err]))
 
 (def limite-inventario 9)
 (def max-incubadoras 3)
 (def max-temporarias 2)
 
 (def categorias
+  "Metas padrão na concessão. Ovos já persistidos mantêm points-goal/time-goal próprios."
   {:comum {:tempo-ms (* 2 60 60 1000) :pontos 100}
    :raro  {:tempo-ms (* 6 60 60 1000) :pontos 250}
-   :epico {:tempo-ms (* 12 60 60 1000) :pontos 500}})
+   :epico {:tempo-ms (* 12 60 60 1000) :pontos 500}
+   :especial {:tempo-ms (* 24 60 60 1000) :pontos 800}})
 
 (defn estado-inicial
   []
@@ -19,7 +23,9 @@
                  :uses nil
                  :bonus-points 0
                  :active-egg-id nil}]
-   :receipts #{}})
+   :receipts #{}
+   :pending-egg-grants []
+   :pi-daily nil})
 
 (defn- ovo
   [estado egg-id]
@@ -112,49 +118,77 @@
                      o))
                  %)))
 
+(defn adicionar-incubadora
+  "Concede incubadora temporária idempotente por incubator-id."
+  [estado incubator-id kind]
+  (let [kind (keyword kind)
+        id (str incubator-id)
+        existing (some #(when (= id (:incubator-id %)) %) (:incubators estado))]
+    (cond
+      existing estado
+      (not (#{:extra :especial} kind))
+      (throw (err/error :invalid_incubator_kind {:kind kind}))
+      (>= (count (:incubators estado)) max-incubadoras)
+      (throw (err/error :incubator_limit {:limit max-incubadoras}))
+      (>= (count (filter #(#{:extra :especial} (:kind %)) (:incubators estado)))
+          max-temporarias)
+      (throw (err/error :incubator_limit {:limit max-temporarias}))
+      :else
+      (update estado :incubators conj
+              {:incubator-id id
+               :kind kind
+               :uses 3
+               :bonus-points (if (= :especial kind) 25 0)
+               :active-egg-id nil}))))
+
 (defn aplicar-pontos
+  "Credita PI nos ovos em incubação. O total do evento é dividido entre incubadoras
+  ativas (sem multiplicar a mesma recompensa). Bonus % da incubadora aplica-se à
+  fatia daquele ovo. Idempotente por event-id."
   [estado event-id pontos]
   (if (contains? (:receipts estado) event-id)
     estado
-    (let [ativos (set (keep :active-egg-id (:incubators estado)))
-          aplicar
-          (fn [o]
-            (if (and (contains? ativos (:egg-id o)) (= :incubating (:state o)))
-              (let [bonus (or (some #(when (= (:incubator-id o) (:incubator-id %))
-                                       (:bonus-points %))
-                                    (:incubators estado))
-                              0)
-                    ganho (* (double pontos) (+ 1.0 (/ (double bonus) 100.0)))
-                    atual (update o :points
-                                  #(min (long (:points-goal o))
-                                        (+ (long %) (long (Math/floor ganho)))))]
-                (if (pronto? atual) (assoc atual :state :ready-to-hatch) atual))
-              o))]
-      (-> estado
-          (update :eggs #(mapv aplicar %))
-          (update :receipts conj event-id)))))
+    (let [ativos (->> (:incubators estado)
+                      (keep (fn [i]
+                              (when-let [eid (:active-egg-id i)]
+                                {:egg-id eid
+                                 :bonus (long (:bonus-points i 0))})))
+                      vec)
+          n (count ativos)
+          base (long pontos)]
+      (if (or (zero? n) (zero? base))
+        (update estado :receipts conj event-id)
+        (let [share (quot base n)
+              rem (rem base n)
+              gains (into {}
+                          (map-indexed
+                           (fn [i {:keys [egg-id bonus]}]
+                             (let [raw (+ share (if (< i rem) 1 0))
+                                   ganho (long (Math/floor
+                                                (* (double raw)
+                                                   (+ 1.0 (/ (double bonus) 100.0)))))]
+                               [egg-id ganho]))
+                           ativos))
+              aplicar
+              (fn [o]
+                (if-let [g (get gains (:egg-id o))]
+                  (if (= :incubating (:state o))
+                    (let [atual (update o :points
+                                        #(min (long (:points-goal o))
+                                              (+ (long %) (long g))))]
+                      (if (pronto? atual) (assoc atual :state :ready-to-hatch) atual))
+                    o)
+                  o))]
+          (-> estado
+              (update :eggs #(mapv aplicar %))
+              (update :receipts conj event-id)))))))
 
 (defn preparar-nascimento
-  "Registro nível 1, HP cheio — espelha preparar-registro-nascimento."
-  [species pokemon-id]
-  {:id-pokemon pokemon-id
-   :nome species
-   :species species
-   :nivel 1
-   :xp-desde-nivel 0
-   :hp 50
-   :hp-atual 50
-   :ataque 40
-   :defesa 40
-   :atq-esp 40
-   :def-esp 40
-   :veloc 40
-   :tipos ["normal"]
-   :golpes [{:nome-exibicao "Investida" :tipo "normal" :poder 40 :classe :fisico}]
-   :shiny false
-   :raridade "comum"
-   :amizade 70
-   :status nil})
+  "Registro nível 1 canônico (catálogo local + growth-v1). Determinístico no seed.
+   Sem dados da espécie → erro `:egg_species_data_missing` (não consumir ovo)."
+  ([species pokemon-id] (preparar-nascimento species pokemon-id pokemon-id))
+  ([species pokemon-id seed]
+   (egg-hatch/preparar-registro species pokemon-id seed)))
 
 (defn assert-hatch-save!
   "Entrega só no save carimbado. Fence do ovo NÃO precisa bater com o writer
@@ -169,11 +203,11 @@
   true)
 
 (defn fixar-resultado
-  "Idempotente: se já há resultado, devolve o existente."
+  "Idempotente: se já há resultado, devolve o existente (sem re-sortear shiny/IVs)."
   [ovo hatch-id pokemon-id]
   (if (:resultado ovo)
     ovo
-    (let [reg (preparar-nascimento (:species ovo) pokemon-id)]
+    (let [reg (preparar-nascimento (:species ovo) pokemon-id hatch-id)]
       (assoc ovo
              :state :delivery-pending
              :hatch-id hatch-id
@@ -182,7 +216,6 @@
                          :species (:species ovo)
                          :registro reg
                          :save-id (:save-id ovo)}))))
-
 (defn concluir-hatch
   [estado egg-id agora]
   (let [o (ovo estado egg-id)
