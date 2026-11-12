@@ -45,10 +45,17 @@ jobs:
           test "$(git rev-parse "$base_ref")" = "$expected"
           merge_base="$(git merge-base HEAD "$base_ref")"
           test "$merge_base" = "$expected"
-          pe_paths="$(git diff --name-only "$base_ref...HEAD" | grep -E '(^|/)036-|trainer_progression|trainer_rewards|trainer-pe-progression|a6-trainer-pe-progression|pokemon-trainer-progression|trade_store|trade_a441|pokemon-trade|bridge_tx' || true)"
-          growth_paths="$(git diff --name-only "$base_ref...HEAD" | grep -E '(^|/)037-|growth_curves|growth-rate|pokemon-growth|domain/growth' || true)"
-          egg_paths="$(git diff --name-only "$base_ref...HEAD" | grep -E '(^|/)egg_activity|egg-activity|egg_hatch|adventure_activity|adventure-activity|domain/eggs|joy.eggs|pokemon-jvm-joy-eggs|a6-eggs' || true)"
-          # Cards PNG de ovos/incubadoras são escopo Node (apresentação); não forçam jvm-eggs.
+          pe_paths="$(git diff --name-only "$base_ref...HEAD" -- modules/pokemon | grep -E '(^|/)036-|trainer_progression|trainer_rewards|trade_store|trade_a441|bridge_tx' || true)"
+          growth_paths="$(git diff --name-only "$base_ref...HEAD" -- modules/pokemon | grep -E '(^|/)037-|growth_curves|growth-rate|domain/growth' || true)"
+          # jvm-eggs: apenas domínio/testes JVM sob modules/pokemon (não workflow CI,
+          # não egg-cards Node, não pokemon-jvm-joy-eggs presenter).
+          egg_paths="$(git diff --name-only "$base_ref...HEAD" -- modules/pokemon deps.edn \
+            | grep -E '(^|/)(egg_activity|egg_hatch|egg_fixes|adventure_activity)\.clj$|(^|/)eggs\.clj$|deps\.edn' || true)"
+          if [[ -n "$egg_paths" ]] && [[ "$egg_paths" == *deps.edn* ]]; then
+            if ! git diff "$base_ref...HEAD" -- deps.edn | grep -qE 'test-a6-eggs|egg_activity|egg_hatch|egg-fixes'; then
+              egg_paths="$(printf '%s\n' "$egg_paths" | grep -v 'deps\.edn' || true)"
+            fi
+          fi
           if [[ -n "$growth_paths" ]]; then
             echo "kind=jvm-pokemon-growth" >> "$GITHUB_OUTPUT"
             echo "Scope=jvm-pokemon-growth (037 + curvas PokéAPI; tip pós-#75)."
