@@ -3207,41 +3207,91 @@ function formatJoyCollect(data, prefix = '!pk') {
   ].filter(Boolean).join('\n');
 }
 
+function progressBar(pct) {
+  const p = Math.max(0, Math.min(100, Number(pct) || 0));
+  const filled = Math.round(p / 10);
+  return `${'▓'.repeat(filled)}${'░'.repeat(10 - filled)} ${p}%`;
+}
+
 function formatAdventureStatus(data, prefix = '!pk') {
   const eggs = (data && data.eggs) || [];
   const incu = (data && data.incubators) || [];
   const inv = eggs.filter((e) => e.state !== 'hatched');
+  const pi = (data && data.piDaily) || {};
   const lines = [
-    '🥚 *Adventure Sync — Ovos*',
-    `Inventário: ${data.inventarioCount || inv.length}/${data.limiteInventario || 9}`
+    '🥚 *Ovos e incubação*',
+    `Inventário: ${data.inventarioCount || inv.length}/${data.limiteInventario || 9}`,
+    `PI hoje: ${pi.points != null ? pi.points : 0}/${pi.cap != null ? pi.cap : 150}`
   ];
+  if (data.pendingEggGrants > 0) {
+    lines.push(`⏳ Ovos aguardando espaço: ${data.pendingEggGrants}`);
+  }
   if (!inv.length) {
     lines.push('Nenhum ovo no inventário.');
   } else {
     inv.forEach((e, i) => {
       const n = i + 1;
       const cat = e.category || '?';
+      const bar = progressBar(e.progressPct);
+      const pts = `${e.points || 0}/${e.pointsGoal || '?'}`;
       if (e.state === 'inventory') {
-        lines.push(`${n}. ${cat} (${e.species || '?'}) — disponível · ${prefix} incubar ${n}`);
+        lines.push(`${n}. *${cat}* — guardado · meta ${e.pointsGoal || '?'} PI · \`${prefix} incubar ${n}\``);
       } else if (e.state === 'incubating') {
         const min = Math.ceil((e.restanteMs || 0) / 60000);
-        lines.push(`${n}. ${cat} — incubando (~${min} min) save ${e.saveId || '?'}`);
+        lines.push(`${n}. *${cat}* — incubando ${bar} (${pts} PI, ~${min} min)`);
       } else if (e.state === 'ready-to-hatch' || e.state === 'delivery-pending') {
-        lines.push(`${n}. ${cat} — *pronto!* ${prefix} ovo nascer ${n}`);
+        lines.push(`${n}. *${cat}* — *pronto para nascer!* \`${prefix} chocar ${n}\``);
       } else {
-        lines.push(`${n}. ${cat} — ${e.state}`);
+        lines.push(`${n}. *${cat}* — ${e.state}`);
       }
     });
   }
   lines.push('', '*Incubadoras*');
   for (const i of incu) {
-    const livre = i.livre ? 'livre' : `ovo ${i.activeEggId || '?'}`;
+    const livre = i.livre ? 'livre' : 'ocupada';
     lines.push(`• ${i.incubatorId} (${i.kind}) — ${livre}`);
   }
   lines.push(
     '',
-    `Comandos: ${prefix} incubar <n> · ${prefix} ovo · ${prefix} incubadoras`,
-    '⚠️ Nascimento sob demanda (sem notificação automática neste adaptador).'
+    `\`${prefix} incubar <n>\` · \`${prefix} chocar\` · \`${prefix} incubacao\``,
+    'A espécie só é revelada no nascimento.'
+  );
+  return lines.join('\n');
+}
+
+function formatIncubators(data, prefix = '!pk') {
+  const incu = (data && data.incubators) || [];
+  const lines = ['🪺 *Incubadoras*'];
+  if (!incu.length) {
+    lines.push('Nenhuma incubadora cadastrada.');
+  } else {
+    for (const i of incu) {
+      const uses = i.uses == null ? '∞' : String(i.uses);
+      const bonus = Number(i.bonusPoints || 0) > 0 ? ` (+${i.bonusPoints}% PI)` : '';
+      lines.push(`• *${i.incubatorId}* (${i.kind}${bonus}) — ${i.livre ? 'livre' : 'ocupada'} · usos ${uses}`);
+    }
+  }
+  lines.push('', `\`${prefix} incubar <n> [id]\` · \`${prefix} ovos\``);
+  return lines.join('\n');
+}
+
+function formatIncubationHelp(data, prefix = '!pk') {
+  const pi = (data && data.piDaily) || {};
+  const acts = (data && data.atividades) || [];
+  const lines = [
+    '📈 *Pontos de Incubação (PI)*',
+    `Hoje: *${pi.points != null ? pi.points : 0}/${pi.cap != null ? pi.cap : 150}* (restam ${pi.restante != null ? pi.restante : '?'})`,
+    'PI ≠ PE do treinador ≠ XP do Pokémon.',
+    '',
+    '*Como ganhar*'
+  ];
+  for (const a of acts) {
+    lines.push(`• ${a.label}: ${a.pi} PI`);
+  }
+  lines.push(
+    '',
+    'Ovos: primeira caça do dia, vitórias, ginásio, raids e missões.',
+    `\`${prefix} ovos\` · \`${prefix} incubadoras\` · \`${prefix} chocar\``
   );
   return lines.join('\n');
 }
@@ -3249,16 +3299,25 @@ function formatAdventureStatus(data, prefix = '!pk') {
 function formatEggIncubate(data, prefix = '!pk') {
   const e = (data && data.egg) || {};
   return [
-    `🥚 Incubando *${e.category || 'ovo'}* (${e.species || '?'}) em ${e.incubatorId || 'permanente'}.`,
-    `Save carimbado: ${e.saveId || '?'} · ${prefix} ovos`
+    `🥚 Incubando ovo *${e.category || 'desconhecido'}* em \`${e.incubatorId || 'permanente'}\`.`,
+    `Save carimbado: ${e.saveId || '?'} · meta ${e.pointsGoal || '?'} PI`,
+    `${prefix} ovos · ${prefix} incubacao`
   ].join('\n');
 }
 
 function formatEggHatch(data, prefix = '!pk') {
+  if (data && (data.collectionFull || data.pending || data['collection-full'])) {
+    return [
+      '📦 Coleção cheia — o nascimento ficou *pendente*.',
+      'Libere espaço e use `' + prefix + ' chocar` de novo (mesmo Pokémon).',
+      `${prefix} pc · ${prefix} ovos`
+    ].join('\n');
+  }
   const reg = (data && data.registro) || {};
   const nome = reg.nome || reg.species || 'Pokémon';
+  const shiny = (reg.shiny || reg['shiny?']) ? ' ✨shiny' : '';
   return [
-    `🎉 O ovo eclodiu! *${nome}* nv.${reg.nivel || 1} entrou na coleção.`,
+    `🎉 O ovo eclodiu! *${nome}*${shiny} nv.${reg.nivel || 1} entrou na coleção.`,
     `${prefix} time · ${prefix} ovos`
   ].join('\n');
 }
@@ -4241,6 +4300,8 @@ const ALIASES = {
   ovos: 'ovos', ovo: 'ovos',
   incubar: 'incubar',
   incubadoras: 'incubadoras',
+  incubacao: 'incubacao', incubação: 'incubacao', pi: 'incubacao',
+  chocar: 'chocar', nascer: 'chocar', hatch: 'chocar',
   loja: 'loja', shop: 'loja',
   mochila: 'mochila', mch: 'mochila', inventario: 'mochila', inventário: 'mochila',
   missoes: 'missoes', 'missões': 'missoes', mis: 'missoes',
@@ -4503,6 +4564,8 @@ module.exports = {
   formatJoySend,
   formatJoyCollect,
   formatAdventureStatus,
+  formatIncubators,
+  formatIncubationHelp,
   formatEggIncubate,
   formatEggHatch,
   resolveEggIndex,

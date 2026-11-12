@@ -1289,14 +1289,16 @@
                          :egg-id (str egg-id)
                          :agora (or agora-ms (System/currentTimeMillis))}
                   hatch-id (assoc :hatch-id (str hatch-id))))]
-    {:operation-id (:operation-id result)
-     :duplicate (boolean (:duplicate result))
-     :save-id save-id
-     :fence-generation (long fence-generation)
-     :pokemon-id (:pokemon-id result)
-     :egg (egg-summary (:egg result))
-     :registro (select-keys (or (:registro result) {})
-                            [:nome :species :nivel :hp :hp-atual])}))
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :save-id save-id
+             :fence-generation (long fence-generation)
+             :pokemon-id (:pokemon-id result)
+             :egg (egg-summary (:egg result))
+             :registro (select-keys (or (:registro result) {})
+                                    [:nome :species :nivel :hp :hp-atual :shiny :shiny? :ivs])}
+      (:collection-full result) (assoc :collection-full true :pending true)
+      (:pending result) (assoc :pending true))))
 
 (defn buy-item!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
