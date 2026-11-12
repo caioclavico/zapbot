@@ -1018,6 +1018,89 @@ function formatLearnMove(data, prefix = '!pk') {
   ].join('\n');
 }
 
+function nomeGolpeMt(g) {
+  if (!g) return '?';
+  return g.nomeExibicao || g['nome-exibicao'] || g.nome || g.slug || '?';
+}
+
+function formatMtHelp(prefix = '!pk', mtQty = 0) {
+  const p = prefix || '!pk';
+  return [
+    '💿 *Máquinas Técnicas*',
+    `📦 MT disponíveis: *${Number(mtQty) || 0}*`,
+    '',
+    'A MT genérica sorteia um golpe compatível do learnset (por nível) e substitui só o slot escolhido.',
+    '',
+    `\`${p} mt\` — esta ajuda`,
+    `\`${p} mt usar <n>\` — golpes do Pokémon da coleção`,
+    `\`${p} mt usar <n> <slot>\` — escolhe o golpe a substituir (1-4)`,
+    `\`${p} mt confirmar\` — aplica e consome 1 MT`,
+    `\`${p} mt cancelar\` — cancela sem consumir`,
+    '',
+    'Compre MT em `!loja comprar mt` (200 moedas).'
+  ].join('\n');
+}
+
+function formatMtPreview(poke, { mtQty = 0, candidatos = 0, prefix = '!pk', idx } = {}) {
+  const p = poke || {};
+  const golpes = p.golpes || [];
+  const lista = golpes.map((g, i) => `${i + 1}. ${nomeGolpeMt(g)}`).join('\n') || '(sem golpes)';
+  const id = p.idPokemon || p['id-pokemon'] || p.id || '?';
+  const n = (idx != null ? Number(idx) + 1 : null);
+  return [
+    `💿 *MT — ${p.nome || 'Pokémon'}*${n != null ? ` (#${n})` : ''}`,
+    `🆔 \`${id}\` · Nv.${p.nivel != null ? p.nivel : '?'}`,
+    `📦 MT: *${Number(mtQty) || 0}* · candidatos compatíveis: *${Number(candidatos) || 0}*`,
+    '',
+    '*Golpes atuais*',
+    lista,
+    '',
+    candidatos > 0
+      ? `Escolha o slot a substituir: \`${prefix} mt usar ${n != null ? n : '<n>'} <1-${golpes.length || 4}>\``
+      : '🚫 Nenhum golpe compatível novo para este Pokémon com a MT genérica.',
+    `Cancelar depois: \`${prefix} mt cancelar\``
+  ].join('\n');
+}
+
+function formatMtPending(poke, slot, { mtQty = 0, prefix = '!pk', candidatos = 0 } = {}) {
+  const p = poke || {};
+  const golpes = p.golpes || [];
+  const atual = golpes[slot];
+  return [
+    '⚙️ *Troca de golpe com MT pendente*',
+    `🐢 *${p.nome || 'Pokémon'}*`,
+    `❌ Slot ${Number(slot) + 1}: *${nomeGolpeMt(atual)}*`,
+    `🎲 Novo golpe: sorteio entre *${Number(candidatos) || 0}* compatíveis (revelado na confirmação)`,
+    `📦 MT disponíveis: *${Number(mtQty) || 0}*`,
+    '',
+    `Confirme: \`${prefix} mt confirmar\``,
+    `Cancele: \`${prefix} mt cancelar\` (não consome MT)`
+  ].join('\n');
+}
+
+function formatMtUsed(data, prefix = '!pk') {
+  const p = (data && data.pokemon) || {};
+  const ant = (data && (data.golpeAnterior || data['golpe-anterior'])) || {};
+  const novo = (data && (data.golpeNovo || data['golpe-novo'])) || {};
+  const resto = data && (data.itemQtyAfter != null
+    ? data.itemQtyAfter
+    : data['item-qty-after']);
+  return [
+    '⚙️ *MÁQUINA TÉCNICA UTILIZADA!*',
+    '',
+    `🐢 *${p.nome || 'Pokémon'}*`,
+    '',
+    `❌ Golpe anterior: ${nomeGolpeMt(ant)}`,
+    `✅ Novo golpe: ${nomeGolpeMt(novo)}`,
+    '',
+    '🎒 MT consumida: 1',
+    `📦 MT restante: ${resto != null ? resto : '?'}`,
+    '',
+    '✨ Seu Pokémon aprendeu um novo ataque!',
+    `${prefix} time · ${prefix} mt`
+  ].join('\n');
+}
+
 function formatForgetMove(data, prefix = '!pk') {
   const rem = (data && data.removido) || {};
   const nome = rem.nomeExibicao || rem['nome-exibicao'] || rem.slug || 'golpe';
@@ -1374,6 +1457,9 @@ function formatError(err) {
       if (itemId === 'cartao-presente' || itemId === 'presente') {
         return '🎒 Você não tem Cartão-presente. Compre com `!loja comprar cartao-presente` (20 moedas).';
       }
+      if (itemId === 'mt') {
+        return '💿 Você não tem MT de Ataque. Compre com `!loja comprar mt` (200 moedas) ou use `!pk mt`.';
+      }
       return '🎒 Você não tem o item necessário. Confira `!pk mochila`.';
     })(),
     INVALID_GIFT_TARGET: '🎁 Marque um amigo válido: !presente @amigo.',
@@ -1415,6 +1501,16 @@ function formatError(err) {
     INVALID_MOVE_SLOT: '❓ Informe um golpe válido (1-4) para substituir ou liberar vaga.',
     MOVE_ALREADY_KNOWN: '❓ Esse golpe já é conhecido (ou já foi oferecido/removido).',
     MUST_KEEP_STAB_MOVE: '🚫 Mantenha pelo menos um ataque ofensivo do próprio tipo.',
+    POKEMON_IDENTITY_MISMATCH:
+      '⚠️ O Pokémon da pendência de MT não corresponde mais à coleção (reordenação/troca/remoção). Use !pk mt usar de novo.',
+    MT_SLOT_CHANGED:
+      '⚠️ O golpe do slot mudou desde a pendência. Use !pk mt usar de novo (nenhuma MT consumida).',
+    MT_MOVE_NOT_IN_CATALOG: '🚫 Golpe não pertence ao catálogo de MT. Operação rejeitada.',
+    MT_MOVE_NOT_ELIGIBLE: '🚫 Esse golpe não é elegível para a espécie/nível (learnset MT).',
+    MT_LEARNSET_UNAVAILABLE: '🚫 Learnset de MT ainda não disponível para esta espécie.',
+    MT_CATALOG_VERSION_MISMATCH:
+      '⚠️ Catálogo de MT desatualizado. Cancele e monte a pendência de novo com !pk mt usar.',
+    INVALID_MT_ITEM: '💿 Consumo de MT inválido neste contexto.',
     NO_MOVE_OFFER: '❓ Não há oferta de golpe pendente. Use !pk aprender após subir de nível.',
     MOVE_NOT_IN_HISTORY: '❓ Esse golpe não está no histórico para reaprender.',
     CANNOT_FORGET_LAST_MOVE: '🚫 Remover deixaria o Pokémon sem golpes suficientes.',
@@ -3338,9 +3434,20 @@ function formatShop(data, prefix = '!loja') {
     ''
   ];
   for (const it of itens) {
-    lines.push(`${it.emoji || '•'} *${it.nome}* — ${it.preco} moedas (\`${it.itemId}\`)`);
+    const id = it.itemId || it['item-id'] || '?';
+    const desc = String(it.descricao || '').trim();
+    const efeito = desc.length > 90 ? `${desc.slice(0, 87)}…` : desc;
+    lines.push(`${it.emoji || '•'} *${it.nome}* — ${it.preco} moedas`);
+    lines.push(`   \`${id}\`${efeito ? ` · ${efeito}` : ''}`);
+    lines.push(`   Comprar: \`${prefix} comprar ${id}\``);
   }
-  lines.push('', `Comprar: ${prefix} comprar <item>`, `Detalhes: ${prefix} detalhes <item>`, 'Inventário: !mochila');
+  lines.push(
+    '',
+    `Detalhes: \`${prefix} detalhes <item>\``,
+    'Inventário: `!mochila`',
+    'Pokébolas e pedras *não* estão à venda aqui (missões/ginásios).',
+    'Incubadoras *não* se compram na loja.'
+  );
   return lines.join('\n');
 }
 
@@ -3936,22 +4043,47 @@ const HELP_TOPICS = {
     titulo: '📖 *ODISSEU — CENTRAL DE AJUDA*',
     grupos: [
       {
-        emoji: '🐾',
-        nome: 'AVENTURA',
+        emoji: '👤',
+        nome: 'TREINADOR E PERFIL',
         itens: [
-          ['cacar', 'Caçadas e captura'],
-          ['raid', 'Raids cooperativas'],
-          ['ginasio', 'Ginásios e líderes']
+          ['treinador', 'Perfil, saves e títulos'],
+          ['recompensas', 'Moedas, PE e conquistas']
         ]
       },
       {
         emoji: '🎒',
-        nome: 'TREINADOR',
+        nome: 'POKÉMON E COLEÇÃO',
         itens: [
           ['pokemon', 'Time, PC e ativo'],
-          ['mochila', 'Itens e recompensas'],
           ['evoluir', 'Evolução e pedras'],
-          ['treinador', 'Perfil, XP e títulos']
+          ['mt', 'Máquinas Técnicas']
+        ]
+      },
+      {
+        emoji: '🌿',
+        nome: 'CAÇA E COMBATE',
+        itens: [
+          ['cacar', 'Caçadas e captura'],
+          ['batalha', 'Combate selvagem'],
+          ['ginasio', 'Ginásios e líderes'],
+          ['raid', 'Raids cooperativas'],
+          ['pvp', 'Desafios PvP']
+        ]
+      },
+      {
+        emoji: '🏪',
+        nome: 'LOJA E ITENS',
+        itens: [
+          ['loja', 'Catálogo e compras'],
+          ['mochila', 'Inventário e resgates']
+        ]
+      },
+      {
+        emoji: '🥚',
+        nome: 'OVOS E INCUBAÇÃO',
+        itens: [
+          ['ovos', 'Inventário de ovos'],
+          ['incubadoras', 'Incubadoras e PI']
         ]
       },
       {
@@ -3959,13 +4091,7 @@ const HELP_TOPICS = {
         nome: 'INTERAÇÃO',
         itens: [
           ['troca', 'Trocas entre treinadores'],
-          ['presentes', 'Presentes diários']
-        ]
-      },
-      {
-        emoji: '🎉',
-        nome: 'EVENTOS',
-        itens: [
+          ['presentes', 'Presentes diários'],
           ['eventos', 'Clima, surtos e missões']
         ]
       }
@@ -4124,6 +4250,136 @@ const HELP_TOPICS = {
       `Itens: \`!loja detalhes <item>\``
     ].join('\n')
   },
+  mt: {
+    aliases: ['mts', 'maquina', 'máquina', 'maquinas', 'máquinas', 'tm-ataque'],
+    titulo: '⚙️ *Máquinas Técnicas (MTs)*',
+    corpo: (p) => [
+      'As MTs ensinam um golpe novo compatível ao Pokémon.',
+      '',
+      '*Comandos*',
+      `\`${p} mt\` — consultar MTs e esta ajuda`,
+      `\`${p} mt usar 1 2\` — Pokémon #1, substitui o golpe do slot 2`,
+      `\`${p} mt confirmar\` — confirma a troca (consome 1 MT)`,
+      `\`${p} mt cancelar\` — cancela sem consumir`,
+      '',
+      '*Como funciona*',
+      '• O golpe novo é sorteado entre elegíveis (espécie + nível)',
+      '• Não ensina golpe já conhecido nem incompatível',
+      '• Consome exatamente 1 MT só na confirmação',
+      '• Preserva HP, nível, XP, IVs, shiny e demais atributos',
+      '• A pendência usa o ID canônico do Pokémon (reordenar a coleção não troca o alvo)',
+      '',
+      '*Como obter*',
+      '`!loja comprar mt` — 200 moedas',
+      '',
+      `Sem candidatos: a MT *não* é consumida. Veja também \`${p} time\`.`
+    ].join('\n')
+  },
+  loja: {
+    aliases: ['shop', 'comprar', 'compras'],
+    titulo: '🏪 *Ajuda — Loja*',
+    corpo: (p) => [
+      'Compre expansões, MT, curas e utilitários com moedas (💰).',
+      '',
+      '*Comandos*',
+      '`!loja` — catálogo com preço e efeito',
+      '`!loja detalhes <item>` — ficha do produto',
+      '`!loja comprar <item>` — compra 1 unidade',
+      '',
+      '*À venda (preços reais)*',
+      '• Expansão de Mochila (`mochila`) — 200 · +50 slots de itens',
+      '• Expansão de Armazenamento (`espaco-pokemon`) — 200 · +50 Pokémon',
+      '• MT de Ataque (`mt`) — 200 · use com `' + p + ' mt`',
+      '• Poção / Poção Máxima — 20 / 60',
+      '• Curas de status (atadura, antídoto, …) — 15',
+      '• Fruta Frambo — 10 · motivação de ginásio',
+      '• Cartão de presente — 20',
+      '',
+      '*Fora da loja*',
+      '• Pokébolas / Grande / Ultra — missões e recompensas',
+      '• Pedras de evolução — ginásios/missões',
+      '• Incubadoras — progresso Adventure Sync (não à venda)',
+      '',
+      'Saldo insuficiente ou item inválido: a compra é rejeitada sem debitar.',
+      `\`${p} mochila\` — inventário · \`${p} ajuda mt\` — MTs`
+    ].join('\n')
+  },
+  ovos: {
+    aliases: ['ovo', 'egg', 'eggs'],
+    titulo: '🥚 *Ajuda — Ovos*',
+    corpo: (p) => [
+      'Ovos vêm de atividades (caça, ginásio, raid, PvP, missões).',
+      '',
+      '*Categorias (meta de PI)*',
+      '• Comum: 100 PI · Raro: 250 · Épico: 500 · Especial: 800',
+      '',
+      '*Comandos*',
+      `\`${p} ovos\` — inventário (até 9) + progresso`,
+      `\`${p} incubar <n> [incubadora]\` — coloca o ovo`,
+      `\`${p} chocar\` — nasce ovos prontos`,
+      `\`${p} incubacao\` — PI do dia e como ganhar`,
+      `\`${p} incubadoras\` — status das incubadoras`,
+      '',
+      '*Regras*',
+      '• Inventário cheio: PI aplica; ovo pode ficar pendente',
+      '• Espécie só é revelada no nascimento',
+      '• Coleção Pokémon cheia: nascimento fica pendente até liberar espaço',
+      '',
+      `\`${p} ajuda incubadoras\` — detalhes de PI e incubadoras`
+    ].join('\n')
+  },
+  incubadoras: {
+    aliases: ['incubadora', 'incubacao', 'incubação', 'pi'],
+    titulo: '🪺 *Ajuda — Incubadoras e PI*',
+    corpo: (p) => [
+      'Incube ovos e acumule Pontos de Incubação (PI).',
+      '',
+      '*Incubadoras*',
+      '• 1 permanente (usos ilimitados)',
+      '• Até 2 temporárias extras/especiais (quando disponíveis)',
+      '• Especial: +25% PI na parcela do ovo daquela incubadora',
+      '',
+      '*PI*',
+      '• Distinto de PE do treinador e XP do Pokémon',
+      '• Teto diário configurável (padrão 150)',
+      '• O PI do evento é *dividido* entre ovos incubando',
+      '',
+      '*Comandos*',
+      `\`${p} incubadoras\` · \`${p} incubacao\` · \`${p} incubar <n> [id]\``,
+      `\`${p} ovos\` · \`${p} chocar\``,
+      '',
+      'Incubadoras *não* se compram na loja.'
+    ].join('\n')
+  },
+  batalha: {
+    aliases: ['batalhas', 'combate', 'combater', 'atacar'],
+    titulo: '⚔️ *Ajuda — Batalhas*',
+    corpo: (p) => [
+      'Combate em caçada selvagem (e ações compartilhadas em ginásio).',
+      '',
+      `\`${p} atacar 1\` … \`${p} 4\` — golpe`,
+      `\`${p} defender\` · \`${p} pocao\` · \`${p} escolher <n>\``,
+      `\`${p} sair\` — desiste (zera sequência de captura)`,
+      '',
+      'Após vencer: XP/PE de batalha; opcionalmente capture.',
+      `\`${p} ajuda cacar\` — fluxo completo de caça`
+    ].join('\n')
+  },
+  pvp: {
+    aliases: ['duelo', 'desafio', 'batalhar'],
+    titulo: '🥊 *Ajuda — PvP*',
+    corpo: (p) => [
+      'Desafie outro treinador do chat.',
+      '',
+      `\`${p} batalhar @jogador\` — abre desafio`,
+      `\`${p} batalhar aceitar\` · \`${p} batalhar cancelar\``,
+      `\`${p} atacar 1\` … — na sua vez`,
+      `\`${p} sair\` — abandona (regras do desafio)`,
+      '',
+      'Use o Pokémon ativo; níveis incompatíveis bloqueiam a entrada.',
+      '1 desafio/batalha PvP por chat.'
+    ].join('\n')
+  },
   troca: {
     aliases: ['trocas', 'negociar'],
     titulo: '🤝 *Ajuda — Trocas*',
@@ -4221,6 +4477,11 @@ function resolveHelpTopic(raw) {
   if (cmd === 'presente') return 'presentes';
   if (cmd === 'evoluir') return 'evoluir';
   if (cmd === 'capturar' || cmd === 'fruta' || cmd === 'liberar') return 'cacar';
+  if (cmd === 'ovos' || cmd === 'ovo' || cmd === 'chocar' || cmd === 'incubar') return 'ovos';
+  if (cmd === 'incubadoras' || cmd === 'incubacao') return 'incubadoras';
+  if (cmd === 'loja') return 'loja';
+  if (cmd === 'mt' || cmd === 'mts') return 'mt';
+  if (cmd === 'batalhar' || cmd === 'pvp') return 'pvp';
   return null;
 }
 
@@ -4245,7 +4506,9 @@ function formatHelp(topicRaw, prefix = '!pk') {
       lines.push('');
     }
     lines.push('_Escolha uma categoria para ver os comandos._');
-    lines.push(`Também: \`${p} raid ajuda\` · \`${p} ginasio ajuda\` · \`${p} mochila ajuda\``);
+    lines.push(
+      `Também: \`${p} raid ajuda\` · \`${p} ginasio ajuda\` · \`${p} mochila ajuda\` · \`${p} mt\``
+    );
     return lines.join('\n');
   }
   const meta = HELP_TOPICS[topic];
@@ -4316,6 +4579,7 @@ const ALIASES = {
   evoluir: 'evoluir', evo: 'evoluir', evolucao: 'evoluir', evolução: 'evoluir',
   aprender: 'aprender', apr: 'aprender',
   reaprender: 'reaprender', reap: 'reaprender',
+  mt: 'mt', mts: 'mt',
   removergolpe: 'removergolpe', rmg: 'removergolpe',
   cancelar: 'cancelar', can: 'cancelar',
   batalhar: 'batalhar', abrir: 'batalhar', entrar: 'batalhar',
@@ -4601,6 +4865,10 @@ module.exports = {
   formatSetActive,
   formatEvolve,
   formatLearnMove,
+  formatMtHelp,
+  formatMtPreview,
+  formatMtPending,
+  formatMtUsed,
   formatForgetMove,
   formatOfferMove,
   formatRefuseOffer,

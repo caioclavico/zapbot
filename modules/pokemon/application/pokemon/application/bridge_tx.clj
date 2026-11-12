@@ -1427,24 +1427,69 @@
 
 (defn learn-move!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
-                 idx golpe slot oferta? consume-item-id]
+                 idx golpe slot oferta? consume-item-id id-pokemon
+                 expected-slot-slug catalog-version]
           :as req}]
   (let [writer-ctx (require-writer! req)
         golpe* (keywordize-keys (or golpe {}))
         result (moves-app/learn-move!
                 store writer-ctx
                 (cond-> {:operation-id (str operation-id)
-                         :idx (long idx)
                          :golpe golpe*
                          :oferta? (boolean oferta?)}
+                  (some? idx) (assoc :idx (long idx))
                   (some? slot) (assoc :slot (long slot))
-                  consume-item-id (assoc :consume-item-id (str consume-item-id))))]
-    {:operation-id (:operation-id result)
-     :duplicate (boolean (:duplicate result))
-     :save-id save-id
-     :fence-generation (long fence-generation)
-     :idx (:idx result)
-     :pokemon (pokemon-summary (:registro result))}))
+                  consume-item-id (assoc :consume-item-id (str consume-item-id))
+                  (not (str/blank? (str id-pokemon)))
+                  (assoc :id-pokemon (str id-pokemon))
+                  (not (str/blank? (str expected-slot-slug)))
+                  (assoc :expected-slot-slug (str expected-slot-slug))
+                  (not (str/blank? (str catalog-version)))
+                  (assoc :catalog-version (str catalog-version))))
+        registro (or (:registro result)
+                     (when (map? (:summary result))
+                       (:registro (:summary result))))]
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :save-id save-id
+             :fence-generation (long fence-generation)
+             :idx (or (:idx result) idx)
+             :pokemon (pokemon-summary registro)}
+      (or (:golpe-anterior result)
+          (get-in result [:summary :golpe-anterior]))
+      (assoc :golpe-anterior
+             (or (:golpe-anterior result)
+                 (get-in result [:summary :golpe-anterior])))
+      (or (:golpe-novo result)
+          (get-in result [:summary :golpe-novo]))
+      (assoc :golpe-novo
+             (or (:golpe-novo result)
+                 (get-in result [:summary :golpe-novo])))
+      (or (:consume-item-id result) consume-item-id
+          (get-in result [:summary :consume-item-id]))
+      (assoc :consume-item-id
+             (str (or (:consume-item-id result)
+                      (get-in result [:summary :consume-item-id])
+                      consume-item-id)))
+      (or (contains? result :item-qty-after)
+          (contains? (or (:summary result) {}) :item-qty-after))
+      (assoc :item-qty-after
+             (long (or (:item-qty-after result)
+                       (get-in result [:summary :item-qty-after])
+                       0)))
+      (or (:id-pokemon result) id-pokemon
+          (get-in result [:summary :id-pokemon]))
+      (assoc :id-pokemon
+             (str (or (:id-pokemon result)
+                      (get-in result [:summary :id-pokemon])
+                      id-pokemon)))
+      (or (:catalog-version result)
+          (get-in result [:summary :catalog-version])
+          catalog-version)
+      (assoc :catalog-version
+             (str (or (:catalog-version result)
+                      (get-in result [:summary :catalog-version])
+                      catalog-version))))))
 
 (defn forget-move!
   [store {:keys [chat-id player-id save-id fence-generation operation-id

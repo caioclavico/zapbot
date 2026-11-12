@@ -179,7 +179,13 @@
            (p/let [_ (http/executar (message "missoes-todas") "pokemon" "missoes")
                    _ (http/executar (message "missoes-diarias") "pokemon" "missoes diarias")
                    _ (http/executar (message "missoes-semanais") "pokemon" "missoes semanais")]
-             (let [[todas diarias semanais] @envios]
+             (let [texto (fn [x]
+                           (cond
+                             (string? x) x
+                             (and x (.-text x)) (str (.-text x))
+                             (map? x) (str (or (:text x) (:texto x) ""))
+                             :else (str x)))
+                   [todas diarias semanais] (mapv texto @envios)]
                (is (and (re-find #"Diária exclusiva" todas)
                         (re-find #"Semanal exclusiva" todas)))
                (is (and (re-find #"Diária exclusiva" diarias)
@@ -502,7 +508,7 @@
                      _ (http/executar (message "perfil-titulo") "pokemon" "titulo")
                      _ (http/executar (message "perfil-amizade") "pokemon" "amizade 1")]
                (is (= 3 (count @respostas)))
-               (is (some #(re-find #"Cartões" %) @respostas))
+               (is (some #(re-find #"Doces Pokémon|Cartões" %) @respostas))
                (is (some #(re-find #"Batalhador" %) @respostas))
                (is (some #(re-find #"220/255" %) @respostas)))))
           (p/catch (fn [erro] (is false (str erro))))

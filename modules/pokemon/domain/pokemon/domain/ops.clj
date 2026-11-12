@@ -1,6 +1,7 @@
 (ns pokemon.domain.ops
   "Payload canônico + validação de identidade para captura/evolução/golpes."
-  (:require [pokemon.domain.errors :as err]
+  (:require [clojure.string :as str]
+            [pokemon.domain.errors :as err]
             [pokemon.domain.model :as model]
             [pokemon.domain.reward :as reward]))
 
@@ -85,14 +86,20 @@
      item-id (assoc :item-id item-id))))
 
 (defn learn-move-payload
-  [{:keys [idx golpe slot oferta? consume-item-id]}]
+  [{:keys [idx golpe slot oferta? consume-item-id id-pokemon
+           expected-slot-slug catalog-version]}]
   (reward/canonicalize
-   (cond-> {:idx (long idx)
-            :golpe (reward/canonicalize
+   (cond-> {:golpe (reward/canonicalize
                     (select-keys golpe [:slug :nome-exibicao :tipo :poder :classe]))
             :oferta? (boolean oferta?)}
+     (some? idx) (assoc :idx (long idx))
      (some? slot) (assoc :slot (long slot))
-     consume-item-id (assoc :consume-item-id (str consume-item-id)))))
+     consume-item-id (assoc :consume-item-id (str consume-item-id))
+     (not (str/blank? (str id-pokemon))) (assoc :id-pokemon (str id-pokemon))
+     (not (str/blank? (str expected-slot-slug)))
+     (assoc :expected-slot-slug (str expected-slot-slug))
+     (not (str/blank? (str catalog-version)))
+     (assoc :catalog-version (str catalog-version)))))
 
 (defn set-active-payload
   [{:keys [idx]}]

@@ -668,6 +668,11 @@
   {:main-opts ["-e" "(require 'clojure.test 'pokemon.tests.growth-curves-a6-test 'pokemon.tests.level-evolution-a6-test 'pokemon.tests.xp-equivalence-test 'pokemon.tests.species-hp-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.growth-curves-a6-test 'pokemon.tests.level-evolution-a6-test 'pokemon.tests.xp-equivalence-test 'pokemon.tests.species-hp-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"]
    :jvm-opts ["-Xms64m" "-Xmx768m" "-XX:+UseG1GC"]}
 
+  ;; A6 — Máquinas Técnicas (consumo atômico + presenter Node em job separado)
+  :test-a6-mt-move-learning
+  {:main-opts ["-m" "odisseu.smoke.a6-mt-move-learning"]
+   :jvm-opts ["-Xms64m" "-Xmx768m" "-XX:+UseG1GC"]}
+
   ;; A6 — ovos / PI / incubadoras (domínio + Datomic + regressão adventure)
   :test-a6-eggs-incubation
   {:main-opts ["-e" "(require 'clojure.test 'pokemon.tests.egg-activity-a6-test 'pokemon.tests.egg-fixes-a6-test 'pokemon.tests.adventure-m37-test 'pokemon.tests.joy-eggs-m410-test) (let [r (clojure.test/run-tests 'pokemon.tests.egg-activity-a6-test 'pokemon.tests.egg-fixes-a6-test 'pokemon.tests.adventure-m37-test 'pokemon.tests.joy-eggs-m410-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"]
