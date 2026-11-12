@@ -1052,46 +1052,48 @@
                                                         (:turn-index raid 0)))
                          :move-index (long (or move-index 0))
                          :agora (or agora-ms (System/currentTimeMillis))}
-                  (map? rng) (assoc :rng (keywordize-keys rng))))]
-    {:operation-id (:operation-id result)
-     :duplicate (boolean (:duplicate result))
-     :player-id player-id
-     :dano (:dano result)
-     :multiplicador (:multiplicador result)
-     :base (:base result)
-     :base-variada (:base-variada result)
-     :variacao-pct (:variacao-pct result)
-     :hp-chefe-antes (:hp-chefe-antes result)
-     :revide (:revide result)
-     :venceu (boolean (:venceu? result))
-     :derrota (boolean (:derrota? result))
-     :trocou (boolean (:trocou? result))
-     :eliminado (boolean (:eliminado? result))
-     :autodesmaio (boolean (:autodesmaio? result))
-     :hp-ativo (:hp-ativo result)
-     :pokemon-atacante (when-let [p (:pokemon-atacante result)]
-                         (select-keys p [:nome :species]))
-     :pokemon-ativo (when-let [p (:pokemon-ativo result)]
-                      (select-keys p [:nome :species]))
-     :golpe (when-let [g (:golpe result)]
-              {:slug (or (:slug g) (get g "slug"))
-               :nome-exibicao (or (:nome-exibicao g) (get g "nome-exibicao")
-                                  (get g "nomeExibicao"))
-               :tipo (or (:tipo g) (get g "tipo"))
-               :poder (or (:poder g) (get g "poder"))
-               :classe (or (:classe g) (get g "classe"))})
-     :rewards (mapv (fn [rw]
-                      (cond-> {:player-id (:player-id rw)
-                               :moedas (:moedas rw)
-                               :pe (:pe rw)}
-                        (some? (:xp-pokemon rw))
-                        (assoc :xp-pokemon (:xp-pokemon rw))
-                        (:pokemon-id rw)
-                        (assoc :pokemon-id (:pokemon-id rw))
-                        (:outcome rw)
-                        (assoc :outcome (name (:outcome rw)))))
-                    (or (:rewards result) []))
-     :raid (raid-summary (:raid result))}))
+                  (map? rng) (assoc :rng (keywordize-keys rng))))
+        level-ups (public-trainer-level-ups result)]
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :player-id player-id
+             :dano (:dano result)
+             :multiplicador (:multiplicador result)
+             :base (:base result)
+             :base-variada (:base-variada result)
+             :variacao-pct (:variacao-pct result)
+             :hp-chefe-antes (:hp-chefe-antes result)
+             :revide (:revide result)
+             :venceu (boolean (:venceu? result))
+             :derrota (boolean (:derrota? result))
+             :trocou (boolean (:trocou? result))
+             :eliminado (boolean (:eliminado? result))
+             :autodesmaio (boolean (:autodesmaio? result))
+             :hp-ativo (:hp-ativo result)
+             :pokemon-atacante (when-let [p (:pokemon-atacante result)]
+                                 (select-keys p [:nome :species]))
+             :pokemon-ativo (when-let [p (:pokemon-ativo result)]
+                              (select-keys p [:nome :species]))
+             :golpe (when-let [g (:golpe result)]
+                      {:slug (or (:slug g) (get g "slug"))
+                       :nome-exibicao (or (:nome-exibicao g) (get g "nome-exibicao")
+                                          (get g "nomeExibicao"))
+                       :tipo (or (:tipo g) (get g "tipo"))
+                       :poder (or (:poder g) (get g "poder"))
+                       :classe (or (:classe g) (get g "classe"))})
+             :rewards (mapv (fn [rw]
+                              (cond-> {:player-id (:player-id rw)
+                                       :moedas (:moedas rw)
+                                       :pe (:pe rw)}
+                                (some? (:xp-pokemon rw))
+                                (assoc :xp-pokemon (:xp-pokemon rw))
+                                (:pokemon-id rw)
+                                (assoc :pokemon-id (:pokemon-id rw))
+                                (:outcome rw)
+                                (assoc :outcome (name (:outcome rw)))))
+                            (or (:rewards result) []))
+             :raid (raid-summary (:raid result))}
+      (seq level-ups) (assoc :trainer-level-ups level-ups))))
 
 (defn raid-capture!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
@@ -1112,22 +1114,24 @@
                   (some? roll) (assoc :roll (long roll))
                   (boolean frambo) (assoc :frambo true)))
         summary (or (:summary result) {})
-        sucesso? (or (:sucesso? result) (:sucesso? summary))]
-    {:operation-id (or (:operation-id result) operation-id)
-     :duplicate (boolean (:duplicate result))
-     :capturou (boolean sucesso?)
-     :chance (or (:chance result) (:chance summary))
-     :chance-base (or (:chance-base result) (:chance-base summary))
-     :roll (or (:roll result) (:roll summary))
-     :frambo (boolean (or (:frambo? result) (:frambo? summary)))
-     :tentativas (or (:tentativas result) (:tentativas summary))
-     :bola bola-id
-     :raid-id (:raid-id raid)
-     :chefe (when-let [c (:chefe raid)]
-              {:nome (or (:nome c) (get c "nome"))
-               :raridade (or (:raridade c) (get c "raridade"))})
-     :save-id save-id
-     :fence-generation (long fence-generation)}))
+        sucesso? (or (:sucesso? result) (:sucesso? summary))
+        level-ups (public-trainer-level-ups result)]
+    (cond-> {:operation-id (or (:operation-id result) operation-id)
+             :duplicate (boolean (:duplicate result))
+             :capturou (boolean sucesso?)
+             :chance (or (:chance result) (:chance summary))
+             :chance-base (or (:chance-base result) (:chance-base summary))
+             :roll (or (:roll result) (:roll summary))
+             :frambo (boolean (or (:frambo? result) (:frambo? summary)))
+             :tentativas (or (:tentativas result) (:tentativas summary))
+             :bola bola-id
+             :raid-id (:raid-id raid)
+             :chefe (when-let [c (:chefe raid)]
+                      {:nome (or (:nome c) (get c "nome"))
+                       :raridade (or (:raridade c) (get c "raridade"))})
+             :save-id save-id
+             :fence-generation (long fence-generation)}
+      (seq level-ups) (assoc :trainer-level-ups level-ups))))
 
 (defn raid-frambo-prepare!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
@@ -1622,13 +1626,15 @@
                          :actor-side side}
                   (some? move-index) (assoc :move-index (long move-index))
                   item-id (assoc :item-id item-id)
-                  (map? rng) (assoc :rng (keywordize-keys rng))))]
+                  (map? rng) (assoc :rng (keywordize-keys rng))))
+        level-ups (public-trainer-level-ups result)]
     (cond-> {:operation-id (:operation-id result)
              :duplicate (boolean (:duplicate result))
              :save-id save-id
              :fence-generation (long fence-generation)
              :battle (present-pvp (:battle result))}
-      (:rewards result) (assoc :rewards (:rewards result)))))
+      (:rewards result) (assoc :rewards (:rewards result))
+      (seq level-ups) (assoc :trainer-level-ups level-ups))))
 
 (defn active-pvp
   [store chat-id]

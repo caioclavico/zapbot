@@ -1467,7 +1467,9 @@
                                                             :now (js/Date.now)
                                                             :operationId (.stableOperationId jvm-transport
                                                                             (:requestId pedido) "prof-confirm")})]
-                        (envelope-jvm pedido (.formatProfessor jvm-present d prefix))))
+                        (envelope-jvm pedido
+                                      (append-trainer-level-ups
+                                       (.formatProfessor jvm-present d prefix) d))))
 
                     (= sub "usar")
                     (if (nil? idx-usar)
@@ -1480,7 +1482,9 @@
                                                         :operationId (.stableOperationId jvm-transport
                                                                         (:requestId pedido)
                                                                         (str "prof-use:" (inc idx-usar)))})]
-                        (envelope-jvm pedido (.formatProfessor jvm-present d prefix))))
+                        (envelope-jvm pedido
+                                      (append-trainer-level-ups
+                                       (.formatProfessor jvm-present d prefix) d))))
 
                     ;; enviar (um ou vários)
                     (empty? idxs-enviar)
@@ -1499,7 +1503,9 @@
                                                        :operationId (.stableOperationId jvm-transport
                                                                        (:requestId pedido)
                                                                        op-key)})]
-                      (envelope-jvm pedido (.formatProfessor jvm-present d prefix)))))
+                      (envelope-jvm pedido
+                                    (append-trainer-level-ups
+                                     (.formatProfessor jvm-present d prefix) d)))))
 
                 "treinador"
                 (p/let [data (desempenho/medir! ctx "pokemon_jvm_trainer"
