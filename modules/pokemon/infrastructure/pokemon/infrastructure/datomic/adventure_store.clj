@@ -66,7 +66,8 @@
 
 (defn- shell-edn
   [estado]
-  (pr-str (select-keys estado [:incubators :receipts :pending-egg-grants :pi-daily])))
+  (pr-str (select-keys estado [:incubators :receipts :pending-egg-grants
+                               :pending-incubator-grants :raid-wins :pi-daily])))
 
 (defn build-ensure-account-tx
   [chat-id player-id]
@@ -210,8 +211,10 @@
                                   (:eggs estado0)))
                      (:egg-id ovo0) agora)
             drained (egg-activity/materialize-pending estado1 agora)
-            estado2 (:estado drained)
+            drained-inc (egg-activity/materialize-pending-incubators (:estado drained))
+            estado2 (:estado drained-inc)
             delivered (:delivered drained)
+            incubators-delivered (:delivered drained-inc)
             ovo-final (some #(when (= (:egg-id ovo0) (:egg-id %)) %) (:eggs estado2))
             delivered-tx (mapv #(egg->entity ak (assoc % :revision 0)) delivered)]
         {:tx (into
@@ -232,14 +235,104 @@
                 :operation-receipt/summary
                 (pr-str {:hatch-id hatch-id
                          :pokemon-id pokemon-id
-                         :pending-delivered (mapv :egg-id delivered)})}]
+                         :pending-delivered (mapv :egg-id delivered)
+                         :incubators-delivered incubators-delivered})}]
               delivered-tx)
          :result {:operation-id operation-id
                   :duplicate false
                   :egg ovo-final
                   :pokemon-id pokemon-id
                   :registro reg
-                  :pending-delivered delivered}}))))
+                  :pending-delivered delivered
+                  :incubators-delivered incubators-delivered}}))))
+
+(defn build-redeem-incubators-tx
+  "Resgata a próxima incubadora pendente quando há vaga. CAS na conta Adventure."
+  [{:keys [writer-ctx account-shell egg-maps request ensure-tx?]}]
+  (let [chat-id (:chat-id writer-ctx)
+        player-id (:player-id writer-ctx)
+        ak (id/adventure-account-key chat-id player-id)
+        shell0 (or account-shell (eggs/estado-inicial))
+        rev (long (:revision shell0 0))
+        estado0 (merge-estado shell0 egg-maps)
+        redeemed (egg-activity/redeem-next-incubator estado0)
+        estado (:estado redeemed)
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        account-tx (if ensure-tx?
+                     [{:adventure-account/key ak
+                       :adventure-account/chat-id chat-id
+                       :adventure-account/player-id player-id
+                       :adventure-account/revision 1
+                       :adventure-account/state-edn (shell-edn estado)}]
+                     [[:db/add [:adventure-account/key ak]
+                       :adventure-account/state-edn (shell-edn estado)]
+                      [:db/cas [:adventure-account/key ak]
+                       :adventure-account/revision rev (inc rev)]])]
+    {:tx (into (vec account-tx)
+               [{:operation-receipt/id operation-id
+                 :operation-receipt/kind "incubator-redeem"
+                 :operation-receipt/channel "gameplay"
+                 :operation-receipt/payload-hash phash
+                 :operation-receipt/player-key (id/player-key chat-id player-id)
+                 :operation-receipt/save-id (:save-id writer-ctx)
+                 :operation-receipt/summary
+                 (pr-str {:status (:status redeemed)
+                          :delivered (:delivered redeemed)
+                          :pending-remaining (:pending-remaining redeemed)})}])
+     :result {:operation-id operation-id
+              :duplicate false
+              :status (:status redeemed)
+              :delivered (:delivered redeemed)
+              :pending-remaining (:pending-remaining redeemed)
+              :incubators (:incubators estado)
+              :pending-incubator-grants (:pending-incubator-grants estado [])}}))
+
+(defn build-reconcile-incubator-rewards-tx
+  "Reconciliação idempotente (somente via harness/GO). Não usar em produção sem GO."
+  [{:keys [writer-ctx account-shell egg-maps request ensure-tx? trainer-level]}]
+  (let [chat-id (:chat-id writer-ctx)
+        player-id (:player-id writer-ctx)
+        ak (id/adventure-account-key chat-id player-id)
+        shell0 (or account-shell (eggs/estado-inicial))
+        rev (long (:revision shell0 0))
+        estado0 (merge-estado shell0 egg-maps)
+        out (egg-activity/reconcile-incubator-rewards
+             estado0 {:trainer-level (long (or trainer-level
+                                               (:trainer-level request)
+                                               0))})
+        estado (:estado out)
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        account-tx (if ensure-tx?
+                     [{:adventure-account/key ak
+                       :adventure-account/chat-id chat-id
+                       :adventure-account/player-id player-id
+                       :adventure-account/revision 1
+                       :adventure-account/state-edn (shell-edn estado)}]
+                     [[:db/add [:adventure-account/key ak]
+                       :adventure-account/state-edn (shell-edn estado)]
+                      [:db/cas [:adventure-account/key ak]
+                       :adventure-account/revision rev (inc rev)]])]
+    {:tx (into (vec account-tx)
+               [{:operation-receipt/id operation-id
+                 :operation-receipt/kind "incubator-reconcile"
+                 :operation-receipt/channel "ops"
+                 :operation-receipt/payload-hash phash
+                 :operation-receipt/player-key (id/player-key chat-id player-id)
+                 :operation-receipt/save-id (:save-id writer-ctx)
+                 :operation-receipt/summary
+                 (pr-str {:trainer-level trainer-level
+                          :level-grants (:level-grants out)
+                          :raid-grant (:raid-grant out)
+                          :delivered (:delivered out)})}])
+     :result {:operation-id operation-id
+              :duplicate false
+              :level-grants (:level-grants out)
+              :raid-grant (:raid-grant out)
+              :delivered (:delivered out)
+              :incubators (:incubators estado)
+              :pending-incubator-grants (:pending-incubator-grants estado [])}}))
 
 (defn build-activity-enrich-tx
   "Aplica PI/ovo da atividade sobre a conta Adventure na mesma TX canônica.
@@ -253,8 +346,14 @@
         agora (long (or (:agora activity-opts) (System/currentTimeMillis)))
         applied (egg-activity/apply-activity
                  (merge-estado shell0 egg-maps) activity-opts)
-        drained (egg-activity/materialize-pending (:estado applied) agora)
-        estado (:estado drained)
+        ;; Recompensas de nível injetadas pelo attach (trainer-progression).
+        crossed (vec (:crossed-levels activity-opts))
+        after-levels (if (seq crossed)
+                       (egg-activity/apply-level-rewards (:estado applied) crossed)
+                       {:estado (:estado applied) :grants []})
+        drained (egg-activity/materialize-pending (:estado after-levels) agora)
+        drained-inc (egg-activity/materialize-pending-incubators (:estado drained))
+        estado (:estado drained-inc)
         egg (:egg-grant applied)
         delivered (:delivered drained)
         egg-tx (into (if egg [(egg->entity ak (assoc egg :revision 0))] [])
@@ -272,11 +371,16 @@
     {:tx (into (vec egg-tx) account-tx)
      :result {:adventure-activity (assoc (:summary applied)
                                          :pending-delivered
-                                         (mapv :egg-id delivered))
+                                         (mapv :egg-id delivered)
+                                         :level-incubator-grants (:grants after-levels)
+                                         :incubators-delivered (:delivered drained-inc))
               :egg egg
               :deferred-egg (:deferred-egg applied)
               :pending-delivered delivered
-              :pi-granted (:pi-granted applied)}}))
+              :pi-granted (:pi-granted applied)
+              :incubator-grant (:incubator-grant applied)
+              :level-incubator-grants (:grants after-levels)
+              :incubators-delivered (:delivered drained-inc)}}))
 
 (defn build-joy-send-tx
   [{:keys [writer-ctx request save colecao enfermaria pokemon-entity-map]}]

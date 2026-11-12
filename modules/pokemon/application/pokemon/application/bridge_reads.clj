@@ -1002,6 +1002,27 @@
    :active-egg-id (:active-egg-id i)
    :livre (nil? (:active-egg-id i))})
 
+(defn- pending-incubator-dto
+  [p]
+  {:reward-id (:reward-id p)
+   :kind (name (or (:kind p) :extra))
+   :label (:label p)
+   :uses (:uses p)
+   :bonus-points (:bonus-points p 0)
+   :source (when-let [s (:source p)] (name s))})
+
+(defn- incubator-reward-catalog-dto
+  []
+  (mapv (fn [[id meta]]
+          {:reward-id id
+           :kind (name (:kind meta))
+           :source (name (:source meta))
+           :threshold (:threshold meta)
+           :uses (:uses meta)
+           :bonus-points (:bonus-points meta)
+           :label (:label meta)})
+        (sort-by key egg-activity/incubator-reward-catalog)))
+
 (defn adventure-status
   "Conta Adventure Sync (ovos/incubadoras). Tempo avançado só no DTO (lazy)."
   [store chat-id player-id {:keys [agora-ms]}]
@@ -1014,7 +1035,11 @@
         pi-day (:pi-daily estado)
         pi-used (long (:points pi-day 0))
         pi-cap (egg-activity/daily-cap)
-        pending (vec (:pending-egg-grants estado []))]
+        pending (vec (:pending-egg-grants estado []))
+        pending-inc (vec (:pending-incubator-grants estado []))
+        receipts (set (:receipts estado #{}))
+        unlocked (filterv #(contains? receipts (:reward-id %))
+                          (incubator-reward-catalog-dto))]
     {:chat-id chat-id
      :player-id player-id
      :active-save-id (:active-save-id player)
@@ -1028,6 +1053,12 @@
                                          (:state %))
                              eggs-l))
      :pending-egg-grants (count pending)
+     :pending-incubator-grants (mapv pending-incubator-dto pending-inc)
+     :pending-incubator-count (count pending-inc)
+     :raid-wins (long (:raid-wins estado 0))
+     :temporary-slots-free (eggs/free-temporary-slots estado)
+     :incubator-rewards-unlocked unlocked
+     :incubator-reward-catalog (incubator-reward-catalog-dto)
      :pi-daily {:day (:day pi-day)
                 :points pi-used
                 :cap pi-cap

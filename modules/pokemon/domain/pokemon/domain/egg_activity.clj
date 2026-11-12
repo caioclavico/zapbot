@@ -208,6 +208,8 @@
                           (update :receipts conj deliver-key))]
               (recur st2 (conj delivered ovo)))))))))
 
+(declare apply-raid-win-progress materialize-pending-incubators)
+
 (defn apply-activity
   "Aplica PI + possível ovo sobre estado mergeado (shell+eggs).
   Idempotente por event-id em :receipts.
@@ -219,9 +221,17 @@
   (let [event-id (str event-id)
         activity (keyword activity)
         agora (long (or agora (System/currentTimeMillis)))]
-    (if (contains? (:receipts estado #{}) event-id)
+    (cond
+      ;; Só aplica crossed-levels em build-activity-enrich-tx (sem PI/ovo).
+      (= activity :incubator-level-reward)
+      {:estado estado :pi-granted 0 :egg-grant nil :deferred-egg nil
+       :summary {:event-id event-id :activity "incubator-level-reward"}}
+
+      (contains? (:receipts estado #{}) event-id)
       {:estado estado :pi-granted 0 :egg-grant nil :deferred-egg nil
        :summary {:duplicate true :event-id event-id}}
+
+      :else
       (let [;; Anti-farm PvP: no máximo 1 crédito PI/ovo por oponente/dia.
             pvp? (#{:pvp-victory :pvp-defeat} activity)
             day (utc-day agora)
@@ -275,15 +285,209 @@
             estado3 (cond-> estado2
                       farm-key (update :receipts conj farm-key)
                       true (update :receipts conj event-id)
-                      true (assoc :pi-daily (:pi-daily shell1)))]
-        {:estado estado3
+                      true (assoc :pi-daily (:pi-daily shell1)))
+            ;; Progressão de incubadoras: só vitória canônica de raid conta.
+            raid-prog (when (= activity :raid-victory)
+                        (apply-raid-win-progress estado3))
+            estado4 (if raid-prog (:estado raid-prog) estado3)
+            drained-inc (materialize-pending-incubators estado4)
+            estado5 (:estado drained-inc)]
+        {:estado estado5
          :pi-granted pi*
          :egg-grant egg-grant
          :deferred-egg deferred
+         :incubator-grant (:incubator-grant raid-prog)
+         :incubators-delivered (:delivered drained-inc)
          :summary {:event-id event-id
                    :activity (name activity)
                    :pi pi*
                    :egg-id (or (:egg-id egg-grant) (:event-id deferred))
                    :egg-category (when force-cat (name force-cat))
                    :deferred? (boolean deferred)
-                   :day day}}))))
+                   :day day
+                   :raid-wins (long (:raid-wins estado5 0))
+                   :incubator-reward (:incubator-grant raid-prog)
+                   :incubators-delivered (:delivered drained-inc)}}))))
+
+;;; ---------------------------------------------------------------------------
+;;; Incubadoras por progressão (níveis 10/20/30 + 10 raids)
+;;; ---------------------------------------------------------------------------
+
+(def incubator-reward-catalog
+  "Regras configuráveis de desbloqueio. Identidade canônica = reward-id."
+  {"incubator-reward:level:10"
+   {:kind :extra :source :level :threshold 10 :uses 3 :bonus-points 0
+    :label "Incubadora extra (nível 10)"}
+   "incubator-reward:level:20"
+   {:kind :extra :source :level :threshold 20 :uses 3 :bonus-points 0
+    :label "Incubadora extra (nível 20)"}
+   "incubator-reward:level:30"
+   {:kind :especial :source :level :threshold 30 :uses 3 :bonus-points 25
+    :label "Incubadora especial (nível 30)"}
+   "incubator-reward:raids:10"
+   {:kind :extra :source :raids :threshold 10 :uses 3 :bonus-points 0
+    :label "Incubadora extra (10 raids)"}})
+
+(def raid-wins-reward-threshold 10)
+
+(defn reward-already-recorded?
+  "True se o marco já foi registrado (recibo, incubadora ativa ou fila)."
+  [estado reward-id]
+  (let [id (str reward-id)
+        receipts (set (:receipts estado #{}))
+        pending (vec (:pending-incubator-grants estado []))
+        incubators (vec (:incubators estado []))]
+    (or (contains? receipts id)
+        (some #(= id (str (:reward-id %))) pending)
+        (some #(= id (str (:incubator-id %))) incubators))))
+
+(defn- pending-incubator-entry
+  [reward-id meta]
+  {:reward-id (str reward-id)
+   :kind (keyword (:kind meta))
+   :source (keyword (:source meta))
+   :label (str (:label meta))
+   :uses (long (:uses meta 3))
+   :bonus-points (long (:bonus-points meta 0))})
+
+(defn enqueue-pending-incubator
+  [estado pending]
+  (let [xs (vec (:pending-incubator-grants estado []))
+        id (str (:reward-id pending))]
+    (if (some #(= id (str (:reward-id %))) xs)
+      estado
+      (assoc estado :pending-incubator-grants (conj xs pending)))))
+
+(defn grant-or-enqueue-incubator
+  "Registra o marco canônico e materializa se houver vaga temporária.
+   Idempotente: se já registrado, devolve estado inalterado.
+   Retorno: {:estado :status :reward-id :kind :pending?}
+   status ∈ #{:duplicate :granted :enqueued :unknown-reward}."
+  [estado reward-id]
+  (let [id (str reward-id)
+        meta (get incubator-reward-catalog id)]
+    (cond
+      (nil? meta)
+      {:estado estado :status :unknown-reward :reward-id id :kind nil :pending? false}
+
+      (reward-already-recorded? estado id)
+      {:estado estado :status :duplicate :reward-id id
+       :kind (:kind meta) :pending? false}
+
+      (pos? (eggs/free-temporary-slots estado))
+      (let [st (-> estado
+                   (eggs/adicionar-incubadora id (:kind meta))
+                   (update :receipts #(set (conj (or % #{}) id))))]
+        {:estado st :status :granted :reward-id id
+         :kind (:kind meta) :pending? false})
+
+      :else
+      (let [pend (pending-incubator-entry id meta)
+            st (-> estado
+                   (enqueue-pending-incubator pend)
+                   (update :receipts #(set (conj (or % #{}) id))))]
+        {:estado st :status :enqueued :reward-id id
+         :kind (:kind meta) :pending? true}))))
+
+(defn materialize-pending-incubators
+  "Drena a fila FIFO enquanto houver vaga temporária.
+   Não remove o recibo do marco (já marcado na concessão do direito)."
+  [estado]
+  (loop [st estado delivered []]
+    (let [xs (vec (:pending-incubator-grants st []))
+          free (eggs/free-temporary-slots st)]
+      (if (or (empty? xs) (zero? free))
+        {:estado st :delivered delivered}
+        (let [p (first xs)
+              id (str (:reward-id p))
+              kind (keyword (:kind p))
+              st1 (assoc st :pending-incubator-grants (vec (rest xs)))
+              ;; Se a incubadora já existe (legado), só remove da fila.
+              already (some #(= id (:incubator-id %)) (:incubators st1))]
+          (if already
+            (recur st1 delivered)
+            (let [st2 (eggs/adicionar-incubadora st1 id kind)]
+              (recur st2 (conj delivered {:reward-id id :kind kind})))))))))
+
+(defn eligible-level-reward-ids
+  "Marcos de nível elegíveis para o nível persistido 036 (não recalcula fórmula)."
+  [trainer-level]
+  (let [lvl (long (or trainer-level 0))]
+    (cond-> []
+      (>= lvl 10) (conj "incubator-reward:level:10")
+      (>= lvl 20) (conj "incubator-reward:level:20")
+      (>= lvl 30) (conj "incubator-reward:level:30"))))
+
+(defn apply-level-rewards
+  "Concede direitos para níveis cruzados (números) ou nível legado (número).
+   Aceita também vetor de reward-ids canônicos. Ordem estável.
+   Retorno: {:estado :grants}."
+  [estado levels-or-ids]
+  (let [xs (if (sequential? levels-or-ids) (vec levels-or-ids) [levels-or-ids])
+        ids (->> xs
+                 (mapcat (fn [x]
+                           (cond
+                             (string? x) (when (get incubator-reward-catalog (str x))
+                                           [(str x)])
+                             (number? x) (eligible-level-reward-ids x)
+                             (keyword? x) (when (get incubator-reward-catalog (name x))
+                                            [(name x)])
+                             :else nil)))
+                 (filter some?)
+                 distinct
+                 vec)]
+    (reduce (fn [{:keys [estado grants]} rid]
+              (let [r (grant-or-enqueue-incubator estado rid)]
+                {:estado (:estado r)
+                 :grants (conj grants (dissoc r :estado))}))
+            {:estado estado :grants []}
+            ids)))
+
+(defn apply-raid-win-progress
+  "Incrementa vitórias canônicas e concede marco raids:10 se atingido.
+   Só chamar no caminho não-duplicado de :raid-victory."
+  [estado]
+  (let [wins (inc (long (:raid-wins estado 0)))
+        st (assoc estado :raid-wins wins)]
+    (if (>= wins raid-wins-reward-threshold)
+      (let [r (grant-or-enqueue-incubator st "incubator-reward:raids:10")]
+        {:estado (:estado r)
+         :raid-wins wins
+         :incubator-grant (dissoc r :estado)})
+      {:estado st :raid-wins wins :incubator-grant nil})))
+
+(defn reconcile-incubator-rewards
+  "Reconciliação idempotente (Datomic descartável / GO explícito).
+   Usa nível persistido + raid-wins do shell. Não inventa concessões:
+   checa recibo, incubadora ativa e fila antes de registrar."
+  [estado {:keys [trainer-level]}]
+  (let [after-levels (apply-level-rewards estado trainer-level)
+        st (:estado after-levels)
+        raid-r (when (>= (long (:raid-wins st 0)) raid-wins-reward-threshold)
+                 (grant-or-enqueue-incubator st "incubator-reward:raids:10"))
+        st2 (if raid-r (:estado raid-r) st)
+        drained (materialize-pending-incubators st2)]
+    {:estado (:estado drained)
+     :level-grants (:grants after-levels)
+     :raid-grant (when raid-r (dissoc raid-r :estado))
+     :delivered (:delivered drained)}))
+
+(defn redeem-next-incubator
+  "Resgata a próxima pendente se houver vaga. Idempotente se fila vazia."
+  [estado]
+  (let [free (eggs/free-temporary-slots estado)
+        xs (vec (:pending-incubator-grants estado []))]
+    (cond
+      (zero? free)
+      {:estado estado :status :no-slot :delivered nil :pending-remaining (count xs)}
+
+      (empty? xs)
+      {:estado estado :status :empty :delivered nil :pending-remaining 0}
+
+      :else
+      (let [drained (materialize-pending-incubators estado)
+            delivered (first (:delivered drained))]
+        {:estado (:estado drained)
+         :status (if delivered :redeemed :empty)
+         :delivered delivered
+         :pending-remaining (count (:pending-incubator-grants (:estado drained) []))}))))

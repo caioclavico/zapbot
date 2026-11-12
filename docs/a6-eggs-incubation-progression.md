@@ -75,9 +75,27 @@ Vitória + captura no mesmo encontro: só PI de caça (5), sem somar PI de vitó
 
 ### Incubadoras
 
-- 1 permanente ilimitada.
-- Até 2 temporárias (`extra` / `especial`, 3 usos; especial +25% no ganho do ovo daquela incubadora).
-- Concessão via `egg-activity/grant-incubator` (progressão/harness), identidade canônica.
+- 1 permanente ilimitada (não ocupa fila de recompensas).
+- Até 2 temporárias simultâneas (`extra` / `especial`); total máx. 3.
+- Temporárias: 3 usos; ao zerar usos são removidas e liberam vaga.
+- Especial: +25% PI sobre a parcela do ovo naquela incubadora.
+
+#### Desbloqueio por progressão (sem segundo sistema de níveis)
+
+| Marco | Chave canônica | Tipo | Usos | Bônus PI |
+|-------|----------------|------|------|----------|
+| Nível 10 | `incubator-reward:level:10` | extra | 3 | 0 |
+| Nível 20 | `incubator-reward:level:20` | extra | 3 | 0 |
+| Nível 30 | `incubator-reward:level:30` | especial | 3 | +25% |
+| 10 raids vencidas | `incubator-reward:raids:10` | extra | 3 | 0 |
+
+- Catálogo: `egg-activity/incubator-reward-catalog`.
+- Concessão atômica: `grant-or-enqueue-incubator` (recibo + inventário ou fila FIFO `:pending-incubator-grants`).
+- Level-up: `adventure-activity/attach` lê `:trainer-level-ups` (036) e aplica marcos cruzados.
+- Raids: só `activity :raid-victory` incrementa `:raid-wins` (não lobby/ataque/captura/derrota/retry).
+- Resgate: `!pk incubadoras resgatar` → `POST /v1/adventure/incubators/redeem`.
+- Reconciliação legada (Datomic descartável / GO explícito): `reconcile-incubator-rewards!` — **não** rodar em prod sem GO.
+- Ausência de recibo ≠ ausência de concessão: reconciliar checa recibo + incubadora ativa + fila.
 
 ### Nascimento
 
@@ -91,8 +109,10 @@ Vitória + captura no mesmo encontro: só PI de caça (5), sem somar PI de vitó
 | Comando | Função |
 |---------|--------|
 | `!pk ovos` | Inventário + barras PI/tempo (sem espécie) |
-| `!pk incubadoras` | Status das incubadoras |
-| `!pk incubar <n> [id]` | Coloca ovo |
+| `!pk incubadoras` | Status das incubadoras (+ pendentes) |
+| `!pk incubadoras recompensas` | Desbloqueadas / equipadas / fila pendente |
+| `!pk incubadoras resgatar` | Materializa a próxima pendente se houver vaga |
+| `!pk incubar <n> [id]` | Coloca ovo (`extra`/`especial` = primeira livre do tipo) |
 | `!pk chocar` / `ovo nascer` | Um ou todos os prontos |
 | `!pk incubacao` | PI do dia, teto, atividades |
 

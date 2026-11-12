@@ -3261,6 +3261,11 @@ function formatAdventureStatus(data, prefix = '!pk') {
 
 function formatIncubators(data, prefix = '!pk') {
   const incu = (data && data.incubators) || [];
+  const pending = Number(
+    (data && (data.pendingIncubatorCount != null
+      ? data.pendingIncubatorCount
+      : data['pending-incubator-count'])) || 0
+  );
   const lines = ['🪺 *Incubadoras*'];
   if (!incu.length) {
     lines.push('Nenhuma incubadora cadastrada.');
@@ -3268,11 +3273,137 @@ function formatIncubators(data, prefix = '!pk') {
     for (const i of incu) {
       const uses = i.uses == null ? '∞' : String(i.uses);
       const bonus = Number(i.bonusPoints || 0) > 0 ? ` (+${i.bonusPoints}% PI)` : '';
-      lines.push(`• *${i.incubatorId}* (${i.kind}${bonus}) — ${i.livre ? 'livre' : 'ocupada'} · usos ${uses}`);
+      const label = i.kind === 'permanente'
+        ? 'permanente'
+        : i.kind === 'especial'
+          ? 'especial'
+          : 'extra';
+      lines.push(`• *${label}*${bonus} — ${i.livre ? 'livre' : 'ocupada'} · usos ${uses}`);
     }
   }
-  lines.push('', `\`${prefix} incubar <n> [id]\` · \`${prefix} ovos\``);
+  if (pending > 0) {
+    lines.push(`⏳ Recompensas pendentes: *${pending}* · \`${prefix} incubadoras resgatar\``);
+  }
+  lines.push(
+    '',
+    `\`${prefix} incubadoras recompensas\` · \`${prefix} incubar <n> [id]\` · \`${prefix} ovos\``
+  );
   return lines.join('\n');
+}
+
+function formatIncubatorRewards(data, prefix = '!pk') {
+  const unlocked = (data && (data.incubatorRewardsUnlocked || data['incubator-rewards-unlocked'])) || [];
+  const pending = (data && (data.pendingIncubatorGrants || data['pending-incubator-grants'])) || [];
+  const equipped = ((data && data.incubators) || []).filter((i) => i && i.kind !== 'permanente');
+  const raidWins = Number((data && (data.raidWins != null ? data.raidWins : data['raid-wins'])) || 0);
+  const free = Number(
+    (data && (data.temporarySlotsFree != null
+      ? data.temporarySlotsFree
+      : data['temporary-slots-free'])) || 0
+  );
+  const lines = [
+    '🏆 *Recompensas de incubadora*',
+    `Raids vencidas: *${raidWins}*/10 · Vagas temporárias livres: *${free}*`
+  ];
+  lines.push('', '*Desbloqueadas*');
+  if (!unlocked.length) {
+    lines.push('Nenhuma ainda. Marcos: nível 10, 20, 30 e 10 raids.');
+  } else {
+    for (const r of unlocked) {
+      lines.push(`• ${r.label || r.rewardId}`);
+    }
+  }
+  lines.push('', '*Equipadas (temporárias)*');
+  if (!equipped.length) {
+    lines.push('Nenhuma incubadora extra ativa.');
+  } else {
+    for (const i of equipped) {
+      const uses = i.uses == null ? '∞' : String(i.uses);
+      const bonus = Number(i.bonusPoints || 0) > 0 ? ` (+${i.bonusPoints}% PI)` : '';
+      lines.push(`• ${i.kind}${bonus} · usos ${uses} · ${i.livre ? 'livre' : 'ocupada'}`);
+    }
+  }
+  lines.push('', '*Pendentes (fila FIFO)*');
+  if (!pending.length) {
+    lines.push('Fila vazia.');
+  } else {
+    pending.forEach((p, idx) => {
+      lines.push(`${idx + 1}. ${p.label || p.rewardId}`);
+    });
+    lines.push(`\`${prefix} incubadoras resgatar\` — próxima da fila se houver vaga.`);
+  }
+  return lines.join('\n');
+}
+
+function formatIncubatorRedeem(data, prefix = '!pk') {
+  const status = String((data && data.status) || '');
+  if (status === 'redeemed') {
+    const d = (data && data.delivered) || {};
+    const kind = d.kind || 'extra';
+    return [
+      '🎉 *Incubadora resgatada!*',
+      `⚙️ Tipo: *${kind}*`,
+      '🥚 Capacidade: 1 ovo.',
+      '🔋 Usos disponíveis: 3.',
+      `Pendentes restantes: ${data.pendingRemaining != null ? data.pendingRemaining : '?'}`,
+      `\`${prefix} incubadoras\``
+    ].join('\n');
+  }
+  if (status === 'no-slot' || status === 'no_slot') {
+    return [
+      '⏳ Sem vaga temporária agora (máx. 2 extras).',
+      'Espere uma incubadora esgotar os usos e tente de novo.',
+      `\`${prefix} incubadoras recompensas\``
+    ].join('\n');
+  }
+  return [
+    '📭 Nenhuma incubadora pendente para resgatar.',
+    `\`${prefix} incubadoras recompensas\``
+  ].join('\n');
+}
+
+function formatIncubatorRewardEvents(data, prefix = '!pk') {
+  if (!data || data.duplicate) return '';
+  const events = readEitherKey(data, 'incubatorRewards', 'incubator-rewards');
+  if (!Array.isArray(events) || !events.length) return '';
+  const blocks = [];
+  for (const ev of events) {
+    if (!ev || ev.status === 'duplicate') continue;
+    const kind = ev.kind || 'extra';
+    const label = kind === 'especial' ? 'incubadora especial' : 'incubadora extra';
+    const threshold = Number(ev.threshold || 0);
+    const source = ev.source || '';
+    const headline = source === 'raids'
+      ? '🏆 10 raids vencidas!'
+      : threshold > 0
+        ? `🏆 Treinador nível ${threshold}!`
+        : '🏆 Novo marco!';
+    if (ev.pending || ev.pending === true || ev.status === 'enqueued') {
+      blocks.push([
+        '🎉 *NOVA RECOMPENSA!*',
+        headline,
+        `⚙️ *${label}* disponível para resgate (sem vaga no inventário).`,
+        `\`${prefix} incubadoras recompensas\` · \`${prefix} incubadoras resgatar\``
+      ].join('\n'));
+    } else {
+      const bonus = Number(ev.bonusPoints || 0);
+      blocks.push([
+        '🎉 *NOVA RECOMPENSA!*',
+        headline,
+        `⚙️ Você desbloqueou uma *${label}*!`,
+        '🥚 Capacidade: 1 ovo.',
+        `🔋 Usos disponíveis: ${ev.uses != null ? ev.uses : 3}.`,
+        bonus > 0 ? `📈 Bônus: +${bonus}% PI no ovo desta incubadora.` : null,
+        `Use \`${prefix} incubadoras\` para visualizar.`
+      ].filter(Boolean).join('\n'));
+    }
+  }
+  return blocks.join('\n\n');
+}
+
+function appendIncubatorRewards(text, data, prefix = '!pk') {
+  const summary = formatIncubatorRewardEvents(data, prefix);
+  return summary ? `${String(text || '').trim()}\n\n${summary}` : String(text || '');
 }
 
 function formatIncubationHelp(data, prefix = '!pk') {
@@ -3705,7 +3836,8 @@ function formatTrainerLevelUps(data) {
 
 function appendTrainerLevelUps(text, data) {
   const summary = formatTrainerLevelUps(data);
-  return summary ? `${String(text || '').trim()}\n\n${summary}` : String(text || '');
+  const withLevels = summary ? `${String(text || '').trim()}\n\n${summary}` : String(text || '');
+  return appendIncubatorRewards(withLevels, data);
 }
 
 function formatMissionClaim(data, kind, prefix = '!pk') {
@@ -4565,6 +4697,10 @@ module.exports = {
   formatJoyCollect,
   formatAdventureStatus,
   formatIncubators,
+  formatIncubatorRewards,
+  formatIncubatorRedeem,
+  formatIncubatorRewardEvents,
+  appendIncubatorRewards,
   formatIncubationHelp,
   formatEggIncubate,
   formatEggHatch,

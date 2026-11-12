@@ -239,6 +239,17 @@
   (reward/canonicalize
    {:egg-id egg-id :hatch-id hatch-id}))
 
+(defn incubator-redeem-payload
+  [{:keys [action]}]
+  (reward/canonicalize
+   {:action (or action "incubator-redeem")}))
+
+(defn incubator-reconcile-payload
+  [{:keys [trainer-level]}]
+  (reward/canonicalize
+   {:action "incubator-reconcile"
+    :trainer-level (long (or trainer-level 0))}))
+
 (defn joy-send-payload
   [{:keys [idx]}]
   (reward/canonicalize {:idx (long idx)}))

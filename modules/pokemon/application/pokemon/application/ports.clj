@@ -222,6 +222,12 @@
   (hatch-egg! [this writer-ctx request]
     "Nascimento idempotente no save carimbado; A≠B → egg_save_mismatch.")
 
+  (redeem-incubator! [this writer-ctx request]
+    "Resgata a próxima incubadora pendente se houver vaga temporária.")
+
+  (reconcile-incubator-rewards! [this writer-ctx request]
+    "Reconciliação idempotente de marcos (harness/GO). Não usar em prod sem GO.")
+
   (list-enfermaria [this chat-id player-id save-id]
     "Leitos Joy do save.")
 

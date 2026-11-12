@@ -179,11 +179,19 @@ function normalizeAdventure(data) {
     .map((i) => normalizeIncubator(i, eggsById))
     .filter(Boolean);
   const pending = Number(pick(src, 'pendingEggGrants', 'pending-egg-grants') || 0);
+  const pendingInc = Number(
+    pick(src, 'pendingIncubatorCount', 'pending-incubator-count')
+    || (Array.isArray(pick(src, 'pendingIncubatorGrants', 'pending-incubator-grants'))
+      ? pick(src, 'pendingIncubatorGrants', 'pending-incubator-grants').length
+      : 0)
+    || 0
+  );
   const pi = pick(src, 'piDaily', 'pi-daily') || {};
   return {
     eggs,
     incubators,
     pendingEggGrants: Number.isFinite(pending) ? pending : 0,
+    pendingIncubatorCount: Number.isFinite(pendingInc) ? pendingInc : 0,
     inventarioCount: Number(pick(src, 'inventarioCount', 'inventario-count') || eggs.length),
     limiteInventario: Number(pick(src, 'limiteInventario', 'limite-inventario') || 9),
     piDaily: {
@@ -308,16 +316,23 @@ function incubatorsSvg(data) {
     items = [{ incubatorId: 'permanente', kind: 'permanente', uses: null, bonusPoints: 0, activeEggId: null, livre: true, rarity: 'comum' }];
   }
   let body = '';
+  if (adv.pendingIncubatorCount > 0) {
+    body += `<text x="42" y="158" fill="#fbbf24" font-family="sans-serif" font-size="15" font-weight="700">⏳ ${adv.pendingIncubatorCount} recompensa(s) pendente(s)</text>`;
+  }
   items.forEach((item, index) => {
     const uses = item.uses == null
       ? 'ilimitados'
       : Number(item.uses) <= 0
         ? 'bloqueada'
         : `${item.uses} usos`;
-    const label = item.kind || item.incubatorId || 'permanente';
+    const label = item.kind === 'especial'
+      ? 'especial'
+      : item.kind === 'extra'
+        ? 'extra'
+        : (item.kind || item.incubatorId || 'permanente');
     body += incubator(
       18 + index * 154,
-      155,
+      175,
       130,
       290,
       Boolean(item.activeEggId),

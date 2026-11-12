@@ -400,6 +400,7 @@
                                               "raid-auto-schedule" "events-pending" "events-ack"
                                               "joy-read" "joy-send" "joy-collect"
                                               "adventure-read" "egg-incubate" "egg-hatch"
+                                              "incubator-redeem" "incubator-reconcile"
                                               "shop-read" "shop-buy" "inventory-read"
                                               "item-use"
                                               "pokemon-set-active" "pokemon-evolve"
@@ -1997,6 +1998,53 @@
                                                  :egg-id egg-id}
                                           hatch-id (assoc :hatch-id hatch-id)
                                           (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/adventure/incubators/redeem")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/redeem-incubator!
+                                  store {:chat-id chat-id
+                                         :player-id player-id
+                                         :save-id save-id
+                                         :fence-generation fence
+                                         :operation-id operation-id})))))
+
+                (= path "/v1/adventure/incubators/reconcile")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          trainer-level (long-or-nil (g body "trainerLevel" "trainer-level"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (nil? trainer-level))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "trainerLevel"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/reconcile-incubator-rewards!
+                                  store {:chat-id chat-id
+                                         :player-id player-id
+                                         :save-id save-id
+                                         :fence-generation fence
+                                         :operation-id operation-id
+                                         :trainer-level trainer-level})))))
 
                 (= path "/v1/shop")
                 (do (require-method! ex #{"GET"})

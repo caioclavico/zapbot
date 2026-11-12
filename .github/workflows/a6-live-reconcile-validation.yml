@@ -40,8 +40,8 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin a6/live-baseline-8ef41c8
           base_ref=origin/a6/live-baseline-8ef41c8
-          # Tip atual da live-baseline (pós PR #81 / ovos+PI). Atualizar só com merge na base.
-          expected=96cb3688f05151e7b6101f3595d395b16cf2727e
+          # Tip atual da live-baseline (pós PR #82 / cards PNG). Atualizar só com merge na base.
+          expected=cc717d08b7c2812e682e6bb8026dc8d55647c24b
           test "$(git rev-parse "$base_ref")" = "$expected"
           merge_base="$(git merge-base HEAD "$base_ref")"
           test "$merge_base" = "$expected"
@@ -311,16 +311,22 @@ jobs:
       - name: Smoke — HTTP quiescence / freeze / restart
         run: clojure -M:smoke-a6-maintenance-quiescence
 
-      - name: Set up Node for presenter tests
+      - name: Set up Node for presenter / card tests
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.23.4'
+          cache: npm
 
-      - name: Node egg + maintenance presenters
+      - name: Install locked dependencies (Sharp / egg-cards)
+        run: npm ci
+
+      - name: Node egg + incubator progression presenters
         run: |
           node --test test/a6-maintenance.test.cjs \
             test/pokemon-jvm-joy-eggs.test.cjs \
-            test/pokemon-jvm-present.test.cjs
+            test/pokemon-jvm-present.test.cjs \
+            test/pokemon-incubator-progression-present.test.cjs \
+            test/pokemon-jvm-egg-cards.test.cjs
 
   validate-jvm-pokemon-growth:
     name: Pokémon growth curves + 037 on live tip
