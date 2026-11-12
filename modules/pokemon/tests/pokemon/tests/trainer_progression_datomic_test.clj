@@ -4,6 +4,7 @@
             [clojure.test :refer [deftest is]]
             [datomic.client.api :as d]
             [odisseu.persistence.datomic :as persistence]
+            [pokemon.application.bridge-tx :as bridge-tx]
             [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.capacity :as capacity]
@@ -344,3 +345,12 @@
     (is (empty? (:trainer-level-ups retry-result))
         "the receipt retry is acknowledged as a duplicate and does not regrant rewards")
     (is (= ledger-after ledger-after-retry))))
+
+(deftest bridge-dto-propaga-trainer-level-ups-sem-chaves-privadas
+  "Regressão: battle/capture DTOs omitiam :trainer-level-ups → mensagem ausente no WhatsApp."
+  (is (= [{:nivel-atual 3 :items {"pokebola" 1}}]
+         (#'bridge-tx/public-trainer-level-ups
+          {:trainer-level-ups [{:nivel-atual 3 :items {"pokebola" 1}
+                                :save-key "sk" :operation-id "op"}]})))
+  (is (nil? (#'bridge-tx/public-trainer-level-ups {})))
+  (is (nil? (#'bridge-tx/public-trainer-level-ups {:trainer-level-ups []}))))

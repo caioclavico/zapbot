@@ -330,6 +330,13 @@
     (merge result (:summary result) {:duplicate true})
     result))
 
+(defn- public-trainer-level-ups
+  "Propaga eventos de level-up já persistidos (enrich 036) para o DTO Node.
+   Sem isso o presenter omite a mensagem mesmo com PE/nível creditados."
+  [result]
+  (when-let [events (seq (:trainer-level-ups result))]
+    (mapv #(dissoc % :save-key :operation-id) events)))
+
 (defn attempt-encounter-capture!
   "POST captura no encontro ativo. Exige save-id + fence + operation-id."
   [store {:keys [chat-id player-id save-id fence-generation operation-id
@@ -358,44 +365,46 @@
                  (some? fuga-roll) (assoc :fuga-roll (long fuga-roll))))
           result (merge-capture-receipt raw)
           save (ports/get-save store chat-id player-id save-id)
-          inv (ports/list-inventory store chat-id player-id save-id)]
+          inv (ports/list-inventory store chat-id player-id save-id)
+          level-ups (public-trainer-level-ups result)]
       ;; Chaves sem `?` — o encoder JSON camelCase preservaria o sufixo.
-      {:operation-id (:operation-id result)
-       :duplicate (boolean (:duplicate result))
-       :channel (:channel result "gameplay")
-       :payload-hash (:payload-hash result)
-       :save-id save-id
-       :fence-generation (long fence-generation)
-       :battle-id (:battle-id result)
-       :capturou (boolean (:capturou? result))
-       :fugiu (boolean (:fugiu? result))
-       :chance (:chance result)
-       :chance-base (:chance-base result)
-       :frambo (boolean (:frambo result))
-       :chances (:chances result)
-       :tentativa (:tentativa result)
-       :bola (:bola result ball)
-       :indice (:indice result)
-       :id-pokemon (:id-pokemon result)
-       :recompensa (:recompensa result)
-       :subida (:subida result)
-       :registro (:registro result)
-       :coins (:coins save 0)
-       :sequencia-capturas (:sequencia-capturas save 0)
-       :collection-count (count (ports/list-collection store chat-id player-id save-id))
-       :inventory inv
-       :encounter (when-let [enc (:encounter result)]
-                    {:battle-id (:battle-id enc)
-                     :aguardando-captura (boolean (:aguardando-captura? enc))
-                     :phase (:phase enc)
-                     :tentativas-captura (:tentativas-captura enc 0)
-                     :bioma (:bioma enc)
-                     :area (when-let [a (mundo/obter-area (str (:bioma enc)))]
-                             (hunt/area-dto a))
-                     :pokemon-o (select-keys (get-in enc [:pokemons :o] {})
-                                             [:nome :species :raridade :hp
-                                              :imagem :imagem-shiny :altura
-                                              :tipos :shiny :shiny?])})})))
+      (cond-> {:operation-id (:operation-id result)
+               :duplicate (boolean (:duplicate result))
+               :channel (:channel result "gameplay")
+               :payload-hash (:payload-hash result)
+               :save-id save-id
+               :fence-generation (long fence-generation)
+               :battle-id (:battle-id result)
+               :capturou (boolean (:capturou? result))
+               :fugiu (boolean (:fugiu? result))
+               :chance (:chance result)
+               :chance-base (:chance-base result)
+               :frambo (boolean (:frambo result))
+               :chances (:chances result)
+               :tentativa (:tentativa result)
+               :bola (:bola result ball)
+               :indice (:indice result)
+               :id-pokemon (:id-pokemon result)
+               :recompensa (:recompensa result)
+               :subida (:subida result)
+               :registro (:registro result)
+               :coins (:coins save 0)
+               :sequencia-capturas (:sequencia-capturas save 0)
+               :collection-count (count (ports/list-collection store chat-id player-id save-id))
+               :inventory inv
+               :encounter (when-let [enc (:encounter result)]
+                            {:battle-id (:battle-id enc)
+                             :aguardando-captura (boolean (:aguardando-captura? enc))
+                             :phase (:phase enc)
+                             :tentativas-captura (:tentativas-captura enc 0)
+                             :bioma (:bioma enc)
+                             :area (when-let [a (mundo/obter-area (str (:bioma enc)))]
+                                     (hunt/area-dto a))
+                             :pokemon-o (select-keys (get-in enc [:pokemons :o] {})
+                                                     [:nome :species :raridade :hp
+                                                      :imagem :imagem-shiny :altura
+                                                      :tipos :shiny :shiny?])})}
+        (seq level-ups) (assoc :trainer-level-ups level-ups)))))
 
 (defn encounter-release!
   "POST liberar selvagem após vitória (sem captura)."
@@ -537,6 +546,7 @@
         gym-res (:gym-resolve result)
         presented (present-battle battle)
         aguardando? (boolean (:aguardando-captura? battle))
+        level-ups (public-trainer-level-ups result)
         ;; Inventário no DTO de vitória → Node mostra menu de bolas como no master
         ;; (sem etapa extra de "carimbada"). Sem mutação; leitura do save ativo.
         inv (when (and aguardando? chat-id player-id save-id)
@@ -597,6 +607,7 @@
                                         :xp (long (:xp-permanencia perm 0))}))))
              :save-id save-id
              :fence-generation (long fence-generation)}
+      (seq level-ups) (assoc :trainer-level-ups level-ups)
       (some? inv) (assoc :inventory inv)
       (some? chances) (assoc :chances chances))))
 

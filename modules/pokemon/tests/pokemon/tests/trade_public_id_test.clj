@@ -22,6 +22,7 @@
   (let [{:keys [conn store]} (base/fixture* {:storage-dir (str ".datomic-local/trade-public-" (UUID/randomUUID))
                                              :system (str "pub-" (UUID/randomUUID))
                                              :db-name "trade-public"})
+        _ (#'base/seed-trade-pokemon! conn store)
         fa (:fence-generation (ports/get-player store "chat" "ash"))
         fb (:fence-generation (ports/get-player store "chat" "misty"))
         req (fn [op]

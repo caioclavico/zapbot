@@ -412,3 +412,85 @@
     (is (= :completed (:state result)))
     (is (= "trade-complete" (:operation-receipt/kind receipt)))
     (is (= :completed (:state (trades/get-trade conn "trade-idem-create"))))))
+
+(deftest create-exige-ids-canonicos-dos-pokemon
+  "Regressão: proposta só com nomes (sem idPokemon) quebrava o confirmar com internal_error."
+  (let [{:keys [conn store]} (fixture)
+        _ (seed-trade-pokemon! conn store)
+        fa (:fence-generation (ports/get-player store "chat" "ash"))
+        fb (:fence-generation (ports/get-player store "chat" "misty"))
+        base {:operation-id "trade-missing-ids" :chat-id "chat"
+              :player-a "ash" :player-b "misty" :save-a "a" :save-b "a"
+              :fence-a fa :fence-b fb :now 1000
+              :pokemon-a-name "Sparky" :pokemon-b-name "Vee"}]
+    (is (= :invalid_trade
+           (try (trades/create! conn base) :ok
+                (catch Exception e (err/error-code e)))))
+    (is (= :invalid_trade
+           (try (trades/create! conn (assoc base :pokemon-a "poke-ash" :operation-id "trade-missing-b"))
+                :ok
+                (catch Exception e (err/error-code e)))))))
+
+(deftest complete-sem-ids-vira-invalid-trade-nao-internal-error
+  (let [{:keys [conn store]} (fixture)
+        _ (seed-trade-pokemon! conn store)
+        fa (:fence-generation (ports/get-player store "chat" "ash"))
+        fb (:fence-generation (ports/get-player store "chat" "misty"))
+        _ (trades/create! conn {:operation-id "trade-ctx-ids" :chat-id "chat"
+                                :player-a "ash" :player-b "misty" :save-a "a" :save-b "a"
+                                :fence-a fa :fence-b fb :pokemon-a "poke-ash" :pokemon-b "poke-misty"
+                                :now 1000})
+        _ (trades/accept! conn {:operation-id "trade-ctx-accept" :trade-id "trade-ctx-ids"
+                                :chat-id "chat" :player-id "misty" :save-id "a"
+                                :fence-generation fb :now 1001})
+        ;; Simula contexto legado sem IDs (só nomes) + request sem pokemonA/B.
+        _ (d/transact conn {:tx-data [[:db/add [:trade/id "trade-ctx-ids"] :trade/context-edn
+                                       (pr-str {:pokemon-a-name "Sparky" :pokemon-b-name "Vee"})]]})
+        before-a (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-ash"])
+        before-b (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-misty"])]
+    (is (= :invalid_trade
+           (try (trades/complete! conn {:operation-id "trade-ctx-complete" :trade-id "trade-ctx-ids"
+                                        :chat-id "chat" :player-id "ash" :save-id "a"
+                                        :fence-generation fa :now 1002})
+                :ok
+                (catch Exception e (err/error-code e)))))
+    (is (= :accepted (:state (trades/get-trade conn "trade-ctx-ids"))))
+    (is (= (:pokemon/save before-a)
+           (:pokemon/save (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-ash"]))))
+    (is (= (:pokemon/save before-b)
+           (:pokemon/save (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-misty"]))))
+    (is (nil? (:db/id (d/pull (d/db conn) '[*] [:operation-receipt/id "trade-ctx-complete"]))))))
+
+(deftest complete-preserva-growth-v1-attrs
+  (let [{:keys [conn store]} (fixture)
+        _ (seed-trade-pokemon! conn store)
+        _ (d/transact conn {:tx-data [[:db/add [:pokemon/id-pokemon "poke-ash"] :pokemon/xp-total 120]
+                                      [:db/add [:pokemon/id-pokemon "poke-ash"] :pokemon/xp-progress-version "growth-v1"]
+                                      [:db/add [:pokemon/id-pokemon "poke-ash"] :pokemon/growth-rate "medium-fast"]
+                                      [:db/add [:pokemon/id-pokemon "poke-misty"] :pokemon/xp-total 90]
+                                      [:db/add [:pokemon/id-pokemon "poke-misty"] :pokemon/xp-progress-version "growth-v1"]
+                                      [:db/add [:pokemon/id-pokemon "poke-misty"] :pokemon/growth-rate "fast"]]})
+        fa (:fence-generation (ports/get-player store "chat" "ash"))
+        fb (:fence-generation (ports/get-player store "chat" "misty"))
+        _ (trades/create! conn {:operation-id "trade-growth" :chat-id "chat"
+                                :player-a "ash" :player-b "misty" :save-a "a" :save-b "a"
+                                :fence-a fa :fence-b fb :pokemon-a "poke-ash" :pokemon-b "poke-misty"
+                                :now 1000})
+        _ (trades/accept! conn {:operation-id "trade-growth-accept" :trade-id "trade-growth"
+                                :chat-id "chat" :player-id "misty" :save-id "a"
+                                :fence-generation fb :now 1001})
+        _ (trades/complete! conn {:operation-id "trade-growth-complete" :trade-id "trade-growth"
+                                  :chat-id "chat" :player-id "ash" :save-id "a"
+                                  :fence-generation fa :pokemon-a "poke-ash" :pokemon-b "poke-misty"
+                                  :now 1002})
+        pa (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-ash"])
+        pb (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-misty"])
+        misty-save (:db/id (d/pull (d/db conn) '[*] [:save/key "chat|misty|a"]))
+        ash-save (:db/id (d/pull (d/db conn) '[*] [:save/key "chat|ash|a"]))]
+    (is (= misty-save (or (-> pa :pokemon/save :db/id) (:pokemon/save pa))))
+    (is (= ash-save (or (-> pb :pokemon/save :db/id) (:pokemon/save pb))))
+    (is (= 120 (:pokemon/xp-total pa)))
+    (is (= "growth-v1" (:pokemon/xp-progress-version pa)))
+    (is (= "medium-fast" (:pokemon/growth-rate pa)))
+    (is (= 90 (:pokemon/xp-total pb)))
+    (is (= "growth-v1" (:pokemon/xp-progress-version pb)))))
