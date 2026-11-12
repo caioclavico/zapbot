@@ -40,14 +40,15 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin a6/live-baseline-8ef41c8
           base_ref=origin/a6/live-baseline-8ef41c8
-          # Tip atual da live-baseline (pós PR #79 / trade+level-up). Atualizar só com merge na base.
-          expected=120f841388958f895c84a94c6d02f1fb13aab8d6
+          # Tip atual da live-baseline (pós PR #81 / ovos+PI). Atualizar só com merge na base.
+          expected=96cb3688f05151e7b6101f3595d395b16cf2727e
           test "$(git rev-parse "$base_ref")" = "$expected"
           merge_base="$(git merge-base HEAD "$base_ref")"
           test "$merge_base" = "$expected"
           pe_paths="$(git diff --name-only "$base_ref...HEAD" | grep -E '(^|/)036-|trainer_progression|trainer_rewards|trainer-pe-progression|a6-trainer-pe-progression|pokemon-trainer-progression|trade_store|trade_a441|pokemon-trade|bridge_tx' || true)"
           growth_paths="$(git diff --name-only "$base_ref...HEAD" | grep -E '(^|/)037-|growth_curves|growth-rate|pokemon-growth|domain/growth' || true)"
           egg_paths="$(git diff --name-only "$base_ref...HEAD" | grep -E '(^|/)egg_activity|egg-activity|egg_hatch|adventure_activity|adventure-activity|domain/eggs|joy.eggs|pokemon-jvm-joy-eggs|a6-eggs' || true)"
+          # Cards PNG de ovos/incubadoras são escopo Node (apresentação); não forçam jvm-eggs.
           if [[ -n "$growth_paths" ]]; then
             echo "kind=jvm-pokemon-growth" >> "$GITHUB_OUTPUT"
             echo "Scope=jvm-pokemon-growth (037 + curvas PokéAPI; tip pós-#75)."
@@ -114,6 +115,9 @@ jobs:
 
       - name: Media security tests
         run: node --test test/pokemon-jvm-media-security.test.cjs
+
+      - name: Egg / incubator PNG cards (Sharp)
+        run: node --test test/pokemon-jvm-egg-cards.test.cjs test/pokemon-jvm-joy-eggs.test.cjs
 
       - name: Announcer, control, restart, and transport tests
         run: npm run test:release-announcer
