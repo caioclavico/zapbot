@@ -94,6 +94,25 @@
   (merge (select-keys request [:pokemon-a :pokemon-b])
          (select-keys request [:pokemon-a-name :pokemon-b-name])))
 
+(defn- pokemon-by-id [db id]
+  (when (and (string? id) (not (str/blank? id)))
+    (d/pull db '[*] [:pokemon/id-pokemon id])))
+
+(defn- pokemon-selection-invalid?
+  "Proposta com nomes/IDs incompletos (regressão idPokemon→nil) não pode nascer.
+   Harness de FSM sem seleção de Pokémon continua permitido."
+  [db request]
+  (let [blank-a? (str/blank? (str (:pokemon-a request)))
+        blank-b? (str/blank? (str (:pokemon-b request)))
+        named? (or (not (str/blank? (str (:pokemon-a-name request))))
+                   (not (str/blank? (str (:pokemon-b-name request)))))]
+    (cond
+      (and blank-a? blank-b? (not named?)) false
+      (or blank-a? blank-b?
+          (not (:db/id (pokemon-by-id db (:pokemon-a request))))
+          (not (:db/id (pokemon-by-id db (:pokemon-b request))))) true
+      :else false)))
+
 (defn create! [conn request]
   (let [{:keys [operation-id chat-id player-a player-b save-a save-b fence-a fence-b now]} request
         payload (reward/canonicalize (select-keys request [:chat-id :player-a :player-b :save-a :save-b :fence-a :fence-b :now]))
@@ -109,7 +128,8 @@
                         sb (d/pull db '[*] [:save/key (str chat-id "|" player-b "|" save-b)])
                         _ (when (or (= player-a player-b) (not (:db/id a)) (not (:db/id b))
                                     (not= save-a (:player/active-save-id a)) (not= save-b (:player/active-save-id b))
-                                    (not= fence-a (:player/fence-generation a)) (not= fence-b (:player/fence-generation b)))
+                                    (not= fence-a (:player/fence-generation a)) (not= fence-b (:player/fence-generation b))
+                                    (pokemon-selection-invalid? db request))
                             (throw (err/error :invalid_trade {})))
                         alloc (next-public-allocation db chat-id)
                         public-id (:public-id alloc)
@@ -248,9 +268,6 @@
   (transition-request conn (assoc request :action :expire)
                       :expire :expired nil))
 
-(defn- pokemon-by-id [db id]
-  (d/pull db '[*] [:pokemon/id-pokemon id]))
-
 (defn- pokemon-record [e]
   (when (:db/id e)
     {:id-pokemon (:pokemon/id-pokemon e)
@@ -316,7 +333,12 @@
         hash (reward/payload-hash payload)
         db (d/db conn)]
     (or (result-receipt (receipt db operation-id) hash operation-id)
-        (let [tr tr0
+        (do
+          ;; Sem IDs canônicos (regressão Node idPokemon→nil) o pull Datomic
+          ;; estoura IllegalArgumentException → "Erro interno na bridge.".
+          (when (or (str/blank? (str pokemon-a)) (str/blank? (str pokemon-b)))
+            (throw (err/error :invalid_trade {:reason :missing-pokemon-ids})))
+          (let [tr tr0
               actor (participant-entity db chat-id player-id)
               a (participant-entity db chat-id (:player-a tr))
               b (participant-entity db chat-id (:player-b tr))
@@ -380,7 +402,7 @@
                      :evolutions (vec (keep :target [prepared-a prepared-b])))
               (catch Exception ex
                 (or (result-receipt (receipt (d/db conn) operation-id) hash operation-id)
-                    (throw ex)))))))))
+                    (throw ex))))))))))
 
 (defn list-trades [conn chat-id player-id]
   (let [db (d/db conn)]

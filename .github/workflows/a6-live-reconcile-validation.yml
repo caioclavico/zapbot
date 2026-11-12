@@ -40,12 +40,12 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin a6/live-baseline-8ef41c8
           base_ref=origin/a6/live-baseline-8ef41c8
-          # Tip atual da live-baseline (pós PR #77 / cutover homolog). Atualizar só com merge na base.
-          expected=d0267bd6540033dfbafa5f70d601bb9962b24d6c
+          # Tip atual da live-baseline (pós PR #78 / ginásio). Atualizar só com merge na base.
+          expected=e1f7ec099abf45063f75538497f38e61d1e01eb1
           test "$(git rev-parse "$base_ref")" = "$expected"
           merge_base="$(git merge-base HEAD "$base_ref")"
           test "$merge_base" = "$expected"
-          pe_paths="$(git diff --name-only "$base_ref...HEAD" | grep -E '(^|/)036-|trainer_progression|trainer_rewards|trainer-pe-progression|a6-trainer-pe-progression|pokemon-trainer-progression' || true)"
+          pe_paths="$(git diff --name-only "$base_ref...HEAD" | grep -E '(^|/)036-|trainer_progression|trainer_rewards|trainer-pe-progression|a6-trainer-pe-progression|pokemon-trainer-progression|trade_store|trade_a441|pokemon-trade|bridge_tx' || true)"
           growth_paths="$(git diff --name-only "$base_ref...HEAD" | grep -E '(^|/)037-|growth_curves|growth-rate|pokemon-growth|domain/growth' || true)"
           if [[ -n "$growth_paths" ]]; then
             echo "kind=jvm-pokemon-growth" >> "$GITHUB_OUTPUT"
@@ -227,6 +227,10 @@ jobs:
       - name: Unit + Datomic tests — trainer PE / 036
         run: clojure -M:test-a6-trainer-progression
 
+      - name: Unit + Datomic tests — trocas (idPokemon / growth-v1 / invalid_trade)
+        run: |
+          clojure -M -e "(require 'clojure.test 'pokemon.tests.trade-a441-test 'pokemon.tests.trade-public-id-test) (let [r (clojure.test/run-tests 'pokemon.tests.trade-a441-test 'pokemon.tests.trade-public-id-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
+
       - name: Smoke — HTTP quiescence / freeze / restart
         run: clojure -M:smoke-a6-maintenance-quiescence
 
@@ -235,9 +239,11 @@ jobs:
         with:
           node-version: '22.23.4'
 
-      - name: Node maintenance + trainer progression presenters
+      - name: Node maintenance + trainer progression + trade idPokemon presenters
         run: |
-          node --test test/a6-maintenance.test.cjs test/pokemon-trainer-progression-present.test.cjs
+          node --test test/a6-maintenance.test.cjs \
+            test/pokemon-trainer-progression-present.test.cjs \
+            test/pokemon-trade-idpokemon.test.cjs
 
   validate-jvm-pokemon-growth:
     name: Pokémon growth curves + 037 on live tip

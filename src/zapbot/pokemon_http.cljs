@@ -1344,8 +1344,19 @@
                             ct (.getCollection jvm #js {:chatId chat-id :playerId target})
                             poke-a (indice-poke! meu ca)
                             poke-b (indice-poke! outro ct)
-                            pokemon-a (or (.-pokemonId poke-a) (.-id poke-a) (.-uuid poke-a))
-                            pokemon-b (or (.-pokemonId poke-b) (.-id poke-b) (.-uuid poke-b))
+                            ;; Bridge JVM serializa `:id-pokemon` → `idPokemon`.
+                            ;; Sem esse campo a proposta nasce só com nomes e
+                            ;; `troca confirmar` estoura internal_error na bridge.
+                            pokemon-a (or (.-idPokemon poke-a) (.-pokemonId poke-a)
+                                          (aget poke-a "id-pokemon")
+                                          (.-id poke-a) (.-uuid poke-a))
+                            pokemon-b (or (.-idPokemon poke-b) (.-pokemonId poke-b)
+                                          (aget poke-b "id-pokemon")
+                                          (.-id poke-b) (.-uuid poke-b))
+                            _ (when (or (str/blank? (str pokemon-a))
+                                        (str/blank? (str pokemon-b)))
+                                (throw (erro-contrato
+                                        "❓ Não consegui identificar os Pokémon da troca. Atualize a coleção com !pk e tente de novo.")))
                             nome-a (nome-pokemon-colecao poke-a)
                             nome-b (nome-pokemon-colecao poke-b)
                             body (clj->js {:chatId chat-id :playerId player-id
@@ -1456,7 +1467,9 @@
                                                             :now (js/Date.now)
                                                             :operationId (.stableOperationId jvm-transport
                                                                             (:requestId pedido) "prof-confirm")})]
-                        (envelope-jvm pedido (.formatProfessor jvm-present d prefix))))
+                        (envelope-jvm pedido
+                                      (append-trainer-level-ups
+                                       (.formatProfessor jvm-present d prefix) d))))
 
                     (= sub "usar")
                     (if (nil? idx-usar)
@@ -1469,7 +1482,9 @@
                                                         :operationId (.stableOperationId jvm-transport
                                                                         (:requestId pedido)
                                                                         (str "prof-use:" (inc idx-usar)))})]
-                        (envelope-jvm pedido (.formatProfessor jvm-present d prefix))))
+                        (envelope-jvm pedido
+                                      (append-trainer-level-ups
+                                       (.formatProfessor jvm-present d prefix) d))))
 
                     ;; enviar (um ou vários)
                     (empty? idxs-enviar)
@@ -1488,7 +1503,9 @@
                                                        :operationId (.stableOperationId jvm-transport
                                                                        (:requestId pedido)
                                                                        op-key)})]
-                      (envelope-jvm pedido (.formatProfessor jvm-present d prefix)))))
+                      (envelope-jvm pedido
+                                    (append-trainer-level-ups
+                                     (.formatProfessor jvm-present d prefix) d)))))
 
                 "treinador"
                 (p/let [data (desempenho/medir! ctx "pokemon_jvm_trainer"

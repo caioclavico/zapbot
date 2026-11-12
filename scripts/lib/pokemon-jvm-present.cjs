@@ -3625,16 +3625,20 @@ function formatTrainerLevelUps(data) {
       .map((row) => {
         const kind = readEitherKey(row, 'marcoEspaco', 'marco-espaco');
         return kind === 'pokemon' || kind === '"pokemon"'
-          ? `📦 +50 espaços Pokémon (nível ${row.nivel})`
-          : `🎒 +50 espaços na mochila (nível ${row.nivel})`;
+          ? `📦 Armazenamento Pokémon: +50 (nível ${row.nivel})`
+          : `🎒 Mochila: +50 (nível ${row.nivel})`;
       });
+    const rewardLines = [...expansions, ...itemLines];
     blocks.push([
-      `🌟 *${trainer} subiu de nível!*`,
-      `Nível ${from} → ${to} · ✨ +${pe} PE`,
-      ...itemLines,
+      `🎉 *TREINADOR SUBIU DE NÍVEL!*`,
+      `🏆 *Nível ${to} alcançado!* (${from} → ${to})`,
+      pe > 0 ? `⭐ PE deste avanço: +${pe}` : null,
+      trainer && trainer !== 'Treinador' ? `👤 ${trainer}` : null,
+      rewardLines.length ? `🎁 *RECOMPENSAS DESBLOQUEADAS*` : null,
+      ...rewardLines,
       pendingLines.length ? `🎒 Sem espaço; ficou pendente: ${pendingLines.join(', ')}` : null,
-      ...expansions,
-      next > 0 ? `Próximo nível: ${current}/${next} PE` : null
+      next > 0 ? `✨ Próximo nível: ${current}/${next} PE` : null,
+      '✨ Continue sua jornada Pokémon!'
     ].filter(Boolean).join('\n'));
   }
   return blocks.join('\n\n');
