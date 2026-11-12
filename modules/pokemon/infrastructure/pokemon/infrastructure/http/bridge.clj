@@ -2163,7 +2163,9 @@
                           idx (long-or-nil (g body "collectionIndex" "idx" "index"))
                           golpe (or (g body "golpe") (g body "move") {})
                           slot (long-or-nil (g body "slot" "moveIndex"))
-                          oferta? (boolean (g body "oferta" "oferta?" "fromOffer"))]
+                          oferta? (boolean (g body "oferta" "oferta?" "fromOffer"))
+                          consume-item-id (g body "consumeItemId" "consume-item-id"
+                                             "consumeItem")]
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? save-id) (nil? fence)
                                 (str/blank? operation-id) (nil? idx)
@@ -2182,7 +2184,9 @@
                                                  :idx idx
                                                  :golpe golpe
                                                  :oferta? oferta?}
-                                          (some? slot) (assoc :slot slot)))))))
+                                          (some? slot) (assoc :slot slot)
+                                          (not (str/blank? (str consume-item-id)))
+                                          (assoc :consume-item-id (str consume-item-id))))))))
 
                 (= path "/v1/pokemon/forget-move")
                 (do (require-method! ex #{"POST"})

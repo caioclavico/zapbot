@@ -383,6 +383,78 @@ async function buildGymNpcTeam(speciesNames) {
   return Promise.all(names.map((n) => fetchPokemonByName(n)));
 }
 
+function slugGolpe(g) {
+  if (!g) return '';
+  return String(g.slug || g['slug'] || g.nomeExibicao || g['nome-exibicao'] || g.nome || '')
+    .trim()
+    .toLowerCase();
+}
+
+function ataqueDoTipo(golpe, tipos) {
+  const tipo = golpe && golpe.tipo;
+  const classe = golpe && golpe.classe;
+  const poder = Number(golpe && golpe.poder) || 0;
+  return Boolean(tipo)
+    && (tipos || []).includes(tipo)
+    && (classe === 'fisico' || classe === 'especial')
+    && poder > 0;
+}
+
+/**
+ * Candidatos de MT genérica: learnset por level-up da espécie (jogos principais /
+ * PokeAPI), ofensivos, ainda não conhecidos, que preservam STAB no slot alvo.
+ * Não mistura regras de Pokémon GO nem MT ágil/carregada.
+ */
+async function listarCandidatosMt(speciesSlug, {
+  nivel = 1,
+  tipos = [],
+  golpesAtuais = [],
+  slot = null
+} = {}) {
+  const slug = String(speciesSlug || '').toLowerCase().trim();
+  if (!slug) return [];
+  const data = await fetchJson(`https://pokeapi.co/api/v2/pokemon/${slug}`);
+  const movesBrutos = data.moves || [];
+  const nivelMax = Math.max(1, Number(nivel) || 1);
+  const aprendidos = movesBrutos.filter((m) => {
+    const n = nivelAprendizado(m);
+    return n != null && n <= nivelMax;
+  });
+  const nomes = [...new Set(aprendidos.map((m) => m.move && m.move.name).filter(Boolean))];
+  const loaded = (await Promise.all(nomes.map(carregarGolpe))).filter(Boolean);
+  const conhecidos = new Set((golpesAtuais || []).map(slugGolpe).filter(Boolean));
+  const tiposArr = Array.isArray(tipos) ? tipos.map(String) : [];
+  const slotN = slot == null ? null : Number(slot);
+  return loaded.filter((g) => {
+    if (!(g.classe === 'fisico' || g.classe === 'especial')) return false;
+    if (!(Number(g.poder) > 0)) return false;
+    if (conhecidos.has(slugGolpe(g))) return false;
+    if (slotN == null || !Number.isInteger(slotN)) return true;
+    const atuais = (golpesAtuais || []).map((x) => ({
+      slug: slugGolpe(x),
+      tipo: x.tipo || x['tipo'],
+      classe: x.classe || x['classe'],
+      poder: Number(x.poder != null ? x.poder : x['poder']) || 0
+    }));
+    if (slotN < 0 || slotN >= atuais.length) return false;
+    const next = atuais.slice();
+    next[slotN] = g;
+    return next.some((gg) => ataqueDoTipo(gg, tiposArr));
+  });
+}
+
+/**
+ * RNG canônico (SHA-256 do seed) — mesmo seed ⇒ mesmo índice.
+ */
+function escolherGolpeMtAleatorio(candidatos, seed) {
+  const list = Array.isArray(candidatos) ? candidatos.filter(Boolean) : [];
+  if (!list.length) return null;
+  const crypto = require('node:crypto');
+  const digest = crypto.createHash('sha256').update(String(seed || ''), 'utf8').digest();
+  const n = digest.readUInt32BE(0);
+  return list[n % list.length];
+}
+
 module.exports = {
   TOTAL,
   PEDRAS,
@@ -401,5 +473,9 @@ module.exports = {
   pokemonDeDados,
   finalizeWild,
   carregarGolpe,
-  nivelAprendizado
+  nivelAprendizado,
+  listarCandidatosMt,
+  escolherGolpeMtAleatorio,
+  slugGolpe,
+  ataqueDoTipo
 };

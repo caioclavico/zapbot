@@ -1018,6 +1018,89 @@ function formatLearnMove(data, prefix = '!pk') {
   ].join('\n');
 }
 
+function nomeGolpeMt(g) {
+  if (!g) return '?';
+  return g.nomeExibicao || g['nome-exibicao'] || g.nome || g.slug || '?';
+}
+
+function formatMtHelp(prefix = '!pk', mtQty = 0) {
+  const p = prefix || '!pk';
+  return [
+    '💿 *Máquinas Técnicas*',
+    `📦 MT disponíveis: *${Number(mtQty) || 0}*`,
+    '',
+    'A MT genérica sorteia um golpe compatível do learnset (por nível) e substitui só o slot escolhido.',
+    '',
+    `\`${p} mt\` — esta ajuda`,
+    `\`${p} mt usar <n>\` — golpes do Pokémon da coleção`,
+    `\`${p} mt usar <n> <slot>\` — escolhe o golpe a substituir (1-4)`,
+    `\`${p} mt confirmar\` — aplica e consome 1 MT`,
+    `\`${p} mt cancelar\` — cancela sem consumir`,
+    '',
+    'Compre MT em `!loja comprar mt` (200 moedas).'
+  ].join('\n');
+}
+
+function formatMtPreview(poke, { mtQty = 0, candidatos = 0, prefix = '!pk', idx } = {}) {
+  const p = poke || {};
+  const golpes = p.golpes || [];
+  const lista = golpes.map((g, i) => `${i + 1}. ${nomeGolpeMt(g)}`).join('\n') || '(sem golpes)';
+  const id = p.idPokemon || p['id-pokemon'] || p.id || '?';
+  const n = (idx != null ? Number(idx) + 1 : null);
+  return [
+    `💿 *MT — ${p.nome || 'Pokémon'}*${n != null ? ` (#${n})` : ''}`,
+    `🆔 \`${id}\` · Nv.${p.nivel != null ? p.nivel : '?'}`,
+    `📦 MT: *${Number(mtQty) || 0}* · candidatos compatíveis: *${Number(candidatos) || 0}*`,
+    '',
+    '*Golpes atuais*',
+    lista,
+    '',
+    candidatos > 0
+      ? `Escolha o slot a substituir: \`${prefix} mt usar ${n != null ? n : '<n>'} <1-${golpes.length || 4}>\``
+      : '🚫 Nenhum golpe compatível novo para este Pokémon com a MT genérica.',
+    `Cancelar depois: \`${prefix} mt cancelar\``
+  ].join('\n');
+}
+
+function formatMtPending(poke, slot, { mtQty = 0, prefix = '!pk', candidatos = 0 } = {}) {
+  const p = poke || {};
+  const golpes = p.golpes || [];
+  const atual = golpes[slot];
+  return [
+    '⚙️ *Troca de golpe com MT pendente*',
+    `🐢 *${p.nome || 'Pokémon'}*`,
+    `❌ Slot ${Number(slot) + 1}: *${nomeGolpeMt(atual)}*`,
+    `🎲 Novo golpe: sorteio entre *${Number(candidatos) || 0}* compatíveis (revelado na confirmação)`,
+    `📦 MT disponíveis: *${Number(mtQty) || 0}*`,
+    '',
+    `Confirme: \`${prefix} mt confirmar\``,
+    `Cancele: \`${prefix} mt cancelar\` (não consome MT)`
+  ].join('\n');
+}
+
+function formatMtUsed(data, prefix = '!pk') {
+  const p = (data && data.pokemon) || {};
+  const ant = (data && (data.golpeAnterior || data['golpe-anterior'])) || {};
+  const novo = (data && (data.golpeNovo || data['golpe-novo'])) || {};
+  const resto = data && (data.itemQtyAfter != null
+    ? data.itemQtyAfter
+    : data['item-qty-after']);
+  return [
+    '⚙️ *MÁQUINA TÉCNICA UTILIZADA!*',
+    '',
+    `🐢 *${p.nome || 'Pokémon'}*`,
+    '',
+    `❌ Golpe anterior: ${nomeGolpeMt(ant)}`,
+    `✅ Novo golpe: ${nomeGolpeMt(novo)}`,
+    '',
+    '🎒 MT consumida: 1',
+    `📦 MT restante: ${resto != null ? resto : '?'}`,
+    '',
+    '✨ Seu Pokémon aprendeu um novo ataque!',
+    `${prefix} time · ${prefix} mt`
+  ].join('\n');
+}
+
 function formatForgetMove(data, prefix = '!pk') {
   const rem = (data && data.removido) || {};
   const nome = rem.nomeExibicao || rem['nome-exibicao'] || rem.slug || 'golpe';
@@ -1373,6 +1456,9 @@ function formatError(err) {
       }
       if (itemId === 'cartao-presente' || itemId === 'presente') {
         return '🎒 Você não tem Cartão-presente. Compre com `!loja comprar cartao-presente` (20 moedas).';
+      }
+      if (itemId === 'mt') {
+        return '💿 Você não tem MT de Ataque. Compre com `!loja comprar mt` (200 moedas) ou use `!pk mt`.';
       }
       return '🎒 Você não tem o item necessário. Confira `!pk mochila`.';
     })(),
@@ -3891,6 +3977,7 @@ const HELP_TOPICS = {
         itens: [
           ['pokemon', 'Time, PC e ativo'],
           ['mochila', 'Itens e recompensas'],
+          ['mt', 'Máquinas Técnicas'],
           ['evoluir', 'Evolução e pedras'],
           ['treinador', 'Perfil, XP e títulos']
         ]
@@ -4063,6 +4150,23 @@ const HELP_TOPICS = {
       '',
       'Pedras vêm de ginásios/missões. Equipe itens de troca antes de negociar.',
       `Itens: \`!loja detalhes <item>\``
+    ].join('\n')
+  },
+  mt: {
+    aliases: ['mts', 'maquina', 'máquina', 'maquinas', 'máquinas', 'tm-ataque'],
+    titulo: '💿 *Ajuda — Máquinas Técnicas*',
+    corpo: (p) => [
+      'Ensine um golpe novo com MT de Ataque da loja.',
+      '',
+      `\`${p} mt\` — estoque e ajuda`,
+      `\`${p} mt usar <n>\` — lista golpes do Pokémon #n`,
+      `\`${p} mt usar <n> <slot>\` — escolhe qual golpe substituir`,
+      `\`${p} mt confirmar\` — aplica (consome 1 MT)`,
+      `\`${p} mt cancelar\` — cancela sem consumir`,
+      '',
+      'O golpe novo é sorteado entre compatíveis do learnset (por nível).',
+      'Não altera nível, XP, IVs, HP, shiny nem evolução.',
+      '`!loja comprar mt` — 200 moedas'
     ].join('\n')
   },
   troca: {
@@ -4255,6 +4359,7 @@ const ALIASES = {
   evoluir: 'evoluir', evo: 'evoluir', evolucao: 'evoluir', evolução: 'evoluir',
   aprender: 'aprender', apr: 'aprender',
   reaprender: 'reaprender', reap: 'reaprender',
+  mt: 'mt', mts: 'mt',
   removergolpe: 'removergolpe', rmg: 'removergolpe',
   cancelar: 'cancelar', can: 'cancelar',
   batalhar: 'batalhar', abrir: 'batalhar', entrar: 'batalhar',
@@ -4538,6 +4643,10 @@ module.exports = {
   formatSetActive,
   formatEvolve,
   formatLearnMove,
+  formatMtHelp,
+  formatMtPreview,
+  formatMtPending,
+  formatMtUsed,
   formatForgetMove,
   formatOfferMove,
   formatRefuseOffer,

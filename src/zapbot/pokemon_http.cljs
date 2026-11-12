@@ -33,7 +33,45 @@
 ;; Remoção de golpe com janela de cancelamento (espelha master; estado só no Node).
 (defonce ^:private remocoes-pendentes (atom {}))
 (def ^:private segundos-remover-golpe 30)
+;; MT: confirmação explícita (slot escolhido pelo jogador; golpe sorteado no pending).
+(defonce ^:private mts-pendentes (atom {}))
+(def ^:private segundos-mt-pendente 600)
 (declare erro-contrato)
+
+(defn- qty-item-inventario
+  "Quantidade de um item no DTO de inventário JVM (camelCase)."
+  [inv item-id]
+  (let [itens (vec (or (some-> inv .-itens) (some-> inv .-items) #js []))
+        id (str item-id)]
+    (long (or (some (fn [it]
+                      (when (= id (str (or (.-itemId it) (aget it "item-id") "")))
+                        (or (.-qty it) (aget it "qty") 0)))
+                    itens)
+              0))))
+
+(defn- limpar-mt-pendente!
+  [chave]
+  (when-let [pend (get @mts-pendentes chave)]
+    (when-let [t (:timer pend)]
+      (js/clearTimeout t))
+    (swap! mts-pendentes dissoc chave)))
+
+(defn- golpe-para-jvm
+  "Normaliza golpe PokeAPI/JS para o payload learn-move (kebab-case)."
+  [g]
+  (let [m (cond
+            (nil? g) {}
+            (map? g) g
+            :else (js->clj g :keywordize-keys true))]
+    (cond-> {:slug (str (or (:slug m) ""))
+             :nome-exibicao (str (or (:nome-exibicao m) (:nomeExibicao m)
+                                     (:nome m) (:slug m) ""))
+             :tipo (str (or (:tipo m) "normal"))
+             :poder (long (or (:poder m) 0))
+             :classe (str (or (:classe m) "fisico"))}
+      (true? (or (:autodesmaio m) (:autodesmaio? m))) (assoc :autodesmaio true)
+      (some? (:recuo m)) (assoc :recuo (:recuo m))
+      (some? (:dreno m)) (assoc :dreno (:dreno m)))))
 
 (defn- parse-indice-1based
   "Converte texto 1-based em índice 0-based, ou nil se inválido."
@@ -2808,32 +2846,166 @@
 
                 "mt"
                 (let [prefix (str config/prefix "pk")
-                      slot-txt (first resto)
-                      slot (when (re-matches #"[1-4]" (str slot-txt))
-                             (dec (js/parseInt slot-txt 10)))]
-                  (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                          col (.getCollection jvm #js {:chatId chat-id :playerId player-id})
-                          idx (or (.-ativoIndex ativo) 0)
-                          poke (nth (vec (or (.-collection col) #js [])) idx nil)
-                          dados (when poke (.fetchPokemonByName pokeapi (or (.-species poke) (.-nome poke))))
-                          golpes (vec (or (.-golpes dados) #js []))
-                          golpe (first golpes)]
-                    (cond
-                      (nil? poke)
-                      (envelope-jvm pedido (str "❓ Sem Pokémon ativo. " prefix " time"))
-                      (nil? golpe)
-                      (envelope-jvm pedido "❓ Não há golpe compatível disponível para este MT.")
-                      :else
-                      (p/let [op-id (.stableOperationId jvm-transport (:requestId pedido)
-                                                        (str "mt:" idx ":" (or slot "vaga")))
-                              data (.learnMove jvm
-                                               (clj->js (cond-> {:chatId chat-id :playerId player-id
-                                                                 :saveId (.-activeSaveId ativo)
-                                                                 :fenceGeneration (.-fenceGeneration ativo)
-                                                                 :operationId op-id :collectionIndex idx
-                                                                 :golpe golpe :consumeItemId "mt"}
-                                                            (some? slot) (assoc :slot slot))))]
-                        (envelope-jvm pedido (.formatLearnMove jvm-present data prefix))))))
+                      chave [chat-id player-id]
+                      sub (str/lower-case (str (or (first resto) "")))
+                      args-mt (vec (rest resto))]
+                  (cond
+                    (or (str/blank? sub) (= "ajuda" sub) (= "help" sub) (= "?" sub))
+                    (p/let [inv (.getInventory jvm #js {:chatId chat-id :playerId player-id})]
+                      (envelope-jvm pedido
+                                    (.formatMtHelp jvm-present prefix
+                                                   (qty-item-inventario inv "mt"))))
+
+                    (= "cancelar" sub)
+                    (if-let [pend (get @mts-pendentes chave)]
+                      (do (limpar-mt-pendente! chave)
+                          (envelope-jvm pedido
+                                        (str "✅ MT cancelada. *"
+                                             (or (:nome-pokemon pend) "Pokémon")
+                                             "* mantém os golpes. Nenhuma MT consumida.")))
+                      (envelope-jvm pedido
+                                    (str "❓ Nenhuma MT pendente. Use " prefix " mt usar <n> <slot>.")))
+
+                    (= "confirmar" sub)
+                    (let [pend (get @mts-pendentes chave)]
+                      (cond
+                        (nil? pend)
+                        (envelope-jvm pedido
+                                      (str "❓ Nenhuma MT pendente. Use " prefix
+                                           " mt usar <n> <slot>."))
+                        (nil? (:golpe pend))
+                        (do (limpar-mt-pendente! chave)
+                            (envelope-jvm pedido
+                                          "❓ Pendência de MT inválida (golpe ausente). Monte de novo."))
+                        :else
+                        (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                                save-ok? (and (= (str (.-activeSaveId ativo))
+                                                 (str (:save-id pend)))
+                                              (= (long (.-fenceGeneration ativo))
+                                                 (long (:fence-generation pend))))]
+                          (if-not save-ok?
+                            (do (limpar-mt-pendente! chave)
+                                (envelope-jvm pedido
+                                              (str "⚠️ Save ativo mudou desde a pendência. "
+                                                   "Use " prefix " mt usar de novo.")))
+                            (p/let [op-id (str "mt-confirm:" chat-id ":" player-id ":"
+                                               (:token pend))
+                                    data (.learnMove jvm
+                                           (clj->js {:chatId chat-id
+                                                     :playerId player-id
+                                                     :saveId (.-activeSaveId ativo)
+                                                     :fenceGeneration (.-fenceGeneration ativo)
+                                                     :operationId op-id
+                                                     :collectionIndex (:idx pend)
+                                                     :slot (:slot pend)
+                                                     :golpe (:golpe pend)
+                                                     :consumeItemId "mt"}))]
+                              (limpar-mt-pendente! chave)
+                              (envelope-jvm pedido
+                                            (.formatMtUsed jvm-present data prefix)))))))
+
+                    (= "usar" sub)
+                    (p/let [inv (.getInventory jvm #js {:chatId chat-id :playerId player-id})
+                            mt-qty (qty-item-inventario inv "mt")
+                            col (.getCollection jvm #js {:chatId chat-id :playerId player-id})
+                            items (vec (or (.-collection col) #js []))
+                            idx (parse-indice-1based (first args-mt) (count items))
+                            poke (when (some? idx) (nth items idx nil))
+                            slot (parse-indice-1based (second args-mt)
+                                                      (count (vec (or (some-> poke .-golpes)
+                                                                      #js []))))]
+                      (cond
+                        (zero? mt-qty)
+                        (envelope-jvm pedido
+                                      (str "💿 Você não tem MT. Compre com `!loja comprar mt` "
+                                           "ou veja " prefix " mt."))
+
+                        (nil? poke)
+                        (envelope-jvm pedido
+                                      (str "❓ Use " prefix " mt usar <número da coleção> [slot].\n"
+                                           "Consulte " prefix " time."))
+
+                        (get @mts-pendentes chave)
+                        (envelope-jvm pedido
+                                      (str "⏳ Já há MT pendente. "
+                                           prefix " mt confirmar ou " prefix " mt cancelar."))
+
+                        (nil? (second args-mt))
+                        (p/let [tipos (vec (or (.-tipos poke) #js []))
+                                golpes (vec (or (.-golpes poke) #js []))
+                                cands (.listarCandidatosMt pokeapi
+                                         (or (.-species poke) (.-nome poke))
+                                         #js {:nivel (or (.-nivel poke) 1)
+                                              :tipos (clj->js tipos)
+                                              :golpesAtuais (clj->js golpes)})]
+                          (envelope-jvm pedido
+                                        (.formatMtPreview jvm-present poke
+                                                          #js {:mtQty mt-qty
+                                                               :candidatos (alength cands)
+                                                               :prefix prefix
+                                                               :idx idx})))
+
+                        (nil? slot)
+                        (envelope-jvm pedido
+                                      (str "❓ Slot inválido. Use " prefix " mt usar "
+                                           (inc idx) " <1-"
+                                           (count (vec (or (.-golpes poke) #js []))) ">."))
+
+                        :else
+                        (p/let [ativo (.getActiveSave jvm
+                                           #js {:chatId chat-id :playerId player-id})
+                                tipos (vec (or (.-tipos poke) #js []))
+                                golpes (vec (or (.-golpes poke) #js []))
+                                cands (.listarCandidatosMt pokeapi
+                                         (or (.-species poke) (.-nome poke))
+                                         #js {:nivel (or (.-nivel poke) 1)
+                                              :tipos (clj->js tipos)
+                                              :golpesAtuais (clj->js golpes)
+                                              :slot slot})
+                                token (str (js/Date.now) "-" (rand-int 1e9))
+                                golpe-raw (.escolherGolpeMtAleatorio pokeapi cands
+                                            (str chat-id "|" player-id "|"
+                                                 (or (.-idPokemon poke) (.-id poke) idx)
+                                                 "|slot:" slot "|" token))
+                                golpe (when golpe-raw (golpe-para-jvm golpe-raw))]
+                          (cond
+                            (zero? (alength cands))
+                            (envelope-jvm pedido
+                                          (str "🚫 Nenhum golpe compatível novo para *"
+                                               (.-nome poke) "* com a MT genérica."))
+
+                            (nil? golpe)
+                            (envelope-jvm pedido
+                                          "🚫 Falha ao sortear golpe compatível. Tente de novo.")
+
+                            :else
+                            (let [timer (js/setTimeout
+                                         (fn []
+                                           (when (= token (:token (get @mts-pendentes chave)))
+                                             (swap! mts-pendentes dissoc chave)))
+                                         (* 1000 segundos-mt-pendente))]
+                              (swap! mts-pendentes assoc chave
+                                     {:token token
+                                      :timer timer
+                                      :idx idx
+                                      :slot slot
+                                      :id-pokemon (or (.-idPokemon poke) (.-id poke))
+                                      :nome-pokemon (.-nome poke)
+                                      :save-id (.-activeSaveId ativo)
+                                      :fence-generation (.-fenceGeneration ativo)
+                                      :golpe golpe
+                                      :candidatos (alength cands)})
+                              (envelope-jvm pedido
+                                            (.formatMtPending jvm-present poke slot
+                                                              #js {:mtQty mt-qty
+                                                                   :prefix prefix
+                                                                   :candidatos
+                                                                   (alength cands)})))))))
+
+                    :else
+                    (envelope-jvm pedido
+                                  (str "❓ Use " prefix " mt, " prefix " mt usar <n> [slot], "
+                                       prefix " mt confirmar ou " prefix " mt cancelar."))))
 
                 "aprender"
                 (let [prefix (str config/prefix "pk")

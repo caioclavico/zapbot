@@ -207,18 +207,21 @@
     (let [r (tx/learn-move!
              s {:chat-id chat :player-id "ash" :save-id "a"
                 :fence-generation (fence s chat "ash")
-                :operation-id "learn-mt" :idx 0 :consume-item-id "mt"
+                :operation-id "learn-mt" :idx 0 :slot 0 :consume-item-id "mt"
                 :golpe {:slug "quick-attack" :nome-exibicao "Ataque Rápido"
                         :tipo "normal" :poder 40 :classe :fisico}})
           retry (tx/learn-move!
                  s {:chat-id chat :player-id "ash" :save-id "a"
                     :fence-generation (fence s chat "ash")
-                    :operation-id "learn-mt" :idx 0 :consume-item-id "mt"
+                    :operation-id "learn-mt" :idx 0 :slot 0 :consume-item-id "mt"
                     :golpe {:slug "quick-attack" :nome-exibicao "Ataque Rápido"
                             :tipo "normal" :poder 40 :classe :fisico}})
           inv (ports/list-inventory s chat "ash" "a")]
       (is (false? (:duplicate r)))
       (is (true? (:duplicate retry)))
+      (is (= "tackle" (get (or (:golpe-anterior r) {}) "slug"
+                            (get (:golpe-anterior r) :slug))))
+      (is (zero? (long (:item-qty-after r -1))))
       (is (zero? (or (:qty (first (filter #(= "mt" (:item-id %)) inv))) 0))))))
 
 (deftest expansao-mochila

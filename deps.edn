@@ -668,6 +668,11 @@
   {:main-opts ["-e" "(require 'clojure.test 'pokemon.tests.growth-curves-a6-test 'pokemon.tests.level-evolution-a6-test 'pokemon.tests.xp-equivalence-test 'pokemon.tests.species-hp-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.growth-curves-a6-test 'pokemon.tests.level-evolution-a6-test 'pokemon.tests.xp-equivalence-test 'pokemon.tests.species-hp-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"]
    :jvm-opts ["-Xms64m" "-Xmx768m" "-XX:+UseG1GC"]}
 
+  ;; A6 — Máquinas Técnicas (consumo atômico + presenter Node em job separado)
+  :test-a6-mt-move-learning
+  {:main-opts ["-m" "odisseu.smoke.a6-mt-move-learning"]
+   :jvm-opts ["-Xms64m" "-Xmx768m" "-XX:+UseG1GC"]}
+
   ;; A6 — smoke HTTP do gate (Datomic descartável)
   :smoke-a6-maintenance-quiescence
   {:main-opts ["-m" "odisseu.smoke.maintenance-quiescence"]

@@ -15,7 +15,7 @@
                      :expansao-tipo :pokemon
                      :descricao "Aumenta a capacidade de Pokémon em +50 (expansoes-pokemon-50)."}
    "mt" {:nome "MT de Ataque" :emoji "💿" :preco 200
-         :descricao "Aprende golpe (uso MT ainda bloqueado no JVM)."}
+         :descricao "Sorteia um ataque compatível (learnset por nível). Use !pk mt usar <n> <slot> e confirme. Consome 1 MT."}
    "atadura" {:nome "Atadura" :emoji "🔥" :preco 15 :status "queimado"
               :descricao "Remove queimadura — !pk curar."}
    "antidoto" {:nome "Antídoto" :emoji "☠️" :preco 15 :status "envenenado"

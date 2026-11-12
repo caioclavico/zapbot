@@ -2742,8 +2742,17 @@
     (let [payload (ops/learn-move-payload request)
           phash (ops/payload-hash payload)
           operation-id (:operation-id request)
-          existing (receipt-entity (d/db conn) operation-id)]
-      (or (resolve-receipt existing phash operation-id)
+          existing (receipt-entity (d/db conn) operation-id)
+          enrich-dup (fn [r]
+                       (let [s (:summary r)]
+                         (cond-> r
+                           (map? s)
+                           (merge (select-keys s [:idx :golpe-anterior :golpe-novo
+                                                  :consume-item-id :item-qty-after
+                                                  :id-pokemon])
+                                  (when (:registro s) {:registro (:registro s)})
+                                  {:duplicate true}))))]
+      (or (some-> (resolve-receipt existing phash operation-id) enrich-dup)
           (try
             (transact-with-writer!
              conn writer-ctx
@@ -2755,13 +2764,37 @@
                      _ (coll/validate-index! idx (count colecao))
                      poke (nth colecao idx)
                      oferta? (boolean (:oferta? request))
+                     slot (:slot request)
+                     golpes-antes (mapv moves/registro->golpe (or (:golpes poke) []))
+                     golpe-anterior (when (some? slot)
+                                      (when (and (integer? (long slot))
+                                                 (<= 0 (long slot))
+                                                 (< (long slot) (count golpes-antes)))
+                                        (nth golpes-antes (long slot))))
                      atualizado (moves/aplicar-aprendizado
-                                 poke (:golpe request) (:slot request) oferta?)
+                                 poke (:golpe request) slot oferta?)
+                     golpe-novo (moves/registro->golpe
+                                 (moves/golpe->registro (:golpe request)))
                      rev (long (:save/revision save 0))
                      pk (id/player-key (:chat-id writer-ctx) (:player-id writer-ctx))
                      lookup [:pokemon/id-pokemon (:id-pokemon poke)]
-                     item-tx (when-let [item-id (:consume-item-id request)]
-                               (inventory-adjust-tx db sk item-id -1))
+                     consume-id (when-let [item-id (:consume-item-id request)]
+                                  (str item-id))
+                     item-tx (when consume-id
+                               (inventory-adjust-tx db sk consume-id -1))
+                     item-qty-after (when consume-id
+                                      (dec (inventory-qty db sk consume-id)))
+                     summary {:idx idx
+                              :slug (moves/chave (:golpe request))
+                              :id-pokemon (:id-pokemon poke)
+                              :golpe-anterior (when golpe-anterior
+                                                (moves/golpe->registro golpe-anterior))
+                              :golpe-novo (moves/golpe->registro golpe-novo)
+                              :consume-item-id consume-id
+                              :item-qty-after item-qty-after
+                              :registro (select-keys atualizado
+                                                     [:id-pokemon :nome :species :nivel
+                                                      :golpes :tipos :shiny :hp :hp-atual])}
                      tx (cond-> (vec (concat (or item-tx [])
                                              [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
                                  [:db/add lookup :pokemon/golpes-edn (pr-str (:golpes atualizado))]
@@ -2775,8 +2808,7 @@
                                   :operation-receipt/payload-hash phash
                                   :operation-receipt/player-key pk
                                   :operation-receipt/save-id (:save-id writer-ctx)
-                                  :operation-receipt/summary
-                                  (pr-str {:idx idx :slug (moves/chave (:golpe request))})}]))
+                                  :operation-receipt/summary (pr-str summary)}]))
                            oferta?
                            (conj [:db/add lookup :pokemon/ofertas-golpes-edn
                                   (pr-str (or (:ofertas-golpes atualizado)
@@ -2787,11 +2819,16 @@
                            :channel "gameplay"
                            :payload-hash phash
                            :idx idx
+                           :id-pokemon (:id-pokemon poke)
+                           :golpe-anterior golpe-anterior
+                           :golpe-novo golpe-novo
+                           :consume-item-id consume-id
+                           :item-qty-after item-qty-after
                            :registro atualizado}})))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]
                 (if (present? dup)
-                  (resolve-receipt dup phash operation-id)
+                  (enrich-dup (resolve-receipt dup phash operation-id))
                   (throw ex))))))))
 
   (set-active-pokemon! [_ writer-ctx request]

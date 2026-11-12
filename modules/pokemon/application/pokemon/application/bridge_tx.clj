@@ -1436,13 +1436,40 @@
                          :golpe golpe*
                          :oferta? (boolean oferta?)}
                   (some? slot) (assoc :slot (long slot))
-                  consume-item-id (assoc :consume-item-id (str consume-item-id))))]
-    {:operation-id (:operation-id result)
-     :duplicate (boolean (:duplicate result))
-     :save-id save-id
-     :fence-generation (long fence-generation)
-     :idx (:idx result)
-     :pokemon (pokemon-summary (:registro result))}))
+                  consume-item-id (assoc :consume-item-id (str consume-item-id))))
+        registro (or (:registro result)
+                     (when (map? (:summary result))
+                       (:registro (:summary result))))]
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :save-id save-id
+             :fence-generation (long fence-generation)
+             :idx (or (:idx result) idx)
+             :pokemon (pokemon-summary registro)}
+      (or (:golpe-anterior result)
+          (get-in result [:summary :golpe-anterior]))
+      (assoc :golpe-anterior
+             (or (:golpe-anterior result)
+                 (get-in result [:summary :golpe-anterior])))
+      (or (:golpe-novo result)
+          (get-in result [:summary :golpe-novo]))
+      (assoc :golpe-novo
+             (or (:golpe-novo result)
+                 (get-in result [:summary :golpe-novo])))
+      (or (:consume-item-id result) consume-item-id
+          (get-in result [:summary :consume-item-id]))
+      (assoc :consume-item-id
+             (str (or (:consume-item-id result)
+                      (get-in result [:summary :consume-item-id])
+                      consume-item-id)))
+      (or (contains? result :item-qty-after)
+          (contains? (or (:summary result) {}) :item-qty-after))
+      (assoc :item-qty-after
+             (long (or (:item-qty-after result)
+                       (get-in result [:summary :item-qty-after])
+                       0)))
+      (:id-pokemon result)
+      (assoc :id-pokemon (:id-pokemon result)))))
 
 (defn forget-move!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
