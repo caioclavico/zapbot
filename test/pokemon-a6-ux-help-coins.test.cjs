@@ -89,17 +89,45 @@ assert.match(index, /ODISSEU — CENTRAL DE AJUDA/);
 assert.match(index, /!pk ajuda cacar/);
 assert.match(index, /!pk ajuda raid/);
 assert.match(index, /!pk ajuda ginasio/);
+assert.match(index, /!pk ajuda mt/);
+assert.match(index, /!pk ajuda loja/);
+assert.match(index, /!pk ajuda ovos/);
+assert.match(index, /!pk ajuda incubadoras/);
 assert.doesNotMatch(index, /JID|datomic|cassandra|operationId/i);
+assert.doesNotMatch(index, /nível 10|10 raids|incubadoras resgatar/i);
 
 for (const topic of [
-  'cacar', 'raid', 'ginasio', 'pokemon', 'mochila', 'evoluir',
+  'cacar', 'raid', 'ginasio', 'pokemon', 'mochila', 'evoluir', 'mt',
+  'loja', 'ovos', 'incubadoras', 'batalha', 'pvp',
   'troca', 'presentes', 'eventos', 'treinador', 'recompensas',
-  'caçar', 'raide', 'ginásio', 'missões'
+  'caçar', 'raide', 'ginásio', 'missões', 'mts'
 ]) {
   const text = present.formatHelp(topic, '!pk');
   assert.ok(text && text.length > 80, `ajuda curta demais: ${topic}`);
   assert.doesNotMatch(text, /JID|datomic|cassandra|fenceGeneration/i);
+  assert.doesNotMatch(text, /nível 10|10 raids vencidas|incubadoras resgatar/i);
 }
+
+const mtHelp = present.formatHelp('mt', '!pk');
+assert.match(mtHelp, /mt confirmar/);
+assert.match(mtHelp, /loja comprar mt/);
+assert.match(mtHelp, /ID canônico|id canônico/i);
+
+const shop = present.formatShop({
+  coins: 50,
+  ocupacaoMochila: 1,
+  capacidadeMochila: 50,
+  livres: 49,
+  itens: [{
+    emoji: '💿',
+    nome: 'MT de Ataque',
+    preco: 200,
+    itemId: 'mt',
+    descricao: 'Sorteia um ataque compatível.'
+  }]
+});
+assert.match(shop, /!loja comprar mt/);
+assert.match(shop, /Incubadoras \*não\* se compram/);
 
 assert.deepStrictEqual(present.resolveHelpRequest(['ajuda']), { topic: null });
 assert.deepStrictEqual(present.resolveHelpRequest(['ajuda', 'raid']), { topic: 'raid' });

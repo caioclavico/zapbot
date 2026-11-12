@@ -3434,9 +3434,20 @@ function formatShop(data, prefix = '!loja') {
     ''
   ];
   for (const it of itens) {
-    lines.push(`${it.emoji || '•'} *${it.nome}* — ${it.preco} moedas (\`${it.itemId}\`)`);
+    const id = it.itemId || it['item-id'] || '?';
+    const desc = String(it.descricao || '').trim();
+    const efeito = desc.length > 90 ? `${desc.slice(0, 87)}…` : desc;
+    lines.push(`${it.emoji || '•'} *${it.nome}* — ${it.preco} moedas`);
+    lines.push(`   \`${id}\`${efeito ? ` · ${efeito}` : ''}`);
+    lines.push(`   Comprar: \`${prefix} comprar ${id}\``);
   }
-  lines.push('', `Comprar: ${prefix} comprar <item>`, `Detalhes: ${prefix} detalhes <item>`, 'Inventário: !mochila');
+  lines.push(
+    '',
+    `Detalhes: \`${prefix} detalhes <item>\``,
+    'Inventário: `!mochila`',
+    'Pokébolas e pedras *não* estão à venda aqui (missões/ginásios).',
+    'Incubadoras *não* se compram na loja.'
+  );
   return lines.join('\n');
 }
 
@@ -4032,23 +4043,47 @@ const HELP_TOPICS = {
     titulo: '📖 *ODISSEU — CENTRAL DE AJUDA*',
     grupos: [
       {
-        emoji: '🐾',
-        nome: 'AVENTURA',
+        emoji: '👤',
+        nome: 'TREINADOR E PERFIL',
         itens: [
-          ['cacar', 'Caçadas e captura'],
-          ['raid', 'Raids cooperativas'],
-          ['ginasio', 'Ginásios e líderes']
+          ['treinador', 'Perfil, saves e títulos'],
+          ['recompensas', 'Moedas, PE e conquistas']
         ]
       },
       {
         emoji: '🎒',
-        nome: 'TREINADOR',
+        nome: 'POKÉMON E COLEÇÃO',
         itens: [
           ['pokemon', 'Time, PC e ativo'],
-          ['mochila', 'Itens e recompensas'],
-          ['mt', 'Máquinas Técnicas'],
           ['evoluir', 'Evolução e pedras'],
-          ['treinador', 'Perfil, XP e títulos']
+          ['mt', 'Máquinas Técnicas']
+        ]
+      },
+      {
+        emoji: '🌿',
+        nome: 'CAÇA E COMBATE',
+        itens: [
+          ['cacar', 'Caçadas e captura'],
+          ['batalha', 'Combate selvagem'],
+          ['ginasio', 'Ginásios e líderes'],
+          ['raid', 'Raids cooperativas'],
+          ['pvp', 'Desafios PvP']
+        ]
+      },
+      {
+        emoji: '🏪',
+        nome: 'LOJA E ITENS',
+        itens: [
+          ['loja', 'Catálogo e compras'],
+          ['mochila', 'Inventário e resgates']
+        ]
+      },
+      {
+        emoji: '🥚',
+        nome: 'OVOS E INCUBAÇÃO',
+        itens: [
+          ['ovos', 'Inventário de ovos'],
+          ['incubadoras', 'Incubadoras e PI']
         ]
       },
       {
@@ -4056,13 +4091,7 @@ const HELP_TOPICS = {
         nome: 'INTERAÇÃO',
         itens: [
           ['troca', 'Trocas entre treinadores'],
-          ['presentes', 'Presentes diários']
-        ]
-      },
-      {
-        emoji: '🎉',
-        nome: 'EVENTOS',
-        itens: [
+          ['presentes', 'Presentes diários'],
           ['eventos', 'Clima, surtos e missões']
         ]
       }
@@ -4223,19 +4252,132 @@ const HELP_TOPICS = {
   },
   mt: {
     aliases: ['mts', 'maquina', 'máquina', 'maquinas', 'máquinas', 'tm-ataque'],
-    titulo: '💿 *Ajuda — Máquinas Técnicas*',
+    titulo: '⚙️ *Máquinas Técnicas (MTs)*',
     corpo: (p) => [
-      'Ensine um golpe novo com MT de Ataque da loja.',
+      'As MTs ensinam um golpe novo compatível ao Pokémon.',
       '',
-      `\`${p} mt\` — estoque e ajuda`,
-      `\`${p} mt usar <n>\` — lista golpes do Pokémon #n`,
-      `\`${p} mt usar <n> <slot>\` — escolhe qual golpe substituir`,
-      `\`${p} mt confirmar\` — aplica (consome 1 MT)`,
+      '*Comandos*',
+      `\`${p} mt\` — consultar MTs e esta ajuda`,
+      `\`${p} mt usar 1 2\` — Pokémon #1, substitui o golpe do slot 2`,
+      `\`${p} mt confirmar\` — confirma a troca (consome 1 MT)`,
       `\`${p} mt cancelar\` — cancela sem consumir`,
       '',
-      'O golpe novo é sorteado entre compatíveis do learnset (por nível).',
-      'Não altera nível, XP, IVs, HP, shiny nem evolução.',
-      '`!loja comprar mt` — 200 moedas'
+      '*Como funciona*',
+      '• O golpe novo é sorteado entre elegíveis (espécie + nível)',
+      '• Não ensina golpe já conhecido nem incompatível',
+      '• Consome exatamente 1 MT só na confirmação',
+      '• Preserva HP, nível, XP, IVs, shiny e demais atributos',
+      '• A pendência usa o ID canônico do Pokémon (reordenar a coleção não troca o alvo)',
+      '',
+      '*Como obter*',
+      '`!loja comprar mt` — 200 moedas',
+      '',
+      `Sem candidatos: a MT *não* é consumida. Veja também \`${p} time\`.`
+    ].join('\n')
+  },
+  loja: {
+    aliases: ['shop', 'comprar', 'compras'],
+    titulo: '🏪 *Ajuda — Loja*',
+    corpo: (p) => [
+      'Compre expansões, MT, curas e utilitários com moedas (💰).',
+      '',
+      '*Comandos*',
+      '`!loja` — catálogo com preço e efeito',
+      '`!loja detalhes <item>` — ficha do produto',
+      '`!loja comprar <item>` — compra 1 unidade',
+      '',
+      '*À venda (preços reais)*',
+      '• Expansão de Mochila (`mochila`) — 200 · +50 slots de itens',
+      '• Expansão de Armazenamento (`espaco-pokemon`) — 200 · +50 Pokémon',
+      '• MT de Ataque (`mt`) — 200 · use com `' + p + ' mt`',
+      '• Poção / Poção Máxima — 20 / 60',
+      '• Curas de status (atadura, antídoto, …) — 15',
+      '• Fruta Frambo — 10 · motivação de ginásio',
+      '• Cartão de presente — 20',
+      '',
+      '*Fora da loja*',
+      '• Pokébolas / Grande / Ultra — missões e recompensas',
+      '• Pedras de evolução — ginásios/missões',
+      '• Incubadoras — progresso Adventure Sync (não à venda)',
+      '',
+      'Saldo insuficiente ou item inválido: a compra é rejeitada sem debitar.',
+      `\`${p} mochila\` — inventário · \`${p} ajuda mt\` — MTs`
+    ].join('\n')
+  },
+  ovos: {
+    aliases: ['ovo', 'egg', 'eggs'],
+    titulo: '🥚 *Ajuda — Ovos*',
+    corpo: (p) => [
+      'Ovos vêm de atividades (caça, ginásio, raid, PvP, missões).',
+      '',
+      '*Categorias (meta de PI)*',
+      '• Comum: 100 PI · Raro: 250 · Épico: 500 · Especial: 800',
+      '',
+      '*Comandos*',
+      `\`${p} ovos\` — inventário (até 9) + progresso`,
+      `\`${p} incubar <n> [incubadora]\` — coloca o ovo`,
+      `\`${p} chocar\` — nasce ovos prontos`,
+      `\`${p} incubacao\` — PI do dia e como ganhar`,
+      `\`${p} incubadoras\` — status das incubadoras`,
+      '',
+      '*Regras*',
+      '• Inventário cheio: PI aplica; ovo pode ficar pendente',
+      '• Espécie só é revelada no nascimento',
+      '• Coleção Pokémon cheia: nascimento fica pendente até liberar espaço',
+      '',
+      `\`${p} ajuda incubadoras\` — detalhes de PI e incubadoras`
+    ].join('\n')
+  },
+  incubadoras: {
+    aliases: ['incubadora', 'incubacao', 'incubação', 'pi'],
+    titulo: '🪺 *Ajuda — Incubadoras e PI*',
+    corpo: (p) => [
+      'Incube ovos e acumule Pontos de Incubação (PI).',
+      '',
+      '*Incubadoras*',
+      '• 1 permanente (usos ilimitados)',
+      '• Até 2 temporárias extras/especiais (quando disponíveis)',
+      '• Especial: +25% PI na parcela do ovo daquela incubadora',
+      '',
+      '*PI*',
+      '• Distinto de PE do treinador e XP do Pokémon',
+      '• Teto diário configurável (padrão 150)',
+      '• O PI do evento é *dividido* entre ovos incubando',
+      '',
+      '*Comandos*',
+      `\`${p} incubadoras\` · \`${p} incubacao\` · \`${p} incubar <n> [id]\``,
+      `\`${p} ovos\` · \`${p} chocar\``,
+      '',
+      'Incubadoras *não* se compram na loja.'
+    ].join('\n')
+  },
+  batalha: {
+    aliases: ['batalhas', 'combate', 'combater', 'atacar'],
+    titulo: '⚔️ *Ajuda — Batalhas*',
+    corpo: (p) => [
+      'Combate em caçada selvagem (e ações compartilhadas em ginásio).',
+      '',
+      `\`${p} atacar 1\` … \`${p} 4\` — golpe`,
+      `\`${p} defender\` · \`${p} pocao\` · \`${p} escolher <n>\``,
+      `\`${p} sair\` — desiste (zera sequência de captura)`,
+      '',
+      'Após vencer: XP/PE de batalha; opcionalmente capture.',
+      `\`${p} ajuda cacar\` — fluxo completo de caça`
+    ].join('\n')
+  },
+  pvp: {
+    aliases: ['duelo', 'desafio', 'batalhar'],
+    titulo: '🥊 *Ajuda — PvP*',
+    corpo: (p) => [
+      'Desafie outro treinador do chat.',
+      '',
+      `\`${p} batalhar @jogador\` — abre desafio`,
+      `\`${p} batalhar aceitar\` · \`${p} batalhar cancelar\``,
+      `\`${p} atacar 1\` … — na sua vez`,
+      `\`${p} sair\` — abandona (regras do desafio)`,
+      '',
+      'Use o Pokémon ativo; níveis incompatíveis bloqueiam a entrada.',
+      '1 desafio/batalha PvP por chat.'
     ].join('\n')
   },
   troca: {
@@ -4335,6 +4477,11 @@ function resolveHelpTopic(raw) {
   if (cmd === 'presente') return 'presentes';
   if (cmd === 'evoluir') return 'evoluir';
   if (cmd === 'capturar' || cmd === 'fruta' || cmd === 'liberar') return 'cacar';
+  if (cmd === 'ovos' || cmd === 'ovo' || cmd === 'chocar' || cmd === 'incubar') return 'ovos';
+  if (cmd === 'incubadoras' || cmd === 'incubacao') return 'incubadoras';
+  if (cmd === 'loja') return 'loja';
+  if (cmd === 'mt' || cmd === 'mts') return 'mt';
+  if (cmd === 'batalhar' || cmd === 'pvp') return 'pvp';
   return null;
 }
 
@@ -4359,7 +4506,9 @@ function formatHelp(topicRaw, prefix = '!pk') {
       lines.push('');
     }
     lines.push('_Escolha uma categoria para ver os comandos._');
-    lines.push(`Também: \`${p} raid ajuda\` · \`${p} ginasio ajuda\` · \`${p} mochila ajuda\``);
+    lines.push(
+      `Também: \`${p} raid ajuda\` · \`${p} ginasio ajuda\` · \`${p} mochila ajuda\` · \`${p} mt\``
+    );
     return lines.join('\n');
   }
   const meta = HELP_TOPICS[topic];
