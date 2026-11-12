@@ -105,7 +105,7 @@
                 :agora due})
             col (ports/list-collection s chat player "a")]
         (is (false? (:duplicate h)))
-        (is (= "Pichu" (:species (first col))))
+        (is (= "pichu" (clojure.string/lower-case (str (:species (first col))))))
         (is (= 1 (:nivel (first col))))
         (is (= :hatched (:state (adv/get-egg s "egg-1"))))))))
 

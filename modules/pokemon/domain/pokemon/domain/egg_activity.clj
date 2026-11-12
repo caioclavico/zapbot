@@ -186,6 +186,28 @@
       (let [p (first xs)]
         [(assoc shell :pending-egg-grants (vec (rest xs))) p]))))
 
+(defn materialize-pending
+  "Drena a fila FIFO enquanto houver vaga. Não re-sorteia espécie/categoria.
+   Identidade `egg:{event-id}` estável. Idempotente via receipt pending-deliver:."
+  [estado agora]
+  (loop [st estado delivered []]
+    (let [n (eggs/inventariados-count st)
+          [st1 pend] (pop-deliverable-pending st n)]
+      (if-not pend
+        {:estado st :delivered delivered}
+        (let [eid (str (:event-id pend))
+              deliver-key (str "pending-deliver:" eid)]
+          (if (contains? (:receipts st1 #{}) deliver-key)
+            (recur st1 delivered)
+            (let [ovo (eggs/novo-ovo (str "egg:" eid)
+                                     (:category pend)
+                                     agora
+                                     (:species pend))
+                  st2 (-> st1
+                          (eggs/conceder-ovo ovo)
+                          (update :receipts conj deliver-key))]
+              (recur st2 (conj delivered ovo)))))))))
+
 (defn apply-activity
   "Aplica PI + possível ovo sobre estado mergeado (shell+eggs).
   Idempotente por event-id em :receipts.

@@ -209,43 +209,56 @@
                             (mapv #(if (= (:egg-id %) (:egg-id ovo0)) ovo1 %)
                                   (:eggs estado0)))
                      (:egg-id ovo0) agora)
-            ovo-final (some #(when (= (:egg-id ovo0) (:egg-id %)) %) (:eggs estado1))]
-        {:tx [(egg->entity ak (assoc ovo-final :revision (inc expected-rev)))
-              [:db/cas [:egg/id (:egg-id ovo0)] :egg/revision expected-rev (inc expected-rev)]
-              [:db/add [:adventure-account/key ak]
-               :adventure-account/state-edn (shell-edn estado1)]
-              [:db/cas [:adventure-account/key ak]
-               :adventure-account/revision rev (inc rev)]
-              (pokemon-entity-map sk reg (count colecao))
-              [:db/cas [:save/key sk] :save/revision save-rev (inc save-rev)]
-              {:operation-receipt/id operation-id
-               :operation-receipt/kind "egg-hatch"
-               :operation-receipt/channel "gameplay"
-               :operation-receipt/payload-hash phash
-               :operation-receipt/player-key (id/player-key chat-id player-id)
-               :operation-receipt/save-id (:save-id writer-ctx)
-               :operation-receipt/summary
-               (pr-str {:hatch-id hatch-id :pokemon-id pokemon-id})}]
+            drained (egg-activity/materialize-pending estado1 agora)
+            estado2 (:estado drained)
+            delivered (:delivered drained)
+            ovo-final (some #(when (= (:egg-id ovo0) (:egg-id %)) %) (:eggs estado2))
+            delivered-tx (mapv #(egg->entity ak (assoc % :revision 0)) delivered)]
+        {:tx (into
+              [(egg->entity ak (assoc ovo-final :revision (inc expected-rev)))
+               [:db/cas [:egg/id (:egg-id ovo0)] :egg/revision expected-rev (inc expected-rev)]
+               [:db/add [:adventure-account/key ak]
+                :adventure-account/state-edn (shell-edn estado2)]
+               [:db/cas [:adventure-account/key ak]
+                :adventure-account/revision rev (inc rev)]
+               (pokemon-entity-map sk reg (count colecao))
+               [:db/cas [:save/key sk] :save/revision save-rev (inc save-rev)]
+               {:operation-receipt/id operation-id
+                :operation-receipt/kind "egg-hatch"
+                :operation-receipt/channel "gameplay"
+                :operation-receipt/payload-hash phash
+                :operation-receipt/player-key (id/player-key chat-id player-id)
+                :operation-receipt/save-id (:save-id writer-ctx)
+                :operation-receipt/summary
+                (pr-str {:hatch-id hatch-id
+                         :pokemon-id pokemon-id
+                         :pending-delivered (mapv :egg-id delivered)})}]
+              delivered-tx)
          :result {:operation-id operation-id
                   :duplicate false
                   :egg ovo-final
                   :pokemon-id pokemon-id
-                  :registro reg}}))))
+                  :registro reg
+                  :pending-delivered delivered}}))))
 
 (defn build-activity-enrich-tx
   "Aplica PI/ovo da atividade sobre a conta Adventure na mesma TX canônica.
-  Garante conta se ausente. Retorna datoms extras (sem fence — o caller já tem)."
+  Garante conta se ausente. Drena pending se houver vaga. Sem fence (caller)."
   [{:keys [writer-ctx account-shell egg-maps activity-opts ensure-tx?]}]
   (let [chat-id (:chat-id writer-ctx)
         player-id (:player-id writer-ctx)
         ak (id/adventure-account-key chat-id player-id)
         shell0 (or account-shell (eggs/estado-inicial))
         rev (long (:revision shell0 0))
+        agora (long (or (:agora activity-opts) (System/currentTimeMillis)))
         applied (egg-activity/apply-activity
                  (merge-estado shell0 egg-maps) activity-opts)
-        estado (:estado applied)
+        drained (egg-activity/materialize-pending (:estado applied) agora)
+        estado (:estado drained)
         egg (:egg-grant applied)
-        egg-tx (when egg [(egg->entity ak (assoc egg :revision 0))])
+        delivered (:delivered drained)
+        egg-tx (into (if egg [(egg->entity ak (assoc egg :revision 0))] [])
+                     (map #(egg->entity ak (assoc % :revision 0)) delivered))
         account-tx (if ensure-tx?
                      [{:adventure-account/key ak
                        :adventure-account/chat-id chat-id
@@ -257,9 +270,12 @@
                       [:db/cas [:adventure-account/key ak]
                        :adventure-account/revision rev (inc rev)]])]
     {:tx (into (vec egg-tx) account-tx)
-     :result {:adventure-activity (:summary applied)
+     :result {:adventure-activity (assoc (:summary applied)
+                                         :pending-delivered
+                                         (mapv :egg-id delivered))
               :egg egg
               :deferred-egg (:deferred-egg applied)
+              :pending-delivered delivered
               :pi-granted (:pi-granted applied)}}))
 
 (defn build-joy-send-tx

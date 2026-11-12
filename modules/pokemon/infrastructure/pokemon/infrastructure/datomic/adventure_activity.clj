@@ -1,8 +1,8 @@
 (ns pokemon.infrastructure.datomic.adventure-activity
   "Enrich transacional: PI + ovos nas mesmas TXs de gameplay (A6).
-  Espelha o padrão de mission-events/attach — sem fila em memória."
+  Espelha o padrão de mission-events/attach — sem fila em memória.
+  Raid/PvP creditam **todos** os participantes elegíveis na TX canônica."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
             [datomic.client.api :as d]
             [pokemon.domain.battle :as battle]
             [pokemon.domain.egg-activity :as egg-activity]
@@ -41,12 +41,33 @@
     (not (contains? (:receipts shell #{}) marker))))
 
 (defn- mark-first-daily!
-  "Anota no summary que o marker será gravado via event-id dedicado no apply."
   [day]
   (str "first-daily-hunt:" day))
 
-(defn- detect-activity
-  "Deriva atividade de incubação a partir do recibo/resultado canônico."
+(defn- raid-category-of
+  [raid summary]
+  (or (:boss-categoria raid)
+      (:categoria raid)
+      (:category raid)
+      (:tier raid)
+      (:boss-categoria summary)
+      (:categoria summary)
+      (:category summary)))
+
+(defn- outcome-kw
+  [x]
+  (let [k (cond
+            (keyword? x) x
+            (string? x) (keyword x)
+            (symbol? x) (keyword (name x))
+            :else nil)]
+    (case k
+      (:vitoria :victory :win) :vitoria
+      (:derrota :defeat :lose :loss) :derrota
+      k)))
+
+(defn- detect-targets
+  "Retorna vetor de alvos {:player-id :opts}. Vários jogadores em raid/PvP."
   [db writer built receipt agora]
   (let [kind (:operation-receipt/kind receipt)
         summary (or (read-edn (:operation-receipt/summary receipt)) {})
@@ -61,157 +82,213 @@
         player-id (:player-id writer)
         day (egg-activity/utc-day agora)]
     (cond
-      ;; Captura selvagem (encounter ou direta)
       (and (= kind "encounter-capture") (:capturou? result))
       (let [shell-eggs (account-shell+eggs db chat-id player-id)
             shell (or (:shell shell-eggs) (eggs/estado-inicial))
             first? (first-daily-hunt? shell agora)]
-        {:activity :hunt-complete
-         :event-id (str "egg-act:hunt:" bid)
-         :first-daily-hunt? first?
-         :first-daily-marker (when first? (mark-first-daily! day))
-         :suppress-wild-victory-pi? true})
+        [{:player-id player-id
+          :opts {:activity :hunt-complete
+                 :event-id (str "egg-act:hunt:" bid)
+                 :first-daily-hunt? first?
+                 :first-daily-marker (when first? (mark-first-daily! day))
+                 :suppress-wild-victory-pi? true
+                 :agora agora}}])
 
       (and (= kind "capture") (:capturou? result))
       (let [shell-eggs (account-shell+eggs db chat-id player-id)
             shell (or (:shell shell-eggs) (eggs/estado-inicial))
             first? (first-daily-hunt? shell agora)
             oid (:operation-receipt/id receipt)]
-        {:activity :hunt-complete
-         :event-id (str "egg-act:capture:" oid)
-         :first-daily-hunt? first?
-         :first-daily-marker (when first? (mark-first-daily! day))
-         :suppress-wild-victory-pi? true})
+        [{:player-id player-id
+          :opts {:activity :hunt-complete
+                 :event-id (str "egg-act:capture:" oid)
+                 :first-daily-hunt? first?
+                 :first-daily-marker (when first? (mark-first-daily! day))
+                 :suppress-wild-victory-pi? true
+                 :agora agora}}])
 
       (and (= kind "battle-turn") finished? (= winner :win) (= :wild (:kind next)))
-      {:activity :wild-victory
-       :event-id (str "egg-act:wild-win:" bid)}
+      [{:player-id player-id
+        :opts {:activity :wild-victory
+               :event-id (str "egg-act:wild-win:" bid)
+               :agora agora}}]
 
       (and (= kind "battle-turn") finished? (= winner :lose) (= :wild (:kind next)))
-      {:activity :wild-defeat
-       :event-id (str "egg-act:wild-lose:" bid)}
+      [{:player-id player-id
+        :opts {:activity :wild-defeat
+               :event-id (str "egg-act:wild-lose:" bid)
+               :agora agora}}]
 
       (and (= kind "battle-turn") finished? (= winner :win) (= :gym (:kind next)))
-      {:activity :gym-victory
-       :event-id (str "egg-act:gym-win:" bid)}
+      [{:player-id player-id
+        :opts {:activity :gym-victory
+               :event-id (str "egg-act:gym-win:" bid)
+               :agora agora}}]
 
       (and (= kind "battle-turn") finished? (= winner :lose) (= :gym (:kind next)))
-      {:activity :gym-defeat
-       :event-id (str "egg-act:gym-lose:" bid)}
+      [{:player-id player-id
+        :opts {:activity :gym-defeat
+               :event-id (str "egg-act:gym-lose:" bid)
+               :agora agora}}]
 
       (and (= kind "gym-resolve") (:venceu? result))
-      {:activity :gym-victory
-       :event-id (str "egg-act:gym-resolve:" (:operation-receipt/id receipt))}
+      [{:player-id player-id
+        :opts {:activity :gym-victory
+               :event-id (str "egg-act:gym-resolve:" (:operation-receipt/id receipt))
+               :agora agora}}]
 
+      ;; PvP: credita vencedor e perdedor na mesma conclusão canônica,
+      ;; independentemente de quem enviou o turno final.
       (and (= kind "pvp-turn") finished? (#{:x :o} winner))
       (let [winner-pid (get-in before [:jogadores winner])
             loser-side (if (= winner :x) :o :x)
-            loser-pid (get-in before [:jogadores loser-side])
-            i-won? (= player-id winner-pid)
-            opponent (if i-won? loser-pid winner-pid)]
-        (when (or i-won? (= player-id loser-pid))
-          {:activity (if i-won? :pvp-victory :pvp-defeat)
-           :event-id (str "egg-act:pvp:" bid ":" player-id)
-           :opponent-id opponent
-           ;; Writer pode ser o perdedor confirmando turno — só credita o ator.
-           :player-id player-id}))
+            loser-pid (get-in before [:jogadores loser-side])]
+        (cond-> []
+          winner-pid
+          (conj {:player-id winner-pid
+                 :opts {:activity :pvp-victory
+                        :event-id (str "egg-act:pvp:" bid ":" winner-pid)
+                        :opponent-id loser-pid
+                        :agora agora}})
+          loser-pid
+          (conj {:player-id loser-pid
+                 :opts {:activity :pvp-defeat
+                        :event-id (str "egg-act:pvp:" bid ":" loser-pid)
+                        :opponent-id winner-pid
+                        :agora agora}})))
 
-      (and (= kind "raid-reward") (#{:vitoria "vitoria" "win"} (keyword (str (:outcome summary)))))
+      ;; Raid: usa :rewards do resultado (um por elegível) — cobre vitória e derrota.
+      (and (= kind "raid-attack") (seq (:rewards result)))
+      (let [raid (:raid result)
+            rid (or (:raid-id raid) (:raid-id summary))
+            cat (raid-category-of raid summary)]
+        (mapv (fn [r]
+                (let [pid (:player-id r)
+                      out (outcome-kw (:outcome r))
+                      act (if (= :derrota out) :raid-defeat :raid-victory)]
+                  {:player-id pid
+                   :opts (cond-> {:activity act
+                                  :event-id (str "egg-act:raid:" rid ":" pid)
+                                  :agora agora}
+                           (= :raid-victory act)
+                           (assoc :raid-category cat))}))
+              (:rewards result)))
+
+      ;; Fallback: raid-attack encerrou sem vetor rewards (não deveria), usa flags.
+      (and (= kind "raid-attack") (or (:venceu? result) (:derrota? result)))
+      (let [raid (:raid result)
+            rid (or (:raid-id raid) (:raid-id summary))
+            cat (raid-category-of raid summary)
+            act (if (:derrota? result) :raid-defeat :raid-victory)]
+        [{:player-id player-id
+          :opts (cond-> {:activity act
+                         :event-id (str "egg-act:raid:" rid ":" player-id)
+                         :agora agora}
+                  (= :raid-victory act) (assoc :raid-category cat))}])
+
+      ;; Recibo raid-reward isolado (idempotente com egg-act:raid:rid:pid).
+      (= kind "raid-reward")
       (let [rid (or (:raid-id summary) (get-in result [:raid :raid-id]))
-            cat (or (:boss-categoria summary) (:categoria summary)
-                    (get-in result [:raid :boss-categoria])
-                    (get-in result [:raid :categoria]))]
-        {:activity :raid-victory
-         :event-id (str "egg-act:raid:" rid ":" player-id)
-         :raid-category cat})
-
-      ;; raid-attack que encerra com vitória (recompensas na mesma TX às vezes)
-      (and (= kind "raid-attack") (:venceu? result))
-      (let [rid (or (get-in result [:raid :raid-id]) (:raid-id summary))
-            cat (or (get-in result [:raid :boss-categoria])
-                    (get-in result [:raid :categoria])
-                    (:categoria summary))]
-        {:activity :raid-victory
-         :event-id (str "egg-act:raid:" rid ":" player-id)
-         :raid-category cat})
+            out (outcome-kw (or (:outcome summary) (:outcome result)))
+            cat (raid-category-of (or (:raid result) {}) summary)
+            ;; player-key do recibo: chat|player
+            pk (:operation-receipt/player-key receipt)
+            pid (or (:player-id summary)
+                    (when (string? pk)
+                      (second (re-find #"\|(.+)$" pk)))
+                    player-id)
+            act (if (= :derrota out) :raid-defeat :raid-victory)]
+        [{:player-id pid
+          :opts (cond-> {:activity act
+                         :event-id (str "egg-act:raid:" rid ":" pid)
+                         :agora agora}
+                  (= :raid-victory act) (assoc :raid-category cat))}])
 
       (and (= kind "mission-claim") (or (:claimed result) (:rewarded result)
                                         (:ok result)))
       (let [oid (:operation-receipt/id receipt)
             egg-cat (or (:egg-category summary) (:eggCategory summary))]
-        {:activity :daily-mission
-         :event-id (str "egg-act:mission:" oid)
-         :mission-egg-category (when egg-cat (keyword egg-cat))})
+        [{:player-id player-id
+          :opts {:activity :daily-mission
+                 :event-id (str "egg-act:mission:" oid)
+                 :mission-egg-category (when egg-cat (keyword egg-cat))
+                 :agora agora}}])
 
       :else nil)))
 
+(defn- apply-marker
+  [enrich marker]
+  (if-not marker
+    enrich
+    (let [estado-edn (some (fn [form]
+                             (when (and (vector? form)
+                                        (= :db/add (first form))
+                                        (= :adventure-account/state-edn (nth form 2 nil)))
+                               (nth form 3)))
+                           (:tx enrich))
+          ;; Also handle map assert on ensure
+          estado-edn (or estado-edn
+                         (some (fn [form]
+                                 (when (and (map? form) (:adventure-account/state-edn form))
+                                   (:adventure-account/state-edn form)))
+                               (:tx enrich)))
+          shell* (when estado-edn (edn/read-string estado-edn))
+          shell** (when shell*
+                    (update shell* :receipts #(set (conj (or % #{}) marker))))]
+      (if-not shell**
+        enrich
+        (update enrich :tx
+                (fn [tx]
+                  (mapv (fn [form]
+                          (cond
+                            (and (vector? form)
+                                 (= :db/add (first form))
+                                 (= :adventure-account/state-edn (nth form 2 nil)))
+                            (assoc form 3 (pr-str shell**))
+
+                            (and (map? form) (:adventure-account/state-edn form))
+                            (assoc form :adventure-account/state-edn (pr-str shell**))
+
+                            :else form))
+                        tx)))))))
+
+(defn- enrich-target
+  [db chat-id built target]
+  (let [pid (:player-id target)
+        opts (:opts target)
+        {:keys [exists? shell eggs]} (account-shell+eggs db chat-id pid)
+        enrich (adventure-store/build-activity-enrich-tx
+                {:writer-ctx {:chat-id chat-id :player-id pid}
+                 :account-shell (or shell (eggs/estado-inicial))
+                 :egg-maps eggs
+                 :activity-opts opts
+                 :ensure-tx? (not exists?)})
+        enrich (apply-marker enrich (:first-daily-marker opts))]
+    enrich))
+
 (defn attach
-  "Anexa PI/ovo à TX se a atividade for elegível. Fail-open se conta ausente
-  (cria ensure). Não altera 036/037."
+  "Anexa PI/ovos à TX para todos os alvos detectados. Não altera 036/037."
   [db writer built]
   (if-not (egg-activity/activity-enabled?)
     built
     (let [receipt (some #(when (and (map? %) (:operation-receipt/id %)) %) (:tx built))
           agora (System/currentTimeMillis)
-          detected (when receipt (detect-activity db writer built receipt agora))]
-      (if-not detected
+          targets (when receipt (detect-targets db writer built receipt agora))]
+      (if-not (seq targets)
         built
         (let [chat-id (:chat-id writer)
-              player-id (:player-id writer)
-              {:keys [exists? shell eggs]} (account-shell+eggs db chat-id player-id)
-              opts (cond-> {:event-id (:event-id detected)
-                            :activity (:activity detected)
-                            :agora agora
-                            :opponent-id (:opponent-id detected)
-                            :raid-category (:raid-category detected)
-                            :mission-egg-category (:mission-egg-category detected)
-                            :first-daily-hunt? (boolean (:first-daily-hunt? detected))
-                            :suppress-wild-victory-pi?
-                            (boolean (:suppress-wild-victory-pi? detected))})
-              ;; Marker de primeira caçada diária: aplica-se como receipt extra
-              ;; via segundo apply se necessário — embutido no mesmo event quando
-              ;; first-daily-hunt? dispara ovo extra no apply-activity.
-              enrich (adventure-store/build-activity-enrich-tx
-                      {:writer-ctx writer
-                       :account-shell (or shell (eggs/estado-inicial))
-                       :egg-maps eggs
-                       :activity-opts opts
-                       :ensure-tx? (not exists?)})
-              ;; Marca first-daily no shell se ganhou a chance (mesmo sem ovo).
-              marker (:first-daily-marker detected)
-              enrich (if-not marker
-                       enrich
-                       (let [estado-edn (some (fn [form]
-                                                (when (and (vector? form)
-                                                           (= :db/add (first form))
-                                                           (= :adventure-account/state-edn (nth form 2 nil)))
-                                                  (nth form 3)))
-                                              (:tx enrich))
-                             shell* (when estado-edn (edn/read-string estado-edn))
-                             shell** (when shell*
-                                       (update shell* :receipts
-                                               #(set (conj (or % #{}) marker))))]
-                         (if-not shell**
-                           enrich
-                           (update enrich :tx
-                                   (fn [tx]
-                                     (mapv (fn [form]
-                                             (if (and (vector? form)
-                                                      (= :db/add (first form))
-                                                      (= :adventure-account/state-edn (nth form 2 nil)))
-                                               (assoc form 3 (pr-str shell**))
-                                               form))
-                                           tx))))))
+              enrichments (mapv #(enrich-target db chat-id built %) targets)
+              summaries (mapv #(get-in % [:result :adventure-activity]) enrichments)
+              extra-tx (mapcat :tx enrichments)
               summary0 (read-edn (:operation-receipt/summary receipt))
               summary (assoc (or summary0 {})
-                             :adventure-activity
-                             (get-in enrich [:result :adventure-activity]))]
+                             :adventure-activity summaries)]
           (-> built
               (update :tx #(into (mapv (fn [item]
                                          (if (= item receipt)
-                                           (assoc item :operation-receipt/summary (pr-str summary))
+                                           (assoc item :operation-receipt/summary
+                                                  (pr-str summary))
                                            item))
                                        %)
-                                 (:tx enrich)))
-              (assoc-in [:result :adventure-activity]
-                        (get-in enrich [:result :adventure-activity]))))))))
+                                 extra-tx))
+              (assoc-in [:result :adventure-activity] summaries)))))))

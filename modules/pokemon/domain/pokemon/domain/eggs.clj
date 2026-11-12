@@ -1,9 +1,8 @@
 (ns pokemon.domain.eggs
   "Adventure Sync — ovos/incubação (puro). Espelha pokemon-service ovos.cljs atividade."
   (:require [clojure.string :as str]
-            [pokemon.domain.errors :as err])
-  (:import [java.nio.charset StandardCharsets]
-           [java.security MessageDigest]))
+            [pokemon.domain.egg-hatch :as egg-hatch]
+            [pokemon.domain.errors :as err]))
 
 (def limite-inventario 9)
 (def max-incubadoras 3)
@@ -184,51 +183,12 @@
               (update :eggs #(mapv aplicar %))
               (update :receipts conj event-id)))))))
 
-(defn- hatch-seed-bytes
-  [seed]
-  (.digest (MessageDigest/getInstance "SHA-256")
-           (.getBytes (str seed) StandardCharsets/UTF_8)))
-
-(defn- u8
-  [^bytes b i]
-  (bit-and (long (aget b (int i))) 0xff))
-
 (defn preparar-nascimento
-  "Registro nível 1. Shiny 1/512 e IVs 0–31 a partir do seed (hatch-id) —
-  estável em retries. `species` já fixada na concessão."
+  "Registro nível 1 canônico (catálogo local + growth-v1). Determinístico no seed.
+   Sem dados da espécie → erro `:egg_species_data_missing` (não consumir ovo)."
   ([species pokemon-id] (preparar-nascimento species pokemon-id pokemon-id))
   ([species pokemon-id seed]
-   (let [b (hatch-seed-bytes (str seed "|" species "|" pokemon-id))
-         shiny? (zero? (mod (+ (bit-shift-left (u8 b 0) 8) (u8 b 1)) 512))
-         iv (fn [i] (mod (u8 b (+ 2 i)) 32))
-         nome (let [s (str species)]
-                (if (str/blank? s) "Pokémon"
-                    (str (str/upper-case (subs s 0 1)) (subs s 1))))
-         ivs {:hp (iv 0) :ataque (iv 1) :defesa (iv 2)
-              :atq-esp (iv 3) :def-esp (iv 4) :veloc (iv 5)}
-         base 40
-         hp (+ 45 (iv 0))]
-     {:id-pokemon pokemon-id
-      :nome nome
-      :species (str species)
-      :nivel 1
-      :xp-desde-nivel 0
-      :hp hp
-      :hp-atual hp
-      :ataque (+ base (iv 1))
-      :defesa (+ base (iv 2))
-      :atq-esp (+ base (iv 3))
-      :def-esp (+ base (iv 4))
-      :veloc (+ base (iv 5))
-      :tipos ["normal"]
-      :golpes [{:nome-exibicao "Investida" :tipo "normal" :poder 40 :classe :fisico}]
-      :shiny shiny?
-      :shiny? shiny?
-      :ivs ivs
-      :raridade "comum"
-      :origem "ovo"
-      :amizade 70
-      :status nil})))
+   (egg-hatch/preparar-registro species pokemon-id seed)))
 
 (defn assert-hatch-save!
   "Entrega só no save carimbado. Fence do ovo NÃO precisa bater com o writer

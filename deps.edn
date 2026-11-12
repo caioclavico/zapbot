@@ -670,7 +670,7 @@
 
   ;; A6 — ovos / PI / incubadoras (domínio + Datomic + regressão adventure)
   :test-a6-eggs-incubation
-  {:main-opts ["-e" "(require 'clojure.test 'pokemon.tests.egg-activity-a6-test 'pokemon.tests.adventure-m37-test 'pokemon.tests.joy-eggs-m410-test) (let [r (clojure.test/run-tests 'pokemon.tests.egg-activity-a6-test 'pokemon.tests.adventure-m37-test 'pokemon.tests.joy-eggs-m410-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"]
+  {:main-opts ["-e" "(require 'clojure.test 'pokemon.tests.egg-activity-a6-test 'pokemon.tests.egg-fixes-a6-test 'pokemon.tests.adventure-m37-test 'pokemon.tests.joy-eggs-m410-test) (let [r (clojure.test/run-tests 'pokemon.tests.egg-activity-a6-test 'pokemon.tests.egg-fixes-a6-test 'pokemon.tests.adventure-m37-test 'pokemon.tests.joy-eggs-m410-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"]
    :jvm-opts ["-Xms64m" "-Xmx768m" "-XX:+UseG1GC"]}
 
   ;; A6 — smoke HTTP do gate (Datomic descartável)
