@@ -77,8 +77,8 @@ Evidências: `/tmp/a6-flat9-reh-20261113T193712Z/`
 
 ## Riscos restantes
 
-1. **19 ambíguos** exigem decisão humana / auditoria Datomic antes de backfill; grants/evoluções desses registros ficam bloqueados até reconciliação; não zerar XP anterior.
-2. Cold archive `cold-pr85-repair` espelhou tip pré-reparo nos levels dos 4 afetados; o volume `repair-reh` é a referência pós-reparo. **Gerar cold fresco** imediatamente antes de qualquer cutover autorizado.
+1. Ambíguos unversioned residual≥9: inventário atual **18** (não 19). Auditoria + ensaio de reconciliação concluídos — ver `docs/a6-flat9-ambiguous-xp-reconciliation-report.md`. Fail-closed permanece até apply autorizado em produção.
+2. Cold archive `cold-pr85-repair` espelhou tip pré-reparo nos levels dos 4 afetados; cold fresco da reconciliação: `cold-flat9-ambig-20261113T215231Z`. **Gerar cold fresco** imediatamente antes de qualquer cutover autorizado.
 3. Multiplicadores ginásio/raid/PvP/adversário permanecem leves sobre pontos flat — balanceamento documentado; caçada comum = 3.
 4. Frota mista durante deploy: leitores antigos podem não entender `flat-9-v2` até o tip JVM/Node.
 
@@ -95,12 +95,14 @@ Evidências: `/tmp/a6-flat9-reh-20261113T193712Z/`
 | Implementação flat-9-v2 | GO |
 | Testes JVM focados | GO |
 | Conversão sem salto de nível (ensaio) | GO |
-| Reparados #85 preservados | GO (volume repair-reh) |
-| Ambíguos fail-closed | GO (19 documentados) |
+| Reparados #85 preservados | GO |
+| Ambíguos — auditoria + ensaio | GO (18/18 B; 0 UNRESOLVED no restore) |
 | Merge/deploy produção | **NO-GO até GO explícito separado** |
-| Backfill produção | **NO-GO** |
+| Backfill produção dos 18 | **NO-GO até GO explícito separado** |
 
 
 ## Revisão de segurança após GO do usuário
 
-Identificado bug no primeiro grant: o caminho `ensure-flat9-v2-for-grant` inicializava residual 0 para unversioned com XP >=9, apagando implicitamente o progresso não reconciliado. Corrigido no PR: agora operação de grant ou evolução falha fechada antes de alterar registro; nada é redefinido. **Esse bloqueio impede temporariamente gameplay com os 19 Pokémon até reconciliação**. Não se deve executar deploy em produção enquanto a auditoria individual e o ensaio cold atualizado não estiverem concluídos. Nenhum merge/backfill/deploy executado nesta revisão.
+Identificado bug no primeiro grant: o caminho `ensure-flat9-v2-for-grant` inicializava residual 0 para unversioned com XP >=9, apagando implicitamente o progresso não reconciliado. Corrigido no PR: agora operação de grant ou evolução falha fechada antes de alterar registro; nada é redefinido.
+
+**Atualização (reconciliação ambígua):** inventário live confirmou **18** registros (1 dos 19 anteriores já `growth-v1`). Todos classificados **B** com evidência; reconciler idempotente ensaiado em restore isolado com **0 Δ nível** e **0 UNRESOLVED**. Detalhes e fingerprints em `docs/a6-flat9-ambiguous-xp-reconciliation-report.md`. Nenhum merge/backfill/deploy executado.

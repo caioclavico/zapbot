@@ -207,6 +207,51 @@
       (is (= residual (:xp-desde-nivel r)))
       (is (= 13 (:nivel r))))))
 
+(deftest reconcile-ambiguous-official-residual-preserves-level
+  (let [span (growth/level-span :medium-fast 13)
+        ;; Staryu-like: residual oficial dentro do span
+        raw 478
+        _ (is (< raw span))
+        target (growth/propose-flat9-from-official-residual
+                {:species "staryu" :nivel 13 :xp-desde-nivel raw})
+        reg {:species "staryu" :nivel 13 :xp-desde-nivel raw :xp raw
+             :hp 50 :hp-atual 50 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1}
+        entry {:id "staryu-test" :action :converter
+               :expected-nivel 13 :expected-raw-xp raw
+               :target-residual target :origin :B-official-residual-unversioned}
+        once (growth/reconcile-ambiguous-entry reg entry)
+        twice (growth/reconcile-ambiguous-entry (:registro once) entry)
+        blocked (growth/reconcile-ambiguous-entry reg
+                                                  (assoc entry :action :manter-bloqueado))]
+    (is (some? target))
+    (is (<= 0 target 8))
+    (is (= :applied (:status once)))
+    (is (= 13 (get-in once [:registro :nivel])))
+    (is (= target (get-in once [:registro :xp-desde-nivel])))
+    (is (= growth/flat9-progress-version
+           (get-in once [:registro :xp-progress-version])))
+    (is (= raw (get-in once [:registro :xp-legacy-residual])))
+    (is (= :skipped (:status twice)) "idempotente")
+    (is (= :blocked (:status blocked)))
+    ;; após reconciliação, grant flat-9 legítimo pode subir se residual+3≥9
+    (let [g (xp/aplicar-xp-atividade (:registro once) 3)
+          sum (+ target 3)
+          expect-nivel (if (>= sum 9) 14 13)
+          expect-resid (if (>= sum 9) (- sum 9) sum)]
+      (is (= expect-nivel (:nivel-final g)))
+      (is (= expect-resid (get-in g [:registro :xp-desde-nivel]))))))
+
+(deftest reconcile-rejects-nivel-or-residual-drift
+  (let [reg {:species "pikachu" :nivel 20 :xp-desde-nivel 100 :xp 100
+             :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1}
+        entry {:action :converter :expected-nivel 20 :expected-raw-xp 99
+               :target-residual 3}]
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"residual diverge"
+                          (growth/reconcile-ambiguous-entry reg entry)))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"nivel diverge"
+                          (growth/reconcile-ambiguous-entry
+                           reg (assoc entry :expected-raw-xp 100 :expected-nivel 19))))))
+
 (deftest hotfix-convert-legacy-residual-never-levels
   "Preserva hotfix #85: convert-legacy-residual (caminho growth-v1) não sobe nível."
   (doseq [res [0 1 4 8 9 10 18 8478]]

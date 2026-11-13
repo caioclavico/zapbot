@@ -409,6 +409,110 @@
                      :xp-legacy-residual (legacy-residual-xp registro)}))
     (ensure-flat9-v2 registro)))
 
+(defn propose-flat9-from-official-residual
+  "Residual oficial no nível (0..span-1) → flat-9 0..8. Preserva nível.
+  Retorna nil se span inválido."
+  [registro]
+  (let [species (or (registro-get registro :species "species" :nome "nome"))
+        rate (or (when-let [g (registro-get registro :growth-rate "growth-rate")]
+                   (keyword g))
+                 (growth-rate-for-species species))
+        nivel (persist-nivel registro)
+        resid (legacy-residual-xp registro)
+        span (level-span rate nivel)]
+    (when (and (pos? span) (< resid span))
+      (min (dec flat9-xp-por-nivel)
+           (long (Math/floor (* (/ (double resid) (double span))
+                                (double flat9-xp-por-nivel))))))))
+
+(defn reconcile-ambiguous-entry
+  "Aplica 1 entrada de manifesto privado de reconciliação.
+
+  Pré-condições (CAS lógico):
+  - ação `:converter`
+  - registro ainda ambíguo OU já flat-9-v2 com mesmo residual (idempotente)
+  - nível == expected-nivel
+  - residual bruto == expected-raw-xp (se ainda ambíguo)
+
+  Nunca altera nível/stats/espécie. Retorna
+  `{:status :applied|:skipped|:blocked :registro :before :after}`."
+  [registro entry]
+  (let [action (keyword (or (:action entry) "manter-bloqueado"))
+        expected-nivel (long (:expected-nivel entry))
+        expected-raw (long (:expected-raw-xp entry))
+        target (when (some? (:target-residual entry))
+                 (long (:target-residual entry)))
+        nivel (persist-nivel registro)
+        raw (legacy-residual-xp registro)
+        ver (progress-ver registro)
+        already? (and (= ver flat9-progress-version)
+                      (= nivel expected-nivel)
+                      (some? target)
+                      (= (long (:xp-desde-nivel registro 0)) target))]
+    (cond
+      already?
+      {:status :skipped
+       :registro registro
+       :before registro
+       :after registro
+       :reason :already-reconciled}
+
+      (not= action :converter)
+      {:status :blocked
+       :registro registro
+       :before registro
+       :after registro
+       :reason :unresolved-manifest}
+
+      (nil? target)
+      {:status :blocked
+       :registro registro
+       :before registro
+       :after registro
+       :reason :missing-target-residual}
+
+      (not (ambiguous-legacy? registro))
+      {:status :blocked
+       :registro registro
+       :before registro
+       :after registro
+       :reason :not-ambiguous}
+
+      (not= nivel expected-nivel)
+      (throw (ex-info "Reconciliacao flat9: nivel diverge do manifesto"
+                      {:code :flat9-recon-nivel-mismatch
+                       :id (:id entry)
+                       :expected expected-nivel
+                       :actual nivel}))
+
+      (not= raw expected-raw)
+      (throw (ex-info "Reconciliation flat9: residual diverge do manifesto"
+                      {:code :flat9-recon-residual-mismatch
+                       :id (:id entry)
+                       :expected expected-raw
+                       :actual raw}))
+
+      (or (neg? target) (> target (dec flat9-xp-por-nivel)))
+      (throw (ex-info "Reconciliation flat9: target residual invalido"
+                      {:code :flat9-recon-bad-target
+                       :target target}))
+
+      :else
+      (let [after (assoc-flat9 registro nivel target
+                               :legacy-residual raw
+                               :legacy-nivel nivel
+                               :growth-rate (when-let [g (registro-get registro :growth-rate "growth-rate")]
+                                              (keyword g)))]
+        (when (not= (long (:nivel after)) nivel)
+          (throw (ex-info "Reconciliation flat9: conversao alterou nivel"
+                          {:code :flat9-recon-level-changed
+                           :antes nivel :depois (:nivel after)})))
+        {:status :applied
+         :registro after
+         :before registro
+         :after after
+         :reason :converted}))))
+
 (defn after-evolution
   "Preserva residual flat-9 e nível; nunca reduz nível."
   [registro]
