@@ -68,6 +68,8 @@
         span-old (cond
                    (= ver "growth-v2") (growth/level-span-simple nivel)
                    (and rate (not= rate :simple)) (growth/level-span rate nivel)
+                   (and known? (or (nil? ver) (= ver "legacy-unversioned")))
+                   growth/legacy-xp-por-nivel
                    :else nil)
         pct (when (and known? span-old (pos? span-old) (< nivel 100))
               (/ (double residual) (double span-old)))]
