@@ -65,8 +65,8 @@
         player "misty"]
     (boot-trainer! s chat player)
     (collection/adicionar-pokemon! s chat player magikarp 80 nil)
-    ;; Magikarp = slow: L1→2 exige 10 XP oficiais (PokéAPI).
-    (let [subiu (collection/ganhar-xp-pokemon! s chat player 0 10)
+    ;; flat-9: L1→2 exige 9 XP.
+    (let [subiu (collection/ganhar-xp-pokemon! s chat player 0 9)
           poke (first (:colecao (collection/consultar-treinador s chat player)))]
       (is (= 2 (:nivel subiu)))
       (is (= 2 (:nivel poke)))

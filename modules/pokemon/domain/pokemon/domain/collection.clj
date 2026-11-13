@@ -60,13 +60,14 @@
       (assoc :xp-legacy-residual (long (g :xp-legacy-residual)))
       (or (keyword? (g :growth-rate)) (string? (g :growth-rate)))
       (assoc :growth-rate (keyword (g :growth-rate)))
-      ;; Captura nova sem XP: total coerente com o nível na curva da espécie.
+      ;; Captura nova sem XP: residual 0 no nível (flat-9-v2).
       (and (nil? (g :xp-total))
            (nil? (g :xp-progress-version))
            (zero? (long (or (g :xp-desde-nivel) 0))))
-      (merge (let [seed (growth/ensure-growth-v1
+      (merge (let [seed (growth/ensure-flat9-v2
                          {:species (or (g :species) (g :nome))
-                          :nivel (long (or (g :nivel) 1))})]
+                          :nivel (long (or (g :nivel) 1))
+                          :xp-desde-nivel 0})]
                (select-keys seed [:xp-total :xp-desde-nivel :xp
                                   :xp-progress-version :growth-rate]))))))
 

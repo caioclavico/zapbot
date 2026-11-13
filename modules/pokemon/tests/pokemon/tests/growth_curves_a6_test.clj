@@ -1,8 +1,7 @@
 (ns pokemon.tests.growth-curves-a6-test
-  "Curvas oficiais PokéAPI + conversão legado residual → growth-v1."
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+  "flat-9-v2: progressão 9 XP/nível + conversão segura + regressão incidente #85.
+   Tabelas PokéAPI permanecem só para migrar growth-v1 → flat-9."
+  (:require [clojure.test :refer [deftest is testing]]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.domain.growth :as growth]
             [pokemon.domain.xp :as xp]
@@ -12,6 +11,19 @@
             [pokemon.application.trainer :as trainer]
             [pokemon.application.collection :as collection]
             [datomic.client.api :as d]))
+
+(defn- mon
+  "Pokémon flat-9-v2 mínimo para grants."
+  [{:keys [species nivel residual]
+    :or {species "pikachu" nivel 1 residual 0}}]
+  {:species species :nome species :nivel nivel
+   :xp-desde-nivel residual :xp residual
+   :xp-total (growth/flat9-synthetic-total nivel residual)
+   :xp-progress-version growth/flat9-progress-version
+   :hp 100 :hp-atual 100 :ataque 50 :defesa 50
+   :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70})
+
+;;; --- Tabelas PokéAPI (migração) ---
 
 (deftest six-curves-loaded-and-monotonic
   (doseq [rate growth/curve-keys]
@@ -23,15 +35,12 @@
                 (growth/total-xp-for-level rate (inc n))))))))
 
 (deftest official-totals-match-pokeapi-snapshot
-  (let [tables (growth/tables)]
-    (is (= 1000000 (growth/total-xp-for-level :medium-fast 100)))
-    (is (= 800000 (growth/total-xp-for-level :fast 100)))
-    (is (= 1250000 (growth/total-xp-for-level :slow 100)))
-    (is (= 1059860 (growth/total-xp-for-level :medium-slow 100)))
-    (is (= 600000 (growth/total-xp-for-level :erratic 100)))
-    (is (= 1640000 (growth/total-xp-for-level :fluctuating 100)))
-    (is (= "medium" (get-in tables [:medium-fast :pokeapi-name])))
-    (is (= "slow-then-very-fast" (get-in tables [:erratic :pokeapi-name])))))
+  (is (= 1000000 (growth/total-xp-for-level :medium-fast 100)))
+  (is (= 800000 (growth/total-xp-for-level :fast 100)))
+  (is (= 1250000 (growth/total-xp-for-level :slow 100)))
+  (is (= 1059860 (growth/total-xp-for-level :medium-slow 100)))
+  (is (= 600000 (growth/total-xp-for-level :erratic 100)))
+  (is (= 1640000 (growth/total-xp-for-level :fluctuating 100))))
 
 (deftest species-resolve-to-official-curves
   (is (= :medium-slow (growth/growth-rate-for-species "bulbasaur")))
@@ -40,80 +49,270 @@
   (is (= :fast (growth/growth-rate-for-species "clefairy")))
   (is (= :erratic (growth/growth-rate-for-species "nincada")))
   (is (= :fluctuating (growth/growth-rate-for-species "wailmer")))
-  (is (= :fast (growth/growth-rate-for-species "wishiwashi-solo"))
-      "forma resolve para espécie-base wishiwashi (fast)"))
+  (is (= :fast (growth/growth-rate-for-species "wishiwashi-solo"))))
 
-(deftest level-from-total-and-boundaries
-  (doseq [rate [:medium-fast :erratic :fluctuating]]
-    (is (= 1 (growth/pokemon-level-from-total-xp rate 0)))
-    (is (= 2 (growth/pokemon-level-from-total-xp rate
-                                                (growth/total-xp-for-level rate 2))))
-    (is (= 50 (growth/pokemon-level-from-total-xp rate
-                                                 (growth/total-xp-for-level rate 50))))
-    (is (= 99 (growth/pokemon-level-from-total-xp rate
-                                                 (dec (growth/total-xp-for-level rate 100)))))
-    (is (= 100 (growth/pokemon-level-from-total-xp rate
-                                                  (growth/total-xp-for-level rate 100))))
-    (is (= 100 (growth/pokemon-level-from-total-xp rate
-                                                  (+ (growth/total-xp-for-level rate 100) 99999))))))
+;;; --- Grants flat-9 ---
 
-(deftest erratic-fluctuating-piecewise-samples
-  ;; Valores oficiais Pontos L50 / L68 / L99 (PokéAPI)
-  (is (= 125000 (growth/total-xp-for-level :erratic 50)))
-  (is (= 257834 (growth/total-xp-for-level :erratic 68)))
-  (is (= 591882 (growth/total-xp-for-level :erratic 99)))
-  (is (= 142500 (growth/total-xp-for-level :fluctuating 50)))
-  (is (= 1640000 (growth/total-xp-for-level :fluctuating 100))))
+(deftest flat9-grant-matrix-0-1-3-8-9-10-18
+  (doseq [[resid ganho nivel-esp resid-esp subidas]
+          [[0 0 20 0 0]
+           [0 1 20 1 0]
+           [0 3 20 3 0]
+           [6 3 21 0 1]   ;; exemplo do plano
+           [8 3 21 2 1]   ;; exemplo do plano
+           [0 8 20 8 0]
+           [0 9 21 0 1]
+           [0 10 21 1 1]
+           [0 18 22 0 2]
+           [8 1 21 0 1]
+           [5 10 21 6 1]]]
+    (testing (str "resid=" resid " +" ganho)
+      (let [r (mon {:nivel 20 :residual resid})
+            g (xp/aplicar-xp-pokemon r ganho)]
+        (is (= nivel-esp (:nivel-final g)))
+        (is (= subidas (:subidas g)))
+        (is (= resid-esp (get-in g [:registro :xp-desde-nivel])))
+        (is (= growth/flat9-progress-version
+               (get-in g [:registro :xp-progress-version])))))))
 
-(deftest legacy-residual-conversion-preserves-level
+(deftest flat9-excedente-preservado-multi-level
+  (let [g (xp/aplicar-xp-pokemon (mon {:nivel 1 :residual 0}) 27)]
+    (is (= 4 (:nivel-final g)))
+    (is (= 3 (:subidas g)))
+    (is (= 0 (get-in g [:registro :xp-desde-nivel])))))
+
+(deftest flat9-nivel-99-e-100
+  (let [to100 (xp/aplicar-xp-pokemon (mon {:nivel 99 :residual 8}) 3)
+        at100 (xp/aplicar-xp-pokemon (mon {:nivel 100 :residual 0}) 50)
+        near (xp/aplicar-xp-pokemon (mon {:nivel 99 :residual 0}) 9)]
+    (is (= 100 (:nivel-final to100)))
+    (is (zero? (get-in to100 [:registro :xp-desde-nivel])))
+    (is (= 100 (:nivel-final at100)))
+    (is (zero? (:subidas at100)))
+    (is (= 100 (:nivel-final near)))
+    (is (zero? (get-in near [:registro :xp-desde-nivel])))))
+
+(deftest flat9-activity-win-loss-no-hidden-multipliers-hunt
+  (let [base (mon {:nivel 20 :residual 0})
+        win (xp/calcular-ganho-pokemon base xp/xp-por-vitoria
+                                       {:atividade :batalha})
+        loss (xp/calcular-ganho-pokemon base xp/xp-por-derrota)
+        hunt (xp/calcular-ganho-pokemon base 3 {:atividade :cacada})]
+    (is (= 3 win))
+    (is (= 1 loss))
+    (is (= 3 hunt) "caçada comum = 3 XP flat, sem (pts/9)×span")
+    (let [g (xp/aplicar-xp-atividade base 3 {:atividade :batalha})]
+      (is (= 20 (:nivel-final g)))
+      (is (= 3 (get-in g [:registro :xp-desde-nivel])))
+      (is (zero? (:subidas g))))))
+
+(deftest flat9-tres-vitorias-sobe-um-nivel
+  (let [[after n]
+        (loop [r (mon {:nivel 24 :residual 0}) n 0]
+          (if (or (>= (long (:nivel r)) 25) (> n 6))
+            [r n]
+            (recur (:registro (xp/aplicar-xp-atividade r xp/xp-por-vitoria))
+                   (inc n))))]
+    (is (= 25 (:nivel after)))
+    (is (= 3 n))))
+
+(deftest flat9-activity-variants-capped
+  (let [base (mon {:nivel 30 :residual 0})
+        win (xp/calcular-ganho-pokemon base 3 {:atividade :batalha})
+        loss (xp/calcular-ganho-pokemon base 1 {:atividade :batalha})
+        rare (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "raro"})
+        epic (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "epico"})
+        leg (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "lendario"})
+        myth (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "mitico"})
+        gym (xp/calcular-ganho-pokemon base 3 {:atividade :ginasio})
+        pvp (xp/calcular-ganho-pokemon base 3 {:atividade :pvp})
+        adv-high (xp/calcular-ganho-pokemon base 3 {:nivel-adversario 60})
+        adv-low (xp/calcular-ganho-pokemon base 3 {:nivel-adversario 10})]
+    (is (= 3 win))
+    (is (= 1 loss))
+    (is (< loss win))
+    (is (<= rare epic leg myth))
+    (is (>= gym win))
+    (is (>= pvp win))
+    (is (>= adv-high win))
+    (is (<= adv-low win))
+    (is (<= myth xp/pokemon-xp-grant-cap))))
+
+(deftest flat9-wins-to-milestones-same-all-species
+  (testing "Todas as espécies: exatamente 3 vitórias por nível"
+    (doseq [species ["pikachu" "bulbasaur" "magikarp" "clefairy" "nincada" "wailmer"]]
+      (doseq [target [10 20 30 50]]
+        (let [wins (loop [r (mon {:species species :nivel 1 :residual 0}) n 0]
+                     (cond
+                       (>= (long (:nivel r)) (long target)) n
+                       (> n 500) n
+                       :else
+                       (recur (:registro (xp/aplicar-xp-atividade r 3))
+                              (inc n))))]
+          (is (= (* 3 (dec target)) wins)
+              (str species " → L" target)))))))
+
+;;; --- Conversão ---
+
+(deftest convert-growth-v1-preserves-level-fraction
+  (let [rate :medium-fast
+        nivel 24
+        span (growth/level-span rate nivel)
+        ;; ~4/9 do span
+        resid-v1 (long (Math/floor (* span (/ 4.0 9.0))))
+        total (+ (growth/total-xp-for-level rate nivel) resid-v1)
+        v1 {:species "pikachu" :nivel nivel :xp-total total
+            :xp-desde-nivel resid-v1 :xp resid-v1
+            :xp-progress-version "growth-v1" :growth-rate rate
+            :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1}
+        flat (growth/ensure-flat9-v2 v1)]
+    (is (= 24 (:nivel flat)))
+    (is (= growth/flat9-progress-version (:xp-progress-version flat)))
+    (let [expected (min 8 (long (Math/floor (* (/ (double resid-v1) (double span)) 9.0))))]
+      (is (= expected (:xp-desde-nivel flat))))
+    (is (< (:xp-desde-nivel flat) 9))
+    (is (= (:nivel flat) (:nivel (growth/ensure-flat9-v2 flat))) "idempotente")))
+
+(deftest convert-proven-legacy-0-8
   (let [legado {:species "pikachu" :nivel 24 :xp-desde-nivel 4
                 :hp 100 :hp-atual 100 :ataque 50 :defesa 50
                 :atq-esp 50 :def-esp 50 :veloc 50}
-        conv (growth/convert-legacy-residual legado)
-        again (growth/convert-legacy-residual conv)]
-    (is (= 24 (:nivel conv)))
-    (is (= "growth-v1" (:xp-progress-version conv)))
-    (is (= 4 (:xp-legacy-residual conv)))
-    (is (= (:xp-total conv) (:xp-total again)) "conversão idempotente")
-    (is (<= (growth/total-xp-for-level :medium-fast 24)
-            (:xp-total conv)
-            (dec (growth/total-xp-for-level :medium-fast 25))))
-    (let [frac (/ 4.0 9.0)
-          span (growth/level-span :medium-fast 24)
-          expected (+ (growth/total-xp-for-level :medium-fast 24)
-                      (long (Math/floor (* frac span))))]
-      (is (= expected (:xp-total conv))))))
+        flat (growth/ensure-flat9-v2 legado)]
+    (is (= 24 (:nivel flat)))
+    (is (= 4 (:xp-desde-nivel flat)))
+    (is (= growth/flat9-progress-version (:xp-progress-version flat)))))
 
-(deftest grant-multi-level-and-cap
-  (let [base {:species "caterpie" :nivel 1 :xp-desde-nivel 0
-              :hp 100 :hp-atual 100 :ataque 10 :defesa 10
-              :atq-esp 10 :def-esp 10 :veloc 10 :amizade 70}
-        ;; medium-fast L10 = 1000
-        big (xp/aplicar-xp-pokemon base 1000)]
-    (is (= 10 (:nivel-final big)))
-    (is (= 9 (:subidas big)))
-    (is (= 0 (get-in big [:registro :xp-desde-nivel])))
-    (let [capped (xp/aplicar-xp-pokemon
-                  (assoc (:registro big)
-                         :nivel 100
-                         :xp-total (growth/total-xp-for-level :medium-fast 100)
-                         :xp-progress-version "growth-v1"
-                         :growth-rate :medium-fast)
-                  50000)]
-      (is (= 100 (:nivel-final capped)))
-      (is (= 0 (:subidas capped)))
-      (is (= (growth/total-xp-for-level :medium-fast 100)
-             (get-in capped [:registro :xp-total]))))))
+(deftest ambiguous-legacy-not-auto-converted
+  (doseq [res [9 10 18 478 8478]]
+    (testing (str "residual=" res)
+      (let [r {:species "pikachu" :nivel 20 :xp-desde-nivel res :xp res
+               :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1}]
+        (is (growth/ambiguous-legacy? r))
+        (let [c (growth/ensure-flat9-v2 r)]
+          (is (nil? (:xp-progress-version c))
+              "ambíguo permanece sem versão")
+          (is (= 20 (:nivel c)))
+          (is (= res (or (:xp-desde-nivel c) (:xp c)))))))))
 
-(deftest evolution-keeps-progress-never-lowers-level
-  (let [pre {:species "charmander" :nivel 16 :xp-desde-nivel 2
-             :hp 100 :hp-atual 100 :ataque 50 :defesa 50
-             :atq-esp 50 :def-esp 50 :veloc 50}
-        conv (growth/convert-legacy-residual pre)
-        evo (growth/after-evolution (assoc conv :species "charmeleon" :nome "Charmeleon"))]
-    (is (>= (:nivel evo) 16))
-    (is (>= (:xp-total evo) (growth/total-xp-for-level (:growth-rate evo) (:nivel evo))))
-    (is (= "growth-v1" (:xp-progress-version evo)))))
+(deftest ambiguous-grant-is-blocked-without-resetting-progress
+  (doseq [residual [9 478 8478]]
+    (let [r {:species "Staryu" :nivel 13 :xp residual :xp-desde-nivel residual
+             :hp 50 :hp-atual 50 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1
+             :amizade 70}]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                            #"reconciliacao necessaria"
+                            (xp/aplicar-xp-atividade r 3 {:atividade :batalha})))
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (growth/after-evolution r)))
+      (is (= residual (:xp-desde-nivel r)))
+      (is (= 13 (:nivel r))))))
+
+(deftest reconcile-ambiguous-official-residual-preserves-level
+  (let [span (growth/level-span :medium-fast 13)
+        ;; Staryu-like: residual oficial dentro do span
+        raw 478
+        _ (is (< raw span))
+        target (growth/propose-flat9-from-official-residual
+                {:species "staryu" :nivel 13 :xp-desde-nivel raw})
+        reg {:species "staryu" :nivel 13 :xp-desde-nivel raw :xp raw
+             :hp 50 :hp-atual 50 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1}
+        entry {:id "staryu-test" :action :converter
+               :expected-nivel 13 :expected-raw-xp raw
+               :target-residual target :origin :B-official-residual-unversioned}
+        once (growth/reconcile-ambiguous-entry reg entry)
+        twice (growth/reconcile-ambiguous-entry (:registro once) entry)
+        blocked (growth/reconcile-ambiguous-entry reg
+                                                  (assoc entry :action :manter-bloqueado))]
+    (is (some? target))
+    (is (<= 0 target 8))
+    (is (= :applied (:status once)))
+    (is (= 13 (get-in once [:registro :nivel])))
+    (is (= target (get-in once [:registro :xp-desde-nivel])))
+    (is (= growth/flat9-progress-version
+           (get-in once [:registro :xp-progress-version])))
+    (is (= raw (get-in once [:registro :xp-legacy-residual])))
+    (is (= :skipped (:status twice)) "idempotente")
+    (is (= :blocked (:status blocked)))
+    ;; após reconciliação, grant flat-9 legítimo pode subir se residual+3≥9
+    (let [g (xp/aplicar-xp-atividade (:registro once) 3)
+          sum (+ target 3)
+          expect-nivel (if (>= sum 9) 14 13)
+          expect-resid (if (>= sum 9) (- sum 9) sum)]
+      (is (= expect-nivel (:nivel-final g)))
+      (is (= expect-resid (get-in g [:registro :xp-desde-nivel]))))))
+
+(deftest reconcile-rejects-nivel-or-residual-drift
+  (let [reg {:species "pikachu" :nivel 20 :xp-desde-nivel 100 :xp 100
+             :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1}
+        entry {:action :converter :expected-nivel 20 :expected-raw-xp 99
+               :target-residual 3}]
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"residual diverge"
+                          (growth/reconcile-ambiguous-entry reg entry)))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"nivel diverge"
+                          (growth/reconcile-ambiguous-entry
+                           reg (assoc entry :expected-raw-xp 100 :expected-nivel 19))))))
+
+(deftest hotfix-convert-legacy-residual-never-levels
+  "Preserva hotfix #85: convert-legacy-residual (caminho growth-v1) não sobe nível."
+  (doseq [res [0 1 4 8 9 10 18 8478]]
+    (let [c (growth/convert-legacy-residual
+             {:species "pikachu" :nivel 20 :xp-desde-nivel res
+              :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})]
+      (is (= 20 (:nivel c)))
+      (is (= "growth-v1" (:xp-progress-version c)))
+      (is (= res (:xp-legacy-residual c)))))
+  (let [c (growth/convert-legacy-residual
+           {:species "pikachu" :nivel 99 :xp-desde-nivel 9
+            :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})]
+    (is (= 99 (:nivel c)))))
+
+(deftest incident-85-repaired-pokemon-regression
+  "Blastoise 74, Tyranitar 90, Crobat 5, Amaura 4 — conversão não altera nível.
+   Staryu L13 residual anômalo — grant não pula nível."
+  (doseq [[sp niv res]
+          [["blastoise" 74 8478]
+           ["tyranitar" 90 12000]
+           ["crobat" 5 40]
+           ["amaura" 4 30]
+           ["Staryu" 13 478]]]
+    (testing sp
+      (let [r {:species sp :nivel niv :xp-desde-nivel res :xp res
+               :hp 100 :hp-atual 100 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1
+               :amizade 70}
+            ens (growth/ensure-flat9-v2 r)]
+        (is (= niv (:nivel ens)))
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (xp/aplicar-xp-atividade r 3))
+            "Ambiguo nao pode alterar XP nem nivel antes de reconciliacao")))))
+
+(deftest evolution-keeps-flat9-progress
+  (let [pre (mon {:species "charmander" :nivel 16 :residual 2})
+        evo (growth/after-evolution (assoc pre :species "charmeleon" :nome "Charmeleon"))]
+    (is (= 16 (:nivel evo)))
+    (is (= 2 (:xp-desde-nivel evo)))
+    (is (= growth/flat9-progress-version (:xp-progress-version evo)))))
+
+(deftest unknown-xp-not-invented
+  (let [p (xp/progresso-pokemon {:nivel 10})]
+    (is (false? (:conhecido? p)))
+    (is (nil? (:xp-nivel-atual p))))
+  (let [p (xp/progresso-pokemon (mon {:nivel 10 :residual 3}))]
+    (is (true? (:conhecido? p)))
+    (is (= 3 (:xp-nivel-atual p)))
+    (is (= 9 (:xp-proximo-nivel p)))))
+
+(deftest stats-grow-only-on-legitimate-levelup
+  (let [base (mon {:nivel 20 :residual 6})
+        atk0 (:ataque base)
+        no-up (xp/aplicar-xp-pokemon base 1)
+        up (xp/aplicar-xp-pokemon base 3)]
+    (is (zero? (:subidas no-up)))
+    (is (= atk0 (get-in no-up [:registro :ataque])))
+    (is (= 1 (:subidas up)))
+    (is (= 21 (:nivel-final up)))
+    (is (> (get-in up [:registro :ataque]) atk0))))
+
+;;; --- Datomic ---
 
 (deftest migration-037-is-additive
   (let [client (persistence/client {:system (str "g037-" (java.util.UUID/randomUUID))
@@ -127,7 +326,7 @@
       (doseq [a attrs]
         (is (some? (d/pull db '[:db/ident] a)))))))
 
-(deftest datomic-grant-persists-growth-v1
+(deftest datomic-grant-persists-flat9-v2
   (let [client (persistence/client {:system (str "gxp-" (java.util.UUID/randomUUID))
                                     :storage-dir (str "/tmp/gxp-" (java.util.UUID/randomUUID))})
         conn (persistence/ensure-db! client "gxp")
@@ -146,87 +345,11 @@
     (collection/ganhar-xp-pokemon! s "c" "ash" 0 9)
     (let [poke (first (ports/list-collection s "c" "ash" "a"))]
       (is (= 2 (:nivel poke)))
-      (is (= "growth-v1" (:xp-progress-version poke)))
-      (is (some? (:xp-total poke)))
-      (is (= :medium-slow (:growth-rate poke))))))
+      (is (= growth/flat9-progress-version (:xp-progress-version poke)))
+      (is (= 0 (:xp-desde-nivel poke)))
+      (is (= (growth/flat9-synthetic-total 2 0) (:xp-total poke))))))
 
-(deftest legacy-vitorias-desde-nivel-precedence
-  (testing "somente vitórias"
-    (let [r {:species "pikachu" :nivel 10 :vitorias-desde-nivel 2
-             :hp 50 :hp-atual 50 :ataque 40 :defesa 40
-             :atq-esp 40 :def-esp 40 :veloc 40}
-          c (growth/convert-legacy-residual r)]
-      (is (= 6 (:xp-legacy-residual c)))
-      (is (= 10 (:nivel c)))
-      (is (= "growth-v1" (:xp-progress-version c)))
-      (let [span (growth/level-span :medium-fast 10)
-            expected (+ (growth/total-xp-for-level :medium-fast 10)
-                        (long (Math/floor (* (/ 6.0 9.0) span))))]
-        (is (= expected (:xp-total c))))))
-  (testing "xp-desde-nivel tem precedência sobre vitórias"
-    (let [c (growth/convert-legacy-residual
-             {:species "pikachu" :nivel 5 :xp-desde-nivel 1 :vitorias-desde-nivel 9
-              :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})]
-      (is (= 1 (:xp-legacy-residual c)))))
-  (testing "idempotência"
-    (let [c1 (growth/convert-legacy-residual
-              {:species "eevee" :nivel 7 :vitorias-desde-nivel 1
-               :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})
-          c2 (growth/convert-legacy-residual c1)]
-      (is (= (:xp-total c1) (:xp-total c2)))
-      (is (= (:nivel c1) (:nivel c2))))))
-
-(deftest legacy-residual-boundaries
-  ;; HOTFIX: conversão nunca sobe nível — residual≥9 só contribui via rem/9.
-  (doseq [[res _old-extra]
-          [[0 0] [1 0] [4 0] [8 0] [9 1] [10 1] [18 2]]]
-    (testing (str "residual=" res)
-      (let [c (growth/convert-legacy-residual
-               {:species "pikachu" :nivel 20 :xp-desde-nivel res
-                :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})
-            nivel' (:nivel c)
-            rate :medium-fast
-            rem (long (mod res 9))
-            span (growth/level-span rate 20)
-            expected-total (+ (growth/total-xp-for-level rate 20)
-                              (long (Math/floor (* (/ (double rem) 9.0) span))))]
-        (is (= 20 nivel') "conversão preserva nível")
-        (is (= expected-total (:xp-total c)))
-        (is (= res (:xp-legacy-residual c))))))
-  (testing "nível 99 com residual 9 NÃO sobe a 100 na conversão"
-    (let [c (growth/convert-legacy-residual
-             {:species "pikachu" :nivel 99 :xp-desde-nivel 9
-              :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})]
-      (is (= 99 (:nivel c)))
-      (is (= 9 (:xp-legacy-residual c)))
-      (is (= (growth/total-xp-for-level :medium-fast 99) (:xp-total c)))
-      (is (zero? (:xp-desde-nivel c)))))
-  (testing "nível 100 não sobe nem acumula residual"
-    (let [c (growth/convert-legacy-residual
-             {:species "pikachu" :nivel 100 :xp-desde-nivel 20
-              :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})]
-      (is (= 100 (:nivel c)))
-      (is (= (growth/total-xp-for-level :medium-fast 100) (:xp-total c)))
-      (is (= 20 (:xp-legacy-residual c))))))
-
-(deftest incident-cacada-nao-pula-niveis-com-residual-anomalo
-  "Regressão: Blastoise L74 residual 8478 e Staryu L13 residual 478."
-  (let [blast (growth/convert-legacy-residual
-               {:species "blastoise" :nivel 74 :xp-desde-nivel 8478 :xp 8478
-                :hp 100 :hp-atual 100 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})
-        staryu (xp/aplicar-xp-atividade
-                {:species "Staryu" :nivel 13 :xp 478 :xp-desde-nivel 478
-                 :hp 50 :hp-atual 50 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1
-                 :amizade 70}
-                3 {:atividade :batalha})]
-    (is (= 74 (:nivel blast)))
-    (is (= 8478 (:xp-legacy-residual blast)))
-    (is (= "growth-v1" (:xp-progress-version blast)))
-    (is (= 13 (:nivel-final staryu)))
-    (is (zero? (:subidas staryu)))
-    (is (= 13 (get-in staryu [:registro :nivel])))))
-
-(deftest datomic-vitorias-only-roundtrip
+(deftest datomic-retry-idempotent-conversion
   (let [client (persistence/client {:system (str "gvic-" (java.util.UUID/randomUUID))
                                     :storage-dir (str "/tmp/gvic-" (java.util.UUID/randomUUID))})
         conn (persistence/ensure-db! client "gvic")
@@ -236,135 +359,20 @@
     (collection/adicionar-pokemon!
      s "c" "ash"
      {:id-pokemon "v1" :species "pikachu" :nome "Pikachu"
-      :nivel 12 :vitorias-desde-nivel 2
+      :nivel 12 :xp-desde-nivel 2
       :hp 35 :hp-atual 35 :ataque 55 :defesa 40
       :atq-esp 50 :def-esp 50 :veloc 90 :tipos ["electric"] :amizade 70
       :golpes [{:slug "thunder-shock" :nome-exibicao "Thunder Shock" :tipo "electric"
                 :poder 40 :classe :especial}]}
      20 nil)
-    ;; 1 XP oficial força ensure-growth-v1 / conversão lazy sem subir por atividade.
     (collection/ganhar-xp-pokemon! s "c" "ash" 0 1)
     (let [poke (first (ports/list-collection s "c" "ash" "a"))
           again (xp/aplicar-xp-pokemon poke 0)]
       (is (= 12 (:nivel poke)))
-      (is (= "growth-v1" (:xp-progress-version poke)))
-      (is (pos? (:xp-total poke)))
+      (is (= growth/flat9-progress-version (:xp-progress-version poke)))
+      (is (= 3 (:xp-desde-nivel poke)))
       (is (= (:xp-total poke) (get-in again [:registro :xp-total]))
-          "retry não duplica XP de conversão"))))
-
-(deftest balanced-activity-grant-pacing
-  (let [base {:species "pikachu" :nivel 24 :xp-desde-nivel 0
-              :xp-progress-version "growth-v1" :growth-rate :medium-fast
-              :xp-total (growth/total-xp-for-level :medium-fast 24)
-              :hp 100 :hp-atual 100 :ataque 50 :defesa 50
-              :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70}
-        span (growth/level-span :medium-fast 24)
-        win (xp/calcular-ganho-pokemon base xp/xp-por-vitoria)
-        loss (xp/calcular-ganho-pokemon base xp/xp-por-derrota)
-        raid (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "lendario"})]
-    (is (= (long (Math/floor (* span (/ 3.0 9.0)))) win)
-        "vitória ≈ 1/3 do span (3 vitórias/nível)")
-    (is (= (long (Math/floor (* span (/ 1.0 9.0)))) loss))
-    (is (> raid win) "raid lendária > vitória comum")
-    (is (<= raid (long (Math/floor (* span xp/pokemon-xp-grant-span-cap)))))
-    (let [[after n]
-          (loop [r base n 0]
-            (if (or (>= (long (:nivel r)) 25) (> n 6))
-              [r n]
-              (recur (:registro (xp/aplicar-xp-atividade r xp/xp-por-vitoria))
-                     (inc n))))]
-      (is (= 25 (:nivel after)))
-      (is (<= 3 n 4) "≈3–4 vitórias por nível (arredondamento do span)"))))
-
-(deftest balance-simulation-milestones-medium-fast
-  (testing "Vitórias estimadas até marcos com ritmo ~3/nível (não é regra PokéAPI)."
-    (let [wins-to (fn [target]
-                    (* 3 (dec (long target))))]
-      (is (= 27 (wins-to 10)))
-      (is (= 57 (wins-to 20)))
-      (is (= 87 (wins-to 30)))
-      (is (= 147 (wins-to 50)))
-      (is (= 222 (wins-to 75)))
-      (is (= 297 (wins-to 100))))))
-
-(defn- mon-at
-  [species nivel]
-  (let [rate (growth/growth-rate-for-species species)
-        total (growth/total-xp-for-level rate nivel)]
-    {:species species :nome species :nivel nivel
-     :xp-total total :xp-desde-nivel 0 :xp 0
-     :xp-progress-version "growth-v1" :growth-rate rate
-     :hp 100 :hp-atual 100 :ataque 50 :defesa 50
-     :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70}))
-
-(defn- wins-to-reach
-  "Simula vitórias comuns sucessivas até atingir `target` (máx 20000)."
-  [species target]
-  (loop [r (mon-at species 1) n 0]
-    (cond
-      (>= (long (:nivel r)) (long target)) n
-      (> n 20000) n
-      :else
-      (recur (:registro (xp/aplicar-xp-atividade r xp/xp-por-vitoria
-                                                 {:atividade :batalha}))
-             (inc n)))))
-
-(deftest dynamic-balance-six-curves-milestones
-  (doseq [[species rate] [["pikachu" :medium-fast]
-                          ["bulbasaur" :medium-slow]
-                          ["magikarp" :slow]
-                          ["clefairy" :fast]
-                          ["nincada" :erratic]
-                          ["wailmer" :fluctuating]]]
-    (testing species
-      (is (= rate (growth/growth-rate-for-species species)))
-      (doseq [target [10 20 30 50]]
-        (let [wins (wins-to-reach species target)
-              lo (* 3 (dec target))
-              hi (* 4 (dec target))]
-          (is (<= lo wins hi)
-              (str species " → L" target " wins=" wins " band=[" lo "," hi "]")))))))
-
-(deftest dynamic-balance-high-milestones-medium-fast
-  (is (<= 222 (wins-to-reach "pikachu" 75) 296))
-  (is (<= 297 (wins-to-reach "pikachu" 100) 396)))
-
-(deftest dynamic-balance-activity-variants
-  (let [base (mon-at "pikachu" 30)
-        win (xp/calcular-ganho-pokemon base 3 {:atividade :batalha})
-        loss (xp/calcular-ganho-pokemon base 1 {:atividade :batalha})
-        rare (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "raro"})
-        epic (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "epico"})
-        leg (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "lendario"})
-        myth (xp/calcular-ganho-pokemon base 6 {:atividade :raid :categoria-raid "mitico"})
-        gym (xp/calcular-ganho-pokemon base 3 {:atividade :ginasio})
-        pvp (xp/calcular-ganho-pokemon base 3 {:atividade :pvp})
-        adv-high (xp/calcular-ganho-pokemon base 3 {:nivel-adversario 60})
-        adv-low (xp/calcular-ganho-pokemon base 3 {:nivel-adversario 10})
-        span (growth/level-span :medium-fast 30)
-        cap (long (Math/floor (* span xp/pokemon-xp-grant-span-cap)))]
-    (is (< loss win))
-    (is (<= rare epic leg myth))
-    (is (> gym win))
-    (is (> pvp win))
-    (is (> adv-high win))
-    (is (< adv-low win))
-    (is (<= myth cap) "anti-exploit cap")
-    (let [near (mon-at "pikachu" 99)
-          need (growth/level-span :medium-fast 99)
-          g (xp/aplicar-xp-pokemon near need {:unidade :oficial})
-          mx (xp/aplicar-xp-atividade (:registro g) 3)]
-      (is (= 100 (:nivel-final g)))
-      (is (= 100 (:nivel-final mx)))
-      (is (zero? (:xp-oficial-aplicado mx)) "L100 não recebe XP excedente"))))
-
-(deftest official-tables-untouched-snapshot
-  (is (= 1000000 (growth/total-xp-for-level :medium-fast 100)))
-  (is (= 800000 (growth/total-xp-for-level :fast 100)))
-  (is (= 1250000 (growth/total-xp-for-level :slow 100)))
-  (is (= 1059860 (growth/total-xp-for-level :medium-slow 100)))
-  (is (= 600000 (growth/total-xp-for-level :erratic 100)))
-  (is (= 1640000 (growth/total-xp-for-level :fluctuating 100))))
+          "retry com 0 XP não duplica"))))
 
 (deftest datomic-persists-xp-legacy-nivel-immutable
   (let [client (persistence/client {:system (str "gln-" (java.util.UUID/randomUUID))
@@ -383,13 +391,12 @@
                 :poder 40 :classe :fisico}]}
      20 nil)
     (collection/ganhar-xp-pokemon! s "c" "ash" 0 1)
-    (let [p1 (first (ports/list-collection s "c" "ash" "a"))
-          need (- (growth/total-xp-for-level :medium-fast 8)
-                  (long (:xp-total p1 0)))]
+    (let [p1 (first (ports/list-collection s "c" "ash" "a"))]
       (is (= 7 (:xp-legacy-nivel p1)))
       (is (= 4 (:xp-legacy-residual p1)))
-      (collection/ganhar-xp-pokemon! s "c" "ash" 0 (max 1 need))
+      (collection/ganhar-xp-pokemon! s "c" "ash" 0 8)
       (let [p2 (first (ports/list-collection s "c" "ash" "a"))]
-        (is (= 7 (:xp-legacy-nivel p2)) "retry/grant não sobrescreve nível legado")
+        (is (= 7 (:xp-legacy-nivel p2)) "grant não sobrescreve nível legado")
         (is (= 4 (:xp-legacy-residual p2)))
-        (is (>= (:nivel p2) 8))))))
+        (is (= 8 (:nivel p2)))
+        (is (= 4 (:xp-desde-nivel p2)))))))
