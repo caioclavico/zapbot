@@ -22,7 +22,7 @@
 - `xp-desde-nivel` e `xp`: residual 0..8 (0 no nível 100)
 - `xp-total` sintético `(nivel-1)*9+residual` para compatibilidade
 - Preservar `:xp-legacy-residual`, `:xp-legacy-nivel` e o histórico Datomic
-- XP desconhecido permanece desconhecido; primeiro ganho em ambíguo inicia residual 0 no nível persistido
+- XP desconhecido permanece desconhecido em leitura; registros sem versão e residual ≥9 **falham fechados** em grants/evolução, sem zerar seu progresso. Somente após reconciliação histórica e transação idempotente podem usar `flat-9-v2`.
 
 ## Migração
 
@@ -36,7 +36,8 @@
 
 1. Implementação e testes CI verdes — ver relatório
 2. Ensaio isolado — 0 mudanças de nível na conversão (1080 Pokémon)
-3. Ambíguos documentados (19)
-4. GO separado para merge/deploy e qualquer backfill
+3. Ensaio inicial histórico: 19 ambíguos (1080 Pokémon). Inventário live RO posterior: **18** ambíguos, nenhum ID novo; `d11cc9ad-…` (Salamence L3 residual 1) já `growth-v1` e saiu do conjunto. Auditoria e reconciliação dos 18 ensaiadas em restore separado, 18/18 aplicados, 0 mudanças de nível, 0 UNRESOLVED, retry idempotente. Ver `docs/a6-flat9-ambiguous-xp-reconciliation-report.md`.
+4. **Sem backfill live:** os 18 continuam na produção até GO para apply, com cold fresco de cutover e fingerprint reconfirmado.
+5. GO separado para merge/deploy e para apply em produção; nenhum GO decorre dos ensaios.
 
 **Proíbe interpretar abertura/atualização do PR como aprovação de produção.**
