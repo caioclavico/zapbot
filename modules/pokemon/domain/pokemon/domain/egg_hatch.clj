@@ -126,4 +126,4 @@
         reg (cond-> reg
               imagem (assoc :imagem (if shiny? (or imagem-shiny imagem) imagem))
               imagem-shiny (assoc :imagem-shiny imagem-shiny))]
-    (growth/ensure-growth-v1 reg)))
+    (growth/ensure-flat9-v2 reg)))

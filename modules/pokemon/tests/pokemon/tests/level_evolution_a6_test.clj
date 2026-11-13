@@ -15,11 +15,9 @@
            [java.nio.charset StandardCharsets]))
 
 (defn- xp-to-level
-  "XP oficial necessário para ir do nível `from` (residual 0) até `to`."
-  [species from to]
-  (let [rate (growth/growth-rate-for-species species)]
-    (- (growth/total-xp-for-level rate to)
-       (growth/total-xp-for-level rate from))))
+  "XP flat-9 necessário para ir do nível `from` (residual 0) até `to`."
+  [_species from to]
+  (* 9 (max 0 (- (long to) (long from)))))
 
 (defn- fresh []
   (let [client (persistence/client {:system (str "a6-levevo-" (java.util.UUID/randomUUID))
@@ -38,11 +36,10 @@
                     :poder 40 :classe :fisico}]}
          m))
 
-(deftest xp-legado-limiar-e-growth-v1
-  (is (= 9 xp/xp-por-nivel) "constante legado residual")
+(deftest xp-flat9-limiar-e-versao
+  (is (= 9 xp/xp-por-nivel) "9 XP por nível")
   (is (= 100 xp/nivel-maximo))
   (is (= 1.03 xp/fator-crescimento-por-nivel))
-  ;; Geodude = medium-slow: L1→2 exige 9 XP oficiais.
   (let [{:keys [registro subidas]}
         (xp/aplicar-xp-pokemon
          {:nome "Geodude" :species "geodude" :nivel 1 :xp-desde-nivel 0
@@ -52,20 +49,19 @@
     (is (= 1 subidas))
     (is (= 2 (:nivel registro)))
     (is (= 0 (:xp-desde-nivel registro)))
-    (is (= "growth-v1" (:xp-progress-version registro)))
-    (is (number? (:xp-total registro)))))
+    (is (= "flat-9-v2" (:xp-progress-version registro)))
+    (is (= (growth/flat9-synthetic-total 2 0) (:xp-total registro)))))
 
 (deftest progresso-pokemon-nao-inventa-zero
   (is (false? (:conhecido? (xp/progresso-pokemon {:nivel 10}))))
   (is (nil? (:xp-nivel-atual (xp/progresso-pokemon {:nivel 10}))))
   (let [p (xp/progresso-pokemon {:nivel 10 :species "pikachu" :xp-desde-nivel 3})]
     (is (true? (:conhecido? p)))
-    (is (number? (:xp-nivel-atual p)))
-    (is (number? (:xp-proximo-nivel p)))
-    (is (= :medium-fast (:growth-rate p))))
+    (is (= 3 (:xp-nivel-atual p)))
+    (is (= 9 (:xp-proximo-nivel p))))
   (let [m (xp/progresso-pokemon {:nivel 100 :species "pikachu" :xp-desde-nivel 0
-                                 :xp-progress-version "growth-v1"
-                                 :xp-total 1000000})]
+                                 :xp-progress-version "flat-9-v2"
+                                 :xp-total (growth/flat9-synthetic-total 100 0)})]
     (is (true? (:nivel-maximo? m)))
     (is (nil? (:xp-proximo-nivel m)))))
 
@@ -243,11 +239,10 @@
                 :nivel 34 :xp-desde-nivel 5
                 :hp 80 :ataque 64 :defesa 58 :atq-esp 80 :def-esp 65 :veloc 80
                 :raridade "incomum"}
-        conv (growth/convert-legacy-residual (base-fire legado))]
+        prog (xp/progresso-pokemon (base-fire legado))]
     (collection/adicionar-pokemon! s "chat" "ash" (base-fire legado) 20 nil)
     (let [csv (reads/team-csv s "chat" "ash" "a")
-          body (String. (.decode (Base64/getDecoder) ^String (:base64 csv)) StandardCharsets/UTF_8)
-          prog (xp/progresso-pokemon conv)]
+          body (String. (.decode (Base64/getDecoder) ^String (:base64 csv)) StandardCharsets/UTF_8)]
       (is (= "odisseu-time-pokemon.csv" (:filename csv)))
       (is (.startsWith ^String (:base64 csv) "77u/") "UTF-8 BOM")
       (is (str/includes? body "pokemon_id,numero_pokedex,nome"))

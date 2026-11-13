@@ -8,12 +8,12 @@
 const PAGE_SIZE = 12;
 
 /**
- * Progresso de XP do Pokémon a partir do DTO canônico JVM (growth-v1).
- * O intervalo do nível vem de `xpNivelAtual`/`xpProximoNivel` calculados na JVM
- * pelas tabelas oficiais — o presenter NÃO reimplementa curvas.
- * Fallback residual legado (limiar 9) só quando o DTO ainda não traz o necessário.
+ * Progresso de XP do Pokémon (flat-9-v2): residual 0..8 / 9 por nível.
+ * O presenter NÃO usa curvas oficiais PokéAPI. Preferência: campos JVM
+ * `xpNivelAtual`/`xpProximoNivel`; se o DTO trouxer span oficial antigo (>9),
+ * força 9 para não exibir milhares como requisito de nível.
  */
-const XP_POR_NIVEL_POKEMON = 9; // legado; preferir campos JVM
+const XP_POR_NIVEL_POKEMON = 9;
 const NIVEL_MAXIMO_POKEMON = 100;
 
 function pickXpKnown(p) {
@@ -56,29 +56,35 @@ function pokemonXpProgress(p) {
       known: true, max: true, atual: 0, necessario: null, pct: null, label: 'NÍVEL MÁXIMO'
     };
   }
-  const atual = Number(
+  const atualRaw = Number(
     p.xpNivelAtual != null ? p.xpNivelAtual
       : (p['xp-nivel-atual'] != null ? p['xp-nivel-atual']
-        : (p.xpDesdeNivel != null ? p.xpDesdeNivel : p.xp))
+        : (p.xpDesdeNivel != null ? p.xpDesdeNivel
+          : (p['xp-desde-nivel'] != null ? p['xp-desde-nivel'] : p.xp)))
   );
-  const necessario = Number(
+  let necessario = Number(
     p.xpProximoNivel != null ? p.xpProximoNivel
       : (p['xp-proximo-nivel'] != null ? p['xp-proximo-nivel']
         : (p.xpNecessario != null ? p.xpNecessario
           : (p['xp-necessario'] != null ? p['xp-necessario']
             : XP_POR_NIVEL_POKEMON)))
   );
-  if (!Number.isFinite(atual) || !Number.isFinite(necessario) || necessario <= 0) {
+  // flat-9-v2: nunca exibir spans oficiais (centenas/milhares) como requisito.
+  if (!Number.isFinite(necessario) || necessario <= 0 || necessario > XP_POR_NIVEL_POKEMON) {
+    necessario = XP_POR_NIVEL_POKEMON;
+  }
+  if (!Number.isFinite(atualRaw)) {
     return { known: false, max: false, atual: null, necessario: null, pct: null, label: 'XP ?' };
   }
+  const atual = Math.max(0, Math.min(XP_POR_NIVEL_POKEMON - 1, Math.floor(atualRaw)));
   const pct = Math.min(100, Math.round((atual / necessario) * 1000) / 10);
   return {
     known: true,
     max: false,
-    atual: Math.floor(atual),
+    atual,
     necessario: Math.floor(necessario),
     pct,
-    label: `XP ${Math.floor(atual)}/${Math.floor(necessario)}`
+    label: `XP ${atual}/${Math.floor(necessario)}`
   };
 }
 
@@ -107,9 +113,9 @@ function blocoXpPokemon(p) {
   }
   return [
     `⚡ *${nome}* — Nv. ${nivel}`,
-    `✨ XP: ${prog.atual} / ${prog.necessario}`,
+    `⚡ XP: ${prog.atual}/${prog.necessario}`,
     barraXpPokemon(p),
-    `⬆️ Próximo nível: ${Number(nivel) + 1}`
+    `Próximo nível: ${Number(nivel) + 1}`
   ].join('\n');
 }
 
