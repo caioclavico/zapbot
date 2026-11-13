@@ -6,7 +6,7 @@
 
 ## READY?
 
-**NO-GO para deploy até reconciliação dos 19 registros ambíguos**, com ressalvas abaixo (19 ambíguos fail-closed; cold fresco pré-cutover).
+**READY para análise de autorização separada**, pois a reconciliação de **18/18** ambíguos foi ensaiada em restore isolado (0 níveis alterados; 0 UNRESOLVED). **Não** há autorização operacional de merge, deploy ou apply live; requer cold fresco e gates do cutover.
 
 ## Arquivos alterados
 
@@ -54,10 +54,10 @@
 | Fonte canônica pós-reparo #85 | volume `odisseu-a6-repair-reh-20261113T184855Z-datomic` |
 | Pokémon | 1080 |
 | Players / saves / receipts / coins / inv / eggs | 28 / 79 / 4276 / 3691 / 137 / 7 |
-| Por versão | legacy-flat9 **999**, growth-v1 **62**, ambiguous **19** |
+| Por versão (ensaio histórico) | legacy-flat9 **999**, growth-v1 **62**, ambiguous **19** |
 | Convertidos na simulação | 1061 |
 | **Mudanças de nível na conversão** | **0** |
-| Ambíguos preservados | 19 (incl. Staryu L13 resid 478) |
+| Ambíguos preservados (ensaio histórico) | 19 (incl. Staryu L13 resid 478) |
 | Reparados #85 | Blastoise **74**, Tyranitar **90**, Crobat **5**, Amaura **4** — inalterados pela conversão |
 
 Evidências: `/tmp/a6-flat9-reh-20261113T193712Z/`
@@ -105,4 +105,11 @@ Evidências: `/tmp/a6-flat9-reh-20261113T193712Z/`
 
 Identificado bug no primeiro grant: o caminho `ensure-flat9-v2-for-grant` inicializava residual 0 para unversioned com XP >=9, apagando implicitamente o progresso não reconciliado. Corrigido no PR: agora operação de grant ou evolução falha fechada antes de alterar registro; nada é redefinido.
 
-**Atualização (reconciliação ambígua):** inventário live confirmou **18** registros (1 dos 19 anteriores já `growth-v1`). Todos classificados **B** com evidência; reconciler idempotente ensaiado em restore isolado com **0 Δ nível** e **0 UNRESOLVED**. Detalhes e fingerprints em `docs/a6-flat9-ambiguous-xp-reconciliation-report.md`. Nenhum merge/backfill/deploy executado.
+**Atualização (reconciliação ambígua):** inventário live confirmou **18** registros (1 dos 19 anteriores: `d11cc9ad-…`, Salamence L3 residual 1, já `growth-v1`; nenhum novo ID). Todos classificados **B** com evidência; reconciler idempotente ensaiado em restore isolado com **0 Δ nível** e **0 UNRESOLVED**. Detalhes e fingerprints em `docs/a6-flat9-ambiguous-xp-reconciliation-report.md`. Nenhum merge/backfill/deploy executado.
+
+
+## Ensaio mais recente — distinguir do snapshot histórico acima
+
+A tabela de 1080 Pokémon / 19 ambíguos pertence ao **ensaio original**; não a substituir por números da nova janela. No cold `cold-flat9-ambig-20261113T215231Z`, o restore isolado continha **1082 Pokémon, 28 jogadores, 79 saves, 18 ambíguos pré-apply**. O reconciler registrou **18 applied**, depois **18 skipped/receipt-exists** em retry, **0 mudanças de nível**, **0 ambíguos pós-apply**, **0 UNRESOLVED** e moedas/itens/ovos estáveis; receipts 4296 → 4314 (+18 esperados). Os reparos Blastoise 74, Tyranitar 90, Crobat 5 e Amaura 4 permaneceram intactos. A evidência está em `docs/a6-flat9-ambiguous-xp-reconciliation-report.md`.
+
+O Salamence `d11cc9ad-…` saiu da lista porque já está `growth-v1` (L3, residual 1), **não** por aplicação do reconciler em produção. O conjunto ativo ainda contém **18** ambíguos até autorização de apply e verificação de drift. O manifesto privado com identificadores completos fica fora do Git; executar novo inventário e comparar estados imediatamente antes do cutover.
