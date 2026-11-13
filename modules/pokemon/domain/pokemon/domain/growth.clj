@@ -1,18 +1,26 @@
 (ns pokemon.domain.growth
-  "Curvas oficiais de XP dos Pokémon (PokéAPI growth-rate).
+  "Progressão de XP dos Pokémon.
 
-  Tabelas locais determinísticas — sem HTTP em runtime.
-  Semântica canônica pós-growth-v1: XP **acumulado** (`:xp-total`) + nível derivado.
-  Legado pré-v1: `:xp-desde-nivel` era **residual** com limiar fixo 9."
+  growth-v2 (canônico): fórmula simples `xpNecessario(n) = 10 + 2*(n-1)`.
+  Persistência: `:xp-desde-nivel` = residual no nível; `:xp-total` =
+  `xpTotalMinimo(n) + residual` (uso interno/conversão).
+
+  growth-v1 (histórico): curvas oficiais PokéAPI — mantido para leitura e
+  conversão proporcional → v2 (sem level-up).
+
+  Legado pré-v1: residual com limiar fixo 9."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [pokemon.domain.errors :as err]
             [pokemon.domain.species-form-aliases :as form-aliases]))
 
-(def progress-version "growth-v1")
+(def progress-version-v1 "growth-v1")
+(def progress-version "growth-v2")
 (def nivel-maximo 100)
 (def legacy-xp-por-nivel 9)
+(def ^{:doc "growth-rate sentinela dos registros growth-v2 (sem curva PokéAPI)."}
+  simple-growth-rate :simple)
 
 (def ^:private tables-resource "pokemon/domain/data/growth_rate_tables.edn")
 (def ^:private species-resource "pokemon/domain/data/species_growth_rates.edn")
@@ -176,12 +184,15 @@
     no limiar do próximo nível com nível antigo).
   - Em L100, XP total = teto da curva; progresso excedente só em metadados.
 
-  Idempotente se `:xp-progress-version` já for growth-v1."
+  Idempotente se `:xp-progress-version` já for growth-v1 ou growth-v2."
   [registro]
   (let [ver (str (or (registro-get registro :xp-progress-version "xp-progress-version")
                      ""))]
-    (if (= ver progress-version)
+    (cond
+      (or (= ver progress-version-v1) (= ver progress-version))
       registro
+
+      :else
       (let [species (or (registro-get registro :species "species" :nome "nome"))
             rate (growth-rate-for-species species)
             nivel0 (max 1 (min nivel-maximo
@@ -227,13 +238,14 @@
                    :xp-total xp-total'
                    :xp-desde-nivel residual'
                    :xp residual'
-                   :xp-progress-version progress-version
+                   :xp-progress-version progress-version-v1
                    :growth-rate rate
                    :xp-legacy-residual legacy-residual
                    :xp-legacy-nivel legacy-nivel))))))
 
 (defn ensure-growth-v1
-  "Garante campos growth-v1; registros novos com só nível recebem total da curva."
+  "Garante campos growth-v1; registros novos com só nível recebem total da curva.
+  Não promove para growth-v2 (usar `ensure-growth-v2` / `convert-to-growth-v2`)."
   [registro]
   (let [ver (str (or (get registro :xp-progress-version)
                      (get registro "xp-progress-version")
@@ -242,6 +254,9 @@
                        (contains? registro "xp-total"))]
     (cond
       (= ver progress-version)
+      registro
+
+      (= ver progress-version-v1)
       (let [species (or (get registro :species) (get registro "species")
                         (get registro :nome) (get registro "nome"))
             rate (or (get registro :growth-rate)
@@ -258,7 +273,7 @@
                :xp-total xp-total
                :xp-desde-nivel residual
                :xp residual
-               :xp-progress-version progress-version
+               :xp-progress-version progress-version-v1
                :nivel nivel))
 
       (and (not has-total?)
@@ -284,66 +299,239 @@
                :xp-total xp-total
                :xp-desde-nivel 0
                :xp 0
-               :xp-progress-version progress-version)))))
+               :xp-progress-version progress-version-v1)))))
 
-(defn after-evolution
-  "Preserva xp-total e nível; nunca reduz nível. Ajusta total se a nova curva
-  exigir mais XP acumulado para o nível atual."
+;;; --- growth-v2: progressão simples -----------------------------------------
+
+(defn xp-necessario
+  "XP necessário para sair do nível `nivel` → `nivel+1`.
+  nil no nível máximo. Fórmula: 10 + 2*(nivel-1)."
+  [nivel]
+  (let [n (long nivel)]
+    (when (< n nivel-maximo)
+      (+ 10 (* 2 (max 0 (dec n)))))))
+
+(defn total-xp-for-level-simple
+  "XP acumulado mínimo do nível `nivel` (1..100): (nivel-1)*(nivel+8)."
+  [nivel]
+  (let [n (max 1 (min nivel-maximo (long nivel)))]
+    (* (dec n) (+ n 8))))
+
+(defn level-span-simple
+  "Span do nível sob growth-v2 (0 no nível 100)."
+  [nivel]
+  (or (xp-necessario nivel) 0))
+
+(defn- clamp-frac
+  "Fração de progresso no nível ∈ [0, 1). 1.0 colapsa para quase-cheio."
+  [frac]
+  (let [f (double frac)]
+    (cond
+      (or (Double/isNaN f) (neg? f)) 0.0
+      (>= f 1.0) 0.999
+      :else f)))
+
+(defn- progress-frac-v1
+  "Fração do span oficial no nível atual (growth-v1)."
   [registro]
   (let [r (ensure-growth-v1 registro)
-        rate (growth-rate-for-species (or (:species r) (:nome r)))
+        rate (or (:growth-rate r)
+                 (growth-rate-for-species (or (:species r) (:nome r))))
         nivel (long (:nivel r 1))
-        min-total (total-xp-for-level rate nivel)
-        xp-total (max (long (:xp-total r 0)) min-total)
-        ;; Se o total antigo implica nível maior na curva nova, sobe (nunca desce).
-        nivel-from-xp (pokemon-level-from-total-xp rate xp-total)
-        nivel' (max nivel nivel-from-xp)
-        xp-total' (max xp-total (total-xp-for-level rate nivel'))
-        residual (residual-in-level rate nivel' xp-total')]
+        residual (long (:xp-desde-nivel r 0))
+        span (level-span rate nivel)]
+    (if (or (>= nivel nivel-maximo) (zero? span))
+      0.0
+      (clamp-frac (/ (double residual) (double span))))))
+
+(defn convert-to-growth-v2
+  "Converte registro para growth-v2 preservando o nível e o progresso
+  proporcional dentro do nível. **Nunca** sobe de nível nesta conversão.
+
+  - Já v2 → idempotente (renormaliza residual/total).
+  - v1 → frac = residual/span(oficial); residual' = floor(frac * span-simples).
+  - Legado residual → v1 depois v2 (pode subir só na etapa v1, política anterior).
+  - Sem campos de XP → v2 no nível atual com residual 0.
+
+  Não grava; a persistência fica a cargo do caminho de escrita."
+  [registro]
+  (let [ver (str (or (registro-get registro :xp-progress-version "xp-progress-version")
+                     ""))]
+    (cond
+      (= ver progress-version)
+      (let [nivel (max 1 (min nivel-maximo
+                              (long (or (registro-get registro :nivel "nivel" :level "level")
+                                        1))))
+            residual (if (>= nivel nivel-maximo)
+                       0
+                       (max 0 (long (or (registro-get registro
+                                                      :xp-desde-nivel "xp-desde-nivel"
+                                                      :xp "xp")
+                                        0))))
+            span (level-span-simple nivel)
+            residual' (if (or (>= nivel nivel-maximo) (zero? span))
+                        0
+                        (min (dec span) residual))
+            xp-total (if (>= nivel nivel-maximo)
+                       (total-xp-for-level-simple nivel-maximo)
+                       (+ (total-xp-for-level-simple nivel) residual'))]
+        (assoc registro
+               :nivel nivel
+               :xp-total xp-total
+               :xp-desde-nivel residual'
+               :xp residual'
+               :xp-progress-version progress-version
+               :growth-rate simple-growth-rate))
+
+      (= ver progress-version-v1)
+      (let [nivel (max 1 (min nivel-maximo
+                              (long (or (registro-get registro :nivel "nivel" :level "level")
+                                        1))))
+            frac (progress-frac-v1 registro)
+            span (level-span-simple nivel)
+            residual (if (or (>= nivel nivel-maximo) (zero? span))
+                       0
+                       (long (Math/floor (* frac (double span)))))
+            xp-total (if (>= nivel nivel-maximo)
+                       (total-xp-for-level-simple nivel-maximo)
+                       (+ (total-xp-for-level-simple nivel) residual))
+            rate-v1 (registro-get registro :growth-rate "growth-rate")]
+        (-> registro
+            (assoc :nivel nivel
+                   :xp-total xp-total
+                   :xp-desde-nivel residual
+                   :xp residual
+                   :xp-progress-version progress-version
+                   :growth-rate simple-growth-rate)
+            (cond-> rate-v1 (assoc :growth-rate-v1 rate-v1))))
+
+      :else
+      (let [has-xp? (or (registro-has? registro :xp-total "xp-total"
+                                       :xp-desde-nivel "xp-desde-nivel"
+                                       :xp "xp"
+                                       :vitorias-desde-nivel "vitorias-desde-nivel"))]
+        (if has-xp?
+          (convert-to-growth-v2 (ensure-growth-v1 registro))
+          (let [nivel (max 1 (min nivel-maximo
+                                  (long (or (registro-get registro :nivel "nivel" :level "level")
+                                            1))))
+                xp-total (total-xp-for-level-simple nivel)]
+            (assoc registro
+                   :nivel nivel
+                   :xp-total xp-total
+                   :xp-desde-nivel 0
+                   :xp 0
+                   :xp-progress-version progress-version
+                   :growth-rate simple-growth-rate)))))))
+
+(defn ensure-growth-v2
+  "Garante growth-v2. Idempotente. Usado em escrita (grant/hatch/evolução)."
+  [registro]
+  (convert-to-growth-v2 registro))
+
+(defn after-evolution
+  "Preserva nível e residual growth-v2; nunca reduz nível."
+  [registro]
+  (let [r (ensure-growth-v2 registro)
+        nivel (long (:nivel r 1))
+        residual (long (:xp-desde-nivel r 0))
+        span (level-span-simple nivel)
+        residual' (if (or (>= nivel nivel-maximo) (zero? span))
+                    0
+                    (min residual (max 0 (dec span))))
+        xp-total (if (>= nivel nivel-maximo)
+                   (total-xp-for-level-simple nivel-maximo)
+                   (+ (total-xp-for-level-simple nivel) residual'))]
     (assoc r
-           :growth-rate rate
-           :nivel nivel'
-           :xp-total xp-total'
-           :xp-desde-nivel residual
-           :xp residual
+           :growth-rate simple-growth-rate
+           :nivel nivel
+           :xp-total xp-total
+           :xp-desde-nivel residual'
+           :xp residual'
            :xp-progress-version progress-version)))
 
 (defn grant-pokemon-xp
-  "Concede XP acumulado oficial. Retorna
-  {:registro :subidas :nivel-final :xp-ganho :xp-total-antes :xp-total-depois}.
+  "Concede XP na unidade growth-v2 (residual no nível).
 
-  `quantidade` já deve estar na unidade oficial (após escala de balanceamento).
-  No nível 100, XP excedente é descartado (total fixo no teto da curva)."
+  Consome `xp-necessario` do nível atual, preserva excedente e continua
+  subindo enquanto houver XP. No nível 100, XP excedente é descartado.
+
+  Retorna {:registro :subidas :nivel-final :xp-ganho :xp-total-antes :xp-total-depois}."
   [registro quantidade]
-  (let [r0 (ensure-growth-v1 registro)
-        rate (or (:growth-rate r0)
-                 (growth-rate-for-species (or (:species r0) (:nome r0))))
+  (let [r0 (ensure-growth-v2 registro)
         nivel0 (long (:nivel r0 1))
-        cap (total-xp-for-level rate nivel-maximo)
         antes (long (:xp-total r0 0))
-        ganho (max 0 (long quantidade))
-        depois (if (>= nivel0 nivel-maximo)
-                 cap
-                 (min cap (+ antes ganho)))
-        nivel1 (pokemon-level-from-total-xp rate depois)
-        subidas (max 0 (- nivel1 nivel0))
-        residual (residual-in-level rate nivel1 depois)]
-    {:registro (assoc r0
-                      :growth-rate rate
-                      :nivel nivel1
-                      :xp-total depois
-                      :xp-desde-nivel residual
-                      :xp residual
-                      :xp-progress-version progress-version)
-     :subidas subidas
-     :nivel-final nivel1
-     :xp-ganho (- depois antes)
-     :xp-total-antes antes
-     :xp-total-depois depois
-     :growth-rate rate}))
+        ganho (max 0 (long quantidade))]
+    (cond
+      (>= nivel0 nivel-maximo)
+      (let [xp-total (total-xp-for-level-simple nivel-maximo)]
+        {:registro (assoc r0
+                          :growth-rate simple-growth-rate
+                          :xp-progress-version progress-version
+                          :xp-total xp-total
+                          :xp-desde-nivel 0
+                          :xp 0
+                          :nivel nivel-maximo)
+         :subidas 0
+         :nivel-final nivel-maximo
+         :xp-ganho 0
+         :xp-total-antes antes
+         :xp-total-depois xp-total
+         :growth-rate simple-growth-rate})
+
+      (zero? ganho)
+      {:registro r0
+       :subidas 0
+       :nivel-final nivel0
+       :xp-ganho 0
+       :xp-total-antes antes
+       :xp-total-depois antes
+       :growth-rate simple-growth-rate}
+
+      :else
+      (loop [nivel nivel0
+             residual (+ (long (:xp-desde-nivel r0 0)) ganho)
+             subidas 0]
+        (let [span (level-span-simple nivel)]
+          (cond
+            (>= nivel nivel-maximo)
+            (let [xp-total (total-xp-for-level-simple nivel-maximo)]
+              {:registro (assoc r0
+                                :growth-rate simple-growth-rate
+                                :nivel nivel-maximo
+                                :xp-total xp-total
+                                :xp-desde-nivel 0
+                                :xp 0
+                                :xp-progress-version progress-version)
+               :subidas subidas
+               :nivel-final nivel-maximo
+               :xp-ganho (- xp-total antes)
+               :xp-total-antes antes
+               :xp-total-depois xp-total
+               :growth-rate simple-growth-rate})
+
+            (and (pos? span) (>= residual span))
+            (recur (inc nivel) (- residual span) (inc subidas))
+
+            :else
+            (let [xp-total (+ (total-xp-for-level-simple nivel) residual)]
+              {:registro (assoc r0
+                                :growth-rate simple-growth-rate
+                                :nivel nivel
+                                :xp-total xp-total
+                                :xp-desde-nivel residual
+                                :xp residual
+                                :xp-progress-version progress-version)
+               :subidas subidas
+               :nivel-final nivel
+               :xp-ganho (- xp-total antes)
+               :xp-total-antes antes
+               :xp-total-depois xp-total
+               :growth-rate simple-growth-rate})))))))
 
 (defn pokemon-progress
-  "Visão de progresso no nível atual (barra WhatsApp)."
+  "Visão de progresso no nível atual (barra WhatsApp).
+  Não inventa XP ausente. Cálculo in-memory — sem side-effect de persistência."
   [registro]
   (let [has-any? (or (contains? registro :xp-progress-version)
                      (contains? registro "xp-progress-version")
@@ -364,12 +552,12 @@
        :xp-proximo-nivel nil
        :progresso-percentual nil
        :xp-total nil
-       :growth-rate nil}
-      (let [r (ensure-growth-v1 registro)
-            rate (:growth-rate r)
+       :growth-rate nil
+       :xp-progress-version nil}
+      (let [r (ensure-growth-v2 registro)
             nivel (long (:nivel r))
             residual (long (:xp-desde-nivel r 0))
-            span (level-span rate nivel)]
+            span (level-span-simple nivel)]
         (if (>= nivel nivel-maximo)
           {:conhecido? true
            :nivel nivel
@@ -378,7 +566,8 @@
            :xp-proximo-nivel nil
            :progresso-percentual nil
            :xp-total (long (:xp-total r))
-           :growth-rate rate}
+           :growth-rate simple-growth-rate
+           :xp-progress-version progress-version}
           {:conhecido? true
            :nivel nivel
            :nivel-maximo? false
@@ -388,4 +577,5 @@
                                    (/ (double residual) (double span))
                                    0.0)
            :xp-total (long (:xp-total r))
-           :growth-rate rate})))))
+           :growth-rate simple-growth-rate
+           :xp-progress-version progress-version})))))

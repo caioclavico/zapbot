@@ -264,7 +264,7 @@
       (is (true? (:duplicate r2)))
       (is (= pe1 pe2)))))
 
-(deftest growth-v1-moderado-vs-batalha-comum
+(deftest growth-v2-moderado-vs-batalha-comum
   (let [reg (mon "Pikachu" :nivel 20)
         win-comum (xp/calcular-ganho-pokemon reg xp/xp-por-vitoria {:atividade :batalha})
         win-ginasio (xp/calcular-ganho-pokemon reg gym/atividade-vitoria-batalha
@@ -278,13 +278,15 @@
     (is (< loss-ginasio win-ginasio))
     (is (<= win-ginasio
             (max 1 (long (Math/floor
-                          (* (double (growth/level-span :medium-fast 20))
+                          (* (double (growth/level-span-simple 20))
                              xp/pokemon-xp-grant-span-cap))))))))
 
 (deftest pokemon-nivel-100-sem-xp
   (let [reg (assoc (mon "Mew" :nivel 100)
-                   :xp-total (growth/total-xp-for-level :medium-fast 100)
-                   :xp-desde-nivel 0)
+                   :xp-total (growth/total-xp-for-level-simple 100)
+                   :xp-desde-nivel 0
+                   :xp-progress-version "growth-v2"
+                   :growth-rate :simple)
         ganho (xp/calcular-ganho-pokemon reg 4 {:atividade :ginasio})]
     (is (zero? ganho))))
 

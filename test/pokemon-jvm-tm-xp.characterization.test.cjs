@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Contratos estáveis de !pk tm (alias de time) — coleção A6.
+ * Contratos estáveis de !pk tm (alias de time) — coleção A6 growth-v2.
  * !pk tm → 'time'. Máquina Técnica de item continua em !pk mt.
  */
 const test = require('node:test');
@@ -16,10 +16,10 @@ const sampleCollection = {
       nome: 'Charmeleon',
       species: 'charmeleon',
       nivel: 34,
-      xpDesdeNivel: 5,
+      xpDesdeNivel: 38,
       xpConhecido: true,
-      xpNivelAtual: 5,
-      xpProximoNivel: 9,
+      xpNivelAtual: 38,
+      xpProximoNivel: 76,
       hp: 80,
       hpAtual: 70,
       tipos: ['fire'],
@@ -31,10 +31,10 @@ const sampleCollection = {
       nome: 'Pikachu',
       species: 'pikachu',
       nivel: 22,
-      xpDesdeNivel: 3,
+      xpDesdeNivel: 13,
       xpConhecido: true,
-      xpNivelAtual: 3,
-      xpProximoNivel: 9,
+      xpNivelAtual: 13,
+      xpProximoNivel: 52,
       hp: 60,
       hpAtual: 60,
       tipos: ['electric'],
@@ -58,15 +58,16 @@ test('caracterização: tm/meus/equipe resolvem para time', () => {
   assert.notEqual(present.resolveCommand(['mt']), 'time');
 });
 
-test('caracterização: formatCollection lista Pokémon com XP canônico', () => {
+test('caracterização: formatCollection lista Pokémon com XP canônico growth-v2', () => {
   const text = present.formatCollection(sampleCollection, [], '!pk');
   assert.match(text, /Meu Time Pokémon/);
   assert.doesNotMatch(text, /Máquinas Técnicas/);
   assert.match(text, /Charmeleon/);
   assert.match(text, /Pikachu/);
-  assert.match(text, /XP 5\/9/);
-  assert.match(text, /XP 3\/9/);
+  assert.match(text, /XP 38\/76/);
+  assert.match(text, /XP 13\/52/);
   assert.match(text, /Nível de treinador: 4/);
+  assert.doesNotMatch(text, /growth-v|PokéAPI|medium-fast/i);
 });
 
 test('caracterização: caption do card não duplica a listagem', () => {
@@ -79,7 +80,7 @@ test('caracterização: caption do card não duplica a listagem', () => {
   assert.equal(env.messages.length, 1);
   assert.equal(env.messages[0].type, 'image');
   assert.doesNotMatch(env.messages[0].text, /Charmeleon/);
-  assert.doesNotMatch(env.messages[0].text, /XP 5\/9/);
+  assert.doesNotMatch(env.messages[0].text, /XP 38\/76/);
 });
 
 test('caracterização: XP ausente não inventa zero', () => {
@@ -92,7 +93,7 @@ test('caracterização: XP ausente não inventa zero', () => {
     count: 1, saveId: 'a', trainerLevel: 1, ativoIndex: 0
   }, [], '!pk');
   assert.match(text, /XP \?/);
-  assert.doesNotMatch(text, /XP 0\/9/);
+  assert.doesNotMatch(text, /XP 0\/\d+/);
 });
 
 test('caracterização: collectionPageSlice pagina 12 e preserva índices', () => {
@@ -104,6 +105,8 @@ test('caracterização: collectionPageSlice pagina 12 e preserva índices', () =
       hp: 10,
       hpAtual: 10,
       xpDesdeNivel: 0,
+      xpNivelAtual: 0,
+      xpProximoNivel: 10,
       xpConhecido: true
     })),
     count: 15

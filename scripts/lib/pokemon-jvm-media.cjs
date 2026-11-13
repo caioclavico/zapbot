@@ -1307,10 +1307,10 @@ function xpProgressoCard(p) {
     || knownFlag === true
   );
   if (!p || knownFlag === false || (!hasCampo && knownFlag !== true)) {
-    return { known: false, max: !!maximo, atual: 0, necessario: 9, ratio: 0, label: maximo ? 'NÍVEL MÁXIMO' : 'XP ?' };
+    return { known: false, max: !!maximo, atual: 0, necessario: 10, ratio: 0, label: maximo ? 'NÍVEL MÁXIMO' : 'XP ?' };
   }
   if (maximo) {
-    return { known: true, max: true, atual: 0, necessario: 9, ratio: 1, label: 'NÍVEL MÁXIMO' };
+    return { known: true, max: true, atual: 0, necessario: null, ratio: 1, label: 'NÍVEL MÁXIMO' };
   }
   const atual = Number(
     p.xpNivelAtual != null ? p.xpNivelAtual
@@ -1318,10 +1318,10 @@ function xpProgressoCard(p) {
   );
   const necessario = Number(
     p.xpProximoNivel != null ? p.xpProximoNivel
-      : (p.xpNecessario != null ? p.xpNecessario : 9)
+      : (p.xpNecessario != null ? p.xpNecessario : 10)
   );
   if (!Number.isFinite(atual) || !Number.isFinite(necessario) || necessario <= 0) {
-    return { known: false, max: false, atual: 0, necessario: 9, ratio: 0, label: 'XP ?' };
+    return { known: false, max: false, atual: 0, necessario: 10, ratio: 0, label: 'XP ?' };
   }
   return {
     known: true,

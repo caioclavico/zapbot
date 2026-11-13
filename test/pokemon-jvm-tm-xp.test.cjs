@@ -9,6 +9,7 @@ const media = require('../scripts/lib/pokemon-jvm-media.cjs');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'a6-tm-xp');
 
+// DTOs growth-v2: xpNecessario(n) = 10 + 2*(n-1) — JVM é a fonte; Node só apresenta.
 const collection = {
   collection: [
     {
@@ -17,12 +18,12 @@ const collection = {
       nome: 'Charmeleon',
       species: 'charmeleon',
       nivel: 34,
-      xpDesdeNivel: 5,
-      xpNivelAtual: 5,
-      xpProximoNivel: 9,
-      xpNecessario: 9,
+      xpDesdeNivel: 38,
+      xpNivelAtual: 38,
+      xpProximoNivel: 76,
+      xpNecessario: 76,
       xpConhecido: true,
-      progressoXpPercentual: 55.6,
+      progressoXpPercentual: 50,
       proximaEvolucao: 'Charizard',
       nivelProximaEvolucao: 36,
       hp: 80,
@@ -36,10 +37,10 @@ const collection = {
       nome: 'Pikachu',
       species: 'pikachu',
       nivel: 22,
-      xpDesdeNivel: 3,
-      xpNivelAtual: 3,
-      xpProximoNivel: 9,
-      xpNecessario: 9,
+      xpDesdeNivel: 13,
+      xpNivelAtual: 13,
+      xpProximoNivel: 52,
+      xpNecessario: 52,
       xpConhecido: true,
       hp: 60,
       hpAtual: 60,
@@ -82,21 +83,41 @@ const collection = {
   ocupacaoPokemon: 4
 };
 
-test('XP canônico Node: xp-por-nivel=9 (parcial no nível)', () => {
-  assert.equal(present.XP_POR_NIVEL_POKEMON, 9);
+test('XP canônico Node: fallback L1=10; meta vem do DTO JVM (growth-v2)', () => {
+  assert.equal(present.XP_POR_NIVEL_POKEMON, 10);
   assert.equal(present.NIVEL_MAXIMO_POKEMON, 100);
   const a = present.pokemonXpProgress(collection.collection[0]);
-  assert.equal(a.atual, 5);
-  assert.equal(a.necessario, 9);
+  assert.equal(a.atual, 38);
+  assert.equal(a.necessario, 76);
   assert.equal(present.pokemonXpProgress({ nivel: 5 }).known, false);
 });
 
 test('pokemonXpProgress: parcial, máximo e ausente', () => {
   const a = present.pokemonXpProgress(collection.collection[0]);
   assert.equal(a.known, true);
-  assert.equal(a.pct, 55.6);
+  assert.equal(a.pct, 50);
   assert.equal(present.pokemonXpProgress(collection.collection[2]).label, 'NÍVEL MÁXIMO');
   assert.equal(present.pokemonXpProgress(collection.collection[3]).label, 'XP ?');
+});
+
+test('blocoXpPokemon: barra no nível sem XP acumulado histórico', () => {
+  const bloco = present.blocoXpPokemon({
+    nome: 'Charmeleon',
+    nivel: 20,
+    xpNivelAtual: 24,
+    xpProximoNivel: 48,
+    xpConhecido: true
+  });
+  assert.match(bloco, /Charmeleon — Nv\. 20/);
+  assert.match(bloco, /XP: 24 \/ 48/);
+  assert.match(bloco, /Próximo nível: 21/);
+  assert.doesNotMatch(bloco, /growth|PokéAPI|acumulad|medium-/i);
+
+  const max = present.blocoXpPokemon({
+    nome: 'Mewtwo', nivel: 100, nivelMaximo: true, xpConhecido: true
+  });
+  assert.match(max, /NÍVEL MÁXIMO/);
+  assert.doesNotMatch(max, /XP: \d+ \/ \d+/);
 });
 
 test('!pk tm txt: Meu Time Pokémon com XP e evolução', () => {
@@ -104,7 +125,7 @@ test('!pk tm txt: Meu Time Pokémon com XP e evolução', () => {
   assert.match(text, /Meu Time Pokémon/);
   assert.doesNotMatch(text, /Máquinas Técnicas/);
   assert.match(text, /Charmeleon.*Nv\. 34/s);
-  assert.match(text, /XP 5\/9/);
+  assert.match(text, /XP 38\/76/);
   assert.match(text, /Próxima evolução: Charizard — Nv\. 36/);
   assert.match(text, /NÍVEL MÁXIMO/);
   assert.match(text, /XP \?/);
@@ -115,7 +136,7 @@ test('!pk tm card caption: curta sem listagem', () => {
   assert.match(caption, /🎮 \*Meu Time Pokémon\*/);
   assert.doesNotMatch(caption, /Máquinas Técnicas/);
   assert.doesNotMatch(caption, /Charmeleon/);
-  assert.doesNotMatch(caption, /XP 5\/9/);
+  assert.doesNotMatch(caption, /XP 38\/76/);
   assert.match(caption, /tm txt/);
   assert.match(caption, /tm csv/);
 });
@@ -153,7 +174,8 @@ test('envelope card-only / txt / csv sem misturar formatos', () => {
 test('modelo compartilhado: mesmas entradas para card e texto', () => {
   const model = present.buildTeamPresentationModel(collection, [], '!pk');
   assert.equal(model.entries.length, 4);
-  assert.equal(model.entries[0].xp.atual, 5);
+  assert.equal(model.entries[0].xp.atual, 38);
+  assert.equal(model.entries[0].xp.necessario, 76);
   assert.match(model.entries[0].evolucao, /Charizard/);
   assert.equal(model.entries[2].xp.max, true);
   assert.equal(model.entries[3].xp.known, false);

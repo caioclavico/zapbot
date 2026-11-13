@@ -45,7 +45,7 @@
       (is (pos? (:ataque a)) sp)
       (is (seq (:golpes a)) sp)
       (is (some #(contains? tipos-esperados (:tipo %)) (:golpes a)) sp)
-      (is (= "growth-v1" (:xp-progress-version a)) sp)
+      (is (= "growth-v2" (:xp-progress-version a)) sp)
       (is (= 1 (:nivel a)) sp)
       (is (= "ovo" (:origem a)) sp)
       (is (map? (:ivs a)) sp)

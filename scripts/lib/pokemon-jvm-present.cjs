@@ -8,12 +8,12 @@
 const PAGE_SIZE = 12;
 
 /**
- * Progresso de XP do Pokémon a partir do DTO canônico JVM (growth-v1).
+ * Progresso de XP do Pokémon a partir do DTO canônico JVM (growth-v2).
  * O intervalo do nível vem de `xpNivelAtual`/`xpProximoNivel` calculados na JVM
- * pelas tabelas oficiais — o presenter NÃO reimplementa curvas.
- * Fallback residual legado (limiar 9) só quando o DTO ainda não traz o necessário.
+ * (`xpNecessario = 10 + 2*(nivel-1)`) — o presenter NÃO reimplementa a fórmula.
+ * Fallback só quando o DTO ainda não traz o necessário (L1 = 10).
  */
-const XP_POR_NIVEL_POKEMON = 9; // legado; preferir campos JVM
+const XP_POR_NIVEL_POKEMON = 10; // fallback L1; preferir campos JVM
 const NIVEL_MAXIMO_POKEMON = 100;
 
 function pickXpKnown(p) {
@@ -98,15 +98,15 @@ function blocoXpPokemon(p) {
   const nivel = (p && p.nivel) || 1;
   if (prog.max) {
     return [
-      `⚡ *${nome}* — Nv. ${nivel}`,
-      '🏆 NÍVEL MÁXIMO'
+      `⚡ *${nome} — Nv. ${nivel}*`,
+      '🏆 *NÍVEL MÁXIMO*'
     ].join('\n');
   }
   if (!prog.known) {
-    return `⚡ *${nome}* — Nv. ${nivel}\n✨ XP: ?`;
+    return `⚡ *${nome} — Nv. ${nivel}*\n✨ XP: ?`;
   }
   return [
-    `⚡ *${nome}* — Nv. ${nivel}`,
+    `⚡ *${nome} — Nv. ${nivel}*`,
     `✨ XP: ${prog.atual} / ${prog.necessario}`,
     barraXpPokemon(p),
     `⬆️ Próximo nível: ${Number(nivel) + 1}`

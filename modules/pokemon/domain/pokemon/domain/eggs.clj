@@ -184,7 +184,7 @@
               (update :receipts conj event-id)))))))
 
 (defn preparar-nascimento
-  "Registro nível 1 canônico (catálogo local + growth-v1). Determinístico no seed.
+  "Registro nível 1 canônico (catálogo local + growth-v2). Determinístico no seed.
    Sem dados da espécie → erro `:egg_species_data_missing` (não consumir ovo)."
   ([species pokemon-id] (preparar-nascimento species pokemon-id pokemon-id))
   ([species pokemon-id seed]

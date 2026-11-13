@@ -15,11 +15,10 @@
            [java.nio.charset StandardCharsets]))
 
 (defn- xp-to-level
-  "XP oficial necessário para ir do nível `from` (residual 0) até `to`."
-  [species from to]
-  (let [rate (growth/growth-rate-for-species species)]
-    (- (growth/total-xp-for-level rate to)
-       (growth/total-xp-for-level rate from))))
+  "XP growth-v2 necessário para ir do nível `from` (residual 0) até `to`."
+  [_species from to]
+  (- (growth/total-xp-for-level-simple to)
+     (growth/total-xp-for-level-simple from)))
 
 (defn- fresh []
   (let [client (persistence/client {:system (str "a6-levevo-" (java.util.UUID/randomUUID))
@@ -38,21 +37,21 @@
                     :poder 40 :classe :fisico}]}
          m))
 
-(deftest xp-legado-limiar-e-growth-v1
-  (is (= 9 xp/xp-por-nivel) "constante legado residual")
+(deftest xp-growth-v2-limiar-simples
+  (is (= 9 xp/xp-por-nivel) "constante legado residual (auditoria)")
   (is (= 100 xp/nivel-maximo))
   (is (= 1.03 xp/fator-crescimento-por-nivel))
-  ;; Geodude = medium-slow: L1→2 exige 9 XP oficiais.
+  ;; growth-v2: L1→2 exige 10 XP.
   (let [{:keys [registro subidas]}
         (xp/aplicar-xp-pokemon
          {:nome "Geodude" :species "geodude" :nivel 1 :xp-desde-nivel 0
           :hp 100 :hp-atual 100
           :ataque 50 :defesa 50 :atq-esp 50 :def-esp 50 :veloc 50 :amizade 70}
-         9)]
+         10)]
     (is (= 1 subidas))
     (is (= 2 (:nivel registro)))
     (is (= 0 (:xp-desde-nivel registro)))
-    (is (= "growth-v1" (:xp-progress-version registro)))
+    (is (= "growth-v2" (:xp-progress-version registro)))
     (is (number? (:xp-total registro)))))
 
 (deftest progresso-pokemon-nao-inventa-zero
@@ -62,10 +61,11 @@
     (is (true? (:conhecido? p)))
     (is (number? (:xp-nivel-atual p)))
     (is (number? (:xp-proximo-nivel p)))
-    (is (= :medium-fast (:growth-rate p))))
+    (is (= 28 (:xp-proximo-nivel p)))
+    (is (= :simple (:growth-rate p))))
   (let [m (xp/progresso-pokemon {:nivel 100 :species "pikachu" :xp-desde-nivel 0
-                                 :xp-progress-version "growth-v1"
-                                 :xp-total 1000000})]
+                                 :xp-progress-version "growth-v2"
+                                 :xp-total (growth/total-xp-for-level-simple 100)})]
     (is (true? (:nivel-maximo? m)))
     (is (nil? (:xp-proximo-nivel m)))))
 

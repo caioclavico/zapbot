@@ -1,6 +1,6 @@
 (ns pokemon.domain.egg-hatch
   "Nascimento canônico a partir do catálogo local (raid_boss_catalog) +
-  species-base / species-hp / growth-v1 / moves / rarity.
+  species-base / species-hp / growth-v2 / moves / rarity.
   Sem HTTP. Espécie ausente → erro recuperável (não consome ovo)."
   (:require [clojure.string :as str]
             [pokemon.domain.errors :as err]
@@ -126,4 +126,4 @@
         reg (cond-> reg
               imagem (assoc :imagem (if shiny? (or imagem-shiny imagem) imagem))
               imagem-shiny (assoc :imagem-shiny imagem-shiny))]
-    (growth/ensure-growth-v1 reg)))
+    (growth/ensure-growth-v2 reg)))
