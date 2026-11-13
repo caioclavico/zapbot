@@ -194,17 +194,18 @@
           (is (= 20 (:nivel c)))
           (is (= res (or (:xp-desde-nivel c) (:xp c)))))))))
 
-(deftest ambiguous-grant-starts-residual-0-no-level-jump
-  (let [r {:species "Staryu" :nivel 13 :xp 478 :xp-desde-nivel 478
-           :hp 50 :hp-atual 50 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1
-           :amizade 70}
-        g (xp/aplicar-xp-atividade r 3 {:atividade :batalha})]
-    (is (= 13 (:nivel-final g)))
-    (is (zero? (:subidas g)))
-    (is (= 3 (get-in g [:registro :xp-desde-nivel])))
-    (is (= 478 (get-in g [:registro :xp-legacy-residual])))
-    (is (= growth/flat9-progress-version
-           (get-in g [:registro :xp-progress-version])))))
+(deftest ambiguous-grant-is-blocked-without-resetting-progress
+  (doseq [residual [9 478 8478]]
+    (let [r {:species "Staryu" :nivel 13 :xp residual :xp-desde-nivel residual
+             :hp 50 :hp-atual 50 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1
+             :amizade 70}]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                            #"reconciliacao necessaria"
+                            (xp/aplicar-xp-atividade r 3 {:atividade :batalha})))
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (growth/after-evolution r)))
+      (is (= residual (:xp-desde-nivel r)))
+      (is (= 13 (:nivel r))))))
 
 (deftest hotfix-convert-legacy-residual-never-levels
   "Preserva hotfix #85: convert-legacy-residual (caminho growth-v1) não sobe nível."
@@ -233,11 +234,11 @@
       (let [r {:species sp :nivel niv :xp-desde-nivel res :xp res
                :hp 100 :hp-atual 100 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1
                :amizade 70}
-            ens (growth/ensure-flat9-v2 r)
-            g (xp/aplicar-xp-atividade r 3)]
+            ens (growth/ensure-flat9-v2 r)]
         (is (= niv (:nivel ens)))
-        (is (= niv (:nivel-final g)))
-        (is (zero? (:subidas g)))))))
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (xp/aplicar-xp-atividade r 3))
+            "Ambiguo nao pode alterar XP nem nivel antes de reconciliacao")))))
 
 (deftest evolution-keeps-flat9-progress
   (let [pre (mon {:species "charmander" :nivel 16 :residual 2})
