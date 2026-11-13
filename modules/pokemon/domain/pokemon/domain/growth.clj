@@ -358,7 +358,8 @@
 
   - Já v2 → idempotente (renormaliza residual/total).
   - v1 → frac = residual/span(oficial); residual' = floor(frac * span-simples).
-  - Legado residual → v1 depois v2 (pode subir só na etapa v1, política anterior).
+  - Legado flat-9 → v2 diretamente, fração residual/9 (sem curva oficial).
+    Residual fora de [0,8] é inconsistente: falha fechada, sem mudar o nível.
   - Sem campos de XP → devolve registro intacto (desconhecido, sem inventar zero).
 
   Não grava; a persistência fica a cargo do caminho de escrita."
@@ -414,9 +415,40 @@
             (cond-> rate-v1 (assoc :growth-rate-v1 rate-v1))))
 
       :else
-      (if (xp-known? registro)
-        (convert-to-growth-v2 (ensure-growth-v1 registro))
-        registro))))
+      (if-not (xp-known? registro)
+        registro
+        (let [nivel (max 1 (min nivel-maximo
+                                (long (or (registro-get registro :nivel "nivel" :level "level")
+                                          1))))
+              ;; Sem versão + XP total é ambíguo; não reinterpretar como flat-9.
+              total? (registro-has? registro :xp-total "xp-total")
+              legacy-residual (legacy-residual-xp registro)
+              _ (when total?
+                  (throw (ex-info "XP sem versao mas com total acumulado: requer auditoria"
+                                  {:code :growth-v2-ambiguous-unversioned-total
+                                   :nivel nivel})))
+              _ (when (>= legacy-residual legacy-xp-por-nivel)
+                  (throw (ex-info "Residual legado fora do intervalo 0..8: requer auditoria"
+                                  {:code :growth-v2-legacy-residual-overflow
+                                   :nivel nivel :residual legacy-residual})))
+              span (level-span-simple nivel)
+              residual (if (>= nivel nivel-maximo)
+                         0
+                         ;; Aritmética inteira evita o arredondamento de dois floors.
+                         (quot (* legacy-residual span) legacy-xp-por-nivel))
+              xp-total (+ (total-xp-for-level-simple nivel) residual)]
+          (assoc registro
+                 :nivel nivel
+                 :xp-total xp-total
+                 :xp-desde-nivel residual
+                 :xp residual
+                 :xp-progress-version progress-version
+                 :growth-rate simple-growth-rate
+                 :xp-legacy-residual legacy-residual
+                 :xp-legacy-nivel (long (or (registro-get registro
+                                                         :xp-legacy-nivel
+                                                         "xp-legacy-nivel")
+                                           nivel))))))))
 
 (defn ensure-growth-v2
   "Converte apenas quando o XP é conhecido; sem XP mantém desconhecido."
