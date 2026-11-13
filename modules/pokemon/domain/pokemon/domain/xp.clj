@@ -144,6 +144,19 @@
   - demais chaves de contexto do calculador (nível adversário, raid, etc.)."
   ([registro quantidade] (aplicar-xp-pokemon registro quantidade nil))
   ([registro quantidade {:keys [unidade] :as opts}]
+   ;; XP desconhecido: zero/ganho inválido não pode convertê-lo silenciosamente.
+   ;; No nível máximo também não existe ganho positivo, logo não inicializa.
+   (if (and (not (growth/xp-known? registro))
+            (or (not (pos? (long quantidade)))
+                (>= (long (get registro :nivel (get registro "nivel" 1)))
+                    growth/nivel-maximo)))
+     {:registro registro
+      :subidas 0
+      :nivel-final (long (get registro :nivel (get registro "nivel" 1)))
+      :nome (get registro :nome (get registro "nome"))
+      :xp-total nil
+      :xp-oficial-aplicado 0
+      :growth-rate nil}
    (let [opts (or opts {})
          nivel-antes (long (get registro :nivel (get registro "nivel" 1)))
          ;; Conversão lazy antes do grant.
@@ -180,7 +193,7 @@
       :nome (get r-final :nome (get r-final "nome"))
       :xp-total (:xp-total r0)
       :xp-oficial-aplicado aplicado
-      :growth-rate growth/simple-growth-rate})))
+      :growth-rate growth/simple-growth-rate}))))
 
 (defn aplicar-xp-atividade
   "Atalho: pontos de atividade → XP oficial balanceado → aplicar."
