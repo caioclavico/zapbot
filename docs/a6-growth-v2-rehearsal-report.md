@@ -179,3 +179,16 @@ Pendências antes de GO de produção:
 - `scripts/a6_gv2_rehearsal_host.sh` — orquestração no host  
 
 PII e dumps privados permanecem apenas no host (`01-inventory-private.edn`).
+
+
+## Correção posterior ao ensaio (requer novo ensaio)
+
+Após este ensaio, o PR #84 recebeu uma correção para converter o legado flat-9
+**diretamente** para growth-v2, preservando a fração `residual/9` sem usar
+curvas growth-v1 intermediárias. O inventário do script de ensaio também
+passa a computar a porcentagem antiga do legado como `residual/9`.
+
+**Atenção:** os números e os gates deste relatório referem-se exclusivamente
+à execução anterior e **não demonstram** o resultado da nova conversão.
+Um novo restore isolado, nova auditoria de residual fora de 0..8,
+novo E2E e novo relatório de diferenças são necessários antes do GO.
