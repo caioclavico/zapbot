@@ -219,3 +219,45 @@
         r (xp/aplicar-xp-pokemon unknown 50)]
     (is (= unknown (:registro r)))
     (is (= 0 (:xp-oficial-aplicado r)))))
+
+(deftest direct-legacy-flat9-to-v2-preserves-proportion
+  (doseq [nivel [1 5 20 30 85]
+          residual (range 0 9)]
+    (let [legacy {:species "pikachu" :nivel nivel
+                  :xp-desde-nivel residual :xp residual
+                  :hp 50 :hp-atual 50}
+          converted (growth/convert-to-growth-v2 legacy)
+          span (growth/level-span-simple nivel)
+          expected (quot (* residual span) 9)]
+      (is (= nivel (:nivel converted)) (str "nivel preservado L" nivel))
+      (is (= expected (:xp-desde-nivel converted))
+          (str "residual flat9 direto L" nivel " +" residual))
+      (is (= "growth-v2" (:xp-progress-version converted)))
+      (is (= converted (growth/convert-to-growth-v2 converted))
+          "conversao idempotente")
+      (is (= residual (:xp-legacy-residual converted)))
+      (is (= nivel (:xp-legacy-nivel converted))))))
+
+(deftest direct-legacy-vitorias-and-string-keys
+  (let [legacy {"species" "pikachu" "nivel" 20 "vitorias-desde-nivel" 1}
+        converted (growth/convert-to-growth-v2 legacy)]
+    (is (= 20 (:nivel converted)))
+    (is (= 16 (:xp-desde-nivel converted)))
+    (is (= 3 (:xp-legacy-residual converted)))))
+
+(deftest direct-legacy-overflow-and-ambiguous-total-fail-closed
+  (doseq [legacy [{:species "pikachu" :nivel 20 :xp 9}
+                  {:species "pikachu" :nivel 20 :xp 18}
+                  {:species "pikachu" :nivel 20 :xp-total 999}
+                  {:species "pikachu" :nivel 20 :xp-total 999 :xp 3}]]
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (growth/convert-to-growth-v2 legacy))
+        "nao converter legado ambiguo nem aumentar nivel silenciosamente")))
+
+(deftest direct-legacy-preserves-other-pokemon-attributes
+  (let [legacy {:id-pokemon "pk-legacy" :species "eevee" :nivel 30
+                :xp 3 :hp 45 :hp-atual 22 :shiny true
+                :golpes [{:slug "tackle"}] :ivs {:attack 15}}
+        converted (growth/convert-to-growth-v2 legacy)]
+    (doseq [k [:id-pokemon :species :nivel :hp :hp-atual :shiny :golpes :ivs]]
+      (is (= (get legacy k) (get converted k)) (str "preserva " k)))))
