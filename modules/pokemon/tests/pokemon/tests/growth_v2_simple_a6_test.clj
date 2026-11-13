@@ -192,3 +192,30 @@
           (let [again (first (ports/list-collection s "c" "ash" "a"))]
             (is (= before (:xp-desde-nivel again)) "retry não altera residual")
             (is (= 10 (:nivel again)))))))))
+
+(deftest unknown-xp-never-synthesized-during-conversion-or-evolution
+  (let [unknown {:species "eevee" :nivel 12 :hp 40 :hp-atual 40}]
+    (is (= unknown (growth/convert-to-growth-v2 unknown)))
+    (is (= unknown (growth/ensure-growth-v2 unknown)))
+    (is (= unknown (growth/after-evolution unknown)))
+    (is (false? (:conhecido? (growth/pokemon-progress unknown))))))
+
+(deftest unknown-xp-first-positive-grant-only
+  (let [unknown {:species "eevee" :nivel 12 :hp 40 :hp-atual 40
+                 :ataque 30 :defesa 30 :atq-esp 30 :def-esp 30 :veloc 30}
+        zero (xp/aplicar-xp-pokemon unknown 0)
+        positive (xp/aplicar-xp-pokemon unknown 5)
+        r (:registro positive)
+        next-grant (xp/aplicar-xp-pokemon r 5)]
+    (is (= unknown (:registro zero)) "zero não inicializa XP desconhecido")
+    (is (= 12 (:nivel-final positive)) "primeiro ganho não altera nível")
+    (is (= 5 (:xp-desde-nivel r)) "ganho real é o primeiro XP conhecido")
+    (is (= "growth-v2" (:xp-progress-version r)))
+    (is (= 10 (get-in next-grant [:registro :xp-desde-nivel])))
+    (is (= 12 (get-in next-grant [:registro :nivel])))))
+
+(deftest unknown-level-100-remains-unknown
+  (let [unknown {:species "eevee" :nivel 100}
+        r (xp/aplicar-xp-pokemon unknown 50)]
+    (is (= unknown (:registro r)))
+    (is (= 0 (:xp-oficial-aplicado r)))))
