@@ -177,29 +177,29 @@
       (is (= (:nivel c1) (:nivel c2))))))
 
 (deftest legacy-residual-boundaries
-  (doseq [[res expect-extra]
+  ;; HOTFIX: conversão nunca sobe nível — residual≥9 só contribui via rem/9.
+  (doseq [[res _old-extra]
           [[0 0] [1 0] [4 0] [8 0] [9 1] [10 1] [18 2]]]
     (testing (str "residual=" res)
       (let [c (growth/convert-legacy-residual
                {:species "pikachu" :nivel 20 :xp-desde-nivel res
                 :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})
             nivel' (:nivel c)
-            rate :medium-fast]
-        (is (= (+ 20 expect-extra) nivel')
-            "nível sobe só pelo excesso flat-9; nunca desce")
-        (is (<= (growth/total-xp-for-level rate nivel')
-                (:xp-total c)
-                (if (>= nivel' 100)
-                  (growth/total-xp-for-level rate 100)
-                  (dec (growth/total-xp-for-level rate (inc nivel'))))))
-        (is (= nivel' (growth/pokemon-level-from-total-xp rate (:xp-total c)))
-            "nível persistido alinhado ao total"))))
-  (testing "nível 99 com residual 9 sobe a 100"
+            rate :medium-fast
+            rem (long (mod res 9))
+            span (growth/level-span rate 20)
+            expected-total (+ (growth/total-xp-for-level rate 20)
+                              (long (Math/floor (* (/ (double rem) 9.0) span))))]
+        (is (= 20 nivel') "conversão preserva nível")
+        (is (= expected-total (:xp-total c)))
+        (is (= res (:xp-legacy-residual c))))))
+  (testing "nível 99 com residual 9 NÃO sobe a 100 na conversão"
     (let [c (growth/convert-legacy-residual
              {:species "pikachu" :nivel 99 :xp-desde-nivel 9
               :hp 10 :hp-atual 10 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})]
-      (is (= 100 (:nivel c)))
-      (is (= (growth/total-xp-for-level :medium-fast 100) (:xp-total c)))
+      (is (= 99 (:nivel c)))
+      (is (= 9 (:xp-legacy-residual c)))
+      (is (= (growth/total-xp-for-level :medium-fast 99) (:xp-total c)))
       (is (zero? (:xp-desde-nivel c)))))
   (testing "nível 100 não sobe nem acumula residual"
     (let [c (growth/convert-legacy-residual
@@ -208,6 +208,23 @@
       (is (= 100 (:nivel c)))
       (is (= (growth/total-xp-for-level :medium-fast 100) (:xp-total c)))
       (is (= 20 (:xp-legacy-residual c))))))
+
+(deftest incident-cacada-nao-pula-niveis-com-residual-anomalo
+  "Regressão: Blastoise L74 residual 8478 e Staryu L13 residual 478."
+  (let [blast (growth/convert-legacy-residual
+               {:species "blastoise" :nivel 74 :xp-desde-nivel 8478 :xp 8478
+                :hp 100 :hp-atual 100 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1})
+        staryu (xp/aplicar-xp-atividade
+                {:species "Staryu" :nivel 13 :xp 478 :xp-desde-nivel 478
+                 :hp 50 :hp-atual 50 :ataque 1 :defesa 1 :atq-esp 1 :def-esp 1 :veloc 1
+                 :amizade 70}
+                3 {:atividade :batalha})]
+    (is (= 74 (:nivel blast)))
+    (is (= 8478 (:xp-legacy-residual blast)))
+    (is (= "growth-v1" (:xp-progress-version blast)))
+    (is (= 13 (:nivel-final staryu)))
+    (is (zero? (:subidas staryu)))
+    (is (= 13 (get-in staryu [:registro :nivel])))))
 
 (deftest datomic-vitorias-only-roundtrip
   (let [client (persistence/client {:system (str "gvic-" (java.util.UUID/randomUUID))
