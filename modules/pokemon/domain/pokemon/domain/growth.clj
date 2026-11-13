@@ -168,15 +168,18 @@
 (defn convert-legacy-residual
   "Converte registro legado (residual + limiar 9) → growth-v1.
 
-  Política de fronteira (espelha `normalizar-xp-registro` do cljs):
-  - Nível legado é piso (nunca reduz).
-  - `floor(residual/9)` vira subidas de nível (cap 100).
-  - O resto `(residual rem 9)/9` mapeia para o span oficial do nível resultante.
-  - Residual exatamente múltiplo de 9 → novo nível com residual 0 (sem XP
-    no limiar do próximo nível com nível antigo).
-  - Em L100, XP total = teto da curva; progresso excedente só em metadados.
+  HOTFIX incidente A6 (saltos de nível em caçada):
+  - **Nunca** sobe de nível nesta conversão — o nível persistido é preservado.
+  - Residual flat-9 legítimo (0..8) mapeia `(r/9)*span` no nível atual.
+  - Residual ≥ 9 (dados anômalos / residual oficial sem versão) **não** usa
+    `quot(r,9)` como subidas; só `rem = r mod 9` entra na fração do span.
+    O valor bruto fica em `:xp-legacy-residual` para auditoria/reparo.
+  - Em L100, XP total = teto da curva.
+  - Idempotente se já `growth-v1`.
 
-  Idempotente se `:xp-progress-version` já for growth-v1."
+  Motivo: valores grandes em `:xp`/`:xp-desde-nivel` sem `xp-progress-version`
+  (ex.: 8478) eram interpretados como flat-9 e concediam dezenas de níveis no
+  primeiro grant de caçada via `ensure-growth-v1`."
   [registro]
   (let [ver (str (or (registro-get registro :xp-progress-version "xp-progress-version")
                      ""))]
@@ -189,19 +192,15 @@
                                                        :level "level")
                                          1))))
             legacy-residual (legacy-residual-xp registro)
-            room (max 0 (- nivel-maximo nivel0))
-            extra (if (>= nivel0 nivel-maximo)
-                    0
-                    (min room (quot legacy-residual legacy-xp-por-nivel)))
+            ;; Nunca conceder níveis na conversão (incidente caçada → L100).
+            nivel nivel0
             rem (if (>= nivel0 nivel-maximo)
                   0
                   (long (mod legacy-residual legacy-xp-por-nivel)))
-            nivel (min nivel-maximo (+ nivel0 extra))
             span (level-span rate nivel)
             frac (if (pos? legacy-xp-por-nivel)
                    (/ (double rem) (double legacy-xp-por-nivel))
                    0.0)
-            ;; rem ∈ 0..8 ⇒ frac < 1 ⇒ mapped < span (nunca pousa no limiar L+1).
             mapped (if (or (>= nivel nivel-maximo) (zero? span))
                      0
                      (long (Math/floor (* frac (double span)))))
@@ -210,23 +209,17 @@
                        (total-xp-for-level rate nivel-maximo)
                        (+ base mapped))
             residual (residual-in-level rate nivel xp-total)
-            nivel-from-xp (pokemon-level-from-total-xp rate xp-total)
-            ;; Consistência: nível derivado do total nunca abaixo do convertido;
-            ;; se o total implica nível maior (não esperado), sobe.
-            nivel' (max nivel nivel-from-xp)
-            xp-total' (max xp-total (total-xp-for-level rate nivel'))
-            residual' (residual-in-level rate nivel' xp-total')
-            ;; Auditoria: nível legado original — nunca sobrescrever se já gravado.
+            ;; Não promover nível a partir do total nesta conversão.
             legacy-nivel (or (when-let [v (registro-get registro
                                                         :xp-legacy-nivel
                                                         "xp-legacy-nivel")]
                                (long v))
                              nivel0)]
         (-> registro
-            (assoc :nivel nivel'
-                   :xp-total xp-total'
-                   :xp-desde-nivel residual'
-                   :xp residual'
+            (assoc :nivel nivel
+                   :xp-total xp-total
+                   :xp-desde-nivel residual
+                   :xp residual
                    :xp-progress-version progress-version
                    :growth-rate rate
                    :xp-legacy-residual legacy-residual
