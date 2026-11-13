@@ -663,9 +663,9 @@
   {:main-opts ["-e" "(require 'clojure.test 'pokemon.tests.trainer-progression-test 'pokemon.tests.trainer-progression-datomic-test) (let [r (clojure.test/run-tests 'pokemon.tests.trainer-progression-test 'pokemon.tests.trainer-progression-datomic-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"]
    :jvm-opts ["-Xms64m" "-Xmx768m" "-XX:+UseG1GC"]}
 
-  ;; A6 — curvas oficiais PokéAPI + conversão legado (037 / growth-v1)
+  ;; A6 — growth-v2 (fórmula simples) + curvas históricas PokéAPI / 037
   :test-a6-pokemon-growth
-  {:main-opts ["-e" "(require 'clojure.test 'pokemon.tests.growth-curves-a6-test 'pokemon.tests.level-evolution-a6-test 'pokemon.tests.xp-equivalence-test 'pokemon.tests.species-hp-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.growth-curves-a6-test 'pokemon.tests.level-evolution-a6-test 'pokemon.tests.xp-equivalence-test 'pokemon.tests.species-hp-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"]
+  {:main-opts ["-e" "(require 'clojure.test 'pokemon.tests.growth-v2-simple-a6-test 'pokemon.tests.growth-curves-a6-test 'pokemon.tests.level-evolution-a6-test 'pokemon.tests.xp-equivalence-test 'pokemon.tests.species-hp-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.growth-v2-simple-a6-test 'pokemon.tests.growth-curves-a6-test 'pokemon.tests.level-evolution-a6-test 'pokemon.tests.xp-equivalence-test 'pokemon.tests.species-hp-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"]
    :jvm-opts ["-Xms64m" "-Xmx768m" "-XX:+UseG1GC"]}
 
   ;; A6 — Máquinas Técnicas (consumo atômico + presenter Node em job separado)

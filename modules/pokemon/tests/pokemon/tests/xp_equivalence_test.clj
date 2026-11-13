@@ -1,5 +1,5 @@
 (ns pokemon.tests.xp-equivalence-test
-  "Equivalência pura das regras de XP vs fixtures do legado."
+  "Equivalência pura das regras de XP vs fixtures (growth-v2 + PE legado)."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]

@@ -40,8 +40,8 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin a6/live-baseline-8ef41c8
           base_ref=origin/a6/live-baseline-8ef41c8
-          # Tip atual da live-baseline (pós PR #82 / cards PNG). Atualizar só com merge na base.
-          expected=cc717d08b7c2812e682e6bb8026dc8d55647c24b
+          # Tip live verificado após merge PR #80 (MT + loja/ajudas); gate fechado por SHA.
+          expected=8b05886f696441fabdce06823a2513c7d8997446
           test "$(git rev-parse "$base_ref")" = "$expected"
           merge_base="$(git merge-base HEAD "$base_ref")"
           test "$merge_base" = "$expected"
@@ -60,7 +60,7 @@ jobs:
           fi
           if [[ -n "$growth_paths" ]]; then
             echo "kind=jvm-pokemon-growth" >> "$GITHUB_OUTPUT"
-            echo "Scope=jvm-pokemon-growth (037 + curvas PokéAPI; tip pós-#75)."
+            echo "Scope=jvm-pokemon-growth (growth-v2 simples + conversão segura; schema 037 preservado)."
             printf '%s\n' "$growth_paths"
           elif [[ -n "$mt_paths" ]]; then
             echo "kind=jvm-mt-move" >> "$GITHUB_OUTPUT"
@@ -405,7 +405,7 @@ jobs:
         run: npm run build
 
   validate-jvm-pokemon-growth:
-    name: Pokémon growth curves + 037 on live tip
+    name: Pokémon growth-v2 + 037 on live tip
     needs: classify-and-verify-base
     if: needs.classify-and-verify-base.outputs.kind == 'jvm-pokemon-growth'
     runs-on: ubuntu-latest
@@ -462,6 +462,11 @@ jobs:
         with:
           node-version: '22.23.4'
 
-      - name: Node maintenance + Pokémon presenters
+      - name: Install locked Node dependencies (Sharp for XP media tests)
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+        run: npm ci
+
+      - name: Node maintenance + Pokémon presenters / growth-v2
         run: |
-          node --test test/a6-maintenance.test.cjs test/pokemon-jvm-present.test.cjs
+          node --test test/a6-maintenance.test.cjs test/pokemon-jvm-present.test.cjs test/pokemon-jvm-tm-xp.characterization.test.cjs test/pokemon-jvm-tm-xp.test.cjs
