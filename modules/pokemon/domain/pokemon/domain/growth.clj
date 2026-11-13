@@ -344,6 +344,14 @@
       0.0
       (clamp-frac (/ (double residual) (double span))))))
 
+(defn xp-known?
+  "True somente com campos de XP presentes; nível isolado não prova progresso."
+  [registro]
+  (boolean (registro-has? registro :xp-total "xp-total"
+                          :xp-desde-nivel "xp-desde-nivel"
+                          :xp "xp"
+                          :vitorias-desde-nivel "vitorias-desde-nivel")))
+
 (defn convert-to-growth-v2
   "Converte registro para growth-v2 preservando o nível e o progresso
   proporcional dentro do nível. **Nunca** sobe de nível nesta conversão.
@@ -351,7 +359,7 @@
   - Já v2 → idempotente (renormaliza residual/total).
   - v1 → frac = residual/span(oficial); residual' = floor(frac * span-simples).
   - Legado residual → v1 depois v2 (pode subir só na etapa v1, política anterior).
-  - Sem campos de XP → v2 no nível atual com residual 0.
+  - Sem campos de XP → devolve registro intacto (desconhecido, sem inventar zero).
 
   Não grava; a persistência fica a cargo do caminho de escrita."
   [registro]
@@ -406,49 +414,56 @@
             (cond-> rate-v1 (assoc :growth-rate-v1 rate-v1))))
 
       :else
-      (let [has-xp? (or (registro-has? registro :xp-total "xp-total"
-                                       :xp-desde-nivel "xp-desde-nivel"
-                                       :xp "xp"
-                                       :vitorias-desde-nivel "vitorias-desde-nivel"))]
-        (if has-xp?
-          (convert-to-growth-v2 (ensure-growth-v1 registro))
-          (let [nivel (max 1 (min nivel-maximo
-                                  (long (or (registro-get registro :nivel "nivel" :level "level")
-                                            1))))
-                xp-total (total-xp-for-level-simple nivel)]
-            (assoc registro
-                   :nivel nivel
-                   :xp-total xp-total
-                   :xp-desde-nivel 0
-                   :xp 0
-                   :xp-progress-version progress-version
-                   :growth-rate simple-growth-rate)))))))
+      (if (xp-known? registro)
+        (convert-to-growth-v2 (ensure-growth-v1 registro))
+        registro))))
 
 (defn ensure-growth-v2
-  "Garante growth-v2. Idempotente. Usado em escrita (grant/hatch/evolução)."
+  "Converte apenas quando o XP é conhecido; sem XP mantém desconhecido."
   [registro]
   (convert-to-growth-v2 registro))
+
+(defn initialize-unknown-for-first-grant
+  "Política explícita: primeiro grant POSITIVO inicializa XP desconhecido no
+  início do nível já persistido, antes de aplicar o novo ganho.
+  Não se aplica em leitura, evolução ou grant zero."
+  [registro]
+  (if (xp-known? registro)
+    (convert-to-growth-v2 registro)
+    (let [nivel (max 1 (min nivel-maximo
+                            (long (or (registro-get registro :nivel "nivel" :level "level") 1))))]
+      (assoc registro
+             :nivel nivel
+             :xp-total (total-xp-for-level-simple nivel)
+             :xp-desde-nivel 0
+             :xp 0
+             :xp-progress-version progress-version
+             :growth-rate simple-growth-rate))))
+
+
 
 (defn after-evolution
   "Preserva nível e residual growth-v2; nunca reduz nível."
   [registro]
-  (let [r (ensure-growth-v2 registro)
-        nivel (long (:nivel r 1))
-        residual (long (:xp-desde-nivel r 0))
-        span (level-span-simple nivel)
-        residual' (if (or (>= nivel nivel-maximo) (zero? span))
-                    0
-                    (min residual (max 0 (dec span))))
-        xp-total (if (>= nivel nivel-maximo)
-                   (total-xp-for-level-simple nivel-maximo)
-                   (+ (total-xp-for-level-simple nivel) residual'))]
-    (assoc r
-           :growth-rate simple-growth-rate
-           :nivel nivel
-           :xp-total xp-total
-           :xp-desde-nivel residual'
-           :xp residual'
-           :xp-progress-version progress-version)))
+  (if-not (xp-known? registro)
+    registro
+    (let [r (ensure-growth-v2 registro)
+          nivel (long (:nivel r 1))
+          residual (long (:xp-desde-nivel r 0))
+          span (level-span-simple nivel)
+          residual' (if (or (>= nivel nivel-maximo) (zero? span))
+                      0
+                      (min residual (max 0 (dec span))))
+          xp-total (if (>= nivel nivel-maximo)
+                     (total-xp-for-level-simple nivel-maximo)
+                     (+ (total-xp-for-level-simple nivel) residual'))]
+      (assoc r
+             :growth-rate simple-growth-rate
+             :nivel nivel
+             :xp-total xp-total
+             :xp-desde-nivel residual'
+             :xp residual'
+             :xp-progress-version progress-version))))
 
 (defn grant-pokemon-xp
   "Concede XP na unidade growth-v2 (residual no nível).
@@ -458,10 +473,13 @@
 
   Retorna {:registro :subidas :nivel-final :xp-ganho :xp-total-antes :xp-total-depois}."
   [registro quantidade]
-  (let [r0 (ensure-growth-v2 registro)
-        nivel0 (long (:nivel r0 1))
-        antes (long (:xp-total r0 0))
-        ganho (max 0 (long quantidade))]
+  (let [ganho (max 0 (long quantidade))
+        ;; Apenas um ganho positivo pode inicializar XP antes desconhecido.
+        r0 (if (pos? ganho)
+             (initialize-unknown-for-first-grant registro)
+             (ensure-growth-v2 registro))
+        nivel0 (long (or (:nivel r0) (:nivel registro) 1))
+        antes (long (or (:xp-total r0) 0))]
     (cond
       (>= nivel0 nivel-maximo)
       (let [xp-total (total-xp-for-level-simple nivel-maximo)]
@@ -486,7 +504,7 @@
        :xp-ganho 0
        :xp-total-antes antes
        :xp-total-depois antes
-       :growth-rate simple-growth-rate}
+       :growth-rate (when (xp-known? r0) simple-growth-rate)}
 
       :else
       (loop [nivel nivel0
