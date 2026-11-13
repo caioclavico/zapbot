@@ -11,7 +11,7 @@ Branch: `feat/a6-simple-pokemon-xp`. **Sem** PR #83 / incubadora.
 | `:xp-total` | XP acumulado oficial na tabela da curva |
 | `:xp-desde-nivel` / `:xp` | Residual = `xp-total − total_oficial(nível)` |
 | Span do nível | `total(n+1) − total(n)` (milhares nos níveis altos) |
-| Legado flat-9 | Sem `xp-progress-version`: residual em “vitórias” ×9 → `ensure-growth-v1` |
+| Legado flat-9 | Sem `xp-progress-version`: residual em 0..8 (ou vitórias ×3) → conversão **direta** para v2 |
 | XP desconhecido | Sem campos de XP → `conhecido?=false`; UI mostra `XP ?` |
 | Schema | 037 (`:pokemon/xp-total`, `:xp-desde-nivel`, `:xp-progress-version`, …) |
 
@@ -47,6 +47,24 @@ legíveis. Transações Datomic antigas **não** são apagadas.
 3. `residual_v2 = floor(frac * xpNecessario(nível))`.
 4. **Não** aplicar level-up nesta etapa.
 5. Idempotente se já `"growth-v2"`.
+
+## Conversão legado flat-9 → growth-v2
+
+Para os Pokémon **sem versão** e com XP legado conhecido, usar diretamente:
+
+`residual_v2 = (residual_legado * xpNecessario(nível)) quot 9`
+
+O nível persistido **não muda**. Preservar `:xp-legacy-residual` e
+`:xp-legacy-nivel` para auditoria. Nunca passar por
+`ensure-growth-v1`/curvas PokéAPI para converter este caso.
+
+Exemplo L20 com 3/9 XP: `3 * 48 quot 9 = 16/48 XP` (33,3%).
+Mesmo valor ao repetir a conversão.
+
+Para registros unversioned com `:xp-total` ou residual legado fora de
+0..8, falhar com erro auditável e **não** inventar ganho nem alterar nível.
+Exigir análise manual dos casos; não prosseguir para cutover com tais casos
+pendentes. XP desconhecido segue sem conversão.
 
 XP desconhecido (sem campos de XP): permanece `conhecido?=false` na leitura,
 em evolução, em conversão explícita e em grants de zero XP. O **primeiro grant
