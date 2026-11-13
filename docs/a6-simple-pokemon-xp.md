@@ -48,13 +48,19 @@ legíveis. Transações Datomic antigas **não** são apagadas.
 4. **Não** aplicar level-up nesta etapa.
 5. Idempotente se já `"growth-v2"`.
 
-XP desconhecido (sem campos de XP): permanece `conhecido?=false` na leitura.
-Não inventar residual zero em consultas RO.
+XP desconhecido (sem campos de XP): permanece `conhecido?=false` na leitura,
+em evolução, em conversão explícita e em grants de zero XP. O **primeiro grant
+positivo** é uma operação canônica de gameplay que inicializa a base no começo
+do nível persistido (residual 0) e soma os pontos ganhos; esse marco não presume
+progresso anterior e não é executado por consulta. No nível 100, não inicializar
+XP desconhecido. A operação usa os recibos transacionais de gameplay.
 
 ## Quando grava
 
-- **Escrita** (grant XP, hatch, evolução, paths que já chamam `ensure-growth-v2`):
-  conversão lazy + persistência da versão nova.
+- **Escrita**: grants positivos convertem v1→v2 proporcionalmente; registros
+  desconhecidos são inicializados somente no primeiro grant positivo.
+- **Evolução**: converte XP conhecido, mantém desconhecido sem criar XP 0.
+- **Hatch**: Pokémon novo recebe o modelo v2 conforme as regras de nascimento.
 - **Leitura** (`pokemon-progress` / DTO): cálculo in-memory para a barra;
   **não** grava conversão só por consultar.
 
@@ -73,11 +79,16 @@ Antes da liberação (GO futuro):
 1. Inventário por `xp-progress-version` + contagem conhecido/desconhecido.
 2. Simulação proporcional (níveis estáveis) em restore isolado.
 3. Cold backup dos 4 volumes + fingerprints pré/pós.
-4. Cutover com imagens que conhecem growth-v2.
-5. Rollback de **código**: imagem anterior ainda lê v1; registros já v2
-   precisam de imagem que entenda v2 (ou freeze de grants até imagem compatível).
-6. Rollback de **dados**: restore do cold pré-cutover — não misturar com
-   escritas v2 posteriores sem análise.
+4. GO explícito para o cutover **e para conversões lazy durante gameplay**:
+   não há backfill em massa, mas a primeira escrita pode persistir v2.
+5. Ensaiar em restore isolado uma frota mista (v1, v2, legado e XP desconhecido)
+   e comparar níveis, IDs, barras, XP, histórico e fingerprints; prever casos
+   de falha durante primeira escrita e reprocessamento idempotente.
+6. Rollback de **código**: a imagem anterior NÃO é segura para editar registros
+   já v2. Não reiniciar escrita com imagem antiga após qualquer grant v2.
+   Em erro, isolar escritores; voltar apenas com versão compatível com v2.
+7. Rollback de **dados**: restauração de cold pré-cutover exige análise de todas
+   as escritas posteriores e reconciliação, jamais sobrescrever saves ativos.
 
 ## WhatsApp
 
