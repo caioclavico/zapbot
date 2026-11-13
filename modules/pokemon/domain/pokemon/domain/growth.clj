@@ -397,16 +397,16 @@
       (assoc-flat9 registro (persist-nivel registro) 0))))
 
 (defn ensure-flat9-v2-for-grant
-  "Como ensure-flat9-v2, mas ambíguos iniciam residual 0 no nível persistido
-  (primeiro ganho; não inventa progresso histórico). Preserva residual bruto
-  em :xp-legacy-residual."
+  "Fail-closed: XP legado sem versão com residual >= 9 precisa de auditoria.
+  Não zera progresso em grant/evolução e não promove níveis silenciosamente.
+  A operação inteira deve abortar, sem gravar recibo de grant, até a
+  reconciliação histórica resultar num estado flat-9-v2 confiável."
   [registro]
   (if (ambiguous-legacy? registro)
-    (let [nivel (persist-nivel registro)
-          raw (legacy-residual-xp registro)]
-      (assoc-flat9 registro nivel 0
-                   :legacy-residual raw
-                   :legacy-nivel nivel))
+    (throw (ex-info "XP legado ambiguo: reconciliacao necessaria antes do grant"
+                    {:code :flat9-ambiguous-legacy-xp
+                     :nivel (persist-nivel registro)
+                     :xp-legacy-residual (legacy-residual-xp registro)}))
     (ensure-flat9-v2 registro)))
 
 (defn after-evolution
