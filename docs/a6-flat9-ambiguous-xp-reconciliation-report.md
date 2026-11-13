@@ -4,7 +4,7 @@
 **PR:** #86 · tip de trabalho sobre `60ee8d3` + commits desta reconciliação.
 **Base live:** `5f3b716` (#85).
 **CI tip anterior flat-9:** `43499558958` SUCCESS (pré-reconciliação).
-**CI pós-reconciliação:** `43516693405` SUCCESS (código `ef4f568`; growth + classify). Commit final tip: `6563097`.
+**CI pós-reconciliação:** `43516693405` SUCCESS no commit de código `ef4f568` (growth + classify). Tip da branch: ver `git rev-parse` / PR #86 head (docs subsequentes não alteram o gate).
 
 ## Contagem
 
