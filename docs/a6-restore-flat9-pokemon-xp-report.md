@@ -62,7 +62,13 @@
 
 Evidências: `/tmp/a6-flat9-reh-20261113T193712Z/`
 
+## CI
+
+- Gate `a6-live-reconcile-validation` alinhado ao tip live **#85** (`5f3b716`).
+- Scope esperado: `jvm-pokemon-growth` (altera `domain/growth`).
+
 ## Testes executados (host)
+
 
 - `clojure -M:test-a6-pokemon-growth` → **60 tests, 1108 assertions, 0 fail**
 - `clojure -M:test-a6-tm-xp-evolution` → **0 fail**
