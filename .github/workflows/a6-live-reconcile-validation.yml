@@ -462,6 +462,11 @@ jobs:
         with:
           node-version: '22.23.4'
 
+      - name: Install locked Node dependencies (Sharp for XP media tests)
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+        run: npm ci
+
       - name: Node maintenance + Pokémon presenters / growth-v2
         run: |
           node --test test/a6-maintenance.test.cjs test/pokemon-jvm-present.test.cjs test/pokemon-jvm-tm-xp.characterization.test.cjs test/pokemon-jvm-tm-xp.test.cjs
