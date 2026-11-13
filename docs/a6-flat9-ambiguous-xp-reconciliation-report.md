@@ -4,6 +4,7 @@
 **PR:** #86 · tip de trabalho sobre `60ee8d3` + commits desta reconciliação.
 **Base live:** `5f3b716` (#85).
 **CI tip anterior flat-9:** `43499558958` SUCCESS (pré-reconciliação).
+**CI pós-reconciliação:** `43516693405` (head `ef4f568`).
 
 ## Contagem
 
