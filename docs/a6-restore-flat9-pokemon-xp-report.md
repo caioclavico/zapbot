@@ -6,7 +6,7 @@
 
 ## READY?
 
-**READY para autorização separada de merge/deploy**, com ressalvas abaixo (19 ambíguos fail-closed; cold fresco pré-cutover).
+**NO-GO para deploy até reconciliação dos 19 registros ambíguos**, com ressalvas abaixo (19 ambíguos fail-closed; cold fresco pré-cutover).
 
 ## Arquivos alterados
 
@@ -35,7 +35,7 @@
 | `growth-v1` | `floor((resid/span)*9)` → 0..8; preserva nível |
 | `growth-v2` | Residual &lt;9 preserva; senão fração segura → 0..8 |
 | Legado 0..8 | Preserva residual; carimba `xp-legacy-*` |
-| Ambíguo (sem versão, residual ≥9) | **Não converte** na leitura; no 1º grant inicia residual 0 no nível persistido e guarda bruto em `xp-legacy-residual` |
+| Ambíguo (sem versão, residual ≥9) | **Não converte** na leitura; grants e evolução falham fechados (sem reinicializar residual); exige reconciliação histórica antes de jogar com esse Pokémon |
 | XP desconhecido | Leitura `conhecido?=false` |
 
 ## Persistência
@@ -77,7 +77,7 @@ Evidências: `/tmp/a6-flat9-reh-20261113T193712Z/`
 
 ## Riscos restantes
 
-1. **19 ambíguos** exigem decisão humana / auditoria Datomic antes de backfill; grants começam residual 0 sem inventar histórico.
+1. **19 ambíguos** exigem decisão humana / auditoria Datomic antes de backfill; grants/evoluções desses registros ficam bloqueados até reconciliação; não zerar XP anterior.
 2. Cold archive `cold-pr85-repair` espelhou tip pré-reparo nos levels dos 4 afetados; o volume `repair-reh` é a referência pós-reparo. **Gerar cold fresco** imediatamente antes de qualquer cutover autorizado.
 3. Multiplicadores ginásio/raid/PvP/adversário permanecem leves sobre pontos flat — balanceamento documentado; caçada comum = 3.
 4. Frota mista durante deploy: leitores antigos podem não entender `flat-9-v2` até o tip JVM/Node.
@@ -99,3 +99,8 @@ Evidências: `/tmp/a6-flat9-reh-20261113T193712Z/`
 | Ambíguos fail-closed | GO (19 documentados) |
 | Merge/deploy produção | **NO-GO até GO explícito separado** |
 | Backfill produção | **NO-GO** |
+
+
+## Revisão de segurança após GO do usuário
+
+Identificado bug no primeiro grant: o caminho `ensure-flat9-v2-for-grant` inicializava residual 0 para unversioned com XP >=9, apagando implicitamente o progresso não reconciliado. Corrigido no PR: agora operação de grant ou evolução falha fechada antes de alterar registro; nada é redefinido. **Esse bloqueio impede temporariamente gameplay com os 19 Pokémon até reconciliação**. Não se deve executar deploy em produção enquanto a auditoria individual e o ensaio cold atualizado não estiverem concluídos. Nenhum merge/backfill/deploy executado nesta revisão.
