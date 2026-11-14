@@ -18,7 +18,7 @@
 (defn- account-shell+eggs
   [db chat-id player-id]
   (let [ak (id/adventure-account-key chat-id player-id)
-        e (d/pull db '[*] [:adventure-account/key ak])
+        e (d/pull db adventure-store/account-pattern [:adventure-account/key ak])
         exists? (present? e)
         shell (if exists?
                 (adventure-store/account-shell e read-edn present?)
