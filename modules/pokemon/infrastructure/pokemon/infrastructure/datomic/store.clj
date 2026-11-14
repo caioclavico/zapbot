@@ -1603,10 +1603,10 @@
 (defn- load-adventure
   [db chat-id player-id]
   (let [ak (id/adventure-account-key chat-id player-id)
-        e (d/pull db '[*] [:adventure-account/key ak])]
+        e (d/pull db adventure-store/account-pattern [:adventure-account/key ak])]
     (when (present? e)
       (adventure-store/merge-estado
-       (adventure-store/account-shell e edn-read present?)
+       (dissoc (adventure-store/account-shell e edn-read present?) :persisted-receipts)
        (load-eggs-for-account db ak)))))
 
 (defn- load-enfermaria
@@ -4397,7 +4397,7 @@
              (fn [db _save]
                (let [ak (id/adventure-account-key (:chat-id writer-ctx)
                                                   (:player-id writer-ctx))
-                     e (d/pull db '[*] [:adventure-account/key ak])
+                     e (d/pull db adventure-store/account-pattern [:adventure-account/key ak])
                      _ (when-not (present? e)
                          (throw (err/error :adventure_account_missing {})))
                      shell (adventure-store/account-shell e edn-read present?)
@@ -4424,7 +4424,7 @@
              (fn [db _save]
                (let [ak (id/adventure-account-key (:chat-id writer-ctx)
                                                   (:player-id writer-ctx))
-                     e (d/pull db '[*] [:adventure-account/key ak])
+                     e (d/pull db adventure-store/account-pattern [:adventure-account/key ak])
                      shell (adventure-store/account-shell e edn-read present?)
                      eggs (load-eggs-for-account db ak)]
                  (adventure-store/build-incubate-tx
@@ -4449,7 +4449,7 @@
              (fn [db save]
                (let [ak (id/adventure-account-key (:chat-id writer-ctx)
                                                   (:player-id writer-ctx))
-                     e (d/pull db '[*] [:adventure-account/key ak])
+                     e (d/pull db adventure-store/account-pattern [:adventure-account/key ak])
                      shell (adventure-store/account-shell e edn-read present?)
                      eggs (load-eggs-for-account db ak)
                      sk (id/save-key (:chat-id writer-ctx)

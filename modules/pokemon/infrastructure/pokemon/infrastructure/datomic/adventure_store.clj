@@ -1,6 +1,7 @@
 (ns pokemon.infrastructure.datomic.adventure-store
   "TX builders Adventure Sync + Joy."
-  (:require [pokemon.domain.capacity :as capacity]
+  (:require [clojure.set :as set]
+            [pokemon.domain.capacity :as capacity]
             [pokemon.domain.collection :as coll]
             [pokemon.domain.egg-activity :as egg-activity]
             [pokemon.domain.eggs :as eggs]
@@ -49,12 +50,18 @@
      :resultado (edn-read (:egg/resultado-edn e))
      :revision (long (:egg/revision e 0))}))
 
+(def account-pattern
+  '[* (limit :adventure-account/receipts nil)])
+
 (defn account-shell
   [e edn-read present?]
   (when (present? e)
     (let [shell (or (edn-read (:adventure-account/state-edn e))
-                    (eggs/estado-inicial))]
+                    (eggs/estado-inicial))
+          persisted (set (:adventure-account/receipts e))]
       (assoc shell
+             :receipts (into persisted (:receipts shell))
+             :persisted-receipts persisted
              :account-key (:adventure-account/key e)
              :revision (long (:adventure-account/revision e 0))))))
 
@@ -66,7 +73,13 @@
 
 (defn- shell-edn
   [estado]
-  (pr-str (select-keys estado [:incubators :receipts :pending-egg-grants :pi-daily])))
+  (pr-str (select-keys estado [:incubators :pending-egg-grants :pi-daily])))
+
+(defn- receipt-txs
+  [account-ref shell estado]
+  (mapv (fn [receipt]
+          [:db/add account-ref :adventure-account/receipts receipt])
+        (set/difference (:receipts estado #{}) (:persisted-receipts shell #{}))))
 
 (defn build-ensure-account-tx
   [chat-id player-id]
@@ -90,18 +103,19 @@
         rev (long (:revision account-shell 0))
         operation-id (:operation-id request)
         phash (:payload-hash request)]
-    {:tx [(egg->entity ak (assoc ovo :revision 0))
-          [:db/add [:adventure-account/key ak]
-           :adventure-account/state-edn (shell-edn estado)]
-          [:db/cas [:adventure-account/key ak]
-           :adventure-account/revision rev (inc rev)]
-          {:operation-receipt/id operation-id
-           :operation-receipt/kind "egg-grant"
-           :operation-receipt/channel "gameplay"
-           :operation-receipt/payload-hash phash
-           :operation-receipt/player-key (id/player-key chat-id player-id)
-           :operation-receipt/save-id (:save-id writer-ctx)
-           :operation-receipt/summary (pr-str {:egg-id (:egg-id ovo)})}]
+    {:tx (into [(egg->entity ak (assoc ovo :revision 0))
+               [:db/add [:adventure-account/key ak]
+                :adventure-account/state-edn (shell-edn estado)]
+               [:db/cas [:adventure-account/key ak]
+                :adventure-account/revision rev (inc rev)]
+               {:operation-receipt/id operation-id
+                :operation-receipt/kind "egg-grant"
+                :operation-receipt/channel "gameplay"
+                :operation-receipt/payload-hash phash
+                :operation-receipt/player-key (id/player-key chat-id player-id)
+                :operation-receipt/save-id (:save-id writer-ctx)
+                :operation-receipt/summary (pr-str {:egg-id (:egg-id ovo)})}]
+               (receipt-txs [:adventure-account/key ak] account-shell estado))
      :result {:operation-id operation-id :duplicate false :egg ovo}}))
 
 (defn build-incubate-tx
@@ -123,21 +137,22 @@
         rev (long (:revision account-shell 0))
         operation-id (:operation-id request)
         phash (:payload-hash request)]
-    {:tx [(egg->entity ak (assoc ovo :revision (inc expected-rev)))
-          [:db/cas [:egg/id (:egg-id ovo)] :egg/revision expected-rev (inc expected-rev)]
-          [:db/add [:adventure-account/key ak]
-           :adventure-account/state-edn (shell-edn estado)]
-          [:db/cas [:adventure-account/key ak]
-           :adventure-account/revision rev (inc rev)]
-          {:operation-receipt/id operation-id
-           :operation-receipt/kind "egg-incubate"
-           :operation-receipt/channel "gameplay"
-           :operation-receipt/payload-hash phash
-           :operation-receipt/player-key (id/player-key chat-id player-id)
-           :operation-receipt/save-id (:save-id writer-ctx)
-           :operation-receipt/summary
-           (pr-str {:egg-id (:egg-id ovo) :due-at (:due-at ovo)
-                    :save-id (:save-id ovo)})}]
+    {:tx (into [(egg->entity ak (assoc ovo :revision (inc expected-rev)))
+               [:db/cas [:egg/id (:egg-id ovo)] :egg/revision expected-rev (inc expected-rev)]
+               [:db/add [:adventure-account/key ak]
+                :adventure-account/state-edn (shell-edn estado)]
+               [:db/cas [:adventure-account/key ak]
+                :adventure-account/revision rev (inc rev)]
+               {:operation-receipt/id operation-id
+                :operation-receipt/kind "egg-incubate"
+                :operation-receipt/channel "gameplay"
+                :operation-receipt/payload-hash phash
+                :operation-receipt/player-key (id/player-key chat-id player-id)
+                :operation-receipt/save-id (:save-id writer-ctx)
+                :operation-receipt/summary
+                (pr-str {:egg-id (:egg-id ovo) :due-at (:due-at ovo)
+                         :save-id (:save-id ovo)})}]
+               (receipt-txs [:adventure-account/key ak] account-shell estado))
      :result {:operation-id operation-id :duplicate false :egg ovo}}))
 (defn build-hatch-tx
   "Avança tempo se preciso, fixa resultado uma vez, entrega na coleção do save
@@ -189,12 +204,13 @@
       (let [estado-pend (assoc estado0 :eggs
                                (mapv #(if (= (:egg-id %) (:egg-id ovo0)) ovo1 %)
                                      (:eggs estado0)))]
-        {:tx [(egg->entity ak (assoc ovo1 :revision (inc expected-rev)))
+        {:tx (into [(egg->entity ak (assoc ovo1 :revision (inc expected-rev)))
               [:db/cas [:egg/id (:egg-id ovo0)] :egg/revision expected-rev (inc expected-rev)]
               [:db/add [:adventure-account/key ak]
                :adventure-account/state-edn (shell-edn estado-pend)]
               [:db/cas [:adventure-account/key ak]
                :adventure-account/revision rev (inc rev)]]
+                   (receipt-txs [:adventure-account/key ak] account-shell estado-pend))
          :result {:operation-id operation-id
                   :duplicate false
                   :pending true
@@ -233,7 +249,8 @@
                 (pr-str {:hatch-id hatch-id
                          :pokemon-id pokemon-id
                          :pending-delivered (mapv :egg-id delivered)})}]
-              delivered-tx)
+              (into delivered-tx
+                    (receipt-txs [:adventure-account/key ak] account-shell estado2)))
          :result {:operation-id operation-id
                   :duplicate false
                   :egg ovo-final
@@ -254,13 +271,17 @@
         applied (egg-activity/apply-activity
                  (merge-estado shell0 egg-maps) activity-opts)
         drained (egg-activity/materialize-pending (:estado applied) agora)
-        estado (:estado drained)
+        estado (cond-> (:estado drained)
+                 (:first-daily-marker activity-opts)
+                 (update :receipts conj (:first-daily-marker activity-opts)))
         egg (:egg-grant applied)
         delivered (:delivered drained)
         egg-tx (into (if egg [(egg->entity ak (assoc egg :revision 0))] [])
                      (map #(egg->entity ak (assoc % :revision 0)) delivered))
+        account-ref (if ensure-tx? (str "new-adventure-account:" ak) [:adventure-account/key ak])
         account-tx (if ensure-tx?
-                     [{:adventure-account/key ak
+                     [{:db/id account-ref
+                       :adventure-account/key ak
                        :adventure-account/chat-id chat-id
                        :adventure-account/player-id player-id
                        :adventure-account/revision 1
@@ -269,7 +290,8 @@
                        :adventure-account/state-edn (shell-edn estado)]
                       [:db/cas [:adventure-account/key ak]
                        :adventure-account/revision rev (inc rev)]])]
-    {:tx (into (vec egg-tx) account-tx)
+    {:tx (into (into egg-tx account-tx)
+               (receipt-txs account-ref shell0 estado))
      :result {:adventure-activity (assoc (:summary applied)
                                          :pending-delivered
                                          (mapv :egg-id delivered))

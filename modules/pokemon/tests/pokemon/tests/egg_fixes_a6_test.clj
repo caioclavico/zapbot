@@ -202,3 +202,43 @@
               (eggs/estado-inicial)
               {:event-id "raid-lose" :activity :raid-defeat
                :agora 8000000})))))
+
+(deftest batalha-finaliza-com-recibos-legados-no-limite
+  (let [s (fresh-store! "battle-receipt-limit")
+        conn (:conn s)
+        chat "c-receipts"
+        player "ash"
+        account [:adventure-account/key (id/adventure-account-key chat player)]
+        writer {:chat-id chat :player-id player}]
+    (boot! s chat player)
+    (let [legacy {:incubators (:incubators (eggs/estado-inicial))}
+          ids (map #(str "egg-act:wild-win:" %) (repeatedly 100 random-uuid))
+          legacy (last (take-while #(< (count (pr-str %)) 4000)
+                                   (reductions #(update %1 :receipts (fnil conj #{}) %2)
+                                               legacy ids)))]
+      (d/transact conn {:tx-data [[:db/add account :adventure-account/state-edn
+                                   (pr-str legacy)]]})
+      (with-redefs [egg-activity/activity-enabled? (constantly true)]
+        (doseq [[outcome activity points] [[:win "wild-victory" 8]
+                                           [:lose "wild-defeat" 3]]]
+          (let [bid (str "battle-" (random-uuid))
+                battle [:battle/id bid]
+                receipt {:operation-receipt/id (str "turn-" bid)
+                         :operation-receipt/kind "battle-turn"
+                         :operation-receipt/summary (pr-str {:battle-id bid})}
+                built {:tx [receipt [:db/add battle :battle/active? false]]
+                       :result {:battle {:battle-id bid :kind :wild
+                                         :active? false :outcome outcome}}}]
+            (d/transact conn {:tx-data [{:battle/id bid :battle/active? true
+                                         :battle/state-edn "{:active? true}"}]})
+            (let [enriched (adventure-activity/attach (d/db conn) writer built)
+                  summary (get-in enriched [:result :adventure-activity 0])]
+              (d/transact conn {:tx-data (:tx enriched)})
+              (is (= activity (:activity summary)))
+              (is (= points (:pi summary)))
+              (is (false? (:battle/active? (d/pull (d/db conn) '[*] battle))))
+              (is (contains? (:receipts (adv/get-account s chat player))
+                             (:event-id summary))))))
+        (let [entity (d/pull (d/db conn) '[*] account)]
+          (is (every? (set (:adventure-account/receipts entity)) (:receipts legacy)))
+          (is (nil? (:receipts (edn/read-string (:adventure-account/state-edn entity))))))))))

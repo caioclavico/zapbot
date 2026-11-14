@@ -18,7 +18,7 @@
 (defn- account-shell+eggs
   [db chat-id player-id]
   (let [ak (id/adventure-account-key chat-id player-id)
-        e (d/pull db '[*] [:adventure-account/key ak])
+        e (d/pull db adventure-store/account-pattern [:adventure-account/key ak])
         exists? (present? e)
         shell (if exists?
                 (adventure-store/account-shell e read-edn present?)
@@ -216,55 +216,17 @@
 
       :else nil)))
 
-(defn- apply-marker
-  [enrich marker]
-  (if-not marker
-    enrich
-    (let [estado-edn (some (fn [form]
-                             (when (and (vector? form)
-                                        (= :db/add (first form))
-                                        (= :adventure-account/state-edn (nth form 2 nil)))
-                               (nth form 3)))
-                           (:tx enrich))
-          ;; Also handle map assert on ensure
-          estado-edn (or estado-edn
-                         (some (fn [form]
-                                 (when (and (map? form) (:adventure-account/state-edn form))
-                                   (:adventure-account/state-edn form)))
-                               (:tx enrich)))
-          shell* (when estado-edn (edn/read-string estado-edn))
-          shell** (when shell*
-                    (update shell* :receipts #(set (conj (or % #{}) marker))))]
-      (if-not shell**
-        enrich
-        (update enrich :tx
-                (fn [tx]
-                  (mapv (fn [form]
-                          (cond
-                            (and (vector? form)
-                                 (= :db/add (first form))
-                                 (= :adventure-account/state-edn (nth form 2 nil)))
-                            (assoc form 3 (pr-str shell**))
-
-                            (and (map? form) (:adventure-account/state-edn form))
-                            (assoc form :adventure-account/state-edn (pr-str shell**))
-
-                            :else form))
-                        tx)))))))
-
 (defn- enrich-target
-  [db chat-id built target]
+  [db chat-id target]
   (let [pid (:player-id target)
         opts (:opts target)
-        {:keys [exists? shell eggs]} (account-shell+eggs db chat-id pid)
-        enrich (adventure-store/build-activity-enrich-tx
-                {:writer-ctx {:chat-id chat-id :player-id pid}
-                 :account-shell (or shell (eggs/estado-inicial))
-                 :egg-maps eggs
-                 :activity-opts opts
-                 :ensure-tx? (not exists?)})
-        enrich (apply-marker enrich (:first-daily-marker opts))]
-    enrich))
+        {:keys [exists? shell eggs]} (account-shell+eggs db chat-id pid)]
+    (adventure-store/build-activity-enrich-tx
+     {:writer-ctx {:chat-id chat-id :player-id pid}
+      :account-shell shell
+      :egg-maps eggs
+      :activity-opts opts
+      :ensure-tx? (not exists?)})))
 
 (defn attach
   "Anexa PI/ovos à TX para todos os alvos detectados. Não altera 036/037."
@@ -277,7 +239,7 @@
       (if-not (seq targets)
         built
         (let [chat-id (:chat-id writer)
-              enrichments (mapv #(enrich-target db chat-id built %) targets)
+              enrichments (mapv #(enrich-target db chat-id %) targets)
               summaries (mapv #(get-in % [:result :adventure-activity]) enrichments)
               extra-tx (mapcat :tx enrichments)
               summary0 (read-edn (:operation-receipt/summary receipt))

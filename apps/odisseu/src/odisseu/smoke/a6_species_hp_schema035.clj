@@ -19,7 +19,8 @@
 (defn run
   []
   (let [{:keys [conn]} (fresh-conn)
-        files-before (vec (butlast schema/migration-files))
+        files-before (vec (take-while #(not= % "migrations/pokemon/035-species-hp-formula.edn")
+                                      schema/migration-files))
         _ (with-redefs [schema/migration-files files-before]
             (schema/install! conn))
         db0 (d/db conn)
