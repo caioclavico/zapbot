@@ -50,6 +50,9 @@
      :resultado (edn-read (:egg/resultado-edn e))
      :revision (long (:egg/revision e 0))}))
 
+(def account-pattern
+  '[* (limit :adventure-account/receipts nil)])
+
 (defn account-shell
   [e edn-read present?]
   (when (present? e)
