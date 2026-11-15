@@ -764,17 +764,19 @@
     (cond
       (or (nil? sub) (str/blank? (str sub)) (= "status" sub))
       (p/let [data (desempenho/medir! ctx "pokemon_jvm_raid_active"
-                       #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))]
-        (envelope-jvm pedido (.formatRaidStatus jvm-present data prefix)))
+                       #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
+              present (.withRaidTurnMention jvm-present
+                        (.formatRaidStatus jvm-present data prefix) (.-raid data))]
+        (envelope-jvm pedido (.-text present) nil (js->clj (.-mentions present))))
 
       (= "abrir" sub)
-      (let [token (str/lower-case (str/trim (str (or (first resto) ""))))]
+      (let [token (str/trim (str/join " " resto))]
         (if (str/blank? token)
           (envelope-jvm pedido (.formatRaidOpenHelp jvm-present prefix))
           (let [ginasio (.resolveRaidGym jvm-present token)]
             (when-not ginasio
               (throw (erro-contrato
-                      (str "❓ Ginásio inválido. Use " prefix " raid abrir para ver a lista."))))
+                      (str "❓ Treinador inválido. Use " prefix " raid abrir para ver a lista."))))
             (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
                     op-id (.stableOperationId jvm-transport
                                               (:requestId pedido)
@@ -876,8 +878,10 @@
                             :hpAtacante (.-vezHp (.-raid data))
                             :fase (.-fase (.-raid data))
                             :turnIndex (.-turnIndex (.-raid data))
-                            :renderPhase "raid-start-manual"}))]
-        (envelope-jvm pedido (.formatRaidStart jvm-present data prefix) img))
+                            :renderPhase "raid-start-manual"}))
+              present (.withRaidTurnMention jvm-present
+                        (.formatRaidStart jvm-present data prefix) (.-raid data))]
+        (envelope-jvm pedido (.-text present) img (js->clj (.-mentions present))))
 
       (= "atacar" sub)
       (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
@@ -926,8 +930,8 @@
                             :fase (.-fase (.-raid data))
                             :turnIndex (.-turnIndex (.-raid data))
                             :renderPhase "raid-attack"}))
-              present (.coerceRaidPresent jvm-present
-                                          (.formatRaidAttack jvm-present data prefix))]
+              present (.withRaidTurnMention jvm-present
+                        (.formatRaidAttack jvm-present data prefix) (.-raid data))]
         (envelope-jvm pedido (append-trainer-level-ups (.-text present) data) img
                       (js->clj (or (.-mentions present) #js []))))
 
@@ -3485,11 +3489,15 @@
                                 (map? (:vez-pokemon raid))
                                 (some? (or (:hpChefe raid) (:hp-chefe raid))))
               raid-js (clj->js (assoc raid :auto true))
-              caption (if tem-snapshot?
-                        (.formatRaidStart jvm-present
-                                          #js {:raid raid-js :auto true}
-                                          prefix)
-                        texto)]
+              present (.withRaidTurnMention jvm-present
+                        (if tem-snapshot?
+                          (.formatRaidStart jvm-present #js {:raid raid-js :auto true} prefix)
+                          texto)
+                        raid-js)
+              caption (.-text present)
+              opts (if (seq (array-seq (.-mentions present)))
+                     (js/Object.assign #js {} opts #js {:mentions (.-mentions present)})
+                     opts)]
           (-> (p/let [_ (log-raid-auto-delivery!
                          "raid-started-render"
                          {:phase "raid-start-auto"

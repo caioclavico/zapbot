@@ -139,7 +139,7 @@ test('ciclo integrado: abrir1 → join×2 → lobby5 → start → vez → golpe
   raid = join(raid, misty, 'Misty');
   assert.equal(raid['n-participantes'], 2);
 
-  const openedMsg = present.formatRaidOpened({ raid: toCamel(raid).raid }, '!pk');
+  const openedMsg = present.formatRaidOpened({ raid: toCamel(raid), agora: t0 }, '!pk');
   assert.match(openedMsg, /5 minutos|⏱️/);
 
   raid = start(raid);

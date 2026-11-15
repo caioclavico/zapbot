@@ -2437,11 +2437,11 @@ function formatGymBlocked(action) {
 
 /** Catálogo A6 — mesmos ids de pokemon.domain.gym/ginasios. */
 const RAID_GYMS = [
-  { id: 'pedra', nome: '🪨 Pedra', nivel: 10 },
-  { id: 'agua', nome: '💧 Água', nivel: 20 },
-  { id: 'eletrico', nome: '⚡ Elétrico', nivel: 30 },
-  { id: 'planta', nome: '🍃 Planta', nivel: 40 },
-  { id: 'fogo', nome: '🔥 Fogo', nivel: 50 }
+  { id: 'pedra', nome: '🪨 Pedra', lider: 'Brock', nivel: 10 },
+  { id: 'agua', nome: '💧 Água', lider: 'Misty', nivel: 20 },
+  { id: 'eletrico', nome: '⚡ Elétrico', lider: 'Lt. Surge', nivel: 30 },
+  { id: 'planta', nome: '🍃 Planta', lider: 'Erika', nivel: 35 },
+  { id: 'fogo', nome: '🔥 Fogo', lider: 'Blaine', nivel: 40 }
 ];
 
 function normalizeGymToken(token) {
@@ -2465,7 +2465,7 @@ function resolveRaidGym(token) {
   const norm = normalizeGymToken(raw);
   const byNome = RAID_GYMS.find((g) => {
     const nomeNorm = normalizeGymToken(g.nome);
-    return nomeNorm === norm || nomeNorm.endsWith(norm) || g.id === norm;
+    return norm && (nomeNorm === norm || g.id === norm || normalizeGymToken(g.lider) === norm);
   });
   return byNome ? byNome.id : null;
 }
@@ -2476,10 +2476,10 @@ function formatRaidOpenHelp(prefix = '!pk') {
     'Lobby: até 5 treinadores · pode começar com 1 · 5 minutos de inscrição.',
     'O criador também precisa entrar com `raid entrar`.',
     '',
-    '*Ginásios:*',
-    ...RAID_GYMS.map((g, i) => `${i + 1}. ${g.nome} (nv.${g.nivel}) — \`${g.id}\``),
+    '*Treinadores NPC*',
+    ...RAID_GYMS.map((g, i) => `${i + 1}. ${g.lider} · ${g.nome} · nv. ${g.nivel}`),
     '',
-    `Abra direto: ${prefix} raid abrir 1   (ou o id, ex. pedra)`,
+    `Abra direto: ${prefix} raid abrir 1   (ou o nome, ex. Brock)`,
     `Sem argumento: ${prefix} raid abrir`
   ].join('\n');
 }
@@ -2504,7 +2504,8 @@ function formatRaidOpened(data, prefix = '!pk') {
   const ocultarChefe = Boolean(r.chefeOculto || r['chefeOculto?'] || data && data.chefeOculto);
   const lines = [
     '⚔️ *RAID POKÉMON*',
-    `🥚 Um desafio está prestes a começar em *${r.nomeGinasio || r.ginasio || 'ginásio'}*!`,
+    `🥚 Desafio de *${r.nomeGinasio || r.ginasio || 'ginásio'}*`,
+    r.nivelGinasio ? `🎚️ Nível ${r.nivelGinasio}` : null,
     '',
     `👥 Treinadores: ${n}/${max}`,
     prazo || '⏳ Entrada aberta',
@@ -3095,6 +3096,21 @@ function formatRaidAttack(data, prefix = '!pk') {
   lines.push(...formatRaidTurnBlock(r, prefix));
   if (data && data.duplicate) lines.push('_idempotente: mesmo operationId_');
   return lines.filter(Boolean).join('\n');
+}
+
+/** Marca o treinador da vez com o identificador aceito pelo WhatsApp. */
+function withRaidTurnMention(result, raid) {
+  const present = coerceRaidPresent(result);
+  const playerId = raid && raid.fase === 'combate' && raid.vez;
+  const turnLine = /^👉 Vez de \*[^\n]+?\*/m;
+  if (typeof playerId !== 'string' || !/^\d+@(?:lid|c\.us|s\.whatsapp\.net)$/.test(playerId)
+      || !turnLine.test(present.text)) {
+    return present;
+  }
+  return {
+    text: present.text.replace(turnLine, `👉 Vez de ${mentionHandle(playerId)}`),
+    mentions: [...new Set([...present.mentions, playerId])]
+  };
 }
 
 /** Normaliza retorno de formatRaidAttack (string | {text,mentions}). */
@@ -4838,6 +4854,7 @@ module.exports = {
   formatRaidFrambo,
   formatRaidRewardLines,
   coerceRaidPresent,
+  withRaidTurnMention,
   buildRaidMentionRoster,
   safeRaidMentionLabel,
   looksLikeTechnicalId,
