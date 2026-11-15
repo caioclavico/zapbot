@@ -49,6 +49,13 @@
   (let [dir (str ".datomic-local/http-trade-flow-" (UUID/randomUUID))
         {:keys [conn store]} (trade-test/fixture* {:storage-dir dir :system (str "http-flow-" (UUID/randomUUID)) :db-name "http-flow"})
         _ (#'trade-test/seed-trade-pokemon! conn store)
+        _ (d/transact conn
+                      {:tx-data [[:db/add [:pokemon/id-pokemon "poke-misty"] :pokemon/collection-index 1]
+                                 {:enfermaria-bed/key "chat|ash|a|bed-1"
+                                  :enfermaria-bed/save-key "chat|ash|a"
+                                  :enfermaria-bed/bed-id "bed-1"
+                                  :enfermaria-bed/pokemon-edn (pr-str {:id-pokemon "other-pokemon"})
+                                  :enfermaria-bed/pronto-em 999999}]})
         fa (:fence-generation (ports/get-player store "chat" "ash"))
         fb (:fence-generation (ports/get-player store "chat" "misty"))
         server (bridge/start! {:store store :port 0 :token "test"})
@@ -74,6 +81,8 @@
                                  :operationId "http-flow-complete" :saveId "a" :fenceGeneration fa
                                  :pokemonA "poke-ash" :pokemonB "poke-misty" :now 1002}
                                 "test" "ash"))))
+      (is (= 1 (:pokemon/collection-index (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-ash"]))))
+      (is (= 0 (:pokemon/collection-index (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-misty"]))))
       (is (= (:db/id (d/pull (d/db conn) '[*] [:save/key "chat|misty|a"]))
              (or (-> (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-ash"]) :pokemon/save :db/id)
                  (:pokemon/save (d/pull (d/db conn) '[*] [:pokemon/id-pokemon "poke-ash"])))))

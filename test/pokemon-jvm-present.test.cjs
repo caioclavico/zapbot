@@ -270,6 +270,9 @@ test('filtro planta e grama resolvem grass; repetidos lista só espécies duplic
   assert.doesNotMatch(reps, /Bulba|Charmander|Chama Dourada|Ratta Dourado/);
   collection.push({ ...collection[6], collectionIndex: 7, nome: 'Ratta Brilhante' });
   const shinies = present.formatCollection({ ...data, count: 8 }, ['repetidos', 'shiny'], '!pk');
+  const brilhantes = present.formatCollection({ ...data, count: 8 }, ['brilhantes'], '!pk');
+  assert.match(brilhantes, /Chama Dourada/);
+  assert.doesNotMatch(brilhantes, /Ratta A/);
   assert.match(shinies, /Ratta Dourado/);
   assert.match(shinies, /Ratta Brilhante/);
   assert.doesNotMatch(shinies, /Ratta A|Chama Dourada/);

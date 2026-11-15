@@ -307,17 +307,18 @@
 
 (defn- joy-holds-pokemon? [db save-key pokemon-id]
   (boolean
-   (some (fn [eid]
+   (some (fn [[eid]]
            (let [raw (:enfermaria-bed/pokemon-edn (d/pull db '[*] eid))]
              (try (let [poke (or (battle/decode-compact-edn raw) {})]
                     (= pokemon-id (or (:id-pokemon poke)
-                                      (:pokemon/id-pokemon poke))))
+                                      (:pokemon/id-pokemon poke)
+                                      (get poke "id-pokemon"))))
                   (catch Exception _ false))))
          (d/q '[:find ?e
                 :in $ ?sk
                 :where [?e :enfermaria-bed/save-key ?sk]] db save-key))))
 
-(defn- unavailable? [db p save-key player pokemon-id]
+(defn- unavailable? [db save-key player pokemon-id]
   (or (:player/active-battle-id player)
       (joy-holds-pokemon? db save-key pokemon-id)))
 
@@ -367,12 +368,15 @@
                          (= save-id (:player/active-save-id actor))
                          (= fence-generation (:player/fence-generation actor))
                          (< (long now) (long (:expires-at tr)))
-                         pa pb (not (unavailable? db pa sk-a a pokemon-a))
-                         (not (unavailable? db pb sk-b b pokemon-b))
+                         (:db/id pa) (:db/id pb)
+                         (not (unavailable? db sk-a a pokemon-a))
+                         (not (unavailable? db sk-b b pokemon-b))
                          (= (:db/id sa) (or (-> pa :pokemon/save :db/id) (:pokemon/save pa)))
                          (= (:db/id sb) (or (-> pb :pokemon/save :db/id) (:pokemon/save pb))))
             (throw (err/error :invalid_trade {})))
-          (let [base-tx [[:db/cas [:trade/id trade-id] :trade/revision (:revision tr) (inc (:revision tr))]
+          (let [index-a (:pokemon/collection-index pa)
+                index-b (:pokemon/collection-index pb)
+                base-tx [[:db/cas [:trade/id trade-id] :trade/revision (:revision tr) (inc (:revision tr))]
                     [:db/cas [:player/key (:player/key a)] :player/active-save-id (:save-a tr) (:save-a tr)]
                     [:db/cas [:player/key (:player/key b)] :player/active-save-id (:save-b tr) (:save-b tr)]
                     [:db/cas [:player/key (:player/key a)] :player/fence-generation (:fence-a tr) (:fence-a tr)]
@@ -380,10 +384,11 @@
                     [:db/cas [:save/key (:save/key sa)] :save/revision (:save/revision sa) (inc (:save/revision sa))]
                     [:db/cas [:save/key (:save/key sb)] :save/revision (:save/revision sb) (inc (:save/revision sb))]
                     [:db/cas [:pokemon/id-pokemon pokemon-a] :pokemon/save (:db/id sa) (:db/id sb)]
-                    [:db/cas [:pokemon/id-pokemon pokemon-b] :pokemon/save (:db/id sb) (:db/id sa)]
-                    [:db/add [:pokemon/id-pokemon pokemon-a] :pokemon/save (:db/id sb)]
-                    [:db/add [:pokemon/id-pokemon pokemon-b] :pokemon/save (:db/id sa)]]
-                tx (vec (concat base-tx
+                    [:db/cas [:pokemon/id-pokemon pokemon-b] :pokemon/save (:db/id sb) (:db/id sa)]]
+                position-tx (when (and (integer? index-a) (integer? index-b) (not= index-a index-b))
+                              [[:db/add [:pokemon/id-pokemon pokemon-a] :pokemon/collection-index index-b]
+                               [:db/add [:pokemon/id-pokemon pokemon-b] :pokemon/collection-index index-a]])
+                tx (vec (concat base-tx position-tx
                     (or (when evolved-a
                           (evolution-tx [:pokemon/id-pokemon pokemon-a] pa-record evolved-a prepared-a)) [])
                     (or (when evolved-b

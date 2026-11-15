@@ -463,7 +463,7 @@ function interpretarFiltros(tokens) {
   for (let i = 0; i < rest.length; i++) {
     const t = rest[i];
     const tn = normalizar(t);
-    if (tn === 'shiny' || t === '✨') { shiny = true; continue; }
+    if (['shiny', 'shinies', 'brilhante', 'brilhantes', '✨'].includes(tn)) { shiny = true; continue; }
     if (tn === 'repetidos' || tn === 'repetido' || tn === 'duplicados'
         || tn === 'duplicado' || tn === 'dup' || tn === 'repeats') {
       repetidos = true;
@@ -812,7 +812,7 @@ function formatCollection(data, tokens, prefix = '!pk') {
     `Use ${prefix} escolher <número> pra trocar o ativo (👉), ou ${prefix} joy para enviar os feridos à Enfermeira Joy.`,
     `Veja a ficha do ativo com ${prefix} time ativo.`,
     `Favorito: ${prefix} favorito <número>.`,
-    `Combine filtros com ${prefix} time [tipo] [raridade] [nome] [nivel N] [repetidos].`,
+    `Combine filtros com ${prefix} time [tipo] [raridade] [nome] [nivel N] [shiny] [repetidos].`,
     `Ordene por força: ${prefix} time > ou <.`,
     `Card visual: ${prefix} tm · CSV: ${prefix} tm csv`,
     `+50 vagas: ${prefix} espaco comprar`
@@ -1729,8 +1729,12 @@ function formatWorldInfo(plan, prefix = '!pk') {
   const texto = (plan && (plan.resumoTexto || plan['resumo-texto'])) || null;
   const mundo = (plan && plan.mundo) || {};
   const padrao = mundo.areaPadrao || mundo['area-padrao'] || (plan && plan.area) || {};
+  const bands = plan && (plan.typeRollBands || plan['type-roll-bands']);
+  const chance = bands
+    ? `Sorteio de tipos fora dos surtos: ${bands.clima}% clima, ${bands.bioma}% bioma${bands.evento ? `, ${bands.evento}% evento temático` : ''}.`
+    : null;
   if (texto) {
-    return `${texto}\n\nCaçar: ${prefix} cacar [área] · Ex.: ${prefix} cacar ${padrao.id || 'praia'}`;
+    return [texto, chance, '', `Caçar: ${prefix} cacar [área] · Ex.: ${prefix} cacar ${padrao.id || 'praia'}`].filter(line => line != null).join('\n');
   }
   const clima = (plan && plan.clima) || mundo.clima || {};
   const disponiveis = mundo.areasDisponiveis || mundo['areas-disponiveis'] || [];
@@ -1743,9 +1747,10 @@ function formatWorldInfo(plan, prefix = '!pk') {
     `📍 *Bioma deste horário:* ${padrao.emoji || '🗺️'} ${padrao.id || padrao.nome || '?'}`,
     `🕒 *Rotação de hoje:* ${rotacao}`,
     `🚫 *Sem acesso por horário hoje:* ${semAcesso}`,
+    chance,
     '',
     `Caçar: ${prefix} cacar [área] · Ex.: ${prefix} cacar ${padrao.id || 'praia'}`
-  ].join('\n');
+  ].filter(line => line != null).join('\n');
 }
 
 /** Surto rotativo 6h — espelha master ver-evento (sem recomeço/loja). */
@@ -1760,7 +1765,7 @@ function formatEventInfo(plan, prefix = '!pk') {
   return [
     `🎉 *${ev.nome || 'Evento'}*`,
     `Espécies em destaque: ${especies.join(', ') || '?'}`,
-    '25% das caçadas encontram uma dessas espécies; os demais encontros seguem o bioma.',
+    `${ev.chance ?? 25}% das caçadas encontram uma dessas espécies. As demais passam pelo sorteio de clima, bioma e evento temático.`,
     `Troca de evento em ${minutos} minutos. Os eventos mudam a cada 6 horas.`,
     `Use ${prefix} cacar. As três tentativas e a chance de fuga continuam valendo.`
   ].join('\n');
