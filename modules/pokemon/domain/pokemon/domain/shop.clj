@@ -4,9 +4,13 @@
             [pokemon.domain.capacity :as capacity]
             [pokemon.domain.errors :as err]))
 
+(def exp-share-id "exp-share")
+
 (def ^:private catalogo-venda
   "Itens com :preco — únicos compráveis na loja."
-  {"cartao-presente" {:nome "Cartão de presente" :emoji "🎁" :preco 20
+  {exp-share-id {:nome "Exp. Share" :emoji "📘" :preco 100 :equipavel? true
+                  :descricao "Equipe com !pk equipar <n> exp-share. Quando o portador vence uma caçada, cada outro Pokémon apto da equipe ganha 1 XP."}
+   "cartao-presente" {:nome "Cartão de presente" :emoji "🎁" :preco 20
                       :descricao "Presente para outro treinador — !presente @amigo."}
    "mochila" {:nome "Expansão de Mochila" :emoji "🎒" :preco 200 :expansao? true
               :expansao-tipo :mochila
@@ -84,7 +88,8 @@
    "greatball" "grande-bola"
    "ultra" "ultra-bola" "ultra-ball" "ultra-bola" "ultraball" "ultra-bola"
    "maxima" "pocao-maxima" "maxima-pocao" "pocao-maxima"
-   "poção" "pocao" "poção-maxima" "pocao-maxima"
+   "porcao-maxima" "pocao-maxima"
+   "compartilha-xp" exp-share-id
    "óculos" "oculos" "oculos-sabios" "oculos"
    "espaco" "espaco-pokemon" "espaço" "espaco-pokemon"
    "espaco-pc" "espaco-pokemon" "pc" "espaco-pokemon"})

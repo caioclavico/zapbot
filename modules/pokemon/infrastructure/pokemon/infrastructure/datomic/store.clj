@@ -3386,6 +3386,16 @@
                                 (long (:pokemon-xp rew 0))
                                 {:hp-atual-override battle-hp-x
                                  :omit-hp-atual? true}))
+                     exp-share-parts
+                     (when (and grant-battle? xp-part (= shop/exp-share-id (:item poke)))
+                       (into []
+                             (comp (filter :in-party)
+                                   (remove #(= (:id-pokemon poke) (:id-pokemon %)))
+                                   (filter #(and (pos? (:hp-atual %))
+                                                 (< (:nivel %) growth/nivel-maximo)
+                                                 (not (growth/ambiguous-legacy? %))))
+                                   (map #(apply-pokemon-xp-tx % 1 {:unidade :flat9})))
+                             colecao))
                      pe-batalha-tx
                      (when (and grant-battle? (pos? (long (:pe rew 0))))
                        (let [v (long (:save/vitorias-treinador save 0))]
@@ -3503,6 +3513,7 @@
                                       (or seq-liberar-tx [])
                                       (or clear-active [])
                                       (or (:tx xp-part) [])
+                                      (mapcat :tx exp-share-parts)
                                       (or (:tx resolve-part) [])))]
                  {:tx tx
                   :result {:operation-id operation-id
@@ -3511,7 +3522,11 @@
                            :payload-hash phash
                            :battle next-state
                            :subida (:subida xp-part)
-                           :reward (if gym-finished? (:reward (:result resolve-part)) rew)
+                           :reward (if gym-finished?
+                                     (:reward (:result resolve-part))
+                                     (cond-> rew
+                                       (seq exp-share-parts)
+                                       (assoc :exp-share-count (count exp-share-parts))))
                            :gym-resolve (when gym-finished? (:result resolve-part))}})))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]

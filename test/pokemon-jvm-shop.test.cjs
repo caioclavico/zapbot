@@ -13,6 +13,12 @@ test('aliases loja/mochila/curar/pocao', () => {
   assert.equal(present.resolveCommand(['pocao']), 'pocao');
   assert.equal(present.resolveCommand(['pot']), 'pocao');
   assert.equal(present.resolveCommand(['pocao-maxima']), 'pocao-maxima');
+  assert.equal(present.resolveCommand(['poção-máxima']), 'pocao-maxima');
+  assert.equal(present.resolveCommand(['porção', 'máxima', '2']), 'pocao-maxima');
+  assert.equal(present.maxPotionTokenCount(['porção', 'máxima', '2']), 2);
+  assert.equal(present.maxPotionTokenCount(['porção-máxima', '2']), 1);
+  assert.equal(present.resolveCommand(['equipar', '2', 'exp-share']), 'equipar');
+  assert.equal(present.findShopItem({ itens: [{ itemId: 'pocao-maxima' }] }, 'Porção Máxima').itemId, 'pocao-maxima');
 });
 
 test('formatShop e buy', () => {

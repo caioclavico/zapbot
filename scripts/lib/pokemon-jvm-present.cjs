@@ -446,6 +446,11 @@ function especieChave(p) {
   return normalizar(p && (p.species || p.nome || p.nickname) || '');
 }
 
+function varianteRepetida(p) {
+  const especie = especieChave(p);
+  return especie ? `${especie}:${p.shiny === true}` : null;
+}
+
 function interpretarFiltros(tokens) {
   const ordem = tokens.includes('>') ? '>' : tokens.includes('<') ? '<' : null;
   const rest = tokens.filter(t => t !== '>' && t !== '<');
@@ -489,7 +494,7 @@ function filtrarColecao(items, tokens) {
   if (f.repetidos) {
     const contagem = {};
     for (const p of list) {
-      const k = especieChave(p);
+      const k = varianteRepetida(p);
       if (!k) continue;
       contagem[k] = (contagem[k] || 0) + 1;
     }
@@ -510,7 +515,7 @@ function filtrarColecao(items, tokens) {
       if (!f.raridades.includes(r)) return false;
     }
     if (especiesRepetidas) {
-      const k = especieChave(p);
+      const k = varianteRepetida(p);
       if (!k || !especiesRepetidas.has(k)) return false;
     }
     return true;
@@ -2000,6 +2005,10 @@ function formatBattleTurn(data, prefix = '!pk') {
     }
     return null;
   };
+  const reward = data.reward || data.recompensa || {};
+  const expShare = reward.expShareCount > 0
+    ? `📘 Exp. Share: +1 XP para cada um de ${reward.expShareCount} Pokémon da equipe.`
+    : null;
   if (bolsaCheiaLiberou) {
     const hpX = hpPair(x, (b.hp || {}).x);
     const golpeFinal = lastActionNarrative(b.lastAction || data.lastAction);
@@ -2011,12 +2020,13 @@ function formatBattleTurn(data, prefix = '!pk') {
     ].filter(Boolean).join('\n');
     return [
       header,
-      '🎒 Bolsa cheia: o selvagem foi liberado. Vitória registrada; sem captura nesta caçada.'
-    ].join('\n');
+      '🎒 Bolsa cheia: o selvagem foi liberado. Vitória registrada; sem captura nesta caçada.',
+      expShare
+    ].filter(Boolean).join('\n');
   }
   if (data.aguardandoCaptura || b.aguardandoCaptura) {
     const hpX = hpPair(x, (b.hp || {}).x);
-    const rew = data.reward || data.recompensa || {};
+    const rew = reward;
     const golpeFinal = lastActionNarrative(b.lastAction || data.lastAction);
     const header = [
       golpeFinal,
@@ -2030,6 +2040,7 @@ function formatBattleTurn(data, prefix = '!pk') {
       rew.pe != null
         ? `⭐ +${rew.pe} PE treinador de batalha`
         : '⭐ PE de batalha recebido',
+      expShare,
       '',
       'Deseja capturar o Pokémon ou deixá-lo ir?'
     ].filter((line) => line != null).join('\n');
@@ -4013,7 +4024,8 @@ function formatItemUse(data, prefix = '!pk') {
 }
 
 function findShopItem(data, rawId) {
-  const id = String(rawId || '').toLowerCase();
+  const chave = normalizar(rawId).trim().replace(/\s+/g, '-');
+  const id = MAX_POTION_ALIASES.has(chave) ? 'pocao-maxima' : chave;
   return ((data && data.itens) || []).find((it) => it.itemId === id) || null;
 }
 
@@ -4233,6 +4245,7 @@ const HELP_TOPICS = {
       '`!loja` · `!loja comprar <item>` — comprar',
       `\`${p} pocao [n]\` · \`${p} pocao-maxima [n]\` · \`${p} curar\``,
       `\`${p} reviver [n]\` — revive um desmaiado`,
+      `\`${p} equipar <n> exp-share\` — compartilha XP nas vitórias de caçada`,
       '',
       'Bolas: Pokébola, Grande Bola, Ultra Bola.',
       'Frambo aumenta a chance da próxima captura.',
@@ -4572,6 +4585,7 @@ const ALIASES = {
   incubacao: 'incubacao', incubação: 'incubacao', pi: 'incubacao',
   chocar: 'chocar', nascer: 'chocar', hatch: 'chocar',
   loja: 'loja', shop: 'loja',
+  equipar: 'equipar',
   mochila: 'mochila', mch: 'mochila', inventario: 'mochila', inventário: 'mochila',
   missoes: 'missoes', 'missões': 'missoes', mis: 'missoes',
   presente: 'presente', presentes: 'presente', pre: 'presente',
@@ -4593,8 +4607,17 @@ const ALIASES = {
   fruta: 'fruta', frambo: 'fruta', framb: 'fruta', razz: 'fruta'
 };
 
+const MAX_POTION_ALIASES = new Set(['pocao-maxima', 'porcao-maxima']);
+
+function maxPotionTokenCount(tokens) {
+  const first = normalizar(tokens?.[0]);
+  if (MAX_POTION_ALIASES.has(first)) return 1;
+  return MAX_POTION_ALIASES.has(`${first}-${normalizar(tokens?.[1])}`) ? 2 : 0;
+}
+
 function resolveCommand(tokens) {
   if (!tokens || !tokens.length) return 'menu';
+  if (maxPotionTokenCount(tokens)) return 'pocao-maxima';
   const raw = (tokens[0] || '').toLowerCase();
   // Alias legado: !pk 1 … !pk 4 escolhe o golpe pelo índice.
   if (/^[1-4]$/.test(raw)) return 'atacar';
@@ -4771,6 +4794,7 @@ module.exports = {
   formatCaptureResult,
   formatReleaseResult,
   resolveCommand,
+  maxPotionTokenCount,
   resolveGymSubcommand,
   formatGymsOverview,
   formatGymDetail,

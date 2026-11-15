@@ -253,9 +253,11 @@ test('filtro planta e grama resolvem grass; repetidos lista só espécies duplic
     { collectionIndex: 1, nome: 'Ivy', species: 'ivysaur', nivel: 16, hp: 50, hpAtual: 50, tipos: ['grass', 'poison'] },
     { collectionIndex: 2, nome: 'Ratta A', species: 'rattata', nivel: 3, hp: 20, hpAtual: 20, tipos: ['normal'] },
     { collectionIndex: 3, nome: 'Ratta B', species: 'rattata', nivel: 4, hp: 22, hpAtual: 22, tipos: ['normal'] },
-    { collectionIndex: 4, nome: 'Charmander', species: 'charmander', nivel: 5, hp: 30, hpAtual: 30, tipos: ['fire'] }
+    { collectionIndex: 4, nome: 'Charmander', species: 'charmander', nivel: 5, hp: 30, hpAtual: 30, tipos: ['fire'] },
+    { collectionIndex: 5, nome: 'Chama Dourada', species: 'charmander', shiny: true, nivel: 5, hp: 30, hpAtual: 30, tipos: ['fire'] },
+    { collectionIndex: 6, nome: 'Ratta Dourado', species: 'rattata', shiny: true, nivel: 5, hp: 30, hpAtual: 30, tipos: ['normal'] }
   ];
-  const data = { collection, count: 5, saveId: 'a', trainerLevel: 1, ativoIndex: 0 };
+  const data = { collection, count: 7, saveId: 'a', trainerLevel: 1, ativoIndex: 0 };
   const planta = present.formatCollection(data, ['planta'], '!pk');
   assert.match(planta, /Bulba/);
   assert.match(planta, /Ivy/);
@@ -265,7 +267,12 @@ test('filtro planta e grama resolvem grass; repetidos lista só espécies duplic
   const reps = present.formatCollection(data, ['repetidos'], '!pk');
   assert.match(reps, /Ratta A/);
   assert.match(reps, /Ratta B/);
-  assert.doesNotMatch(reps, /Bulba/);
+  assert.doesNotMatch(reps, /Bulba|Charmander|Chama Dourada|Ratta Dourado/);
+  collection.push({ ...collection[6], collectionIndex: 7, nome: 'Ratta Brilhante' });
+  const shinies = present.formatCollection({ ...data, count: 8 }, ['repetidos', 'shiny'], '!pk');
+  assert.match(shinies, /Ratta Dourado/);
+  assert.match(shinies, /Ratta Brilhante/);
+  assert.doesNotMatch(shinies, /Ratta A|Chama Dourada/);
   assert.match(reps, /repetidos/);
 });
 

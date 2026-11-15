@@ -4,6 +4,7 @@
             [datomic.client.api :as d]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.battle :as battle-app]
+            [pokemon.application.bridge-tx :as tx]
             [pokemon.application.capture :as capture-app]
             [pokemon.application.collection :as collection]
             [pokemon.application.hunt :as hunt-app]
@@ -85,8 +86,11 @@
       "taxa-captura ausente (species falhou) não quebra raridade")
   (is (true? (:shiny? (hunt/sortear-shiny magikarp-cand 0))))
   (is (false? (:shiny? (hunt/sortear-shiny magikarp-cand 1))))
-  (is (false? (:shiny? (hunt/sortear-shiny magikarp-cand nil)))
-      "shiny-roll nil não lança NPE (produção)"))
+  (with-redefs [clojure.core/rand-int (fn [limite]
+                                      (is (= 256 limite))
+                                      0)]
+    (is (true? (:shiny? (hunt/sortear-shiny magikarp-cand nil))))
+    (is (true? (:shiny? (hunt/sortear-shiny magikarp-cand))))))
 
 (deftest cooldown-de-caca-e-configuravel-com-protecao-de-producao
   (let [at 1700000000000]
@@ -177,6 +181,13 @@
         player "ash"
         agora 1700000000000]
     (boot! s chat player)
+    (collection/adicionar-pokemon! s chat player geodude-cand 40 nil)
+    (reward-app/admin-seed-reward!
+     s {:operation-id "seed-exp-share-coins" :chat-id chat :player-id player
+        :save-id "a" :coins-delta 100})
+    (let [ctx (writer/freeze-writer s chat player)]
+      (tx/buy-item! s (assoc ctx :operation-id "buy-exp-share" :item-id "exp-share"))
+      (tx/use-item! s (assoc ctx :operation-id "equip-exp-share" :item-id "exp-share" :idx 0)))
     (let [plano (hunt-app/plan s chat player
                                {:agora-ms agora
                                 :roll-tipos 50  ; bioma (não clima)
@@ -190,20 +201,20 @@
                   :poder-alvo (:poder-alvo plano)
                   :candidates [magikarp-cand geodude-cand]
                   :agora-ms agora
-                  :shiny-roll 1})
+                  :shiny-roll 0})
           bid (:battle-id start)
           ;; :agora alinhado ao idle do start (agora-ms) — wall-clock quebraria
           ;; battle_idle_expired com timestamps sintéticos.
-          win (battle-app/confirm-turn!
-               s chat player
-               {:operation-id "turn-win"
-                :battle-id bid
-                :expected-turn-index 0
-                :action :attack
-                :move-index 0
-                :agora agora
-                :rng {:damage-var 10 :crit 99 :flee 99 :accuracy 0
-                      :contagio 99 :status-golpe 99 :wild-move 0 :impede-para 99}})
+          attack {:operation-id "turn-win"
+                  :battle-id bid
+                  :expected-turn-index 0
+                  :action :attack
+                  :move-index 0
+                  :agora agora
+                  :rng {:damage-var 10 :crit 99 :flee 99 :accuracy 0
+                        :contagio 99 :status-golpe 99 :wild-move 0 :impede-para 99}}
+          win (battle-app/confirm-turn! s chat player attack)
+          retry (battle-app/confirm-turn! s chat player attack)
           cap (capture-app/attempt-encounter-capture!
                s chat player
                {:operation-id "cap-1"
@@ -214,7 +225,12 @@
       (is (false? (:duplicate start)))
       (is (true? (:aguardando-captura? (:battle win))))
       (is (true? (:capturou? cap)))
-      (is (= 2 (count (ports/list-collection s chat player "a"))))
+      (is (= 1 (get-in win [:reward :exp-share-count])))
+      (is (true? (:duplicate retry)))
+      (let [col (ports/list-collection s chat player "a")]
+        (is (= 3 (count col)))
+        (is (= 1 (:xp (second col))))
+        (is (true? (:shiny (last col)))))
       (is (pos? (:ultima-cacada-at (ports/get-save s chat player "a"))))
       (is (nil? (:active-wild-battle-id (ports/get-group s chat)))))))
 

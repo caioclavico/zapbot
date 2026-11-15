@@ -115,7 +115,7 @@
     (is (< 0.46 rate 0.54) (str "rate surto=" rate))))
 
 (deftest shiny-1-em-512
-  (is (= 512 hunt/shiny-chance))
+  (is (= 256 hunt/shiny-chance))
   (is (true? (:shiny? (hunt/sortear-shiny magikarp 0))))
   (is (false? (:shiny? (hunt/sortear-shiny magikarp 1))))
   (is (false? (:shiny? (hunt/sortear-shiny magikarp 511))))

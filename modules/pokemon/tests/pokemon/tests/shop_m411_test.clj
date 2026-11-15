@@ -48,6 +48,7 @@
     (is (= 15 (get cat "atadura")))
     (is (= 20 (get cat "pocao")))
     (is (= 60 (get cat "pocao-maxima")))
+    (is (= "pocao-maxima" (shop/normalizar-item "Porção Máxima")))
     (is (= 10 (get cat "fruta")))
     (is (= 200 (get cat "mochila")))
     (is (= 200 (get cat "mt")))

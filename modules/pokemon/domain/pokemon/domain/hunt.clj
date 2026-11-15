@@ -21,7 +21,7 @@
 (def tentativas-caca 25)
 (def nivel-maximo-caca 11)
 (def chance-tipos-clima 35)
-(def shiny-chance 512)
+(def shiny-chance 256)
 
 (def surtos
   [{:nome "Festival das Águas" :especies ["poliwag" "shellder" "staryu" "eevee"]}
@@ -70,7 +70,7 @@
   (capture/assegurar-raridade pokemon))
 
 (defn sortear-shiny
-  "1/512. `sorteio` injetável (0 = shiny).
+  "1/256. `sorteio` injetável (0 = shiny).
    `nil` no sorteio = RNG local (produção não envia shinyRoll)."
   ([pokemon] (sortear-shiny pokemon (rand-int shiny-chance)))
   ([pokemon sorteio]

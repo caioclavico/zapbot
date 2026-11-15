@@ -1329,7 +1329,10 @@
               resolved-cmd)
         resto (if (re-matches #"[1-4]" primeiro)
                 [primeiro]
-                (vec (rest args)))]
+                (let [consumed (if (= "pocao-maxima" cmd)
+                                 (max 1 (.maxPotionTokenCount jvm-present (clj->js args)))
+                                 1)]
+                  (vec (drop consumed args))))]
     (if (and help-req (not recovery?))
       (entregar-envelope-jvm!
        message ctx pedido
