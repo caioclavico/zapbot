@@ -17,10 +17,12 @@ test('aliases clima/areas/mapa/eventos', () => {
 test('formatWorldInfo usa resumoTexto da JVM (paridade master)', () => {
   const texto = present.formatWorldInfo({
     resumoTexto: '☀️ *Clima de hoje: Ensolarado* — favorece fire, grass, ground.\n📍 *Bioma deste horário:* 🌳 floresta\n🕒 *Rotação de hoje:* 🌳 floresta • 🏖️ praia • 🪨 caverna\n🚫 *Sem acesso por horário hoje:* 🏙️ cidade • 🌊 lago • 🌋 vulcao',
-    mundo: { areaPadrao: { id: 'floresta' } }
+    mundo: { areaPadrao: { id: 'floresta' } },
+    typeRollBands: { clima: 35, bioma: 47, evento: 18 }
   }, '!pk');
   assert.match(texto, /\*Clima de hoje: Ensolarado\*/);
   assert.match(texto, /Bioma deste horário/);
+  assert.match(texto, /35% clima, 47% bioma, 18% evento temático/);
   assert.match(texto, /!pk cacar/);
 });
 

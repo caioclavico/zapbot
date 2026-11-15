@@ -107,20 +107,20 @@
     (is (= 35 climate-hits))
     (is (< 0.31 rate 0.39) (str "rate clima=" rate))))
 
-(deftest surto-50-porcento
-  (is (= 50 (count (filter hunt/surto? (range 100)))))
+(deftest surto-25-porcento
+  (is (= 25 (count (filter hunt/surto? (range 100)))))
   (let [mc 5000
         hits (count (filter (fn [_] (hunt/surto? (rand-int 100))) (range mc)))
         rate (/ (double hits) mc)]
-    (is (< 0.46 rate 0.54) (str "rate surto=" rate))))
+    (is (< 0.21 rate 0.29) (str "rate surto=" rate))))
 
-(deftest shiny-1-em-512
+(deftest shiny-1-em-256
   (is (= 256 hunt/shiny-chance))
   (is (true? (:shiny? (hunt/sortear-shiny magikarp 0))))
   (is (false? (:shiny? (hunt/sortear-shiny magikarp 1))))
-  (is (false? (:shiny? (hunt/sortear-shiny magikarp 511))))
+  (is (false? (:shiny? (hunt/sortear-shiny magikarp 255))))
   (is (= 1 (count (filter #(:shiny? (hunt/sortear-shiny magikarp %))
-                          (range 512))))))
+                          (range 256))))))
 
 (deftest poder-alvo-e-teto-master
   (is (= 320 (hunt/poder-alvo-caca 1)))
@@ -129,7 +129,7 @@
   (is (= 60 hunt/tolerancia-poder-caca))
   (is (= 25 hunt/tentativas-caca))
   (is (= 35 hunt/chance-tipos-clima))
-  (is (= 50 hunt/chance-surto)))
+  (is (= 25 hunt/chance-surto)))
 
 (deftest selecao-bioma-teto-e-fallback-mais-fraco
   (let [tipos #{"water"}

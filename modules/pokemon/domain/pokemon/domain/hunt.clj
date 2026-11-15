@@ -236,7 +236,7 @@
         pref (or prefix "!pk")]
     (str "🎉 *" (:nome evento) "*\n"
          "Espécies em destaque: " (str/join ", " (:especies evento)) "\n"
-         "50% das caçadas encontram uma dessas espécies; os demais encontros seguem o bioma.\n"
+         (:chance evento chance-surto) "% das caçadas encontram uma dessas espécies. As demais passam pelo sorteio de clima, bioma e evento temático.\n"
          "Troca de evento em " minutos " minutos. Os eventos mudam a cada 6 horas.\n"
          "Use " pref " cacar. As três tentativas e a chance de fuga continuam valendo.")))
 
