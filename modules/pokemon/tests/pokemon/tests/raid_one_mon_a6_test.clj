@@ -100,14 +100,17 @@
   (let [r0 (-> (raid-combate [["ash" {:pokemon (mon "A" 50) :collection-index 0}]
                               ["misty" {:pokemon (mon "B" 100) :collection-index 0}]])
                (forcar-hp "ash" 1))
-        out (raid/atacar r0 "ash" 0 (+ agora 10) {:raid-damage-var 15})]
+        prazo (:expira r0)
+        out (raid/atacar r0 "ash" 0 (dec prazo) {:raid-damage-var 15})
+        r1 (:raid out)
+        r2 (:raid (raid/atacar r1 "misty" 0 prazo {:raid-damage-var 15}))
+        r3 (:raid (raid/atacar r2 "misty" 0 (inc prazo) {:raid-damage-var 15}))]
     (is (false? (:derrota? out)))
-    (is (= "combate" (:fase (:raid out))))
-    (is (= "misty" (:vez (:raid out))))
-    (is (false? (raid/participante-vivo?
-                 (get-in out [:raid :participantes "ash"]))))
-    (is (true? (raid/participante-vivo?
-                (get-in out [:raid :participantes "misty"]))))))
+    (is (= "combate" (:fase r1) (:fase r2) (:fase r3)))
+    (is (= "misty" (:vez r1) (:vez r2) (:vez r3)))
+    (is (false? (raid/participante-vivo? (get-in r1 [:participantes "ash"]))))
+    (is (true? (raid/participante-vivo? (get-in r3 [:participantes "misty"]))))
+    (is (< (:hp-chefe r3) (:hp-chefe r2) (:hp-chefe r1)))))
 
 (deftest catalogo-manual-maior-que-templates-fixos
   (let [audit (rb/audit-catalog)]
@@ -118,3 +121,15 @@
     (is (string? (get-in a [:chefe :species])))
     (is (string? (get-in b [:chefe :species])))
     (is (contains? #{"iniciante" "bronze" "prata" "ouro" "diamante"} (:liga a)))))
+
+(deftest raid-manual-do-npc-segue-tema-e-pesos
+  (let [nova (fn [i]
+               (rb/select-boss-for-ginasio "fogo" {:rng (constantly (/ (+ i 0.5) 100))}))
+        sorteios (mapv nova (range 100))]
+    (is (every? #(= "Blaine" (:nome-ginasio %)) sorteios))
+    (is (every? #(= 40 (:nivel-ginasio %) (get-in % [:chefe :nivel])) sorteios))
+    (is (every? #(some #{"fire"} (get-in % [:chefe :tipos])) sorteios))
+    (is (every? #(<= (get-in % [:chefe :fator-dificuldade]) 1.25) sorteios))
+    (is (= {"raro" 85 "epico" 10 "lendario" 4 "mitico" 1}
+           (frequencies (map :categoria sorteios))))
+    (is (< 1 (count (set (map #(get-in % [:chefe :species]) sorteios)))))))

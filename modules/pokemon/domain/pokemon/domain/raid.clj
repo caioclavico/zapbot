@@ -680,16 +680,17 @@
                      (assoc :hp-chefe hp')
                      (assoc-in [:participantes player-id] part-final)
                      (update :turn-index (fnil inc 0)))
-           vivos (filter #(participante-vivo? (get-in raid' [:participantes %]))
-                         (:ordem raid'))
-           derrota? (and (not venceu?) (empty? vivos))
+           proxima (when-not venceu? (proxima-vez raid' player-id))
+           derrota? (and (not venceu?) (nil? proxima))
            raid'' (cond
                     venceu? (assoc raid'
                                    :fase "vitoria"
                                    :captura-expira (+ (long agora) duracao-captura)
                                    :vez nil)
                     derrota? (assoc raid' :fase "derrota" :vez nil)
-                    :else (assoc raid' :vez (proxima-vez raid' player-id)))]
+                    :else (assoc raid'
+                                 :vez proxima
+                                 :expira (+ (long agora) duracao-combate)))]
        {:raid raid''
         :dano dano
         :multiplicador multiplicador

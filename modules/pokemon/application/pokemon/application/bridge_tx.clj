@@ -783,6 +783,7 @@
        :fase (:fase raid)
        :ginasio (:ginasio raid)
        :nome-ginasio (:nome-ginasio raid)
+       :nivel-ginasio (:nivel-ginasio raid)
        :liga (:liga raid)
        :hp-chefe (:hp-chefe raid)
        :hp-max (:hp-max raid)
@@ -831,24 +832,18 @@
    :fence-generation (long fence-generation)})
 
 (defn open-raid!
-  "Abre lobby. Se `chefe`/`liga` omitidos, sorteia do catálogo A6 completo
-  (via `raid-boss/select-boss-for-ginasio`) — não mais o asé fixo do ginásio.
-  Chefe explícito (harness/testes) preservado sem re-sorteio."
+  "Abre lobby. Sem chefe explícito, sorteia no tema e nível do NPC."
   [store {:keys [chat-id player-id save-id fence-generation operation-id
                  raid-id ginasio nome-ginasio nivel-ginasio liga chefe agora-ms
                  recent-species rng]
           :as req}]
   (let [writer-ctx (require-writer! req)
         derived (when (and ginasio (or (nil? chefe) (empty? chefe)))
-                  (try
-                    (raid-boss/select-boss-for-ginasio
-                     ginasio
-                     (cond-> {}
-                       (seq recent-species) (assoc :recent-species recent-species)
-                       rng (assoc :rng rng)))
-                    (catch Exception _
-                      ;; Fallback legado se catálogo indisponível.
-                      (raid-domain/boss-do-ginasio ginasio))))
+                  (raid-boss/select-boss-for-ginasio
+                   ginasio
+                   (cond-> {}
+                     (seq recent-species) (assoc :recent-species recent-species)
+                     rng (assoc :rng rng))))
         chefe-m (keywordize-keys (or (when (seq chefe) chefe) (:chefe derived) {}))
         _ (when-not (seq (str (or (:nome chefe-m) "")))
             (throw (err/error :raid_config_invalid {:need :chefe})))
@@ -862,13 +857,16 @@
                  :nivel-ginasio (long (or nivel-ginasio (:nivel-ginasio derived) 1))
                  :liga (or liga (:liga derived) "iniciante")
                  :chefe chefe-m
-                 :agora (or agora-ms (System/currentTimeMillis))})]
+                 :agora (or agora-ms (System/currentTimeMillis))})
+        raid (or (:raid result)
+                 (when-let [rid (get-in result [:summary :raid-id])]
+                   (raid-app/get-raid store rid)))]
     {:operation-id (:operation-id result)
      :duplicate (boolean (:duplicate result))
      :save-id save-id
      :fence-generation (long fence-generation)
-     :raid (raid-summary (:raid result))
-     :boss-categoria (:categoria derived)
+     :raid (raid-summary raid)
+     :boss-categoria (get-in raid [:chefe :raridade])
      :catalog-version (:catalog-version derived)}))
 
 (defn cancel-raid!

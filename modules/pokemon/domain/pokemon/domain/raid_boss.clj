@@ -345,51 +345,39 @@
       :catalog-version (:version cat)
       :rolls {:categoria cat-roll :especie sp-roll}})))
 
-(def weights-por-liga
-  "Dificuldade manual alinhada à liga do ginásio (não altera taxas de captura)."
-  {"iniciante" {"raro" 0.70 "epico" 0.25 "lendario" 0.05 "mitico" 0.00}
-   "bronze"    {"raro" 0.55 "epico" 0.30 "lendario" 0.12 "mitico" 0.03}
-   "prata"     {"raro" 0.35 "epico" 0.35 "lendario" 0.22 "mitico" 0.08}
-   "ouro"      {"raro" 0.20 "epico" 0.35 "lendario" 0.30 "mitico" 0.15}
-   "diamante"  {"raro" 0.10 "epico" 0.25 "lendario" 0.40 "mitico" 0.25}})
+(def ^:private manual-profiles
+  ;; Nível do chefe, tema e pesos por evento. A cadência automática tem seus próprios pesos.
+  {"pedra"    [10 "rock"     {"raro" 100}]
+   "agua"     [20 "water"    {"raro" 97 "epico" 3}]
+   "eletrico" [30 "electric" {"raro" 93 "epico" 6 "lendario" 1}]
+   "planta"   [35 "grass"    {"raro" 89 "epico" 8 "lendario" 3}]
+   "fogo"     [40 "fire"     {"raro" 85 "epico" 10 "lendario" 4 "mitico" 1}]})
 
 (defn select-boss-for-ginasio
-  "Combina ginásio A6 (liga/nível) + seleção dinâmica do catálogo completo.
-  Prefere espécies do `:pool`/`:time` do ginásio quando elegíveis; senão
-  sorteia entre todas as elegíveis com pesos da liga."
+  "Sorteia um chefe do tema do NPC e escala seus atributos ao nível da raide manual."
   [ginasio-id opts]
-  (let [g (gym/obter-ginasio (str/lower-case (str/trim (str ginasio-id))))]
+  (let [id (str/lower-case (str/trim (str ginasio-id)))
+        g (gym/obter-ginasio id)
+        [nivel tipo weights] (get manual-profiles id)]
     (when-not g
       (throw (err/error :raid_gym_unknown {:ginasio ginasio-id})))
-    (let [nivel (long (:nivel g))
-          liga (raid/liga-para-nivel nivel)
-          liga-id (:id liga)
-          weights (or (get weights-por-liga liga-id) category-weights-default)
-          theme (set (map str (concat (or (:pool g) []) (or (:time g) []))))
-          cat (or (:catalog opts) (catalog))
-          elig (eligible-species cat)
-          theme-elig (filterv #(contains? theme (str (:species %))) elig)
-          ;; Soft-bias: se o tema tem elegíveis (raro+), 60% sorteia só nesse pool.
-          rng* (or (:rng opts) rand)
-          theme-roll (double (rng*))
-          use-theme? (and (seq theme-elig) (< theme-roll 0.60))
-          catalog* (if use-theme?
-                     (assoc cat :species (mapv #(dissoc % :raridade) theme-elig))
-                     cat)
-          picked (select-boss (merge (dissoc opts :rng)
-                                     {:nivel nivel
-                                      :catalog catalog*
-                                      :category-weights weights
-                                      :rng rng*}))]
-      {:ginasio (:id g)
-       :nome-ginasio (:nome g)
+    (let [cat (or (:catalog opts) (catalog))
+          pool-npc (set (gym/pool-npc g))
+          themed (filterv #(or (some #{tipo} (:tipos %))
+                               (contains? pool-npc (:species %)))
+                          (:species cat))
+          picked (select-boss (assoc opts
+                                     :nivel nivel
+                                     :catalog (assoc cat :species themed)
+                                     :category-weights weights))]
+      {:ginasio id
+       :nome-ginasio (:lider g)
        :nivel-ginasio nivel
-       :liga liga-id
-       :chefe (:chefe picked)
+       :liga (:id (raid/liga-para-nivel nivel))
+       :chefe (update (:chefe picked) :fator-dificuldade min 1.25)
        :categoria (:categoria picked)
        :catalog-version (:catalog-version picked)
-       :rolls (:rolls picked)
-       :theme-pool? use-theme?})))
+       :rolls (:rolls picked)})))
 
 (defn simulate-distribution
   "Simula N sorteios em memória (sem criar raids). Retorna frequências."
