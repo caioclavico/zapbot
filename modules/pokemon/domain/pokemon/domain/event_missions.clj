@@ -128,9 +128,7 @@
              fam (when (or (seq (:doces mission)) (seq (:familias-doce event-def)))
                    (resolve-candy-pick mission event-def existing
                                        #(draw* [id :candy] (max 1 (count (:familias-doce event-def))))))
-             qty (long (or (first (vals (:doces mission)))
-                           (when fam 1)
-                           0))
+             qty (if fam (long (:quantidade-doce mission)) 0)
              doces' (cond-> doces
                       (and fam (pos? qty))
                       (update (profile/family fam) (fnil + 0) qty))

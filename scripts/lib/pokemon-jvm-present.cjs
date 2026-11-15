@@ -3660,6 +3660,10 @@ function formatMissionRewards(mission) {
     const n = Number(doces[fam] || 0);
     if (n > 0) parts.push(`${n} Doce ${fam.charAt(0).toUpperCase()}${fam.slice(1)}`);
   });
+  const randomCandy = Number(mission.quantidadeDoce || mission['quantidade-doce'] || 0);
+  if (!Object.keys(doces).length && randomCandy > 0) {
+    parts.push(`${randomCandy} doces de uma família do evento`);
+  }
   return parts.length ? `🎁 ${parts.join(' + ')}` : null;
 }
 
@@ -3678,7 +3682,7 @@ function formatMissionEventList(events, prefix) {
       const state = mission.estado;
       const icon = state === 'rewarded' ? '🎁' : state === 'completed' ? '✅' : '⬜';
       lines.push(`${i}. ${icon} ${mission.nome || mission.objetivo || mission.id} — ${mission.progresso || 0}/${mission.meta || 0}`);
-      const rewardLine = formatMissionRewards(mission);
+      const rewardLine = state === 'rewarded' ? null : formatMissionRewards(mission);
       if (rewardLine) lines.push(`   ${rewardLine}`);
       i += 1;
     }

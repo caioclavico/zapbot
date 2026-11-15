@@ -20,129 +20,133 @@
   #{"omanyte" "kabuto" "aerodactyl" "lileep" "anorith" "cranidos" "shieldon"
     "tirtouga" "archen" "tyrunt" "amaura"})
 
+(def ^:private mission-prizes
+  {:facil {:items {"pokebola" 4 "grande-bola" 3 "fruta" 2
+                   "ultra-bola" 1 "cartao-presente" 1}
+           :candy 2}
+   :media {:items {"pokebola" 6 "grande-bola" 5 "fruta" 3
+                   "ultra-bola" 2 "cartao-presente" 2}
+           :candy 4}
+   :dificil {:items {"pokebola" 8 "grande-bola" 7 "fruta" 5
+                     "ultra-bola" 4 "cartao-presente" 3}
+             :candy 6}})
+
+(defn- with-mission-prize [mission]
+  (let [{:keys [items candy]} (mission-prizes (:dificuldade mission))
+        family (:familia-doce mission)]
+    (cond-> (assoc (dissoc mission :familia-doce)
+                   :recompensas items :quantidade-doce candy)
+      family (assoc :doces {family candy}))))
+
 (def catalog
   "Definições estáveis. Janelas de ocorrência vivem no schedule/ocorrência (não no catálogo)."
-  [{:id "festival-dragoes"
-    :nome "Festival dos Dragões"
-    :emoji "🐉"
-    :categoria "especial"
-    :tipos-favorecidos #{"dragon"}
-    :familias-doce ["dratini" "bagon" "gible" "axew" "deino" "goomy" "jangmo-o" "dreepy" "frigibax"]
-    :missoes [{:id "cap-dragao" :nome "Capture Pokémon Dragão" :meta 3
-               :objetivo "Capturar 3 Pokémon do tipo Dragão"
-               :acao "captura" :tipos ["dragon"]
-               :recompensas {"fruta" 2 "ultra-bola" 2}
-               :doces {"dratini" 2}}
-              {:id "evo-dragao" :nome "Evolua um Dragão" :meta 1
-               :objetivo "Evoluir 1 Pokémon de família Dragão"
-               :acao "evolucao" :familias ["dratini" "bagon" "gible" "axew" "deino" "goomy" "jangmo-o" "dreepy" "frigibax"]
-               :recompensas {"fruta" 1 "cartao-presente" 1}
-               :doces {"bagon" 3}}
-              {:id "raid-dragao" :nome "Participe de raids" :meta 2
-               :objetivo "Participar de 2 raids"
-               :acao "raid-join"
-               :recompensas {"ultra-bola" 1 "fruta" 1}}]
-    :bias-tipos 20}
-   {:id "noite-sombras"
-    :nome "Noite das Sombras"
-    :emoji "👻"
-    :categoria "especial"
-    :tipos-favorecidos #{"ghost" "dark"}
-    :familias-doce ["gastly" "litwick" "zorua" "pawniard"]
-    :missoes [{:id "cap-sombra" :nome "Capture Fantasma ou Sombrio" :meta 4
-               :objetivo "Capturar 4 Pokémon Fantasma/Sombrio"
-               :acao "captura" :tipos ["ghost" "dark"]
-               :recompensas {"fruta" 2 "ultra-bola" 2 "grande-bola" 2}
-               :doces {"gastly" 2}}
-              {:id "bat-sombra" :nome "Vença batalhas temáticas" :meta 2
-               :objetivo "Vencer 2 batalhas"
-               :acao "batalha"
-               :recompensas {"grande-bola" 3 "fruta" 1}}]
-    :bias-tipos 18}
-   {:id "tempestade-eletrica"
-    :nome "Tempestade Elétrica"
-    :emoji "⚡"
-    :categoria "comum"
-    :tipos-favorecidos #{"electric"}
-    :familias-doce ["pikachu" "elekid" "magnemite"]
-    :missoes [{:id "cap-eletrico" :nome "Capture Elétricos" :meta 5
-               :objetivo "Capturar 5 Pokémon Elétricos"
-               :acao "captura" :tipos ["electric"]
-               :recompensas {"grande-bola" 3 "fruta" 1}
-               :doces {"pikachu" 3}}
-              {:id "evo-eletrico" :nome "Evolua um Elétrico" :meta 1
-               :objetivo "Evoluir 1 família Elétrica"
-               :acao "evolucao" :familias ["pikachu" "elekid" "magnemite"]
-               :recompensas {"ultra-bola" 1}
-               :doces {"elekid" 2}}]
-    :bias-tipos 18}
-   {:id "mare-misteriosa"
-    :nome "Maré Misteriosa"
-    :emoji "🌊"
-    :categoria "comum"
-    :tipos-favorecidos #{"water"}
-    :familias-doce ["magikarp" "squirtle" "poliwag" "horsea" "spheal"]
-    :missoes [{:id "cap-agua" :nome "Capture Pokémon Água" :meta 5
-               :objetivo "Capturar 5 Pokémon Água"
-               :acao "captura" :tipos ["water"]
-               :recompensas {"fruta" 2 "grande-bola" 2}
-               :doces {"magikarp" 3}}
-              {:id "raid-agua" :nome "Raids durante a maré" :meta 1
-               :objetivo "Participar de 1 raid"
-               :acao "raid-join"
-               :recompensas {"cartao-presente" 1 "fruta" 1}}]
-    :bias-tipos 18}
-   {:id "despertar-floresta"
-    :nome "Despertar da Floresta"
-    :emoji "🌿"
-    :categoria "comum"
-    :tipos-favorecidos #{"grass" "bug"}
-    :familias-doce ["bulbasaur" "oddish" "scyther"]
-    :missoes [{:id "cap-planta" :nome "Capture Planta/Inseto" :meta 5
-               :objetivo "Capturar 5 Pokémon Planta ou Inseto"
-               :acao "captura" :tipos ["grass" "bug"]
-               :recompensas {"fruta" 2 "pokebola" 4}
-               :doces {"bulbasaur" 2}}
-              {:id "evo-planta" :nome "Evolua na floresta" :meta 1
-               :objetivo "Evoluir 1 família Planta/Inseto"
-               :acao "evolucao" :familias ["bulbasaur" "oddish" "scyther"]
-               :recompensas {"fruta" 2}
-               :doces {"oddish" 2}}]
-    :bias-tipos 18}
-   {:id "era-fosseis"
-    :nome "Era dos Fósseis"
-    :emoji "🦴"
-    :categoria "especial"
-    :tipos-favorecidos #{"rock" "water" "flying"}
-    :familias-doce (vec (sort fossil-family-roots))
-    :classificacao "fossil-family-roots"
-    :missoes [{:id "cap-fossil" :nome "Capture um fóssil" :meta 3
-               :objetivo "Capturar 3 Pokémon de famílias fósseis"
-               :acao "captura" :familias (vec (sort fossil-family-roots))
-               :recompensas {"ultra-bola" 2 "fruta" 1}
-               :doces {"kabuto" 2}}
-              {:id "evo-fossil" :nome "Evolua um fóssil" :meta 1
-               :objetivo "Evoluir 1 família fóssil"
-               :acao "evolucao" :familias (vec (sort fossil-family-roots))
-               :recompensas {"ultra-bola" 1 "cartao-presente" 1}
-               :doces {"omanyte" 2}}]
-    :bias-tipos 15}
-   {:id "eclipse-mistico"
-    :nome "Eclipse Místico"
-    :emoji "🌙"
-    :categoria "raro"
-    :tipos-favorecidos #{"psychic" "ghost" "fairy"}
-    :familias-doce ["ralts" "abra" "eevee" "gastly"]
-    :missoes [{:id "cap-mistico" :nome "Desafio do Eclipse" :meta 7
-               :objetivo "Capturar 7 Pokémon Psíquico/Fantasma/Fada"
-               :acao "captura" :tipos ["psychic" "ghost" "fairy"]
-               :recompensas {"ultra-bola" 3 "cartao-presente" 2 "fruta" 2}
-               :doces {"ralts" 4}}
-              {:id "raid-mistico" :nome "Raids difíceis" :meta 2
-               :objetivo "Vencer 2 raids"
-               :acao "raid-win"
-               :recompensas {"ultra-bola" 2 "fruta" 2}}]
-    :bias-tipos 12}])
+  (mapv #(update % :missoes (fn [missions] (mapv with-mission-prize missions)))
+     [{:id "festival-dragoes"
+      :nome "Festival dos Dragões"
+      :emoji "🐉"
+      :categoria "especial"
+      :tipos-favorecidos #{"dragon"}
+      :familias-doce ["dratini" "bagon" "gible" "axew" "deino" "goomy" "jangmo-o" "dreepy" "frigibax"]
+      :missoes [{:id "cap-dragao" :nome "Capture Pokémon Dragão" :meta 3 :dificuldade :dificil
+                 :objetivo "Capturar 3 Pokémon do tipo Dragão"
+                 :acao "captura" :tipos ["dragon"]
+                 :familia-doce "dratini"}
+                {:id "evo-dragao" :nome "Evolua um Dragão" :meta 1 :dificuldade :media
+                 :objetivo "Evoluir 1 Pokémon de família Dragão"
+                 :acao "evolucao" :familias ["dratini" "bagon" "gible" "axew" "deino" "goomy" "jangmo-o" "dreepy" "frigibax"]
+                 :familia-doce "bagon"}
+                {:id "raid-dragao" :nome "Participe de raids" :meta 2 :dificuldade :facil
+                 :objetivo "Participar de 2 raids"
+                 :acao "raid-join"}]
+      :bias-tipos 20}
+     {:id "noite-sombras"
+      :nome "Noite das Sombras"
+      :emoji "👻"
+      :categoria "especial"
+      :tipos-favorecidos #{"ghost" "dark"}
+      :familias-doce ["gastly" "litwick" "zorua" "pawniard"]
+      :missoes [{:id "cap-sombra" :nome "Capture Fantasma ou Sombrio" :meta 4 :dificuldade :dificil
+                 :objetivo "Capturar 4 Pokémon Fantasma/Sombrio"
+                 :acao "captura" :tipos ["ghost" "dark"]
+                 :familia-doce "gastly"}
+                {:id "bat-sombra" :nome "Vença batalhas temáticas" :meta 2 :dificuldade :facil
+                 :objetivo "Vencer 2 batalhas"
+                 :acao "batalha"}]
+      :bias-tipos 18}
+     {:id "tempestade-eletrica"
+      :nome "Tempestade Elétrica"
+      :emoji "⚡"
+      :categoria "comum"
+      :tipos-favorecidos #{"electric"}
+      :familias-doce ["pikachu" "elekid" "magnemite"]
+      :missoes [{:id "cap-eletrico" :nome "Capture Elétricos" :meta 5 :dificuldade :dificil
+                 :objetivo "Capturar 5 Pokémon Elétricos"
+                 :acao "captura" :tipos ["electric"]
+                 :familia-doce "pikachu"}
+                {:id "evo-eletrico" :nome "Evolua um Elétrico" :meta 1 :dificuldade :media
+                 :objetivo "Evoluir 1 família Elétrica"
+                 :acao "evolucao" :familias ["pikachu" "elekid" "magnemite"]
+                 :familia-doce "elekid"}]
+      :bias-tipos 18}
+     {:id "mare-misteriosa"
+      :nome "Maré Misteriosa"
+      :emoji "🌊"
+      :categoria "comum"
+      :tipos-favorecidos #{"water"}
+      :familias-doce ["magikarp" "squirtle" "poliwag" "horsea" "spheal"]
+      :missoes [{:id "cap-agua" :nome "Capture Pokémon Água" :meta 5 :dificuldade :dificil
+                 :objetivo "Capturar 5 Pokémon Água"
+                 :acao "captura" :tipos ["water"]
+                 :familia-doce "magikarp"}
+                {:id "raid-agua" :nome "Raids durante a maré" :meta 1 :dificuldade :facil
+                 :objetivo "Participar de 1 raid"
+                 :acao "raid-join"}]
+      :bias-tipos 18}
+     {:id "despertar-floresta"
+      :nome "Despertar da Floresta"
+      :emoji "🌿"
+      :categoria "comum"
+      :tipos-favorecidos #{"grass" "bug"}
+      :familias-doce ["bulbasaur" "oddish" "scyther"]
+      :missoes [{:id "cap-planta" :nome "Capture Planta/Inseto" :meta 5 :dificuldade :dificil
+                 :objetivo "Capturar 5 Pokémon Planta ou Inseto"
+                 :acao "captura" :tipos ["grass" "bug"]
+                 :familia-doce "bulbasaur"}
+                {:id "evo-planta" :nome "Evolua na floresta" :meta 1 :dificuldade :media
+                 :objetivo "Evoluir 1 família Planta/Inseto"
+                 :acao "evolucao" :familias ["bulbasaur" "oddish" "scyther"]
+                 :familia-doce "oddish"}]
+      :bias-tipos 18}
+     {:id "era-fosseis"
+      :nome "Era dos Fósseis"
+      :emoji "🦴"
+      :categoria "especial"
+      :tipos-favorecidos #{"rock" "water" "flying"}
+      :familias-doce (vec (sort fossil-family-roots))
+      :classificacao "fossil-family-roots"
+      :missoes [{:id "cap-fossil" :nome "Capture um fóssil" :meta 3 :dificuldade :dificil
+                 :objetivo "Capturar 3 Pokémon de famílias fósseis"
+                 :acao "captura" :familias (vec (sort fossil-family-roots))
+                 :familia-doce "kabuto"}
+                {:id "evo-fossil" :nome "Evolua um fóssil" :meta 1 :dificuldade :media
+                 :objetivo "Evoluir 1 família fóssil"
+                 :acao "evolucao" :familias (vec (sort fossil-family-roots))
+                 :familia-doce "omanyte"}]
+      :bias-tipos 15}
+     {:id "eclipse-mistico"
+      :nome "Eclipse Místico"
+      :emoji "🌙"
+      :categoria "raro"
+      :tipos-favorecidos #{"psychic" "ghost" "fairy"}
+      :familias-doce ["ralts" "abra" "eevee" "gastly"]
+      :missoes [{:id "cap-mistico" :nome "Desafio do Eclipse" :meta 7 :dificuldade :media
+                 :objetivo "Capturar 7 Pokémon Psíquico/Fantasma/Fada"
+                 :acao "captura" :tipos ["psychic" "ghost" "fairy"]
+                 :familia-doce "ralts"}
+                {:id "raid-mistico" :nome "Raids difíceis" :meta 2 :dificuldade :dificil
+                 :objetivo "Vencer 2 raids"
+                 :acao "raid-win"}]
+      :bias-tipos 12}]))
 
 (defn by-id [id]
   (some #(when (= id (:id %)) %) catalog))
