@@ -571,6 +571,8 @@
                        (cond-> {:pokemon-xp (long (:pokemon-xp rew 0))
                                 :pe (long (:pe rew 0))
                                 :coins (long (:coins rew 0))}
+                         (pos? (:exp-share-count rew 0))
+                         (assoc :exp-share-count (:exp-share-count rew))
                          (some? (:bonus-xp rew))
                          (assoc :bonus-xp (:bonus-xp rew))
                          (true? (:battle-reward? rew))

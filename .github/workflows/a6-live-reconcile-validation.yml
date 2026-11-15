@@ -36,12 +36,14 @@ jobs:
       - name: Verify ancestry and classify scope
         id: scope
         shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin a6/live-baseline-8ef41c8
           base_ref=origin/a6/live-baseline-8ef41c8
-          # Tip live confirmado após PR #86 (XP flat-9-v2); gate SHA fixo.
-          expected=60dc18b633bf1538f252f1cd6ddf8dcb480e2574
+          # PRs use the base SHA supplied by GitHub. The historical push jobs keep their pin.
+          expected="${PR_BASE_SHA:-60dc18b633bf1538f252f1cd6ddf8dcb480e2574}"
           test "$(git rev-parse "$base_ref")" = "$expected"
           merge_base="$(git merge-base HEAD "$base_ref")"
           test "$merge_base" = "$expected"
@@ -375,6 +377,11 @@ jobs:
 
       - name: Unit + Datomic tests — MT move learning + shop
         run: clojure -M:test-a6-mt-move-learning
+
+      - name: Unit + Datomic tests — wild hunts and shop
+        run: |
+          clojure -M:test-m4-hunt
+          clojure -M:test-m4-shop
 
       - name: Smoke — HTTP quiescence / freeze / restart
         run: clojure -M:smoke-a6-maintenance-quiescence
