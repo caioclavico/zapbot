@@ -102,3 +102,25 @@ test('apresentação filtra todas, diárias e semanais sem misturar grupos', () 
   assert.match(present.formatGift({ sent: true, targetPlayerId: 'misty@c.us', items: [{ itemId: 'pokebola', qty: 3 }], pending: [] }), /misty/);
   assert.match(present.formatMissionPending({ added: [{ itemId: 'pokebola', qty: 2 }], pending: [] }), /recolhidas/);
 });
+
+test('missões de evento mostram os novos prêmios só para resgates pendentes', () => {
+  const output = present.formatMissions({
+    events: [{
+      status: 'active',
+      nome: 'Eclipse Místico',
+      missions: [
+        {
+          nome: 'Raids difíceis', estado: 'completed', progresso: 2, meta: 2,
+          recompensas: { 'ultra-bola': 4 }, quantidadeDoce: 6
+        },
+        {
+          nome: 'Desafio do Eclipse', estado: 'rewarded', progresso: 7, meta: 7,
+          recompensas: { 'ultra-bola': 2 }, doces: { ralts: 4 }
+        }
+      ]
+    }]
+  }, 'evento', '!pk');
+  assert.match(output, /4 Ultra Bolas \+ 6 doces de uma família do evento/);
+  assert.match(output, /Desafio do Eclipse — 7\/7/);
+  assert.doesNotMatch(output, /Doce Ralts/);
+});

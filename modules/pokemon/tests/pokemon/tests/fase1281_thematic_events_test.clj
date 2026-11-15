@@ -25,6 +25,29 @@
   (is (events/fossil-family? "omanyte"))
   (is (not (events/fossil-family? "pikachu"))))
 
+(deftest recompensas-crescem-por-dificuldade-e-preservam-estado
+  (let [tiers (group-by :dificuldade (mapcat :missoes events/catalog))]
+    (is (= #{:facil :media :dificil} (set (keys tiers))))
+    (doseq [[lower higher] [[:facil :media] [:media :dificil]]
+            a (tiers lower)
+            b (tiers higher)]
+      (is (< (:quantidade-doce a) (:quantidade-doce b)))
+      (is (every? (fn [[item n]] (< n (get-in b [:recompensas item] 0)))
+                  (:recompensas a)))))
+  (let [progress {"cap-dragao" 3 "evo-dragao" 1 "raid-dragao" 1}
+        saved {"progresso" progress "premiados" ["evo-dragao"]
+               "candy-picks" {"evo-dragao" "bagon"}}
+        claim (em/build-claim "festival-dragoes" saved (fn [_ _] 0))]
+    (is (= ["cap-dragao"] (:ids claim)))
+    (is (= {"dratini" 6} (:doces claim)))
+    (is (= 4 (get-in claim [:items "ultra-bola"])))
+    (is (= progress (get-in claim [:state "progresso"])))
+    (is (= ["evo-dragao" "cap-dragao"] (get-in claim [:state "premiados"])))
+    (is (= "bagon" (get-in claim [:state "candy-picks" "evo-dragao"]))))
+  (let [saved {"progresso" {"raid-mistico" 2}}
+        claim (em/build-claim "eclipse-mistico" saved (fn [_ _] 1))]
+    (is (= {"abra" 6} (:doces claim)))))
+
 (deftest flag-off-isola-active-events-e-bias
   (is (false? (events/thematic-events-enabled?)))
   (is (empty? (events/active-events (Instant/now))))
