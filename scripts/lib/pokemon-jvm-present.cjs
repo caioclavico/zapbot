@@ -373,8 +373,7 @@ function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
   const precisao = golpe.precisao != null ? golpe.precisao : golpe.accuracy;
   const prec = precisao != null ? `, precisão ${precisao}%` : '';
   const mark = mult === 0 ? ' 🚫' : (mult > 1 ? ' 🔥' : (mult < 1 ? ' 😕' : ''));
-  const tipoEmoji = emojiTipo(tipo);
-  const linha = `${idx + 1}. ${emojiGolpe(golpe)}${tipoEmoji ? ` ${tipoEmoji}` : ''} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
+  const linha = `${idx + 1}. ${emojiGolpe(golpe)} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
   if (isExplosionGolpe(golpe) && mult === 0) {
     return `${linha}\n   ⚠️ Sem efeito neste alvo — o Pokémon *não* desmaia se o golpe não causar dano.`;
   }
@@ -2636,10 +2635,9 @@ function formatRaidMoveLines(pokemon, prefix = '!pk', tiposDefesa, habilidadeDef
     // Status/transform válidos: nome + classe — não confundir com ref quebrada (?).
     if (!ofensivo) {
       const emoji = emojiGolpe(Object.assign({}, g, { classe }));
-      const tipoEmoji = emojiTipo(g.tipo || g.type);
-      return `${i + 1}. ${emoji}${tipoEmoji ? ` ${tipoEmoji}` : ''} *${nome}* — _indisponível na raid_`;
+      return `${i + 1}. ${emoji} *${nome}* — _indisponível na raid_`;
     }
-    // Paridade caça: emoji de classe/tipo + marca de efetividade vs chefe.
+    // Paridade caça: emoji de classe + marca de efetividade vs chefe.
     const gNorm = classeRaw != null ? g : Object.assign({}, g, { classe: 'fisico' });
     const linha = linhaGolpe(i, gNorm, tiposDefesa || [], habilidadeDefensor);
     return `${linha} → \`${prefix} raid atacar ${i + 1}\``;
