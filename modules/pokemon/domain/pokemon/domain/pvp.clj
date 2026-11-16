@@ -8,6 +8,8 @@
 (def minutos-espera 5)
 (def tempo-espera-ms (* minutos-espera 60 1000))
 (def moedas-por-vitoria 10)
+(def max-trocas 3)
+(def intervalo-trocas-ms 60000)
 
 (defn as-side
   "Normaliza marcador de lado para :x|:o (aceita keyword, string ou nil)."
@@ -81,11 +83,21 @@
   [battle]
   (or (:faixa-niveis battle) (faixa-niveis (get-in battle [:pokemons :x]))))
 
+(defn dentro-da-faixa?
+  [{:keys [min max]} pokemon]
+  (<= min (long (or (:nivel pokemon) 1)) max))
+
 (defn compativel?
   [battle pokemon]
-  (let [{:keys [min max]} (faixa-desafio battle)
-        nivel (long (or (:nivel pokemon) 1))]
-    (<= min nivel max)))
+  (dentro-da-faixa? (faixa-desafio battle) pokemon))
+
+(defn estado-troca
+  [battle side]
+  (let [oponente (if (= side :x) :o :x)
+        usadas (get-in battle [:trocas side :usadas] 0)]
+    {:restantes (- max-trocas usadas)
+     :disponivel-em (get-in battle [:trocas side :disponivel-em] 0)
+     :faixa (faixa-niveis (get-in battle [:pokemons oponente]))}))
 
 (defn xp-por-nocautes
   "Espelha treinador/xp-por-nocautes."

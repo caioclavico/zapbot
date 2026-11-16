@@ -130,3 +130,16 @@ test('erros PvP mapeados', () => {
   assert.match(present.formatError({ code: 'PVP_OUT_OF_TURN' }), /vez/i);
   assert.match(present.formatError({ code: 'PVP_NO_CHALLENGE' }), /desafio/i);
 });
+
+test('PvP exibe a troca feita, a faixa do próximo jogador e o intervalo', () => {
+  const battle = {
+    kind: 'pvp', phase: 'active', vez: 'o', nomes: { x: 'Ash', o: 'Misty' },
+    lastAction: { action: 'switch', side: 'x', pokemonNome: 'Noctowl' },
+    trocas: { o: { restantes: 2, disponivelEm: Date.now() + 60000, faixa: { min: 17, max: 23 } } }
+  };
+  const texto = present.formatPvpBattle(battle);
+  assert.match(texto, /Ash.*colocou.*Noctowl/);
+  assert.match(texto, /!pk trocar.*2\/3 trocas.*Nv\. 17–23.*aguarde \d+s/);
+  assert.match(present.formatError({ code: 'PVP_SWITCH_COOLDOWN', details: { restanteMs: 1500 } }), /2s/);
+  assert.equal(present.resolveCommand(['trocar', '2']), 'escolher');
+});

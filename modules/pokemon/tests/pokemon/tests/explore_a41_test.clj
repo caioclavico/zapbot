@@ -83,10 +83,32 @@
     (when-let [bloqueada (first indisponiveis)]
       (is (nil? (mundo/area-disponivel (:id bloqueada) dia)))))
   (let [texto (mundo/texto-resumo (Instant/parse "2026-10-17T15:00:00Z"))]
-    (is (re-find #"Clima de hoje" texto))
+    (is (re-find #"Clima agora" texto))
     (is (re-find #"Bioma deste horário" texto))
-    (is (re-find #"Rotação de hoje" texto))
-    (is (re-find #"Sem acesso por horário hoje" texto))))
+    (is (re-find #"Biomas abertos" texto))
+    (is (re-find #"Espécies em destaque|espécies em destaque" texto))))
+
+(deftest mundo-muda-nos-limites-do-fuso
+  (doseq [[hora periodo bioma] [["00:00" "Madrugada" "floresta"]
+                               ["05:59" "Madrugada" "floresta"]
+                               ["06:00" "Dia" "praia"]
+                               ["16:59" "Dia" "praia"]
+                               ["17:00" "Entardecer" "lago"]
+                               ["18:59" "Entardecer" "lago"]
+                               ["19:00" "Noite" "cidade"]
+                               ["23:59" "Noite" "cidade"]]]
+    (let [instant (Instant/parse (str "2026-11-15T" hora ":00-03:00"))
+          mundo (mundo/resumo instant)]
+      (is (= periodo (get-in mundo [:periodo :nome])))
+      (is (= bioma (get-in mundo [:area-padrao :id])))
+      (when (not= periodo "Dia")
+        (is (not= "ensolarado" (get-in mundo [:clima :id]))))))
+  (let [instant (Instant/parse "2026-11-15T04:00:00Z")
+        plano #(hunt/montar-plano {:instant instant :roll-surto %1 :roll-tipos %2})]
+    (is (= "Céu limpo" (:nome (mundo/obter-clima "ceu-limpo"))))
+    (is (= ["hoothoot" "noctowl" "venonat"] (:especies-destaque (plano 99 99))))
+    (is (nil? (:especies-destaque (plano 99 0))))
+    (is (nil? (:especies-destaque (plano 0 99))))))
 
 (deftest clima-vs-bioma-35-porcento
   "Limiar master: roll < 35 → clima. Em 0..99 isso são exatamente 35 hits."
@@ -158,13 +180,12 @@
     (is (nil? (:evento sem-surto)))
     (is (re-find #"Festival|Faíscas|Trilha|Floresta"
                  (:nome (:evento-atual com-surto))))
-    (is (re-find #"Clima de hoje" (:resumo-texto com-surto)))
+    (is (re-find #"Clima agora" (:resumo-texto com-surto)))
     (is (re-find #"destaque" (hunt/texto-evento agora :prefix "!pk")))))
 
 (deftest area-indisponivel-erro-com-resumo
-  (let [dia "2026-10-17"
-        bloq (first (mundo/areas-indisponiveis dia))
-        instant (Instant/parse "2026-10-17T12:00:00-03:00")
+  (let [instant (Instant/parse "2026-10-17T12:00:00-03:00")
+        bloq (first (:areas-indisponiveis (mundo/resumo instant)))
         ex (try
              (hunt/montar-plano
               {:area-pedida (:id bloq)

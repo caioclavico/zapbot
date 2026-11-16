@@ -1033,27 +1033,14 @@
     (boolean (or (true? (some-> battle .-suaVez))
                  (and side vez (= side vez))))))
 
-(defn- mencao-vez-pvp
-  "Player-id de quem deve jogar agora (para @ no WhatsApp)."
-  [battle]
-  (let [jog (some-> battle .-jogadores)
-        vez (some-> battle .-vez)]
-    (when (and jog vez)
-      (cond
-        (= vez "x") (or (.-x jog) (aget jog "x"))
-        (= vez "o") (or (.-o jog) (aget jog "o"))
-        :else nil))))
+(defn- turno-apresentado [texto battle player-id]
+  (.withBattleTurnMention jvm-present texto battle player-id))
 
-(defn- envelope-jvm-pvp
-  [pedido texto imagem battle]
-  (let [mention (mencao-vez-pvp battle)
-        extras #js {:effects #js []}]
-    (when imagem
-      (aset extras "image" imagem)
-      (aset extras "caption" texto))
-    (when mention
-      (aset extras "mentions" #js [mention]))
-    (.envelope jvm-present (:requestId pedido) texto extras)))
+(defn- envelope-turno [pedido present imagem]
+  (envelope-jvm pedido (.-text present) imagem (js->clj (.-mentions present))))
+
+(defn- envelope-jvm-pvp [pedido texto imagem battle]
+  (envelope-turno pedido (turno-apresentado texto battle nil) imagem))
 
 (defn- lado-vez-pvp
   "Lado canônico de quem deve jogar agora (\"x\"|\"o\"|nil)."
@@ -1119,7 +1106,7 @@
 
 (defn- confirmar-turno-pvp!
   [jvm ctx pedido chat-id player-id battle
-   {:keys [action move-index item-id]}]
+   {:keys [action move-index item-id collection-index]}]
   (let [prefix (str config/prefix "pk")
         side0 (lado-pvp battle player-id)]
     (cond
@@ -1135,6 +1122,7 @@
                           (= action "attack") (str "atk:" (or move-index 0))
                           (= action "defend") "def"
                           (= action "item") (str "item:" (or item-id "?"))
+                          (= action "switch") (str "switch:" collection-index)
                           :else (str action))
               op-id (.stableOperationId jvm-transport
                                         (:requestId pedido)
@@ -1151,7 +1139,8 @@
                                      :expectedTurnIndex (or (.-turnIndex battle) 0)
                                      :action action}
                               (some? move-index) (assoc :moveIndex move-index)
-                              (some? item-id) (assoc :itemId item-id)))
+                              (some? item-id) (assoc :itemId item-id)
+                              (some? collection-index) (assoc :collectionIndex collection-index)))
               data (desempenho/medir! ctx "pokemon_jvm_pvp_turn"
                      #(.confirmPvpTurn jvm body))
               b (.-battle data)
@@ -1166,7 +1155,7 @@
               img (render-arena-pvp! ctx b side
                                      {:texto texto
                                       :efeito efeito
-                                      :mostrar-entrada? false})]
+                                      :mostrar-entrada? (= action "switch")})]
         (envelope-jvm-pvp pedido texto img b)))))
 
 (defn- confirmar-turno-encontro!
@@ -1200,6 +1189,7 @@
           texto (append-trainer-level-ups
                  (.formatBattleTurn jvm-present data (str config/prefix "pk")) data)
           b (.-battle data)
+          present (turno-apresentado texto b player-id)
           fugiu? (= "flee" (or (.-outcome data) (some-> b .-outcome)))
           img (render-seguro! ctx "pokemon_jvm_media_turn"
                 #(.renderHuntArena jvm-media
@@ -1213,7 +1203,7 @@
                          :caption texto
                          :efeito (.efeitoDeTurno jvm-media data)
                          :mostrarEntrada false}))]
-    (envelope-jvm pedido texto img)))
+    (envelope-turno pedido present img)))
 
 (defn- normalizar-missao-token
   "Remove acentos/caixa — aceita diaria(s), semanal(is), evento(s)."
@@ -2191,6 +2181,7 @@
                                   texto (.formatGymChallengeStart jvm-present data
                                                                   (str config/prefix "pk"))
                                   battle (.-battle data)
+                                  present (turno-apresentado texto battle player-id)
                                   hp-map (some-> battle .-hp)
                                   px (some-> battle .-pokemonX)
                                   po (some-> battle .-pokemonO)
@@ -2211,7 +2202,7 @@
                                                         #js {:atual (.-o hp-map)
                                                              :max (or (some-> po .-hp)
                                                                       (.-o hp-map))})}))]
-                            (envelope-jvm pedido texto img)))))
+                            (envelope-turno pedido present img)))))
 
                     (contains? #{"ranking" "historico"} sub)
                     (let [gym-id (when (seq args-gin)
@@ -2360,7 +2351,7 @@
                               ;; Fence fresco pós-pokeapi; 1 retry só em stale.
                               started (start-hunt-jvm!
                                        jvm pokeapi ctx chat-id player-id
-                                       (or area-pedida (some-> plano .-area .-id))
+                                       area-pedida
                                        plano cands op-id)]
                         (if-let [bloqueio2 (:bloqueio started)]
                           (envelope-jvm pedido bloqueio2)
@@ -2369,6 +2360,7 @@
                                   texto (.formatHuntStart jvm-present plano-final data
                                                           (str config/prefix "pk"))
                                   battle (.-battle data)
+                                  present (turno-apresentado texto battle player-id)
                                   img (render-seguro! ctx "pokemon_jvm_media_hunt"
                                         #(.renderHuntArena jvm-media
                                             #js {:area (or (.-area data)
@@ -2380,7 +2372,7 @@
                                                  :aguardandoCaptura false
                                                  :caption texto
                                                  :mostrarEntrada true}))]
-                            (envelope-jvm pedido texto img))))))))
+                            (envelope-turno pedido present img))))))))
 
                 "fruta"
                 (p/let [enc (desempenho/medir! ctx "pokemon_jvm_encounter"
@@ -2806,10 +2798,12 @@
                                       nil)]
                       (cond
                         (nil? st)
-                        (envelope-jvm pedido
-                                      (str "❓ Seu Pokémon ativo não tem status para curar.\n\n"
-                                           (.formatBattleState jvm-present encontro
-                                                               (str config/prefix "pk"))))
+                        (envelope-turno pedido
+                          (turno-apresentado
+                           (str "❓ Seu Pokémon ativo não tem status para curar.\n\n"
+                                (.formatBattleState jvm-present encontro (str config/prefix "pk")))
+                           encontro player-id)
+                          nil)
                         (nil? item-cura)
                         (envelope-jvm pedido
                                       (str "❓ Status `" st "` sem item de cura mapeado."))
@@ -2887,7 +2881,11 @@
                                #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))
                         total (or (.-count col) 0)
                         idx (parse-indice-1based (first resto) total)
-                        prefix (str config/prefix "pk")]
+                        prefix (str config/prefix "pk")
+                        pvp (.getActivePvp jvm #js {:chatId chat-id})
+                        battle (.-battle pvp)
+                        em-pvp? (and (= "active" (some-> battle .-phase))
+                                     (lado-pvp battle player-id))]
                   (cond
                     (zero? total)
                     (envelope-jvm pedido (str "❓ Coleção vazia. Use " prefix " iniciar."))
@@ -2895,6 +2893,10 @@
                     (envelope-jvm pedido
                                   (str "❓ Escolha um número válido: " prefix " escolher <1-"
                                        total "> (veja com " prefix " time)."))
+                    em-pvp?
+                    (confirmar-turno-pvp! jvm ctx pedido chat-id player-id battle
+                                          {:action "switch" :collection-index idx})
+
                     :else
                     (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
                             op-id (.stableOperationId jvm-transport

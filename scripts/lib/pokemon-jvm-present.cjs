@@ -1500,6 +1500,9 @@ function formatError(err) {
     INVALID_TRADE_TRANSITION: '⚠️ Essa proposta não aceita esta ação no estado atual.',
     BATTLE_SAVE_MISMATCH: '⚠️ Encontro pertence a outro save — callback antigo rejeitado.',
     BATTLE_ALREADY_ACTIVE: '⚔️ Já existe uma batalha/encontro seu em andamento.',
+    PVP_SWITCH_LIMIT: '🔄 Você já usou as três trocas desta batalha.',
+    PVP_SWITCH_SAME_POKEMON: '🔄 Esse Pokémon já está em campo. Use !pk time para ver os outros.',
+    PVP_SWITCH_COOLDOWN: '⏳ Aguarde antes de fazer outra troca.',
     BATTLE_BUSY: '🚫 Termine a batalha/caça antes de trocar o ativo, evoluir, alterar golpes ou usar o professor.',
     INVALID_COLLECTION_INDEX: '❓ Número inválido. Consulte !pk tm.',
     PROFESSOR_BUSY: '⚠️ Já existe um envio pendente. Confirme o código ou use !pk professor cancelar.',
@@ -1535,7 +1538,7 @@ function formatError(err) {
     PVP_NOT_PARTICIPANT: '🚫 Você não participa desta batalha.',
     PVP_CANCEL_FORBIDDEN: '🚫 Só quem abriu o desafio pode cancelá-lo com !pk sair.',
     NOT_PVP_BATTLE: '❓ Esta batalha não é PvP.',
-    AREA_UNAVAILABLE: '🗺️ Essa área não está disponível hoje. Veja a rotação com !pk clima.',
+    AREA_UNAVAILABLE: '🗺️ Essa área não está disponível neste horário. Veja a rotação com !pk clima.',
     HUNT_COOLDOWN: '⏳ Ainda em cooldown de caça. Aguarde e tente de novo.',
     CHAT_HUNT_BUSY: '⚔️ Já existe uma caçada em andamento neste chat.',
     ACTIVE_POKEMON_FAINTED: '😵 Seu Pokémon ativo está desmaiado. Cure-o antes de caçar.',
@@ -1602,6 +1605,14 @@ function formatError(err) {
     STARTER_UNAVAILABLE: '🧢 Inicial já escolhido ou jornada já em andamento. Use !pk treinador.'
   };
   let base = map[code] || `⚠️ ${err.message || 'Falha no jogo'} (${code}).`;
+  if (code === 'PVP_SWITCH_COOLDOWN') {
+    const ms = Number(err.details && err.details.restanteMs);
+    if (ms > 0) base = `⏳ Aguarde ${Math.ceil(ms / 1000)}s para trocar de novo.`;
+  }
+  if (code === 'PVP_LEVEL_INCOMPATIBLE') {
+    const faixa = err.details && err.details.faixa;
+    if (faixa) base = `⚖️ Escolha um Pokémon entre os níveis ${faixa.min} e ${faixa.max}.`;
+  }
   if (code === 'AREA_UNAVAILABLE') {
     const d = (err && err.details) || {};
     const resumo = d.resumoTexto || d['resumo-texto'];
@@ -1780,6 +1791,7 @@ function formatHuntStart(plan, result, prefix = '!pk') {
   const surto = result && result.surto;
   const intro = [
     `${area.emoji || '🗺️'} Você entrou em *${area.nome || area.id || '?'}*!`,
+    plan && plan.periodo && plan.periodo.nome ? `🕒 *${plan.periodo.nome}*` : null,
     `${clima.emoji || '☁️'} Clima *${clima.nome || '?'}*: tipos ${(clima.tipos || []).map(tipoLabelPt).join(', ') || '?'} aparecem mais.`,
     surto && plan && plan.evento ? `🎉 ${plan.evento.nome} — encontro do evento!` : null,
     `Um ${textoRaridade(selvagem)} *${selvagem.nome || '?'}* apareceu.`,
@@ -3102,13 +3114,31 @@ function formatRaidAttack(data, prefix = '!pk') {
 function withRaidTurnMention(result, raid) {
   const present = coerceRaidPresent(result);
   const playerId = raid && raid.fase === 'combate' && raid.vez;
-  const turnLine = /^👉 Vez de \*[^\n]+?\*/m;
+  return withTurnMention(present, playerId, /^👉 Vez de \*[^\n]+?\*/m);
+}
+
+function withBattleTurnMention(result, battle, playerId) {
+  const present = coerceRaidPresent(result);
+  if (!battle || battle.outcome || battle.aguardandoCaptura ||
+      !(battle.active === true || battle.phase === 'active')) {
+    return present;
+  }
+  if (battle.kind === 'pvp' || battle.jogadores) {
+    const id = battle.jogadores && battle.jogadores[battle.vez];
+    return withTurnMention(present, id, /^👉 Vez de \*[^\n]+?\*/m);
+  }
+  return withTurnMention(present, playerId, /^(?=(?:Escolha:|Ataque:|Batalha:))/m);
+}
+
+function withTurnMention(present, playerId, turnLine) {
   if (typeof playerId !== 'string' || !/^\d+@(?:lid|c\.us|s\.whatsapp\.net)$/.test(playerId)
       || !turnLine.test(present.text)) {
     return present;
   }
   return {
-    text: present.text.replace(turnLine, `👉 Vez de ${mentionHandle(playerId)}`),
+    text: present.text.replace(turnLine, match => (
+      `👉 Vez de ${mentionHandle(playerId)}${match ? '' : '\n'}`
+    )),
     mentions: [...new Set([...present.mentions, playerId])]
   };
 }
@@ -3288,7 +3318,7 @@ function formatJoyStatus(data, prefix = '!pk') {
       const nome = (b.pokemon && (b.pokemon.nome || b.pokemon.species)) || '?';
       const restMs = b.restanteMs != null ? b.restanteMs : b['restante-ms'];
       const rest = b.pronto
-        ? 'pronto — use o comando de novo para recolher'
+        ? 'pronto — retorno automático em instantes'
         : formatDurationPt(Number(restMs || 0) / 1000);
       lines.push(`• ${nome} — ${rest}`);
     }
@@ -3321,7 +3351,7 @@ function formatJoySend(data, prefix = '!pk') {
     : (secsCfg != null ? Number(secsCfg) : 1800);
   return [
     `🏥 A Enfermeira Joy recebeu *${nome}*.`,
-    `Voltará com HP cheio em ${formatDurationPt(secs)}.`,
+    `Voltará automaticamente ao time com HP cheio em ${formatDurationPt(secs)}.`,
     `Acompanhe: ${prefix} joy · ${prefix} time`
   ].join('\n');
 }
@@ -4148,7 +4178,7 @@ const HELP_TOPICS = {
       '',
       '*Começar*',
       `1. \`${p} inicial\` — escolha seu inicial (primeira vez)`,
-      `2. \`${p} clima\` — veja áreas e clima do dia`,
+      `2. \`${p} clima\` — veja biomas, clima e espécies deste horário`,
       `3. \`${p} cacar\` ou \`${p} cacar <área>\` — inicia a caçada`,
       '',
       '*Durante o combate*',
@@ -4418,9 +4448,11 @@ const HELP_TOPICS = {
       `\`${p} batalhar @jogador\` — abre desafio`,
       `\`${p} batalhar aceitar\` · \`${p} batalhar cancelar\``,
       `\`${p} atacar 1\` … — na sua vez`,
+      `\`${p} trocar <número>\` — escolha no \`${p} time\` durante a luta`,
       `\`${p} sair\` — abandona (regras do desafio)`,
       '',
-      'Use o Pokémon ativo; níveis incompatíveis bloqueiam a entrada.',
+      'O desafio começa com seu Pokémon ativo.',
+      'Cada treinador pode trocar três vezes, com 60s entre trocas. Trocar passa a vez e exige até 3 níveis de diferença do adversário em campo.',
       '1 desafio/batalha PvP por chat.'
     ].join('\n')
   },
@@ -4455,7 +4487,7 @@ const HELP_TOPICS = {
     aliases: ['evento', 'clima', 'missoes', 'missões', 'surto'],
     titulo: '🎉 *Ajuda — Eventos e clima*',
     corpo: (p) => [
-      'Clima, áreas do dia, surtos e missões.',
+      'Clima, biomas, surtos e missões.',
       '',
       `\`${p} clima\` — áreas e tipos favorecidos`,
       `\`${p} eventos\` — eventos temáticos ativos`,
@@ -4855,6 +4887,7 @@ module.exports = {
   formatRaidRewardLines,
   coerceRaidPresent,
   withRaidTurnMention,
+  withBattleTurnMention,
   buildRaidMentionRoster,
   safeRaidMentionLabel,
   looksLikeTechnicalId,
@@ -5056,7 +5089,10 @@ function formatPvpBattle(battle, prefix = '!pk', opts = {}) {
   const la = raw.lastAction || {};
   let acaoLinha = null;
   if (la.mensagem) acaoLinha = la.mensagem;
-  else if (la.action === 'defend' || la.action === ':defend') {
+  else if (la.action === 'switch') {
+    const nome = nomes[la.side] || 'Treinador';
+    acaoLinha = `🔄 *${nome}* colocou *${la.pokemonNome || 'outro Pokémon'}* em campo.`;
+  } else if (la.action === 'defend' || la.action === ':defend') {
     acaoLinha = la.impedido
       ? '🛡️ Tentou defender, mas ficou impedido pelo status.'
       : '🛡️ Entrou em posição defensiva (esquiva / metade do dano).';
@@ -5079,6 +5115,11 @@ function formatPvpBattle(battle, prefix = '!pk', opts = {}) {
   const golpes = menuGolpes(atacante, defensor.tipos || [], defensor.habilidade);
   const nGolpes = ((atacante.golpes) || []).length;
 
+  const troca = raw.trocas && raw.trocas[raw.vez];
+  const segundos = troca && Math.ceil((Number(troca.disponivelEm) - Date.now()) / 1000);
+  const trocaLinha = troca && troca.restantes > 0
+    ? `🔄 ${prefix} trocar <número do !pk time> · ${troca.restantes}/3 trocas · Nv. ${troca.faixa.min}–${troca.faixa.max}${segundos > 0 ? ` · aguarde ${segundos}s` : ''}`
+    : troca ? '🔄 Limite de trocas atingido.' : null;
   const lines = [
     '⚔️ *Batalha PvP*',
     nomes.x || nomes.o ? `${nomes.x || 'X'} vs ${nomes.o || 'O'}` : null,
@@ -5095,6 +5136,7 @@ function formatPvpBattle(battle, prefix = '!pk', opts = {}) {
       ? `Escolha: ${prefix} atacar <1-${nGolpes || 4}> · ${prefix} <1-${nGolpes || 4}> · ${prefix} defender · ${prefix} pocao · ${prefix} sair`
       : null,
     golpes,
+    trocaLinha,
     '',
     `📖 Ações: ${prefix} atacar ajuda · ${prefix} defender · ${prefix} pocao · ${prefix} sair`,
     mySide && !suaVez ? '' : null,

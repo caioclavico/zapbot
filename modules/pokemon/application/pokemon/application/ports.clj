@@ -231,6 +231,9 @@
   (joy-collect! [this writer-ctx request]
     "Recolhe curados com pronto-em vencido.")
 
+  (joy-return-due! [this opts]
+    "Devolve leitos prontos ao save de origem, inclusive quando está inativo.")
+
   (buy-item! [this writer-ctx request]
     "Compra 1 item do catálogo: debita moedas + credita inventário (ou expansão).")
 

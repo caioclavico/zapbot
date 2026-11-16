@@ -293,7 +293,7 @@
      raid-id (assoc :raid-id (str raid-id)))))
 
 (defn pvp-turn-payload
-  [{:keys [battle-id expected-turn-index action move-index item-id rng actor-side]}]
+  [{:keys [battle-id expected-turn-index action move-index item-id rng actor-side collection-index]}]
   (reward/canonicalize
    (cond-> {:battle-id (str battle-id)
             :expected-turn-index (long expected-turn-index)
@@ -301,6 +301,7 @@
             :actor-side (name actor-side)}
      (some? move-index) (assoc :move-index (long move-index))
      (some? item-id) (assoc :item-id (str item-id))
+     (some? collection-index) (assoc :collection-index (long collection-index))
      (map? rng) (assoc :rng (reward/canonicalize rng)))))
 
 (def payload-hash reward/payload-hash)

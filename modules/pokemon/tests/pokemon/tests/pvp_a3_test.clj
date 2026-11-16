@@ -118,7 +118,7 @@
      agora (assoc :agora agora))))
 
 (defn- turn!
-  [s chat player battle expected action op & {:keys [move-index item-id rng]}]
+  [s chat player battle expected action op & {:keys [move-index item-id rng collection-index agora]}]
   (let [side (pvp/side-of-player (ports/get-battle s battle) player)]
     (pvp-app/confirm-turn!
      s chat player
@@ -129,7 +129,9 @@
               :actor-side side}
        (some? move-index) (assoc :move-index move-index)
        item-id (assoc :item-id item-id)
-       rng (assoc :rng rng)))))
+       rng (assoc :rng rng)
+       (some? collection-index) (assoc :collection-index collection-index)
+       agora (assoc :agora agora)))))
 (defn- err-code [thunk]
   (try (thunk) :ok
        (catch Exception ex (err/error-code ex))))
@@ -223,6 +225,48 @@
     (let [bid (get-in (open! s chat "ash" "open-lvl") [:battle :battle-id])]
       (is (= :pvp_level_incompatible
              (err-code #(accept! s chat "misty" bid "acc-lvl")))))))
+
+(deftest troca-em-combate-pvp
+  (let [s (fresh-store! "a3-troca")
+        chat "chat-troca"
+        agora (System/currentTimeMillis)
+        troca! (fn [bid turno idx tempo op]
+                 (turn! s chat "ash" bid turno :switch op :collection-index idx
+                        :agora (+ agora tempo)))
+        passa! (fn [bid turno tempo]
+                 (turn! s chat "misty" bid turno :defend (str "defende-" turno)
+                        :agora (+ agora tempo)))]
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (collection/adicionar-pokemon! s chat "ash" pikachu 31 nil)
+    (collection/adicionar-pokemon! s chat "ash" (assoc squirtle :nivel 23) 26 "queimado")
+    (collection/adicionar-pokemon! s chat "ash" magikarp-nv5 20 nil)
+    (collection/adicionar-pokemon! s chat "ash" (assoc squirtle :nivel 24) 44 nil)
+    (collection/adicionar-pokemon! s chat "misty" squirtle 44 nil)
+    (let [bid (get-in (open! s chat "abre-troca" :agora agora) [:battle :battle-id])]
+      (is (= :battle_not_active (err-code #(troca! bid 0 1 0 "troca-antes"))))
+      (accept! s chat "misty" bid "aceita-troca" :agora agora)
+      (is (= :pvp_level_incompatible (err-code #(troca! bid 0 2 0 "troca-baixo"))))
+      (is (= :pvp_level_incompatible (err-code #(troca! bid 0 3 0 "troca-alto"))))
+      (is (= :pvp_switch_same_pokemon (err-code #(troca! bid 0 0 0 "troca-igual"))))
+      (let [b (:battle (troca! bid 0 1 0 "troca-1"))]
+        (is (= :o (:vez b)))
+        (is (= 1 (:turn-index b)))
+        (is (= 26 (get-in b [:hp :x])))
+        (is (= :queimado (get-in b [:status :x])))
+        (is (= 2 (:restantes (pvp/estado-troca b :x))))
+        (is (= 3 (:restantes (pvp/estado-troca b :o))))
+        (is (= 0 (:ativo-index (ports/get-save s chat "ash" "a")))))
+      (is (:duplicate (troca! bid 0 1 0 "troca-1")))
+      (is (= :receipt_payload_mismatch (err-code #(troca! bid 0 2 0 "troca-1"))))
+      (is (= :pvp_out_of_turn (err-code #(troca! bid 1 0 0 "troca-fora-da-vez"))))
+      (passa! bid 1 10)
+      (is (= :pvp_switch_cooldown (err-code #(troca! bid 2 0 59999 "troca-cedo"))))
+      (is (= 31 (get-in (troca! bid 2 0 60000 "troca-2") [:battle :hp :x])))
+      (passa! bid 3 60001)
+      (is (= 26 (get-in (troca! bid 4 1 120000 "troca-3") [:battle :hp :x])))
+      (passa! bid 5 120001)
+      (is (= :pvp_switch_limit (err-code #(troca! bid 6 0 180000 "troca-4")))))))
 
 (defn- grind-pvp-until-done!
   [s chat bid max-turns]

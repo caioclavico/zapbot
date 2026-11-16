@@ -1627,6 +1627,49 @@
                  :pronto-em (:enfermaria-bed/pronto-em e)})))
        vec))
 
+(defn- return-due-joy!
+  [conn {:keys [agora limit] :or {limit 32}}]
+  (let [agora (long (or agora (System/currentTimeMillis)))
+        due (d/q '[:find ?chat ?player ?slot (min ?pronto)
+                   :in $ ?agora
+                   :where
+                   [?bed :enfermaria-bed/pronto-em ?pronto]
+                   [(<= ?pronto ?agora)]
+                   [?bed :enfermaria-bed/save-key ?sk]
+                   [?save :save/key ?sk]
+                   [?save :save/slot-id ?slot]
+                   [?save :save/player ?p]
+                   [?p :player/chat-id ?chat]
+                   [?p :player/player-id ?player]]
+                 (d/db conn) agora)]
+    (reduce
+     (fn [returned [chat-id player-id save-id _]]
+       (let [db (d/db conn)
+             save (save-entity db chat-id player-id save-id)
+             sk (id/save-key chat-id player-id save-id)
+             beds (load-enfermaria db sk)
+             ready (filter #(<= (:pronto-em %) agora) beds)]
+         (if (and (present? save) (seq ready))
+           (let [phash (ops/payload-hash {:save-key sk :beds (sort (map :bed-id ready))})
+                 {:keys [tx result]}
+                 (adventure-store/build-joy-collect-tx
+                  {:writer-ctx {:chat-id chat-id :player-id player-id :save-id save-id}
+                   :request {:operation-id (str "joy-auto:" phash)
+                             :payload-hash phash :agora agora}
+                   :save save :colecao (query-collection db sk) :enfermaria beds
+                   :pokemon-entity-map pokemon-entity-map})]
+             (try
+               ;; O tratamento pertence ao save de origem; o CAS de revisão do
+               ;; coletor serializa com coleta manual, troca de save e outros writes.
+               (d/transact conn {:tx-data (vec tx)})
+               (+ returned (:n result))
+               (catch Exception ex
+                 (if (anomaly-conflict? ex)
+                   returned
+                   (throw ex)))))
+           returned)))
+     0 (take limit (sort-by peek due)))))
+
 (defn- clear-chat-wild-tx
   "Remove trava de caça do chat se ainda apontar para esta batalha."
   [db chat-id battle-id]
@@ -4496,6 +4539,7 @@
             (transact-with-writer!
              conn writer-ctx
              (fn [db save]
+               (assert-no-busy-battle! db (:chat-id writer-ctx) (:player-id writer-ctx))
                (let [sk (id/save-key (:chat-id writer-ctx)
                                      (:player-id writer-ctx)
                                      (:save-id writer-ctx))]
@@ -4537,6 +4581,9 @@
                 (if (present? dup)
                   (resolve-receipt dup phash operation-id)
                   (throw ex))))))))
+
+  (joy-return-due! [_ opts]
+    (return-due-joy! conn opts))
 
   (buy-item! [_ writer-ctx request]
     (let [payload (ops/shop-buy-payload request)
@@ -4893,14 +4940,32 @@
                      item-id (when (= :item action)
                                (shop/normalizar-item (str (:item-id request))))
                      sk-actor (id/save-key chat-id player-id (:save-id writer-ctx))
+                     switching? (= :switch action)
+                     collection-index (:collection-index request)
+                     col (when switching?
+                           (when-not (= (:save-id writer-ctx) (get-in state [:saves side]))
+                             (throw (err/error :battle_save_mismatch {})))
+                           (let [col (query-collection db sk-actor)]
+                             (when-not (integer? collection-index)
+                               (throw (err/error :invalid_collection_index {})))
+                             (coll/validate-index! collection-index (count col))
+                             col))
                      inv-tx (when (= :item action)
                               (inventory-adjust-tx db sk-actor item-id -1))
                      next-state (battle/apply-pvp-turn
                                  state side
-                                 {:action action
-                                  :move-index (:move-index request)
-                                  :item-id item-id}
+                                 (cond-> {:action action
+                                          :move-index (:move-index request)
+                                          :item-id item-id}
+                                   switching? (assoc :collection-index collection-index
+                                                     :pokemon (nth col collection-index)
+                                                     :agora agora))
                                  (:rng request))
+                     switch-tx (when switching?
+                                 (pvp-store/pokemon-sync-tx
+                                  (nth col (get-in state [:indices-ativos side]))
+                                  (get-in state [:hp side])
+                                  (get-in state [:status side])))
                      pk (id/player-key chat-id player-id)
                      rev (long (:save/revision save 0))
                      finished? (not (:active? next-state))
@@ -4927,7 +4992,7 @@
                      ;; XP de Pokémon nos dois lados (nocautes); bônus só no vencedor.
                      reward-parts
                      (when finished?
-                       (let [desafiante (get-in state [:pokemons :x])
+                       (let [desafiante {:nivel (- (:max (pvp/faixa-desafio state)) pvp/diferenca-maxima-niveis)}
                              xp-parts
                              (keep
                               (fn [marca]
@@ -5005,6 +5070,7 @@
                                                         [:db/add [:battle/id battle-id] k v])
                                                       idle-touch)))
                               (concat (or inv-tx [])
+                                      (or switch-tx [])
                                       (or sync-both [])
                                       reward-tx
                                       (or clear-players [])
