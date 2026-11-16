@@ -2292,6 +2292,7 @@ function formatCaptureResult(data, prefix = '!pk') {
     const moedasLinha = (rew.moedas != null && Number(rew.moedas) > 0)
       ? (textoMoedas(rew.moedas) || `💰 +${rew.moedas} moedas`)
       : '💰 Nenhuma moeda de sequência nesta faixa.';
+    const piLines = formatConfirmedPiLines(data);
     const linhas = [
       '🎉 *POKÉMON CAPTURADO!*',
       `✅ ${meta.nome} · ${chance}% · nº ${idx} · *${selvagem}*`,
@@ -2301,6 +2302,7 @@ function formatCaptureResult(data, prefix = '!pk') {
       `✨ +${rew.xp || 0} XP Pokémon`,
       `⭐ +${rew.pe != null ? rew.pe : 0} PE treinador`,
       moedasLinha,
+      ...piLines,
       data.subida
         ? (data.subida.niveisSubidos > 1 || data.subida.niveis_subidos > 1
           ? `🌟 *${data.subida.nome}* subiu ${data.subida.niveisSubidos || data.subida.niveis_subidos} níveis e chegou ao Nv. ${data.subida.nivel}!`
@@ -3391,51 +3393,35 @@ function progressBar(pct) {
 
 function formatAdventureStatus(data, prefix = '!pk') {
   const eggs = (data && data.eggs) || [];
-  const incu = (data && data.incubators) || [];
-  const inv = eggs.filter((e) => e.state !== 'hatched');
-  const pi = (data && data.piDaily) || {};
+  const available = eggs.filter((e) => e.state === 'inventory');
   const lines = [
-    '🥚 *Ovos e incubação*',
-    `Inventário: ${data.inventarioCount || inv.length}/${data.limiteInventario || 9}`,
-    `PI hoje: ${pi.points != null ? pi.points : 0}/${pi.cap != null ? pi.cap : 150}`
+    '🥚 *Ovos disponíveis*',
+    `Inventário total: ${data.inventarioCount != null ? data.inventarioCount : eggs.filter((e) => e.state !== 'hatched').length}/${data.limiteInventario || 9}`,
+    `Para incubar agora: *${available.length}*`
   ];
   if (data.pendingEggGrants > 0) {
     lines.push(`⏳ Ovos aguardando espaço: ${data.pendingEggGrants}`);
   }
-  if (!inv.length) {
-    lines.push('Nenhum ovo no inventário.');
+  if (!available.length) {
+    lines.push('Nenhum ovo disponível. Progresso fica em `' + prefix + ' incubadoras`.');
   } else {
-    inv.forEach((e, i) => {
+    available.forEach((e, i) => {
       const n = i + 1;
       const cat = e.category || '?';
-      const bar = progressBar(e.progressPct);
-      const pts = `${e.points || 0}/${e.pointsGoal || '?'}`;
-      if (e.state === 'inventory') {
-        lines.push(`${n}. *${cat}* — guardado · meta ${e.pointsGoal || '?'} PI · \`${prefix} incubar ${n}\``);
-      } else if (e.state === 'incubating') {
-        const min = Math.ceil((e.restanteMs || 0) / 60000);
-        lines.push(`${n}. *${cat}* — incubando ${bar} (${pts} PI, ~${min} min)`);
-      } else if (e.state === 'ready-to-hatch' || e.state === 'delivery-pending') {
-        lines.push(`${n}. *${cat}* — *pronto para nascer!* \`${prefix} chocar ${n}\``);
-      } else {
-        lines.push(`${n}. *${cat}* — ${e.state}`);
-      }
+      lines.push(`${n}. *${cat}* · \`${prefix} incubar ${n}\``);
     });
-  }
-  lines.push('', '*Incubadoras*');
-  for (const i of incu) {
-    const livre = i.livre ? 'livre' : 'ocupada';
-    lines.push(`• ${i.incubatorId} (${i.kind}) — ${livre}`);
   }
   lines.push(
     '',
-    `\`${prefix} incubar <n>\` · \`${prefix} chocar\` · \`${prefix} incubacao\``,
+    `\`${prefix} incubar <n>\` · \`${prefix} incubadoras\` · \`${prefix} pi\``,
     'A espécie só é revelada no nascimento.'
   );
   return lines.join('\n');
 }
 
 function formatIncubators(data, prefix = '!pk') {
+  const eggs = (data && data.eggs) || [];
+  const byId = new Map(eggs.filter((e) => e.eggId).map((e) => [String(e.eggId), e]));
   const incu = (data && data.incubators) || [];
   const lines = ['🪺 *Incubadoras*'];
   if (!incu.length) {
@@ -3443,11 +3429,20 @@ function formatIncubators(data, prefix = '!pk') {
   } else {
     for (const i of incu) {
       const uses = i.uses == null ? '∞' : String(i.uses);
-      const bonus = Number(i.bonusPoints || 0) > 0 ? ` (+${i.bonusPoints}% PI)` : '';
-      lines.push(`• *${i.incubatorId}* (${i.kind}${bonus}) — ${i.livre ? 'livre' : 'ocupada'} · usos ${uses}`);
+      const bonus = Number(i.bonusPoints || 0) > 0 ? ` · bônus +${i.bonusPoints}% PI` : '';
+      const egg = i.activeEggId ? byId.get(String(i.activeEggId)) : null;
+      if (!egg) {
+        lines.push(`• *${i.kind || i.incubatorId}* — livre · usos ${uses}${bonus}`);
+        continue;
+      }
+      const pts = `${egg.points || 0}/${egg.pointsGoal || '?'}`;
+      const bar = progressBar(egg.progressPct);
+      const ready = egg.state === 'ready-to-hatch' || egg.state === 'delivery-pending' || egg.pronto;
+      lines.push(`• *${i.kind || i.incubatorId}* — ${egg.category || 'ovo'} ${bar} (${pts} PI) · usos ${uses}${bonus}`);
+      if (ready) lines.push(`  ✅ pronto · \`${prefix} chocar\``);
     }
   }
-  lines.push('', `\`${prefix} incubar <n> [id]\` · \`${prefix} ovos\``);
+  lines.push('', `\`${prefix} incubar <n> [id]\` · \`${prefix} ovos\` · \`${prefix} chocar\``);
   return lines.join('\n');
 }
 
@@ -3499,7 +3494,8 @@ function formatEggHatch(data, prefix = '!pk') {
 }
 
 function resolveEggIndex(data, oneBased) {
-  const eggs = ((data && data.eggs) || []).filter((e) => e.state !== 'hatched');
+  // Índices de !pk incubar N acompanham só ovos em inventory (mesma ordem do card).
+  const eggs = ((data && data.eggs) || []).filter((e) => e.state === 'inventory');
   const n = Number(oneBased);
   if (!Number.isFinite(n) || n < 1 || n > eggs.length) return null;
   return eggs[n - 1];
@@ -3526,7 +3522,7 @@ function formatShop(data, prefix = '!loja') {
     `Detalhes: \`${prefix} detalhes <item>\``,
     'Inventário: `!mochila`',
     'Pokébolas e pedras *não* estão à venda aqui (missões/ginásios).',
-    'Incubadoras *não* se compram na loja.'
+    'Incubadoras extra/especial: 200/400 moedas (`incubadora-extra`, `incubadora-especial`).'
   );
   return lines.join('\n');
 }
@@ -3952,6 +3948,7 @@ function formatMissionClaim(data, kind, prefix = '!pk') {
   });
   if (result.items && result.items.length) lines.push(`🎁 ${formatMissionItems(result.items)}`);
   if (result.pending && result.pending.length) lines.push(`🎒 Sem espaço: ${formatMissionItems(result.pending)}. Use !mochila resgatar.`);
+  for (const line of formatConfirmedPiLines(data)) lines.push(line);
   if (result.duplicate || data && data.reconciled) lines.push('_Mesma operação já confirmada._');
   lines.push(`${prefix} missoes`);
   return lines.join('\n');
@@ -4421,7 +4418,7 @@ const HELP_TOPICS = {
       '*Fora da loja*',
       '• Pokébolas / Grande / Ultra — missões e recompensas',
       '• Pedras de evolução — ginásios/missões',
-      '• Incubadoras — progresso Adventure Sync (não à venda)',
+      '• Incubadoras — progresso Adventure Sync (loja: extra 200 / especial 400)',
       '',
       'Saldo insuficiente ou item inválido: a compra é rejeitada sem debitar.',
       `\`${p} mochila\` — inventário · \`${p} ajuda mt\` — MTs`
@@ -4471,7 +4468,7 @@ const HELP_TOPICS = {
       `\`${p} incubadoras\` · \`${p} incubacao\` · \`${p} incubar <n> [id]\``,
       `\`${p} ovos\` · \`${p} chocar\``,
       '',
-      'Incubadoras *não* se compram na loja.'
+      'Loja: `incubadora-extra` (200) · `incubadora-especial` (400).'
     ].join('\n')
   },
   batalha: {

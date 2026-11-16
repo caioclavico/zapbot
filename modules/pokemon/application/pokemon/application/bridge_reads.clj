@@ -1040,12 +1040,14 @@
                                          :pontos (:pontos v)}])
                             eggs/categorias))
      :atividades
-     [{:id "caca" :label "Caça concluída" :pi 5}
-      {:id "vitoria-selvagem" :label "Vitória selvagem" :pi 8}
-      {:id "ginasio-vitoria" :label "Vitória no ginásio" :pi 15}
-      {:id "pvp-vitoria" :label "Vitória PvP" :pi 12}
-      {:id "raid" :label "Raid vencida" :pi "20–45"}
-      {:id "missao" :label "Missão diária" :pi 20}]}))
+     [{:id "captura" :label "Captura selvagem" :pi 15}
+      {:id "vitoria-selvagem" :label "Vitória selvagem" :pi 15}
+      {:id "derrota-selvagem" :label "Derrota selvagem" :pi 5}
+      {:id "pvp-vitoria" :label "Vitória PvP" :pi 20}
+      {:id "pvp-derrota" :label "Derrota PvP" :pi 5}
+      {:id "ginasio-vitoria" :label "Vitória no ginásio" :pi 25}
+      {:id "raid" :label "Raid (participação + vitória)" :pi "20+10"}
+      {:id "missao" :label "Missão diária" :pi 30}]}))
 
 (defn shop-catalog
   "Catálogo à venda (preços canônicos) + saldo do save ativo."

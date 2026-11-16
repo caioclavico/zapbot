@@ -265,69 +265,86 @@ function stateLabel(egg) {
 
 function eggsSvg(data) {
   const adv = normalizeAdventure(data);
-  const list = adv.eggs.slice(0, 9);
-  const count = Math.min(adv.inventarioCount, adv.limiteInventario);
-  let body = `<text x="560" y="105" text-anchor="end" fill="#8edbff" font-family="sans-serif" font-size="22">${count}/${adv.limiteInventario}</text>`;
+  // Spec: !pk ovos mostra só inventário (incubando fica em !pk incubadoras).
+  const list = adv.eggs.filter((e) => e.state === 'inventory').slice(0, 9);
+  const invTotal = Math.min(adv.inventarioCount, adv.limiteInventario);
+  let body = `<text x="560" y="105" text-anchor="end" fill="#8edbff" font-family="sans-serif" font-size="22">${invTotal}/${adv.limiteInventario}</text>`;
+  body += `<text x="42" y="158" fill="#93a8d5" font-family="sans-serif" font-size="15">${list.length} disponível(is) para incubar</text>`;
   if (adv.pendingEggGrants > 0) {
-    body += `<text x="42" y="158" fill="#fbbf24" font-family="sans-serif" font-size="15" font-weight="700">⏳ ${adv.pendingEggGrants} ovo(s) aguardando espaço</text>`;
+    body += `<text x="320" y="158" text-anchor="middle" fill="#fbbf24" font-family="sans-serif" font-size="14" font-weight="700">⏳ ${adv.pendingEggGrants} aguardando espaço</text>`;
   }
   if (adv.inventarioCount >= adv.limiteInventario) {
-    body += `<text x="320" y="158" text-anchor="middle" fill="#f87171" font-family="sans-serif" font-size="14">Inventário cheio</text>`;
+    body += `<text x="560" y="158" text-anchor="end" fill="#f87171" font-family="sans-serif" font-size="13">cheio</text>`;
   }
   Array.from({ length: 9 }, (_, i) => list[i]).forEach((item, index) => {
     const x = 42 + (index % 3) * 188;
     const y = 175 + Math.floor(index / 3) * 175;
+    const slot = index + 1;
     body += `<rect x="${x}" y="${y}" width="164" height="154" rx="18" fill="#132653" stroke="#273d70"/>`;
+    body += `<text x="${x + 148}" y="${y + 24}" text-anchor="end" fill="#8edbff" font-family="sans-serif" font-size="18" font-weight="700">${slot}</text>`;
     if (!item) {
       body += `<text x="${x + 82}" y="${y + 88}" text-anchor="middle" fill="#52658e" font-family="sans-serif" font-size="15">vazio</text>`;
       return;
     }
     const rarity = item.category;
-    const active = item.state === 'incubating'
-      || item.state === 'ready-to-hatch'
-      || item.state === 'delivery-pending';
-    const goal = item.pointsGoal;
-    const points = item.points;
-    const ratioFromPts = goal > 0 ? points / goal : 0;
-    const ratioFromPct = (item.progressPct || 0) / 100;
-    const ratio = active ? Math.max(0, Math.min(1, Math.max(ratioFromPts, ratioFromPct))) : 0;
-    body += egg(x + 82, y + 48, 36, rarity, 0.72);
-    body += `<text x="${x + 82}" y="${y + 103}" text-anchor="middle" fill="${rarityColor(rarity)}" font-family="sans-serif" font-size="14" font-weight="700">${esc(String(rarity).toUpperCase())}</text>`;
-    body += `<text x="${x + 82}" y="${y + 122}" text-anchor="middle" fill="#d9e7ff" font-family="sans-serif" font-size="12">${esc(stateLabel(item))}</text>`;
-    body += `<rect x="${x + 18}" y="${y + 132}" width="128" height="6" rx="3" fill="#263b68"/>`;
-    body += `<rect x="${x + 18}" y="${y + 132}" width="${128 * ratio}" height="6" rx="3" fill="${rarityColor(rarity)}"/>`;
-    body += `<text x="${x + 82}" y="${y + 149}" text-anchor="middle" fill="#c6d5ef" font-family="sans-serif" font-size="10">${active ? `${points}/${goal} PI` : `meta ${goal} PI`}</text>`;
+    body += egg(x + 82, y + 58, 42, rarity, 0.85);
+    body += `<text x="${x + 82}" y="${y + 128}" text-anchor="middle" fill="${rarityColor(rarity)}" font-family="sans-serif" font-size="15" font-weight="700">${esc(String(rarity).toUpperCase())}</text>`;
+    body += `<text x="${x + 82}" y="${y + 146}" text-anchor="middle" fill="#93a8d5" font-family="sans-serif" font-size="12">!pk incubar ${slot}</text>`;
   });
-  return base('Meus Ovos', 'Inventário e progresso', body);
+  return base('Meus Ovos', 'Disponíveis para incubar', body);
 }
 
 function incubatorsSvg(data) {
   const adv = normalizeAdventure(data);
+  const eggsById = new Map();
+  for (const e of adv.eggs) {
+    if (e.eggId) eggsById.set(String(e.eggId), e);
+  }
   let items = adv.incubators.slice(0, 4);
   if (!items.length) {
     items = [{ incubatorId: 'permanente', kind: 'permanente', uses: null, bonusPoints: 0, activeEggId: null, livre: true, rarity: 'comum' }];
   }
   let body = '';
   items.forEach((item, index) => {
+    const egg = item.activeEggId ? eggsById.get(String(item.activeEggId)) : null;
     const uses = item.uses == null
       ? 'ilimitados'
       : Number(item.uses) <= 0
         ? 'bloqueada'
         : `${item.uses} usos`;
     const label = item.kind || item.incubatorId || 'permanente';
+    const x = 18 + index * 154;
+    const y = 155;
     body += incubator(
-      18 + index * 154,
-      155,
+      x,
+      y,
       130,
       290,
       Boolean(item.activeEggId),
-      item.rarity || 'comum',
+      (egg && egg.category) || item.rarity || 'comum',
       label,
       uses,
       Number(item.bonusPoints || 0) > 0
     );
+    if (egg) {
+      const goal = egg.pointsGoal || goalFor(egg.category);
+      const points = egg.points || 0;
+      const ratio = Math.max(0, Math.min(1, goal > 0 ? points / goal : (egg.progressPct || 0) / 100));
+      const ready = egg.state === 'ready-to-hatch' || egg.state === 'delivery-pending' || egg.pronto;
+      const barY = y + 330;
+      body += `<rect x="${x + 18}" y="${barY}" width="94" height="8" rx="4" fill="#263b68"/>`;
+      body += `<rect x="${x + 18}" y="${barY}" width="${94 * ratio}" height="8" rx="4" fill="${rarityColor(egg.category)}"/>`;
+      body += `<text x="${x + 65}" y="${barY + 24}" text-anchor="middle" fill="#c6d5ef" font-family="sans-serif" font-size="12">${points}/${goal} PI · ${Math.round(ratio * 100)}%</text>`;
+      if (ready) {
+        body += `<text x="${x + 65}" y="${barY + 42}" text-anchor="middle" fill="#86efac" font-family="sans-serif" font-size="13" font-weight="700">pronto!</text>`;
+      } else {
+        body += `<text x="${x + 65}" y="${barY + 42}" text-anchor="middle" fill="#93a8d5" font-family="sans-serif" font-size="12">${esc(String(egg.category || '').toUpperCase())}</text>`;
+      }
+    } else {
+      body += `<text x="${x + 65}" y="${y + 354}" text-anchor="middle" fill="#52658e" font-family="sans-serif" font-size="13">livre</text>`;
+    }
   });
-  return base('Incubadoras', 'Disponibilidade e usos restantes', body);
+  return base('Incubadoras', 'Progresso PI e usos', body);
 }
 
 async function render(kind, data) {

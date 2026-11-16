@@ -48,9 +48,9 @@ test('formatAdventureStatus e hatch', () => {
     eggs: [{ eggId: 'e1', category: 'comum', state: 'inventory', pointsGoal: 100, progressPct: 0 }],
     incubators: [{ incubatorId: 'permanente', kind: 'permanente', livre: true }]
   }, '!pk');
-  assert.match(text, /Ovos e incubação/);
-  assert.match(text, /PI hoje/);
-  assert.doesNotMatch(text, /Pichu/);
+  assert.match(text, /Ovos disponíveis/);
+  assert.match(text, /Para incubar agora/);
+  assert.doesNotMatch(text, /Pichu|PI hoje/);
   assert.match(text, /espécie só é revelada/i);
   assert.match(present.formatEggHatch({
     registro: { nome: 'Pichu', nivel: 1, shiny: true }
@@ -60,7 +60,7 @@ test('formatAdventureStatus e hatch', () => {
   }), /Coleção cheia/);
   assert.match(present.formatIncubationHelp({
     piDaily: { points: 10, cap: 150, restante: 140 },
-    atividades: [{ label: 'Caça concluída', pi: 5 }]
+    atividades: [{ label: 'Captura selvagem', pi: 15 }]
   }, '!pk'), /Pontos de Incubação/);
 });
 
@@ -69,10 +69,11 @@ test('resolveEggIndex', () => {
     eggs: [
       { eggId: 'a', state: 'inventory' },
       { eggId: 'b', state: 'hatched' },
-      { eggId: 'c', state: 'incubating' }
+      { eggId: 'c', state: 'incubating' },
+      { eggId: 'd', state: 'inventory' }
     ]
   };
   assert.equal(present.resolveEggIndex(data, 1).eggId, 'a');
-  assert.equal(present.resolveEggIndex(data, 2).eggId, 'c');
-  assert.equal(present.resolveEggIndex(data, 9), null);
+  assert.equal(present.resolveEggIndex(data, 2).eggId, 'd');
+  assert.equal(present.resolveEggIndex(data, 3), null);
 });

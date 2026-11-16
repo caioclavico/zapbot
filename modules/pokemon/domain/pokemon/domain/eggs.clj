@@ -25,6 +25,8 @@
                  :active-egg-id nil}]
    :receipts #{}
    :pending-egg-grants []
+   :pending-incubator-grants []
+   :daily-mission-claims 0
    :pi-daily nil})
 
 (defn- ovo

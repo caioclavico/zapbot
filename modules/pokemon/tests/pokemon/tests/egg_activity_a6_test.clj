@@ -59,7 +59,7 @@
     (let [st (eggs/estado-inicial)
           r1 (egg-activity/apply-activity st {:event-id "a1" :activity :gym-victory
                                               :agora 1000000})
-          ;; gym victory = 15 PI → capped to 10
+          ;; gym victory = 25 PI → capped to 10
           _ (is (= 10 (:pi-granted r1)))
           r2 (egg-activity/apply-activity (:estado r1)
                                           {:event-id "a2" :activity :gym-victory
@@ -127,3 +127,34 @@
     (with-redefs [eggs/categorias (assoc eggs/categorias :comum {:pontos 999 :tempo-ms 1})]
       (is (= 100 (:points-goal ovo'))
           "ovo já concedido mantém meta"))))
+
+(deftest pi-table-v2-valores
+  (doseq [[act expect]
+          [[:hunt-complete 15] [:wild-victory 15] [:wild-defeat 5]
+           [:pvp-victory 20] [:gym-victory 25] [:daily-mission 30]
+           [:raid-victory 30] [:raid-defeat 20]]]
+    (is (= expect (get egg-activity/pi-por-atividade act)) (str act))))
+
+(deftest primeira-vitoria-ginasio-semana-concede-extra
+  (let [t0 1700000000000
+        r (egg-activity/apply-activity
+           (eggs/estado-inicial)
+           {:event-id "gym-1" :activity :gym-victory :agora t0})
+        st (:estado r)
+        kinds (map :kind (:incubators st))]
+    (is (= 25 (:pi-granted r)))
+    (is (some #{:extra} kinds))
+    (let [r2 (egg-activity/apply-activity
+              st {:event-id "gym-2" :activity :gym-victory :agora t0})]
+      (is (= 1 (count (filter #(= :extra (:kind %)) (:incubators (:estado r2)))))
+          "só uma extra por semana"))))
+
+(deftest sete-missoes-diarias-concedem-extra
+  (let [t0 1700000000000]
+    (loop [st (eggs/estado-inicial) n 0]
+      (if (< n 7)
+        (recur (:estado (egg-activity/apply-activity
+                         st {:event-id (str "m-" n) :activity :daily-mission
+                             :agora t0}))
+               (inc n))
+        (is (some #(= :extra (:kind %)) (:incubators st)))))))

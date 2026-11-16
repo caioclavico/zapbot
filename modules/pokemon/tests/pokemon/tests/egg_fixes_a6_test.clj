@@ -176,7 +176,7 @@
               (eggs/estado-inicial)
               {:event-id "egg-act:pvp:b1:misty" :activity :pvp-defeat
                :opponent-id "ash" :agora 9000000})]
-    (is (= 12 (:pi-granted win)))
+    (is (= 20 (:pi-granted win)))
     (is (= 5 (:pi-granted lose)))
     (is (zero? (:pi-granted
                 (egg-activity/apply-activity
@@ -189,15 +189,15 @@
                  {:event-id "egg-act:pvp:b2:ash" :activity :pvp-victory
                   :opponent-id "misty" :agora 9000000}))))))
 
-(deftest pi-raid-por-categoria
-  (doseq [[cat expect]
-          [["raro" 20] ["epico" 30] ["lendario" 45] ["mitico" 45]]]
+(deftest pi-raid-participacao-e-vitoria
+  ;; Participação 20; vitória +10 → 30 flat (tier só afeta ovo/incubadora).
+  (doseq [cat ["raro" "epico" "lendario" "mitico"]]
     (let [r (egg-activity/apply-activity
              (eggs/estado-inicial)
              {:event-id (str "raid-" cat) :activity :raid-victory
               :raid-category cat :agora 8000000})]
-      (is (= expect (:pi-granted r)) cat)))
-  (is (= 10 (:pi-granted
+      (is (= 30 (:pi-granted r)) cat)))
+  (is (= 20 (:pi-granted
              (egg-activity/apply-activity
               (eggs/estado-inicial)
               {:event-id "raid-lose" :activity :raid-defeat
@@ -219,8 +219,8 @@
       (d/transact conn {:tx-data [[:db/add account :adventure-account/state-edn
                                    (pr-str legacy)]]})
       (with-redefs [egg-activity/activity-enabled? (constantly true)]
-        (doseq [[outcome activity points] [[:win "wild-victory" 8]
-                                           [:lose "wild-defeat" 3]]]
+        (doseq [[outcome activity points] [[:win "wild-victory" 15]
+                                           [:lose "wild-defeat" 5]]]
           (let [bid (str "battle-" (random-uuid))
                 battle [:battle/id bid]
                 receipt {:operation-receipt/id (str "turn-" bid)

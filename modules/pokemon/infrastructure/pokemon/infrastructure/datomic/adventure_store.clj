@@ -71,11 +71,16 @@
   (assoc (or shell (eggs/estado-inicial))
          :eggs (vec egg-maps)))
 
-(defn- shell-edn
+(defn shell-edn
+  "Serializa o shell Adventure (incubadoras/PI/pending). Sem ovos (entidades)."
   [estado]
-  (pr-str (select-keys estado [:incubators :pending-egg-grants :pi-daily])))
+  (pr-str (select-keys estado [:incubators
+                               :pending-egg-grants
+                               :pending-incubator-grants
+                               :daily-mission-claims
+                               :pi-daily])))
 
-(defn- receipt-txs
+(defn receipt-txs
   [account-ref shell estado]
   (mapv (fn [receipt]
           [:db/add account-ref :adventure-account/receipts receipt])

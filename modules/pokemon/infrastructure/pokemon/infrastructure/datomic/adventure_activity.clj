@@ -36,7 +36,7 @@
 
 (defn- first-daily-hunt?
   [shell agora]
-  (let [day (egg-activity/utc-day agora)
+  (let [day (egg-activity/game-day agora)
         marker (str "first-daily-hunt:" day)]
     (not (contains? (:receipts shell #{}) marker))))
 
@@ -80,7 +80,7 @@
         winner (:outcome next)
         chat-id (:chat-id writer)
         player-id (:player-id writer)
-        day (egg-activity/utc-day agora)]
+        day (egg-activity/game-day agora)]
     (cond
       (and (= kind "encounter-capture") (:capturou? result))
       (let [shell-eggs (account-shell+eggs db chat-id player-id)

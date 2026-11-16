@@ -5,12 +5,14 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [pokemon.domain.eggs :as eggs]
-            [pokemon.domain.errors :as err])
+            [pokemon.domain.errors :as err]
+            [pokemon.domain.mundo :as mundo])
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
-           [java.time Instant ZoneOffset]
-           [java.time.format DateTimeFormatter]))
-
+           [java.time Instant ZoneId ZoneOffset ZonedDateTime]
+           [java.time.format DateTimeFormatter]
+           [java.time.temporal WeekFields]
+           [java.util Locale]))
 (def catalog-resource "pokemon/domain/data/egg_hatch_catalog_v1.edn")
 (def catalog-version "egg-hatch-catalog-v1")
 
@@ -31,19 +33,33 @@
         (some-> (System/getenv "ADVENTURE_EGG_ACTIVITY") str/lower-case))))
 
 ;; Pontos de incubação por atividade (antes do teto diário / split).
+;; Política a6-rpg-pi-table-v2 — valores de produto; ovos já incubando
+;; mantêm metas persistidas (points-goal) independentemente desta tabela.
 (def pi-por-atividade
-  {:hunt-complete 5
-   :wild-victory 8
-   :wild-defeat 3
-   :gym-victory 15
-   :gym-defeat 6
-   :pvp-victory 12
+  {:hunt-complete 15          ; captura selvagem bem-sucedida
+   :wild-victory 15
+   :wild-defeat 5
+   :gym-victory 25
+   :gym-defeat 5
+   :pvp-victory 20
    :pvp-defeat 5
-   :raid-rare 20
-   :raid-epic 30
-   :raid-legendary 45
-   :raid-defeat 10
-   :daily-mission 20})
+   ;; Raid: participação concluída 20; vitória +10 adicionais (=30 total).
+   :raid-victory 30
+   :raid-defeat 20
+   :daily-mission 30})
+
+;; Chance % de incubadora consumível (sorteio canônico por event-id).
+(def incubator-chance
+  {:raid-epic 10
+   :raid-legendary 15
+   :raid-mythic 25})
+
+(def incubator-kind-for
+  {:raid-epic :extra
+   :raid-legendary :especial
+   :raid-mythic :especial
+   :gym-week :extra
+   :missions-7 :extra})
 
 ;; Chance % de ovo (primeiro d100 canônico).
 (def egg-chance
@@ -102,11 +118,78 @@
   [seed chance-percent]
   (< (* (canonical-roll seed) 100.0) (double chance-percent)))
 
+(defn game-timezone
+  "Timezone das recompensas diárias do jogo (missão/PI). Env opcional."
+  []
+  (let [raw (some-> (System/getenv "MISSOES_TIMEZONE") str/trim)]
+    (if (str/blank? raw) mundo/default-timezone raw)))
+
 (defn utc-day
+  "Legado: dia civil UTC. Preferir `game-day` para teto PI / anti-farm."
   [epoch-ms]
   (.format (DateTimeFormatter/ofPattern "yyyy-MM-dd")
            (.atZone (Instant/ofEpochMilli (long epoch-ms)) ZoneOffset/UTC)))
 
+(defn game-day
+  "Dia civil no fuso das recompensas diárias (default America/Sao_Paulo)."
+  ([epoch-ms] (game-day epoch-ms (game-timezone)))
+  ([epoch-ms timezone-id]
+   (mundo/dia-atual (Instant/ofEpochMilli (long epoch-ms)) timezone-id)))
+
+(defn game-week
+  "Semana ISO no fuso do jogo — chave estável para 1ª vitória de ginásio/semana."
+  ([epoch-ms] (game-week epoch-ms (game-timezone)))
+  ([epoch-ms timezone-id]
+   (let [zdt (ZonedDateTime/ofInstant (Instant/ofEpochMilli (long epoch-ms))
+                                      (ZoneId/of timezone-id))
+         wf (WeekFields/of Locale/ROOT)
+         week (.get zdt (.weekOfWeekBasedYear wf))
+         year (.get zdt (.weekBasedYear wf))]
+     (format "%d-W%02d" year week))))
+
+(defn raid-incubator-key
+  "Chave de chance de incubadora por categoria de raid (nil se sem drop)."
+  [categoria]
+  (let [c (-> (str (or categoria "")) str/lower-case)]
+    (cond
+      (re-find #"myth|mitic" c) :raid-mythic
+      (re-find #"lend|legendary" c) :raid-legendary
+      (re-find #"epic|épico|epico" c) :raid-epic
+      :else nil)))
+
+(defn enqueue-pending-incubator
+  [shell pending]
+  (let [xs (vec (:pending-incubator-grants shell []))
+        id (:event-id pending)]
+    (if (some #(= id (:event-id %)) xs)
+      shell
+      (assoc shell :pending-incubator-grants (conj xs pending)))))
+
+(defn try-grant-incubator
+  "Concede incubadora temporária ou enfileira se no limite. Idempotente por event-id."
+  [estado event-id kind]
+  (let [event-id (str event-id)
+        kind (keyword kind)
+        receipt (str "incubator-grant:" event-id)]
+    (cond
+      (contains? (:receipts estado #{}) receipt)
+      {:estado estado :incubator-grant nil :deferred-incubator nil}
+      :else
+      (try
+        (let [st (eggs/adicionar-incubadora estado event-id kind)
+              st1 (update st :receipts conj receipt)]
+          {:estado st1
+           :incubator-grant {:incubator-id event-id :kind kind}
+           :deferred-incubator nil})
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :incubator_limit (err/error-code e))
+            (let [pend {:event-id event-id :kind kind}
+                  st (enqueue-pending-incubator estado pend)
+                  st1 (update st :receipts conj receipt)]
+              {:estado st1
+               :incubator-grant nil
+               :deferred-incubator pend})
+            (throw e)))))))
 (defn sortear-especie
   "Sorteio ponderado estável. Espécie fixada na concessão."
   [categoria seed]
@@ -131,11 +214,12 @@
         (str (str/upper-case (subs s 0 1)) (subs s 1)))))
 
 (defn raid-tier-key
-  "Mapeia categoria de raid → chave de PI/ovo."
+  "Mapeia categoria de raid → chave de ovo (sorteio). PI de raid é flat."
   [categoria]
   (let [c (-> (str (or categoria "")) str/lower-case)]
     (cond
-      (re-find #"lend|myth|mitic|legendary" c) :raid-legendary
+      (re-find #"myth|mitic" c) :raid-legendary
+      (re-find #"lend|legendary" c) :raid-legendary
       (re-find #"epic|épico|epico" c) :raid-epic
       :else :raid-rare)))
 
@@ -148,20 +232,19 @@
 
 (defn remaining-daily-pi
   [shell agora]
-  (let [day (utc-day agora)
+  (let [day (game-day agora)
         used (long (:points (pi-day-state shell day) 0))]
     (max 0 (- (daily-cap) used))))
 
 (defn credit-daily-pi
-  "Atualiza contador diário; retorna [shell' pontos-efetivos]."
+  "Atualiza contador diário (fuso do jogo); retorna [shell' pontos-efetivos]."
   [shell agora pontos]
-  (let [day (utc-day agora)
+  (let [day (game-day agora)
         cur (pi-day-state shell day)
         used (long (:points cur 0))
         room (max 0 (- (daily-cap) used))
         gain (min (long pontos) room)]
     [(assoc shell :pi-daily {:day day :points (+ used gain)}) gain]))
-
 (defn pending-egg
   [event-id category species catalog-ver]
   {:event-id (str event-id)
@@ -209,9 +292,9 @@
               (recur st2 (conj delivered ovo)))))))))
 
 (defn apply-activity
-  "Aplica PI + possível ovo sobre estado mergeado (shell+eggs).
+  "Aplica PI + possível ovo/incubadora sobre estado mergeado (shell+eggs).
   Idempotente por event-id em :receipts.
-  Retorna {:estado :pi-granted :egg-grant :deferred-egg :summary}."
+  Retorna {:estado :pi-granted :egg-grant :deferred-egg :incubator-grant :summary}."
   [estado
    {:keys [event-id activity agora opponent-id first-daily-hunt? suppress-wild-victory-pi?
            raid-category mission-egg-category]
@@ -221,18 +304,18 @@
         agora (long (or agora (System/currentTimeMillis)))]
     (if (contains? (:receipts estado #{}) event-id)
       {:estado estado :pi-granted 0 :egg-grant nil :deferred-egg nil
+       :incubator-grant nil :deferred-incubator nil
        :summary {:duplicate true :event-id event-id}}
-      (let [;; Anti-farm PvP: no máximo 1 crédito PI/ovo por oponente/dia.
+      (let [;; Anti-farm PvP: no máximo 1 crédito PI/ovo por oponente/dia (fuso do jogo).
             pvp? (#{:pvp-victory :pvp-defeat} activity)
-            day (utc-day agora)
+            day (game-day agora)
+            week (game-week agora)
             farm-key (when (and pvp? opponent-id)
                        (str "pvp-farm:" day ":" opponent-id))
             farmed? (and farm-key (contains? (:receipts estado #{}) farm-key))
-            raid-key (when (= activity :raid-victory)
-                       (raid-tier-key raid-category))
-            pi-key (cond
-                     (= activity :raid-victory) raid-key
-                     :else activity)
+            raid-egg-key (when (= activity :raid-victory)
+                           (raid-tier-key raid-category))
+            pi-key activity
             pi0 (long (or (get pi-por-atividade pi-key) 0))
             pi0 (cond
                   suppress-wild-victory-pi? 0
@@ -246,7 +329,7 @@
                        (= activity :wild-victory) :wild-victory
                        (= activity :gym-victory) :gym-victory
                        (= activity :pvp-victory) :pvp-victory
-                       (= activity :raid-victory) raid-key
+                       (= activity :raid-victory) raid-egg-key
                        (= activity :daily-mission) :daily-mission
                        (= activity :welcome) :welcome
                        :else nil)
@@ -272,18 +355,56 @@
               (let [pend (pending-egg event-id force-cat species catalog-version)
                     sh (enqueue-pending-egg estado1 pend)]
                 [(merge estado1 sh) nil pend]))
-            estado3 (cond-> estado2
+            ;; Contador de missões diárias → 1 incubadora extra a cada 7.
+            mission-n (long (:daily-mission-claims estado2 0))
+            estado2m (if (= activity :daily-mission)
+                       (assoc estado2 :daily-mission-claims (inc mission-n))
+                       estado2)
+            mission-grant? (and (= activity :daily-mission)
+                                (zero? (mod (inc mission-n) 7)))
+            gym-week-key (str "incubator-gym-week:" week)
+            gym-grant? (and (= activity :gym-victory)
+                            (not (contains? (:receipts estado2m #{}) gym-week-key)))
+            raid-inc-key (when (= activity :raid-victory)
+                           (raid-incubator-key raid-category))
+            raid-grant? (and raid-inc-key
+                             (roll-percent (str event-id "|incubator")
+                                           (get incubator-chance raid-inc-key 0)))
+            inc-spec (cond
+                       gym-grant? {:id (str "gym-week:" week) :kind :extra
+                                   :receipt gym-week-key}
+                       mission-grant? {:id (str "missions-7:" (quot (inc mission-n) 7))
+                                       :kind :extra
+                                       :receipt (str "incubator-missions-7:"
+                                                     (quot (inc mission-n) 7))}
+                       raid-grant? {:id (str "raid-inc:" event-id)
+                                    :kind (get incubator-kind-for raid-inc-key)
+                                    :receipt nil}
+                       :else nil)
+            grant-out (when inc-spec
+                        (try-grant-incubator estado2m (:id inc-spec) (:kind inc-spec)))
+            estado3 (cond-> (or (:estado grant-out) estado2m)
                       farm-key (update :receipts conj farm-key)
+                      (:receipt inc-spec) (update :receipts conj (:receipt inc-spec))
                       true (update :receipts conj event-id)
                       true (assoc :pi-daily (:pi-daily shell1)))]
         {:estado estado3
          :pi-granted pi*
          :egg-grant egg-grant
          :deferred-egg deferred
+         :incubator-grant (:incubator-grant grant-out)
+         :deferred-incubator (:deferred-incubator grant-out)
          :summary {:event-id event-id
                    :activity (name activity)
                    :pi pi*
                    :egg-id (or (:egg-id egg-grant) (:event-id deferred))
                    :egg-category (when force-cat (name force-cat))
                    :deferred? (boolean deferred)
-                   :day day}}))))
+                   :incubator-id (or (get-in grant-out [:incubator-grant :incubator-id])
+                                     (get-in grant-out [:deferred-incubator :event-id]))
+                   :incubator-kind (some-> (or (get-in grant-out [:incubator-grant :kind])
+                                               (get-in grant-out [:deferred-incubator :kind]))
+                                           name)
+                   :incubator-deferred? (boolean (:deferred-incubator grant-out))
+                   :day day
+                   :week week}}))))
