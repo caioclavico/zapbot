@@ -10,6 +10,8 @@
 (def moedas-por-vitoria 10)
 (def max-trocas 3)
 (def intervalo-trocas-ms 60000)
+;; Até 3 Pokémon distintos por treinador por partida (substituição após nocaute).
+(def max-participantes 3)
 
 (defn as-side
   "Normaliza marcador de lado para :x|:o (aceita keyword, string ou nil)."
@@ -91,13 +93,68 @@
   [battle pokemon]
   (dentro-da-faixa? (faixa-desafio battle) pokemon))
 
+(defn usados
+  [battle side]
+  (set (or (get-in battle [:usados (as-side side)]) #{})))
+
+(defn eliminados
+  [battle side]
+  (set (or (get-in battle [:eliminados (as-side side)]) #{})))
+
+(defn aguardando-substituicao-de
+  "Lado que precisa trocar obrigatoriamente (:x|:o|:both|nil)."
+  [battle]
+  (let [v (:aguardando-substituicao battle)]
+    (cond
+      (#{:x :o :both} v) v
+      (= "both" (str v)) :both
+      :else (as-side v))))
+
+(defn aguardando-substituicao?
+  [battle side]
+  (let [w (aguardando-substituicao-de battle)
+        s (as-side side)]
+    (or (= w :both) (and s (= w s)))))
+
+(defn pode-adicionar-participante?
+  "Novo índice só se ainda não usou 3 distintos (reentrar usado/vivo ok)."
+  [battle side collection-index]
+  (let [idx (long collection-index)
+        u (usados battle side)]
+    (or (contains? u idx)
+        (< (count u) max-participantes))))
+
+(defn pokemon-elegivel-substituicao?
+  "HP>0, não eliminado, faixa ±3 da âncora, dentro do limite de 3."
+  [battle side pokemon collection-index]
+  (let [idx (long collection-index)
+        hp (long (or (:hp-atual pokemon) (:hp pokemon) 0))]
+    (and (some? pokemon)
+         (pos? hp)
+         (not (contains? (eliminados battle side) idx))
+         (not= idx (long (or (get-in battle [:indices-ativos (as-side side)]) -1)))
+         (dentro-da-faixa? (faixa-desafio battle) pokemon)
+         (pode-adicionar-participante? battle side idx))))
+
+(defn tem-substituicao-elegivel?
+  "Algum mon da coleção pode entrar agora no lado."
+  [battle side colecao]
+  (boolean
+   (some (fn [[idx poke]]
+           (pokemon-elegivel-substituicao? battle side poke idx))
+         (map-indexed vector (or colecao [])))))
+
 (defn estado-troca
   [battle side]
-  (let [oponente (if (= side :x) :o :x)
-        usadas (get-in battle [:trocas side :usadas] 0)]
+  (let [usadas (get-in battle [:trocas side :usadas] 0)
+        forced? (aguardando-substituicao? battle side)]
     {:restantes (- max-trocas usadas)
      :disponivel-em (get-in battle [:trocas side :disponivel-em] 0)
-     :faixa (faixa-niveis (get-in battle [:pokemons oponente]))}))
+     :faixa (faixa-desafio battle)
+     :obrigatoria? forced?
+     :participantes (count (usados battle side))
+     :max-participantes max-participantes
+     :eliminados (vec (sort (eliminados battle side)))}))
 
 (defn xp-por-nocautes
   "Espelha treinador/xp-por-nocautes."

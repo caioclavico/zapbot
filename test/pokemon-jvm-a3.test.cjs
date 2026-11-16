@@ -129,6 +129,25 @@ test('erros PvP mapeados', () => {
   assert.match(present.formatError({ code: 'PVP_CHAT_BUSY' }), /desafio|batalha|PvP/i);
   assert.match(present.formatError({ code: 'PVP_OUT_OF_TURN' }), /vez/i);
   assert.match(present.formatError({ code: 'PVP_NO_CHALLENGE' }), /desafio/i);
+  assert.match(present.formatError({ code: 'PVP_MUST_SWITCH' }), /desmaiou|trocar/i);
+  assert.match(present.formatError({ code: 'PVP_PARTICIPANT_LIMIT' }), /3/);
+});
+
+test('formatPvpBattle substituição obrigatória', () => {
+  const texto = present.formatPvpBattle({
+    kind: 'pvp', phase: 'active', vez: 'o',
+    nomes: { x: 'Ash', o: 'Misty' },
+    aguardandoSubstituicao: 'o',
+    lastFaint: { side: 'o', nome: 'Magikarp' },
+    pokemonX: { nome: 'Hitmonlee', hp: 50, hpAtual: 50 },
+    pokemonO: { nome: 'Magikarp', hp: 20, hpAtual: 0 },
+    hp: { x: 50, o: 0 },
+    faixaNiveis: { min: 17, max: 23 }
+  }, '!pk');
+  assert.match(texto, /Magikarp.*desmaiou/i);
+  assert.match(texto, /trocar/);
+  assert.match(texto, /obrigat/i);
+  assert.doesNotMatch(texto, /Vez de/);
 });
 
 test('PvP exibe a troca feita, a faixa do próximo jogador e o intervalo', () => {

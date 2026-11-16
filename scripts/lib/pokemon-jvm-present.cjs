@@ -1503,6 +1503,10 @@ function formatError(err) {
     PVP_SWITCH_LIMIT: '🔄 Você já usou as três trocas desta batalha.',
     PVP_SWITCH_SAME_POKEMON: '🔄 Esse Pokémon já está em campo. Use !pk time para ver os outros.',
     PVP_SWITCH_COOLDOWN: '⏳ Aguarde antes de fazer outra troca.',
+    PVP_MUST_SWITCH: '💀 Seu Pokémon desmaiou! Use !pk trocar <número> para continuar (obrigatório).',
+    PVP_WAITING_REPLACEMENT: '⏳ Aguarde o adversário escolher outro Pokémon.',
+    PVP_POKEMON_ELIMINATED: '🚫 Esse Pokémon já foi eliminado nesta batalha.',
+    PVP_PARTICIPANT_LIMIT: '🚫 Você já usou 3 Pokémon distintos nesta batalha.',
     BATTLE_BUSY: '🚫 Termine a batalha/caça antes de trocar o ativo, evoluir, alterar golpes ou usar o professor.',
     INVALID_COLLECTION_INDEX: '❓ Número inválido. Consulte !pk tm.',
     PROFESSOR_BUSY: '⚠️ Já existe um envio pendente. Confirme o código ou use !pk professor cancelar.',
@@ -5091,7 +5095,10 @@ function formatPvpBattle(battle, prefix = '!pk', opts = {}) {
   if (la.mensagem) acaoLinha = la.mensagem;
   else if (la.action === 'switch') {
     const nome = nomes[la.side] || 'Treinador';
-    acaoLinha = `🔄 *${nome}* colocou *${la.pokemonNome || 'outro Pokémon'}* em campo.`;
+    const forced = Boolean(la.obrigatoria || la.obrigatoriaPvp || la['obrigatoria?']);
+    acaoLinha = forced
+      ? `🔄 *${nome}* mandou *${la.pokemonNome || 'outro Pokémon'}* após o nocaute.`
+      : `🔄 *${nome}* colocou *${la.pokemonNome || 'outro Pokémon'}* em campo.`;
   } else if (la.action === 'defend' || la.action === ':defend') {
     acaoLinha = la.impedido
       ? '🛡️ Tentou defender, mas ficou impedido pelo status.'
@@ -5115,27 +5122,36 @@ function formatPvpBattle(battle, prefix = '!pk', opts = {}) {
   const golpes = menuGolpes(atacante, defensor.tipos || [], defensor.habilidade);
   const nGolpes = ((atacante.golpes) || []).length;
 
-  const troca = raw.trocas && raw.trocas[raw.vez];
+  const waiting = raw.aguardandoSubstituicao || raw.aguardando_substituicao || null;
+  const faint = raw.lastFaint || raw.last_faint || {};
+  const faintNome = faint.nome || (waiting === 'x' ? nomePokemon(px) : waiting === 'o' ? nomePokemon(po) : null);
+  const waitingLine = waiting
+    ? `💀 *${faintNome || 'Pokémon'}* desmaiou! Escolha outro com ${prefix} trocar <número> (até 3 por batalha; obrigatório, sem gastar cota).`
+    : null;
+  const troca = raw.trocas && raw.trocas[raw.vez || waiting];
   const segundos = troca && Math.ceil((Number(troca.disponivelEm) - Date.now()) / 1000);
-  const trocaLinha = troca && troca.restantes > 0
-    ? `🔄 ${prefix} trocar <número do !pk time> · ${troca.restantes}/3 trocas · Nv. ${troca.faixa.min}–${troca.faixa.max}${segundos > 0 ? ` · aguarde ${segundos}s` : ''}`
-    : troca ? '🔄 Limite de trocas atingido.' : null;
+  const trocaLinha = waiting
+    ? `🔄 ${prefix} trocar <número do !pk time> · substituição obrigatória · Nv. ${(raw.faixaNiveis && raw.faixaNiveis.min) || (troca && troca.faixa && troca.faixa.min) || '?'}–${(raw.faixaNiveis && raw.faixaNiveis.max) || (troca && troca.faixa && troca.faixa.max) || '?'}`
+    : (troca && troca.restantes > 0
+      ? `🔄 ${prefix} trocar <número do !pk time> · ${troca.restantes}/3 trocas · Nv. ${troca.faixa.min}–${troca.faixa.max}${segundos > 0 ? ` · aguarde ${segundos}s` : ''}`
+      : troca ? '🔄 Limite de trocas atingido.' : null);
   const lines = [
     '⚔️ *Batalha PvP*',
     nomes.x || nomes.o ? `${nomes.x || 'X'} vs ${nomes.o || 'O'}` : null,
     acaoLinha,
+    waitingLine,
     raw.turnIndex != null ? `⚔️ Turno ${raw.turnIndex}` : null,
-    `👉 Vez de *${vezNome}*`,
+    waiting ? null : `👉 Vez de *${vezNome}*`,
     '',
     hpX ? `🐾 *${nomes.x || 'X'}* — *${nomePokemon(px)}*${emojiStatus(status.x)}` : null,
     hpX ? barraHp(hpX.atual, hpX.max) : null,
     hpO ? `👾 *${nomes.o || 'O'}* — *${nomePokemon(po)}*${emojiStatus(status.o)}` : null,
     hpO ? barraHp(hpO.atual, hpO.max) : null,
     '',
-    golpes
+    waiting ? null : (golpes
       ? `Escolha: ${prefix} atacar <1-${nGolpes || 4}> · ${prefix} <1-${nGolpes || 4}> · ${prefix} defender · ${prefix} pocao · ${prefix} sair`
-      : null,
-    golpes,
+      : null),
+    waiting ? null : golpes,
     trocaLinha,
     '',
     `📖 Ações: ${prefix} atacar ajuda · ${prefix} defender · ${prefix} pocao · ${prefix} sair`,

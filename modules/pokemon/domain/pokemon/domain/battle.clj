@@ -406,7 +406,27 @@
   [battle outcome]
   (assoc battle :phase :finished :outcome outcome :active? false
          :aguardando-captura? false
+         :aguardando-substituicao nil
          :desafio-expira-em nil))
+
+(defn finalize-pvp-replacement-gate
+  "Se há substituição pendente e o lado não tem mon elegível, encerra o PvP.
+  Coleções são snapshots atuais (HP/status); domínio puro além disso."
+  [battle colecao-x colecao-o]
+  (let [w (pvp/aguardando-substituicao-de battle)]
+    (if-not w
+      battle
+      (let [can-x? (pvp/tem-substituicao-elegivel? battle :x colecao-x)
+            can-o? (pvp/tem-substituicao-elegivel? battle :o colecao-o)]
+        (case w
+          :both (cond
+                  (and can-x? can-o?) battle
+                  can-x? (finish-pvp battle :x)
+                  can-o? (finish-pvp battle :o)
+                  :else (finish-pvp battle :draw))
+          :x (if can-x? battle (finish-pvp battle :o))
+          :o (if can-o? battle (finish-pvp battle :x))
+          battle)))))
 
 (defn- registrar-nocaute
   "Conta KO para o Pokémon ativo do lado oposto ao caído."
@@ -449,9 +469,32 @@
     (update battle :fainted-x (fnil conj #{}) (long idx))
     battle))
 
+(defn- mark-eliminado-pvp
+  "Marca o índice ativo do lado como eliminado nesta partida."
+  [battle side]
+  (if-let [idx (get-in battle [:indices-ativos side])]
+    (update-in battle [:eliminados side] (fnil conj #{}) (long idx))
+    battle))
+
+(defn- request-pvp-replacement
+  "Após nocaute: aguarda substituição obrigatória (store valida elegíveis)."
+  [battle side]
+  (let [vez (if (= side :both) nil side)]
+    (-> battle
+        (assoc :aguardando-substituicao side
+               :vez vez
+               :active? true
+               :phase :active)
+        (assoc :last-faint {:side side
+                            :nome (when-not (= side :both)
+                                    (get-in battle [:pokemons side :nome]))
+                            :index (when-not (= side :both)
+                                     (get-in battle [:indices-ativos side]))}))))
+
 (defn- resolve-faint
   "Após HP 0: em caça encerra; em ginásio troca reserva ou encerra o match;
-   em PvP 1×1 define vencedor (:x|:o) ou empate.
+   em PvP marca eliminado e aguarda substituição (até 3 distintos); sem apto
+   o store finaliza. Caça permanece 1×1 sem troca.
 
   Ginásio + Explosion: se X e O caem no mesmo golpe, marcar o índice de X em
   `fainted-x` *antes* de `enviar-proximo` — senão o sync pós-vitória não zera
@@ -459,13 +502,18 @@
   [battle fainted-side]
   (cond
     (= :pvp (:kind battle))
-    (let [b (registrar-nocaute battle fainted-side)
+    (let [b (-> battle
+                (registrar-nocaute fainted-side)
+                (mark-eliminado-pvp fainted-side))
           hx (long (get-in b [:hp :x] 0))
           ho (long (get-in b [:hp :o] 0))]
       (cond
-        (and (zero? hx) (zero? ho)) (finish-pvp b :draw)
-        (zero? hx) (finish-pvp b :o)
-        (zero? ho) (finish-pvp b :x)
+        (and (zero? hx) (zero? ho))
+        (-> b
+            (mark-eliminado-pvp (if (= fainted-side :x) :o :x))
+            (request-pvp-replacement :both))
+        (zero? hx) (request-pvp-replacement b :x)
+        (zero? ho) (request-pvp-replacement b :o)
         :else b))
 
     (not= :gym (:kind battle))
@@ -906,6 +954,8 @@
      :itens-usados {:x {}}
      :indices-ativos {:x idx}
      :participacao {:x {idx 0}}
+     :usados {:x #{idx}}
+     :eliminados {:x #{}}
      :collection-index idx
      :faixa-niveis faixa
      :desafio-expira-em (+ agora pvp/tempo-espera-ms)
@@ -914,6 +964,7 @@
      :outcome nil
      :active? true
      :aguardando-captura? false
+     :aguardando-substituicao nil
      :vez nil}))
 
 (defn accept-pvp-challenge
@@ -945,8 +996,11 @@
               (assoc-in [:itens-usados :o] {})
               (assoc-in [:indices-ativos :o] idx)
               (assoc-in [:participacao :o] {idx 0})
+              (assoc-in [:usados :o] #{idx})
+              (assoc-in [:eliminados :o] #{})
               (dissoc :desafio-expira-em)
-              (assoc :phase :active :aguardando-captura? false))
+              (assoc :phase :active :aguardando-captura? false
+                     :aguardando-substituicao nil))
         ;; Intimidate ao iniciar (como wild/gym).
         x-int? (= "intimidate" (or (get-in b [:pokemons :x :habilidade])
                                    (get-in b [:pokemons :x "habilidade"])))
@@ -1004,43 +1058,84 @@
         (assoc-in [:status marca] nil)
         (assoc :last-item {:item-id id :status-cleared (name st)}))))
 
+(defn- clear-aguardando-substituicao
+  [battle side]
+  (let [w (pvp/aguardando-substituicao-de battle)]
+    (cond
+      (nil? w) battle
+      (= w :both) (assoc battle :aguardando-substituicao
+                         (if (= side :x) :o :x))
+      (= w side) (assoc battle :aguardando-substituicao nil)
+      :else battle)))
+
 (defn- trocar-pokemon-pvp
   [battle side foe {:keys [collection-index pokemon agora]}]
-  (let [{:keys [restantes disponivel-em faixa]} (pvp/estado-troca battle side)
+  (let [forced? (pvp/aguardando-substituicao? battle side)
+        {:keys [restantes disponivel-em]} (pvp/estado-troca battle side)
+        idx (long collection-index)
         hp (:hp-atual pokemon)]
-    (when (zero? restantes)
-      (throw (err/error :pvp_switch_limit {})))
-    (when (< agora disponivel-em)
-      (throw (err/error :pvp_switch_cooldown {:restante-ms (- disponivel-em agora)})))
-    (when (= collection-index (get-in battle [:indices-ativos side]))
+    (when-not forced?
+      (when (zero? restantes)
+        (throw (err/error :pvp_switch_limit {})))
+      (when (< agora disponivel-em)
+        (throw (err/error :pvp_switch_cooldown {:restante-ms (- disponivel-em agora)}))))
+    (when (= idx (long (or (get-in battle [:indices-ativos side]) -1)))
       (throw (err/error :pvp_switch_same_pokemon {})))
+    (when (contains? (pvp/eliminados battle side) idx)
+      (throw (err/error :pvp_pokemon_eliminated {:collection-index idx})))
+    (when-not (pvp/pode-adicionar-participante? battle side idx)
+      (throw (err/error :pvp_participant_limit
+                        {:max pvp/max-participantes
+                         :usados (vec (pvp/usados battle side))})))
     (pvp/assert-healthy-active! pokemon hp)
-    (when-not (pvp/dentro-da-faixa? faixa pokemon)
-      (throw (err/error :pvp_level_incompatible {:faixa faixa :nivel (:nivel pokemon)})))
-    (-> battle
-        (assoc-in [:pokemons side] (slim-pokemon-for-battle pokemon))
-        (assoc-in [:hp side] hp)
-        (assoc-in [:status side] (kw-status (:status pokemon)))
-        (assoc-in [:estagios side] {})
-        (assoc-in [:defendendo side] false)
-        (assoc-in [:itens-usados side] {})
-        (assoc-in [:indices-ativos side] collection-index)
-        (update-in [:participacao side collection-index] (fnil identity 0))
-        (assoc-in [:trocas side] {:usadas (inc (- pvp/max-trocas restantes))
-                                 :disponivel-em (+ agora pvp/intervalo-trocas-ms)})
-        (assoc :vez foe
-               :last-action {:action :switch :side side
-                             :pokemon-nome (:nome pokemon)})
-        (update :turn-index inc))))
+    (when-not (pvp/compativel? battle pokemon)
+      (throw (err/error :pvp_level_incompatible
+                        {:faixa (pvp/faixa-desafio battle) :nivel (:nivel pokemon)})))
+    (let [b (-> battle
+                (assoc-in [:pokemons side] (slim-pokemon-for-battle pokemon))
+                (assoc-in [:hp side] (long hp))
+                (assoc-in [:status side] (kw-status (:status pokemon)))
+                (assoc-in [:estagios side] {})
+                (assoc-in [:defendendo side] false)
+                (assoc-in [:itens-usados side] {})
+                (assoc-in [:indices-ativos side] idx)
+                (update-in [:usados side] (fnil conj #{}) idx)
+                (update-in [:participacao side idx] (fnil identity 0))
+                (clear-aguardando-substituicao side)
+                (assoc :last-action {:action :switch :side side
+                                     :pokemon-nome (:nome pokemon)
+                                     :obrigatoria? forced?})
+                (update :turn-index inc))]
+      (if forced?
+        ;; Após troca obrigatória o lado que entrou age (sem consumir cota/CD).
+        (assoc b :vez side)
+        (-> b
+            (assoc-in [:trocas side] {:usadas (inc (- pvp/max-trocas restantes))
+                                     :disponivel-em (+ agora pvp/intervalo-trocas-ms)})
+            (assoc :vez foe))))))
 
 (defn apply-pvp-turn
   "Turno humano no PvP. Sem wild-response; alterna :vez se a batalha segue."
   [battle actor-side {:keys [action move-index item-id] :as request} rng]
   (let [battle (pvp/normalize-battle-sides battle)
-        actor-side (pvp/as-side actor-side)]
+        actor-side (pvp/as-side actor-side)
+        waiting (pvp/aguardando-substituicao-de battle)]
     (when-not (and (= :pvp (:kind battle)) (= :active (:phase battle)) (:active? battle))
       (throw (err/error :battle_not_active {:phase (:phase battle) :kind (:kind battle)})))
-    (when-not (and actor-side (= actor-side (:vez battle)))
+    (when (and waiting (not= action :switch))
+      (throw (err/error :pvp_must_switch
+                        {:side waiting :actor actor-side})))
+    (when (and waiting
+               (= action :switch)
+               (not (pvp/aguardando-substituicao? battle actor-side))
+               (not= waiting :both))
+      (throw (err/error :pvp_waiting_replacement {:side waiting})))
+    (when (and waiting (= waiting :both) (= action :switch)
+               (not (#{:x :o} actor-side)))
+      (throw (err/error :pvp_waiting_replacement {:side waiting})))
+    (when-not (and actor-side
+                   (or (pvp/aguardando-substituicao? battle actor-side)
+                       (= actor-side (:vez battle))))
       (throw (err/error :pvp_out_of_turn
                         {:vez (:vez battle) :actor actor-side})))
     (let [rng (or rng {})

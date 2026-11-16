@@ -5,7 +5,8 @@
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
             [pokemon.domain.pvp :as pvp]
-            [pokemon.domain.xp :as xp]))
+            [pokemon.domain.xp :as xp]
+            [pokemon.infrastructure.datomic.economy-store :as economy-store]))
 
 (defn- present? [e] (boolean (:db/id e)))
 
@@ -76,24 +77,29 @@
                  :nivel-final (or (:nivel-final applied) (:nivel poke))}})))
 
 (defn winner-bonus-tx
-  "Moedas + bola + +1 vitória (PE de treinador). Sem XP de Pokémon.
-   CAS direto em :save/coins (sem economy-store no runtime de produção)."
+  "Moedas (ledger operacional) + bola + +1 vitória (PE de treinador).
+   Sem XP de Pokémon."
   ([db sk save desafiante-pokemon]
    (winner-bonus-tx db sk save desafiante-pokemon nil))
-  ([db sk save desafiante-pokemon _operation-id]
-   (let [coins (long (:save/coins save 0))
-         bola (pvp/bola-premio desafiante-pokemon)
-         next-coins (+ coins pvp/moedas-por-vitoria)
+  ([db sk save desafiante-pokemon operation-id]
+   (let [bola (pvp/bola-premio desafiante-pokemon)
          vitorias (inc (long (:save/vitorias-treinador save 0)))
          inv-key (id/inventory-item-key sk bola)
          cur (d/pull db '[:inventory-item/qty] [:inventory-item/key inv-key])
-         old-qty (long (:inventory-item/qty cur 0))]
-     {:tx [[:db/cas [:save/key sk] :save/coins coins next-coins]
-           [:db/add [:save/key sk] :save/vitorias-treinador vitorias]
-           {:inventory-item/key inv-key
-            :inventory-item/save [:save/key sk]
-            :inventory-item/item-id bola
-            :inventory-item/qty (inc old-qty)}]
+         old-qty (long (:inventory-item/qty cur 0))
+         coin-part (economy-store/apply-delta-tx
+                    {:sk sk
+                     :save save
+                     :delta pvp/moedas-por-vitoria
+                     :operation-id (str (or operation-id "pvp-win") ":coins")
+                     :source "pvp-victory"
+                     :role "primary"})]
+     {:tx (into (vec (:tx coin-part))
+                [[:db/add [:save/key sk] :save/vitorias-treinador vitorias]
+                 {:inventory-item/key inv-key
+                  :inventory-item/save [:save/key sk]
+                  :inventory-item/item-id bola
+                  :inventory-item/qty (inc old-qty)}])
       :summary {:moedas pvp/moedas-por-vitoria
                 :pe 1
                 :bola bola}})))

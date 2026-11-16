@@ -187,6 +187,8 @@
      :pvp_chat_busy :pvp_self_accept :pvp_not_waiting :pvp_challenge_expired
      :pvp_out_of_turn :pvp_not_participant :pvp_cancel_forbidden
      :pvp_switch_limit :pvp_switch_cooldown :pvp_switch_same_pokemon
+     :pvp_must_switch :pvp_waiting_replacement :pvp_pokemon_eliminated
+     :pvp_participant_limit
      :gym_cas_conflict :not_gym_leader :gym_defense_pending
      :cannot_challenge_own_gym :gym_locked :gym_daily_limit
      :raid_not_open :raid_already_started :already_in_raid :raid_full
