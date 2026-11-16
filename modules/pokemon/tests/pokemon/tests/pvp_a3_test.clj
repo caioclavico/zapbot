@@ -243,7 +243,7 @@
     (collection/adicionar-pokemon! s chat "ash" magikarp-nv5 20 nil)
     (collection/adicionar-pokemon! s chat "ash" (assoc squirtle :nivel 24) 44 nil)
     (collection/adicionar-pokemon! s chat "misty" squirtle 44 nil)
-    (let [bid (get-in (open! s chat "abre-troca" :agora agora) [:battle :battle-id])]
+    (let [bid (get-in (open! s chat "ash" "abre-troca" :agora agora) [:battle :battle-id])]
       (is (= :battle_not_active (err-code #(troca! bid 0 1 0 "troca-antes"))))
       (accept! s chat "misty" bid "aceita-troca" :agora agora)
       (is (= :pvp_level_incompatible (err-code #(troca! bid 0 2 0 "troca-baixo"))))
