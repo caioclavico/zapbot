@@ -3501,6 +3501,16 @@ function resolveEggIndex(data, oneBased) {
   return eggs[n - 1];
 }
 
+function resolveHatchEggIndex(data, oneBased) {
+  // !pk chocar N: só ovos prontos (não usa a lista de inventário do card).
+  const eggs = ((data && data.eggs) || []).filter((e) => (
+    e.state === 'ready-to-hatch' || e.state === 'delivery-pending'
+  ));
+  const n = Number(oneBased);
+  if (!Number.isFinite(n) || n < 1 || n > eggs.length) return null;
+  return eggs[n - 1];
+}
+
 function formatShop(data, prefix = '!loja') {
   const itens = (data && data.itens) || [];
   const lines = [
@@ -4969,6 +4979,7 @@ module.exports = {
   formatEggIncubate,
   formatEggHatch,
   resolveEggIndex,
+  resolveHatchEggIndex,
   formatShop,
   formatShopBuy,
   formatShopDetails,

@@ -291,6 +291,30 @@
                           (update :receipts conj deliver-key))]
               (recur st2 (conj delivered ovo)))))))))
 
+(defn- room-for-temp-incubator?
+  [estado]
+  (and (< (count (:incubators estado [])) eggs/max-incubadoras)
+       (< (count (filter #(#{:extra :especial} (:kind %)) (:incubators estado [])))
+          eggs/max-temporarias)))
+
+(defn materialize-pending-incubators
+  "Drena `:pending-incubator-grants` FIFO quando houver vaga de incubadora temp.
+   Idempotente via receipt `pending-incubator-deliver:`."
+  [estado]
+  (loop [st estado delivered []]
+    (let [xs (vec (:pending-incubator-grants st []))]
+      (if (or (empty? xs) (not (room-for-temp-incubator? st)))
+        {:estado st :delivered delivered}
+        (let [p (first xs)
+              eid (str (:event-id p))
+              deliver-key (str "pending-incubator-deliver:" eid)
+              st-pop (assoc st :pending-incubator-grants (vec (rest xs)))]
+          (if (contains? (:receipts st #{}) deliver-key)
+            (recur st-pop delivered)
+            (let [st2 (-> (eggs/adicionar-incubadora st-pop eid (:kind p))
+                          (update :receipts conj deliver-key))]
+              (recur st2 (conj delivered p)))))))))
+
 (defn apply-activity
   "Aplica PI + possível ovo/incubadora sobre estado mergeado (shell+eggs).
   Idempotente por event-id em :receipts.
@@ -317,8 +341,10 @@
                            (raid-tier-key raid-category))
             pi-key activity
             pi0 (long (or (get pi-por-atividade pi-key) 0))
+            ;; suppress-wild-victory-pi?: só anula vitória selvagem no mesmo
+            ;; encontro da captura — NÃO zera :hunt-complete.
             pi0 (cond
-                  suppress-wild-victory-pi? 0
+                  (and suppress-wild-victory-pi? (= activity :wild-victory)) 0
                   farmed? 0
                   :else pi0)
             [shell1 pi*] (credit-daily-pi estado agora pi0)

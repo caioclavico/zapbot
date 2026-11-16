@@ -77,3 +77,18 @@ test('resolveEggIndex', () => {
   assert.equal(present.resolveEggIndex(data, 2).eggId, 'd');
   assert.equal(present.resolveEggIndex(data, 3), null);
 });
+
+test('resolveHatchEggIndex só lista prontos', () => {
+  const data = {
+    eggs: [
+      { eggId: 'inv', state: 'inventory' },
+      { eggId: 'ready', state: 'ready-to-hatch' },
+      { eggId: 'pending', state: 'delivery-pending' },
+      { eggId: 'inc', state: 'incubating' }
+    ]
+  };
+  assert.equal(present.resolveHatchEggIndex(data, 1).eggId, 'ready');
+  assert.equal(present.resolveHatchEggIndex(data, 2).eggId, 'pending');
+  assert.equal(present.resolveHatchEggIndex(data, 3), null);
+  assert.equal(present.resolveEggIndex(data, 1).eggId, 'inv');
+});

@@ -158,3 +158,29 @@
                              :agora t0}))
                (inc n))
         (is (some #(= :extra (:kind %)) (:incubators st)))))))
+
+(deftest captura-nao-zera-pi-com-suppress-wild-victory
+  (let [r (egg-activity/apply-activity
+           (eggs/estado-inicial)
+           {:event-id "hunt-1" :activity :hunt-complete
+            :suppress-wild-victory-pi? true :agora 1700000000000})]
+    (is (= 15 (:pi-granted r))
+        "flag só suprime :wild-victory, não a captura")))
+
+(deftest pending-incubator-drena-quando-ha-vaga
+  (let [full (-> (eggs/estado-inicial)
+                 (eggs/adicionar-incubadora "e1" :extra)
+                 (eggs/adicionar-incubadora "e2" :especial))
+        deferred (egg-activity/try-grant-incubator full "pend-1" :extra)
+        _ (is (some? (:deferred-incubator deferred)))
+        _ (is (= 1 (count (:pending-incubator-grants (:estado deferred)))))
+        ;; Libera um slot removendo a especial esgotada
+        freed (update (:estado deferred) :incubators
+                      (fn [xs] (vec (remove #(= "e2" (:incubator-id %)) xs))))
+        out (egg-activity/materialize-pending-incubators freed)]
+    (is (some #(= "pend-1" (:incubator-id %)) (:incubators (:estado out))))
+    (is (empty? (:pending-incubator-grants (:estado out))))
+    (is (= 1 (count (:delivered out))))
+    ;; idempotente
+    (is (= (:estado out)
+           (:estado (egg-activity/materialize-pending-incubators (:estado out)))))))

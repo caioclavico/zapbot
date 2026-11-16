@@ -58,7 +58,8 @@
                  (eggs/estado-inicial))
         grant (when incubadora?
                 (egg-activity/try-grant-incubator shell0 incubator-id incubator-kind))
-        shell1 (when grant (:estado grant))
+        shell1 (when grant
+                 (:estado (egg-activity/materialize-pending-incubators (:estado grant))))
         incubator-tx
         (when incubadora?
           (let [account-ref (if acc-exists?
