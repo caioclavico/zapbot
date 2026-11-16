@@ -964,19 +964,17 @@
                     feridos)}))
 
 (defn- egg-dto
-  [o agora]
+  [o]
   (let [cat (name (or (:category o) :comum))
-        state (name (or (:state o) :inventory))
+        state (if (and (= :delivery-pending (:state o)) (not (eggs/pronto? o)))
+                "incubating"
+                (name (or (:state o) :inventory)))
         due (:due-at o)
-        restante (when (and due (= "incubating" state))
-                   (max 0 (- (long due) (long agora))))
         pts (long (:points o 0))
         goal (long (:points-goal o 0))
         tms (long (:time-ms o 0))
         tgoal (long (:time-goal-ms o 0))
-        pct-pts (when (pos? goal) (min 100 (long (/ (* pts 100) goal))))
-        pct-time (when (pos? tgoal) (min 100 (long (/ (* tms 100) tgoal))))
-        pct (max (or pct-pts 0) (or pct-time 0))]
+        pct (if (pos? goal) (min 100 (long (/ (* pts 100) goal))) 0)]
     {:egg-id (:egg-id o)
      :category cat
      :state state
@@ -989,7 +987,6 @@
      :time-goal-ms tgoal
      :progress-pct pct
      :due-at due
-     :restante-ms restante
      :incubator-id (:incubator-id o)
      :save-id (:save-id o)
      :fence-generation (:fence-generation o)
@@ -1024,7 +1021,7 @@
      :agora agora
      :limite-inventario eggs/limite-inventario
      :inventario-count (eggs/inventariados-count estado)
-     :eggs (mapv #(egg-dto % agora) eggs-l)
+     :eggs (mapv egg-dto eggs-l)
      :incubators (mapv incubator-dto (:incubators estado []))
      :prontos (count (filter #(contains? #{:ready-to-hatch :delivery-pending}
                                          (:state %))

@@ -726,17 +726,24 @@
                                  (let [st (str (.-state e))]
                                    (or (= st "ready-to-hatch")
                                        (= st "delivery-pending")))))
+              sem-prontos (let [incubando (.filter eggs #(= "incubating" (.-state %)))
+                                faltam (map #(str (.-category %) ": " (.-pointsRestante %) " PI")
+                                            (array-seq incubando))]
+                            (str "❓ Nenhum ovo pronto. "
+                                 (when (seq faltam) (str "Faltam " (str/join " · " faltam) ". "))
+                                 "Use " prefix " incubadoras."))
               alvos (if (str/blank? (str n-str))
                       (vec (array-seq prontos))
                       (let [egg (.resolveHatchEggIndex jvm-present adv n-str)]
                         (when-not egg
                           (throw (erro-contrato
-                                  (str "❓ Índice inválido entre ovos prontos. Use "
-                                       prefix " incubadoras."))))
+                                  (if (zero? (.-length prontos))
+                                    sem-prontos
+                                    (str "❓ Índice inválido entre ovos prontos. Use "
+                                         prefix " incubadoras.")))))
                         [egg]))
               _ (when (empty? alvos)
-                  (throw (erro-contrato
-                          (str "❓ Nenhum ovo pronto. Use " prefix " incubadoras."))))
+                  (throw (erro-contrato sem-prontos)))
               textos (atom [])]
         (-> (reduce (fn [p egg]
                       (p/then p (fn [_]

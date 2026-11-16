@@ -75,8 +75,16 @@
 
 (defn pronto?
   [ovo]
-  (or (>= (long (:points ovo 0)) (long (:points-goal ovo 0)))
-      (>= (long (:time-ms ovo 0)) (long (:time-goal-ms ovo 0)))))
+  (let [goal (long (:points-goal ovo 0))]
+    (and (pos? goal) (>= (long (:points ovo 0)) goal))))
+
+(defn- em-incubacao? [ovo]
+  (contains? #{:incubating :ready-to-hatch :delivery-pending} (:state ovo)))
+
+(defn- atualizar-prontidao [ovo]
+  (if (= :delivery-pending (:state ovo))
+    ovo
+    (assoc ovo :state (if (pronto? ovo) :ready-to-hatch :incubating))))
 
 (defn incubar
   "Inicia incubação e carimba save-id + fence (impede entrega em outro save)."
@@ -111,12 +119,10 @@
   [estado agora]
   (update estado :eggs
           #(mapv (fn [o]
-                   (if (= :incubating (:state o))
+                   (if (em-incubacao? o)
                      (let [elapsed (max 0 (- (long agora) (long (:incubated-at o 0))))
                            atual (assoc o :time-ms (max (long (:time-ms o 0)) elapsed))]
-                       (if (pronto? atual)
-                         (assoc atual :state :ready-to-hatch)
-                         atual))
+                       (atualizar-prontidao atual))
                      o))
                  %)))
 
@@ -174,11 +180,11 @@
               aplicar
               (fn [o]
                 (if-let [g (get gains (:egg-id o))]
-                  (if (= :incubating (:state o))
+                  (if (and (em-incubacao? o) (not (pronto? o)))
                     (let [atual (update o :points
                                         #(min (long (:points-goal o))
                                               (+ (long %) (long g))))]
-                      (if (pronto? atual) (assoc atual :state :ready-to-hatch) atual))
+                      (atualizar-prontidao atual))
                     o)
                   o))]
           (-> estado
@@ -196,8 +202,11 @@
   "Entrega só no save carimbado. Fence do ovo NÃO precisa bater com o writer
   atual (A→B→A sobe a geração); callback stale é bloqueado pelo fence do writer."
   [ovo writer-ctx]
-  (when-not (contains? #{:ready-to-hatch :delivery-pending} (:state ovo))
-    (throw (err/error :egg_not_ready {:state (:state ovo)})))
+  (when-not (and (contains? #{:ready-to-hatch :delivery-pending} (:state ovo))
+                 (pronto? ovo))
+    (throw (err/error :egg_not_ready
+                      {:state (:state ovo)
+                       :points-restante (max 0 (- (:points-goal ovo 0) (:points ovo 0)))})))
   (when (not= (:save-id ovo) (:save-id writer-ctx))
     (throw (err/error :egg_save_mismatch
                       {:sealed (:save-id ovo)

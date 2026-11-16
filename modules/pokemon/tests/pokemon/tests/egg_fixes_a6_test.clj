@@ -94,6 +94,7 @@
                               :adventure-account/state-edn (pr-str shell')]
                              [:db/cas [:adventure-account/key ak]
                               :adventure-account/revision rev (inc rev)]]}))
+    (d/transact conn {:tx-data [[:db/add [:egg/id "slot-0"] :egg/points 100]]})
     (let [h (adv/hatch! s chat player
                         {:operation-id "h-0" :egg-id "slot-0"
                          :hatch-id "hatch-slot-0"
