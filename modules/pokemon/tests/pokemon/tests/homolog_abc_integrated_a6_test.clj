@@ -193,8 +193,8 @@
           (is (sequential? inv2)))))))
 
 (deftest homolog-abc-taxas-captura-aprovadas
-  (is (= 78 (get capture/raridade-chance-base "comum")))
-  (is (= 58 (get capture/raridade-chance-base "incomum")))
+  (is (= 62 (get capture/raridade-chance-base "comum")))
+  (is (= 48 (get capture/raridade-chance-base "incomum")))
   (is (= 28 (get capture/raridade-chance-base "raro")))
   (is (= 14 (get capture/raridade-chance-base "epico")))
   (is (= 5 (get capture/raridade-chance-base "lendario")))

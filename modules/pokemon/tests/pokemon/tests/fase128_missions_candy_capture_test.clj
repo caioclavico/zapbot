@@ -93,7 +93,7 @@
                                       :atq-esp 50 :def-esp 50 :veloc 50})
         mit (capture/chance-captura {:raridade "mitico" :hp 50 :ataque 50 :defesa 50
                                      :atq-esp 50 :def-esp 50 :veloc 50})]
-    (is (<= 75 comum 90))
+    (is (<= 55 comum 70))
     (is (<= 5 lend 12))
     (is (<= 3 mit 8))
     (is (> comum lend))
@@ -103,11 +103,11 @@
         com (capture/chance-com-bola-frambo base "pokebola" true)]
     (is (= 40 sem))
     (is (= 60 com))
-    (is (<= com 95)))
+    (is (<= com 90)))
   (let [painel (capture/chances-painel 40 true)]
     (is (= 60 (get painel "pokebola")))
     (is (= 90 (get painel "grande-bola")))
-    (is (= 95 (get painel "ultra-bola")))))
+    (is (= 90 (get painel "ultra-bola")))))
 
 (deftest captura-comuns-mais-faceis-que-lendarios-pos-batalha
   (let [c (capture/chance-base-pos-batalha

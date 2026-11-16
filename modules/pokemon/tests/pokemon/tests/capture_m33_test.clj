@@ -354,18 +354,18 @@
     (is (= 40 (capture/chance-com-bola base "pokebola")))
     (is (= 60 (capture/chance-com-bola base "grande-bola")))
     (is (= 80 (capture/chance-com-bola base "ultra-bola"))))
-  ;; Fase 12.8: caps unificados em 95 (comuns podem exibir 75–90 com Pokébola).
-  (is (= 95 (capture/chance-com-bola 95 "pokebola")) "pokébola cap 95")
-  (is (= 95 (capture/chance-com-bola 95 "grande-bola")) "grande cap 95")
-  (is (= 95 (capture/chance-com-bola 95 "ultra-bola")) "ultra cap 95")
+  ;; wild-catch-balance-v1: caps unificados em 90.
+  (is (= 90 (capture/chance-com-bola 95 "pokebola")) "pokébola cap 90")
+  (is (= 90 (capture/chance-com-bola 95 "grande-bola")) "grande cap 90")
+  (is (= 90 (capture/chance-com-bola 95 "ultra-bola")) "ultra cap 90")
   (let [mit (capture/chance-captura
              {:raridade "mitico"
               :hp 200 :ataque 200 :defesa 200 :atq-esp 200 :def-esp 200 :veloc 200})]
     (is (<= 3 mit 8) "faixa mítico 3–8"))
   (let [c (capture/chance-captura magikarp)]
-    (is (<= 75 c 90) "faixa comum 75–90"))
-  (is (<= (capture/chance-base-pos-batalha magikarp :adormecido 10) 95)
-      "teto pós-batalha 95"))
+    (is (<= 55 c 70) "faixa comum 55–70"))
+  (is (<= (capture/chance-base-pos-batalha magikarp :adormecido 10) 90)
+      "teto pós-batalha 90"))
 
 (deftest hp-zero-nao-altera-chance-especie
   "Derrota zera HP de batalha, mas poder-total usa o atributo :hp (máx)."
