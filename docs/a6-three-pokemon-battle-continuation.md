@@ -1,32 +1,37 @@
-# Odisseu A6 — Continuidade da caçada e PvP até esgotar Pokémon aptos
+# Odisseu A6 — PvP com até 3 Pokémon e substituição após nocaute
 
-**Estado:** proposta de implementação, sem merge/deploy ou alterações em saves live.
+**Estado:** especificação de implementação. Sem merge/deploy ou alterações nos saves live.
 
-## Bug confirmado na revisão
+## Escopo explícito
 
-Na live A6, `modules/pokemon/domain/pokemon/domain/battle.clj`, `resolve-faint` chama `finish-pvp` ou `finish-lose` no primeiro nocaute do Pokémon ativo, mesmo quando existem outros Pokémon aptos. O PvP já mantém até três **trocas voluntárias** e cooldown de 60 s em `pokemon.domain.pvp`, mas isso não resolve substituição forçada.
+**Somente PvP.** Na caçada selvagem permanece a mecânica atual **1 Pokémon contra o selvagem**: se o Pokémon ativo desmaiar, ocorre derrota e a caçada termina. **Não permitir troca na caçada**, nem alterar seu fluxo de HP, captura, recompensa ou persistência.
 
-## Contrato de jogo
+## Problema confirmado
 
-- Em **caçada** e **PvP**, permitir **até três Pokémon distintos por treinador por batalha**, selecionados **durante** a batalha. Não obrigar a possuir três nem montar time antecipadamente.
-- O primeiro Pokémon é o ativo inicial; quando ele desmaia, consultar a coleção atual (mesmo save, fence válido) e os participantes/nocautes da batalha. Se existir outro Pokémon elegível, entrar em estado **aguardando substituição** e oferecer números válidos para seleção.
-- Se o jogador **não tiver outro Pokémon saudável e elegível**, mesmo que só possua um ou dois, **decretar derrota imediatamente**. Se os três participantes já foram derrotados, idem. Pokémon além dos três permitidos **não** podem ser escalados no mesmo confronto.
-- A seleção após desmaio é **obrigatória**, não consome o limite de três trocas voluntárias nem sofre cooldown de 60s. A troca voluntária continua limitada a três e sujeita ao cooldown. Distinguir `pokemon-distintos-usados`, `eliminados`, `trocas-voluntarias`.
-- Um Pokémon com HP zero ou já eliminado nesta batalha não volta, mesmo se o inventário for curado fora do combate. Pokémon retirado voluntariamente ainda apto pode voltar, mas não permite mais de três distintos no confronto.
-- Cada lado do PvP tem sua própria lista de até três e seu próprio estado de substituição; o oponente não ganha vitória quando só o Pokémon ativo cai. Vitória ocorre quando a equipe adversária ficar sem combatentes aptos. Em nocaute simultâneo (Explosion, veneno etc), processar ambos os lados antes de definir vitória/empate.
-- A faixa de compatibilidade de nível PvP (±3 do referencial estabelecido) vale ao entrar e substituir, inclusive após nocaute. Estabilizar a âncora da faixa para não variar indevidamente durante a luta.
-- Em caçada, preservar Pokémon selvagem, HP e status restantes, turnos, chance de captura e evento original. Trocar não reinicia o adversário ou a caça.
-- Não permitir que o lado aguardando substituição ataque, defenda ou use itens até escolher, nem permitir turno extra do rival nesse intervalo; definir inequivocamente quem age em seguida, com timeouts e retomada pós-restart.
-- A UI WhatsApp menciona o treinador que precisa escolher e mostra números de Pokémon realmente aptos com mensagem clara, por exemplo: `💀 Seu Pikachu desmaiou! Escolha outro Pokémon: !pk trocar 2`. Se não houver aptos: `💀 Seus Pokémon disponíveis foram derrotados. Fim da batalha!`.
+Na live A6, `modules/pokemon/domain/pokemon/domain/battle.clj`, `resolve-faint` termina o PvP imediatamente no primeiro nocaute com `finish-pvp`. O PvP já oferece até 3 trocas voluntárias e intervalo de 60 segundos, mas o nocaute não conduz a uma substituição obrigatória. Corrigir apenas o ramo `:pvp` e os fluxos relacionados, mantendo o ramo de caça `:wild` intacto.
 
-## Implementação e segurança
+## Contrato de PvP
 
-1. Inspecionar os fluxos e portas reais de batalha/coleção na JVM: `battle/resolve-faint`, `apply-player-turn`, `apply-pvp-turn`, serviço de caçada e persistência Datomic. Não inferir nomes de comandos; reutilizar aliases existentes.
-2. Quando o nocaute ocorrer, localizar candidatos elegíveis sem mutação fora da transação. Se necessário, registrar `awaiting-replacement`, `fainted-indices`, `used-indices`, `switch-count` no estado persistido da batalha com compatibilidade retroativa.
-3. O caminho de troca forçada deve validar o índice, identidade/HP/nível/save/fence e ser atômico e idempotente por recibo/event-id. Não apagar XP, níveis, itens, HP, stats ou resultados anteriores.
-4. Evitar exploração trocando de save ou mudando Pokémon no inventário durante a luta; não ressuscitar um participante eliminado por updates externos.
-5. Regras de recompensa PvP e caçada aplicadas **uma vez no desfecho definitivo**, nunca por nocaute intermediário. Compatível com PI e XP, sem concessão duplicada.
-6. Testar com 1, 2, 3 e 4+ Pokémon na coleção; elegibilidade 0/1/2/3; nocaute simples/simultâneo; troca forçada e voluntária; cooldown; níveis incompatíveis; ausência de candidato; revive externo; timeouts; retry; concorrência; crash/restart; render/marcação WhatsApp e integridade Datomic.
-7. Ensaiar em restore isolado, rodar CI e documentar `docs/a6-three-pokemon-battle-report.md` com riscos/gates.
+- **Até 3 Pokémon distintos por treinador por batalha**, escolhidos **durante** o confronto. Não é necessário possuir 3 nem montar escalação antecipadamente.
+- Início usa o Pokémon ativo. Ao desmaiar, se restar outro Pokémon apto e elegível entre até três participantes permitidos, o combate entra em estado **aguardando substituição obrigatória**. A vitória/derrota não ocorre nesse primeiro nocaute.
+- Quando não houver outro Pokémon apto dentro do limite de 3 distintos, ocorre derrota imediatamente; um jogador com apenas 1 ou 2 Pokémon aptos pode lutar normalmente com essa quantidade.
+- Substituição **obrigatória** após nocaute não consome o limite de 3 trocas **voluntárias** nem sofre o intervalo de 60 segundos. Trocas voluntárias continuam limitadas e sujeitas a cooldown.
+- Pokémon com HP 0 ou eliminado não pode voltar na mesma batalha, mesmo após cura fora do combate. Pokémon retirado voluntariamente, ainda apto, pode retornar; nunca permitir 4º Pokémon distinto por partida.
+- Cada participante PvP controla independentemente seus Pokémon usados, eliminados e sua janela de substituição. O adversário não recebe vitória por um único nocaute.
+- Nocaute simultâneo (Explosion/status) deve avaliar os dois lados e suas reservas aptas antes de vitória, derrota ou empate.
+- Compatibilidade de nível **±3** em relação à âncora do desafio original, também para substituição; não redefinir a âncora depois de trocar de Pokémon.
+- Enquanto aguarda escolha obrigatória, bloquear ataques/itens/defesa do lado desmaiado; impedir turno extra adversário. Persistir estado e reconstituí-lo após restart; cuidar dos timeouts.
+- Apresentação WhatsApp menciona o jogador e lista opções reais por número, usando comando/aliases existentes (confirmar roteador antes de escolher sintaxe). Exemplo: `💀 Seu Pikachu desmaiou! Escolha outro Pokémon para continuar.`
+- Apenas o resultado **definitivo** concede vitória, XP, PI, PE ou moedas; preservar idempotência e recibos.
 
-**Sem autorização de merge/deploy/backfill:** etapa atual é desenvolver/testar e entregar PR. Nenhum save de produção pode ser alterado.
+## Implementação
+
+1. Auditar `pokemon.domain.battle/resolve-faint`, `apply-pvp-turn`, `trocar-pokemon-pvp`, integração com coleção e persistência Datomic. Verificar como informar opções de reservas na hora do nocaute sem escolher previamente.
+2. Persistir quando necessário índices e identidades dos até 3 Pokémon distintos, eliminados e estado `awaiting-replacement`, sem sobrescrever equipe ou saves.
+3. Validar substituição sob lock/CAS com request-id idempotente, save/fence, HP, faixa de nível e limite de 3.
+4. Manter inalterados `create-wild-battle`, `apply-player-turn` e a finalização `:wild` (salvo refatoração comprovadamente neutra); sem fallback de substituição na caça.
+5. Testes: PvP com 1, 2, 3 e 4+ disponíveis, nocaute de 1º/2º/3º, ausência de aptos, voluntária vs obrigatória, cooldown, nível incompatível, mesmo Pokémon desmaiado, troca/revive externo, nocaute simultâneo, retries e restart.
+6. Testes explícitos de regressão **caçada continua 1×1 e desmaio termina a caça sem trocar**; resultados e recompensas invariantes.
+7. CI, ensaio isolado e relatório `docs/a6-three-pokemon-battle-report.md`. Sem mutação live.
+
+**Sem autorização de merge/deploy/backfill.**
