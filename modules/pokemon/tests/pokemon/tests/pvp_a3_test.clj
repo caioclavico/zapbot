@@ -407,6 +407,53 @@
         (is (= :active (get-in r [:battle :phase])))
         (is (= :x (get-in r [:battle :vez])))))))
 
+(deftest substituicao-obrigatoria-apos-nocaute
+  "PvP: com 2º mon apto, nocaute não encerra — força !pk trocar sem gastar cota."
+  (let [s (fresh-store! "a3-subst")
+        chat "chat-subst"
+        agora (System/currentTimeMillis)]
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (collection/adicionar-pokemon! s chat "ash" hitmonlee-forte 50 nil)
+    (collection/adicionar-pokemon! s chat "misty" magikarp-fraco 20 nil)
+    (collection/adicionar-pokemon! s chat "misty" (assoc squirtle :nivel 20) 44 nil)
+    (let [bid (get-in (open! s chat "ash" "open-sub" :agora agora) [:battle :battle-id])]
+      (accept! s chat "misty" bid "acc-sub" :first-turn-tie :x :agora agora)
+      (let [t1 (turn! s chat "ash" bid 0 :attack "ko-sub"
+                      :move-index 0 :rng rng-hit :agora agora)
+            b (:battle t1)]
+        (is (true? (:active? b)))
+        (is (= :o (pvp/aguardando-substituicao-de b)))
+        (is (contains? (pvp/eliminados b :o) 0))
+        (is (= :pvp_must_switch
+               (err-code #(turn! s chat "misty" bid (:turn-index b) :attack "atk-block"
+                                 :move-index 0 :rng rng-hit :agora agora))))
+        (is (= 3 (:restantes (pvp/estado-troca b :o))))
+        (let [sw (turn! s chat "misty" bid (:turn-index b) :switch "switch-forced"
+                        :collection-index 1 :agora agora)
+              b2 (:battle sw)]
+          (is (nil? (pvp/aguardando-substituicao-de b2)))
+          (is (= 1 (get-in b2 [:indices-ativos :o])))
+          (is (= #{0 1} (pvp/usados b2 :o)))
+          (is (= 3 (:restantes (pvp/estado-troca b2 :o)))
+              "troca obrigatória não consome cota voluntária")
+          (is (= :o (:vez b2)))
+          (is (true? (get-in b2 [:last-action :obrigatoria?]))))))))
+
+(deftest nocaute-sem-reserva-ainda-encerra
+  (let [s (fresh-store! "a3-1mon")
+        chat "chat-1mon"]
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (collection/adicionar-pokemon! s chat "ash" hitmonlee-forte 50 nil)
+    (collection/adicionar-pokemon! s chat "misty" magikarp-fraco 20 nil)
+    (let [bid (get-in (open! s chat "ash" "open-1m") [:battle :battle-id])]
+      (accept! s chat "misty" bid "acc-1m" :first-turn-tie :x)
+      (let [t1 (turn! s chat "ash" bid 0 :attack "ko-1m"
+                      :move-index 0 :rng rng-hit)]
+        (is (false? (get-in t1 [:battle :active?])))
+        (is (= :x (get-in t1 [:battle :outcome])))))))
+
 (deftest recompensa-uma-vez-no-nocaute
   (let [s (fresh-store! "a3-rew")
         chat "chat-rew"]

@@ -4961,6 +4961,18 @@
                                                      :pokemon (nth col collection-index)
                                                      :agora agora))
                                  (:rng request))
+                     ;; Sem apto após nocaute → derrota imediata (1 mon ou 3 esgotados).
+                     next-state
+                     (let [col-x (query-collection
+                                  db (id/save-key chat-id
+                                                  (get-in next-state [:jogadores :x])
+                                                  (get-in next-state [:saves :x])))
+                           col-o (when (get-in next-state [:jogadores :o])
+                                   (query-collection
+                                    db (id/save-key chat-id
+                                                    (get-in next-state [:jogadores :o])
+                                                    (get-in next-state [:saves :o]))))]
+                       (battle/finalize-pvp-replacement-gate next-state col-x (or col-o [])))
                      switch-tx (when switching?
                                  (pvp-store/pokemon-sync-tx
                                   (nth col (get-in state [:indices-ativos side]))
