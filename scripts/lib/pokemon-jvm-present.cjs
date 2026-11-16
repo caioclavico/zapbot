@@ -1879,11 +1879,12 @@ function formatGymPokemonRewards(gymResolve) {
   return lines;
 }
 
-function formatGymResolve(gymResolve, battle) {
+function formatGymResolve(gymResolve, battle, data) {
   if (!gymResolve) return null;
   const nome = (battle && battle.gymNome) || 'ginásio';
   const peLines = formatGymPeBreakdown(gymResolve);
   const pokeLines = formatGymPokemonRewards(gymResolve);
+  const piLines = formatConfirmedPiLines(data || gymResolve || {});
   if (gymResolve.venceu) {
     const rew = gymResolve.reward || {};
     return [
@@ -1901,8 +1902,9 @@ function formatGymResolve(gymResolve, battle) {
       (rew.moedas != null && Number(rew.moedas) > 0)
         ? (textoMoedas(rew.moedas) || `💰 +${rew.moedas} moedas.`)
         : null,
+      ...piLines,
       gymResolve.occupied ? '🏛️ Você é o novo líder — time reservado no ginásio.' : null,
-      pokeLines.length || peLines.length ? '📈 *Recompensas recebidas!*' : null
+      pokeLines.length || peLines.length || piLines.length ? '📈 *Recompensas recebidas!*' : null
     ].filter(Boolean).join('\n');
   }
   if ((battle && battle.outcome) === 'draw') {
@@ -2004,7 +2006,7 @@ function formatBattleTurn(data, prefix = '!pk') {
   const area = b.area || {};
   const gym = b.kind === 'gym' || Boolean(b.gymId);
   if (data.gymResolve || (!b.active && gym && b.outcome)) {
-    return formatGymResolve(data.gymResolve || { venceu: b.outcome === 'win' }, b);
+    return formatGymResolve(data.gymResolve || { venceu: b.outcome === 'win' }, b, data);
   }
   const bolsaCheiaLiberou = Boolean(
     data.selvagemLiberadoBolsaCheia || b.selvagemLiberadoBolsaCheia
@@ -2045,6 +2047,7 @@ function formatBattleTurn(data, prefix = '!pk') {
     const hpX = hpPair(x, (b.hp || {}).x);
     const rew = reward;
     const golpeFinal = lastActionNarrative(b.lastAction || data.lastAction);
+    const piLines = formatConfirmedPiLines(data);
     const header = [
       golpeFinal,
       '🏆 *VITÓRIA NA CAÇADA!*',
@@ -2057,6 +2060,7 @@ function formatBattleTurn(data, prefix = '!pk') {
       rew.pe != null
         ? `⭐ +${rew.pe} PE treinador de batalha`
         : '⭐ PE de batalha recebido',
+      ...piLines,
       expShare,
       '',
       'Deseja capturar o Pokémon ou deixá-lo ir?'
@@ -2962,6 +2966,9 @@ function formatRaidVictory(data, prefix = '!pk') {
     partLines.push('_Sem participantes listados._');
   }
   const rewards = formatRaidRewardLines(data.rewards, data.playerId || data['player-id'], roster);
+  const piLines = formatConfirmedPiLines(data, {
+    playerId: data.playerId || data['player-id']
+  });
   const mentionSet = [];
   for (const m of [...roster.mentions, ...rewards.mentions]) {
     if (m && !mentionSet.includes(m)) mentionSet.push(m);
@@ -2974,6 +2981,7 @@ function formatRaidVictory(data, prefix = '!pk') {
     ...partLines,
     '',
     ...rewards.lines,
+    ...(piLines.length ? ['', ...piLines] : []),
     ...nextCmds
   ].join('\n');
   return { text, mentions: mentionSet };
@@ -3652,6 +3660,43 @@ function textoMoedas(n, { prefixo = '+' } = {}) {
   if (!Number.isFinite(v) || v === 0) return null;
   const sinal = prefixo == null ? '' : String(prefixo);
   return `${COIN_EMOJI} ${sinal}${v} moedas`;
+}
+
+/**
+ * PI confirmado pela liquidação Adventure (adventure-activity no recibo).
+ * Nunca infere tabela local — só anuncia o que veio persistido/confirmado.
+ */
+function pickAdventureActivities(data) {
+  if (!data || typeof data !== 'object') return [];
+  const raw = data.adventureActivity || data.adventure_activity
+    || data['adventure-activity'] || data.adventure;
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (raw && typeof raw === 'object') return [raw];
+  return [];
+}
+
+function formatConfirmedPiLines(data, opts = {}) {
+  const playerId = opts.playerId || opts['player-id'] || null;
+  const lines = [];
+  for (const a of pickAdventureActivities(data)) {
+    if (!a || a.duplicate === true) continue;
+    const owner = a.playerId || a.player_id || a['player-id'];
+    if (playerId && owner && String(owner) !== String(playerId)) continue;
+    const pi = Number(a.pi != null ? a.pi : (a.piGranted != null ? a.piGranted : a['pi-granted']));
+    if (Number.isFinite(pi) && pi > 0) {
+      lines.push(`🥚 +${pi} PI de incubação`);
+    }
+    const ep = a.eggProgress || a.egg_progress || a['egg-progress'];
+    if (ep && typeof ep === 'object') {
+      const cat = ep.category || ep.categoria || a.eggCategory || a['egg-category'] || 'ovo';
+      const cur = ep.points != null ? ep.points : ep.pontos;
+      const goal = ep.goal != null ? ep.goal : ep.meta;
+      if (cur != null && goal != null) {
+        lines.push(`🧪 Ovo ${cat}: ${cur}/${goal} PI`);
+      }
+    }
+  }
+  return lines;
 }
 
 function candyLabel(family, qty) {
@@ -4844,6 +4889,7 @@ module.exports = {
   formatBattleTurn,
   formatWorldInfo,
   formatEventInfo,
+  formatConfirmedPiLines,
   barraHp,
   menuGolpes,
   textoRaridade,
@@ -5021,15 +5067,17 @@ function pvpViewForSide(battle, mySide) {
   };
 }
 
-function formatPvpRewards(rewards, prefix = '!pk') {
+function formatPvpRewards(rewards, prefix = '!pk', data) {
   const r = rewards || {};
-  if (!r || (!r.moedas && !r.pe && !(r.pokemon && r.pokemon.length) && !r.bola)) {
+  const piLines = formatConfirmedPiLines(data || {});
+  if (!r || (!r.moedas && !r.pe && !(r.pokemon && r.pokemon.length) && !r.bola && !piLines.length)) {
     return null;
   }
   const lines = [];
   if (r.moedas) lines.push(`${textoMoedas(r.moedas) || `💰 +${r.moedas} moedas`} (confira com ${prefix} loja)`);
   if (r.pe) lines.push(`⭐ +${r.pe} PE de treinador (vitória)`);
   if (r.bola) lines.push(`🎒 +1 ${r.bola}`);
+  lines.push(...piLines);
   const pokes = Array.isArray(r.pokemon) ? r.pokemon : [];
   if (pokes.length) {
     lines.push('✨ *XP por Pokémon:*');
@@ -5079,7 +5127,7 @@ function formatPvpBattle(battle, prefix = '!pk', opts = {}) {
     } else {
       const winName = raw.outcome === 'x' ? (nomes.x || 'X') : (nomes.o || 'O');
       lines.push(`🏆 *${winName}* venceu!`);
-      const rewTxt = formatPvpRewards(rewards, prefix);
+      const rewTxt = formatPvpRewards(rewards, prefix, opts.data || raw);
       if (rewTxt) lines.push(rewTxt);
       else lines.push('💰 +10 moedas');
     }
@@ -5150,5 +5198,5 @@ function formatPvpBattle(battle, prefix = '!pk', opts = {}) {
 function formatPvpTurn(data, prefix = '!pk', opts = {}) {
   const b = (data && data.battle) || data || {};
   const rewards = (data && data.rewards) || b.rewards || opts.rewards;
-  return formatPvpBattle(b, prefix, Object.assign({}, opts, { rewards }));
+  return formatPvpBattle(b, prefix, Object.assign({}, opts, { rewards, data }));
 }
