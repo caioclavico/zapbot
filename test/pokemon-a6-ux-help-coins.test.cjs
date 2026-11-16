@@ -124,10 +124,33 @@ const shop = present.formatShop({
     preco: 200,
     itemId: 'mt',
     descricao: 'Sorteia um ataque compatível.'
+  }, {
+    emoji: '🪺',
+    nome: 'Incubadora Extra',
+    preco: 200,
+    itemId: 'incubadora-extra',
+    descricao: 'Incubadora temporária (3 usos).'
+  }, {
+    emoji: '✨',
+    nome: 'Incubadora Especial',
+    preco: 400,
+    itemId: 'incubadora-especial',
+    descricao: 'Incubadora temporária (3 usos, +25% PI).'
   }]
 });
 assert.match(shop, /!loja comprar mt/);
-assert.match(shop, /Incubadoras \*não\* se compram/);
+assert.match(shop, /incubadora-extra/);
+assert.match(shop, /incubadora-especial/);
+assert.match(shop, /200\/400 moedas/);
+assert.match(shop, /!loja comprar incubadora-extra/);
+assert.match(shop, /!loja comprar incubadora-especial/);
+assert.doesNotMatch(shop, /Incubadoras \*não\* se compram/);
+
+const incubadorasHelp = present.formatHelp('incubadoras', '!pk');
+assert.match(incubadorasHelp, /incubadora-extra/);
+assert.match(incubadorasHelp, /incubadora-especial/);
+assert.match(incubadorasHelp, /\(200\).*\(400\)|\(200\).*·.*\(400\)/);
+assert.doesNotMatch(incubadorasHelp, /não se compram/i);
 
 assert.deepStrictEqual(present.resolveHelpRequest(['ajuda']), { topic: null });
 assert.deepStrictEqual(present.resolveHelpRequest(['ajuda', 'raid']), { topic: 'raid' });
