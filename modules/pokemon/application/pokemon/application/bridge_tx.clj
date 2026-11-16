@@ -1581,6 +1581,9 @@
                :faixa-niveis (:faixa-niveis battle)
                :desafio-expira-em (:desafio-expira-em battle)
                :vez (when vez (name vez))
+               :trocas (when (= :active (:phase battle))
+                         {:x (pvp-domain/estado-troca battle :x)
+                          :o (pvp-domain/estado-troca battle :o)})
                :jogadores {:x (pvp-domain/jogador battle :x)
                            :o (pvp-domain/jogador battle :o)}
                :nomes (let [n (or (:nomes battle) {})]
@@ -1655,7 +1658,7 @@
 
 (defn confirm-pvp-turn!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
-                 battle-id expected-turn-index action move-index item-id rng]
+                 battle-id expected-turn-index action move-index item-id collection-index rng]
           :as req}]
   (let [writer-ctx (require-writer! req)
         battle (or (ports/get-battle store battle-id)
@@ -1673,6 +1676,7 @@
                          :actor-side side}
                   (some? move-index) (assoc :move-index (long move-index))
                   item-id (assoc :item-id item-id)
+                  (some? collection-index) (assoc :collection-index (long collection-index))
                   (map? rng) (assoc :rng (keywordize-keys rng))))
         level-ups (public-trainer-level-ups result)]
     (cond-> {:operation-id (:operation-id result)

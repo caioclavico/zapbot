@@ -51,7 +51,9 @@
         ofertas (or (:golpes-oferecidos poke) (:ofertas-golpes poke))
         ofertas' (when (seq ofertas)
                    (mapv #(if (map? %) (battle/slim-golpe-for-battle %) %) ofertas))]
-    (cond-> {:id-pokemon (:id-pokemon poke)
+    (cond-> (merge (select-keys poke [:xp-total :xp-progress-version :xp-legacy-residual
+                                     :xp-legacy-nivel :growth-rate :hp-base :hp-formula-version])
+                   {:id-pokemon (:id-pokemon poke)
              :species (or (:species poke) (:nome poke))
              :nome (or (:nome poke) (:nickname poke) (:species poke))
              :shiny (boolean (:shiny poke))
@@ -67,7 +69,7 @@
              :veloc (long (:veloc poke 0))
              :raridade (or (:raridade poke) "comum")
              :golpes golpes
-             :tipos (vec (or (:tipos poke) []))}
+             :tipos (vec (or (:tipos poke) []))})
       (:status poke) (assoc :status (:status poke))
       (:habilidade poke) (assoc :habilidade (:habilidade poke))
       (:imagem poke) (assoc :imagem (:imagem poke))

@@ -186,6 +186,7 @@
      :battle_idle_expired
      :pvp_chat_busy :pvp_self_accept :pvp_not_waiting :pvp_challenge_expired
      :pvp_out_of_turn :pvp_not_participant :pvp_cancel_forbidden
+     :pvp_switch_limit :pvp_switch_cooldown :pvp_switch_same_pokemon
      :gym_cas_conflict :not_gym_leader :gym_defense_pending
      :cannot_challenge_own_gym :gym_locked :gym_daily_limit
      :raid_not_open :raid_already_started :already_in_raid :raid_full
@@ -2411,6 +2412,7 @@
                           action (g body "action")
                           move-index (long-or-nil (g body "moveIndex" "move-index"))
                           item-id (g body "itemId" "item-id")
+                          collection-index (long-or-nil (g body "collectionIndex" "collection-index"))
                           rng (g body "rng")]
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? save-id) (nil? fence)
@@ -2433,6 +2435,8 @@
                                           (some? move-index)
                                           (assoc :move-index move-index)
                                           item-id (assoc :item-id item-id)
+                                          (some? collection-index)
+                                          (assoc :collection-index collection-index)
                                           (map? rng) (assoc :rng rng)))))))
 
                 (= path "/v1/events/pending")
@@ -2510,12 +2514,12 @@
         (catch Throwable t
           (handle-error! ex t))))))
 
-(defn- start-idle-sweeper!
+(defn- start-gameplay-sweeper!
   [store maintenance-gate]
   (let [sched (Executors/newSingleThreadScheduledExecutor
                (reify java.util.concurrent.ThreadFactory
                  (newThread [_ r]
-                   (doto (Thread. r "battle-idle-sweeper")
+                   (doto (Thread. r "gameplay-sweeper")
                      (.setDaemon true)))))
         interval (max 5000 (long idle-sweep-interval-ms))]
     (.scheduleWithFixedDelay
@@ -2524,10 +2528,13 @@
      (fn []
        (when (or (nil? maintenance-gate) (maintenance-gate/acquire! maintenance-gate))
          (try
-           (ports/expire-idle-battles! store {:limit 32})
-           (catch Throwable t
-             (binding [*out* *err*]
-               (println "[bridge] idle-sweeper:" (ex-message t))))
+           (doseq [[label sweep!] [["idle" ports/expire-idle-battles!]
+                                   ["joy" ports/joy-return-due!]]]
+             (try
+               (sweep! store {:limit 32})
+               (catch Exception t
+                 (binding [*out* *err*]
+                   (println "[bridge] gameplay-sweeper" label ":" (ex-message t))))))
            (finally
              (when maintenance-gate
                (maintenance-gate/release! maintenance-gate))))))
@@ -2583,7 +2590,7 @@
                                   score-point! (assoc :score-point! score-point!)
                                   (seq platform-hooks) (assoc :platform-hooks platform-hooks)
                                   recovery-catalog (assoc :recovery-catalog recovery-catalog)))
-          sweeper (start-idle-sweeper! store maintenance-gate)]
+          sweeper (start-gameplay-sweeper! store maintenance-gate)]
       (.createContext server "/" handler)
       (.setExecutor server executor)
       (.start server)

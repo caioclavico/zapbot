@@ -1004,9 +1004,38 @@
         (assoc-in [:status marca] nil)
         (assoc :last-item {:item-id id :status-cleared (name st)}))))
 
+(defn- trocar-pokemon-pvp
+  [battle side foe {:keys [collection-index pokemon agora]}]
+  (let [{:keys [restantes disponivel-em faixa]} (pvp/estado-troca battle side)
+        hp (:hp-atual pokemon)]
+    (when (zero? restantes)
+      (throw (err/error :pvp_switch_limit {})))
+    (when (< agora disponivel-em)
+      (throw (err/error :pvp_switch_cooldown {:restante-ms (- disponivel-em agora)})))
+    (when (= collection-index (get-in battle [:indices-ativos side]))
+      (throw (err/error :pvp_switch_same_pokemon {})))
+    (pvp/assert-healthy-active! pokemon hp)
+    (when-not (pvp/dentro-da-faixa? faixa pokemon)
+      (throw (err/error :pvp_level_incompatible {:faixa faixa :nivel (:nivel pokemon)})))
+    (-> battle
+        (assoc-in [:pokemons side] (slim-pokemon-for-battle pokemon))
+        (assoc-in [:hp side] hp)
+        (assoc-in [:status side] (kw-status (:status pokemon)))
+        (assoc-in [:estagios side] {})
+        (assoc-in [:defendendo side] false)
+        (assoc-in [:itens-usados side] {})
+        (assoc-in [:indices-ativos side] collection-index)
+        (update-in [:participacao side collection-index] (fnil identity 0))
+        (assoc-in [:trocas side] {:usadas (inc (- pvp/max-trocas restantes))
+                                 :disponivel-em (+ agora pvp/intervalo-trocas-ms)})
+        (assoc :vez foe
+               :last-action {:action :switch :side side
+                             :pokemon-nome (:nome pokemon)})
+        (update :turn-index inc))))
+
 (defn apply-pvp-turn
   "Turno humano no PvP. Sem wild-response; alterna :vez se a batalha segue."
-  [battle actor-side {:keys [action move-index item-id]} rng]
+  [battle actor-side {:keys [action move-index item-id] :as request} rng]
   (let [battle (pvp/normalize-battle-sides battle)
         actor-side (pvp/as-side actor-side)]
     (when-not (and (= :pvp (:kind battle)) (= :active (:phase battle)) (:active? battle))
@@ -1018,6 +1047,8 @@
           foe (if (= actor-side :x) :o :x)
           defending-before? (boolean (get-in battle [:defendendo actor-side]))]
       (case action
+        :switch (trocar-pokemon-pvp battle actor-side foe request)
+
         :defend
         (let [gate (resolve-status-gate battle actor-side rng)]
           (if (:impedido? gate)

@@ -325,7 +325,8 @@ async function fetchPokemonByName(name) {
 
 /**
  * Monta candidatos para o plano JVM.
- * Surto: uma espécie do evento. Senão: até `tentativasMax` ids aleatórios.
+ * Surto: uma espécie do evento. No sorteio por bioma, às vezes tenta
+ * primeiro uma espécie em destaque, sujeita ao limite de poder no JVM.
  */
 async function buildHuntCandidates(plan, { random = Math.random } = {}) {
   if (plan.surto && plan.evento && Array.isArray(plan.evento.especies)) {
@@ -335,8 +336,17 @@ async function buildHuntCandidates(plan, { random = Math.random } = {}) {
   }
   const max = Math.min(Number(plan.tentativasMax) || 25, 25);
   const out = [];
+  const destaques = plan.especiesDestaque;
+  if (Array.isArray(destaques) && destaques.length && random() < 0.5) {
+    const nome = destaques[Math.floor(random() * destaques.length)];
+    try {
+      out.push(await fetchPokemonByName(nome));
+    } catch (err) {
+      if (err.code !== 'POKEAPI_HTTP' || err.status !== 404) throw err;
+    }
+  }
   const seen = new Set();
-  for (let i = 0; i < max; i++) {
+  for (let i = out.length; i < max; i++) {
     let id;
     do {
       id = 1 + Math.floor(random() * TOTAL);

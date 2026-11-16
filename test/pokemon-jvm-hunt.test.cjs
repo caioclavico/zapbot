@@ -200,3 +200,26 @@ test('finalizeWild omite taxa-captura quando species falha', async () => {
   assert.ok(Array.isArray(poke.golpes));
   assert.equal(poke.taxaCaptura, undefined);
 });
+
+test('menções de turno seguem o jogador da caça, do ginásio e do PvP', () => {
+  const treinador = '1234@lid';
+  const proximo = '9876@c.us';
+  const texto = '🐾 Abra\nEscolha: !pk atacar 1';
+  for (const kind of ['wild', 'gym']) {
+    const battle = { kind, active: true, phase: 'active' };
+    assert.deepEqual(present.withBattleTurnMention(texto, battle, treinador), {
+      text: '🐾 Abra\n👉 Vez de @1234\nEscolha: !pk atacar 1',
+      mentions: [treinador]
+    });
+    assert.deepEqual(present.withBattleTurnMention(texto, {
+      ...battle, aguardandoCaptura: true
+    }, treinador), { text: texto, mentions: [] });
+  }
+  const pvp = { kind: 'pvp', phase: 'active', vez: 'o', jogadores: { x: treinador, o: proximo } };
+  assert.deepEqual(present.withBattleTurnMention('👉 Vez de *Ana*', pvp, treinador), {
+    text: '👉 Vez de @9876', mentions: [proximo]
+  });
+  assert.deepEqual(present.withBattleTurnMention('🏆 Ana venceu!', { ...pvp, outcome: 'o' }), {
+    text: '🏆 Ana venceu!', mentions: []
+  });
+});

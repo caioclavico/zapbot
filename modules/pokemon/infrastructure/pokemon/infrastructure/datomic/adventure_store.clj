@@ -307,10 +307,13 @@
         save-id (:save-id writer-ctx)
         sk (id/save-key chat-id player-id save-id)
         agora (long (or (:agora request) (System/currentTimeMillis)))
-        out (joy/enviar colecao enfermaria (long (:idx request)) agora)
-        removed (nth colecao (long (:idx request)))
+        idx (long (:idx request))
+        out (joy/enviar colecao enfermaria idx agora)
+        removed (:registro out)
         rem-id (:id-pokemon removed)
         remaining (:colecao out)
+        ativo (:save/ativo-index save 0)
+        novo-ativo (if (= idx ativo) 0 (if (< idx ativo) (dec ativo) ativo))
         reindex (map-indexed
                  (fn [i poke]
                    [:db/add [:pokemon/id-pokemon (:id-pokemon poke)]
@@ -326,6 +329,7 @@
           [[:db/retractEntity [:pokemon/id-pokemon rem-id]]]
           reindex
           [bed-entity
+           [:db/add [:save/key sk] :save/ativo-index novo-ativo]
            [:db/cas [:save/key sk] :save/revision rev (inc rev)]
            {:operation-receipt/id operation-id
             :operation-receipt/kind "joy-send"

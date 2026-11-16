@@ -247,15 +247,16 @@
            roll-tipos roll-surto agora-ms active-events]}]
   (let [instant (or instant (Instant/ofEpochMilli (long (or agora-ms (System/currentTimeMillis)))))
         tz (or timezone-id mundo/default-timezone)
-        dia (mundo/dia-atual instant tz)
-        clima (mundo/clima-do-dia dia)
+        {:keys [dia clima periodo area-padrao areas-disponiveis especies-por-bioma]}
+        (mundo/rotacao instant tz)
         area (if (and area-pedida (not (str/blank? (str area-pedida))))
-               (or (mundo/area-disponivel area-pedida dia)
+               (or (let [id (:id (mundo/obter-area area-pedida))]
+                     (some #(when (= id (:id %)) %) areas-disponiveis))
                    (throw (err/error :area_unavailable
                                      {:pedido area-pedida
                                       :dia dia
                                       :resumo-texto (mundo/texto-resumo instant tz)})))
-               (mundo/area-padrao instant tz))
+               area-padrao)
         roll-t (long (or roll-tipos (rand-int 100)))
         roll-s (long (or roll-surto (rand-int 100)))
         thematic (when (events/thematic-events-enabled?) active-events)
@@ -268,6 +269,9 @@
         bands (events/combined-type-roll-bands thematic)]
     {:dia dia
      :timezone tz
+     :periodo periodo
+     :especies-destaque (when (and (not surto) (>= roll-t (+ (:evento bands) (:clima bands))))
+                          (get especies-por-bioma (:id area)))
      :area (area-dto area)
      :clima (clima-dto clima)
      :tipos-encontro (vec (sort tipos))

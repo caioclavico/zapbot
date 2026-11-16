@@ -1,5 +1,5 @@
 (ns pokemon.domain.mundo
-  "Rotação diária de clima e biomas — espelho de zapbot.pokemon.mundo.
+  "Rotação de clima e biomas por horário.
   Puro: timezone e instante injetáveis."
   (:require [clojure.string :as str]
             [pokemon.domain.raid-gym-theme :as gym-theme])
@@ -40,6 +40,31 @@
    {:id "neve" :nome "Neve" :emoji "❄️" :tipos #{"ice" "steel"}}
    {:id "nevoeiro" :nome "Nevoeiro" :emoji "🌫️" :tipos #{"ghost" "dark"}}])
 
+(def ^:private ceu-limpo
+  (assoc (first climas) :id "ceu-limpo" :nome "Céu limpo" :emoji "🌙"))
+
+(def ^:private periodos
+  [{:nome "Madrugada" :inicio 0
+    :biomas ["floresta" "caverna" "lago"]
+    :especies {"floresta" ["hoothoot" "noctowl" "venonat"]
+               "caverna" ["zubat" "sableye" "diglett"]
+               "lago" ["psyduck" "wooper" "marill"]}}
+   {:nome "Dia" :inicio 6
+    :biomas ["praia" "floresta" "vulcao"]
+    :especies {"praia" ["wingull" "krabby" "buizel"]
+               "floresta" ["caterpie" "oddish" "seedot"]
+               "vulcao" ["slugma" "numel" "growlithe"]}}
+   {:nome "Entardecer" :inicio 17
+    :biomas ["lago" "praia" "cidade"]
+    :especies {"lago" ["lotad" "poliwag" "ralts"]
+               "praia" ["shellder" "frillish" "wingull"]
+               "cidade" ["meowth" "magnemite" "pidove"]}}
+   {:nome "Noite" :inicio 19
+    :biomas ["cidade" "floresta" "caverna"]
+    :especies {"cidade" ["rattata" "shinx" "glameow"]
+               "floresta" ["hoothoot" "spinarak" "murkrow"]
+               "caverna" ["zubat" "umbreon" "roggenrola"]}}])
+
 (defn- zone
   [timezone-id]
   (ZoneId/of (or timezone-id default-timezone)))
@@ -78,7 +103,7 @@
 (defn obter-clima
   [texto]
   (let [id (normalizar texto)]
-    (some #(when (or (= id (:id %)) (= id (normalizar (:nome %)))) %) climas)))
+    (some #(when (or (= id (:id %)) (= id (normalizar (:nome %)))) %) (conj climas ceu-limpo))))
 
 (defn area-disponivel
   [texto dia]
@@ -90,12 +115,30 @@
   ([instant timezone-id]
    (.getHour (ZonedDateTime/ofInstant (or instant (Instant/now)) (zone timezone-id)))))
 
+(defn rotacao
+  [instant timezone-id]
+  (let [local (ZonedDateTime/ofInstant (or instant (Instant/now)) (zone timezone-id))
+        dia (.toLocalDate local)
+        hora (.getHour local)
+        indice (reduce (fn [atual [i {:keys [inicio]}]]
+                         (if (<= inicio hora) i atual))
+                       0 (map-indexed vector periodos))
+        {:keys [nome inicio biomas especies]} (nth periodos indice)
+        proximo (or (:inicio (get periodos (inc indice))) 24)
+        clima (nth climas (mod (+ (.toEpochDay dia) indice) (count climas)))
+        clima (if (and (not= nome "Dia") (= "ensolarado" (:id clima))) ceu-limpo clima)
+        disponiveis (mapv obter-area biomas)]
+    {:dia (str dia)
+     :periodo {:nome nome :inicio inicio :fim proximo}
+     :clima clima
+     :area-padrao (first disponiveis)
+     :areas-disponiveis disponiveis
+     :areas-indisponiveis (filterv #(not (some #{(:id %)} biomas)) areas)
+     :especies-por-bioma especies}))
+
 (defn area-padrao
   ([instant] (area-padrao instant default-timezone))
-  ([instant timezone-id]
-   (let [dia (dia-atual instant timezone-id)
-         disponiveis (areas-do-dia dia)]
-     (nth disponiveis (mod (hora-no-fuso instant timezone-id) 3)))))
+  ([instant timezone-id] (:area-padrao (rotacao instant timezone-id))))
 
 (defn areas-indisponiveis
   [dia]
@@ -105,27 +148,34 @@
 (defn resumo
   ([instant] (resumo instant default-timezone))
   ([instant timezone-id]
-   (let [dia (dia-atual instant timezone-id)
-         clima (clima-do-dia dia)
-         atual (area-padrao instant timezone-id)
-         disponiveis (areas-do-dia dia)
-         indisponiveis (areas-indisponiveis dia)]
+   (let [{:keys [dia periodo clima area-padrao areas-disponiveis areas-indisponiveis
+                 especies-por-bioma]} (rotacao instant timezone-id)
+         dto #(select-keys % [:id :nome :emoji :tipos])]
      {:dia dia
-      :clima (select-keys clima [:id :nome :emoji :tipos])
-      :area-padrao (select-keys atual [:id :nome :emoji :tipos])
-      :areas-disponiveis (mapv #(select-keys % [:id :nome :emoji :tipos]) disponiveis)
-      :areas-indisponiveis (mapv #(select-keys % [:id :nome :emoji :tipos]) indisponiveis)})))
+      :periodo periodo
+      :clima (dto clima)
+      :area-padrao (dto area-padrao)
+      :areas-disponiveis (mapv #(assoc (dto %) :especies (get especies-por-bioma (:id %)))
+                               areas-disponiveis)
+      :areas-indisponiveis (mapv dto areas-indisponiveis)})))
 
 (defn texto-resumo
-  "Espelha zapbot.pokemon.mundo/resumo (string exibida em !pk clima/areas/mapa)."
+  "Texto exibido em !pk clima/areas/mapa."
   ([instant] (texto-resumo instant default-timezone))
   ([instant timezone-id]
-   (let [{:keys [clima area-padrao areas-disponiveis areas-indisponiveis]}
+   (let [{:keys [periodo clima area-padrao areas-disponiveis]}
          (resumo instant timezone-id)]
-     (str (:emoji clima) " *Clima de hoje: " (:nome clima) "* — favorece "
-          (str/join ", " (sort (tipos-labels-pt (:tipos clima)))) ".\n"
-          "📍 *Bioma deste horário:* " (:emoji area-padrao) " " (:id area-padrao) "\n"
-          "🕒 *Rotação de hoje:* "
-          (str/join " • " (map #(str (:emoji %) " " (:id %)) areas-disponiveis)) "\n"
-          "🚫 *Sem acesso por horário hoje:* "
-          (str/join " • " (map #(str (:emoji %) " " (:id %)) areas-indisponiveis))))))
+     (str (:emoji clima) " *Clima agora: " (:nome clima) "* — favorece "
+          (str/join ", " (sort (tipos-labels-pt (:tipos clima)))) ".
+"
+          "🕒 *" (:nome periodo) "* · "
+          (format "%02dh–%02dh" (:inicio periodo) (:fim periodo)) "
+"
+          "📍 *Bioma deste horário:* " (:emoji area-padrao) " " (:nome area-padrao) "
+"
+          "🗺️ *Biomas abertos e espécies em destaque:*
+"
+          (str/join "
+" (map (fn [{:keys [emoji nome especies]}]
+                                (str emoji " " nome " · " (str/join ", " (map str/capitalize especies))))
+                              areas-disponiveis))))))

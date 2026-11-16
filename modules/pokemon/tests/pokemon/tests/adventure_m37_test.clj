@@ -353,22 +353,33 @@
         (is (= 2 (count (ports/list-collection s chat player "a"))))
         (is (zero? (count (joy-app/list-beds s chat player "a"))))))))
 
-(deftest joy-isolamento-saves
-  (let [s (fresh-store! "j-iso")
+(deftest joy-retorno-automatico-no-save-de-origem
+  (let [db "j-auto"
+        s (fresh-store! db)
         chat "chat-j2"
         player "blue"
-        t0 7000000]
+        t0 7000000
+        pronto (+ t0 joy/tempo-tratamento-ms)]
     (boot! s chat player)
     (collection/adicionar-pokemon! s chat player mon 5 "queimado")
-    (joy-app/send! s chat player {:operation-id "sa" :idx 0 :agora t0})
-    (trainer/switch-save! s chat player "b")
-    (is (= 0 (count (joy-app/list-beds s chat player "b"))))
-    (is (= 1 (count (joy-app/list-beds s chat player "a"))))
-    (trainer/switch-save! s chat player "a")
-    (joy-app/collect!
-     s chat player
-     {:operation-id "ca" :agora (+ t0 joy/tempo-tratamento-ms)})
-    (is (= 1 (count (ports/list-collection s chat player "a"))))))
+    (let [antes (first (ports/list-collection s chat player "a"))]
+      (joy-app/send! s chat player {:operation-id "sa" :idx 0 :agora t0})
+      (trainer/switch-save! s chat player "b")
+      (is (empty? (joy-app/list-beds s chat player "b")))
+      (is (= 1 (count (joy-app/list-beds s chat player "a"))))
+      (let [s (reopen-store db)]
+        (is (zero? (ports/joy-return-due! s {:agora (dec pronto)})))
+        (is (= 1 (ports/joy-return-due! s {:agora pronto})))
+        (is (zero? (ports/joy-return-due! s {:agora pronto})))
+        (is (= "b" (:active-save-id (ports/get-player s chat player))))
+        (is (empty? (ports/list-collection s chat player "b")))
+        (is (empty? (joy-app/list-beds s chat player "a")))
+        (let [[curado & outros] (ports/list-collection s chat player "a")]
+          (is (empty? outros))
+          (is (= (:id-pokemon antes) (:id-pokemon curado)))
+          (is (= (:hp curado) (:hp-atual curado)))
+          (is (nil? (:status curado)))
+          (is (:in-party curado)))))))
 
 (deftest concorrencia-hatch-isolada
   (let [s (fresh-store! "e-conc")
