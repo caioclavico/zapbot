@@ -10,23 +10,25 @@
 
 ;; Políticas oficiais (:oficial-a/:oficial-b) via rarity/*politica* — default :legado.
 
-;; Faixas-base (Pokébola, sem status/seqüência) — Fase 12.8.
-;; Valores centrais das faixas pedidas; leve variação por poder dentro da faixa.
-;; Rebalance caça A6 (auditoria): raros+ mais duros; comuns ainda generosos.
-;; Bola/Frambo aplicam-se depois, com cap por bola (95).
+;; Faixas-base (Pokébola, sem status) — A6 wild-capture-streak-balance.
+;; Comum/incomum reduzidos; raro+ inalterados nesta fase.
+;; Bola/Frambo aplicam-se depois, com cap por bola (90).
+;; Política: streak NÃO altera probabilidade (só recompensas streak-unit-v1).
+(def politica-chance-captura-versao "wild-catch-balance-v1")
+
 (def raridade-chance-base
-  {"comum" 78
-   "incomum" 58
+  {"comum" 62
+   "incomum" 48
    "raro" 28
    "epico" 14
    "lendario" 5
    "mitico" 3})
 
 (def raridade-chance-min
-  {"comum" 70 "incomum" 48 "raro" 18 "epico" 8 "lendario" 2 "mitico" 1})
+  {"comum" 55 "incomum" 40 "raro" 18 "epico" 8 "lendario" 2 "mitico" 1})
 
 (def raridade-chance-max
-  {"comum" 88 "incomum" 68 "raro" 38 "epico" 22 "lendario" 9 "mitico" 6})
+  {"comum" 70 "incomum" 58 "raro" 38 "epico" 22 "lendario" 9 "mitico" 6})
 
 ;; Compat: mapa antigo ainda consultado por código legado de peso.
 (def raridades
@@ -39,6 +41,8 @@
 
 (def chance-captura-minima 3)
 (def chance-captura-maxima 90)
+;; Raide mantém cap legado 95 (não acoplar ao rebalance de caça).
+(def chance-captura-maxima-raid 95)
 (def poder-referencia-captura 450)
 ;; ±4 pp dentro da faixa por desvio de poder (não cruza limites da raridade).
 (def poder-variacao-pp 4)
@@ -51,9 +55,9 @@
    "paralisado" 1.5 "envenenado" 1.5 "queimado" 1.5 "confuso" 1.5})
 
 (def bolas
-  {"pokebola" {:nome "Pokébola" :multiplicador-captura 1 :limite-captura 95}
-   "grande-bola" {:nome "Grande Bola" :multiplicador-captura 1.5 :limite-captura 95}
-   "ultra-bola" {:nome "Ultra Bola" :multiplicador-captura 2 :limite-captura 95}})
+  {"pokebola" {:nome "Pokébola" :multiplicador-captura 1 :limite-captura 90}
+   "grande-bola" {:nome "Grande Bola" :multiplicador-captura 1.5 :limite-captura 90}
+   "ultra-bola" {:nome "Ultra Bola" :multiplicador-captura 2 :limite-captura 90}})
 
 (def bola-aliases
   "IDs legados que somam no estoque/débito do canônico (UI + inventory-adjust)."
@@ -67,8 +71,7 @@
   [item-id]
   (get bola-aliases (str item-id) #{(str item-id)}))
 
-;; Caps de bola: Pokébola sobe a 95 para não truncar comuns (~82–90) artificialmente.
-;; Grande/Ultra mantêm 95. Chance nunca > 100 após frambo (re-capada no limite).
+;; Caps de bola unificados em 90 (wild-catch-balance-v1). Frambo re-capa no limite.
 
 (def fuga-raridade
   {"comum" 5 "incomum" 7 "raro" 9 "epico" 11 "lendario" 14 "mitico" 16})
@@ -278,45 +281,56 @@
         (min chance-captura-maxima))))
 
 (defn chance-base-pos-batalha
-  "Pós-batalha: status × espécie + bônus moderado de sequência.
-  Sem o +25 legado — preserva ordenação por raridade (comuns ≫ lendários)."
+  "Pós-batalha: status × espécie. Sequência NÃO altera a chance
+  (política wild-catch-balance-v1); streak continua só em recompensas.
+  `sequencia-capturas` permanece no arity por compatibilidade de callers."
   [pokemon status sequencia-capturas]
   (let [poke (assegurar-raridade pokemon)
         bonus (get bonus-captura-status status 1)
         base (chance-captura poke)
-        seq-bonus (min 10 (long sequencia-capturas))]
+        _ignored (long (or sequencia-capturas 0))]
     (-> (Math/round (* (double bonus) base))
-        (+ seq-bonus)
         (max 1)
-        (min 95))))
+        (min chance-captura-maxima))))
 
 (defn chance-com-bola
-  [chance-base bola-id]
-  (let [bola (get bolas bola-id)]
-    (when-not bola
-      (throw (err/error :unknown_ball {:bola bola-id})))
-    (min (:limite-captura bola)
-         (Math/round (* (double chance-base) (:multiplicador-captura bola))))))
+  "Aplica multiplicador da bola. `lim-override` opcional (ex.: raide 95)."
+  ([chance-base bola-id]
+   (chance-com-bola chance-base bola-id nil))
+  ([chance-base bola-id lim-override]
+   (let [bola (get bolas bola-id)]
+     (when-not bola
+       (throw (err/error :unknown_ball {:bola bola-id})))
+     (let [lim (long (or lim-override (:limite-captura bola) chance-captura-maxima))]
+       (min lim
+            (Math/round (* (double chance-base) (:multiplicador-captura bola))))))))
 
 ;; Fruta Frambo (item `fruta`) — caça e raide.
 (def frambo-item-id "fruta")
 (def frambo-multiplicador-captura 1.5)
 
 (defn chance-com-bola-frambo
-  "Chance final: bola (± frambo 1.5×). Sem frambo ≡ chance-com-bola. Cap no limite da bola."
-  [chance-base bola-id frambo?]
-  (let [com-bola (chance-com-bola chance-base bola-id)]
-    (if-not frambo?
-      com-bola
-      (let [lim (get-in bolas [bola-id :limite-captura] 95)]
-        (min lim (Math/round (* (double com-bola) frambo-multiplicador-captura)))))))
+  "Chance final: bola (± frambo 1.5×). Sem frambo ≡ chance-com-bola.
+  Cap no limite da bola (wild 90) ou `lim-override` (raid 95)."
+  ([chance-base bola-id frambo?]
+   (chance-com-bola-frambo chance-base bola-id frambo? nil))
+  ([chance-base bola-id frambo? lim-override]
+   (let [com-bola (chance-com-bola chance-base bola-id lim-override)]
+     (if-not frambo?
+       com-bola
+       (let [lim (long (or lim-override
+                           (get-in bolas [bola-id :limite-captura])
+                           chance-captura-maxima))]
+         (min lim (Math/round (* (double com-bola) frambo-multiplicador-captura))))))))
 
 (defn chances-painel
   "Mapa bola→% para UI (antes/depois da fruta)."
-  [chance-base frambo?]
-  (into {}
-        (for [bola (keys bolas)]
-          [bola (chance-com-bola-frambo chance-base bola frambo?)])))
+  ([chance-base frambo?]
+   (chances-painel chance-base frambo? nil))
+  ([chance-base frambo? lim-override]
+   (into {}
+         (for [bola (keys bolas)]
+           [bola (chance-com-bola-frambo chance-base bola frambo? lim-override)]))))
 
 (defn attempt-capture
   "Resolve uma tentativa. `roll` / `fuga-roll` são 0–99 (injetáveis).

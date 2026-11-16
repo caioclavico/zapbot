@@ -1,20 +1,20 @@
-;; Fixtures A6 captura — faixas rebalanceadas (auditoria gameplay).
+;; Fixtures A6 captura — wild-catch-balance-v1.
 ;; chance-captura = clamp na faixa da raridade ± variação leve por poder
-;; chance-base-pos-batalha = min(95, round(bonus_status * chance) + min(10, seq))
-;; chance-com-bola = min(95, round(chance-base * mult))  ; pokébola lim 95
+;; chance-base-pos-batalha = min(90, round(bonus_status * chance))  ; SEM seq-bonus
+;; chance-com-bola = min(90, round(chance-base * mult))
 [
  {:id "magikarp-comum-neutro"
   :pokemon {:nome "Magikarp" :raridade "comum"
             :hp 20 :ataque 10 :defesa 55 :atq-esp 15 :def-esp 20 :veloc 80}
-  ;; poder=200; centro 78; delta = -round((200-450)/200*4) = 5 → 83
-  ;; clamp faixa comum [70,88] → 83
-  :chance-especie 83
+  ;; poder=200; centro 62; delta = -round((200-450)/200*4) = 5 → 67
+  ;; clamp faixa comum [55,70] → 67
+  :chance-especie 67
   :status nil
   :sequencia 0
-  ;; base = round(1*83)+0 = 83
-  :chance-base 83
+  ;; base = round(1*67) = 67 (seq ignorada)
+  :chance-base 67
   :bola "pokebola"
-  :chance-bola 83}
+  :chance-bola 67}
 
  {:id "onix-raro-paralisado-seq3"
   :pokemon {:nome "Onix" :raridade "raro"
@@ -23,23 +23,20 @@
   :chance-especie 28
   :status :paralisado
   :sequencia 3
-  ;; base = round(1.5*28)+min(10,3) = 42+3 = 45
-  :chance-base 45
+  ;; base = round(1.5*28) = 42  (seq NÃO soma)
+  :chance-base 42
   :bola "ultra-bola"
-  ;; min(95, round(45*2)) = 90
-  :chance-bola 90}
+  ;; min(90, round(42*2)) = 84
+  :chance-bola 84}
 
  {:id "mewtwo-mitico-sem-status"
   :pokemon {:nome "Mewtwo" :raridade "mitico"
             :hp 120 :ataque 110 :defesa 90 :atq-esp 154 :def-esp 90 :veloc 130}
-  ;; poder=694; centro 3; delta negativo → clamp lo=1 → 1? wait actual=3
-  ;; runtime: chance-especie 3 (centro 3, clamp [1,6])
   :chance-especie 3
   :status nil
   :sequencia 0
-  ;; base = 3+0 = 3
   :chance-base 3
   :bola "grande-bola"
-  ;; min(95, round(3*1.5)) = 5
+  ;; min(90, round(3*1.5)) = 5
   :chance-bola 5}
 ]

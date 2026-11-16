@@ -842,7 +842,9 @@
                         chances
                         (into {}
                               (for [bola (keys capture/bolas)]
-                                [bola (capture/chance-com-bola-frambo base bola frambo?)]))]
+                                [bola (capture/chance-com-bola-frambo
+                                       base bola frambo?
+                                       capture/chance-captura-maxima-raid)]))]
                     {:tentativas (long (:tentativas cap 0))
                      :max-tentativas raid/max-tentativas-captura
                      :capturou (boolean (:capturou cap))

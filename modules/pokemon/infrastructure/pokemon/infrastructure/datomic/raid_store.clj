@@ -1047,7 +1047,8 @@
         prepared? (boolean (get-in raid [:capturas player-id :frambo-preparada]))
         ;; `:frambo true` no request permite operação combinada (prepare+uso).
         frambo? (or prepared? (boolean (:frambo request)))
-        chance (capture/chance-com-bola-frambo chance-base bola frambo?)
+        chance (capture/chance-com-bola-frambo
+                chance-base bola frambo? capture/chance-captura-maxima-raid)
         ;; Produção: RNG local. Testes/smoke injetam `:roll` (0–99).
         ;; Bug 12.6: default antigo 100 ⇒ (< roll chance) sempre falso.
         roll (long (or (:roll request) (rand-int 100)))
