@@ -1571,36 +1571,36 @@
      (let [battle (pvp-domain/normalize-battle-sides battle)
            base (present-battle battle)
            vez (pvp-domain/as-side (:vez battle))
-           side (when player-id (pvp-domain/side-of-player battle player-id))]
-       (let [waiting (pvp-domain/aguardando-substituicao-de battle)
-            must-switch? (boolean (and side waiting
-                                       (or (= waiting :both) (= waiting side))))]
-        (merge base
-               {:kind "pvp"
-                :pvp? true
-                :phase (name (:phase battle :waiting))
-                ;; Sem `?` no DTO — JSON camelCase precisa bater com Node (aguardando).
-                :aguardando (boolean (pvp-domain/aguardando? battle))
-                :aguardando-substituicao (when waiting (name waiting))
-                :last-faint (:last-faint battle)
-                :usados {:x (vec (sort (pvp-domain/usados battle :x)))
-                         :o (vec (sort (pvp-domain/usados battle :o)))}
-                :eliminados {:x (vec (sort (pvp-domain/eliminados battle :x)))
-                             :o (vec (sort (pvp-domain/eliminados battle :o)))}
-                :faixa-niveis (:faixa-niveis battle)
-                :desafio-expira-em (:desafio-expira-em battle)
-                :vez (when vez (name vez))
-                :trocas (when (= :active (:phase battle))
-                          {:x (pvp-domain/estado-troca battle :x)
-                           :o (pvp-domain/estado-troca battle :o)})
-                :jogadores {:x (pvp-domain/jogador battle :x)
-                            :o (pvp-domain/jogador battle :o)}
-                :nomes (let [n (or (:nomes battle) {})]
-                         {:x (or (get n :x) (get n "x"))
-                          :o (or (get n :o) (get n "o"))})
-                :outcome (when-let [o (:outcome battle)] (name o))
-                :sua-vez (boolean (or must-switch?
-                                      (and side vez (= side vez))))}))))))
+           side (when player-id (pvp-domain/side-of-player battle player-id))
+           waiting (pvp-domain/aguardando-substituicao-de battle)
+           must-switch? (boolean (and side waiting
+                                      (or (= waiting :both) (= waiting side))))]
+       (merge base
+              {:kind "pvp"
+               :pvp? true
+               :phase (name (:phase battle :waiting))
+               ;; Sem `?` no DTO — JSON camelCase precisa bater com Node (aguardando).
+               :aguardando (boolean (pvp-domain/aguardando? battle))
+               :aguardando-substituicao (when waiting (name waiting))
+               :last-faint (:last-faint battle)
+               :usados {:x (vec (sort (pvp-domain/usados battle :x)))
+                        :o (vec (sort (pvp-domain/usados battle :o)))}
+               :eliminados {:x (vec (sort (pvp-domain/eliminados battle :x)))
+                            :o (vec (sort (pvp-domain/eliminados battle :o)))}
+               :faixa-niveis (:faixa-niveis battle)
+               :desafio-expira-em (:desafio-expira-em battle)
+               :vez (when vez (name vez))
+               :trocas (when (= :active (:phase battle))
+                         {:x (pvp-domain/estado-troca battle :x)
+                          :o (pvp-domain/estado-troca battle :o)})
+               :jogadores {:x (pvp-domain/jogador battle :x)
+                           :o (pvp-domain/jogador battle :o)}
+               :nomes (let [n (or (:nomes battle) {})]
+                        {:x (or (get n :x) (get n "x"))
+                         :o (or (get n :o) (get n "o"))})
+               :outcome (when-let [o (:outcome battle)] (name o))
+               :sua-vez (boolean (or must-switch?
+                                     (and side vez (= side vez))))})))))
 
 (defn open-pvp!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
