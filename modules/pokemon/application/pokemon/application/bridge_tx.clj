@@ -1600,7 +1600,7 @@
                           :o (or (get n :o) (get n "o"))})
                 :outcome (when-let [o (:outcome battle)] (name o))
                 :sua-vez (boolean (or must-switch?
-                                      (and side vez (= side vez))))})))))
+                                      (and side vez (= side vez))))}))))))
 
 (defn open-pvp!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
