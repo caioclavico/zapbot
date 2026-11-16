@@ -728,13 +728,15 @@
                                        (= st "delivery-pending")))))
               alvos (if (str/blank? (str n-str))
                       (vec (array-seq prontos))
-                      (let [egg (.resolveEggIndex jvm-present adv n-str)]
+                      (let [egg (.resolveHatchEggIndex jvm-present adv n-str)]
                         (when-not egg
-                          (throw (erro-contrato "❓ Índice de ovo inválido.")))
+                          (throw (erro-contrato
+                                  (str "❓ Índice inválido entre ovos prontos. Use "
+                                       prefix " incubadoras."))))
                         [egg]))
               _ (when (empty? alvos)
                   (throw (erro-contrato
-                          (str "❓ Nenhum ovo pronto. Use " prefix " ovos."))))
+                          (str "❓ Nenhum ovo pronto. Use " prefix " incubadoras."))))
               textos (atom [])]
         (-> (reduce (fn [p egg]
                       (p/then p (fn [_]

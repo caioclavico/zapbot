@@ -10,20 +10,20 @@ test('formatConfirmedPiLines só usa PI confirmado', () => {
     adventureActivity: [{ activity: 'wild-victory', pi: 0, duplicate: false }]
   }), []);
   assert.deepEqual(present.formatConfirmedPiLines({
-    adventureActivity: [{ activity: 'pvp-victory', pi: 12, eventId: 'egg-act:pvp:1:ash' }]
-  }), ['🥚 +12 PI de incubação']);
+    adventureActivity: [{ activity: 'pvp-victory', pi: 20, eventId: 'egg-act:pvp:1:ash' }]
+  }), ['🥚 +20 PI de incubação']);
   assert.deepEqual(present.formatConfirmedPiLines({
     adventureActivity: [
-      { playerId: 'ash', pi: 12 },
+      { playerId: 'ash', pi: 20 },
       { playerId: 'misty', pi: 5 }
     ]
-  }, { playerId: 'ash' }), ['🥚 +12 PI de incubação']);
+  }, { playerId: 'ash' }), ['🥚 +20 PI de incubação']);
 });
 
 test('vitória de caça anuncia PI confirmado', () => {
   const text = present.formatBattleTurn({
     aguardandoCaptura: true,
-    adventureActivity: [{ activity: 'wild-victory', pi: 8 }],
+    adventureActivity: [{ activity: 'wild-victory', pi: 15 }],
     battle: {
       kind: 'wild',
       active: false,
@@ -36,8 +36,7 @@ test('vitória de caça anuncia PI confirmado', () => {
     reward: { pokemonXp: 3, pe: 1 }
   });
   assert.match(text, /VITÓRIA NA CAÇADA/);
-  assert.match(text, /\+8 PI de incubação/);
-  assert.doesNotMatch(text, /\+15 PI/);
+  assert.match(text, /\+15 PI de incubação/);
 });
 
 test('não inventa PI sem adventure-activity', () => {

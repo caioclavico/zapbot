@@ -71,11 +71,16 @@
   (assoc (or shell (eggs/estado-inicial))
          :eggs (vec egg-maps)))
 
-(defn- shell-edn
+(defn shell-edn
+  "Serializa o shell Adventure (incubadoras/PI/pending). Sem ovos (entidades)."
   [estado]
-  (pr-str (select-keys estado [:incubators :pending-egg-grants :pi-daily])))
+  (pr-str (select-keys estado [:incubators
+                               :pending-egg-grants
+                               :pending-incubator-grants
+                               :daily-mission-claims
+                               :pi-daily])))
 
-(defn- receipt-txs
+(defn receipt-txs
   [account-ref shell estado]
   (mapv (fn [receipt]
           [:db/add account-ref :adventure-account/receipts receipt])
@@ -271,11 +276,13 @@
         applied (egg-activity/apply-activity
                  (merge-estado shell0 egg-maps) activity-opts)
         drained (egg-activity/materialize-pending (:estado applied) agora)
-        estado (cond-> (:estado drained)
+        drained-inc (egg-activity/materialize-pending-incubators (:estado drained))
+        estado (cond-> (:estado drained-inc)
                  (:first-daily-marker activity-opts)
                  (update :receipts conj (:first-daily-marker activity-opts)))
         egg (:egg-grant applied)
         delivered (:delivered drained)
+        delivered-inc (:delivered drained-inc)
         egg-tx (into (if egg [(egg->entity ak (assoc egg :revision 0))] [])
                      (map #(egg->entity ak (assoc % :revision 0)) delivered))
         account-ref (if ensure-tx? (str "new-adventure-account:" ak) [:adventure-account/key ak])
@@ -294,10 +301,13 @@
                (receipt-txs account-ref shell0 estado))
      :result {:adventure-activity (assoc (:summary applied)
                                          :pending-delivered
-                                         (mapv :egg-id delivered))
+                                         (mapv :egg-id delivered)
+                                         :pending-incubators-delivered
+                                         (mapv :event-id delivered-inc))
               :egg egg
               :deferred-egg (:deferred-egg applied)
               :pending-delivered delivered
+              :pending-incubators-delivered delivered-inc
               :pi-granted (:pi-granted applied)}}))
 
 (defn build-joy-send-tx

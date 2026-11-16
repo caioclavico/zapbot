@@ -1,8 +1,13 @@
 (ns pokemon.infrastructure.datomic.shop-store
   "TX builders de compra e uso de itens."
-  (:require [pokemon.domain.errors :as err]
+  (:require [clojure.edn :as edn]
+            [datomic.client.api :as d]
+            [pokemon.domain.egg-activity :as egg-activity]
+            [pokemon.domain.eggs :as eggs]
+            [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
             [pokemon.domain.shop :as shop]
+            [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
             [pokemon.infrastructure.datomic.economy-store :as economy-store]))
 
 (defn build-buy-tx
@@ -35,12 +40,43 @@
         operation-id (:operation-id request)
         phash (:payload-hash request)
         expansao? (boolean (:expansao? meta))
+        incubadora? (boolean (:incubadora? meta))
         expansao-tipo (:expansao-tipo meta)
-        item-tx (when-not expansao?
+        item-tx (when-not (or expansao? incubadora?)
                   (inventory-adjust-tx db sk item-id 1))
         exp-mochila (long (:save/expansoes-mochila-50 save 0))
         exp-pokemon (long (:save/expansoes-pokemon-50 save 0))
-        next-coins (:operational-after coin-part)]
+        next-coins (:operational-after coin-part)
+        ;; Incubadora: concede na conta Adventure (não vai à mochila).
+        incubator-kind (:incubadora-kind meta)
+        incubator-id (str "shop:" operation-id)
+        ak (id/adventure-account-key chat-id player-id)
+        acc-e (d/pull db adventure-store/account-pattern [:adventure-account/key ak])
+        acc-exists? (some? (:db/id acc-e))
+        shell0 (if acc-exists?
+                 (adventure-store/account-shell acc-e edn/read-string #(some? (:db/id %)))
+                 (eggs/estado-inicial))
+        grant (when incubadora?
+                (egg-activity/try-grant-incubator shell0 incubator-id incubator-kind))
+        shell1 (when grant
+                 (:estado (egg-activity/materialize-pending-incubators (:estado grant))))
+        incubator-tx
+        (when incubadora?
+          (let [account-ref (if acc-exists?
+                              [:adventure-account/key ak]
+                              (str "new-adventure-account:" ak))
+                rev (long (:revision shell0 0))]
+            (cond-> (if acc-exists?
+                      [[:db/add account-ref :adventure-account/state-edn
+                        (adventure-store/shell-edn shell1)]
+                       [:db/cas account-ref :adventure-account/revision rev (inc rev)]]
+                      [{:db/id account-ref
+                        :adventure-account/key ak
+                        :adventure-account/chat-id chat-id
+                        :adventure-account/player-id player-id
+                        :adventure-account/revision 1
+                        :adventure-account/state-edn (adventure-store/shell-edn shell1)}])
+              true (into (adventure-store/receipt-txs account-ref shell0 shell1)))))]
     {:tx (cond-> (into [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
                         {:operation-receipt/id operation-id
                          :operation-receipt/kind "shop-buy"
@@ -50,14 +86,20 @@
                          :operation-receipt/save-id save-id
                          :operation-receipt/summary
                          (pr-str {:item-id item-id :preco preco :expansao? expansao?
-                                  :expansao-tipo expansao-tipo})}]
+                                  :expansao-tipo expansao-tipo
+                                  :incubadora? incubadora?
+                                  :incubadora-kind incubator-kind
+                                  :incubator-deferred?
+                                  (boolean (:deferred-incubator grant))})}]
                        (:tx coin-part))
            (and expansao? (= expansao-tipo :mochila))
            (conj [:db/add [:save/key sk] :save/expansoes-mochila-50 (inc exp-mochila)])
            (and expansao? (= expansao-tipo :pokemon))
            (conj [:db/add [:save/key sk] :save/expansoes-pokemon-50 (inc exp-pokemon)])
            (seq item-tx)
-           (into item-tx))
+           (into item-tx)
+           (seq incubator-tx)
+           (into incubator-tx))
      :result {:operation-id operation-id
               :duplicate false
               :item-id item-id
@@ -67,6 +109,10 @@
               :coins-depois next-coins
               :expansao? expansao?
               :expansao-tipo expansao-tipo
+              :incubadora? incubadora?
+              :incubadora-kind incubator-kind
+              :incubator-grant (:incubator-grant grant)
+              :deferred-incubator (:deferred-incubator grant)
               :expansoes-mochila-50 (if (and expansao? (= expansao-tipo :mochila))
                                       (inc exp-mochila) exp-mochila)
               :expansoes-pokemon-50 (if (and expansao? (= expansao-tipo :pokemon))

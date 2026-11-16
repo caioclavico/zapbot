@@ -45,30 +45,43 @@ Fluxo completo Adventure Sync (pontos, RNG, catálogo km 2/5/10, incubadoras ext
 
 Espécie sorteada **na concessão** (catálogo `egg-hatch-catalog-v1`); estável em retries. Apresentação WhatsApp **não revela** a espécie até o nascimento.
 
-### Aquisição (sorteio canônico por `event-id`)
+### Aquisição (sorteio canônico por `event-id`) — PI table v2
 
 | Evento | Ovo | PI |
 |--------|-----|----|
-| Primeira caçada diária (captura) | 20% comum | — (PI da caça abaixo) |
-| Vitória selvagem (sem captura no mesmo encontro) | 5% comum | 8 |
-| Caça concluída (captura) | — | 5 |
-| Vitória ginásio | 12% raro | 15 |
-| Derrota ginásio | — | 6 |
-| Raid rara | 15% raro | 20 |
-| Raid épica | 25% épico | 30 |
-| Raid lendária/mítica | 35% especial | 45 |
-| Derrota raid | — | 10 |
-| PvP vitória (1×/oponente/dia UTC) | 8% raro | 12 |
+| Primeira caçada diária (captura) | 20% comum | — (PI da captura abaixo) |
+| Captura selvagem | — | 15 |
+| Vitória selvagem (sem captura no mesmo encontro) | 5% comum | 15 |
+| Derrota selvagem | — | 5 |
+| Vitória ginásio | 12% raro | 25 |
+| Derrota ginásio | — | 5 |
+| Raid (participação concluída) | por tier | 20 |
+| Raid (vitória) | por tier | +10 (total 30) |
+| PvP vitória (1×/oponente/dia, fuso do jogo) | 8% raro | 20 |
 | PvP derrota (1×/oponente/dia) | — | 5 |
-| Missão diária resgatada | explícito no pacote se houver | 20 |
+| Missão diária resgatada | explícito no pacote se houver | 30 |
 | Boas-vindas (1×/conta) | 1 comum | 0 |
 
 Inventário cheio (máx. 9): PI aplica; ovo vai para `:pending-egg-grants` no shell (não perde).  
-Vitória + captura no mesmo encontro: só PI de caça (5), sem somar PI de vitória.
+Vitória + captura no mesmo encontro: só PI de captura (15), sem somar PI de vitória.
+
+### Incubadoras consumíveis
+
+| Fonte | Recompensa |
+|-------|------------|
+| 1ª vitória de ginásio da semana (ISO, fuso do jogo) | 1 extra |
+| A cada 7 missões diárias resgatadas | 1 extra |
+| Raid épica | 10% extra |
+| Raid lendária | 15% especial |
+| Raid mítica | 25% especial |
+| Loja | extra 200 / especial 400 moedas |
+
+Limite: pending se inventário de incubadoras cheio (`:pending-incubator-grants`).
 
 ### PI
 
 - Teto diário configurável: `ADVENTURE_PI_DAILY_CAP` (default **150**).
+- Dia civil no fuso `MISSOES_TIMEZONE` / `America/Sao_Paulo` (não UTC da VM).
 - Distinto de PE do treinador (036) e XP do Pokémon (037).
 - Distribuição: PI do evento é **dividido** entre ovos incubando (sem multiplicar).
 - Idempotência: `event-id` em `:receipts` do shell + enrich na mesma TX da atividade.
@@ -90,11 +103,11 @@ Vitória + captura no mesmo encontro: só PI de caça (5), sem somar PI de vitó
 
 | Comando | Função |
 |---------|--------|
-| `!pk ovos` | Inventário + barras PI/tempo (sem espécie) |
-| `!pk incubadoras` | Status das incubadoras |
-| `!pk incubar <n> [id]` | Coloca ovo |
+| `!pk ovos` | Só ovos `inventory` (números 1..N, sem barras PI) |
+| `!pk incubadoras` / `!pk incubadora` | Progresso PI, usos, pronto |
+| `!pk incubar <n> [id]` | Coloca ovo (índice = card de inventário) |
 | `!pk chocar` / `ovo nascer` | Um ou todos os prontos |
-| `!pk incubacao` | PI do dia, teto, atividades |
+| `!pk incubacao` / `!pk pi` | PI do dia, teto, atividades |
 
 Raid egg PNGs permanecem só como lembrete visual de chefe.
 

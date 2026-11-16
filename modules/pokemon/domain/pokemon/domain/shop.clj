@@ -45,7 +45,13 @@
    "oculos" {:nome "Óculos Sábios" :emoji "👓" :preco 40 :equipavel? true
              :descricao "Equipável (equipar ainda bloqueado no JVM)."}
    "faixa-foco" {:nome "Faixa de Foco" :emoji "🥋" :preco 55 :equipavel? true
-                 :descricao "Equipável (equipar ainda bloqueado no JVM)."}})
+                 :descricao "Equipável (equipar ainda bloqueado no JVM)."}
+   "incubadora-extra" {:nome "Incubadora Extra" :emoji "🪺" :preco 200
+                       :incubadora? true :incubadora-kind :extra
+                       :descricao "Incubadora temporária (3 usos). Não ocupa a mochila."}
+   "incubadora-especial" {:nome "Incubadora Especial" :emoji "✨" :preco 400
+                          :incubadora? true :incubadora-kind :especial
+                          :descricao "Incubadora temporária (3 usos, +25% PI). Não ocupa a mochila."}})
 
 (def ^:private catalogo-info
   "Itens sem preço (informação / obtenção fora da loja)."
@@ -92,7 +98,9 @@
    "compartilha-xp" exp-share-id
    "óculos" "oculos" "oculos-sabios" "oculos"
    "espaco" "espaco-pokemon" "espaço" "espaco-pokemon"
-   "espaco-pc" "espaco-pokemon" "pc" "espaco-pokemon"})
+   "espaco-pc" "espaco-pokemon" "pc" "espaco-pokemon"
+   "incubadora" "incubadora-extra" "incubadora-temp" "incubadora-extra"
+   "incubadora-bonus" "incubadora-especial"})
 
 (defn normalizar-item
   [nome]
@@ -181,7 +189,9 @@
       (throw (err/error :insufficient_coins
                         {:coins coins :preco preco :item-id id}))
 
-      (and (not (:expansao? meta)) (not (cabe-item? save inventory)))
+      (and (not (:expansao? meta))
+           (not (:incubadora? meta))
+           (not (cabe-item? save inventory)))
       (throw (err/error :bag_full
                         {:ocupacao (ocupacao-mochila inventory)
                          :capacidade (capacidade-mochila-save save)}))

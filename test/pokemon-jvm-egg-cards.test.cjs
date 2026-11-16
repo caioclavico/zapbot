@@ -135,12 +135,16 @@ test('media: tipo inválido cai em null (fallback texto)', async () => {
 
 test('present: texto de ovos/incubacao permanece como fallback', () => {
   const status = present.formatAdventureStatus(dtoEggs, '!pk');
-  assert.match(status, /Ovos e incubação/);
+  assert.match(status, /Ovos disponíveis/);
   assert.match(status, /especial/);
+  assert.match(status, /incubar 1/);
   assert.match(status, /aguardando espaço/);
+  assert.doesNotMatch(status, /incubando|45\/100/);
   const help = present.formatIncubationHelp(dtoEggs, '!pk');
   assert.match(help, /40\/150/);
   assert.match(help, /Pontos de Incubação/);
+  const inc = present.formatIncubators(dtoEggs, '!pk');
+  assert.match(inc, /45\/100 PI|pronto|comum/);
 });
 
 test('render idempotente para o mesmo DTO', async () => {
@@ -195,7 +199,7 @@ test('handler: !pk ovos anexa PNG único no envelope', async () => {
   assert.equal(env.messages[0].mimeType, 'image/png');
   assert.equal(env.messages[0].filename, 'ovos.png');
   assert.ok(env.messages[0].base64.length > 100);
-  assert.match(env.messages[0].text, /Ovos e incubação/);
+  assert.match(env.messages[0].text, /Ovos disponíveis/);
   assert.doesNotMatch(env.messages[0].text, /Bulbasaur|Pichu|species/i);
   const meta = await sharp(Buffer.from(env.messages[0].base64, 'base64')).metadata();
   assert.deepEqual([meta.width, meta.height], [640, 820]);
@@ -222,7 +226,7 @@ test('handler: falha Sharp → fallback texto sem quebrar', async () => {
   const env = await handleOvosLikeCljs(dtoEggs, { failRender: true });
   assert.equal(env.messages.length, 1);
   assert.equal(env.messages[0].type, 'text');
-  assert.match(env.messages[0].text, /Ovos e incubação/);
+  assert.match(env.messages[0].text, /Ovos disponíveis/);
 });
 
 test('handler: retry mesmo requestId não multiplica mensagens no envelope', async () => {

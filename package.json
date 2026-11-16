@@ -26,7 +26,7 @@
     "dotenv": "^16.4.5",
     "qrcode-terminal": "^0.12.0",
     "rss-parser": "^3.13.0",
-    "sharp": "0.35.5",
+    "sharp": "^0.35.5",
     "whatsapp-web.js": "https://github.com/wwebjs/whatsapp-web.js/archive/b0a4b6c6c10868fad4881fb484b97895ce898b5d.tar.gz"
   },
   "overrides": {
