@@ -45,7 +45,7 @@ O `Dockerfile` é pensado para ARM64 (ex.: Oracle Cloud Free Tier) e usa o Chrom
 
 ### Cada comando é seu próprio namespace
 
-Os módulos do jogo ficam em `src/zapbot/pokemon/`, com namespaces `zapbot.pokemon.*`. A entrada do jogo é `zapbot.pokemon.core`.
+O roteador entrega os comandos Pokémon a `zapbot.pokemon-http`. No A6, o adaptador traduz mensagens do WhatsApp para chamadas à bridge em `apps/odisseu`. Em `modules/pokemon`, `domain` contém as regras do jogo, `application` coordena os comandos e `infrastructure` implementa a persistência. O adaptador HTTP também atende instalações que ainda usam `pokemon-service`.
 
 `src/zapbot/*.cljs` — a lista completa de comandos com descrições vive em `zapbot.router/comandos` (também usada para gerar `!ajuda`). Ao adicionar um comando novo: criar o namespace, adicionar ao `require` e `case` de `zapbot.router`, e adicionar entrada em `comandos`.
 
@@ -53,7 +53,6 @@ Namespaces que merecem atenção por não serem óbvios pelo nome:
 - `zapbot.bloqueio` — bloqueio de comandos/jogos/bot por chat (admin), checado antes de todo despacho
 - `zapbot.admins` — cadastro de admins conhecidos por grupo, alimentado passivamente pelo evento `group_admin_changed` (mais confiável que `getChatModel` ao vivo, que falha persistentemente em alguns grupos)
 - `zapbot.historico` — só guarda mensagens vistas desde que o bot foi ligado (não busca histórico completo do grupo) — por isso `!resuma` e `!sorteio` só têm efeito sobre atividade recente
-- `zapbot.pokemon.core`/`zapbot.pokemon.pokedex`/`zapbot.pokemon.treinador`/`zapbot.pokemon.loja` — sistema de captura/batalha/evolução de Pokémon, com nível de treinador desacoplado do rank e economia de moedas via `zapbot.pokemon.loja`
 - `zapbot.rank` — pontuação persistida por chat (vitórias em `!velha`, `!naval`, `!pokemon`, `!quiz`)
 - `zapbot.velha`, `!naval`, `!adedonha`, `!quiz` — estado de jogo em memória por chat (não sobrevive a restart, exceto placar via `zapbot.rank`)
 
