@@ -1,6 +1,7 @@
 (ns odisseu.smoke.a5-3-raid-eggs
   "A5.3 — contrato HTTP de raids e ovos em Datomic Local descartável."
-  (:require [odisseu.persistence.datomic :as persistence]
+  (:require [datomic.client.api :as d]
+            [odisseu.persistence.datomic :as persistence]
             [pokemon.application.collection :as collection]
             [pokemon.application.ports :as ports]
             [pokemon.application.reward :as reward]
@@ -158,19 +159,22 @@
         (let [incu (http! client base token "ash" "POST" "/v1/adventure/eggs/incubate"
                           {:chatId chat :playerId "ash" :saveId "a" :fenceGeneration (f)
                            :operationId "a53-egg-incubate" :eggId "a53-egg" :agoraMs t0})
-              due (+ t0 (* 2 60 60 1000))
-              hatch (http! client base token "ash" "POST" "/v1/adventure/eggs/hatch"
-                           {:chatId chat :playerId "ash" :saveId "a" :fenceGeneration (f)
-                            :operationId "a53-egg-hatch" :eggId "a53-egg"
-                            :hatchId "a53-hatch" :agoraMs due})
-              retry (http! client base token "ash" "POST" "/v1/adventure/eggs/hatch"
-                          {:chatId chat :playerId "ash" :saveId "a" :fenceGeneration (f)
-                           :operationId "a53-egg-hatch" :eggId "a53-egg"
-                           :hatchId "a53-hatch" :agoraMs due})]
+              due (+ t0 (* 2 60 60 1000))]
           (assert! (= 200 (:status incu)) "egg-incubate" incu)
-          (assert! (= 200 (:status hatch)) "egg-hatch" hatch)
-          (assert! (true? (get-in retry [:body "data" "duplicate"]))
-                   "egg-hatch-idempotency" retry)))
+          ;; Chocar exige a meta de PI; o relógio de 2 h não completa mais o ovo.
+          (d/transact (:conn store)
+                      {:tx-data [[:db/add [:egg/id "a53-egg"] :egg/points 100]]})
+          (let [hatch (http! client base token "ash" "POST" "/v1/adventure/eggs/hatch"
+                             {:chatId chat :playerId "ash" :saveId "a" :fenceGeneration (f)
+                              :operationId "a53-egg-hatch" :eggId "a53-egg"
+                              :hatchId "a53-hatch" :agoraMs due})
+                retry (http! client base token "ash" "POST" "/v1/adventure/eggs/hatch"
+                             {:chatId chat :playerId "ash" :saveId "a" :fenceGeneration (f)
+                              :operationId "a53-egg-hatch" :eggId "a53-egg"
+                              :hatchId "a53-hatch" :agoraMs due})]
+            (assert! (= 200 (:status hatch)) "egg-hatch" hatch)
+            (assert! (true? (get-in retry [:body "data" "duplicate"]))
+                     "egg-hatch-idempotency" retry))))
       (finally (bridge/stop! server)))))
 
 (defn -main [& _]

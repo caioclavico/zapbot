@@ -1,6 +1,7 @@
 (ns odisseu.smoke.m4-joy-eggs
   "Smoke M4.10 — Joy + ovos na bridge + regressões M3.7."
   (:require [clojure.test :as t]
+            [datomic.client.api :as d]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.ports :as ports]
             [pokemon.application.collection :as collection]
@@ -86,6 +87,8 @@
                         "operationId" "smoke-i"
                         "eggId" "egg-smoke" "agoraMs" t0})
             _ (assert! (= 200 (:status incu)) (str "incu " incu))
+            _ (d/transact (:conn s)
+                          {:tx-data [[:db/add [:egg/id "egg-smoke"] :egg/points 100]]})
             adv (http hc base token "GET"
                       (str "/v1/adventure?chatId=" chat "&playerId=ash&agoraMs=" t0)
                       nil)

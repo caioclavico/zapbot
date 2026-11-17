@@ -5,6 +5,7 @@
             [pokemon.application.ports :as ports]
             [pokemon.application.bridge-tx :as bridge]
             [pokemon.application.trainer :as trainer]
+            [pokemon.domain.xp :as xp]
             [pokemon.infrastructure.datomic.store :as store]))
 
 (def ^:private system "odisseu-m2-tests")
@@ -67,7 +68,9 @@
       (is (= "Magikarp" (:species (first (:party a)))))
       (is (empty? (:party b)))
       (is (= 1 (:trainer-level (:save a))))
-      (is (= 4 (:trainer-level (:save b))))
+      ;; O seed grava nível 4 e 500 PE. Sem :trainer-xp-level-progress,
+      ;; a leitura projeta a curva progressiva (max do nível gravado e da curva).
+      (is (= (:nivel (xp/progresso-treinador 500)) (:trainer-level (:save b))))
       (is (= 500 (:trainer-xp (:save b))))
       (is (= [{:item-id "poke-ball" :qty 3}] (:inventory a)))
       (is (= [{:item-id "great-ball" :qty 1}] (:inventory b))))))

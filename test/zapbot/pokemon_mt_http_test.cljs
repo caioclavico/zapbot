@@ -3,22 +3,23 @@
   (:require [cljs.test :refer-macros [async deftest is testing]]
             [promesa.core :as p]
             [zapbot.pokemon-http :as http]
+            [zapbot.pokemon.mt :as mt]
             [zapbot.armazenamento :as armazenamento]))
 
 (defn- isolado! [executar]
   (let [originais @http/entregas
-        mts @http/mts-pendentes
+        mts @mt/mts-pendentes
         salvar armazenamento/salvar!
         salvar-c armazenamento/salvar-confirmado!]
     (reset! http/entregas {})
-    (reset! http/mts-pendentes {})
+    (reset! mt/mts-pendentes {})
     (set! armazenamento/salvar! (fn [& _] (p/resolved nil)))
     (set! armazenamento/salvar-confirmado! (fn [& _] (p/resolved true)))
     (-> (p/resolved nil)
         (p/then (fn [_] (executar)))
         (p/finally (fn []
                      (reset! http/entregas originais)
-                     (reset! http/mts-pendentes mts)
+                     (reset! mt/mts-pendentes mts)
                      (set! armazenamento/salvar! salvar)
                      (set! armazenamento/salvar-confirmado! salvar-c))))))
 
@@ -183,7 +184,7 @@
                               :mentionedIds #js []
                               :reply (fn [texto & _] (swap! respostas conj texto) (p/resolved nil))})]
                (p/let [_ (http/executar (msg "u") "pokemon" "mt usar 1 1")
-                       op-antes (get-in @http/mts-pendentes ["grupo@g.us|ash@lid" :operation-id])
+                       op-antes (get-in @mt/mts-pendentes ["grupo@g.us|ash@lid" :operation-id])
                        _ (http/executar (msg "c1") "pokemon" "mt confirmar")
                        ;; Segunda confirmação: pendência já limpa → mensagem sem learnMove.
                        _ (http/executar (msg "c2") "pokemon" "mt confirmar")]
@@ -252,10 +253,10 @@
                               :mentionedIds #js []
                               :reply (fn [texto & _] (swap! respostas conj texto) (p/resolved nil))})]
                (p/let [_ (http/executar (msg "u") "pokemon" "mt usar 1 1")
-                       snap @http/mts-pendentes
+                       snap @mt/mts-pendentes
                        ;; Simula restart: limpa atom e reidrata do snapshot persistido.
-                       _ (reset! http/mts-pendentes {})
-                       _ (reset! http/mts-pendentes snap)
+                       _ (reset! mt/mts-pendentes {})
+                       _ (reset! mt/mts-pendentes snap)
                        _ (http/executar (msg "c") "pokemon" "mt confirmar")]
                  (is (= 1 (count @bodies)))
                  (is (re-find #"MÁQUINA TÉCNICA" (last @respostas)))))))

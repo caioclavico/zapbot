@@ -41,7 +41,10 @@
            :journal (str base "-journal")
            :maint (str base "-maint")}]
     (doseq [p [(:poke-live c) (:poke-bak c) (:poke-rec c) (:journal c) (:maint c)]]
-      (assert-disposable! p)
+      (assert-disposable! p))
+    ;; snapshot-storage! recusa destino existente. O backup nasce vazio só no snapshot.
+    (wipe-dir! (:poke-bak c))
+    (doseq [p [(:poke-live c) (:poke-rec c) (:journal c) (:maint c)]]
       (.mkdirs (io/file (persistence/resolve-storage-dir p))))
     (journal/wipe! (:journal c))
     (wipe-dir! (:maint c))

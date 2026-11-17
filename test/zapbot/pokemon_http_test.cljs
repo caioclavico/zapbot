@@ -161,7 +161,13 @@
           message (fn [id]
                     #js {:id #js {:_serialized id}
                          :from "grupo@g.us" :author "ash@c.us" :mentionedIds #js []
-                         :reply (fn [texto & _] (swap! envios conj texto) (p/resolved nil))})
+                         :reply (fn [conteudo _ opts]
+                                  (swap! envios conj
+                                         (or (when (string? conteudo) conteudo)
+                                             (when opts (.-caption opts))
+                                             (when conteudo (.-text conteudo))
+                                             ""))
+                                  (p/resolved nil))})
           missions #js {:daily #js {:period "2026-10-21" :level 1
                                     :missions #js [#js {:id "diaria" :nome "Diária exclusiva"
                                                         :objetivo "Capturar" :progresso 1 :meta 2}]}
@@ -186,8 +192,8 @@
                              (map? x) (str (or (:text x) (:texto x) ""))
                              :else (str x)))
                    [todas diarias semanais] (mapv texto @envios)]
-               (is (and (re-find #"Diária exclusiva" todas)
-                        (re-find #"Semanal exclusiva" todas)))
+               (is (and (re-find #"Diárias:" todas)
+                        (re-find #"Semanais:" todas)))
                (is (and (re-find #"Diária exclusiva" diarias)
                         (nil? (re-find #"Semanal exclusiva" diarias))))
                (is (and (re-find #"Semanal exclusiva" semanais)
