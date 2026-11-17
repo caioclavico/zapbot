@@ -164,6 +164,8 @@
                 :last-rename-operation-id (:save/last-rename-operation-id e)
                 :last-rename-name (:save/last-rename-name e)
                 :coins (:save/coins e 0)
+                :coins-recorded (long (:save/coins e 0))
+                :xp-insignias-recorded (long (:save/xp-insignias e 0))
                 :revision (:save/revision e 0)
                 :ativo-index (:save/ativo-index e 0)
                 :vitorias-treinador (:save/vitorias-treinador e 0)

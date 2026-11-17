@@ -4,7 +4,8 @@
             [clojure.string :as str]
             [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
-            [pokemon.domain.reward :as reward]))
+            [pokemon.domain.reward :as reward]
+            [pokemon.domain.xp :as xp]))
 
 (defn- inv-index
   [items]
@@ -61,28 +62,81 @@
      "enfermaria" (count (filter #(= "enfermaria" %) locs))
      "total" (count pokemon)}))
 
+(defn- metrics-of
+  [m]
+  {:doacoes-pokemon (long (or (:doacoes-pokemon m) 0))
+   :vitorias-treinador (long (or (:vitorias-treinador m) 0))
+   :maior-sequencia-capturas (long (or (:maior-sequencia-capturas m) 0))})
+
+(defn- classified-economy
+  "Separa o saldo histórico importado do saldo operacional gastável.
+   O PE de insígnias exibido é o derivado dos marcos; o valor legado fica registrado."
+  [m]
+  {:coins-recorded (long (or (:coins-recorded m) (:coins m) 0))
+   :coins-spendable (long (or (:coins-spendable m) 0))
+   :coins-operational (long (or (:coins-operational m) 0))
+   :economy-status (str (or (:economy-status m) "unknown-pending"))
+   :coins-historical-status (str (or (:coins-historical-status m) "unknown"))
+   :xp-insignias-recorded (long (or (:xp-insignias-recorded m) 0))
+   :xp-insignias (xp/xp-insignias-from-metrics (metrics-of m))})
+
+(def ^:private field-class
+  {:coins-recorded :historical
+   :coins-spendable :operational
+   :coins-operational :operational
+   :economy-status :operational
+   :coins-historical-status :historical
+   :xp-insignias-recorded :historical
+   :xp-insignias :derived
+   :vitorias-treinador :historical
+   :pe-ginasios :historical
+   :pe-raids :historical
+   :xp-missoes :historical
+   :ativo-index :operational
+   :expansoes-pokemon-50 :historical
+   :expansoes-mochila-50 :historical
+   :inventory :historical
+   :ginasios :historical
+   :pokemon-count :identity
+   :shiny-ids :identity
+   :ids :identity
+   :buckets :identity})
+
+(defn- fingerprint
+  [view]
+  (reward/payload-hash
+   (select-keys view (concat (keys field-class) [:slot-id :pokemon]))))
+
 (defn- expected-from-ir
   [save-ir]
-  (let [pokes (mapv poke-view (sort-by :collection-index (:pokemon save-ir)))]
-    {:slot-id (:slot-id save-ir)
-     :coins (long (:coins save-ir))
-     :vitorias-treinador (long (:vitorias-treinador save-ir))
-     :pe-ginasios (long (:pe-ginasios save-ir))
-     :pe-raids (long (:pe-raids save-ir))
-     :xp-insignias (long (:xp-insignias save-ir))
-     :xp-missoes (long (:xp-missoes save-ir))
-     :ativo-index (long (:ativo-index save-ir))
-     :expansoes-pokemon-50 (long (:expansoes-pokemon-50 save-ir))
-     :expansoes-mochila-50 (long (:expansoes-mochila-50 save-ir))
-     :inventory (inv-index (:inventory save-ir))
-     :ginasios (:ginasios save-ir)
-     :pokemon-count (:pokemon-count save-ir)
-     :buckets (or (:buckets save-ir) (bucket-counts pokes))
-     :pokemon pokes
-     :shiny-ids (vec (sort (remove nil? (:shiny-ids save-ir))))
-     :ids (vec (sort (map :id-pokemon pokes)))
-     :content-hash (:content-hash save-ir)
-     :provenance (:provenance save-ir)}))
+  (let [pokes (mapv poke-view (sort-by :collection-index (:pokemon save-ir)))
+        metrics (metrics-of save-ir)]
+    (merge
+     {:slot-id (:slot-id save-ir)
+      :vitorias-treinador (long (:vitorias-treinador save-ir))
+      :pe-ginasios (long (:pe-ginasios save-ir))
+      :pe-raids (long (:pe-raids save-ir))
+      :xp-missoes (long (:xp-missoes save-ir))
+      :ativo-index (long (:ativo-index save-ir))
+      :expansoes-pokemon-50 (long (:expansoes-pokemon-50 save-ir))
+      :expansoes-mochila-50 (long (:expansoes-mochila-50 save-ir))
+      :inventory (inv-index (:inventory save-ir))
+      :ginasios (:ginasios save-ir)
+      :pokemon-count (:pokemon-count save-ir)
+      :buckets (or (:buckets save-ir) (bucket-counts pokes))
+      :pokemon pokes
+      :shiny-ids (vec (sort (remove nil? (:shiny-ids save-ir))))
+      :ids (vec (sort (map :id-pokemon pokes)))
+      :content-hash (:content-hash save-ir)
+      :provenance (:provenance save-ir)}
+     (classified-economy
+      (merge metrics
+             {:coins-recorded (long (:coins save-ir))
+              :coins-spendable 0
+              :coins-operational 0
+              :economy-status "unknown-pending"
+              :coins-historical-status "unknown"
+              :xp-insignias-recorded (long (:xp-insignias save-ir))})))))
 
 (defn- bed->poke-view
   "Projeta leito Joy como pokemon location=enfermaria para equivalência IR."
@@ -110,25 +164,31 @@
         pokes (vec (concat (sort-by :collection-index from-col)
                            (sort-by :id-pokemon from-beds)))
         all-ids (map :id-pokemon pokes)]
-    {:slot-id slot-id
-     :coins (long (:coins save 0))
-     :vitorias-treinador (long (:vitorias-treinador save 0))
-     :pe-ginasios (long (:pe-ginasios save 0))
-     :pe-raids (long (:pe-raids save 0))
-     :xp-insignias (long (:xp-insignias save 0))
-     :xp-missoes (long (:xp-missoes save 0))
-     :ativo-index (long (:ativo-index save 0))
-     :expansoes-pokemon-50 (long (:expansoes-pokemon-50 save 0))
-     :expansoes-mochila-50 (long (:expansoes-mochila-50 save 0))
-     :inventory (inv-index (:inventory snap))
-     :ginasios (:ginasios save)
-     :pokemon-count (count pokes)
-     :buckets (bucket-counts pokes)
-     :pokemon pokes
-     :joy-bed-count (count beds)
-     :collection-count (count col)
-     :shiny-ids (->> pokes (filter :shiny) (map :id-pokemon) (remove nil?) sort vec)
-     :ids (->> all-ids (remove nil?) sort vec)}))
+    (merge
+     {:slot-id slot-id
+      :vitorias-treinador (long (:vitorias-treinador save 0))
+      :pe-ginasios (long (:pe-ginasios save 0))
+      :pe-raids (long (:pe-raids save 0))
+      :xp-missoes (long (:xp-missoes save 0))
+      :ativo-index (long (:ativo-index save 0))
+      :expansoes-pokemon-50 (long (:expansoes-pokemon-50 save 0))
+      :expansoes-mochila-50 (long (:expansoes-mochila-50 save 0))
+      :inventory (inv-index (:inventory snap))
+      :ginasios (:ginasios save)
+      :pokemon-count (count pokes)
+      :buckets (bucket-counts pokes)
+      :pokemon pokes
+      :joy-bed-count (count beds)
+      :collection-count (count col)
+      :shiny-ids (->> pokes (filter :shiny) (map :id-pokemon) (remove nil?) sort vec)
+      :ids (->> all-ids (remove nil?) sort vec)}
+     (classified-economy (merge (metrics-of save)
+                                {:coins-recorded (:coins-recorded save)
+                                 :coins-spendable (:coins save)
+                                 :coins-operational (:coins-operational save)
+                                 :economy-status (:economy-status save)
+                                 :coins-historical-status (:coins-historical-status save)
+                                 :xp-insignias-recorded (:xp-insignias-recorded save)})))))
 
 (defn- poke-core
   "Campos obrigatórios na equivalência (sem origin-edn completo — comparado à parte)."
@@ -144,14 +204,12 @@
 
 (defn- field-diffs
   [expected actual]
-  (let [keys-cmp [:coins :vitorias-treinador :pe-ginasios :pe-raids
-                  :xp-insignias :xp-missoes :ativo-index
-                  :expansoes-pokemon-50 :expansoes-mochila-50
-                  :inventory :ginasios :pokemon-count :shiny-ids :ids :buckets]
+  (let [keys-cmp (vec (keys field-class))
         scalar (->> keys-cmp
                     (keep (fn [k]
                             (when (not= (get expected k) (get actual k))
                               {:field k
+                               :class (get field-class k)
                                :expected (get expected k)
                                :actual (get actual k)})))
                     vec)
@@ -193,7 +251,9 @@
   (let [exp (expected-from-ir save-ir)
         act (actual-from-store store (:chat-id save-ir) (:player-id save-ir) (:slot-id save-ir))
         diffs (field-diffs exp act)
-        ok? (empty? diffs)]
+        expected-fp (fingerprint exp)
+        actual-fp (fingerprint act)
+        ok? (and (empty? diffs) (= expected-fp actual-fp))]
     {:slot-id (:slot-id save-ir)
      :ok? ok?
      :expected-count (:pokemon-count exp)
@@ -201,6 +261,8 @@
      :expected-buckets (:buckets exp)
      :actual-buckets (:buckets act)
      :expected-hash (:content-hash save-ir)
+     :expected-fingerprint expected-fp
+     :actual-fingerprint actual-fp
      :diffs diffs
      :provenance (:provenance save-ir)}))
 
