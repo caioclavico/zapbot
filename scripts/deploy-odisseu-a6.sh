@@ -94,6 +94,18 @@ jvm_maintenance() {
       --entrypoint node "$node_image" -e "$maintenance_js" jvm "$1"
 }
 
+base_compose_files() {
+  local container=$1 dir=$2 path files
+  files=$(label "$container" com.docker.compose.project.config_files)
+  local -a paths
+  IFS=, read -r -a paths <<< "$files"
+  for path in "${paths[@]}"; do
+    if [[ $path != "$dir"/docker-compose.odisseu-release.*.yml ]]; then
+      printf '%s\n' "$path"
+    fi
+  done
+}
+
 deploy() {
   [[ $EUID == 0 ]] || fail "Rode deploy com sudo para ler o env protegido do Compose"
   command -v python3 >/dev/null || fail "python3 é necessário para validar os volumes"
@@ -113,13 +125,13 @@ deploy() {
   local dir files path override backup volume source container
   local -a paths compose volumes archive_args=()
   dir=$(label "$jvm" com.docker.compose.project.working_dir)
-  files=$(label "$jvm" com.docker.compose.project.config_files)
+  files=$(base_compose_files "$jvm" "$dir")
   [[ -d $dir && -n $files ]] || fail "Compose original ausente"
   for container in "$jvm" "$node"; do
     [[ $(label "$container" com.docker.compose.project) == "$project" &&
        $(label "$container" com.docker.compose.service) == "$container" &&
        $(label "$container" com.docker.compose.project.working_dir) == "$dir" &&
-       $(label "$container" com.docker.compose.project.config_files) == "$files" ]] ||
+       $(base_compose_files "$container" "$dir") == "$files" ]] ||
       fail "Configuração Compose divergente em $container"
   done
 
@@ -130,10 +142,9 @@ deploy() {
     fail "Tokens de manutenção ausentes"
 
   cd "$dir"
-  IFS=, read -r -a paths <<< "$files"
+  mapfile -t paths <<< "$files"
   compose=(docker compose -p "$project" --project-directory "$dir")
   for path in "${paths[@]}"; do
-    [[ $path != "$dir"/docker-compose.odisseu-release.*.yml ]] || continue
     [[ -r $path ]] || fail "Arquivo do Compose indisponível: $path"
     compose+=(-f "$path")
   done
