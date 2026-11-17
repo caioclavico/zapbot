@@ -1,6 +1,7 @@
 (ns pokemon.tests.joy-eggs-m410-test
   "M4.10 — bridge Joy + Adventure Sync (ovos)."
   (:require [clojure.test :refer [deftest is]]
+            [datomic.client.api :as d]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.bridge-reads :as reads]
             [pokemon.application.bridge-tx :as tx]
@@ -121,6 +122,7 @@
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
         :operation-id "i1" :egg-id "egg-410" :agora-ms t0})
+    (d/transact (:conn s) {:tx-data [[:db/add [:egg/id "egg-410"] :egg/points 100]]})
     (trainer/switch-save! s chat "ash" "b")
     (let [code (try
                  (tx/hatch-egg!
