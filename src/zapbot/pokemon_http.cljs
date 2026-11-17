@@ -6,6 +6,10 @@
             ["whatsapp-web.js" :as wwjs]
             [zapbot.config :as config]
             [zapbot.pokemon.mt :as mt]
+            [zapbot.pokemon.ovos :as ovos]
+            [zapbot.pokemon.raides :as raides]
+            [zapbot.pokemon.resposta :refer [append-trainer-level-ups envelope-jvm
+                                            erro-contrato render-seguro!]]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.desempenho :as desempenho]
             [zapbot.rank :as rank]
@@ -34,8 +38,6 @@
 ;; Remoção de golpe com janela de cancelamento (espelha master; estado só no Node).
 (defonce ^:private remocoes-pendentes (atom {}))
 (def ^:private segundos-remover-golpe 30)
-(declare erro-contrato)
-
 (defn- parse-indice-1based
   "Converte texto 1-based em índice 0-based, ou nil se inválido."
   [texto total]
@@ -161,9 +163,6 @@
     (swap! filas assoc cid atual)
     (p/finally atual #(when (identical? atual (get @filas cid)) (swap! filas dissoc cid)))))
 
-(defn- erro-contrato [texto]
-  (doto (js/Error. texto) (aset "code" "INVALID_RESPONSE")))
-
 (defn- validar-resposta! [resposta]
   (when-not (and (map? resposta) (vector? (:messages resposta))
                  (vector? (:effects resposta)))
@@ -282,22 +281,6 @@
     (entregar! nil (fn [conteudo opcoes] (.reply message conteudo nil opcoes))
                ctx (str "jvm:" (:requestId pedido)) resposta)))
 
-(defn- envelope-jvm
-  "Texto obrigatório; imagem e mentions opcionais. Efeitos vazios (não são TX Datomic)."
-  ([pedido texto] (envelope-jvm pedido texto nil nil))
-  ([pedido texto imagem] (envelope-jvm pedido texto imagem nil))
-  ([pedido texto imagem mentions]
-   (let [extras #js {:effects #js []}]
-     (when imagem
-       (aset extras "image" imagem)
-       (aset extras "caption" texto))
-     (when (seq mentions)
-       (aset extras "mentions" (clj->js (vec mentions))))
-     (.envelope jvm-present (:requestId pedido) texto extras))))
-
-(defn- append-trainer-level-ups [texto data]
-  (.appendTrainerLevelUps jvm-present (str texto) data))
-
 (defn- especie-pokedex-top-level?
   "Top-level !pokedex/!dex/!pdx = ficha de espécie (master). !pk pokedex = coleção."
   [comando]
@@ -371,14 +354,6 @@
                false)))
          abertas)]
     (when (= 1 (count elegiveis)) (first elegiveis))))
-
-(defn- render-seguro!
-  "Render de mídia pós-TX. Qualquer falha → nil (nunca reexecuta gameplay)."
-  [ctx metrica f]
-  (-> (desempenho/medir! ctx metrica f)
-      (p/catch (fn [err]
-                 (js/console.error (str "mídia JVM (" metrica "):") err)
-                 nil))))
 
 (defn- codigo-jvm [erro]
   (str/upper-case (str (or (some-> erro .-code) ""))))
@@ -550,380 +525,6 @@
                         #(.renderStaticAsset jvm-media tema
                                              #js {:filename (str tema ".png")})))]
           (envelope-jvm pedido texto img))))))
-
-(defn- hatch-egg-jvm!
-  [jvm ctx pedido chat-id player-id egg]
-  (let [prefix (str config/prefix "pk")]
-    (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-            op-id (.stableOperationId jvm-transport
-                                      (:requestId pedido)
-                                      (str "egg-hatch:" (.-eggId egg)))
-            data (desempenho/medir! ctx "pokemon_jvm_egg_hatch"
-                   #(.hatchEgg jvm
-                      #js {:chatId chat-id
-                           :playerId player-id
-                           :saveId (.-activeSaveId ativo)
-                           :fenceGeneration (.-fenceGeneration ativo)
-                           :operationId op-id
-                           :eggId (.-eggId egg)
-                           :hatchId (str "hatch:" (.-eggId egg))}))]
-      (.formatEggHatch jvm-present data prefix))))
-
-(defn- executar-ovos-jvm!
-  "Fluxo !pk ovos / incubar / incubadoras / incubacao / chocar — sob demanda.
-   ovos/incubadoras anexam PNG Sharp (egg-cards); falha de mídia → só texto."
-  [jvm ctx pedido chat-id player-id sub args]
-  (let [prefix (str config/prefix "pk")
-        sub (str/lower-case (str (or sub "")))]
-    (cond
-      (or (= "incubadoras" sub) (= "incubadora" sub))
-      (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
-                       #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))
-              texto (.formatIncubators jvm-present data prefix)
-              img (render-seguro! ctx "pokemon_jvm_media_incubators"
-                    #(.renderIncubatorCard jvm-media data
-                                           #js {:filename "incubadoras.png"}))]
-        (envelope-jvm pedido texto img))
-
-      (or (= "incubacao" sub) (= "incubação" sub) (= "pi" sub))
-      (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
-                       #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))]
-        (envelope-jvm pedido (.formatIncubationHelp jvm-present data prefix)))
-
-      (= "incubar" sub)
-      (let [n-str (first args)
-            kind (str/lower-case (str (or (second args) "permanente")))
-            incubator (case kind
-                        ("extra" "especial" "temporaria" "temporária") kind
-                        kind)]
-        (when (str/blank? (str n-str))
-          (throw (erro-contrato (str "❓ Use " prefix " incubar <n> [incubadora]"))))
-        (p/let [adv (.getAdventure jvm #js {:chatId chat-id :playerId player-id})
-                egg (.resolveEggIndex jvm-present adv n-str)
-                _ (when-not egg
-                    (throw (erro-contrato "❓ Índice de ovo inválido. Use !pk ovos.")))
-                _ (when-not (= "inventory" (str (.-state egg)))
-                    (throw (erro-contrato "❓ Esse ovo não está disponível para incubar.")))
-                ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                op-id (.stableOperationId jvm-transport
-                                          (:requestId pedido)
-                                          (str "egg-inc:" (.-eggId egg)))
-                data (desempenho/medir! ctx "pokemon_jvm_egg_incubate"
-                       #(.incubateEgg jvm
-                          #js {:chatId chat-id
-                               :playerId player-id
-                               :saveId (.-activeSaveId ativo)
-                               :fenceGeneration (.-fenceGeneration ativo)
-                               :operationId op-id
-                               :eggId (.-eggId egg)
-                               :incubatorId (or incubator "permanente")}))]
-          (envelope-jvm pedido (.formatEggIncubate jvm-present data prefix))))
-
-      (or (= "nascer" sub) (= "hatch" sub) (= "chocar" sub))
-      (p/let [adv (.getAdventure jvm #js {:chatId chat-id :playerId player-id})
-              n-str (first args)
-              eggs (or (.-eggs adv) #js [])
-              prontos (.filter eggs
-                               (fn [e]
-                                 (let [st (str (.-state e))]
-                                   (or (= st "ready-to-hatch")
-                                       (= st "delivery-pending")))))
-              sem-prontos (let [incubando (.filter eggs #(= "incubating" (.-state %)))
-                                faltam (map #(str (.-category %) ": " (.-pointsRestante %) " PI")
-                                            (array-seq incubando))]
-                            (str "❓ Nenhum ovo pronto. "
-                                 (when (seq faltam) (str "Faltam " (str/join " · " faltam) ". "))
-                                 "Use " prefix " incubadoras."))
-              alvos (if (str/blank? (str n-str))
-                      (vec (array-seq prontos))
-                      (let [egg (.resolveHatchEggIndex jvm-present adv n-str)]
-                        (when-not egg
-                          (throw (erro-contrato
-                                  (if (zero? (.-length prontos))
-                                    sem-prontos
-                                    (str "❓ Índice inválido entre ovos prontos. Use "
-                                         prefix " incubadoras.")))))
-                        [egg]))
-              _ (when (empty? alvos)
-                  (throw (erro-contrato sem-prontos)))
-              textos (atom [])]
-        (-> (reduce (fn [p egg]
-                      (p/then p (fn [_]
-                                  (p/then (hatch-egg-jvm! jvm ctx pedido chat-id player-id egg)
-                                          (fn [txt] (swap! textos conj txt))))))
-                    (p/resolved nil)
-                    alvos)
-            (p/then (fn [_]
-                      (envelope-jvm pedido (str/join "\n\n" @textos))))))
-
-      :else
-      ;; ovos / ovo / ajuda → status + card PNG
-      (p/let [data (desempenho/medir! ctx "pokemon_jvm_adventure"
-                       #(.getAdventure jvm #js {:chatId chat-id :playerId player-id}))
-              texto (.formatAdventureStatus jvm-present data prefix)
-              img (render-seguro! ctx "pokemon_jvm_media_eggs"
-                    #(.renderEggInventoryCard jvm-media data
-                                              #js {:filename "ovos.png"}))]
-        (envelope-jvm pedido texto img)))))
-
-(defn- executar-raid-jvm!
-  "Fluxo !pk raide / gin entrar|iniciar|atacar|… — gameplay JVM antes de mídia."
-  [jvm ctx pedido chat-id player-id player-name args-raid]
-  (let [sub (.resolveRaidSubcommand jvm-present (or (first args-raid) ""))
-        resto (vec (rest args-raid))
-        prefix (str config/prefix "pk")]
-    (cond
-      (or (nil? sub) (str/blank? (str sub)) (= "status" sub))
-      (p/let [data (desempenho/medir! ctx "pokemon_jvm_raid_active"
-                       #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
-              present (.withRaidTurnMention jvm-present
-                        (.formatRaidStatus jvm-present data prefix) (.-raid data))]
-        (envelope-jvm pedido (.-text present) nil (js->clj (.-mentions present))))
-
-      (= "abrir" sub)
-      (let [token (str/trim (str/join " " resto))]
-        (if (str/blank? token)
-          (envelope-jvm pedido (.formatRaidOpenHelp jvm-present prefix))
-          (let [ginasio (.resolveRaidGym jvm-present token)]
-            (when-not ginasio
-              (throw (erro-contrato
-                      (str "❓ Treinador inválido. Use " prefix " raid abrir para ver a lista."))))
-            (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                    op-id (.stableOperationId jvm-transport
-                                              (:requestId pedido)
-                                              (str "raid-open:" ginasio))
-                    data (desempenho/medir! ctx "pokemon_jvm_raid_open"
-                           #(.openRaid jvm
-                              #js {:chatId chat-id
-                                   :playerId player-id
-                                   :saveId (.-activeSaveId ativo)
-                                   :fenceGeneration (.-fenceGeneration ativo)
-                                   :operationId op-id
-                                   :ginasio ginasio}))]
-              (envelope-jvm pedido (.formatRaidOpened jvm-present data prefix))))))
-
-      (= "cancelar" sub)
-      (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-              op-id (.stableOperationId jvm-transport
-                                        (:requestId pedido) "raid-cancel")
-              data (desempenho/medir! ctx "pokemon_jvm_raid_cancel"
-                     #(.cancelRaid jvm
-                        #js {:chatId chat-id
-                             :playerId player-id
-                             :saveId (.-activeSaveId ativo)
-                             :fenceGeneration (.-fenceGeneration ativo)
-                             :operationId op-id}))]
-        (envelope-jvm pedido (.formatRaidCancelled jvm-present data prefix)))
-
-      (= "time" sub)
-      (p/let [data (desempenho/medir! ctx "pokemon_jvm_raid_eligible"
-                       #(.getRaidEligible jvm #js {:chatId chat-id :playerId player-id}))]
-        (envelope-jvm pedido (.formatRaidEligible jvm-present data prefix)))
-
-      (= "entrar" sub)
-      ;; Default: Pokémon *ativo* (escolher). `auto` = melhor apto. `<n>` = índice.
-      (let [raw (str/lower-case (str/trim (str (or (first resto) "ativo"))))
-            auto? (= "auto" raw)
-            use-active? (or (str/blank? raw) (= "ativo" raw) (= "active" raw)
-                            (= "escolhido" raw))
-            idx (when-not (or auto? use-active?)
-                  (let [n (js/parseInt raw 10)]
-                    (when-not (js/isNaN n) (dec n))))]
-        (when (and (not auto?) (not use-active?) (or (nil? idx) (neg? idx)))
-          (throw (erro-contrato
-                  (str "❓ Use " prefix " raid entrar  ·  "
-                       prefix " raid entrar auto  ·  "
-                       prefix " raid entrar <n>"))))
-        (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                mode (cond auto? "auto" use-active? "ativo" :else (str idx))
-                op-id (.stableOperationId jvm-transport
-                                          (:requestId pedido)
-                                          (str "raid-join:" mode))
-                data (desempenho/medir! ctx "pokemon_jvm_raid_join"
-                       #(.joinRaid jvm
-                          (clj->js (cond-> {:chatId chat-id
-                                            :playerId player-id
-                                            :saveId (.-activeSaveId ativo)
-                                            :fenceGeneration (.-fenceGeneration ativo)
-                                            :operationId op-id
-                                            :nome player-name}
-                                     auto? (assoc :auto true)
-                                     use-active? (assoc :useActive true)
-                                     (and (not auto?) (not use-active?))
-                                     (assoc :collectionIndex idx)))))]
-          (envelope-jvm pedido (.formatRaidJoin jvm-present data prefix))))
-
-      (= "sair" sub)
-      (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-              op-id (.stableOperationId jvm-transport
-                                        (:requestId pedido) "raid-leave")
-              data (desempenho/medir! ctx "pokemon_jvm_raid_leave"
-                     #(.leaveRaid jvm
-                        #js {:chatId chat-id
-                             :playerId player-id
-                             :saveId (.-activeSaveId ativo)
-                             :fenceGeneration (.-fenceGeneration ativo)
-                             :operationId op-id}))]
-        (envelope-jvm pedido (.formatRaidLeave jvm-present data prefix)))
-
-      (= "iniciar" sub)
-      (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-              op-id (.stableOperationId jvm-transport
-                                        (:requestId pedido) "raid-start")
-              data (desempenho/medir! ctx "pokemon_jvm_raid_start"
-                     #(.startRaid jvm
-                        #js {:chatId chat-id
-                             :playerId player-id
-                             :saveId (.-activeSaveId ativo)
-                             :fenceGeneration (.-fenceGeneration ativo)
-                             :operationId op-id}))
-              img (render-seguro! ctx "pokemon_jvm_media_raid_start"
-                    #(.renderRaidBattleCard jvm-media
-                       #js {:ginasio (or (.-nomeGinasio (.-raid data))
-                                         (.-ginasio (.-raid data)))
-                            :chefe (some-> (.-raid data) .-chefe)
-                            :atacante (some-> (.-raid data) .-vezPokemon)
-                            :treinador (or (.-vezNome (.-raid data)) player-name)
-                            :hpChefe (.-hpChefe (.-raid data))
-                            :hpMax (.-hpMax (.-raid data))
-                            :hpAtacante (.-vezHp (.-raid data))
-                            :fase (.-fase (.-raid data))
-                            :turnIndex (.-turnIndex (.-raid data))
-                            :renderPhase "raid-start-manual"}))
-              present (.withRaidTurnMention jvm-present
-                        (.formatRaidStart jvm-present data prefix) (.-raid data))]
-        (envelope-jvm pedido (.-text present) img (js->clj (.-mentions present))))
-
-      (= "atacar" sub)
-      (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
-                           #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
-              raid (.-raid raid-data)
-              _ (when-not raid
-                  (throw (erro-contrato "❓ Nenhuma raid ativa neste chat.")))
-              ;; Aceita `suaVez` (contrato) e `suaVez?` (legado camelCase com ?).
-              ;; Também confere igualdade literal player-id === vez (identidade canônica).
-              sua-vez? (or (true? (.-suaVez raid))
-                           (true? (aget raid "suaVez?"))
-                           (and player-id (.-vez raid) (= player-id (.-vez raid))))
-              _ (when-not sua-vez?
-                  (throw (erro-contrato "⏳ Não é a sua vez de atacar.")))
-              move (js/parseInt (or (first resto) "1") 10)
-              move-idx (if (js/isNaN move) 0 (max 0 (dec move)))
-              ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-              op-id (.stableOperationId jvm-transport
-                                        (:requestId pedido)
-                                        (str "raid-atk:" (.-raidId raid) ":"
-                                             (.-turnIndex raid) ":" move-idx))
-              data (desempenho/medir! ctx "pokemon_jvm_raid_attack"
-                     #(.raidAttack jvm
-                        #js {:chatId chat-id
-                             :playerId player-id
-                             :saveId (.-activeSaveId ativo)
-                             :fenceGeneration (.-fenceGeneration ativo)
-                             :operationId op-id
-                             :raidId (.-raidId raid)
-                             :expectedTurnIndex (.-turnIndex raid)
-                             :moveIndex move-idx}))
-              img (render-seguro! ctx "pokemon_jvm_media_raid_atk"
-                    #(.renderRaidBattleCard jvm-media
-                       #js {:ginasio (or (.-nomeGinasio (.-raid data))
-                                         (.-ginasio (.-raid data)))
-                            :chefe (some-> (.-raid data) .-chefe)
-                            :atacante (or (.-vezPokemon (.-raid data))
-                                          (some-> raid .-vezPokemon))
-                            :treinador (or (.-vezNome (.-raid data))
-                                           (.-vezNome raid)
-                                           player-name)
-                            :hpChefe (.-hpChefe (.-raid data))
-                            :hpMax (.-hpMax (.-raid data))
-                            :hpAtacante (or (.-vezHp (.-raid data))
-                                            (.-vezHp raid))
-                            :fase (.-fase (.-raid data))
-                            :turnIndex (.-turnIndex (.-raid data))
-                            :renderPhase "raid-attack"}))
-              present (.withRaidTurnMention jvm-present
-                        (.formatRaidAttack jvm-present data prefix) (.-raid data))]
-        (envelope-jvm pedido (append-trainer-level-ups (.-text present) data) img
-                      (js->clj (or (.-mentions present) #js []))))
-
-      ;; fruta / frambo / fruta frambo — espelha caça selvagem: prepare + UI completa
-      (or (= "frambo" sub) (= "fruta" sub))
-      (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
-                           #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
-              raid (.-raid raid-data)
-              _ (when-not (and raid (.-capturaPendente raid))
-                  (throw (erro-contrato "❓ Captura de raid indisponível agora.")))
-              ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-              op-id (.stableOperationId jvm-transport
-                                        (:requestId pedido)
-                                        (str "raid-frambo:" (.-raidId raid)))
-              _prep (desempenho/medir! ctx "pokemon_jvm_raid_frambo"
-                      #(.raidFrambo jvm
-                         #js {:chatId chat-id
-                              :playerId player-id
-                              :saveId (.-activeSaveId ativo)
-                              :fenceGeneration (.-fenceGeneration ativo)
-                              :operationId op-id
-                              :raidId (.-raidId raid)}))
-              ;; Re-fetch: chances reais + estoque após prepare (formatter compartilhado).
-              raid-ui (desempenho/medir! ctx "pokemon_jvm_raid_active"
-                         #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))]
-        (envelope-jvm pedido
-                      (.formatRaidCaptureUi jvm-present raid-ui prefix
-                                            #js {:afterFrambo true})))
-
-      (= "capturar" sub)
-      (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
-                           #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
-              raid (.-raid raid-data)
-              _ (when-not (and raid (.-capturaPendente raid))
-                  (throw (erro-contrato "❓ Captura de raid indisponível agora.")))]
-        (if (str/blank? (str/join " " resto))
-          (envelope-jvm pedido (.formatRaidCaptureUi jvm-present raid-data prefix))
-          (let [tokens (->> resto (map str) (remove str/blank?) vec)
-                frambo? (boolean (some #(contains? #{"frambo" "framb" "razz"}
-                                                   (str/lower-case %))
-                                       tokens))
-                bola (->> tokens
-                          (remove #(contains? #{"frambo" "framb" "razz"}
-                                              (str/lower-case %)))
-                          (str/join " "))
-                _ (when (str/blank? bola)
-                    (throw (erro-contrato
-                            (str "❓ Use " prefix
-                                 " raid capturar 1|2|3"
-                                 " (ou pokebola|grande-bola|ultra-bola)"))))]
-            (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                    op-id (.stableOperationId jvm-transport
-                                              (:requestId pedido)
-                                              (str "raid-cap:" (.-raidId raid) ":"
-                                                   bola (when frambo? ":frambo")))
-                    data (desempenho/medir! ctx "pokemon_jvm_raid_capture"
-                           #(.raidCapture jvm
-                              (clj->js (cond-> {:chatId chat-id
-                                                :playerId player-id
-                                                :saveId (.-activeSaveId ativo)
-                                                :fenceGeneration (.-fenceGeneration ativo)
-                                                :operationId op-id
-                                                :raidId (.-raidId raid)
-                                                :bola bola}
-                                         frambo? (assoc :frambo true)))))
-                    img (render-seguro! ctx "pokemon_jvm_media_raid_cap"
-                          #(.renderCaptureBall jvm-media
-                              #js {:bola (or (.-bola data) "pokebola")
-                                   :capturou (boolean (.-capturou data))
-                                   :fugiu false}))]
-              (envelope-jvm pedido
-                            (append-trainer-level-ups
-                             (.formatRaidCapture jvm-present data prefix) data) img)))))
-
-      (or (= "ajuda" sub) (= "help" sub) (= "?" sub))
-      (envelope-jvm pedido (.formatHelp jvm-present "raid" prefix))
-
-      :else
-      (envelope-jvm pedido
-                    (str "❓ Comando de raid não reconhecido.\n"
-                         "Use " prefix " ajuda raid para consultar os comandos disponíveis.")))))
 
 (defn- lado-pvp
   "Retorna \"x\"|\"o\"|nil a partir de jogadores no DTO da batalha."
@@ -2149,7 +1750,7 @@
                     (contains? #{"abrir" "entrar" "iniciar" "sair" "cancelar" "atacar" "capturar"} sub)
                     ;; Mesmos fluxos que !pk raide <sub> … (abrir N sem menu prévio).
                     (p/let [args-raid (into [sub] args-gin)
-                            env (executar-raid-jvm! jvm ctx pedido chat-id player-id
+                            env (raides/executar! jvm ctx pedido chat-id player-id
                                                     player-name args-raid)]
                       env)
 
@@ -2533,29 +2134,29 @@
                                                   (str config/prefix "pk"))))
 
                 "raid"
-                (executar-raid-jvm! jvm ctx pedido chat-id player-id player-name resto)
+                (raides/executar! jvm ctx pedido chat-id player-id player-name resto)
 
                 "joy"
                 (executar-joy-jvm! jvm ctx pedido chat-id player-id resto)
 
                 "ovos"
-                (executar-ovos-jvm! jvm ctx pedido chat-id player-id
+                (ovos/executar! jvm ctx pedido chat-id player-id
                                     (or (first resto) "ovos") (vec (rest resto)))
 
                 "incubar"
-                (executar-ovos-jvm! jvm ctx pedido chat-id player-id
+                (ovos/executar! jvm ctx pedido chat-id player-id
                                     "incubar" resto)
 
                 "incubadoras"
-                (executar-ovos-jvm! jvm ctx pedido chat-id player-id
+                (ovos/executar! jvm ctx pedido chat-id player-id
                                     "incubadoras" resto)
 
                 "incubacao"
-                (executar-ovos-jvm! jvm ctx pedido chat-id player-id
+                (ovos/executar! jvm ctx pedido chat-id player-id
                                     "incubacao" resto)
 
                 "chocar"
-                (executar-ovos-jvm! jvm ctx pedido chat-id player-id
+                (ovos/executar! jvm ctx pedido chat-id player-id
                                     "chocar" resto)
 
                 "loja"
