@@ -19,15 +19,26 @@ status() {
   fi
 }
 
+check_node_image() {
+  docker run --rm --pull never --network none --entrypoint node "$node_image" -e '
+    const fs = require("node:fs");
+    for (const file of ["target/main.js", "scripts/healthcheck.js",
+      "scripts/lib/group-allowlist.cjs", "scripts/lib/a6-maintenance.cjs"]) {
+      fs.accessSync("/app/" + file, fs.constants.R_OK);
+    }
+    fs.accessSync("/app/assets", fs.constants.R_OK | fs.constants.X_OK);'
+}
+
 build() (
   workspace=$(mktemp -d)
   trap 'rm -rf -- "$workspace"' EXIT
   git -C "$workspace" init -q
   git -C "$workspace" fetch --depth=1 "$repo" "$commit"
-  git -C "$workspace" checkout --detach FETCH_HEAD
+  (umask 022; git -C "$workspace" checkout --detach FETCH_HEAD)
   [[ $(git -C "$workspace" rev-parse HEAD) == "$commit" ]] || fail "Commit incorreto"
   docker build --platform linux/amd64 -f "$workspace/Dockerfile.jvm" -t "$jvm_image" "$workspace"
   docker build --platform linux/amd64 -f "$workspace/Dockerfile" -t "$node_image" "$workspace"
+  check_node_image
   printf 'IMAGENS_PRONTAS %s\n' "$tag"
 )
 
@@ -89,6 +100,7 @@ deploy() {
   exec 9>/var/lock/odisseu-deploy.lock
   flock -n 9 || fail "Já existe um deploy em andamento"
   docker image inspect "$jvm_image" "$node_image" >/dev/null
+  check_node_image
   wait_healthy "$jvm"
   wait_healthy "$node"
   if [[ $(docker inspect -f '{{.Config.Image}}' "$jvm") == "$jvm_image" &&
