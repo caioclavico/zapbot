@@ -50,6 +50,15 @@
      (* incremento-poder-por-nivel
         (dec (min (max 1 (long (or nivel 1))) nivel-maximo-caca)))))
 
+(defn perfil-forca-caca
+  "Faz a faixa de poder e a chance de um encontro forte crescerem com ambos os níveis."
+  [trainer-level pokemon-level]
+  (let [treinador (/ (dec (min 50 (max 1 (long (or trainer-level 1))))) 49.0)
+        pokemon (/ (dec (min 100 (max 1 (long (or pokemon-level 1))))) 99.0)
+        progresso (Math/sqrt (* treinador pokemon))]
+    {:poder-alvo (poder-alvo-caca (+ 1 (Math/round (* (dec nivel-maximo-caca) progresso))))
+     :chance-forte (Math/round (* 40 progresso))}))
+
 (defn evento-atual
   "Surtos rotativos a cada 6h (legado aventuras/evento-atual)."
   [agora-ms]
@@ -106,6 +115,20 @@
           (if ok?
             c
             (recur (next restantes) melhor')))))))
+
+(defn selecionar-selvagem-progressivo
+  [candidatos tipos trainer-level pokemon-level roll]
+  (let [{:keys [poder-alvo chance-forte]} (perfil-forca-caca trainer-level pokemon-level)
+        forte (when (< roll chance-forte)
+                (->> candidatos
+                     (filter (fn [candidato]
+                               (let [poder (capture/poder-total candidato)]
+                                 (and (pertence-ao-bioma? candidato tipos)
+                                      (< poder-alvo poder)
+                                      (<= poder (+ poder-alvo tolerancia-poder-caca))))))
+                     (sort-by capture/poder-total >)
+                     first))]
+    (or forte (selecionar-selvagem candidatos poder-alvo tipos))))
 
 (defn resolver-tipos-encontro
   "Sorteio de tipos do encontro.
@@ -243,7 +266,7 @@
 (defn montar-plano
   "Plano de caça (RNG injetável para testes).
   :active-events — ocorrências/views temáticas ativas (12.8.1); nil = só clima/bioma."
-  [{:keys [area-pedida instant timezone-id trainer-level
+  [{:keys [area-pedida instant timezone-id trainer-level pokemon-level
            roll-tipos roll-surto agora-ms active-events]}]
   (let [instant (or instant (Instant/ofEpochMilli (long (or agora-ms (System/currentTimeMillis)))))
         tz (or timezone-id mundo/default-timezone)
@@ -263,8 +286,7 @@
         tipos (resolver-tipos-encontro area clima roll-t thematic)
         evento (evento-atual (.toEpochMilli instant))
         surto (surto? roll-s)
-        nivel (long (or trainer-level 1))
-        alvo (poder-alvo-caca nivel)
+        {:keys [poder-alvo chance-forte]} (perfil-forca-caca trainer-level pokemon-level)
         evento-dto (select-keys evento [:nome :especies :fim :chance])
         bands (events/combined-type-roll-bands thematic)]
     {:dia dia
@@ -284,7 +306,8 @@
                                                :occurrence-id :inicio-ms :fim-ms])
                               (or thematic []))
      :type-roll-bands bands
-     :poder-alvo alvo
+     :poder-alvo poder-alvo
+     :chance-forte chance-forte
      :tolerancia tolerancia-poder-caca
      :tentativas-max tentativas-caca
      :total-pokemons total-pokemons

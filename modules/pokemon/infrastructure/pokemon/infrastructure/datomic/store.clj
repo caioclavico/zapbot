@@ -2564,7 +2564,8 @@
                   (throw ex))))))))
 
   (start-hunt! [_ writer-ctx request]
-    (let [payload (ops/hunt-start-payload request)
+    (let [roll-forte (rand-int 100)
+          payload (ops/hunt-start-payload request)
           phash (ops/payload-hash payload)
           operation-id (:operation-id request)
           existing (receipt-entity (d/db conn) operation-id)]
@@ -2613,11 +2614,9 @@
                          (when-not c
                            (throw (err/error :hunt_no_candidates {:surto? true})))
                          c)
-                       (hunt/selecionar-selvagem
-                        candidates
-                        (long (:poder-alvo request (hunt/poder-alvo-caca
-                                                   (:trainer-level save-m 1))))
-                        tipos))
+                       (hunt/selecionar-selvagem-progressivo
+                        candidates tipos (:trainer-level save-m 1)
+                        (:nivel pokemon-x 1) roll-forte))
                      selvagem (let [base (hunt/com-raridade selvagem)
                                     ;; Produção não manda shinyRoll; nil não pode ir
                                     ;; para (long) — ver NPE doubleValue no !pk caçar.

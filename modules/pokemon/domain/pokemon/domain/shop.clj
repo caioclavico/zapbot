@@ -39,13 +39,13 @@
    "fruta" {:nome "Fruta Frambo" :emoji "🍓" :preco 10 :motivacao 20
             :descricao "Motivação de ginásio (+20) — !pk gin potenciar."}
    "restos" {:nome "Restos" :emoji "🍱" :preco 45 :equipavel? true
-             :descricao "Equipável (equipar ainda bloqueado no JVM)."}
+             :descricao "Recupera 1/16 do HP máximo por turno. Equipe com !pk equipar <n> restos."}
    "banda" {:nome "Banda Musculosa" :emoji "💪" :preco 40 :equipavel? true
-            :descricao "Equipável (equipar ainda bloqueado no JVM)."}
+            :descricao "Aumenta em 15% o dano físico. Equipe com !pk equipar <n> banda."}
    "oculos" {:nome "Óculos Sábios" :emoji "👓" :preco 40 :equipavel? true
-             :descricao "Equipável (equipar ainda bloqueado no JVM)."}
+             :descricao "Aumenta em 15% o dano especial. Equipe com !pk equipar <n> oculos."}
    "faixa-foco" {:nome "Faixa de Foco" :emoji "🥋" :preco 55 :equipavel? true
-                 :descricao "Equipável (equipar ainda bloqueado no JVM)."}
+                 :descricao "Com HP cheio, sobrevive a um golpe fatal com 1 HP uma vez por batalha. Use !pk equipar <n> faixa-foco."}
    "incubadora-extra" {:nome "Incubadora Extra" :emoji "🪺" :preco 200
                        :incubadora? true :incubadora-kind :extra
                        :descricao "Incubadora temporária (3 usos). Não ocupa a mochila."}
@@ -96,6 +96,7 @@
    "maxima" "pocao-maxima" "maxima-pocao" "pocao-maxima"
    "porcao-maxima" "pocao-maxima"
    "compartilha-xp" exp-share-id
+   "banda-musculosa" "banda"
    "óculos" "oculos" "oculos-sabios" "oculos"
    "espaco" "espaco-pokemon" "espaço" "espaco-pokemon"
    "espaco-pc" "espaco-pokemon" "pc" "espaco-pokemon"
