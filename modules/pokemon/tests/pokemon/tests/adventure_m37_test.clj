@@ -1,6 +1,7 @@
 (ns pokemon.tests.adventure-m37-test
   "M3.7 — Adventure Sync (ovos) + Enfermeira Joy."
   (:require [clojure.test :refer [deftest is]]
+            [datomic.client.api :as d]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.adventure :as adv]
             [pokemon.application.collection :as collection]
@@ -81,6 +82,9 @@
           (is (empty? (:prontos (joy/curados [entrada] (+ t0 (* 60 1000)))))
               "cura não termina antes dos 30 min mesmo com env zerado depois"))))))
 
+(defn- completar-pi! [s egg-id]
+  (d/transact (:conn s) {:tx-data [[:db/add [:egg/id egg-id] :egg/points 100]]}))
+
 (deftest incubacao-e-nascimento
   (let [s (fresh-store! "e-hatch")
         chat "chat-e1"
@@ -99,6 +103,7 @@
       (is (= :incubating (get-in inc [:egg :state])))
       (is (= "a" (get-in inc [:egg :save-id])))
       (is (= (+ t0 (* 2 60 60 1000)) due))
+      (completar-pi! s "egg-1")
       (let [h (adv/hatch!
                s chat player
                {:operation-id "hatch-1" :egg-id "egg-1" :hatch-id "h1"
@@ -135,7 +140,8 @@
                    :ok
                    (catch Exception ex (err/error-code ex)))]
         (is (= :egg_not_ready code))))
-    ;; depois do prazo + reopen
+    (completar-pi! (reopen-store db) "egg-p")
+    ;; PI completo após reabrir a base
     (let [s (reopen-store db)
           due (:due-at (adv/get-egg s "egg-p"))
           h (adv/hatch! s chat player
@@ -158,6 +164,7 @@
     (adv/incubate!
      s chat player
      {:operation-id "i3" :egg-id "egg-i" :agora t0})
+    (completar-pi! s "egg-i")
     (let [req {:operation-id "hatch-once" :egg-id "egg-i" :hatch-id "h-once"
                :agora due}
           r1 (adv/hatch! s chat player req)
@@ -180,6 +187,7 @@
     (adv/incubate!
      s chat player
      {:operation-id "i4" :egg-id "egg-aba" :agora t0})
+    (completar-pi! s "egg-aba")
     ;; A → B: hatch no B deve falhar
     (trainer/switch-save! s chat player "b")
     (let [code (try
@@ -212,6 +220,7 @@
     (adv/incubate!
      s chat player
      {:operation-id "i5" :egg-id "egg-st" :agora t0})
+    (completar-pi! s "egg-st")
     (let [w (writer/freeze-writer s chat player)]
       (trainer/switch-save! s chat player "b")
       (let [code (try
@@ -398,7 +407,8 @@
         :category :comum :species "Magikarp" :agora t0})
       (adv/incubate!
        s chat p
-       {:operation-id (str "i-" p) :egg-id (str "egg-" p) :agora t0}))
+       {:operation-id (str "i-" p) :egg-id (str "egg-" p) :agora t0})
+      (completar-pi! s (str "egg-" p)))
     (doseq [p ["p1" "p2"]]
       (.start
        (Thread.

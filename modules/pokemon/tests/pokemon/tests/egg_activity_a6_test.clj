@@ -1,6 +1,7 @@
 (ns pokemon.tests.egg-activity-a6-test
   "A6 — progressão de ovos/PI/incubadoras (domínio + Datomic descartável)."
   (:require [clojure.test :refer [deftest is testing]]
+            [datomic.client.api :as d]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.adventure :as adv]
             [pokemon.application.ports :as ports]
@@ -8,6 +9,7 @@
             [pokemon.domain.egg-activity :as egg-activity]
             [pokemon.domain.eggs :as eggs]
             [pokemon.domain.errors :as err]
+            [pokemon.infrastructure.datomic.adventure-store :as adventure-store]
             [pokemon.infrastructure.datomic.store :as store]))
 
 (def ^:private system "odisseu-egg-a6-tests")
@@ -80,7 +82,12 @@
     (adv/incubate! s chat player
                    {:operation-id "i1" :egg-id "egg-ready"
                     :incubator-id "permanente" :agora t0})
-    ;; Força pronto via tempo
+    (is (= :egg_not_ready
+           (try
+             (adv/hatch! s chat player {:operation-id "early" :egg-id "egg-ready"
+                                        :agora (+ t0 (* 3 60 60 1000))})
+             (catch Exception ex (err/error-code ex)))))
+    (d/transact (:conn s) {:tx-data [[:db/add [:egg/id "egg-ready"] :egg/points 100]]})
     (let [h1 (adv/hatch! s chat player
                          {:operation-id "h1" :egg-id "egg-ready"
                           :hatch-id "hatch-egg-ready"
@@ -100,6 +107,39 @@
         (is (= (:pokemon-id h1) (get-in egg [:resultado :pokemon-id])))
         (is (= (get-in h1 [:registro :shiny])
                (get-in egg [:resultado :registro :shiny])))))))
+
+(deftest ovo-legado-pronto-por-tempo-volta-a-receber-pi
+  (let [ovo (assoc (eggs/novo-ovo "legacy" :comum 0 "pichu")
+                   :state :ready-to-hatch :incubated-at 0 :points 99)
+        estado (-> (eggs/estado-inicial)
+                   (assoc :eggs [ovo])
+                   (assoc-in [:incubators 0 :active-egg-id] "legacy"))
+        avancado (eggs/avancar-tempo estado (:time-goal-ms ovo))
+        pontuado (eggs/aplicar-pontos estado "point" 1)]
+    (is (= :incubating (get-in avancado [:eggs 0 :state])))
+    (is (= 100 (get-in pontuado [:eggs 0 :points])))
+    (is (= :ready-to-hatch (get-in pontuado [:eggs 0 :state])))
+    (is (= pontuado (eggs/aplicar-pontos pontuado "point" 1)))))
+
+(deftest pi-de-atividade-e-persistido-no-ovo
+  (let [s (fresh-store! "egg-activity-points")
+        chat "c-activity" player "ash" t0 2000000]
+    (boot! s chat player)
+    (adv/grant-egg! s chat player
+                    {:operation-id "g-pi" :egg-id "egg-pi" :category :comum
+                     :species "pichu" :agora t0})
+    (adv/incubate! s chat player
+                   {:operation-id "i-pi" :egg-id "egg-pi"
+                    :incubator-id "permanente" :agora t0})
+    (let [account (adv/get-account s chat player)
+          {:keys [tx]} (adventure-store/build-activity-enrich-tx
+                        {:writer-ctx {:chat-id chat :player-id player}
+                         :account-shell (dissoc account :eggs)
+                         :egg-maps (:eggs account)
+                         :activity-opts {:activity :wild-victory :event-id "pi-event"
+                                         :agora t0}})]
+      (d/transact (:conn s) {:tx-data tx})
+      (is (= 15 (:points (adv/get-egg s "egg-pi")))))))
 
 (deftest grant-incubadora-extra
   (let [st (eggs/adicionar-incubadora (eggs/estado-inicial) "extra-1" :extra)]

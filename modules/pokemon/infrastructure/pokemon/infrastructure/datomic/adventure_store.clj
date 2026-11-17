@@ -283,8 +283,19 @@
         egg (:egg-grant applied)
         delivered (:delivered drained)
         delivered-inc (:delivered drained-inc)
-        egg-tx (into (if egg [(egg->entity ak (assoc egg :revision 0))] [])
-                     (map #(egg->entity ak (assoc % :revision 0)) delivered))
+        prev-eggs (into {} (map (juxt :egg-id identity)) egg-maps)
+        progress-tx (mapcat (fn [updated]
+                              (let [egg-id (:egg-id updated)
+                                    prev (get prev-eggs egg-id)]
+                                (when (and prev (not= updated prev))
+                                  (let [revision (long (:revision prev 0))
+                                        next-revision (inc revision)]
+                                    [(egg->entity ak (assoc updated :revision next-revision))
+                                     [:db/cas [:egg/id egg-id] :egg/revision revision next-revision]]))))
+                            (:eggs estado))
+        egg-tx (into (mapv #(egg->entity ak (assoc % :revision 0))
+                           (cond-> delivered egg (conj egg)))
+                     progress-tx)
         account-ref (if ensure-tx? (str "new-adventure-account:" ak) [:adventure-account/key ak])
         account-tx (if ensure-tx?
                      [{:db/id account-ref
