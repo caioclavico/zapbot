@@ -34,8 +34,11 @@
             {:nome-exibicao "Rest" :tipo "psiquico" :poder 0 :classe :status}]})
 
 (def ^:private chefe
+  ;; O HP do combate é `hp-por-jogador` × participantes (fator 1 → 640 com dois
+  ;; treinadores). Tipo normal deixa o Body Slam neutro, e a vitória paga a
+  ;; tabela canônica: 50 moedas, 6 PE e 6 XP de Pokémon.
   {:nome "Onix" :hp 100 :ataque 50 :defesa 50 :atq-esp 50 :def-esp 50 :veloc 30
-   :tipos ["rock"] :nivel 1 :raridade "raro"
+   :tipos ["normal"] :nivel 1 :raridade "raro"
    :golpes [{:nome-exibicao "Tackle" :tipo "normal" :poder 40 :classe :fisico}]})
 
 (defn- fence [s chat player]
@@ -112,6 +115,31 @@
     (is (= 24 (capture/chance-com-bola-frambo 8 "ultra-bola" true)))
     (is (= 70 (capture/chance-com-bola-frambo 35 "ultra-bola" false)))))
 
+(deftest derrota-paga-tabela-de-derrota
+  (let [s (fresh-store! "r126-loss")
+        chat "c-loss"
+        rid "raid-loss"
+        fraco {:nome "Caterpie" :hp 40 :ataque 20 :defesa 20 :atq-esp 20 :def-esp 20
+               :veloc 20 :tipos ["bug"] :nivel 3 :raridade "comum"
+               :golpes [{:nome-exibicao "Bug Bite" :tipo "bug" :poder 20 :classe :fisico}]}]
+    (trainer/create-trainer! s {:chat-id chat :player-id "ash"})
+    (trainer/create-trainer! s {:chat-id chat :player-id "misty"})
+    (collection/adicionar-pokemon! s chat "ash" fraco 40 nil)
+    (collection/adicionar-pokemon! s chat "misty" fraco 40 nil)
+    (let [r (win-raid! s chat rid)
+          ash (ports/get-save s chat "ash" "a")
+          code (try
+                 (tx/raid-capture!
+                  s {:chat-id chat :player-id "ash" :save-id "a"
+                     :fence-generation (fence s chat "ash")
+                     :operation-id "cap-loss" :bola "ultra-bola" :roll 0
+                     :agora-ms 100})
+                 (catch Exception ex (err/error-code ex)))]
+      (is (= "derrota" (:fase r)))
+      (is (= 0 (:coins ash)))
+      (is (= (:pe (raid/recompensas :derrota)) (:pe-raids ash)))
+      (is (= :raid_not_found code)))))
+
 (deftest ultra-bola-sucesso-e-falha-deterministica
   (let [s (fresh-store! "r126-ultra")
         chat "c-u"
@@ -131,14 +159,19 @@
                     :agora-ms 100})]
         (is (true? (:capturou cap)))
         (is (= 70 (:chance cap)))
-        (is (false? (:frambo cap)))))
-    (testing "idempotência"
+        (is (false? (:frambo cap)))
+        (is (= 2 (count (ports/list-collection s chat "ash" "a"))))))
+    (testing "idempotência não duplica o Pokémon nem a recompensa de vitória"
       (let [dup (tx/raid-capture!
                  s {:chat-id chat :player-id "ash" :save-id "a"
                     :fence-generation (fence s chat "ash")
                     :operation-id "cap-ok" :bola "ultra-bola" :roll 0
-                    :agora-ms 100})]
-        (is (true? (:duplicate dup)))))))
+                    :agora-ms 100})
+            ash (ports/get-save s chat "ash" "a")]
+        (is (true? (:duplicate dup)))
+        (is (= 2 (count (ports/list-collection s chat "ash" "a"))))
+        (is (= 50 (:coins ash)))
+        (is (= 6 (:pe-raids ash)))))))
 
 (deftest ultra-bola-falha-no-limite
   (let [s (fresh-store! "r126-fail")
@@ -161,7 +194,17 @@
       (is (false? (:capturou cap)))
       (is (= 70 (:chance cap)))
       (is (= (dec antes) depois))
-      (is (= 1 (:tentativas cap))))))
+      (is (= 1 (:tentativas cap)))
+      (let [dup (tx/raid-capture!
+                 s {:chat-id chat :player-id "ash" :save-id "a"
+                    :fence-generation (fence s chat "ash")
+                    :operation-id "cap-fail" :bola "ultra-bola" :roll 70
+                    :agora-ms 100})
+            apos-retry (->> (ports/list-inventory s chat "ash" "a")
+                            (filter #(= "ultra-bola" (:item-id %)))
+                            (map :qty) (reduce + 0))]
+        (is (true? (:duplicate dup)))
+        (is (= depois apos-retry))))))
 
 (deftest captura-sem-roll-nao-fixa-cem
   "Produção não envia roll; default antigo 100 ⇒ sempre falha."
