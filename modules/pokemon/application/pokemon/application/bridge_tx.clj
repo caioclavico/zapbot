@@ -1,0 +1,1735 @@
+(ns pokemon.application.bridge-tx
+  "Casos de uso M4.2/M4.4/M4.5 da bridge: ensure, saves, activate, encontro/caça.
+  Sem seed admin; save-id + fence + operation-id explícitos nas escritas."
+  (:require [clojure.string :as str]
+            [pokemon.application.active :as active-app]
+            [pokemon.application.favorite :as fav-app]
+            [pokemon.application.adventure :as adv]
+            [pokemon.application.battle :as battle-app]
+            [pokemon.application.capture :as capture-app]
+            [pokemon.application.evolution :as evo-app]
+            [pokemon.application.gym :as gym-app]
+            [pokemon.application.hunt :as hunt-app]
+            [pokemon.application.joy :as joy-app]
+            [pokemon.application.moves :as moves-app]
+            [pokemon.application.bag :as bag-app]
+            [pokemon.application.onboarding :as onboard-app]
+            [pokemon.application.ports :as ports]
+            [pokemon.application.pvp :as pvp-app]
+            [pokemon.application.raid :as raid-app]
+            [pokemon.application.reward :as reward-app]
+            [pokemon.application.shop :as shop-app]
+            [pokemon.application.trainer :as trainer]
+            [pokemon.domain.pvp :as pvp-domain]
+            [pokemon.domain.shop :as shop-domain]
+            [pokemon.domain.battle :as battle]
+            [pokemon.domain.capture :as capture]
+            [pokemon.domain.errors :as err]
+            [pokemon.domain.gym :as gym]
+            [pokemon.domain.hunt :as hunt]
+            [pokemon.domain.identities :as id]
+            [pokemon.domain.joy :as joy]
+            [pokemon.domain.model :as model]
+            [pokemon.domain.moves :as moves]
+            [pokemon.domain.mundo :as mundo]
+            [pokemon.domain.raid :as raid-domain]
+            [pokemon.domain.raid-boss :as raid-boss]))
+
+(defn- present-pokemon
+  "DTO de apresentação para Node (HP atual/máx, golpes, sprites).
+   Raridade canônica via `assegurar-raridade` (legado/classificação explícita).
+   Golpes re-normalizados (string-keys / slug) — mesmo canônico do encounter-dto."
+  [p hp-atual]
+  (when p
+    (let [p (capture/assegurar-raridade p)
+          resolved (capture/resolver-raridade p)
+          golpes (->> (or (:golpes p) (get p "golpes") [])
+                      (mapv battle/golpe-normalizado)
+                      (filterv map?))]
+      (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
+                              :raridade :tipos :ataque :defesa :atq-esp :def-esp
+                              :veloc :imagem :imagem-shiny :altura
+                              :status :habilidade :collection-index
+                              :motivacao-ginasio])
+        true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0))
+                    :raridade (:raridade resolved)
+                    :raridade-fonte (name (:fonte resolved))
+                    :golpes golpes)
+        (:shiny? p) (assoc :shiny true)))))
+
+(defn- present-battle
+  "Fatia de batalha com HP, golpes e área visual para UI de caça/turno."
+  [battle]
+  (when battle
+    (let [px (get-in battle [:pokemons :x])
+          po (get-in battle [:pokemons :o])
+          hp (:hp battle)]
+      {:battle-id (:battle-id battle)
+       :kind (name (:kind battle :wild))
+       :gym-id (:gym-id battle)
+       :gym-nome (:gym-nome battle)
+       :lider-nome (:lider-nome battle)
+       :active (boolean (:active? battle))
+       :hp hp
+       :status (:status battle)
+       :phase (:phase battle)
+       :outcome (:outcome battle)
+       :turn-index (:turn-index battle 0)
+       :bioma (:bioma battle)
+       :clima (let [c (:clima battle)]
+                (cond
+                  (map? c) (hunt/clima-dto c)
+                  (and c (not (str/blank? (str c))))
+                  (some-> (mundo/obter-clima (str c)) hunt/clima-dto)
+                  :else nil))
+       :area (when-let [a (mundo/obter-area (str (:bioma battle)))]
+               (hunt/area-dto a))
+       :aguardando-captura (boolean (:aguardando-captura? battle))
+       :somente-batalha (boolean (:somente-batalha? battle))
+       :selvagem-liberado-bolsa-cheia
+       (boolean (:selvagem-liberado-bolsa-cheia? battle))
+       :last-action (:last-action battle)
+       :last-switch (:last-switch battle)
+       :reservas-x (count (get-in battle [:reservas :x] []))
+       :reservas-o (count (get-in battle [:reservas :o] []))
+       :pokemon-x (present-pokemon px (get hp :x))
+       :pokemon-o (present-pokemon po (get hp :o))})))
+
+(defn- save-summary
+  [store chat-id player-id slot]
+  (when-let [save (ports/get-save store chat-id player-id slot)]
+    {:save-id slot
+     :display-name (:display-name save)
+     :origin (:origin save)
+     :origin-player-id (:origin-player-id save)
+     :legacy-version (:legacy-version save)
+     :coins (:coins save 0)
+     :revision (:revision save 0)
+     :trainer-xp (:trainer-xp save 0)
+     :trainer-level (:trainer-level save 1)
+     :collection-count (count (ports/list-collection store chat-id player-id slot))
+     :party-count (count (ports/list-party store chat-id player-id slot))
+     :inventory (ports/list-inventory store chat-id player-id slot)}))
+
+(defn ensure-trainer!
+  "Cria treinador+saves A/B se ainda não existir (idempotente)."
+  [store {:keys [chat-id player-id]}]
+  (model/validate-create-player! {:chat-id chat-id :player-id player-id})
+  (let [existing (ports/get-player store chat-id player-id)
+        player (if existing
+                 existing
+                 (trainer/create-trainer! store {:chat-id chat-id :player-id player-id}))]
+    {:created (nil? existing)
+     :chat-id chat-id
+     :player-id player-id
+     :active-save-id (:active-save-id player)
+     :fence-generation (:fence-generation player 0)}))
+
+(defn onboarding-status
+  [store chat-id player-id]
+  (onboard-app/status store chat-id player-id))
+
+(defn start-journey!
+  "ensure + kit (10 Pokébolas) idempotente; retorna menu de starters se pendente."
+  [store {:keys [chat-id player-id operation-id] :as req}]
+  (model/validate-create-player! {:chat-id chat-id :player-id player-id})
+  (onboard-app/start-journey! store req))
+
+(defn claim-starter-kit!
+  [store req]
+  (bag-app/claim-kit! store req))
+
+(defn claim-bag-daily!
+  [store req]
+  (bag-app/claim-daily! store req))
+
+(defn choose-starter!
+  [store req]
+  (onboard-app/choose-starter! store req))
+
+(defn list-saves
+  [store chat-id player-id]
+  (let [player (or (ports/get-player store chat-id player-id)
+                   (throw (err/error :player_not_found
+                                     {:chat-id chat-id :player-id player-id})))
+        saves (ports/list-saves store chat-id player-id)]
+    {:chat-id chat-id
+     :player-id player-id
+     :active-save-id (:active-save-id player)
+     :fence-generation (:fence-generation player 0)
+     :saves (mapv (fn [save]
+                    (merge (save-summary store chat-id player-id (:slot-id save))
+                           {:slot-id (:slot-id save)}))
+                  saves)}))
+
+(defn create-save-slot!
+  "Cria slot vazio sem alterar o ponteiro ativo. Repetição retorna o existente.
+  Se `save-id` vier em branco, aloca o próximo slot livre (a–z, s1…)."
+  [store {:keys [chat-id player-id save-id display-name]}]
+  (model/validate-create-player! {:chat-id chat-id :player-id player-id})
+  (let [listed (ports/list-saves store chat-id player-id)
+        resolved-id (if (str/blank? (str save-id))
+                      (model/next-available-slot-id (mapv :slot-id listed))
+                      (str/lower-case (str/trim (str save-id))))]
+    (model/validate-save-slot! resolved-id)
+    (let [existing (ports/get-save store chat-id player-id resolved-id)
+          name (when-not (str/blank? (str display-name))
+                 (model/validate-save-display-name! display-name))]
+      (when name
+        (model/assert-display-name-available! listed resolved-id name))
+      (let [save (or existing (trainer/create-save! store chat-id player-id resolved-id))]
+        (if (nil? name)
+          (assoc save :created (nil? existing) :slot-id resolved-id :save-id resolved-id)
+          (let [current (:display-name save)]
+            (if (= name current)
+              (assoc save :created (nil? existing) :slot-id resolved-id :save-id resolved-id)
+              (if existing
+                (throw (err/error :save_payload_mismatch {:save-id resolved-id}))
+                (do
+                  (ports/rename-save! store {:chat-id chat-id :player-id player-id
+                                             :save-id resolved-id :display-name name})
+                  (assoc (ports/get-save store chat-id player-id resolved-id)
+                         :created true
+                         :slot-id resolved-id
+                         :save-id resolved-id))))))))))
+
+(defn rename-save!
+  [store {:keys [chat-id player-id save-id display-name expected-fence-generation]
+          :as request}]
+  (model/validate-create-player! {:chat-id chat-id :player-id player-id})
+  (model/validate-save-slot! save-id)
+  (let [name (model/validate-save-display-name! display-name)
+        listed (ports/list-saves store chat-id player-id)]
+    (model/assert-display-name-available! listed save-id name)
+    (ports/rename-save! store (assoc request :display-name name))))
+
+(defn activate-save!
+  "Ativa save via TX Datomic (fence sobe). Opcionalmente exige fence esperado."
+  [store {:keys [chat-id player-id save-id expected-fence-generation]}]
+  (model/validate-save-slot! save-id)
+  (let [player (or (ports/get-player store chat-id player-id)
+                   (throw (err/error :player_not_found
+                                     {:chat-id chat-id :player-id player-id})))
+        current-fence (:fence-generation player 0)]
+    (when (and (some? expected-fence-generation)
+               (not= (long expected-fence-generation) (long current-fence)))
+      (throw (err/error :stale_writer_fence
+                        {:expected expected-fence-generation
+                         :fence current-fence
+                         :active (:active-save-id player)})))
+    (let [snap (trainer/switch-save! store chat-id player-id save-id)
+          p (:player snap)]
+      {:chat-id chat-id
+       :player-id player-id
+       :active-save-id (:active-save-id p)
+       :fence-generation (:fence-generation p)
+       :save (select-keys (:save snap)
+                          [:slot-id :display-name :coins :revision
+                           :trainer-xp :trainer-level])})))
+
+(defn credit-coins!
+  "Mutação representativa: credita moedas no save congelado (fence + recibo).
+
+  Exige save-id, fence-generation e operation-id do cliente — não recongela
+  o ativo automaticamente a partir do pedido."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id coins-delta]
+          :as req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (when-not (integer? coins-delta)
+    (throw (err/error :invalid_coins_delta {:coins-delta coins-delta})))
+  (model/validate-save-slot! save-id)
+  (let [writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        result (reward-app/apply-gameplay-reward!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :coins-delta (long coins-delta)})
+        save (ports/get-save store chat-id player-id save-id)]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :channel (:channel result)
+     :payload-hash (:payload-hash result)
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :coins (:coins save 0)
+     :summary (:summary result)}))
+
+(defn get-operation
+  "Reconciliação pós-timeout. Exige chat-id+player-id do contexto confiável
+  e só devolve recibo do mesmo jogador (M4.3)."
+  [store operation-id chat-id player-id]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when (or (str/blank? (str chat-id)) (str/blank? (str player-id)))
+    (throw (err/error :invalid_query {:required ["chatId" "playerId"]})))
+  (let [receipt (ports/get-receipt store (str operation-id))]
+    (when-not receipt
+      (throw (err/error :operation_not_found {:operation-id operation-id})))
+    (let [expected (id/player-key chat-id player-id)]
+      (when-not (= expected (:player-key receipt))
+        (throw (err/error :operation_forbidden
+                          {:operation-id operation-id})))
+      (assoc receipt :persisted true))))
+
+(defn- camel->kebab
+  [s]
+  (-> (str s)
+      (str/replace #"\?" "")
+      (str/replace #"([a-z0-9])([A-Z])" "$1-$2")
+      str/lower-case))
+
+(defn- keywordize-keys
+  "JSON string keys → keywords kebab (atqEsp / atq-esp → :atq-esp)."
+  [x]
+  (cond
+    (map? x)
+    (into {}
+          (map (fn [[k v]]
+                 [(cond
+                    (keyword? k) k
+                    (string? k) (keyword (camel->kebab k))
+                    :else k)
+                  (keywordize-keys v)])
+               x))
+    (vector? x) (mapv keywordize-keys x)
+    (sequential? x) (mapv keywordize-keys x)
+    :else x))
+
+(defn- normalize-ball
+  "Aliases canônicos → IDs de inventário. Inclui super/great (UI 'Super Bola')."
+  [raw]
+  (let [chave (-> (or raw "")
+                  str/trim
+                  str/lower-case
+                  (str/replace #"\s+" "-"))
+        mapped (get {"1" "pokebola" "normal" "pokebola" "poke" "pokebola"
+                     "pokebola" "pokebola" "pokébola" "pokebola"
+                     "poke-ball" "pokebola" "pokeball" "pokebola"
+                     "2" "grande-bola" "grande" "grande-bola"
+                     "grande-bola" "grande-bola"
+                     "super" "grande-bola" "super-bola" "grande-bola"
+                     "superbola" "grande-bola" "great" "grande-bola"
+                     "great-ball" "grande-bola" "greatball" "grande-bola"
+                     "3" "ultra-bola" "ultra" "ultra-bola"
+                     "ultra-bola" "ultra-bola"
+                     "ultra-ball" "ultra-bola" "ultraball" "ultra-bola"}
+                    chave)]
+    (or mapped
+        (when (contains? capture/bolas chave) chave))))
+
+(defn- merge-capture-receipt
+  "Idempotência: recibo duplicado → campos de captura a partir do summary."
+  [result]
+  (if (and (:duplicate result) (map? (:summary result)))
+    (merge result (:summary result) {:duplicate true})
+    result))
+
+(defn- public-trainer-level-ups
+  "Propaga eventos de level-up já persistidos (enrich 036) para o DTO Node.
+   Sem isso o presenter omite a mensagem mesmo com PE/nível creditados."
+  [result]
+  (when-let [events (seq (:trainer-level-ups result))]
+    (mapv #(dissoc % :save-key :operation-id) events)))
+
+(defn attempt-encounter-capture!
+  "POST captura no encontro ativo. Exige save-id + fence + operation-id."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 bola battle-id roll fuga-roll frambo]
+          :as req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [ball (normalize-ball bola)]
+    (when-not ball
+      (throw (err/error :unknown_ball {:bola bola})))
+    (let [writer-ctx {:chat-id chat-id
+                      :player-id player-id
+                      :save-id save-id
+                      :fence-generation (long fence-generation)}
+          raw (capture-app/attempt-encounter-capture!
+               store writer-ctx
+               (cond-> {:operation-id (str operation-id)
+                        :bola ball}
+                 battle-id (assoc :battle-id battle-id)
+                 (true? frambo) (assoc :frambo true)
+                 (some? roll) (assoc :roll (long roll))
+                 (some? fuga-roll) (assoc :fuga-roll (long fuga-roll))))
+          result (merge-capture-receipt raw)
+          save (ports/get-save store chat-id player-id save-id)
+          inv (ports/list-inventory store chat-id player-id save-id)
+          level-ups (public-trainer-level-ups result)]
+      ;; Chaves sem `?` — o encoder JSON camelCase preservaria o sufixo.
+      (cond-> {:operation-id (:operation-id result)
+               :duplicate (boolean (:duplicate result))
+               :channel (:channel result "gameplay")
+               :payload-hash (:payload-hash result)
+               :save-id save-id
+               :fence-generation (long fence-generation)
+               :battle-id (:battle-id result)
+               :capturou (boolean (:capturou? result))
+               :fugiu (boolean (:fugiu? result))
+               :chance (:chance result)
+               :chance-base (:chance-base result)
+               :frambo (boolean (:frambo result))
+               :chances (:chances result)
+               :tentativa (:tentativa result)
+               :bola (:bola result ball)
+               :indice (:indice result)
+               :id-pokemon (:id-pokemon result)
+               :recompensa (:recompensa result)
+               :subida (:subida result)
+               :registro (:registro result)
+               :coins (:coins save 0)
+               :sequencia-capturas (:sequencia-capturas save 0)
+               :collection-count (count (ports/list-collection store chat-id player-id save-id))
+               :inventory inv
+               :encounter (when-let [enc (:encounter result)]
+                            {:battle-id (:battle-id enc)
+                             :aguardando-captura (boolean (:aguardando-captura? enc))
+                             :phase (:phase enc)
+                             :tentativas-captura (:tentativas-captura enc 0)
+                             :bioma (:bioma enc)
+                             :area (when-let [a (mundo/obter-area (str (:bioma enc)))]
+                                     (hunt/area-dto a))
+                             :pokemon-o (select-keys (get-in enc [:pokemons :o] {})
+                                                     [:nome :species :raridade :hp
+                                                      :imagem :imagem-shiny :altura
+                                                      :tipos :shiny :shiny?])})}
+        (seq level-ups) (assoc :trainer-level-ups level-ups)))))
+
+(defn encounter-release!
+  "POST liberar selvagem após vitória (sem captura)."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id battle-id]
+          :as _req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        raw (capture-app/encounter-release!
+             store writer-ctx
+             (cond-> {:operation-id (str operation-id)}
+               battle-id (assoc :battle-id battle-id)))
+        result (merge-capture-receipt raw)
+        save (ports/get-save store chat-id player-id save-id)]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :channel (:channel result "gameplay")
+     :payload-hash (:payload-hash result)
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle-id (:battle-id result)
+     :liberou (boolean (:liberou? result))
+     :capturou false
+     :fugiu false
+     :sequencia-capturas (:sequencia-capturas save 0)
+     :sequencia-antes (:sequencia-antes result 0)
+     :coins (:coins save 0)
+     :encounter (when-let [enc (:encounter result)]
+                  {:battle-id (:battle-id enc)
+                   :aguardando-captura false
+                   :phase (:phase enc)
+                   :bioma (:bioma enc)})}))
+
+(defn start-wild-battle!
+  "Harness/e2e: inicia batalha selvagem no save congelado (dev)."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id]
+          :as req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        normalized (-> (dissoc req :fence-generation)
+                       (update :pokemon-x keywordize-keys)
+                       (update :pokemon-o keywordize-keys)
+                       (assoc :operation-id (str operation-id)))
+        result (battle-app/start-wild-battle! store writer-ctx normalized)]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :battle (:battle result)
+     :battle-id (get-in result [:battle :battle-id])
+     :save-id save-id
+     :fence-generation (long fence-generation)}))
+
+(defn start-hunt!
+  "Inicia caça com candidatos já buscados na PokeAPI (Node).
+  `allow-test-rng` controla se shinyRoll do body é honrado."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 area-id tipos-encontro surto? poder-alvo candidates
+                 shiny-roll clima-id agora-ms allow-test-rng battle-id]
+          :as req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (when (or (str/blank? (str area-id)) (empty? tipos-encontro) (nil? poder-alvo))
+    (throw (err/error :invalid_query
+                      {:required ["areaId" "tiposEncontro" "poderAlvo" "candidates"]})))
+  (when (empty? candidates)
+    (throw (err/error :hunt_no_candidates {})))
+  (let [cands (mapv keywordize-keys candidates)
+        writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        result (hunt-app/start-hunt!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :area-id (str area-id)
+                         :tipos-encontro tipos-encontro
+                         :surto? (boolean surto?)
+                         :poder-alvo (long poder-alvo)
+                         :candidates cands
+                         :clima-id clima-id
+                         :agora-ms agora-ms}
+                  battle-id (assoc :battle-id battle-id)
+                  (and allow-test-rng (some? shiny-roll))
+                  (assoc :shiny-roll (long shiny-roll))))
+        battle (:battle result)
+        selvagem (:selvagem result)]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :battle-id (:battle-id result)
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :somente-batalha (boolean (:somente-batalha? result))
+     :surto (boolean (:surto? result))
+     :area-id (:area-id result)
+     :area (when-let [a (mundo/obter-area (str (:area-id result)))]
+             (hunt/area-dto a))
+     :selvagem (present-pokemon selvagem (get-in battle [:hp :o]))
+     :battle (present-battle battle)}))
+
+(defn confirm-battle-turn!
+  "Harness/e2e: confirma turno (injeta rng para testes)."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id]
+          :as req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        normalized (-> (dissoc req :fence-generation)
+                       (update :rng keywordize-keys)
+                       (assoc :operation-id (str operation-id))
+                       (cond-> (string? (:action req))
+                         (update :action keyword)))
+        result (battle-app/confirm-turn! store writer-ctx normalized)
+        battle (:battle result)
+        gym-res (:gym-resolve result)
+        presented (present-battle battle)
+        aguardando? (boolean (:aguardando-captura? battle))
+        level-ups (public-trainer-level-ups result)
+        ;; Inventário no DTO de vitória → Node mostra menu de bolas como no master
+        ;; (sem etapa extra de "carimbada"). Sem mutação; leitura do save ativo.
+        inv (when (and aguardando? chat-id player-id save-id)
+              (ports/list-inventory store chat-id player-id save-id))
+        ;; Chances canônicas do motor — Node não recalcula %.
+        chances (when aguardando?
+                  (capture/chances-painel
+                   (long (or (:chance-base-captura battle) 0))
+                   (boolean (:frambo-preparada battle))))]
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :battle (assoc presented
+                            :pokemons {:x (get-in battle [:pokemons :x])
+                                       :o (get-in battle [:pokemons :o])})
+             :battle-id (:battle-id battle)
+             :aguardando-captura aguardando?
+             :outcome (:outcome battle)
+             :chance-base-captura (:chance-base-captura battle)
+             :tentativas-captura (long (:tentativas-captura battle 0))
+             :somente-batalha (boolean (:somente-batalha? battle))
+             :reward (when-let [rew (:reward result)]
+                       (cond-> {:pokemon-xp (long (:pokemon-xp rew 0))
+                                :pe (long (:pe rew 0))
+                                :coins (long (:coins rew 0))}
+                         (pos? (:exp-share-count rew 0))
+                         (assoc :exp-share-count (:exp-share-count rew))
+                         (some? (:bonus-xp rew))
+                         (assoc :bonus-xp (:bonus-xp rew))
+                         (true? (:battle-reward? rew))
+                         (assoc :battle-reward true)))
+             :gym-resolve (when gym-res
+                            (let [perm (:permanencia gym-res {})
+                                  pokes (or (:pokemon-rewards gym-res) [])]
+                              (cond-> {:venceu (boolean (:venceu? gym-res))
+                                       :premio (when-let [p (:premio gym-res)] (name p))
+                                       :occupied (boolean (:occupied? gym-res))
+                                       :pe-delta (:pe-delta gym-res)
+                                       :pe-batalha (:pe-batalha gym-res)
+                                       :pe-nocautes (:pe-nocautes gym-res)
+                                       :pe-conquista (:pe-conquista gym-res)
+                                       :pe-defesa (:pe-defesa gym-res)
+                                       :conquistou (boolean (:conquistou? gym-res))
+                                       :defendeu (boolean (:defendeu? gym-res))
+                                       :nocautes-total (long (:nocautes-total gym-res 0))
+                                       :pokemon-rewards
+                                       (mapv (fn [r]
+                                               {:idx (:idx r)
+                                                :nome (:nome r)
+                                                :nocautes (long (:nocautes r 0))
+                                                :atividade (long (:atividade r 0))
+                                                :xp-oficial (long (:xp-oficial r 0))
+                                                :subidas (long (:subidas r 0))
+                                                :nivel-final (long (:nivel-final r 1))})
+                                             pokes)
+                                       :reward (:reward gym-res)}
+                                (seq perm)
+                                (assoc :permanencia
+                                       {:moedas (long (:moedas-permanencia perm 0))
+                                        :bruta (long (:permanencia-bruta perm 0))
+                                        :xp (long (:xp-permanencia perm 0))}))))
+             :save-id save-id
+             :fence-generation (long fence-generation)}
+      (seq level-ups) (assoc :trainer-level-ups level-ups)
+      (some? inv) (assoc :inventory inv)
+      (some? chances) (assoc :chances chances))))
+
+(def ^:private heal-by-item
+  "Pontos de motivação derivados do item — nunca do cliente."
+  {"pocao" {:item-id "pocao" :pontos 40 :label "Poção de Vida"}
+   "fruta" {:item-id "fruta" :pontos 20 :label "Fruta Frambo"}
+   "fruta-dourada" {:item-id "fruta-dourada" :pontos 100 :label "Fruta Dourada"}})
+
+(defn set-gym-team!
+  "Salva escalação 3 índices no save congelado."
+  [store {:keys [chat-id player-id save-id fence-generation indices]
+          :as _req}]
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [idxs (mapv long (or indices []))
+        writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        result (gym-app/set-gym-team! store writer-ctx idxs)]
+    {:save-id save-id
+     :fence-generation (long fence-generation)
+     :indices (:time-ginasio result idxs)
+     :time-ginasio (:time-ginasio result idxs)}))
+
+(defn- named-team-writer
+  [{:keys [chat-id player-id save-id fence-generation]}]
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context {})))
+  {:chat-id chat-id :player-id player-id :save-id save-id
+   :fence-generation (long fence-generation)})
+
+(defn list-named-teams [store chat-id player-id save-id]
+  {:teams (ports/list-named-teams store chat-id player-id save-id)
+   :chat-id chat-id :player-id player-id :save-id save-id})
+
+(defn save-named-team! [store req]
+  (let [writer (named-team-writer req)]
+    (ports/save-named-team! store writer (select-keys req [:operation-id :name :indices :pokemon-ids]))))
+
+(defn use-named-team! [store req]
+  (let [writer (named-team-writer req)]
+    (ports/use-named-team! store writer (select-keys req [:operation-id :name :destination]))))
+
+(defn delete-named-team! [store req]
+  (let [writer (named-team-writer req)]
+    (ports/delete-named-team! store writer (select-keys req [:operation-id :name]))))
+
+(defn select-league! [store req]
+  (let [writer (named-team-writer req)]
+    (ports/select-league! store writer (select-keys req [:operation-id :league-id]))))
+
+(defn start-gym-challenge!
+  "Inicia desafio 3×3. NPC: candidates da PokeAPI; ocupado: time do slot."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 gym-id candidates nome agora-ms dia battle-id]
+          :as _req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (when (str/blank? (str gym-id))
+    (throw (err/error :invalid_query {:required ["gymId"]})))
+  (when-not (gym/challenges-enabled?)
+    (throw (err/error :gym_challenges_disabled
+                      {:message "desafios de ginásio temporariamente suspensos"})))
+  (let [writer-ctx {:chat-id chat-id
+                    :player-id player-id
+                    :save-id save-id
+                    :fence-generation (long fence-generation)}
+        cands (mapv keywordize-keys (or candidates []))
+        result (gym-app/start-challenge!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :gym-id (str gym-id)
+                         :candidates cands
+                         :nome (or nome player-id)}
+                  battle-id (assoc :battle-id battle-id)
+                  (some? agora-ms) (assoc :agora agora-ms)
+                  (some? dia) (assoc :dia dia)))
+        battle (:battle result)
+        px (get-in battle [:pokemons :x])
+        po (get-in battle [:pokemons :o])]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle-id (:battle-id result)
+     :gym-id (:gym-id result)
+     :battle {:battle-id (:battle-id battle)
+              :kind "gym"
+              :gym-id (:gym-id battle)
+              :gym-nome (:gym-nome battle)
+              :lider-nome (:lider-nome battle)
+              :active (boolean (:active? battle))
+              :hp (:hp battle)
+              :phase (:phase battle)
+              :turn-index (:turn-index battle 0)
+              :reservas-x (count (get-in battle [:reservas :x] []))
+              :reservas-o (count (get-in battle [:reservas :o] []))
+              :pokemon-x (when px
+                           (select-keys px [:nome :species :hp :hp-atual :nivel :imagem
+                                            :imagem-shiny :altura :tipos :golpes
+                                            :status :shiny :shiny?]))
+              :pokemon-o (when po
+                           (select-keys po [:nome :species :hp :hp-atual :nivel :imagem
+                                            :imagem-shiny :altura :tipos :golpes
+                                            :status :shiny :shiny?
+                                            :motivacao-ginasio]))}}))
+
+(defn heal-gym-motivation!
+  "Recupera motivação do líder. `item` → pontos no servidor."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 gym-id indice item agora-ms]
+          :as _req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  (let [spec (get heal-by-item (str/lower-case (str (or item ""))))]
+    (when-not spec
+      (throw (err/error :unknown_heal_item
+                        {:item item :allowed (keys heal-by-item)})))
+    (when-not (and (integer? indice) (<= 0 (long indice) 2))
+      (throw (err/error :invalid_motivation_index {:idx indice})))
+    (let [writer-ctx {:chat-id chat-id
+                      :player-id player-id
+                      :save-id save-id
+                      :fence-generation (long fence-generation)}
+          result (gym-app/heal-motivation!
+                  store writer-ctx
+                  {:operation-id (str operation-id)
+                   :gym-id (str gym-id)
+                   :indice (long indice)
+                   :item-id (:item-id spec)
+                   :pontos (:pontos spec)
+                   :agora (or agora-ms (System/currentTimeMillis))})]
+      {:operation-id (:operation-id result)
+       :duplicate (boolean (:duplicate result))
+       :save-id save-id
+       :fence-generation (long fence-generation)
+       :gym-id (str gym-id)
+       :indice (long indice)
+       :item (:item-id spec)
+       :label (:label spec)
+       :antes (:antes result)
+       :depois (:depois result)})))
+
+(defn- raid-summary
+  "Resumo leve para mutações. Inclui bloco de vez (Fase 12) sem IDs crús
+  como nome — usa :nome do participante canônico."
+  [raid]
+  (when raid
+    (let [parts (:participantes raid {})
+          vez (:vez raid)
+          vp (when vez (get parts vez))
+          vivos (when (= "combate" (str (:fase raid)))
+                  (filterv #(pos? (get-in parts [% :hp] 0)) (:ordem raid [])))
+          proxima (when (and vez (seq vivos))
+                    (first (concat (rest (drop-while #(not= vez %) vivos))
+                                   (take-while #(not= vez %) vivos))))
+          poke (:pokemon vp)]
+      {:raid-id (:raid-id raid)
+       :fase (:fase raid)
+       :ginasio (:ginasio raid)
+       :nome-ginasio (:nome-ginasio raid)
+       :nivel-ginasio (:nivel-ginasio raid)
+       :liga (:liga raid)
+       :hp-chefe (:hp-chefe raid)
+       :hp-max (:hp-max raid)
+       :vez vez
+       :vez-nome (:nome vp)
+       :vez-hp (:hp vp)
+       :vez-valida (boolean (raid-domain/vez-valida? raid))
+       ;; Mesmo DTO canônico do encounter (golpes normalizados + raridade + sprites).
+       :vez-pokemon (present-pokemon poke (:hp vp))
+       :proxima-vez proxima
+       :proxima-vez-nome (when proxima (get-in parts [proxima :nome]))
+       :turn-index (:turn-index raid 0)
+       :ordem (:ordem raid [])
+       :n-participantes (count (:ordem raid []))
+       :participantes
+       (mapv (fn [pid]
+               (let [p (get parts pid)
+                     poke (:pokemon p)]
+                 (cond-> {:player-id pid
+                          :nome (:nome p)
+                          :hp (:hp p)
+                          :dano (:dano p 0)
+                          :collection-index (:collection-index p)}
+                   poke (assoc :pokemon
+                               (select-keys poke
+                                            [:nome :species :nivel :hp-atual])))))
+             (:ordem raid []))
+       :chefe (when-let [c (:chefe raid)]
+                (when (or (:nome c) (:species c) (get c "nome") (get c "species"))
+                  (present-pokemon c (or (:hp-chefe raid) (:hp c)))))
+       :expira (:expira raid)
+       :captura-expira (:captura-expira raid)
+       :rewards-paid (boolean (:rewards-paid? raid))})))
+
+(defn- require-writer!
+  [{:keys [chat-id player-id save-id fence-generation operation-id]}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (when-not (and chat-id player-id save-id (integer? fence-generation))
+    (throw (err/error :missing_writer_context
+                      {:need [:chat-id :player-id :save-id :fence-generation]})))
+  (model/validate-save-slot! save-id)
+  {:chat-id chat-id
+   :player-id player-id
+   :save-id save-id
+   :fence-generation (long fence-generation)})
+
+(defn open-raid!
+  "Abre lobby. Sem chefe explícito, sorteia no tema e nível do NPC."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id ginasio nome-ginasio nivel-ginasio liga chefe agora-ms
+                 recent-species rng]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        derived (when (and ginasio (or (nil? chefe) (empty? chefe)))
+                  (raid-boss/select-boss-for-ginasio
+                   ginasio
+                   (cond-> {}
+                     (seq recent-species) (assoc :recent-species recent-species)
+                     rng (assoc :rng rng))))
+        chefe-m (keywordize-keys (or (when (seq chefe) chefe) (:chefe derived) {}))
+        _ (when-not (seq (str (or (:nome chefe-m) "")))
+            (throw (err/error :raid_config_invalid {:need :chefe})))
+        ginasio* (str (or (:ginasio derived) ginasio))
+        result (raid-app/open-raid!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :raid-id (or raid-id (str operation-id))
+                 :ginasio ginasio*
+                 :nome-ginasio (or nome-ginasio (:nome-ginasio derived) ginasio*)
+                 :nivel-ginasio (long (or nivel-ginasio (:nivel-ginasio derived) 1))
+                 :liga (or liga (:liga derived) "iniciante")
+                 :chefe chefe-m
+                 :agora (or agora-ms (System/currentTimeMillis))})
+        raid (or (:raid result)
+                 (when-let [rid (get-in result [:summary :raid-id])]
+                   (raid-app/get-raid store rid)))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :raid (raid-summary raid)
+     :boss-categoria (get-in raid [:chefe :raridade])
+     :catalog-version (:catalog-version derived)}))
+
+(defn cancel-raid!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        agora (or agora-ms (System/currentTimeMillis))
+        _ (raid-app/expire-lobby! store chat-id agora)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        result (raid-app/cancel-raid!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :agora agora})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :raid (raid-summary (:raid result))}))
+
+(defn- raid-apto?
+  [raid p]
+  (and p
+       (pos? (long (:hp-atual p 0)))
+       (some (fn [g]
+               (let [c (or (:classe g) (get g "classe"))
+                     poder (long (or (:poder g) (get g "poder") 0))]
+                 (and (contains? #{:fisico :especial "fisico" "especial"} c)
+                      (pos? poder))))
+             (or (:golpes p) []))))
+
+(defn- pokemon-by-collection-index
+  "Resolve o mon do jogador por `:collection-index` canônico.
+   Fallback `nth` cobre ativo-index legado (= posição na coleção ordenada)."
+  [colecao idx]
+  (let [idx (long idx)]
+    (or (some #(when (= (long (:collection-index % -1)) idx) %) colecao)
+        (when (and (<= 0 idx) (< idx (count colecao)))
+          (nth colecao idx)))))
+
+(defn- raid-auto-score
+  "Critérios reais de combate disponíveis: soma de atributos + melhor
+   poder ofensivo. Sem type chart no domínio de raide."
+  [p]
+  (let [stats (reduce + 0 (map #(long (or (get p %) 0))
+                               [:hp-atual :ataque :defesa
+                                :atq-esp :def-esp :veloc]))
+        max-poder (reduce max 0
+                          (map #(long (or (:poder %) (get % "poder") 0))
+                               (or (:golpes p) [])))]
+    (+ stats (long max-poder))))
+
+(defn- raid-auto-index
+  "Melhor mon *elegível deste jogador* — nunca compartilha seleção."
+  [raid colecao]
+  (let [aptos (filterv #(raid-apto? raid %) colecao)]
+    (when-not (seq aptos)
+      (throw (err/error :invalid_raid_pokemon {:auto? true})))
+    (let [best (apply max-key raid-auto-score aptos)
+          ci (:collection-index best)]
+      (if (some? ci)
+        (long ci)
+        (long (or (first (keep-indexed
+                          (fn [i p] (when (identical? p best) i))
+                          colecao))
+                  0))))))
+
+(defn- raid-inapto-reason
+  [raid p]
+  (cond
+    (nil? p) :not_found
+    (not (pos? (long (:hp-atual p 0)))) :hp
+    :else :sem_golpe_ofensivo))
+
+(defn join-raid!
+  "Inscrição *por jogador/save*. Modes:
+   - `:auto?` → melhor apto da coleção deste jogador
+   - `:use-active?` → Pokémon ativo; se inapto → erro (sem fallback silencioso)
+   - `:collection-index` → slot explícito
+   No lobby, reentrar atualiza só o snapshot deste `player-id`."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id collection-index nome agora-ms auto? use-active?]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {:raid-id raid-id})))
+        colecao (ports/list-collection store chat-id player-id save-id)
+        save-m (ports/get-save store chat-id player-id save-id)
+        idx (cond
+              auto? (raid-auto-index raid colecao)
+              use-active?
+              (let [ai (long (:ativo-index save-m 0))
+                    p (pokemon-by-collection-index colecao ai)]
+                (when-not (raid-apto? raid p)
+                  (throw (err/error :invalid_raid_pokemon
+                                    {:use-active? true
+                                     :ativo-index ai
+                                     :reason (raid-inapto-reason raid p)})))
+                (long (:collection-index p ai)))
+              (some? collection-index) (long collection-index)
+              :else (throw (err/error :invalid_query
+                                      {:required ["collectionIndex|auto|useActive"]})))
+        result (raid-app/join-raid!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :collection-index (long idx)
+                 :nome (or nome player-id)
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :refreshed (boolean (:refreshed result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :raid (raid-summary (:raid result))
+     :collection-index (long idx)
+     :mode (cond auto? "auto" use-active? "ativo" :else "index")
+     :participant (let [part (:participant result)
+                        poke (:pokemon part)]
+                    (cond-> (select-keys part
+                                         [:nome :hp :dano :collection-index])
+                      poke (assoc :pokemon (select-keys poke
+                                                        [:nome :species :nivel]))))}))
+
+(defn leave-raid!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        result (raid-app/leave-raid!
+                store writer-ctx
+                ;; payload-hash de leave reusa raid-join (índice irrelevante).
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :collection-index 0
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :raid (raid-summary (:raid result))}))
+
+(defn start-raid!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        result (raid-app/start-raid!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :agora (or agora-ms (System/currentTimeMillis))})
+        summary (raid-summary (:raid result))
+        pid (:player-id writer-ctx)
+        ;; Enriquecer sua-vez para o formatRaidTurnBlock mostrar "É a sua vez"
+        ;; e golpes numerados no primeiro turno após !pk raid iniciar.
+        enriched (when summary
+                   (assoc summary
+                          :sua-vez (boolean (and pid (= pid (:vez summary))))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :raid enriched}))
+
+(defn raid-attack!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id expected-turn-index move-index agora-ms rng]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        result (raid-app/attack!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :raid-id (:raid-id raid)
+                         :expected-turn-index (long (or expected-turn-index
+                                                        (:turn-index raid 0)))
+                         :move-index (long (or move-index 0))
+                         :agora (or agora-ms (System/currentTimeMillis))}
+                  (map? rng) (assoc :rng (keywordize-keys rng))))
+        level-ups (public-trainer-level-ups result)]
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :player-id player-id
+             :dano (:dano result)
+             :multiplicador (:multiplicador result)
+             :base (:base result)
+             :base-variada (:base-variada result)
+             :variacao-pct (:variacao-pct result)
+             :hp-chefe-antes (:hp-chefe-antes result)
+             :revide (:revide result)
+             :venceu (boolean (:venceu? result))
+             :derrota (boolean (:derrota? result))
+             :trocou (boolean (:trocou? result))
+             :eliminado (boolean (:eliminado? result))
+             :autodesmaio (boolean (:autodesmaio? result))
+             :hp-ativo (:hp-ativo result)
+             :pokemon-atacante (when-let [p (:pokemon-atacante result)]
+                                 (select-keys p [:nome :species]))
+             :pokemon-ativo (when-let [p (:pokemon-ativo result)]
+                              (select-keys p [:nome :species]))
+             :golpe (when-let [g (:golpe result)]
+                      {:slug (or (:slug g) (get g "slug"))
+                       :nome-exibicao (or (:nome-exibicao g) (get g "nome-exibicao")
+                                          (get g "nomeExibicao"))
+                       :tipo (or (:tipo g) (get g "tipo"))
+                       :poder (or (:poder g) (get g "poder"))
+                       :classe (or (:classe g) (get g "classe"))})
+             :rewards (mapv (fn [rw]
+                              (cond-> {:player-id (:player-id rw)
+                                       :moedas (:moedas rw)
+                                       :pe (:pe rw)}
+                                (some? (:xp-pokemon rw))
+                                (assoc :xp-pokemon (:xp-pokemon rw))
+                                (:pokemon-id rw)
+                                (assoc :pokemon-id (:pokemon-id rw))
+                                (:outcome rw)
+                                (assoc :outcome (name (:outcome rw)))))
+                            (or (:rewards result) []))
+             :raid (raid-summary (:raid result))}
+      (seq level-ups) (assoc :trainer-level-ups level-ups))))
+
+(defn raid-capture!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id bola roll frambo agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        bola-id (or (normalize-ball bola)
+                    (throw (err/error :unknown_ball {:bola bola})))
+        result (raid-app/capture!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :raid-id (:raid-id raid)
+                         :bola bola-id
+                         :agora (or agora-ms (System/currentTimeMillis))}
+                  (some? roll) (assoc :roll (long roll))
+                  (boolean frambo) (assoc :frambo true)))
+        summary (or (:summary result) {})
+        sucesso? (or (:sucesso? result) (:sucesso? summary))
+        level-ups (public-trainer-level-ups result)]
+    (cond-> {:operation-id (or (:operation-id result) operation-id)
+             :duplicate (boolean (:duplicate result))
+             :capturou (boolean sucesso?)
+             :chance (or (:chance result) (:chance summary))
+             :chance-base (or (:chance-base result) (:chance-base summary))
+             :roll (or (:roll result) (:roll summary))
+             :frambo (boolean (or (:frambo? result) (:frambo? summary)))
+             :tentativas (or (:tentativas result) (:tentativas summary))
+             :bola bola-id
+             :raid-id (:raid-id raid)
+             :chefe (when-let [c (:chefe raid)]
+                      {:nome (or (:nome c) (get c "nome"))
+                       :raridade (or (:raridade c) (get c "raridade"))})
+             :save-id save-id
+             :fence-generation (long fence-generation)}
+      (seq level-ups) (assoc :trainer-level-ups level-ups))))
+
+(defn raid-frambo-prepare!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        result (raid-app/prepare-frambo!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :agora (or agora-ms (System/currentTimeMillis))})
+        summary (or (:summary result) {})]
+    {:operation-id (or (:operation-id result) operation-id)
+     :duplicate (boolean (:duplicate result))
+     :frambo-preparada (boolean (or (:frambo-preparada result)
+                                    (:frambo summary)
+                                    (:duplicate result)))
+     :tentativas (or (:tentativas result) (:tentativas summary) 0)
+     :raid-id (:raid-id raid)
+     :save-id save-id
+     :fence-generation (long fence-generation)}))
+
+(defn encounter-frambo-prepare!
+  "Prepara Frambo na caça selvagem (estado separado da raide)."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 battle-id]
+          :as req}]
+  (when (or (nil? operation-id) (empty? (str operation-id)))
+    (throw (err/error :missing_operation_id {})))
+  (let [writer-ctx (require-writer! req)
+        result (ports/encounter-frambo-prepare!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)}
+                  battle-id (assoc :battle-id battle-id)))
+        summary (or (:summary result) result)]
+    {:operation-id (or (:operation-id result) operation-id)
+     :duplicate (boolean (:duplicate result))
+     :frambo-preparada (boolean (or (:frambo-preparada summary)
+                                    (:frambo-preparada result)
+                                    (:duplicate result)))
+     :chance-base (:chance-base summary)
+     :chances (:chances summary)
+     :frambo (:frambo summary)
+     :battle-id (:battle-id summary)
+     :save-id save-id
+     :fence-generation (long fence-generation)}))
+
+(defn- egg-summary
+  [egg]
+  (when egg
+    {:egg-id (:egg-id egg)
+     :category (name (or (:category egg) :comum))
+     :state (name (or (:state egg) :inventory))
+     :species (:species egg)
+     :due-at (:due-at egg)
+     :save-id (:save-id egg)
+     :fence-generation (:fence-generation egg)
+     :incubator-id (:incubator-id egg)
+     :points (:points egg 0)
+     :points-goal (:points-goal egg 0)}))
+
+(defn joy-send!
+  "Envia um ferido (índice 0-based da coleção) à enfermaria."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (joy-app/send!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :idx (long idx)
+                 :agora (or agora-ms (System/currentTimeMillis))})
+        entrada (:entrada result)]
+    (let [agora (long (or agora-ms (System/currentTimeMillis)))
+          pronto (long (or (:pronto-em result)
+                           (:pronto-em entrada)
+                           0))]
+      {:operation-id (:operation-id result)
+       :duplicate (boolean (:duplicate result))
+       :save-id save-id
+       :fence-generation (long fence-generation)
+       :pronto-em pronto
+       :restante-ms (max 0 (- pronto agora))
+       :tempo-tratamento-segundos (joy/tempo-tratamento-segundos)
+       :bed-id (:bed-id entrada)
+       :pokemon (select-keys (or (:pokemon entrada) {})
+                             [:nome :species :nivel :hp :hp-atual :status
+                              :collection-index])})))
+
+(defn joy-collect!
+  "Recolhe todos os leitos prontos do save ativo."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (joy-app/collect!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :n (long (:n result 0))
+     :curados (mapv #(select-keys % [:nome :species :nivel :hp :hp-atual :status])
+                    (or (:curados result) []))}))
+
+(defn grant-egg!
+  "Harness/teste: concede ovo. Nunca pelo WhatsApp."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 egg-id category species agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        _ (adv/ensure-account! store chat-id player-id)
+        result (adv/grant-egg!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :egg-id (or egg-id (str operation-id))
+                 :category (or category :comum)
+                 :species (or species "Magikarp")
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :egg (egg-summary (:egg result))}))
+
+(defn incubate-egg!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 egg-id incubator-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        _ (adv/ensure-account! store chat-id player-id)
+        result (adv/incubate!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :egg-id (str egg-id)
+                 :incubator-id (or incubator-id "permanente")
+                 :agora (or agora-ms (System/currentTimeMillis))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :egg (egg-summary (:egg result))}))
+
+(defn hatch-egg!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 egg-id hatch-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (adv/hatch!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :egg-id (str egg-id)
+                         :agora (or agora-ms (System/currentTimeMillis))}
+                  hatch-id (assoc :hatch-id (str hatch-id))))]
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :save-id save-id
+             :fence-generation (long fence-generation)
+             :pokemon-id (:pokemon-id result)
+             :egg (egg-summary (:egg result))
+             :registro (select-keys (or (:registro result) {})
+                                    [:nome :species :nivel :hp :hp-atual :shiny :shiny? :ivs])}
+      (:collection-full result) (assoc :collection-full true :pending true)
+      (:pending result) (assoc :pending true))))
+
+(defn buy-item!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 item-id qty]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        id (shop-domain/normalizar-item item-id)
+        result (shop-app/buy!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :item-id id
+                 :qty (long (or qty 1))})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :item-id (:item-id result)
+     :nome (:nome result)
+     :emoji (:emoji result)
+     :preco (:preco result)
+     :coins (:coins-depois result)
+     :expansao (boolean (:expansao? result))
+     :expansao? (boolean (:expansao? result))
+     :expansao-tipo (:expansao-tipo result)
+     :expansoes-mochila-50 (:expansoes-mochila-50 result)
+     :expansoes-pokemon-50 (:expansoes-pokemon-50 result)}))
+
+(defn use-item!
+  "Usa poção/cura. Se item-id vazio e kind=curar, resolve pelo status do alvo."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 item-id idx kind]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        colecao (ports/list-collection store chat-id player-id save-id)
+        save (ports/get-save store chat-id player-id save-id)
+        idx* (long (or idx (:ativo-index save 0)))
+        poke (when (and (seq colecao) (<= 0 idx* (dec (count colecao))))
+               (nth colecao idx*))
+        id (cond
+             (and (seq (str item-id)) (not= "auto" (str item-id)))
+             (shop-domain/normalizar-item item-id)
+
+             (or (= "curar" (str kind)) (= "cura" (str kind)))
+             (or (shop-domain/cura-status-item (:status poke))
+                 (throw (err/error :no_status_to_cure
+                                   {:idx idx* :status (:status poke)})))
+
+             :else
+             (throw (err/error :missing_item_id {})))
+        result (shop-app/use-item!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :item-id id
+                 :idx idx*})]
+    (merge {:operation-id (:operation-id result)
+            :duplicate (boolean (:duplicate result))
+            :save-id save-id
+            :fence-generation (long fence-generation)
+            :item-id (:item-id result)
+            :kind (:kind result)
+            :idx (:idx result)
+            :pokemon (:pokemon result)}
+           (select-keys result [:hp-antes :hp-depois :hp-max :status-antes]))))
+
+(defn- pokemon-summary
+  [p]
+  (when p
+    (select-keys p [:id-pokemon :nome :species :nivel :hp :hp-atual :tipos
+                    :golpes :ofertas-golpes :golpes-oferecidos :historico-golpes
+                    :golpes-removidos :imagem :imagem-shiny :shiny :raridade
+                    :habilidade :ataque :defesa :atq-esp :def-esp :veloc])))
+
+(defn set-active-pokemon!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id idx]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (active-app/set-active!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :idx (long idx)})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :ativo-index (:ativo-index result idx)
+     :pokemon (pokemon-summary (:pokemon result))}))
+
+(defn set-favorite-pokemon!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id idx clear?]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (fav-app/set-favorite!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :clear? (boolean clear?)}
+                  (and (not clear?) (some? idx)) (assoc :idx (long idx))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :clear (boolean (:clear? result))
+     :ativado (boolean (:ativado? result))
+     :favorito (:favorito result)
+     :pokemon (pokemon-summary (:pokemon result))}))
+
+(defn evolve-pokemon!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx item-id dados]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        dados* (keywordize-keys (or dados {}))
+        result (evo-app/evolve!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :idx (long idx)
+                         :dados dados*}
+                  item-id (assoc :item-id (str item-id))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :item-id item-id
+     :pokemon (pokemon-summary (:registro result))}))
+
+(defn learn-move!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx golpe slot oferta? consume-item-id id-pokemon
+                 expected-slot-slug catalog-version]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        golpe* (keywordize-keys (or golpe {}))
+        result (moves-app/learn-move!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :golpe golpe*
+                         :oferta? (boolean oferta?)}
+                  (some? idx) (assoc :idx (long idx))
+                  (some? slot) (assoc :slot (long slot))
+                  consume-item-id (assoc :consume-item-id (str consume-item-id))
+                  (not (str/blank? (str id-pokemon)))
+                  (assoc :id-pokemon (str id-pokemon))
+                  (not (str/blank? (str expected-slot-slug)))
+                  (assoc :expected-slot-slug (str expected-slot-slug))
+                  (not (str/blank? (str catalog-version)))
+                  (assoc :catalog-version (str catalog-version))))
+        registro (or (:registro result)
+                     (when (map? (:summary result))
+                       (:registro (:summary result))))]
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :save-id save-id
+             :fence-generation (long fence-generation)
+             :idx (or (:idx result) idx)
+             :pokemon (pokemon-summary registro)}
+      (or (:golpe-anterior result)
+          (get-in result [:summary :golpe-anterior]))
+      (assoc :golpe-anterior
+             (or (:golpe-anterior result)
+                 (get-in result [:summary :golpe-anterior])))
+      (or (:golpe-novo result)
+          (get-in result [:summary :golpe-novo]))
+      (assoc :golpe-novo
+             (or (:golpe-novo result)
+                 (get-in result [:summary :golpe-novo])))
+      (or (:consume-item-id result) consume-item-id
+          (get-in result [:summary :consume-item-id]))
+      (assoc :consume-item-id
+             (str (or (:consume-item-id result)
+                      (get-in result [:summary :consume-item-id])
+                      consume-item-id)))
+      (or (contains? result :item-qty-after)
+          (contains? (or (:summary result) {}) :item-qty-after))
+      (assoc :item-qty-after
+             (long (or (:item-qty-after result)
+                       (get-in result [:summary :item-qty-after])
+                       0)))
+      (or (:id-pokemon result) id-pokemon
+          (get-in result [:summary :id-pokemon]))
+      (assoc :id-pokemon
+             (str (or (:id-pokemon result)
+                      (get-in result [:summary :id-pokemon])
+                      id-pokemon)))
+      (or (:catalog-version result)
+          (get-in result [:summary :catalog-version])
+          catalog-version)
+      (assoc :catalog-version
+             (str (or (:catalog-version result)
+                      (get-in result [:summary :catalog-version])
+                      catalog-version))))))
+
+(defn forget-move!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx slot]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (moves-app/forget-move!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :idx (long idx)
+                 :slot (long slot)})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :removido (:removido result)
+     :pokemon (pokemon-summary (:registro result))}))
+
+(defn offer-move!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx golpe]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        golpe* (keywordize-keys (or golpe {}))
+        result (moves-app/offer-move!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :idx (long idx)
+                 :golpe golpe*})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :resultado (:resultado result)
+     :pokemon (pokemon-summary (:registro result))}))
+
+(defn refuse-offer!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id idx]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (moves-app/refuse-offer!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :idx (long idx)})]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :pokemon (pokemon-summary (:registro result))}))
+
+(defn relearn-move!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 idx slug slot]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (moves-app/relearn-move!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :idx (long idx)
+                         :slug (str slug)}
+                  (some? slot) (assoc :slot (long slot))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :idx (:idx result)
+     :slug (:slug result)
+     :preco (:preco result moves/preco-reaprender)
+     :coins-depois (:coins-depois result)
+     :pokemon (pokemon-summary (:registro result))}))
+
+(defn- present-pvp
+  ([battle] (present-pvp battle nil))
+  ([battle player-id]
+   (when battle
+     (let [battle (pvp-domain/normalize-battle-sides battle)
+           base (present-battle battle)
+           vez (pvp-domain/as-side (:vez battle))
+           side (when player-id (pvp-domain/side-of-player battle player-id))
+           waiting (pvp-domain/aguardando-substituicao-de battle)
+           must-switch? (boolean (and side waiting
+                                      (or (= waiting :both) (= waiting side))))]
+       (merge base
+              {:kind "pvp"
+               :pvp? true
+               :phase (name (:phase battle :waiting))
+               ;; Sem `?` no DTO — JSON camelCase precisa bater com Node (aguardando).
+               :aguardando (boolean (pvp-domain/aguardando? battle))
+               :aguardando-substituicao (when waiting (name waiting))
+               :last-faint (:last-faint battle)
+               :usados {:x (vec (sort (pvp-domain/usados battle :x)))
+                        :o (vec (sort (pvp-domain/usados battle :o)))}
+               :eliminados {:x (vec (sort (pvp-domain/eliminados battle :x)))
+                            :o (vec (sort (pvp-domain/eliminados battle :o)))}
+               :faixa-niveis (:faixa-niveis battle)
+               :desafio-expira-em (:desafio-expira-em battle)
+               :vez (when vez (name vez))
+               :trocas (when (= :active (:phase battle))
+                         {:x (pvp-domain/estado-troca battle :x)
+                          :o (pvp-domain/estado-troca battle :o)})
+               :jogadores {:x (pvp-domain/jogador battle :x)
+                           :o (pvp-domain/jogador battle :o)}
+               :nomes (let [n (or (:nomes battle) {})]
+                        {:x (or (get n :x) (get n "x"))
+                         :o (or (get n :o) (get n "o"))})
+               :outcome (when-let [o (:outcome battle)] (name o))
+               :sua-vez (boolean (or must-switch?
+                                     (and side vez (= side vez))))})))))
+
+(defn open-pvp!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 player-name agora]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        save (ports/get-save store chat-id player-id save-id)
+        colecao (ports/list-collection store chat-id player-id save-id)
+        idx (long (:ativo-index save 0))
+        poke (when (and (seq colecao) (< idx (count colecao))) (nth colecao idx))
+        _ (when-not poke (throw (err/error :no_active_pokemon {})))
+        result (pvp-app/open-challenge!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :collection-index idx
+                         :pokemon-id (:id-pokemon poke)
+                         :player-name player-name}
+                  (some? agora) (assoc :agora agora)))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle (present-pvp (:battle result))}))
+
+(defn accept-pvp!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 player-name battle-id agora first-turn-tie]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        save (ports/get-save store chat-id player-id save-id)
+        colecao (ports/list-collection store chat-id player-id save-id)
+        idx (long (:ativo-index save 0))
+        poke (when (and (seq colecao) (< idx (count colecao))) (nth colecao idx))
+        _ (when-not poke (throw (err/error :no_active_pokemon {})))
+        pending (or battle-id
+                    (:battle-id (pvp-app/active-in-chat store chat-id)))
+        result (pvp-app/accept-challenge!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :battle-id pending
+                         :collection-index idx
+                         :pokemon-id (:id-pokemon poke)
+                         :player-name player-name}
+                  (some? agora) (assoc :agora agora)
+                  first-turn-tie (assoc :first-turn-tie (keyword first-turn-tie))))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle (present-pvp (:battle result))}))
+
+(defn cancel-pvp!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id battle-id]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (pvp-app/cancel!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)}
+                  battle-id (assoc :battle-id battle-id)))]
+    {:operation-id (:operation-id result)
+     :duplicate (boolean (:duplicate result))
+     :save-id save-id
+     :fence-generation (long fence-generation)
+     :battle (present-pvp (:battle result))}))
+
+(defn confirm-pvp-turn!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 battle-id expected-turn-index action move-index item-id collection-index rng]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        battle (or (ports/get-battle store battle-id)
+                   (pvp-app/active-in-chat store chat-id))
+        _ (when-not battle (throw (err/error :battle_not_found {:battle-id battle-id})))
+        side (pvp-domain/side-of-player battle player-id)
+        _ (when-not side (throw (err/error :pvp_not_participant {})))
+        result (pvp-app/confirm-turn!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :battle-id (:battle-id battle)
+                         :expected-turn-index (long (or expected-turn-index
+                                                        (:turn-index battle 0)))
+                         :action (keyword action)
+                         :actor-side side}
+                  (some? move-index) (assoc :move-index (long move-index))
+                  item-id (assoc :item-id item-id)
+                  (some? collection-index) (assoc :collection-index (long collection-index))
+                  (map? rng) (assoc :rng (keywordize-keys rng))))
+        level-ups (public-trainer-level-ups result)]
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :save-id save-id
+             :fence-generation (long fence-generation)
+             :battle (present-pvp (:battle result))}
+      (:rewards result) (assoc :rewards (:rewards result))
+      (seq level-ups) (assoc :trainer-level-ups level-ups))))
+
+(defn active-pvp
+  [store chat-id]
+  (when-let [b (pvp-app/active-in-chat store chat-id)]
+    {:chat-id chat-id
+     :battle (present-pvp b)}))
+
+(defn leave-battle!
+  "!pk sair — abandono voluntário unificado (wild/gym/pvp/raid)."
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 battle-id raid-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        result (ports/leave-battle!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)}
+                  battle-id (assoc :battle-id battle-id)
+                  raid-id (assoc :raid-id raid-id)
+                  (some? agora-ms) (assoc :agora agora-ms)))
+        status (or (:status result) "left")
+        modality (:modality result)]
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :status status
+             :save-id save-id
+             :fence-generation (long fence-generation)}
+      modality (assoc :modality modality)
+      (some? (:opponent-notified result))
+      (assoc :opponent-notified (boolean (:opponent-notified result)))
+      (some? (:raid-ended result))
+      (assoc :raid-ended (boolean (:raid-ended result)))
+      (:battle result)
+      (assoc :battle (if (= "pvp" (str modality))
+                       (present-pvp (:battle result))
+                       (present-battle (:battle result))))
+      (:raid result)
+      (assoc :raid (raid-summary (:raid result))))))

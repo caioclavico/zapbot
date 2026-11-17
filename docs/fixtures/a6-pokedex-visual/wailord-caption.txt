@@ -1,0 +1,12 @@
+📖 *Pokédex do tio Odisseu*
+
+#321 *Wailord*
+🏷️ Tipo: Água
+📏 Altura: 14.5 m | ⚖️ Peso: 398.0 kg
+✨ Habilidades: véu de água, alheio, pressão (oculto)
+
+❤️ HP: 170 | ⚔️ Ataque: 90 | 🛡️ Defesa: 45
+🔮 Atq. Especial: 90 | 🌀 Def. Especial: 45 | 💨 Velocidade: 60
+🔺 Evolução: forma final — não evolui
+
+📜 _WAILORD é o maior de todos os POKéMON identificados até agora. Este POKéMON gigante nada languidamente no vasto mar aberto, comendo grandes quantidades de comida de uma só vez com sua boca enorme._

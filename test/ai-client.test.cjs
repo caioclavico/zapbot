@@ -146,3 +146,14 @@ test('logger failure cannot stop successful generation',async()=>{
   const f=fixture([response('gemini')],{logger:()=>{throw new Error('logging unavailable');}});
   assert.equal(await f.client.generate('Pergunta'),'Resposta.');
 });
+
+test('generateDetailed reports provider, latency and attempts without changing generate contract',async()=>{
+  const f=fixture([response('gemini')]);
+  const detailed=await f.client.generateDetailed('Tema curto',{maxOutputTokens:123});
+  assert.deepEqual(detailed,{text:'Resposta.',provider:'gemini',attempts:1,latencyMs:0});
+  assert.equal(f.calls[0].body.generationConfig.maxOutputTokens,123);
+  const next=fixture([response('groq')],{geminiApiKey:'',groqModel:'modelo-groq-configurado'});
+  const groq=await next.client.generateDetailed('Tema curto',{maxOutputTokens:77});
+  assert.equal(groq.provider,'groq');
+  assert.equal(next.calls[0].body.max_tokens,77);
+});

@@ -1,0 +1,2 @@
+[[:db/retract :operation-receipt/id :db/unique :db.unique/identity]
+ [:db/add :operation-receipt/id :db/unique :db.unique/value]]

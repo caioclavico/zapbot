@@ -1,0 +1,10 @@
+;; A5.5.2b — escalações nomeadas por save, referenciando IDs canônicos.
+[
+ {:db/ident       :save/times-prontos-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "EDN {nome {:pokemon-ids [...]}} de escalações salvas"}
+ {:db/ident       :save/time-liga-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Índices da escalação nomeada aplicada à liga"}]

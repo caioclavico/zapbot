@@ -1,0 +1,1123 @@
+(ns pokemon.infrastructure.datomic.raid-store
+  "TX builders de raid (fora do store monolítico)."
+  (:require [clojure.string :as str]
+            [pokemon.domain.battle :as battle]
+            [pokemon.domain.capacity :as capacity]
+            [pokemon.domain.capture :as capture]
+            [pokemon.domain.collection :as coll]
+            [pokemon.domain.errors :as err]
+            [pokemon.domain.identities :as id]
+            [pokemon.domain.ops :as ops]
+            [pokemon.domain.raid :as raid]
+            [pokemon.domain.raid-auto :as raid-auto]
+            [pokemon.infrastructure.datomic.battle-idle-store :as battle-idle-store]
+            [pokemon.infrastructure.datomic.economy-store :as economy-store]))
+(defn- renorm-poke
+  "Reaplica slim/normalização ao carregar snapshot (golpes string-key → UI válida)."
+  [p]
+  (when p
+    (or (battle/slim-pokemon-for-battle p {:keep-images? true}) p)))
+
+(defn- decode-participant-bundle
+  "Compat: edn legado = mapa do Pokémon; v2 = {:__raid-party-v1 ...}."
+  [raw hp-attr collection-index]
+  (let [edn (or raw {})]
+    (if (:__raid-party-v1 edn)
+      (let [party (mapv (fn [s]
+                          {:pokemon (renorm-poke (or (:pokemon s) {}))
+                           :hp (long (:hp s 0))
+                           :collection-index (long (:collection-index s 0))})
+                        (or (:party edn) []))
+            idx (long (:active-idx edn 0))
+            slot (nth party idx (first party))
+            poke (renorm-poke (or (:active edn) (:pokemon slot) {}))]
+        {:pokemon poke
+         :party (if (seq party)
+                  party
+                  [{:pokemon poke :hp (long hp-attr) :collection-index (long collection-index)}])
+         :active-party-idx idx
+         :hp (long (or (:hp slot) hp-attr 0))
+         :collection-index (long (or (:collection-index slot) collection-index 0))})
+      (let [poke (renorm-poke edn)]
+        {:pokemon poke
+         :party [{:pokemon poke
+                  :hp (long hp-attr)
+                  :collection-index (long collection-index)}]
+         :active-party-idx 0
+         :hp (long hp-attr)
+         :collection-index (long collection-index)}))))
+
+(defn participant->map
+  [e edn-read present?]
+  (when (present? e)
+    (let [hp (long (:raid-participant/hp e 0))
+          idx (long (:raid-participant/collection-index e 0))
+          decoded (decode-participant-bundle
+                   (edn-read (:raid-participant/pokemon-edn e))
+                   hp idx)]
+      (merge {:key (:raid-participant/key e)
+              :raid-id (:raid-participant/raid-id e)
+              :player-key (:raid-participant/player-key e)
+              :player-id (when-let [pk (:raid-participant/player-key e)]
+                           (:player-id (id/parse-player-key pk)))
+              :save-id (:raid-participant/save-id e)
+              :fence-generation (long (:raid-participant/fence-generation e 0))
+              :nome (:raid-participant/nome e)
+              :dano (long (:raid-participant/dano e 0))}
+             decoded))))
+
+(defn raid->map
+  [e participantes capturas edn-read present?]
+  (when (present? e)
+    (let [parts (into {}
+                      (map (fn [p]
+                             [(:player-id p) p])
+                           participantes))
+          caps (into {}
+                     (map (fn [[pid c]]
+                            [pid {:tentativas (long (:tentativas c 0))
+                                  :capturou (boolean (:capturou c))
+                                  :frambo-preparada (boolean (:frambo-preparada c))}])
+                          capturas))]
+      {:raid-id (:raid/id e)
+       :chat-id (:raid/chat-id e)
+       :ginasio (:raid/ginasio e)
+       :nome-ginasio (:raid/nome-ginasio e)
+       :nivel-ginasio (long (:raid/nivel-ginasio e 1))
+       :liga (:raid/liga e)
+       :fase (:raid/fase e)
+       :expira (:raid/expira e)
+       :captura-expira (:raid/captura-expira e)
+       :proxima (:raid/proxima e)
+       :hp-chefe (long (:raid/hp-chefe e 0))
+       :hp-max (long (:raid/hp-max e 0))
+       :defesa (double (:raid/defesa e 50))
+       :def-esp (double (:raid/def-esp e 50))
+       :vez (:raid/vez e)
+       :ordem (or (edn-read (:raid/ordem-edn e)) [])
+       :chefe (or (edn-read (:raid/chefe-edn e)) {})
+       :criador (:raid/criador e)
+       :criada-em (:raid/criada-em e)
+       :min-jogadores (when (:raid/min-jogadores e) (long (:raid/min-jogadores e)))
+       :max-jogadores (when (:raid/max-jogadores e) (long (:raid/max-jogadores e)))
+       :turn-index (long (:raid/turn-index e 0))
+       :revision (long (:raid/revision e 0))
+       :rewards-paid? (boolean (:raid/rewards-paid? e))
+       :origem (:raid/origem e)
+       :last-activity-at (:raid/last-activity-at e)
+       :idle-expires-at (:raid/idle-expires-at e)
+       :idle-expired? (boolean (:raid/idle-expired? e))
+       :participantes parts
+       :capturas caps})))
+
+(defn- raid-entity-tx
+  [r]
+  (cond-> {:raid/id (:raid-id r)
+           :raid/chat-id (:chat-id r)
+           :raid/ginasio (:ginasio r)
+           :raid/nome-ginasio (:nome-ginasio r)
+           :raid/nivel-ginasio (long (:nivel-ginasio r 1))
+           :raid/liga (:liga r)
+           :raid/fase (str (:fase r))
+           :raid/expira (long (:expira r))
+           :raid/ordem-edn (pr-str (:ordem r))
+           :raid/chefe-edn (pr-str (:chefe r))
+           :raid/turn-index (long (:turn-index r 0))
+           :raid/revision (long (:revision r 0))
+           :raid/rewards-paid? (boolean (:rewards-paid? r))}
+    (:captura-expira r) (assoc :raid/captura-expira (long (:captura-expira r)))
+    (:proxima r) (assoc :raid/proxima (long (:proxima r)))
+    (:hp-chefe r) (assoc :raid/hp-chefe (long (:hp-chefe r)))
+    (:hp-max r) (assoc :raid/hp-max (long (:hp-max r)))
+    (:defesa r) (assoc :raid/defesa (double (:defesa r)))
+    (:def-esp r) (assoc :raid/def-esp (double (:def-esp r)))
+    (:vez r) (assoc :raid/vez (:vez r))
+    (:criador r) (assoc :raid/criador (:criador r))
+    (:criada-em r) (assoc :raid/criada-em (long (:criada-em r)))
+    (:min-jogadores r) (assoc :raid/min-jogadores (long (:min-jogadores r)))
+    (:max-jogadores r) (assoc :raid/max-jogadores (long (:max-jogadores r)))
+    (:origem r) (assoc :raid/origem (str (:origem r)))
+    (:last-activity-at r) (assoc :raid/last-activity-at (long (:last-activity-at r)))
+    (:idle-expires-at r) (assoc :raid/idle-expires-at (long (:idle-expires-at r)))
+    (some? (:idle-expired? r)) (assoc :raid/idle-expired? (boolean (:idle-expired? r)))))
+
+(defn schedule->map
+  [e present?]
+  (when (present? e)
+    {:chat-id (:raid-auto-schedule/chat-id e)
+     :enabled (boolean (:raid-auto-schedule/enabled e))
+     :interval-ms (long (:raid-auto-schedule/interval-ms e
+                                                         raid-auto/default-interval-ms))
+     :next-at (long (:raid-auto-schedule/next-at e 0))
+     :ginasio-index (long (:raid-auto-schedule/ginasio-index e 0))
+     :revision (long (:raid-auto-schedule/revision e 0))
+     :last-spawn-id (:raid-auto-schedule/last-spawn-id e)
+     :last-raid-id (:raid-auto-schedule/last-raid-id e)}))
+
+(defn outbox->map
+  [e present?]
+  (when (and (present? e) (nil? (:pokemon-outbox/acked-at e)))
+    {:id (:pokemon-outbox/id e)
+     :chat-id (:pokemon-outbox/chat-id e)
+     :kind (:pokemon-outbox/kind e)
+     :texto (:pokemon-outbox/texto e)
+     :created-at (long (:pokemon-outbox/created-at e 0))}))
+
+(defn opened-raid-id
+  "Extrai raid-id de outbox `raid-opened:{raid-id}`."
+  [event-id]
+  (let [id (str event-id)
+        prefix "raid-opened:"]
+    (when (str/starts-with? id prefix)
+      (subs id (count prefix)))))
+
+(defn started-raid-id
+  "Extrai raid-id de outbox `raid-started:{raid-id}:{lobby-expira}`."
+  [event-id]
+  (let [id (str event-id)
+        prefix "raid-started:"]
+    (when (str/starts-with? id prefix)
+      (let [rest (subs id (count prefix))]
+        (when-let [m (re-matches #"(.*):(\d+)" rest)]
+          (nth m 1))))))
+
+(defn opened-media-from-raid
+  "Payload de mídia para revelar o chefe no Node (sem migration)."
+  [raid]
+  (when (map? raid)
+    (let [chefe (or (:chefe raid) {})
+          nome (or (:nome chefe) (get chefe "nome")
+                   (:species chefe) (get chefe "species"))
+          imagem (or (:imagem chefe) (get chefe "imagem")
+                     (:imagem-shiny chefe) (get chefe "imagem-shiny"))
+          species (or (:species chefe) (get chefe "species") nome)
+          cat (or (:boss-categoria raid)
+                  (:raridade chefe) (get chefe "raridade")
+                  "raro")
+          tipos (or (:tipos chefe) (get chefe "tipos") [])
+          tipo (when (seq tipos) (str (first tipos)))]
+      (when (and (string? nome) (seq nome))
+        (cond-> {:nome (str nome)
+                 :species (when species (str species))
+                 :imagem (when (string? imagem) (str imagem))
+                 :categoria (str cat)
+                 :ginasio (str (or (:nome-ginasio raid) (:ginasio raid) ""))}
+          tipo (assoc :tipo (str/lower-case (str tipo)))
+          (seq tipos) (assoc :tipos (mapv #(str/lower-case (str %)) tipos)))))))
+
+(defn- present-poke-for-frame
+  "DTO mínimo do 1º frame de combate (golpes normalizados + sprite + raridade)."
+  [p hp-atual]
+  (when p
+    (let [p (capture/assegurar-raridade (renorm-poke p))
+          resolved (capture/resolver-raridade p)
+          golpes (->> (or (:golpes p) (get p "golpes") [])
+                      (mapv battle/golpe-normalizado)
+                      (filterv map?))]
+      (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
+                              :raridade :tipos :imagem :imagem-shiny :altura
+                              :status :habilidade])
+        true (assoc :hp-atual (long (or hp-atual (:hp-atual p) (:hp p) 0))
+                    :raridade (:raridade resolved)
+                    :raridade-fonte (name (:fonte resolved))
+                    :golpes golpes)
+        (:shiny? p) (assoc :shiny true)))))
+
+(defn started-combat-from-raid
+  "Snapshot de combate anexado ao outbox raid-started (sem migration).
+   Mesmo formato consumido por formatRaidStart / renderRaidBattleCard no Node."
+  [raid]
+  (when (and (map? raid) (= "combate" (str (:fase raid))))
+    (let [parts (:participantes raid {})
+          vez (:vez raid)
+          vp (when vez (get parts vez))
+          poke (:pokemon vp)
+          vivos (filterv #(pos? (long (get-in parts [% :hp] 0))) (:ordem raid []))
+          proxima (when (and vez (seq vivos))
+                    (first (concat (rest (drop-while #(not= % vez) vivos))
+                                   (take-while #(not= % vez) vivos))))
+          chefe (:chefe raid)]
+      {:raid-id (:raid-id raid)
+       :fase "combate"
+       :ginasio (:ginasio raid)
+       :nome-ginasio (:nome-ginasio raid)
+       :liga (:liga raid)
+       :hp-chefe (:hp-chefe raid)
+       :hp-max (:hp-max raid)
+       :vez vez
+       :vez-nome (:nome vp)
+       :vez-hp (:hp vp)
+       :vez-pokemon (present-poke-for-frame poke (:hp vp))
+       :proxima-vez proxima
+       :proxima-vez-nome (when proxima (get-in parts [proxima :nome]))
+       :turn-index (:turn-index raid 0)
+       :chefe (when (and (map? chefe)
+                         (or (:nome chefe) (:species chefe)
+                             (get chefe "nome") (get chefe "species")))
+                (present-poke-for-frame chefe
+                                        (or (:hp-chefe raid) (:hp chefe))))
+       :auto true})))
+
+(defn- outbox-tx
+  [{:keys [id chat-id kind texto created-at]}]
+  {:pokemon-outbox/id id
+   :pokemon-outbox/chat-id chat-id
+   :pokemon-outbox/kind (str kind)
+   :pokemon-outbox/texto (str texto)
+   :pokemon-outbox/created-at (long created-at)})
+
+(defn- schedule-entity-tx
+  [s]
+  (cond-> {:raid-auto-schedule/chat-id (:chat-id s)
+           :raid-auto-schedule/enabled (boolean (:enabled s))
+           :raid-auto-schedule/interval-ms (long (:interval-ms s))
+           :raid-auto-schedule/next-at (long (:next-at s))
+           :raid-auto-schedule/ginasio-index (long (:ginasio-index s 0))
+           :raid-auto-schedule/revision (long (:revision s 0))}
+    (:last-spawn-id s) (assoc :raid-auto-schedule/last-spawn-id (:last-spawn-id s))
+    (:last-raid-id s) (assoc :raid-auto-schedule/last-raid-id (:last-raid-id s))))
+
+(defn- encode-participant-pokemon-edn
+  "Snapshot de combate — party v2 embutida no edn (sem migration de schema)."
+  [p]
+  (let [slim-slot (fn [s]
+                    {:pokemon (battle/slim-pokemon-for-battle
+                               (:pokemon s) {:keep-images? true})
+                     :hp (long (:hp s 0))
+                     :collection-index (long (:collection-index s 0))})
+        party (mapv slim-slot
+                    (or (:party p)
+                        [{:pokemon (:pokemon p)
+                          :hp (:hp p)
+                          :collection-index (:collection-index p 0)}]))
+        bundle {:__raid-party-v1 true
+                :active (battle/slim-pokemon-for-battle
+                         (:pokemon p) {:keep-images? true})
+                :party party
+                :active-idx (long (:active-party-idx p 0))}]
+    (battle/encode-value-edn :raid-participant/pokemon-edn bundle)))
+
+(defn- participant-entity
+  [raid-id player-id chat-id p]
+  {:raid-participant/key (id/raid-participant-key raid-id player-id)
+   :raid-participant/raid-id raid-id
+   :raid-participant/player-key (id/player-key chat-id player-id)
+   :raid-participant/save-id (:save-id p)
+   :raid-participant/fence-generation (long (:fence-generation p))
+   :raid-participant/nome (:nome p)
+   :raid-participant/pokemon-edn (encode-participant-pokemon-edn p)
+   :raid-participant/hp (long (:hp p))
+   :raid-participant/dano (long (:dano p 0))
+   :raid-participant/collection-index (long (:collection-index p 0))})
+
+(defn build-open-tx
+  "Abre lobby. `active-raid` = snapshot do ponteiro (já eager-expired se preciso)."
+  [{:keys [request active-raid]}]
+  (let [agora (long (or (:agora request) (System/currentTimeMillis)))
+        _ (when (and active-raid (raid/lobby-ou-combate-vivo? active-raid agora))
+            (throw (err/error :raid_chat_busy
+                              {:raid-id (:raid-id active-raid)
+                               :fase (:fase active-raid)})))
+        r (assoc (raid/nova-raid request) :origem (or (:origem request) "manual"))
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        pk (id/player-key (:chat-id r) (or (:criador r) "system"))
+        chat-id (:chat-id r)
+        ;; Ponteiro deve existir (ensure no store). CAS nil|old → novo id.
+        expected-id (when active-raid (:raid-id active-raid))
+        pointer-tx (if (= expected-id (:raid-id r))
+                     []
+                     [[:db/cas [:chat-active-raid/chat-id chat-id]
+                       :chat-active-raid/raid-id expected-id (:raid-id r)]])]
+    {:tx (into [(raid-entity-tx r)
+                {:operation-receipt/id operation-id
+                 :operation-receipt/kind "raid-open"
+                 :operation-receipt/channel "gameplay"
+                 :operation-receipt/payload-hash phash
+                 :operation-receipt/player-key pk
+                 :operation-receipt/save-id (or (:save-id request) "a")
+                 :operation-receipt/summary (pr-str {:raid-id (:raid-id r)})}]
+               pointer-tx)
+     :result {:operation-id operation-id
+              :duplicate false
+              :raid r}}))
+
+(defn build-upsert-schedule-tx
+  [{:keys [schedule expected-revision]}]
+  (let [s schedule
+        expected (long (or expected-revision (:revision s 0)))
+        next-rev (inc expected)
+        s' (assoc s :revision next-rev)]
+    {:tx (cond-> [(schedule-entity-tx s')]
+           (pos? expected)
+           (conj [:db/cas [:raid-auto-schedule/chat-id (:chat-id s)]
+                  :raid-auto-schedule/revision expected next-rev]))
+     :result {:schedule s'}}))
+
+(defn intent-receipt-tx
+  "Persiste próximo slot planejado. `:operation-receipt/id` é unique/value —
+   create vs update explícitos (sem migration)."
+  [chat-id intent exists?]
+  (when (and chat-id (map? intent) (:next-at intent))
+    (let [rid (raid-auto/intent-receipt-id chat-id)
+          summary (pr-str {:next-at (long (:next-at intent))
+                           :categoria (str (:categoria intent))
+                           :reminders? (boolean (:reminders? intent))})]
+      (if exists?
+        {:db/id [:operation-receipt/id rid]
+         :operation-receipt/summary summary
+         :operation-receipt/kind "raid-auto-intent"
+         :operation-receipt/payload-hash rid}
+        {:operation-receipt/id rid
+         :operation-receipt/kind "raid-auto-intent"
+         :operation-receipt/channel "system"
+         :operation-receipt/payload-hash rid
+         :operation-receipt/player-key (id/player-key chat-id "system")
+         :operation-receipt/save-id "a"
+         :operation-receipt/summary summary}))))
+
+(defn cadence-receipt-tx
+  "Overrides de cadência (intervalos + daily-limit + janela 12.8.2) —
+   unique/value create/update. Sem migration de schema."
+  [chat-id cadence exists?]
+  (when (and chat-id (map? cadence)
+             (or (:category-intervals cadence)
+                 (some? (:daily-limit cadence))
+                 (some? (:special-reserve cadence))
+                 (some? (:distribution cadence))
+                 (some? (:window-start-hour cadence))
+                 (some? (:window-end-hour cadence))
+                 (some? (:timezone cadence))))
+    (let [rid (raid-auto/cadence-receipt-id chat-id)
+          intervals (when-let [i (:category-intervals cadence)]
+                      (raid-auto/normalize-category-intervals i))
+          daily (when (some? (:daily-limit cadence))
+                  (raid-auto/normalize-daily-limit (:daily-limit cadence)))
+          reserve (when (some? (:special-reserve cadence))
+                    (raid-auto/normalize-special-reserve
+                     (:special-reserve cadence)
+                     (or daily raid-auto/default-daily-limit)))
+          dist (when (some? (:distribution cadence))
+                 (raid-auto/normalize-distribution (:distribution cadence)))
+          summary (pr-str (cond-> {}
+                            intervals (assoc :category-intervals intervals)
+                            (some? daily) (assoc :daily-limit daily)
+                            (some? reserve) (assoc :special-reserve reserve)
+                            dist (assoc :distribution dist)
+                            (some? (:window-start-hour cadence))
+                            (assoc :window-start-hour
+                                   (long (:window-start-hour cadence)))
+                            (some? (:window-end-hour cadence))
+                            (assoc :window-end-hour
+                                   (long (:window-end-hour cadence)))
+                            (some? (:timezone cadence))
+                            (assoc :timezone (str (:timezone cadence)))))]
+      (if exists?
+        {:db/id [:operation-receipt/id rid]
+         :operation-receipt/summary summary
+         :operation-receipt/kind "raid-auto-cadence"
+         :operation-receipt/payload-hash rid}
+        {:operation-receipt/id rid
+         :operation-receipt/kind "raid-auto-cadence"
+         :operation-receipt/channel "system"
+         :operation-receipt/payload-hash rid
+         :operation-receipt/player-key (id/player-key chat-id "system")
+         :operation-receipt/save-id "a"
+         :operation-receipt/summary summary}))))
+
+(defn build-auto-spawn-tx
+  "Spawn automático atômico: receipt spawn-id + raid + ponteiro + agenda + outbox.
+   Também grava intent do próximo slot (categoria/lembretes) — Fase 12.7.2."
+  [{:keys [plan schedule active-raid announce-texto agora intent-exists?]}]
+  (let [acao (:acao plan)
+        chat-id (:chat-id schedule)
+        expected-rev (long (:revision schedule 0))
+        next-rev (inc expected-rev)
+        agora (long agora)
+        intent-tx (intent-receipt-tx chat-id (:intent plan) (boolean intent-exists?))]
+    (case acao
+      (:noop :skip-disabled)
+      {:tx [] :result {:acao acao :schedule schedule :duplicate false}}
+
+      (:skip-busy :skip-daily-cap :skip-outside-window :skip-missed)
+      (let [skip-kind (case acao
+                        :skip-daily-cap "raid-auto-skip-cap"
+                        :skip-outside-window "raid-auto-skip-outside-window"
+                        :skip-missed "raid-auto-skip-missed"
+                        "raid-auto-skip")
+            ;; 12.8.2: last-spawn-id só muda em spawn real — preserva raid aberta.
+            s' (cond-> (assoc schedule
+                              :next-at (:next-at plan)
+                              :revision next-rev
+                              :next-categoria (:next-categoria plan)
+                              :next-reminders? (:next-reminders? plan))
+                 (:last-spawn-id schedule)
+                 (assoc :last-spawn-id (:last-spawn-id schedule))
+                 (:last-raid-id schedule)
+                 (assoc :last-raid-id (:last-raid-id schedule)))
+            rev-tx (when (pos? expected-rev)
+                     [[:db/cas [:raid-auto-schedule/chat-id chat-id]
+                       :raid-auto-schedule/revision expected-rev next-rev]])]
+        {:tx (into (cond-> [(schedule-entity-tx s')
+                            {:operation-receipt/id (:spawn-id plan)
+                             :operation-receipt/kind skip-kind
+                             :operation-receipt/channel "system"
+                             :operation-receipt/payload-hash (:spawn-id plan)
+                             :operation-receipt/player-key (id/player-key chat-id "system")
+                             :operation-receipt/save-id "a"
+                             :operation-receipt/summary
+                             (pr-str {:acao acao
+                                      :active (:active-raid-id plan)
+                                      :spawns-today (:spawns-today plan)
+                                      :daily-limit (:daily-limit plan)
+                                      :next-categoria (:next-categoria plan)
+                                      :next-at (:next-at plan)
+                                      :skip-reason (or (:skip-reason plan) acao)})}]
+                     intent-tx (conj intent-tx))
+                   (or rev-tx []))
+         :result {:acao acao :schedule s' :duplicate false
+                  :intent (:intent plan)}})
+
+      :spawn
+      (let [_ (when (raid-auto/ocupa-slot-contra-spawn? active-raid)
+                (throw (err/error :raid_chat_busy
+                                  {:raid-id (:raid-id active-raid)
+                                   :fase (:fase active-raid)
+                                   :origem (:origem active-raid)})))
+            r (-> (raid/nova-raid {:raid-id (:raid-id plan)
+                                   :chat-id chat-id
+                                   :ginasio (:ginasio plan)
+                                   :nome-ginasio (:nome-ginasio plan)
+                                   :nivel-ginasio (:nivel-ginasio plan)
+                                   :liga (:liga plan)
+                                   :chefe (:chefe plan)
+                                   :agora agora
+                                   :criador nil
+                                   :min-jogadores (:min-jogadores plan)
+                                   :max-jogadores (:max-jogadores plan)
+                                   :duracao-ms (:duracao-ms plan)})
+                  (assoc :origem "auto"
+                         :boss-categoria (:boss-categoria plan)
+                         :recomendados (:recomendados plan)))
+            expected-ptr (when active-raid (:raid-id active-raid))
+            s' (assoc schedule
+                      :next-at (:next-at plan)
+                      :ginasio-index (:next-ginasio-index plan)
+                      :revision next-rev
+                      :last-spawn-id (:spawn-id plan)
+                      :last-raid-id (:raid-id plan)
+                      :next-categoria (:next-categoria plan)
+                      :next-reminders? (:next-reminders? plan))
+            event-id (raid-auto/outbox-opened-id (:raid-id plan))
+            pointer-tx [[:db/cas [:chat-active-raid/chat-id chat-id]
+                         :chat-active-raid/raid-id expected-ptr (:raid-id r)]]
+            rev-tx (when (pos? expected-rev)
+                     [[:db/cas [:raid-auto-schedule/chat-id chat-id]
+                       :raid-auto-schedule/revision expected-rev next-rev]])]
+        {:tx (into (cond-> [(raid-entity-tx r)
+                            (schedule-entity-tx s')
+                            {:operation-receipt/id (:spawn-id plan)
+                             :operation-receipt/kind "raid-auto-spawn"
+                             :operation-receipt/channel "system"
+                             :operation-receipt/payload-hash (:spawn-id plan)
+                             :operation-receipt/player-key (id/player-key chat-id "system")
+                             :operation-receipt/save-id "a"
+                             :operation-receipt/summary
+                             (pr-str {:raid-id (:raid-id r)
+                                      :due-at (:due-at plan)
+                                      :boss-categoria (:boss-categoria plan)})}
+                            (outbox-tx {:id event-id
+                                        :chat-id chat-id
+                                        :kind "raid-opened"
+                                        :texto announce-texto
+                                        :created-at agora})]
+                     intent-tx (conj intent-tx))
+                   (concat pointer-tx (or rev-tx [])))
+         :result {:acao :spawn :schedule s' :raid r :duplicate false
+                  :due-at (:due-at plan)
+                  :outbox-id event-id
+                  :intent (:intent plan)}}))))
+
+(defn build-auto-expire-announce-tx
+  "Após expire de lobby auto: anuncia combate ou cancelamento via outbox.
+   IDs estáveis por raid-id + expira do lobby (reenvio WA não recria jogo)."
+  [{:keys [raid acao agora texto]}]
+  (when (and (= "auto" (str (:origem raid)))
+             (contains? #{:combate :cancelada} acao)
+             (string? texto) (seq texto))
+    (let [lobby-expira (long (:expira raid 0))
+          event-id (if (= :combate acao)
+                     (raid-auto/outbox-started-id (:raid-id raid) lobby-expira)
+                     (raid-auto/outbox-cancelled-id (:raid-id raid) lobby-expira))
+          kind (if (= :combate acao) "raid-started" "raid-cancelled")]
+      {:tx [(outbox-tx {:id event-id
+                        :chat-id (:chat-id raid)
+                        :kind kind
+                        :texto texto
+                        :created-at (long agora)})]
+       :result {:outbox-id event-id :kind kind}})))
+
+(defn build-reminder-outbox-tx
+  "Enfileira lembrete visual (kind raid-reminder-*). Sem migration — só outbox 030."
+  [{:keys [plan agora]}]
+  (let [event-id (:event-id plan)]
+    {:tx [(outbox-tx {:id event-id
+                      :chat-id (:chat-id plan)
+                      :kind (:kind plan)
+                      :texto (:texto plan)
+                      :created-at (long agora)})]
+     :result {:acao :remind
+              :outbox-id event-id
+              :kind (:kind plan)
+              :due-at (:due-at plan)
+              :offset-ms (:offset-ms plan)
+              :chat-id (:chat-id plan)}}))
+
+(defn build-expire-lobby-tx
+  "Materializa expiração de inscrições (cancelada ou combate)."
+  [{:keys [raid agora announce-texto]}]
+  (let [exp (raid/expirar-inscricoes raid agora)
+        raid' (:raid exp)
+        acao (:acao exp)
+        expected-rev (long (:revision raid 0))
+        chat-id (:chat-id raid)
+        rid (:raid-id raid)
+        announce (when (and announce-texto
+                            (= "auto" (str (:origem raid)))
+                            (contains? #{:combate :cancelada} acao))
+                   (build-auto-expire-announce-tx
+                    {:raid raid :acao acao :agora agora :texto announce-texto}))]
+    (case acao
+      :noop {:tx [] :result {:raid raid' :acao :noop}}
+      :cancelada
+      ;; Mantém entidade do ponteiro; só limpa raid-id (CAS nil na próxima open).
+      {:tx (into [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
+                  [:db/cas [:raid/id rid] :raid/revision
+                   expected-rev (inc expected-rev)]
+                  [:db/retract [:chat-active-raid/chat-id chat-id]
+                   :chat-active-raid/raid-id rid]]
+                 (or (:tx announce) []))
+       :result {:raid raid' :acao :cancelada :outbox-id (:outbox-id (:result announce))}}
+      :combate
+      {:tx (into [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
+                  [:db/cas [:raid/id rid] :raid/revision
+                   expected-rev (inc expected-rev)]]
+                 (or (:tx announce) []))
+       :result {:raid raid' :acao :combate :outbox-id (:outbox-id (:result announce))}})))
+
+(defn build-cancel-tx
+  [{:keys [save writer-ctx request raid]}]
+  (let [player-id (:player-id writer-ctx)
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        raid' (raid/cancelar raid player-id agora)
+        expected-rev (long (:revision raid 0))
+        sk (id/save-key (:chat-id writer-ctx) player-id (:save-id writer-ctx))
+        rev (long (:save/revision save 0))
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        chat-id (:chat-id raid)
+        rid (:raid-id raid)]
+    {:tx [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
+          [:db/cas [:raid/id rid] :raid/revision expected-rev (inc expected-rev)]
+          [:db/retract [:chat-active-raid/chat-id chat-id]
+           :chat-active-raid/raid-id rid]
+          [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+          {:operation-receipt/id operation-id
+           :operation-receipt/kind "raid-cancel"
+           :operation-receipt/channel "gameplay"
+           :operation-receipt/payload-hash phash
+           :operation-receipt/player-key (id/player-key (:chat-id writer-ctx) player-id)
+           :operation-receipt/save-id (:save-id writer-ctx)
+           :operation-receipt/summary (pr-str {:raid-id rid})}]
+     :result {:operation-id operation-id :duplicate false :raid raid'}}))
+
+(defn build-join-tx
+  [{:keys [db save writer-ctx request raid colecao]}]
+  (let [chat-id (:chat-id writer-ctx)
+        player-id (:player-id writer-ctx)
+        save-id (:save-id writer-ctx)
+        fence (:fence-generation writer-ctx)
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        already? (contains? (:participantes raid) player-id)
+        old (when already? (get-in raid [:participantes player-id]))
+        idx (long (:collection-index request))
+        same-idx? (and already? (= idx (long (:collection-index old -1))))]
+    (cond
+      ;; Já inscrito com o mesmo mon → idempotente.
+      (and already? same-idx?)
+      {:tx [{:operation-receipt/id operation-id
+             :operation-receipt/kind "raid-join"
+             :operation-receipt/channel "gameplay"
+             :operation-receipt/payload-hash phash
+             :operation-receipt/player-key (id/player-key chat-id player-id)
+             :operation-receipt/save-id save-id
+             :operation-receipt/summary
+             (pr-str {:raid-id (:raid-id raid) :already true :idx idx})}]
+       :result {:operation-id operation-id
+                :duplicate true
+                :refreshed false
+                :raid raid
+                :participant old}}
+
+      ;; Combate: combatente travado — não troca.
+      (and already? (not (raid/inscricoes-abertas? raid agora)))
+      (throw (err/error :raid_combatant_locked
+                        {:fase (:fase raid)
+                         :collection-index (:collection-index old)
+                         :requested idx}))
+
+      :else
+      (let [poke (or (some #(when (= (long (:collection-index % -1)) idx) %) colecao)
+                     (when (and (<= 0 idx) (< idx (count colecao)))
+                       (nth colecao idx)))
+            _ (when-not poke (throw (err/error :pokemon_not_found {:idx idx})))
+            ;; Regra 1-mon: exatamente o índice pedido — sem reservas automáticas.
+            party [{:pokemon poke :collection-index idx}]
+            nome (or (:nome request) (:nome old) player-id)
+            raid' (raid/entrar raid
+                               {:player-id player-id
+                                :nome nome
+                                :save-id save-id
+                                :fence-generation fence
+                                :pokemon poke
+                                :collection-index idx
+                                :party party}
+                               agora)
+            p (get-in raid' [:participantes player-id])
+            sk (id/save-key chat-id player-id save-id)
+            rev (long (:save/revision save 0))
+            expected-rev (long (:revision raid 0))]
+        {:tx [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
+              [:db/cas [:raid/id (:raid-id raid)] :raid/revision expected-rev (inc expected-rev)]
+              (participant-entity (:raid-id raid) player-id chat-id p)
+              [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+              {:operation-receipt/id operation-id
+               :operation-receipt/kind "raid-join"
+               :operation-receipt/channel "gameplay"
+               :operation-receipt/payload-hash phash
+               :operation-receipt/player-key (id/player-key chat-id player-id)
+               :operation-receipt/save-id save-id
+               :operation-receipt/summary
+               (pr-str {:raid-id (:raid-id raid) :idx idx :refreshed already?})}]
+         :result {:operation-id operation-id
+                  :duplicate false
+                  :refreshed (boolean already?)
+                  :raid raid'
+                  :participant p}}))))
+
+(defn build-leave-tx
+  [{:keys [save writer-ctx request raid]}]
+  (let [chat-id (:chat-id writer-ctx)
+        player-id (:player-id writer-ctx)
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        raid' (raid/sair raid player-id agora)
+        expected-rev (long (:revision raid 0))
+        sk (id/save-key chat-id player-id (:save-id writer-ctx))
+        rev (long (:save/revision save 0))
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        part-key (id/raid-participant-key (:raid-id raid) player-id)]
+    {:tx [[:db/add [:raid/id (:raid-id raid)] :raid/fase "inscricoes"]
+          [:db/add [:raid/id (:raid-id raid)] :raid/ordem-edn (pr-str (:ordem raid'))]
+          [:db/cas [:raid/id (:raid-id raid)] :raid/revision expected-rev (inc expected-rev)]
+          [:db/retractEntity [:raid-participant/key part-key]]
+          [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+          {:operation-receipt/id operation-id
+           :operation-receipt/kind "raid-leave"
+           :operation-receipt/channel "gameplay"
+           :operation-receipt/payload-hash phash
+           :operation-receipt/player-key (id/player-key chat-id player-id)
+           :operation-receipt/save-id (:save-id writer-ctx)
+           :operation-receipt/summary (pr-str {:raid-id (:raid-id raid)})}]
+     :result {:operation-id operation-id :duplicate false :raid raid'}}))
+
+(defn build-start-tx
+  [{:keys [save writer-ctx request raid]}]
+  (let [player-id (:player-id writer-ctx)
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        idle (battle-idle-store/raid-touch-attrs agora)
+        raid' (-> (raid/iniciar raid player-id agora)
+                  (assoc :last-activity-at (:raid/last-activity-at idle)
+                         :idle-expires-at (:raid/idle-expires-at idle)
+                         :idle-expired? false))
+        expected-rev (long (:revision raid 0))
+        expected-turn (long (:turn-index raid 0))
+        sk (id/save-key (:chat-id writer-ctx) player-id (:save-id writer-ctx))
+        rev (long (:save/revision save 0))
+        operation-id (:operation-id request)
+        phash (:payload-hash request)]
+    {:tx [(merge (raid-entity-tx (assoc raid' :revision (inc expected-rev))) idle)
+          [:db/cas [:raid/id (:raid-id raid)] :raid/revision expected-rev (inc expected-rev)]
+          [:db/cas [:raid/id (:raid-id raid)] :raid/turn-index expected-turn 0]
+          [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+          {:operation-receipt/id operation-id
+           :operation-receipt/kind "raid-start"
+           :operation-receipt/channel "gameplay"
+           :operation-receipt/payload-hash phash
+           :operation-receipt/player-key (id/player-key (:chat-id writer-ctx) player-id)
+           :operation-receipt/save-id (:save-id writer-ctx)
+           :operation-receipt/summary (pr-str {:raid-id (:raid-id raid) :n (count (:ordem raid'))})}]
+     :result {:operation-id operation-id :duplicate false :raid raid'}}))
+
+(defn- party-slots-of
+  [part]
+  (or (seq (:party part))
+      (when (:pokemon part)
+        [{:pokemon (:pokemon part)
+          :hp (long (:hp part 0))
+          :collection-index (long (:collection-index part 0))}])))
+
+(defn- slot-hp-for-id
+  [part id-poke]
+  (when id-poke
+    (some (fn [s]
+            (when (= id-poke (or (get-in s [:pokemon :id-pokemon])
+                                 (get-in s [:pokemon "id-pokemon"])))
+              (long (:hp s 0))))
+          (party-slots-of part))))
+
+(defn raid-party-hp-txs
+  "Espelha HP da party do snapshot → `:pokemon/hp-atual` (paridade wild/gym).
+  Sem isso `!pk time` permanece no HP da inscrição."
+  [db sk party query-collection pokemon-hp-status-tx]
+  (when (and query-collection pokemon-hp-status-tx (seq party))
+    (let [colecao (query-collection db sk)
+          by-id (into {}
+                      (keep (fn [p]
+                              (when-let [id (:id-pokemon p)]
+                                [id p]))
+                            colecao))]
+      (vec
+       (mapcat
+        (fn [slot]
+          (let [id (or (get-in slot [:pokemon :id-pokemon])
+                       (get-in slot [:pokemon "id-pokemon"]))
+                live (get by-id id)
+                hp (long (:hp slot 0))]
+            (when (and live (not= (long (or (:hp-atual live) 0)) hp))
+              (pokemon-hp-status-tx live hp nil (:status live)))))
+        party)))))
+
+(defn- raid-all-parties-hp-txs
+  "Sincroniza party de todos os participantes (ataque / fim de combate)."
+  [db raid' query-collection pokemon-hp-status-tx]
+  (when (and query-collection pokemon-hp-status-tx)
+    (vec
+     (mapcat
+      (fn [[pid p]]
+        (let [sk (id/save-key (:chat-id raid') pid (:save-id p))]
+          (raid-party-hp-txs db sk (party-slots-of p)
+                             query-collection pokemon-hp-status-tx)))
+      (:participantes raid')))))
+
+(defn- reward-tx-for-participant
+  "Liquida PE/XP/(moedas) para um elegível. `outcome` ∈ #{:vitoria :derrota}.
+  Recibo determinístico `raid-reward|raid-id|player-id` — uma concessão por raid.
+  XP aplica-se ao mon da coleção (mesmo nocauteado no snapshot da raid)."
+  [db raid player-id part apply-pokemon-xp-tx save-entity query-collection outcome]
+  (let [amounts (raid/recompensas outcome)
+        moedas (long (:moedas amounts))
+        pe-qtd (long (:pe amounts))
+        xp-base (long (:xp-pokemon amounts))
+        chat-id (:chat-id raid)
+        save-id (:save-id part)
+        sk (id/save-key chat-id player-id save-id)
+        save (save-entity db chat-id player-id save-id)
+        pe (long (:save/pe-raids save 0))
+        rev (long (:save/revision save 0))
+        receipt-id (str "raid-reward|" (:raid-id raid) "|" player-id)
+        id-poke (or (get-in part [:pokemon :id-pokemon])
+                    (get-in part [:pokemon "id-pokemon"]))
+        live0 (when id-poke
+                (some #(when (= (:id-pokemon %) id-poke) %)
+                      (query-collection db sk)))
+        ;; Preserva HP do snapshot na coleção antes do XP (nível-up não “cura” raid).
+        live (when live0
+               (if-let [hp (slot-hp-for-id part id-poke)]
+                 (assoc live0 :hp-atual hp)
+                 live0))
+        xp-qtd (if live xp-base 0)
+        xp-part (when (and live (pos? xp-qtd))
+                  (apply-pokemon-xp-tx live xp-qtd
+                                       {:unidade :atividade
+                                        :atividade :raid
+                                        :categoria-raid (or (:boss-categoria raid)
+                                                            (:categoria raid)
+                                                            (:category raid)
+                                                            (:tier raid))}))
+        coin-part (when (pos? moedas)
+                    (economy-store/apply-delta-tx
+                     {:sk sk :save save :delta moedas
+                      :operation-id receipt-id :source "raid" :role "primary"}))]
+    {:tx (concat
+          [[:db/add [:save/key sk] :save/pe-raids (+ pe pe-qtd)]
+           [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+           {:operation-receipt/id receipt-id
+            :operation-receipt/kind "raid-reward"
+            :operation-receipt/channel "gameplay"
+            :operation-receipt/payload-hash
+            (ops/payload-hash
+             (ops/raid-reward-payload
+              {:raid-id (:raid-id raid)
+               :player-id player-id
+               :outcome outcome}))
+            :operation-receipt/player-key (id/player-key chat-id player-id)
+            :operation-receipt/save-id save-id
+            :operation-receipt/summary
+            (pr-str {:outcome (name outcome)
+                     :moedas moedas
+                     :pe pe-qtd
+                     :xp-pokemon xp-qtd})}]
+          (or (:tx coin-part) [])
+          (or (:tx xp-part) []))
+     :player-id player-id
+     :moedas moedas
+     :pe pe-qtd
+     :xp-pokemon xp-qtd
+     :pokemon-id id-poke
+     :outcome outcome}))
+
+(defn build-attack-tx
+  [{:keys [db save writer-ctx request raid
+           apply-pokemon-xp-tx save-entity query-collection
+           pokemon-hp-status-tx]}]
+  (let [player-id (:player-id writer-ctx)
+        part (get-in raid [:participantes player-id])
+        _ (raid/assert-participant-fence! part writer-ctx)
+        expected-turn (long (or (:expected-turn-index request)
+                                (:turn-index raid 0)))
+        _ (when (not= expected-turn (long (:turn-index raid 0)))
+            (throw (err/error :stale_turn_index
+                              {:expected expected-turn
+                               :actual (:turn-index raid)})))
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        _ (battle-idle-store/assert-battle-not-idle-expired! raid agora)
+        move-index (long (:move-index request))
+        ;; Variação sorteada UMA vez no domínio; receipt/idempotência não re-rola.
+        outcome (raid/atacar raid player-id move-index agora (:rng request))
+        raid' (:raid outcome)
+        still-combat? (= "combate" (str (:fase raid')))
+        idle (when still-combat? (battle-idle-store/raid-touch-attrs agora))
+        raid' (cond-> raid'
+                idle (assoc :last-activity-at (:raid/last-activity-at idle)
+                            :idle-expires-at (:raid/idle-expires-at idle)
+                            :idle-expired? false))
+        expected-rev (long (:revision raid 0))
+        sk (id/save-key (:chat-id writer-ctx) player-id (:save-id writer-ctx))
+        rev (long (:save/revision save 0))
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        reward-outcome (cond
+                         (:venceu? outcome) :vitoria
+                         (:derrota? outcome) :derrota
+                         :else nil)
+        pay-rewards? (and reward-outcome (not (:rewards-paid? raid)))
+        ;; HP da coleção antes das recompensas (XP não deve restaurar full HP).
+        hp-sync (raid-all-parties-hp-txs db raid' query-collection pokemon-hp-status-tx)
+        reward-bundles (when pay-rewards?
+                         (mapv (fn [[pid p]]
+                                 (reward-tx-for-participant
+                                  db raid' pid p
+                                  apply-pokemon-xp-tx save-entity query-collection
+                                  reward-outcome))
+                               (raid/participantes-elegiveis raid')))
+        part' (get-in raid' [:participantes player-id])
+        ;; Atualiza HP/dano dos participantes vivos no snapshot
+        other-parts (for [[pid p] (:participantes raid')
+                          :when (not= pid player-id)]
+                      (participant-entity (:raid-id raid) pid (:chat-id writer-ctx) p))
+        ;; Derrota: libera ponteiro. Vitória: mantém enquanto captura pendente.
+        clear-ptr (when (raid/deve-liberar-ponteiro? raid' agora)
+                    [[:db/retract [:chat-active-raid/chat-id (:chat-id writer-ctx)]
+                      :chat-active-raid/raid-id (:raid-id raid)]])
+        raid-tx (concat
+                 [(cond-> (raid-entity-tx (assoc raid' :revision (inc expected-rev)
+                                                 :rewards-paid? (or (:rewards-paid? raid)
+                                                                    pay-rewards?)))
+                    idle (merge idle))
+                  [:db/cas [:raid/id (:raid-id raid)] :raid/revision
+                   expected-rev (inc expected-rev)]
+                  [:db/cas [:raid/id (:raid-id raid)] :raid/turn-index
+                   expected-turn (long (:turn-index raid'))]
+                  (participant-entity (:raid-id raid) player-id
+                                      (:chat-id writer-ctx) part')
+                  [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                  {:operation-receipt/id operation-id
+                   :operation-receipt/kind "raid-attack"
+                   :operation-receipt/channel "gameplay"
+                   :operation-receipt/payload-hash phash
+                   :operation-receipt/player-key
+                   (id/player-key (:chat-id writer-ctx) player-id)
+                   :operation-receipt/save-id (:save-id writer-ctx)
+                   :operation-receipt/summary
+                   (pr-str {:dano (:dano outcome)
+                            :multiplicador (:multiplicador outcome)
+                            :base (:base outcome)
+                            :base-variada (:base-variada outcome)
+                            :variacao-pct (:variacao-pct outcome)
+                            :venceu? (:venceu? outcome)
+                            :derrota? (:derrota? outcome)
+                            :trocou? (:trocou? outcome)
+                            :eliminado? (:eliminado? outcome)})}]
+                 other-parts
+                 (or hp-sync [])
+                 (or clear-ptr []))]
+    {:tx (into (vec raid-tx) (mapcat :tx reward-bundles))
+     :result {:operation-id operation-id
+              :duplicate false
+              :dano (:dano outcome)
+              :multiplicador (:multiplicador outcome)
+              :base (:base outcome)
+              :base-variada (:base-variada outcome)
+              :variacao-pct (:variacao-pct outcome)
+              :hp-chefe-antes (:hp-chefe-antes outcome)
+              :revide (:revide outcome)
+              :venceu? (:venceu? outcome)
+              :derrota? (:derrota? outcome)
+              :trocou? (boolean (:trocou? outcome))
+              :eliminado? (boolean (:eliminado? outcome))
+              :autodesmaio? (boolean (:autodesmaio? outcome))
+              :hp-ativo (:hp-ativo outcome)
+              :golpe (:golpe outcome)
+              :pokemon-atacante (:pokemon-atacante outcome)
+              :pokemon-ativo (:pokemon-ativo outcome)
+              :raid raid'
+              :rewards (mapv #(select-keys % [:player-id :moedas :pe :xp-pokemon
+                                              :pokemon-id :outcome])
+                             (or reward-bundles []))}}))
+
+(defn build-frambo-prepare-tx
+  "Prepara Frambo para a próxima tentativa — não consome ainda."
+  [{:keys [db save writer-ctx request raid inventory-adjust-tx]}]
+  (let [chat-id (:chat-id writer-ctx)
+        player-id (:player-id writer-ctx)
+        save-id (:save-id writer-ctx)
+        part (get-in raid [:participantes player-id])
+        _ (raid/assert-participant-fence! part writer-ctx)
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        _ (when-not (raid/captura-pendente? raid player-id agora)
+            (throw (err/error :raid_capture_unavailable {:player-id player-id})))
+        cap (get-in raid [:capturas player-id])
+        _ (when (:frambo-preparada cap)
+            (throw (err/error :frambo_already_prepared {:player-id player-id})))
+        sk (id/save-key chat-id player-id save-id)
+        ;; Valida qty>=1 sem incluir o débito no TX (consumo só na captura).
+        _ (inventory-adjust-tx db sk capture/frambo-item-id -1)
+        rev (long (:save/revision save 0))
+        cap-key (id/raid-capture-key (:raid-id raid) player-id)
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        tentativas (long (:tentativas cap 0))]
+    {:tx [[:db/cas [:save/key sk] :save/revision rev (inc rev)]
+          {:raid-capture/key cap-key
+           :raid-capture/raid-id (:raid-id raid)
+           :raid-capture/player-id player-id
+           :raid-capture/tentativas tentativas
+           :raid-capture/capturou (boolean (:capturou cap))
+           :raid-capture/frambo-preparada true}
+          {:operation-receipt/id operation-id
+           :operation-receipt/kind "raid-frambo-prep"
+           :operation-receipt/channel "gameplay"
+           :operation-receipt/payload-hash phash
+           :operation-receipt/player-key (id/player-key chat-id player-id)
+           :operation-receipt/save-id save-id
+           :operation-receipt/summary
+           (pr-str {:raid-id (:raid-id raid) :frambo true})}]
+     :result {:operation-id operation-id
+              :duplicate false
+              :frambo-preparada true
+              :tentativas tentativas}}))
+
+(defn build-capture-tx
+  [{:keys [db save writer-ctx request raid colecao save-m
+           pokemon-entity-map inventory-adjust-tx]}]
+  (let [chat-id (:chat-id writer-ctx)
+        player-id (:player-id writer-ctx)
+        save-id (:save-id writer-ctx)
+        part (get-in raid [:participantes player-id])
+        _ (raid/assert-participant-fence! part writer-ctx)
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        _ (when-not (raid/captura-pendente? raid player-id agora)
+            (throw (err/error :raid_capture_unavailable {:player-id player-id})))
+        bola (:bola request)
+        chefe (:chefe raid)
+        chance-base (raid/chance-captura (or (:raridade chefe) (get chefe "raridade")))
+        prepared? (boolean (get-in raid [:capturas player-id :frambo-preparada]))
+        ;; `:frambo true` no request permite operação combinada (prepare+uso).
+        frambo? (or prepared? (boolean (:frambo request)))
+        chance (capture/chance-com-bola-frambo
+                chance-base bola frambo? capture/chance-captura-maxima-raid)
+        ;; Produção: RNG local. Testes/smoke injetam `:roll` (0–99).
+        ;; Bug 12.6: default antigo 100 ⇒ (< roll chance) sempre falso.
+        roll (long (or (:roll request) (rand-int 100)))
+        sucesso? (< roll chance)
+        tentativas (long (get-in raid [:capturas player-id :tentativas] 0))
+        sk (id/save-key chat-id player-id save-id)
+        rev (long (:save/revision save 0))
+        cap-key (id/raid-capture-key (:raid-id raid) player-id)
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        storage (capacity/resumo-armazenamento-pokemon (count colecao) (or save-m save))
+        _ (when (:cheio? storage)
+            (throw (err/error :collection_full
+                              {:count (:ocupacao storage)
+                               :capacidade (:capacidade storage)
+                               :excesso (:excesso storage)
+                               :nivel (:nivel storage)})))
+        item-tx (inventory-adjust-tx db sk bola -1)
+        frambo-tx (when frambo?
+                    (inventory-adjust-tx db sk capture/frambo-item-id -1))
+        add-tx (when sucesso?
+                 (let [reg (-> chefe
+                               (dissoc :id-pokemon)
+                               (assoc :nivel 1
+                                      :hp-atual (or (:hp chefe) (get chefe "hp") 50)
+                                      :status nil
+                                      :id-pokemon (coll/new-id-pokemon)
+                                      :nome (or (:nome chefe) (get chefe "nome") "Chefe")
+                                      :species (or (:species chefe) (:nome chefe)
+                                                   (get chefe "nome"))))]
+                   [(pokemon-entity-map sk reg (count colecao))]))
+        capturou? (or sucesso?
+                      (boolean (get-in raid [:capturas player-id :capturou])))
+        raid-pos (-> raid
+                     (assoc-in [:capturas player-id]
+                               {:tentativas (inc tentativas)
+                                :capturou capturou?
+                                :frambo-preparada false}))
+        liberar? (raid/deve-liberar-ponteiro? raid-pos agora)
+        clear-ptr (when liberar?
+                    [[:db/retract [:chat-active-raid/chat-id chat-id]
+                      :chat-active-raid/raid-id (:raid-id raid)]])]
+    {:tx (concat item-tx
+                 (or frambo-tx [])
+                 (or add-tx [])
+                 [{:raid-capture/key cap-key
+                   :raid-capture/raid-id (:raid-id raid)
+                   :raid-capture/player-id player-id
+                   :raid-capture/tentativas (inc tentativas)
+                   :raid-capture/capturou capturou?
+                   :raid-capture/frambo-preparada false}
+                  [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                  {:operation-receipt/id operation-id
+                   :operation-receipt/kind "raid-capture"
+                   :operation-receipt/channel "gameplay"
+                   :operation-receipt/payload-hash phash
+                   :operation-receipt/player-key (id/player-key chat-id player-id)
+                   :operation-receipt/save-id save-id
+                   :operation-receipt/summary
+                   (pr-str {:sucesso? sucesso? :chance chance :roll roll
+                            :frambo? frambo? :pointer-cleared liberar?})}]
+                 (or clear-ptr []))
+     :result {:operation-id operation-id
+              :duplicate false
+              :sucesso? sucesso?
+              :chance chance
+              :chance-base chance-base
+              :roll roll
+              :frambo? frambo?
+              :bola bola
+              :tentativas (inc tentativas)
+              :pointer-cleared (boolean liberar?)}}))

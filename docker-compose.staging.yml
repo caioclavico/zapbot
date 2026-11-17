@@ -1,0 +1,146 @@
+# Staging isolado M6.1–M6.3 — Node + JVM + Datomic Local.
+# NÃO é produção. NÃO publica a bridge JVM em interface pública.
+# Pokémon gameplay: somente JVM (sem Cassandra no caminho Pokémon).
+# Um writer por volume: FileLock em /data/datomic-local/.odisseu-writer.lock
+# Sessão WhatsApp: bind ./ .wwebjs_auth_staging (NUNCA .wwebjs_auth de produção).
+#
+# Uso:
+#   cp .env.staging.example .env.staging   # preencha tokens + DEV_GROUP_ID
+#   # Com sessão de TESTE em .wwebjs_auth_staging/session-staging:
+#   STAGING_WHATSAPP_CONFIRM=1 ./scripts/staging-integrated.sh
+#   # Ou Compose (Node só sobe se você montar sessão de teste):
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build
+#
+# Opcional Cassandra (módulos Node não-Pokémon):
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging --profile with-cassandra up -d
+#
+# Backup consistente: stop odisseu-jvm → scripts/staging-backup.sh (host) ou
+# docker run --rm -v odisseu-staging-datomic:/data -v "$PWD/.datomic-local:/out" alpine
+#   cp -a /data /out/m62-compose-bak
+
+name: odisseu-staging
+
+services:
+  odisseu-jvm:
+    build:
+      context: .
+      dockerfile: Dockerfile.jvm
+    container_name: odisseu-staging-jvm
+    restart: unless-stopped
+    stop_grace_period: 20s
+    environment:
+      # O Core aplica este valor no processo JVM; zero só é aceito com APP_ENV=staging.
+      APP_ENV: staging
+      POKEMON_HUNT_COOLDOWN_SECONDS: "0"
+      ODISSEU_BRIDGE_HOST: "0.0.0.0"
+      ODISSEU_BRIDGE_PORT: "18090"
+      ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND: "true"
+      ODISSEU_BRIDGE_TOKEN: ${ODISSEU_BRIDGE_TOKEN:?Defina ODISSEU_BRIDGE_TOKEN}
+      ODISSEU_BRIDGE_SYSTEM: odisseu-m61-staging
+      ODISSEU_BRIDGE_STORAGE: /data/datomic-local
+      ODISSEU_BRIDGE_DB: staging
+      ODISSEU_BRIDGE_SEED: ${ODISSEU_BRIDGE_SEED:-true}
+      ODISSEU_BRIDGE_RESET: ${ODISSEU_BRIDGE_RESET:-false}
+      ODISSEU_BRIDGE_ALLOW_TEST_RNG: "true"
+      JAVA_TOOL_OPTIONS: "-Xms64m -Xmx256m -XX:+UseG1GC"
+    volumes:
+      - odisseu-staging-datomic:/data/datomic-local
+    # Somente loopback do host — nunca 0.0.0.0:18090 no host.
+    ports:
+      - "127.0.0.1:18090:18090"
+    networks:
+      - staging-internal
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18090/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 90s
+    mem_limit: 512m
+    cpus: 1.0
+    # rede staging-internal: Node alcança JVM pelo nome; host só via 127.0.0.1:18090
+
+  odisseu-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: odisseu-staging-node
+    restart: unless-stopped
+    stop_grace_period: 60s
+    depends_on:
+      odisseu-jvm:
+        condition: service_healthy
+    env_file:
+      - .env.staging
+    environment:
+      APP_ENV: staging
+      POKEMON_ADAPTER: jvm
+      POKEMON_JVM_URL: http://odisseu-jvm:18090
+      POKEMON_JVM_ALLOW_DOCKER_HOST: "true"
+      POKEMON_JVM_TOKEN: ${ODISSEU_BRIDGE_TOKEN:?Defina ODISSEU_BRIDGE_TOKEN}
+      # Pokémon não usa Cassandra; URL do serviço legado vazia evita segundo writer.
+      POKEMON_SERVICE_URL: ""
+      POKEMON_SERVICE_TOKEN: ""
+      PLATFORM_ADAPTER: datomic
+      PLATFORM_JVM_URL: http://odisseu-jvm:18090
+      PLATFORM_JVM_TOKEN: ${ODISSEU_BRIDGE_TOKEN:?Defina ODISSEU_BRIDGE_TOKEN}
+      PLATFORM_JVM_ALLOW_PRIVATE_HOST: "true"
+      NODE_OPTIONS: --max-old-space-size=384
+      CHROMIUM_DISABLE_GPU: "true"
+      CHROMIUM_LOW_RESOURCE_MODE: "true"
+      # Path DEVE ser *_staging — APP_ENV=staging rejeita /.wwebjs_auth exato.
+      # clientId=staging → session-staging/ no volume. Host: .wwebjs_auth_staging/
+      WWEBJS_DATA_PATH: /app/.wwebjs_auth_staging
+      WWEBJS_CLIENT_ID: staging
+    volumes:
+      # Bind exclusivo de staging — NÃO monte .wwebjs_auth de produção aqui.
+      - ./.wwebjs_auth_staging:/app/.wwebjs_auth_staging
+      - odisseu-staging-data:/app/data
+    # Health Node exige WhatsApp READY — sem sessão de teste fica degraded.
+    # scripts/staging-integrated.sh bloqueia QR automático.
+    networks:
+      - staging-internal
+    mem_limit: 2560m
+    memswap_limit: 4g
+    cpus: 2.0
+    ports:
+      # Health do Node só em loopback (nunca público).
+      - "127.0.0.1:3001:3001"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # Opcional: Cassandra só para módulos Node não-Pokémon (rank/lembretes/…).
+  cassandra:
+    profiles: ["with-cassandra"]
+    image: cassandra:5
+    container_name: odisseu-staging-cassandra
+    restart: unless-stopped
+    environment:
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    volumes:
+      - odisseu-staging-cassandra:/var/lib/cassandra
+    # Só loopback — nunca exposição pública.
+    ports:
+      - "127.0.0.1:9043:9042"
+    networks:
+      - staging-internal
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+networks:
+  staging-internal:
+    driver: bridge
+    internal: false
+
+volumes:
+  odisseu-staging-datomic:
+  odisseu-staging-data:
+  odisseu-staging-cassandra:

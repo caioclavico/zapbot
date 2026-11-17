@@ -1,0 +1,12 @@
+;; M4.11 — expansões de mochila (capacidade alinhada a pokemon-service / capacity.clj).
+[
+ {:db/ident       :save/expansoes-mochila-50
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Compras de expansão de mochila (+50 slots cada); espelha expansoes-mochila-50"}
+
+ {:db/ident       :save/capacidade-mochila-legada
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Capacidade base legada (default 50) para capacity/capacidade-mochila"}
+]

@@ -1,0 +1,217 @@
+(ns pokemon.domain.shop
+  "Catálogo e regras de compra/uso — espelha loja.cljs / pokemon-service."
+  (:require [clojure.string :as str]
+            [pokemon.domain.capacity :as capacity]
+            [pokemon.domain.errors :as err]))
+
+(def exp-share-id "exp-share")
+
+(def ^:private catalogo-venda
+  "Itens com :preco — únicos compráveis na loja."
+  {exp-share-id {:nome "Exp. Share" :emoji "📘" :preco 100 :equipavel? true
+                  :descricao "Equipe com !pk equipar <n> exp-share. Quando o portador vence uma caçada, cada outro Pokémon apto da equipe ganha 1 XP."}
+   "cartao-presente" {:nome "Cartão de presente" :emoji "🎁" :preco 20
+                      :descricao "Presente para outro treinador — !presente @amigo."}
+   "mochila" {:nome "Expansão de Mochila" :emoji "🎒" :preco 200 :expansao? true
+              :expansao-tipo :mochila
+              :descricao "Aumenta a capacidade da mochila de itens em +50."}
+   "espaco-pokemon" {:nome "Expansão de Armazenamento" :emoji "📦" :preco 200 :expansao? true
+                     :expansao-tipo :pokemon
+                     :descricao "Aumenta a capacidade de Pokémon em +50 (expansoes-pokemon-50)."}
+   "mt" {:nome "MT de Ataque" :emoji "💿" :preco 200
+         :descricao "Sorteia um ataque compatível (learnset por nível). Use !pk mt usar <n> <slot> e confirme. Consome 1 MT."}
+   "atadura" {:nome "Atadura" :emoji "🔥" :preco 15 :status "queimado"
+              :descricao "Remove queimadura — !pk curar."}
+   "antidoto" {:nome "Antídoto" :emoji "☠️" :preco 15 :status "envenenado"
+               :descricao "Remove envenenamento — !pk curar."}
+   "paralisia" {:nome "Cura de Paralisia" :emoji "⚡" :preco 15 :status "paralisado"
+                :descricao "Remove paralisia — !pk curar."}
+   "despertar" {:nome "Despertar" :emoji "💤" :preco 15 :status "adormecido"
+                :descricao "Acorda o Pokémon — !pk curar."}
+   "degelo" {:nome "Antigelo" :emoji "🧊" :preco 15 :status "congelado"
+             :descricao "Descongela — !pk curar."}
+   "persim" {:nome "Baya Caquic" :emoji "💫" :preco 15 :status "confuso"
+             :descricao "Remove confusão — !pk curar."}
+   "pocao" {:nome "Poção de Vida" :emoji "🧪" :preco 20 :cura-hp 0.4
+            :descricao "Recupera 40% do HP — !pk pocao."}
+   "pocao-maxima" {:nome "Poção Máxima" :emoji "💖" :preco 60 :cura-hp 1.0
+                   :descricao "Restaura todo o HP — !pk pocao-maxima."}
+   "fruta" {:nome "Fruta Frambo" :emoji "🍓" :preco 10 :motivacao 20
+            :descricao "Motivação de ginásio (+20) — !pk gin potenciar."}
+   "restos" {:nome "Restos" :emoji "🍱" :preco 45 :equipavel? true
+             :descricao "Recupera 1/16 do HP máximo por turno. Equipe com !pk equipar <n> restos."}
+   "banda" {:nome "Banda Musculosa" :emoji "💪" :preco 40 :equipavel? true
+            :descricao "Aumenta em 15% o dano físico. Equipe com !pk equipar <n> banda."}
+   "oculos" {:nome "Óculos Sábios" :emoji "👓" :preco 40 :equipavel? true
+             :descricao "Aumenta em 15% o dano especial. Equipe com !pk equipar <n> oculos."}
+   "faixa-foco" {:nome "Faixa de Foco" :emoji "🥋" :preco 55 :equipavel? true
+                 :descricao "Com HP cheio, sobrevive a um golpe fatal com 1 HP uma vez por batalha. Use !pk equipar <n> faixa-foco."}
+   "incubadora-extra" {:nome "Incubadora Extra" :emoji "🪺" :preco 200
+                       :incubadora? true :incubadora-kind :extra
+                       :descricao "Incubadora temporária (3 usos). Não ocupa a mochila."}
+   "incubadora-especial" {:nome "Incubadora Especial" :emoji "✨" :preco 400
+                          :incubadora? true :incubadora-kind :especial
+                          :descricao "Incubadora temporária (3 usos, +25% PI). Não ocupa a mochila."}})
+
+(def ^:private catalogo-info
+  "Itens sem preço (informação / obtenção fora da loja)."
+  {"pokebola" {:nome "Pokébola" :emoji "🔴" :nao-venda :missoes}
+   "grande-bola" {:nome "Grande Bola" :emoji "🔵" :nao-venda :missoes}
+   "ultra-bola" {:nome "Ultra Bola" :emoji "🟡" :nao-venda :missoes}
+   "fruta-dourada" {:nome "Fruta Frambo Dourada" :emoji "🌟" :nao-venda :diario
+                    :motivacao 100}
+   "reviver" {:nome "Reviver" :emoji "💎" :nao-venda :missoes}
+   "catalisador-evolutivo" {:nome "Catalisador Evolutivo" :emoji "🧬" :nao-venda :missoes}
+   "revestimento-metalico" {:nome "Revestimento Metálico" :emoji "🧬" :nao-venda :missoes}
+   "escama-dragao" {:nome "Escama de Dragão" :emoji "🧬" :nao-venda :missoes}
+   "upgrade" {:nome "Upgrade" :emoji "🧬" :nao-venda :missoes}
+   "protetor" {:nome "Protetor" :emoji "🧬" :nao-venda :missoes}
+   "pedra-rei" {:nome "Pedra do Rei" :emoji "🧬" :nao-venda :missoes}
+   "eletrizador" {:nome "Eletrizador" :emoji "🧬" :nao-venda :missoes}
+   "magmarizador" {:nome "Magmarizador" :emoji "🧬" :nao-venda :missoes}
+   "tecido-ceifador" {:nome "Tecido do Ceifador" :emoji "🧬" :nao-venda :missoes}
+   "escama-prisma" {:nome "Escama Prisma" :emoji "🧬" :nao-venda :missoes}
+   "chicote-doce" {:nome "Chicote Doce" :emoji "🧬" :nao-venda :missoes}
+   "sache-perfumado" {:nome "Sachê Perfumado" :emoji "🧬" :nao-venda :missoes}
+   "pedra-agua" {:nome "Pedra da Água" :emoji "💧" :nao-venda :ginasio}
+   "pedra-trovao" {:nome "Pedra do Trovão" :emoji "⚡" :nao-venda :ginasio}
+   "pedra-fogo" {:nome "Pedra do Fogo" :emoji "🔥" :nao-venda :ginasio}
+   "pedra-folha" {:nome "Pedra da Folha" :emoji "🍃" :nao-venda :ginasio}
+   "pedra-lua" {:nome "Pedra da Lua" :emoji "🌙" :nao-venda :ginasio}})
+
+(def status-cura
+  {"atadura" "queimado"
+   "antidoto" "envenenado"
+   "paralisia" "paralisado"
+   "despertar" "adormecido"
+   "degelo" "congelado"
+   "persim" "confuso"})
+
+(def aliases-item
+  {"normal" "pokebola" "poke" "pokebola" "poke-ball" "pokebola" "pokeball" "pokebola"
+   "grande" "grande-bola" "super" "grande-bola" "super-bola" "grande-bola"
+   "superbola" "grande-bola" "great" "grande-bola" "great-ball" "grande-bola"
+   "greatball" "grande-bola"
+   "ultra" "ultra-bola" "ultra-ball" "ultra-bola" "ultraball" "ultra-bola"
+   "maxima" "pocao-maxima" "maxima-pocao" "pocao-maxima"
+   "porcao-maxima" "pocao-maxima"
+   "compartilha-xp" exp-share-id
+   "banda-musculosa" "banda"
+   "óculos" "oculos" "oculos-sabios" "oculos"
+   "espaco" "espaco-pokemon" "espaço" "espaco-pokemon"
+   "espaco-pc" "espaco-pokemon" "pc" "espaco-pokemon"
+   "incubadora" "incubadora-extra" "incubadora-temp" "incubadora-extra"
+   "incubadora-bonus" "incubadora-especial"})
+
+(defn normalizar-item
+  [nome]
+  (let [chave (-> (or nome "") str/trim str/lower-case
+                  (str/replace #"á|à|ã|â" "a")
+                  (str/replace #"é|ê" "e")
+                  (str/replace #"í" "i")
+                  (str/replace #"ó|ô|õ" "o")
+                  (str/replace #"ú" "u")
+                  (str/replace #"ç" "c")
+                  (str/replace #"\s+" "-"))]
+    (get aliases-item chave chave)))
+
+(defn item
+  [item-id]
+  (or (get catalogo-venda item-id)
+      (get catalogo-info item-id)))
+
+(defn item-equipavel?
+  "Retorna true somente para itens que a master permite segurar."
+  [item-id]
+  (true? (:equipavel? (item (normalizar-item item-id)))))
+
+(defn catalogo-loja
+  "Itens à venda, ordenados por preço."
+  []
+  (->> catalogo-venda
+       (map (fn [[id meta]] (assoc meta :item-id id)))
+       (sort-by (juxt :preco :item-id))
+       vec))
+
+(defn ocupacao-mochila
+  [inventory]
+  (reduce + 0 (map #(long (:qty % 0)) (or inventory []))))
+
+(defn capacidade-mochila-save
+  [save]
+  (capacity/capacidade-mochila
+   (:trainer-level save 1)
+   (:expansoes-mochila-50 save 0)
+   (or (:capacidade-mochila-legada save) 50)))
+
+(defn cabe-item?
+  [save inventory]
+  (< (ocupacao-mochila inventory) (capacidade-mochila-save save)))
+
+(defn economia-confiavel?
+  "Recovery/offline-import pode ter coins=0 como placeholder (unknown-pending).
+   Não tratar isso como saldo real gastável."
+  [save]
+  (let [origin (some-> (:origin save) str)
+        slot (some-> (or (:slot-id save) (:save-id save)) str)
+        legacy (some-> (:legacy-version save) str)]
+    (not (or (= origin "offline-import")
+             (and (string? slot) (str/starts-with? slot "recovery"))
+             (= legacy "unknown")))))
+
+(defn validar-compra!
+  "Retorna item meta ou lança. Não muta estado.
+   `coins` deve ser o saldo comprovadamente gastável (spendable), não o
+   placeholder :save/coins de recovery unknown-pending."
+  [item-id save inventory coins]
+  (let [id (normalizar-item item-id)
+        meta (get catalogo-venda id)
+        info (get catalogo-info id)
+        preco (long (or (:preco meta) 0))]
+    (cond
+      (and (nil? meta) (nil? info))
+      (throw (err/error :unknown_shop_item {:item-id id}))
+
+      (nil? meta)
+      (throw (err/error :item_not_for_sale
+                        {:item-id id :reason (:nao-venda info)}))
+
+      ;; Débito só contra saldo comprovado (economy/assert-can-spend! no store).
+      ;; Aqui: se spendable insuficiente e recovery sem operacional → unreliable.
+      (and (not (economia-confiavel? save))
+           (<= (long coins) 0))
+      (throw (err/error :economy_unreliable
+                        {:item-id id
+                         :reason :no-proven-balance
+                         :coins coins
+                         :message "Sem saldo operacional comprovado. Histórico unknown-pending não é gastável."}))
+
+      (< (long coins) preco)
+      (throw (err/error :insufficient_coins
+                        {:coins coins :preco preco :item-id id}))
+
+      (and (not (:expansao? meta))
+           (not (:incubadora? meta))
+           (not (cabe-item? save inventory)))
+      (throw (err/error :bag_full
+                        {:ocupacao (ocupacao-mochila inventory)
+                         :capacidade (capacidade-mochila-save save)}))
+
+      :else (assoc meta :item-id id))))
+
+(defn cura-status-item
+  "Item-id que cura o status dado, ou nil."
+  [status]
+  (let [st (some-> status str str/lower-case)]
+    (some (fn [[id s]] (when (= s st) id)) status-cura)))
+
+(defn aplicar-pocao
+  "Novo hp-atual após poção (fração do HP máximo)."
+  [pokemon fracao]
+  (let [hp-max (long (or (:hp pokemon) (get pokemon "hp") 0))
+        hp (long (or (:hp-atual pokemon) (get pokemon "hp-atual") 0))
+        ganho (long (Math/floor (* hp-max (double fracao))))
+        novo (min hp-max (+ hp ganho))]
+    (when (>= hp hp-max)
+      (throw (err/error :pokemon_full_hp {:hp hp :hp-max hp-max})))
+    {:hp-antes hp :hp-depois novo :hp-max hp-max}))

@@ -1,0 +1,54 @@
+;; M7.0 — schema Datomic Local para bloqueio + admins-conhecidos (sintético).
+;; Não ligado ao runtime Node/Cassandra de produção.
+[
+ {:db/ident       :platform.chat/id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "ID do chat WhatsApp (ex.: ...@g.us)."}
+
+ {:db/ident       :platform.block/chat
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Entidade de bloqueio → chat."}
+
+ {:db/ident       :platform.block/bot?
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Bot inteiro desligado no chat."}
+
+ {:db/ident       :platform.block/command
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/many
+  :db/doc         "Comandos bloqueados (ex.: naval, quiz)."}
+
+ {:db/ident       :platform.admin/chat
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Admin conhecido → chat."}
+
+ {:db/ident       :platform.admin/player-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "JID serializado do admin."}
+
+ {:db/ident       :platform.admin/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "chat-id|player-id — identidade estável."}
+
+ {:db/ident       :platform.op/id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Recibo idempotente de import/mutação do harness."}
+
+ {:db/ident       :platform.op/domain
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.op/payload-hash
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+]

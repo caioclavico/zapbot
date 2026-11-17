@@ -47,6 +47,8 @@ DEPLOYMENT_LABEL = 'io.zapbot.deployment-id'
 REVISION_LABEL = 'org.opencontainers.image.revision'
 RESTORE_PROTOCOL_LABEL = 'io.zapbot.restore-protocol'
 RESTORE_PROTOCOL_STATE = 'restore-protocol-state.json'
+CANONICAL_TRAINER_LABEL = 'io.zapbot.canonical-trainer-protocol'
+CANONICAL_TRAINER_STATE = 'canonical-trainer-state.json'
 IMAGE_RE = re.compile(r'^ghcr\.io/[a-z0-9][a-z0-9._-]*/(zapbot(?:-pokemon)?):[0-9a-f]{40}$')
 POKEMON_HEALTH = """const h=require('node:http');
 const host=process.env.HOST==='::1'?'::1':'127.0.0.1';
@@ -331,6 +333,21 @@ class Deployment:
             raise DeployError('Restore protocol activation records are inconsistent')
         return True
 
+    def canonical_trainer_policy(self):
+        marker = self.config_dir / 'canonical-trainer-required'
+        state = self.config_dir / CANONICAL_TRAINER_STATE
+        if not marker.exists() and not state.exists():
+            return False
+        try:
+            required = private_file(marker, self.owner_uid).strip()
+            record = json.loads(private_file(state, self.owner_uid))
+        except (OSError, ValueError, TypeError):
+            raise DeployError('Canonical trainer protocol activation records are unreadable') from None
+        expected = {'required': True, 'version': 1, 'label': '1', 'legacyWritersRevoked': True}
+        if required != '1' or record != expected:
+            raise DeployError('Canonical trainer protocol activation records are inconsistent')
+        return True
+
     def activate_restore_protocol(self, image):
         """Persist activation after an already validated compatible image.
 
@@ -363,6 +380,8 @@ class Deployment:
         # activated, loss/corruption of either record fails closed.
         if self.restore_protocol_policy() and labels.get(RESTORE_PROTOCOL_LABEL) != '1':
             raise DeployError('Image does not support the required restore protocol')
+        if self.canonical_trainer_policy() and labels.get(CANONICAL_TRAINER_LABEL) != '1':
+            raise DeployError('Image does not support the required canonical trainer protocol')
 
     def persistence(self, current, *, restoring_profile=False):
         config, host = current['Config'], current['HostConfig']
@@ -412,7 +431,10 @@ class Deployment:
             config['Env'] = [key + '=' + env[key] for key in env]
         config['StopTimeout'] = max(self.grace_seconds, config.get('StopTimeout') or 0)
         config['Labels'] = dict(config.get('Labels') or {})
-        for label in (SERVICE_LABEL, STORAGE_LABEL, REVISION_LABEL):
+        for label in (SERVICE_LABEL, STORAGE_LABEL, REVISION_LABEL, CANONICAL_TRAINER_LABEL):
+            if label == CANONICAL_TRAINER_LABEL and label not in (image['Config'].get('Labels') or {}):
+                config['Labels'].pop(label, None)
+                continue
             config['Labels'][label] = image['Config']['Labels'][label]
         config['Labels'][DEPLOYMENT_LABEL] = self.transaction_name
         # Reattach every Docker-created anonymous volume by its actual name.

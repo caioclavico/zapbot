@@ -1,0 +1,37 @@
+{
+  "chrome": "Chrome/157.0.8103.38",
+  "uid": 1000,
+  "noSandboxFlag": false,
+  "adequately_sandboxed": true,
+  "seccomp_bpf": true,
+  "pid_ns": true,
+  "net_ns": true,
+  "browser": {
+    "Name": "chrome",
+    "Uid": "1000 1000 1000 1000",
+    "Gid": "1000 1000 1000 1000",
+    "CapEff": "0000000000000000",
+    "NoNewPrivs": "1",
+    "Seccomp": "2",
+    "Seccomp_filters": "1"
+  },
+  "renderer": {
+    "Name": "chrome",
+    "Uid": "1000 1000 1000 1000",
+    "Gid": "1000 1000 1000 1000",
+    "CapEff": "0000000000000000",
+    "NoNewPrivs": "1",
+    "Seccomp": "2",
+    "Seccomp_filters": "2"
+  },
+  "browser_ns": {
+    "user": "user:[4026531837]",
+    "pid": "pid:[4026532492]",
+    "net": "net:[4026532494]"
+  },
+  "renderer_ns": {
+    "user": "user:[4026532558]",
+    "pid": "pid:[4026532628]",
+    "net": "net:[4026532562]"
+  }
+}

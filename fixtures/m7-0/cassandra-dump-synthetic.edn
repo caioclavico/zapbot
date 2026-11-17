@@ -1,0 +1,57 @@
+;; Dump sintético M7.0 — NUNCA dados reais. meta.synthetic obrigatório.
+{:meta {:synthetic true
+        :milestone "M7.0"
+        :source "fixtures/m7-0"
+        :nota "Espelha chaves de zapbot.armazenamento (estado_particionado)."}
+ :modules
+ {"bloqueio"
+  {"chat-m70-a@g.us" {"bot?" false
+                      "comandos" ["naval" "quiz"]}
+   "chat-m70-b@g.us" {"bot?" true
+                      "comandos" []}
+   "chat-m70-c@g.us" {"bot?" false
+                      "comandos" ["pokemon" "velha" "stop"]}}
+
+  "admins-conhecidos"
+  {"chat-m70-a@g.us" ["551100000001@c.us" "551100000002@c.us"]
+   "chat-m70-b@g.us" ["551100000099@c.us"]
+   "chat-m70-c@g.us" []}
+
+  ;; Demais domínios: inventário de contrato (fixtures mínimas para fases futuras).
+  "rank"
+  {"chat-m70-a@g.us"
+   {"551100000001@c.us" {"nome" "Ash" "pontos" 3 "jogos" {"velha" 2 "quiz" 1}}}}
+
+  "enquetes"
+  {"chat-m70-a@g.us"
+   {"pergunta" "Preferem café ou chá?"
+    "opcoes" ["Café" "Chá"]
+    "votos" {"551100000001@c.us" 1}
+    "prefix" "!"}}
+
+  "quiz-historico"
+  {"chat-m70-a@g.us" ["Capital do Brasil?" "Maior planeta?"]}
+
+  "lembretes"
+  {"rem-m70-1" {"id" "rem-m70-1"
+                "chat" "chat-m70-a@g.us"
+                "texto" "caçar"
+                "criador" "551100000001@c.us"
+                "em" 1893456000000}}
+
+  "bugs"
+  {"1" {"id" "1"
+        "versao" "0.0.0-syn"
+        "chat" "chat-m70-a@g.us"
+        "reportado-por" "551100000001@c.us"
+        "autor-mensagem" "551100000002@c.us"
+        "mensagem" "bug sintético"
+        "mensagem-em" 1700000000000
+        "origem" "citada"
+        "reportado-em" 1700000001000
+        "status" "aberto"}}
+
+  "participantes"
+  {"chat-m70-a@g.us"
+   {"551100000001@c.us" "Ash"
+    "551100000002@c.us" "Misty"}}}}

@@ -25,22 +25,24 @@ function createClient(options = {}) {
   const groqEnabled = configured(groqApiKey);
   const emit = event => { try { logger({event: 'ai_request', ...event}); } catch {} };
 
-  function request(provider, prompt) {
+  function request(provider, prompt, maxOutputTokens) {
     if (provider === 'gemini') {
       return {
         url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel)}:generateContent`,
         headers: {'Content-Type': 'application/json', 'x-goog-api-key': geminiApiKey},
-        body: {systemInstruction: {parts: [{text: systemPrompt}]}, contents: [{role: 'user', parts: [{text: prompt}]}]},
+        body: {systemInstruction: {parts: [{text: systemPrompt}]}, contents: [{role: 'user', parts: [{text: prompt}]}],
+          ...(maxOutputTokens ? {generationConfig: {maxOutputTokens}} : {})},
       };
     }
     return {
       url: 'https://api.groq.com/openai/v1/chat/completions',
       headers: {'Content-Type': 'application/json', Authorization: `Bearer ${groqApiKey}`},
-      body: {model: groqModel, messages: [{role: 'system', content: systemPrompt}, {role: 'user', content: prompt}]},
+      body: {model: groqModel, messages: [{role: 'system', content: systemPrompt}, {role: 'user', content: prompt}],
+        ...(maxOutputTokens ? {max_tokens: maxOutputTokens} : {})},
     };
   }
 
-  async function attempt(provider, prompt, deadline, number) {
+  async function attempt(provider, prompt, deadline, number, maxOutputTokens) {
     const start = now();
     const timeout = Math.min(requestTimeoutMs, deadline - start);
     const model = provider === 'gemini' ? geminiModel : groqModel;
@@ -58,7 +60,7 @@ function createClient(options = {}) {
     let result;
     try {
       const operation = (async () => {
-        const {url, headers, body} = request(provider, prompt);
+        const {url, headers, body} = request(provider, prompt, maxOutputTokens);
         const response = await fetchFn(url, {method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal});
         if (!response.ok) {
           // Do not read or log provider error bodies: they can echo private input.
@@ -83,17 +85,21 @@ function createClient(options = {}) {
     return result;
   }
 
-  async function generate(prompt) {
+  async function generateDetailed(prompt, generationOptions = {}) {
     const start = now();
     const deadline = start + totalTimeoutMs;
+    const maxOutputTokens = positive(generationOptions.maxOutputTokens, 0);
+    let attempts = 0;
+    const complete = (text, provider) => ({text, provider, attempts, latencyMs: Math.max(0, now() - start)});
     // Reserve one bounded request for fallback; all waits count toward the total.
     const primaryDeadline = groqEnabled ? Math.max(start, deadline - Math.min(requestTimeoutMs, totalTimeoutMs / 2)) : deadline;
     if (configured(geminiApiKey)) {
       for (let number = 1; number <= 3 && now() < primaryDeadline; number++) {
-        const result = await attempt('gemini', prompt, primaryDeadline, number);
+        attempts++;
+        const result = await attempt('gemini', prompt, primaryDeadline, number, maxOutputTokens);
         if (result.text) {
           emit({provider: 'gemini', model: geminiModel, outcome: 'complete', latency_ms: now() - start});
-          return result.text;
+          return complete(result.text, 'gemini');
         }
         const transient = TRANSIENT.has(result.status) || ['network', 'timeout'].includes(result.error);
         if (!transient || number === 3) break;
@@ -105,16 +111,20 @@ function createClient(options = {}) {
     }
     if (groqEnabled && now() < deadline) {
       emit({provider: 'groq', model: groqModel, outcome: 'fallback'});
-      const result = await attempt('groq', prompt, deadline, 1);
+      attempts++;
+      const result = await attempt('groq', prompt, deadline, 1, maxOutputTokens);
       if (result.text) {
         emit({provider: 'groq', model: groqModel, outcome: 'complete', latency_ms: now() - start});
-        return result.text;
+        return complete(result.text, 'groq');
       }
     }
     emit({outcome: 'unavailable', latency_ms: Math.max(0, now() - start)});
-    return null;
+    return {text: null, provider: null, attempts, latencyMs: Math.max(0, now() - start)};
   }
-  return {generate};
+  async function generate(prompt) {
+    return (await generateDetailed(prompt)).text;
+  }
+  return {generate, generateDetailed};
 }
 
 module.exports = {createClient, retryAfterMs};

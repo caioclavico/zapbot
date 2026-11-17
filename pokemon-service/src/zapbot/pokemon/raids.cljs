@@ -1,5 +1,10 @@
 (ns zapbot.pokemon.raids
-  "Raids cooperativas com equipes e HP próprios, persistidos por chat."
+  "Raids cooperativas com equipes e HP próprios, persistidos por chat.
+
+  A instância da raide (chefe, fase, HP, ordem, vez, prazos) é compartilhada
+  pelo grupo. Participação, captura pendente e recompensas do jogador ficam
+  carimbadas com o save de origem quando as flags de transição/canônico
+  estão ligadas — não se abandona a raide para liberar troca."
   (:require [clojure.string :as str]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.config :as config]
@@ -13,6 +18,48 @@
 ;; Campo legado atualizado pelo início manual; não agenda novas aparições.
 (def intervalo (* 6 60 60 1000))
 
+(defn- raids-vinculadas-a-save? []
+  (boolean (or config/save-transitions-enabled? config/canonical-trainer-enabled?)))
+
+(defn- ctx-save [pid]
+  (armazenamento/contexto-writer-jogador pid))
+
+(defn- carimbar-participante [participante pid]
+  "Anexa save-id/fence (e selo, se disponível) no momento da inscrição."
+  (if-not (raids-vinculadas-a-save?)
+    participante
+    (let [ctx (ctx-save pid)]
+      (when-not (and ctx (string? (:save-id ctx)) (not (str/blank? (:save-id ctx))))
+        (throw (ex-info "Raide sem vínculo de save ativo; inscrição bloqueada."
+                        {:code :raid-save-binding-required})))
+      (when (and (string? (:transition-owner ctx))
+                 (not (str/blank? (:transition-owner ctx))))
+        (throw (ex-info "Raide bloqueada durante reserva de transição."
+                        {:code :raid-transition-reserved})))
+      (let [selo (try (armazenamento/selo-save-atual pid)
+                      (catch :default _ nil))]
+        (cond-> (assoc participante
+                       "save-id" (:save-id ctx)
+                       "fence-generation" (:fence-generation ctx))
+          selo (assoc "save-seal" selo))))))
+
+(defn- participante-do-save-atual?
+  "True no legado; com flags, exige save/fence iguais ao writer atual."
+  [participante pid]
+  (if-not (raids-vinculadas-a-save?)
+    true
+    (let [ctx (ctx-save pid)
+          sid (get participante "save-id")
+          fence (get participante "fence-generation")]
+      (boolean
+       (and ctx (string? sid) (not (str/blank? sid))
+            (= sid (:save-id ctx))
+            (or (nil? fence) (nil? (:fence-generation ctx))
+                (= fence (:fence-generation ctx))))))))
+
+(defn- recusar-save-cruzado [raid]
+  [raid "🚫 Esta participação de raide pertence a outro save. Volte ao save de origem para continuar."])
+
 (defn ativa? [raid agora]
   (and (contains? #{"inscricoes" "combate"} (get raid "fase"))
        (< agora (get raid "expira" 0))))
@@ -22,18 +69,42 @@
 (defn no-ginasio? [cid id agora]
   (let [r (atual cid)] (and (= id (get r "ginasio")) (ativa? r agora))))
 
-(defn captura-pendente [cid pid agora]
-  (let [r (atual cid)]
-    (when (and (= "vitoria" (get r "fase")) (< agora (get r "captura-expira" 0))
-               (pos? (get-in r ["participantes" pid "dano"] 0))
-               (< (get-in r ["capturas" pid "tentativas"] 0) 3)
-               (not (get-in r ["capturas" pid "capturou"])))
+(defn- captura-pendente-duravel?
+  "Critério durável (sem checar save) — usado para bloquear transição."
+  [raid pid agora]
+  (and (= "vitoria" (get raid "fase"))
+       (< agora (get raid "captura-expira" 0))
+       (pos? (get-in raid ["participantes" pid "dano"] 0))
+       (< (get-in raid ["capturas" pid "tentativas"] 0) 3)
+       (not (get-in raid ["capturas" pid "capturou"]))))
+
+(defn captura-pendente
+  "Retorna a raide se o jogador pode tentar capturar no save atual.
+  Com flags ligadas, save B não enxerga captura pendente de A."
+  [cid pid agora]
+  (let [r (atual cid)
+        p (get-in r ["participantes" pid])]
+    (when (and (captura-pendente-duravel? r pid agora)
+               (participante-do-save-atual? p pid))
       r)))
 
+(defn bloqueia-transicao-save?
+  "Participação ativa ou captura pendente no módulo durável.
+  Não limpa nem abandona a raide para liberar a troca."
+  [cid pid agora]
+  (let [r (atual cid)]
+    (boolean
+     (or (and (ativa? r agora) (contains? (get r "participantes" {}) pid))
+         (captura-pendente-duravel? r pid agora)))))
+
 (defn registrar-tentativa! [cid pid capturou?]
-  (swap! raids update-in [cid "capturas" pid]
-         #(-> (or % {}) (update "tentativas" (fnil inc 0)) (assoc "capturou" capturou?)))
-  (armazenamento/salvar! "raids" @raids))
+  (let [p (get-in @raids [cid "participantes" pid])]
+    (when-not (participante-do-save-atual? p pid)
+      (throw (ex-info "Captura de raide de outro save; efeito bloqueado."
+                      {:code :raid-save-fence-conflict})))
+    (swap! raids update-in [cid "capturas" pid]
+           #(-> (or % {}) (update "tentativas" (fnil inc 0)) (assoc "capturou" capturou?)))
+    (armazenamento/salvar! "raids" @raids)))
 
 (defn chance-captura [raridade]
   (get {"raro" 35 "lendario" 8 "mitico" 4} raridade 35))
@@ -55,27 +126,30 @@
                           (pos? (get % "poder" 0))) (get registro "golpes"))))
     [raid "❌ Escolha um Pokémon com HP, da liga da raide e com um golpe de dano."]
     :else
-    [(-> raid (update "ordem" conj pid)
-         (assoc-in ["participantes" pid]
-                   {"nome" nome "pokemon" registro "hp" (get registro "hp-atual") "dano" 0}))
-     (str "✅ " nome " entrou com " (get registro "nome") ".")]))
+    (let [base {"nome" nome "pokemon" registro "hp" (get registro "hp-atual") "dano" 0}
+          participante (carimbar-participante base pid)]
+      [(-> raid (update "ordem" conj pid)
+           (assoc-in ["participantes" pid] participante))
+       (str "✅ " nome " entrou com " (get registro "nome") ".")])))
 
 (defn iniciar [raid pid agora]
-  (cond
-    (not (and (ativa? raid agora) (= "inscricoes" (get raid "fase"))))
-    [raid "❓ Não há inscrições abertas."]
-    (and (get raid "criador") (not= pid (get raid "criador"))) [raid "Só quem abriu a raide pode iniciá-la."]
-    (not (contains? (get raid "participantes") pid)) [raid "Entre na raide antes de iniciar."]
-    (< (count (get raid "ordem")) 2) [raid "São necessários pelo menos 2 participantes."]
-    :else
-    (let [n (count (get raid "ordem"))
-          registros (map #(get % "pokemon") (vals (get raid "participantes")))
-          media (fn [stat] (/ (reduce + (map #(get % stat 50) registros)) n))]
-      [(assoc raid "fase" "combate" "hp-chefe" (* 220 n) "hp-max" (* 220 n)
-                   "defesa" (media "defesa") "def-esp" (media "def-esp")
-                   "vez" (first (get raid "ordem")) "expira" (+ agora duracao-combate)
-                   "proxima" (+ agora intervalo))
-       "⚔️ Raide iniciada! Cada jogador ataca na sua vez; o chefe contra-ataca."])))
+  (let [p (get-in raid ["participantes" pid])]
+    (cond
+      (not (and (ativa? raid agora) (= "inscricoes" (get raid "fase"))))
+      [raid "❓ Não há inscrições abertas."]
+      (and (get raid "criador") (not= pid (get raid "criador"))) [raid "Só quem abriu a raide pode iniciá-la."]
+      (not (contains? (get raid "participantes") pid)) [raid "Entre na raide antes de iniciar."]
+      (not (participante-do-save-atual? p pid)) (recusar-save-cruzado raid)
+      (< (count (get raid "ordem")) 2) [raid "São necessários pelo menos 2 participantes."]
+      :else
+      (let [n (count (get raid "ordem"))
+            registros (map #(get % "pokemon") (vals (get raid "participantes")))
+            media (fn [stat] (/ (reduce + (map #(get % stat 50) registros)) n))]
+        [(assoc raid "fase" "combate" "hp-chefe" (* 220 n) "hp-max" (* 220 n)
+                     "defesa" (media "defesa") "def-esp" (media "def-esp")
+                     "vez" (first (get raid "ordem")) "expira" (+ agora duracao-combate)
+                     "proxima" (+ agora intervalo))
+         "⚔️ Raide iniciada! Cada jogador ataca na sua vez; o chefe contra-ataca."]))))
 
 (defn atacar [raid pid slot agora]
   (let [participante (get-in raid ["participantes" pid])
@@ -84,6 +158,7 @@
     (cond
       (not (and (ativa? raid agora) (= "combate" (get raid "fase"))))
       [raid "❓ Não há uma raide em combate."]
+      (not (participante-do-save-atual? participante pid)) (recusar-save-cruzado raid)
       (not= pid (get raid "vez")) [raid "⏳ Aguarde sua vez na raide."]
       (not (and golpe (contains? #{"fisico" "especial"} (get golpe "classe"))
                 (pos? (get golpe "poder" 0))))
@@ -134,19 +209,53 @@
          "\n" config/prefix "pokemon gin " (if (= "inscricoes" (get raid "fase")) "entrar [número] | !pk gin iniciar" "atacar <1-4>"))
     (str "🤝 Raide: " (case (get raid "fase") "vitoria" "vitória do grupo." "derrota" "grupo derrotado." "nenhuma ativa (encerrada ou expirada)."))))
 
+(defn- texto-premio [participante moedas progresso]
+  (str "\n💰 " (get participante "nome") ": "
+       (if moedas
+         (str "+" moedas " moedas; +" (:pe progresso 0) " PE; +"
+              (:xp progresso 0) " XP para o Pokémon inscrito."
+              (when (:pendente? progresso)
+                " XP reservado até o Pokémon voltar à equipe e você usar um comando Pokémon.")
+              (when (zero? (:xp progresso 0))
+                " O Pokémon não está disponível na sua equipe."))
+         "recompensa desta raide já recebida.")
+       (when-let [subida (:subida progresso)]
+         (str "\n✨ " (:nome subida) " chegou ao nível " (:nivel subida) "!"))))
+
+(defn- premiar-participante! [cid jogador participante dia]
+  "Aplica moedas/PE/XP no save carimbado; sem selo no modo canônico retém o prêmio."
+  (let [aplicar (fn []
+                  (let [moedas (loja/premiar-raid! cid jogador dia)
+                        progresso (when moedas
+                                    (treinador/premiar-progresso-raid!
+                                     cid jogador dia (get participante "pokemon")))]
+                    (assoc (or progresso {}) :pid jogador
+                           :texto (texto-premio participante moedas progresso))))]
+    (if-not (raids-vinculadas-a-save?)
+      (aplicar)
+      (if-let [selo (get participante "save-seal")]
+        (armazenamento/executar-com-selo-save! cid jogador selo aplicar)
+        {:pid jogador
+         :texto (str "\n💰 " (get participante "nome")
+                     ": recompensa retida até o save de origem ser reconciliado.")}))))
+
 (defn comando! [cid pid nome args registro liga-padrao agora]
   (let [[acao valor] args
         raid (get @raids cid)
+        p (get-in raid ["participantes" pid])
         [novo texto]
         (case acao
           "abrir" [raid "A aparição automática de raides foi removida. Consulte !pk raide para acompanhar uma raide existente."]
           "entrar" (entrar raid pid nome registro agora)
           "iniciar" (iniciar raid pid agora)
           "atacar" (atacar raid pid (when (re-matches #"[1-4]" (or valor "")) (dec (js/parseInt valor 10))) agora)
-          "sair" (if (and (ativa? raid agora) (= "inscricoes" (get raid "fase")))
+          "sair" (cond
+                   (not (and (ativa? raid agora) (= "inscricoes" (get raid "fase"))))
+                   [raid "Só é possível sair durante as inscrições; em combate, a raide termina por vitória, derrota ou prazo."]
+                   (and p (not (participante-do-save-atual? p pid))) (recusar-save-cruzado raid)
+                   :else
                    [(-> raid (update "ordem" #(vec (remove #{pid} %)))
-                        (update "participantes" dissoc pid)) "Inscrição removida."]
-                   [raid "Só é possível sair durante as inscrições; em combate, a raide termina por vitória, derrota ou prazo."])
+                        (update "participantes" dissoc pid)) "Inscrição removida."])
           "cancelar" (if (and (= pid (get raid "criador")) (= "inscricoes" (get raid "fase")))
                        [(assoc raid "fase" "cancelada") "Raide cancelada."]
                        [raid "Só o criador pode cancelar, antes de iniciar."])
@@ -157,22 +266,7 @@
     (let [dia (or (get novo "id") (missoes/dia-atual))
           premios (when (and (= "vitoria" (get novo "fase")) (not= "vitoria" (get raid "fase")))
                     (mapv (fn [[jogador participante]]
-                            (let [moedas (loja/premiar-raid! cid jogador dia)
-                                  progresso (when moedas
-                                              (treinador/premiar-progresso-raid!
-                                               cid jogador dia (get participante "pokemon")))]
-                              (assoc progresso :pid jogador
-                                     :texto (str "\n💰 " (get participante "nome") ": "
-                                                 (if moedas
-                                                   (str "+" moedas " moedas; +" (:pe progresso 0) " PE; +"
-                                                        (:xp progresso 0) " XP para o Pokémon inscrito."
-                                                        (when (:pendente? progresso)
-                                                          " XP reservado até o Pokémon voltar à equipe e você usar um comando Pokémon.")
-                                                        (when (zero? (:xp progresso 0))
-                                                          " O Pokémon não está disponível na sua equipe."))
-                                                   "recompensa desta raide já recebida.")
-                                                 (when-let [subida (:subida progresso)]
-                                                   (str "\n✨ " (:nome subida) " chegou ao nível " (:nivel subida) "!"))))))
+                            (premiar-participante! cid jogador participante dia))
                           (filter #(pos? (get (second %) "dano" 0)) (get novo "participantes"))))]
       {:texto (str texto
                   (when (= "vitoria" (get novo "fase"))

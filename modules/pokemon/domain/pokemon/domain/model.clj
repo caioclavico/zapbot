@@ -1,0 +1,123 @@
+(ns pokemon.domain.model
+  "Regras puras do núcleo treinador/saves (sem I/O, sem Datomic)."
+  (:require [clojure.string :as str]
+            [pokemon.domain.errors :as err]
+            [pokemon.domain.identities :as id]))
+
+(def default-slots ["a" "b"])
+
+(def ^:private reserved-display-names
+  "Nomes bloqueados para evitar ambiguidade com subcomandos."
+  #{"save" "saves" "novo" "renomear" "ativar" "ativo" "recuperar"
+    "recovery" "slot" "id" "help" "ajuda"})
+
+(defn normalize-public-name
+  "Normaliza rótulo público para comparação (trim + lower-case)."
+  [name]
+  (some-> name str str/trim str/lower-case not-empty))
+
+(defn public-save-label
+  "Identificador público: display-name se presente; senão slot-id interno."
+  [save]
+  (let [shown (some-> (:display-name save) str str/trim not-empty)]
+    (or shown (str (:slot-id save)))))
+
+(defn validate-save-display-name!
+  [name]
+  (let [value (some-> name str str/trim)]
+    (when-not (and value (<= 1 (count value) 80)
+                   (not (re-find #"[\r\n]" value)))
+      (throw (err/error :invalid_save_name {:name name})))
+    (when (contains? reserved-display-names (str/lower-case value))
+      (throw (err/error :invalid_save_name {:name name :reason :reserved})))
+    value))
+
+(defn assert-display-name-available!
+  "Garante unicidade do rótulo público por jogador.
+  Colide com display-name ou slot-id de outro save (case-insensitive)."
+  [saves save-id display-name]
+  (let [wanted (normalize-public-name display-name)
+        others (remove #(= (str save-id) (str (:slot-id %))) saves)]
+    (when (some (fn [s]
+                  (let [labels (cond-> [(normalize-public-name (:slot-id s))]
+                                 (normalize-public-name (:display-name s))
+                                 (conj (normalize-public-name (:display-name s))))]
+                    (some #(= wanted %) labels)))
+                others)
+      (throw (err/error :save_name_taken {:name display-name :save-id save-id})))
+    display-name))
+
+(defn next-available-slot-id
+  "Próximo slot interno livre: a–z, depois s1…s99."
+  [existing-ids]
+  (let [used (set (map str existing-ids))
+        letters (map str "abcdefghijklmnopqrstuvwxyz")
+        extras (map #(str "s" %) (range 1 100))
+        pick (first (remove used (concat letters extras)))]
+    (when-not pick
+      (throw (err/error :save_limit_reached {:used (count used)})))
+    pick))
+
+(defn validate-create-player!
+  [{:keys [chat-id player-id]}]
+  (when-not (and (id/valid-identity-part? chat-id)
+                 (id/valid-identity-part? player-id))
+    (throw (err/error :invalid_identity {:chat-id chat-id :player-id player-id})))
+  {:chat-id chat-id :player-id player-id :player-key (id/player-key chat-id player-id)})
+
+(defn validate-save-slot!
+  [save-id]
+  (when-not (id/valid-slot-id? save-id)
+    (throw (err/error :invalid_slot_id {:save-id save-id})))
+  save-id)
+
+(defn initial-save
+  "Estado inicial de um save vazio (moedas/xp/nível)."
+  [save-id]
+  (validate-save-slot! save-id)
+  {:slot-id save-id
+   :coins 0
+   :trainer-xp 0
+   :trainer-level 1
+   :revision 0})
+
+(defn assert-activate
+  "Decide se a alternância é no-op ou deve avançar o fence.
+  Nunca muta dados do outro save — só o ponteiro ativo.
+
+  set-initial: usa o fence atual como expected (não assume 0). Casos em que o
+  jogador já teve fence avançado sem active-save-id (ex.: import recovery)
+  deixam de falhar CAS 0→1 contra fence real >0."
+  [{:keys [active-save-id fence-generation]} target-save-id]
+  (validate-save-slot! target-save-id)
+  (let [fence (long (or fence-generation 0))]
+    (cond
+      (nil? active-save-id)
+      {:action :set-initial
+       :target target-save-id
+       :expected-fence fence
+       :next-fence (inc fence)}
+
+      (= active-save-id target-save-id)
+      {:action :noop :target target-save-id :fence-generation fence}
+
+      :else
+      {:action :switch
+       :from active-save-id
+       :target target-save-id
+       :expected-fence fence
+       :next-fence (inc fence)})))
+
+(defn apply-coin-delta
+  [coins delta]
+  (let [next (+ (long coins) (long delta))]
+    (when (neg? next)
+      (throw (err/error :insufficient_coins {:coins coins :delta delta})))
+    next))
+
+(defn reward-summary
+  "Resumo serializável do efeito (vai no recibo; sem I/O)."
+  [{:keys [coins-delta pokemon-key species shiny item-id item-qty]}]
+  (cond-> {:coins-delta (or coins-delta 0)}
+    pokemon-key (assoc :pokemon-key pokemon-key :species species :shiny (boolean shiny))
+    item-id (assoc :item-id item-id :item-qty (or item-qty 0))))

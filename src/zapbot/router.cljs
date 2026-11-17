@@ -31,8 +31,8 @@
             [zapbot.rank :as rank]))
 
 (def ^:private comandos
-  [{:emoji "🤡" :uso "piada"              :desc "Conta uma piada aleatória"}
-   {:emoji "🧠" :uso "curiosidade"        :desc "Conta uma curiosidade aleatória"}
+  [{:emoji "🤡" :uso "piada [assunto]"   :desc "Conta uma piada variada, opcionalmente sobre um assunto"}
+   {:emoji "🧠" :uso "curiosidade [assunto]" :desc "Conta uma curiosidade variada, opcionalmente sobre um assunto"}
    {:emoji "📰" :uso "noticias"           :desc "Mostra as últimas notícias"}
    {:emoji "💱" :uso "cotacao [PAR ...]"  :desc "Cotação de moedas (padrão: USD-BRL, EUR-BRL, BTC-BRL)"}
    {:emoji "🌦️" :uso "previsao [cidade]"  :desc "Previsão do tempo (também funciona como !tempo, !clima)"}
@@ -55,7 +55,7 @@
    {:emoji "🚫" :uso "ban"                :desc "Remove quem for mencionado/citado do grupo (apenas admins)"}
    {:emoji "📊" :uso "status"             :desc "Mostra versão, últimas mudanças, consumo de recursos e uptime da VM"}
    {:emoji "🧩" :uso "quiz [letra|sair]"  :desc "Pergunta de múltipla escolha: responda com a letra (a/b/c/d) ou cancele com 'sair'"}
-   {:emoji "⚡" :uso "pokemon [inicial|cacar [area]|clima|treinador|titulo|amizade|pokedex [n|descobertas]|ginasio|liga|time|mochila|missoes|atacar|sair]" :desc "Batalhe, explore áreas com clima e complete sua Pokédex"}
+   {:emoji "⚡" :uso "pokemon [inicial|cacar [area]|clima|treinador|titulo|amizade|pokedex [n|descobertas]|ginasio|liga|time|mochila|saves|save <nome|n>|novo save [nome]|renomear save <nome|n> <novo>|recuperar [v1|v2|ambos]|atacar|sair]" :desc "Batalhe, explore áreas com clima e complete sua Pokédex"}
    {:emoji "🐛" :uso "pk bug" :desc "Registra no Cassandra a mensagem respondida ou a anterior, junto da versão atual"}
    {:emoji "📖" :uso "pokedex [nome|numero]" :desc "Mostra tipo, altura, peso, habilidades e status de um Pokémon em português (sem args, sorteia um)"}
    {:emoji "📚" :uso "pokemon ajuda [batalhas|ginasios|cacadas|ligas|time|evolucao|shiny|semanais|raid]" :desc "Guias de como jogar, com passos, regras e exemplos; também aceita pokemon <módulo> ajuda"}
@@ -66,7 +66,7 @@
    {:emoji "📅" :uso "missoes semanais [resgatar]" :desc "Objetivos semanais de ginásios, capturas e PvP com moedas"}
    {:emoji "🤝" :uso "pokemon raid [abrir <liga>|entrar [n]|iniciar|atacar <1-4>|sair|cancelar]" :desc "Enfrente Snorlax com 2 a 6 jogadores da mesma liga; regras em pokemon ajuda raid"}
    {:emoji "💎" :uso "pokemon evoluir <número> <pedra>" :desc "Evolua espécies compatíveis usando uma pedra da mochila"}
-   {:emoji "🔄" :uso "pokemon negociar <seu número> <número do outro> @pessoa" :desc "Proponha uma troca; destinatário aceita e autor confirma usando o ID da proposta"}
+   {:emoji "🔄" :uso "pk troca <seu nº> <nº do outro> @pessoa" :desc "Proponha uma troca (#N); aceite/confirme/recuse com !pk troca aceitar|confirmar|recusar N"}
    {:emoji "🎉" :uso "pokemon eventos" :desc "Confira as espécies em destaque nas caçadas e o tempo restante do evento"}
    {:emoji "🎁" :uso "presente @amigo" :desc "Envie um cartão comprado na loja com bolas sorteadas para um amigo"}
    {:emoji "📋" :uso "missoes [resgatar]" :desc "Missões diárias com XP de treinador, Pokébolas e chance de Grande ou Ultra Bola"}
@@ -98,8 +98,8 @@
 
 (defn- despachar [message cmd args]
   (case cmd
-    "piada"     (piadas/piada-aleatoria)
-    "curiosidade" (p/resolved (curiosidades/curiosidade-aleatoria))
+    "piada"     (piadas/piada-aleatoria (str/join " " args))
+    "curiosidade" (curiosidades/curiosidade-aleatoria (str/join " " args))
     "noticias"  (noticias/buscar-noticias)
     "cotacao"   (if (seq args)
                   (cotacao/buscar-cotacoes (map str/upper-case args))
@@ -121,14 +121,14 @@
     ("defina" "definir") (dicionario/buscar-definicao (str/join " " args))
     "traduza"   (traduza/traduzir-frase (str/join " " args))
     ("resuma" "resumo" "resumir" "resume") (resumo/resumir-chat message (str/join " " args))
-    "lembrete" (p/resolved (lembretes/criar! message (str/join " " args)))
-    "lembretes" (p/resolved (lembretes/listar message))
-    "cancelarlembrete" (p/resolved (lembretes/cancelar! message (str/join " " args)))
+    "lembrete" (lembretes/criar! message (str/join " " args))
+    "lembretes" (lembretes/listar message)
+    "cancelarlembrete" (lembretes/cancelar! message (str/join " " args))
     "enquete" (if (= "fechar" (str/lower-case (str/trim (str/join " " args))))
-                (p/resolved (enquetes/fechar! message))
-                (if (empty? args) (p/resolved (enquetes/ver message))
-                    (p/resolved (enquetes/criar! message (str/join " " args)))))
-    "votar" (p/resolved (enquetes/votar! message (str/join " " args)))
+                (enquetes/fechar! message)
+                (if (empty? args) (enquetes/ver message)
+                    (enquetes/criar! message (str/join " " args))))
+    "votar" (enquetes/votar! message (str/join " " args))
     "apuracao" (apuracao/buscar-apuracao (first args))
     "pergunta"  (pergunta/perguntar message (str/join " " args))
     "bola8"     (bola8/jogar message (str/join " " args))

@@ -1,0 +1,178 @@
+;; Schema Datomic M2 — treinador / saves A·B / economia / pokémon / recibos.
+;; IDs alinhados ao canônico Cassandra: chat_id, player_id, active_save_id,
+;; fence_generation, operation receipts. Sem efeitos externos.
+[
+ ;; --- Conta do jogador (escopo chat × player) ---
+ {:db/ident       :player/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Lookup: \"{chat-id}|{player-id}\" — compatível com import Cassandra"}
+
+ {:db/ident       :player/chat-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Espelha canonical_trainer_accounts.chat_id"}
+
+ {:db/ident       :player/player-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Espelha canonical_trainer_accounts.player_id"}
+
+ {:db/ident       :player/active-save-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Ponteiro do save ativo (ex.: \"a\" | \"b\"). Não embute dados do save."}
+
+ {:db/ident       :player/fence-generation
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Geração de fence; CAS em alternância A↔B (substitui LWT Cassandra)"}
+
+ ;; --- Save independente (escopo chat × player × save) ---
+ {:db/ident       :save/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Lookup: \"{chat-id}|{player-id}|{save-id}\""}
+
+ {:db/ident       :save/slot-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Identificador do slot (\"a\" | \"b\" | …); validSlotId Cassandra"}
+
+ {:db/ident       :save/player
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Ref para a conta :player"}
+
+ {:db/ident       :save/coins
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :save/trainer-xp
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :save/trainer-level
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :save/revision
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Revisão do save para CAS em escritas concorrentes no mesmo save"}
+
+ ;; --- Inventário por save ---
+ {:db/ident       :inventory-item/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "\"{save-key}|{item-id}\""}
+
+ {:db/ident       :inventory-item/save
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :inventory-item/item-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :inventory-item/qty
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ ;; --- Instância de Pokémon (pertence a um save) ---
+ {:db/ident       :pokemon/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Identidade estável da instância (importável / operation-bound)"}
+
+ {:db/ident       :pokemon/save
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/species
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/nickname
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/shiny
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/xp
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/level
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokemon/in-party
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one}
+
+ ;; --- Pokédex por save ---
+ {:db/ident       :pokedex-entry/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "\"{save-key}|{species}\""}
+
+ {:db/ident       :pokedex-entry/save
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokedex-entry/species
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokedex-entry/seen
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :pokedex-entry/caught
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one}
+
+ ;; --- Recibo idempotente global ---
+ {:db/ident       :operation-receipt/id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "operation-id global; impede duplicar moedas/recompensas/pokémon"}
+
+ {:db/ident       :operation-receipt/kind
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :operation-receipt/player-key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :operation-receipt/save-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :operation-receipt/summary
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "EDN serializado do efeito aplicado (auditoria / replay de leitura)"}
+
+ ;; --- Estado compartilhado do grupo (entidade separada) ---
+ {:db/ident       :group/chat-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Estado de grupo (raid/ginásio/rank futuro). Não vive no save."}
+
+ {:db/ident       :group/label
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Marcador mínimo M2 para provar isolamento grupo × save"}
+]

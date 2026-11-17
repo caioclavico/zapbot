@@ -1,0 +1,34 @@
+[
+  {
+    "file": "battle-hp-full.png",
+    "cornersX": 0,
+    "cornersO": 0,
+    "hasAlphaX": true,
+    "hasAlphaO": true,
+    "bytes": 106161
+  },
+  {
+    "file": "battle-hp-partial.png",
+    "cornersX": 0,
+    "cornersO": 0,
+    "hasAlphaX": true,
+    "hasAlphaO": true,
+    "bytes": 97592
+  },
+  {
+    "file": "sprite-transparent-vs-opaque.png",
+    "cornersX": 0,
+    "cornersO": 0,
+    "hasAlphaX": true,
+    "hasAlphaO": true,
+    "bytes": 37942
+  },
+  {
+    "file": "sprite-large-transparent.png",
+    "cornersX": 0,
+    "cornersO": 0,
+    "hasAlphaX": true,
+    "hasAlphaO": true,
+    "bytes": 124999
+  }
+]

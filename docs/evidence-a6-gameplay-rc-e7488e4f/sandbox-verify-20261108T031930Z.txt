@@ -1,0 +1,1 @@
+RESULT disposable profile and data persisted across container recreation PASS

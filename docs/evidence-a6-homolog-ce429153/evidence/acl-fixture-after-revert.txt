@@ -1,0 +1,64 @@
+# file: /sess
+# owner: 1001
+# group: 1002
+user::rwx
+group::---
+mask::---
+other::---
+
+# file: /sess/session-a6
+# owner: root
+# group: root
+user::rwx
+group::---
+mask::---
+other::---
+
+# file: /sess/session-a6/Default
+# owner: root
+# group: root
+user::rwx
+group::---
+mask::---
+other::---
+
+# file: /sess/session-a6/Default/Preferences
+# owner: root
+# group: root
+user::rw-
+group::---
+mask::---
+other::---
+
+# file: /sess/session-a6/Default/Preferences.acl-probe
+# owner: 1000
+# group: 1000
+user::rw-
+group::---
+other::---
+
+# file: /data
+# owner: root
+# group: root
+user::rwx
+group::r-x
+mask::r-x
+other::r-x
+
+# file: /data/ai-content-history.json
+# owner: 1000
+# group: 1000
+user::rw-
+user:1000:rwx	#effective:---
+group::r-x	#effective:---
+mask::---
+other::---
+
+# file: /data/a6-maintenance.json
+# owner: root
+# group: root
+user::rw-
+group::---
+mask::---
+other::---
+

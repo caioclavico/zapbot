@@ -2,9 +2,16 @@ node_modules/
 target/
 .shadow-cljs/
 .wwebjs_auth/
+.wwebjs_auth_staging/
+.wwebjs_auth_core/
+.wwebjs_auth_a6_staging/
 .wwebjs_cache/
 data/
 .env
+.env.staging
+.env.odisseu-core
+.env.a6-staging
+.env.*.local
 *.log
 .nrepl-port
 .clj-kondo/*
@@ -13,3 +20,22 @@ data/
 
 # Private legacy-save validation inputs; never commit player data.
 .private-legacy-validation/
+
+# Clojure/JVM + Datomic Local (dev only — M1)
+.cpcache/
+.datomic-local/
+.tools/
+
+# Pacotes RC locais (tars Docker pesados — não versionar)
+rc-artifacts/**/*.tar
+rc-artifacts/**/logs/
+artifacts/**/*.tar
+artifacts/**/*.log
+artifacts/**/local-only/
+artifacts/**/*.tar
+artifacts/**/*.log
+artifacts/**/local-only/
+
+# Catálogo estático de chefes (Fase 12.7) — exception to data/
+!modules/pokemon/domain/pokemon/domain/data/
+!modules/pokemon/domain/pokemon/domain/data/raid_boss_catalog.edn

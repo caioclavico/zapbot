@@ -1,0 +1,67 @@
+;; Idle timeout de batalhas — last-activity/expires absolutos + outbox de notificação.
+[
+ {:db/ident       :battle/last-activity-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Epoch ms da última ação válida aceita"}
+
+ {:db/ident       :battle/idle-expires-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Epoch ms absoluto; sweeper/eager expire quando agora ≥ este valor"}
+
+ {:db/ident       :battle/idle-expired?
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Marcador idempotente de encerramento por inatividade"}
+
+ {:db/ident       :raid/last-activity-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/idle-expires-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :raid/idle-expired?
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle-notify/id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Outbox WhatsApp: battle-idle-notify|<battle-id>|<player-id>"}
+
+ {:db/ident       :battle-notify/kind
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle-notify/battle-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle-notify/chat-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle-notify/player-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle-notify/payload-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle-notify/created-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle-notify/acked?
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :battle-notify/acked-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+]

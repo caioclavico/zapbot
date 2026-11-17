@@ -5,6 +5,9 @@
             [clojure.string :as str]
             ["whatsapp-web.js" :as wwjs]
             ["qrcode-terminal" :as qrcode]
+            ["fs" :as fs]
+            ["os" :as os]
+            ["path" :as path]
             [zapbot.config :as config]
             [zapbot.desempenho :as desempenho]
             [zapbot.recursos :as recursos]
@@ -14,12 +17,23 @@
             [zapbot.adedonha :as adedonha]
             [zapbot.lembretes :as lembretes]
             [zapbot.admins :as admins]
+            [zapbot.bugs :as bugs]
             [zapbot.pokemon-http :as pokemon]
+            [zapbot.bloqueio :as bloqueio]
+            [zapbot.enquetes :as enquetes]
+            [zapbot.quiz :as quiz]
+            [zapbot.rank :as rank]
+            [zapbot.platform-jvm :as platform]
+            [zapbot.gemini :as gemini]
             [zapbot.router :as router]))
 
 (def ^:private Client (.-Client wwjs))
 (def ^:private LocalAuth (.-LocalAuth wwjs))
 (def ^:private startup (js/require "../scripts/lib/whatsapp-startup.cjs"))
+(def ^:private group-discovery (js/require "../scripts/lib/bootstrap-group-discovery.cjs"))
+(def ^:private release-bootstrap (js/require "../scripts/lib/release-bootstrap.cjs"))
+(def ^:private ^js node-maintenance (js/require "../scripts/lib/a6-maintenance.cjs"))
+(def ^:private shutdown-control (js/require "../scripts/lib/a6-shutdown.cjs"))
 
 (defn configurar-envio-seguro!
   "Desativa o sendSeen quebrado do WhatsApp Web antes de qualquer envio.
@@ -39,23 +53,354 @@
 
 (defn- on-qr [qr]
   (js/console.log "📱 Escaneie o QR code abaixo com o WhatsApp (Aparelhos conectados > Conectar aparelho):")
+  (when config/staging-bootstrap-group?
+    (js/console.log "[bootstrap] Use SOMENTE a conta WhatsApp Business de TESTE — nunca o número principal.")
+    (try
+      (let [out (path/join (path/dirname (discovery-path)) "qr-payload.txt")]
+        (fs/mkdirSync (path/dirname out) #js {:recursive true})
+        (fs/writeFileSync out (str qr) "utf8")
+        (js/console.log "[bootstrap] Payload QR em" out "(para ferramentas externas; prefira o ASCII abaixo)."))
+      (catch :default _ nil)))
   (.generate qrcode qr #js {:small true}))
 
-(defn- on-ready [client]
+(defn- discovery-path []
+  (or (when (and (string? config/staging-group-discovery-path)
+                 (not (str/blank? config/staging-group-discovery-path)))
+        config/staging-group-discovery-path)
+      (path/join (os/homedir) "odisseu-recovery" "m6-3c-private" "groups.json")))
+
+(defn- sleep-ms [ms]
+  (js/Promise. (fn [resolve _] (js/setTimeout resolve ms))))
+
+(defn- err-diag
+  "Diagnóstico curto sem stack/credenciais/números."
+  [err]
+  (let [msg (or (some-> err .-message) (str err))
+        name (or (some-> err .-name) "Error")
+        sanitized (-> msg
+                      (str/replace #"(?i)Bearer\s+\S+" "Bearer [redacted]")
+                      (str/replace #"(?i)(token|password|secret|authorization)\s*[:=]\s*[^\s,;]+" "$1=[redacted]")
+                      (str/replace #"(?i)https?://\S+" "[url]")
+                      (str/replace #"[\w.+-]+@(c\.us|g\.us|lid)" "[jid]")
+                      (str/replace #"\b\d{8,}\b" "[id]"))
+        safe (if (> (count sanitized) 120)
+               (str (subs sanitized 0 117) "...")
+               sanitized)]
+    {:name name :message safe}))
+
+(def ^:private bootstrap-client (atom nil))
+(def ^:private discovery-inflight? (atom false))
+(def ^:private discovery-retry-timers (atom []))
+
+;; Retries leves pós-READY (sem reiniciar Chromium) se a coleção ainda sincroniza.
+(def ^:private bootstrap-tentativas 8)
+(def ^:private bootstrap-backoff-ms [2000 3000 5000 8000 12000 15000 20000 30000])
+(def ^:private rediscovery-delays-ms [15000 45000 90000 180000])
+
+(defn- cancelar-rediscovery! []
+  (doseq [t @discovery-retry-timers]
+    (try (js/clearTimeout t) (catch :default _ nil)))
+  (reset! discovery-retry-timers []))
+
+(defn- js->diag-map [raw]
+  (when raw
+    (js->clj raw :keywordize-keys true)))
+
+(defn- grupos-do-resultado [raw]
+  (->> (or (some-> raw .-groups) #js [])
+       array-seq
+       (map (fn [g]
+              {"id" (or (aget g "id") "")
+               "name" (or (aget g "name") "")
+               "hasGroupMetadata" (boolean (aget g "hasGroupMetadata"))}))
+       (filter #(not (str/blank? (get % "id"))))
+       vec))
+
+(defn- descoberta-leve
+  "page.evaluate com WAWebCollections — sem getChatModel / sem msgs privadas."
+  [^js client]
+  (let [^js page (.-pupPage client)]
+    (if-not page
+      (p/rejected (js/Error. "pupPage_indisponivel"))
+      (-> (.evaluate page (.-discoverGroupsInPage group-discovery))
+          (p/then
+           (fn [raw]
+             (let [diag (or (js->diag-map (some-> raw .-diagnostics)) {})
+                   grupos (grupos-do-resultado raw)]
+               (js/console.log "[bootstrap] diagnóstico"
+                               (clj->js {:collectionSource (:collectionSource diag)
+                                         :chatCount (:chatCount diag)
+                                         :groupCount (:groupCount diag)
+                                         :chatsWithGroupMetadata (:chatsWithGroupMetadata diag)
+                                         :idServerCounts (:idServerCounts diag)
+                                         :helpers (:helpers diag)}))
+               {:ok? true
+                :via (str "light:" (or (:collectionSource diag) "none"))
+                :grupos grupos
+                :diagnostics diag})))
+          (p/catch
+           (fn [err]
+             (js/console.warn "[bootstrap] descoberta leve falhou"
+                              (clj->js (err-diag err)))
+             {:ok? false :err err}))))))
+
+(defn- tentar-get-chats-opcional
+  "Client.getChats ainda pode falhar (r:r via getChatModel). Só informativo."
+  [^js client]
+  (-> (.getChats client)
+      (p/then (fn [chats]
+                (let [n (alength chats)
+                      g (->> (array-seq chats)
+                             (filter #(true? (.-isGroup %)))
+                             count)]
+                  (js/console.log "[bootstrap] getChats OK (opcional)"
+                                  (str "chats=" n " groups=" g))
+                  {:ok? true})))
+      (p/catch
+       (fn [err]
+         (js/console.warn "[bootstrap] getChats falhou (esperado se metadata atrasar)"
+                          (clj->js (err-diag err)))
+         {:ok? false :err err}))))
+
+(defn- ler-groups-json
+  "Lê groups.json anterior (só id/name agregados). Nil se ausente/inválido."
+  [out]
+  (try
+    (when (fs/existsSync out)
+      (let [prev (js->clj (js/JSON.parse (fs/readFileSync out "utf8")))]
+        {:groups (vec (or (get prev "groups") []))
+         :groupCount (or (get prev "groupCount") 0)}))
+    (catch :default _ nil)))
+
+(defn- gravar-grupos-descobertos!
+  "Grava resultado. Não substitui grupos bons por [] sem marcar incomplete."
+  [out grupos via diagnostics]
+  (let [prev (when (empty? grupos) (ler-groups-json out))
+        prev-grupos (when (and prev (seq (:groups prev))) (:groups prev))
+        preserved? (boolean (and (empty? grupos) (seq prev-grupos)))
+        grupos-out (if preserved? prev-grupos (mapv #(select-keys % ["id" "name"]) grupos))
+        incomplete? (or (empty? grupos) preserved?)
+        payload (clj->js
+                 {"generatedAt" (.toISOString (js/Date.))
+                  "discoveryVia" via
+                  "connectedUser" "redacted"
+                  "groupCount" (count grupos-out)
+                  "groups" grupos-out
+                  "diagnostics" (or diagnostics {})
+                  "incomplete" incomplete?
+                  "staleGroupsPreserved" preserved?
+                  "lastAttemptGroupCount" (count grupos)
+                  "awaitingSync" (boolean (empty? grupos))
+                  "stagingGroupConfirmed" false
+                  "devGroupIdInvented" false
+                  "note"
+                  (str "Preencha DEV_GROUP_ID no .env com o id do grupo de teste, "
+                       "defina STAGING_GROUP_CONFIRMED=1 e reinicie "
+                       "SEM STAGING_BOOTSTRAP_GROUP. "
+                       "Re-descobrir sem reiniciar: "
+                       "curl -sS -X POST http://127.0.0.1:3001/bootstrap/discover-groups")})]
+    (fs/mkdirSync (path/dirname out) #js {:recursive true})
+    (fs/writeFileSync out (js/JSON.stringify payload nil 2) "utf8")
+    (js/console.log "[bootstrap] Grupos no arquivo:" (count grupos-out)
+                    "(via" via ")"
+                    (if preserved? "[preservados — tentativa vazia]" ""))
+    (doseq [g grupos-out]
+      (js/console.log (str "  - " (get g "name") " => " (get g "id"))))
+    (js/console.log "[bootstrap] Lista escrita em" out
+                    (str "incomplete=" incomplete?))
+    (js/console.log "[bootstrap] Nenhuma mensagem será processada neste modo.")
+    (when (empty? grupos)
+      (js/console.log "[bootstrap] zero grupos na tentativa — coleção pode sincronizar;"
+                      "use POST /bootstrap/discover-groups ou aguarde retries."))
+    grupos-out))
+
+(defn- agendar-rediscovery!
+  "Retries automáticos sem reiniciar Chromium enquanto groups=[]."
+  [^js client]
+  (cancelar-rediscovery!)
+  (reset! discovery-retry-timers
+          (mapv (fn [ms]
+                  (js/setTimeout
+                   (fn []
+                     (js/console.log "[bootstrap] re-descoberta automática após"
+                                     (str (/ ms 1000) "s"))
+                     (descobrir-grupos! client {:reason "auto-retry"}))
+                   ms))
+                rediscovery-delays-ms)))
+
+(defn- aplicar-resultado-descoberta!
+  [out {:keys [ok? via grupos diagnostics]} {:keys [schedule-retry?]}]
+  (if-not ok?
+    (do
+      (js/console.warn "[bootstrap] rodada sem resultado utilizável")
+      false)
+    (do
+      (gravar-grupos-descobertos! out (or grupos []) via diagnostics)
+      (if (seq grupos)
+        (do (cancelar-rediscovery!) true)
+        (do
+          (when schedule-retry?
+            (js/console.log "[bootstrap] zero grupos — agendando re-descoberta sem reiniciar Chromium")
+            (agendar-rediscovery! @bootstrap-client))
+          false)))))
+
+(defn- tentativa-descoberta
+  "Loop com backoff após READY. Agenda rediscovery só ao esgotar."
+  [^js client out n]
+  (if (> n bootstrap-tentativas)
+    (do
+      (js/console.error "[bootstrap] esgotaram tentativas leves — sessão preservada.")
+      (agendar-rediscovery! client)
+      (p/resolved nil))
+    (let [espera (nth bootstrap-backoff-ms (dec n) 30000)]
+      (-> (descoberta-leve client)
+          (p/then
+           (fn [resultado]
+             (if (and (:ok? resultado) (seq (:grupos resultado)))
+               (aplicar-resultado-descoberta! out resultado {:schedule-retry? false})
+               (do
+                 (when (:ok? resultado)
+                   (gravar-grupos-descobertos!
+                    out [] (:via resultado) (:diagnostics resultado))
+                   (js/console.log "[bootstrap] ainda sem grupos;"
+                                   "nova tentativa em" (str espera "ms")
+                                   (str "(" n "/" bootstrap-tentativas ")")))
+                 (-> (sleep-ms espera)
+                     (p/then (fn [_] (tentativa-descoberta client out (inc n)))))))))))))
+
+(defn bootstrap-discover-status
+  "Status síncrono para o endpoint HTTP (sem side-effect)."
+  []
+  (cond
+    (nil? @bootstrap-client)
+    {:status "not_ready" :http 503
+     :note "WhatsApp ainda não emitiu READY no modo bootstrap."}
+
+    @discovery-inflight?
+    {:status "busy" :http 409
+     :note "Descoberta já em andamento — aguarde logs [bootstrap]."}
+
+    :else
+    {:status "ready" :http 202
+     :note "Pode agendar descoberta."}))
+
+(defn descobrir-grupos!
+  "Lista só id+nome de grupos. Sem msgs privadas. Idempotente sob inflight."
+  ([client] (descobrir-grupos! client {:reason "ready"}))
+  ([^js client {:keys [reason]}]
+   (if-not (compare-and-set! discovery-inflight? false true)
+     (do
+       (js/console.log "[bootstrap] descoberta já em andamento — ignore"
+                       (str "(" (or reason "manual") ")"))
+       (p/resolved {:busy true}))
+     (let [out (discovery-path)
+           ready? (= reason "ready")]
+       (js/console.log "[bootstrap] iniciando descoberta"
+                       (str "(" (or reason "manual") ")"))
+       (-> (sleep-ms (if ready? 3000 500))
+           (p/then
+            (fn [_]
+              (if ready?
+                (do
+                  (tentar-get-chats-opcional client)
+                  (tentativa-descoberta client out 1))
+                ;; HTTP / auto-retry: uma rodada (timers já agendados no esgotamento).
+                (-> (descoberta-leve client)
+                    (p/then
+                     (fn [resultado]
+                       (aplicar-resultado-descoberta!
+                        out resultado {:schedule-retry? false})))))))
+           (p/catch
+            (fn [err]
+              (js/console.error "[bootstrap] Falha inesperada na descoberta:"
+                                (clj->js (err-diag err)))
+              nil))
+           (p/then (fn [resultado]
+                     (reset! discovery-inflight? false)
+                     resultado))
+           (p/catch (fn [err]
+                      (reset! discovery-inflight? false)
+                      (p/rejected err))))))))
+
+(defn agendar-descoberta-http!
+  "Agenda descoberta após flush da resposta HTTP. Nunca bloqueia o handler."
+  []
+  (let [st (bootstrap-discover-status)]
+    (if (not= "ready" (:status st))
+      st
+      (let [client @bootstrap-client]
+        ;; setTimeout(0): resposta HTTP termina antes do evaluate no Chromium.
+        (js/setTimeout
+         (fn []
+           (try
+             (descobrir-grupos! client {:reason "http"})
+             (catch :default err
+               (js/console.error "[bootstrap] agendar http falhou"
+                                 (clj->js (err-diag err))))))
+         0)
+        (assoc st :accepted true
+               :note "Descoberta agendada; veja logs [bootstrap] e groups.json.")))))
+
+(defn- on-ready [client release-coordinator]
+  (if (.shuttingDown node-maintenance)
+    (js/console.log "[shutdown] ignorando READY durante encerramento")
+    (do
   (js/console.log (str "✅ " config/bot-name " conectado e pronto para uso!"))
-  (js/console.log (str "📞 Número conectado: +" (.. client -info -wid -user)))
-  (pokemon/iniciar! client)
-  (lembretes/iniciar! client))
+  ;; Não logar número telefônico (PII).
+  (js/console.log "📞 Conta autenticada (número omitido).")
+  (gemini/log-status-boot!)
+  (if config/staging-bootstrap-group?
+    (do
+      (reset! bootstrap-client client)
+      (js/console.log "[bootstrap] Modo descoberta de grupo — sem comandos/notificações.")
+      (js/console.log "[bootstrap] Re-descobrir: POST http://127.0.0.1:3001/bootstrap/discover-groups")
+      (descobrir-grupos! client {:reason "ready"}))
+    (do
+      (pokemon/iniciar! client)
+      (lembretes/iniciar! client)
+      ;; READY é só gate operacional. Announcer exige intent confirmado + piloto + gates.
+      (when (and release-coordinator (.begin node-maintenance))
+        (-> (.onWhatsAppReady release-coordinator)
+            (p/then (fn [resultado]
+                      (when-not (#{"disabled" "no-release-intent" "already-completed"}
+                                  (some-> resultado .-status))
+                        (js/console.log "[release-announcer]" (or (some-> resultado .-status) "attempted")))
+                      nil))
+            (p/catch (fn [err]
+                       (js/console.warn "[release-announcer] isolated failure"
+                                        (or (.-code err) "announcement_error"))
+                       nil))
+            (p/finally #(.end node-maintenance)))))))))
 
 (defn- chat-id [message]
   (if (.-fromMe message) (.-to message) (.-from message)))
 
-;; em desenvolvimento (APP_ENV=development), só processa mensagens do chat de
-;; teste (DEV_GROUP_ID) - evita responder duplicado nos grupos reais enquanto
-;; uma instância local roda ao lado da de produção
-(defn- permitido-pelo-ambiente? [message]
-  (or (not= config/app-env "development")
-      (= (chat-id message) config/dev-group-id)))
+;; staging: DEV_GROUP_ID (ou ALLOW_ALL_GROUPS) + STAGING_ALLOWED_USERS
+;; (com STAGING_STRICT_USER_ALLOWLIST lista vazia nega todos)
+(defn- remetente-id [message]
+  (or (.-author message)
+      (when-not (.-fromMe message) (.-from message))))
+
+(defn- permitido-pelo-ambiente? [message is-group?]
+  (and (config/chat-autorizado? (chat-id message) is-group?)
+       (config/usuario-autorizado? (remetente-id message))))
+
+(defn- tipo-grupo-do-chat [message cid]
+  (cond
+    (and (string? cid) (str/ends-with? cid "@g.us")) true
+    (and (string? cid) (str/ends-with? cid "@c.us")) false
+    (and message (fn? (.-getChat ^js message)))
+    (-> (.getChat message)
+        (p/then (fn [chat]
+                  (let [is-group (.-isGroup ^js chat)]
+                    (when (or (true? is-group) (false? is-group))
+                      is-group))))
+        (p/catch (fn [err]
+                   (js/console.warn
+                    "[authorization] Chat metadata unavailable; message denied:"
+                    (clj->js (err-diag err)))
+                   nil)))
+    :else nil))
 
 (def ^:private limite-legenda-midia 900)
 
@@ -89,9 +434,9 @@
                      (desempenho/medir! ctx "envio_texto_fallback"
                        #(enviar-texto-estruturado message texto mentions))))))))
 
-(defn- processar-mensagem [message ctx]
+(defn- processar-mensagem [message ctx is-group?]
   (whatsapp-reply/preparar! message)
-  (when (permitido-pelo-ambiente? message)
+  (when (permitido-pelo-ambiente? message is-group?)
     (adedonha/capturar-resposta! message)
     ;; Aguarda a fila do histórico: assim !pk bug sempre encontra exatamente
     ;; a mensagem anterior, mesmo quando os eventos chegam muito próximos.
@@ -122,7 +467,8 @@
                                                   (map-indexed vector medias))
                                                  (p/catch
                                                   (fn [erro]
-                                                    (js/console.error "Erro ao enviar cartões; usando lista em texto:" erro)
+                                                    (js/console.error "Erro ao enviar cartões; usando lista em texto:"
+                                                                      (clj->js (err-diag erro)))
                                                     (enviar-texto-estruturado message (:texto resposta) (:mentions resposta))))))
                         ;; documento (ex.: !pokemon time csv): manda o texto primeiro e o
                         ;; arquivo em seguida - legenda em documento não aparece de forma
@@ -137,17 +483,54 @@
                         ;; uma string simples - todo o resto continua string normal
                         (string? resposta) (.reply message resposta)
                         :else (.reply message (:texto resposta) nil #js {:mentions (clj->js (:mentions resposta))}))))))
-        (p/catch (fn [err] (js/console.error "Erro ao processar mensagem:" err))))))
+        (p/catch (fn [err]
+                   (if (= "MAINTENANCE_ACTIVE" (some-> err .-code str/upper-case))
+                     (.reply message "O Odisseu está em manutenção operacional. Tente novamente quando o serviço for retomado.")
+                     (js/console.error "Erro ao processar mensagem:" (clj->js (err-diag err)))))))))
 
 (defn- on-message [message]
-  (let [executar #(if (and (permitido-pelo-ambiente? message)
-                          (desempenho/pokemon? (.-body message)))
-                   (desempenho/acompanhar-mensagem! message (fn [ctx] (processar-mensagem message ctx)))
-                   (processar-mensagem message nil))]
-    (if (and (permitido-pelo-ambiente? message)
-             (str/starts-with? (str/trim (or (.-body message) "")) config/prefix))
-      (recursos/medir-comando! executar)
-      (executar))))
+  (let [despachar (fn [is-group?]
+                    (when (permitido-pelo-ambiente? message is-group?)
+                      (let [executar #(if (and (desempenho/pokemon? (.-body message)))
+                                       (desempenho/acompanhar-mensagem!
+                                        message (fn [ctx] (processar-mensagem message ctx is-group?)))
+                                       (processar-mensagem message nil is-group?))]
+                        (if (str/starts-with? (str/trim (or (.-body message) "")) config/prefix)
+                          (recursos/medir-comando! executar)
+                          (executar)))))
+        executar #(let [tipo (tipo-grupo-do-chat message (chat-id message))]
+                    (if (and tipo (fn? (.-then ^js tipo)))
+                      (p/then tipo despachar)
+                      (despachar tipo)))
+        ;; O evento WhatsApp ignora o retorno do dispatcher; absorver aqui
+        ;; somente rejeições já tratadas evita unhandledRejection no processo.
+        executar-seguro #(if-not (.begin node-maintenance)
+                           (when (and (not (.shuttingDown node-maintenance))
+                                      (str/starts-with? (str/trim (or (.-body message) "")) config/prefix))
+                             (-> (js/Promise.resolve
+                                  (.reply message "O Odisseu está em manutenção operacional. Tente novamente quando o serviço for retomado."))
+                                 (p/catch (fn [err]
+                                            (js/console.warn "[maintenance] não foi possível enviar aviso de manutenção"
+                                                             (clj->js (err-diag err)))
+                                            nil))))
+                           (try
+                             (let [resultado (executar)]
+                               (if (and resultado (fn? (.-then ^js resultado)))
+                                 (-> (js/Promise.resolve resultado)
+                                     (p/catch (fn [err]
+                                                (js/console.error
+                                                 "[dispatch] rejeição de comando isolada:"
+                                                 (clj->js (err-diag err)))
+                                                nil))
+                                     (p/finally (fn [] (.end node-maintenance))))
+                                 (do (.end node-maintenance) resultado)))
+                             (catch :default err
+                               (.end node-maintenance)
+                               (js/console.error
+                                "[dispatch] exceção de comando isolada:"
+                                (clj->js (err-diag err)))
+                               nil))) ]
+    (executar-seguro)))
 
 (defn opcoes-puppeteer []
   (cond-> {:protocolTimeout 300000
@@ -155,8 +538,7 @@
            ;; padrão do Puppeteer competem com ele e podem enviar SIGKILL.
            :handleSIGTERM false
            :handleSIGINT false
-           :args (clj->js (cond-> ["--no-sandbox" "--disable-setuid-sandbox"
-                                   "--disable-quic" "--disable-features=Quic"]
+           :args (clj->js (cond-> ["--disable-quic" "--disable-features=Quic"]
                            config/chromium-low-resource-mode
                            (into ["--disable-extensions" "--disable-default-apps" "--no-first-run"])
                            config/chromium-disable-gpu (conj "--disable-gpu")))}
@@ -167,55 +549,271 @@
 ;; vivo (ver zapbot.bloqueio), então funciona mesmo em grupos onde aquele
 ;; falha persistentemente.
 (defn- on-group-admin-changed [notification]
-  (admins/processar-evento-promocao! notification))
+  (when (and (config/chat-autorizado? (.-chatId notification))
+             (.begin node-maintenance))
+    (try
+      (let [result (admins/processar-evento-promocao! notification)]
+        (if (and result (fn? (.-then ^js result)))
+          (p/finally result #(.end node-maintenance))
+          (do (.end node-maintenance) result)))
+      (catch :default err
+        (.end node-maintenance)
+        (js/console.error "[maintenance] admin event failed" (clj->js (err-diag err)))
+        nil))))
 
 (defonce ^:private iniciado? (atom false))
 
+(defn- drenar-antes-de-encerrar!
+  "Fecha admissão e aguarda operações em voo. Sem marker durável, falha fechado."
+  []
+  (-> (.enter node-maintenance 30000)
+      (p/then (fn [state]
+                (if (and (.-quiescent state) (.-durable state))
+                  state
+                  (throw (js/Error. (if-not (.-durable state)
+                                          "NODE_MAINTENANCE_MARKER_NOT_DURABLE"
+                                          "NODE_DRAIN_INCOMPLETE"))))))))
+
+(defn- fechar-servidor! [^js server]
+  (js/Promise.
+   (fn [resolve reject]
+     (if-not (.-listening server)
+       (resolve true)
+       (.close server (fn [err]
+                        (if err (reject err) (resolve true))))))))
+
+(defn- criar-controlador-shutdown [^js server recovery diagnostico & [stop-sources]]
+  (.createShutdown shutdown-control
+                    #js {:drain drenar-antes-de-encerrar!
+                         :beforeDrain (fn []
+                                        (.startShutdown node-maintenance)
+                                        (saude/atualizar! diagnostico "MAINTENANCE"
+                                                          "Admission closed; waiting for accepted operations."))
+                         :stopAdmissionSources (or stop-sources (fn []
+                                                                  (pokemon/parar!)
+                                                                  (lembretes/parar!)))
+                         :stopResources (fn [] (recursos/parar!))
+                         :updateHealth (fn []
+                                         (saude/atualizar! diagnostico "DISCONNECTED"
+                                                           "Encerramento coordenado; sessão preservada."))
+                         :stopPokemon (fn [] (platform/close!))
+                         :closeServer (fn [] (fechar-servidor! server))
+                         :closeRecovery (fn [] (when recovery (.close recovery)))
+                         :exit (fn [code] (js/process.exit code))
+                         :deadlineMs 330000
+                         :log (fn [event details]
+                                (js/console.error "[shutdown]" event
+                                                  (js/JSON.stringify details)))}))
+
 (defn- encerrar-com-sessao! [^js recovery diagnostico ^js server]
-  (let [encerrando? (atom false)]
+  (let [shutdown (criar-controlador-shutdown server recovery diagnostico)]
     (doseq [sinal ["SIGTERM" "SIGINT"]]
       (.on js/process sinal
            (fn []
-             (when (compare-and-set! encerrando? false true)
-               (recursos/parar!)
-               (saude/atualizar! diagnostico "DISCONNECTED" "Encerrando navegador; preservando sessão.")
-               (pokemon/parar!)
-               (.close server)
-               ;; Limite apenas para uma parada solicitada, nunca para startup lento.
-               (js/setTimeout #(js/process.exit 1) 45000)
-               (-> (p/resolved nil)
-                   (p/then (fn [_] (.close recovery)))
-                   (p/then (fn [_] (js/process.exit 0)))
-                   (p/catch (fn [err]
-                              (saude/log! (str "Erro ao encerrar: " (.-message err)))
-                              (js/process.exit 1))))))))))
+             (-> (.request shutdown sinal)
+                 (p/catch (fn [err]
+                            (js/console.error "[shutdown] attempt failed; resources remain open"
+                                              (or (.-code err) "shutdown_error"))
+                            nil))))))))
+
+(defn- local-auth-opts
+  "LocalAuth com path/clientId configuráveis — staging isolado da produção."
+  []
+  (let [opts #js {:dataPath config/wwebjs-data-path}]
+    (when config/wwebjs-client-id
+      (unchecked-set opts "clientId" config/wwebjs-client-id))
+    opts))
+
+(defonce ^:private jvm-probe-cache*
+  (atom {:ok false :transport "disabled" :error "probing"}))
+
+(defn- probe-jvm-health []
+  (try
+    (let [jvm (js/require "../scripts/lib/pokemon-jvm-client.cjs")
+          client (.createClient jvm
+                                #js {:baseUrl config/pokemon-jvm-url
+                                     :token (or config/pokemon-jvm-token "")
+                                     :allowDockerJvmHost (boolean config/pokemon-jvm-allow-docker-host?)
+                                     :connectTimeoutMs config/pokemon-jvm-connect-timeout-ms
+                                     :timeoutMs config/pokemon-jvm-timeout-ms})]
+      (-> (.health client)
+          (p/then (fn [data]
+                    (.close client)
+                    {:ok true :transport "disabled" :jvm (js->clj data :keywordize-keys true)}))
+          (p/catch (fn [err]
+                     (try (.close client) (catch :default _))
+                     {:ok false :transport "disabled"
+                      :error (or (.-message err) "jvm_unreachable")}))))
+    (catch :default err
+      (p/resolved {:ok false :transport "disabled"
+                   :error (or (.-message err) "jvm_client_config")}))))
+
+(defn- main-http-only!
+  "Homologação A6: Node sobe /health + probe JVM sem WhatsApp/QR/Chromium."
+  []
+  (js/console.log "[boot] WHATSAPP_TRANSPORT=disabled — sem QR, sem LocalAuth, sem Chromium.")
+  (js/console.log "[boot] POKEMON_RAID_AUTO_TICK=" config/pokemon-raid-auto-tick?)
+  (let [diagnostico (saude/criar)
+        _ (saude/atualizar! diagnostico "DISABLED"
+                            "Transporte WhatsApp desativado (homolog HTTP-only).")
+        server (saude/servir!
+                diagnostico nil
+                {:bind-host config/health-bind-host
+                 :maintenance node-maintenance
+                 :on-jvm-health (fn [] @jvm-probe-cache*)})
+        probe-timer (atom nil)
+        shutdown (criar-controlador-shutdown
+                  server nil diagnostico
+                  (fn [] (when-let [timer @probe-timer]
+                           (js/clearInterval timer)
+                           (reset! probe-timer nil))))]
+    (doseq [sinal ["SIGTERM" "SIGINT"]]
+      (.on js/process sinal
+           (fn []
+             (-> (.request shutdown sinal)
+                 (p/catch (fn [_] nil))))))
+    (letfn [(refresh-probe! []
+              (-> (probe-jvm-health)
+                  (p/then (fn [r] (reset! jvm-probe-cache* r) nil))
+                  (p/catch (fn [err]
+                             (reset! jvm-probe-cache*
+                                     {:ok false :error (or (.-message err) "probe_failed")})))))]
+      (refresh-probe!)
+      (reset! probe-timer (js/setInterval refresh-probe! 15000))
+      (when config/pokemon-jvm-enabled?
+        (js/console.log "[boot] HTTP-only: bridge JVM=" config/pokemon-jvm-url
+                        " allowDockerHost=" config/pokemon-jvm-allow-docker-host?))
+      (js/console.log "[boot] HTTP-only ready — /health e /jvm-health em"
+                      config/health-bind-host ":3001"))))
 
 (defn main [& _args]
+  (if config/whatsapp-transport-disabled?
+    (when (compare-and-set! iniciado? false true)
+      (main-http-only!))
+    (do
   ;; Um único cliente/browser por processo; só a injeção pode ser repetida.
+  (when (and config/staging-like?
+             (not config/staging-bootstrap-group?)
+             (or (nil? config/dev-group-id) (str/blank? config/dev-group-id)))
+    (js/console.error "APP_ENV=" config/app-env
+                      "exige DEV_GROUP_ID (chat de teste). Abortando.")
+    (js/console.error "Para só descobrir o ID do grupo: STAGING_BOOTSTRAP_GROUP=1")
+    (js/process.exit 2))
+  (when (and (= "staging" config/app-env)
+             (not config/staging-bootstrap-group?)
+             (string? config/dev-group-id)
+             (not (str/blank? config/dev-group-id))
+             (not config/staging-group-confirmed?))
+    (js/console.error "Staging exige STAGING_GROUP_CONFIRMED=1 após validar DEV_GROUP_ID.")
+    (js/console.error "DEV_GROUP_ID está definido, mas o grupo ainda não foi confirmado.")
+    (js/process.exit 7))
+  (when (and (= "staging" config/app-env)
+             (config/caminho-sessao-producao? config/wwebjs-data-path))
+    (js/console.error "Staging recusou WWEBJS_DATA_PATH de produção:"
+                      config/wwebjs-data-path)
+    (js/console.error "Use /app/.wwebjs_auth_core ou /app/.wwebjs_auth_staging"
+                      "(nunca /app/.wwebjs_auth).")
+    (js/process.exit 3))
   (when (compare-and-set! iniciado? false true)
     (let [puppeteer-opts (opcoes-puppeteer)
-          client (Client. #js {:authStrategy (LocalAuth.)
+          client (Client. #js {:authStrategy (LocalAuth. (local-auth-opts))
                                :puppeteer (clj->js puppeteer-opts)})
           diagnostico (saude/criar)
+          ;; STAGING_ALLOW_QR / bootstrap: restoreOnly false — senão QR em
+          ;; pasta parcial dispara AUTH_TRANSITION e fecha o Chromium.
           recovery (.installStartupRecovery startup client
-                     #js {:onState (fn [estado]
-                                     (when (#{"recovering" "error"} estado)
-                                       (saude/atualizar! diagnostico
-                                                        (if (= estado "error") "ERROR" "RECOVERING")
-                                                        "Estado de inicialização atualizado; sessão preservada.")))})
-          server (saude/servir! diagnostico client)]
+                     (clj->js
+                      (cond-> {:onState (fn [estado]
+                                          (when (#{"recovering" "error"} estado)
+                                            (saude/atualizar! diagnostico
+                                                             (if (= estado "error") "ERROR" "RECOVERING")
+                                                             "Estado de inicialização atualizado; sessão preservada.")))}
+                        (or config/staging-bootstrap-group?
+                            config/staging-allow-qr?)
+                        (assoc :restoreOnly false))))
+          release-coordinator
+          (try
+            (when (and config/release-announcer-enabled?
+                       (not config/staging-bootstrap-group?)
+                       (platform/enabled?))
+              (.createReleaseBootstrap release-bootstrap
+                #js {:enabled config/release-announcer-enabled?
+                     :intentPath config/release-announcement-intent-path
+                     :controlPath config/release-announcement-control-path
+                     :pilotChatId config/release-pilot-chat-id
+                     ;; Allowlist própria — NÃO usa chat-autorizado?/ALLOW_ALL_GROUPS.
+                     :isChatAuthorized (fn [chat-id]
+                                         (boolean (config/release-chat-autorizado? chat-id)))
+                     :client client
+                     :platform (platform/release-client)
+                     :checkJvmHealth (fn []
+                                       (-> (probe-jvm-health)
+                                           (p/then (fn [result] (boolean (:ok result))))))
+                     :isWhatsAppReady (fn [] (.acceptingReady recovery))
+                     :isNodeHealthy (fn []
+                                      (= "ok" (:status (saude/resposta diagnostico client))))
+                     :logger (fn [event]
+                               (js/console.log "[release-announcer]" (js/JSON.stringify event)))}))
+            (catch :default err
+              (js/console.warn "[release-announcer] coordinator unavailable"
+                               (or (.-code err) "configuration_error"))
+              nil))
+          server (saude/servir!
+                  diagnostico client
+                  (cond-> {:bind-host config/health-bind-host
+                           :maintenance node-maintenance}
+                    config/staging-bootstrap-group?
+                    (assoc :on-discover-groups
+                           (fn []
+                             ;; Síncrono + setTimeout(0): HTTP responde antes do evaluate.
+                             (agendar-descoberta-http!)))))]
+      (when config/staging-bootstrap-group?
+        (js/console.log "[bootstrap] STAGING_BOOTSTRAP_GROUP=1 — sem comandos, sem replies, sem notificações.")
+        (js/console.log "[bootstrap] Endpoint: POST/GET http://127.0.0.1:3001/bootstrap/discover-groups"))
       (configurar-envio-seguro! client)
       (saude/acompanhar! diagnostico client)
-      (recursos/iniciar! client)
+      (when-not config/staging-bootstrap-group?
+        (recursos/iniciar! client))
       (encerrar-com-sessao! recovery diagnostico server)
       (.on client "qr" (fn [qr] (when (.acceptingQR recovery) (on-qr qr))))
-      (.on client "ready" (fn [] (when (.acceptingReady recovery) (on-ready client))))
-      (.on client "disconnected" (fn [& _] (pokemon/parar!)))
-      (.on client "auth_failure" (fn [& _] (pokemon/parar!)))
-      ;; Preserva o fluxo de mensagens e os inicializadores dos jogos.
-      (.on client "message_create" on-message)
-      (.on client "group_admin_changed" on-group-admin-changed)
-      (-> (armazenamento/iniciar!)
+      (.on client "ready" (fn [] (when (.acceptingReady recovery) (on-ready client release-coordinator))))
+      (.on client "disconnected" (fn [& _]
+                                  (when-not config/staging-bootstrap-group?
+                                    (pokemon/parar!))))
+      (.on client "auth_failure" (fn [& _]
+                                  (when-not config/staging-bootstrap-group?
+                                    (pokemon/parar!))))
+      ;; Bootstrap: não processa mensagens nem eventos de admin.
+      (when-not config/staging-bootstrap-group?
+        (.on client "message_create" on-message)
+        (.on client "group_admin_changed" on-group-admin-changed))
+      (-> (if config/staging-bootstrap-group?
+            (p/resolved true)
+            (armazenamento/iniciar!))
+          (p/then (fn [_]
+                    (when (and (not config/staging-bootstrap-group?)
+                               (platform/enabled?)
+                               config/pokemon-jvm-enabled?)
+                      (js/console.log "[boot] staging Datomic+JVM: Cassandra"
+                                      (if (armazenamento/cliente-construido?)
+                                        "FOI instanciado (inesperado)"
+                                        "não instanciado")))
+                    (if (and (not config/staging-bootstrap-group?) (platform/enabled?))
+                      (-> (p/all [(bloqueio/hidratar-datomic!)
+                                  (admins/hidratar-datomic!)
+                                  (enquetes/hidratar-datomic!)
+                                  (quiz/hidratar-datomic!)
+                                  (rank/hidratar-datomic!)
+                                  (lembretes/hidratar-datomic!)
+                                  (bugs/hidratar-datomic!)
+                                  (historico/hidratar-datomic!)])
+                          (p/then (fn [_]
+                                    (js/console.log "[platform] bloqueio/admins/enquetes/quiz/rank/lembretes/bugs/participantes hidratados via Datomic")
+                                    true))
+                          (p/catch (fn [err]
+                                     (js/console.error "[platform] Datomic indisponível (fail-closed):" err)
+                                     (p/rejected err))))
+                      (p/resolved true))))
           (p/then (fn [_]
                     (saude/iniciar-avisos! diagnostico)
                     (.initialize recovery)))
@@ -223,4 +821,4 @@
                      (when-not (.stopping recovery)
                        (saude/atualizar! diagnostico "ERROR"
                                         (str "Erro ao inicializar: " (.-message err)))
-                       (js/console.error err))))))))
+                       (js/console.error err))))))))))

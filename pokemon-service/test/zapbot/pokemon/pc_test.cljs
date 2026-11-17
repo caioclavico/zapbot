@@ -70,15 +70,15 @@
 (deftest expansao-debita-preco-fixo-e-nao-cobra-sem-saldo
   (let [estado (atom {"chat" {"ash" {"moedas" 600}}})]
     (with-redefs [loja/contas estado armazenamento/salvar! sem-gravacao]
-      (is (= 30 (loja/capacidade-pokemon "chat" "ash")))
-      (doseq [[preco capacidade] [[200 80] [200 130] [200 180]]]
+      (is (= 50 (loja/capacidade-pokemon "chat" "ash")))
+      (doseq [[preco capacidade] [[200 100] [200 150] [200 200]]]
         (is (= 200 (loja/preco-expansao-pc "chat" "ash")))
         (is (= {:status :ok :preco preco :capacidade capacidade}
                (loja/comprar-espaco-pc! "chat" "ash")))
         (is (= capacidade (loja/capacidade-pokemon "chat" "ash"))))
       (is (= 0 (loja/moedas "chat" "ash")))
       (is (= {:status :sem-moedas :preco 200} (loja/comprar-espaco-pc! "chat" "ash")))
-      (is (= 180 (loja/capacidade-pokemon "chat" "ash"))))))
+      (is (= 200 (loja/capacidade-pokemon "chat" "ash"))))))
 
 (deftest retornos-e-doacoes-vao-a-colecao-sem-cortar-excedentes
   (let [estado (atom {"chat" {"ash" {"equipe" (mapv registro (range 6))

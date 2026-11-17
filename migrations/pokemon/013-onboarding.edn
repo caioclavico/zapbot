@@ -1,0 +1,13 @@
+;; M9.6 — flags de onboarding (kit inicial + escolha do starter).
+;; Espelham legado Cassandra: kit-inicial-resgatado / inicial-escolhido.
+[
+ {:db/ident       :save/kit-inicial-resgatado
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one
+  :db/doc         "true após conceder 10 Pokébolas do kit inicial (uma vez por save)"}
+
+ {:db/ident       :save/inicial-escolhido
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one
+  :db/doc         "true após conceder Bulbasaur/Charmander/Squirtle (uma vez por save)"}
+]

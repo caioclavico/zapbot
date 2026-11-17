@@ -1,0 +1,11 @@
+[{:db/ident :mission-event/key
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one
+  :db/unique :db.unique/value
+  :db/doc "Identidade da ação canônica; unique/value rejeita duplicação concorrente"}
+ {:db/ident :mission-event/save
+  :db/valueType :db.type/ref :db/cardinality :db.cardinality/one}
+ {:db/ident :mission-event/operation
+  :db/valueType :db.type/ref :db/cardinality :db.cardinality/one}
+ {:db/ident :mission-event/data-edn
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one
+  :db/doc "Origem, jogador/save, instante, fuso, períodos e tipo processados atomicamente"}]

@@ -277,7 +277,7 @@
                     r (adventure/aplicar-distancia! "g" "p" evento)]
               (is (= 800000 (get-in r [:state :eggs 0 :progress-mm])))))))) done)))
 
-(deftest falha-apos-entrega-bloqueia-chat-e-recupera-sem-duplicar
+(deftest cas-aplicado-resposta-perdida-e-leitura-serial-evitam-reentrega
   (async done
     (concluir (fixture/com-banco
       (fn [{:keys [now fault]}]
@@ -285,11 +285,14 @@
           (let [evento (fixture/caminhada now "meta" 2000000)]
             (reset! fault {:op :trainer-cas :after? true})
             (p/let [_ (-> (adventure/aplicar-distancia! "g" "p" evento) (p/catch (fn [_] nil)))
-                    _ (is (= 1 (count @storage/partes-bloqueadas)))
-                    _ (falha #(core/enfileirar-operacao-interna! "g" (fn [] (is false "Operação não deveria executar"))) :result-unknown)
+                    ;; O resultado CAS foi provado por leitura SERIAL; o
+                    ;; bloqueio temporário deve ter sido removido.
+                    _ (is (empty? @storage/partes-bloqueadas))
+                    permitida (core/enfileirar-operacao-interna! "g" (fn [] :admitida))
                     _ (adventure/recuperar! "g" "p")
                     _ (adventure/aplicar-distancia! "g" "p" evento)
                     h (adventure/historico! "g" "p" (store/mes @now))]
+              (is (= :admitida permitida))
               (is (empty? @storage/partes-bloqueadas))
               (is (= 1 (count (treinador/equipe "g" "p")))) (is (= 1 (count h)))))))) done)))
 
@@ -358,13 +361,22 @@
 (deftest reinicializacao-reconcilia-entrega-incerta-antes-da-admissao
   (async done
     (concluir (fixture/com-banco
-      (fn [{:keys [now fault]}]
+      (fn [{:keys [now fault db]}]
         (p/let [_ (abrir "g" "p")]
           (reset! fault {:op :trainer-cas :after? true})
           (p/let [_ (-> (adventure/aplicar-distancia! "g" "p" (fixture/caminhada now "meta" 2000000)) (p/catch (fn [_] nil)))
+                  ;; A resposta da aplicação CAS pode se perder; primeiro
+                  ;; comprovar diretamente o snapshot durável antes do restart.
+                  raw (get-in @db [:legacy ["treinador" "g"]])
+                  _ (is (some? raw) "CAS do treinador deve deixar linha durável")
+                  _ (is (= 1 (count (get-in (js->clj (js/JSON.parse raw)) ["p" "equipe"])))
+                        "A linha durável deve conter o Pokémon e o recibo")
                   ;; Simula perda dos guards/cache no restart; banco permanece.
                   _ (reset! storage/partes-bloqueadas {})
                   _ (reset! treinador/contas {})
+                  ;; O processo real hidrata os módulos do treinador antes de
+                  ;; iniciar a reconciliação Adventure.
+                  _ (storage/recuperar-treinador! "g")
                   _ (adventure/preparar-inicializacao!)
                   _ (is (not (adventure/disponivel?)))
                   _ (adventure/inicializar!)

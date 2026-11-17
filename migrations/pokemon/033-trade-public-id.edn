@@ -1,0 +1,24 @@
+;; A6 — identificador público curto por chat (separado do trade/id canônico).
+[
+ {:db/ident :trade/public-id
+  :db/valueType :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc "Número público curto da proposta no chat (ex.: 84 → #84)."}
+
+ {:db/ident :trade/public-key
+  :db/valueType :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique :db.unique/identity
+  :db/doc "Chave única chat-id|public-id para resolução determinística."}
+
+ {:db/ident :trade-seq/chat-id
+  :db/valueType :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique :db.unique/identity
+  :db/doc "Contador persistente de IDs públicos por chat."}
+
+ {:db/ident :trade-seq/next
+  :db/valueType :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc "Próximo public-id a alocar neste chat (CAS)."}
+]

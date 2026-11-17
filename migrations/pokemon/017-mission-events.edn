@@ -1,0 +1,5 @@
+;; Estado histórico do evento, sem reativação ou concessão de itens.
+[{:db/ident :save/missoes-eventos-edn
+  :db/valueType :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc "EDN por ID original do evento: progresso e premiados; isolado por save"}]

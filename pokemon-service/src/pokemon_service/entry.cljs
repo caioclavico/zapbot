@@ -4,6 +4,7 @@
             [promesa.core :as p]
             [pokemon-service.shutdown :as shutdown-log]
             [pokemon-service.restauracao :as restauracao]
+            [pokemon-service.save-slots :as save-slots]
             [zapbot.armazenamento :as armazenamento]
             [zapbot.config :as config]
             [zapbot.desempenho :as desempenho]
@@ -24,7 +25,11 @@
   (adventure/preparar-inicializacao!)
   ;; Preserva a criação síncrona do driver usada pelo bootstrap e pelos testes.
   (p/then (armazenamento/iniciar!)
-          (fn [_] (p/let [_ (restauracao/reconciliar-inicializacao!)]
+          (fn [_]
+            (p/let [_ (armazenamento/reconciliar-save-transitions!)
+                    _ (armazenamento/hidratar-saves-ativos!)
+                    _ (save-slots/initialize!)
+                    _ (restauracao/reconciliar-inicializacao!)]
                     (adventure/inicializar!)))))
 (defn diagnostics [] (clj->js (armazenamento/diagnostico)))
 (defn is-ready [] (boolean (and (armazenamento/pronto?) @restauracao/reconciliado? (adventure/disponivel?))))
@@ -33,6 +38,8 @@
 (defn register-module [modulo] (armazenamento/registrar-modulo! modulo))
 (defn reserve [modulo chave valor]
   (p/then (armazenamento/reservar! modulo chave (js->clj valor)) clj->js))
+(defn save-transition-execute [sql parametros opcoes]
+  (armazenamento/save-transition-executar! sql parametros opcoes))
 (defn take-effects [chat-id] (clj->js (rank/recolher-efeitos! chat-id)))
 
 ;; Exports internos para composição/testes; não estão no dispatcher HTTP.
@@ -62,6 +69,15 @@
 (defn activity-time [cid pid now]
   (p/then (adventure/atividade-avancar-tempo! cid pid now) clj->js))
 (defn activity-tick [] (adventure/processar-vencidos!))
+(defn save-slots-import [cid pid slot-id versao]
+  (save-slots/importar-legado! cid pid slot-id versao))
+(defn save-slots-list [cid pid] (save-slots/listar cid pid))
+(defn save-slot-metadata [cid pid slot-id] (save-slots/metadados cid pid slot-id))
+;; Export interno para testes/composição: ativa + hidrata atoms sem WhatsApp.
+(defn save-activate [cid pid slot-id operation-id]
+  (p/then (save-slots/ativar-save! cid pid slot-id operation-id) clj->js))
+(defn save-hydrate-player [cid pid]
+  (p/then (save-slots/hidratar-jogador! cid pid) clj->js))
 (defn start-timers [emitir]
   (when (and (not config/read-only?) @restauracao/reconciliado?)
     (adventure/iniciar-notificacoes! (fn [cid resposta] (emitir cid (clj->js resposta))))
@@ -108,7 +124,7 @@
                    (p/resolved (loja/mochila contexto (first partes))))
       "loja" (case (some-> (first partes) str/lower-case (str/replace #":" ""))
                ("ajuda" "help" "?") (p/resolved (ajuda/resposta "loja ajuda"))
-               "comprar" (p/resolved (loja/comprar contexto (str/join " " (rest partes))))
+               "comprar" (loja/comprar contexto (str/join " " (rest partes)))
                ("detalhes" "detalhe") (p/resolved (loja/detalhes (str/join " " (rest partes))))
                (pokemon/jogar contexto "loja"))
       (p/rejected (ex-info "Comando fora do domínio Pokémon." {:status 400})))))
@@ -120,9 +136,13 @@
      #(desempenho/acompanhar!
        contexto
        (fn [_]
-         (p/let [resposta (despachar contexto (.-command pedido))
-                 _ (armazenamento/aguardar-todas!)]
-           (clj->js resposta)))
+         (armazenamento/com-contexto-writer-treinador!
+          (:chat-id contexto)
+          (fn [] (p/let [resposta (despachar contexto (.-command pedido))
+                         _ (armazenamento/aguardar-todas!)]
+                   (clj->js resposta)))
+          true
+          (:player-id contexto)))
        (fn [dados]
          (js/console.log
           (js/JSON.stringify

@@ -26,8 +26,22 @@ function installStartupRecovery(client,{attempts=3,backoff=[2000,5000],timeoutMs
   let pending=null,initialWork=null,initialResult=null,deadline=null,wait=null;
   let stopped=false,failed=false,closing=null,closedBrowser=null;
   let readyDuringInject=false;
+  let injectGeneration=0;
   client.zapbotStartupState='starting';
   function log(event,extra={}) {try{logger(JSON.stringify({event,...extra}));}catch{}}
+  // Structured stages for operators (no URLs, cookies, QR, or tokens).
+  function stage(name,extra={}) {
+    log('whatsapp_startup_stage',{
+      stage:name,
+      startup_state:client.zapbotStartupState,
+      inject_pending:!!pending,
+      ready_deferred:readyDuringInject,
+      inject_generation:injectGeneration,
+      browser_connected:!!client.pupBrowser?.isConnected?.(),
+      page_closed:client.pupPage?!!client.pupPage.isClosed?.():null,
+      ...extra
+    });
+  }
   function state(value){client.zapbotStartupState=value;try{onState(value);}catch{}}
   function clearDeadline(){if(deadline!==null){cancel(deadline);deadline=null;}}
   function cancelWait(){if(wait){cancel(wait.timer);wait.resolve();wait=null;}}
@@ -82,10 +96,85 @@ function installStartupRecovery(client,{attempts=3,backoff=[2000,5000],timeoutMs
   async function fail(error,phase){
     if(!failed&&!stopped){
       failed=true;state('error');clearDeadline();cancelWait();
-      log('whatsapp_recovery_failed',{phase,reason:transient(error)?'context_destroyed':
-        error?.code==='STARTUP_TIMEOUT'?'startup_timeout':error?.code==='AUTH_TRANSITION'?'authentication_transition':'non_transient'});
+      const reason=transient(error)?'context_destroyed':
+        error?.code==='STARTUP_TIMEOUT'?'startup_timeout':error?.code==='AUTH_TRANSITION'?'authentication_transition':'non_transient';
+      stage('failed',{phase,reason,code:error?.code||null});
+      log('whatsapp_recovery_failed',{phase,reason});
     }
     try{await closeBrowser();}catch(cleanup){log('whatsapp_cleanup_failed',{phase});throw cleanup;}
+  }
+  // wwjs emits AUTHENTICATED+READY from onAppStateHasSyncedEvent. inject() only
+  // installs the Socket.hasSynced listener and returns. A later framenavigated
+  // re-inject can race the first hasSynced callback (LoadUtils / WWebJS) and leave
+  // Socket.hasSynced=true with WWebJS undefined and no READY. If hasSynced is
+  // already true when listeners are (re)attached, change:hasSynced also never
+  // fires again — catch up explicitly after a successful inject.
+  async function catchupHasSynced(page){
+    if(stopped||failed||!page||page.isClosed?.())return;
+    async function probe(){
+      return page.evaluate(()=>{
+        try{
+          const Socket=window.require('WAWebSocketModel').Socket;
+          return {
+            hasSynced:!!Socket.hasSynced,
+            socket_state:Socket.state||null,
+            has_catchup_fn:typeof window.onAppStateHasSyncedEvent==='function',
+            has_wwebjs:typeof window.WWebJS!=='undefined'
+          };
+        }catch{
+          return {hasSynced:false,has_catchup_fn:false,has_wwebjs:false,probe_error:true};
+        }
+      });
+    }
+    let status;
+    try{status=await probe();}
+    catch(error){
+      stage('hasSynced_probe_failed',{transient:transient(error),code:error?.code||null});
+      return;
+    }
+    stage('hasSynced_probe',status||{});
+    if(!status?.hasSynced)return;
+    // Do NOT only call onAppStateHasSyncedEvent after pre-injecting LoadUtils:
+    // wwjs then sees WWebJS already defined, skips ClientInfo/attachEventListeners,
+    // emits READY, and the bot never receives message_create.
+    if(!status.has_wwebjs){
+      try{
+        const utilsPath=require.resolve('whatsapp-web.js/src/util/Injected/Utils');
+        const {LoadUtils}=require(utilsPath);
+        stage('hasSynced_loadutils_inject');
+        await page.evaluate(LoadUtils);
+      }catch(error){
+        stage('hasSynced_loadutils_failed',{transient:transient(error),code:error?.code||null});
+        return;
+      }
+    }
+    try{
+      if(!client.info){
+        const ClientInfo=require(require.resolve('whatsapp-web.js/src/structures/ClientInfo'));
+        const InterfaceController=require(require.resolve('whatsapp-web.js/src/util/InterfaceController'));
+        const raw=await page.evaluate(()=>({
+          ...window.require('WAWebConnModel').Conn.serialize(),
+          wid:window.require('WAWebUserPrefsMeUser').getMaybeMePnUser()||
+              window.require('WAWebUserPrefsMeUser').getMaybeMeLidUser()
+        }));
+        client.info=new ClientInfo(client,raw);
+        client.interface=new InterfaceController(client);
+        stage('hasSynced_clientinfo');
+      }
+      if(!client.zapbotListenersAttached){
+        await client.attachEventListeners();
+        client.zapbotListenersAttached=true;
+        stage('hasSynced_listeners_attached');
+      }
+    }catch(error){
+      stage('hasSynced_wire_failed',{transient:transient(error),code:error?.code||null});
+      return;
+    }
+    if(client.zapbotStartupState!=='ready'){
+      stage('hasSynced_catchup_ready_emit');
+      client.emit('ready');
+    }
+    stage('hasSynced_catchup_done');
   }
   function hookPage(page){
     if(page.zapbotNavigationGuard)return;
@@ -110,46 +199,81 @@ function installStartupRecovery(client,{attempts=3,backoff=[2000,5000],timeoutMs
           const error=Object.assign(new Error('Authentication transition requires operator review'),{code:'AUTH_TRANSITION'});
           return fail(error,'navigation').catch(()=>{});
         }
+        // Avoid re-inject churn once READY is accepted; navigation after ready
+        // previously raced LoadUtils and stranded RECOVERING with hasSynced=true.
+        if(client.zapbotStartupState==='ready'){
+          stage('inject_skip_after_ready');
+          return;
+        }
         return Promise.resolve().then(()=>listener.call(page,frame)).catch(error=>fail(error,'navigation')).catch(()=>{});
         }catch(error){return fail(error,'navigation').catch(()=>{});}
       });
     };
   }
   if(inject)client.inject=function(){
-    if(pending)return pending;
+    if(pending){
+      stage('inject_coalesced');
+      return pending;
+    }
     let succeeded=false;
-    pending=(async()=>{
+    const generation=++injectGeneration;
+    const page=client.pupPage;
+    const work=(async()=>{
       if(!alive()){await closeBrowser();throw new Error('WhatsApp startup is stopped or browser is unavailable');}
-      const page=client.pupPage;hookPage(page);state('recovering');
+      hookPage(page);state('recovering');
+      stage('inject_enter',{generation});
       for(let attempt=1;attempt<=attempts;attempt++){
         if(!alive()||client.pupPage!==page)throw new Error('WhatsApp page changed or recovery stopped');
         readyDuringInject=false;
         state('recovering');
+        stage('inject_attempt',{generation,attempt,attempts,inject_timeout_ms:injectTimeoutMs});
         let timer;
         try{
           const value=await Promise.race([Promise.resolve().then(inject),new Promise((_,reject)=>{
             timer=schedule(()=>{
               const error=Object.assign(new Error('WhatsApp injection did not finish'),{code:'STARTUP_TIMEOUT'});
+              stage('inject_timeout',{generation,attempt,inject_timeout_ms:injectTimeoutMs});
               fail(error,'injection').catch(()=>{});reject(error);
             },injectTimeoutMs);
           })]);
-          succeeded=true;return value;
+          if(timer!==undefined){cancel(timer);timer=undefined;}
+          succeeded=true;
+          stage('inject_success',{generation,attempt});
+          return value;
         }
         catch(error){
           if(timer!==undefined){cancel(timer);timer=undefined;}
           readyDuringInject=false;
           if(!stopped&&!failed)state('recovering');
-          if(!transient(error)||attempt===attempts||!alive())throw error;
+          if(!transient(error)||attempt===attempts||!alive()){
+            stage('inject_failed',{generation,attempt,transient:transient(error),code:error?.code||null});
+            throw error;
+          }
           const delay=backoff[attempt-1];
           log('whatsapp_inject_retry',{attempt,next_attempt:attempt+1,backoff_ms:delay,reason:'context_destroyed'});
+          stage('inject_retry',{generation,attempt,next_attempt:attempt+1,backoff_ms:delay});
           await new Promise(resolve=>{wait={resolve,timer:schedule(()=>{wait=null;resolve();},delay)};});
         }
         finally{if(timer!==undefined)cancel(timer);}
       }
-    })().finally(()=>{
+    })();
+    // Use then() (not async finally) so callers always await catch-up / ready re-emit.
+    pending=work.then(async(value)=>{
       pending=null;
-      if(succeeded&&readyDuringInject&&!stopped&&!failed)client.emit('ready');
+      if(succeeded&&!stopped&&!failed){
+        try{await catchupHasSynced(page);}
+        catch{stage('hasSynced_catchup_unhandled');}
+      }
+      if(succeeded&&readyDuringInject&&!stopped&&!failed){
+        stage('ready_reemit_after_inject',{generation});
+        client.emit('ready');
+      }
       readyDuringInject=false;
+      return value;
+    },async(error)=>{
+      pending=null;
+      readyDuringInject=false;
+      throw error;
     });
     return pending;
   };
@@ -159,8 +283,13 @@ function installStartupRecovery(client,{attempts=3,backoff=[2000,5000],timeoutMs
       fail(Object.assign(new Error('READY without a live authenticated browser'),{code:'AUTH_TRANSITION'}),'readiness').catch(()=>{});
       return;
     }
-    if(pending){readyDuringInject=true;return;}
+    if(pending){
+      readyDuringInject=true;
+      stage('ready_deferred_during_inject');
+      return;
+    }
     state('ready');clearDeadline();
+    stage('ready_accepted');
   });
   client.on('auth_failure',()=>{fail(Object.assign(new Error('Authentication failure'),{code:'AUTH_TRANSITION'}),'authentication').catch(()=>{});});
   client.on('disconnected',()=>{if(!stopped&&!failed)fail(new Error('WhatsApp disconnected'),'connection').catch(()=>{});});

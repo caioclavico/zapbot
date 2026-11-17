@@ -1,0 +1,78 @@
+;; Fase 12.8.1 — agenda + ocorrências de eventos temáticos (aditivo; default off).
+[
+ {:db/ident       :thematic-event-schedule/chat-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Agenda automática de eventos temáticos por grupo"}
+
+ {:db/ident       :thematic-event-schedule/enabled
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Default false — não dispara até GO + flag"}
+
+ {:db/ident       :thematic-event-schedule/next-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Epoch ms da próxima tentativa de ativação"}
+
+ {:db/ident       :thematic-event-schedule/last-catalog-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :thematic-event-schedule/last-occurrence-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :thematic-event-schedule/last-start-ms
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :thematic-event-schedule/revision
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :thematic-event-schedule/policy-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Overrides opcionais de frequência/duração (EDN)"}
+
+ {:db/ident       :thematic-event-occurrence/id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "chat:catalog-id:startMs"}
+
+ {:db/ident       :thematic-event-occurrence/chat-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :thematic-event-occurrence/catalog-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :thematic-event-occurrence/inicio-ms
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :thematic-event-occurrence/fim-ms
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :thematic-event-occurrence/status
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "active|ended|cancelled"}
+
+ {:db/ident       :thematic-event-occurrence/announced-start?
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :thematic-event-occurrence/announced-end?
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :thematic-event-occurrence/created-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+]

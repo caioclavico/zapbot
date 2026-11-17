@@ -64,6 +64,7 @@ test('workflow verifies embedded revision for new and reused images before fixtu
     case "$*" in
       *Architecture*) printf 'linux/amd64';;
       *org.opencontainers.image.revision*) printf '%s' "$FIXTURE_REVISION";;
+      *io.zapbot.canonical-trainer-protocol*) printf '1';;
       *) return 99;;
     esac
   }

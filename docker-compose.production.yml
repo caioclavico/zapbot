@@ -1,8 +1,16 @@
 # Imagem construída no GitHub Actions. Cassandra roda em outra VM.
+# Nota A6 cutover: o Node live atual usa o projeto `odisseu-a6-cutover` e o overlay
+# `docker-compose.a6-ai-drain-sandbox.overlay.yml` (não este arquivo). Não aplicar
+# este compose na VM Core sem revisão explícita da janela.
 services:
   bot:
     image: ${ZAPBOT_IMAGE:?Defina a imagem do commit}
     container_name: zapbot
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/chromium-seccomp.json
     stop_grace_period: 60s
     # Também impede limpeza de locks no CMD de imagens antigas em rollback.
     command: ["node", "target/main.js"]
