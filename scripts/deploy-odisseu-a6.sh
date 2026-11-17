@@ -80,7 +80,10 @@ async function control(path, method = "GET") {
 }
 (async () => {
   let phase = await control("status");
-  if (action === "resume" && ["frozen", "quiescent", "draining"].includes(phase)) {
+  if (action === "resume" && !isJvm && phase === "draining") {
+    phase = await control("enter?timeoutMs=5000", "POST");
+  }
+  if (action === "resume" && (isJvm ? ["frozen", "quiescent", "draining"].includes(phase) : phase === "quiescent")) {
     await control("resume", "POST");
     phase = await control("status");
   }
