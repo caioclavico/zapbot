@@ -180,17 +180,21 @@
         mon {:nome "Rattata" :hp 40 :hp-atual 40 :ataque 30 :defesa 20
              :atq-esp 20 :def-esp 20 :veloc 40 :tipos ["normal"]
              :nivel 5 :raridade "comum"}]
-    (boot! s chat "ash" 100)
+    (boot! s chat "ash" 200)
     (collection/adicionar-pokemon! s chat "ash" mon 10 nil)
-    (tx/buy-item! s {:chat-id chat :player-id "ash" :save-id "a"
-                     :fence-generation (fence s chat "ash")
-                     :operation-id "buy-restos" :item-id "restos"})
-    (let [r (tx/use-item! s {:chat-id chat :player-id "ash" :save-id "a"
-                             :fence-generation (fence s chat "ash")
-                             :operation-id "equip-restos" :item-id "restos" :idx 0})
-          poke (first (ports/list-collection s chat "ash" "a"))]
-      (is (= "equip" (:kind r)))
-      (is (= "restos" (:item poke))))))
+    (let [ctx {:chat-id chat :player-id "ash" :save-id "a"
+               :fence-generation (fence s chat "ash")}]
+      (doseq [item ["restos" "banda" "oculos" "faixa-foco"]]
+        (tx/buy-item! s (assoc ctx :operation-id (str "buy-" item) :item-id item))
+        (let [r (tx/use-item! s (assoc ctx :operation-id (str "equip-" item)
+                                     :item-id item :idx 0))
+              poke (first (ports/list-collection s chat "ash" "a"))]
+          (is (= "equip" (:kind r)))
+          (is (= item (:item poke)))))
+      (let [inventory (ports/list-inventory s chat "ash" "a")
+            held-ids #{"restos" "banda" "oculos" "faixa-foco"}]
+        (is (= #{"restos" "banda" "oculos"}
+               (into #{} (comp (filter #(pos? (:qty % 0))) (map :item-id) (filter held-ids)) inventory)))))))
 
 (deftest mt-consome-item-com-a-mesma-transacao
   (let [s (fresh-store! "s411-mt")

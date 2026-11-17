@@ -127,6 +127,22 @@
                    [geodude-cand magikarp-cand] alvo tipos)]
     (is (= "Magikarp" (:nome escolhido)))))
 
+(deftest encontro-forte-combina-os-dois-niveis
+  (let [chance #(-> (hunt/perfil-forca-caca %1 %2) :chance-forte)
+        fraco {:nome "Fraco" :tipos ["water"] :hp 40 :ataque 40 :defesa 40
+               :atq-esp 40 :def-esp 40 :veloc 40}
+        forte (assoc fraco :nome "Forte" :hp 100 :ataque 100 :defesa 100
+                     :atq-esp 100 :def-esp 100 :veloc 100)
+        fora-do-bioma (assoc forte :nome "Fora" :tipos ["fire"] :ataque 120)
+        escolher #(hunt/selecionar-selvagem-progressivo
+                   [fraco fora-do-bioma forte] #{"water"} %1 %2 %3)]
+    (is (zero? (chance 50 1)))
+    (is (zero? (chance 1 100)))
+    (is (< (chance 25 50) (chance 50 50) (chance 50 100)))
+    (is (= "Forte" (:nome (escolher 50 100 0))))
+    (is (= "Fraco" (:nome (escolher 50 100 99))))
+    (is (= "Fraco" (:nome (escolher 50 1 0))))))
+
 (deftest start-sem-shiny-roll-nem-taxa-captura
   "Regressão INTERNAL_ERROR !pk caçar: Node não envia shinyRoll;
    species pode omitir taxa-captura."

@@ -4354,7 +4354,7 @@ const HELP_TOPICS = {
       '`!loja` · `!loja comprar <item>` — comprar',
       `\`${p} pocao [n]\` · \`${p} pocao-maxima [n]\` · \`${p} curar\``,
       `\`${p} reviver [n]\` — revive um desmaiado`,
-      `\`${p} equipar <n> exp-share\` — compartilha XP nas vitórias de caçada`,
+      `\`${p} equipar <n> <item>\` — exp-share, restos, banda, oculos ou faixa-foco`,
       '',
       'Bolas: Pokébola, Grande Bola, Ultra Bola.',
       'Frambo aumenta a chance da próxima captura.',

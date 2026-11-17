@@ -39,6 +39,7 @@
                 :agora-ms agora
                 :timezone-id timezone-id
                 :trainer-level nivel
+                :pokemon-level (:nivel ativo)
                 :roll-tipos roll-tipos
                 :roll-surto roll-surto
                 :active-events thematic})
