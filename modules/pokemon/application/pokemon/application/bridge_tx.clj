@@ -404,7 +404,9 @@
                                                      [:nome :species :raridade :hp
                                                       :imagem :imagem-shiny :altura
                                                       :tipos :shiny :shiny?])})}
-        (seq level-ups) (assoc :trainer-level-ups level-ups)))))
+        (and (not (:duplicate result)) (seq (:adventure-activity result)))
+      (assoc :adventure-activity (:adventure-activity result))
+      (seq level-ups) (assoc :trainer-level-ups level-ups)))))
 
 (defn encounter-release!
   "POST liberar selvagem após vitória (sem captura)."
@@ -609,6 +611,8 @@
                                         :xp (long (:xp-permanencia perm 0))}))))
              :save-id save-id
              :fence-generation (long fence-generation)}
+      (and (not (:duplicate result)) (seq (:adventure-activity result)))
+      (assoc :adventure-activity (:adventure-activity result))
       (seq level-ups) (assoc :trainer-level-ups level-ups)
       (some? inv) (assoc :inventory inv)
       (some? chances) (assoc :chances chances))))
@@ -1092,7 +1096,13 @@
                                 (:outcome rw)
                                 (assoc :outcome (name (:outcome rw)))))
                             (or (:rewards result) []))
+             :captura-pendente (boolean (when-let [updated (:raid result)]
+                                         (raid-domain/captura-pendente?
+                                          updated player-id
+                                          (or agora-ms (System/currentTimeMillis)))))
              :raid (raid-summary (:raid result))}
+      (and (not (:duplicate result)) (seq (:adventure-activity result)))
+      (assoc :adventure-activity (:adventure-activity result))
       (seq level-ups) (assoc :trainer-level-ups level-ups))))
 
 (defn raid-capture!
@@ -1126,11 +1136,14 @@
              :tentativas (or (:tentativas result) (:tentativas summary))
              :bola bola-id
              :raid-id (:raid-id raid)
+             :victory-reward (or (:victory-reward result) (:victory-reward summary))
              :chefe (when-let [c (:chefe raid)]
                       {:nome (or (:nome c) (get c "nome"))
                        :raridade (or (:raridade c) (get c "raridade"))})
              :save-id save-id
              :fence-generation (long fence-generation)}
+      (and (not (:duplicate result)) (seq (:adventure-activity result)))
+      (assoc :adventure-activity (:adventure-activity result))
       (seq level-ups) (assoc :trainer-level-ups level-ups))))
 
 (defn raid-frambo-prepare!
@@ -1695,6 +1708,8 @@
              :fence-generation (long fence-generation)
              :battle (present-pvp (:battle result))}
       (:rewards result) (assoc :rewards (:rewards result))
+      (and (not (:duplicate result)) (seq (:adventure-activity result)))
+      (assoc :adventure-activity (:adventure-activity result))
       (seq level-ups) (assoc :trainer-level-ups level-ups))))
 
 (defn active-pvp
