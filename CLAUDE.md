@@ -19,8 +19,6 @@ Fluxo normal de desenvolvimento: `npm run dev` num terminal (recompila a cada sa
 Primeira execução gera um QR code no terminal para escanear com o WhatsApp (Aparelhos conectados); a sessão persiste em `.wwebjs_auth/`.
 
 Scripts standalone adicionais (definidos em `shadow-cljs.edn`, cada um com seu próprio build/entrypoint):
-- `zapbot.migrar-estado/-main` → `target/migrar-estado.js` (migração de chaves legadas no Cassandra)
-- `zapbot.pokemon.resetar/-main` → `target/resetar-pokemon.js` (reset do roster de `!pokemon`)
 
 Compile-os manualmente via shadow-cljs se precisar rodá-los (não fazem parte do `npm run build` padrão, que só compila o build `:app`).
 
