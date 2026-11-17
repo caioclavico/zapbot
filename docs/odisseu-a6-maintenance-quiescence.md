@@ -1,5 +1,7 @@
 # Odisseu A6 — manutenção e quiescência
 
+> A auditoria de 2026-11-05 que a `master` gravou neste caminho (contenção do workflow de produção e o hold fail-closed) está preservada integralmente em [docs/archive/2026-11-05-master-production-deploy-hold-audit.md](archive/2026-11-05-master-production-deploy-hold-audit.md). Este arquivo permanece o relatório de manutenção e quiescência da linha A6.
+
 **Decisão: CONDITIONAL**
 **Escopo executado:** implementação e homologação local, no clone `/private/tmp/zapbot-announcer-a6-rc-final`. Nenhuma conexão ou alteração em produção foi realizada. Não houve backup cold, parada/restart live, migration, deploy ou envio WhatsApp real.
 
