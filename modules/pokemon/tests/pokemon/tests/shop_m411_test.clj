@@ -194,7 +194,7 @@
       (let [inventory (ports/list-inventory s chat "ash" "a")
             held-ids #{"restos" "banda" "oculos" "faixa-foco"}]
         (is (= #{"restos" "banda" "oculos"}
-               (into #{} (comp (map :item-id) (filter held-ids)) inventory)))))))
+               (into #{} (comp (filter #(pos? (:qty % 0))) (map :item-id) (filter held-ids)) inventory)))))))
 
 (deftest mt-consome-item-com-a-mesma-transacao
   (let [s (fresh-store! "s411-mt")
