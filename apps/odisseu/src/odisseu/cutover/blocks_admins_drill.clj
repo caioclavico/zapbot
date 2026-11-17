@@ -27,6 +27,10 @@
   (when (re-find #"(?i)prod|oracle|live|m53-real|m55-real" (str p))
     (throw (ex-info "m87_path_blocked" {:path p}))))
 
+(defn- clear-maintenance! [path]
+  (let [dir (io/file (persistence/resolve-storage-dir path) ".a6-maintenance")]
+    (doseq [f (reverse (file-seq dir))] (.delete f))))
+
 (defn- wipe-dir! [path]
   (let [f (io/file (persistence/resolve-storage-dir path))]
     (when (.exists f)
@@ -45,10 +49,12 @@
            :maint (str base "-maint")}]
     (doseq [p (vals (dissoc c :id :system))]
       (assert-disposable! p)
-      (.mkdirs (io/file (persistence/resolve-storage-dir p))))
+      (.mkdirs (io/file (persistence/resolve-storage-dir p)))
+      (clear-maintenance! p))
     (journal/wipe! (:journal c))
     (wipe-dir! (:maint c))
     (.mkdirs (io/file (:maint c)))
+    (wipe-dir! (:plat-bak c))
     c))
 
 (defn- durable
@@ -236,7 +242,8 @@
   (let [c (ctx "volume") s (open! c)
         _ (ba/block-commands! s (durable c) chat ["naval"] "m87-pre")
         wm (journal/watermark (:journal c))
-        _ (backup/snapshot-storage! (:plat-live c) (:plat-bak c))
+        _ (backup/cold-snapshot! (:plat-live c) (:plat-bak c))
+        _ (backup/resume-storage! (:plat-live c))
         ;; pós-backup: block quiz, unblock naval, remember, forget
         _ (ba/block-commands! s (durable c) chat ["quiz"] "m87-post-b")
         _ (ba/unblock-commands! s (durable c) chat ["naval"] "m87-post-u")
@@ -248,6 +255,7 @@
         _ (wipe-dir! (:plat-rec c))
         _ (.mkdirs (io/file (persistence/resolve-storage-dir (:plat-rec c))))
         _ (backup/restore-storage! (:plat-rec c) (:plat-bak c))
+        _ (backup/resume-storage! (:plat-rec c))
         s2 (reopen-rec! c)
         after-restore-cmds (cmds s2 chat)
         replay (ba/replay-journal-after! s2 (:journal c) wm)

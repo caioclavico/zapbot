@@ -63,7 +63,8 @@
                 (recur (.getCause error) (conj messages (or (.getMessage error) ""))
                        (conj classes (.getName (class error))))
                 {:messages messages :classes classes}))
-            lock-failure? (some #(re-find #"(?i)lock|in use|already open" %) messages)]
+            lock-failure? (some #(re-find #"(?i)lock|in use|already open|datomic_maintenance_active" %)
+                                 messages)]
         (if lock-failure?
           (do (println "EXTERNAL_WRITE_DENIED" (str/join "," classes)) (flush) (System/exit 0))
           (do (println "EXTERNAL_WRITE_FAILED_UNEXPECTEDLY" (str/join " | " messages))
@@ -151,7 +152,11 @@
         created (child! "--create" storage nil)
         _ (await-child! created "CHILD_DATA_CREATED")
         holder (child! "--hold" storage release-file)
-        ready (.readLine ^BufferedReader (:reader holder))]
+        ready (loop []
+                (let [line (.readLine ^BufferedReader (:reader holder))]
+                  (if (and line (str/starts-with? line "Picked up JAVA_TOOL_OPTIONS"))
+                    (recur)
+                    line)))]
     (ensure! (= "CHILD_WRITER_READY" ready) "child-writer-not-ready")
     (ensure! (expect-throw! #(backup/snapshot-storage! storage backup-path))
              "active-writer-snapshot-was-accepted")
@@ -181,7 +186,7 @@
                      (ensure! (and (zero? exit) (str/includes? output "EXTERNAL_WRITE_DENIED"))
                               "writer-started-during-cold-copy"))))
           snapshot (with-redefs-fn {hook-var hook}
-                     #(backup/snapshot-storage! storage backup-path))]
+                     #(backup/cold-snapshot! storage backup-path))]
       (ensure! (:ok snapshot) "snapshot-not-published")
       (ensure! @attempted "external-writer-probe-did-not-run-during-copy")
       (ensure! (:ok (backup/verify-backup! backup-path)) "snapshot-verification-failed"))
@@ -241,6 +246,7 @@
         (backup/discard-staging! (str root) (str stage))))
 
     (backup/restore-storage! restore-path backup-path)
+    (backup/resume-storage! restore-path)
     (await-child! (child! "--read" restore-path nil) "RESTORED_CANONICAL_STATE_PASS")
     (ensure! (expect-throw! #(backup/restore-storage! restore-path backup-path))
              "non-empty-restore-destination-overwritten")

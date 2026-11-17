@@ -1,6 +1,7 @@
 (ns pokemon.migration.pipeline
   "Orquestra export → transform → import → equivalência → A/B → backup (M5.0)."
-  (:require [clojure.java.io :as io]
+  (:require             [clojure.java.io :as io]
+            [clojure.string :as str]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
@@ -26,6 +27,19 @@
           s (store/make-store conn)]
       (trainer/bootstrap! s)
       s)))
+
+(defn- disposable-storage? [rel]
+  (and (string? rel)
+       (str/starts-with? rel ".datomic-local/")
+       (not (re-find #"(?i)prod|oracle|live|m53-real|m55-real" rel))))
+
+(defn- wipe-storage! [rel]
+  (when-not (disposable-storage? rel)
+    (throw (ex-info "pipeline_storage_not_disposable" {:storage rel})))
+  (let [root (io/file (persistence/resolve-storage-dir rel))]
+    (when (.exists root)
+      (doseq [f (reverse (file-seq root))]
+        (.delete f)))))
 
 (defn- reopen-store
   [storage-rel system db-name]
@@ -76,6 +90,9 @@
          import-batch-id "m50-batch-syn-001"}}]
   (let [out (io/file out-dir)
         _ (.mkdirs out)
+        ;; O diretório descartável pode ter ficado :quiescent num ensaio anterior.
+        _ (wipe-storage! storage-rel)
+        _ (wipe-storage! backup-rel)
         export-data (if fixture-path
                       (export/from-path fixture-path)
                       (export/synthetic-default))
@@ -90,12 +107,14 @@
         reimport (mig-import/reimport-same-batch! store ir import-batch-id)
         equivalence (eq/compare-ir store ir)
         switch-result (switch-roundtrip! store (:chat-id ir) (:player-id ir))
-        backup-result (backup/snapshot-storage! storage-rel backup-rel)
-        ;; Simula falha: apaga db e restaura do backup
-        _ (let [client (persistence/client {:system system :storage-dir storage-rel})]
-            (persistence/delete-db! client db-name))
-        restore-result (backup/restore-storage! storage-rel backup-rel)
-        store2 (reopen-store storage-rel system db-name)
+        backup-result (backup/cold-snapshot! storage-rel backup-rel)
+        ;; _impl_release fecha os canais daquele diretório neste JVM. A leitura
+        ;; pós-restore usa um path novo, que o Datomic local consegue abrir.
+        restore-rel (str storage-rel "-restored")
+        _ (wipe-storage! restore-rel)
+        restore-result (backup/restore-storage! restore-rel backup-rel)
+        _ (backup/resume-storage! restore-rel)
+        store2 (reopen-store restore-rel system db-name)
         equivalence-after-restore (eq/compare-ir store2 ir)
         report-data (report/build-report
                      {:ir ir

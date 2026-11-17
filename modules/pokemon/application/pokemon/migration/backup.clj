@@ -3,7 +3,8 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [odisseu.persistence.datomic :as persistence])
+            [odisseu.persistence.datomic :as persistence]
+            [pokemon.infrastructure.http.maintenance-gate :as gate])
   (:import [java.io IOException]
            [java.nio ByteBuffer]
            [java.nio.channels FileChannel FileLock OverlappingFileLockException]
@@ -16,11 +17,27 @@
            [java.util UUID]))
 
 (def ^:private manifest-name ".a6-datomic-backup.edn")
+(def ^:private quiescence-cert-name "backup-quiescence.edn")
+(def ^:private quiescence-cert-rel ".a6-maintenance/backup-quiescence.edn")
+(def ^:private quiescence-ttl-ms (* 15 60 1000))
 (def ^:dynamic ^:private *test-hook*
   "Fault injection used only by disposable tests; never set by application code."
   nil)
 (defonce ^:private held-lock-paths (atom #{}))
 (defonce ^:private overlap-channels (atom []))
+
+(defn release-refused-lock-probes!
+  "Fecha canais abertos apenas para detectar um writer no mesmo processo,
+   depois que esse writer já foi liberado. Fechar o canal enquanto o writer
+   original ainda segura o arquivo pode soltar o lock dele."
+  []
+  (let [channels (vec @overlap-channels)]
+    (reset! overlap-channels [])
+    (doseq [^FileChannel channel channels]
+      (try
+        (when (.isOpen channel) (.close channel))
+        (catch Throwable _ nil)))
+    (count channels)))
 
 (defn- hook! [event data]
   (when *test-hook* (*test-hook* event data)))
@@ -246,6 +263,8 @@
           (catch OverlappingFileLockException e
             ;; Closing a second channel for a locked file may release JVM-wide
             ;; locks on some platforms. Keep it open and fail closed instead.
+            ;; The path is not a lock we hold, so it must leave the registry.
+            (swap! held-lock-paths disj key)
             (swap! overlap-channels conj channel)
             (throw (ex-info "backup_writer_active_in_process" {:lock (str p)} e)))
           (catch Throwable e
@@ -313,6 +332,132 @@
     (catch AtomicMoveNotSupportedException e
       (throw (ex-info "backup_atomic_rename_unsupported" {:target (str target)} e)))))
 
+(defn- sha256-string [s]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (.update digest (.getBytes (str s) "UTF-8"))
+    (format "%064x" (BigInteger. 1 (.digest digest)))))
+
+(defn- quiescence-artifact? [rel]
+  (or (= rel quiescence-cert-rel)
+      (and (str/starts-with? rel ".a6-maintenance/")
+           (str/ends-with? rel ".tmp"))))
+
+(defn- content-generation [^Path root]
+  (let [entries (->> (tree-manifest root)
+                     (remove #(quiescence-artifact? (:path %)))
+                     (map #(select-keys % [:path :kind :size :sha256]))
+                     (sort-by :path))]
+    (sha256-string (pr-str entries))))
+
+(defn- cert-file [^Path root]
+  (.resolve root quiescence-cert-rel))
+
+(defn- read-cert [^Path root]
+  (let [p (cert-file root)]
+    (when-not (exists? p)
+      (fail! "backup_quiescence_unproven" {:path (str p)}))
+    (try
+      (edn/read-string (slurp (str p)))
+      (catch Throwable e
+        (throw (ex-info "backup_quiescence_unproven" {:path (str p)} e))))))
+
+(defn- write-cert! [^Path root cert]
+  (let [dir (.resolve root ".a6-maintenance")
+        target (cert-file root)
+        tmp (.resolve dir (str "." quiescence-cert-name "-" (UUID/randomUUID) ".tmp"))]
+    (Files/createDirectories dir (make-array java.nio.file.attribute.FileAttribute 0))
+    (spit (str tmp) (pr-str cert))
+    (force-file! tmp)
+    (Files/move tmp target (into-array StandardCopyOption
+                                       [StandardCopyOption/ATOMIC_MOVE
+                                        StandardCopyOption/REPLACE_EXISTING]))
+    cert))
+
+(defn- assert-quiescence-certificate! [^Path root]
+  (let [state (persistence/maintenance-state (str root))
+        cert (read-cert root)
+        generation (content-generation root)
+        now (System/currentTimeMillis)]
+    (when-not (contains? #{:quiescent :frozen} (:phase state))
+      (fail! "backup_quiescence_required" {:phase (:phase state)}))
+    (when-not (and (= "odisseu-backup-quiescence" (:format cert))
+                   (= 1 (:version cert))
+                   (= generation (:generation cert))
+                   (number? (:expires-at-ms cert))
+                   (< now (long (:expires-at-ms cert))))
+      (fail! "backup_quiescence_unproven"
+             {:phase (:phase state) :generation generation}))
+    cert))
+
+(defn attest-quiescence!
+  "Emite um certificado curto. Exige marker :quiescent/:frozen, zero writes
+   informadas, geração estável e locks Datomic adquiríveis. Fechar a conexão
+   não basta: sem o marker e sem o lock livre o certificado não é gravado."
+  [storage-rel {:keys [active-writes observe-ms] :or {active-writes -1 observe-ms 0}}]
+  (let [root (path (persistence/resolve-storage-dir storage-rel))
+        state (persistence/maintenance-state storage-rel)
+        phase (:phase state)]
+    (when-not (contains? #{:quiescent :frozen} phase)
+      (fail! "backup_quiescence_required" {:phase phase}))
+    (when-not (and (number? active-writes) (zero? (long active-writes)))
+      (fail! "backup_writes_still_active" {:active-writes active-writes}))
+    (let [before (content-generation root)
+          _ (when (pos? (long observe-ms)) (Thread/sleep (long observe-ms)))
+          after (content-generation root)]
+      (when-not (= before after)
+        (fail! "backup_writes_observed" {}))
+      (with-offline-locks root (fn [_] nil))
+      (let [stable (content-generation root)]
+        (when-not (= before stable)
+          (fail! "backup_writes_observed" {}))
+        (write-cert! root
+                     {:format "odisseu-backup-quiescence"
+                      :version 1
+                      :phase phase
+                      :generation stable
+                      :active-writes 0
+                      :issued-at-ms (System/currentTimeMillis)
+                      :expires-at-ms (+ (System/currentTimeMillis) quiescence-ttl-ms)})))))
+
+(defn prepare-cold-snapshot!
+  "Drena o gate. Timeout não grava certificado e não declara quiescência."
+  [storage-rel maintenance-gate {:keys [timeout-ms observe-ms] :or {timeout-ms 5000 observe-ms 0}}]
+  (let [entered (gate/enter! maintenance-gate (long timeout-ms))]
+    (when-not (:quiescent? entered)
+      (fail! "backup_quiescence_timeout"
+             {:phase (:phase entered) :active-writes (:active-writes entered)}))
+    (attest-quiescence! storage-rel {:active-writes (:active-writes entered)
+                                     :observe-ms observe-ms})))
+
+(defn- maintenance-dir [storage-rel]
+  (.getAbsolutePath
+   (io/file (persistence/resolve-storage-dir storage-rel) ".a6-maintenance")))
+
+(declare snapshot-storage! resume-storage!)
+
+(defn cold-snapshot!
+  "Estaciona os flocks deste processo, prova quiescência e só então copia.
+   Os canais de dados permanecem abertos e o flock é readquirido no final.
+   O backup carrega o marker :quiescent. `resume-storage!` reabre admissão
+   na cópia restaurada e na origem."
+  [storage-rel backup-rel]
+  (let [parked (persistence/park-storage-writers! storage-rel)]
+    (try
+      (let [g (gate/create (maintenance-dir storage-rel))]
+        (prepare-cold-snapshot! storage-rel g {:timeout-ms 5000 :observe-ms 0})
+        (snapshot-storage! storage-rel backup-rel))
+      (finally
+        (persistence/relock-writers! parked)))))
+
+(defn resume-storage!
+  "Reabre admissão só a partir de :quiescent ou :frozen, com zero writes."
+  [storage-rel]
+  (let [g (gate/create (maintenance-dir storage-rel))
+        phase (:phase (gate/status g))]
+    (when (contains? #{:quiescent :frozen} phase)
+      (gate/resume! g))
+    (gate/status g)))
+
 (defn snapshot-storage!
   "Creates a cold snapshot without replacing existing backups. The Datomic JVM
    must be stopped; the helper additionally acquires the bridge and DB file locks
@@ -332,6 +477,7 @@
         (with-offline-locks
           from
           (fn [_locks]
+            (assert-quiescence-certificate! from)
             (let [source-manifest (tree-manifest from)
                   stage (staging-path to)]
               (Files/createDirectory stage (make-array java.nio.file.attribute.FileAttribute 0))

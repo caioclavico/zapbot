@@ -204,8 +204,8 @@
         _ (assert-disposable! storage-pokemon-bak)
         ;; quiesce: backup com processo ainda open é aceitável no Local se
         ;; nenhuma TX concorrente — pós-ops só depois do snapshot retornar.
-        bak-pl (backup/snapshot-storage! storage-platform storage-platform-bak)
-        bak-pk (backup/snapshot-storage! storage-pokemon storage-pokemon-bak)
+        bak-pl (backup/cold-snapshot! storage-platform storage-platform-bak)
+        bak-pk (backup/cold-snapshot! storage-pokemon storage-pokemon-bak)
         ;; sair da janela de quiesce — TXs pós-backup no LIVE
         post (apply-post-backup-ops! poke platform)
         state-after-post (snapshot-state poke platform)
@@ -219,6 +219,8 @@
         t-restore0 (ms-now)
         res-pl (backup/restore-storage! storage-platform-recovered storage-platform-bak)
         res-pk (backup/restore-storage! storage-pokemon-recovered storage-pokemon-bak)
+        _ (backup/resume-storage! storage-platform-recovered)
+        _ (backup/resume-storage! storage-pokemon-recovered)
         restore-ms (- (ms-now) t-restore0)
         recovered-at (ms-now)
         poke2 (reopen-pokemon! storage-pokemon-recovered system-name)
@@ -306,6 +308,7 @@
         _ (assert-disposable! dest)
         _ (wipe-dir! dest)
         r (backup/restore-storage! dest storage-pokemon-bak)
+        _ (backup/resume-storage! dest)
         store (cut-import/reopen-pokemon-store! dest system-name pokemon-db)
         c (coins store)]
     {:ok true

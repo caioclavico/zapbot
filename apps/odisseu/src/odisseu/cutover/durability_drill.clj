@@ -27,6 +27,10 @@
   (when (re-find #"(?i)prod|oracle|live|m53-real|m55-real" (str p))
     (throw (ex-info "m83_path_blocked" {:path p}))))
 
+(defn- clear-maintenance! [path]
+  (let [dir (io/file (persistence/resolve-storage-dir path) ".a6-maintenance")]
+    (doseq [f (reverse (file-seq dir))] (.delete f))))
+
 (defn- wipe-dir! [path]
   (let [f (io/file (persistence/resolve-storage-dir path))]
     (when (.exists f)
@@ -48,8 +52,12 @@
            :journal (str base "-journal")}]
     (doseq [p (vals (dissoc c :id :system))]
       (assert-disposable! p)
-      (.mkdirs (io/file (persistence/resolve-storage-dir p))))
+      (.mkdirs (io/file (persistence/resolve-storage-dir p)))
+      (clear-maintenance! p))
     (journal/wipe! (:journal c))
+    ;; O snapshot recusa destino pré-existente.
+    (wipe-dir! (:plat-bak c))
+    (wipe-dir! (:poke-bak c))
     c))
 
 (defn- coins [store]
@@ -190,8 +198,10 @@
         (journal/entries-after jdir after-seq)))
 
 (defn- backup-live! [c]
-  (backup/snapshot-storage! (:plat-live c) (:plat-bak c))
-  (backup/snapshot-storage! (:poke-live c) (:poke-bak c)))
+  (backup/cold-snapshot! (:plat-live c) (:plat-bak c))
+  (backup/cold-snapshot! (:poke-live c) (:poke-bak c))
+  (backup/resume-storage! (:plat-live c))
+  (backup/resume-storage! (:poke-live c)))
 
 (defn- restore-to-rec! [c]
   (wipe-dir! (:plat-rec c))
@@ -199,7 +209,9 @@
   (.mkdirs (io/file (persistence/resolve-storage-dir (:plat-rec c))))
   (.mkdirs (io/file (persistence/resolve-storage-dir (:poke-rec c))))
   (backup/restore-storage! (:plat-rec c) (:plat-bak c))
-  (backup/restore-storage! (:poke-rec c) (:poke-bak c)))
+  (backup/restore-storage! (:poke-rec c) (:poke-bak c))
+  (backup/resume-storage! (:plat-rec c))
+  (backup/resume-storage! (:poke-rec c)))
 
 (defn- scenario-happy-path!
   []
