@@ -28,9 +28,13 @@
       s)))
 
 (def ^:private mon
+  "O chefe real abre com 320 HP por jogador (640 aqui) e o revide é HP/5.
+  Body Slam é Normal e Onix é Pedra: o dano cai pela metade e os dois
+  Snorlax desmaiam antes. Quebra-Tijolo é Lutador, super efetivo, e
+  vence sem mudar a fórmula da raide."
   {:nome "Snorlax" :hp 200 :ataque 80 :defesa 50 :atq-esp 50 :def-esp 50 :veloc 40
    :tipos ["normal"] :nivel 20 :raridade "raro"
-   :golpes [{:nome-exibicao "Body Slam" :tipo "normal" :poder 80 :classe :fisico}
+   :golpes [{:nome-exibicao "Brick Break" :tipo "fighting" :poder 80 :classe :fisico}
             {:nome-exibicao "Rest" :tipo "psiquico" :poder 0 :classe :status}]})
 
 (def ^:private chefe
@@ -99,6 +103,19 @@
               :move-index 0 :agora-ms (+ 10 n)})
           (recur (inc n))))))
   (raid-app/get-raid s rid))
+
+(deftest raid-nao-aplica-estagio-de-batalha
+  "O dano da raide não lê estágios. O catálogo de golpes não muda esta conta."
+  (let [golpe {:poder 80 :classe :fisico :tipo "normal"}
+        poke {:ataque 80}
+        arena {:hp-chefe 640 :defesa 50.0 :chefe {:tipos ["rock"]}}
+        rng {:raid-damage-var 15}
+        sem (raid/calcular-dano golpe poke arena rng)
+        com (raid/calcular-dano
+             (assoc golpe :alteracoes [{:atributo :ataque :estagios 6}])
+             poke arena rng)]
+    (is (= 0.5 (:multiplicador sem)))
+    (is (= (:dano sem) (:dano com)))))
 
 (deftest chance-frambo-balanceamento
   (testing "regras documentadas: base raide × bola (± frambo 1.5, cap da bola)"

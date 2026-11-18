@@ -1,5 +1,9 @@
 (ns zapbot.pokemon.golpes
   "Identidade dos golpes e nomes em português. Catálogo PokeAPI (2026-09-09).
+  A cópia canônica de runtime é modules/pokemon/domain/move-names-ptbr.json
+  (a JVM lê o resource; scripts/lib/move-names-ptbr.json é a mesma cópia no Node).
+  Este mapa continua no ClojureScript porque o bundle legado não lê esse JSON.
+  test/move-names-ptbr.test.cjs falha se as três representações divergirem.
   Traduções disponíveis em WatWowMap/pogo-data-api, complementadas por
   traduções locais do bot; não pressupõe nomes oficiais para todo o catálogo."
   (:require [clojure.string :as str]))

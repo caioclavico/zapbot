@@ -8,6 +8,7 @@
 const PAGE_SIZE = 12;
 const nomesGolpe = require('./move-names.cjs');
 const efeitosGolpe = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, 'move-effects.json'), 'utf8'));
+const auditoriaGolpe = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, 'move-effect-audit.json'), 'utf8'));
 
 /**
  * Progresso de XP do Pokémon (flat-9-v2): residual 0..8 / 9 por nível.
@@ -364,7 +365,33 @@ function resumoEfeitosGolpe(golpe) {
   if (dreno > 0) partes.push(`drena ${dreno}% do dano como HP`);
   const recuo = Number(golpe.recuo != null ? golpe.recuo : (fx.recuo || 0));
   if (recuo > 0) partes.push(`recua ${recuo}% do dano`);
-  return partes.length ? partes.join(', ') : 'sem efeito adicional modelado';
+  const aviso = avisoEfeitoNaoModelado(golpe);
+  if (partes.length) return aviso ? `${partes.join(', ')}. ${aviso}` : partes.join(', ');
+  if (aviso) return aviso;
+  const row = linhaAuditoria(golpe);
+  if (row && row.classe === 'conhecido-nao-implementado') {
+    const oq = (row.conhecidos || []).slice(0, 3).join(', ');
+    return oq
+      ? `efeito conhecido, ainda não entra neste combate (${oq})`
+      : 'efeito conhecido, ainda não entra neste combate';
+  }
+  return 'sem efeito adicional';
+}
+
+function linhaAuditoria(golpe) {
+  if (!golpe) return null;
+  const slug = golpe.slug || golpe['slug'];
+  if (slug && auditoriaGolpe[slug]) return auditoriaGolpe[slug];
+  const bruto = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome;
+  if (!bruto) return null;
+  const r = nomesGolpe.resolver(bruto);
+  return r.slug ? auditoriaGolpe[r.slug] : null;
+}
+
+function avisoEfeitoNaoModelado(golpe) {
+  const row = linhaAuditoria(golpe);
+  if (!row || !row.limites || !row.limites.length) return null;
+  return `não entra neste combate: ${row.limites.join(', ')}`;
 }
 
 /** Descrição canônica de Explosion / Self-Destruct para menus e ajuda. */

@@ -691,7 +691,7 @@
                  (conj (resumo-alteracoes golpe))
                  (pos? (or (:cura golpe) 0))
                  (conj (str "recupera " (:cura golpe) "% do HP")))]
-    (if (seq partes) (str/join ", " partes) "sem efeito adicional modelado")))
+    (if (seq partes) (str/join ", " partes) "efeito não confirmado neste combate")))
 
 (defn- linha-golpe [idx golpe tipos-defesa habilidade-defensor]
   (let [status? (= :status (:classe golpe))
