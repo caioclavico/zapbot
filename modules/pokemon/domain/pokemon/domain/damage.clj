@@ -2,6 +2,7 @@
   "Cálculo de dano — fórmulas exatas de zapbot.pokemon.core.
   Sem STAB no dano (só preferência de moveset no legado)."
   (:require [clojure.string :as str]
+            [pokemon.domain.mechanics :as mechanics]
             [pokemon.domain.move-names :as move-names]
             [pokemon.domain.rng :as rng]
             [pokemon.domain.types :as types]))
@@ -52,6 +53,25 @@
                  (/ (double poder-ataque) (double (max 1 poder-defesa))))]
     (max 1 (+ (Math/round bruto) variancia))))
 
+(defn chance-acerto
+  "nil = sempre acerta (golpe sem precisão e sem estágios, ou que ignora).
+  Estágios de precisão/evasão usam a mesma curva dos outros atributos.
+  Sem precisão gravada, a base é 100 — o golpe antigo continua certo
+  enquanto ninguém mudou precisão ou evasão."
+  [precisao estagios-atacante estagios-defensor ignora?]
+  (if ignora?
+    nil
+    (let [estagios-atacante (or estagios-atacante {})
+          estagios-defensor (or estagios-defensor {})
+          acc (long (get estagios-atacante :precisao 0))
+          eva (long (get estagios-defensor :evasao 0))]
+      (when (or precisao (not (zero? acc)) (not (zero? eva)))
+        (let [base (double (or precisao 100))
+              efetivo (* base
+                         (multiplicador-estagio acc)
+                         (/ 1.0 (multiplicador-estagio eva)))]
+          (max 1 (min 100 (long (Math/round efetivo)))))))))
+
 (defn resolver-ataque
   "Espelha core/resolver-ataque. Retorna {:dano :acertou? :critico? :multiplicador :errou? :esquivou?}."
   [{:keys [golpe atacante defensor
@@ -67,7 +87,10 @@
         poder-ataque (stat-efetivo atacante (or estagios-atacante {}) atributo-atq)
         poder-defesa (stat-efetivo defensor (or estagios-defensor {}) atributo-def)
         precisao (:precisao golpe)
-        errou? (and precisao (>= (rng/roll rng :accuracy 100) (long precisao)))
+        chance (chance-acerto precisao estagios-atacante estagios-defensor
+                              (:ignora-precisao golpe))
+        errou? (and chance (< chance 100)
+                   (>= (rng/roll rng :accuracy 100) chance))
         vel-def (velocidade-efetiva defensor (or estagios-defensor {}) status-defensor)
         esquivou? (and (not errou?) defendendo?
                        (< (rng/roll rng :dodge 100) (chance-esquiva vel-def)))
@@ -81,10 +104,9 @@
                              (and (not fisico?) (= item-atacante "oculos")))
                        1.15 1.0)
         acertos (if (:max-acertos golpe)
-                  (+ (long (:min-acertos golpe 1))
-                     (rng/roll rng :multi-hit
-                               (inc (- (long (:max-acertos golpe))
-                                       (long (:min-acertos golpe 1))))))
+                  (mechanics/rolar-acertos (long (:min-acertos golpe 1))
+                                           (long (:max-acertos golpe))
+                                           rng)
                   1)
         fator (* multiplicador impulso impulso-item (if critico? 1.5 1.0))
         base (calcular-dano (or (:poder golpe) 0) poder-ataque poder-defesa rng)
@@ -145,6 +167,12 @@
                     (texto-impulso (:impulso resolved)
                                    (or (:habilidade atacante) (get atacante "habilidade"))))]
     (cond
+      (:bloqueado? resolved)
+      "🛡️ Proteção bloqueou o ataque!"
+
+      (:sumido? resolved)
+      "💨 O golpe não alcançou o alvo!"
+
       (:errou? resolved)
       (str nome-golpe " de *" nome-atk "* errou o alvo!")
 

@@ -1,6 +1,7 @@
 (ns pokemon.domain.status
   "Status de combate — impedimentos, DoT e contágio (legado core.cljs)."
-  (:require [pokemon.domain.rng :as rng]))
+  (:require [pokemon.domain.mechanics :as mechanics]
+            [pokemon.domain.rng :as rng]))
 
 (def chance-paralisia-trava 25)
 (def chance-contagio 35)
@@ -61,9 +62,13 @@
     (get tipo->status tipo-golpe)))
 
 (defn tentar-status-do-golpe
-  [golpe status-atual rng]
-  (let [status (->kw (:status-causado golpe))
-        chance (or (:chance-status golpe) (when status 100) 0)]
-    (when (and status (nil? (->kw status-atual))
-               (< (rng/roll rng :status-golpe 100) (long chance)))
-      status)))
+  ([golpe status-atual rng]
+   (tentar-status-do-golpe golpe status-atual rng nil))
+  ([golpe status-atual rng tipos]
+   (let [status (->kw (:status-causado golpe))
+         chance (or (:chance-status golpe) (when status 100) 0)]
+     (when (and status
+                (nil? (->kw status-atual))
+                (not (mechanics/imune-a-status? status tipos))
+                (< (rng/roll rng :status-golpe 100) (long chance)))
+       status))))

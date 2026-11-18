@@ -7,6 +7,8 @@
   (:require [clojure.string :as str]
             [pokemon.domain.battle :as battle]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.mechanics :as mechanics]
+            [pokemon.domain.move-effects :as move-effects]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.rng :as rng]
             [pokemon.domain.types :as types]))
@@ -649,15 +651,21 @@
      (throw (err/error :raid_not_your_turn {:vez (:vez raid) :player-id player-id})))
    (let [part (get-in raid [:participantes player-id])
          pokemon (:pokemon part)
-         golpes (mapv battle/golpe-normalizado (or (:golpes pokemon) []))
+         golpes (mapv #(move-effects/enriquecer (battle/golpe-normalizado %))
+                     (or (:golpes pokemon) []))
          golpe (when (and (integer? move-index) (<= 0 move-index 3)
                           (< move-index (count golpes)))
                  (nth golpes move-index))]
      (when-not (golpe-dano? golpe)
        (throw (err/error :invalid_raid_move {:move-index move-index})))
      (let [hp-chefe-antes (long (:hp-chefe raid 0))
+           acertos (if (:max-acertos golpe)
+                     (mechanics/rolar-acertos (long (:min-acertos golpe 1))
+                                              (long (:max-acertos golpe))
+                                              rng)
+                     1)
            calc (calcular-dano golpe pokemon raid rng)
-           dano (:dano calc)
+           dano (min hp-chefe-antes (* acertos (long (:dano calc))))
            multiplicador (:multiplicador calc)
            base (:base calc)
            ;; Autodesmaio (Explosion): após hit válido, HP do ativo → 0.
@@ -693,6 +701,7 @@
                                  :expira (+ (long agora) duracao-combate)))]
        {:raid raid''
         :dano dano
+        :acertos acertos
         :multiplicador multiplicador
         :base base
         :base-variada (:base-variada calc)

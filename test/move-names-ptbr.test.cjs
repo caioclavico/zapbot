@@ -62,6 +62,17 @@ test('alias inglês, português e ambiguidade de furacão', () => {
   assert.deepEqual(ambiguo.candidatos.sort(), ['drill-run', 'hurricane']);
 });
 
+test('mecanicas do Node e da JVM são a mesma cópia', () => {
+  const node = JSON.parse(fs.readFileSync(path.join(root, 'scripts/lib/move-mechanics.json'), 'utf8'));
+  const jvm = JSON.parse(fs.readFileSync(path.join(root, 'modules/pokemon/domain/move-mechanics.json'), 'utf8'));
+  assert.deepEqual(node, jvm);
+  assert.equal(node.protect.familia, 'protecao');
+  assert.equal(node['leech-seed'].familia, 'semente');
+  assert.equal(node.toxic.familia, 'veneno-grave');
+  assert.equal(node['double-slap'].maxAcertos, 5);
+  assert.equal(node['solar-beam'].familia, 'preparacao');
+});
+
 test('auditoria cobre o catálogo e não esconde efeito conhecido', () => {
   const audit = JSON.parse(fs.readFileSync(path.join(root, 'scripts/lib/move-effect-audit.json'), 'utf8'));
   const copia = JSON.parse(fs.readFileSync(path.join(root, 'modules/pokemon/domain/move-effect-audit.json'), 'utf8'));
@@ -78,21 +89,22 @@ test('auditoria cobre o catálogo e não esconde efeito conhecido', () => {
     + classes['conhecido-nao-implementado'] + classes['mecanica-ausente'],
     Object.keys(nomes.nomes).length);
   assert.equal(audit.tackle.classe, 'sem-efeito-adicional');
-  assert.equal(audit.protect.limites.includes('proteção'), true);
-  assert.equal(audit['leech-seed'].limites.includes('semente sanguessuga'), true);
-  assert.equal(audit.toxic.limites.includes('veneno grave'), true);
-  assert.equal(audit['sand-attack'].limites.includes('precisão'), true);
-  assert.equal(audit['double-team'].limites.includes('evasão'), true);
-  assert.equal(audit['fake-out'].limites.includes('recuo que impede a ação'), true);
-  assert.equal(audit['solar-beam'].limites.includes('vários turnos'), true);
+  assert.equal(audit.protect.classe, 'implementado');
+  assert.equal(audit.protect.limites.includes('proteção'), false);
+  assert.equal(audit['leech-seed'].classe, 'implementado');
+  assert.equal(audit.toxic.classe, 'implementado');
+  assert.equal(audit['sand-attack'].classe, 'implementado');
+  assert.equal(audit['fake-out'].classe, 'implementado');
+  assert.equal(audit['solar-beam'].classe, 'implementado');
   const menu = present.menuGolpes({
     golpes: [
       { slug: 'protect', nomeExibicao: 'Protect', tipo: 'normal', classe: 'status', poder: 0 },
       { slug: 'tackle', nomeExibicao: 'Tackle', tipo: 'normal', classe: 'status', poder: 0 }
     ]
   }, []);
-  assert.match(menu, /não entra neste combate: proteção/);
+  assert.match(menu, /proteção; falha se for repetida/);
   assert.match(menu, /sem efeito adicional/);
+  assert.doesNotMatch(menu, /não entra neste combate: proteção/);
   assert.doesNotMatch(menu, /sem efeito adicional modelado/);
 });
 

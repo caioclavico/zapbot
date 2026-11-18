@@ -968,6 +968,7 @@
      :result {:operation-id operation-id
               :duplicate false
               :dano (:dano outcome)
+              :acertos (:acertos outcome)
               :multiplicador (:multiplicador outcome)
               :base (:base outcome)
               :base-variada (:base-variada outcome)

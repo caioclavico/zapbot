@@ -9,6 +9,7 @@ const PAGE_SIZE = 12;
 const nomesGolpe = require('./move-names.cjs');
 const efeitosGolpe = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, 'move-effects.json'), 'utf8'));
 const auditoriaGolpe = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, 'move-effect-audit.json'), 'utf8'));
+const mecanicasGolpe = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, 'move-mechanics.json'), 'utf8'));
 
 /**
  * Progresso de XP do Pokémon (flat-9-v2): residual 0..8 / 9 por nível.
@@ -313,17 +314,43 @@ const ATRIBUTO_PT = {
   'def-esp': 'Defesa Especial',
   defEsp: 'Defesa Especial',
   veloc: 'Velocidade',
-  velocidade: 'Velocidade'
+  velocidade: 'Velocidade',
+  precisao: 'Precisão',
+  evasao: 'Evasão'
+};
+
+const FAMILIA_MENU = {
+  protecao: 'proteção; falha se for repetida',
+  semente: 'Semente Sanguessuga',
+  'veneno-grave': 'envenenamento grave',
+  preparacao: 'prepara e ataca no turno seguinte',
+  recarga: 'recarrega no turno seguinte',
+  residual: 'prende e causa dano por alguns turnos',
+  'limpar-status-equipe': 'cura o status da equipe',
+  'limpar-status-proprio': 'cura o próprio status',
+  'limpar-estagios': 'zera os estágios',
+  'limpar-volatil': 'remove semente e armadilha'
 };
 
 const STATUS_PT = {
   queimado: 'queimadura',
   envenenado: 'envenenamento',
+  'envenenado-grave': 'envenenamento grave',
   paralisado: 'paralisia',
   adormecido: 'sono',
   congelado: 'congelamento',
   confuso: 'confusão'
 };
+
+function mecanicaDoGolpe(golpe) {
+  if (!golpe) return null;
+  const slug = golpe.slug || golpe['slug'];
+  if (slug && mecanicasGolpe[slug]) return mecanicasGolpe[slug];
+  const bruto = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome;
+  if (!bruto) return null;
+  const r = nomesGolpe.resolver(bruto);
+  return r.slug ? mecanicasGolpe[r.slug] : null;
+}
 
 function efeitoCatalogo(golpe) {
   if (!golpe) return null;
@@ -338,14 +365,19 @@ function efeitoCatalogo(golpe) {
 function resumoEfeitosGolpe(golpe) {
   const partes = [];
   const fx = efeitoCatalogo(golpe) || {};
-  const status = golpe.statusCausado || golpe['status-causado'] || fx.statusCausado;
+  const mec = mecanicaDoGolpe(golpe) || {};
+  const status = mec.familia === 'veneno-grave'
+    ? null
+    : (golpe.statusCausado || golpe['status-causado'] || fx.statusCausado);
   if (status) {
     const chance = golpe.chanceStatus != null ? golpe.chanceStatus
       : (golpe['chance-status'] != null ? golpe['chance-status'] : fx.chanceStatus);
     const nome = STATUS_PT[status] || status;
     partes.push(`causa ${nome}${chance != null && chance < 100 ? ` (${chance}%)` : ''}`);
   }
-  const alt = (golpe.alteracoes && golpe.alteracoes.length) ? golpe.alteracoes : (fx.alteracoes || []);
+  const alt = (golpe.alteracoes && golpe.alteracoes.length)
+    ? golpe.alteracoes
+    : (fx.alteracoes || mec.alteracoes || mec.alteracoesExtra || []);
   if (alt.length) {
     partes.push(alt.map(a => {
       const atr = ATRIBUTO_PT[a.atributo || a.attribute] || a.atributo || a.attribute || '?';
@@ -365,6 +397,12 @@ function resumoEfeitosGolpe(golpe) {
   if (dreno > 0) partes.push(`drena ${dreno}% do dano como HP`);
   const recuo = Number(golpe.recuo != null ? golpe.recuo : (fx.recuo || 0));
   if (recuo > 0) partes.push(`recua ${recuo}% do dano`);
+  if (mec.familia && FAMILIA_MENU[mec.familia]) partes.push(FAMILIA_MENU[mec.familia]);
+  if (mec.flinch) partes.push(`recuo que impede a ação (${mec.flinch}%)`);
+  if (mec.maxAcertos > 1) partes.push(`acerta ${mec.minAcertos || 2} a ${mec.maxAcertos} vezes`);
+  if (mec.ignoraPrecisao) partes.push('ignora precisão e evasão');
+  if (mec.atravessaProtecao) partes.push('atravessa proteção');
+  if (mec.soPrimeiroTurno) partes.push('só no primeiro turno em campo');
   const aviso = avisoEfeitoNaoModelado(golpe);
   if (partes.length) return aviso ? `${partes.join(', ')}. ${aviso}` : partes.join(', ');
   if (aviso) return aviso;
@@ -3184,7 +3222,9 @@ function formatRaidAttack(data, prefix = '!pk') {
       lines.push(`${emojiClasse} *${nomeAtacante || 'Pokémon'}* causou ${dano} de dano e recebeu ${revide} de revide!`);
     } else if (dano != null && Number.isFinite(dano)) {
       lines.push(`${emojiClasse} *${nomeAtacante || 'Pokémon'}* causou ${dano} de dano!`);
-    } else {
+    }
+    const acertosRaid = data && data.acertos != null ? Number(data.acertos) : 1;
+    if (acertosRaid > 1) lines.push(`🎯 Acertou ${acertosRaid} vezes!`); else {
       lines.push(nomeAtacante
         ? `${emojiClasse} *${nomeGolpe}* de *${nomeAtacante}*!`
         : `${emojiClasse} *${nomeGolpe}*!`);

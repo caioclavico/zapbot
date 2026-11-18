@@ -7,6 +7,7 @@
             [pokemon.domain.capture :as capture]
             [pokemon.domain.damage :as dmg]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.mechanics :as mechanics]
             [pokemon.domain.move-effects :as move-effects]
             [pokemon.domain.move-names :as move-names]
             [pokemon.domain.pvp :as pvp]
@@ -340,18 +341,31 @@
 
 (defn- aplicar-dot
   [battle marca]
-  (let [st (get-in battle [:status marca])
-        maximo (get-in battle [:pokemons marca :hp])
-        dot (status/dano-por-status st maximo)]
-    (if (pos? dot)
-      [(update-in battle [:hp marca] #(max 0 (- % dot))) dot]
-      [battle 0])))
+  (let [st (status/->kw (get-in battle [:status marca]))
+        maximo (get-in battle [:pokemons marca :hp])]
+    (if (= :envenenado-grave st)
+      (let [tick (mechanics/tick-veneno-grave battle marca)]
+        [(:battle tick) (:dot tick) (when (:mensagem tick) [(:mensagem tick)])])
+      (let [dot (status/dano-por-status st maximo)]
+        (if (pos? dot)
+          [(update-in battle [:hp marca] #(max 0 (- % dot))) dot nil]
+          [battle 0 nil])))))
 
 (defn aplicar-fim-de-turno
   [battle marca]
   (let [[b _] (aplicar-restos battle marca)
-        [b2 dot] (aplicar-dot b marca)]
-    {:battle b2 :dot dot}))
+        seme (mechanics/tick-semente b marca)
+        res (mechanics/tick-residual (:battle seme) marca)
+        [b2 dot msgs-dot] (aplicar-dot (:battle res) marca)]
+    {:battle b2
+     :dot dot
+     :mensagens (vec (concat (:mensagens seme) (:mensagens res) msgs-dot))}))
+
+(defn- anexar-linhas
+  [la linhas]
+  (if (seq linhas)
+    (update la :mensagem #(str % (when (and % (seq %)) "\n") (str/join "\n" linhas)))
+    la))
 
 (defn- aplicar-alteracoes-resultado
   "Aplica estágios e devolve o que mudou de fato, já limitado a −6..+6."
@@ -377,10 +391,11 @@
   (:battle (aplicar-alteracoes-resultado battle marca alteracoes)))
 
 (defn- anexar-efeitos
-  [la nome-atk nome-def alvo aplicadas status-aplicado cura]
+  [la nome-atk nome-def alvo aplicadas status-aplicado cura & {:keys [linhas]}]
   (let [extras (vec (concat (move-effects/linhas-estagios aplicadas nome-atk nome-def alvo)
                             (keep identity [(move-effects/linha-status status-aplicado nome-def)
-                                            (move-effects/linha-cura cura nome-atk)])))]
+                                            (move-effects/linha-cura cura nome-atk)])
+                            (or linhas [])))]
     (cond-> la
       (seq aplicadas) (assoc :efeitos-aplicados (vec aplicadas))
       status-aplicado (assoc :status-aplicado status-aplicado)
@@ -390,30 +405,72 @@
 
 (defn- executar-golpe-status
   [battle golpe ator alvo rng]
-  (let [precisao (:precisao golpe)
-        errou? (and precisao
-                    (< 0 (long precisao) 100)
-                    (>= (rng/roll rng :status-accuracy 100) (long precisao)))
+  (let [bloqueado? (mechanics/protecao-bloqueia? battle alvo golpe)
+        battle (if bloqueado? (mechanics/consumir-protecao battle alvo) battle)
+        chance (dmg/chance-acerto (:precisao golpe)
+                                  (get-in battle [:estagios ator])
+                                  (get-in battle [:estagios alvo])
+                                  (:ignora-precisao golpe))
+        errou? (and (not bloqueado?)
+                    chance (< chance 100)
+                    (>= (rng/roll rng :status-accuracy 100) chance))
+        familia (:familia golpe)
+        prot (when (and (not errou?) (not bloqueado?) (= :protecao familia))
+               (mechanics/tentar-protecao battle ator rng))
+        battle (or (:battle prot) battle)
+        semente (when (and (not errou?) (not bloqueado?) (nil? prot) (= :semente familia))
+                  (mechanics/aplicar-semente battle alvo ator
+                                              (get-in battle [:pokemons alvo :tipos])))
+        battle (or (:battle semente) battle)
+        battle (cond
+                 (or errou? bloqueado? prot semente) battle
+                 (= :limpar-status-proprio familia)
+                 (mechanics/limpar-status-lado battle ator :proprio)
+                 (= :limpar-status-equipe familia)
+                 (mechanics/limpar-status-lado battle ator :equipe)
+                 (= :limpar-estagios familia)
+                 (mechanics/limpar-estagios battle)
+                 :else battle)
         max-hp (long (get-in battle [:pokemons ator :hp] 0))
-        cura (when (and (not errou?) (:cura golpe) (pos? max-hp))
+        cura (when (and (not errou?) (not bloqueado?) (:cura golpe) (pos? max-hp))
                (max 1 (quot (* max-hp (long (:cura golpe))) 100)))
         battle (if cura
                  (update-in battle [:hp ator] #(min max-hp (+ (long %) cura)))
                  battle)
         marca-est (if (= :adversario (:alvo golpe)) alvo ator)
-        alt (if (and (not errou?) (seq (:alteracoes golpe)))
+        alt (if (and (not errou?) (not bloqueado?) (nil? prot)
+                     (seq (:alteracoes golpe))
+                     (mechanics/chance-de-alteracao? golpe rng))
               (aplicar-alteracoes-resultado battle marca-est (:alteracoes golpe))
               {:battle battle :aplicadas []})
         battle (:battle alt)
         marca-st (if (= :proprio (:alvo golpe)) ator alvo)
-        aplicado (when (and (not errou?) (:status-causado golpe))
-                   (status/tentar-status-do-golpe golpe (get-in battle [:status marca-st]) rng))
-        battle (cond-> battle aplicado (assoc-in [:status marca-st] aplicado))]
+        aplicado (when (and (not errou?) (not bloqueado?) (nil? prot) (nil? semente)
+                            (:status-causado golpe))
+                   (status/tentar-status-do-golpe
+                    golpe (get-in battle [:status marca-st]) rng
+                    (get-in battle [:pokemons marca-st :tipos])))
+        battle (cond-> battle
+                 aplicado (assoc-in [:status marca-st] aplicado)
+                 (= :envenenado-grave aplicado)
+                 (mechanics/iniciar-veneno-grave marca-st))
+        linhas (cond
+                 bloqueado? []
+                 errou? []
+                 (:mensagem prot) [(:mensagem prot)]
+                 (:mensagem semente) [(:mensagem semente)]
+                 (:imune? semente) ["⚠️ A semente não pegou neste tipo!"]
+                 (= :limpar-status-equipe familia) ["✨ Os status da equipe foram curados!"]
+                 (= :limpar-status-proprio familia) ["✨ O status foi curado!"]
+                 (= :limpar-estagios familia) ["✨ Os estágios dos dois lados foram zerados!"]
+                 :else [])]
     {:battle battle
      :errou? (boolean errou?)
+     :bloqueado? (boolean bloqueado?)
      :aplicadas (:aplicadas alt)
      :status-aplicado aplicado
      :cura cura
+     :linhas linhas
      :alvo (:alvo golpe)}))
 
 (defn- maybe-focus-band
@@ -511,6 +568,7 @@
             (assoc-in [:hp marca] hp)
             (assoc-in [:status marca] (kw-status status))
             (assoc-in [:estagios marca] {})
+            (mechanics/limpar-volatil marca)
             (assoc-in [:defendendo marca] false)
             (assoc-in [:itens-usados marca] {})
             (cond-> idx (assoc-in [:indices-ativos marca] idx)
@@ -618,32 +676,59 @@
       {:battle battle :impedido? false :texto (:texto imp)})))
 
 (defn- apply-offensive-hit
-  [battle atk-marca def-marca golpe defendendo? rng]
-  (let [golpe (golpe-normalizado golpe)
+  [battle atk-marca def-marca golpe defendendo? rng & {:keys [alvo-ja-agiu?]}]
+  (let [golpe (merge (golpe-normalizado golpe)
+                    (select-keys golpe [:familia :flinch :so-primeiro-turno
+                                        :atravessa-protecao :ignora-precisao
+                                        :invulneravel :chance-alteracao
+                                        :turnos-min :turnos-max
+                                        :min-acertos :max-acertos]))
+        bloqueado? (mechanics/protecao-bloqueia? battle def-marca golpe)
+        invulneravel? (and (get-in battle [:volatil def-marca :invulneravel?])
+                           (not (:atravessa-protecao golpe)))
         atacante (get-in battle [:pokemons atk-marca])
         defensor (get-in battle [:pokemons def-marca])
-        resolved (dmg/resolver-ataque
-                  {:golpe golpe
-                   :atacante atacante
-                   :defensor defensor
-                   :estagios-atacante (get-in battle [:estagios atk-marca])
-                   :estagios-defensor (get-in battle [:estagios def-marca])
-                   :status-defensor (get-in battle [:status def-marca])
-                   :defendendo? defendendo?
-                   :hp-atacante-atual (get-in battle [:hp atk-marca])
-                   :rng rng})
+        resolved (cond
+                   bloqueado?
+                   {:dano 0 :acertou? false :bloqueado? true :errou? false
+                    :esquivou? false :multiplicador 1 :acertos 1 :critico? false}
+                   invulneravel?
+                   {:dano 0 :acertou? false :errou? false :sumido? true :esquivou? false
+                    :bloqueado? false :multiplicador 1 :acertos 1 :critico? false}
+                   :else
+                   (dmg/resolver-ataque
+                    {:golpe golpe
+                     :atacante atacante
+                     :defensor defensor
+                     :estagios-atacante (get-in battle [:estagios atk-marca])
+                     :estagios-defensor (get-in battle [:estagios def-marca])
+                     :status-defensor (get-in battle [:status def-marca])
+                     :defendendo? defendendo?
+                     :hp-atacante-atual (get-in battle [:hp atk-marca])
+                     :rng rng}))
+        battle (cond-> battle
+                 bloqueado? (mechanics/consumir-protecao def-marca))
         hp-antes (get-in battle [:hp def-marca])
-        battle (maybe-focus-band battle def-marca hp-antes (:dano resolved) (:acertou? resolved))
+        battle (if (or bloqueado? invulneravel?)
+                 battle
+                 (maybe-focus-band battle def-marca hp-antes (:dano resolved) (:acertou? resolved)))
         st-def (get-in battle [:status def-marca])
         classe (let [c (:classe golpe)] (if (keyword? c) c (keyword c)))
         novo-status (or (when (:acertou? resolved)
-                          (status/tentar-status-do-golpe golpe st-def rng))
+                          (status/tentar-status-do-golpe
+                           golpe st-def rng (get-in battle [:pokemons def-marca :tipos])))
                         (when (and (:acertou? resolved)
                                    (nil? (:status-causado golpe))
                                    (contains? #{:fisico :especial} classe))
                           (status/tentar-contagiar (:tipo golpe) st-def rng)))
         battle (cond-> battle
-                 novo-status (assoc-in [:status def-marca] novo-status))
+                 novo-status (assoc-in [:status def-marca] novo-status)
+                 (= :envenenado-grave novo-status)
+                 (mechanics/iniciar-veneno-grave def-marca)
+                 (and (:acertou? resolved) (= :residual (:familia golpe)))
+                 (mechanics/aplicar-residual def-marca golpe rng)
+                 (and (:acertou? resolved) (= :limpar-volatil (:familia golpe)))
+                 (mechanics/limpar-semente-e-armadilha atk-marca))
         dreno (when (and (:acertou? resolved) (:dreno golpe))
                 (max 1 (quot (* (:dano resolved) (long (:dreno golpe))) 100)))
         recuo (when (and (:acertou? resolved) (:recuo golpe)
@@ -660,12 +745,17 @@
                  autodesmaio? (assoc-in [:hp atk-marca] 0)
                  ;; Snapshot embutido acompanha o HP de combate (evita UI/resync com HP cheio).
                  autodesmaio? (assoc-in [:pokemons atk-marca :hp-atual] 0))
-        battle (if (and (:acertou? resolved) (seq (:alteracoes golpe)))
+        battle (if (and (:acertou? resolved) (seq (:alteracoes golpe))
+                        (mechanics/chance-de-alteracao? golpe rng))
                  (let [alvo (if (= :proprio (:alvo golpe)) atk-marca def-marca)
                        resultado (aplicar-alteracoes-resultado battle alvo (:alteracoes golpe))]
                    (vary-meta (:battle resultado) assoc :odisseu/aplicadas (:aplicadas resultado)
                               :odisseu/alvo-alt (:alvo golpe)))
-                 battle)]
+                 battle)
+        battle (-> battle
+                   (mechanics/marcar-flinch def-marca golpe (:acertou? resolved)
+                                            (boolean alvo-ja-agiu?) rng)
+                   (mechanics/agendar-recarga atk-marca golpe))]
     {:battle (with-meta battle nil)
      :aplicadas (:odisseu/aplicadas (meta battle))
      :alvo-alteracao (:odisseu/alvo-alt (meta battle))
@@ -678,13 +768,18 @@
 
 (defn- pick-wild-move
   [selvagem rng]
-  (let [golpes (mapv golpe-normalizado (or (:golpes selvagem) []))
+  (let [golpes (mapv #(move-effects/enriquecer (golpe-normalizado %))
+                     (or (:golpes selvagem) []))
         n (count golpes)]
     (if (zero? n)
       golpe-padrao
       (let [g (nth golpes (rng/roll rng :wild-move n))]
-        (if (contains? #{:fisico :especial} (:classe g))
-          (move-effects/enriquecer g)
+        (if (or (contains? #{:fisico :especial} (:classe g))
+                (:familia g)
+                (:status-causado g)
+                (seq (:alteracoes g))
+                (:flinch g))
+          g
           golpe-padrao)))))
 
 (defn- wild-response
@@ -709,24 +804,65 @@
             (zero? (get-in b [:hp :o])) (resolve-faint b :o)
             (zero? (get-in b [:hp :x])) (resolve-faint b :x)
             :else (assoc-in b [:defendendo :x] false)))
-        (let [golpe (pick-wild-move (get-in battle [:pokemons :o]) rng)
-              hit (apply-offensive-hit (:battle gate) :o :x golpe
-                                       player-was-defending? rng)
-              rival-la (anexar-efeitos
-                        (dmg/last-action-ataque
-                         golpe
-                         (get-in (:battle gate) [:pokemons :o])
-                         (get-in (:battle gate) [:pokemons :x])
-                         (:resolved hit)
-                         player-was-defending?)
-                        (or (:nome (get-in (:battle gate) [:pokemons :o])) "adversário")
-                        (or (:nome (get-in (:battle gate) [:pokemons :x])) "Pokémon")
-                        (:alvo-alteracao hit)
-                        (:aplicadas hit)
-                        (:status-aplicado hit)
-                        nil)
-              b (assoc-in (:battle hit) [:defendendo :x] false)
+        (let [pre (mechanics/preparar-acao (:battle gate) :o
+                                          (pick-wild-move (get-in battle [:pokemons :o]) rng)
+                                          rng)
+              golpe (:golpe pre)
+              classe (:classe golpe)
+              ofensivo? (contains? #{:fisico :especial} classe)
+              alt (if (and (:pular? pre) (seq (:alteracoes-carga pre)))
+                    (aplicar-alteracoes-resultado (:battle pre) :o (:alteracoes-carga pre))
+                    {:battle (:battle pre) :aplicadas []})
+              b0 (:battle alt)
+              hit (when-not (:pular? pre)
+                    (if ofensivo?
+                      (apply-offensive-hit b0 :o :x golpe player-was-defending? rng
+                                           :alvo-ja-agiu? true)
+                      (let [st (executar-golpe-status b0 golpe :o :x rng)]
+                        {:battle (:battle st)
+                         :resolved {:dano 0 :acertou? (not (:errou? st))
+                                    :errou? (:errou? st)
+                                    :bloqueado? (:bloqueado? st)
+                                    :multiplicador 1 :acertos 1}
+                         :aplicadas (:aplicadas st)
+                         :status-aplicado (:status-aplicado st)
+                         :cura (:cura st)
+                         :linhas (:linhas st)
+                         :alvo-alteracao (:alvo st)})))
+              base-la (if (:pular? pre)
+                        {:action :attack
+                         :mensagem (:mensagem pre)
+                         :golpe-nome (move-names/apresentar golpe)}
+                        (anexar-efeitos
+                         (if ofensivo?
+                           (dmg/last-action-ataque
+                            golpe
+                            (get-in b0 [:pokemons :o])
+                            (get-in b0 [:pokemons :x])
+                            (:resolved hit)
+                            player-was-defending?)
+                           {:action :attack
+                            :dano 0
+                            :acertou? (not (:errou? (:resolved hit)))
+                            :errou? (:errou? (:resolved hit))
+                            :golpe-nome (move-names/apresentar golpe)
+                            :mensagem (cond
+                                        (:bloqueado? (:resolved hit))
+                                        "🛡️ Proteção bloqueou o ataque!"
+                                        (:errou? (:resolved hit))
+                                        (str "📊 *" (move-names/apresentar golpe) "* errou!")
+                                        :else
+                                        (str "📊 *" (move-names/apresentar golpe) "*!"))})
+                         (or (:nome (get-in b0 [:pokemons :o])) "adversário")
+                         (or (:nome (get-in b0 [:pokemons :x])) "Pokémon")
+                         (:alvo-alteracao hit)
+                         (concat (:aplicadas alt) (:aplicadas hit))
+                         (:status-aplicado hit)
+                         (:cura hit)
+                         :linhas (:linhas hit)))
+              b (assoc-in (or (:battle hit) b0) [:defendendo :x] false)
               fim (aplicar-fim-de-turno b :o)
+              rival-la (anexar-linhas base-la (:mensagens fim))
               b (assoc (:battle fim) :last-rival-action rival-la)]
           (cond
             (zero? (get-in b [:hp :x])) (resolve-faint b :x)
@@ -767,6 +903,7 @@
                         {:item-id id :status (name st) :expected esperado})))
     (-> battle
         (assoc-in [:status :x] nil)
+        (mechanics/limpar-contador-veneno :x)
         (assoc :last-item {:item-id id :status-cleared (name st)}))))
 
 (defn apply-player-turn
@@ -818,8 +955,32 @@
             idx (long (or move-index 0))]
         (when-not (< -1 idx (count golpes))
           (throw (err/error :invalid_move_index {:idx idx :count (count golpes)})))
-        (let [golpe (move-effects/enriquecer (golpe-normalizado (nth golpes idx)))
-              gate (resolve-status-gate battle :x rng)]
+        (let [pre (mechanics/preparar-acao
+                   battle :x
+                   (move-effects/enriquecer (golpe-normalizado (nth golpes idx)))
+                   rng)]
+          (if (:pular? pre)
+            (let [alt (if (seq (:alteracoes-carga pre))
+                        (aplicar-alteracoes-resultado (:battle pre) :x (:alteracoes-carga pre))
+                        {:battle (:battle pre) :aplicadas []})
+                  fim (aplicar-fim-de-turno (:battle alt) :x)
+                  b (wild-response (:battle fim) defending-before? rng)
+                  nome (or (get-in battle [:pokemons :x :nome]) "Pokémon")
+                  la (anexar-linhas
+                      {:action :attack :move-index idx
+                       :mensagem (:mensagem pre)
+                       :golpe-nome (move-names/apresentar (:golpe pre))}
+                      (concat (move-effects/linhas-estagios (:aplicadas alt) nome nome :proprio)
+                              (:mensagens fim)))
+                  rival (:last-rival-action b)]
+              (-> b (update :turn-index inc)
+                  (assoc :last-action
+                         (cond-> la
+                           (:mensagem rival)
+                           (assoc :mensagem-rival (:mensagem rival)
+                                  :dano-rival (:dano rival))))))
+            (let [golpe (:golpe pre)
+                  gate (resolve-status-gate (:battle pre) :x rng)]
           (if (:impedido? gate)
             (let [b (wild-response (:battle gate) false rng)
                   nome (or (get-in battle [:pokemons :x :nome]) "Pokémon")
@@ -842,7 +1003,9 @@
                         {:battle (:battle status-hit)
                          :resolved {:dano 0 :acertou? (not (:errou? status-hit))
                                     :multiplicador 1 :acertos 1
+                                    :bloqueado? (:bloqueado? status-hit)
                                     :errou? (:errou? status-hit)}
+                         :linhas (:linhas status-hit)
                          :autodesmaio? false
                          :hp-antes hp-o-antes
                          :hp-depois hp-o-antes
@@ -870,16 +1033,21 @@
                                 :golpe-nome (move-names/apresentar golpe)
                                 :tipo-golpe (:tipo golpe)
                                 :classe "status"
-                                :mensagem (if (:errou? status-hit)
+                                :mensagem (cond
+                                            (:bloqueado? status-hit)
+                                            "🛡️ Proteção bloqueou o ataque!"
+                                            (:errou? status-hit)
                                             (str "📊 *" (move-names/apresentar golpe)
                                                  "* de *" nome-atk "* errou!")
+                                            :else
                                             (str "📊 *" (move-names/apresentar golpe)
                                                  "* de *" nome-atk "*!"))})
                              nome-atk nome-def
                              (or (:alvo-alteracao hit) (:alvo golpe))
                              (:aplicadas hit)
                              (:status-aplicado hit)
-                             (:cura hit))
+                             (:cura hit)
+                             :linhas (:linhas hit))
                   b (:battle hit)
                   fim (aplicar-fim-de-turno b :x)
                   b (:battle fim)
@@ -895,13 +1063,13 @@
                       (zero? (get-in b [:hp :x])) (resolve-faint b :x)
                       :else (wild-response b defending-before? rng))
                   rival (:last-rival-action b)
-                  la (cond-> player-la
+                  la (cond-> (anexar-linhas player-la (:mensagens fim))
                        (:mensagem rival)
                        (assoc :mensagem-rival (:mensagem rival)
                               :dano-rival (:dano rival)))]
               (-> b
                   (update :turn-index inc)
-                  (assoc :last-action la))))))
+                  (assoc :last-action la))))))))
 
       (throw (err/error :unknown_battle_action {:action action})))))
 
@@ -1138,6 +1306,7 @@
                         {:item-id id :status (name st) :expected esperado})))
     (-> battle
         (assoc-in [:status marca] nil)
+        (mechanics/limpar-contador-veneno marca)
         (assoc :last-item {:item-id id :status-cleared (name st)}))))
 
 (defn- clear-aguardando-substituicao
@@ -1178,6 +1347,7 @@
                 (assoc-in [:hp side] (long hp))
                 (assoc-in [:status side] (kw-status (:status pokemon)))
                 (assoc-in [:estagios side] {})
+                (mechanics/limpar-volatil side)
                 (assoc-in [:defendendo side] false)
                 (assoc-in [:itens-usados side] {})
                 (assoc-in [:indices-ativos side] idx)
@@ -1281,8 +1451,30 @@
               idx (long (or move-index 0))]
           (when-not (< -1 idx (count golpes))
             (throw (err/error :invalid_move_index {:idx idx :count (count golpes)})))
-          (let [golpe (move-effects/enriquecer (golpe-normalizado (nth golpes idx)))
-                gate (resolve-status-gate battle actor-side rng)]
+          (let [pre (mechanics/preparar-acao
+                     battle actor-side
+                     (move-effects/enriquecer (golpe-normalizado (nth golpes idx)))
+                     rng)]
+            (if (:pular? pre)
+              (let [alt (if (seq (:alteracoes-carga pre))
+                          (aplicar-alteracoes-resultado (:battle pre) actor-side (:alteracoes-carga pre))
+                          {:battle (:battle pre) :aplicadas []})
+                    nome (or (get-in battle [:pokemons actor-side :nome]) "Pokémon")
+                    fim (aplicar-fim-de-turno (:battle alt) actor-side)
+                    b (:battle fim)
+                    b (cond
+                        (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
+                        :else (assoc b :vez foe))
+                    la (anexar-linhas
+                        {:action :attack :move-index idx :side actor-side
+                         :mensagem (:mensagem pre)
+                         :golpe-nome (move-names/apresentar (:golpe pre))}
+                        (concat (move-effects/linhas-estagios (:aplicadas alt) nome nome :proprio)
+                                (:mensagens fim)))]
+                (-> b (update :turn-index inc)
+                    (assoc :last-action la)))
+              (let [golpe (:golpe pre)
+                    gate (resolve-status-gate (:battle pre) actor-side rng)]
             (if (:impedido? gate)
               (let [b (:battle gate)
                     nome (or (get-in battle [:pokemons actor-side :nome]) "Pokémon")
@@ -1308,8 +1500,10 @@
                            :aplicadas (:aplicadas status-hit)
                            :status-aplicado (:status-aplicado status-hit)
                            :cura (:cura status-hit)
+                           :linhas (:linhas status-hit)
                            :alvo-alteracao (:alvo status-hit)
                            :resolved {:dano 0 :acertou? (not (:errou? status-hit))
+                                      :bloqueado? (:bloqueado? status-hit)
                                       :errou? (:errou? status-hit)
                                       :multiplicador 1 :acertos 1}})
                     nome-atk (or (:nome atk) "Pokémon")
@@ -1326,26 +1520,32 @@
                            :golpe-nome (move-names/apresentar golpe)
                            :tipo-golpe (:tipo golpe)
                            :classe "status"
-                           :mensagem (if (:errou? status-hit)
+                           :mensagem (cond
+                                       (:bloqueado? status-hit)
+                                       "🛡️ Proteção bloqueou o ataque!"
+                                       (:errou? status-hit)
                                        (str "📊 *" (move-names/apresentar golpe)
                                             "* de *" nome-atk "* errou!")
+                                       :else
                                        (str "📊 *" (move-names/apresentar golpe)
                                             "* de *" nome-atk "*!"))})
                         nome-atk nome-def
                         (or (:alvo-alteracao hit) (:alvo golpe))
                         (:aplicadas hit)
                         (:status-aplicado hit)
-                        (:cura hit))
+                        (:cura hit)
+                        :linhas (:linhas hit))
                     b (assoc-in (:battle hit) [:defendendo foe] false)
                     fim (aplicar-fim-de-turno b actor-side)
                     b (:battle fim)
+                    la (anexar-linhas la (:mensagens fim))
                     b (cond
                         (zero? (get-in b [:hp foe])) (resolve-faint b foe)
                         (zero? (get-in b [:hp actor-side])) (resolve-faint b actor-side)
                         :else (assoc b :vez foe))]
                 (-> b
                     (update :turn-index inc)
-                    (assoc :last-action la))))))
+                    (assoc :last-action la))))))))
 
         (throw (err/error :unknown_battle_action {:action action}))))))
 
