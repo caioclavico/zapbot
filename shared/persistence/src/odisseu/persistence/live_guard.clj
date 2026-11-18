@@ -14,16 +14,27 @@
 
 (def ^:dynamic *proof-file* proof-file)
 
-(defn- mountinfo []
+(defn- mount-shows-live?
+  []
   (let [source (io/file "/proc/self/mountinfo")]
-    (if (.isFile source)
-      (slurp source)
-      "")))
+    (when (.isFile source)
+      (try
+        (with-open [reader (java.io.BufferedReader.
+                            (java.io.InputStreamReader.
+                             (java.io.FileInputStream. source)
+                             java.nio.charset.StandardCharsets/UTF_8))]
+          (loop []
+            (when-let [line (.readLine reader)]
+              (if (str/includes? line live-volume)
+                true
+                (recur)))))
+        (catch java.io.IOException _
+          false)))))
 
 (defn live-visible?
   [storage]
   (or (str/includes? (str storage) live-volume)
-      (str/includes? (mountinfo) live-volume)))
+      (true? (mount-shows-live?))))
 
 (defn- exclusive-proof
   [storage]
