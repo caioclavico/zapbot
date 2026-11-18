@@ -36,6 +36,13 @@ def isolated_state():
         "externalWriters": [],
         "activeNodeOps": 0,
         "activeJvmWrites": 0,
+        "storageGate": {
+            "othersSeeReadOnly": True,
+            "capSysAdmin": False,
+            "bridgeMountPrivate": True,
+            "laterProcessWrite": "erofs",
+            "ownerCanRearmWrite": False,
+        },
         "nodePhase": "draining",
         "jvmPhase": "open",
     }

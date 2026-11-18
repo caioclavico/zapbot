@@ -2,7 +2,9 @@
   "Entrypoint da bridge HTTP JVM (dev/staging).
    Default: loopback. Rede privada Docker só com ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND=true.
    Nunca usa storages M5.3B/M5.5 de referência. Sem seed destrutivo sem RESET.
-   Um único writer por storage via FileLock em <storage>/.odisseu-writer.lock."
+   Um único writer cooperativo por storage via FileLock em <storage>/.odisseu-writer.lock.
+   Esse lock não impede um processo que o ignore. A exclusividade comprovável
+   é o mount privado da bridge, ligado só com ODISSEU_STORAGE_NAMESPACE=1."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [datomic.client.api :as d]

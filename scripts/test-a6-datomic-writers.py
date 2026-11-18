@@ -4,6 +4,8 @@
 from pathlib import Path
 import unittest
 
+from a6_writer_policy import inventory_report, prove_quiescence
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = (
@@ -32,18 +34,53 @@ def classify():
         "tests": sorted(tests),
         "bypass": sorted(bypass),
         "quiescenceProven": False,
+        "note": "Inventário de código não comprova writer ativo nem quiescência.",
     }
 
 
 class DatomicWriterTests(unittest.TestCase):
-    def test_bridge_is_not_the_only_writer_and_quiescence_stays_unproven(self):
+    def test_bridge_is_not_the_only_writer_and_source_list_does_not_prove_quiescence(self):
         found = classify()
+        listed = inventory_report()
         self.assertTrue(any(item.endswith("http_server.clj") for item in found["runtime"]))
         self.assertTrue(found["bypass"])
         self.assertIn("scripts/a64_apply_028_schema_only.clj", found["bypass"])
         self.assertIn("apps/odisseu/src/odisseu/cutover/rehearsal.clj", found["bypass"])
         self.assertFalse(found["quiescenceProven"])
+        self.assertFalse(listed["quiescenceProven"])
+        self.assertEqual(listed["clients"], 24)
+        self.assertEqual(listed["transactPaths"], 13)
         self.assertGreaterEqual(len(found["bypass"]), 5)
+
+    def test_quiescence_requires_storage_exclusivity_not_a_cooperative_lock(self):
+        gate = {
+            "othersSeeReadOnly": True,
+            "capSysAdmin": False,
+            "bridgeMountPrivate": True,
+            "laterProcessWrite": "erofs",
+            "ownerCanRearmWrite": False,
+        }
+        self.assertFalse(prove_quiescence({"storageGate": {"cooperativeLockOnly": True}})["quiescenceProven"])
+        opened = dict(gate)
+        opened["laterProcessWrite"] = "ok"
+        self.assertFalse(prove_quiescence({"storageGate": opened})["quiescenceProven"])
+        rearmed = dict(gate)
+        rearmed["ownerCanRearmWrite"] = True
+        self.assertEqual(prove_quiescence({"storageGate": rearmed})["reason"], "storage_not_exclusive")
+        proven = prove_quiescence({
+            "storageGate": gate,
+            "activeNodeOps": 0,
+            "activeJvmWrites": 0,
+            "liveExternalWriters": [],
+        })
+        self.assertTrue(proven["quiescenceProven"])
+        self.assertEqual(proven["phase"], "quiescent")
+        after = prove_quiescence({
+            "storageGate": gate,
+            "liveExternalWriters": ["scripts/a64_apply_028_schema_only.clj"],
+        })
+        self.assertFalse(after["quiescenceProven"])
+        self.assertEqual(after["reason"], "external_datomic_client")
 
     def test_recovery_gate_remains_closed_after_a_bad_marker(self):
         source = (ROOT / "modules/pokemon/infrastructure/pokemon/infrastructure/http/maintenance_gate.clj").read_text(encoding="utf-8")

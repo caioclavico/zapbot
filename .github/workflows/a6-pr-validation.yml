@@ -104,12 +104,14 @@ jobs:
           set -euo pipefail
           bash -n scripts/deploy-vm.sh scripts/load-image-vm.sh scripts/install-deploy.sh \
             scripts/ci-ssh-deploy.sh scripts/resolve-gce-instance.sh scripts/a6-delivery.sh \
-            scripts/ci-a6-deliver.sh
+            scripts/ci-a6-deliver.sh scripts/a6-container-update.sh scripts/a6-storage-namespace-prove.sh \
+            docker/jvm-storage-entrypoint.sh
           python3 scripts/test-ci-changes.py
           python3 scripts/test-ci-ssh.py
           python3 scripts/test-production-deploy-hold.py
           python3 scripts/test-a6-delivery.py
           python3 scripts/test-a6-datomic-writers.py
+          python3 scripts/test-a6-backup-rollback.py
           python3 scripts/test-resolve-gce-instance.py
           python3 scripts/test-deploy.py
           python3 scripts/test-deploy-recovery.py
