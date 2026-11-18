@@ -27,6 +27,8 @@ report["mode"] = sys.argv[2]
 if sys.argv[2] == "execute":
     report["executeAllowed"] = False
     report["blocked"] = sorted(set(report["blocked"] + ["apply_requires_live_recheck"]))
+    sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    raise SystemExit(2)
 text = json.dumps(report, indent=2, sort_keys=True)
 if "TOKEN=" in text or "KEY=" in text:
     raise DeployError("secret_in_output")

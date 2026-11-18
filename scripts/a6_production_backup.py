@@ -29,18 +29,44 @@ def _live_marker(path):
     return "odisseu-a6-cutover" in text or "/var/lib/docker/volumes" in text
 
 
-def admit(collection, vm, source, destination, free_bytes, source_bytes):
-    """Devolve a admissão. Não copia e não apaga a origem."""
+BACKUP_AUTHORIZATION = "autorizar-backup-producao-a6"
+
+
+def _quiescence_reason(collection, vm):
     if isinstance(collection, dict) or collection is None:
-        return _deny("declared_evidence")
+        return "declared_evidence"
     if getattr(collection, "source", "") != "docker-inspect-subprocess":
-        return _deny("declared_evidence")
+        return "declared_evidence"
     if not vm_matches(vm or {}):
-        return _deny("vm_mismatch")
-    if collection.volume != LIVE_VOLUME or str(source) != DATOMIC_SOURCE:
+        return "vm_mismatch"
+    if collection.volume != LIVE_VOLUME or collection.authorized != "odisseu-a6-jvm":
+        return "writer_not_identified"
+    if collection.active_jvm_writes != 0 or collection.active_node_ops != 0:
+        return "writes_in_flight"
+    if collection.node_phase not in ("draining", "quiescent", "frozen"):
+        return "node_not_draining"
+    if collection.jvm_phase not in ("quiescent", "frozen"):
+        return "jvm_not_quiescent"
+    for row in INVENTORY:
+        if row["transact"] and row["path"] in collection.processes:
+            return "external_datomic_client"
+    exclusive = assess_observed(collection.documents, collection.volume, collection.authorized)
+    if not exclusive["exclusive"]:
+        return exclusive["reason"] or "writable_mount_not_exclusive"
+    if assess(collection.documents, LIVE_VOLUME, collection.authorized)["reason"] != "live_volume_refused":
+        return "lab_gate_removed"
+    return None
+
+
+def admit(collection, vm, source, destination, free_bytes, source_bytes):
+    """Devolve a admissão do volume live. Não copia e não apaga a origem."""
+    reason = _quiescence_reason(collection, vm)
+    if reason == "writer_not_identified" and getattr(collection, "volume", None) not in (None, LIVE_VOLUME):
+        reason = "source_not_live_datomic"
+    if reason:
+        return _deny(reason)
+    if str(source) != DATOMIC_SOURCE:
         return _deny("source_not_live_datomic")
-    if collection.authorized != "odisseu-a6-jvm":
-        return _deny("writer_not_identified")
     if _live_marker(destination) or Path(destination) == Path(source):
         return _deny("destination_not_separate")
     try:
@@ -48,20 +74,6 @@ def admit(collection, vm, source, destination, free_bytes, source_bytes):
             return _deny("destination_not_separate")
     except OSError:
         return _deny("destination_not_separate")
-    if collection.active_jvm_writes != 0 or collection.active_node_ops != 0:
-        return _deny("writes_in_flight")
-    if collection.node_phase not in ("draining", "quiescent", "frozen"):
-        return _deny("node_not_draining")
-    if collection.jvm_phase not in ("quiescent", "frozen"):
-        return _deny("jvm_not_quiescent")
-    for row in INVENTORY:
-        if row["transact"] and row["path"] in collection.processes:
-            return _deny("external_datomic_client")
-    exclusive = assess_observed(collection.documents, collection.volume, collection.authorized)
-    if not exclusive["exclusive"]:
-        return _deny(exclusive["reason"] or "writable_mount_not_exclusive")
-    if assess(collection.documents, LIVE_VOLUME, collection.authorized)["reason"] != "live_volume_refused":
-        return _deny("lab_gate_removed")
     if free_bytes < source_bytes * 2 + MARGIN:
         return _deny("insufficient_space")
     return {
@@ -72,6 +84,23 @@ def admit(collection, vm, source, destination, free_bytes, source_bytes):
         "destination": str(destination),
         "vm": {key: VM[key] for key in ("instance", "zone")},
     }
+
+
+def copy_authorized_isolated(source, destination, collection, vm, authorization, free_bytes, source_bytes):
+    """Mesmos gates do backup de produção, copiando só um diretório isolado."""
+    if authorization != BACKUP_AUTHORIZATION:
+        raise ProductionBackupError("backup_not_authorized")
+    if _live_marker(source) or _live_marker(destination):
+        raise ProductionBackupError("live_path_refused")
+    reason = _quiescence_reason(collection, vm)
+    if reason:
+        raise ProductionBackupError(reason)
+    if free_bytes < source_bytes * 2 + MARGIN:
+        raise ProductionBackupError("insufficient_space")
+    report = rehearse_isolated_copy(source, destination)
+    report["authorization"] = "accepted"
+    report["quiescence"] = "observed"
+    return report
 
 
 def execute_copy(admission, hold, execute, source_exists):

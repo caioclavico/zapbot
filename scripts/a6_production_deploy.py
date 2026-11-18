@@ -8,6 +8,8 @@ Este módulo não abre Docker por conta própria.
 
 from __future__ import annotations
 
+import json
+
 from a6_mount_policy import LIVE_VOLUME, assess, assess_observed
 from a6_production_contract import (
     CURRENT,
@@ -56,12 +58,29 @@ def _safe(argv):
     return argv
 
 
-def recreate_argv(service, image, live):
+def _prefix(docker_direct):
+    if docker_direct:
+        return ["docker"]
+    return ["sudo", "-n", "docker"]
+
+
+def _socket_exposed(mounts):
+    for mount in mounts or []:
+        haystack = " ".join(str(mount.get(key) or "") for key in ("source", "destination", "name"))
+        if "docker.sock" in haystack:
+            return True
+    return False
+
+
+def recreate_argv(service, image, live, docker_direct=False):
+    prefix = _prefix(docker_direct)
     if service == "jvm":
         if not mounts_match(live["mounts"], JVM_MOUNTS):
             raise DeployError("mount_mismatch")
-        argv = [
-            "docker", "run", "-d",
+        if _socket_exposed(live.get("mounts")):
+            raise DeployError("docker_socket_exposed")
+        argv = prefix + [
+            "run", "-d",
             "--name", "odisseu-a6-jvm",
             "--network", live["network"],
             "--restart", live["restart"],
@@ -84,8 +103,10 @@ def recreate_argv(service, image, live):
             raise DeployError("node_caps_not_preserved")
         if "no-new-privileges:true" not in (live.get("security") or []):
             raise DeployError("node_security_not_preserved")
-        argv = [
-            "docker", "run", "-d",
+        if _socket_exposed(live.get("mounts")):
+            raise DeployError("docker_socket_exposed")
+        argv = prefix + [
+            "run", "-d",
             "--name", "odisseu-a6-node",
             "--network", live["network"],
             "--restart", live["restart"],
@@ -126,6 +147,8 @@ def preflight(observation):
         reasons.append("jvm_mount_mismatch")
     if not mounts_match(node.get("mounts") or [], NODE_MOUNTS):
         reasons.append("node_mount_mismatch")
+    if _socket_exposed(jvm.get("mounts")) or _socket_exposed(node.get("mounts")):
+        reasons.append("docker_socket_exposed")
     for key in ("ODISSEU_BRIDGE_TOKEN", "ODISSEU_BRIDGE_STORAGE"):
         if key not in (jvm.get("envKeys") or []):
             reasons.append("jvm_env_missing")
@@ -191,64 +214,146 @@ def plan(observation, sha, service, env=None):
     for row in INVENTORY:
         if row["transact"] and row["path"] in (observation.get("processes") or ""):
             reasons.append("external_datomic_client")
+    if not observation.get("_observed"):
+        reasons.append("declared_evidence")
+    direct = bool(observation.get("dockerDirect"))
     try:
         tag = image_tag(service, sha)
-        argv = recreate_argv(service, tag, observation[service])
+        argv = recreate_argv(service, tag, observation[service], direct)
     except DeployError as exc:
         reasons.append(str(exc))
         tag = ""
         argv = []
     allowed = execute_allowed(env, reasons, service)
     previous = observation.get(service, {}).get("image")
+    rollback = []
+    if previous and argv:
+        try:
+            rollback = recreate_argv(service, previous, observation[service], direct)
+        except DeployError as exc:
+            reasons.append(str(exc))
+            allowed = False
     return {
         "executeAllowed": allowed,
         "deployComplete": False,
         "dryRun": not allowed,
+        "dockerDirect": direct,
         "service": service,
         "previousImage": previous,
         "nextImage": tag,
         "argv": argv,
-        "rollbackArgv": recreate_argv(service, previous, observation[service]) if previous and argv else [],
+        "rollbackArgv": rollback,
         "blocked": sorted(set(reasons)),
         "oneService": service,
         "untouched": "odisseu-a6-node" if service == "jvm" else "odisseu-a6-jvm",
     }
 
 
+def _names(service):
+    name = "odisseu-a6-node" if service == "node" else "odisseu-a6-jvm"
+    return name, name + "-previous", name + "-failed"
+
+
+def _guard_start(command):
+    if len(command) >= 2 and command[-2] == "start" and (
+        command[-1].endswith("-previous") or command[-1].endswith("-failed")
+    ):
+        raise DeployError("parallel_start_refused")
+    return _safe(command)
+
+
 def apply_commands(report):
-    """Comandos que o shell só pode emitir quando executeAllowed é verdadeiro."""
+    """Para o container antigo antes de criar o novo. Os dois não ficam ativos."""
     if not report.get("executeAllowed"):
         raise DeployError("execute_refused")
-    service = report["service"]
-    name = "odisseu-a6-node" if service == "node" else "odisseu-a6-jvm"
-    previous = name + "-previous"
+    name, previous, _failed = _names(report["service"])
+    prefix = _prefix(report.get("dockerDirect"))
     commands = [
-        ["docker", "rename", name, previous],
+        prefix + ["stop", "--time", "30", name],
+        prefix + ["rename", name, previous],
+        prefix + ["update", "--restart=no", previous],
         report["argv"],
-        ["docker", "inspect", "--format", "{{.State.Health.Status}}", name],
+        prefix + ["inspect", "--format", "{{.State.Health.Status}}", name],
     ]
     for command in commands:
-        _safe(command)
+        _guard_start(command)
     return commands
 
 
-def run_apply(runner, report, health="healthy"):
-    """Emite rename e run só quando o plano já foi admitido. Não decide o gate."""
+def rollback_commands(service, docker_direct=False):
+    name, previous, failed = _names(service)
+    prefix = _prefix(docker_direct)
+    commands = [
+        prefix + ["stop", "--time", "30", name],
+        prefix + ["rename", name, failed],
+        prefix + ["update", "--restart=no", failed],
+        prefix + ["rename", previous, name],
+        prefix + ["start", name],
+    ]
+    for command in commands:
+        _guard_start(command)
+    return commands
+
+
+def recover_after(service, completed, battle_written=False, docker_direct=False):
+    """Interrupção entre stop, rename, run e health deixa um único writer."""
+    name, previous, failed = _names(service)
+    prefix = _prefix(docker_direct)
+    if battle_written:
+        commands = [
+            prefix + ["update", "--restart=no", previous],
+            prefix + ["update", "--restart=no", failed],
+        ]
+        return {"mode": "forward_only", "maintenance": True, "commands": commands}
+    if "run" in completed:
+        return {"mode": "rollback", "maintenance": True, "commands": rollback_commands(service, docker_direct)}
+    if "rename" in completed:
+        commands = [
+            prefix + ["rename", previous, name],
+            prefix + ["start", name],
+        ]
+        return {"mode": "rollback", "maintenance": True, "commands": [_guard_start(item) for item in commands]}
+    if "stop" in completed:
+        return {"mode": "rollback", "maintenance": True, "commands": [_guard_start(prefix + ["start", name])]}
+    return {"mode": "unchanged", "maintenance": False, "commands": []}
+
+
+def run_apply(runner, report, health="healthy", fail_at=None, battle_written=False):
+    """Para, renomeia e só então cria. Falha no meio devolve um plano recuperável."""
     commands = apply_commands(report)
     executed = []
-    for command in commands[:-1]:
+    completed = []
+    verbs = ["stop", "rename", "update", "run", "inspect"]
+    for command, verb in zip(commands, verbs):
+        if fail_at == verb:
+            recovery = recover_after(report["service"], completed, battle_written, report.get("dockerDirect"))
+            for item in recovery["commands"]:
+                runner(item)
+                executed.append(item)
+            recovery["commands"] = executed
+            recovery["applied"] = False
+            recovery["rolledBack"] = recovery["mode"] == "rollback"
+            return recovery
         executed.append(command)
-        completed = runner(command)
-        if getattr(completed, "returncode", 1) != 0:
+        completed.append(verb)
+        completed_run = runner(command)
+        if getattr(completed_run, "returncode", 1) != 0:
             raise DeployError("docker_failed")
-    if health != "healthy":
-        for command in rollback_commands(report["service"]):
-            executed.append(command)
-            runner(command)
-        return {"applied": False, "rolledBack": True, "commands": executed}
-    executed.append(commands[-1])
-    runner(commands[-1])
-    return {"applied": True, "rolledBack": False, "commands": executed}
+        if verb == "run" and health != "healthy":
+            if battle_written:
+                recovery = recover_after(report["service"], completed, True, report.get("dockerDirect"))
+                for item in recovery["commands"]:
+                    runner(item)
+                    executed.append(item)
+                recovery["commands"] = executed
+                recovery["applied"] = False
+                recovery["rolledBack"] = False
+                return recovery
+            for item in rollback_commands(report["service"], report.get("dockerDirect")):
+                executed.append(item)
+                runner(item)
+            return {"applied": False, "rolledBack": True, "mode": "rollback", "maintenance": True, "commands": executed}
+    return {"applied": True, "rolledBack": False, "mode": "updated", "maintenance": False, "commands": executed}
 
 
 def rollback_allowed(evidence):
@@ -258,20 +363,7 @@ def rollback_allowed(evidence):
         raise DeployError("rollback_image_missing")
     if evidence.get("otherServiceChanged"):
         raise DeployError("rollback_touched_other_service")
-    return rollback_commands(evidence["service"])
-
-
-def rollback_commands(service):
-    name = "odisseu-a6-jvm" if service == "jvm" else "odisseu-a6-node"
-    previous = name + "-previous"
-    commands = [
-        ["docker", "rename", name, name + "-failed"],
-        ["docker", "rename", previous, name],
-        ["docker", "start", name],
-    ]
-    for command in commands:
-        _safe(command)
-    return commands
+    return rollback_commands(evidence["service"], evidence.get("dockerDirect", False))
 
 
 def evaluate_sequence(checkpoints):
@@ -331,6 +423,133 @@ def _step_ok(item):
     if step == "confirm_open":
         return item.get("jvmPhase") == "open" and item.get("nodePhase") == "open" and item.get("whatsapp") == "READY"
     return False
+
+
+def _run(runner, args):
+    if not callable(runner):
+        raise DeployError("declared_evidence")
+    completed = runner(args)
+    if getattr(completed, "returncode", 1) != 0:
+        return None
+    return completed.stdout or ""
+
+
+def _publish(bindings, container_port):
+    spec = (bindings or {}).get(container_port) or []
+    if not spec:
+        return ""
+    host = spec[0].get("HostIp") or "127.0.0.1"
+    return f"{host}:{spec[0].get('HostPort')}:{container_port.split('/')[0]}"
+
+
+def _security(options):
+    normalized = []
+    for option in options or []:
+        if str(option).startswith("seccomp="):
+            normalized.append("seccomp")
+        else:
+            normalized.append(option)
+    return normalized
+
+
+def _mounts(document):
+    mounts = []
+    for mount in document.get("Mounts") or []:
+        mounts.append({
+            "type": mount.get("Type"),
+            "name": mount.get("Name") or "",
+            "source": mount.get("Source") or "",
+            "destination": mount.get("Destination"),
+            "rw": mount.get("RW", True),
+        })
+    return mounts
+
+
+def _service(document, publish):
+    host = document.get("HostConfig") or {}
+    config = document.get("Config") or {}
+    keys = []
+    for item in config.get("Env") or []:
+        keys.append(str(item).split("=", 1)[0])
+    return {
+        "name": str(document.get("Name") or "").lstrip("/"),
+        "image": config.get("Image") or "",
+        "imageId": document.get("Image") or "",
+        "user": config.get("User") or "",
+        "network": host.get("NetworkMode") or "",
+        "restart": (host.get("RestartPolicy") or {}).get("Name") or "",
+        "privileged": bool(host.get("Privileged")),
+        "capAdd": host.get("CapAdd") or [],
+        "capDrop": host.get("CapDrop") or [],
+        "security": _security(host.get("SecurityOpt")),
+        "publish": publish,
+        "memory": host.get("Memory") or 0,
+        "health": ((document.get("State") or {}).get("Health") or {}).get("Status") or "",
+        "mounts": _mounts(document),
+        "envKeys": keys,
+    }
+
+
+def observe_vm(runner):
+    """Lê inspect, CapEff e marcadores pelo runner. Mapa declarado não entra."""
+    if not callable(runner):
+        raise DeployError("declared_evidence")
+    direct = _run(runner, ["docker", "info"]) is not None
+    if not direct and _run(runner, ["sudo", "-n", "docker", "info"]) is None:
+        raise DeployError("docker_unavailable")
+    prefix = _prefix(direct)
+    raw = _run(runner, prefix + ["inspect", "odisseu-a6-jvm", "odisseu-a6-node"])
+    status = _run(runner, prefix + ["exec", "odisseu-a6-jvm", "cat", "/proc/self/status"])
+    processes = _run(runner, prefix + ["exec", "odisseu-a6-jvm", "ps", "-eo", "args"])
+    jvm_marker = _run(runner, prefix + ["exec", "odisseu-a6-jvm", "cat", "/data/datomic-local/.a6-maintenance/bridge-maintenance.edn"])
+    node_marker = _run(runner, prefix + ["exec", "odisseu-a6-node", "cat", "/app/data/a6-maintenance.json"])
+    hostname = _run(runner, ["hostname"])
+    metadata = _run(runner, ["metadata"])
+    if None in (raw, status, processes, jvm_marker, node_marker, hostname, metadata):
+        raise DeployError("observation_incomplete")
+    documents = json.loads(raw)
+    if not isinstance(documents, list) or len(documents) != 2:
+        raise DeployError("observation_incomplete")
+    by_name = {str(item.get("Name") or "").lstrip("/"): item for item in documents}
+    if "odisseu-a6-jvm" not in by_name or "odisseu-a6-node" not in by_name:
+        raise DeployError("container_mismatch")
+    cap_line = next((line for line in status.splitlines() if line.startswith("CapEff:")), "")
+    cap_eff = cap_line.split()[1] if len(cap_line.split()) == 2 else ""
+    vm = json.loads(metadata)
+    vm["hostname"] = hostname.strip()
+    jvm = _service(by_name["odisseu-a6-jvm"], _publish(by_name["odisseu-a6-jvm"].get("HostConfig", {}).get("PortBindings"), "18090/tcp"))
+    node = _service(by_name["odisseu-a6-node"], _publish(by_name["odisseu-a6-node"].get("HostConfig", {}).get("PortBindings"), "3001/tcp"))
+    jvm["capEff"] = cap_eff
+    jvm["phase"] = (_token(jvm_marker, ":phase") or "").lstrip(":")
+    node["phase"] = str(json.loads(node_marker).get("phase") or "")
+    node["whatsapp"] = ""
+    redacted = []
+    for item in documents:
+        copied = dict(item)
+        config = dict(item.get("Config") or {})
+        config.pop("Env", None)
+        copied["Config"] = config
+        redacted.append(copied)
+    observation = {
+        "_observed": True,
+        "source": "docker-inspect-subprocess",
+        "dockerDirect": direct,
+        "vm": vm,
+        "jvm": jvm,
+        "node": node,
+        "processes": processes,
+        "documents": redacted,
+    }
+    serialized = json.dumps(observation)
+    if "TOKEN=" in serialized or "super-secret" in serialized:
+        raise DeployError("secret_in_observation")
+    return observation
+
+
+def _token(text, key):
+    if key not in text:
+        return ""
+    return text.split(key, 1)[1].strip().split()[0].rstrip(",}")
 
 
 def current_dry_run(sha):

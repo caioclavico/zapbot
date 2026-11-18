@@ -12,8 +12,10 @@ from pathlib import Path
 from a6_consistent_backup import BackupError, consistent_copy
 from a6_mount_policy import LIVE_VOLUME, Collection, assess
 from a6_production_backup import (
+    BACKUP_AUTHORIZATION,
     ProductionBackupError,
     admit,
+    copy_authorized_isolated,
     execute_copy,
     rehearse_isolated_copy,
     restore_isolated,
@@ -24,6 +26,7 @@ from a6_production_deploy import (
     apply_commands,
     current_dry_run,
     evaluate_sequence,
+    observe_vm,
     plan,
     rollback_allowed,
     run_apply,
@@ -69,6 +72,72 @@ def admitted():
     )
 
 
+def vm_runner():
+    jvm = _inspect(CURRENT["jvm"], "127.0.0.1:18092:18090")
+    node = _inspect(CURRENT["node"], "127.0.0.1:3003:3001")
+
+    class Result:
+        def __init__(self, stdout, returncode=0):
+            self.stdout = stdout
+            self.returncode = returncode
+
+    def runner(args):
+        if args == ["docker", "info"]:
+            return Result("", 1)
+        if args == ["sudo", "-n", "docker", "info"]:
+            return Result("")
+        if args[-2:] == ["odisseu-a6-jvm", "odisseu-a6-node"]:
+            return Result(json.dumps([jvm, node]))
+        if args[-1] == "/proc/self/status":
+            return Result("CapEff:\t00000000a80425fb\n")
+        if args[-1] == "args":
+            return Result("clojure.main -m odisseu.bridge.http-server\n")
+        if str(args[-1]).endswith("bridge-maintenance.edn"):
+            return Result("{:phase :quiescent :active-writes 0}\n")
+        if str(args[-1]).endswith("a6-maintenance.json"):
+            return Result('{"phase":"draining","activeOps":0}\n')
+        if args == ["hostname"]:
+            return Result("odisseu-core\n")
+        if args == ["metadata"]:
+            return Result(json.dumps({"instance": "odisseu-core", "zone": "us-central1-a", "project": VM["project"]}))
+        return Result("", 1)
+
+    return runner
+
+
+def _inspect(service, publish):
+    host, host_port, container_port = publish.split(":")
+    mounts = [{
+        "Type": item["type"],
+        "Name": item.get("name") or "",
+        "Source": item.get("source") or "",
+        "Destination": item["destination"],
+        "RW": item["rw"],
+    } for item in service["mounts"]]
+    env = []
+    for key in service["envKeys"]:
+        env.append(f"{key}=super-secret-value" if "TOKEN" in key or key.endswith("_KEY") else f"{key}=publico")
+    security = ["no-new-privileges:true", "seccomp={\"profile\":true}"] if "seccomp" in service["security"] else service["security"]
+    return {
+        "Name": "/" + service["name"],
+        "Id": service["imageId"],
+        "Image": service["imageId"],
+        "Config": {"Image": service["image"], "User": service["user"], "Env": env},
+        "HostConfig": {
+            "Privileged": service["privileged"],
+            "CapAdd": service["capAdd"],
+            "CapDrop": service["capDrop"],
+            "SecurityOpt": security,
+            "RestartPolicy": {"Name": service["restart"]},
+            "Memory": service["memory"],
+            "NetworkMode": service["network"],
+            "PortBindings": {f"{container_port}/tcp": [{"HostIp": host, "HostPort": host_port}]},
+        },
+        "Mounts": mounts,
+        "State": {"Health": {"Status": service["health"]}},
+    }
+
+
 class ProductionDeployTests(unittest.TestCase):
     def test_dry_run_preserves_mounts_and_refuses_execution(self):
         report = current_dry_run(SHA)
@@ -76,6 +145,8 @@ class ProductionDeployTests(unittest.TestCase):
         self.assertFalse(report["executeAllowed"])
         self.assertFalse(report["deployComplete"])
         self.assertIn("jvm_not_quiescent", report["blocked"])
+        self.assertIn("declared_evidence", report["blocked"])
+        self.assertEqual(report["argv"][:3], ["sudo", "-n", "docker"])
         self.assertIn("type=volume,source=odisseu-a6-cutover-datomic,target=/data/datomic-local", report["argv"])
         self.assertIn("type=bind,source=/run/odisseu-control,target=/run/odisseu-control", report["argv"])
         self.assertIn("--cap-drop", report["argv"])
@@ -141,6 +212,19 @@ class ProductionDeployTests(unittest.TestCase):
                 restore_isolated(manifest, Path(tmp) / "backup", Path(tmp) / "bad")
             self.assertTrue((source / "save.edn").exists())
             self.assertFalse((Path(tmp) / "bad").exists())
+            isolated = Path(tmp) / "isolated-source"
+            isolated.mkdir()
+            (isolated / "save.edn").write_text('{:player "p"}', encoding="utf-8")
+            with self.assertRaises(ProductionBackupError):
+                copy_authorized_isolated(isolated, Path(tmp) / "isolated-copy", collection(), VM, "nao", 2_000_000_000, 100)
+            with self.assertRaises(ProductionBackupError):
+                copy_authorized_isolated(DATOMIC_SOURCE, Path(tmp) / "live-copy", collection(), VM, BACKUP_AUTHORIZATION, 2_000_000_000, 100)
+            produced = copy_authorized_isolated(
+                isolated, Path(tmp) / "isolated-copy", collection(), VM, BACKUP_AUTHORIZATION, 2_000_000_000, 100,
+            )
+            self.assertTrue(produced["sourcePreserved"])
+            self.assertEqual((isolated / "save.edn").read_text(encoding="utf-8"), '{:player "p"}')
+            self.assertTrue(Path(produced["manifest"]).is_file())
 
     def test_execute_copy_does_not_run_and_wrong_image_is_rejected(self):
         with self.assertRaises(ProductionBackupError):
@@ -159,8 +243,13 @@ class ProductionDeployTests(unittest.TestCase):
             "PRODUCTION_AUTHORIZATION": "autorizar-producao-a6",
             "ODISSEU_A6_DELIVERY_VALIDATED": "true",
         }
-        report = plan(ready, SHA, "jvm", env)
-        self.assertTrue(report["executeAllowed"])
+        declared = plan(ready, SHA, "jvm", env)
+        self.assertIn("declared_evidence", declared["blocked"])
+        self.assertFalse(declared["executeAllowed"])
+        observed = observe_vm(vm_runner())
+        self.assertNotIn("super-secret", json.dumps(observed))
+        observed_plan = plan(observed, SHA, "jvm", env)
+        self.assertTrue(observed_plan["executeAllowed"], observed_plan["blocked"])
         calls = []
 
         class Result:
@@ -170,11 +259,17 @@ class ProductionDeployTests(unittest.TestCase):
             calls.append(command)
             return Result()
 
-        failed = run_apply(runner, report, health="unhealthy")
+        failed = run_apply(runner, observed_plan, health="unhealthy")
         self.assertTrue(failed["rolledBack"])
+        self.assertTrue(failed["maintenance"])
         joined = " ".join(" ".join(command) for command in calls)
+        stop_at = joined.index("stop --time 30 odisseu-a6-jvm")
+        run_at = joined.index("run -d --name odisseu-a6-jvm")
+        self.assertLess(stop_at, run_at)
         self.assertIn("docker rename odisseu-a6-jvm odisseu-a6-jvm-previous", joined)
         self.assertIn("docker start odisseu-a6-jvm", joined)
+        self.assertNotIn("start odisseu-a6-jvm-previous", joined)
+        self.assertNotIn("start odisseu-a6-jvm-failed", joined)
         self.assertNotIn("volume rm", joined)
         self.assertNotIn("odisseu-a6-node", joined)
         partial = evaluate_sequence([
@@ -210,6 +305,74 @@ class ProductionDeployTests(unittest.TestCase):
                 "argv": ["docker", "volume", "rm", "odisseu-a6-cutover-datomic"],
             })
         self.assertEqual(str(destructive.exception), "destructive_command")
+        resume = evaluate_sequence([
+            {"step": "node_maintenance", "nodePhase": "draining"},
+            {"step": "drain", "activeNodeOps": 0, "activeJvmWrites": 0},
+            {"step": "quiescence", "jvmPhase": "quiescent", "exclusive": True, "externalWriters": []},
+            {"step": "backup", "manifestVerified": True, "sourcePreserved": True},
+            {"step": "update_jvm", "service": "jvm", "previousImage": "old", "mountsPreserved": True},
+            {"step": "validate_jvm", "health": "healthy", "entrypoint": True, "capDropSysAdmin": True, "privileged": False},
+            {"step": "update_node", "service": "node", "jvmUntouched": True},
+            {"step": "validate_whatsapp", "whatsapp": "READY", "health": "healthy"},
+            {"step": "resume", "resumeExplicit": False},
+        ])
+        self.assertFalse(resume["deployComplete"])
+        self.assertEqual(resume["next"], "resume")
+
+    def test_interruption_keeps_one_writer_and_new_battle_stays_in_maintenance(self):
+        observed = plan(observe_vm(vm_runner()), SHA, "jvm", {
+            "A6_EXECUTE": "1",
+            "ODISSEU_PRODUCTION_DEPLOY_HOLD": "false",
+            "PRODUCTION_AUTHORIZATION": "autorizar-producao-a6",
+            "ODISSEU_A6_DELIVERY_VALIDATED": "true",
+        })
+        self.assertTrue(observed["executeAllowed"], observed["blocked"])
+
+        class Result:
+            returncode = 0
+
+        def apply(fail_at=None, health="healthy", battle=False):
+            calls = []
+
+            def runner(command):
+                calls.append(command)
+                return Result()
+
+            report = run_apply(runner, observed, health=health, fail_at=fail_at, battle_written=battle)
+            return report, calls
+
+        before_run, calls = apply(fail_at="run")
+        self.assertEqual(before_run["mode"], "rollback")
+        self.assertTrue(any(command[-2:] == ["start", "odisseu-a6-jvm"] for command in calls))
+        self.assertFalse(any(command[-1].endswith("-previous") and command[-2] == "start" for command in calls))
+        stopped, stopped_calls = apply(fail_at="stop")
+        self.assertEqual(stopped["mode"], "unchanged")
+        self.assertEqual(stopped_calls, [])
+        during_rename, renamed_calls = apply(fail_at="rename")
+        self.assertEqual(during_rename["mode"], "rollback")
+        self.assertEqual(renamed_calls[-1], ["sudo", "-n", "docker", "start", "odisseu-a6-jvm"])
+        self.assertFalse(any(len(command) > 3 and command[3] == "run" for command in renamed_calls))
+        after_rename, parked = apply(fail_at="update")
+        self.assertTrue(any(command[-3:] == ["rename", "odisseu-a6-jvm-previous", "odisseu-a6-jvm"] for command in parked))
+        self.assertFalse(any(command[-2] == "run" for command in parked))
+        forward, kept = apply(health="unhealthy", battle=True)
+        self.assertEqual(forward["mode"], "forward_only")
+        self.assertTrue(forward["maintenance"])
+        self.assertFalse(any(command[-2] == "start" for command in kept))
+        node = plan(observe_vm(vm_runner()), SHA, "node", {
+            "A6_EXECUTE": "1",
+            "ODISSEU_PRODUCTION_DEPLOY_HOLD": "false",
+            "PRODUCTION_AUTHORIZATION": "autorizar-producao-a6",
+            "ODISSEU_A6_DELIVERY_VALIDATED": "true",
+        })
+        node_fail = run_apply(lambda command: Result(), node, fail_at="run")
+        self.assertEqual(node_fail["mode"], "rollback")
+        self.assertTrue(node_fail["maintenance"])
+        sock = observe_vm(vm_runner())
+        sock["node"]["mounts"].append({"type": "bind", "source": "/var/run/docker.sock", "destination": "/var/run/docker.sock", "rw": True})
+        blocked = plan(sock, SHA, "node", {})
+        self.assertIn("docker_socket_exposed", blocked["blocked"])
+        self.assertIn("node_mount_mismatch", blocked["blocked"])
 
     def test_shell_dry_run_and_entrypoint_refuse_a_missing_mount(self):
         script = ROOT / "scripts" / "a6-production-deploy.sh"
@@ -218,8 +381,14 @@ class ProductionDeployTests(unittest.TestCase):
         report = json.loads(done.stdout)
         self.assertFalse(report["executeAllowed"])
         self.assertFalse(report["deployComplete"])
-        refused = subprocess.run(["bash", str(script), "volume rm odisseu-a6-cutover-datomic"], check=False, capture_output=True, text=True)
+        refused = subprocess.run(["bash", str(script), "--execute"], check=False, capture_output=True, text=True)
         self.assertEqual(refused.returncode, 2)
+        self.assertFalse(json.loads(refused.stdout)["executeAllowed"])
+        workflow = (ROOT / ".github/workflows/a6-pr-validation.yml").read_text(encoding="utf-8")
+        self.assertNotIn("--execute", workflow)
+        self.assertNotIn("- master", workflow.split("pull_request:")[0])
+        destroyed = subprocess.run(["bash", str(script), "volume rm odisseu-a6-cutover-datomic"], check=False, capture_output=True, text=True)
+        self.assertEqual(destroyed.returncode, 2)
         if shutil.which("docker") is None:
             self.skipTest("docker ausente")
         entry = ROOT / "docker" / "jvm-storage-entrypoint.sh"
