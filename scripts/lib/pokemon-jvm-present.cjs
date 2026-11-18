@@ -337,7 +337,11 @@ const FAMILIA_MENU = {
   'canto-mortal': 'derruba os dois lados após a contagem',
   hazard: 'entrada de campo, não prende',
   clima: 'muda o clima',
-  terreno: 'muda o terreno'
+  terreno: 'muda o terreno',
+  visao: 'causa o dano duas rodadas depois, calculado agora',
+  queda: 'leva o alvo para o alto e solta no turno seguinte; falha contra Voador e Levitação',
+  aterrar: 'joga no chão e anula a imunidade a Terrestre até trocar',
+  'tri-ataque': '20% de chance de queimadura, paralisia ou congelamento'
 };
 
 const STATUS_PT = {
@@ -415,7 +419,16 @@ function resumoEfeitosGolpe(golpe) {
   if (mec.atravessaProtecao) partes.push('atravessa proteção');
   if (mec.soPrimeiroTurno) partes.push('só no primeiro turno em campo');
   const aviso = avisoEfeitoNaoModelado(golpe);
-  if (partes.length) return aviso ? `${partes.join(', ')}. ${aviso}` : partes.join(', ');
+  const rowParcial = linhaAuditoria(golpe);
+  const parcial = rowParcial
+    && rowParcial.classe === 'conhecido-nao-implementado'
+    && (rowParcial.conhecidos || []).includes('metadado ausente na PokéAPI')
+    ? 'o restante deste golpe ainda não entra neste combate'
+    : null;
+  if (partes.length) {
+    const extra = [aviso, parcial].filter(Boolean).join('. ');
+    return extra ? `${partes.join(', ')}. ${extra}` : partes.join(', ');
+  }
   if (aviso) return aviso;
   const row = linhaAuditoria(golpe);
   if (row && row.classe === 'conhecido-nao-implementado') {
@@ -490,6 +503,8 @@ function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
   } else {
     const poder = golpe && golpe.poder != null ? golpe.poder : (golpe && golpe.power);
     corpo = `poder ${poder != null ? poder : 0}`;
+    const extra = resumoEfeitosGolpe(golpe);
+    if (extra && extra !== 'sem efeito adicional') corpo += `; ${extra}`;
     if (isExplosionGolpe(golpe)) {
       corpo += '; desmaia após o uso';
     }

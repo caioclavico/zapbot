@@ -51,9 +51,29 @@
 (defn- volatil [battle marca]
   (get-in battle [:volatil marca] {}))
 
+(defn habilidade-de
+  [pokemon]
+  (str (or (:habilidade pokemon) (get pokemon "habilidade") "")))
+
+(defn aterrado?
+  "No chão: sem Voador e sem Levitação, salvo se um golpe o derrubou."
+  [battle marca]
+  (let [poke (get-in battle [:pokemons marca])]
+    (boolean
+     (or (get-in battle [:volatil marca :aterrado?])
+         (and poke
+              (not (contains? (tipos-de poke) "flying"))
+              (not= "levitate" (habilidade-de poke)))))))
+
 (defn limpar-volatil
   [battle marca]
-  (assoc-in battle [:volatil marca] {}))
+  (let [outro (if (= marca :x) :o :x)
+        vol (get-in battle [:volatil marca])
+        carregava? (:carga vol)
+        era-alvo? (and (:no-ar? vol) (not carregava?))]
+    (cond-> (assoc-in battle [:volatil marca] {})
+      carregava? (update-in [:volatil outro] dissoc :no-ar? :invulneravel?)
+      era-alvo? (update-in [:volatil outro] dissoc :no-ar? :invulneravel? :carga))))
 
 (defn preparar-acao
   "Recarga, flinch, carga e golpe de primeiro turno.
@@ -79,6 +99,13 @@
        :pular? true
        :mensagem "💥 O adversário recuou e perdeu a ação!"}
 
+      (and (:no-ar? v)
+           (not (and carga (= (:slug carga) (:slug golpe)))))
+      {:battle battle
+       :golpe golpe
+       :pular? true
+       :mensagem "🌬️ O Pokémon está no ar e não pode agir!"}
+
       (and (:so-primeiro-turno golpe) (pos? turnos))
       {:battle battle
        :golpe golpe
@@ -98,12 +125,15 @@
        :mensagem "😵 O tormento impede repetir o golpe!"}
 
       (and carga (= (:slug carga) (:slug golpe)))
-      {:battle (-> battle
-                   (update-in [:volatil marca] dissoc :carga :invulneravel?)
-                   (assoc-in [:volatil marca :ultimo-slug] (:slug golpe)))
-       :golpe (dissoc (:golpe carga) :alteracoes)
-       :pular? false
-       :mensagem nil}
+      (let [outro (if (= marca :x) :o :x)
+            queda? (= :queda (:familia (:golpe carga)))]
+        {:battle (cond-> (-> battle
+                             (update-in [:volatil marca] dissoc :carga :invulneravel? :no-ar?)
+                             (assoc-in [:volatil marca :ultimo-slug] (:slug golpe)))
+                   queda? (update-in [:volatil outro] dissoc :no-ar? :invulneravel?))
+         :golpe (dissoc (:golpe carga) :alteracoes)
+         :pular? false
+         :mensagem nil})
 
       (and (= :preparacao (:familia golpe))
            (:pula-carga-no-sol golpe)
@@ -123,6 +153,26 @@
        :carregar? true
        :alteracoes-carga (when (= :proprio (:alvo golpe)) (:alteracoes golpe))
        :mensagem "✨ O Pokémon está se preparando!"}
+
+      (= :queda (:familia golpe))
+      (let [outro (if (= marca :x) :o :x)
+            alvo (get-in battle [:pokemons outro])]
+        (if (or (contains? (tipos-de alvo) "flying")
+                (= "levitate" (habilidade-de alvo)))
+          {:battle battle
+           :golpe golpe
+           :pular? true
+           :mensagem "🌬️ Queda Livre não alcança quem flutua!"}
+          {:battle (-> battle
+                       (assoc-in [:volatil marca :carga] {:slug (:slug golpe) :golpe golpe})
+                       (assoc-in [:volatil marca :no-ar?] true)
+                       (assoc-in [:volatil marca :invulneravel?] true)
+                       (assoc-in [:volatil outro :no-ar?] true)
+                       (assoc-in [:volatil outro :invulneravel?] true))
+           :golpe golpe
+           :pular? true
+           :carregar? true
+           :mensagem "🌬️ Queda Livre levou o alvo para o alto!"}))
 
       :else
       {:battle (cond-> (if (= :protecao (:familia golpe))
@@ -308,13 +358,15 @@
     :else (:precisao golpe)))
 
 (defn terreno-bloqueia-status?
-  "Elétrico impede sono. Névoa impede status principal. Voador não está no chão.
-  Terreno psíquico não entra: o combate não tem prioridade."
-  [battle status tipos]
+  "Elétrico impede sono. Névoa impede status principal. Voador e Levitação
+  não estão no chão. Terreno psíquico não entra: o combate não tem prioridade."
+  [battle marca status tipos]
   (let [t (get-in battle [:terreno :tipo])
-        voa? (contains? (set (map str tipos)) "flying")
+        no-chao? (if marca
+                   (aterrado? battle marca)
+                   (not (contains? (set (map str tipos)) "flying")))
         st (keyword (if (keyword? status) (name status) (str status)))]
-    (and t (not voa?)
+    (and t no-chao?
          (or (and (= t :eletrico) (= st :adormecido))
              (and (= t :nevoa)
                   (contains? #{:queimado :envenenado :envenenado-grave
@@ -334,12 +386,13 @@
 
 (defn aplicar-familia-de-campo
   "Clima, terreno, entrada, disable, tormento e canto mortal.
-  Devolve nil quando a família não é desta camada."
-  [battle golpe alvo]
+  Devolve nil quando a família não é desta camada.
+  `marca` é quem usou o golpe: o selvagem age no fim da rodada."
+  [battle golpe alvo marca]
   (case (:familia golpe)
     :clima
     (let [tipo (campo-de golpe)]
-      {:battle (assoc battle :clima {:tipo tipo :restante 5})
+      {:battle (assoc battle :clima {:tipo tipo :restante 5 :recem? (= marca :o)})
        :mensagem (case tipo
                    :sol "☀️ O sol forte tomou o campo!"
                    :chuva "🌧️ A chuva começou!"
@@ -350,7 +403,7 @@
 
     :terreno
     (let [tipo (campo-de golpe)]
-      {:battle (assoc battle :terreno {:tipo tipo :restante 5})
+      {:battle (assoc battle :terreno {:tipo tipo :restante 5 :recem? (= marca :o)})
        :mensagem (case tipo
                    :eletrico "⚡ O terreno elétrico cobriu o campo!"
                    :grama "🌱 O terreno gramado cobriu o campo!"
@@ -401,7 +454,7 @@
   (let [haz (get-in battle [:campo marca :hazards])
         poke (get-in battle [:pokemons marca])
         tipos (tipos-de poke)
-        voa? (contains? tipos "flying")
+        no-chao? (aterrado? battle marca)
         max-hp (long (or (:hp poke) 0))
         hp (long (get-in battle [:hp marca] 0))]
     (if (or (nil? haz) (not (pos? hp)) (not (pos? max-hp)))
@@ -409,14 +462,14 @@
       (let [mult (types/multiplicador-vs-tipos "rock" (vec tipos) nil)
             rocha (when (:rochas haz)
                     (max 1 (long (Math/round (* (/ (double max-hp) 8.0) mult)))))
-            esp (when (and (not voa?) (pos? (long (:espinhos haz 0))))
+            esp (when (and no-chao? (pos? (long (:espinhos haz 0))))
                   (max 1 (long (quot max-hp (case (long (:espinhos haz)) 1 8 2 6 4)))))
             tox (long (:toxicos haz 0))
             absorve? (and (pos? tox) (contains? tipos "poison"))
-            tox-pega? (and (pos? tox) (not voa?) (not absorve?)
+            tox-pega? (and (pos? tox) no-chao? (not absorve?)
                            (not (contains? tipos "steel"))
                            (nil? (get-in battle [:status marca])))
-            teia? (and (:teia haz) (not voa?))
+            teia? (and (:teia haz) no-chao?)
             battle (-> battle
                        (cond-> rocha (update-in [:hp marca] #(max 0 (- % rocha)))
                                esp (update-in [:hp marca] #(max 0 (- % esp)))
@@ -475,11 +528,10 @@
                      (str "🌨️ O granizo causou " dano " de dano!"))]})))
 
 (defn- cura-grama [battle marca]
-  (let [tipos (tipos-de (get-in battle [:pokemons marca]))
-        hp (long (get-in battle [:hp marca] 0))
+  (let [hp (long (get-in battle [:hp marca] 0))
         max-hp (long (get-in battle [:pokemons marca :hp] 0))]
     (if (or (not= :grama (get-in battle [:terreno :tipo]))
-            (contains? tipos "flying")
+            (not (aterrado? battle marca))
             (not (pos? hp))
             (>= hp max-hp))
       {:battle battle :mensagens []}
@@ -497,37 +549,82 @@
        :mensagens ["🛡️ A proteção se desfez."]}
       {:battle battle :mensagens []})))
 
+(defn status-tri-ataque
+  "20% no total. Um dos três status é sorteado; imunidade anula o escolhido."
+  [status-atual rng tipos]
+  (when (and (nil? status-atual)
+             (< (rng/roll rng :status-golpe 100) 20))
+    (let [escolha (nth [:queimado :congelado :paralisado]
+                       (rng/roll rng :tri-ataque 3))]
+      (when-not (imune-a-status? escolha tipos)
+        escolha))))
+
+(defn- avancar-condicao
+  "Cinco rodadas, um desconto por fechamento. Quem age no fim da rodada
+  não perde a rodada em que criou o clima."
+  [battle chave]
+  (let [c (get battle chave)]
+    (if-not (and c (pos? (long (:restante c 0))))
+      {:battle battle :encerrou? false}
+      (if (:recem? c)
+        {:battle (update battle chave dissoc :recem?) :encerrou? false}
+        (let [n (dec (long (:restante c)))]
+          (if (pos? n)
+            {:battle (assoc battle chave (assoc c :restante n)) :encerrou? false}
+            {:battle (dissoc battle chave) :encerrou? true}))))))
+
+(defn- tick-visao
+  [battle]
+  (reduce (fn [acc marca]
+            (if-let [p (get-in (:battle acc) [:campo :previsto marca])]
+              (let [n (dec (long (:restante p 1)))]
+                (if (pos? n)
+                  {:battle (assoc-in (:battle acc) [:campo :previsto marca :restante] n)
+                   :mensagens (:mensagens acc)}
+                  (let [dano (long (:dano p 0))
+                        protegido? (get-in (:battle acc) [:volatil marca :protecao?])
+                        hp (long (get-in (:battle acc) [:hp marca] 0))
+                        nome (or (:nome p) "Visão do Futuro")
+                        battle (cond-> (update-in (:battle acc) [:campo :previsto] dissoc marca)
+                                 protegido? (update-in [:volatil marca] dissoc :protecao?)
+                                 (and (not protegido?) (pos? hp))
+                                 (update-in [:hp marca] #(max 0 (- % dano))))]
+                    {:battle battle
+                     :mensagens (conj (:mensagens acc)
+                                      (if protegido?
+                                        (str "🛡️ Proteção bloqueou " nome "!")
+                                        (str "🔮 " nome " causou " dano " de dano!")))})))
+              acc))
+          {:battle battle :mensagens []}
+          [:x :o]))
+
 (defn tick-fim
-  "Canto mortal e disable por lado. Clima e terreno contam uma vez por turno,
-  para a ação do jogador e a resposta selvagem não descontarem duas vezes."
-  [battle marca]
+  "Canto mortal e disable por lado. Clima, terreno e visão descontam uma vez,
+  no fechamento da rodada, para jogador e selvagem durarem o mesmo."
+  [battle marca & {:keys [fecha-rodada?]}]
   (let [per (tick-perecer battle marca)
         dis (tick-desabilitar (:battle per) marca)
-        idx (long (:turn-index battle 0))
-        primeiro? (not= idx (get-in battle [:campo :ultimo-tick]))
-        base (if primeiro?
-               (-> (:battle dis)
-                   (assoc-in [:campo :ultimo-tick] idx)
-                   (update :clima (fn [c]
-                                    (when (and c (pos? (long (:restante c 0))))
-                                      (let [n (dec (long (:restante c)))]
-                                        (when (pos? n) (assoc c :restante n))))))
-                   (update :terreno (fn [t]
-                                      (when (and t (pos? (long (:restante t 0))))
-                                        (let [n (dec (long (:restante t)))]
-                                          (when (pos? n) (assoc t :restante n)))))))
-               (:battle dis))
-        chip (chip-clima base marca)
-        grama (cura-grama (:battle chip) marca)
-        prot (expirar-protecao-alheia (:battle grama) marca)
+        base (:battle dis)
+        chip (if (and fecha-rodada? (:recem? (:clima base)))
+               {:battle base :mensagens []}
+               (chip-clima base marca))
+        grama (if (and fecha-rodada? (:recem? (:terreno (:battle chip))))
+                {:battle (:battle chip) :mensagens []}
+                (cura-grama (:battle chip) marca))
+        clima (if fecha-rodada?
+                (avancar-condicao (:battle grama) :clima)
+                {:battle (:battle grama) :encerrou? false})
+        terreno (if fecha-rodada?
+                  (avancar-condicao (:battle clima) :terreno)
+                  {:battle (:battle clima) :encerrou? false})
+        visao (if fecha-rodada?
+                (tick-visao (:battle terreno))
+                {:battle (:battle terreno) :mensagens []})
+        prot (expirar-protecao-alheia (:battle visao) marca)
         acabou (cond-> []
-                 (and primeiro? (get-in battle [:clima :tipo])
-                      (nil? (get-in (:battle grama) [:clima :tipo])))
-                 (conj "🌤️ O clima voltou ao normal!")
-                 (and primeiro? (get-in battle [:terreno :tipo])
-                      (nil? (get-in (:battle grama) [:terreno :tipo])))
-                 (conj "✨ O terreno se desfez!"))]
+                 (:encerrou? clima) (conj "🌤️ O clima voltou ao normal!")
+                 (:encerrou? terreno) (conj "✨ O terreno se desfez!"))]
     {:battle (:battle prot)
      :mensagens (vec (concat (:mensagens per) (:mensagens dis)
                              (:mensagens chip) (:mensagens grama)
-                             (:mensagens prot) acabou))}))
+                             (:mensagens visao) (:mensagens prot) acabou))}))

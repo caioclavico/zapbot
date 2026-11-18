@@ -133,6 +133,24 @@
     (is (= 2 (:acertos agora)))
     (is (= (* 2 (:dano um)) (:dano agora)))))
 
+(deftest precisao-85-e-golpe-infalivel
+  (let [fogo (jogador (golpe "fire-blast" "Rajada de Fogo" "fire" 110))
+        certo (jogador (golpe "swift" "Ataque Veloz" "normal" 60))
+        raid-fogo (montar 1 1.0 fogo ["grass"])
+        legado (simular :legado raid-fogo {:raid-damage-var 15 :accuracy 0})
+        atual (mapv #(simular :atual raid-fogo {:raid-damage-var 15 :accuracy %})
+                    (range 100))
+        vitorias (count (filter :venceu? atual))
+        um (raid/atacar (montar 1 1.0 certo ["normal"]) "p0" 0 1
+                        {:raid-damage-var 15 :accuracy 99})]
+    (println {:rajada-legado legado :rajada-vitorias-em-100 vitorias
+              :ataque-veloz-errou? (:errou? um) :hp (:hp-chefe raid-fogo)})
+    (is (:venceu? legado))
+    (is (pos? vitorias))
+    (is (< vitorias 100))
+    (is (not (:errou? um)))
+    (is (= 320 (:hp-chefe raid-fogo)))))
+
 (deftest carga-e-recarga-alongam-a-raid
   (let [rng {:raid-damage-var 15 :accuracy 0}
         solar (montar 1 1.0 (jogador (golpe "solar-beam" "Raio Solar" "grass" 120)) ["water"])

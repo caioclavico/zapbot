@@ -7,6 +7,7 @@
             [pokemon.domain.mechanics :as mechanics]
             [pokemon.domain.move-effects :as move-effects]
             [pokemon.domain.raid :as raid]
+            [pokemon.domain.types :as types]
             [pokemon.infrastructure.datomic.raid-store :as raid-store]))
 
 (def ^:private rng-base
@@ -463,3 +464,136 @@
     (is (= (get-in direto [:raid :hp-chefe]) (get-in volta [:raid :hp-chefe])))
     (is (= 3 (get-in volta [:raid :chefe :contador])))
     (is (< (get-in repetido [:raid :hp-chefe]) (get-in direto [:raid :hp-chefe])))))
+
+(defn- fechar-rodada
+  [battle]
+  (-> battle
+      (battle/aplicar-fim-de-turno :x)
+      :battle
+      (battle/aplicar-fim-de-turno :o :fecha-rodada? true)))
+
+(deftest clima-dura-cinco-rodadas-dos-dois-lados
+  (let [base (batalha (mon "A" ["normal"] []) (mon "B" ["normal"] []))
+        jogador (assoc base :clima {:tipo :granizo :restante 5})
+        selvagem (assoc base :clima {:tipo :granizo :restante 5 :recem? true})
+        rodadas (fn [b]
+                  (loop [atual b n 0 msgs []]
+                    (if (= n 6)
+                      {:battle atual :msgs msgs}
+                      (let [fim (fechar-rodada atual)]
+                        (recur (:battle fim) (inc n)
+                               (into msgs (:mensagens fim)))))))
+        do-jogador (rodadas jogador)
+        do-selvagem (rodadas selvagem)]
+    (is (= 4 (get-in (:battle (fechar-rodada jogador)) [:clima :restante])))
+    (is (= 5 (get-in (:battle (fechar-rodada selvagem)) [:clima :restante])))
+    (is (nil? (get-in do-jogador [:battle :clima])))
+    (is (nil? (get-in do-selvagem [:battle :clima])))
+    (is (= 1 (count (filter #(re-find #"voltou ao normal" %) (:msgs do-jogador)))))
+    (is (= 1 (count (filter #(re-find #"voltou ao normal" %) (:msgs do-selvagem)))))
+    (is (= 5 (count (filter #(re-find #"granizo causou" %) (:msgs do-jogador)))))
+    (is (= 5 (count (filter #(re-find #"granizo causou" %) (:msgs do-selvagem)))))))
+
+(deftest neve-reforca-defesa-de-gelo-e-granizo-nao
+  (let [golpe {:slug "tackle" :poder 40 :classe :fisico :tipo "normal"}
+        gelo (mon "Gelo" ["ice"] [])
+        comum {:golpe golpe
+               :atacante (mon "A" ["normal"] []) :defensor gelo
+               :rng {:accuracy 0 :crit 99 :damage-var 0 :dodge 99}}
+        seco (dmg/resolver-ataque comum)
+        neve (dmg/resolver-ataque (assoc comum :golpe golpe :clima :neve))
+        granizo (dmg/resolver-ataque (assoc comum :golpe golpe :clima :granizo))]
+    (is (< (:dano neve) (:dano seco)))
+    (is (:defesa-neve? neve))
+    (is (= (:dano seco) (:dano granizo)))
+    (is (not (:defesa-neve? granizo)))))
+
+(deftest levitacao-e-derrubada
+  (let [chao {:slug "earthquake" :poder 100 :classe :fisico :tipo "ground"}
+        voador (mon "Ave" ["flying"] [])
+        flutuante (assoc (mon "Gas" ["ghost"] []) :habilidade "levitate")
+        rng {:accuracy 0 :crit 99 :damage-var 0 :dodge 99}
+        x (mon "A" ["ground"]
+               [{:slug "smack-down" :nome-exibicao "Derrubada" :tipo "rock"
+                 :poder 50 :classe :fisico}
+                {:slug "earthquake" :nome-exibicao "Terremoto" :tipo "ground"
+                 :poder 100 :classe :fisico}])
+        o (mon "Ave" ["flying"]
+               [{:slug "tackle" :nome-exibicao "Investida" :tipo "normal"
+                 :poder 1 :classe :fisico}])
+        t1 (agir (batalha x o) 0 {})
+        limpo (mechanics/limpar-volatil t1 :o)]
+    (is (zero? (types/multiplicador-vs-tipos "ground" ["flying"] nil)))
+    (is (zero? (types/multiplicador-vs-tipos "ground" ["ghost"] "levitate")))
+    (is (= 1.0 (types/multiplicador-vs-tipos "ground" ["flying"] nil true)))
+    (is (= 1.0 (types/multiplicador-vs-tipos "ground" ["ghost"] "levitate" true)))
+    (is (get-in t1 [:volatil :o :aterrado?]))
+    (is (re-find #"no chão" (:mensagem (:last-action t1))))
+    (is (:acertou? (dmg/resolver-ataque
+                    {:golpe chao :atacante x :defensor voador :aterrado? true :rng rng})))
+    (is (not (:acertou? (dmg/resolver-ataque
+                         {:golpe chao :atacante x :defensor voador :rng rng}))))
+    (is (not (get-in limpo [:volatil :o :aterrado?])))
+    (let [entrada (mechanics/aplicar-entrada
+                   (-> (batalha x flutuante)
+                       (assoc-in [:campo :o :hazards :espinhos] 1)
+                       (assoc-in [:hp :o] 160))
+                   :o)
+          derrubado (mechanics/aplicar-entrada
+                     (-> (batalha x flutuante)
+                         (assoc-in [:volatil :o :aterrado?] true)
+                         (assoc-in [:campo :o :hazards :espinhos] 1))
+                     :o)]
+      (is (= 160 (get-in (:battle entrada) [:hp :o])))
+      (is (< (get-in (:battle derrubado) [:hp :o]) 160)))))
+
+(deftest visao-do-futuro-sai-na-terceira-rodada
+  (let [x (mon "Mew" ["psychic"]
+               [{:slug "future-sight" :nome-exibicao "Visão do Futuro"
+                 :tipo "psychic" :poder 120 :classe :especial}])
+        o (mon "Alvo" ["normal"]
+               [{:slug "tackle" :nome-exibicao "Investida" :tipo "normal"
+                 :poder 1 :classe :fisico}])
+        t1 (agir (batalha x o) 0 {})
+        t2 (agir t1 0 {})
+        t3 (agir t2 0 {})]
+    (is (re-find #"prevista" (:mensagem (:last-action t1))))
+    (is (= 160 (get-in t1 [:hp :o])))
+    (is (= 2 (get-in t1 [:campo :previsto :o :restante])))
+    (is (= 160 (get-in t2 [:hp :o])))
+    (is (= 1 (get-in t2 [:campo :previsto :o :restante])))
+    (is (< (get-in t3 [:hp :o]) 160))
+    (is (nil? (get-in t3 [:campo :previsto :o])))
+    (is (re-find #"já está a caminho"
+                 (:mensagem (:last-action (agir t1 0 {})))))))
+
+(deftest queda-livre-e-triataque
+  (let [x (mon "Ave" ["flying"]
+               [{:slug "sky-drop" :nome-exibicao "Queda Livre" :tipo "flying"
+                 :poder 60 :classe :fisico}])
+        o (mon "Alvo" ["normal"]
+               [{:slug "tackle" :nome-exibicao "Investida" :tipo "normal"
+                 :poder 40 :classe :fisico}])
+        voa (mon "Pidgey" ["flying"]
+                 [{:slug "tackle" :nome-exibicao "Investida" :tipo "normal"
+                   :poder 40 :classe :fisico}])
+        t1 (agir (batalha x o) 0 {})
+        t2 (agir t1 0 {})
+        falha (agir (batalha x voa) 0 {})
+        tri (mon "A" ["normal"]
+                  [{:slug "tri-attack" :nome-exibicao "Triataque" :tipo "normal"
+                    :poder 80 :classe :especial}])
+        queima (agir (batalha tri o) 0 {:status-golpe 0 :tri-ataque 0})
+        nada (agir (batalha tri o) 0 {:status-golpe 20 :tri-ataque 0})
+        fogo (mon "Fogo" ["fire"]
+                   [{:slug "tackle" :nome-exibicao "Investida" :tipo "fire"
+                     :poder 1 :classe :fisico}])
+        imune (agir (batalha tri fogo) 0 {:status-golpe 0 :tri-ataque 0})]
+    (is (re-find #"para o alto" (:mensagem (:last-action t1))))
+    (is (= 160 (get-in t1 [:hp :o])))
+    (is (re-find #"não pode agir" (:mensagem (:last-rival-action t1))))
+    (is (< (get-in t2 [:hp :o]) 160))
+    (is (re-find #"não alcança" (:mensagem (:last-action falha))))
+    (is (= :queimado (get-in queima [:status :o])))
+    (is (nil? (get-in nada [:status :o])))
+    (is (nil? (get-in imune [:status :o])))))

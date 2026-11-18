@@ -105,6 +105,18 @@ test('auditoria cobre o catálogo e não esconde efeito conhecido', () => {
   assert.match(menu, /proteção; falha se for repetida/);
   assert.match(menu, /sem efeito adicional/);
   assert.doesNotMatch(menu, /não entra neste combate: proteção/);
+  const futuro = present.menuGolpes({
+    golpes: [
+      { slug: 'future-sight', nomeExibicao: 'Future Sight', tipo: 'psychic', classe: 'especial', poder: 120 },
+      { slug: 'psychic-terrain', nomeExibicao: 'Psychic Terrain', tipo: 'psychic', classe: 'status', poder: 0 },
+      { slug: 'shadow-half', nomeExibicao: 'Shadow Half', tipo: 'normal', classe: 'especial', poder: 1 }
+    ]
+  }, []);
+  const linhas = futuro.split('\n');
+  assert.match(linhas[0], /duas rodadas depois/);
+  assert.doesNotMatch(linhas[0], /não entra neste combate/);
+  assert.match(linhas[1], /não entra neste combate: proteção, efeito de campo/);
+  assert.match(linhas[2], /o restante deste golpe ainda não entra neste combate/);
   assert.doesNotMatch(menu, /sem efeito adicional modelado/);
 });
 

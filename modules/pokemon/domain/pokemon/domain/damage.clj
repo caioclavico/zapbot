@@ -78,14 +78,21 @@
            estagios-atacante estagios-defensor
            status-defensor
            defendendo? hp-atacante-atual
-           clima rng]}]
+           clima aterrado? rng]}]
   (let [fisico? (= :fisico (let [c (:classe golpe)]
                              (if (keyword? c) c (keyword c))))
         item-atacante (or (:item atacante) (get atacante "item"))
         atributo-atq (if fisico? :ataque :atq-esp)
         atributo-def (if fisico? :defesa :def-esp)
         poder-ataque (stat-efetivo atacante (or estagios-atacante {}) atributo-atq)
-        poder-defesa (stat-efetivo defensor (or estagios-defensor {}) atributo-def)
+        poder-defesa (let [base (stat-efetivo defensor (or estagios-defensor {}) atributo-def)
+                           gelo? (and (= clima :neve)
+                                      (= atributo-def :defesa)
+                                      (contains? (set (map str (:tipos defensor))) "ice"))]
+                       (if gelo? (* base 1.5) base))
+        defesa-neve? (and (= clima :neve)
+                          (= atributo-def :defesa)
+                          (contains? (set (map str (:tipos defensor))) "ice"))
         precisao (mechanics/precisao-no-clima golpe clima)
         chance (chance-acerto precisao estagios-atacante estagios-defensor
                               (:ignora-precisao golpe))
@@ -97,10 +104,11 @@
         multiplicador (types/multiplicador-vs-tipos
                        (:tipo golpe)
                        (or (:tipos defensor) [])
-                       (or (:habilidade defensor) (get defensor "habilidade")))
+                       (or (:habilidade defensor) (get defensor "habilidade"))
+                       (boolean aterrado?))
         chance-crit (cond
                       (:critico-garantido golpe) 100
-                      (:chance-critico golpe) (long (:chance-critico golpe))
+                      (some? (:chance-critico golpe)) (long (:chance-critico golpe))
                       :else chance-critico)
         critico? (< (rng/roll rng :crit 100) chance-crit)
         impulso (impulso-habilidade atacante hp-atacante-atual (:tipo golpe))
@@ -128,7 +136,8 @@
      :errou? (boolean errou?)
      :esquivou? (boolean esquivou?)
      :acertos acertos
-     :impulso impulso}))
+     :impulso impulso
+     :defesa-neve? (boolean defesa-neve?)}))
 
 (defn- emoji-golpe
   [golpe]
@@ -177,12 +186,18 @@
       (:sumido? resolved)
       "💨 O golpe não alcançou o alvo!"
 
+      (:visao-ocupada? resolved)
+      (str nome-golpe " já está a caminho!")
+
       (:errou? resolved)
       (str nome-golpe " de *" nome-atk "* errou o alvo!")
 
       (:esquivou? resolved)
       (str "💨 *" nome-def "* esquivou completamente de " nome-golpe
            " de *" nome-atk "*! Nenhum dano.")
+
+      (:visao? resolved)
+      (str nome-golpe " foi prevista! O dano sai daqui a duas rodadas.")
 
       (zero? dano)
       (str nome-golpe " de *" nome-atk "* não teve efeito em *"
@@ -196,6 +211,7 @@
       (str nome-golpe " de *" nome-atk "* causou " dano
            " de dano em *" nome-def "*!" sufixo
            (when (:nocaute? resolved) "\n💀 Nocaute de um golpe!")
+           (when (:defesa-neve? resolved) "\n❄️ A neve reforçou a Defesa!")
            (when (> acertos 1) (str "\n🎯 Acertou " acertos " vezes!"))))))
 
 (defn last-action-ataque

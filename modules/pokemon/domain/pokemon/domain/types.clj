@@ -23,8 +23,14 @@
    "fairy"    {"fighting" 2 "dragon" 2 "dark" 2 "fire" 0.5 "poison" 0.5 "steel" 0.5}})
 
 (defn multiplicador-vs-tipos
-  "Produto dos multiplicadores; Levitate anula Ground."
-  [tipo-ataque tipos-defesa habilidade-defensor]
-  (if (and (= tipo-ataque "ground") (= habilidade-defensor "levitate"))
-    0.0
-    (double (reduce * 1 (map #(get-in tabela-tipos [tipo-ataque %] 1) tipos-defesa)))))
+  "Produto dos multiplicadores. Levitate anula Ground.
+  `aterrado?` ignora Voador e Levitação até a troca."
+  ([tipo-ataque tipos-defesa habilidade-defensor]
+   (multiplicador-vs-tipos tipo-ataque tipos-defesa habilidade-defensor false))
+  ([tipo-ataque tipos-defesa habilidade-defensor aterrado?]
+   (let [tipos (map str tipos-defesa)
+         tipos (if aterrado? (remove #{"flying"} tipos) tipos)
+         hab (if aterrado? nil habilidade-defensor)]
+     (if (and (= tipo-ataque "ground") (= hab "levitate"))
+       0.0
+       (double (reduce * 1 (map #(get-in tabela-tipos [tipo-ataque %] 1) tipos)))))))

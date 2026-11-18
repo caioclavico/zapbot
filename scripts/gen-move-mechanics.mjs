@@ -129,7 +129,16 @@ for (const slug of Object.keys(names)) {
     entry.chanceCritico = crit >= 2 ? 100 : 50;
   }
 
-  if (VENENO_GRAVE.has(slug) || text.includes('badly poison')) {
+  if (slug === 'future-sight') {
+    entry.familia = 'visao';
+    entry.chanceCritico = 0;
+  } else if (slug === 'sky-drop') {
+    entry.familia = 'queda';
+  } else if (slug === 'smack-down') {
+    entry.familia = 'aterrar';
+  } else if (slug === 'tri-attack') {
+    entry.familia = 'tri-ataque';
+  } else if (VENENO_GRAVE.has(slug) || text.includes('badly poison')) {
     entry.familia = 'veneno-grave';
   } else if (ailment === 43 || PROTECAO.has(slug)
              || text.includes('protection for the rest of the turn')
@@ -250,7 +259,8 @@ function covers(limite, mec) {
   if (limite === 'semente sanguessuga') return mec.familia === 'semente' || mec.familia === 'limpar-volatil';
   if (limite === 'veneno grave') return mec.familia === 'veneno-grave';
   if (limite === 'armadilha') return mec.familia === 'residual';
-  if (limite === 'vários turnos') return ['preparacao', 'recarga', 'residual', 'canto-mortal'].includes(mec.familia);
+  if (limite === 'vários turnos') return ['preparacao', 'recarga', 'residual', 'canto-mortal', 'queda', 'visao'].includes(mec.familia);
+  if (limite === 'efeito próprio') return ['visao', 'aterrar', 'tri-ataque'].includes(mec.familia);
   if (limite === 'nocaute de um golpe') return mec.familia === 'nocaute';
   if (limite === 'troca forçada') return mec.familia === 'troca-forcada';
   if (limite === 'desabilitar') return mec.familia === 'desabilitar';
@@ -261,7 +271,7 @@ function covers(limite, mec) {
 }
 
 const conhecidoCoberto = (texto, mec, fx) => {
-  if (texto === 'metadado ausente na PokéAPI') return false;
+  if (texto === 'metadado ausente na PokéAPI') return mec?.familia === 'clima' && mec?.campo === 'neve';
   if (texto === 'chance de crítico diferente') return Boolean(mec?.chanceCritico || mec?.criticoGarantido);
   const alts = [...(fx?.alteracoes || []), ...(mec?.alteracoes || []), ...(mec?.alteracoesExtra || [])];
   const m = texto.match(/^(ataque especial|defesa especial|ataque|defesa|velocidade|precisão|evasão) ([+-]\d+)$/);
