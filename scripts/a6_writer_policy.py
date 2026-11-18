@@ -74,28 +74,30 @@ INVENTORY = (
 )
 
 
-def storage_exclusive(gate):
-    """Lock de arquivo não basta: o mesmo usuário pode ignorá-lo."""
-    if not isinstance(gate, dict) or gate.get("cooperativeLockOnly"):
-        return False
-    return (
-        gate.get("othersSeeReadOnly") is True
-        and gate.get("capSysAdmin") is False
-        and gate.get("bridgeMountPrivate") is True
-        and gate.get("laterProcessWrite") == "erofs"
-        and gate.get("ownerCanRearmWrite") is False
-    )
-
-
 def prove_quiescence(evidence):
-    evidence = evidence or {}
+    """Ignora quiescenceProven recebido. A prova sai só dos campos observados."""
+    evidence = dict(evidence or {})
+    evidence.pop("quiescenceProven", None)
     writers = list(evidence.get("liveExternalWriters") or evidence.get("externalWriters") or [])
-    if writers:
+    tools = list(evidence.get("maintenanceToolsRunning") or [])
+    if writers or tools:
         return {"quiescenceProven": False, "reason": "external_datomic_client", "phase": "draining"}
     if int(evidence.get("activeNodeOps") or 0) != 0 or int(evidence.get("activeJvmWrites") or 0) != 0:
         return {"quiescenceProven": False, "reason": "writes_in_flight", "phase": "draining"}
-    if not storage_exclusive(evidence.get("storageGate")):
-        return {"quiescenceProven": False, "reason": "storage_not_exclusive", "phase": "draining"}
+    if evidence.get("nodePhase") not in ("draining", "quiescent", "frozen"):
+        return {"quiescenceProven": False, "reason": "node_not_draining", "phase": "draining"}
+    if evidence.get("jvmPhase") not in ("quiescent", "frozen"):
+        return {"quiescenceProven": False, "reason": "jvm_not_quiescent", "phase": "draining"}
+    if evidence.get("mountsObserved") is not True or evidence.get("mountPolicyHeld") is not True:
+        return {"quiescenceProven": False, "reason": "mounts_not_observed", "phase": "draining"}
+    if evidence.get("capSysAdmin") is not False:
+        return {"quiescenceProven": False, "reason": "cap_sys_admin", "phase": "draining"}
+    if evidence.get("laterWriterResult") != "no_mount":
+        return {"quiescenceProven": False, "reason": "later_writer_not_proven", "phase": "draining"}
+    holders = evidence.get("writableMounts")
+    writer = evidence.get("authorizedWriter")
+    if not writer or holders != [writer]:
+        return {"quiescenceProven": False, "reason": "writable_mount_not_exclusive", "phase": "draining"}
     return {"quiescenceProven": True, "reason": None, "phase": "quiescent"}
 
 

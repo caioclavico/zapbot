@@ -51,6 +51,11 @@ services:
       ODISSEU_JOURNAL_DIR: /data/journal
       ODISSEU_MAINT_DIR: /data/maint
       JAVA_TOOL_OPTIONS: "-Xms64m -Xmx384m -XX:+UseG1GC"
+    privileged: false
+    cap_drop:
+      - SYS_ADMIN
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - odisseu-core-datomic:/data/datomic-local
       - odisseu-core-journal:/data/journal
@@ -126,8 +131,7 @@ services:
       WWEBJS_CLIENT_ID: core
       # Gates: preencher DEV_GROUP_ID + STAGING_* no .env.odisseu-core
     volumes:
-      # Bind exclusivo — NÃO monte .wwebjs_auth de odisseu-zapbot.
-      # Host e container usam o mesmo sufixo _core (sessão existente preservada).
+      # Sem o volume Datomic. O Node fala com a JVM por HTTP.
       - ./.wwebjs_auth_core:/app/.wwebjs_auth_core
       - odisseu-core-data:/app/data
     networks:

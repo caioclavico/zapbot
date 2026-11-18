@@ -117,7 +117,15 @@ def drain(state):
         "externalWriters": writers,
         "activeNodeOps": state.get("activeNodeOps") or 0,
         "activeJvmWrites": state.get("activeJvmWrites") or 0,
-        "storageGate": state.get("storageGate"),
+        "nodePhase": state.get("nodePhase"),
+        "jvmPhase": state.get("jvmPhase"),
+        "authorizedWriter": state.get("authorizedWriter"),
+        "writableMounts": state.get("writableMounts"),
+        "capSysAdmin": state.get("capSysAdmin"),
+        "maintenanceToolsRunning": state.get("maintenanceToolsRunning") or [],
+        "laterWriterResult": state.get("laterWriterResult"),
+        "mountPolicyHeld": state.get("mountPolicyHeld"),
+        "mountsObserved": state.get("mountsObserved"),
     })
     return {
         "command": "drain",

@@ -52,35 +52,42 @@ class DatomicWriterTests(unittest.TestCase):
         self.assertEqual(listed["transactPaths"], 13)
         self.assertGreaterEqual(len(found["bypass"]), 5)
 
-    def test_quiescence_requires_storage_exclusivity_not_a_cooperative_lock(self):
-        gate = {
-            "othersSeeReadOnly": True,
-            "capSysAdmin": False,
-            "bridgeMountPrivate": True,
-            "laterProcessWrite": "erofs",
-            "ownerCanRearmWrite": False,
-        }
-        self.assertFalse(prove_quiescence({"storageGate": {"cooperativeLockOnly": True}})["quiescenceProven"])
-        opened = dict(gate)
-        opened["laterProcessWrite"] = "ok"
-        self.assertFalse(prove_quiescence({"storageGate": opened})["quiescenceProven"])
-        rearmed = dict(gate)
-        rearmed["ownerCanRearmWrite"] = True
-        self.assertEqual(prove_quiescence({"storageGate": rearmed})["reason"], "storage_not_exclusive")
-        proven = prove_quiescence({
-            "storageGate": gate,
+    def test_the_thirteen_transact_tools_do_not_open_a_client_directly(self):
+        tools = [row["path"] for row in inventory_report()["rows"] if row["transact"]]
+        self.assertEqual(len(tools), 13)
+        for relative in tools:
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertNotIn("(d/client", text, relative)
+            self.assertTrue(
+                "persistence/client" in text or "(p/client" in text or "live-guard/assert-external!" in text,
+                relative,
+            )
+
+    def test_quiescence_requires_an_observed_exclusive_mount(self):
+        observed = {
+            "nodePhase": "draining",
+            "jvmPhase": "quiescent",
             "activeNodeOps": 0,
             "activeJvmWrites": 0,
-            "liveExternalWriters": [],
-        })
-        self.assertTrue(proven["quiescenceProven"])
-        self.assertEqual(proven["phase"], "quiescent")
-        after = prove_quiescence({
-            "storageGate": gate,
-            "liveExternalWriters": ["scripts/a64_apply_028_schema_only.clj"],
-        })
-        self.assertFalse(after["quiescenceProven"])
-        self.assertEqual(after["reason"], "external_datomic_client")
+            "authorizedWriter": "odisseu-a6-jvm",
+            "writableMounts": ["odisseu-a6-jvm"],
+            "capSysAdmin": False,
+            "maintenanceToolsRunning": [],
+            "laterWriterResult": "no_mount",
+            "mountPolicyHeld": True,
+            "mountsObserved": True,
+        }
+        self.assertFalse(prove_quiescence({"quiescenceProven": True})["quiescenceProven"])
+        self.assertEqual(prove_quiescence(observed)["phase"], "quiescent")
+        second = dict(observed)
+        second["writableMounts"] = ["odisseu-a6-jvm", "odisseu-a6-extra"]
+        self.assertEqual(prove_quiescence(second)["reason"], "writable_mount_not_exclusive")
+        later = dict(observed)
+        later["laterWriterResult"] = "writable"
+        self.assertFalse(prove_quiescence(later)["quiescenceProven"])
+        declared = dict(observed)
+        declared["mountsObserved"] = False
+        self.assertEqual(prove_quiescence(declared)["reason"], "mounts_not_observed")
 
     def test_recovery_gate_remains_closed_after_a_bad_marker(self):
         source = (ROOT / "modules/pokemon/infrastructure/pokemon/infrastructure/http/maintenance_gate.clj").read_text(encoding="utf-8")

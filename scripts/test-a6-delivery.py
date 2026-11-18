@@ -36,15 +36,15 @@ def isolated_state():
         "externalWriters": [],
         "activeNodeOps": 0,
         "activeJvmWrites": 0,
-        "storageGate": {
-            "othersSeeReadOnly": True,
-            "capSysAdmin": False,
-            "bridgeMountPrivate": True,
-            "laterProcessWrite": "erofs",
-            "ownerCanRearmWrite": False,
-        },
+        "jvmPhase": "quiescent",
+        "authorizedWriter": "odisseu-a6-jvm",
+        "writableMounts": ["odisseu-a6-jvm"],
+        "capSysAdmin": False,
+        "maintenanceToolsRunning": [],
+        "laterWriterResult": "no_mount",
+        "mountPolicyHeld": True,
+        "mountsObserved": True,
         "nodePhase": "draining",
-        "jvmPhase": "open",
     }
 
 
