@@ -24,17 +24,15 @@ plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 if plan.get("isolated") is not True:
     print("plano não isolado", file=sys.stderr)
     raise SystemExit(2)
-proof = prove_quiescence(plan.get("evidence") or {})
+observed = plan.get("observedContainers")
+if isinstance(observed, list):
+    mounts = assess(observed, plan["preserve"]["datomic"], plan["container"])
+    if not mounts["exclusive"]:
+        print(mounts["reason"] or "writable_mount_not_exclusive", file=sys.stderr)
+        raise SystemExit(2)
+proof = prove_quiescence(plan.get("evidence") or {}, plan)
 if not proof["quiescenceProven"]:
     print(proof["reason"] or "quiescence_not_proven", file=sys.stderr)
-    raise SystemExit(2)
-observed = plan.get("observedContainers")
-if not isinstance(observed, list):
-    print("mounts_not_observed", file=sys.stderr)
-    raise SystemExit(2)
-mounts = assess(observed, plan["preserve"]["datomic"], plan["container"])
-if not mounts["exclusive"]:
-    print(mounts["reason"] or "writable_mount_not_exclusive", file=sys.stderr)
     raise SystemExit(2)
 for key in ("datomic", "journal", "maint", "session"):
     if not plan.get("preserve", {}).get(key):

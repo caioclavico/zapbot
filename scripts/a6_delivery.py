@@ -113,20 +113,9 @@ def verify(state, service):
 def drain(state):
     preflight(state)
     writers = _external_writers(state)
-    proof = prove_quiescence({
-        "externalWriters": writers,
-        "activeNodeOps": state.get("activeNodeOps") or 0,
-        "activeJvmWrites": state.get("activeJvmWrites") or 0,
-        "nodePhase": state.get("nodePhase"),
-        "jvmPhase": state.get("jvmPhase"),
-        "authorizedWriter": state.get("authorizedWriter"),
-        "writableMounts": state.get("writableMounts"),
-        "capSysAdmin": state.get("capSysAdmin"),
-        "maintenanceToolsRunning": state.get("maintenanceToolsRunning") or [],
-        "laterWriterResult": state.get("laterWriterResult"),
-        "mountPolicyHeld": state.get("mountPolicyHeld"),
-        "mountsObserved": state.get("mountsObserved"),
-    })
+    proof = prove_quiescence(state.get("collection"), state)
+    if writers and not proof["quiescenceProven"] and proof["reason"] == "declared_evidence":
+        proof = dict(proof, reason="external_datomic_client")
     return {
         "command": "drain",
         "phase": proof["phase"],

@@ -2,6 +2,7 @@
 """Classifica clientes Datomic. Quiescência não é comprovada enquanto houver bypass."""
 
 from pathlib import Path
+import json
 import unittest
 
 from a6_writer_policy import inventory_report, prove_quiescence
@@ -58,36 +59,97 @@ class DatomicWriterTests(unittest.TestCase):
         for relative in tools:
             text = (ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn("(d/client", text, relative)
+            self.assertNotIn("runtime-client", text, relative)
             self.assertTrue(
                 "persistence/client" in text or "(p/client" in text or "live-guard/assert-external!" in text,
                 relative,
             )
 
-    def test_quiescence_requires_an_observed_exclusive_mount(self):
-        observed = {
+    def test_declared_map_does_not_prove_quiescence(self):
+        declared = {
+            "quiescenceProven": True,
+            "mountsObserved": True,
+            "environment": "isolated",
             "nodePhase": "draining",
             "jvmPhase": "quiescent",
-            "activeNodeOps": 0,
-            "activeJvmWrites": 0,
-            "authorizedWriter": "odisseu-a6-jvm",
-            "writableMounts": ["odisseu-a6-jvm"],
-            "capSysAdmin": False,
-            "maintenanceToolsRunning": [],
-            "laterWriterResult": "no_mount",
-            "mountPolicyHeld": True,
-            "mountsObserved": True,
         }
-        self.assertFalse(prove_quiescence({"quiescenceProven": True})["quiescenceProven"])
-        self.assertEqual(prove_quiescence(observed)["phase"], "quiescent")
-        second = dict(observed)
-        second["writableMounts"] = ["odisseu-a6-jvm", "odisseu-a6-extra"]
-        self.assertEqual(prove_quiescence(second)["reason"], "writable_mount_not_exclusive")
-        later = dict(observed)
-        later["laterWriterResult"] = "writable"
-        self.assertFalse(prove_quiescence(later)["quiescenceProven"])
-        declared = dict(observed)
-        declared["mountsObserved"] = False
-        self.assertEqual(prove_quiescence(declared)["reason"], "mounts_not_observed")
+        report = prove_quiescence(declared, {"environment": "isolated"})
+        self.assertFalse(report["quiescenceProven"])
+        self.assertEqual(report["reason"], "declared_evidence")
+        blocked = prove_quiescence(None, {"environment": "production"})
+        self.assertEqual(blocked["reason"], "production_not_authorized")
+
+    def test_slashed_privileged_name_is_not_exclusive(self):
+        from a6_mount_policy import assess
+        containers = [{
+            "Id": "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abcd",
+            "Name": "/odisseu-a6-jvm",
+            "Mounts": [{"Name": "a6-lab-datomic", "Destination": "/data/datomic-local", "RW": True}],
+            "HostConfig": {"Privileged": True, "CapAdd": ["SYS_ADMIN"]},
+            "CapEff": "00000000a80425fb",
+        }]
+        result = assess(containers, "a6-lab-datomic", "odisseu-a6-jvm")
+        self.assertFalse(result["exclusive"])
+        self.assertEqual(result["reason"], "privileged_or_sys_admin")
+        quiet = {
+            "Id": "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abcd",
+            "Name": "/odisseu-a6-jvm",
+            "Mounts": [{"Name": "a6-lab-datomic", "Destination": "/data/datomic-local", "RW": True}],
+            "HostConfig": {"Privileged": False, "CapAdd": []},
+            "CapEff": "00000000a80425fb",
+        }
+        extra = {
+            "Id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "Name": "/outra-ferramenta",
+            "Mounts": [{"Name": "a6-lab-datomic", "RW": True}],
+            "HostConfig": {"Privileged": False, "CapAdd": ["SYS_ADMIN"]},
+            "CapEff": "00000000a80425fb",
+        }
+        second = assess([quiet, extra], "a6-lab-datomic", "odisseu-a6-jvm")
+        self.assertFalse(second["exclusive"])
+        self.assertEqual(second["reason"], "writable_mount_not_exclusive")
+
+    def test_collected_observation_can_prove_an_isolated_lab_only(self):
+        from a6_mount_policy import collect_from_runner
+        document = {
+            "Id": "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abcd",
+            "Name": "/odisseu-a6-jvm",
+            "Mounts": [{"Name": "a6-lab-datomic", "Destination": "/data/datomic-local", "RW": True}],
+            "HostConfig": {"Privileged": False, "CapAdd": []},
+        }
+
+        class Result:
+            def __init__(self, stdout, returncode=0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def runner(args, processes="clojure.main -m odisseu.bridge.http-server\n"):
+            if args[:2] == ["docker", "inspect"]:
+                return Result(json.dumps([document]))
+            if args[-1] == "/proc/self/status":
+                return Result("CapEff:\t00000000a80425fb\n")
+            if "ps" in args:
+                return Result(processes)
+            if str(args[-1]).endswith("bridge-maintenance.edn"):
+                return Result("{:phase :quiescent :active-writes 0}\n")
+            if str(args[-1]).endswith("a6-maintenance.json"):
+                return Result('{"phase":"draining","activeOps":0}\n')
+            return Result("", 1)
+
+        collection = collect_from_runner(lambda args: runner(args), "a6-lab-datomic", "odisseu-a6-jvm")
+        proven = prove_quiescence(collection, {"environment": "isolated"})
+        self.assertTrue(proven["quiescenceProven"])
+        self.assertIsNone(proven["reason"])
+        busy = collect_from_runner(
+            lambda args: runner(args, processes="scripts/a64_apply_028_schema_only.clj\n"),
+            "a6-lab-datomic",
+            "odisseu-a6-jvm",
+        )
+        blocked = prove_quiescence(busy, {"environment": "isolated"})
+        self.assertFalse(blocked["quiescenceProven"])
+        self.assertEqual(blocked["reason"], "external_datomic_client")
+        live = collect_from_runner(lambda args: runner(args), "odisseu-a6-cutover-datomic", "odisseu-a6-jvm")
+        self.assertIsNone(live)
 
     def test_recovery_gate_remains_closed_after_a_bad_marker(self):
         source = (ROOT / "modules/pokemon/infrastructure/pokemon/infrastructure/http/maintenance_gate.clj").read_text(encoding="utf-8")

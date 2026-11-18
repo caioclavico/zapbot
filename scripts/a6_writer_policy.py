@@ -74,30 +74,33 @@ INVENTORY = (
 )
 
 
-def prove_quiescence(evidence):
-    """Ignora quiescenceProven recebido. A prova sai só dos campos observados."""
-    evidence = dict(evidence or {})
-    evidence.pop("quiescenceProven", None)
-    writers = list(evidence.get("liveExternalWriters") or evidence.get("externalWriters") or [])
-    tools = list(evidence.get("maintenanceToolsRunning") or [])
-    if writers or tools:
-        return {"quiescenceProven": False, "reason": "external_datomic_client", "phase": "draining"}
-    if int(evidence.get("activeNodeOps") or 0) != 0 or int(evidence.get("activeJvmWrites") or 0) != 0:
+def prove_quiescence(collection, state=None):
+    """Só uma Collection lida por collect_from_runner pode ser verdadeira.
+    Mapa, flag mountsObserved e quiescenceProven declarados não provam nada.
+    Produção nunca é autorizada por este resultado."""
+    from a6_mount_policy import LIVE_VOLUME, Collection, assess
+
+    state = state or {}
+    if state.get("environment") == "production":
+        return {"quiescenceProven": False, "reason": "production_not_authorized", "phase": "draining"}
+    if isinstance(collection, dict) or not isinstance(collection, Collection):
+        return {"quiescenceProven": False, "reason": "declared_evidence", "phase": "draining"}
+    if collection.source != "docker-inspect-subprocess":
+        return {"quiescenceProven": False, "reason": "declared_evidence", "phase": "draining"}
+    if collection.volume == LIVE_VOLUME or "cutover" in collection.volume:
+        return {"quiescenceProven": False, "reason": "live_volume_not_authorized", "phase": "draining"}
+    if collection.active_node_ops != 0 or collection.active_jvm_writes != 0:
         return {"quiescenceProven": False, "reason": "writes_in_flight", "phase": "draining"}
-    if evidence.get("nodePhase") not in ("draining", "quiescent", "frozen"):
+    if collection.node_phase not in ("draining", "quiescent", "frozen"):
         return {"quiescenceProven": False, "reason": "node_not_draining", "phase": "draining"}
-    if evidence.get("jvmPhase") not in ("quiescent", "frozen"):
+    if collection.jvm_phase not in ("quiescent", "frozen"):
         return {"quiescenceProven": False, "reason": "jvm_not_quiescent", "phase": "draining"}
-    if evidence.get("mountsObserved") is not True or evidence.get("mountPolicyHeld") is not True:
-        return {"quiescenceProven": False, "reason": "mounts_not_observed", "phase": "draining"}
-    if evidence.get("capSysAdmin") is not False:
-        return {"quiescenceProven": False, "reason": "cap_sys_admin", "phase": "draining"}
-    if evidence.get("laterWriterResult") != "no_mount":
-        return {"quiescenceProven": False, "reason": "later_writer_not_proven", "phase": "draining"}
-    holders = evidence.get("writableMounts")
-    writer = evidence.get("authorizedWriter")
-    if not writer or holders != [writer]:
-        return {"quiescenceProven": False, "reason": "writable_mount_not_exclusive", "phase": "draining"}
+    for row in INVENTORY:
+        if row["transact"] and row["path"] in collection.processes:
+            return {"quiescenceProven": False, "reason": "external_datomic_client", "phase": "draining"}
+    result = assess(collection.documents, collection.volume, collection.authorized)
+    if not result["exclusive"]:
+        return {"quiescenceProven": False, "reason": result["reason"], "phase": "draining"}
     return {"quiescenceProven": True, "reason": None, "phase": "quiescent"}
 
 

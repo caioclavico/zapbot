@@ -190,3 +190,6 @@ jobs:
 
       - name: Quiescência em Datomic temporário
         run: clojure -M:smoke-a6-maintenance-quiescence
+
+      - name: Identidade do storage desconhecida não abre cliente
+        run: clojure -M -e "(require 'clojure.test 'pokemon.tests.live-storage-guard-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.live-storage-guard-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"

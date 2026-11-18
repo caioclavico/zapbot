@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 from a6_consistent_backup import BackupError, consistent_copy, restore_copy
+from a6_mount_policy import collect_from_runner
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,21 +20,33 @@ PROVE = ROOT / "scripts" / "a6-storage-namespace-prove.sh"
 ENTRY = ROOT / "docker" / "jvm-storage-entrypoint.sh"
 
 
-def evidence():
-    return {
-        "nodePhase": "draining",
-        "jvmPhase": "quiescent",
-        "activeNodeOps": 0,
-        "activeJvmWrites": 0,
-        "liveExternalWriters": [],
-        "authorizedWriter": "odisseu-a6-jvm",
-        "writableMounts": ["odisseu-a6-jvm"],
-        "capSysAdmin": False,
-        "maintenanceToolsRunning": [],
-        "laterWriterResult": "no_mount",
-        "mountPolicyHeld": True,
-        "mountsObserved": True,
+def evidence(processes="clojure.main -m odisseu.bridge.http-server\n"):
+    document = {
+        "Id": "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abcd",
+        "Name": "/odisseu-a6-jvm",
+        "Mounts": [{"Name": "a6-lab-datomic", "Destination": "/data/datomic-local", "RW": True}],
+        "HostConfig": {"Privileged": False, "CapAdd": []},
     }
+
+    class Result:
+        def __init__(self, stdout, returncode=0):
+            self.stdout = stdout
+            self.returncode = returncode
+
+    def runner(args):
+        if args[:2] == ["docker", "inspect"]:
+            return Result(json.dumps([document]))
+        if args[-1] == "/proc/self/status":
+            return Result("CapEff:\t00000000a80425fb\n")
+        if "ps" in args:
+            return Result(processes)
+        if str(args[-1]).endswith("bridge-maintenance.edn"):
+            return Result("{:phase :quiescent :active-writes 0}\n")
+        if str(args[-1]).endswith("a6-maintenance.json"):
+            return Result('{"phase":"draining","activeOps":0}\n')
+        return Result("", 1)
+
+    return collect_from_runner(runner, "a6-lab-datomic", "odisseu-a6-jvm")
 
 
 class BackupRollbackTests(unittest.TestCase):
@@ -43,7 +56,7 @@ class BackupRollbackTests(unittest.TestCase):
             source.mkdir()
             (source / "save.edn").write_text("{:player \"p\"}", encoding="utf-8")
             with self.assertRaises(BackupError):
-                consistent_copy(source, Path(tmp) / "copy", {"storageGate": {"cooperativeLockOnly": True}})
+                consistent_copy(source, Path(tmp) / "copy", {"mountsObserved": True, "quiescenceProven": True})
             self.assertTrue((source / "save.edn").exists())
             report = consistent_copy(source, Path(tmp) / "copy", evidence())
             self.assertEqual(report["files"], 1)
@@ -90,7 +103,7 @@ class BackupRollbackTests(unittest.TestCase):
                     "maint": "odisseu-a6-cutover-maint",
                     "session": "a6-cutover-session-from-core",
                 },
-                "evidence": evidence(),
+                "evidence": {"quiescenceProven": True, "mountsObserved": True},
                 "observedContainers": [{
                     "Name": "odisseu-a6-jvm",
                     "Mounts": [{"Name": "odisseu-a6-cutover-datomic", "Destination": "/data/datomic-local", "RW": True}],
@@ -102,11 +115,9 @@ class BackupRollbackTests(unittest.TestCase):
             env = os.environ.copy()
             env.update({"A6_ISOLATED": "1", "PATH": f"{binary}:{env.get('PATH', '')}", "DOCKER_LOG": str(log)})
             done = subprocess.run(["bash", str(UPDATE), str(path)], check=False, capture_output=True, text=True, env=env)
-            self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertIn("previous=odisseu-jvm:old", done.stdout)
-            recorded = log.read_text(encoding="utf-8")
-            self.assertNotIn("volume rm", recorded)
-            self.assertNotIn("compose down", recorded)
+            self.assertEqual(done.returncode, 2, done.stderr)
+            self.assertIn("live_volume_refused", done.stderr)
+            self.assertFalse(log.exists() and "rename" in log.read_text(encoding="utf-8"))
             refused = subprocess.run(["bash", str(UPDATE), str(path)], check=False, capture_output=True, text=True)
             self.assertEqual(refused.returncode, 2)
 
@@ -138,7 +149,7 @@ class BackupRollbackTests(unittest.TestCase):
                     "maint": "a6-lab-maint",
                     "session": "a6-lab-session",
                 },
-                "evidence": evidence(),
+                "evidence": {"quiescenceProven": True, "mountsObserved": True},
                 "observedContainers": [
                     {"Name": "odisseu-a6-jvm", "Mounts": [{"Name": "a6-lab-datomic", "RW": True}],
                      "HostConfig": {"Privileged": False, "CapAdd": []}},
@@ -223,6 +234,27 @@ class BackupRollbackTests(unittest.TestCase):
                 check=False, capture_output=True, text=True,
             )
             self.assertNotEqual(outsider.returncode, 0)
+            restarted = subprocess.run(["docker", "restart", jvm], check=False, capture_output=True, text=True)
+            self.assertEqual(restarted.returncode, 0, restarted.stderr)
+            outsider_again = subprocess.run(
+                ["docker", "run", "--rm", "--cap-drop", "SYS_ADMIN", "alpine",
+                 "sh", "-c", "echo later >> /data/datomic-local/save"],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertNotEqual(outsider_again.returncode, 0)
+            subprocess.run(["docker", "rm", "-f", jvm], check=False, capture_output=True, text=True)
+            recreated = subprocess.run(
+                ["docker", "run", "-d", "--name", jvm, "--cap-drop", "SYS_ADMIN",
+                 "-v", f"{name}:/data/datomic-local", "alpine", "sleep", "20"],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(recreated.returncode, 0, recreated.stderr)
+            outsider_recreated = subprocess.run(
+                ["docker", "run", "--rm", "--cap-drop", "SYS_ADMIN", "alpine",
+                 "sh", "-c", "echo later >> /data/datomic-local/save"],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertNotEqual(outsider_recreated.returncode, 0)
             self.assertNotIn(name, outsider.stdout)
             second = subprocess.run(
                 ["docker", "run", "-d", "--name", extra, "--cap-drop", "SYS_ADMIN",
@@ -235,12 +267,28 @@ class BackupRollbackTests(unittest.TestCase):
             )
             observed = json.loads(inspect.stdout)
             from a6_mount_policy import assess
+            for container in observed:
+                status = subprocess.run(
+                    ["docker", "exec", container["Id"], "cat", "/proc/self/status"],
+                    check=False, capture_output=True, text=True,
+                )
+                for line in status.stdout.splitlines():
+                    if line.startswith("CapEff:"):
+                        container["CapEff"] = line.split(":", 1)[1].strip()
             result = assess(observed, name, jvm)
             self.assertFalse(result["exclusive"])
             self.assertEqual(result["reason"], "writable_mount_not_exclusive")
             subprocess.run(["docker", "rm", "-f", extra], check=False, capture_output=True, text=True)
             inspect_one = subprocess.run(["docker", "inspect", jvm], check=False, capture_output=True, text=True)
-            alone = assess(json.loads(inspect_one.stdout), name, jvm)
+            alone_docs = json.loads(inspect_one.stdout)
+            status = subprocess.run(
+                ["docker", "exec", jvm, "cat", "/proc/self/status"],
+                check=False, capture_output=True, text=True,
+            )
+            for line in status.stdout.splitlines():
+                if line.startswith("CapEff:"):
+                    alone_docs[0]["CapEff"] = line.split(":", 1)[1].strip()
+            alone = assess(alone_docs, name, jvm)
             self.assertTrue(alone["exclusive"], alone)
         finally:
             subprocess.run(["docker", "rm", "-f", jvm, extra], check=False, capture_output=True, text=True)
