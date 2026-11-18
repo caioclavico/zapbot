@@ -90,6 +90,36 @@ test('falha de Sinistea não autoriza consumo', () => {
   assert.equal(semCadeia.motivo, 'sem-cadeia');
 });
 
+test('planejar Sinistea é idempotente e não mexe no inventário', () => {
+  const inv = { itens: [{ itemId: 'catalisador-evolutivo', qty: 1 }] };
+  const primeiro = pokeapi.planejarEvolucaoSinistea({
+    species: 'sinistea', chain: cadeiaSinistea, inventario: inv
+  });
+  const segundo = pokeapi.planejarEvolucaoSinistea({
+    species: 'sinistea', chain: cadeiaSinistea, inventario: inv
+  });
+  assert.deepEqual(segundo, primeiro);
+  assert.equal(primeiro.consumir, true);
+  assert.equal(inv.itens[0].qty, 1);
+  const outro = pokeapi.planejarEvolucaoSinistea({
+    species: 'poltchageist',
+    chain: {
+      chain: {
+        species: { name: 'poltchageist' },
+        evolves_to: [{
+          species: { name: 'sinistcha' },
+          evolution_details: [
+            { trigger: { name: 'use-item' }, item: { name: 'cracked-pot' } }
+          ]
+        }]
+      }
+    },
+    inventario: inv
+  });
+  assert.equal(outro.consumir, false);
+  assert.equal(outro.motivo, 'especie');
+});
+
 test('Pikachu continua na pedra-trovão e outras evoluções especiais ficam de fora', () => {
   assert.equal(pokeapi.destinoPedra('pedra-trovao', 'pikachu'), 'raichu');
   const pikachu = pokeapi.planejarEvolucaoSinistea({
