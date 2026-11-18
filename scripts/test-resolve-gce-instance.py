@@ -42,13 +42,16 @@ class ResolveTests(unittest.TestCase):
                 encoding="utf-8",
             )
             binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
-            env = os.environ.copy()
-            env.update({
-                "PATH": f"{tmp}:{env.get('PATH', '')}",
+            # Ambiente mínimo: no Actions, GITHUB_OUTPUT faria o script
+            # gravar o host no arquivo do runner e deixar stdout vazio.
+            env = {
+                "PATH": f"{tmp}:{os.environ.get('PATH', '')}",
+                "HOME": os.environ.get("HOME", "/tmp"),
+                "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
                 "ODISSEU_GCP_PROJECT": "lab",
                 "ODISSEU_GCP_ZONE": "us-central1-a",
                 "ODISSEU_GCP_INSTANCE": "odisseu-lab",
-            })
+            }
             result = subprocess.run(["bash", str(SCRIPT)], check=False, capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "host=192.0.2.20")
