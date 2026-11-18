@@ -226,10 +226,15 @@ class ComposeTest(unittest.TestCase):
     def test_google_destination_fixed_and_existing_deploy_gates_preserved(self):
         workflow = Path(__file__).parents[1] / '.github/workflows/deploy.yml'
         text = workflow.read_text()
-        self.assertEqual(text.count("SSH_HOST: '35.238.24.225'"), 2)
-        self.assertEqual(text.count("SSH_USER: 'zapbot-deploy'"), 2)
+        self.assertNotIn('35.238.24.225', text)
+        self.assertNotIn('35.192.113.146', text)
+        self.assertNotIn('34.68.189.66', text)
         self.assertNotIn('129.148.52.187', text)
-        self.assertIn("vars.AUTO_DEPLOY_ENABLED == 'true'", text)
+        self.assertNotIn("SSH_USER: 'zapbot-deploy'", text)
+        self.assertIn("vars.ODISSEU_PRODUCTION_DEPLOY_HOLD == 'false'", text)
+        self.assertIn("vars.ODISSEU_A6_DELIVERY_VALIDATED == 'true'", text)
+        self.assertIn("inputs.production_authorization == 'autorizar-producao-a6'", text)
+        self.assertNotIn("github.event_name == 'push' && vars.AUTO_DEPLOY_ENABLED", text)
         self.assertIn('refs/heads/master', text)
         self.assertIn('production', text)
         self.assertEqual(D.SERVICES['odisseu'][1], '/home/caiohclavico/zapbot')

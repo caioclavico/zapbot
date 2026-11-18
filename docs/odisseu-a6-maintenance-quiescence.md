@@ -16,6 +16,8 @@ Os requisitos abaixo continuam valendo. A retomada é explícita: JVM primeiro e
 
 **Decisão desta reconciliação: BLOCKED para deploy e para manutenção em produção.**
 
+O workflow não usa mais endereço IP fixo. A VM só pode ser resolvida por projeto, zona e nome, e o job de deploy não entra na fila por push. Além do hold, falta `ODISSEU_A6_DELIVERY_VALIDATED=true`, que esta revisão não configura. Node e JVM são passos separados. O runner `scripts/ci-a6-deliver.sh` recusa o apply na VM. A quiescência continua não comprovada: scripts, ensaios e o cutover ainda abrem cliente Datomic fora da bridge.
+
 **Decisão: CONDITIONAL**
 **Escopo executado:** implementação e homologação local, no clone `/private/tmp/zapbot-announcer-a6-rc-final`. Nenhuma conexão ou alteração em produção foi realizada. Não houve backup cold, parada/restart live, migration, deploy ou envio WhatsApp real.
 
