@@ -255,13 +255,17 @@ class ProductionDeployTests(unittest.TestCase):
         self.assertIn("invalid_sha", plan(CURRENT, "nao-e-sha", "jvm")["blocked"])
         stopped = jvm_document()
         stopped["State"] = {"Running": False, "Status": "exited"}
-        if not Path(DATOMIC_SOURCE).exists():
-            with self.assertRaises(ProductionBackupError) as missing:
-                execute_copy(
-                    collection([stopped]), VM, "/tmp/odisseu-a6-backup-missing", "false", True,
-                    BACKUP_AUTHORIZATION, 2_000_000_000, 100,
-                )
-            self.assertEqual(str(missing.exception), "source_missing")
+        try:
+            live_readable = Path(DATOMIC_SOURCE).is_dir()
+        except OSError:
+            live_readable = False
+        self.assertFalse(live_readable, "volume live legível; a suíte não copia")
+        with self.assertRaises(ProductionBackupError) as missing:
+            execute_copy(
+                collection([stopped]), VM, "/tmp/odisseu-a6-backup-missing", "false", True,
+                BACKUP_AUTHORIZATION, 2_000_000_000, 100,
+            )
+        self.assertIn(str(missing.exception), {"source_missing", "source_unreadable"})
         external = collection(
             [stopped],
             processes="clojure apps/odisseu/src/odisseu/smoke/datomic_local.clj\n",

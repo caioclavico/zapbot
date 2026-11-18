@@ -154,11 +154,17 @@ def execute_copy(collection, vm, destination, hold, execute, authorization, free
     try:
         if Path(destination).resolve().is_relative_to(source.resolve()):
             raise ProductionBackupError("destination_not_separate")
-    except OSError:
-        raise ProductionBackupError("destination_not_separate")
-    if not source.is_dir():
+        readable = source.is_dir()
+    except ProductionBackupError:
+        raise
+    except OSError as exc:
+        raise ProductionBackupError("source_unreadable") from exc
+    if not readable:
         raise ProductionBackupError("source_missing")
-    measured = _dir_bytes(source)
+    try:
+        measured = _dir_bytes(source)
+    except OSError as exc:
+        raise ProductionBackupError("source_unreadable") from exc
     if source_bytes < measured:
         raise ProductionBackupError("source_bytes_mismatch")
     if free_bytes < max(source_bytes, measured) * 2 + MARGIN:
