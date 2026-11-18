@@ -1,5 +1,8 @@
 (ns zapbot.pokemon.core
-  "Comando !pokemon - batalha entre duas pessoas do chat, cada uma com um
+  "Motor legado de compatibilidade. O WhatsApp ao vivo entra por
+  zapbot.pokemon-http e as regras atuais ficam na JVM. Este namespace
+  continua nos builds de reset, migração e benchmark e nos testes CLJS.
+  Comando !pokemon - batalha entre duas pessoas do chat, cada uma com um
   Pokémon sorteado (nome, imagem, golpes reais e stats via PokeAPI - grátis,
   sem chave). Cada jogador escolhe qual dos 4 golpes do seu Pokémon usar a
   cada turno; ataques consideram o tipo/poder/classe do golpe escolhido,
