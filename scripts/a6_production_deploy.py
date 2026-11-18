@@ -50,6 +50,21 @@ def image_tag(kind, sha):
     raise DeployError("service_required")
 
 
+def _valid_digest(digest):
+    text = str(digest or "")
+    if text.startswith("sha256:"):
+        text = text[7:]
+    return len(text) == 64 and all(char in "0123456789abcdef" for char in text)
+
+
+def image_ref(kind, sha, digest):
+    tag = image_tag(kind, sha)
+    if not _valid_digest(digest):
+        return tag
+    hexpart = str(digest).split(":", 1)[-1]
+    return f"{tag}@sha256:{hexpart}"
+
+
 def _safe(argv):
     text = " ".join(argv)
     for token in FORBIDDEN:
@@ -204,7 +219,7 @@ def execute_allowed(env, reasons, service):
     return not reasons
 
 
-def plan(observation, sha, service, env=None):
+def plan(observation, sha, service, env=None, digest=None, backup=None, jvm_updated=False):
     env = env or {}
     reasons = preflight(observation)
     if observation.get("jvm", {}).get("phase") != "quiescent":
@@ -216,10 +231,17 @@ def plan(observation, sha, service, env=None):
             reasons.append("external_datomic_client")
     if not observation.get("_observed"):
         reasons.append("declared_evidence")
+    if service == "node" and not jvm_updated:
+        reasons.append("jvm_not_updated")
+    if not _valid_digest(digest):
+        reasons.append("image_digest_missing")
+    verified = isinstance(backup, dict) and backup.get("manifestVerified") is True and backup.get("sourcePreserved") is True
+    if not verified:
+        reasons.append("backup_not_verified")
     direct = bool(observation.get("dockerDirect"))
     try:
         tag = image_tag(service, sha)
-        argv = recreate_argv(service, tag, observation[service], direct)
+        argv = recreate_argv(service, image_ref(service, sha, digest), observation[service], direct)
     except DeployError as exc:
         reasons.append(str(exc))
         tag = ""
@@ -240,11 +262,14 @@ def plan(observation, sha, service, env=None):
         "dockerDirect": direct,
         "service": service,
         "previousImage": previous,
+        "previousDigest": observation.get(service, {}).get("imageId") or "",
         "nextImage": tag,
+        "imageDigest": digest if _valid_digest(digest) else "",
         "argv": argv,
         "rollbackArgv": rollback,
         "blocked": sorted(set(reasons)),
         "oneService": service,
+        "jvmBeforeNode": service == "jvm" or bool(jvm_updated),
         "untouched": "odisseu-a6-node" if service == "jvm" else "odisseu-a6-jvm",
     }
 
