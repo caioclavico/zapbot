@@ -1,0 +1,190 @@
+name: Validação A6 do PR
+
+# Testes do PR #106 e da linha de reconciliação.
+# Não publica imagem, não implanta e não fala com a VM.
+# O push desta branch é o gatilho que o GitHub aceita antes do arquivo
+# existir na master. pull_request passa a valer de forma estável depois
+# que este arquivo estiver na master. O código da branch não recebe
+# o token da base.
+
+on:
+  push:
+    branches:
+      - integration/a6-master-reconciliation
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a6-pr-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Testar e compilar Node
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/integration/a6-master-reconciliation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+    steps:
+      - name: Recusar execução fora da validação
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${GITHUB_EVENT_NAME}" in
+            pull_request|push) ;;
+            *) echo "evento não permitido" >&2; exit 1 ;;
+          esac
+          for key in ODISSEU_GCP_PROJECT ODISSEU_GCP_ZONE ODISSEU_GCP_INSTANCE SSH_HOST SSH_KEY POKEMON_HOST POKEMON_USER; do
+            if [[ -n "${!key:-}" ]]; then
+              echo "ambiente de produção presente" >&2
+              exit 1
+            fi
+          done
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:http
+      - run: npm run build
+
+  scripts:
+    name: Testar hold e entrega isolada
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/integration/a6-master-reconciliation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Recusar execução fora da validação
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${GITHUB_EVENT_NAME}" in
+            pull_request|push) ;;
+            *) echo "evento não permitido" >&2; exit 1 ;;
+          esac
+          for key in ODISSEU_GCP_PROJECT ODISSEU_GCP_ZONE ODISSEU_GCP_INSTANCE SSH_HOST SSH_KEY POKEMON_HOST POKEMON_USER; do
+            if [[ -n "${!key:-}" ]]; then
+              echo "ambiente de produção presente" >&2
+              exit 1
+            fi
+          done
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Conferir sintaxe e testes isolados
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/deploy-vm.sh scripts/load-image-vm.sh scripts/install-deploy.sh \
+            scripts/ci-ssh-deploy.sh scripts/resolve-gce-instance.sh scripts/a6-delivery.sh \
+            scripts/ci-a6-deliver.sh
+          python3 scripts/test-ci-changes.py
+          python3 scripts/test-ci-ssh.py
+          python3 scripts/test-production-deploy-hold.py
+          python3 scripts/test-a6-delivery.py
+          python3 scripts/test-a6-datomic-writers.py
+          python3 scripts/test-resolve-gce-instance.py
+          python3 scripts/test-deploy.py
+          python3 scripts/test-deploy-recovery.py
+          python3 scripts/test-deploy-compose.py
+          python3 scripts/test-load-image.py
+          python3 scripts/test-deploy-ssh.py
+          node --test scripts/test-ci-registry.cjs test/odisseu-legacy-stop.test.cjs
+
+  jvm:
+    name: Testar JVM, raids e quiescência
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/integration/a6-master-reconciliation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Recusar execução fora da validação
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${GITHUB_EVENT_NAME}" in
+            pull_request|push) ;;
+            *) echo "evento não permitido" >&2; exit 1 ;;
+          esac
+          for key in ODISSEU_GCP_PROJECT ODISSEU_GCP_ZONE ODISSEU_GCP_INSTANCE SSH_HOST SSH_KEY POKEMON_HOST POKEMON_USER DATOMIC_CLOUD_ENDPOINT; do
+            if [[ -n "${!key:-}" ]]; then
+              echo "ambiente de produção presente" >&2
+              exit 1
+            fi
+          done
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Instalar Clojure CLI 1.12.6.1673
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/linux-install.sh \
+            https://github.com/clojure/brew-install/releases/download/1.12.6.1673/linux-install.sh
+          chmod +x /tmp/linux-install.sh
+          sudo /tmp/linux-install.sh
+          clojure -Sdescribe
+
+      - name: Baixar dependências JVM
+        run: clojure -P -M:test-m3-raid
+
+      - name: M2 saves
+        run: clojure -M:test-m2-trainer
+
+      - name: M3.3 captura
+        run: clojure -M:test-m3-capture
+
+      - name: Captura comum 65/80/95
+        run: |
+          clojure -M -e "(require 'clojure.test 'pokemon.tests.move-effects-capture-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.move-effects-capture-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
+
+      - name: M3.4 batalha
+        run: clojure -M:test-m3-battle
+
+      - name: M3.5 ginásio
+        run: clojure -M:test-m3-gym
+
+      - name: M3.6 raids e Datomic temporário
+        run: clojure -M:test-m3-raid
+
+      - name: Mecânicas, persistência e idempotência do lote B
+        run: clojure -M:test-a6-lote-b
+
+      - name: Drain de manutenção
+        run: clojure -M:test-a6-maintenance-drain
+
+      - name: Quiescência em Datomic temporário
+        run: clojure -M:smoke-a6-maintenance-quiescence
