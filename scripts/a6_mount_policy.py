@@ -91,17 +91,16 @@ def writable_holders(containers, volume):
     return holders
 
 
-def assess(containers, volume, authorized):
-    if volume == LIVE_VOLUME:
-        return {"exclusive": False, "reason": "live_volume_refused", "holders": []}
+def assess_observed(containers, volume, authorized):
+    """Checa holders e capabilities. Não decide se o volume live pode ser usado."""
     holders = writable_holders(containers, volume)
-    authorized_name = normalize_name(authorized)
     if any(name and "node" in name for name in holders):
         return {"exclusive": False, "reason": "node_has_datomic", "holders": holders}
     privileged = False
     added = False
     effective_unknown = False
     effective_set = False
+    matched = False
     matched_name = ""
     for container in containers or []:
         if not _is_authorized(container, authorized):
@@ -127,6 +126,13 @@ def assess(containers, volume, authorized):
     if effective_unknown:
         return {"exclusive": False, "reason": "cap_eff_unknown", "holders": holders}
     return {"exclusive": True, "reason": None, "holders": holders}
+
+
+def assess(containers, volume, authorized):
+    """O helper de laboratório continua recusando o volume live."""
+    if volume == LIVE_VOLUME:
+        return {"exclusive": False, "reason": "live_volume_refused", "holders": []}
+    return assess_observed(containers, volume, authorized)
 
 
 def _run(runner, args):
