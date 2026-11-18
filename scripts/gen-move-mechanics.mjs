@@ -154,9 +154,12 @@ for (const slug of Object.keys(names)) {
     entry.familia = 'hazard'; entry.campo = 'toxicos';
   } else if (slug === 'sticky-web') {
     entry.familia = 'hazard'; entry.campo = 'teia';
-  } else if (['sunny-day', 'rain-dance', 'sandstorm', 'hail', 'snowscape'].includes(slug)) {
+  } else if (slug === 'hail') {
     entry.familia = 'clima';
-    entry.campo = { 'sunny-day': 'sol', 'rain-dance': 'chuva', 'sandstorm': 'areia', hail: 'neve', snowscape: 'neve' }[slug];
+    entry.campo = 'granizo';
+  } else if (['sunny-day', 'rain-dance', 'sandstorm', 'snowscape'].includes(slug)) {
+    entry.familia = 'clima';
+    entry.campo = { 'sunny-day': 'sol', 'rain-dance': 'chuva', 'sandstorm': 'areia', snowscape: 'neve' }[slug];
   } else if (['electric-terrain', 'grassy-terrain', 'misty-terrain'].includes(slug)) {
     entry.familia = 'terreno';
     entry.campo = { 'electric-terrain': 'eletrico', 'grassy-terrain': 'grama', 'misty-terrain': 'nevoa' }[slug];
@@ -238,10 +241,13 @@ function covers(limite, mec) {
   if (!mec) return false;
   if (limite === 'recuo que impede a ação') return mec.flinch > 0;
   if (limite === 'vários acertos') return mec.maxAcertos > 1;
-  if (limite === 'proteção') return mec.familia === 'protecao' || mec.atravessaProtecao === true;
+  if (limite === 'proteção') {
+    return mec.familia === 'protecao' || mec.atravessaProtecao === true
+      || (mec.familia === 'terreno' && mec.campo === 'nevoa');
+  }
   if (limite === 'precisão') return (mec.alteracoes || mec.alteracoesExtra || []).some(a => a.atributo === 'precisao') || mec.ignoraPrecisao === true;
   if (limite === 'evasão') return (mec.alteracoes || mec.alteracoesExtra || []).some(a => a.atributo === 'evasao');
-  if (limite === 'semente sanguessuga') return mec.familia === 'semente';
+  if (limite === 'semente sanguessuga') return mec.familia === 'semente' || mec.familia === 'limpar-volatil';
   if (limite === 'veneno grave') return mec.familia === 'veneno-grave';
   if (limite === 'armadilha') return mec.familia === 'residual';
   if (limite === 'vários turnos') return ['preparacao', 'recarga', 'residual', 'canto-mortal'].includes(mec.familia);

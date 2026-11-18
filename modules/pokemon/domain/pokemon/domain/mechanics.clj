@@ -304,7 +304,7 @@
   (cond
     (and (= clima :chuva) (:precisao-chuva golpe)) (:precisao-chuva golpe)
     (and (= clima :sol) (:precisao-sol golpe)) (:precisao-sol golpe)
-    (and (= clima :neve) (:precisao-neve golpe)) (:precisao-neve golpe)
+    (and (#{:neve :granizo} clima) (:precisao-neve golpe)) (:precisao-neve golpe)
     :else (:precisao golpe)))
 
 (defn terreno-bloqueia-status?
@@ -345,6 +345,7 @@
                    :chuva "🌧️ A chuva começou!"
                    :areia "🏜️ A tempestade de areia começou!"
                    :neve "❄️ A neve começou!"
+                   :granizo "🌨️ O granizo começou!"
                    "✨ O clima mudou!")})
 
     :terreno
@@ -463,15 +464,15 @@
         max-hp (long (get-in battle [:pokemons marca :hp] 0))
         areia? (and (= tipo :areia)
                     (not (some tipos ["rock" "ground" "steel"])))
-        neve? (and (= tipo :neve) (not (contains? tipos "ice")))
-        dano (when (and (pos? hp) (pos? max-hp) (or areia? neve?))
+        granizo? (and (= tipo :granizo) (not (contains? tipos "ice")))
+        dano (when (and (pos? hp) (pos? max-hp) (or areia? granizo?))
                (max 1 (long (quot max-hp 16))))]
     (if-not dano
       {:battle battle :mensagens []}
       {:battle (update-in battle [:hp marca] #(max 0 (- % dano)))
        :mensagens [(if areia?
                      (str "🏜️ A areia causou " dano " de dano!")
-                     (str "❄️ A neve causou " dano " de dano!"))]})))
+                     (str "🌨️ O granizo causou " dano " de dano!"))]})))
 
 (defn- cura-grama [battle marca]
   (let [tipos (tipos-de (get-in battle [:pokemons marca]))
@@ -485,6 +486,16 @@
       (let [cura (max 1 (long (quot max-hp 16)))]
         {:battle (update-in battle [:hp marca] #(min max-hp (+ % cura)))
          :mensagens [(str "🌱 O terreno gramado recuperou " cura " de HP!")]}))))
+
+(defn expirar-protecao-alheia
+  "A proteção dura a ação do adversário. Se ele não bater, ela se desfaz
+  no fim do turno dele e não atravessa a rodada seguinte."
+  [battle marca]
+  (let [outro (if (= marca :x) :o :x)]
+    (if (get-in battle [:volatil outro :protecao?])
+      {:battle (update-in battle [:volatil outro] dissoc :protecao?)
+       :mensagens ["🛡️ A proteção se desfez."]}
+      {:battle battle :mensagens []})))
 
 (defn tick-fim
   "Canto mortal e disable por lado. Clima e terreno contam uma vez por turno,
@@ -508,6 +519,7 @@
                (:battle dis))
         chip (chip-clima base marca)
         grama (cura-grama (:battle chip) marca)
+        prot (expirar-protecao-alheia (:battle grama) marca)
         acabou (cond-> []
                  (and primeiro? (get-in battle [:clima :tipo])
                       (nil? (get-in (:battle grama) [:clima :tipo])))
@@ -515,6 +527,7 @@
                  (and primeiro? (get-in battle [:terreno :tipo])
                       (nil? (get-in (:battle grama) [:terreno :tipo])))
                  (conj "✨ O terreno se desfez!"))]
-    {:battle (:battle grama)
+    {:battle (:battle prot)
      :mensagens (vec (concat (:mensagens per) (:mensagens dis)
-                             (:mensagens chip) (:mensagens grama) acabou))}))
+                             (:mensagens chip) (:mensagens grama)
+                             (:mensagens prot) acabou))}))

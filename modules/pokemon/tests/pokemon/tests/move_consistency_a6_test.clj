@@ -270,6 +270,92 @@
                 rng-base)]
       (is (nil? (get-in saiu [:volatil :x :desabilitado]))))))
 
+(deftest neve-nao-fura-e-granizo-fura
+  (let [x (mon "A" ["normal"]
+               [{:slug "tackle" :nome-exibicao "Investida" :tipo "normal"
+                 :poder 40 :classe :fisico}])
+        o (mon "B" ["normal"]
+               [{:slug "tackle" :nome-exibicao "Investida" :tipo "normal"
+                 :poder 1 :classe :fisico}])
+        base (batalha x o)
+        neve (battle/aplicar-fim-de-turno (assoc base :clima {:tipo :neve :restante 5}) :x)
+        gelo (battle/aplicar-fim-de-turno
+              (assoc-in (assoc base :clima {:tipo :granizo :restante 5})
+                        [:pokemons :x :tipos] ["ice"])
+              :x)
+        granizo (battle/aplicar-fim-de-turno
+                 (assoc base :clima {:tipo :granizo :restante 5}) :x)
+        nevasca (move-effects/enriquecer
+                 {:slug "blizzard" :poder 110 :classe :especial :tipo "ice"})
+        comum {:atacante x :defensor o
+               :rng {:accuracy 99 :crit 99 :damage-var 0 :dodge 99}}]
+    (is (= 160 (get-in (:battle neve) [:hp :x])))
+    (is (= 160 (get-in (:battle gelo) [:hp :x])))
+    (is (= 150 (get-in (:battle granizo) [:hp :x])))
+    (is (some #(re-find #"granizo" %) (:mensagens granizo)))
+    (is (:acertou? (dmg/resolver-ataque (assoc comum :golpe nevasca :clima :neve))))
+    (is (:acertou? (dmg/resolver-ataque (assoc comum :golpe nevasca :clima :granizo))))
+    (is (:errou? (dmg/resolver-ataque (assoc comum :golpe nevasca))))))
+
+(deftest protecao-nao-atravessa-a-rodada-seguinte
+  (let [x (mon "Mew" ["psychic"]
+               [{:slug "protect" :nome-exibicao "Proteção" :tipo "normal"
+                 :poder 0 :classe :status}])
+        o (mon "Alvo" ["normal"]
+               [{:slug "swords-dance" :nome-exibicao "Dança das Espadas"
+                 :tipo "normal" :poder 0 :classe :status}
+                {:slug "tackle" :nome-exibicao "Investida" :tipo "normal"
+                 :poder 80 :classe :fisico}])
+        t1 (agir (batalha x o) 0 {:wild-move 0})
+        t2 (agir t1 0 {:wild-move 1 :protecao 50 :accuracy 0 :crit 99
+                      :damage-var 0 :dodge 99})]
+    (is (re-find #"Proteção ativada" (:mensagem (:last-action t1))))
+    (is (nil? (get-in t1 [:volatil :x :protecao?])))
+    (is (re-find #"se desfez" (str (:mensagem (:last-rival-action t1))
+                                   (:mensagem (:last-action t1)))))
+    (is (< (get-in t2 [:hp :x]) 160))))
+
+(deftest retomada-preserva-o-estado-temporario
+  (let [x (mon "A" ["normal"] [])
+        o (mon "B" ["normal"] [])
+        b (-> (batalha x o)
+              (assoc-in [:volatil :x :protecao?] true)
+              (assoc-in [:volatil :x :protecao-seguidas] 1)
+              (assoc-in [:volatil :o :veneno-contador] 2)
+              (assoc-in [:volatil :o :semente] :x)
+              (assoc-in [:volatil :o :residual] {:restante 3})
+              (assoc-in [:volatil :x :carga] {:slug "solar-beam" :golpe {:slug "solar-beam"}})
+              (assoc-in [:volatil :x :recarga?] true)
+              (assoc-in [:volatil :o :desabilitado] {:slug "tackle" :restante 3})
+              (assoc-in [:volatil :o :tormento?] true)
+              (assoc-in [:volatil :o :ultimo-slug] "tackle")
+              (assoc-in [:volatil :x :perecer] 2)
+              (assoc-in [:volatil :o :perecer] 2)
+              (assoc :clima {:tipo :sol :restante 4})
+              (assoc :terreno {:tipo :grama :restante 4})
+              (assoc-in [:campo :o :hazards] {:rochas true :espinhos 2}))
+        volta (battle/decode-compact-edn (battle/encode-state-edn b))]
+    (is (get-in volta [:volatil :x :protecao?]))
+    (is (= 2 (get-in volta [:volatil :o :veneno-contador])))
+    (is (= :x (get-in volta [:volatil :o :semente])))
+    (is (= 3 (get-in volta [:volatil :o :residual :restante])))
+    (is (= "solar-beam" (get-in volta [:volatil :x :carga :slug])))
+    (is (get-in volta [:volatil :x :recarga?]))
+    (is (= "tackle" (get-in volta [:volatil :o :desabilitado :slug])))
+    (is (get-in volta [:volatil :o :tormento?]))
+    (is (= 2 (get-in volta [:volatil :x :perecer])))
+    (is (= :sol (get-in volta [:clima :tipo])))
+    (is (= :grama (get-in volta [:terreno :tipo])))
+    (is (get-in volta [:campo :o :hazards :rochas]))
+    (let [so-veneno (battle/decode-compact-edn
+                     (battle/encode-state-edn
+                      (-> (batalha x o)
+                          (assoc-in [:status :o] :envenenado-grave)
+                          (assoc-in [:volatil :o :veneno-contador] 2))))
+          depois (battle/aplicar-fim-de-turno so-veneno :o)]
+      (is (= 3 (get-in (:battle depois) [:volatil :o :veneno-contador])))
+      (is (= 140 (get-in (:battle depois) [:hp :o]))))))
+
 (deftest sol-pula-a-carga-do-raio-solar
   (let [x (mon "Sol" ["grass"]
                [{:slug "solar-beam" :nome-exibicao "Raio Solar" :tipo "grass"
@@ -351,3 +437,29 @@
     (is (= 1 (get-in dec [:volatil :protecao-seguidas])))
     (is (nil? (:volatil velho)))
     (is (= chefe (clojure.edn/read-string (pr-str chefe))))))
+
+(deftest raid-retomada-aplica-o-veneno-uma-vez
+  (let [agora 1
+        snorlax {:nome "Snorlax" :hp 200 :ataque 80 :defesa 50 :atq-esp 80
+                 :def-esp 50 :veloc 40 :tipos ["normal"] :nivel 20
+                 :golpes [{:slug "brick-break" :nome-exibicao "Quebra-Tijolo"
+                           :tipo "fighting" :poder 80 :classe :fisico}]}
+        base (-> (raid-de snorlax)
+                 (assoc-in [:chefe :status] :envenenado-grave)
+                 (assoc-in [:chefe :contador] 2))
+        direto (raid/atacar base "p" 0 agora {:raid-damage-var 0 :accuracy 0})
+        chefe (clojure.edn/read-string (pr-str (:chefe base)))
+        part (get-in base [:participantes "p"])
+        dec (#'raid-store/decode-participant-bundle
+             (battle/decode-compact-edn
+              (#'raid-store/encode-participant-pokemon-edn part))
+             (:hp part) 0)
+        volta (raid/atacar (-> base
+                               (assoc :chefe chefe)
+                               (assoc-in [:participantes "p"] (merge part dec)))
+                           "p" 0 agora {:raid-damage-var 0 :accuracy 0})
+        repetido (raid/atacar (:raid direto) "p" 0 (inc agora)
+                              {:raid-damage-var 0 :accuracy 0})]
+    (is (= (get-in direto [:raid :hp-chefe]) (get-in volta [:raid :hp-chefe])))
+    (is (= 3 (get-in volta [:raid :chefe :contador])))
+    (is (< (get-in repetido [:raid :hp-chefe]) (get-in direto [:raid :hp-chefe])))))
