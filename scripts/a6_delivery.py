@@ -14,6 +14,8 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+from a6_writer_policy import prove_quiescence
+
 
 PRESERVE = ("datomic", "journal", "maint", "session", "network", "env", "restart")
 SERVICES = ("node", "jvm")
@@ -111,14 +113,15 @@ def verify(state, service):
 def drain(state):
     preflight(state)
     writers = _external_writers(state)
-    proven = not writers and state.get("activeNodeOps") == 0 and state.get("activeJvmWrites") == 0
-    phase = "quiescent" if proven else "draining"
+    proof = prove_quiescence(state.get("collection"), state)
+    if writers and not proof["quiescenceProven"] and proof["reason"] == "declared_evidence":
+        proof = dict(proof, reason="external_datomic_client")
     return {
         "command": "drain",
-        "phase": phase,
-        "quiescenceProven": False if writers else proven,
+        "phase": proof["phase"],
+        "quiescenceProven": proof["quiescenceProven"],
         "externalWriters": writers,
-        "reason": "external_datomic_client" if writers else None,
+        "reason": proof["reason"],
         "preserve": _preserve_snapshot(state),
     }
 
@@ -144,7 +147,7 @@ def update(state, service, sha):
         "image": target.get("image"),
         "untouched": "odisseu-a6-jvm" if service == "node" else "odisseu-a6-node",
         "preserve": _preserve_snapshot(state),
-        "quiescenceProven": False,
+        "quiescenceProven": drained["quiescenceProven"],
     }
 
 

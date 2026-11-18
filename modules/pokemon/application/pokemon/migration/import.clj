@@ -14,7 +14,8 @@
             [pokemon.domain.reward :as reward]
             [pokemon.migration.gates :as gates]
             [pokemon.migration.transform :as transform]
-            [pokemon.infrastructure.datomic.economy-store :as economy-store]))
+            [pokemon.infrastructure.datomic.economy-store :as economy-store]
+            [odisseu.persistence.live-guard :as live-guard]))
 
 (def ^:private datomic-local-string-limit
   "Limite prático do Datomic Local para valor de atributo (~4096)."
@@ -433,6 +434,10 @@
                                  :cause (ex-message ex)
                                  :hint "Recibo não gravado; limpe o slot recovery antes de retentar."})))))))))
 
+(defn- refuse-live-import!
+  [store]
+  (live-guard/assert-external! (or (:storage-dir store) (:storage store) "")))
+
 (defn import-ir!
   "Importa IR completa. Recusa se houver quarentena bloqueante sem :allow-quarantine?
    Ativa o slot marcado como canonical-active ao final.
@@ -440,6 +445,7 @@
   [store ir {:keys [import-batch-id allow-quarantine? match-report require-match-resolved?]
              :or {allow-quarantine? false
                   require-match-resolved? false}}]
+  (refuse-live-import! store)
   (when (str/blank? import-batch-id)
     (throw (err/error :missing_import_batch_id {})))
   (let [;; Avisos (loja órfã, sourceVersion) vão ao relatório; só bloqueios duros abortam
@@ -480,6 +486,7 @@
 (defn reimport-same-batch!
   "Segunda passagem: deve retornar duplicate em todos os saves."
   [store ir import-batch-id]
+  (refuse-live-import! store)
   (let [conn (:conn store)]
     (mapv #(import-one-save! store conn import-batch-id %) (:saves ir))))
 
@@ -495,6 +502,7 @@
     (throw (err/error :recovery_selection_invalid
                       {:chat-id chat-id :player-id player-id
                        :snapshot-count (count snapshots)})))
+  (refuse-live-import! store)
   (let [conn (:conn store)
         snapshots (mapv (fn [snapshot]
                           (let [version (or (:legacy-version snapshot)

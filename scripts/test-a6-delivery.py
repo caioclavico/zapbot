@@ -8,10 +8,40 @@ import unittest
 from pathlib import Path
 
 from a6_delivery import drain, health, rollback, update
+from a6_mount_policy import collect_from_runner
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "a6-delivery.sh"
+
+
+def lab_collection(processes="clojure.main -m odisseu.bridge.http-server\n"):
+    document = {
+        "Id": "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abcd",
+        "Name": "/odisseu-a6-jvm",
+        "Mounts": [{"Name": "a6-lab-datomic", "Destination": "/data/datomic-local", "RW": True}],
+        "HostConfig": {"Privileged": False, "CapAdd": []},
+    }
+
+    class Result:
+        def __init__(self, stdout, returncode=0):
+            self.stdout = stdout
+            self.returncode = returncode
+
+    def runner(args):
+        if args[:2] == ["docker", "inspect"]:
+            return Result(json.dumps([document]))
+        if args[-1] == "/proc/self/status":
+            return Result("CapEff:\t00000000a80425fb\n")
+        if "ps" in args:
+            return Result(processes)
+        if str(args[-1]).endswith("bridge-maintenance.edn"):
+            return Result("{:phase :quiescent :active-writes 0}\n")
+        if str(args[-1]).endswith("a6-maintenance.json"):
+            return Result('{"phase":"draining","activeOps":0}\n')
+        return Result("", 1)
+
+    return collect_from_runner(runner, "a6-lab-datomic", "odisseu-a6-jvm")
 
 
 def isolated_state():
@@ -36,8 +66,15 @@ def isolated_state():
         "externalWriters": [],
         "activeNodeOps": 0,
         "activeJvmWrites": 0,
+        "jvmPhase": "quiescent",
+        "authorizedWriter": "odisseu-a6-jvm",
+        "writableMounts": ["odisseu-a6-jvm"],
+        "capSysAdmin": False,
+        "maintenanceToolsRunning": [],
+        "laterWriterResult": "no_mount",
+        "mountPolicyHeld": True,
+        "mountsObserved": True,
         "nodePhase": "draining",
-        "jvmPhase": "open",
     }
 
 
@@ -88,6 +125,7 @@ class DeliveryTests(unittest.TestCase):
 
     def test_update_is_idempotent_and_rollback_touches_one_service(self):
         state = isolated_state()
+        state["collection"] = lab_collection()
         sha = "b1d8db29c0d14788f5426a0779ef2e2dda07dd0f"
         first = update(state, "node", sha)
         self.assertTrue(first["changed"])
