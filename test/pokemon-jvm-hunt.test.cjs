@@ -118,7 +118,7 @@ test('vitória mostra dano canônico do golpe final', () => {
     }
   });
   assert.match(win, /Wartortle/);
-  assert.match(win, /Water Gun|40/);
+  assert.match(win, /Jato d'Água|40/);
   assert.match(win, /desmaiou|VITÓRIA/i);
   assert.match(win, /capturar|Liberar/i);
   assert.match(win, /Super efetivo|super efetivo|🔥/i);

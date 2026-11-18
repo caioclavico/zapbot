@@ -2,6 +2,7 @@
   "Cálculo de dano — fórmulas exatas de zapbot.pokemon.core.
   Sem STAB no dano (só preferência de moveset no legado)."
   (:require [clojure.string :as str]
+            [pokemon.domain.move-names :as move-names]
             [pokemon.domain.rng :as rng]
             [pokemon.domain.types :as types]))
 
@@ -134,8 +135,7 @@
 (defn mensagem-ataque
   "Texto legado de core/resolver-ataque (`causou N de dano` + sufixos)."
   [golpe atacante defensor resolved defendendo?]
-  (let [nome-golpe (str (emoji-golpe golpe) " *"
-                        (or (:nome-exibicao golpe) (:slug golpe) "golpe") "*")
+  (let [        nome-golpe (str (emoji-golpe golpe) " *" (move-names/apresentar golpe) "*")
         nome-atk (or (:nome atacante) (:species atacante) "Pokémon")
         nome-def (or (:nome defensor) (:species defensor) "adversário")
         dano (long (:dano resolved 0))
@@ -186,7 +186,8 @@
              :esquivou? (boolean (:esquivou? resolved))
              :acertos (long (:acertos resolved 1))
              :tipo-golpe (:tipo golpe)
-             :golpe-nome (or (:nome-exibicao golpe) (:slug golpe))
+             :golpe-slug (:slug golpe)
+             :golpe-nome (move-names/apresentar golpe)
              :autodesmaio? auto?
              :mensagem msg}
       (some? move-index) (assoc :move-index move-index)

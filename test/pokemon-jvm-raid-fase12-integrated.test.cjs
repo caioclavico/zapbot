@@ -148,7 +148,7 @@ test('ciclo integrado: abrir1 → join×2 → lobby5 → start → vez → golpe
 
   const statusAsh = present.formatRaidStatus(dtoFor(raid, ash), '!pk');
   assert.match(statusAsh, /Vez de \*Ash\*/);
-  assert.match(statusAsh, /Thunderbolt/);
+  assert.match(statusAsh, /Raio/);
   assert.match(statusAsh, /!pk raid atacar 1/);
   assert.match(statusAsh, /É a sua vez/);
   assert.doesNotMatch(statusAsh, /111@lid/);
@@ -183,7 +183,7 @@ test('ciclo integrado: abrir1 → join×2 → lobby5 → start → vez → golpe
     raid: toCamel(after)
   }, '!pk');
   assert.match(atkMsg, /Misty/);
-  assert.match(atkMsg, /Water Gun|Psychic/);
+  assert.match(atkMsg, /Jato d'Água|Psíquico/);
   assert.match(atkMsg, /Próximo: \*Ash\*/);
 
   assert.equal(precheckAttack(dtoFor(after, misty), misty), true);

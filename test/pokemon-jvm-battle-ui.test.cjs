@@ -178,10 +178,10 @@ test('formatBattleTurn com HP zero no adversário (nocaute → captura)', () => 
       pokemonO: { ...magikarp, hpAtual: 0 }
     }
   }, '!pk');
-  assert.match(text, /derrotado/);
-  assert.match(text, /CHANCES DE CAPTURA|Capturar:|Escolha sua Poké Bola/);
+  assert.match(text, /VITÓRIA NA CAÇADA|derrotado/);
+  assert.match(text, /CHANCES DE CAPTURA|Capturar:|Escolha sua Poké Bola|Escolha sua Pokébola/);
   assert.match(text, /!pk capturar|!pk fruta/);
-  assert.match(text, /Poké Bola: 70%/); // cap 95 — base 70 permanece
+  assert.match(text, /chance 70%/);
   assert.match(text, /60\/100/);
   assert.doesNotMatch(text, /carimbada/i);
   assert.doesNotMatch(text, /Agora você pode capturar/);

@@ -6,6 +6,8 @@
  */
 
 const PAGE_SIZE = 12;
+const nomesGolpe = require('./move-names.cjs');
+const efeitosGolpe = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, 'move-effects.json'), 'utf8'));
 
 /**
  * Progresso de XP do Pokémon (flat-9-v2): residual 0..8 / 9 por nível.
@@ -302,29 +304,67 @@ function emojiStatus(status) {
   }
 }
 
+const ATRIBUTO_PT = {
+  ataque: 'Ataque',
+  defesa: 'Defesa',
+  'atq-esp': 'Ataque Especial',
+  atqEsp: 'Ataque Especial',
+  'def-esp': 'Defesa Especial',
+  defEsp: 'Defesa Especial',
+  veloc: 'Velocidade',
+  velocidade: 'Velocidade'
+};
+
+const STATUS_PT = {
+  queimado: 'queimadura',
+  envenenado: 'envenenamento',
+  paralisado: 'paralisia',
+  adormecido: 'sono',
+  congelado: 'congelamento',
+  confuso: 'confusão'
+};
+
+function efeitoCatalogo(golpe) {
+  if (!golpe) return null;
+  const slug = golpe.slug || golpe['slug'];
+  if (slug && efeitosGolpe[slug]) return efeitosGolpe[slug];
+  const bruto = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome;
+  if (!bruto) return null;
+  const r = nomesGolpe.resolver(bruto);
+  return r.slug ? efeitosGolpe[r.slug] : null;
+}
+
 function resumoEfeitosGolpe(golpe) {
   const partes = [];
-  const status = golpe.statusCausado || golpe['status-causado'];
+  const fx = efeitoCatalogo(golpe) || {};
+  const status = golpe.statusCausado || golpe['status-causado'] || fx.statusCausado;
   if (status) {
-    const chance = golpe.chanceStatus != null ? golpe.chanceStatus : golpe['chance-status'];
-    partes.push(`causa ${status}${chance != null && chance < 100 ? ` (${chance}%)` : ''}`);
+    const chance = golpe.chanceStatus != null ? golpe.chanceStatus
+      : (golpe['chance-status'] != null ? golpe['chance-status'] : fx.chanceStatus);
+    const nome = STATUS_PT[status] || status;
+    partes.push(`causa ${nome}${chance != null && chance < 100 ? ` (${chance}%)` : ''}`);
   }
-  const alt = golpe.alteracoes || golpe['alteracoes'] || [];
+  const alt = (golpe.alteracoes && golpe.alteracoes.length) ? golpe.alteracoes : (fx.alteracoes || []);
   if (alt.length) {
     partes.push(alt.map(a => {
-      const atr = a.atributo || a.attribute || '?';
+      const atr = ATRIBUTO_PT[a.atributo || a.attribute] || a.atributo || a.attribute || '?';
       const est = a.estagios != null ? a.estagios : a.stages;
       return `${atr} ${est > 0 ? '+' : ''}${est}`;
     }).join(', '));
   }
-  const cura = Number(golpe.cura || 0);
+  const cura = Number(golpe.cura != null ? golpe.cura : (fx.cura || 0));
   if (cura > 0) partes.push(`recupera ${cura}% do HP`);
   const auto = golpe.autodesmaio === true || golpe['autodesmaio'] === true
-    || golpe.selfDestruct === true || golpe['self-destruct'] === true;
+    || golpe.selfDestruct === true || golpe['self-destruct'] === true
+    || fx.autodesmaio === true;
   if (auto) {
     partes.push('causa dano devastador, mas o próprio Pokémon desmaia após o uso');
   }
-  return partes.length ? partes.join(', ') : 'efeito especial';
+  const dreno = Number(golpe.dreno != null ? golpe.dreno : (fx.dreno || 0));
+  if (dreno > 0) partes.push(`drena ${dreno}% do dano como HP`);
+  const recuo = Number(golpe.recuo != null ? golpe.recuo : (fx.recuo || 0));
+  if (recuo > 0) partes.push(`recua ${recuo}% do dano`);
+  return partes.length ? partes.join(', ') : 'sem efeito adicional modelado';
 }
 
 /** Descrição canônica de Explosion / Self-Destruct para menus e ajuda. */
@@ -342,9 +382,17 @@ function isExplosionGolpe(golpe) {
 }
 
 function nomeGolpeUi(golpe, idx) {
-  const raw = golpe && (golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome || golpe.slug);
-  const n = raw != null ? String(raw).trim() : '';
-  if (n && n !== '?') return n;
+  if (golpe) {
+    const slug = golpe.slug || golpe['slug'];
+    if (slug && nomesGolpe.nomes[String(slug)]) return nomesGolpe.nomes[String(slug)];
+    const bruto = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome || slug;
+    if (bruto) {
+      const r = nomesGolpe.resolver(bruto);
+      if (!r.ambiguo && r.slug && nomesGolpe.nomes[r.slug]) return nomesGolpe.nomes[r.slug];
+      const n = String(bruto).trim();
+      if (n && n !== '?') return n;
+    }
+  }
   const tipo = golpe && (golpe.tipo || golpe.type);
   if (tipo) return `Golpe ${TIPOS_PT[tipo] || tipo}`;
   if (golpe && golpe.golpeIrrecuperavel) return `Golpe ${idx + 1} (irrecuperável)`;
@@ -373,7 +421,8 @@ function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
   const precisao = golpe.precisao != null ? golpe.precisao : golpe.accuracy;
   const prec = precisao != null ? `, precisão ${precisao}%` : '';
   const mark = mult === 0 ? ' 🚫' : (mult > 1 ? ' 🔥' : (mult < 1 ? ' 😕' : ''));
-  const linha = `${idx + 1}. ${emojiGolpe(golpe)} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
+  const tipoEmoji = emojiTipo(tipo);
+  const linha = `${idx + 1}. ${emojiGolpe(golpe)}${tipoEmoji ? ` ${tipoEmoji}` : ''} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
   if (isExplosionGolpe(golpe) && mult === 0) {
     return `${linha}\n   ⚠️ Sem efeito neste alvo — o Pokémon *não* desmaia se o golpe não causar dano.`;
   }
@@ -1020,7 +1069,7 @@ function formatLearnMove(data, prefix = '!pk') {
   const p = (data && data.pokemon) || {};
   const golpes = p.golpes || [];
   const lista = golpes.map((g, i) => {
-    const nome = g.nomeExibicao || g['nome-exibicao'] || g.slug || '?';
+    const nome = nomeGolpeUi(g, 0);
     return `${i + 1}. ${nome}`;
   }).join('\n');
   return [
@@ -1032,7 +1081,7 @@ function formatLearnMove(data, prefix = '!pk') {
 
 function nomeGolpeMt(g) {
   if (!g) return '?';
-  return g.nomeExibicao || g['nome-exibicao'] || g.nome || g.slug || '?';
+  return nomeGolpeUi(g, 0);
 }
 
 function formatMtHelp(prefix = '!pk', mtQty = 0) {
@@ -1115,7 +1164,7 @@ function formatMtUsed(data, prefix = '!pk') {
 
 function formatForgetMove(data, prefix = '!pk') {
   const rem = (data && data.removido) || {};
-  const nome = rem.nomeExibicao || rem['nome-exibicao'] || rem.slug || 'golpe';
+  const nome = nomeGolpeUi(rem, 0);
   const p = (data && data.pokemon) || {};
   return `🗑️ *${nome}* removido de *${p.nome || '?'}*.\n${prefix} aprender · ${prefix} reaprender`;
 }
@@ -1127,7 +1176,7 @@ function formatOfferMove(data, prefix = '!pk') {
   }
   const ofertas = p.ofertasGolpes || p['ofertas-golpes'] || p.golpesOferecidos || [];
   const oferta = ofertas[0] || {};
-  const nome = oferta.nomeExibicao || oferta['nome-exibicao'] || oferta.slug || 'golpe';
+  const nome = nomeGolpeUi(oferta, 0);
   return [
     `📘 *${p.nome || '?'}* pode aprender *${nome}*!`,
     menuGolpes(p, [], null),
@@ -1157,7 +1206,7 @@ function formatMoveOfferMenu(pokemon, prefix = '!pk') {
       `Use ${prefix} aprender após subir de nível, ou ${prefix} reaprender.`
     ].join('\n');
   }
-  const nome = oferta.nomeExibicao || oferta['nome-exibicao'] || oferta.slug || 'golpe';
+  const nome = nomeGolpeUi(oferta, 0);
   const vagas = (p.golpes || []).length < 4;
   return [
     `📘 *${p.nome || '?'}* pode aprender *${nome}*!`,
@@ -1833,7 +1882,7 @@ function golpesLinha(p) {
   const gs = (p && p.golpes) || [];
   if (!gs.length) return null;
   return gs.map((g, i) => {
-    const nome = g.nomeExibicao || g['nome-exibicao'] || g.nome || g.slug || '?';
+    const nome = nomeGolpeUi(g, i);
     const poder = g.poder != null ? g.poder : '?';
     const tipo = g.tipo || '?';
     return `${i + 1}. ${nome} (${tipo}/${poder})`;
@@ -1968,7 +2017,10 @@ function formatGymChallengeStart(data, prefix = '!pk') {
  * Usado quando `lastAction.mensagem` falta (DTO parcial / legado).
  */
 function formatCanonicalAttackLine(la, pokemonX, pokemonO) {
-  const nomeGolpe = la.golpeNome || la['golpe-nome'] || la.golpe || 'golpe';
+  const nomeGolpe = nomesGolpe.nomePtBr({
+    slug: la.golpeSlug || la['golpe-slug'],
+    nomeExibicao: la.golpeNome || la['golpe-nome'] || la.golpe
+  }) || 'golpe';
   const nomeAtk = (pokemonX && (pokemonX.nome || pokemonX.species)) || 'Pokémon';
   const nomeDef = (pokemonO && (pokemonO.nome || pokemonO.species)) || 'adversário';
   const dano = la.dano != null ? Number(la.dano) : null;
@@ -2159,10 +2211,21 @@ function qtyBall(inv, id) {
   ), 0);
 }
 
-function chanceComBola(chanceBase, bolaId, frambo) {
-  const limits = { pokebola: [1, 95], 'grande-bola': [1.5, 95], 'ultra-bola': [2, 95] };
-  const [mult, lim] = limits[bolaId] || [1, 95];
-  let n = Math.min(lim, Math.round(Number(chanceBase || 0) * mult));
+function aplicarFracao(chance, numer, denom) {
+  const c = Math.round(Number(chance) || 0);
+  const prod = c * numer;
+  const q = Math.trunc(prod / denom);
+  const r = prod % denom;
+  return (r * 2 >= denom) ? q + 1 : q;
+}
+
+function chanceComBola(chanceBase, bolaId, frambo, opts) {
+  const raid = Boolean(opts && opts.raid);
+  const tabela = raid
+    ? { pokebola: [1, 1, 95], 'grande-bola': [3, 2, 95], 'ultra-bola': [2, 1, 95] }
+    : { pokebola: [1, 1, 90], 'grande-bola': [16, 13, 90], 'ultra-bola': [19, 13, 95] };
+  const [numer, denom, lim] = tabela[bolaId] || [1, 1, raid ? 95 : 90];
+  let n = Math.min(lim, aplicarFracao(chanceBase, numer, denom));
   if (frambo) n = Math.min(lim, Math.round(n * 1.5));
   return n;
 }
@@ -2637,7 +2700,8 @@ function formatRaidMoveLines(pokemon, prefix = '!pk', tiposDefesa, habilidadeDef
     // Status/transform válidos: nome + classe — não confundir com ref quebrada (?).
     if (!ofensivo) {
       const emoji = emojiGolpe(Object.assign({}, g, { classe }));
-      return `${i + 1}. ${emoji} *${nome}* — _indisponível na raid_`;
+      const tipoEmoji = emojiTipo(g.tipo || g.type);
+      return `${i + 1}. ${emoji}${tipoEmoji ? ` ${tipoEmoji}` : ''} *${nome}* — _indisponível na raid_`;
     }
     // Paridade caça: emoji de classe + marca de efetividade vs chefe.
     const gNorm = classeRaw != null ? g : Object.assign({}, g, { classe: 'fisico' });
@@ -3210,7 +3274,7 @@ function formatRaidCaptureUi(data, prefix = '!pk', opts = {}) {
     if (fromMap != null) return Number(fromMap);
     const hasAnyMotor = chances && Object.keys(chances).length > 0;
     if (hasAnyMotor) return NaN; // não inventar % divergente do motor
-    return chanceComBola(baseChance, id, prepared);
+    return chanceComBola(baseChance, id, prepared, { raid: true });
   };
   const pct = (id) => {
     const n = pctNum(id);

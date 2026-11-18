@@ -138,7 +138,7 @@ test('apresentação de turno: nome, golpes, comando e próximo', () => {
   }, '!pk');
   assert.match(text, /Vez de \*Misty\*/);
   assert.match(text, /Starmie/);
-  assert.match(text, /Water Gun/);
+  assert.match(text, /Jato d'Água/);
   assert.match(text, /indisponível/);
   assert.match(text, /!pk raid atacar 1/);
   assert.match(text, /Próximo: \*Ash\*/);
@@ -158,7 +158,7 @@ test('formatRaidStart e Attack usam bloco de turno', () => {
     }
   }, '!pk');
   assert.match(start, /Ash/);
-  assert.match(start, /Thunderbolt/);
+  assert.match(start, /Raio/);
   assert.match(start, /É a sua vez/);
 
   const atk = present.formatRaidAttack({
@@ -173,7 +173,7 @@ test('formatRaidStart e Attack usam bloco de turno', () => {
     }
   }, '!pk');
   assert.match(atk, /Brock/);
-  assert.match(atk, /Rock Throw/);
+  assert.match(atk, /Arremesso de Pedra/);
 });
 
 test('renderRaidBattleCard retorna png ou null (fallback textual)', async () => {
