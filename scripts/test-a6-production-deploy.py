@@ -36,7 +36,8 @@ from a6_production_deploy import (
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "96a7e48d06e1bf6e6a23ce65256301efdd724d9c"
 DIGEST = "sha256:" + ("ab" * 32)
-BACKUP = {"manifestVerified": True, "sourcePreserved": True}
+BACKUP = {"manifestVerified": True, "sourcePreserved": True, "restoreIsolated": True, "jvmStopped": True}
+IMAGE = {"_observed": True, "architecture": "amd64", "revision": SHA}
 ENV = {
     "A6_EXECUTE": "1",
     "ODISSEU_PRODUCTION_DEPLOY_HOLD": "false",
@@ -167,8 +168,23 @@ class ProductionDeployTests(unittest.TestCase):
         self.assertEqual(report["previousImage"], CURRENT["jvm"]["image"])
         self.assertEqual(report["untouched"], "odisseu-a6-node")
         self.assertIn("image_digest_missing", report["blocked"])
+        self.assertIn("image_not_observed", report["blocked"])
         self.assertIn("backup_not_verified", report["blocked"])
         self.assertNotIn("@sha256:", " ".join(report["argv"]))
+        arm = plan(
+            CURRENT, SHA, "jvm", {}, digest=DIGEST, backup=BACKUP,
+            image={"_observed": True, "architecture": "arm64", "revision": SHA},
+        )
+        self.assertIn("image_not_amd64", arm["blocked"])
+        self.assertFalse(arm["executeAllowed"])
+        skipped = evaluate_sequence([
+            {"step": "node_maintenance", "nodePhase": "draining"},
+            {"step": "drain", "activeNodeOps": 0, "activeJvmWrites": 0},
+            {"step": "quiescence", "jvmPhase": "quiescent", "exclusive": True, "externalWriters": []},
+            {"step": "backup", "manifestVerified": True, "sourcePreserved": True},
+        ])
+        self.assertFalse(skipped["deployComplete"])
+        self.assertEqual(skipped["next"], "backup")
 
     def test_missing_mount_and_wrong_volume_are_refused(self):
         missing = deepcopy(CURRENT)
@@ -298,7 +314,7 @@ class ProductionDeployTests(unittest.TestCase):
         self.assertFalse(declared["executeAllowed"])
         observed = observe_vm(vm_runner())
         self.assertNotIn("super-secret", json.dumps(observed))
-        observed_plan = plan(observed, SHA, "jvm", env, digest=DIGEST, backup=BACKUP)
+        observed_plan = plan(observed, SHA, "jvm", env, digest=DIGEST, backup=BACKUP, image=IMAGE)
         self.assertTrue(observed_plan["executeAllowed"], observed_plan["blocked"])
         self.assertIn(f"@sha256:{DIGEST.split(':', 1)[1]}", observed_plan["argv"][-1])
         self.assertTrue(observed_plan["jvmBeforeNode"])
@@ -328,7 +344,7 @@ class ProductionDeployTests(unittest.TestCase):
             {"step": "node_maintenance", "nodePhase": "draining"},
             {"step": "drain", "activeNodeOps": 0, "activeJvmWrites": 0},
             {"step": "quiescence", "jvmPhase": "quiescent", "exclusive": True, "externalWriters": []},
-            {"step": "backup", "manifestVerified": True, "sourcePreserved": True},
+            {"step": "backup", "manifestVerified": True, "sourcePreserved": True, "restoreIsolated": True, "jvmStopped": True},
             {"step": "update_jvm", "service": "jvm", "previousImage": CURRENT["jvm"]["image"], "mountsPreserved": True},
         ])
         self.assertFalse(partial["deployComplete"])
@@ -339,7 +355,7 @@ class ProductionDeployTests(unittest.TestCase):
             {"step": "node_maintenance", "nodePhase": "draining"},
             {"step": "drain", "activeNodeOps": 0, "activeJvmWrites": 0},
             {"step": "quiescence", "jvmPhase": "quiescent", "exclusive": True, "externalWriters": []},
-            {"step": "backup", "manifestVerified": True, "sourcePreserved": True},
+            {"step": "backup", "manifestVerified": True, "sourcePreserved": True, "restoreIsolated": True, "jvmStopped": True},
             {"step": "update_jvm", "service": "jvm", "previousImage": "old", "mountsPreserved": True},
             {"step": "validate_jvm", "health": "healthy", "entrypoint": True, "capDropSysAdmin": True, "privileged": False},
             {"step": "update_node", "service": "node", "jvmUntouched": True},
@@ -361,7 +377,7 @@ class ProductionDeployTests(unittest.TestCase):
             {"step": "node_maintenance", "nodePhase": "draining"},
             {"step": "drain", "activeNodeOps": 0, "activeJvmWrites": 0},
             {"step": "quiescence", "jvmPhase": "quiescent", "exclusive": True, "externalWriters": []},
-            {"step": "backup", "manifestVerified": True, "sourcePreserved": True},
+            {"step": "backup", "manifestVerified": True, "sourcePreserved": True, "restoreIsolated": True, "jvmStopped": True},
             {"step": "update_jvm", "service": "jvm", "previousImage": "old", "mountsPreserved": True},
             {"step": "validate_jvm", "health": "healthy", "entrypoint": True, "capDropSysAdmin": True, "privileged": False},
             {"step": "update_node", "service": "node", "jvmUntouched": True},
@@ -372,7 +388,7 @@ class ProductionDeployTests(unittest.TestCase):
         self.assertEqual(resume["next"], "resume")
 
     def test_interruption_keeps_one_writer_and_new_battle_stays_in_maintenance(self):
-        observed = plan(observe_vm(vm_runner()), SHA, "jvm", dict(ENV), digest=DIGEST, backup=BACKUP)
+        observed = plan(observe_vm(vm_runner()), SHA, "jvm", dict(ENV), digest=DIGEST, backup=BACKUP, image=IMAGE)
         self.assertTrue(observed["executeAllowed"], observed["blocked"])
 
         class Result:
@@ -408,9 +424,9 @@ class ProductionDeployTests(unittest.TestCase):
         self.assertFalse(any(command[-2] == "start" for command in kept))
         node = plan(
             observe_vm(vm_runner()), SHA, "node", dict(ENV),
-            digest=DIGEST, backup=BACKUP, jvm_updated=True,
+            digest=DIGEST, backup=BACKUP, jvm_updated=True, image=IMAGE,
         )
-        early = plan(observe_vm(vm_runner()), SHA, "node", dict(ENV), digest=DIGEST, backup=BACKUP)
+        early = plan(observe_vm(vm_runner()), SHA, "node", dict(ENV), digest=DIGEST, backup=BACKUP, image=IMAGE)
         self.assertIn("jvm_not_updated", early["blocked"])
         self.assertFalse(early["executeAllowed"])
         node_fail = run_apply(lambda command: Result(), node, fail_at="run")
