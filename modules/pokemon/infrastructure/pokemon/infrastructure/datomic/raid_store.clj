@@ -31,13 +31,14 @@
             idx (long (:active-idx edn 0))
             slot (nth party idx (first party))
             poke (renorm-poke (or (:active edn) (:pokemon slot) {}))]
-        {:pokemon poke
-         :party (if (seq party)
-                  party
-                  [{:pokemon poke :hp (long hp-attr) :collection-index (long collection-index)}])
-         :active-party-idx idx
-         :hp (long (or (:hp slot) hp-attr 0))
-         :collection-index (long (or (:collection-index slot) collection-index 0))})
+        (cond-> {:pokemon poke
+                 :party (if (seq party)
+                          party
+                          [{:pokemon poke :hp (long hp-attr) :collection-index (long collection-index)}])
+                 :active-party-idx idx
+                 :hp (long (or (:hp slot) hp-attr 0))
+                 :collection-index (long (or (:collection-index slot) collection-index 0))}
+          (:volatil edn) (assoc :volatil (:volatil edn))))
       (let [poke (renorm-poke edn)]
         {:pokemon poke
          :party [{:pokemon poke
@@ -290,11 +291,12 @@
                         [{:pokemon (:pokemon p)
                           :hp (:hp p)
                           :collection-index (:collection-index p 0)}]))
-        bundle {:__raid-party-v1 true
-                :active (battle/slim-pokemon-for-battle
-                         (:pokemon p) {:keep-images? true})
-                :party party
-                :active-idx (long (:active-party-idx p 0))}]
+        bundle (cond-> {:__raid-party-v1 true
+                        :active (battle/slim-pokemon-for-battle
+                                 (:pokemon p) {:keep-images? true})
+                        :party party
+                        :active-idx (long (:active-party-idx p 0))}
+                 (:volatil p) (assoc :volatil (:volatil p)))]
     (battle/encode-value-edn :raid-participant/pokemon-edn bundle)))
 
 (defn- participant-entity
@@ -969,6 +971,8 @@
               :duplicate false
               :dano (:dano outcome)
               :acertos (:acertos outcome)
+              :errou? (boolean (:errou? outcome))
+              :mensagem (:mensagem outcome)
               :multiplicador (:multiplicador outcome)
               :base (:base outcome)
               :base-variada (:base-variada outcome)

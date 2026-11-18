@@ -329,7 +329,15 @@ const FAMILIA_MENU = {
   'limpar-status-equipe': 'cura o status da equipe',
   'limpar-status-proprio': 'cura o próprio status',
   'limpar-estagios': 'zera os estágios',
-  'limpar-volatil': 'remove semente e armadilha'
+  'limpar-volatil': 'remove semente, armadilha e entrada',
+  nocaute: 'nocaute de um golpe se o nível alcançar',
+  'troca-forcada': 'obriga o adversário a trocar ou fugir',
+  desabilitar: 'desabilita o último golpe',
+  tormento: 'impede repetir o último golpe',
+  'canto-mortal': 'derruba os dois lados após a contagem',
+  hazard: 'entrada de campo, não prende',
+  clima: 'muda o clima',
+  terreno: 'muda o terreno'
 };
 
 const STATUS_PT = {
@@ -401,6 +409,9 @@ function resumoEfeitosGolpe(golpe) {
   if (mec.flinch) partes.push(`recuo que impede a ação (${mec.flinch}%)`);
   if (mec.maxAcertos > 1) partes.push(`acerta ${mec.minAcertos || 2} a ${mec.maxAcertos} vezes`);
   if (mec.ignoraPrecisao) partes.push('ignora precisão e evasão');
+  else if (mec.precisao) partes.push(`precisão ${mec.precisao}`);
+  if (mec.criticoGarantido) partes.push('sempre crítico');
+  else if (mec.chanceCritico) partes.push(`crítico ${mec.chanceCritico}%`);
   if (mec.atravessaProtecao) partes.push('atravessa proteção');
   if (mec.soPrimeiroTurno) partes.push('só no primeiro turno em campo');
   const aviso = avisoEfeitoNaoModelado(golpe);
@@ -1615,6 +1626,7 @@ function formatError(err) {
     INVALID_TRADE_TRANSITION: '⚠️ Essa proposta não aceita esta ação no estado atual.',
     BATTLE_SAVE_MISMATCH: '⚠️ Encontro pertence a outro save — callback antigo rejeitado.',
     BATTLE_ALREADY_ACTIVE: '⚔️ Já existe uma batalha/encontro seu em andamento.',
+    PRESO: '🕸️ Não consegue escapar da armadilha!',
     PVP_SWITCH_LIMIT: '🔄 Você já usou as três trocas desta batalha.',
     PVP_SWITCH_SAME_POKEMON: '🔄 Esse Pokémon já está em campo. Use !pk time para ver os outros.',
     PVP_SWITCH_COOLDOWN: '⏳ Aguarde antes de fazer outra troca.',
@@ -3216,7 +3228,10 @@ function formatRaidAttack(data, prefix = '!pk') {
   // Narrativa: dano/revide canônicos — HP detalhado só nas barras do turn block.
   const revide = data && data.revide != null ? Number(data.revide) : null;
   if (nomeGolpe) {
-    if (dano != null && Number.isFinite(dano) && dano === 0 && mult === 0) {
+    if (data && (data.errou || data['errou?'])) {
+      lines.push(`💨 *${nomeGolpe || 'Golpe'}* errou!`);
+      if (revide != null && revide > 0) lines.push(`⚔️ O chefe revidou com ${revide} de dano!`);
+    } else if (dano != null && Number.isFinite(dano) && dano === 0 && mult === 0) {
       lines.push(`${emojiClasse} *${nomeGolpe}* de *${nomeAtacante || 'Pokémon'}* não teve efeito em *${nomeChefe}*! 🚫`);
     } else if (dano != null && Number.isFinite(dano) && revide != null && revide > 0) {
       lines.push(`${emojiClasse} *${nomeAtacante || 'Pokémon'}* causou ${dano} de dano e recebeu ${revide} de revide!`);
@@ -3224,6 +3239,7 @@ function formatRaidAttack(data, prefix = '!pk') {
       lines.push(`${emojiClasse} *${nomeAtacante || 'Pokémon'}* causou ${dano} de dano!`);
     }
     const acertosRaid = data && data.acertos != null ? Number(data.acertos) : 1;
+    if (data && data.mensagem) lines.push(String(data.mensagem));
     if (acertosRaid > 1) lines.push(`🎯 Acertou ${acertosRaid} vezes!`); else {
       lines.push(nomeAtacante
         ? `${emojiClasse} *${nomeGolpe}* de *${nomeAtacante}*!`

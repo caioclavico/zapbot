@@ -116,8 +116,17 @@ for (const slug of Object.keys(names)) {
   }
   const accuracy = num(move.accuracy);
   const damageClass = String(move.damage_class_id);
+  const category = num(meta.meta_category_id);
+  const crit = num(meta.crit_rate) || 0;
   if ((damageClass === '2' || damageClass === '3') && (accuracy == null || accuracy === 0)) {
     entry.ignoraPrecisao = true;
+  } else if (!fx?.precisao && accuracy != null && accuracy > 0 && accuracy < 100) {
+    entry.precisao = accuracy;
+  }
+  if (text.includes('always results in a critical hit') || text.includes('always gets a critical hit')) {
+    entry.criticoGarantido = true;
+  } else if (crit > 0) {
+    entry.chanceCritico = crit >= 2 ? 100 : 50;
   }
 
   if (VENENO_GRAVE.has(slug) || text.includes('badly poison')) {
@@ -127,6 +136,30 @@ for (const slug of Object.keys(names)) {
              || text.includes('blocks damaging attacks')
              || text.includes('prevents any moves from hitting the user this turn')) {
     entry.familia = 'protecao';
+  } else if (category === 9) {
+    entry.familia = 'nocaute';
+  } else if (category === 12 || slug === 'dragon-tail' || slug === 'circle-throw') {
+    entry.familia = 'troca-forcada';
+  } else if (ailment === 13 || slug === 'disable') {
+    entry.familia = 'desabilitar';
+  } else if (ailment === 12 || slug === 'torment') {
+    entry.familia = 'tormento';
+  } else if (ailment === 20 || slug === 'perish-song') {
+    entry.familia = 'canto-mortal';
+  } else if (slug === 'stealth-rock') {
+    entry.familia = 'hazard'; entry.campo = 'rochas';
+  } else if (slug === 'spikes') {
+    entry.familia = 'hazard'; entry.campo = 'espinhos';
+  } else if (slug === 'toxic-spikes') {
+    entry.familia = 'hazard'; entry.campo = 'toxicos';
+  } else if (slug === 'sticky-web') {
+    entry.familia = 'hazard'; entry.campo = 'teia';
+  } else if (['sunny-day', 'rain-dance', 'sandstorm', 'hail', 'snowscape'].includes(slug)) {
+    entry.familia = 'clima';
+    entry.campo = { 'sunny-day': 'sol', 'rain-dance': 'chuva', 'sandstorm': 'areia', hail: 'neve', snowscape: 'neve' }[slug];
+  } else if (['electric-terrain', 'grassy-terrain', 'misty-terrain'].includes(slug)) {
+    entry.familia = 'terreno';
+    entry.campo = { 'electric-terrain': 'eletrico', 'grassy-terrain': 'grama', 'misty-terrain': 'nevoa' }[slug];
   } else if (ailment === 18) {
     entry.familia = 'semente';
     entry.alvo = 'adversario';
@@ -151,7 +184,13 @@ for (const slug of Object.keys(names)) {
   ) {
     entry.familia = 'preparacao';
     if (text.includes('dodging all attacks')) entry.invulneravel = true;
+    if (slug === 'solar-beam' || slug === 'solar-blade') entry.pulaCargaNoSol = true;
   }
+  if (slug === 'thunder' || slug === 'hurricane') {
+    entry.precisaoChuva = 100;
+    entry.precisaoSol = 50;
+  }
+  if (slug === 'blizzard') entry.precisaoNeve = 100;
 
   if (entry.familia === 'protecao') {
     delete entry.alteracoes;
@@ -205,12 +244,19 @@ function covers(limite, mec) {
   if (limite === 'semente sanguessuga') return mec.familia === 'semente';
   if (limite === 'veneno grave') return mec.familia === 'veneno-grave';
   if (limite === 'armadilha') return mec.familia === 'residual';
-  if (limite === 'vários turnos') return ['preparacao', 'recarga', 'residual'].includes(mec.familia);
+  if (limite === 'vários turnos') return ['preparacao', 'recarga', 'residual', 'canto-mortal'].includes(mec.familia);
+  if (limite === 'nocaute de um golpe') return mec.familia === 'nocaute';
+  if (limite === 'troca forçada') return mec.familia === 'troca-forcada';
+  if (limite === 'desabilitar') return mec.familia === 'desabilitar';
+  if (limite === 'tormento') return mec.familia === 'tormento';
+  if (limite === 'canto mortal') return mec.familia === 'canto-mortal';
+  if (limite === 'efeito de campo') return ['clima', 'terreno', 'hazard'].includes(mec.familia);
   return false;
 }
 
 const conhecidoCoberto = (texto, mec, fx) => {
-  if (texto === 'metadado ausente na PokéAPI' || texto === 'chance de crítico diferente') return false;
+  if (texto === 'metadado ausente na PokéAPI') return false;
+  if (texto === 'chance de crítico diferente') return Boolean(mec?.chanceCritico || mec?.criticoGarantido);
   const alts = [...(fx?.alteracoes || []), ...(mec?.alteracoes || []), ...(mec?.alteracoesExtra || [])];
   const m = texto.match(/^(ataque especial|defesa especial|ataque|defesa|velocidade|precisão|evasão) ([+-]\d+)$/);
   if (m) {
@@ -258,6 +304,8 @@ for (const [slug, row] of Object.entries(audit)) {
   if (mec?.recuo) modelado.add('recuo');
   if (mec?.cura) modelado.add('cura');
   if (mec?.ignoraPrecisao) modelado.add('ignora-precisao');
+  if (mec?.precisao) modelado.add('precisao');
+  if (mec?.chanceCritico || mec?.criticoGarantido) modelado.add('critico');
   if (mec?.atravessaProtecao) modelado.add('atravessa-protecao');
   let classe;
   if (limites.length) classe = 'mecanica-ausente';
@@ -271,8 +319,12 @@ for (const [slug, row] of Object.entries(audit)) {
 }
 const auditJson = JSON.stringify(audit);
 for (const p of auditPaths) fs.writeFileSync(p, auditJson);
+const valores = Object.values(mechanics);
 console.log(JSON.stringify({
   mecanicas: Object.keys(mechanics).length,
+  precisaoNumerica: valores.filter(m => m.precisao).length,
+  ignoraPrecisao: valores.filter(m => m.ignoraPrecisao).length,
+  criticoAlterado: valores.filter(m => m.chanceCritico || m.criticoGarantido).length,
   counts,
   familias: Object.values(mechanics).reduce((a, m) => {
     const k = m.familia || (m.flinch ? 'flinch' : m.maxAcertos ? 'acertos' : 'outro');

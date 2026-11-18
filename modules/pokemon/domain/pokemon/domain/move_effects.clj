@@ -81,6 +81,30 @@
       (true? (get mec "ignoraPrecisao"))
       (assoc :ignora-precisao true)
 
+      (and (nil? (:precisao golpe)) (some? (get mec "precisao")))
+      (assoc :precisao (long (get mec "precisao")))
+
+      (some? (get mec "chanceCritico"))
+      (assoc :chance-critico (long (get mec "chanceCritico")))
+
+      (true? (get mec "criticoGarantido"))
+      (assoc :critico-garantido true)
+
+      (true? (get mec "pulaCargaNoSol"))
+      (assoc :pula-carga-no-sol true)
+
+      (some? (get mec "precisaoChuva"))
+      (assoc :precisao-chuva (long (get mec "precisaoChuva")))
+
+      (some? (get mec "precisaoSol"))
+      (assoc :precisao-sol (long (get mec "precisaoSol")))
+
+      (some? (get mec "precisaoNeve"))
+      (assoc :precisao-neve (long (get mec "precisaoNeve")))
+
+      (get mec "campo")
+      (assoc :campo (keyword (get mec "campo")))
+
       (true? (get mec "invulneravel"))
       (assoc :invulneravel true)
 

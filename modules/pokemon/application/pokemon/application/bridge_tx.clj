@@ -1059,6 +1059,8 @@
              :player-id player-id
              :dano (:dano result)
              :acertos (:acertos result)
+             :errou (boolean (:errou? result))
+             :mensagem (:mensagem result)
              :multiplicador (:multiplicador result)
              :base (:base result)
              :base-variada (:base-variada result)

@@ -78,7 +78,7 @@
            estagios-atacante estagios-defensor
            status-defensor
            defendendo? hp-atacante-atual
-           rng]}]
+           clima rng]}]
   (let [fisico? (= :fisico (let [c (:classe golpe)]
                              (if (keyword? c) c (keyword c))))
         item-atacante (or (:item atacante) (get atacante "item"))
@@ -86,7 +86,7 @@
         atributo-def (if fisico? :defesa :def-esp)
         poder-ataque (stat-efetivo atacante (or estagios-atacante {}) atributo-atq)
         poder-defesa (stat-efetivo defensor (or estagios-defensor {}) atributo-def)
-        precisao (:precisao golpe)
+        precisao (mechanics/precisao-no-clima golpe clima)
         chance (chance-acerto precisao estagios-atacante estagios-defensor
                               (:ignora-precisao golpe))
         errou? (and chance (< chance 100)
@@ -98,7 +98,11 @@
                        (:tipo golpe)
                        (or (:tipos defensor) [])
                        (or (:habilidade defensor) (get defensor "habilidade")))
-        critico? (< (rng/roll rng :crit 100) chance-critico)
+        chance-crit (cond
+                      (:critico-garantido golpe) 100
+                      (:chance-critico golpe) (long (:chance-critico golpe))
+                      :else chance-critico)
+        critico? (< (rng/roll rng :crit 100) chance-crit)
         impulso (impulso-habilidade atacante hp-atacante-atual (:tipo golpe))
         impulso-item (if (or (and fisico? (= item-atacante "banda"))
                              (and (not fisico?) (= item-atacante "oculos")))
@@ -191,6 +195,7 @@
       :else
       (str nome-golpe " de *" nome-atk "* causou " dano
            " de dano em *" nome-def "*!" sufixo
+           (when (:nocaute? resolved) "\n💀 Nocaute de um golpe!")
            (when (> acertos 1) (str "\n🎯 Acertou " acertos " vezes!"))))))
 
 (defn last-action-ataque
