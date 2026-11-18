@@ -47,7 +47,9 @@ O `Dockerfile` é pensado para ARM64 (ex.: Oracle Cloud Free Tier) e usa o Chrom
 
 ### Cada comando é seu próprio namespace
 
-Os módulos do jogo ficam em `src/zapbot/pokemon/`, com namespaces `zapbot.pokemon.*`. A entrada do jogo é `zapbot.pokemon.core`.
+O build `:app` entra por `zapbot.core`. O comando Pokémon ao vivo é `zapbot.pokemon-http`: ele compõe o WhatsApp e chama a JVM. As regras de batalha, captura, raid, economia e saves ficam em `modules/pokemon/{domain,application,infrastructure}`. `scripts/lib` apresenta o recibo no Node. `pokemon-service/` continua sendo o serviço Cassandra separado, compilado pelo próprio `shadow-cljs.edn`, e não é o caminho ao vivo do A6.
+
+`src/zapbot/pokemon/` é o motor antigo de compatibilidade. Ele ainda alimenta os builds `:resetar-pokemon`, `:migrar-estado` e `:benchmark`, a suíte `npm test` e o terceiro catálogo de nomes em `golpes.cljs`. `zapbot.core` e `zapbot.router` não o carregam. Não apagar esse diretório enquanto esses builds, testes ou o catálogo existirem. O PR #105 remove essa árvore e não deve ser mergeado por cima desta master.
 
 `src/zapbot/*.cljs` — a lista completa de comandos com descrições vive em `zapbot.router/comandos` (também usada para gerar `!ajuda`). Ao adicionar um comando novo: criar o namespace, adicionar ao `require` e `case` de `zapbot.router`, e adicionar entrada em `comandos`.
 
@@ -55,7 +57,8 @@ Namespaces que merecem atenção por não serem óbvios pelo nome:
 - `zapbot.bloqueio` — bloqueio de comandos/jogos/bot por chat (admin), checado antes de todo despacho
 - `zapbot.admins` — cadastro de admins conhecidos por grupo, alimentado passivamente pelo evento `group_admin_changed` (mais confiável que `getChatModel` ao vivo, que falha persistentemente em alguns grupos)
 - `zapbot.historico` — só guarda mensagens vistas desde que o bot foi ligado (não busca histórico completo do grupo) — por isso `!resuma` e `!sorteio` só têm efeito sobre atividade recente
-- `zapbot.pokemon.core`/`zapbot.pokemon.pokedex`/`zapbot.pokemon.treinador`/`zapbot.pokemon.loja` — sistema de captura/batalha/evolução de Pokémon, com nível de treinador desacoplado do rank e economia de moedas via `zapbot.pokemon.loja`
+- `zapbot.pokemon-http` — adaptador WhatsApp do Pokémon. O hotfix do Sinistea mora aqui e só consome o catalisador quando o plano pede o item.
+- `zapbot.pokemon.core` — motor legado, fora do bundle `:app`. Os testes CLJS e o reset/migração ainda dependem dele.
 - `zapbot.rank` — pontuação persistida por chat (vitórias em `!velha`, `!naval`, `!pokemon`, `!quiz`)
 - `zapbot.velha`, `!naval`, `!adedonha`, `!quiz` — estado de jogo em memória por chat (não sobrevive a restart, exceto placar via `zapbot.rank`)
 
