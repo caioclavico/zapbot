@@ -86,6 +86,72 @@ function pedrasCompativeis(speciesSlug) {
   return Object.keys(PEDRAS).filter(id => PEDRAS[id].evolucoes[slug]);
 }
 
+/** Só Sinistea. Outras espécies e outras pedras ficam no caminho `destinoPedra`. */
+const ITENS_SINISTEA = new Set(['cracked-pot', 'chipped-pot']);
+const DESTINO_SINISTEA = 'polteageist';
+const ITEM_CATALISADOR = 'catalisador-evolutivo';
+
+function destinosSinistea(cadeia) {
+  const raiz = cadeia && (cadeia.chain || cadeia);
+  const found = [];
+  const walk = (node) => {
+    if (!node || !node.species || node.species.name !== 'sinistea') {
+      (node && node.evolves_to || []).forEach(walk);
+      return;
+    }
+    (node.evolves_to || []).forEach((evo) => {
+      const dest = evo && evo.species && evo.species.name;
+      const casa = (evo.evolution_details || []).some((d) =>
+        d && d.trigger && d.trigger.name === 'use-item' &&
+        d.item && ITENS_SINISTEA.has(d.item.name) &&
+        dest === DESTINO_SINISTEA);
+      if (casa) found.push(dest);
+      walk(evo);
+    });
+  };
+  walk(raiz);
+  return [...new Set(found)];
+}
+
+function qtyItemInventario(inventario, itemId) {
+  const bruto = inventario && (inventario.itens || inventario.items || inventario.inventory);
+  const itens = Array.isArray(bruto) ? bruto : [];
+  const id = String(itemId);
+  for (const it of itens) {
+    if (!it) continue;
+    const atual = String(it.itemId || it['item-id'] || it.id || '');
+    if (atual === id) return Number(it.qty || 0);
+  }
+  return 0;
+}
+
+/**
+ * Decide a evolução especial do Sinistea sem consumir item.
+ * `consumir` só é true quando a cadeia, o destino e o catalisador estão válidos.
+ */
+function planejarEvolucaoSinistea({ species, chain, destino, inventario } = {}) {
+  const slug = String(species || '').toLowerCase();
+  const recusa = (motivo, extra = {}) => ({ ok: false, consumir: false, motivo, ...extra });
+  if (slug !== 'sinistea') return recusa('especie');
+  const destinos = destinosSinistea(chain);
+  if (!destinos.length) return recusa('sem-cadeia');
+  const pedido = String(destino || '').trim().toLowerCase();
+  if (pedido && pedido !== DESTINO_SINISTEA) return recusa('destino', { destinos });
+  if (destinos.length !== 1 || destinos[0] !== DESTINO_SINISTEA) {
+    return recusa('destino', { destinos });
+  }
+  const qty = qtyItemInventario(inventario, ITEM_CATALISADOR);
+  if (!(qty >= 1)) return recusa('sem-item', { itemId: ITEM_CATALISADOR, qty });
+  return {
+    ok: true,
+    consumir: true,
+    motivo: null,
+    itemId: ITEM_CATALISADOR,
+    destino: DESTINO_SINISTEA,
+    qty
+  };
+}
+
 function escalarNivel(pokemon, nivel) {
   const n = Math.max(1, Number(nivel) || 1);
   const fator = Math.pow(FATOR_CRESCIMENTO, n - 1);
@@ -143,6 +209,14 @@ function nivelAprendizado(movimento) {
     .filter(n => n != null)
     .sort((a, b) => a - b);
   return levels.length ? levels[0] : null;
+}
+
+async function cadeiaEvolucaoSinistea(slug) {
+  if (String(slug || '').toLowerCase() !== 'sinistea') return null;
+  const sp = await fetchJson(`https://pokeapi.co/api/v2/pokemon-species/${encodeURIComponent(slug)}`);
+  const url = sp && sp.evolution_chain && sp.evolution_chain.url;
+  if (!url) return null;
+  return fetchJson(url);
 }
 
 async function fetchJson(url, { timeoutMs = 15000 } = {}) {
@@ -502,6 +576,9 @@ module.exports = {
   normalizarItem,
   destinoPedra,
   pedrasCompativeis,
+  destinosSinistea,
+  planejarEvolucaoSinistea,
+  cadeiaEvolucaoSinistea,
   escalarNivel,
   dadosEvolucao,
   fetchPokemonById,

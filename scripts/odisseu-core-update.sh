@@ -8,6 +8,12 @@ cd "$ROOT"
 # shellcheck source=odisseu-core-lib.sh
 source "${ROOT}/scripts/odisseu-core-lib.sh"
 
+compose_file="${ODISSEU_CORE_COMPOSE:-docker-compose.odisseu-core.yml}"
+if grep -q 'odisseu-a6-' "$compose_file"; then
+  echo 'odisseu-core-update.sh não altera o stack odisseu-a6-*.' >&2
+  exit 2
+fi
+
 odisseu_core_require_env "$ROOT"
 
 MODE="${1:-jvm}"

@@ -2,6 +2,10 @@
 # Runner-only client. The VM accepts a forced command, never an arbitrary shell.
 set -euo pipefail
 umask 077
+if [[ "${DEPLOY_TARGET:-}" == "odisseu-a6-node" ]]; then
+  echo 'odisseu-a6-node não usa este runner. O plano é scripts/a6-node-hotfix-plan.py e o apply permanece desligado.' >&2
+  exit 2
+fi
 SSH_PORT=${SSH_PORT:-22}
 
 [[ "${GITHUB_REF:-}" == refs/heads/master ]] || { echo 'Deploy is restricted to master.' >&2; exit 2; }

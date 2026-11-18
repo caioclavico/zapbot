@@ -1008,7 +1008,9 @@ function formatEvolve(data, prefix = '!pk') {
   const item = data && data.itemId;
   return [
     `✨ Evoluiu para *${p.nome || '?'}*!`,
-    item ? `Uma pedra (\`${item}\`) foi consumida.` : null,
+    item === 'catalisador-evolutivo'
+      ? '1 Catalisador Evolutivo foi consumido.'
+      : (item ? `Uma pedra (\`${item}\`) foi consumida.` : null),
     'Nível, XP e item equipado foram preservados.',
     `${prefix} time · ${prefix} escolher`
   ].filter(Boolean).join('\n');

@@ -141,6 +141,80 @@
     (let [n (js/parseInt (str texto) 10)]
       (when (and (<= 1 n) (<= n total)) (dec n)))))
 
+(defn- mensagem-pedras
+  [prefix slug]
+  (str "❓ Use " prefix " evoluir <número> <pedra>."
+       "\nPedras compatíveis: "
+       (or (not-empty
+            (str/join ", "
+                      (js->clj (.pedrasCompativeis pokeapi (or slug "")))))
+           "nenhuma nesta versão")
+       "\nGanhe pedras nos ginásios."
+       (when (= slug "sinistea")
+         (str "\nSinistea: " prefix " evoluir <número> especial."))))
+
+(defn- concluir-evolucao!
+  "POST /v1/pokemon/evolve. O item só entra no corpo depois da validação do chamador."
+  [jvm ctx pedido chat-id player-id prefix idx item-id destino poke]
+  (p/let [evoluido (.fetchPokemonByName pokeapi destino)
+          nivel (or (.-nivel poke) 1)
+          escalado (.escalarNivel pokeapi evoluido nivel)
+          dados (.dadosEvolucao pokeapi escalado)
+          ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+          op-id (.stableOperationId jvm-transport
+                                    (:requestId pedido)
+                                    (str "evolve:" idx ":" item-id))
+          data (desempenho/medir! ctx "pokemon_jvm_evolve"
+                 #(.evolvePokemon jvm
+                    (clj->js {:chatId chat-id
+                              :playerId player-id
+                              :saveId (.-activeSaveId ativo)
+                              :fenceGeneration (.-fenceGeneration ativo)
+                              :operationId op-id
+                              :collectionIndex idx
+                              :itemId item-id
+                              :dados dados})))]
+    (envelope-jvm pedido (.formatEvolve jvm-present data prefix))))
+
+(defn- evoluir-sinistea!
+  "Catalisador só para Sinistea → Polteageist. Falha não chama a JVM."
+  [jvm ctx pedido chat-id player-id prefix idx poke slug destino-txt]
+  (p/let [cadeia (when (= slug "sinistea")
+                   (.cadeiaEvolucaoSinistea pokeapi slug))
+          inv (when (= slug "sinistea")
+                (desempenho/medir! ctx "pokemon_jvm_inventory"
+                  #(.getInventory jvm #js {:chatId chat-id :playerId player-id})))
+          plano (.planejarEvolucaoSinistea pokeapi
+                  #js {:species slug
+                       :chain cadeia
+                       :destino destino-txt
+                       :inventario inv})]
+    (cond
+      (and (.-ok plano) (.-consumir plano) (= (.-itemId plano) "catalisador-evolutivo"))
+      (concluir-evolucao! jvm ctx pedido chat-id player-id prefix
+                          idx (.-itemId plano) (.-destino plano) poke)
+
+      (= (.-motivo plano) "sem-item")
+      (envelope-jvm pedido
+                    (str "🧬 Você precisa de um Catalisador Evolutivo para evoluir Sinistea."
+                         "\nO item não foi consumido."))
+
+      (= (.-motivo plano) "destino")
+      (envelope-jvm pedido
+                    (str "❓ Sinistea evolui para Polteageist com "
+                         prefix " evoluir <número> especial."
+                         "\nO item não foi consumido."))
+
+      (= slug "sinistea")
+      (envelope-jvm pedido
+                    (str "❓ Não confirmei a evolução especial do Sinistea."
+                         "\nO item não foi consumido."))
+
+      :else
+      (envelope-jvm pedido
+                    (str "❓ Esse Pokémon não evolui com Catalisador Evolutivo."
+                         "\n" (mensagem-pedras prefix slug))))))
+
 (defn- configurado? []
   (and (not (str/blank? config/pokemon-service-url))
        (not (str/blank? config/pokemon-service-token))))
@@ -2924,7 +2998,8 @@
                 "evoluir"
                 (let [prefix (str config/prefix "pk")
                       idx-txt (first resto)
-                      item-raw (second resto)]
+                      item-raw (second resto)
+                      destino-especial (str/join " " (drop 2 resto))]
                   (p/let [col (desempenho/medir! ctx "pokemon_jvm_collection"
                                  #(.getCollection jvm #js {:chatId chat-id :playerId player-id}))
                           items (vec (or (.-collection col) #js []))
@@ -2932,39 +3007,24 @@
                           poke (when (some? idx) (nth items idx nil))
                           slug (some-> poke .-species str/lower-case)
                           item-id (when item-raw (.normalizarItem pokeapi item-raw))
-                          destino (when (and slug item-id)
+                          destino (when (and slug item-id (not= item-id "especial"))
                                     (.destinoPedra pokeapi item-id slug))]
                     (cond
-                      (or (nil? poke) (nil? destino))
+                      (nil? poke)
                       (envelope-jvm pedido
                                     (str "❓ Use " prefix " evoluir <número> <pedra>."
-                                         "\nPedras compatíveis: "
-                                         (or (not-empty
-                                              (str/join ", "
-                                                        (js->clj (.pedrasCompativeis pokeapi
-                                                                                    (or slug "")))))
-                                             "nenhuma nesta versão")
-                                         "\nGanhe pedras nos ginásios."))
+                                         "\nO número é o de " prefix " time."))
+
+                      (= item-id "especial")
+                      (evoluir-sinistea! jvm ctx pedido chat-id player-id prefix
+                                         idx poke slug destino-especial)
+
+                      (nil? destino)
+                      (envelope-jvm pedido (mensagem-pedras prefix slug))
+
                       :else
-                      (p/let [evoluido (.fetchPokemonByName pokeapi destino)
-                              nivel (or (.-nivel poke) 1)
-                              escalado (.escalarNivel pokeapi evoluido nivel)
-                              dados (.dadosEvolucao pokeapi escalado)
-                              ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                              op-id (.stableOperationId jvm-transport
-                                                        (:requestId pedido)
-                                                        (str "evolve:" idx ":" item-id))
-                              data (desempenho/medir! ctx "pokemon_jvm_evolve"
-                                     #(.evolvePokemon jvm
-                                        (clj->js {:chatId chat-id
-                                                  :playerId player-id
-                                                  :saveId (.-activeSaveId ativo)
-                                                  :fenceGeneration (.-fenceGeneration ativo)
-                                                  :operationId op-id
-                                                  :collectionIndex idx
-                                                  :itemId item-id
-                                                  :dados dados})))]
-                        (envelope-jvm pedido (.formatEvolve jvm-present data prefix))))))
+                      (concluir-evolucao! jvm ctx pedido chat-id player-id prefix
+                                          idx item-id destino poke))))
 
                 "mt"
                 (let [prefix (str config/prefix "pk")
