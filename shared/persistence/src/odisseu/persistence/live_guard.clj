@@ -81,14 +81,30 @@
           (if (proven-isolated-temp? path) :non-live :unknown)
           :else :non-live)))))
 
+(defn- read-proc-text
+  "Lê um arquivo de /proc sem available(), que devolve EINVAL no runner."
+  [file]
+  (try
+    (when (.isFile file)
+      (with-open [reader (java.io.BufferedReader.
+                          (java.io.InputStreamReader.
+                           (java.io.FileInputStream. file)
+                           java.nio.charset.StandardCharsets/UTF_8))]
+        (loop [lines []]
+          (if-let [line (.readLine reader)]
+            (recur (conj lines line))
+            (str/join "\n" lines)))))
+    (catch java.io.IOException _ nil)))
+
 (defn read-kernel-binding
-  "Relê boot id e id do container no momento da checagem."
+  "Relê boot id e id do container no momento da checagem.
+   Falha de leitura vira observação vazia e não autoriza."
   []
-  (let [boot (io/file "/proc/sys/kernel/random/boot_id")
-        cgroup (io/file "/proc/self/cgroup")]
-    {:boot-id (when (.isFile boot) (str/trim (slurp boot)))
-     :container-id (when (.isFile cgroup)
-                     (when-let [found (re-find #"([0-9a-f]{12,64})" (slurp cgroup))]
+  (let [boot (read-proc-text (io/file "/proc/sys/kernel/random/boot_id"))
+        cgroup (read-proc-text (io/file "/proc/self/cgroup"))]
+    {:boot-id (when boot (str/trim boot))
+     :container-id (when cgroup
+                     (when-let [found (re-find #"([0-9a-f]{12,64})" cgroup)]
                        (if (string? found) found (last found))))
      :mounts (let [mount (read-mountinfo)]
                (when (= :ok (:status mount)) (:text mount)))}))
