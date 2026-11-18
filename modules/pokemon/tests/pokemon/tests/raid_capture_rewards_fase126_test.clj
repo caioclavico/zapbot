@@ -104,13 +104,13 @@
   (testing "regras documentadas: base raide × bola (± frambo 1.5, cap da bola)"
     (is (= 35 (raid/chance-captura "raro")))
     (is (= 8 (raid/chance-captura "lendario")))
-    (is (= 70 (capture/chance-com-bola 35 "ultra-bola")))
+    (is (= 70 (capture/chance-com-bola 35 "ultra-bola" capture/chance-captura-maxima-raid)))
     (is (= 95 (capture/chance-com-bola-frambo
                35 "ultra-bola" true capture/chance-captura-maxima-raid))
         "35×2=70 ×1.5 → 105 cap raid 95")
-    (is (= 16 (capture/chance-com-bola 8 "ultra-bola")))
-    (is (= 24 (capture/chance-com-bola-frambo 8 "ultra-bola" true)))
-    (is (= 70 (capture/chance-com-bola-frambo 35 "ultra-bola" false)))))
+    (is (= 16 (capture/chance-com-bola 8 "ultra-bola" capture/chance-captura-maxima-raid)))
+    (is (= 24 (capture/chance-com-bola-frambo 8 "ultra-bola" true capture/chance-captura-maxima-raid)))
+    (is (= 70 (capture/chance-com-bola-frambo 35 "ultra-bola" false capture/chance-captura-maxima-raid)))))
 
 (deftest ultra-bola-sucesso-e-falha-deterministica
   (let [s (fresh-store! "r126-ultra")
@@ -253,7 +253,7 @@
                   :frambo true :agora-ms 100})]
       (is (true? (:capturou cap)))
       (is (true? (:frambo cap)))
-      (is (= (capture/chance-com-bola-frambo 35 "grande-bola" true) (:chance cap))))))
+      (is (= (capture/chance-com-bola-frambo 35 "grande-bola" true capture/chance-captura-maxima-raid) (:chance cap))))))
 
 (deftest recompensas-detalhadas-no-golpe-fatal
   (let [s (fresh-store! "r126-rw")

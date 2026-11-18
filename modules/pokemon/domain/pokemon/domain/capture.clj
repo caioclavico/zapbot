@@ -14,10 +14,10 @@
 ;; Comum/incomum reduzidos; raro+ inalterados nesta fase.
 ;; Bola/Frambo aplicam-se depois, com cap por bola (90).
 ;; Política: streak NÃO altera probabilidade (só recompensas streak-unit-v1).
-(def politica-chance-captura-versao "wild-catch-balance-v1")
+(def politica-chance-captura-versao "wild-catch-balance-v2")
 
 (def raridade-chance-base
-  {"comum" 62
+  {"comum" 65
    "incomum" 48
    "raro" 28
    "epico" 14
@@ -55,9 +55,32 @@
    "paralisado" 1.5 "envenenado" 1.5 "queimado" 1.5 "confuso" 1.5})
 
 (def bolas
-  {"pokebola" {:nome "Pokébola" :multiplicador-captura 1 :limite-captura 90}
-   "grande-bola" {:nome "Grande Bola" :multiplicador-captura 1.5 :limite-captura 90}
-   "ultra-bola" {:nome "Ultra Bola" :multiplicador-captura 2 :limite-captura 90}})
+  "Curva selvagem: 65 → 65 / 80 / 95 nas condições de referência.
+  `limite-captura` impede que a Bola Média e a Ultra caiam no mesmo teto
+  para um Pokémon comum (a Ultra para em 95; a Média, em 90).
+  Raide continua nos multiplicadores legados via `lim-override`."
+  {"pokebola" {:nome "Pokébola" :numer 1 :denom 1 :multiplicador-captura 1
+               :limite-captura 90}
+   "grande-bola" {:nome "Grande Bola" :numer 16 :denom 13
+                  :multiplicador-captura (/ 16.0 13) :limite-captura 90}
+   "ultra-bola" {:nome "Ultra Bola" :numer 19 :denom 13
+                 :multiplicador-captura (/ 19.0 13) :limite-captura 95}})
+
+(def ^:private bolas-raid
+  {"pokebola" [1 1]
+   "grande-bola" [3 2]
+   "ultra-bola" [2 1]})
+
+(defn- aplicar-fracao
+  "Arredonda metade para cima sem erro de binário: (n*a)/b."
+  [chance numer denom]
+  (let [c (long chance)
+        a (long numer)
+        b (long denom)
+        prod (* c a)
+        q (quot prod b)
+        r (rem prod b)]
+    (if (>= (* r 2) b) (inc q) q)))
 
 (def bola-aliases
   "IDs legados que somam no estoque/débito do canônico (UI + inventory-adjust)."
@@ -301,9 +324,11 @@
    (let [bola (get bolas bola-id)]
      (when-not bola
        (throw (err/error :unknown_ball {:bola bola-id})))
-     (let [lim (long (or lim-override (:limite-captura bola) chance-captura-maxima))]
-       (min lim
-            (Math/round (* (double chance-base) (:multiplicador-captura bola))))))))
+     (let [lim (long (or lim-override (:limite-captura bola) chance-captura-maxima))
+           [numer denom] (if lim-override
+                           (get bolas-raid bola-id)
+                           [(:numer bola) (:denom bola)])]
+       (min lim (aplicar-fracao chance-base numer denom))))))
 
 ;; Fruta Frambo (item `fruta`) — caça e raide.
 (def frambo-item-id "fruta")

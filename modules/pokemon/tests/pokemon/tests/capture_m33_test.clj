@@ -352,12 +352,11 @@
 (deftest modificadores-bola-e-limites
   (let [base 40]
     (is (= 40 (capture/chance-com-bola base "pokebola")))
-    (is (= 60 (capture/chance-com-bola base "grande-bola")))
-    (is (= 80 (capture/chance-com-bola base "ultra-bola"))))
-  ;; wild-catch-balance-v1: caps unificados em 90.
+    (is (= 49 (capture/chance-com-bola base "grande-bola")))
+    (is (= 58 (capture/chance-com-bola base "ultra-bola"))))
   (is (= 90 (capture/chance-com-bola 95 "pokebola")) "pokébola cap 90")
   (is (= 90 (capture/chance-com-bola 95 "grande-bola")) "grande cap 90")
-  (is (= 90 (capture/chance-com-bola 95 "ultra-bola")) "ultra cap 90")
+  (is (= 95 (capture/chance-com-bola 95 "ultra-bola")) "ultra cap 95")
   (let [mit (capture/chance-captura
              {:raridade "mitico"
               :hp 200 :ataque 200 :defesa 200 :atq-esp 200 :def-esp 200 :veloc 200})]

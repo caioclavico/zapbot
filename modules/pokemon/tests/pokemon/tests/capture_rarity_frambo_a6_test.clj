@@ -20,7 +20,7 @@
 
 (deftest ultra-frambo-respeita-cap
   (let [c (capture/chance-com-bola-frambo 80 "ultra-bola" true)]
-    (is (= 90 c))))
+    (is (= 95 c) "80 × 19/13 estoura o teto selvagem da Ultra")))
 
 (deftest sequencia-nao-altera-chance
   (let [poke {:raridade "comum" :hp 40 :ataque 40 :defesa 40
@@ -29,7 +29,7 @@
         c50 (capture/chance-base-pos-batalha poke nil 50)
         c100 (capture/chance-base-pos-batalha poke nil 100)]
     (is (= c0 c50 c100))
-    (is (= "wild-catch-balance-v1" capture/politica-chance-captura-versao))))
+    (is (= "wild-catch-balance-v2" capture/politica-chance-captura-versao))))
 
 (deftest sim-10k-streak-invariante-e-centros
   "10k tentativas: taxa ≈ chance publicada; streak 0 vs 100 idênticos."
@@ -57,7 +57,7 @@
     (is (<= 55 chance 70))
     (is (< (Math/abs (- taxa (double chance))) 1.5)
         (str "taxa=" taxa " chance=" chance))
-    (is (= 62 (get capture/raridade-chance-base "comum")))
+    (is (= 65 (get capture/raridade-chance-base "comum")))
     (is (= 48 (get capture/raridade-chance-base "incomum")))
     (is (= 90 capture/chance-captura-maxima))
     (is (= 95 capture/chance-captura-maxima-raid))))

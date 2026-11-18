@@ -226,7 +226,7 @@
 (deftest b4-frambo-multiplicador-e-cap
   (is (= 27 (capture/chance-com-bola-frambo 18 "pokebola" true)))
   (is (= 18 (capture/chance-com-bola-frambo 18 "pokebola" false)))
-  (is (= 90 (capture/chance-com-bola-frambo 80 "ultra-bola" true)))
+  (is (= 95 (capture/chance-com-bola-frambo 80 "ultra-bola" true)))
   (is (= 90 (capture/chance-com-bola-frambo 70 "grande-bola" true)))
   (is (= 95 (capture/chance-com-bola-frambo
              80 "ultra-bola" true capture/chance-captura-maxima-raid))
@@ -296,7 +296,7 @@
 
 (deftest b5-tabela-raridade-wild-e-raid
   (testing "wild depois = wild-catch-balance-v1"
-    (is (= {"comum" 62 "incomum" 48 "raro" 28 "epico" 14 "lendario" 5 "mitico" 3}
+    (is (= {"comum" 65 "incomum" 48 "raro" 28 "epico" 14 "lendario" 5 "mitico" 3}
            wild-depois)))
   (testing "wild depois ≤ wild antes em todas as raridades"
     (doseq [r (keys wild-antes)]
@@ -313,17 +313,26 @@
 (deftest b5-grande-ultra-multiplicadores
   (let [base 40]
     (is (= 40 (capture/chance-com-bola base "pokebola")))
-    (is (= 60 (capture/chance-com-bola base "grande-bola")) "×1.5")
-    (is (= 80 (capture/chance-com-bola base "ultra-bola")) "×2")
-    (is (= 90 (capture/chance-com-bola 95 "grande-bola")) "cap wild 90")
-    (is (= 90 (capture/chance-com-bola 90 "ultra-bola")) "cap wild 90")
+    (is (= 49 (capture/chance-com-bola base "grande-bola")) "16/13")
+    (is (= 58 (capture/chance-com-bola base "ultra-bola")) "19/13")
+    (is (= 90 (capture/chance-com-bola 95 "grande-bola")) "cap wild média 90")
+    (is (= 95 (capture/chance-com-bola 90 "ultra-bola")) "cap wild ultra 95")
     (is (= 95 (capture/chance-com-bola 95 "ultra-bola"
                                        capture/chance-captura-maxima-raid))
         "cap raid 95"))
+  (testing "referência de Pokémon comum: 65, 80 e 95"
+    (let [comum {:raridade "comum" :hp 75 :ataque 75 :defesa 75
+                 :atq-esp 75 :def-esp 75 :veloc 75}]
+      (is (= 65 (capture/chance-captura comum)))
+      (is (= 65 (capture/chance-com-bola 65 "pokebola")))
+      (is (= 80 (capture/chance-com-bola 65 "grande-bola")))
+      (is (= 95 (capture/chance-com-bola 65 "ultra-bola")))
+      (is (not= (capture/chance-com-bola 65 "grande-bola")
+                (capture/chance-com-bola 65 "ultra-bola")))))
   (testing "attempt-capture RNG determinístico com grande-bola"
     (let [r (capture/attempt-capture
              {:pokemon {:raridade "raro" :hp 50 :ataque 50 :defesa 50
                         :atq-esp 50 :def-esp 50 :veloc 50}
               :bola "grande-bola" :chance-base 28 :roll 0 :fuga-roll 99})]
       (is (true? (:capturou? r)))
-      (is (= 42 (:chance r)) "28 × 1.5 = 42"))))
+      (is (= 34 (:chance r)) "28 × 16/13 = 34"))))
