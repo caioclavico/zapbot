@@ -1,0 +1,50 @@
+;; M7.2 — schema Datomic Local para enquetes (sintético / staging).
+;; Uma enquete aberta por chat; votos por eleitor; sem TTL/deadline no legado.
+[
+ {:db/ident       :platform.poll/chat
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "Enquete ativa → chat (no máximo uma por chat)."}
+
+ {:db/ident       :platform.poll/question
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Pergunta da enquete."}
+
+ {:db/ident       :platform.poll/options
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Opções como EDN vector (ordem preservada)."}
+
+ {:db/ident       :platform.poll/prefix
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Prefixo de comando gravado na criação (ex.: !)."}
+
+ {:db/ident       :platform.poll.vote/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "chat-id|voter-id — um voto por eleitor na enquete ativa."}
+
+ {:db/ident       :platform.poll.vote/poll
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Voto → enquete."}
+
+ {:db/ident       :platform.poll.vote/voter
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "JID serializado do eleitor."}
+
+ {:db/ident       :platform.poll.vote/choice
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Índice 1-based da opção escolhida."}
+
+ {:db/ident       :platform.op/snapshot
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Snapshot EDN opcional (ex.: enquete encerrada) para retry idempotente."}
+]

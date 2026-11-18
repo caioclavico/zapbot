@@ -1,0 +1,20 @@
+;; Catálogo de nascimentos por categoria de ovo (A6).
+;; Origem dos pools: espelho do legado adventure_catalog (km 2/5/10) + pool especial
+;; sem lendários obrigatórios. Pesos somam 100 por categoria.
+;; version: egg-hatch-catalog-v1 — alterar pesos aqui NÃO muda ovos já concedidos
+;; (a espécie é fixada na concessão).
+{:version "egg-hatch-catalog-v1"
+ :source "legacy adventure_catalog km pools + especial balanceado (sem lendários)"
+ :pools
+ {:comum [{:weight 70 :species ["pidgey" "rattata" "caterpie" "weedle"]}
+          {:weight 25 :species ["bulbasaur" "charmander" "squirtle"]}
+          {:weight 5 :species ["pichu" "cleffa" "igglybuff"]}]
+  :raro [{:weight 55 :species ["geodude" "machop" "poliwag"]}
+         {:weight 35 :species ["eevee" "growlithe" "vulpix"]}
+         {:weight 10 :species ["togepi" "ralts" "mareep"]}]
+  :epico [{:weight 40 :species ["onix" "scyther" "pinsir"]}
+          {:weight 45 :species ["dratini" "larvitar" "bagon"]}
+          {:weight 15 :species ["riolu" "gible" "beldum"]}]
+  :especial [{:weight 50 :species ["eevee" "togepi" "ralts" "mareep"]}
+             {:weight 35 :species ["dratini" "larvitar" "bagon" "gible"]}
+             {:weight 15 :species ["riolu" "beldum" "pichu"]}]}}

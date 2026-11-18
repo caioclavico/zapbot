@@ -108,3 +108,45 @@
                            ["loja" ""]] @chamadas))))
           (.catch (fn [erro] (is false (str erro))))
           (.finally done)))))
+
+(deftest comandos-de-troca-sao-roteados-pelo-pokemon
+  (async done
+    (let [chamadas (atom [])]
+      (with-redefs [config/prefix "!"
+                    bloqueio/chat-id (fn [_] "chat@c.us")
+                    bloqueio/bot-bloqueado? (fn [_] false)
+                    bloqueio/comando-bloqueado? (fn [_ _] false)
+                    pokemon/jogar (fn [_ args]
+                                       (swap! chamadas conj args)
+                                       (js/Promise.resolve :ok))]
+        (-> (js/Promise.all
+             (clj->js (map #(router/processar (mensagem %))
+                           ["!pk troca" "!pk troca 2 3 @treinador" "!pk troca aceitar 123"
+                            "!pk troca confirmar 123" "!pk troca recusar 123" "!pk troca cancelar 123"])))
+            (.then (fn [_]
+                     (is (= ["troca" "troca 2 3 @treinador" "troca aceitar 123"
+                             "troca confirmar 123" "troca recusar 123" "troca cancelar 123"]
+                            @chamadas))
+                     (done)))
+            (.catch (fn [erro] (is false (str erro)) (done))))))))
+
+(deftest neg-nao-e-mais-rota-de-negociacao
+  (async done
+    (let [jogar (atom []) executar (atom [])]
+      (with-redefs [config/prefix "!"
+                    bloqueio/chat-id (fn [_] "chat@c.us")
+                    bloqueio/bot-bloqueado? (fn [_] false)
+                    bloqueio/comando-bloqueado? (fn [_ _] false)
+                    pokemon/jogar (fn [_ args]
+                                    (swap! jogar conj args)
+                                    (js/Promise.resolve :ok))
+                    pokemon/executar (fn [_ cmd args]
+                                       (swap! executar conj [cmd args])
+                                       (js/Promise.resolve :ok))]
+        (-> (js/Promise.all
+             (clj->js [(router/processar (mensagem "!neg"))]))
+            (.then (fn [_]
+                     (is (empty? @jogar))
+                     (is (empty? @executar))
+                     (done)))
+            (.catch (fn [erro] (is false (str erro)) (done))))))))

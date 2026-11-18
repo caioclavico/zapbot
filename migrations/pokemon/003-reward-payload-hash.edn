@@ -1,0 +1,12 @@
+;; M3.2 — recibo com hash de payload (idempotência estrita).
+[
+ {:db/ident       :operation-receipt/payload-hash
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "SHA-256 hex do payload canônico; retry com payload diferente falha"}
+
+ {:db/ident       :operation-receipt/channel
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "\"gameplay\" (fence obrigatório) | \"admin\" (seed/migração explícita)"}
+]

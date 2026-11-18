@@ -60,33 +60,38 @@
 
 (deftest health-http-diferencia-pronto-de-processo-vivo
   (let [s (saude/criar) c (cliente) codigo (atom nil) corpo (atom nil)
+        req (fn [path] #js {:method "GET" :url path :on (fn [& _] nil)})
         res #js {:writeHead (fn [n & _] (reset! codigo n))
+                 :on (fn [& _] nil)
                  :end (fn [& [texto]] (reset! corpo texto))}]
-    (saude/atender! s c #js {:method "GET" :url "/health"} res)
+    (saude/atender! s c (req "/health") res)
     (is (= 503 @codigo))
     (is (= "STARTING" (.-whatsapp (js/JSON.parse @corpo))))
     (reset! (:estado s) "READY")
-    (saude/atender! s c #js {:method "GET" :url "/health"} res)
+    (saude/atender! s c (req "/health") res)
     (is (= 200 @codigo))
-    (saude/atender! s c #js {:method "GET" :url "/"} res)
+    (saude/atender! s c (req "/") res)
     (is (= 404 @codigo))))
 
 (deftest diagnostico-passivo-nao-consulta-chromium
   (let [codigo (atom nil) corpo (atom nil)
+        req #js {:method "GET" :url "/diagnostics" :on (fn [& _] nil)}
         res #js {:writeHead (fn [n & _] (reset! codigo n))
+                 :on (fn [& _] nil)
                  :end #(reset! corpo %)}]
     (with-redefs [desempenho/pendentes (fn [] [{:id 7 :pendentes ["fila_pokemon"]}])]
-      (saude/atender! (saude/criar) nil #js {:method "GET" :url "/diagnostics"} res)
+      (saude/atender! (saude/criar) nil req res)
       (is (= 200 @codigo))
       (is (= {:operacoes [{:id 7 :pendentes ["fila_pokemon"]}]}
              (js->clj (js/JSON.parse @corpo) :keywordize-keys true))))))
 
 (deftest diagnostico-retorna-amostra-em-cache-sem-consultar-browser
   (let [corpo (atom nil)
+        req #js {:method "GET" :url "/diagnostics" :on (fn [& _] nil)}
         amostra #js {:node #js {:rss_bytes 12345}}
-        res #js {:writeHead (fn [& _]) :end #(reset! corpo %)}]
+        res #js {:writeHead (fn [& _]) :on (fn [& _] nil) :end #(reset! corpo %)}]
     (with-redefs [recursos/amostra (fn [] amostra)
                   desempenho/pendentes (fn [] [])]
-      (saude/atender! (saude/criar) nil #js {:method "GET" :url "/diagnostics"} res)
+      (saude/atender! (saude/criar) nil req res)
       (is (= {:operacoes [] :recursos {:node {:rss_bytes 12345}}}
              (js->clj (js/JSON.parse @corpo) :keywordize-keys true))))))

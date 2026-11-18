@@ -149,7 +149,7 @@
                       (is (str/includes? texto token))
                       (core/comando-professor message ["confirmar" token]))))
           (p/then (fn [texto]
-                    (is (str/includes? texto "+1 cartão"))
+                    (is (str/includes? texto "+1 Doce"))
                     (is (empty? (treinador/equipe cid "ash")))
                     (is (= 1 (loja/quantidade-item cid "ash" "restos")))
                     (is (false? (treinador/inicial-disponivel? cid "ash")))))
@@ -189,7 +189,7 @@
                     (is (= 2 (count @chamadas)))
                     (core/jogar-comando message "professor usar 1")))
           (p/then (fn [texto]
-                    (is (str/includes? texto "não tem cartões"))
+                    (is (str/includes? texto "não tem Doces"))
                     (is (= 0 (get (treinador/cartoes-professor cid "ash") "pidgey")))
                     (set! core/buscar-cadeia-evolucao (fn [_] (p/resolved nil)))
                     (core/jogar-comando message "professor enviar 1")))

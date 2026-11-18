@@ -1,0 +1,342 @@
+(ns pokemon.application.ports
+  "Ports da aplicação — domínio não depende de Datomic.")
+
+(defprotocol TrainerStore
+  "Persistência do núcleo treinador/saves + coleção + recompensas (M3.2).
+
+  Implementações (ex.: Datomic Local) vivem em infrastructure."
+
+  (ensure-schema! [this]
+    "Instala schemas versionados ainda não aplicados.")
+
+  (create-player! [this chat-id player-id]
+    "Cria conta do jogador. Idempotente se já existir.")
+
+  (create-save! [this chat-id player-id save-id]
+    "Cria save vazio no slot. Falha se já existir.")
+
+  (list-saves [this chat-id player-id]
+    "Lista todos os saves do jogador em ordem determinística.")
+
+  (rename-save! [this request]
+    "Renomeia um save com contexto de writer e fence.")
+
+  (get-player [this chat-id player-id]
+    "Retorna mapa da conta ou nil.")
+
+  (get-save [this chat-id player-id save-id]
+    "Retorna mapa do save (economia, progresso) ou nil.")
+
+  (list-party [this chat-id player-id save-id]
+    "Pokémon com in-party=true do save.")
+
+  (list-collection [this chat-id player-id save-id]
+    "Coleção ordenada por collection-index (legado equipe unificada).")
+
+  (list-pokedex-entries [this chat-id player-id save-id]
+    "Entradas da Pokédex do save (seen/caught + contadores).")
+
+  (list-inventory [this chat-id player-id save-id]
+    "Itens do inventário do save.")
+
+  (active-save-id [this chat-id player-id]
+    "Ponteiro ativo ou nil.")
+
+  (activate-save! [this chat-id player-id save-id]
+    "Alterna ponteiro A↔B com CAS de fence. Não sobrescreve o outro save.")
+
+  (apply-gameplay-reward! [this writer-ctx request]
+    "Recompensa de gameplay: CAS save ativo+fence na mesma TX;
+     recibo com payload-hash; canal \"gameplay\".")
+
+  (admin-seed-reward! [this request]
+    "EXPLÍCITO: seed/harness/migração sem fence. Canal \"admin\".
+     Não usar em comandos comuns.")
+
+  (add-to-collection! [this writer-ctx registro]
+    "Acrescenta Pokémon à coleção do save congelado no writer-ctx (CAS ativo+fence).")
+
+  (update-hp-status! [this writer-ctx idx hp-atual status]
+    "Atualiza HP/status no índice da coleção do save ativo congelado.")
+
+  (grant-pokemon-xp! [this writer-ctx idx quantidade]
+    "Concede XP ao Pokémon no índice (regras legado ganhar-xp-no-indice!).")
+
+  (register-trainer-victory! [this writer-ctx]
+    "Incrementa vitorias-treinador no save ativo (CAS fence).")
+
+  (attempt-capture! [this writer-ctx request]
+    "Captura: consome bola, resolve chance, adiciona Pokémon se sucesso.
+     CAS ativo+fence; recibo operation-id + payload-hash.")
+
+  (attempt-encounter-capture! [this writer-ctx request]
+    "Tentativa de captura no encontro ativo (aguardando-captura?).
+     Consome bola + atualiza/encerra batalha na mesma TX; fence + recibo.")
+
+  (encounter-release! [this writer-ctx request]
+    "Libera o selvagem após vitória (sem captura). Preserva XP/PE de batalha;
+     zera sequência de capturas. Fence + recibo idempotente.")
+
+  (encounter-frambo-prepare! [this writer-ctx request]
+    "Prepara Fruta Frambo na caça selvagem (consome 1 fruta, marca bônus).
+     Independente do prepare de raide; fence + recibo.")
+
+  (start-hunt! [this writer-ctx request]
+    "Inicia caça: seleciona selvagem validado, cria batalha, cooldown + trava de chat.")
+
+  (evolve-pokemon! [this writer-ctx request]
+    "Evolui Pokémon no índice; consome item se :item-id; fence + recibo.")
+
+  (learn-move! [this writer-ctx request]
+    "Aprende/substitui golpe no índice; fence + recibo.")
+
+  (set-active-pokemon! [this writer-ctx request]
+    "Define o índice ativo do save; bloqueia com batalha/caça ativa.")
+
+  (set-favorite-pokemon! [this writer-ctx request]
+    "Marca/remove favorito por índice da coleção; fence + recibo.")
+
+  (forget-move! [this writer-ctx request]
+    "Remove golpe no slot do Pokémon; fence + recibo.")
+
+  (offer-move! [this writer-ctx request]
+    "Oferece golpe (auto-aprende se houver vaga; senão enfileira).")
+
+  (refuse-offer! [this writer-ctx request]
+    "Recusa a primeira oferta de golpe pendente.")
+
+  (relearn-move! [this writer-ctx request]
+    "Reaprende golpe do histórico cobrando moedas; fence + recibo.")
+  (start-wild-battle! [this writer-ctx request]
+    "Inicia batalha selvagem no save ativo; bloqueia se já houver ativa.")
+
+  (confirm-battle-turn! [this writer-ctx request]
+    "Persiste turno confirmado (CAS turn-index + fence); recompensas via M3.2.")
+
+  (get-battle [this battle-id]
+    "Snapshot da batalha ou nil.")
+
+  (active-battle [this chat-id player-id]
+    "Batalha ativa do jogador ou nil.")
+
+  (get-gym-occupation [this chat-id gym-id]
+    "Ocupação atual do ginásio no grupo ou nil (NPC).")
+
+  (get-gym-statistics [this chat-id gym-id]
+    "Ranking e histórico persistidos do ginásio ou nil.")
+
+  (list-gym-occupations-for-player [this chat-id player-id]
+    "Ginásios que o jogador ocupa (qualquer save).")
+
+  (set-gym-team! [this writer-ctx indices]
+    "Salva escalação de 3 índices no save ativo.")
+
+  (list-named-teams [this chat-id player-id save-id]
+    "Escalações nomeadas persistidas no save, referenciando IDs canônicos.")
+
+  (save-named-team! [this writer-ctx request]
+    "Salva ou substitui escalação nomeada, sem reservar Pokémon.")
+
+  (use-named-team! [this writer-ctx request]
+    "Aplica escalação nomeada ao ginásio ou liga, revalidando IDs.")
+
+  (delete-named-team! [this writer-ctx request]
+    "Exclui escalação nomeada do save.")
+
+  (select-league! [this writer-ctx request]
+    "Seleciona a liga canônica para o save ativo.")
+
+  (start-gym-challenge! [this writer-ctx request]
+    "Inicia combate 3×3; resultado só via turnos + resolve interno.")
+
+  (resolve-gym-challenge! [this writer-ctx request]
+    "Aplica derrota/vitória: PE/XP/moedas/insígnia/ocupação com fence+recibo.
+     Não expor no WhatsApp — só harness/teste ou fim de batalha no store.")
+
+  (heal-gym-motivation! [this writer-ctx request]
+    "Recupera motivação do defensor (líder do save ativo); consome item.")
+
+  (get-raid [this raid-id]
+    "Snapshot da raid ou nil.")
+
+  (active-raid [this chat-id]
+    "Raid apontada pelo chat (ponteiro), ou nil. Expiração fica na bridge.")
+
+  (open-raid! [this writer-ctx request]
+    "Abre lobby cooperativo no chat (1 ativa; CAS no ponteiro).")
+
+  (join-raid! [this writer-ctx request]
+    "Inscreve com save-id+fence carimbados; snapshot do Pokémon.")
+
+  (leave-raid! [this writer-ctx request]
+    "Sai durante inscrições.")
+
+  (start-raid! [this writer-ctx request]
+    "Inicia combate (≥2); define HP compartilhado.")
+
+  (cancel-raid! [this writer-ctx request]
+    "Cancela lobby antes do combate (criador).")
+
+  (expire-raid-lobby! [this chat-id agora]
+    "Eager expire de inscrições vencidas (sem timer). Retorna raid atualizada ou nil.")
+
+  (get-raid-auto-schedule [this chat-id]
+    "Agenda de aparição automática do chat ou nil.")
+
+  (upsert-raid-auto-schedule! [this schedule]
+    "Cria/atualiza agenda (CAS revision).")
+
+  (tick-raid-auto! [this request]
+    "Tick recuperável: spawns due + expire lobbies auto. Sem timers em memória.")
+
+  (list-pokemon-outbox [this limit]
+    "Eventos pendentes (acked-at nil), ordem por created-at.")
+
+  (ack-pokemon-outbox! [this event-id agora]
+    "Confirma entrega WhatsApp (idempotente).")
+
+  (raid-attack! [this writer-ctx request]
+    "Turno de ataque com CAS turn-index; recompensas na transição vitória.")
+
+  (raid-capture! [this writer-ctx request]
+    "Tentativa de captura pós-vitória (bola + roll).")
+
+  (raid-frambo-prepare! [this writer-ctx request]
+    "Prepara Fruta Frambo para a próxima tentativa de captura do chefe.")
+
+  (ensure-adventure-account! [this chat-id player-id]
+    "Garante conta Adventure Sync do jogador (global ao pid).")
+
+  (get-adventure-account [this chat-id player-id]
+    "Estado Adventure (incubadoras + ovos) ou nil.")
+
+  (get-egg [this egg-id]
+    "Snapshot do ovo ou nil.")
+
+  (grant-egg! [this writer-ctx request]
+    "Concede ovo ao inventário Adventure (fence do writer ativo).")
+
+  (incubate-egg! [this writer-ctx request]
+    "Incuba e carimba save-id+fence no ovo; grava due-at durável.")
+
+  (hatch-egg! [this writer-ctx request]
+    "Nascimento idempotente no save carimbado; A≠B → egg_save_mismatch.")
+
+  (list-enfermaria [this chat-id player-id save-id]
+    "Leitos Joy do save.")
+
+  (joy-send! [this writer-ctx request]
+    "Envia ferido ao Centro (30 min); remove da coleção do save.")
+
+  (joy-collect! [this writer-ctx request]
+    "Recolhe curados com pronto-em vencido.")
+
+  (joy-return-due! [this opts]
+    "Devolve leitos prontos ao save de origem, inclusive quando está inativo.")
+
+  (buy-item! [this writer-ctx request]
+    "Compra 1 item do catálogo: debita moedas + credita inventário (ou expansão).")
+
+  (use-item! [this writer-ctx request]
+    "Usa cura de status ou poção no índice da coleção; consome 1 item.")
+
+  (ensure-group! [this chat-id label]
+    "Garante entidade de grupo separada dos saves.")
+
+  (get-group [this chat-id]
+    "Estado mínimo do grupo ou nil.")
+
+  (get-receipt [this operation-id]
+    "Recibo de operação por id ou nil (reconciliação M4.2).")
+
+  (create-trade! [this request] "Cria proposta canônica de negociação.")
+  (get-trade [this trade-id] "Consulta proposta canônica.")
+  (resolve-trade-id [this chat-id trade-ref]
+    "Resolve `#N`/N ou id canônico legado no chat; nil se inexistente.")
+  (list-trades [this chat-id player-id] "Lista propostas visíveis ao participante.")
+  (accept-trade! [this request] "Aceita proposta.")
+  (refuse-trade! [this request] "Recusa proposta.")
+  (cancel-trade! [this request] "Cancela proposta.")
+  (complete-trade! [this request] "Confirma e conclui troca.")
+
+  (get-friendship [this chat-id player-id save-id collection-index])
+  (list-titles [this chat-id player-id save-id])
+  (select-title! [this request])
+  (professor-cards [this chat-id player-id save-id])
+  (professor-send! [this request])
+  (professor-cancel! [this request])
+  (professor-confirm! [this request])
+  (professor-use! [this request])
+
+  (claim-starter-kit! [this writer-ctx request]
+    "Concede 10 Pokébolas do kit inicial uma vez por treinador (fence + recibo).")
+
+  (claim-bag-daily! [this writer-ctx request]
+    "Bônus diário da mochila (3–7 bolas + fruta/7d); fence + recibo; anti-farm entre saves.")
+
+  (choose-starter! [this writer-ctx request]
+    "Concede Bulbasaur/Charmander/Squirtle e marca inicial-escolhido (fence + recibo).")
+
+  (open-pvp-challenge! [this writer-ctx request]
+    "Abre desafio PvP 1×1 no chat com o Pokémon ativo; fence + recibo.")
+
+  (accept-pvp-challenge! [this writer-ctx request]
+    "Aceita desafio aguardando; valida faixa ±3; fence do aceitante.")
+
+  (cancel-pvp! [this writer-ctx request]
+    "Cancela desafio próprio ou desiste da batalha ativa.")
+
+  (confirm-pvp-turn! [this writer-ctx request]
+    "Turno PvP do jogador da vez; CAS turn-index; sem resposta NPC.")
+
+  (active-pvp-battle [this chat-id]
+    "Batalha/desafio PvP apontado pelo chat, ou nil.")
+
+  (claim-daily-missions! [this writer-ctx request]
+    "Resgata missões diárias concluídas; fence + recibo + XP/itens.")
+
+  (claim-weekly-missions! [this writer-ctx request]
+    "Resgata missões semanais concluídas; fence + recibo + moedas/itens.")
+
+  (send-gift! [this writer-ctx request]
+    "Envia cartão-presente a outro jogador; registra missões do remetente.")
+
+  (collect-mission-pending! [this writer-ctx request]
+    "Recolhe recompensas pendentes até a capacidade, com recibo e fencing.")
+
+  (thematic-active-events [this chat-id agora-ms]
+    "Ocorrências temáticas ativas do chat (views) ou [].")
+
+  (thematic-event-history [this chat-id limit]
+    "Histórico recente de ocorrências do chat.")
+
+  (get-thematic-schedule [this chat-id]
+    "Agenda temática do chat ou nil.")
+
+  (set-thematic-schedule-enabled! [this chat-id enabled? agora-ms]
+    "Liga/desliga agenda automática (default false).")
+
+  (admin-schedule-thematic! [this chat-id opts]
+    "Agenda next-at / force catalog / enable.")
+
+  (cancel-thematic-occurrence! [this occurrence-id]
+    "Cancela ocorrência (futura ou ativa).")
+
+  (tick-thematic-events! [this request]
+    "Tick: encerra vencidos + ativa due (flag + enabled por chat).")
+
+  (claim-event-missions! [this writer-ctx request]
+    "Resgata missões concluídas da ocorrência temática; fence + recibo + doces.")
+
+  (leave-battle! [this writer-ctx request]
+    "Abandono voluntário (!pk sair): wild/gym/pvp/raid individual.
+     Receipt idempotente; sem recompensas; notifica oponente PvP via outbox.")
+
+  (expire-idle-battles! [this opts]
+    "Sweeper: encerra batalhas/raids com idle-expires-at vencido (idempotente).")
+
+  (list-battle-idle-notifications [this opts]
+    "Outbox de avisos de inatividade/leave ainda não ackados.")
+
+  (ack-battle-idle-notification! [this notify-id]
+    "Ack idempotente de notificação de idle/leave."))

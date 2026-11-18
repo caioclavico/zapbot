@@ -1,0 +1,28 @@
+(ns odisseu.smoke.raid-auto-cadence-fase1282
+  "Runner Fase 12.8.2 — distribuição uniforme + regressão 12.7.x."
+  (:require [clojure.pprint :as pprint]
+            [clojure.test :as test]
+            [pokemon.tests.raid-auto-cadence-fase1282-test]
+            [pokemon.tests.raid-auto-cadence-fase1272-test]
+            [pokemon.tests.raid-auto-reminder-fase1271-test]
+            [pokemon.tests.raid-auto-lobby-iniciar-fase1271-test]
+            [pokemon.tests.raid-auto-intent-fase1273-test])
+  (:import [java.time Instant]))
+
+(defn -main
+  [& _]
+  (let [s0 (test/run-tests 'pokemon.tests.raid-auto-cadence-fase1282-test)
+        s1 (test/run-tests 'pokemon.tests.raid-auto-cadence-fase1272-test)
+        s2 (test/run-tests 'pokemon.tests.raid-auto-reminder-fase1271-test)
+        s3 (test/run-tests 'pokemon.tests.raid-auto-lobby-iniciar-fase1271-test)
+        s4 (test/run-tests 'pokemon.tests.raid-auto-intent-fase1273-test)
+        summary {:test (+ (:test s0) (:test s1) (:test s2) (:test s3) (:test s4))
+                 :pass (+ (:pass s0) (:pass s1) (:pass s2) (:pass s3) (:pass s4))
+                 :fail (+ (:fail s0) (:fail s1) (:fail s2) (:fail s3) (:fail s4))
+                 :error (+ (:error s0) (:error s1) (:error s2) (:error s3) (:error s4))}
+        ok? (and (zero? (:fail summary)) (zero? (:error summary)))]
+    (println "=== raid auto 12.8.2 (uniform cadence + regressões) summary ===")
+    (pprint/pprint {:ok ok? :summary summary :at (str (Instant/now))
+                    :java (System/getProperty "java.version")})
+    (shutdown-agents)
+    (System/exit (if ok? 0 1))))

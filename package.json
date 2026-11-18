@@ -9,24 +9,28 @@
   "scripts": {
     "dev": "shadow-cljs watch app",
     "build": "npm run verify:media-patch && shadow-cljs release app",
-    "test": "npm run verify:media-patch && npm run test:ai && npm run test:resources && shadow-cljs compile test && node target/test.js",
-    "test:resources": "node --test test/odisseu-resource-monitor.test.cjs test/whatsapp-startup.test.cjs test/healthcheck.test.cjs test/whatsapp-resource-patch.test.cjs",
-    "test:http": "node --test test/pokemon-http-client.test.cjs scripts/test-pokemon-contract.cjs pokemon-service/test/*.test.cjs",
+    "test": "npm run verify:media-patch && npm run test:ai && npm run test:resources && npm run test:release-announcer && shadow-cljs compile test && node target/test.js",
+    "test:resources": "node --test test/odisseu-resource-monitor.test.cjs test/whatsapp-startup.test.cjs test/healthcheck.test.cjs test/health-bind-host.test.cjs test/whatsapp-resource-patch.test.cjs test/bootstrap-group-discovery.test.cjs test/bootstrap-discover-http.test.cjs test/a6-maintenance.test.cjs test/a6-shutdown.test.cjs test/a6-ai-drain-sandbox-invariants.test.cjs test/move-names-ptbr.test.cjs",
+    "test:http": "node --test test/pokemon-http-client.test.cjs test/pokemon-jvm-client.test.cjs test/platform-jvm-client.test.cjs scripts/test-pokemon-contract.cjs pokemon-service/test/*.test.cjs",
+    "test:m4-jvm": "node --test test/pokemon-jvm-client.test.cjs test/pokemon-jvm-present.test.cjs test/pokemon-jvm-commands.test.cjs && node scripts/test-pokemon-jvm-contract.cjs && node scripts/test-pokemon-jvm-tx-contract.cjs",
+    "test:pokedex-species": "node --test test/pokemon-pokedex-species.test.cjs test/pokemon-pokedex-integration.test.cjs test/pokedex-species-pilot.test.cjs test/pokemon-jvm-a42.test.cjs",
+    "test:trade-e2e": "node scripts/test-pokemon-trade-e2e.cjs",
     "start": "node target/main.js",
     "postinstall": "node scripts/patch-whatsapp-media.js",
     "verify:media-patch": "node scripts/patch-whatsapp-media.js --check",
-    "test:ai": "node --test test/ai-client.test.cjs"
+    "test:ai": "node --test test/ai-client.test.cjs test/ai-content-generator.test.cjs test/ai-content-history-file.test.cjs",
+    "test:release-announcer": "node --test test/release-announcer.test.cjs test/release-announcer-control.test.cjs test/release-bootstrap.test.cjs test/release-runtime.test.cjs test/whatsapp-release-transport.test.cjs"
   },
   "dependencies": {
     "cassandra-driver": "^4.7.2",
     "dotenv": "^16.4.5",
     "qrcode-terminal": "^0.12.0",
     "rss-parser": "^3.13.0",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.5",
     "whatsapp-web.js": "https://github.com/wwebjs/whatsapp-web.js/archive/b0a4b6c6c10868fad4881fb484b97895ce898b5d.tar.gz"
   },
   "overrides": {
-    "adm-zip": "^0.6.0"
+    "adm-zip": "0.6.1"
   },
   "devDependencies": {
     "shadow-cljs": "^2.28.5"

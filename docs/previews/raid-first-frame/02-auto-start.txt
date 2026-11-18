@@ -1,0 +1,15 @@
+⚔️ *RAID INICIADA AUTOMATICAMENTE!*
+🏛️ 🔥 Fogo
+🔥 Chefe: *Magmar*
+❤️ HP do chefe: 440/440
+
+👾 *Magmar* · 🟡 Lendário
+[██████████] 440/440
+🐾 *Wartortle* · 🟢 Incomum
+[████████░░] 120/150
+👉 Vez de *Ash*
+1. 🔮 💧 *Jato d'Água* (Água, poder 40) 🔥 → `!pk raid atacar 1`
+2. 🔮 💧 *Bolha* (Água, poder 40) 🔥 → `!pk raid atacar 2`
+3. 📊 💧 *Recolher-se* — _indisponível na raid_
+4. 💥 🌑 *Mordida* (Sombrio, poder 60) → `!pk raid atacar 4`
+✅ É a sua vez — escolha o golpe acima.

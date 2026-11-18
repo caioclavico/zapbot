@@ -1,0 +1,32 @@
+# Ambiente descartável dos contratos Node/JVM.
+# Java 21 é necessário pelo shadow-cljs/Closure Compiler usados no checkout.
+FROM eclipse-temurin:21-jdk-jammy
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl git rlwrap \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && curl -fsSL -o /tmp/linux-install.sh https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh \
+    && chmod +x /tmp/linux-install.sh \
+    && /tmp/linux-install.sh \
+    && rm -f /tmp/linux-install.sh \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# postinstall precisa existir antes de npm ci.
+COPY package*.json ./
+COPY scripts/patch-whatsapp-media.js ./scripts/patch-whatsapp-media.js
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+RUN npm ci
+
+COPY . .
+
+# Falhas de resolução devem interromper o build; não mascarar com || true.
+RUN clojure -P -M:bridge-http
+
+ENV RUN_DOCKER_CHECK=0 \
+    CLOJURE_BIN=/usr/local/bin/clojure
+
+CMD ["bash", "scripts/test-a555d-local.sh"]

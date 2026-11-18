@@ -1,0 +1,168 @@
+;; Snapshot sintético mais recente — candidato a import (não o de 14/10).
+{:meta {:synthetic true
+        :milestone "M8.0"
+        :label "m8-newer-candidate"
+        :snapshot-date "2024-10-19"
+        :role :import-candidate
+        :source "fixtures/m8-0"
+        :nota "Candidato a import. Snapshot 14/10 permanece evidência."}
+
+ :active_provenance
+ {:snapshot-id "m8-active-newer-001"
+  :kind :canonical-active
+  :chat-id "chat-m80-a@g.us"
+  :player-id "551180000001@c.us"
+  :target-slot "a"
+  :label "save-a-newer"}
+
+ :historical_snapshots
+ [{:snapshot-id "m8-hist-b-independent-001"
+   :kind :historical-independent
+   :chat-id "chat-m80-a@g.us"
+   :player-id "551180000001@c.us"
+   :target-slot "b"
+   :label "save-b-historico"
+   :created-at "2024-03-15T08:30:00.000Z"
+   :treinador {"equipe" [{"id-pokemon" "hist-poke-001" "nome" "Pikachu" "nivel" 20
+                          "hp" 80 "hp-atual" 80}]
+               "pc" []
+               "enfermaria" []
+               "vitorias-treinador" 10
+               "pe-ginasios" 5}
+   :loja {"moedas" 100 "inventario" {"poke-ball" 3}}}]
+
+ :modules
+ {"bloqueio"
+  {"chat-m80-a@g.us" {"bot?" false "comandos" ["naval" "quiz"]}
+   "chat-m80-b@g.us" {"bot?" true "comandos" []}
+   "chat-m80-c@g.us" {"bot?" false "comandos" ["pokemon"]}}
+
+  "admins-conhecidos"
+  {"chat-m80-a@g.us" ["551180000001@c.us" "551180000002@c.us"]
+   "chat-m80-b@g.us" ["551180000099@c.us"]
+   "chat-m80-c@g.us" ["551180000050@c.us"]}
+
+  "enquetes"
+  {"chat-m80-a@g.us"
+   {"pergunta" "Preferem raid ou ginásio?"
+    "opcoes" ["Raid" "Ginásio" "Ambos"]
+    "votos" {"551180000001@c.us" 0
+             "551180000002@c.us" 1}
+    "prefix" "!"}
+   "chat-m80-c@g.us"
+   {"pergunta" "Nova enquete aberta"
+    "opcoes" ["Sim" "Não"]
+    "votos" {}
+    "prefix" "!"}}
+
+  "quiz-historico"
+  {"chat-m80-a@g.us" ["Capital do Brasil?" "Maior planeta?"]
+   "chat-m80-b@g.us" ["Quem criou o Pokémon?"]}
+
+  "rank"
+  {"chat-m80-a@g.us"
+   {"551180000001@c.us"
+    {"nome" "Ash" "pontos" 8
+     "jogos" {"velha" 3 "quiz" 2}
+     ;; evt-score-001 preservado; evt-score-002 é pontuação legítima nova (não somar snapshots)
+     "efeitos-pokemon-http" {"evt-score-001" {"tipo" "vitoria" "em" 1728000000000}
+                             "evt-score-002" {"tipo" "vitoria" "em" 1728800000000}}}
+   "551180000002@c.us"
+    {"nome" "Misty" "pontos" 2
+     "jogos" {"quiz" 1}}}}
+
+  "lembretes"
+  {"rem-m80-pending" {"id" "rem-m80-pending"
+                      "chat" "chat-m80-a@g.us"
+                      "texto" "caçar"
+                      "criador" "551180000001@c.us"
+                      "em" 1893456000000
+                      "status" "pending"}
+   "rem-m80-sent" {"id" "rem-m80-sent"
+                   "chat" "chat-m80-a@g.us"
+                   "texto" "já enviado"
+                   "criador" "551180000001@c.us"
+                   "em" 1700000000000
+                   "status" "completed"}
+   "rem-m80-cancel" {"id" "rem-m80-cancel"
+                     "chat" "chat-m80-b@g.us"
+                     "texto" "cancelado"
+                     "criador" "551180000099@c.us"
+                     "em" 1800000000000
+                     "status" "cancelled"}
+   "rem-m80-new" {"id" "rem-m80-new"
+                  "chat" "chat-m80-c@g.us"
+                  "texto" "novo lembrete"
+                  "criador" "551180000050@c.us"
+                  "em" 1900000000000
+                  "status" "pending"}}
+
+  "bugs"
+  {"1" {"id" "1"
+        "versao" "0.0.0-syn"
+        "chat" "chat-m80-a@g.us"
+        "reportado-por" "551180000001@c.us"
+        "autor-mensagem" "551180000002@c.us"
+        "mensagem" "bug sintético antigo"
+        "mensagem-em" 1700000000000
+        "origem" "citada"
+        "reportado-em" 1700000001000
+        "status" "resolvido"
+        "resolvido-em" 1728800000000}
+   "2" {"id" "2"
+        "versao" "0.0.0-syn"
+        "chat" "chat-m80-c@g.us"
+        "reportado-por" "551180000050@c.us"
+        "autor-mensagem" "551180000050@c.us"
+        "mensagem" "bug novo"
+        "mensagem-em" 1728700000000
+        "origem" "anterior"
+        "reportado-em" 1728700001000
+        "status" "aberto"}}
+
+  "participantes"
+  {"chat-m80-a@g.us"
+   {"551180000001@c.us" "Ash"
+    "551180000002@c.us" "Misty"}
+   "chat-m80-b@g.us"
+   {"551180000099@c.us" "Brock"}
+   "chat-m80-c@g.us"
+   {"551180000050@c.us" "Tracey"}}
+
+  "treinador"
+  {"551180000001@c.us"
+   {"equipe" [{"id-pokemon" "act-poke-001" "nome" "Bulbasaur" "nivel" 14
+               "hp" 70 "hp-atual" 70 "xp-desde-nivel" 40}
+              {"id-pokemon" "act-poke-002" "nome" "Squirtle" "nivel" 10
+               "hp" 55 "hp-atual" 55 "xp-desde-nivel" 5}]
+    "pc" []
+    "enfermaria" [{"pokemon" {"id-pokemon" "act-joy-001" "nome" "Charmander" "nivel" 8
+                              "hp" 40 "hp-atual" 40}
+                   "pronto-em" 1729000000000}
+                  {"pokemon" {"id-pokemon" "act-joy-002" "nome" "Oddish" "nivel" 5
+                              "hp" 30 "hp-atual" 10}
+                   "pronto-em" 1729100000000}]
+    "vitorias-treinador" 5
+    "pe-ginasios" 4
+    "pe-raids" 1
+    "xp-insignias" 1
+    "xp-missoes" 0}}
+
+  "loja"
+  {"551180000001@c.us"
+   {"moedas" 350
+    "inventario" {"poke-ball" 8 "pocao" 1 "great-ball" 2}}}
+
+  "ginasios"
+  {"chat-m80-a@g.us" {"pedra" {"lider" "551180000001@c.us" "motivacao" 80}
+                      "agua" {"lider" "551180000002@c.us" "motivacao" 40}}}
+
+  "raids"
+  {"chat-m80-a@g.us" {"ativo?" false}}
+
+  "pokemon-batalhas-ativas" {}
+  "pokemon-cacadas-ativas" {}
+  "pokedex-cache" {"Bulbasaur" {"cached-at" 1728800000000}
+                   "Squirtle" {"cached-at" 1728800000000}}
+  "pokemon-http-deliveries" {"d2" {"status" "ephemeral"}}
+  "pokemon-restauracao-journals" {"j1" {"nota" "decision-required"}}}}

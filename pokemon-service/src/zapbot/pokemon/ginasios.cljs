@@ -3,6 +3,7 @@
   (:require [zapbot.armazenamento :as armazenamento]
             [clojure.string :as str]
             [zapbot.config :as config]
+            [promesa.core :as p]
             [zapbot.pokemon.treinador :as treinador]
             [zapbot.pokemon.loja :as loja]))
 
@@ -58,6 +59,15 @@
              #(assoc % "motivacao" novas "motivacao-em" agora))
       (salvar-ocupacoes!)
       novas)))
+
+(defn desgaste-planejado
+  "Calcula o próximo estado da ocupação sem mutar atom ou Cassandra. Usado pelo
+  journal canônico para fixar um plano antes do LWT."
+  [ocupacao agora]
+  (when ocupacao
+    (let [novas (mapv #(max motivacao-minima (- % perda-motivacao-por-defesa))
+                      (motivacoes ocupacao agora))]
+      (assoc ocupacao "motivacao" novas "motivacao-em" agora))))
 
 (defn- recuperar-motivacao!
   [cid pid id indice agora item consumir!]
@@ -163,20 +173,53 @@
                 (update "tempo-ms" (fnil + 0) (max 0 (- agora (get anterior "desde" agora))))))
     (salvar-estatisticas!)))
 
-(defn registrar-resultado! [cid id ocupante desafiante nome venceu? agora]
+(defn- atualizar-estatistica-resultado [estado ocupante desafiante nome venceu? agora]
   (let [entrada {"quando" agora "desafiante" desafiante "nome" nome
                  "lider" (get ocupante "nome" "Líder NPC") "venceu" venceu?}]
-    (when (and ocupante (not venceu?))
-      (desgastar-defesa! cid id ocupante agora))
-    (swap! estatisticas update-in [cid id]
-           (fn [estado]
-             (cond-> (update (or estado {}) "historico"
-                             #(vec (take-last 50 (conj (vec %) entrada))))
-               (and ocupante (not venceu?))
-               (update-in ["lideres" (get ocupante "pid")]
-                          #(-> (or % {}) (assoc "nome" (get ocupante "nome"))
-                               (update "defesas" (fnil inc 0)))))))
-    (salvar-estatisticas!)))
+    (cond-> (update (or estado {}) "historico"
+                    #(vec (take-last 50 (conj (vec %) entrada))))
+      (and ocupante (not venceu?))
+      (update-in ["lideres" (get ocupante "pid")]
+                 #(-> (or % {}) (assoc "nome" (get ocupante "nome"))
+                      (update "defesas" (fnil inc 0)))))))
+
+(defn registrar-resultado!
+  ([cid id ocupante desafiante nome venceu? agora]
+   (registrar-resultado! cid id ocupante desafiante nome venceu? agora nil))
+  ([cid id ocupante desafiante nome venceu? agora operacao-id]
+   (if config/canonical-gyms-enabled?
+     (do
+       (when-not (and (string? operacao-id) (seq operacao-id))
+         (throw (ex-info "Resultado canônico exige ID durável da batalha."
+                         {:code :canonical-gym-operation-id-required})))
+       (p/let [_ (when (and ocupante (not venceu?))
+                   (armazenamento/alterar-ginasio-confirmado!
+                    "ginasios" cid id (str operacao-id "-wear")
+                    (fn [estado]
+                      (when-not (= estado (lider cid id))
+                        (throw (ex-info "Ocupação mudou durante a defesa; resultado antigo recusado."
+                                        {:code :canonical-gym-stale-battle})))
+                      (let [motivacao (motivacoes estado agora)
+                            novas (mapv #(max motivacao-minima (- % perda-motivacao-por-defesa)) motivacao)]
+                        (assoc estado "motivacao" novas "motivacao-em" agora)))))
+               resultado (armazenamento/alterar-ginasio-confirmado!
+                          "ginasios-estatisticas" cid id (str operacao-id "-result")
+                          #(atualizar-estatistica-resultado % ocupante desafiante nome venceu? agora))]
+         (swap! estatisticas assoc-in [cid id] resultado)
+         resultado))
+     (let [entrada {"quando" agora "desafiante" desafiante "nome" nome
+                    "lider" (get ocupante "nome" "Líder NPC") "venceu" venceu?}]
+       (when (and ocupante (not venceu?))
+         (desgastar-defesa! cid id ocupante agora))
+       (swap! estatisticas update-in [cid id]
+              (fn [estado]
+                (cond-> (update (or estado {}) "historico"
+                                #(vec (take-last 50 (conj (vec %) entrada))))
+                  (and ocupante (not venceu?))
+                  (update-in ["lideres" (get ocupante "pid")]
+                             #(-> (or % {}) (assoc "nome" (get ocupante "nome"))
+                                  (update "defesas" (fnil inc 0)))))))
+       (salvar-estatisticas!)))))
 
 (defn ranking-dados [cid id agora]
   (let [atual (lider cid id)

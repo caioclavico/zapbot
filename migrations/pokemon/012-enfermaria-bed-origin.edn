@@ -1,0 +1,12 @@
+;; M5.5 — audit trail dos leitos importados (origin/legado fora do pokemon-edn
+;; para respeitar o limite de string do Datomic Local ~4096).
+
+[{:db/ident       :enfermaria-bed/origin-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "origin-edn do Pokémon histórico na Joy (import); opcional"}
+
+ {:db/ident       :enfermaria-bed/legado-edn
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "legado-edn serializado do Pokémon histórico na Joy; opcional"}]

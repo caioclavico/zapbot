@@ -309,6 +309,30 @@ function validate(account){
   assertOperationalSafe(account);
   return count;
 }
+// Validation for a dormant save slot. It checks the same Pokémon/profile
+// structure and XP migration that the restore path checks, including
+// operational references, but never replaces or normalizes the stored input.
+// A slot is inert; pending or unknown operational state still makes it
+// ineligible for later activation until that state is reviewed.
+function validateSlotAccount(account){
+  let snapshot;
+  try{
+    const visit=value=>{
+      if(value===null||typeof value==='string'||typeof value==='boolean')return;
+      if(typeof value==='number'){if(!Number.isFinite(value))fail('invalid_slot_format');return;}
+      if(Array.isArray(value)){for(const item of value)visit(item);return;}
+      if(!isObject(value))fail('invalid_slot_format');
+      for(const [key,item] of Object.entries(value)){if(typeof key!=='string')fail('invalid_slot_format');visit(item);}
+    };
+    visit(account);snapshot=copy(account);
+  }catch(error){if(error instanceof RestoreError)throw error;fail('invalid_slot_format');}
+  if(Object.prototype.hasOwnProperty.call(snapshot||{},'restore-receipt'))fail('invalid_slot_source');
+  const migrated=migrateLegacyAccount(snapshot);
+  const count=validate(migrated.target);
+  const receipts=receiptRecord(snapshot?.['adventure-entregas']);
+  if(!receipts.ok)fail('invalid_global_receipts');
+  return {pokemonCount:count,sourceHash:hash(snapshot),receiptCount:Object.keys(receipts.receipts).length};
+}
 // Kept equivalent to treinador/normalizar-xp-registro: nine XP per level and
 // a 3% rounded increase per level. This is a pure migration of the preview
 // copy; the legacy source is never modified.
@@ -543,4 +567,4 @@ class RestoreProtocol{
     return {status:'completed',backup:op.backupId};
   }
 }
-module.exports={RestoreProtocol,RestoreError,validate,prepare,normalizeLegacyPokemon,migrateLegacyAccount,diagnosticEntries,hash};
+module.exports={RestoreProtocol,RestoreError,validate,validateSlotAccount,prepare,normalizeLegacyPokemon,migrateLegacyAccount,diagnosticEntries,receiptRecord,hash};

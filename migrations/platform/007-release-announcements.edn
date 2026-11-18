@@ -1,0 +1,47 @@
+;; Fase A6 Release Announcer — platform/007 (aditivo). Não reutilizar 006
+;; (006-bugs-participantes já está na linhagem de produção).
+;; Os atributos vivem na entidade de entrega e não alteram lembretes legados.
+[
+ {:db/ident :platform.delivery/type
+  :db/valueType :db.type/keyword :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/release-version
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/content-hash
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/chat
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/idempotency-key
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one
+  :db/unique :db.unique/identity}
+ {:db/ident :platform.delivery/eligibility
+  :db/valueType :db.type/keyword :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/status
+  :db/valueType :db.type/keyword :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/claimant
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/lease-until
+  :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/fence
+  :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/fail-count
+  :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/last-error
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/due-at
+  :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/delivery-id
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/message-id
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one
+  :db/unique :db.unique/identity}
+ {:db/ident :platform.delivery/message-claimant
+  :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/message-fence
+  :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/send-started-at
+  :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/sent-at
+  :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+ {:db/ident :platform.delivery/confirmed-at
+  :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+]

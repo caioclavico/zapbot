@@ -1,0 +1,6 @@
+[
+ {:db/ident :save/professor-cards-edn :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :save/professor-pending-edn :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :save/title :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+ {:db/ident :save/doacoes-pokemon :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+]

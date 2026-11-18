@@ -117,39 +117,41 @@
   (let [cid  (chat-id message)
         pid  (jogador-id message)
         jogo (get @jogos cid)]
-    (p/resolved
-     (cond
-       (nil? jogo)
-       (str (cabecalho) "❓ Não tem partida rolando. Digite " config/prefix "velha pra abrir uma.")
+    (cond
+      (nil? jogo)
+      (p/resolved (str (cabecalho) "❓ Não tem partida rolando. Digite " config/prefix "velha pra abrir uma."))
 
-       (not (contains? (:jogadores jogo) :o))
-       (str (cabecalho) "⏳ Ainda falta alguém entrar de ⭕. Digite " config/prefix "velha pra entrar.")
+      (not (contains? (:jogadores jogo) :o))
+      (p/resolved (str (cabecalho) "⏳ Ainda falta alguém entrar de ⭕. Digite " config/prefix "velha pra entrar."))
 
-       (not= pid (get-in jogo [:jogadores (:vez jogo)]))
-       (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo))
+      (not= pid (get-in jogo [:jogadores (:vez jogo)]))
+      (p/resolved (str (cabecalho) "🚫 Não é sua vez!\n\n" (mensagem-estado jogo)))
 
-       (some? (nth (:tabuleiro jogo) (dec posicao)))
-       (str (cabecalho) "🚫 Essa casa já foi jogada.\n\n" (mensagem-estado jogo))
+      (some? (nth (:tabuleiro jogo) (dec posicao)))
+      (p/resolved (str (cabecalho) "🚫 Essa casa já foi jogada.\n\n" (mensagem-estado jogo)))
 
-       :else
-       (let [marca     (:vez jogo)
-             tabuleiro (assoc (:tabuleiro jogo) (dec posicao) marca)
-             venceu    (vencedor tabuleiro)]
-         (cond
-           venceu
-           (do (swap! jogos dissoc cid)
-               (rank/pontuar! cid (get-in jogo [:jogadores venceu]) (get-in jogo [:nomes venceu]) "velha")
-               (str (cabecalho) (desenhar tabuleiro) "\n\n🏆 "
-                    (get-in jogo [:nomes venceu]) " (" (if (= venceu :x) "❌" "⭕") ") venceu!"))
+      :else
+      (let [marca     (:vez jogo)
+            tabuleiro (assoc (:tabuleiro jogo) (dec posicao) marca)
+            venceu    (vencedor tabuleiro)]
+        (cond
+          venceu
+          (do (swap! jogos dissoc cid)
+              (p/then (rank/pontuar! cid (get-in jogo [:jogadores venceu])
+                                    (get-in jogo [:nomes venceu]) "velha"
+                                    (rank/operation-id-from-message message "velha"))
+                      (fn [_]
+                        (str (cabecalho) (desenhar tabuleiro) "\n\n🏆 "
+                             (get-in jogo [:nomes venceu]) " (" (if (= venceu :x) "❌" "⭕") ") venceu!"))))
 
-           (empate? tabuleiro)
-           (do (swap! jogos dissoc cid)
-               (str (cabecalho) (desenhar tabuleiro) "\n\n🤝 Deu velha (empate)!"))
+          (empate? tabuleiro)
+          (do (swap! jogos dissoc cid)
+              (p/resolved (str (cabecalho) (desenhar tabuleiro) "\n\n🤝 Deu velha (empate)!")))
 
-           :else
-           (let [jogo-novo (-> jogo (assoc :tabuleiro tabuleiro) (assoc :vez (outro marca)))]
-             (swap! jogos assoc cid jogo-novo)
-             (str (cabecalho) (mensagem-estado jogo-novo)))))))))
+          :else
+          (let [jogo-novo (-> jogo (assoc :tabuleiro tabuleiro) (assoc :vez (outro marca)))]
+            (swap! jogos assoc cid jogo-novo)
+            (p/resolved (str (cabecalho) (mensagem-estado jogo-novo)))))))))
 
 (defn jogar [message args]
   (let [args (str/trim (or args ""))]

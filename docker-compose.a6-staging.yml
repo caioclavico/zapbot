@@ -1,0 +1,150 @@
+# A6 staging ISOLADO — independente do Core A5.6 (`odisseu-core` / a56-*).
+# NÃO monta volumes a56/core. NÃO publica portas públicas.
+# NÃO compartilha sessão WhatsApp do Core/produção.
+#
+# Uso (futuro — NÃO executar nesta fase de preparação):
+#   cp .env.a6-staging.example .env.a6-staging   # tokens NOVOS; nunca copiar do Core
+#   docker compose -f docker-compose.a6-staging.yml --env-file .env.a6-staging config
+#   # JVM only (recomendado na VM Core se RAM apertada):
+#   docker compose -f docker-compose.a6-staging.yml --env-file .env.a6-staging up -d --build
+#   # + Node/WhatsApp de TESTE (profile with-node; sessão própria):
+#   docker compose -f docker-compose.a6-staging.yml --env-file .env.a6-staging --profile with-node up -d --build
+#
+# Portas loopback exclusivas: 18091 (JVM) · 3002 (Node)
+# Datomic: system=odisseu-a6-staging db=core-a6-staging
+
+name: odisseu-a6-staging
+
+services:
+  odisseu-a6-jvm:
+    build:
+      context: .
+      dockerfile: Dockerfile.jvm
+    image: odisseu-jvm:a6-staging-local
+    container_name: odisseu-a6-staging-jvm
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      APP_ENV: staging
+      POKEMON_HUNT_COOLDOWN_SECONDS: "1800"
+      POKEMON_JOY_HEAL_SECONDS: "1800"
+      POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS: ${POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS:-300}
+      ODISSEU_BRIDGE_HOST: "0.0.0.0"
+      ODISSEU_BRIDGE_PORT: "18090"
+      ODISSEU_BRIDGE_ALLOW_PRIVATE_BIND: "true"
+      ODISSEU_BRIDGE_TOKEN: ${ODISSEU_BRIDGE_TOKEN:?Defina ODISSEU_BRIDGE_TOKEN em .env.a6-staging}
+      # Identidade Datomic exclusiva (≠ system/db do Core A5.6)
+      ODISSEU_BRIDGE_SYSTEM: odisseu-a6-staging
+      ODISSEU_BRIDGE_STORAGE: /data/datomic-local
+      ODISSEU_BRIDGE_DB: core-a6-staging
+      ODISSEU_PLATFORM_DB: platform-a6-staging
+      ODISSEU_PLATFORM_ENABLED: "true"
+      ODISSEU_BRIDGE_SEED: ${ODISSEU_BRIDGE_SEED:-false}
+      ODISSEU_BRIDGE_RESET: ${ODISSEU_BRIDGE_RESET:-false}
+      ODISSEU_BRIDGE_ALLOW_TEST_RNG: ${ODISSEU_BRIDGE_ALLOW_TEST_RNG:-false}
+      # Kill switch JVM do tick auto (default OFF). Só true em lab sintético.
+      ODISSEU_BRIDGE_RAID_AUTO_TICK: ${ODISSEU_BRIDGE_RAID_AUTO_TICK:-false}
+      ODISSEU_JOURNAL_DIR: /data/journal
+      ODISSEU_MAINT_DIR: /data/maint
+      JAVA_TOOL_OPTIONS: "-Xms64m -Xmx320m -XX:+UseG1GC"
+    volumes:
+      - odisseu-a6-staging-datomic:/data/datomic-local
+      - odisseu-a6-staging-journal:/data/journal
+      - odisseu-a6-staging-maint:/data/maint
+    ports:
+      - "127.0.0.1:18091:18090"
+    networks:
+      - a6-staging-internal
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -m 4 http://127.0.0.1:18090/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 180s
+    mem_limit: 512m
+    memswap_limit: 768m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  odisseu-a6-node:
+    profiles: ["with-node"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: odisseu-node:a6-staging-local
+    container_name: odisseu-a6-staging-node
+    restart: unless-stopped
+    stop_grace_period: 60s
+    depends_on:
+      odisseu-a6-jvm:
+        condition: service_healthy
+    env_file:
+      - .env.a6-staging
+    environment:
+      APP_ENV: staging
+      BOT_NAME: ${BOT_NAME:-Odisseu-A6-Staging}
+      # Fail-closed: sem allow-all; grupo só após confirmação explícita
+      ALLOW_ALL_GROUPS: "false"
+      STAGING_GROUP_CONFIRMED: ${STAGING_GROUP_CONFIRMED:-0}
+      STAGING_STRICT_USER_ALLOWLIST: ${STAGING_STRICT_USER_ALLOWLIST:-1}
+      STAGING_BOOTSTRAP_GROUP: ${STAGING_BOOTSTRAP_GROUP:-0}
+      STAGING_ALLOW_QR: "0"
+      STAGING_WHATSAPP_CONFIRM: ${STAGING_WHATSAPP_CONFIRM:-0}
+      # Homolog local: sem QR / LocalAuth / Chromium
+      WHATSAPP_TRANSPORT: ${WHATSAPP_TRANSPORT:-disabled}
+      HEALTH_BIND_HOST: ${HEALTH_BIND_HOST:-0.0.0.0}
+      # Kill switch raides automáticas — OFF (tick só via HTTP sintético no script)
+      POKEMON_RAID_AUTO_TICK: "false"
+      POKEMON_RAID_AUTO_TICK_MS: ${POKEMON_RAID_AUTO_TICK_MS:-30000}
+      POKEMON_ADAPTER: jvm
+      POKEMON_JVM_URL: http://odisseu-a6-jvm:18090
+      POKEMON_JVM_TOKEN: ${ODISSEU_BRIDGE_TOKEN:?Defina ODISSEU_BRIDGE_TOKEN}
+      POKEMON_JVM_ALLOW_DOCKER_HOST: "true"
+      POKEMON_SERVICE_URL: ""
+      POKEMON_SERVICE_TOKEN: ""
+      PLATFORM_ADAPTER: datomic
+      PLATFORM_JVM_URL: http://odisseu-a6-jvm:18090
+      PLATFORM_JVM_TOKEN: ${ODISSEU_BRIDGE_TOKEN:?Defina ODISSEU_BRIDGE_TOKEN}
+      PLATFORM_JVM_ALLOW_PRIVATE_HOST: "true"
+      NODE_OPTIONS: --max-old-space-size=384
+      CHROMIUM_DISABLE_GPU: "true"
+      CHROMIUM_LOW_RESOURCE_MODE: "true"
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      # Sessão WhatsApp EXCLUSIVA A6 — nunca _core / nunca prod
+      WWEBJS_DATA_PATH: /app/.wwebjs_auth_a6_staging
+      WWEBJS_CLIENT_ID: a6-staging
+    volumes:
+      - ./.wwebjs_auth_a6_staging:/app/.wwebjs_auth_a6_staging
+      - odisseu-a6-staging-data:/app/data
+    networks:
+      - a6-staging-internal
+    mem_limit: 2560m
+    memswap_limit: 3584m
+    cpus: 1.5
+    ports:
+      - "127.0.0.1:3002:3001"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+networks:
+  a6-staging-internal:
+    driver: bridge
+    name: odisseu-a6-staging_internal
+    internal: false
+
+volumes:
+  odisseu-a6-staging-datomic:
+    name: odisseu-a6-staging-datomic
+  odisseu-a6-staging-journal:
+    name: odisseu-a6-staging-journal
+  odisseu-a6-staging-maint:
+    name: odisseu-a6-staging-maint
+  odisseu-a6-staging-data:
+    name: odisseu-a6-staging-data

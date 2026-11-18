@@ -1,0 +1,13 @@
+⚔️ *RAID — TURNO 1*
+🔮 *Wartortle* causou 40 de dano!
+Super efetivo!🔥
+👾 *Magmar* · 🟡 Lendário
+[█████████░] 400/440
+🐾 *Wartortle* · 🟢 Incomum
+[████████░░] 120/150
+👉 Vez de *Ash*
+1. 🔮 💧 *Jato d'Água* (Água, poder 40) 🔥 → `!pk raid atacar 1`
+2. 🔮 💧 *Bolha* (Água, poder 40) 🔥 → `!pk raid atacar 2`
+3. 📊 💧 *Recolher-se* — _indisponível na raid_
+4. 💥 🌑 *Mordida* (Sombrio, poder 60) → `!pk raid atacar 4`
+✅ É a sua vez — escolha o golpe acima.

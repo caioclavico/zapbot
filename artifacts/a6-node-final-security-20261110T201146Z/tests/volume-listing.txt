@@ -1,0 +1,13 @@
+/tmp/a6-final-sec-Upkk/auth:
+total 0
+drwxrwxrwx@ 3 caioclavico  wheel   96 Nov 10 16:19 .
+drwxrwxrwx@ 6 caioclavico  wheel  192 Nov 10 16:19 ..
+-rw-r--r--@ 1 caioclavico  wheel    0 Nov 10 16:19 SingletonLock
+
+/tmp/a6-final-sec-Upkk/data:
+total 24
+drwxrwxrwx@ 5 caioclavico  wheel  160 Nov 10 16:19 .
+drwxrwxrwx@ 6 caioclavico  wheel  192 Nov 10 16:19 ..
+-rw-r--r--  1 caioclavico  wheel   10 Nov 10 16:19 marker.txt
+-rw-r--r--  1 caioclavico  wheel  101 Nov 10 16:19 release-announcer-control.json
+-rw-r--r--  1 caioclavico  wheel    8 Nov 10 16:19 sigkill.txt

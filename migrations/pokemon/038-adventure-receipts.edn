@@ -1,0 +1,4 @@
+[{:db/ident       :adventure-account/receipts
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/many
+  :db/doc         "Recibos individuais de PI, ovos e limites diários da conta Adventure."}]

@@ -1,0 +1,69 @@
+;; M7.6 — schema Datomic Local para bugs + participantes (sintético / staging).
+;; Bugs: id → relatório. Participantes: chat → {player-id → nome}.
+[
+ {:db/ident       :platform.bug/id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "ID numérico em string (legado: \"1\", \"2\", …)."}
+
+ {:db/ident       :platform.bug/version
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.bug/chat
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.bug/reported-by
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.bug/message-author
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.bug/message
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.bug/message-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.bug/origin
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "citada|anterior"}
+
+ {:db/ident       :platform.bug/reported-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.bug/status
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/doc         "aberto|resolvido"}
+
+ {:db/ident       :platform.bug/resolved-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.participant/key
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one
+  :db/unique      :db.unique/identity
+  :db/doc         "chat|player-id"}
+
+ {:db/ident       :platform.participant/chat
+  :db/valueType   :db.type/ref
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.participant/player-id
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+
+ {:db/ident       :platform.participant/name
+  :db/valueType   :db.type/string
+  :db/cardinality :db.cardinality/one}
+]

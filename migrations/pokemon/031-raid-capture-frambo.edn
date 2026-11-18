@@ -1,0 +1,5 @@
+;; Fase 12.6 — Fruta Frambo preparada para a próxima tentativa de captura do chefe.
+[{:db/ident       :raid-capture/frambo-preparada
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one
+  :db/doc         "true = Frambo pronta para a próxima tentativa válida (sem consumir ainda)"}]

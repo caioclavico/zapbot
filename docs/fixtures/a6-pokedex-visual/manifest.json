@@ -1,0 +1,68 @@
+[
+  {
+    "id": "pikachu",
+    "ok": true,
+    "nome": "Pikachu",
+    "numero": 25,
+    "bytes": 47995,
+    "file": "docs/fixtures/a6-pokedex-visual/pikachu-pokedex.png"
+  },
+  {
+    "id": "charizard",
+    "ok": true,
+    "nome": "Charizard",
+    "numero": 6,
+    "bytes": 57767,
+    "file": "docs/fixtures/a6-pokedex-visual/charizard-pokedex.png"
+  },
+  {
+    "id": "gengar",
+    "ok": true,
+    "nome": "Gengar",
+    "numero": 94,
+    "bytes": 58463,
+    "file": "docs/fixtures/a6-pokedex-visual/gengar-pokedex.png"
+  },
+  {
+    "id": "bulbasaur",
+    "ok": true,
+    "nome": "Bulbasaur",
+    "numero": 1,
+    "bytes": 83954,
+    "file": "docs/fixtures/a6-pokedex-visual/bulbasaur-pokedex.png"
+  },
+  {
+    "id": "wailord",
+    "ok": true,
+    "nome": "Wailord",
+    "numero": 321,
+    "bytes": 45726,
+    "file": "docs/fixtures/a6-pokedex-visual/wailord-pokedex.png"
+  },
+  {
+    "id": "diglett",
+    "ok": true,
+    "nome": "Diglett",
+    "numero": 50,
+    "bytes": 60656,
+    "file": "docs/fixtures/a6-pokedex-visual/diglett-pokedex.png"
+  },
+  {
+    "id": "number-150",
+    "ok": true,
+    "nome": "Mewtwo",
+    "numero": 150,
+    "bytes": 46796,
+    "file": "docs/fixtures/a6-pokedex-visual/number-150-pokedex.png"
+  },
+  {
+    "id": "no-image-placeholder",
+    "ok": true,
+    "bytes": 13530
+  },
+  {
+    "id": "invalid",
+    "ok": true,
+    "textMatch": true
+  }
+]

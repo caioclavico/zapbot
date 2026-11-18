@@ -125,16 +125,17 @@
             (is (= 1 (count @envios)))
             (is (= 1 (count (treinador/equipe "g" "p@lid")))))))) done)))
 
-(deftest entrega-cas-incerta-resolvida-pelo-worker
+(deftest entrega-cas-aplicado-com-resposta-perdida-e-confirmado-pelo-worker
   (async done
     (concluir (fixture/com-banco
       (fn [{:keys [fault]}]
         (let [envios (atom [])]
           (p/let [_ (chamar "ovos" []) _ (chamar "incubar" ["1"])
                   _ (reset! fault {:op :trainer-cas :after? true})
-                  _ (-> (adventure/atividade-pontos! "g" "p@lid" "finish" 100)
-                        (p/then (fn [_] (is false "Entrega deveria falhar na confirmação")))
-                        (p/catch (fn [_] nil)))
+                  ;; O driver perde a resposta depois do LWT. A leitura SERIAL
+                  ;; confirma o recibo junto ao Pokémon, então a chamada não
+                  ;; deve ser tratada como uma entrega pendente.
+                  _ (adventure/atividade-pontos! "g" "p@lid" "finish" 100)
                   _ (reset! adventure/emissor (fn [_ raw] (swap! envios conj raw) (p/resolved nil)))
                   _ (adventure/processar-vencidos!)]
             (is (= 1 (count @envios)))

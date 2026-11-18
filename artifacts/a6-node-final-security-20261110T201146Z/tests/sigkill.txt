@@ -1,0 +1,4 @@
+=== sigkill simulation ===
+dfe73e1764520e09e621645c9e06d6cd5b28a507de8865339f30d4e07c41c79b
+running
+locks_ok

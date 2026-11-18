@@ -1,0 +1,475 @@
+(ns pokemon.infrastructure.datomic.gym-store
+  "Montagem de TX de ginásio (fora do store monolítico)."
+  (:require [clojure.edn :as edn]
+            [pokemon.domain.battle :as battle]
+            [pokemon.domain.collection :as coll]
+            [pokemon.domain.errors :as err]
+            [pokemon.domain.gym :as gym]
+            [pokemon.domain.identities :as id]
+            [pokemon.domain.xp :as xp]
+            [pokemon.infrastructure.datomic.economy-store :as economy-store]))
+
+(defn statistics-key [chat-id gym-id]
+  (str chat-id "|" gym-id))
+
+(defn statistics->map [e edn-read present?]
+  (when (and (present? e) (:gym-statistics/key e))
+    {:key (:gym-statistics/key e)
+     :chat-id (:gym-statistics/chat-id e)
+     :gym-id (:gym-statistics/gym-id e)
+     :leaders (or (edn-read (:gym-statistics/leader-stats-edn e)) {})
+     :history (or (edn-read (:gym-statistics/history-edn e)) [])
+     :revision (long (:gym-statistics/revision e 0))}))
+
+(defn build-statistics-tx
+  "Registra um desafio dentro da mesma transação de resolução."
+  [{:keys [statistics-entity chat-id gym-id agora venceu? ocupacao challenger-id challenger-name]}]
+  (let [key (statistics-key chat-id gym-id)
+        stats (statistics->map statistics-entity edn/read-string some?)
+        leaders (or (:leaders stats) {})
+        history (or (:history stats) [])
+        old-pid (some-> ocupacao :pid str)
+        old-name (some-> ocupacao :nome)
+        challenger-id (str challenger-id)
+        leaders (cond
+                  (and (not venceu?) old-pid)
+                  (let [old (or (get leaders old-pid) {})]
+                    (assoc leaders old-pid
+                           (merge old {:nome (or (:nome old) old-name old-pid)
+                                       :defesas (inc (long (:defesas old 0)))
+                                       :tempo-ms (long (:tempo-ms old 0))})))
+                  (and venceu? old-pid)
+                  (let [old (or (get leaders old-pid) {})
+                        permanencia (max 0 (- (long agora) (long (:desde ocupacao agora))))]
+                    (assoc leaders old-pid
+                           (merge old {:nome (or (:nome old) old-name old-pid)
+                                       :defesas (long (:defesas old 0))
+                                       :tempo-ms (+ (long (:tempo-ms old 0)) permanencia)})))
+                  :else leaders)
+        event {:quando (long agora) :desafiante challenger-id
+               :nome (or challenger-name challenger-id)
+               :lider (or old-name old-pid "Líder NPC") :venceu (boolean venceu?)}
+        next-history (->> (conj (vec history) event) (take-last 50) vec)
+        next-rev (inc (long (:revision stats 0)))
+        entity {:gym-statistics/key key :gym-statistics/chat-id chat-id
+                :gym-statistics/gym-id gym-id
+                :gym-statistics/leader-stats-edn (pr-str leaders)
+                :gym-statistics/history-edn (pr-str next-history)
+                :gym-statistics/revision next-rev}]
+    {:tx (if stats
+           [[:db/cas [:gym-statistics/key key] :gym-statistics/revision
+             (long (:revision stats 0)) next-rev]
+            [:db/add [:gym-statistics/key key] :gym-statistics/leader-stats-edn
+             (pr-str leaders)]
+            [:db/add [:gym-statistics/key key] :gym-statistics/history-edn
+             (pr-str next-history)]]
+           [entity])
+     :statistics {:leaders leaders :history next-history :revision next-rev}}))
+
+(defn occupation->map
+  "Nil se slot vazio (stub rev 0 sem player-key)."
+  [e edn-read present?]
+  (when (and (present? e) (:gym-occupation/player-key e))
+    {:key (:gym-occupation/key e)
+     :chat-id (:gym-occupation/chat-id e)
+     :gym-id (:gym-occupation/gym-id e)
+     :player-key (:gym-occupation/player-key e)
+     :pid (when-let [pk (:gym-occupation/player-key e)]
+            (:player-id (id/parse-player-key pk)))
+     :save-id (:gym-occupation/save-id e)
+     :nome (:gym-occupation/nome e)
+     :desde (:gym-occupation/desde e)
+     :motivacao (or (edn-read (:gym-occupation/motivacao-edn e)) [100 100 100])
+     :motivacao-em (:gym-occupation/motivacao-em e)
+     :time (or (edn-read (:gym-occupation/team-edn e)) [])
+     :revision (long (:gym-occupation/revision e 0))}))
+
+(defn- registro-retorno
+  [reg xp-ant]
+  (let [base {:id-pokemon (or (:id-pokemon reg) (get reg "id-pokemon") (coll/new-id-pokemon))
+              :nome (or (:nome reg) (get reg "nome"))
+              :species (or (:species reg) (:nome reg) (get reg "nome"))
+              :shiny (boolean (or (:shiny reg) (get reg "shiny")))
+              :hp (long (or (:hp reg) (get reg "hp") 0))
+              :hp-atual 0
+              :ataque (long (or (:ataque reg) (get reg "ataque") 0))
+              :defesa (long (or (:defesa reg) (get reg "defesa") 0))
+              :atq-esp (long (or (:atq-esp reg) (get reg "atq-esp") 0))
+              :def-esp (long (or (:def-esp reg) (get reg "def-esp") 0))
+              :veloc (long (or (:veloc reg) (get reg "veloc") 0))
+              :nivel (long (or (:nivel reg) (get reg "nivel") 1))
+              :xp-desde-nivel (long (or (:xp-desde-nivel reg) (get reg "xp-desde-nivel") 0))
+              :amizade (long (or (:amizade reg) (get reg "amizade") 70))
+              :tipos (vec (or (:tipos reg) (get reg "tipos") []))
+              :golpes (or (:golpes reg) (get reg "golpes") [])
+              :habilidade (or (:habilidade reg) (get reg "habilidade"))
+              :raridade (or (:raridade reg) (get reg "raridade") "comum")}]
+    (if (pos? xp-ant)
+      (:registro (xp/aplicar-xp-atividade
+                  (assoc base :amizade (min 255 (+ (:amizade base) 10)))
+                  xp-ant
+                  {:atividade :ginasio}))
+      base)))
+
+(defn- participacao-lookup
+  "Resolve nocautes para um índice; nil se não participou."
+  [parts idx]
+  (when (contains? parts (long idx))
+    (long (get parts (long idx) 0))))
+
+(defn- pokemon-reward-row
+  [idx poke kos applied]
+  {:idx (long idx)
+   :id-pokemon (:id-pokemon poke)
+   :nome (or (:nome poke) (:species poke))
+   :nocautes (long (or kos 0))
+   :atividade (long (or (:atividade applied) 0))
+   :xp-oficial (long (or (:xp-oficial-aplicado applied) 0))
+   :subidas (long (or (:subidas applied) 0))
+   :nivel-final (long (or (:nivel-final applied)
+                          (:nivel (:registro applied))
+                          (:nivel poke)
+                          1))})
+
+(defn build-resolve-tx
+  "Retorna {:tx :result} para resolve-gym-challenge!.
+  slot-revision: revisão atual do stub/ocupação (0 se vazio).
+  omit-receipt?: quando true (fim de batalha 3×3), o recibo já veio do turno.
+
+  Recompensas imediatas (PE + XP dos participantes) são aplicadas nesta TX,
+  independentemente de conquista/defesa. Bônus de conquista/defesa são PE
+  adicionais na mesma transação atômica (idempotente via operation-id)."
+  [{:keys [db save writer-ctx request ocupacao colecao slot-revision
+           query-collection save-entity player-entity
+           pokemon-entity-map apply-pokemon-xp-tx inventory-adjust-tx
+           omit-receipt? omit-revision-cas? statistics-entity]}]
+  (let [chat-id (:chat-id writer-ctx)
+        player-id (:player-id writer-ctx)
+        save-id (:save-id writer-ctx)
+        gym-id (:gym-id request)
+        g (or (gym/obter-ginasio gym-id)
+              (throw (err/error :unknown_gym {:gym-id gym-id})))
+        pk (id/player-key chat-id player-id)
+        sk (id/save-key chat-id player-id save-id)
+        gk (id/gym-occupation-key chat-id gym-id)
+        actual-rev (long (or slot-revision (:revision ocupacao 0)))
+        insignias (or (:ginasios request) {})
+        _ (when-not (gym/desbloqueado? insignias gym-id)
+            (throw (err/error :gym_locked {:gym-id gym-id})))
+        venceu? (boolean (:venceu? request))
+        dia (or (:dia request) "1970-01-01")
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        premio (when venceu? (gym/registrar-insignia insignias gym-id dia))
+        vit-rew (when premio (gym/recompensa-vitoria premio (:pedra-roll request)))
+        participacao-raw (or (:participacao request) {})
+        colecao-size (count colecao)
+        ;; Valida índices/nocautes antes de qualquer crédito (falha explícita).
+        plano (gym/plano-recompensa-batalha
+               {:venceu? venceu?
+                :participacao participacao-raw
+                :premio premio
+                :ocupacao ocupacao
+                :desafiante-player-key pk
+                :collection-size colecao-size})
+        parts (:participacao plano)
+        pe-delta (long (:pe-desafiante plano 0))
+        coins-delta (long (:moedas vit-rew 0))
+        nivel-adv (long (:nivel g))
+        xp-opts {:unidade :atividade :atividade :ginasio :nivel-adversario nivel-adv}
+        rev (long (:save/revision save 0))
+        pe (long (:save/pe-ginasios save 0))
+        vitorias (long (:save/vitorias-treinador save 0))
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        coin-part (when (pos? coins-delta)
+                    (economy-store/apply-delta-tx
+                     {:sk sk :save save :delta coins-delta
+                      :operation-id operation-id :source "gym" :role "primary"}))
+        occupy-indices (when (and venceu? (seq (:indices request)))
+                         (set (map long (:indices request))))
+        expected-rev (when occupy-indices
+                       (long (or (:expected-revision request) 0)))
+        _ (when (and occupy-indices (not= expected-rev actual-rev))
+            (throw (err/error :gym_cas_conflict
+                              {:expected expected-rev :actual actual-rev})))
+        _ (when (and occupy-indices ocupacao
+                     (nil? (:expected-revision request))
+                     (not= (:player-key ocupacao) pk))
+            (throw (err/error :gym_cas_conflict
+                              {:expected nil :actual (:pid ocupacao)})))
+        ;; XP imediato só para índices com participação canônica registrada.
+        ;; Reserva que nunca entrou NÃO recebe XP (nem na ocupação).
+        xp-grant-parts
+        (keep
+         (fn [[idx nocautes]]
+           (let [i (long idx)
+                 poke (nth colecao i)
+                 atividade (gym/atividade-participante venceu? nocautes)]
+             (when (and poke (not (contains? occupy-indices i)) (pos? atividade))
+               (let [part (apply-pokemon-xp-tx poke atividade xp-opts)
+                     applied (xp/aplicar-xp-atividade poke atividade
+                                                      (dissoc xp-opts :unidade))]
+                 {:tx (:tx part)
+                  :reward (pokemon-reward-row i poke nocautes
+                                              (assoc applied :atividade atividade))}))))
+         parts)
+        xp-txs (mapcat :tx xp-grant-parts)
+        pokemon-rewards-coll (mapv :reward xp-grant-parts)
+        insignias' (if premio (assoc insignias gym-id dia) insignias)
+        ;; Defesa: +PE ao líder com CAS de :save/revision (e pe) — evita lost
+        ;; update sob concorrência; retry de transact-with-writer! relê o save.
+        defense-pe-tx
+        (when (and (:defendeu? plano) ocupacao (pos? (long (:pe-defensor plano 0))))
+          (let [prev (id/parse-player-key (:player-key ocupacao))
+                prev-sk (id/save-key (:chat-id prev) (:player-id prev)
+                                     (:save-id ocupacao))
+                prev-save (save-entity db (:chat-id prev) (:player-id prev)
+                                       (:save-id ocupacao))
+                prev-rev (long (:save/revision prev-save 0))
+                prev-pe (long (:save/pe-ginasios prev-save 0))
+                delta (long (:pe-defensor plano))]
+            (when (:save/key prev-save)
+              [[:db/cas [:save/key prev-sk] :save/revision prev-rev (inc prev-rev)]
+               [:db/cas [:save/key prev-sk] :save/pe-ginasios prev-pe (+ prev-pe delta)]])))
+        base-tx (cond-> (cond-> []
+                          (not omit-revision-cas?)
+                          (conj [:db/cas [:save/key sk] :save/revision rev (inc rev)])
+                          (pos? pe-delta)
+                          (conj [:db/add [:save/key sk] :save/pe-ginasios (+ pe pe-delta)]))
+                  (seq defense-pe-tx)
+                  (into defense-pe-tx)
+                  (not omit-receipt?)
+                  (conj {:operation-receipt/id operation-id
+                         :operation-receipt/kind "gym-resolve"
+                         :operation-receipt/channel "gameplay"
+                         :operation-receipt/payload-hash phash
+                         :operation-receipt/player-key pk
+                         :operation-receipt/save-id save-id
+                         :operation-receipt/summary
+                         (pr-str {:gym-id gym-id :venceu? venceu? :premio premio
+                                  :pe-batalha (:pe-batalha plano)
+                                  :pe-nocautes (:pe-nocautes plano)
+                                  :pe-conquista (:pe-conquista plano)
+                                  :pe-defesa (:pe-defesa plano)})})
+                  premio (conj [:db/add [:save/key sk] :save/ginasios-edn (pr-str insignias')])
+                  (seq (:tx coin-part))
+                  (into (:tx coin-part))
+                  (:vitoria-treinador? vit-rew)
+                  (conj [:db/add [:save/key sk] :save/vitorias-treinador (inc vitorias)])
+                  (and (:pedra? vit-rew) (:item g))
+                  (into (inventory-adjust-tx db sk (:item g) 1)))
+        wear-tx (when (and (not venceu?) ocupacao (not occupy-indices))
+                  (let [worn (gym/desgastar-motivacao ocupacao agora)]
+                    [[:db/add [:gym-occupation/key gk]
+                      :gym-occupation/motivacao-edn (pr-str (:motivacao worn))]
+                     [:db/add [:gym-occupation/key gk]
+                      :gym-occupation/motivacao-em agora]
+                     [:db/cas [:gym-occupation/key gk]
+                      :gym-occupation/revision actual-rev (inc actual-rev)]]))
+        occupy-tx
+        (when occupy-indices
+          (let [indices (mapv long (:indices request))
+                occupy-built
+                (mapv (fn [i]
+                        (let [poke (nth colecao i)
+                              nk (participacao-lookup parts i)]
+                          (if (some? nk)
+                            (let [atividade (gym/atividade-participante venceu? nk)
+                                  applied (if (pos? atividade)
+                                            (xp/aplicar-xp-atividade poke atividade
+                                                                     (dissoc xp-opts :unidade))
+                                            {:registro poke :xp-oficial-aplicado 0
+                                             :subidas 0 :nivel-final (:nivel poke 1)})]
+                              {:registro (:registro applied)
+                               :reward (pokemon-reward-row i poke nk
+                                                           (assoc applied :atividade atividade))})
+                            {:registro poke :reward nil})))
+                      indices)
+                registros (mapv :registro occupy-built)
+                occupy-reward-rows (vec (keep :reward occupy-built))
+                _ (gym/validar-time-ocupacao! indices registros)
+                _ (when (and ocupacao
+                             (= (:player-key ocupacao) pk)
+                             (= (:save-id ocupacao) save-id))
+                    (throw (err/error :cannot_challenge_own_gym
+                                      {:save-id save-id :player-id player-id})))
+                xp-ant (if ocupacao (gym/xp-permanencia ocupacao agora) 0)
+                ;; Permanência: bruta → teto diário → flag (default off).
+                permanence-plan
+                (when ocupacao
+                  (let [prev (id/parse-player-key (:player-key ocupacao))
+                        prev-save (save-entity db (:chat-id prev) (:player-id prev)
+                                               (:save-id ocupacao))
+                        day (gym/day-key agora)
+                        daily (or (some-> (:save/gym-permanence-daily-edn prev-save)
+                                          edn/read-string)
+                                  {})
+                        already (long (get daily day 0))]
+                    (assoc (gym/plano-recompensa-permanencia
+                            {:duration-ms (gym/duracao-ms ocupacao agora)
+                             :already-today already
+                             :economy-enabled? (gym/permanence-rewards-enabled?)})
+                           :day day
+                           :daily daily
+                           :already already
+                           :prev-save prev-save
+                           :prev-parsed prev
+                           :reward-op (gym/occupation-reward-id
+                                       gk (or (:desde ocupacao) agora)))))
+                moedas-ant (long (:payable permanence-plan 0))
+                nova (gym/nova-ocupacao
+                      {:player-id player-id :save-id save-id
+                       :nome (or (:nome request) player-id)
+                       :time registros :agora agora})
+                removed-ids (set (map :id-pokemon registros))
+                remaining (vec (remove #(contains? removed-ids (:id-pokemon %)) colecao))
+                remove-tx (mapcat (fn [i]
+                                    [[:db/retractEntity
+                                      [:pokemon/id-pokemon (:id-pokemon (nth colecao i))]]])
+                                  (sort > indices))
+                reindex-tx (map-indexed
+                            (fn [i poke]
+                              [:db/add [:pokemon/id-pokemon (:id-pokemon poke)]
+                               :pokemon/collection-index (long i)])
+                            remaining)
+                return-tx
+                (when ocupacao
+                  (let [prev (id/parse-player-key (:player-key ocupacao))
+                        prev-sk (id/save-key (:chat-id prev) (:player-id prev)
+                                             (:save-id ocupacao))
+                        prev-colecao (query-collection db prev-sk)
+                        start (count prev-colecao)]
+                    (map-indexed
+                     (fn [i reg]
+                       (pokemon-entity-map prev-sk
+                                           (registro-retorno reg xp-ant)
+                                           (+ start i)))
+                     (:time ocupacao))))
+                prev-coins-tx
+                (when (and permanence-plan (pos? moedas-ant))
+                  (let [prev (:prev-parsed permanence-plan)
+                        prev-sk (id/save-key (:chat-id prev) (:player-id prev)
+                                             (:save-id ocupacao))
+                        prev-save (:prev-save permanence-plan)
+                        day (:day permanence-plan)
+                        daily' (assoc (:daily permanence-plan) day
+                                      (+ (:already permanence-plan) moedas-ant))
+                        old-daily (:save/gym-permanence-daily-edn prev-save)
+                        coin-tx (:tx (economy-store/apply-delta-tx
+                                      {:sk prev-sk :save prev-save :delta moedas-ant
+                                       :operation-id (:reward-op permanence-plan)
+                                       :source "gym-permanence" :role "permanence"
+                                       :agora agora}))
+                        daily-cas (if (nil? old-daily)
+                                    [[:db/cas [:save/key prev-sk]
+                                      :save/gym-permanence-daily-edn nil (pr-str daily')]]
+                                    [[:db/cas [:save/key prev-sk]
+                                      :save/gym-permanence-daily-edn old-daily (pr-str daily')]])]
+                    (into (vec coin-tx) daily-cas)))
+                occ-entity {:gym-occupation/key gk
+                            :gym-occupation/chat-id chat-id
+                            :gym-occupation/gym-id gym-id
+                            :gym-occupation/player-key pk
+                            :gym-occupation/save-id save-id
+                            :gym-occupation/nome (:nome nova)
+                            :gym-occupation/desde agora
+                            :gym-occupation/motivacao-edn (pr-str (:motivacao nova))
+                            :gym-occupation/motivacao-em agora
+                            :gym-occupation/team-edn
+                            (battle/encode-gym-team-edn (:time nova))}
+                occ-tx [occ-entity
+                        [:db/cas [:gym-occupation/key gk]
+                         :gym-occupation/revision expected-rev (inc expected-rev)]]
+                prev-defense-tx
+                (when (and ocupacao (not= (:player-key ocupacao) pk))
+                  (let [prev (id/parse-player-key (:player-key ocupacao))
+                        n (long (:player/gym-defense-count
+                                 (player-entity db (:chat-id prev) (:player-id prev)) 0))]
+                    [[:db/cas [:player/key (:player-key ocupacao)]
+                      :player/gym-defense-count n (max 0 (dec n))]]))
+                n-chal (long (:player/gym-defense-count
+                              (player-entity db chat-id player-id) 0))
+                challenger-defense
+                [[:db/cas [:player/key pk] :player/gym-defense-count n-chal (inc n-chal)]]]
+            {:tx (concat remove-tx reindex-tx (or return-tx [])
+                         (or prev-coins-tx []) occ-tx
+                         (or prev-defense-tx []) challenger-defense)
+             :meta {:moedas-permanencia moedas-ant
+                    :xp-permanencia xp-ant
+                    :permanencia-bruta (long (:gross permanence-plan 0))
+                    :permanencia-teto (long (:capped permanence-plan 0))}
+             :pokemon-rewards occupy-reward-rows}))
+        stats-part (build-statistics-tx
+                    {:statistics-entity statistics-entity
+                     :chat-id chat-id :gym-id gym-id :agora agora
+                     :venceu? venceu? :ocupacao ocupacao
+                     :challenger-id player-id :challenger-name (:nome request)})
+        pokemon-rewards (into (vec pokemon-rewards-coll)
+                              (or (:pokemon-rewards occupy-tx) []))
+        tx (into (into (into base-tx (concat (or xp-txs []) (or wear-tx [])))
+                       (or (:tx occupy-tx) []))
+                 (:tx stats-part))]
+    {:tx tx
+     :result {:operation-id operation-id
+              :duplicate false
+              :channel "gameplay"
+              :payload-hash phash
+              :venceu? venceu?
+              :premio premio
+              :reward vit-rew
+              :pe-delta pe-delta
+              :pe-batalha (long (:pe-batalha plano 0))
+              :pe-nocautes (long (:pe-nocautes plano 0))
+              :pe-conquista (long (:pe-conquista plano 0))
+              :pe-defesa (long (:pe-defesa plano 0))
+              :pe-defensor (long (:pe-defensor plano 0))
+              :conquistou? (boolean (:conquistou? plano))
+              :defendeu? (boolean (:defendeu? plano))
+              :nocautes-total (gym/total-nocautes parts)
+              :pokemon-rewards pokemon-rewards
+              :occupied? (boolean occupy-tx)
+              :statistics (:statistics stats-part)
+              :permanencia (or (:meta occupy-tx) {})}}))
+
+(defn build-heal-tx
+  [{:keys [db save writer-ctx request ocupacao inventory-adjust-tx]}]
+  (let [chat-id (:chat-id writer-ctx)
+        player-id (:player-id writer-ctx)
+        save-id (:save-id writer-ctx)
+        gym-id (:gym-id request)
+        pk (id/player-key chat-id player-id)
+        sk (id/save-key chat-id player-id save-id)
+        _ (when-not ocupacao (throw (err/error :gym_empty {:gym-id gym-id})))
+        _ (when-not (and (= (:player-key ocupacao) pk)
+                         (= (:save-id ocupacao) save-id))
+            (throw (err/error :not_gym_leader
+                              {:save-id save-id :occupation-save (:save-id ocupacao)})))
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        healed (gym/recuperar-motivacao ocupacao (:indice request) agora (:pontos request))
+        item-tx (inventory-adjust-tx db sk (:item-id request) -1)
+        rev (long (:save/revision save 0))
+        gym-rev (long (:revision ocupacao 0))
+        gk (id/gym-occupation-key chat-id gym-id)
+        operation-id (:operation-id request)
+        phash (:payload-hash request)]
+    {:tx (into item-tx
+               [[:db/add [:gym-occupation/key gk]
+                 :gym-occupation/motivacao-edn
+                 (pr-str (get-in healed [:ocupacao :motivacao]))]
+                [:db/add [:gym-occupation/key gk] :gym-occupation/motivacao-em agora]
+                [:db/cas [:gym-occupation/key gk]
+                 :gym-occupation/revision gym-rev (inc gym-rev)]
+                [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                {:operation-receipt/id operation-id
+                 :operation-receipt/kind "gym-heal"
+                 :operation-receipt/channel "gameplay"
+                 :operation-receipt/payload-hash phash
+                 :operation-receipt/player-key pk
+                 :operation-receipt/save-id save-id
+                 :operation-receipt/summary
+                 (pr-str {:gym-id gym-id :antes (:antes healed)
+                          :depois (:depois healed)})}])
+     :result {:operation-id operation-id
+              :duplicate false
+              :antes (:antes healed)
+              :depois (:depois healed)}}))
