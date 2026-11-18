@@ -13,7 +13,7 @@ done
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mode="dry-run"
-sha="${A6_SHA:-0507831d1b6ec8f35aac1794256e94de2b7a0e20}"
+sha="${A6_SHA:-96a7e48d06e1bf6e6a23ce65256301efdd724d9c}"
 if [[ "${1:-}" == "--execute" ]]; then
   mode="execute"
 fi

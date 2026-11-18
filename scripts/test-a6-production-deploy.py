@@ -34,7 +34,15 @@ from a6_production_deploy import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHA = "0507831d1b6ec8f35aac1794256e94de2b7a0e20"
+SHA = "96a7e48d06e1bf6e6a23ce65256301efdd724d9c"
+DIGEST = "sha256:" + ("ab" * 32)
+BACKUP = {"manifestVerified": True, "sourcePreserved": True}
+ENV = {
+    "A6_EXECUTE": "1",
+    "ODISSEU_PRODUCTION_DEPLOY_HOLD": "false",
+    "PRODUCTION_AUTHORIZATION": "autorizar-producao-a6",
+    "ODISSEU_A6_DELIVERY_VALIDATED": "true",
+}
 
 
 def jvm_document(privileged=False, cap_add=None, volume=LIVE_VOLUME):
@@ -158,6 +166,9 @@ class ProductionDeployTests(unittest.TestCase):
         self.assertNotIn("TOKEN=", text)
         self.assertEqual(report["previousImage"], CURRENT["jvm"]["image"])
         self.assertEqual(report["untouched"], "odisseu-a6-node")
+        self.assertIn("image_digest_missing", report["blocked"])
+        self.assertIn("backup_not_verified", report["blocked"])
+        self.assertNotIn("@sha256:", " ".join(report["argv"]))
 
     def test_missing_mount_and_wrong_volume_are_refused(self):
         missing = deepcopy(CURRENT)
@@ -226,30 +237,71 @@ class ProductionDeployTests(unittest.TestCase):
             self.assertEqual((isolated / "save.edn").read_text(encoding="utf-8"), '{:player "p"}')
             self.assertTrue(Path(produced["manifest"]).is_file())
 
-    def test_execute_copy_does_not_run_and_wrong_image_is_rejected(self):
-        with self.assertRaises(ProductionBackupError):
-            execute_copy(admitted(), "true", False, False)
-        with self.assertRaises(ProductionBackupError):
-            execute_copy(admitted(), "true", True, True)
+    def test_execute_copy_refuses_a_running_writer_and_recovers_isolated_bytes(self):
+        with self.assertRaises(ProductionBackupError) as dry:
+            execute_copy(collection(), VM, "/tmp/odisseu-a6-backup-dry", "false", False, BACKUP_AUTHORIZATION, 2_000_000_000, 100)
+        self.assertEqual(str(dry.exception), "dry_run")
+        with self.assertRaises(ProductionBackupError) as held:
+            execute_copy(collection(), VM, "/tmp/odisseu-a6-backup-hold", "true", True, BACKUP_AUTHORIZATION, 2_000_000_000, 100)
+        self.assertEqual(str(held.exception), "hold_active")
+        running = jvm_document()
+        running["State"] = {"Running": True, "Status": "running"}
+        with self.assertRaises(ProductionBackupError) as writable:
+            execute_copy(
+                collection([running]), VM, "/tmp/odisseu-a6-backup-run", "false", True,
+                BACKUP_AUTHORIZATION, 2_000_000_000, 100, isolated_root="/tmp/does-not-matter",
+            )
+        self.assertEqual(str(writable.exception), "datomic_writable")
         self.assertIn("invalid_sha", plan(CURRENT, "nao-e-sha", "jvm")["blocked"])
+        stopped = jvm_document()
+        stopped["State"] = {"Running": False, "Status": "exited"}
+        try:
+            live_readable = Path(DATOMIC_SOURCE).is_dir()
+        except OSError:
+            live_readable = False
+        self.assertFalse(live_readable, "volume live legível; a suíte não copia")
+        with self.assertRaises(ProductionBackupError) as missing:
+            execute_copy(
+                collection([stopped]), VM, "/tmp/odisseu-a6-backup-missing", "false", True,
+                BACKUP_AUTHORIZATION, 2_000_000_000, 100,
+            )
+        self.assertIn(str(missing.exception), {"source_missing", "source_unreadable"})
+        external = collection(
+            [stopped],
+            processes="clojure apps/odisseu/src/odisseu/smoke/datomic_local.clj\n",
+        )
+        with self.assertRaises(ProductionBackupError) as writer:
+            execute_copy(external, VM, "/tmp/odisseu-a6-backup-ext", "false", True, BACKUP_AUTHORIZATION, 2_000_000_000, 100)
+        self.assertEqual(str(writer.exception), "external_datomic_client")
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "volume"
+            source.mkdir()
+            (source / "save.edn").write_text('{:coins 7}', encoding="utf-8")
+            produced = execute_copy(
+                collection([stopped]), VM, Path(tmp) / "backup", "false", True,
+                BACKUP_AUTHORIZATION, 2_000_000_000, 100, isolated_root=source,
+            )
+            self.assertTrue(produced["manifestVerified"])
+            self.assertTrue(produced["sourcePreserved"])
+            self.assertEqual((source / "save.edn").read_text(encoding="utf-8"), "{:coins 7}")
+            restored = restore_isolated(produced["manifest"], Path(tmp) / "backup", Path(tmp) / "restored")
+            self.assertEqual((Path(restored["restored"]) / "save.edn").read_text(encoding="utf-8"), "{:coins 7}")
+            self.assertEqual(produced["source"], "isolated")
 
     def test_health_failure_rolls_back_one_service_and_interruption_blocks_completion(self):
         ready = deepcopy(CURRENT)
         ready["jvm"]["phase"] = "quiescent"
         ready["node"]["phase"] = "draining"
-        env = {
-            "A6_EXECUTE": "1",
-            "ODISSEU_PRODUCTION_DEPLOY_HOLD": "false",
-            "PRODUCTION_AUTHORIZATION": "autorizar-producao-a6",
-            "ODISSEU_A6_DELIVERY_VALIDATED": "true",
-        }
-        declared = plan(ready, SHA, "jvm", env)
+        env = dict(ENV)
+        declared = plan(ready, SHA, "jvm", env, digest=DIGEST, backup=BACKUP)
         self.assertIn("declared_evidence", declared["blocked"])
         self.assertFalse(declared["executeAllowed"])
         observed = observe_vm(vm_runner())
         self.assertNotIn("super-secret", json.dumps(observed))
-        observed_plan = plan(observed, SHA, "jvm", env)
+        observed_plan = plan(observed, SHA, "jvm", env, digest=DIGEST, backup=BACKUP)
         self.assertTrue(observed_plan["executeAllowed"], observed_plan["blocked"])
+        self.assertIn(f"@sha256:{DIGEST.split(':', 1)[1]}", observed_plan["argv"][-1])
+        self.assertTrue(observed_plan["jvmBeforeNode"])
         calls = []
 
         class Result:
@@ -320,12 +372,7 @@ class ProductionDeployTests(unittest.TestCase):
         self.assertEqual(resume["next"], "resume")
 
     def test_interruption_keeps_one_writer_and_new_battle_stays_in_maintenance(self):
-        observed = plan(observe_vm(vm_runner()), SHA, "jvm", {
-            "A6_EXECUTE": "1",
-            "ODISSEU_PRODUCTION_DEPLOY_HOLD": "false",
-            "PRODUCTION_AUTHORIZATION": "autorizar-producao-a6",
-            "ODISSEU_A6_DELIVERY_VALIDATED": "true",
-        })
+        observed = plan(observe_vm(vm_runner()), SHA, "jvm", dict(ENV), digest=DIGEST, backup=BACKUP)
         self.assertTrue(observed["executeAllowed"], observed["blocked"])
 
         class Result:
@@ -359,12 +406,13 @@ class ProductionDeployTests(unittest.TestCase):
         self.assertEqual(forward["mode"], "forward_only")
         self.assertTrue(forward["maintenance"])
         self.assertFalse(any(command[-2] == "start" for command in kept))
-        node = plan(observe_vm(vm_runner()), SHA, "node", {
-            "A6_EXECUTE": "1",
-            "ODISSEU_PRODUCTION_DEPLOY_HOLD": "false",
-            "PRODUCTION_AUTHORIZATION": "autorizar-producao-a6",
-            "ODISSEU_A6_DELIVERY_VALIDATED": "true",
-        })
+        node = plan(
+            observe_vm(vm_runner()), SHA, "node", dict(ENV),
+            digest=DIGEST, backup=BACKUP, jvm_updated=True,
+        )
+        early = plan(observe_vm(vm_runner()), SHA, "node", dict(ENV), digest=DIGEST, backup=BACKUP)
+        self.assertIn("jvm_not_updated", early["blocked"])
+        self.assertFalse(early["executeAllowed"])
         node_fail = run_apply(lambda command: Result(), node, fail_at="run")
         self.assertEqual(node_fail["mode"], "rollback")
         self.assertTrue(node_fail["maintenance"])

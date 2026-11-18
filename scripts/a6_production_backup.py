@@ -1,9 +1,8 @@
 """Backup de produção, separado do helper de laboratório.
 
-consistent_copy continua recusando odisseu-a6-cutover. Esta operação só
-admite o volume live quando a coleta veio de um runner, a VM é a esperada,
-o drain está concluído e a cópia ainda não foi autorizada a executar.
-O padrão é não copiar.
+consistent_copy continua recusando odisseu-a6-cutover. A cópia do volume
+live só acontece com coleta de um runner, VM esperada, drain concluído,
+JVM parada e autorização explícita. O padrão é não copiar.
 """
 
 from __future__ import annotations
@@ -103,20 +102,79 @@ def copy_authorized_isolated(source, destination, collection, vm, authorization,
     return report
 
 
-def execute_copy(admission, hold, execute, source_exists):
-    """A cópia real exige admissão, hold solto e o arquivo de origem presente.
-    Esta revisão não chama esta função contra a VM."""
+def _active_writer(documents, volume):
+    """O volume só pode ser copiado quando nenhum holder está em execução."""
+    found = False
+    for container in documents or []:
+        holds = False
+        for mount in container.get("Mounts") or []:
+            haystack = " ".join(str(mount.get(key) or "") for key in ("Name", "Source", "Destination"))
+            writable = mount.get("RW", mount.get("rw", True))
+            if volume and volume in haystack and writable is not False:
+                holds = True
+        if not holds:
+            continue
+        found = True
+        state = container.get("State")
+        if not isinstance(state, dict) or "Running" not in state:
+            return "writer_state_unknown"
+        if state.get("Running") is True or state.get("Status") == "running":
+            return "datomic_writable"
+    if not found:
+        return "writer_not_identified"
+    return None
+
+
+def execute_copy(collection, vm, destination, hold, execute, authorization, free_bytes, source_bytes, isolated_root=None):
+    """Copia o volume live depois da quiescência e com a JVM parada.
+
+    isolated_root exercita o mesmo caminho em diretório temporário. Sem ele,
+    a origem é o volume live e esta revisão não é chamada contra a VM.
+    """
     if execute is not True:
         raise ProductionBackupError("dry_run")
     if hold != "false":
         raise ProductionBackupError("hold_active")
-    if not isinstance(admission, dict) or not admission.get("admitted"):
-        raise ProductionBackupError("not_admitted")
-    if admission.get("source") != DATOMIC_SOURCE:
-        raise ProductionBackupError("source_not_live_datomic")
-    if not source_exists:
+    if authorization != BACKUP_AUTHORIZATION:
+        raise ProductionBackupError("backup_not_authorized")
+    reason = _quiescence_reason(collection, vm)
+    if reason:
+        raise ProductionBackupError(reason)
+    active = _active_writer(getattr(collection, "documents", ()), LIVE_VOLUME)
+    if active:
+        raise ProductionBackupError(active)
+    if _live_marker(destination) or Path(destination) == Path(DATOMIC_SOURCE):
+        raise ProductionBackupError("destination_not_separate")
+    if isolated_root is None:
+        source = Path(DATOMIC_SOURCE)
+    else:
+        source = Path(isolated_root)
+        if _live_marker(source):
+            raise ProductionBackupError("live_path_refused")
+    try:
+        if Path(destination).resolve().is_relative_to(source.resolve()):
+            raise ProductionBackupError("destination_not_separate")
+        readable = source.is_dir()
+    except ProductionBackupError:
+        raise
+    except OSError as exc:
+        raise ProductionBackupError("source_unreadable") from exc
+    if not readable:
         raise ProductionBackupError("source_missing")
-    raise ProductionBackupError("production_copy_not_run_in_this_revision")
+    try:
+        measured = _dir_bytes(source)
+    except OSError as exc:
+        raise ProductionBackupError("source_unreadable") from exc
+    if source_bytes < measured:
+        raise ProductionBackupError("source_bytes_mismatch")
+    if free_bytes < max(source_bytes, measured) * 2 + MARGIN:
+        raise ProductionBackupError("insufficient_space")
+    report = _copy_and_verify(source, destination)
+    report["authorization"] = "accepted"
+    report["quiescence"] = "observed"
+    report["writersStopped"] = True
+    report["source"] = DATOMIC_SOURCE if isolated_root is None else "isolated"
+    return report
 
 
 def rehearse_isolated_copy(source, destination):
@@ -125,10 +183,18 @@ def rehearse_isolated_copy(source, destination):
     destination = Path(destination)
     if _live_marker(source) or _live_marker(destination):
         raise ProductionBackupError("live_path_refused")
+    return _copy_and_verify(source, destination)
+
+
+def _copy_and_verify(source, destination):
+    source = Path(source)
+    destination = Path(destination)
     if destination.exists():
         raise ProductionBackupError("destination_exists")
     if not source.is_dir():
         raise ProductionBackupError("source_missing")
+    if _live_marker(destination):
+        raise ProductionBackupError("destination_not_separate")
     shutil.copytree(source, destination)
     manifest = _manifest(destination)
     _verify(source, destination, manifest)
@@ -137,7 +203,12 @@ def rehearse_isolated_copy(source, destination):
     manifest_path = destination.parent / "backup-manifest.txt"
     lines = [f"{item['sha256']}  {item['path']}" for item in manifest]
     manifest_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-    return {"files": len(manifest), "manifest": str(manifest_path), "sourcePreserved": True}
+    return {
+        "files": len(manifest),
+        "manifest": str(manifest_path),
+        "sourcePreserved": True,
+        "manifestVerified": True,
+    }
 
 
 def restore_isolated(manifest_path, backup, restore_dir):
@@ -164,6 +235,10 @@ def restore_isolated(manifest_path, backup, restore_dir):
 
 def _deny(reason):
     return {"admitted": False, "reason": reason, "execute": False}
+
+
+def _dir_bytes(root):
+    return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
 
 
 def _manifest(root):
