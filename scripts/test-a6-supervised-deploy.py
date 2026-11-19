@@ -100,6 +100,15 @@ class World:
         self.processes = "clojure.main -m odisseu.bridge.http-server\n"
         self.writes = 0
         self.ops = 0
+        self.admitted = 0
+        self.completed = 0
+        self.failed = 0
+        self.rejected = 0
+        self.node_phase = "open"
+        self.jvm_phase = "open"
+        self.unauthorized = False
+        self.jvm_open_zero = False
+        self.datomic_up = True
         self.jvm_running = True
         self.health = "healthy"
         self.contract = "up"
@@ -126,6 +135,8 @@ class World:
             return Result(json.dumps({"instance": "odisseu-core", "zone": "us-central1-a", "project": VM["project"]}))
         if args[:1] == ["df"]:
             return Result("Avail\n2000000000\n")
+        if len(args) >= 2 and args[-2] == "-c" and "curl" in str(args[-1]):
+            return self._http(str(args[-1]))
         if "inspect" in args and "--format" not in args and args[-2:] == ["odisseu-a6-jvm", "odisseu-a6-node"]:
             return Result(json.dumps(self.documents()))
         if "--format" in args:
@@ -150,11 +161,13 @@ class World:
         if args[-1] == "args":
             return Result(self.processes)
         if str(args[-1]).endswith("bridge-maintenance.edn"):
-            phase = "open" if self.open else "quiescent"
-            return Result("{:phase :%s :active-writes %s}\n" % (phase, self.writes))
+            return Result("{:phase :%s :active-writes %s}\n" % (self.jvm_phase, self.writes))
         if str(args[-1]).endswith("a6-maintenance.json"):
-            phase = "open" if self.open else "draining"
-            return Result(json.dumps({"phase": phase, "activeOps": self.ops}))
+            return Result(json.dumps({
+                "phase": self.node_phase,
+                "activeOps": self.ops,
+                "durable": True,
+            }))
         if args[-1] == "/data/datomic-local/battle-format.edn":
             if not self.battle:
                 return Result("", 1)
@@ -179,6 +192,73 @@ class World:
             if verb in {"stop", "rename", "update", "start", "run", "exec", "inspect"}:
                 return Result("")
         return Result("comando inesperado: " + " ".join(args), 1)
+
+    def _jvm_body(self, quiescent):
+        data = {
+            "phase": self.jvm_phase,
+            "active-writes": self.writes,
+            "admitted-writes": self.admitted,
+            "completed-writes": self.completed,
+            "failed-writes": self.failed,
+            "rejected-writes": self.rejected,
+        }
+        if quiescent:
+            data["quiescent?"] = True
+        return data
+
+    def _http(self, script):
+        if self.unauthorized and "/ops/maintenance/" in script:
+            return Result(json.dumps({"status": "error", "code": "unauthorized"}) + "\n401")
+        if "/health" in script and "/ops/" not in script:
+            status = "up" if self.datomic_up else "down"
+            body = {
+                "ok": self.datomic_up,
+                "data": {
+                    "status": status,
+                    "maintenance": {"phase": self.jvm_phase, "active-writes": self.writes},
+                },
+            }
+            return Result(json.dumps(body) + "\n" + ("200" if self.datomic_up else "503"))
+        node = "3001" in script
+        post = " -X POST " in script
+        if node and post and "/enter" in script:
+            if self.ops != 0:
+                self.node_phase = "draining"
+                body = {"phase": "draining", "activeOperations": self.ops, "durable": True, "quiescent": False}
+                return Result(json.dumps(body) + "\n409")
+            self.node_phase = "quiescent"
+            self.ops = 0
+            body = {"phase": "quiescent", "activeOperations": 0, "durable": True, "quiescent": True}
+            return Result(json.dumps(body) + "\n200")
+        if node and post and "/resume" in script:
+            if self.node_phase not in ("quiescent", "frozen") or self.ops != 0:
+                return Result(json.dumps({"status": "error", "code": "maintenance_resume_blocked"}) + "\n409")
+            self.node_phase = "open"
+            return Result(json.dumps({"phase": "open", "activeOperations": 0, "durable": True}) + "\n200")
+        if node:
+            body = {"phase": self.node_phase, "activeOperations": self.ops, "durable": True}
+            return Result(json.dumps(body) + "\n200")
+        if post and "/enter" in script:
+            if self.jvm_open_zero:
+                self.jvm_phase = "open"
+                self.writes = 0
+                return Result(json.dumps({"ok": True, "data": self._jvm_body(False)}) + "\n200")
+            if self.jvm_phase == "frozen":
+                return Result(json.dumps({"ok": False, "error": {"code": "maintenance_enter_forbidden_while_frozen"}}) + "\n500")
+            if self.writes != 0:
+                self.jvm_phase = "draining"
+                return Result(json.dumps({
+                    "ok": False,
+                    "error": {"code": "maintenance_drain_timeout", "details": {"active-writes": self.writes, "phase": "draining"}},
+                }) + "\n409")
+            self.jvm_phase = "quiescent"
+            return Result(json.dumps({"ok": True, "data": self._jvm_body(True)}) + "\n200")
+        if post and "/resume" in script:
+            if self.jvm_phase not in ("quiescent", "frozen") or self.writes != 0:
+                return Result(json.dumps({"ok": False, "error": {"code": "maintenance_resume_blocked"}}) + "\n409")
+            self.jvm_phase = "open"
+            return Result(json.dumps({"ok": True, "data": {"phase": "open", "resumed-at": "t"}}) + "\n200")
+        return Result(json.dumps({"ok": True, "data": self._jvm_body(False)}) + "\n200")
 
 
 CONTRACT_MARKER = "pokemon-jvm-client.cjs"
@@ -222,9 +302,24 @@ class SupervisedWindowTests(unittest.TestCase):
             jvm_run = next(index for index, command in enumerate(joined) if " run " in f" {command} " and "odisseu-a6-jvm" in command and "odisseu-node" not in command)
             node_run = next(index for index, command in enumerate(joined) if " run " in f" {command} " and "odisseu-a6-node" in command)
             stop = next(index for index, command in enumerate(joined) if command.endswith("stop --time 30 odisseu-a6-jvm"))
+            enter = next(index for index, command in enumerate(joined) if "/ops/maintenance/enter" in command and "odisseu-a6-node" in command)
+            drain = next(index for index, command in enumerate(joined) if "/ops/maintenance/enter" in command and "odisseu-a6-jvm" in command)
+            resume = [command for command in joined if "/ops/maintenance/resume" in command]
+            self.assertLess(enter, drain)
+            self.assertLess(drain, stop)
             self.assertLess(stop, jvm_run)
             self.assertLess(jvm_run, node_run)
+            self.assertEqual(len(resume), 2)
+            self.assertNotIn("inspect --format " + RESUME_PHRASE, text)
             self.assertFalse(any(command.endswith("start odisseu-a6-jvm-previous") or command.endswith("start odisseu-a6-jvm-failed") for command in joined))
+            markers = [
+                command for command in joined
+                if "a6-maintenance.json" in command or "bridge-maintenance.edn" in command
+            ]
+            self.assertGreater(len(markers), 0)
+            self.assertTrue(all(" cat " in f" {command} " for command in markers))
+            self.assertNotIn(">", "\n".join(markers))
+            self.assertEqual(report["lastCompleted"], "validate_game")
 
     def test_declared_map_push_and_hold_do_not_start(self):
         with self.assertRaises(DeployError) as declared:
@@ -278,10 +373,10 @@ class SupervisedWindowTests(unittest.TestCase):
         cases = []
         drain = World()
         drain.writes = 1
-        cases.append((drain, "writes_in_flight", "drain"))
+        cases.append((drain, "jvm_drain_timeout", "jvm_drain"))
         writer = World()
         writer.processes = INVENTORY[0]["path"] + "\n"
-        cases.append((writer, "external_datomic_client", "drain"))
+        cases.append((writer, "external_datomic_client", "quiescence"))
         privileged = World()
         privileged.privileged = True
         cases.append((privileged, "privileged_or_sys_admin", "preflight"))
@@ -344,8 +439,54 @@ class SupervisedWindowTests(unittest.TestCase):
             resume = run_case(World(), root / "resume", env=quiet)
             self.assertEqual(resume["next"], "resume")
             self.assertIn("resume_not_explicit", resume["blocked"])
-            self.assertNotIn(RESUME_PHRASE, " ".join(" ".join(command) for command in resume["commands"]))
+            joined_resume = " ".join(" ".join(command) for command in resume["commands"])
+            self.assertNotIn(RESUME_PHRASE, joined_resume)
+            self.assertNotIn("/ops/maintenance/resume", joined_resume)
             self.assertNotIn("confirm_open", resume["steps"])
+
+    def test_maintenance_api_failures_stop_before_the_jvm(self):
+        cases = []
+        unauthorized = World()
+        unauthorized.unauthorized = True
+        cases.append((unauthorized, "maintenance_unauthorized", "node_maintenance"))
+        busy = World()
+        busy.ops = 1
+        cases.append((busy, "node_maintenance_timeout", "node_maintenance"))
+        open_zero = World()
+        open_zero.jvm_open_zero = True
+        cases.append((open_zero, "jvm_not_quiescent", "jvm_drain"))
+        failed = World()
+        failed.failed = 1
+        failed.admitted = 1
+        cases.append((failed, "jvm_writes_failed", "jvm_drain"))
+        incomplete = World()
+        incomplete.admitted = 2
+        cases.append((incomplete, "jvm_writes_incomplete", "jvm_drain"))
+        frozen = World()
+        frozen.jvm_phase = "frozen"
+        cases.append((frozen, "maintenance_state_unknown", "jvm_drain"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for world, reason, nxt in cases:
+                report = run_case(world, root / reason)
+                self.assertIn(reason, report["blocked"], report)
+                self.assertEqual(report["next"], nxt)
+                self.assertFalse(report["deployComplete"])
+                self.assertFalse(any(
+                    "stop" in command and command[-1] == "odisseu-a6-jvm" for command in report["commands"]
+                ))
+                self.assertEqual((root / reason / "export" / "save.edn").read_text(encoding="utf-8"), SAVE)
+
+    def test_second_window_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = World()
+            first = run_case(world, root / "first")
+            second = run_case(world, root / "second")
+            self.assertTrue(first["deployComplete"], first["blocked"])
+            self.assertTrue(second["deployComplete"], second["blocked"])
+            self.assertEqual((root / "first" / "export" / "save.edn").read_text(encoding="utf-8"), SAVE)
+            self.assertEqual((root / "second" / "export" / "save.edn").read_text(encoding="utf-8"), SAVE)
 
     def test_temp_volume_bytes_survive_the_window(self):
         if shutil.which("docker") is None:
@@ -407,6 +548,22 @@ class SupervisedWindowTests(unittest.TestCase):
         ci = subprocess.run(["bash", str(script), "--window"], check=False, capture_output=True, text=True, env=env)
         self.assertEqual(ci.returncode, 2)
         self.assertIn("push_not_authorized", ci.stderr)
+        live = os.environ.copy()
+        for key in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME"):
+            live.pop(key, None)
+        live.update({
+            "A6_SUPERVISED_CONFIRM": "executar-janela-a6",
+            "A6_SUPERVISED_RUNNER": "vm",
+            "ODISSEU_PRODUCTION_DEPLOY_HOLD": "false",
+            "A6_LIVE_BACKUP": "autorizar-backup-producao-a6",
+            "A6_EXECUTE": "1",
+            "PRODUCTION_AUTHORIZATION": "autorizar-producao-a6",
+        })
+        refused_live = subprocess.run(
+            ["bash", str(script), "--window"], check=False, capture_output=True, text=True, env=live,
+        )
+        self.assertEqual(refused_live.returncode, 2)
+        self.assertIn("apply_requires_live_recheck", refused_live.stderr)
         workflow = (ROOT / ".github/workflows/a6-pr-validation.yml").read_text(encoding="utf-8")
         self.assertNotIn("--window", workflow)
         self.assertNotIn("executar-janela-a6", workflow)
