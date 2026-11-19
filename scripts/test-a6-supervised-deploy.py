@@ -20,8 +20,10 @@ from a6_image_transfer import (
 from a6_production_contract import CURRENT, VM
 from a6_production_deploy import DeployError
 from a6_supervised_deploy import (
+    QUIESCENT,
     RESUME_PHRASE,
     SUPERVISED_STEPS,
+    _apply_confirmed,
     evaluate_supervised,
     run_supervised,
 )
@@ -87,6 +89,8 @@ def _inspect(service, publish, running, privileged, cap_add, health):
 
 
 class World:
+    """VM falsa com o comportamento do Docker 29 que a janela depende."""
+
     def __init__(self):
         self.hostname = "odisseu-core"
         self.architecture = "amd64"
@@ -109,7 +113,6 @@ class World:
         self.unauthorized = False
         self.jvm_open_zero = False
         self.datomic_up = True
-        self.jvm_running = True
         self.health = "healthy"
         self.contract = "up"
         self.whatsapp = "READY"
@@ -118,11 +121,69 @@ class World:
         self.entrypoint = "/usr/local/bin/jvm-storage-entrypoint.sh"
         self.open = False
         self.ran_jvm = False
+        self.status_fault = None
+        self.status_calls = {"node": 0, "jvm": 0}
+        self.jvm_marker_fault = None
+        self.extra_holders = []
+        self.containers = {
+            "odisseu-a6-jvm": {"image": CURRENT["jvm"]["imageId"], "running": True},
+            "odisseu-a6-node": {"image": CURRENT["node"]["imageId"], "running": True},
+        }
+
+    @property
+    def jvm_running(self):
+        return bool((self.containers.get("odisseu-a6-jvm") or {}).get("running"))
+
+    def state(self):
+        return dict(self.__dict__)
+
+    def load(self, state):
+        self.__dict__.update(state)
+        return self
+
+    def _tags(self):
+        return {
+            "odisseu-jvm:a6-%s-amd64" % SHA[:12]: self.jvm_id,
+            "odisseu-node:a6-%s" % SHA[:12]: self.node_id,
+            CURRENT["jvm"]["image"]: CURRENT["jvm"]["imageId"],
+            CURRENT["node"]["image"]: CURRENT["node"]["imageId"],
+        }
+
+    def _resolve(self, ref):
+        """tag@sha256 só resolve se a tag aponta para esse ID, como no containerd store."""
+        tags = self._tags()
+        if ref.startswith("sha256:"):
+            return ref if ref in tags.values() else None
+        if "@sha256:" in ref:
+            tag, digest = ref.split("@", 1)
+            return digest if tags.get(tag) == digest else None
+        return tags.get(ref)
 
     def documents(self):
-        jvm = _inspect(CURRENT["jvm"], CURRENT["jvm"]["publish"], self.jvm_running, self.privileged, self.cap_add, self.health)
-        node = _inspect(CURRENT["node"], CURRENT["node"]["publish"], True, False, [], self.health)
-        return [jvm, node]
+        documents = []
+        for name, service, publish, privileged, cap_add in (
+            ("odisseu-a6-jvm", CURRENT["jvm"], CURRENT["jvm"]["publish"], self.privileged, self.cap_add),
+            ("odisseu-a6-node", CURRENT["node"], CURRENT["node"]["publish"], False, []),
+        ):
+            container = self.containers.get(name)
+            if container is None:
+                return None
+            document = _inspect(service, publish, container["running"], privileged, cap_add, self.health)
+            document["Image"] = container["image"]
+            documents.append(document)
+        return documents
+
+    def _holders(self):
+        rows = []
+        for name, container in sorted(self.containers.items()):
+            if name.startswith("odisseu-a6-jvm"):
+                rows.append("%s\t%s" % (name, "running" if container["running"] else "exited"))
+        rows.extend(self.extra_holders)
+        return Result("\n".join(rows) + ("\n" if rows else ""))
+
+    def _docker(self, args):
+        index = args.index("docker")
+        return args[index + 1], args[index + 2:]
 
     def runner(self, args):
         if args == ["docker", "info"]:
@@ -135,63 +196,140 @@ class World:
             return Result(json.dumps({"instance": "odisseu-core", "zone": "us-central1-a", "project": VM["project"]}))
         if args[:1] == ["df"]:
             return Result("Avail\n2000000000\n")
-        if len(args) >= 2 and args[-2] == "-c" and "curl" in str(args[-1]):
-            return self._http(str(args[-1]))
-        if "inspect" in args and "--format" not in args and args[-2:] == ["odisseu-a6-jvm", "odisseu-a6-node"]:
-            return Result(json.dumps(self.documents()))
-        if "--format" in args:
-            template = args[args.index("--format") + 1]
-            if template == RESUME_PHRASE:
-                self.open = True
-                return Result(RESUME_PHRASE + "\n")
-            if "Architecture" in template:
-                return Result(f"{self.architecture}\t{self.revision}\n")
-            if "{{.Id}}" in template:
-                identity = self.node_id if "odisseu-node" in args[-1] else self.jvm_id
-                return Result(identity + "\n")
-            if "Health.Status" in template:
-                return Result(self.health + "\n")
-            if "Privileged" in template:
-                return Result("true\n" if self.privileged else "false\n")
-            if "Entrypoint" in template or "Cmd" in template:
-                return Result(self.entrypoint + "\n")
-        if args[-1] == "/proc/self/status":
+        if "docker" not in args:
+            return Result("comando inesperado: " + " ".join(args), 1)
+        verb, rest = self._docker(args)
+        if verb == "exec":
+            name = rest[0]
+            container = self.containers.get(name)
+            if container is None or not container["running"]:
+                return Result("Error response from daemon: container %s is not running" % name, 1)
+            return self._exec(name, rest[1:])
+        if verb == "ps":
+            if "volume=odisseu-a6-cutover-datomic" in rest:
+                return self._holders()
+            if "name=odisseu-a6-" in rest:
+                return Result("".join(name + "\n" for name in sorted(self.containers)))
+            return Result("", 1)
+        if verb == "image":
+            return self._image(rest)
+        if verb == "inspect":
+            return self._inspect_cmd(rest)
+        if verb == "stop":
+            container = self.containers.get(rest[-1])
+            if container is None:
+                return Result("No such container", 1)
+            container["running"] = False
+            return Result(rest[-1] + "\n")
+        if verb == "rename":
+            source, target = rest
+            if source not in self.containers or target in self.containers:
+                return Result("Error response from daemon: rename conflict", 1)
+            self.containers[target] = self.containers.pop(source)
+            return Result("")
+        if verb == "update":
+            return Result("") if rest[-1] in self.containers else Result("No such container", 1)
+        if verb == "start":
+            container = self.containers.get(rest[-1])
+            if container is None:
+                return Result("No such container", 1)
+            container["running"] = True
+            return Result("")
+        if verb == "run":
+            return self._run(rest)
+        return Result("comando inesperado: " + " ".join(args), 1)
+
+    def _run(self, rest):
+        name = rest[rest.index("--name") + 1]
+        if name in self.containers:
+            return Result("Conflict. The container name is already in use", 125)
+        if "--pull" not in rest or rest[rest.index("--pull") + 1] != "never":
+            return Result("pull de registry não permitido no teste", 125)
+        if any("<" in str(part) and ">" in str(part) for part in rest):
+            return Result("invalid argument", 125)
+        if "--env-file" in rest and not Path(rest[rest.index("--env-file") + 1]).is_file():
+            return Result("open env file: no such file or directory", 125)
+        image = self._resolve(rest[-1])
+        if image is None:
+            return Result("Error response from daemon: No such image: " + rest[-1], 125)
+        self.containers[name] = {"image": image, "running": True}
+        if name == "odisseu-a6-jvm":
+            self.ran_jvm = True
+            self.writes = 0
+            self.admitted = self.completed = self.failed = self.rejected = 0
+        return Result("container-id\n")
+
+    def _image(self, rest):
+        template = rest[rest.index("--format") + 1]
+        ref = rest[-1]
+        image = self._resolve(ref)
+        if image is None:
+            return Result("Error response from daemon: No such image: " + ref, 1)
+        if "Architecture" in template:
+            return Result(f"{self.architecture}\t{self.revision}\n")
+        if "{{.Id}}" in template:
+            return Result(image + "\n")
+        return Result("", 1)
+
+    def _inspect_cmd(self, rest):
+        if "--format" not in rest:
+            if rest[-2:] == ["odisseu-a6-jvm", "odisseu-a6-node"]:
+                documents = self.documents()
+                if documents is None:
+                    return Result("Error: No such object", 1)
+                return Result(json.dumps(documents))
+            return Result("", 1)
+        template = rest[rest.index("--format") + 1]
+        name = rest[-1]
+        if template == RESUME_PHRASE:
+            self.open = True
+            return Result(RESUME_PHRASE + "\n")
+        container = self.containers.get(name)
+        if container is None:
+            return Result("Error: No such object: " + name, 1)
+        if template == "{{.Image}}":
+            return Result(container["image"] + "\n")
+        if template == "{{.State.Running}}":
+            return Result(("true" if container["running"] else "false") + "\n")
+        if "Health.Status" in template:
+            return Result(self.health + "\n")
+        if "Privileged" in template:
+            return Result("true\n" if self.privileged else "false\n")
+        if "Entrypoint" in template or "Cmd" in template:
+            return Result(self.entrypoint + "\n")
+        return Result("", 1)
+
+    def _exec(self, name, rest):
+        if len(rest) >= 2 and rest[-2] == "-c" and "curl" in str(rest[-1]):
+            return self._http(str(rest[-1]))
+        if rest[-1] == "/proc/self/status":
             cap = self.cap_after_run if self.ran_jvm and self.cap_after_run else self.cap_eff
             return Result(f"CapEff:\t{cap}\n")
-        if args[-1] == "args":
+        if rest[-1] == "args":
             return Result(self.processes)
-        if str(args[-1]).endswith("bridge-maintenance.edn"):
-            return Result("{:phase :%s :active-writes %s}\n" % (self.jvm_phase, self.writes))
-        if str(args[-1]).endswith("a6-maintenance.json"):
-            return Result(json.dumps({
-                "phase": self.node_phase,
-                "activeOps": self.ops,
-                "durable": True,
-            }))
-        if args[-1] == "/data/datomic-local/battle-format.edn":
+        if str(rest[-1]).endswith("bridge-maintenance.edn"):
+            if self.jvm_marker_fault == "garbage":
+                return Result("{:phase")
+            if self.jvm_marker_fault == "nil":
+                return Result("{:phase :%s :active-writes nil}\n" % self.jvm_phase)
+            if self.jvm_phase == "quiescent":
+                return Result("{:phase :quiescent :quiescent-at \"t\" :active-writes %s}\n" % self.writes)
+            return Result("{:phase :%s :updated-at \"t\"}\n" % self.jvm_phase)
+        if str(rest[-1]).endswith("a6-maintenance.json"):
+            return Result(json.dumps({"phase": self.node_phase, "updatedAt": "t"}))
+        if rest[-1] == "/data/datomic-local/battle-format.edn":
             if not self.battle:
                 return Result("", 1)
             return Result(self.battle)
-        if "stop" in args and args[-1] == "odisseu-a6-jvm":
-            self.jvm_running = False
-            return Result("")
-        if "docker" in args and args[args.index("docker") + 1] == "run" and "odisseu-a6-jvm" in args:
-            self.ran_jvm = True
-            self.jvm_running = True
-            return Result("")
-        if args[-1] == CONTRACT_MARKER or (len(args) >= 2 and args[-2] == "-e"):
+        if rest[-1] == CONTRACT_MARKER or (len(rest) >= 2 and rest[-2] == "-e"):
             if self.contract != "up":
                 return Result("", 2)
             return Result("up")
-        if args[-1] == "/app/scripts/healthcheck.js":
+        if rest[-1] == "/app/scripts/healthcheck.js":
             body = json.dumps({"status": "ok", "whatsapp": self.whatsapp, "chromium": self.chromium})
             code = 0 if self.whatsapp == "READY" and self.chromium else 1
             return Result(body + "\n", code)
-        if "docker" in args:
-            verb = args[args.index("docker") + 1]
-            if verb in {"stop", "rename", "update", "start", "run", "exec", "inspect"}:
-                return Result("")
-        return Result("comando inesperado: " + " ".join(args), 1)
+        return Result("")
 
     def _jvm_body(self, quiescent):
         data = {
@@ -205,6 +343,27 @@ class World:
         if quiescent:
             data["quiescent?"] = True
         return data
+
+    def _fault(self, service, body):
+        """Falha só depois do status que o próprio enter lê."""
+        fault = self.status_fault
+        if not fault or fault[0] != service:
+            return body
+        self.status_calls[service] += 1
+        if self.status_calls[service] <= fault[2]:
+            return body
+        kind = fault[1]
+        data = body if service == "node" else body["data"]
+        key = "activeOperations" if service == "node" else "active-writes"
+        if kind == "missing":
+            data.pop(key, None)
+        elif kind == "null":
+            data[key] = None
+        elif kind == "garbage":
+            return None
+        elif kind == "admitted":
+            data.pop("admitted-writes", None)
+        return body
 
     def _http(self, script):
         if self.unauthorized and "/ops/maintenance/" in script:
@@ -236,7 +395,9 @@ class World:
             self.node_phase = "open"
             return Result(json.dumps({"phase": "open", "activeOperations": 0, "durable": True}) + "\n200")
         if node:
-            body = {"phase": self.node_phase, "activeOperations": self.ops, "durable": True}
+            body = self._fault("node", {"phase": self.node_phase, "activeOperations": self.ops, "durable": True})
+            if body is None:
+                return Result("<html>erro\n200")
             return Result(json.dumps(body) + "\n200")
         if post and "/enter" in script:
             if self.jvm_open_zero:
@@ -258,7 +419,29 @@ class World:
                 return Result(json.dumps({"ok": False, "error": {"code": "maintenance_resume_blocked"}}) + "\n409")
             self.jvm_phase = "open"
             return Result(json.dumps({"ok": True, "data": {"phase": "open", "resumed-at": "t"}}) + "\n200")
-        return Result(json.dumps({"ok": True, "data": self._jvm_body(False)}) + "\n200")
+        body = self._fault("jvm", {"ok": True, "data": self._jvm_body(False)})
+        if body is None:
+            return Result("<html>erro\n200")
+        return Result(json.dumps(body) + "\n200")
+
+
+def materialize(argv, service):
+    """Resolvedor de teste: arquivos temporários no lugar dos placeholders."""
+    root = Path(tempfile.mkdtemp(prefix="a6sup-env-"))
+    env_file = root / "env"
+    env_file.write_text("PUBLICO=1\n", encoding="utf-8")
+    os.chmod(env_file, 0o600)
+    seccomp = root / "seccomp.json"
+    seccomp.write_text("{}\n", encoding="utf-8")
+    resolved = []
+    for part in argv:
+        if part == "<inspect-ao-vivo-sem-log>":
+            resolved.append(str(env_file))
+        elif part == "<seccomp-copiado-do-inspect-sem-log>":
+            resolved.append("seccomp=" + str(seccomp))
+        else:
+            resolved.append(part)
+    return resolved, lambda: shutil.rmtree(root, ignore_errors=True)
 
 
 CONTRACT_MARKER = "pokemon-jvm-client.cjs"
@@ -278,6 +461,7 @@ def run_case(world, root, env=None, isolated=None):
         dict(ENV if env is None else env),
         root / "backup",
         isolated_root,
+        materialize=materialize,
     )
 
 
@@ -400,6 +584,7 @@ class SupervisedWindowTests(unittest.TestCase):
                 dict(ENV),
                 root / "missing-backup",
                 root / "does-not-exist",
+                materialize=materialize,
             )
             self.assertEqual(missing["next"], "backup")
             self.assertFalse(missing["datomicRestored"])
@@ -477,6 +662,101 @@ class SupervisedWindowTests(unittest.TestCase):
                 ))
                 self.assertEqual((root / reason / "export" / "save.edn").read_text(encoding="utf-8"), SAVE)
 
+    def test_quiescence_without_counters_never_stops_the_jvm(self):
+        cases = []
+        for service in ("node", "jvm"):
+            for kind in ("missing", "null", "garbage"):
+                world = World()
+                world.status_fault = (service, kind, 1)
+                cases.append((world, f"{service}-{kind}"))
+        admitted = World()
+        admitted.status_fault = ("jvm", "admitted", 1)
+        cases.append((admitted, "jvm-admitted"))
+        garbage_marker = World()
+        garbage_marker.jvm_marker_fault = "garbage"
+        cases.append((garbage_marker, "marker-garbage"))
+        nil_marker = World()
+        nil_marker.jvm_marker_fault = "nil"
+        cases.append((nil_marker, "marker-nil"))
+        writer = World()
+        writer.extra_holders = ["odisseu-datomic-console\trunning"]
+        cases.append((writer, "second-holder"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for world, label in cases:
+                report = run_case(world, root / label)
+                self.assertFalse(report["deployComplete"], label)
+                self.assertIn(report["next"], ("quiescence", "jvm_drain"), (label, report["blocked"]))
+                self.assertTrue(report["blocked"], label)
+                self.assertFalse(any(
+                    "stop" in command and command[-1] == "odisseu-a6-jvm" for command in report["commands"]
+                ), label)
+                self.assertTrue(world.containers["odisseu-a6-jvm"]["running"], label)
+                self.assertNotIn("quiescence", report["steps"], label)
+        drained = {"node": {"phase": "quiescent"}, "jvm": {"phase": "quiescent"}}
+        live = {
+            "node": {"phase": "quiescent", "activeOperations": 0, "durable": True},
+            "jvm": {"phase": "quiescent", "activeWrites": 0, "admittedWrites": 3, "completedWrites": 3, "failedWrites": 0},
+        }
+        self.assertEqual(_apply_confirmed(drained, QUIESCENT, live)["admittedWrites"], 3)
+        for broken in (None, {}, {"node": live["node"]}):
+            with self.assertRaises(DeployError) as missing:
+                _apply_confirmed(drained, QUIESCENT, broken)
+            self.assertEqual(str(missing.exception), "quiescence_counters_missing")
+        for key, value in (("activeWrites", None), ("activeWrites", "0"), ("activeWrites", True), ("completedWrites", None)):
+            changed = json.loads(json.dumps(live))
+            changed["jvm"][key] = value
+            with self.assertRaises(DeployError) as bad:
+                _apply_confirmed(drained, QUIESCENT, changed)
+            self.assertEqual(str(bad.exception), "quiescence_counters_missing")
+        changed = json.loads(json.dumps(live))
+        changed["node"].pop("activeOperations")
+        with self.assertRaises(DeployError):
+            _apply_confirmed(drained, QUIESCENT, changed)
+        marked = {"node": {"phase": "quiescent", "activeOpsMarked": True, "activeOps": None}, "jvm": {"phase": "quiescent"}}
+        with self.assertRaises(DeployError) as unreadable:
+            _apply_confirmed(marked, QUIESCENT, live)
+        self.assertEqual(str(unreadable.exception), "quiescence_counters_unreadable")
+
+    def test_run_reference_is_pinned_and_local(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = run_case(World(), root / "ok")
+            self.assertTrue(report["deployComplete"], report["blocked"])
+            runs = [command for command in report["commands"] if "docker" in command and command[command.index("docker") + 1] == "run"]
+            self.assertEqual(len(runs), 2)
+            for command in runs:
+                self.assertEqual(command[command.index("--pull") + 1], "never")
+                self.assertIn("@sha256:", command[-1])
+                self.assertNotIn("<", " ".join(command))
+            self.assertTrue(any(command[-3:-1] == ["--format", "{{.Image}}"] for command in report["commands"]))
+            unresolved = run_supervised(
+                World().runner, SHA, JVM_DIGEST, NODE_DIGEST, dict(ENV), root / "raw" / "backup", root / "export",
+            )
+            self.assertIn("run_argv_unresolved", unresolved["blocked"])
+            self.assertEqual(unresolved["next"], "images")
+            self.assertFalse(any("/ops/maintenance/enter" in " ".join(command) for command in unresolved["commands"]))
+            moved = World()
+
+            def swapping(args):
+                if "docker" in args and args[args.index("docker") + 1] == "run" and "odisseu-a6-jvm" in args:
+                    moved.jvm_id = "sha256:" + ("ef" * 32)
+                return moved.runner(args)
+
+            export = root / "moved-export"
+            export.mkdir()
+            (export / "save.edn").write_text(SAVE, encoding="utf-8")
+            swapped = run_supervised(
+                swapping, SHA, JVM_DIGEST, NODE_DIGEST, dict(ENV), root / "moved" / "backup", export,
+                materialize=materialize,
+            )
+            self.assertFalse(swapped["deployComplete"])
+            self.assertIn("docker_failed", swapped["blocked"])
+            self.assertEqual(moved.containers["odisseu-a6-jvm"]["image"], CURRENT["jvm"]["imageId"])
+            self.assertTrue(moved.containers["odisseu-a6-jvm"]["running"])
+            self.assertNotIn("odisseu-a6-jvm-previous", moved.containers)
+            self.assertEqual((export / "save.edn").read_text(encoding="utf-8"), SAVE)
+
     def test_second_window_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -484,7 +764,15 @@ class SupervisedWindowTests(unittest.TestCase):
             first = run_case(world, root / "first")
             second = run_case(world, root / "second")
             self.assertTrue(first["deployComplete"], first["blocked"])
-            self.assertTrue(second["deployComplete"], second["blocked"])
+            self.assertFalse(second["deployComplete"])
+            self.assertIn("previous_container_exists", second["blocked"])
+            self.assertEqual(second["next"], "preflight")
+            self.assertFalse(any(
+                command[command.index("docker") + 1] in {"stop", "rename", "run", "start"}
+                for command in second["commands"] if "docker" in command
+            ))
+            self.assertTrue(world.containers["odisseu-a6-jvm"]["running"])
+            self.assertEqual(world.containers["odisseu-a6-jvm"]["image"], JVM_DIGEST)
             self.assertEqual((root / "first" / "export" / "save.edn").read_text(encoding="utf-8"), SAVE)
             self.assertEqual((root / "second" / "export" / "save.edn").read_text(encoding="utf-8"), SAVE)
 
@@ -518,6 +806,7 @@ class SupervisedWindowTests(unittest.TestCase):
                 world.health = "unhealthy"
                 unhealthy = run_supervised(
                     world.runner, SHA, JVM_DIGEST, NODE_DIGEST, dict(ENV), root / "bad", export,
+                    materialize=materialize,
                 )
                 healthy = run_case(World(), root / "good", isolated=export)
                 self.assertFalse(unhealthy["datomicRestored"])

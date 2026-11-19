@@ -105,7 +105,8 @@ jobs:
           bash -n scripts/deploy-vm.sh scripts/load-image-vm.sh scripts/install-deploy.sh \
             scripts/ci-ssh-deploy.sh scripts/resolve-gce-instance.sh scripts/a6-delivery.sh \
             scripts/ci-a6-deliver.sh scripts/a6-container-update.sh scripts/a6-storage-namespace-prove.sh \
-            scripts/a6-exclusive-maintenance.sh scripts/a6-production-deploy.sh scripts/a6-supervised-deploy.sh docker/jvm-storage-entrypoint.sh
+            scripts/a6-exclusive-maintenance.sh scripts/a6-production-deploy.sh scripts/a6-supervised-deploy.sh scripts/a6-operational-window.sh \
+            scripts/a6-hold-recovery.sh docker/jvm-storage-entrypoint.sh
           python3 scripts/test-ci-changes.py
           python3 scripts/test-ci-ssh.py
           python3 scripts/test-production-deploy-hold.py
@@ -115,6 +116,9 @@ jobs:
           python3 scripts/test-a6-production-deploy.py
           python3 scripts/test-a6-supervised-deploy.py
           python3 scripts/test-a6-maintenance-ops.py
+          python3 scripts/test-a6-operational-window.py
+          python3 scripts/test-a6-window-interruptions.py
+          python3 scripts/test-a6-image-reference.py
           python3 scripts/test-resolve-gce-instance.py
           python3 scripts/test-deploy.py
           python3 scripts/test-deploy-recovery.py

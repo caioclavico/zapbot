@@ -3,20 +3,29 @@
 Cada passo só começa depois do anterior. A evidência vem do runner.
 Um mapa montado à mão não entra. O backup restaurado fica num diretório
 novo: o volume de origem não é recolocado no lugar.
+
+Toda mudança na VM grava a intenção antes e a conclusão depois de
+observar o resultado. Na retomada, intenção aberta é resolvida olhando a
+VM; o que não dá para provar bloqueia em vez de repetir.
 """
 
 from __future__ import annotations
 
 import contextvars
+import copy
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 from a6_maintenance_ops import (
     enter_jvm,
     enter_node,
     jvm_health,
+    jvm_status,
+    node_marker_phase,
+    node_status,
     resume_jvm,
     resume_node,
 )
@@ -32,14 +41,19 @@ from a6_production_deploy import (
     FORBIDDEN,
     DeployError,
     apply_commands,
+    image_ref,
     image_tag,
     observe_image,
     observe_vm,
     plan,
     preflight,
     recover_after,
+    recreate_argv,
     _prefix,
+    _publish,
+    _service,
 )
+from a6_window_journal import NullJournal, atomic_write_json
 from a6_writer_policy import INVENTORY
 
 
@@ -71,9 +85,17 @@ CONTRACT = (
     ".health().then(function(data){if(!data||data.status!=='up')process.exit(2);process.stdout.write('up')})"
     ".catch(function(){process.exit(2)})"
 )
+QUIESCENT = {"node_phase": "quiescent", "jvm_phase": "quiescent"}
+OPEN = {"node_phase": "open", "jvm_phase": "open"}
+REPEATABLE = {"hold_release", "hold_restore", "node_maintenance", "jvm_drain", "resume_jvm", "resume_node"}
+JOURNAL_ERRORS = {"checkpoint_write_failed", "checkpoint_pending_unresolved", "checkpoint_sequence_mismatch"}
+STOPPED_STATES = {"exited", "created", "dead"}
+PLACEHOLDER = re.compile(r"<[^<>]+>")
 
 _RUNS = set()
 _DEST = contextvars.ContextVar("a6_window_destination", default=None)
+_META = contextvars.ContextVar("a6_window_meta", default=None)
+_JOURNAL = contextvars.ContextVar("a6_window_journal", default=None)
 
 
 def evaluate_supervised(checkpoints):
@@ -117,6 +139,16 @@ def _next(names):
     return SUPERVISED_STEPS[index] if index < len(SUPERVISED_STEPS) else None
 
 
+def _j():
+    return _JOURNAL.get() or NullJournal()
+
+
+def _mark(checkpoints, item):
+    """O passo só conta depois de gravado no diário."""
+    _j().step(item)
+    checkpoints.append(item)
+
+
 def _finish(checkpoints, nxt, blocked, commands, **extra):
     _RUNS.add(id(checkpoints))
     verdict = evaluate_supervised(checkpoints)
@@ -137,12 +169,26 @@ def _finish(checkpoints, nxt, blocked, commands, **extra):
     report.update(extra)
     if "TOKEN=" in str(report.get("commands")):
         raise DeployError("secret_in_output")
-    _record(report)
+    try:
+        _record(report)
+    except DeployError as exc:
+        report["deployComplete"] = False
+        report["blocked"] = sorted(set(report["blocked"]) | {str(exc)})
+        report["next"] = report["next"] or "validate_game"
     return report
 
 
 def _record(report):
-    """Guarda o último passo fora do volume. Não grava token nem marcador."""
+    """Guarda o último passo fora do volume. Gravação recusada vira bloqueio."""
+    journal = _JOURNAL.get()
+    if journal is not None:
+        journal.update(
+            lastCompleted=report.get("lastCompleted"),
+            next=report.get("next"),
+            blocked=report.get("blocked"),
+            deployComplete=report.get("deployComplete") is True,
+        )
+        return
     destination = _DEST.get()
     if not destination or _live_marker(str(destination)):
         return
@@ -156,11 +202,15 @@ def _record(report):
         "blocked": report.get("blocked"),
         "datomicRestored": False,
         "deployComplete": report.get("deployComplete") is True,
+        "steps": report.get("steps") or [],
     }
-    try:
-        target.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
-    except OSError:
-        return
+    meta = _META.get() or {}
+    if meta.get("windowId"):
+        payload["windowId"] = meta["windowId"]
+    if meta.get("vmHostname"):
+        payload["vmHostname"] = meta["vmHostname"]
+    payload["holdRestored"] = meta.get("holdRestored") is True
+    atomic_write_json(target, payload)
 
 
 def _live_marker(path):
@@ -186,6 +236,10 @@ def _ok(completed):
 
 def _out(completed):
     return getattr(completed, "stdout", "") or ""
+
+
+def _count(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _jvm_running(observation):
@@ -224,17 +278,95 @@ def _ready(completed):
     return '"whatsapp":"READY"' in text.replace(" ", "") and '"chromium":true' in text.replace(" ", "")
 
 
-def _collection(observation):
+def _live_counters(wrapped, prefix):
+    """Contadores da API autenticada. O marcador durável não carrega todos."""
+    return {"node": node_status(wrapped, prefix), "jvm": jvm_status(wrapped, prefix)}
+
+
+def _apply_confirmed(observation, confirmed, live=None):
+    """Fase do marcador, fase da API e contadores. Ausente nunca vira zero."""
+    node = observation.get("node") or {}
+    jvm = observation.get("jvm") or {}
+    if node.get("phase") != confirmed["node_phase"] or jvm.get("phase") != confirmed["jvm_phase"]:
+        raise DeployError("maintenance_marker_mismatch")
+    if node.get("activeOpsMarked") and not _count(node.get("activeOps")):
+        raise DeployError("quiescence_counters_unreadable")
+    if jvm.get("activeWritesMarked") and not _count(jvm.get("activeWrites")):
+        raise DeployError("quiescence_counters_unreadable")
+    if _count(node.get("activeOps")) and node["activeOps"] != 0:
+        raise DeployError("writes_in_flight")
+    if _count(jvm.get("activeWrites")) and jvm["activeWrites"] != 0:
+        raise DeployError("writes_in_flight")
+    if not isinstance(live, dict) or not isinstance(live.get("node"), dict) or not isinstance(live.get("jvm"), dict):
+        raise DeployError("quiescence_counters_missing")
+    node_live = live["node"]
+    jvm_live = live["jvm"]
+    if node_live.get("phase") != confirmed["node_phase"] or jvm_live.get("phase") != confirmed["jvm_phase"]:
+        raise DeployError("maintenance_phase_mismatch")
+    if node_live.get("durable") is not True:
+        raise DeployError("maintenance_marker_unreadable")
+    counters = (
+        node_live.get("activeOperations"),
+        jvm_live.get("activeWrites"),
+        jvm_live.get("admittedWrites"),
+        jvm_live.get("completedWrites"),
+        jvm_live.get("failedWrites"),
+    )
+    if not all(_count(value) for value in counters):
+        raise DeployError("quiescence_counters_missing")
+    ops, writes, admitted, completed, failed = counters
+    if ops != 0 or writes != 0:
+        raise DeployError("writes_in_flight")
+    if failed != 0:
+        raise DeployError("jvm_writes_failed")
+    if admitted != completed + failed:
+        raise DeployError("jvm_writes_incomplete")
+    return {
+        "activeOperations": ops,
+        "activeWrites": writes,
+        "admittedWrites": admitted,
+        "completedWrites": completed,
+        "failedWrites": failed,
+    }
+
+
+def _volume_holders(wrapped, prefix):
+    """Todo container que monta o Datomic, rodando ou não."""
+    completed = wrapped(prefix + ["ps", "-a", "--filter", "volume=" + LIVE_VOLUME, "--format", "{{.Names}}\t{{.State}}"])
+    if not _ok(completed):
+        raise DeployError("holders_unreadable")
+    holders = []
+    for line in _out(completed).splitlines():
+        if not line.strip():
+            continue
+        parts = line.strip().split("\t")
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            raise DeployError("holders_unreadable")
+        holders.append((parts[0].lstrip("/"), parts[1].strip()))
+    return holders
+
+
+def _single_writer(holders, expected):
+    """expected é o único que pode estar ativo. Os outros ficam parados."""
+    active = sorted(name for name, state in holders if state not in STOPPED_STATES)
+    if active != sorted(expected):
+        raise DeployError("datomic_writable" if not expected else "writable_mount_not_exclusive")
+    return active
+
+
+def _collection(observation, live):
     documents = []
     for item in observation["documents"]:
         copied = dict(item)
         if str(copied.get("Name") or "").lstrip("/") == "odisseu-a6-jvm":
             copied["CapEff"] = observation["jvm"].get("capEff")
         documents.append(copied)
-    writes = observation["jvm"].get("activeWrites")
-    ops = observation["node"].get("activeOps")
-    if not isinstance(writes, int) or not isinstance(ops, int):
-        raise DeployError("observation_incomplete")
+    if not isinstance(live, dict):
+        raise DeployError("quiescence_counters_missing")
+    writes = (live.get("jvm") or {}).get("activeWrites")
+    ops = (live.get("node") or {}).get("activeOperations")
+    if not _count(writes) or not _count(ops):
+        raise DeployError("quiescence_counters_missing")
     return Collection(
         source="docker-inspect-subprocess",
         documents=tuple(documents),
@@ -248,6 +380,50 @@ def _collection(observation):
     )
 
 
+def _observe_stopped(wrapped, prefix, drained):
+    """JVM parada não aceita exec. Inspect e o marcador do Node bastam."""
+    raw = wrapped(prefix + ["inspect", "odisseu-a6-jvm", "odisseu-a6-node"])
+    if not _ok(raw):
+        raise DeployError("observation_incomplete")
+    try:
+        documents = json.loads(_out(raw))
+    except ValueError as exc:
+        raise DeployError("observation_incomplete") from exc
+    if not isinstance(documents, list) or len(documents) != 2:
+        raise DeployError("observation_incomplete")
+    by_name = {str(item.get("Name") or "").lstrip("/"): item for item in documents}
+    if "odisseu-a6-jvm" not in by_name or "odisseu-a6-node" not in by_name:
+        raise DeployError("container_mismatch")
+    marker = wrapped(prefix + ["exec", "odisseu-a6-node", "cat", "/app/data/a6-maintenance.json"])
+    if not _ok(marker):
+        raise DeployError("maintenance_marker_unreadable")
+    jvm = _service(by_name["odisseu-a6-jvm"], _publish(by_name["odisseu-a6-jvm"].get("HostConfig", {}).get("PortBindings"), "18090/tcp"))
+    node = _service(by_name["odisseu-a6-node"], _publish(by_name["odisseu-a6-node"].get("HostConfig", {}).get("PortBindings"), "3001/tcp"))
+    jvm["capEff"] = drained["jvm"].get("capEff")
+    jvm["phase"] = drained["jvm"].get("phase")
+    jvm["phaseObservedBeforeStop"] = True
+    jvm["activeWrites"] = None
+    node["phase"] = node_marker_phase(_out(marker))
+    node["activeOps"] = None
+    redacted = []
+    for item in documents:
+        copied = dict(item)
+        config = dict(item.get("Config") or {})
+        config.pop("Env", None)
+        copied["Config"] = config
+        redacted.append(copied)
+    return {
+        "_observed": True,
+        "source": "docker-inspect-subprocess",
+        "dockerDirect": drained.get("dockerDirect"),
+        "vm": drained["vm"],
+        "jvm": jvm,
+        "node": node,
+        "processes": drained.get("processes") or "",
+        "documents": redacted,
+    }
+
+
 def _separate(source, destination):
     source = Path(source).resolve()
     destination = Path(destination).resolve()
@@ -257,18 +433,30 @@ def _separate(source, destination):
         raise DeployError("live_path_refused")
 
 
-def _restart_old_jvm(wrapped, direct):
-    recovery = recover_after("jvm", ["stop"], False, direct)
+def _recover(wrapped, op, recovery):
+    """Recuperação também registra intenção. Diário quebrado: não mexe mais na VM."""
+    journal = _j()
+    if journal.broken:
+        recovery["skipped"] = "checkpoint_write_failed"
+        return recovery
+    journal.intent(op, mode=recovery["mode"])
+    results = []
     for command in recovery["commands"]:
-        wrapped(command)
+        completed = wrapped(command)
+        results.append(_ok(completed))
+        if not _ok(completed):
+            break
+    journal.done(op, ok=all(results), commands=len(results))
     return recovery
+
+
+def _restart_old_jvm(wrapped, direct):
+    return _recover(wrapped, "restart_old_jvm", recover_after("jvm", ["stop"], False, direct))
 
 
 def _rollback(wrapped, service, battle, direct):
     recovery = recover_after(service, ["stop", "rename", "update", "run"], battle, direct)
-    for command in recovery["commands"]:
-        wrapped(command)
-    return recovery
+    return _recover(wrapped, "rollback_" + service, recovery)
 
 
 def _battle(wrapped, prefix):
@@ -276,38 +464,85 @@ def _battle(wrapped, prefix):
     return _ok(completed) and ":volatil" in _out(completed)
 
 
+def _digest_hex(value):
+    text = str(value or "").strip()
+    return text[7:] if text.startswith("sha256:") else text
+
+
 def _images(wrapped, sha, jvm_digest, node_digest, direct):
+    """Tag, Image ID e a referência exata que o docker run vai usar."""
     images = {}
     for service, digest in (("jvm", jvm_digest), ("node", node_digest)):
         ref = image_tag(service, sha)
         image = observe_image(wrapped, ref, direct)
         if not str(image.get("revision") or "").startswith(sha):
             raise DeployError("image_revision_mismatch")
-        raw = wrapped(_prefix(direct) + ["image", "inspect", "--format", "{{.Id}}", ref])
-        if not _ok(raw):
-            raise DeployError("image_not_observed")
-        seen = str(_out(raw)).strip()
-        if seen.startswith("sha256:"):
-            seen = seen[7:]
         expected = str(digest).split(":", 1)[-1]
-        if seen != expected:
-            raise DeployError("image_digest_mismatch")
+        for probe in (ref, image_ref(service, sha, digest)):
+            raw = wrapped(_prefix(direct) + ["image", "inspect", "--format", "{{.Id}}", probe])
+            if not _ok(raw):
+                raise DeployError("image_not_observed")
+            if _digest_hex(_out(raw)) != expected:
+                raise DeployError("image_digest_mismatch")
+        image["runRef"] = image_ref(service, sha, digest)
         images[service] = image
     return images
 
 
-def run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isolated_root=None, event=None):
+def _unresolved(observation, sha, jvm_digest, node_digest, materialize):
+    """O argv do run não pode levar placeholder. Sem resolvedor, para antes do hold."""
+    direct = bool(observation.get("dockerDirect"))
+    for service, digest in (("jvm", jvm_digest), ("node", node_digest)):
+        argv = recreate_argv(service, image_ref(service, sha, digest), observation[service], direct)
+        if PLACEHOLDER.search(" ".join(argv)) and materialize is None:
+            return "run_argv_unresolved"
+    return None
+
+
+def run_supervised(
+    runner, sha, jvm_digest, node_digest, env, destination, isolated_root=None, event=None,
+    hold_gate=None, prior=None, window_id=None, journal=None, materialize=None,
+):
     """Executa a janela. O relatório final não autoriza uma segunda execução."""
     token = _DEST.set(destination)
+    meta = {"windowId": window_id, "vmHostname": None, "holdRestored": False}
+    meta_token = _META.set(meta)
+    journal_token = _JOURNAL.set(journal)
+    checkpoints = []
+    seen = []
     try:
-        return _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isolated_root, event)
+        return _run_supervised(
+            runner, sha, jvm_digest, node_digest, env, destination, isolated_root, event, hold_gate, prior, meta,
+            materialize, checkpoints, seen,
+        )
+    except DeployError as exc:
+        if str(exc) not in JOURNAL_ERRORS:
+            raise
+        return _finish(checkpoints, _next([item.get("step") for item in checkpoints]), [str(exc)], seen,
+                       admitted=True, maintenance=True)
     finally:
+        _JOURNAL.reset(journal_token)
+        _META.reset(meta_token)
         _DEST.reset(token)
 
 
-def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isolated_root=None, event=None):
-    checkpoints = []
-    seen = []
+def _op(op, call, **detail):
+    """Intenção, chamada e conclusão. Erro observado fecha a intenção como falha."""
+    journal = _j()
+    journal.intent(op, **detail)
+    try:
+        result = call()
+    except DeployError as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
+        journal.done(op, ok=False, reason=str(exc))
+        raise
+    journal.done(op, ok=True)
+    return result
+
+
+def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isolated_root, event, hold_gate, prior, meta,
+                    materialize, checkpoints, seen):
     if event == "push" or os.environ.get("GITHUB_EVENT_NAME") == "push":
         raise DeployError("push_not_authorized")
     if not callable(runner):
@@ -326,7 +561,10 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         return _finish(checkpoints, "authorization", [reason], seen)
     if isolated_root is None and env.get("A6_LIVE_BACKUP") != BACKUP_AUTHORIZATION:
         return _finish(checkpoints, "authorization", ["backup_not_authorized"], seen)
-    checkpoints.append({"step": "authorization", "hold": "released", "window": True})
+    if isinstance(prior, dict) and prior.get("deployComplete") is True:
+        return _finish(checkpoints, "authorization", ["window_already_complete"], seen)
+    prior = copy.deepcopy(prior) if isinstance(prior, dict) else None
+    _mark(checkpoints, {"step": "authorization", "window": True})
     if _live_marker(destination) or (isolated_root is not None and _live_marker(isolated_root)):
         return _finish(checkpoints, "backup", ["live_path_refused"], seen)
 
@@ -338,42 +576,97 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         seen.append(list(args))
         return runner(args)
 
+    pending = (prior or {}).get("pending") if isinstance((prior or {}).get("pending"), dict) else None
     try:
         observation = observe_vm(wrapped)
     except DeployError as exc:
+        if pending or (_prior_has(prior, "stop_jvm") and not _prior_has(prior, "validate_jvm")):
+            return _finish(checkpoints, "preflight", ["checkpoint_indeterminate"], seen,
+                           pendingOp=(pending or {}).get("op"), observed=str(exc))
         return _finish(checkpoints, "preflight", [str(exc)], seen)
     direct = bool(observation.get("dockerDirect"))
+    prefix = _prefix(direct)
+    meta["vmHostname"] = (observation.get("vm") or {}).get("hostname")
+    if isinstance(prior, dict) and prior.get("vmHostname") and prior.get("vmHostname") != meta["vmHostname"]:
+        return _finish(checkpoints, "preflight", ["checkpoint_incompatible"], seen)
+    if pending:
+        try:
+            prior, resolution = _reconcile(wrapped, prefix, prior, pending, observation, jvm_digest, node_digest)
+        except DeployError as exc:
+            if str(exc) in JOURNAL_ERRORS:
+                raise
+            return _finish(checkpoints, "preflight", [str(exc)], seen, pendingOp=pending.get("op"))
+        _j().resolve(resolution)
+    if _prior_has(prior, "update_jvm") and not _image_matches(observation, "jvm", jvm_digest):
+        return _finish(checkpoints, "images", ["checkpoint_indeterminate"], seen)
+    if _prior_has(prior, "update_node") and not _image_matches(observation, "node", node_digest):
+        return _finish(checkpoints, "images", ["checkpoint_indeterminate"], seen)
+    if Path(destination).exists() and not _prior_has(prior, "manifest"):
+        return _finish(checkpoints, "backup", ["checkpoint_indeterminate"], seen)
     blocked = preflight(observation)
+    if not blocked:
+        try:
+            blocked = _leftovers(wrapped, prefix, prior)
+        except DeployError as exc:
+            blocked = [str(exc)]
     if blocked:
         return _finish(checkpoints, "preflight", blocked, seen)
-    checkpoints.append({"step": "preflight"})
+    _mark(checkpoints, {"step": "preflight", "vmHostname": meta.get("vmHostname")})
 
     try:
         images = _images(wrapped, sha, jvm_digest, node_digest, direct)
+        unresolved = _unresolved(observation, sha, jvm_digest, node_digest, materialize)
     except DeployError as exc:
         return _finish(checkpoints, "images", [str(exc)], seen)
-    checkpoints.append({
+    if unresolved:
+        return _finish(checkpoints, "images", [unresolved], seen)
+    _mark(checkpoints, {
         "step": "images",
         "jvmArchitecture": images["jvm"].get("architecture"),
         "nodeArchitecture": images["node"].get("architecture"),
+        "jvmRunRef": images["jvm"]["runRef"],
+        "nodeRunRef": images["node"]["runRef"],
     })
 
-    prefix = _prefix(direct)
+    if _resumed(prior) and _prior_has(prior, "update_jvm") and _prior_has(prior, "update_node"):
+        forward = _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest, hold_gate, meta, checkpoints, seen)
+        if forward is not None:
+            return forward
+
+    if hold_gate is not None:
+        try:
+            if hold_gate.read() != "true":
+                return _finish(checkpoints, "node_maintenance", ["hold_not_protected"], seen)
+            _j().intent("hold_release")
+            hold_gate.release()
+            observed_hold = hold_gate.read()
+            if observed_hold != "false":
+                return _finish(checkpoints, "node_maintenance", ["hold_release_unconfirmed"], seen)
+            _j().done("hold_release", hold=observed_hold)
+        except DeployError as exc:
+            if str(exc) in JOURNAL_ERRORS:
+                raise
+            return _finish(checkpoints, "node_maintenance", [str(exc)], seen)
+
     try:
-        node_state = enter_node(wrapped, prefix)
+        node_state = _op("node_maintenance", lambda: enter_node(wrapped, prefix))
     except DeployError as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
         return _finish(checkpoints, "node_maintenance", [str(exc)], seen, admitted=True, maintenance=True)
-    checkpoints.append({
+    _mark(checkpoints, {
         "step": "node_maintenance",
         "phase": node_state["phase"],
         "activeOperations": node_state["activeOperations"],
         "durable": True,
     })
     try:
-        jvm_state = enter_jvm(wrapped, prefix)
+        jvm_state = _op("jvm_drain", lambda: enter_jvm(wrapped, prefix))
     except DeployError as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
         return _finish(checkpoints, "jvm_drain", [str(exc)], seen, admitted=True, maintenance=True)
-    checkpoints.append({
+    _mark(checkpoints, {
         "step": "jvm_drain",
         "phase": jvm_state["phase"],
         "activeWrites": jvm_state["activeWrites"],
@@ -382,134 +675,92 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         "failedWrites": jvm_state["failedWrites"],
         "rejectedWrites": jvm_state["rejectedWrites"],
     })
-    confirmed = {
-        "node_phase": "quiescent",
-        "jvm_phase": "quiescent",
-        "node_ops": 0,
-        "jvm_writes": 0,
-    }
     try:
         drained = observe_vm(wrapped)
-        _apply_confirmed(drained, confirmed)
+        quiesced = _live_counters(wrapped, prefix)
+        counters = _apply_confirmed(drained, QUIESCENT, quiesced)
+        if not str(drained.get("processes") or "").strip():
+            raise DeployError("processes_unreadable")
+        holders = _single_writer(_volume_holders(wrapped, prefix), ["odisseu-a6-jvm"])
+        exclusive = assess_observed(_collection(drained, quiesced).documents, LIVE_VOLUME, "odisseu-a6-jvm")
+        if not exclusive["exclusive"]:
+            raise DeployError(exclusive.get("reason") or "writable_mount_not_exclusive")
     except DeployError as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
         return _finish(checkpoints, "quiescence", [str(exc)], seen, admitted=True, maintenance=True)
     if _external(drained.get("processes")):
         return _finish(checkpoints, "quiescence", ["external_datomic_client"], seen, admitted=True, maintenance=True)
-    checkpoints.append({
+    _mark(checkpoints, {
         "step": "quiescence",
         "jvmPhase": "quiescent",
         "nodePhase": "quiescent",
-        "activeWrites": 0,
-        "activeOperations": 0,
+        "markerPhases": True,
+        "holders": holders,
+        **counters,
     })
 
-    stopped_cmd = wrapped(prefix + ["stop", "--time", "30", "odisseu-a6-jvm"])
-    if not _ok(stopped_cmd):
-        return _finish(checkpoints, "stop_jvm", ["docker_failed"], seen, admitted=True, maintenance=True)
-    try:
-        stopped = observe_vm(wrapped)
-    except DeployError as exc:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "stop_jvm", [str(exc)], seen, admitted=True, maintenance=True)
-    if _jvm_running(stopped) is not False:
-        return _finish(checkpoints, "stop_jvm", ["writers_still_running"], seen, admitted=True, maintenance=True)
-    try:
-        _apply_confirmed(stopped, confirmed)
-    except DeployError as exc:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "stop_jvm", [str(exc)], seen, admitted=True, maintenance=True)
-    checkpoints.append({"step": "stop_jvm"})
-    try:
-        exclusive_collection = _collection(stopped)
-    except DeployError as exc:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "exclusive", [str(exc)], seen, admitted=True, maintenance=True)
-    exclusive = assess_observed(exclusive_collection.documents, LIVE_VOLUME, "odisseu-a6-jvm")
-    if not exclusive["exclusive"]:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(
-            checkpoints,
-            "exclusive",
-            [exclusive.get("reason") or "writable_mount_not_exclusive"],
-            seen,
-            admitted=True,
-            maintenance=True,
+    jvm_kept = _prior_has(prior, "update_jvm") and _image_matches(drained, "jvm", jvm_digest)
+    if jvm_kept:
+        kept = _accept_replaced_jvm(wrapped, prefix, checkpoints, destination, drained, quiesced)
+        if kept is not None:
+            return _finish(checkpoints, "backup", [kept], seen, admitted=True, maintenance=True)
+        stopped = drained
+        backup = {
+            "manifestVerified": True,
+            "sourcePreserved": True,
+            "restoreIsolated": True,
+            "jvmStopped": True,
+        }
+        validated = _validate_jvm(wrapped, prefix, direct, checkpoints, seen)
+        if validated is not None:
+            return validated
+    else:
+        replaced = _stop_and_backup(
+            wrapped, prefix, drained, quiesced, destination, isolated_root, direct, seen, checkpoints,
         )
-    checkpoints.append({"step": "exclusive", "holders": exclusive.get("holders") or []})
-
-    parent = str(Path(destination).resolve().parent)
-    space = wrapped(["df", "-B1", "--output=avail", parent])
-    free_bytes = _avail(_out(space) if _ok(space) else "")
-    if free_bytes is None:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "backup", ["insufficient_space"], seen, admitted=True, maintenance=True)
-    try:
-        source = isolated_root if isolated_root is not None else "/var/lib/docker/volumes/odisseu-a6-cutover-datomic/_data"
-        _separate(source, destination)
-        measured = _bytes(source) if isolated_root is not None else measured_live(wrapped, source)
-        copied = execute_copy(
-            _collection(stopped),
-            drained["vm"],
-            destination,
-            "false",
-            True,
-            BACKUP_AUTHORIZATION,
-            free_bytes,
-            measured,
-            isolated_root=isolated_root,
+        if replaced[0] is not None:
+            return replaced[0]
+        stopped, backup = replaced[1], replaced[2]
+        update = _update_service(
+            wrapped, stopped, sha, "jvm", jvm_digest, images["jvm"], env, backup, False, direct, seen, checkpoints,
+            materialize,
         )
-    except (DeployError, ProductionBackupError, OSError) as exc:
-        _restart_old_jvm(wrapped, direct)
-        reason = str(exc) if str(exc) else "backup_not_verified"
-        return _finish(checkpoints, "backup", [reason], seen, admitted=True, maintenance=True)
-    checkpoints.append({
-        "step": "backup",
-        "manifestVerified": True,
-        "sourcePreserved": True,
-        "jvmStopped": True,
-    })
-    try:
-        _reread_manifest(copied["manifest"], destination)
-    except (DeployError, ProductionBackupError, OSError) as exc:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "manifest", [str(exc) or "backup_invalid"], seen, admitted=True, maintenance=True)
-    checkpoints.append({"step": "manifest", "manifestVerified": True})
+        if update is not None:
+            return update
+        validated = _validate_jvm(wrapped, prefix, direct, checkpoints, seen)
+        if validated is not None:
+            return validated
 
-    restore_dir = Path(destination).resolve().parent / "restore-isolated"
-    try:
-        _separate(isolated_root or source, restore_dir)
-        restored = restore_isolated(copied["manifest"], destination, restore_dir)
-    except (DeployError, ProductionBackupError, OSError) as exc:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "restore_isolated", [str(exc) or "backup_invalid"], seen, admitted=True, maintenance=True)
-    checkpoints.append({"step": "restore_isolated", "restoreIsolated": True, "restoredTo": restored["restored"]})
-
-    backup = {
-        "manifestVerified": True,
-        "sourcePreserved": True,
-        "restoreIsolated": True,
-        "jvmStopped": True,
-    }
-    update = _update_service(
-        wrapped, stopped, sha, "jvm", jvm_digest, images["jvm"], env, backup, False, direct, seen, checkpoints
-    )
-    if update is not None:
-        return update
-    validated = _validate_jvm(wrapped, prefix, direct, checkpoints, seen)
-    if validated is not None:
-        return validated
-
-    node_update = _update_service(
-        wrapped, stopped, sha, "node", node_digest, images["node"], env, backup, True, direct, seen, checkpoints
-    )
-    if node_update is not None:
-        return node_update
+    node_kept = _prior_has(prior, "update_node") and _image_matches(drained, "node", node_digest)
+    if node_kept:
+        _mark(checkpoints, {"step": "update_node", "service": "node", "observed": True, "jvmUntouched": True})
+    else:
+        node_update = _update_service(
+            wrapped, stopped, sha, "node", node_digest, images["node"], env, backup, True, direct, seen, checkpoints,
+            materialize,
+        )
+        if node_update is not None:
+            return node_update
     whatsapp = wrapped(prefix + ["exec", "odisseu-a6-node", "node", "/app/scripts/healthcheck.js"])
     if not _ready(whatsapp):
         _rollback(wrapped, "node", False, direct)
         return _finish(checkpoints, "validate_whatsapp", ["whatsapp_not_ready"], seen, admitted=True, maintenance=True)
-    checkpoints.append({"step": "validate_whatsapp", "whatsapp": "READY", "health": "healthy"})
+    _mark(checkpoints, {"step": "validate_whatsapp", "whatsapp": "READY", "health": "healthy"})
 
+    if hold_gate is not None:
+        try:
+            _j().intent("hold_restore")
+            hold_gate.restore()
+            observed_hold = hold_gate.read()
+            _j().done("hold_restore", hold=observed_hold)
+        except DeployError as exc:
+            if str(exc) in JOURNAL_ERRORS:
+                raise
+            return _finish(checkpoints, "resume", [str(exc)], seen, admitted=True, maintenance=True)
+        meta["holdRestored"] = observed_hold == "true"
+        if meta["holdRestored"] is not True:
+            return _finish(checkpoints, "resume", ["hold_not_restored"], seen, admitted=True, maintenance=True)
     if env.get("A6_RESUME_EXPLICIT") != RESUME_PHRASE:
         return _finish(checkpoints, "resume", ["resume_not_explicit"], seen, admitted=True, maintenance=True)
     try:
@@ -519,30 +770,57 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
     if integrity["phase"] != "quiescent" or integrity["activeWrites"] != 0:
         return _finish(checkpoints, "resume", ["datomic_integrity_unknown"], seen, admitted=True, maintenance=True)
     try:
-        resume_jvm(wrapped, prefix)
-        resume_node(wrapped, prefix)
+        _op("resume_jvm", lambda: resume_jvm(wrapped, prefix))
+        _op("resume_node", lambda: resume_node(wrapped, prefix))
     except DeployError as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
         return _finish(checkpoints, "resume", [str(exc)], seen, admitted=True, maintenance=True)
-    checkpoints.append({"step": "resume", "resumeExplicit": True})
-    opened = {"node_phase": "open", "jvm_phase": "open", "node_ops": 0, "jvm_writes": 0}
+    _mark(checkpoints, {"step": "resume", "resumeExplicit": True})
+    return _confirm_and_validate(wrapped, prefix, checkpoints, seen)
 
+
+def _resumed(prior):
+    return _prior_has(prior, "resume") or (isinstance(prior, dict) and prior.get("resumeAttempted") is True)
+
+
+def _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest, hold_gate, meta, checkpoints, seen):
+    """Resume já enviado: as duas fases abertas e as imagens novas só pedem confirmação."""
+    if not (_image_matches(observation, "jvm", jvm_digest) and _image_matches(observation, "node", node_digest)):
+        return None
+    try:
+        live = _live_counters(wrapped, prefix)
+    except DeployError:
+        return None
+    if live["node"].get("phase") != "open" or live["jvm"].get("phase") != "open":
+        return None
+    if hold_gate is not None:
+        if hold_gate.read() != "true":
+            return _finish(checkpoints, "resume", ["hold_not_restored"], seen, admitted=True, maintenance=True)
+        meta["holdRestored"] = True
+    for name in SUPERVISED_STEPS[3:16]:
+        _mark(checkpoints, {"step": name, "observed": "after_resume"})
+    return _confirm_and_validate(wrapped, prefix, checkpoints, seen)
+
+
+def _confirm_and_validate(wrapped, prefix, checkpoints, seen):
     try:
         final = observe_vm(wrapped)
-        _apply_confirmed(final, opened)
+        live = _live_counters(wrapped, prefix)
+        _apply_confirmed(final, OPEN, live)
+        _single_writer(_volume_holders(wrapped, prefix), ["odisseu-a6-jvm"])
     except DeployError as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
         return _finish(checkpoints, "confirm_open", [str(exc)], seen, admitted=True, maintenance=True)
     again = wrapped(prefix + ["exec", "odisseu-a6-node", "node", "/app/scripts/healthcheck.js"])
-    jvm_container_health = final["jvm"].get("health")
-    node_container_health = final["node"].get("health")
     if not (
-        final["jvm"].get("phase") == "open"
-        and final["node"].get("phase") == "open"
-        and _ready(again)
-        and jvm_container_health == "healthy"
-        and node_container_health == "healthy"
+        _ready(again)
+        and final["jvm"].get("health") == "healthy"
+        and final["node"].get("health") == "healthy"
     ):
         return _finish(checkpoints, "confirm_open", ["not_open"], seen, admitted=True, maintenance=True)
-    checkpoints.append({
+    _mark(checkpoints, {
         "step": "confirm_open",
         "jvmPhase": "open",
         "nodePhase": "open",
@@ -553,7 +831,7 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
     })
     try:
         game = jvm_health(wrapped, prefix)
-        dispatcher = resume_node(wrapped, prefix)
+        dispatcher = node_status(wrapped, prefix)
     except DeployError as exc:
         return _finish(checkpoints, "validate_game", [str(exc)], seen, admitted=True, maintenance=True)
     final_ready = wrapped(prefix + ["exec", "odisseu-a6-node", "node", "/app/scripts/healthcheck.js"])
@@ -565,7 +843,7 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         and dispatcher["activeOperations"] == 0
         and _ready(final_ready)
     ):
-        checkpoints.append({
+        _mark(checkpoints, {
             "step": "validate_game",
             "jvmPhase": "open",
             "nodePhase": "open",
@@ -580,19 +858,223 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
     return _finish(checkpoints, "validate_game", ["game_not_ready"], seen, admitted=True, maintenance=False)
 
 
-def _apply_confirmed(observation, confirmed):
-    if observation["node"].get("phase") != confirmed["node_phase"]:
-        raise DeployError("maintenance_marker_mismatch")
-    if observation["jvm"].get("phase") != confirmed["jvm_phase"]:
-        raise DeployError("maintenance_marker_mismatch")
-    if observation["node"].get("activeOps") is None:
-        observation["node"]["activeOps"] = confirmed["node_ops"]
-    if observation["jvm"].get("activeWrites") is None:
-        observation["jvm"]["activeWrites"] = confirmed["jvm_writes"]
-    if observation["node"].get("activeOps") != confirmed["node_ops"]:
-        raise DeployError("writes_in_flight")
-    if observation["jvm"].get("activeWrites") != confirmed["jvm_writes"]:
-        raise DeployError("writes_in_flight")
+def _leftovers(wrapped, prefix, prior):
+    """-previous ou -failed de outra janela faria o rename falhar com a JVM já parada."""
+    completed = wrapped(prefix + ["ps", "-a", "--filter", "name=odisseu-a6-", "--format", "{{.Names}}"])
+    if not _ok(completed):
+        raise DeployError("containers_unreadable")
+    names = {line.strip().lstrip("/") for line in _out(completed).splitlines() if line.strip()}
+    for service in ("jvm", "node"):
+        if _prior_has(prior, "update_" + service):
+            continue
+        for suffix in ("-previous", "-failed"):
+            if "odisseu-a6-" + service + suffix in names:
+                return ["previous_container_exists"]
+    return []
+
+
+def _previous_stopped(wrapped, prefix, service):
+    name = "odisseu-a6-%s-previous" % service
+    completed = wrapped(prefix + ["inspect", "--format", "{{.State.Running}}", name])
+    return _ok(completed) and _out(completed).strip() == "false"
+
+
+def _reconcile(wrapped, prefix, prior, pending, observation, jvm_digest, node_digest):
+    """Intenção sem conclusão. Só segue quando o inspect prova o estado."""
+    op = pending.get("op")
+    verb = pending.get("verb")
+    adjusted = copy.deepcopy(prior)
+    adjusted["pending"] = None
+    if op in REPEATABLE:
+        if op in ("resume_jvm", "resume_node"):
+            adjusted["resumeAttempted"] = True
+        return adjusted, "repeatable_observed"
+    if op == "stop_jvm":
+        if _jvm_running(observation) is True and not _image_matches(observation, "jvm", jvm_digest):
+            return adjusted, "jvm_still_running"
+        raise DeployError("checkpoint_indeterminate")
+    if op in ("update_jvm", "update_node") and verb in ("run", "inspect"):
+        service = op.split("_", 1)[1]
+        digest = jvm_digest if service == "jvm" else node_digest
+        if _image_matches(observation, service, digest) and _previous_stopped(wrapped, prefix, service):
+            steps = adjusted.setdefault("steps", [])
+            if op not in steps:
+                steps.append(op)
+            return adjusted, "replacement_observed"
+    raise DeployError("checkpoint_indeterminate")
+
+
+def _prior_has(prior, step):
+    steps = prior.get("steps") if isinstance(prior, dict) else None
+    return isinstance(steps, list) and step in steps
+
+
+def _image_matches(observation, service, digest):
+    seen = _digest_hex((observation.get(service) or {}).get("imageId"))
+    expected = str(digest).split("sha256:")[-1]
+    return bool(expected) and seen == expected and (observation.get(service) or {}).get("health") == "healthy"
+
+
+def _reuse_verified_backup(destination):
+    destination = Path(destination)
+    manifest = destination.parent / "backup-manifest.txt"
+    if not destination.is_dir() or not manifest.is_file():
+        raise DeployError("checkpoint_indeterminate")
+    _reread_manifest(manifest, destination)
+    return {"manifest": str(manifest)}
+
+
+def _accept_replaced_jvm(wrapped, prefix, checkpoints, destination, drained, quiesced):
+    try:
+        copied = _reuse_verified_backup(destination)
+        _reread_manifest(copied["manifest"], Path(destination).resolve().parent / "restore-isolated")
+        collection = _collection(drained, quiesced)
+        if not _previous_stopped(wrapped, prefix, "jvm"):
+            raise DeployError("checkpoint_indeterminate")
+    except (DeployError, OSError) as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
+        return str(exc) or "checkpoint_indeterminate"
+    exclusive = assess_observed(collection.documents, LIVE_VOLUME, "odisseu-a6-jvm")
+    if not exclusive["exclusive"]:
+        return exclusive.get("reason") or "writable_mount_not_exclusive"
+    _mark(checkpoints, {"step": "stop_jvm", "observed": "jvm_already_replaced"})
+    _mark(checkpoints, {"step": "exclusive", "holders": exclusive.get("holders") or []})
+    _mark(checkpoints, {
+        "step": "backup",
+        "manifestVerified": True,
+        "sourcePreserved": True,
+        "jvmStopped": True,
+        "reused": True,
+    })
+    _mark(checkpoints, {"step": "manifest", "manifestVerified": True, "reused": True})
+    _mark(checkpoints, {"step": "restore_isolated", "restoreIsolated": True, "reused": True})
+    _mark(checkpoints, {"step": "update_jvm", "service": "jvm", "observed": True, "mountsPreserved": True})
+    return None
+
+
+def _stop_and_backup(wrapped, prefix, drained, quiesced, destination, isolated_root, direct, seen, checkpoints):
+    journal = _j()
+    journal.intent("stop_jvm")
+    stopped_cmd = wrapped(prefix + ["stop", "--time", "30", "odisseu-a6-jvm"])
+    if not _ok(stopped_cmd):
+        return _finish(checkpoints, "stop_jvm", ["docker_failed"], seen, admitted=True, maintenance=True,
+                       pendingOp="stop_jvm"), None, None
+    try:
+        stopped = _observe_stopped(wrapped, prefix, drained)
+        holders = _volume_holders(wrapped, prefix)
+    except DeployError as exc:
+        return _finish(checkpoints, "stop_jvm", [str(exc)], seen, admitted=True, maintenance=True,
+                       pendingOp="stop_jvm"), None, None
+    if _jvm_running(stopped) is not False:
+        return _finish(checkpoints, "stop_jvm", ["writers_still_running"], seen, admitted=True, maintenance=True,
+                       pendingOp="stop_jvm"), None, None
+    try:
+        _single_writer(holders, [])
+    except DeployError as exc:
+        return _finish(checkpoints, "stop_jvm", [str(exc)], seen, admitted=True, maintenance=True,
+                       pendingOp="stop_jvm"), None, None
+    journal.done("stop_jvm", running=False)
+    _mark(checkpoints, {"step": "stop_jvm", "holdersActive": []})
+    try:
+        exclusive_collection = _collection(stopped, quiesced)
+    except DeployError as exc:
+        _restart_old_jvm(wrapped, direct)
+        return _finish(checkpoints, "exclusive", [str(exc)], seen, admitted=True, maintenance=True), None, None
+    exclusive = assess_observed(exclusive_collection.documents, LIVE_VOLUME, "odisseu-a6-jvm")
+    if not exclusive["exclusive"]:
+        _restart_old_jvm(wrapped, direct)
+        return _finish(
+            checkpoints, "exclusive", [exclusive.get("reason") or "writable_mount_not_exclusive"], seen,
+            admitted=True, maintenance=True,
+        ), None, None
+    _mark(checkpoints, {"step": "exclusive", "holders": exclusive.get("holders") or []})
+    parent = str(Path(destination).resolve().parent)
+    space = wrapped(["df", "-B1", "--output=avail", parent])
+    free_bytes = _avail(_out(space) if _ok(space) else "")
+    if free_bytes is None:
+        _restart_old_jvm(wrapped, direct)
+        return _finish(checkpoints, "backup", ["insufficient_space"], seen, admitted=True, maintenance=True), None, None
+    source = isolated_root if isolated_root is not None else "/var/lib/docker/volumes/odisseu-a6-cutover-datomic/_data"
+    try:
+        _separate(source, destination)
+        if Path(destination).exists() and (Path(destination).parent / "backup-manifest.txt").is_file():
+            copied = _reuse_verified_backup(destination)
+            journal.note("backup_reused", destination=str(destination))
+        else:
+            measured = _bytes(source) if isolated_root is not None else measured_live(wrapped, source)
+
+            def copy_and_verify():
+                result = execute_copy(
+                    exclusive_collection, drained["vm"], destination, "false", True, BACKUP_AUTHORIZATION,
+                    free_bytes, measured, isolated_root=isolated_root,
+                )
+                _reread_manifest(result["manifest"], destination)
+                return result
+
+            copied = _op_backup(copy_and_verify, destination)
+    except (DeployError, ProductionBackupError, OSError) as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
+        _restart_old_jvm(wrapped, direct)
+        reason = str(exc) if str(exc) else "backup_not_verified"
+        return _finish(checkpoints, "backup", [reason], seen, admitted=True, maintenance=True), None, None
+    _mark(checkpoints, {
+        "step": "backup",
+        "manifestVerified": True,
+        "sourcePreserved": True,
+        "jvmStopped": True,
+    })
+    _mark(checkpoints, {"step": "manifest", "manifestVerified": True})
+    restore_dir = Path(destination).resolve().parent / "restore-isolated"
+    try:
+        if restore_dir.exists():
+            _reread_manifest(copied["manifest"], restore_dir)
+            restored = {"restored": str(restore_dir)}
+        else:
+            _separate(isolated_root or source, restore_dir)
+            restored = _op_restore(lambda: restore_isolated(copied["manifest"], destination, restore_dir))
+    except (DeployError, ProductionBackupError, OSError) as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
+        _restart_old_jvm(wrapped, direct)
+        return _finish(checkpoints, "restore_isolated", [str(exc) or "backup_invalid"], seen, admitted=True, maintenance=True), None, None
+    _mark(checkpoints, {"step": "restore_isolated", "restoreIsolated": True, "restoredTo": restored["restored"]})
+    backup = {
+        "manifestVerified": True,
+        "sourcePreserved": True,
+        "restoreIsolated": True,
+        "jvmStopped": True,
+    }
+    return None, stopped, backup
+
+
+def _op_backup(call, destination):
+    journal = _j()
+    journal.intent("backup", destination=str(destination))
+    try:
+        result = call()
+    except (DeployError, ProductionBackupError, OSError) as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
+        journal.done("backup", ok=False, reason=str(exc) or "backup_not_verified")
+        raise
+    journal.done("backup", ok=True, files=result.get("files"))
+    return result
+
+
+def _op_restore(call):
+    journal = _j()
+    journal.intent("restore_isolated")
+    try:
+        result = call()
+    except (DeployError, ProductionBackupError, OSError) as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
+        journal.done("restore_isolated", ok=False, reason=str(exc) or "backup_invalid")
+        raise
+    journal.done("restore_isolated", ok=True)
+    return result
 
 
 def _reread_manifest(manifest_path, destination):
@@ -617,7 +1099,9 @@ def measured_live(wrapped, source):
     return int(token[0])
 
 
-def _update_service(wrapped, observation, sha, service, digest, image, env, backup, jvm_updated, direct, seen, checkpoints):
+def _update_service(wrapped, observation, sha, service, digest, image, env, backup, jvm_updated, direct, seen, checkpoints,
+                    materialize=None):
+    step = "update_jvm" if service == "jvm" else "update_node"
     planned = plan(
         observation,
         sha,
@@ -631,42 +1115,60 @@ def _update_service(wrapped, observation, sha, service, digest, image, env, back
     if not planned["executeAllowed"]:
         if service == "jvm":
             _restart_old_jvm(wrapped, direct)
-        return _finish(
-            checkpoints,
-            "update_jvm" if service == "jvm" else "update_node",
-            planned["blocked"],
-            seen,
-            admitted=True,
-            maintenance=True,
-        )
+        return _finish(checkpoints, step, planned["blocked"], seen, admitted=True, maintenance=True)
+    commands = apply_commands(planned)
+    cleanup = None
+    if PLACEHOLDER.search(" ".join(commands[3])):
+        resolved = materialize(commands[3], service) if materialize is not None else None
+        if not resolved or PLACEHOLDER.search(" ".join(resolved[0])):
+            if service == "jvm":
+                _restart_old_jvm(wrapped, direct)
+            return _finish(checkpoints, step, ["run_argv_unresolved"], seen, admitted=True, maintenance=True)
+        commands[3], cleanup = resolved
     verbs = ["stop", "rename", "update", "run", "inspect"]
     completed = []
     health = ""
-    for command, verb in zip(apply_commands(planned), verbs):
-        result = wrapped(command)
-        if not _ok(result):
-            recovery = recover_after(service, completed, False, direct)
-            for item in recovery["commands"]:
-                wrapped(item)
-            return _finish(
-                checkpoints,
-                "update_jvm" if service == "jvm" else "update_node",
-                ["docker_failed"],
-                seen,
-                admitted=True,
-                maintenance=True,
-                recovery=recovery["mode"],
-            )
-        completed.append(verb)
-        if verb == "inspect":
-            health = _out(result).strip()
-    if "run" in completed:
-        checkpoints.append({
-            "step": "update_jvm" if service == "jvm" else "update_node",
-            "service": service,
-            "mountsPreserved": True,
-            "jvmUntouched": service == "node",
-        })
+    journal = _j()
+    try:
+        for command, verb in zip(commands, verbs):
+            journal.intent(step, verb=verb)
+            result = wrapped(command)
+            if verb == "run" and cleanup is not None:
+                cleanup()
+                cleanup = None
+            if not _ok(result):
+                journal.done(step, verb=verb, ok=False)
+                recovery = recover_after(service, completed, False, direct)
+                _recover(wrapped, "recover_" + service, recovery)
+                return _finish(checkpoints, step, ["docker_failed"], seen, admitted=True, maintenance=True,
+                               recovery=recovery["mode"])
+            journal.done(step, verb=verb, ok=True)
+            completed.append(verb)
+            if verb == "inspect":
+                health = _out(result).strip()
+    finally:
+        if cleanup is not None:
+            cleanup()
+    name = "odisseu-a6-" + service
+    running = wrapped(_prefix(direct) + ["inspect", "--format", "{{.Image}}", name])
+    reason = None
+    if not _ok(running) or _digest_hex(_out(running)) != str(digest).split(":", 1)[-1]:
+        reason = "image_digest_mismatch_after_run"
+    elif service == "jvm":
+        try:
+            _single_writer(_volume_holders(wrapped, _prefix(direct)), [name])
+        except DeployError as exc:
+            reason = "second_writer" if str(exc) == "writable_mount_not_exclusive" else str(exc)
+    if reason is not None:
+        recovery = _rollback(wrapped, service, False, direct)
+        return _finish(checkpoints, step, [reason], seen, admitted=True, maintenance=True, recovery=recovery["mode"])
+    _mark(checkpoints, {
+        "step": step,
+        "service": service,
+        "mountsPreserved": True,
+        "jvmUntouched": service == "node",
+        "imageId": "sha256:" + _digest_hex(_out(running)),
+    })
     if health != "healthy":
         battle = _battle(wrapped, _prefix(direct)) if service == "jvm" else False
         recovery = _rollback(wrapped, service, battle, direct)
@@ -699,7 +1201,7 @@ def _validate_jvm(wrapped, prefix, direct, checkpoints, seen):
     elif not _ok(contract) or _out(contract).strip() != "up":
         reason = "contract_incompatible"
     if reason is None:
-        checkpoints.append({
+        _mark(checkpoints, {
             "step": "validate_jvm",
             "health": "healthy",
             "entrypoint": True,
