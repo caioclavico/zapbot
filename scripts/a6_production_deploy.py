@@ -219,7 +219,7 @@ def execute_allowed(env, reasons, service):
     return not reasons
 
 
-def plan(observation, sha, service, env=None, digest=None, backup=None, jvm_updated=False):
+def plan(observation, sha, service, env=None, digest=None, backup=None, jvm_updated=False, image=None):
     env = env or {}
     reasons = preflight(observation)
     if observation.get("jvm", {}).get("phase") != "quiescent":
@@ -235,7 +235,19 @@ def plan(observation, sha, service, env=None, digest=None, backup=None, jvm_upda
         reasons.append("jvm_not_updated")
     if not _valid_digest(digest):
         reasons.append("image_digest_missing")
-    verified = isinstance(backup, dict) and backup.get("manifestVerified") is True and backup.get("sourcePreserved") is True
+    if not isinstance(image, dict) or not image.get("_observed"):
+        reasons.append("image_not_observed")
+    elif image.get("architecture") != "amd64":
+        reasons.append("image_not_amd64")
+    elif not str(image.get("revision") or "").startswith(sha):
+        reasons.append("image_revision_mismatch")
+    verified = (
+        isinstance(backup, dict)
+        and backup.get("manifestVerified") is True
+        and backup.get("sourcePreserved") is True
+        and backup.get("restoreIsolated") is True
+        and backup.get("jvmStopped") is True
+    )
     if not verified:
         reasons.append("backup_not_verified")
     direct = bool(observation.get("dockerDirect"))
@@ -429,7 +441,12 @@ def _step_ok(item):
     if step == "quiescence":
         return item.get("jvmPhase") == "quiescent" and item.get("exclusive") is True and not item.get("externalWriters")
     if step == "backup":
-        return item.get("manifestVerified") is True and item.get("sourcePreserved") is True
+        return (
+            item.get("manifestVerified") is True
+            and item.get("sourcePreserved") is True
+            and item.get("restoreIsolated") is True
+            and item.get("jvmStopped") is True
+        )
     if step == "update_jvm":
         return item.get("service") == "jvm" and item.get("previousImage") and item.get("mountsPreserved") is True
     if step == "validate_jvm":
@@ -575,6 +592,19 @@ def _token(text, key):
     if key not in text:
         return ""
     return text.split(key, 1)[1].strip().split()[0].rstrip(",}")
+
+
+def observe_image(runner, ref, docker_direct=False):
+    """Lê arquitetura e revisão da imagem pelo runner. Um mapa declarado não serve."""
+    if not callable(runner):
+        raise DeployError("declared_evidence")
+    raw = _run(runner, _prefix(docker_direct) + ["image", "inspect", "--format", "{{.Architecture}}\t{{index .Config.Labels \"org.opencontainers.image.revision\"}}", ref])
+    if not raw or "\t" not in raw:
+        raise DeployError("image_not_observed")
+    architecture, revision = raw.strip().split("\t", 1)
+    if architecture != "amd64":
+        raise DeployError("image_not_amd64")
+    return {"_observed": True, "architecture": architecture, "revision": revision, "ref": ref}
 
 
 def current_dry_run(sha):
