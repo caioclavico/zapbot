@@ -118,6 +118,8 @@ jobs:
           python3 scripts/test-a6-maintenance-ops.py
           python3 scripts/test-a6-operational-window.py
           python3 scripts/test-a6-window-interruptions.py
+          python3 scripts/test-a6-root-backup.py
+          python3 scripts/test-a6-runtime-materialize.py
           python3 scripts/test-a6-image-reference.py
           python3 scripts/test-resolve-gce-instance.py
           python3 scripts/test-deploy.py
@@ -126,6 +128,9 @@ jobs:
           python3 scripts/test-load-image.py
           python3 scripts/test-deploy-ssh.py
           node --test scripts/test-ci-registry.cjs test/odisseu-legacy-stop.test.cjs
+
+      - name: Ensaiar tmpfs, seccomp e backup root em Docker descartável
+        run: bash scripts/test-a6-ops-docker.sh
 
   jvm:
     name: Testar JVM, raids e quiescência

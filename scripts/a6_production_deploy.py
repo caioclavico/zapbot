@@ -534,6 +534,32 @@ def _service(document, publish):
     }
 
 
+def observe_gce(runner):
+    """Identidade coletada na VM, sem proxy e com resposta autenticada por flavor."""
+    fields = {"instance": "instance/name", "zone": "instance/zone",
+              "project": "project/project-id", "instanceId": "instance/id"}
+    identity = {}
+    for key, path in fields.items():
+        raw = _run(runner, ["curl", "--silent", "--show-error", "--fail",
+                           "--noproxy", "*", "--connect-timeout", "2", "--max-time", "5",
+                           "--include", "--header", "Metadata-Flavor: Google",
+                           "http://metadata.google.internal/computeMetadata/v1/" + path])
+        if raw is None:
+            if key == "instanceId":
+                continue
+            raise DeployError("metadata_unavailable")
+        headers, separator, value = raw.replace("\r\n", "\n").partition("\n\n")
+        if not separator or "metadata-flavor: google" not in headers.lower().splitlines():
+            raise DeployError("metadata_flavor_invalid")
+        value = value.strip()
+        if not value or "\n" in value:
+            raise DeployError("metadata_invalid")
+        identity[key] = value.rsplit("/", 1)[-1] if key == "zone" else value
+    if not vm_matches(dict(identity, hostname=identity.get("instance"))):
+        raise DeployError("vm_mismatch")
+    return identity
+
+
 def observe_vm(runner):
     """Lê inspect, CapEff e marcadores pelo runner. Mapa declarado não entra."""
     if not callable(runner):
@@ -548,13 +574,12 @@ def observe_vm(runner):
     jvm_marker = _run(runner, prefix + ["exec", "odisseu-a6-jvm", "cat", "/data/datomic-local/.a6-maintenance/bridge-maintenance.edn"])
     node_marker = _run(runner, prefix + ["exec", "odisseu-a6-node", "cat", "/app/data/a6-maintenance.json"])
     hostname = _run(runner, ["hostname"])
-    metadata = _run(runner, ["metadata"])
-    if None in (raw, status, processes, jvm_marker, node_marker, hostname, metadata):
+    vm = observe_gce(runner)
+    if None in (raw, status, processes, jvm_marker, node_marker, hostname):
         raise DeployError("observation_incomplete")
     try:
         documents = json.loads(raw)
         node_state = json.loads(node_marker)
-        vm = json.loads(metadata)
     except ValueError as exc:
         raise DeployError("observation_incomplete") from exc
     if not isinstance(node_state, dict) or not isinstance(vm, dict):

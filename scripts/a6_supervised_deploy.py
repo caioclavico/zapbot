@@ -494,6 +494,8 @@ def _unresolved(observation, sha, jvm_digest, node_digest, materialize):
     direct = bool(observation.get("dockerDirect"))
     for service, digest in (("jvm", jvm_digest), ("node", node_digest)):
         argv = recreate_argv(service, image_ref(service, sha, digest), observation[service], direct)
+        if materialize is not None and hasattr(materialize, "preflight"):
+            materialize.preflight(service)
         if PLACEHOLDER.search(" ".join(argv)) and materialize is None:
             return "run_argv_unresolved"
     return None
@@ -614,6 +616,12 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
     _mark(checkpoints, {"step": "preflight", "vmHostname": meta.get("vmHostname")})
 
     try:
+        if isolated_root is None:
+            from a6_root_backup import preflight as backup_preflight
+            try:
+                backup_preflight(destination)
+            except (ProductionBackupError, OSError) as exc:
+                raise DeployError('backup_admin_not_ready') from exc
         images = _images(wrapped, sha, jvm_digest, node_digest, direct)
         unresolved = _unresolved(observation, sha, jvm_digest, node_digest, materialize)
     except DeployError as exc:
@@ -990,6 +998,9 @@ def _stop_and_backup(wrapped, prefix, drained, quiesced, destination, isolated_r
         ), None, None
     _mark(checkpoints, {"step": "exclusive", "holders": exclusive.get("holders") or []})
     parent = str(Path(destination).resolve().parent)
+    if isolated_root is None:
+        from a6_root_backup import BACKUP_ROOT
+        parent = str(BACKUP_ROOT)
     space = wrapped(["df", "-B1", "--output=avail", parent])
     free_bytes = _avail(_out(space) if _ok(space) else "")
     if free_bytes is None:
@@ -1005,10 +1016,14 @@ def _stop_and_backup(wrapped, prefix, drained, quiesced, destination, isolated_r
             measured = _bytes(source) if isolated_root is not None else measured_live(wrapped, source)
 
             def copy_and_verify():
-                result = execute_copy(
-                    exclusive_collection, drained["vm"], destination, "false", True, BACKUP_AUTHORIZATION,
-                    free_bytes, measured, isolated_root=isolated_root,
-                )
+                if isolated_root is None:
+                    from a6_root_backup import backup as administrative_backup
+                    result = administrative_backup(Path(destination).parent.name)
+                else:
+                    result = execute_copy(
+                        exclusive_collection, drained["vm"], destination, "false", True, BACKUP_AUTHORIZATION,
+                        free_bytes, measured, isolated_root=isolated_root,
+                    )
                 _reread_manifest(result["manifest"], destination)
                 return result
 

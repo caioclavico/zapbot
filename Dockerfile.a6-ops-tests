@@ -1,0 +1,4 @@
+FROM docker:29.9.1-dind AS dockercli
+FROM python:3.12-slim
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+WORKDIR /work

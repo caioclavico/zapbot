@@ -30,8 +30,8 @@
 #   A6_HOLD_STORE=github bash scripts/a6-hold-recovery.sh
 # Ele volta o hold para true mesmo sem diário, grava uma auditoria e
 # não toca em containers. Não restaurar o Datomic à mão.
-# Hoje a janela para em run_argv_unresolved antes de liberar o hold:
-# o run ainda tem placeholders de env-file e seccomp sem resolvedor.
+# Ambiente é materializado em tmpfs na VM; seccomp customizado exige
+# A6_NODE_SECCOMP_PATH e A6_NODE_SECCOMP_SHA256 verificados antes do hold.
 set -euo pipefail
 
 for argument in "$@"; do
