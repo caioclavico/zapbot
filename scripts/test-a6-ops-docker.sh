@@ -27,4 +27,4 @@ docker exec "$daemon" mkdir -p /home/caiohclavico/odisseu-recovery/a6-cutover-se
 docker save alpine:3.20 | docker exec -i "$daemon" docker -H unix:///run/a6-test/docker.sock load >/dev/null
 docker run --pull=never --rm --network none -v "$PWD:/work:ro" -v "$socket:/run/a6-test" \
   -v "$fixture:/fixture" -e DOCKER_HOST=unix:///run/a6-test/docker.sock zapbot-a6-ops-tests \
-  sh -ec 'python scripts/test-a6-runtime-materialize.py; python scripts/test-a6-root-backup.py; python scripts/test-a6-docker-materialize.py'
+  sh -ec 'python scripts/test-a6-runtime-materialize.py; python scripts/test-a6-root-backup.py; python scripts/test-a6-admin-backup-client.py; bash scripts/test-a6-admin-privilege-boundary.sh; python scripts/test-a6-docker-materialize.py; python scripts/test-a6-operational-window.py; python scripts/test-a6-window-interruptions.py'

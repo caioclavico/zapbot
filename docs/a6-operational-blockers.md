@@ -162,3 +162,37 @@ na VM, concluir os três checks do PR e o ensaio integrado completo. Os
 ensaios parciais não são evidência suficiente para declarar EXECUTION_READY.
 Nenhuma manutenção, restart, alteração de hold, cópia do Datomic real,
 merge, deploy ou ativação de CI/CD legado foi executada.
+
+## Procedimentos operacionais preparados
+
+O provisionamento é uma operação administrativa separada. O operador cria um
+tar do commit revisado, confere seu SHA-256 fora da VM e o disponibiliza ao
+administrador em caminho root-owned. O comando é:
+
+```bash
+sudo A6_ADMIN_BUNDLE=/root/a6-admin-<sha>.tar \
+  A6_ADMIN_BUNDLE_SHA256=<sha256-do-tar-conferido> \
+  A6_NODE_SECCOMP_SHA256=4e4980dbebe8f2853a3e1df17489a00cf027237bfc044516e4b7e84fc610fa10 \
+  bash /caminho-verificado/a6-provision-admin.sh
+```
+
+Ele instala somente o helper e seus módulos em `/usr/local/lib/odisseu-a6`, o
+entry point root-owned `/usr/local/libexec/odisseu-a6/a6-root-backup`, a base
+de backup `root:root 0700`, perfil seccomp previamente verificado e a regra
+sudoers restrita ao helper. Ele não entra em manutenção, não escreve o hold,
+não carrega imagens nem substitui containers. A credencial temporária do `gh`
+continua fora deste provisionamento: deve ser injetada em tmpfs/ambiente do
+processo na sessão da janela e revogada depois; nunca é salva pelo script.
+
+A execução da janela continua separada, interativa e exige todos os gates:
+
+```bash
+A6_BACKUP_DESTINATION=/var/backups/odisseu-a6/<window-id>/data \
+A6_HOLD_STORE=github bash scripts/a6-operational-window.sh --window
+```
+
+O comando B só aceita esse destino fixo. O runner opera como `caioclavico` e
+usa `sudo -n` somente para o entry point root-owned; nunca eleva o checkout.
+O ensaio AMD64 reproduz o usuário, a regra sudoers e a recusa explícita de
+um entry point localizado no checkout. A recuperação do hold usa o fluxo
+existente e não precisa do helper de backup.

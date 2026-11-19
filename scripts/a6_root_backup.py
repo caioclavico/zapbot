@@ -108,7 +108,7 @@ def preflight(destination):
     info = BACKUP_ROOT.lstat()
     if BACKUP_ROOT.resolve() != BACKUP_ROOT or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o700:
         raise ProductionBackupError('backup_root_permissions')
-    return window
+    return {"ready": True, "window": window}
 
 
 def _signature(collection):
@@ -141,13 +141,14 @@ def backup(window):
 
 def cli(argv=None):
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 2 or args[0] != '--backup':
-        print('uso: a6_root_backup.py --backup WINDOW_ID', file=sys.stderr)
+    if len(args) != 2 or args[0] not in ('--backup', '--preflight'):
+        print('uso: a6-root-backup --preflight|--backup WINDOW_ID', file=sys.stderr)
         return 2
     try:
         old = os.umask(0o077)
         try:
-            result = backup(args[1])
+            result = (preflight(BACKUP_ROOT / args[1] / 'data')
+                      if args[0] == '--preflight' else backup(args[1]))
         finally:
             os.umask(old)
         print(json.dumps(result))

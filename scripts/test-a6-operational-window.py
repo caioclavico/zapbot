@@ -296,7 +296,9 @@ class OperationalWindowTests(unittest.TestCase):
             "A6_IMAGE_SHA": "abc",
             "A6_JVM_DIGEST": "sha256:" + ("ab" * 32),
             "A6_NODE_DIGEST": "sha256:" + ("cd" * 32),
-            "A6_BACKUP_DESTINATION": "/tmp/a6-operational-none",
+            "A6_BACKUP_DESTINATION": "/var/backups/odisseu-a6/janela-ci/data",
+            "A6_NODE_SECCOMP_PATH": "/etc/odisseu-a6/chromium-seccomp.json",
+            "A6_NODE_SECCOMP_SHA256": "4e4980dbebe8f2853a3e1df17489a00cf027237bfc044516e4b7e84fc610fa10",
         })
         ci = subprocess.run(["bash", str(script), "--window"], check=False, capture_output=True, text=True, env=env)
         self.assertEqual(ci.returncode, 2)

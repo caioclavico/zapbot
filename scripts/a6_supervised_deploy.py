@@ -617,7 +617,7 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
 
     try:
         if isolated_root is None:
-            from a6_root_backup import preflight as backup_preflight
+            from a6_admin_backup_client import preflight as backup_preflight
             try:
                 backup_preflight(destination)
             except (ProductionBackupError, OSError) as exc:
@@ -1017,8 +1017,8 @@ def _stop_and_backup(wrapped, prefix, drained, quiesced, destination, isolated_r
 
             def copy_and_verify():
                 if isolated_root is None:
-                    from a6_root_backup import backup as administrative_backup
-                    result = administrative_backup(Path(destination).parent.name)
+                    from a6_admin_backup_client import backup as administrative_backup
+                    result = administrative_backup(destination)
                 else:
                     result = execute_copy(
                         exclusive_collection, drained["vm"], destination, "false", True, BACKUP_AUTHORIZATION,
