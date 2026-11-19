@@ -561,9 +561,12 @@ def observe_vm(runner):
     vm["hostname"] = hostname.strip()
     jvm = _service(by_name["odisseu-a6-jvm"], _publish(by_name["odisseu-a6-jvm"].get("HostConfig", {}).get("PortBindings"), "18090/tcp"))
     node = _service(by_name["odisseu-a6-node"], _publish(by_name["odisseu-a6-node"].get("HostConfig", {}).get("PortBindings"), "3001/tcp"))
+    node_state = json.loads(node_marker)
     jvm["capEff"] = cap_eff
     jvm["phase"] = (_token(jvm_marker, ":phase") or "").lstrip(":")
-    node["phase"] = str(json.loads(node_marker).get("phase") or "")
+    jvm["activeWrites"] = _int_token(jvm_marker, ":active-writes")
+    node["phase"] = str(node_state.get("phase") or "")
+    node["activeOps"] = node_state.get("activeOps") if isinstance(node_state.get("activeOps"), int) else None
     node["whatsapp"] = ""
     redacted = []
     for item in documents:
@@ -594,6 +597,16 @@ def _token(text, key):
     return text.split(key, 1)[1].strip().split()[0].rstrip(",}")
 
 
+def _int_token(text, key):
+    raw = _token(text, key).lstrip(":")
+    if raw == "":
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 def observe_image(runner, ref, docker_direct=False):
     """Lê arquitetura e revisão da imagem pelo runner. Um mapa declarado não serve."""
     if not callable(runner):
@@ -601,7 +614,9 @@ def observe_image(runner, ref, docker_direct=False):
     raw = _run(runner, _prefix(docker_direct) + ["image", "inspect", "--format", "{{.Architecture}}\t{{index .Config.Labels \"org.opencontainers.image.revision\"}}", ref])
     if not raw or "\t" not in raw:
         raise DeployError("image_not_observed")
-    architecture, revision = raw.strip().split("\t", 1)
+    architecture, revision = raw.split("\t", 1)
+    architecture = architecture.strip()
+    revision = revision.strip()
     if architecture != "amd64":
         raise DeployError("image_not_amd64")
     return {"_observed": True, "architecture": architecture, "revision": revision, "ref": ref}
