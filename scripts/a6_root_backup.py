@@ -5,6 +5,7 @@ Instalar código e dependências em diretório root:root não gravável pelo ope
 Não autorizar sudo para uma cópia deste arquivo em checkout gravável.
 """
 from __future__ import annotations
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ import sys
 from types import SimpleNamespace
 
 from a6_production_backup import (BACKUP_AUTHORIZATION, ProductionBackupError, execute_copy,
-                                  restore_isolated, _dir_bytes, MARGIN)
+                                  restore_isolated, _dir_bytes, _verify)
 from a6_production_contract import DATOMIC_SOURCE, DATOMIC_VOLUME, NODE_MOUNTS, mounts_match
 from a6_production_deploy import DeployError, observe_gce, _mounts, _token, _int_token
 from a6_mount_policy import Collection
@@ -108,7 +109,101 @@ def preflight(destination):
     info = BACKUP_ROOT.lstat()
     if BACKUP_ROOT.resolve() != BACKUP_ROOT or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o700:
         raise ProductionBackupError('backup_root_permissions')
-    return {"ready": True, "window": window}
+    return {"ready": True, "window": window, "operation": "preflight"}
+
+
+def _destination(window):
+    if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}', window):
+        raise ProductionBackupError('window_id_invalid')
+    return BACKUP_ROOT / window
+
+
+def _manifest(path):
+    rows = []
+    try:
+        for line in path.read_text(encoding='utf-8').splitlines():
+            digest, relative = line.split('  ', 1)
+            if (not re.fullmatch(r'[0-9a-f]{64}', digest) or not relative
+                    or Path(relative).is_absolute() or '..' in Path(relative).parts):
+                raise ValueError()
+            rows.append({'path': relative, 'sha256': digest})
+    except (OSError, ValueError) as exc:
+        raise ProductionBackupError('backup_manifest_invalid') from exc
+    if not rows:
+        raise ProductionBackupError('backup_manifest_invalid')
+    return rows
+
+
+def _receipt(window, report, reused=False):
+    return {
+        'window': window,
+        'operation': 'status',
+        'reused': bool(reused),
+        'manifestVerified': report.get('manifestVerified') is True,
+        'sourcePreserved': report.get('sourcePreserved') is True,
+        'restoreIsolated': report.get('restoreIsolated') is True,
+        'volume': DATOMIC_VOLUME,
+        'files': int(report.get('files') or 0),
+    }
+
+
+def _manifest_sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_attestation(destination, window, manifest):
+    """Proveniência durável criada somente depois da cópia e do restore validados."""
+    payload = {
+        'window': window,
+        'volume': DATOMIC_VOLUME,
+        'manifestSha256': _manifest_sha256(manifest),
+        'files': len(_manifest(manifest)),
+        'sourcePreserved': True,
+        'restoreIsolated': True,
+    }
+    target = destination / 'backup-attestation.json'
+    encoded = (json.dumps(payload, sort_keys=True, separators=(',', ':')) + '\n').encode('utf-8')
+    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(descriptor, encoded)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _attestation(destination, window, manifest):
+    target = destination / 'backup-attestation.json'
+    try:
+        info = target.lstat()
+        if stat.S_ISLNK(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != 0:
+            raise ValueError()
+        payload = json.loads(target.read_text(encoding='utf-8'))
+    except (OSError, ValueError, TypeError) as exc:
+        raise ProductionBackupError('backup_attestation_invalid') from exc
+    expected = {
+        'window': window,
+        'volume': DATOMIC_VOLUME,
+        'manifestSha256': _manifest_sha256(manifest),
+        'files': len(_manifest(manifest)),
+        'sourcePreserved': True,
+        'restoreIsolated': True,
+    }
+    if payload != expected:
+        raise ProductionBackupError('backup_attestation_invalid')
+    return payload
+
+
+def status(window):
+    """Verifica o artefato concluído; não observa nem compara o Datomic em uso."""
+    destination = _destination(window)
+    preflight(destination / 'data')
+    backup, restore = destination / 'data', destination / 'restore-isolated'
+    manifest = _manifest(destination / 'backup-manifest.txt')
+    _no_symlinks(backup); _no_symlinks(restore)
+    _attestation(destination, window, destination / 'backup-manifest.txt')
+    _verify(backup, restore, manifest)
+    return _receipt(window, {'manifestVerified': True, 'sourcePreserved': True,
+                             'restoreIsolated': True, 'files': len(manifest)}, reused=True)
 
 
 def _signature(collection):
@@ -117,12 +212,12 @@ def _signature(collection):
 
 
 def backup(window):
-    preflight(BACKUP_ROOT / window / 'data')
+    destination = _destination(window)
+    preflight(destination / 'data')
     source = Path(DATOMIC_SOURCE)
     _no_symlinks(source)
     collection, vm = _collect()
     _no_open_handles(source)
-    destination = BACKUP_ROOT / window
     destination.mkdir(mode=0o700)  # Não reusa diretório parcial ou preexistente.
     size = _dir_bytes(source)
     free = shutil.disk_usage(destination).free
@@ -136,19 +231,30 @@ def backup(window):
         raise ProductionBackupError('backup_observation_changed')
     restored = restore_isolated(report['manifest'], destination / 'data', destination / 'restore-isolated')
     report.update(restoreIsolated=True, files=restored['files'])
-    return report
+    _write_attestation(destination, window, destination / 'backup-manifest.txt')
+    return _receipt(window, report)
+
+
+def ensure(window):
+    """Retomada idempotente: valida um backup concluído ou cria um novo."""
+    destination = _destination(window)
+    if destination.exists():
+        return status(window)
+    return backup(window)
 
 
 def cli(argv=None):
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 2 or args[0] not in ('--backup', '--preflight'):
-        print('uso: a6-root-backup --preflight|--backup WINDOW_ID', file=sys.stderr)
+    if len(args) != 2 or args[0] not in ('--backup', '--ensure', '--preflight', '--status'):
+        print('uso: a6-root-backup --preflight|--backup|--ensure|--status WINDOW_ID', file=sys.stderr)
         return 2
     try:
         old = os.umask(0o077)
         try:
-            result = (preflight(BACKUP_ROOT / args[1] / 'data')
-                      if args[0] == '--preflight' else backup(args[1]))
+            result = ({'ready': True, **preflight(BACKUP_ROOT / args[1] / 'data')}
+                      if args[0] == '--preflight' else
+                      backup(args[1]) if args[0] == '--backup' else
+                      ensure(args[1]) if args[0] == '--ensure' else status(args[1]))
         finally:
             os.umask(old)
         print(json.dumps(result))
