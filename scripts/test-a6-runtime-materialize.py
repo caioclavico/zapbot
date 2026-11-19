@@ -73,6 +73,13 @@ class RuntimeTests(unittest.TestCase):
         with patch('pathlib.Path.unlink', side_effect=PermissionError()):
             with self.assertRaisesRegex(DeployError, 'cleanup_failed'): cleanup()
 
+    def test_guardian_setup_failure_removes_environment(self):
+        self.prepare()
+        with patch.object(self.m, '_inspect', return_value=self.doc), patch.object(self.m, '_seccomp', return_value=None), patch('os.fork', side_effect=OSError()):
+            with self.assertRaisesRegex(DeployError, 'guardian_failed'):
+                self.m(self.argv, 'node')
+        self.assertEqual([p.name for p in self.m.root.iterdir()], ['lock'])
+
     def test_symlink_root_refused(self):
         self.m.root.symlink_to(Path(self.temp.name), target_is_directory=True)
         with patch('a6_runtime_materialize._tmpfs'), self.assertRaises(DeployError): self.m.prepare()

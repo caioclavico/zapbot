@@ -164,18 +164,37 @@ class Materializer:
         if service == 'jvm' and seccomp:
             resolved[-1:-1] = ['--security-opt', seccomp]
         old = os.umask(0o077)
+        path = None
         try:
             fd, name = tempfile.mkstemp(prefix='env-', dir=self.root)
             path = Path(name)
             with os.fdopen(fd, 'w', encoding='utf-8') as stream:
                 stream.write('\n'.join(env) + '\n')
             _private(path, 0o600)
+        except BaseException:
+            if path is not None:
+                try:
+                    path.unlink()
+                except OSError:
+                    raise DeployError('runtime_cleanup_failed') from None
+            raise DeployError('runtime_materialization_failed') from None
         finally:
             os.umask(old)
         resolved[resolved.index(ENV_PLACEHOLDER)] = str(path)
         # Guardião separado: EOF do pipe também acontece quando o pai recebe SIGKILL.
-        read_fd, write_fd = os.pipe()
-        pid = os.fork()
+        read_fd = write_fd = None
+        try:
+            read_fd, write_fd = os.pipe()
+            pid = os.fork()
+        except BaseException:
+            for descriptor in (read_fd, write_fd):
+                if descriptor is not None:
+                    os.close(descriptor)
+            try:
+                path.unlink()
+            except OSError:
+                raise DeployError('runtime_cleanup_failed') from None
+            raise DeployError('runtime_guardian_failed') from None
         if pid == 0:
             os.close(write_fd)
             self.lock.close()
