@@ -5,6 +5,7 @@ Instalar código e dependências em diretório root:root não gravável pelo ope
 Não autorizar sudo para uma cópia deste arquivo em checkout gravável.
 """
 from __future__ import annotations
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -146,23 +147,61 @@ def _receipt(window, report, reused=False):
     }
 
 
+def _manifest_sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_attestation(destination, window, manifest):
+    """Proveniência durável criada somente depois da cópia e do restore validados."""
+    payload = {
+        'window': window,
+        'volume': DATOMIC_VOLUME,
+        'manifestSha256': _manifest_sha256(manifest),
+        'files': len(_manifest(manifest)),
+        'sourcePreserved': True,
+        'restoreIsolated': True,
+    }
+    target = destination / 'backup-attestation.json'
+    encoded = (json.dumps(payload, sort_keys=True, separators=(',', ':')) + '\n').encode('utf-8')
+    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(descriptor, encoded)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _attestation(destination, window, manifest):
+    target = destination / 'backup-attestation.json'
+    try:
+        info = target.lstat()
+        if stat.S_ISLNK(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != 0:
+            raise ValueError()
+        payload = json.loads(target.read_text(encoding='utf-8'))
+    except (OSError, ValueError, TypeError) as exc:
+        raise ProductionBackupError('backup_attestation_invalid') from exc
+    expected = {
+        'window': window,
+        'volume': DATOMIC_VOLUME,
+        'manifestSha256': _manifest_sha256(manifest),
+        'files': len(_manifest(manifest)),
+        'sourcePreserved': True,
+        'restoreIsolated': True,
+    }
+    if payload != expected:
+        raise ProductionBackupError('backup_attestation_invalid')
+    return payload
+
+
 def status(window):
-    """Atestado sem conteúdo dos jogadores; só root lê source, backup e restore."""
+    """Verifica o artefato concluído; não observa nem compara o Datomic em uso."""
     destination = _destination(window)
     preflight(destination / 'data')
-    source, backup, restore = Path(DATOMIC_SOURCE), destination / 'data', destination / 'restore-isolated'
+    backup, restore = destination / 'data', destination / 'restore-isolated'
     manifest = _manifest(destination / 'backup-manifest.txt')
-    _no_symlinks(source); _no_symlinks(backup); _no_symlinks(restore)
-    collection, vm = _collect()
-    _no_open_handles(source)
-    _verify(source, backup, manifest)
+    _no_symlinks(backup); _no_symlinks(restore)
+    _attestation(destination, window, destination / 'backup-manifest.txt')
     _verify(backup, restore, manifest)
-    _no_open_handles(source)
-    again, again_vm = _collect()
-    if (_signature(again) != _signature(collection) or again_vm != vm
-            or again.jvm_phase != collection.jvm_phase or again.node_phase != collection.node_phase
-            or again.active_jvm_writes != 0 or again.active_node_ops != 0):
-        raise ProductionBackupError('backup_observation_changed')
     return _receipt(window, {'manifestVerified': True, 'sourcePreserved': True,
                              'restoreIsolated': True, 'files': len(manifest)}, reused=True)
 
@@ -192,6 +231,7 @@ def backup(window):
         raise ProductionBackupError('backup_observation_changed')
     restored = restore_isolated(report['manifest'], destination / 'data', destination / 'restore-isolated')
     report.update(restoreIsolated=True, files=restored['files'])
+    _write_attestation(destination, window, destination / 'backup-manifest.txt')
     return _receipt(window, report)
 
 
