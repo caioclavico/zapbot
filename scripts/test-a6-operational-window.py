@@ -67,6 +67,18 @@ def _run(world, root, hold=None, confirmer=_confirm, env=None, prior=None, windo
 
 
 class OperationalWindowTests(unittest.TestCase):
+    def setUp(self):
+        self._ci = {
+            key: os.environ.pop(key)
+            for key in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME")
+            if key in os.environ
+        }
+
+    def tearDown(self):
+        for key in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME"):
+            os.environ.pop(key, None)
+        os.environ.update(self._ci)
+
     def test_refuses_without_authorization_confirmation_or_protected_hold(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -257,6 +269,11 @@ class OperationalWindowTests(unittest.TestCase):
             pushed, hold = _run(SUPERVISED.World(), root, event="push")
             self.assertIn("push_not_authorized", pushed["blocked"])
             self.assertEqual(hold.writes, [])
+            os.environ["GITHUB_ACTIONS"] = "true"
+            inherited, inherited_hold = _run(SUPERVISED.World(), root / "ci")
+            self.assertIn("push_not_authorized", inherited["blocked"])
+            self.assertEqual(inherited_hold.writes, [])
+            os.environ.pop("GITHUB_ACTIONS", None)
         script = ROOT / "scripts" / "a6-operational-window.sh"
         env = os.environ.copy()
         for key in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "A6_HOLD_STORE", "A6_EXECUTE"):
