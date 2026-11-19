@@ -367,7 +367,8 @@ class SupervisedWindowTests(unittest.TestCase):
                 export = root / "export"
                 export.mkdir()
                 copy = subprocess.run(
-                    ["docker", "run", "--rm", "-v", f"{name}:/from:ro", "-v", f"{export}:/to", "ubuntu:24.04", "cp", "-a", "/from/.", "/to/"],
+                    ["docker", "run", "--rm", "-v", f"{name}:/from:ro", "-v", f"{export}:/to", "ubuntu:24.04",
+                     "sh", "-c", "cp -a /from/. /to && chmod -R a+rwX /to"],
                     check=False, capture_output=True, text=True,
                 )
                 self.assertEqual(copy.returncode, 0, copy.stderr)
