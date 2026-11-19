@@ -1,6 +1,8 @@
 #!/bin/bash
 # Janela supervisionada do stack A6. Não responde a push nem ao CI.
 # Sem a confirmação explícita, não chama Docker e não copia volume.
+# Mesmo com a janela autorizada, este script não chama Docker nesta fase.
+# O ciclo real fica em a6_supervised_deploy.py e só corre com um runner injetado.
 set -euo pipefail
 
 for argument in "$@"; do

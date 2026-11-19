@@ -114,6 +114,7 @@ jobs:
           python3 scripts/test-a6-backup-rollback.py
           python3 scripts/test-a6-production-deploy.py
           python3 scripts/test-a6-supervised-deploy.py
+          python3 scripts/test-a6-maintenance-ops.py
           python3 scripts/test-resolve-gce-instance.py
           python3 scripts/test-deploy.py
           python3 scripts/test-deploy-recovery.py
