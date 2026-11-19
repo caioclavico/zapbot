@@ -16,13 +16,22 @@
 #   A6_JVM_DIGEST=sha256:<digest amd64 da JVM> \
 #   A6_NODE_DIGEST=sha256:<digest amd64 do Node> \
 #   A6_BACKUP_DESTINATION=<diretório fora dos volumes> \
+#   A6_STATE_DIR=<diretório do diário, padrão ~/.odisseu-a6-window> \
 #   bash scripts/a6-operational-window.sh --window
 # O terminal pede confirmo-alterar-vm-a6 antes da primeira alteração.
-# Interromper o processo restaura o hold para true se ele tinha sido
-# liberado e o resume ainda não tinha ocorrido. Um checkpoint em
-# a6-window-checkpoint.json, ao lado do backup, guarda a janela, a VM
-# e o último passo. Retomar é repetir o mesmo A6_WINDOW_ID. Outro id
-# com janela incompleta é recusado. Não restaurar o Datomic à mão.
+# O diário a6-window-checkpoint.json fica em A6_STATE_DIR. Ele grava a
+# intenção antes de cada operação irreversível e a conclusão só depois
+# de observá-la, com escrita atômica e fsync. Falha ao gravar bloqueia.
+# Retomar é repetir o mesmo A6_WINDOW_ID; operação com resultado
+# desconhecido é conferida no docker inspect e nunca repetida às cegas.
+# Outro id com janela incompleta é recusado, e a6-window.lock impede
+# duas janelas ao mesmo tempo.
+# Se o processo morrer, até com SIGKILL, rodar antes de qualquer coisa:
+#   A6_HOLD_STORE=github bash scripts/a6-hold-recovery.sh
+# Ele volta o hold para true mesmo sem diário, grava uma auditoria e
+# não toca em containers. Não restaurar o Datomic à mão.
+# Hoje a janela para em run_argv_unresolved antes de liberar o hold:
+# o run ainda tem placeholders de env-file e seccomp sem resolvedor.
 set -euo pipefail
 
 for argument in "$@"; do

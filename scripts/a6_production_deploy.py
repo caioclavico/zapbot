@@ -97,6 +97,7 @@ def recreate_argv(service, image, live, docker_direct=False):
         argv = prefix + [
             "run", "-d",
             "--name", "odisseu-a6-jvm",
+            "--pull", "never",
             "--network", live["network"],
             "--restart", live["restart"],
             "--memory", str(live["memory"]),
@@ -123,6 +124,7 @@ def recreate_argv(service, image, live, docker_direct=False):
         argv = prefix + [
             "run", "-d",
             "--name", "odisseu-a6-node",
+            "--pull", "never",
             "--network", live["network"],
             "--restart", live["restart"],
             "--memory", str(live["memory"]),
@@ -549,7 +551,14 @@ def observe_vm(runner):
     metadata = _run(runner, ["metadata"])
     if None in (raw, status, processes, jvm_marker, node_marker, hostname, metadata):
         raise DeployError("observation_incomplete")
-    documents = json.loads(raw)
+    try:
+        documents = json.loads(raw)
+        node_state = json.loads(node_marker)
+        vm = json.loads(metadata)
+    except ValueError as exc:
+        raise DeployError("observation_incomplete") from exc
+    if not isinstance(node_state, dict) or not isinstance(vm, dict):
+        raise DeployError("observation_incomplete")
     if not isinstance(documents, list) or len(documents) != 2:
         raise DeployError("observation_incomplete")
     by_name = {str(item.get("Name") or "").lstrip("/"): item for item in documents}
@@ -557,16 +566,16 @@ def observe_vm(runner):
         raise DeployError("container_mismatch")
     cap_line = next((line for line in status.splitlines() if line.startswith("CapEff:")), "")
     cap_eff = cap_line.split()[1] if len(cap_line.split()) == 2 else ""
-    vm = json.loads(metadata)
     vm["hostname"] = hostname.strip()
     jvm = _service(by_name["odisseu-a6-jvm"], _publish(by_name["odisseu-a6-jvm"].get("HostConfig", {}).get("PortBindings"), "18090/tcp"))
     node = _service(by_name["odisseu-a6-node"], _publish(by_name["odisseu-a6-node"].get("HostConfig", {}).get("PortBindings"), "3001/tcp"))
-    node_state = json.loads(node_marker)
     jvm["capEff"] = cap_eff
     jvm["phase"] = (_token(jvm_marker, ":phase") or "").lstrip(":")
     jvm["activeWrites"] = _int_token(jvm_marker, ":active-writes")
+    jvm["activeWritesMarked"] = ":active-writes" in jvm_marker
     node["phase"] = str(node_state.get("phase") or "")
     node["activeOps"] = node_state.get("activeOps") if isinstance(node_state.get("activeOps"), int) else None
+    node["activeOpsMarked"] = "activeOps" in node_state
     node["whatsapp"] = ""
     redacted = []
     for item in documents:
@@ -594,7 +603,8 @@ def observe_vm(runner):
 def _token(text, key):
     if key not in text:
         return ""
-    return text.split(key, 1)[1].strip().split()[0].rstrip(",}")
+    words = text.split(key, 1)[1].strip().split()
+    return words[0].rstrip(",}") if words else ""
 
 
 def _int_token(text, key):

@@ -347,8 +347,10 @@ class MaintenanceCycleTests(unittest.TestCase):
                     dict(supervised.ENV),
                     root / "backup",
                     export,
+                    materialize=supervised.materialize,
                 )
                 self.assertTrue(report["deployComplete"], report["blocked"])
+                self.assertNotIn("activeOps", json.loads(node_file.read_text(encoding="utf-8")))
                 self.assertEqual(report["steps"], list(supervised.SUPERVISED_STEPS))
                 self.assertFalse(report["datomicRestored"])
                 self.assertEqual((export / "save.edn").read_bytes(), before)

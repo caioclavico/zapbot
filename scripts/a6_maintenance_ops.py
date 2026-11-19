@@ -294,6 +294,27 @@ def resume_jvm(wrapped, prefix):
     return final
 
 
+def node_status(wrapped, prefix):
+    """GET /ops/maintenance/status. Contador ausente ou ilegível para a janela."""
+    code, body = _call(wrapped, command(
+        prefix, NODE, "GET", "/ops/maintenance/status",
+        NODE_HEADER, NODE_TOKEN_ENV, NODE_PORT,
+    ))
+    if code != 200:
+        _node_view(code, body, False)
+        raise DeployError("maintenance_state_unknown")
+    return _node_view(code, body, False)
+
+
+def jvm_status(wrapped, prefix):
+    """GET /ops/maintenance/status da ponte, com os cinco contadores."""
+    code, body = _call(wrapped, command(
+        prefix, JVM, "GET", "/ops/maintenance/status",
+        JVM_HEADER, JVM_TOKEN_ENV, JVM_PORT,
+    ))
+    return _jvm_data(code, body)
+
+
 def jvm_health(wrapped, prefix):
     """Lê /health. Não grava no Datomic."""
     code, body = _call(wrapped, command(

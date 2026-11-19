@@ -3,6 +3,11 @@
 O script dry-run continua recusando Docker. Este módulo só corre quando
 um operador confirma a frase e o hold observado era true. O hold volta
 a true antes do resume e também se a janela quebra no meio.
+
+SIGKILL não executa finally. Por isso a liberação do hold grava a
+intenção antes de escrever false no GitHub, e recover_hold devolve o hold
+a true lendo só o GitHub: funciona sem diário, com diário quebrado e sem
+nenhuma frase de autorização.
 """
 
 from __future__ import annotations
@@ -12,14 +17,29 @@ import os
 import sys
 from pathlib import Path
 
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from a6_production_contract import VM
 from a6_production_deploy import DeployError
 from a6_supervised_deploy import RESUME_PHRASE, WINDOW, run_supervised
+from a6_window_journal import (
+    JOURNAL,
+    WindowJournal,
+    WindowLock,
+    archive,
+    binding_mismatch,
+    load,
+    state_dir,
+    write_audit,
+)
 
 
 CONFIRM = "confirmo-alterar-vm-a6"
 HOLD_NAME = "ODISSEU_PRODUCTION_DEPLOY_HOLD"
 REPO = "caioclavico/zapbot"
+HOLD_OPS = ("hold_release", "hold_restore")
+DEFAULT_STATE = "~/.odisseu-a6-window"
 
 
 class MemoryHold:
@@ -93,20 +113,11 @@ class GithubHold:
 
 
 def checkpoint_path(destination):
-    return Path(destination).resolve().parent / "a6-window-checkpoint.json"
+    return Path(destination).resolve().parent / JOURNAL
 
 
 def load_checkpoint(destination):
-    path = checkpoint_path(destination)
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise DeployError("checkpoint_indeterminate") from exc
-    if not isinstance(data, dict):
-        raise DeployError("checkpoint_indeterminate")
-    return data
+    return load(Path(destination).resolve().parent)
 
 
 def _authorized(env):
@@ -120,72 +131,89 @@ def _authorized(env):
     return all(env.get(key) == value for key, value in required.items())
 
 
-def _blocked(reason, decisions, hold, commands=None):
+def _in_ci(env, event=None):
+    return (
+        event == "push"
+        or env.get("GITHUB_EVENT_NAME") == "push"
+        or env.get("GITHUB_ACTIONS") == "true"
+        or os.environ.get("GITHUB_ACTIONS") == "true"
+        or os.environ.get("GITHUB_EVENT_NAME") == "push"
+    )
+
+
+def _read(hold):
     try:
-        current = hold.read()
+        return hold.read()
     except DeployError:
-        current = "indeterminate"
+        return "indeterminate"
+
+
+def _blocked(reason, decisions, hold, commands=None):
     return {
         "deployComplete": False,
         "executeAllowed": False,
         "blocked": [str(reason)],
         "decisions": list(decisions),
-        "hold": current,
+        "hold": _read(hold),
         "datomicRestored": False,
         "commands": commands or [],
         "steps": [],
     }
 
 
-def _write_checkpoint(destination, window_id, report, hold_value):
-    if not destination or "odisseu-a6-cutover" in str(destination) or "/var/lib/docker/volumes" in str(destination):
-        return
-    path = checkpoint_path(destination)
-    if not path.parent.is_dir() or "/var/lib/docker/volumes" in str(path):
-        return
-    payload = {
-        "windowId": window_id,
-        "vmHostname": None,
-        "lastCompleted": None,
-        "next": None,
-        "steps": [],
-        "blocked": [],
-        "deployComplete": False,
-        "datomicRestored": False,
-        "holdRestored": hold_value == "true",
-        "holdReleased": True,
-    }
-    if isinstance(report, dict):
-        payload.update({
-            "lastCompleted": report.get("lastCompleted"),
-            "next": report.get("next"),
-            "steps": report.get("steps") or [],
-            "blocked": report.get("blocked") or [],
-            "deployComplete": report.get("deployComplete") is True,
-        })
-        for item in report.get("checkpoints") or []:
-            if item.get("step") == "preflight" and item.get("vmHostname"):
-                payload["vmHostname"] = item.get("vmHostname")
-    try:
-        path.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
-    except OSError:
-        return
+def _interrupted(record):
+    if not isinstance(record, dict):
+        return False
+    pending = record.get("pending") if isinstance(record.get("pending"), dict) else {}
+    return (
+        (record.get("holdReleased") is True and record.get("holdRestored") is not True)
+        or pending.get("op") in HOLD_OPS
+    )
 
 
-def execute_window(runner, hold, confirmer, sha, jvm_digest, node_digest, env, destination, isolated_root=None, window_id=None, prior=None, event=None):
-    """Corre a janela. Sem confirmação, sem hold true ou em CI, não muda a VM."""
+def _protect(hold, journal, decisions, label="hold_restored"):
+    """Devolve o hold a true. O diário registra quando consegue; o hold não espera por ele."""
+    if _read(hold) == "true":
+        if journal is not None and (journal.data.get("pending") or {}).get("op") in HOLD_OPS:
+            try:
+                journal.resolve("hold_observed_true")
+            except DeployError:
+                decisions.append("checkpoint_write_failed")
+        return False
+    pending = (journal.data.get("pending") or {}).get("op") if journal is not None else None
+    if journal is not None and pending is None:
+        try:
+            journal.intent("hold_restore")
+            pending = "hold_restore"
+        except DeployError:
+            decisions.append("checkpoint_write_failed")
+    hold.restore()
+    decisions.append(label)
+    if journal is not None:
+        try:
+            if pending in HOLD_OPS:
+                journal.resolve("hold_restored", hold="true")
+            else:
+                journal.note("hold_restored", pendingKept=pending)
+            journal.update(holdRestored=True)
+        except DeployError:
+            decisions.append("checkpoint_write_failed")
+    return True
+
+
+def execute_window(
+    runner, hold, confirmer, sha, jvm_digest, node_digest, env, destination, isolated_root=None,
+    window_id=None, prior=None, event=None, state=None, materialize=None,
+):
+    """Corre a janela. Sem confirmação, sem hold true, com outra janela ou em CI, não muda a VM."""
     decisions = []
     report = None
     failure = None
     previous = os.environ.get(HOLD_NAME)
+    lock = None
+    journal = None
     try:
-        if (
-            event == "push"
-            or env.get("GITHUB_EVENT_NAME") == "push"
-            or env.get("GITHUB_ACTIONS") == "true"
-            or os.environ.get("GITHUB_ACTIONS") == "true"
-            or os.environ.get("GITHUB_EVENT_NAME") == "push"
-        ):
+        if _in_ci(env, event):
             raise DeployError("push_not_authorized")
         if not callable(runner):
             raise DeployError("declared_evidence")
@@ -194,20 +222,44 @@ def execute_window(runner, hold, confirmer, sha, jvm_digest, node_digest, env, d
             raise DeployError("window_id_required")
         if not _authorized(env):
             raise DeployError("window_not_authorized")
-        record = prior if prior is not None else load_checkpoint(destination)
+        directory = state_dir(state or Path(destination).resolve().parent)
+        lock = WindowLock(directory).acquire()
+        binding = {
+            "vmHostname": VM["hostname"],
+            "imageSha": sha,
+            "jvmDigest": jvm_digest,
+            "nodeDigest": node_digest,
+            "destination": str(Path(destination).resolve()),
+        }
+        from_disk = prior is None
+        try:
+            record = load(directory) if from_disk else prior
+        except DeployError:
+            _protect(hold, None, decisions, "hold_restored_after_interruption")
+            raise
         if record is not None:
+            other = record.get("windowId") not in (None, window_id)
             if record.get("steps") and not record.get("windowId"):
+                _protect(hold, None, decisions, "hold_restored_after_interruption")
                 raise DeployError("checkpoint_indeterminate")
-            if record.get("holdReleased") is True and record.get("holdRestored") is not True:
-                hold.restore()
-                decisions.append("hold_restored_after_interruption")
-            if record.get("windowId") not in (None, window_id):
-                reason = "window_already_complete" if record.get("deployComplete") is True else "window_already_open"
-                raise DeployError(reason)
-            if record.get("vmHostname") not in (None, VM["hostname"]):
-                raise DeployError("checkpoint_incompatible")
-            if record.get("deployComplete") is True:
-                raise DeployError("window_already_complete")
+            owner = WindowJournal(directory, record.get("windowId"), binding, data=record)
+            if _interrupted(record):
+                _protect(hold, owner, decisions, "hold_restored_after_interruption")
+            if other:
+                if record.get("deployComplete") is not True:
+                    raise DeployError("window_already_open")
+                if from_disk:
+                    archive(directory, record)
+                decisions.append("previous_window_archived")
+                record = None
+            else:
+                if record.get("vmHostname") not in (None, VM["hostname"]):
+                    raise DeployError("checkpoint_incompatible")
+                if binding_mismatch(record, binding):
+                    raise DeployError("checkpoint_incompatible")
+                if record.get("deployComplete") is True:
+                    raise DeployError("window_already_complete")
+                journal = owner
         observed = hold.read()
         decisions.append("hold_observed_" + observed)
         if observed != "true":
@@ -217,6 +269,10 @@ def execute_window(runner, hold, confirmer, sha, jvm_digest, node_digest, env, d
         if str(confirmer("Digite confirmo-alterar-vm-a6 para alterar a VM: ")).strip() != CONFIRM:
             raise DeployError("interactive_confirmation_rejected")
         decisions.append("interactive_confirmed")
+        if journal is None:
+            journal = WindowJournal(directory, window_id, binding)
+        journal.note("window_opened", pid=os.getpid())
+        prior_snapshot = journal.snapshot() if journal.data.get("steps") or journal.data.get("pending") else None
         os.environ[HOLD_NAME] = "false"
         run_env = dict(env)
         run_env[HOLD_NAME] = "false"
@@ -230,8 +286,10 @@ def execute_window(runner, hold, confirmer, sha, jvm_digest, node_digest, env, d
             isolated_root,
             event,
             hold_gate=hold,
-            prior=record,
+            prior=prior_snapshot,
             window_id=window_id,
+            journal=journal,
+            materialize=materialize,
         )
     except DeployError as exc:
         failure = exc
@@ -240,23 +298,24 @@ def execute_window(runner, hold, confirmer, sha, jvm_digest, node_digest, env, d
             os.environ.pop(HOLD_NAME, None)
         else:
             os.environ[HOLD_NAME] = previous
-        if getattr(hold, "released", False):
+        released = getattr(hold, "released", False) or (journal is not None and _interrupted(journal.data))
+        if released:
             try:
-                if hold.read() != "true":
-                    hold.restore()
+                _protect(hold, journal, decisions)
             except DeployError as exc:
                 failure = exc if failure is None else failure
-        if getattr(hold, "released", False) or report is not None:
+        if journal is not None and failure is not None and report is None:
             try:
-                current = hold.read()
+                journal.update(blocked=[str(failure)])
             except DeployError:
-                current = "indeterminate"
-            _write_checkpoint(destination, window_id, report, current)
+                decisions.append("checkpoint_write_failed")
+        if lock is not None:
+            lock.release()
     if getattr(hold, "released", False):
         decisions.append("hold_released")
     if getattr(hold, "restored", False) and isinstance(report, dict) and "resume" in (report.get("steps") or []):
         decisions.append("hold_restored_before_resume")
-    elif getattr(hold, "restored", False):
+    elif getattr(hold, "restored", False) and "hold_restored" not in decisions:
         decisions.append("hold_restored")
     if failure is not None:
         blocked = _blocked(failure, decisions, hold, (report or {}).get("commands") if isinstance(report, dict) else [])
@@ -267,10 +326,62 @@ def execute_window(runner, hold, confirmer, sha, jvm_digest, node_digest, env, d
         return blocked
     result = dict(report)
     result["decisions"] = decisions
-    result["hold"] = hold.read()
+    result["hold"] = _read(hold)
     result["executeAllowed"] = False
     result["datomicRestored"] = False
     return result
+
+
+def recover_hold(hold, state, env=None, event=None):
+    """Recuperação administrativa: só o hold. Não toca container nem faz rollback."""
+    env = env if env is not None else dict(os.environ)
+    if _in_ci(env, event):
+        raise DeployError("push_not_authorized")
+    directory = state_dir(state)
+    audit = {
+        "action": "hold_recovery",
+        "pid": os.getpid(),
+        "containersTouched": False,
+        "rollback": False,
+        "datomicRestored": False,
+    }
+    with WindowLock(directory):
+        journal = None
+        try:
+            record = load(directory)
+            audit["checkpoint"] = "absent" if record is None else "present"
+        except DeployError:
+            record = None
+            audit["checkpoint"] = "indeterminate"
+        if record is not None:
+            audit["windowId"] = record.get("windowId")
+            audit["pending"] = record.get("pending")
+            audit["lastCompleted"] = record.get("lastCompleted")
+            audit["interruptedWindow"] = record.get("deployComplete") is not True
+            journal = WindowJournal(directory, record.get("windowId"), {}, data=record)
+        before = _read(hold)
+        audit["holdBefore"] = before
+        decisions = []
+        if before != "true":
+            hold.restore()
+        after = hold.read()
+        if after != "true":
+            raise DeployError("hold_restore_unconfirmed")
+        audit["holdAfter"] = after
+        audit["restored"] = before != "true"
+        if journal is not None:
+            try:
+                journal.note("hold_recovery", holdBefore=before, holdAfter=after)
+                journal.update(holdRestored=True)
+            except DeployError:
+                decisions.append("checkpoint_write_failed")
+        audit["decisions"] = decisions
+        try:
+            audit["audit"] = write_audit(directory, audit)
+        except DeployError:
+            audit["audit"] = None
+            audit["decisions"].append("audit_write_failed")
+    return audit
 
 
 def _subprocess_runner(args):
@@ -278,14 +389,27 @@ def _subprocess_runner(args):
     return subprocess.run(args, check=False, capture_output=True, text=True)
 
 
-def cli():
+def _state_from_env():
+    return os.environ.get("A6_STATE_DIR") or DEFAULT_STATE
+
+
+def cli(argv=None):
     """Entrada do processo. CI e um terminal sem confirmação não chegam aqui pelo shell."""
+    argv = list(sys.argv[1:] if argv is None else argv)
     if os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("GITHUB_EVENT_NAME") == "push":
         print("push_not_authorized", file=sys.stderr)
         return 2
     if os.environ.get("A6_HOLD_STORE") != "github":
         print("hold_store_required", file=sys.stderr)
         return 2
+    if argv[:1] == ["--recover-hold"]:
+        try:
+            audit = recover_hold(GithubHold(_subprocess_runner), _state_from_env())
+        except DeployError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(json.dumps(audit, ensure_ascii=False))
+        return 0 if not audit.get("decisions") else 2
     if not sys.stdin.isatty():
         print("interactive_confirmation_required", file=sys.stderr)
         return 2
@@ -300,6 +424,7 @@ def cli():
         os.environ.get("A6_BACKUP_DESTINATION") or "",
         None,
         window_id=os.environ.get("A6_WINDOW_ID"),
+        state=_state_from_env(),
     )
     public = {
         key: report.get(key)
@@ -310,5 +435,4 @@ def cli():
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
     raise SystemExit(cli())

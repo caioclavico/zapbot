@@ -61,6 +61,7 @@ def _run(world, root, hold=None, confirmer=_confirm, env=None, prior=None, windo
         window_id=window_id,
         prior=prior,
         event=event,
+        materialize=SUPERVISED.materialize,
     )
     report["seen"] = seen
     return report, hold
@@ -163,7 +164,7 @@ class OperationalWindowTests(unittest.TestCase):
             (export / "save.edn").write_text(SUPERVISED.SAVE, encoding="utf-8")
             unloaded = execute_window(
                 missing_image, hold, _confirm, SUPERVISED.SHA, SUPERVISED.JVM_DIGEST, SUPERVISED.NODE_DIGEST,
-                dict(SUPERVISED.ENV), root / "images" / "backup", export, window_id="janela-isolada-1",
+                dict(SUPERVISED.ENV), root / "images" / "backup", export, window_id="janela-isolada-1", materialize=SUPERVISED.materialize,
             )
             self.assertIn("image_not_observed", unloaded["blocked"])
             self.assertEqual(hold.read(), "true")
@@ -198,7 +199,7 @@ class OperationalWindowTests(unittest.TestCase):
             resume = execute_window(
                 fail_resume, resume_hold, _confirm, SUPERVISED.SHA, SUPERVISED.JVM_DIGEST,
                 SUPERVISED.NODE_DIGEST, dict(SUPERVISED.ENV), root / "resume" / "backup", export,
-                window_id="janela-isolada-1",
+                window_id="janela-isolada-1", materialize=SUPERVISED.materialize,
             )
             self.assertIn("resume_failed", resume["blocked"])
             self.assertEqual(observed, ["true"])
@@ -237,11 +238,11 @@ class OperationalWindowTests(unittest.TestCase):
                 "holdReleased": True,
                 "holdRestored": False,
             }
-            hold = MemoryHold("true")
+            hold = MemoryHold("false")
             busy = execute_window(
                 SUPERVISED.World().runner, hold, _confirm, SUPERVISED.SHA, SUPERVISED.JVM_DIGEST,
                 SUPERVISED.NODE_DIGEST, dict(SUPERVISED.ENV), root / "backup", export,
-                window_id="janela-nova", prior=open_window,
+                window_id="janela-nova", prior=open_window, materialize=SUPERVISED.materialize,
             )
             self.assertIn("window_already_open", busy["blocked"])
             self.assertEqual(hold.read(), "true")
@@ -249,7 +250,7 @@ class OperationalWindowTests(unittest.TestCase):
             incompatible = execute_window(
                 SUPERVISED.World().runner, MemoryHold("true"), _confirm, SUPERVISED.SHA, SUPERVISED.JVM_DIGEST,
                 SUPERVISED.NODE_DIGEST, dict(SUPERVISED.ENV), root / "backup", export,
-                window_id="janela-isolada-1",
+                window_id="janela-isolada-1", materialize=SUPERVISED.materialize,
                 prior={"windowId": "janela-isolada-1", "vmHostname": "outra-vm", "deployComplete": False, "steps": ["preflight"]},
             )
             self.assertIn("checkpoint_incompatible", incompatible["blocked"])
@@ -257,7 +258,7 @@ class OperationalWindowTests(unittest.TestCase):
             done = execute_window(
                 SUPERVISED.World().runner, MemoryHold("true"), _confirm, SUPERVISED.SHA, SUPERVISED.JVM_DIGEST,
                 SUPERVISED.NODE_DIGEST, dict(SUPERVISED.ENV), root / "backup", export,
-                window_id="janela-isolada-1",
+                window_id="janela-isolada-1", materialize=SUPERVISED.materialize,
                 prior={"windowId": "janela-isolada-1", "vmHostname": "odisseu-core", "deployComplete": True, "steps": ["validate_game"]},
             )
             self.assertIn("window_already_complete", done["blocked"])
@@ -304,6 +305,16 @@ class OperationalWindowTests(unittest.TestCase):
         interactive = subprocess.run(["bash", str(script), "--window"], check=False, capture_output=True, text=True, env=env)
         self.assertEqual(interactive.returncode, 2)
         self.assertIn("interactive_confirmation_required", interactive.stderr)
+        recovery = ROOT / "scripts" / "a6-hold-recovery.sh"
+        env["GITHUB_ACTIONS"] = "true"
+        recovery_ci = subprocess.run(["bash", str(recovery)], check=False, capture_output=True, text=True, env=env)
+        self.assertEqual(recovery_ci.returncode, 2)
+        self.assertIn("push_not_authorized", recovery_ci.stderr)
+        env.pop("GITHUB_ACTIONS")
+        env.pop("A6_HOLD_STORE")
+        recovery_store = subprocess.run(["bash", str(recovery)], check=False, capture_output=True, text=True, env=env)
+        self.assertEqual(recovery_store.returncode, 2)
+        self.assertIn("hold_store_required", recovery_store.stderr)
         workflow = (ROOT / ".github" / "workflows" / "a6-pr-validation.yml").read_text(encoding="utf-8")
         self.assertNotIn(CONFIRM, workflow)
         self.assertNotIn("A6_HOLD_STORE", workflow)
