@@ -413,6 +413,16 @@ def cli(argv=None):
     if not sys.stdin.isatty():
         print("interactive_confirmation_required", file=sys.stderr)
         return 2
+    from a6_runtime_materialize import Materializer
+    direct = _subprocess_runner(["docker", "info"]).returncode == 0
+    prefix = ["docker"] if direct else ["sudo", "-n", "docker"]
+    profiles = {}
+    for service in ("jvm", "node"):
+        path = os.environ.get("A6_" + service.upper() + "_SECCOMP_PATH")
+        digest = os.environ.get("A6_" + service.upper() + "_SECCOMP_SHA256")
+        if path and digest:
+            profiles[service] = (path, digest)
+    materializer = Materializer(prefix, profiles=profiles)
     report = execute_window(
         _subprocess_runner,
         GithubHold(_subprocess_runner),
@@ -425,6 +435,7 @@ def cli(argv=None):
         None,
         window_id=os.environ.get("A6_WINDOW_ID"),
         state=_state_from_env(),
+        materialize=materializer,
     )
     public = {
         key: report.get(key)

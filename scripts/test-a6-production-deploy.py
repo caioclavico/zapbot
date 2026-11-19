@@ -107,8 +107,11 @@ def vm_runner():
             return Result('{"phase":"draining","activeOps":0}\n')
         if args == ["hostname"]:
             return Result("odisseu-core\n")
-        if args == ["metadata"]:
-            return Result(json.dumps({"instance": "odisseu-core", "zone": "us-central1-a", "project": VM["project"]}))
+        if args[:1] == ["curl"] and args[-1].startswith("http://metadata.google.internal/computeMetadata/v1/"):
+            values = {"instance/name": "odisseu-core", "instance/zone": "projects/123/zones/us-central1-a",
+                      "project/project-id": VM["project"], "instance/id": "123"}
+            path = args[-1].split("/v1/", 1)[1]
+            return Result("HTTP/1.1 200 OK\r\nMetadata-Flavor: Google\r\n\r\n" + values[path])
         return Result("", 1)
 
     return runner

@@ -15,7 +15,9 @@
 #   A6_IMAGE_SHA=<sha do código das imagens> \
 #   A6_JVM_DIGEST=sha256:<digest amd64 da JVM> \
 #   A6_NODE_DIGEST=sha256:<digest amd64 do Node> \
-#   A6_BACKUP_DESTINATION=<diretório fora dos volumes> \
+#   A6_BACKUP_DESTINATION=/var/backups/odisseu-a6/<window-id>/data \
+#   A6_NODE_SECCOMP_PATH=/etc/odisseu-a6/chromium-seccomp.json \
+#   A6_NODE_SECCOMP_SHA256=4e4980dbebe8f2853a3e1df17489a00cf027237bfc044516e4b7e84fc610fa10 \
 #   A6_STATE_DIR=<diretório do diário, padrão ~/.odisseu-a6-window> \
 #   bash scripts/a6-operational-window.sh --window
 # O terminal pede confirmo-alterar-vm-a6 antes da primeira alteração.
@@ -30,8 +32,8 @@
 #   A6_HOLD_STORE=github bash scripts/a6-hold-recovery.sh
 # Ele volta o hold para true mesmo sem diário, grava uma auditoria e
 # não toca em containers. Não restaurar o Datomic à mão.
-# Hoje a janela para em run_argv_unresolved antes de liberar o hold:
-# o run ainda tem placeholders de env-file e seccomp sem resolvedor.
+# Ambiente é materializado em tmpfs na VM; seccomp customizado exige
+# A6_NODE_SECCOMP_PATH e A6_NODE_SECCOMP_SHA256 verificados antes do hold.
 set -euo pipefail
 
 for argument in "$@"; do
@@ -70,6 +72,14 @@ fi
 
 if [[ -z "${A6_WINDOW_ID:-}" || -z "${A6_IMAGE_SHA:-}" || -z "${A6_JVM_DIGEST:-}" || -z "${A6_NODE_DIGEST:-}" || -z "${A6_BACKUP_DESTINATION:-}" ]]; then
   echo "window_not_authorized" >&2
+  exit 2
+fi
+
+expected_backup="/var/backups/odisseu-a6/${A6_WINDOW_ID}/data"
+if [[ "${A6_BACKUP_DESTINATION}" != "$expected_backup" || \
+      "${A6_NODE_SECCOMP_PATH:-}" != "/etc/odisseu-a6/chromium-seccomp.json" || \
+      "${A6_NODE_SECCOMP_SHA256:-}" != "4e4980dbebe8f2853a3e1df17489a00cf027237bfc044516e4b7e84fc610fa10" ]]; then
+  echo "operational_profile_required" >&2
   exit 2
 fi
 
