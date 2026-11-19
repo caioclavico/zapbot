@@ -222,6 +222,8 @@ def execute_window(
             raise DeployError("window_id_required")
         if not _authorized(env):
             raise DeployError("window_not_authorized")
+        if state is None and str(destination).startswith("/var/backups/odisseu-a6/"):
+            raise DeployError("state_dir_required")
         directory = state_dir(state or Path(destination).resolve().parent)
         lock = WindowLock(directory).acquire()
         binding = {
@@ -229,7 +231,7 @@ def execute_window(
             "imageSha": sha,
             "jvmDigest": jvm_digest,
             "nodeDigest": node_digest,
-            "destination": str(Path(destination).resolve()),
+            "destination": str(destination),
         }
         from_disk = prior is None
         try:

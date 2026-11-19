@@ -39,10 +39,32 @@ def _call(arguments):
     return value
 
 
+def _attestation(value, window, operation):
+    required = ('window', 'operation', 'manifestVerified', 'sourcePreserved',
+                'restoreIsolated', 'volume', 'files')
+    if (any(key not in value for key in required) or value['window'] != window
+            or value['operation'] != 'status' or value['manifestVerified'] is not True
+            or value['sourcePreserved'] is not True or value['restoreIsolated'] is not True
+            or value['volume'] != 'odisseu-a6-cutover-datomic' or not isinstance(value['files'], int)
+            or value['files'] <= 0):
+        raise ProductionBackupError('backup_admin_invalid')
+    return value
+
+
 def preflight(destination):
     """Valida o helper instalado antes que a janela solte o hold."""
-    return _call(["--preflight", _window(destination)])
+    window = _window(destination)
+    value = _call(["--preflight", window])
+    if value != {'ready': True, 'window': window, 'operation': 'preflight'}:
+        raise ProductionBackupError('backup_admin_invalid')
+    return value
 
 
 def backup(destination):
-    return _call(["--backup", _window(destination)])
+    window = _window(destination)
+    return _attestation(_call(["--ensure", window]), window, 'ensure')
+
+
+def status(destination):
+    window = _window(destination)
+    return _attestation(_call(["--status", window]), window, 'status')

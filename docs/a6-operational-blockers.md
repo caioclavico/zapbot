@@ -196,3 +196,26 @@ usa `sudo -n` somente para o entry point root-owned; nunca eleva o checkout.
 O ensaio AMD64 reproduz o usuário, a regra sudoers e a recusa explícita de
 um entry point localizado no checkout. A recuperação do hold usa o fluxo
 existente e não precisa do helper de backup.
+
+## Contrato do backup privilegiado
+
+O helper instalado expõe somente objetos JSON em `stdout`:
+
+| Operação | Uso | Evidência devolvida |
+|---|---|---|
+| `--preflight WINDOW_ID` | antes de soltar o hold | helper root-owned e janela válida |
+| `--ensure WINDOW_ID` | cria ou reutiliza backup | manifesto, origem, restore, volume e contagem de arquivos |
+| `--status WINDOW_ID` | retomada | revalida manifesto, source, restore e ausência de alteração concorrente |
+
+`a6_admin_backup_client.py` rejeita qualquer JSON que não contenha a janela,
+o volume `odisseu-a6-cutover-datomic`, manifesto válido, origem preservada,
+restore isolado e contagem positiva. O runner não abre o volume live, a base
+de backup, manifesto ou restore. Também não mede espaço: o helper mede e
+valida o espaço como root antes da cópia. Na retomada após uma interrupção
+com JVM já substituída, o runner chama `--status` e não tenta ler o backup.
+
+O ensaio AMD64 valida `--preflight` através do sudoers real e valida o
+backup sintético, manifesto e `--status` pelo entry point root-owned, sem
+expor dados. Ele também confirma que o usuário operacional não lê o diretório
+`root:root 0700` nem eleva o checkout. A infraestrutura de produção continua
+inalterada; portanto o estado permanece **EXECUTION_BLOCKED / DEPLOY_BLOCKED**.

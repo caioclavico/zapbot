@@ -9,6 +9,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from a6_image_transfer import (
     CANDIDATES,
@@ -469,6 +470,48 @@ def run_case(world, root, env=None, isolated=None):
 
 
 class SupervisedWindowTests(unittest.TestCase):
+    def test_live_backup_uses_only_admin_attestation(self):
+        """Runner sem root não toca paths de volume, backup, manifesto ou restore."""
+        receipt = {
+            "window": "janela-admin", "operation": "status", "reused": False,
+            "manifestVerified": True, "sourcePreserved": True, "restoreIsolated": True,
+            "volume": "odisseu-a6-cutover-datomic", "files": 2,
+        }
+        destination = "/var/backups/odisseu-a6/janela-admin/data"
+        env = dict(ENV)
+        env["A6_LIVE_BACKUP"] = "autorizar-backup-producao-a6"
+        env["A6_STATE_DIR"] = "/tmp/a6-admin-journal"
+        with patch("a6_admin_backup_client.preflight", return_value={"ready": True, "window": "janela-admin", "operation": "preflight"}) as ready, \
+             patch("a6_admin_backup_client.backup", return_value=receipt) as copied:
+            report = run_supervised(World().runner, SHA, JVM_DIGEST, NODE_DIGEST, env, destination,
+                                    None, materialize=materialize)
+        self.assertTrue(report["deployComplete"], report["blocked"])
+        ready.assert_called_once_with(destination)
+        copied.assert_called_once_with(destination)
+        commands = "\n".join(" ".join(item) for item in report["commands"])
+        self.assertNotIn("/var/lib/docker/volumes/odisseu-a6-cutover-datomic/_data", commands)
+        self.assertNotIn("backup-manifest.txt", commands)
+
+    def test_live_resume_rechecks_completed_backup_with_the_helper(self):
+        receipt = {
+            "window": "janela-admin", "operation": "status", "reused": True,
+            "manifestVerified": True, "sourcePreserved": True, "restoreIsolated": True,
+            "volume": "odisseu-a6-cutover-datomic", "files": 2,
+        }
+        destination = "/var/backups/odisseu-a6/janela-admin/data"
+        env = dict(ENV, A6_LIVE_BACKUP="autorizar-backup-producao-a6", A6_STATE_DIR="/tmp/a6-admin-journal")
+        world = World()
+        world.containers["odisseu-a6-jvm"]["image"] = JVM_DIGEST
+        world.containers["odisseu-a6-jvm-previous"] = {"image": CURRENT["jvm"]["imageId"], "running": False}
+        with patch("a6_admin_backup_client.preflight", return_value={"ready": True, "window": "janela-admin", "operation": "preflight"}), \
+             patch("a6_admin_backup_client.status", return_value=receipt) as checked, \
+             patch("a6_admin_backup_client.backup") as copied:
+            report = run_supervised(world.runner, SHA, JVM_DIGEST, NODE_DIGEST, env, destination, None,
+                                    prior={"steps": ["update_jvm"]}, materialize=materialize)
+        self.assertTrue(report["deployComplete"], report["blocked"])
+        checked.assert_called_once_with(destination)
+        copied.assert_not_called()
+
     def test_window_reaches_open_and_keeps_the_save(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

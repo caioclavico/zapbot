@@ -506,7 +506,12 @@ def run_supervised(
     hold_gate=None, prior=None, window_id=None, journal=None, materialize=None,
 ):
     """Executa a janela. O relatório final não autoriza uma segunda execução."""
-    token = _DEST.set(destination)
+    # O destino live é root-only. Relatórios sem WindowJournal ficam no estado
+    # do operador, nunca ao lado do backup administrativo.
+    record_destination = destination
+    if isolated_root is None and str(destination).startswith("/var/backups/odisseu-a6/"):
+        record_destination = str(Path(env.get("A6_STATE_DIR") or "~/.odisseu-a6-window").expanduser() / "report")
+    token = _DEST.set(record_destination)
     meta = {"windowId": window_id, "vmHostname": None, "holdRestored": False}
     meta_token = _META.set(meta)
     journal_token = _JOURNAL.set(journal)
@@ -603,7 +608,7 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         return _finish(checkpoints, "images", ["checkpoint_indeterminate"], seen)
     if _prior_has(prior, "update_node") and not _image_matches(observation, "node", node_digest):
         return _finish(checkpoints, "images", ["checkpoint_indeterminate"], seen)
-    if Path(destination).exists() and not _prior_has(prior, "manifest"):
+    if isolated_root is not None and Path(destination).exists() and not _prior_has(prior, "manifest"):
         return _finish(checkpoints, "backup", ["checkpoint_indeterminate"], seen)
     blocked = preflight(observation)
     if not blocked:
@@ -710,7 +715,7 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
 
     jvm_kept = _prior_has(prior, "update_jvm") and _image_matches(drained, "jvm", jvm_digest)
     if jvm_kept:
-        kept = _accept_replaced_jvm(wrapped, prefix, checkpoints, destination, drained, quiesced)
+        kept = _accept_replaced_jvm(wrapped, prefix, checkpoints, destination, isolated_root, drained, quiesced)
         if kept is not None:
             return _finish(checkpoints, "backup", [kept], seen, admitted=True, maintenance=True)
         stopped = drained
@@ -932,10 +937,14 @@ def _reuse_verified_backup(destination):
     return {"manifest": str(manifest)}
 
 
-def _accept_replaced_jvm(wrapped, prefix, checkpoints, destination, drained, quiesced):
+def _accept_replaced_jvm(wrapped, prefix, checkpoints, destination, isolated_root, drained, quiesced):
     try:
-        copied = _reuse_verified_backup(destination)
-        _reread_manifest(copied["manifest"], Path(destination).resolve().parent / "restore-isolated")
+        if isolated_root is None:
+            from a6_admin_backup_client import status as administrative_status
+            administrative_status(destination)
+        else:
+            copied = _reuse_verified_backup(destination)
+            _reread_manifest(copied["manifest"], Path(destination).resolve().parent / "restore-isolated")
         collection = _collection(drained, quiesced)
         if not _previous_stopped(wrapped, prefix, "jvm"):
             raise DeployError("checkpoint_indeterminate")
@@ -997,37 +1006,35 @@ def _stop_and_backup(wrapped, prefix, drained, quiesced, destination, isolated_r
             admitted=True, maintenance=True,
         ), None, None
     _mark(checkpoints, {"step": "exclusive", "holders": exclusive.get("holders") or []})
-    parent = str(Path(destination).resolve().parent)
-    if isolated_root is None:
-        from a6_root_backup import BACKUP_ROOT
-        parent = str(BACKUP_ROOT)
-    space = wrapped(["df", "-B1", "--output=avail", parent])
-    free_bytes = _avail(_out(space) if _ok(space) else "")
-    if free_bytes is None:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "backup", ["insufficient_space"], seen, admitted=True, maintenance=True), None, None
-    source = isolated_root if isolated_root is not None else "/var/lib/docker/volumes/odisseu-a6-cutover-datomic/_data"
     try:
-        _separate(source, destination)
-        if Path(destination).exists() and (Path(destination).parent / "backup-manifest.txt").is_file():
-            copied = _reuse_verified_backup(destination)
-            journal.note("backup_reused", destination=str(destination))
+        if isolated_root is None:
+            # O helper mede espaço, lê o volume, manifesta, restaura e atesta.
+            # Este processo vê apenas o objeto JSON sem caminhos ou dados do save.
+            from a6_admin_backup_client import backup as administrative_backup
+            copied = _op_backup(lambda: administrative_backup(destination), destination)
         else:
-            measured = _bytes(source) if isolated_root is not None else measured_live(wrapped, source)
+            source = isolated_root
+            _separate(source, destination)
+            if Path(destination).exists() and (Path(destination).parent / "backup-manifest.txt").is_file():
+                copied = _reuse_verified_backup(destination)
+                journal.note("backup_reused", destination=str(destination))
+            else:
+                measured = _bytes(source)
+                parent = str(Path(destination).resolve().parent)
+                space = wrapped(["df", "-B1", "--output=avail", parent])
+                free_bytes = _avail(_out(space) if _ok(space) else "")
+                if free_bytes is None:
+                    raise DeployError("insufficient_space")
 
-            def copy_and_verify():
-                if isolated_root is None:
-                    from a6_admin_backup_client import backup as administrative_backup
-                    result = administrative_backup(destination)
-                else:
+                def copy_and_verify():
                     result = execute_copy(
                         exclusive_collection, drained["vm"], destination, "false", True, BACKUP_AUTHORIZATION,
                         free_bytes, measured, isolated_root=isolated_root,
                     )
-                _reread_manifest(result["manifest"], destination)
-                return result
+                    _reread_manifest(result["manifest"], destination)
+                    return result
 
-            copied = _op_backup(copy_and_verify, destination)
+                copied = _op_backup(copy_and_verify, destination)
     except (DeployError, ProductionBackupError, OSError) as exc:
         if str(exc) in JOURNAL_ERRORS:
             raise
@@ -1041,14 +1048,18 @@ def _stop_and_backup(wrapped, prefix, drained, quiesced, destination, isolated_r
         "jvmStopped": True,
     })
     _mark(checkpoints, {"step": "manifest", "manifestVerified": True})
-    restore_dir = Path(destination).resolve().parent / "restore-isolated"
     try:
-        if restore_dir.exists():
-            _reread_manifest(copied["manifest"], restore_dir)
-            restored = {"restored": str(restore_dir)}
+        if isolated_root is None:
+            # backup() já devolve atestado de manifesto, origem e restore isolado.
+            restored = {"restored": "admin-verified"}
         else:
-            _separate(isolated_root or source, restore_dir)
-            restored = _op_restore(lambda: restore_isolated(copied["manifest"], destination, restore_dir))
+            restore_dir = Path(destination).resolve().parent / "restore-isolated"
+            if restore_dir.exists():
+                _reread_manifest(copied["manifest"], restore_dir)
+                restored = {"restored": str(restore_dir)}
+            else:
+                _separate(isolated_root, restore_dir)
+                restored = _op_restore(lambda: restore_isolated(copied["manifest"], destination, restore_dir))
     except (DeployError, ProductionBackupError, OSError) as exc:
         if str(exc) in JOURNAL_ERRORS:
             raise
@@ -1102,16 +1113,6 @@ def _reread_manifest(manifest_path, destination):
         digest, relative = line.split("  ", 1)
         if hashlib.sha256((root / relative).read_bytes()).hexdigest() != digest:
             raise DeployError("backup_invalid")
-
-
-def measured_live(wrapped, source):
-    completed = wrapped(["du", "-sb", source])
-    if not _ok(completed):
-        raise DeployError("source_unreadable")
-    token = _out(completed).strip().split()
-    if not token or not token[0].isdigit():
-        raise DeployError("source_unreadable")
-    return int(token[0])
 
 
 def _update_service(wrapped, observation, sha, service, digest, image, env, backup, jvm_updated, direct, seen, checkpoints,

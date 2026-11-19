@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 import os
+import io
+import json
+from contextlib import redirect_stdout
 from pathlib import Path
 import tempfile
 import unittest
@@ -32,10 +35,20 @@ class RootBackupTests(unittest.TestCase):
             collection = Collection('docker-inspect-subprocess', docs, '', 'quiescent', 'draining', 0, 0, LIVE_VOLUME, 'odisseu-a6-jvm')
             with patch.object(admin, 'BACKUP_ROOT', root), patch.object(admin, 'DATOMIC_SOURCE', str(source)), \
                  patch('a6_production_backup.DATOMIC_SOURCE', str(source)), patch.object(admin, '_collect', return_value=(collection, dict(VM))):
-                result = admin.backup('fixture')
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(admin.cli(['--backup', 'fixture']), 0)
+                result = json.loads(output.getvalue())
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(admin.cli(['--status', 'fixture']), 0)
+                observed = json.loads(output.getvalue())
+                self.assertTrue(observed['reused'])
+                self.assertEqual(observed['files'], result['files'])
             self.assertTrue(result['sourcePreserved'])
             self.assertTrue(result['manifestVerified'])
             self.assertTrue(result['restoreIsolated'])
+            self.assertEqual(result['window'], 'fixture')
             self.assertEqual((source / 'save.edn').read_bytes(), (root / 'fixture/restore-isolated/save.edn').read_bytes())
             self.assertTrue((root / 'fixture/backup-manifest.txt').is_file())
 
