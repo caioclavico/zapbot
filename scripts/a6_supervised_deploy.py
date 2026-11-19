@@ -74,6 +74,7 @@ CONTRACT = (
 
 _RUNS = set()
 _DEST = contextvars.ContextVar("a6_window_destination", default=None)
+_META = contextvars.ContextVar("a6_window_meta", default=None)
 
 
 def evaluate_supervised(checkpoints):
@@ -157,6 +158,12 @@ def _record(report):
         "datomicRestored": False,
         "deployComplete": report.get("deployComplete") is True,
     }
+    meta = _META.get() or {}
+    if meta.get("windowId"):
+        payload["windowId"] = meta["windowId"]
+    if meta.get("vmHostname"):
+        payload["vmHostname"] = meta["vmHostname"]
+    payload["holdRestored"] = meta.get("holdRestored") is True
     try:
         target.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
     except OSError:
@@ -296,16 +303,21 @@ def _images(wrapped, sha, jvm_digest, node_digest, direct):
     return images
 
 
-def run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isolated_root=None, event=None):
+def run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isolated_root=None, event=None, hold_gate=None, prior=None, window_id=None):
     """Executa a janela. O relatório final não autoriza uma segunda execução."""
     token = _DEST.set(destination)
+    meta = {"windowId": window_id, "vmHostname": None, "holdRestored": False}
+    meta_token = _META.set(meta)
     try:
-        return _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isolated_root, event)
+        return _run_supervised(
+            runner, sha, jvm_digest, node_digest, env, destination, isolated_root, event, hold_gate, prior, meta,
+        )
     finally:
+        _META.reset(meta_token)
         _DEST.reset(token)
 
 
-def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isolated_root=None, event=None):
+def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isolated_root, event, hold_gate, prior, meta):
     checkpoints = []
     seen = []
     if event == "push" or os.environ.get("GITHUB_EVENT_NAME") == "push":
@@ -326,7 +338,9 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         return _finish(checkpoints, "authorization", [reason], seen)
     if isolated_root is None and env.get("A6_LIVE_BACKUP") != BACKUP_AUTHORIZATION:
         return _finish(checkpoints, "authorization", ["backup_not_authorized"], seen)
-    checkpoints.append({"step": "authorization", "hold": "released", "window": True})
+    if isinstance(prior, dict) and prior.get("deployComplete") is True:
+        return _finish(checkpoints, "authorization", ["window_already_complete"], seen)
+    checkpoints.append({"step": "authorization", "window": True})
     if _live_marker(destination) or (isolated_root is not None and _live_marker(isolated_root)):
         return _finish(checkpoints, "backup", ["live_path_refused"], seen)
 
@@ -343,10 +357,19 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
     except DeployError as exc:
         return _finish(checkpoints, "preflight", [str(exc)], seen)
     direct = bool(observation.get("dockerDirect"))
+    meta["vmHostname"] = (observation.get("vm") or {}).get("hostname")
+    if isinstance(prior, dict) and prior.get("vmHostname") and prior.get("vmHostname") != meta["vmHostname"]:
+        return _finish(checkpoints, "preflight", ["checkpoint_incompatible"], seen)
+    if _prior_has(prior, "update_jvm") and not _image_matches(observation, "jvm", jvm_digest):
+        return _finish(checkpoints, "images", ["checkpoint_indeterminate"], seen)
+    if _prior_has(prior, "update_node") and not _image_matches(observation, "node", node_digest):
+        return _finish(checkpoints, "images", ["checkpoint_indeterminate"], seen)
+    if Path(destination).exists() and not _prior_has(prior, "manifest"):
+        return _finish(checkpoints, "backup", ["checkpoint_indeterminate"], seen)
     blocked = preflight(observation)
     if blocked:
         return _finish(checkpoints, "preflight", blocked, seen)
-    checkpoints.append({"step": "preflight"})
+    checkpoints.append({"step": "preflight", "vmHostname": meta.get("vmHostname")})
 
     try:
         images = _images(wrapped, sha, jvm_digest, node_digest, direct)
@@ -357,6 +380,14 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         "jvmArchitecture": images["jvm"].get("architecture"),
         "nodeArchitecture": images["node"].get("architecture"),
     })
+    if hold_gate is not None:
+        try:
+            if hold_gate.read() == "true":
+                hold_gate.release()
+            if hold_gate.read() != "false":
+                return _finish(checkpoints, "node_maintenance", ["hold_release_unconfirmed"], seen)
+        except DeployError as exc:
+            return _finish(checkpoints, "node_maintenance", [str(exc)], seen)
 
     prefix = _prefix(direct)
     try:
@@ -403,113 +434,62 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         "activeOperations": 0,
     })
 
-    stopped_cmd = wrapped(prefix + ["stop", "--time", "30", "odisseu-a6-jvm"])
-    if not _ok(stopped_cmd):
-        return _finish(checkpoints, "stop_jvm", ["docker_failed"], seen, admitted=True, maintenance=True)
-    try:
-        stopped = observe_vm(wrapped)
-    except DeployError as exc:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "stop_jvm", [str(exc)], seen, admitted=True, maintenance=True)
-    if _jvm_running(stopped) is not False:
-        return _finish(checkpoints, "stop_jvm", ["writers_still_running"], seen, admitted=True, maintenance=True)
-    try:
-        _apply_confirmed(stopped, confirmed)
-    except DeployError as exc:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "stop_jvm", [str(exc)], seen, admitted=True, maintenance=True)
-    checkpoints.append({"step": "stop_jvm"})
-    try:
-        exclusive_collection = _collection(stopped)
-    except DeployError as exc:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "exclusive", [str(exc)], seen, admitted=True, maintenance=True)
-    exclusive = assess_observed(exclusive_collection.documents, LIVE_VOLUME, "odisseu-a6-jvm")
-    if not exclusive["exclusive"]:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(
-            checkpoints,
-            "exclusive",
-            [exclusive.get("reason") or "writable_mount_not_exclusive"],
-            seen,
-            admitted=True,
-            maintenance=True,
+    jvm_kept = _prior_has(prior, "update_jvm") and _image_matches(drained, "jvm", jvm_digest)
+    if jvm_kept:
+        kept = _accept_replaced_jvm(checkpoints, destination, drained)
+        if kept is not None:
+            return _finish(checkpoints, "backup", [kept], seen, admitted=True, maintenance=True)
+        stopped = drained
+        backup = {
+            "manifestVerified": True,
+            "sourcePreserved": True,
+            "restoreIsolated": True,
+            "jvmStopped": True,
+        }
+    else:
+        replaced = _stop_and_backup(
+            wrapped, prefix, drained, destination, isolated_root, direct, confirmed, seen, checkpoints,
         )
-    checkpoints.append({"step": "exclusive", "holders": exclusive.get("holders") or []})
-
-    parent = str(Path(destination).resolve().parent)
-    space = wrapped(["df", "-B1", "--output=avail", parent])
-    free_bytes = _avail(_out(space) if _ok(space) else "")
-    if free_bytes is None:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "backup", ["insufficient_space"], seen, admitted=True, maintenance=True)
-    try:
-        source = isolated_root if isolated_root is not None else "/var/lib/docker/volumes/odisseu-a6-cutover-datomic/_data"
-        _separate(source, destination)
-        measured = _bytes(source) if isolated_root is not None else measured_live(wrapped, source)
-        copied = execute_copy(
-            _collection(stopped),
-            drained["vm"],
-            destination,
-            "false",
-            True,
-            BACKUP_AUTHORIZATION,
-            free_bytes,
-            measured,
-            isolated_root=isolated_root,
+        if replaced[0] is not None:
+            return replaced[0]
+        stopped, backup = replaced[1], replaced[2]
+    if jvm_kept:
+        validated = _validate_jvm(wrapped, prefix, direct, checkpoints, seen)
+        if validated is not None:
+            return validated
+    else:
+        update = _update_service(
+            wrapped, stopped, sha, "jvm", jvm_digest, images["jvm"], env, backup, False, direct, seen, checkpoints
         )
-    except (DeployError, ProductionBackupError, OSError) as exc:
-        _restart_old_jvm(wrapped, direct)
-        reason = str(exc) if str(exc) else "backup_not_verified"
-        return _finish(checkpoints, "backup", [reason], seen, admitted=True, maintenance=True)
-    checkpoints.append({
-        "step": "backup",
-        "manifestVerified": True,
-        "sourcePreserved": True,
-        "jvmStopped": True,
-    })
-    try:
-        _reread_manifest(copied["manifest"], destination)
-    except (DeployError, ProductionBackupError, OSError) as exc:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "manifest", [str(exc) or "backup_invalid"], seen, admitted=True, maintenance=True)
-    checkpoints.append({"step": "manifest", "manifestVerified": True})
+        if update is not None:
+            return update
+        validated = _validate_jvm(wrapped, prefix, direct, checkpoints, seen)
+        if validated is not None:
+            return validated
 
-    restore_dir = Path(destination).resolve().parent / "restore-isolated"
-    try:
-        _separate(isolated_root or source, restore_dir)
-        restored = restore_isolated(copied["manifest"], destination, restore_dir)
-    except (DeployError, ProductionBackupError, OSError) as exc:
-        _restart_old_jvm(wrapped, direct)
-        return _finish(checkpoints, "restore_isolated", [str(exc) or "backup_invalid"], seen, admitted=True, maintenance=True)
-    checkpoints.append({"step": "restore_isolated", "restoreIsolated": True, "restoredTo": restored["restored"]})
-
-    backup = {
-        "manifestVerified": True,
-        "sourcePreserved": True,
-        "restoreIsolated": True,
-        "jvmStopped": True,
-    }
-    update = _update_service(
-        wrapped, stopped, sha, "jvm", jvm_digest, images["jvm"], env, backup, False, direct, seen, checkpoints
-    )
-    if update is not None:
-        return update
-    validated = _validate_jvm(wrapped, prefix, direct, checkpoints, seen)
-    if validated is not None:
-        return validated
-
-    node_update = _update_service(
-        wrapped, stopped, sha, "node", node_digest, images["node"], env, backup, True, direct, seen, checkpoints
-    )
-    if node_update is not None:
-        return node_update
+    node_kept = _prior_has(prior, "update_node") and _image_matches(drained, "node", node_digest)
+    if node_kept:
+        checkpoints.append({"step": "update_node", "service": "node", "observed": True, "jvmUntouched": True})
+    else:
+        node_update = _update_service(
+            wrapped, stopped, sha, "node", node_digest, images["node"], env, backup, True, direct, seen, checkpoints
+        )
+        if node_update is not None:
+            return node_update
     whatsapp = wrapped(prefix + ["exec", "odisseu-a6-node", "node", "/app/scripts/healthcheck.js"])
     if not _ready(whatsapp):
         _rollback(wrapped, "node", False, direct)
         return _finish(checkpoints, "validate_whatsapp", ["whatsapp_not_ready"], seen, admitted=True, maintenance=True)
     checkpoints.append({"step": "validate_whatsapp", "whatsapp": "READY", "health": "healthy"})
 
+    if hold_gate is not None:
+        try:
+            hold_gate.restore()
+        except DeployError as exc:
+            return _finish(checkpoints, "resume", [str(exc)], seen, admitted=True, maintenance=True)
+        meta["holdRestored"] = hold_gate.read() == "true"
+        if meta["holdRestored"] is not True:
+            return _finish(checkpoints, "resume", ["hold_not_restored"], seen, admitted=True, maintenance=True)
     if env.get("A6_RESUME_EXPLICIT") != RESUME_PHRASE:
         return _finish(checkpoints, "resume", ["resume_not_explicit"], seen, admitted=True, maintenance=True)
     try:
@@ -578,6 +558,133 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         })
         return _finish(checkpoints, None, [], seen, admitted=True, maintenance=False)
     return _finish(checkpoints, "validate_game", ["game_not_ready"], seen, admitted=True, maintenance=False)
+
+
+def _prior_has(prior, step):
+    steps = prior.get("steps") if isinstance(prior, dict) else None
+    return isinstance(steps, list) and step in steps
+
+
+def _image_matches(observation, service, digest):
+    seen = str((observation.get(service) or {}).get("imageId") or "")
+    if seen.startswith("sha256:"):
+        seen = seen[7:]
+    expected = str(digest).split("sha256:")[-1]
+    return bool(expected) and seen == expected and (observation.get(service) or {}).get("health") == "healthy"
+
+
+def _reuse_verified_backup(destination):
+    destination = Path(destination)
+    manifest = destination.parent / "backup-manifest.txt"
+    if not destination.is_dir() or not manifest.is_file():
+        raise DeployError("checkpoint_indeterminate")
+    _reread_manifest(manifest, destination)
+    return {"manifest": str(manifest)}
+
+
+def _accept_replaced_jvm(checkpoints, destination, drained):
+    try:
+        copied = _reuse_verified_backup(destination)
+        _reread_manifest(copied["manifest"], Path(destination).resolve().parent / "restore-isolated")
+        collection = _collection(drained)
+    except (DeployError, OSError) as exc:
+        return str(exc) or "checkpoint_indeterminate"
+    exclusive = assess_observed(collection.documents, LIVE_VOLUME, "odisseu-a6-jvm")
+    if not exclusive["exclusive"]:
+        return exclusive.get("reason") or "writable_mount_not_exclusive"
+    checkpoints.append({"step": "stop_jvm", "observed": "jvm_already_replaced"})
+    checkpoints.append({"step": "exclusive", "holders": exclusive.get("holders") or []})
+    checkpoints.append({
+        "step": "backup",
+        "manifestVerified": True,
+        "sourcePreserved": True,
+        "jvmStopped": True,
+        "reused": True,
+    })
+    checkpoints.append({"step": "manifest", "manifestVerified": True, "reused": True})
+    checkpoints.append({"step": "restore_isolated", "restoreIsolated": True, "reused": True})
+    checkpoints.append({"step": "update_jvm", "service": "jvm", "observed": True, "mountsPreserved": True})
+    return None
+
+
+def _stop_and_backup(wrapped, prefix, drained, destination, isolated_root, direct, confirmed, seen, checkpoints):
+    stopped_cmd = wrapped(prefix + ["stop", "--time", "30", "odisseu-a6-jvm"])
+    if not _ok(stopped_cmd):
+        return _finish(checkpoints, "stop_jvm", ["docker_failed"], seen, admitted=True, maintenance=True), None, None
+    try:
+        stopped = observe_vm(wrapped)
+    except DeployError as exc:
+        _restart_old_jvm(wrapped, direct)
+        return _finish(checkpoints, "stop_jvm", [str(exc)], seen, admitted=True, maintenance=True), None, None
+    if _jvm_running(stopped) is not False:
+        return _finish(checkpoints, "stop_jvm", ["writers_still_running"], seen, admitted=True, maintenance=True), None, None
+    try:
+        _apply_confirmed(stopped, confirmed)
+    except DeployError as exc:
+        _restart_old_jvm(wrapped, direct)
+        return _finish(checkpoints, "stop_jvm", [str(exc)], seen, admitted=True, maintenance=True), None, None
+    checkpoints.append({"step": "stop_jvm"})
+    try:
+        exclusive_collection = _collection(stopped)
+    except DeployError as exc:
+        _restart_old_jvm(wrapped, direct)
+        return _finish(checkpoints, "exclusive", [str(exc)], seen, admitted=True, maintenance=True), None, None
+    exclusive = assess_observed(exclusive_collection.documents, LIVE_VOLUME, "odisseu-a6-jvm")
+    if not exclusive["exclusive"]:
+        _restart_old_jvm(wrapped, direct)
+        return _finish(
+            checkpoints, "exclusive", [exclusive.get("reason") or "writable_mount_not_exclusive"], seen,
+            admitted=True, maintenance=True,
+        ), None, None
+    checkpoints.append({"step": "exclusive", "holders": exclusive.get("holders") or []})
+    parent = str(Path(destination).resolve().parent)
+    space = wrapped(["df", "-B1", "--output=avail", parent])
+    free_bytes = _avail(_out(space) if _ok(space) else "")
+    if free_bytes is None:
+        _restart_old_jvm(wrapped, direct)
+        return _finish(checkpoints, "backup", ["insufficient_space"], seen, admitted=True, maintenance=True), None, None
+    try:
+        source = isolated_root if isolated_root is not None else "/var/lib/docker/volumes/odisseu-a6-cutover-datomic/_data"
+        _separate(source, destination)
+        if Path(destination).exists() and (Path(destination).parent / "backup-manifest.txt").is_file():
+            copied = _reuse_verified_backup(destination)
+        else:
+            measured = _bytes(source) if isolated_root is not None else measured_live(wrapped, source)
+            copied = execute_copy(
+                _collection(stopped), drained["vm"], destination, "false", True, BACKUP_AUTHORIZATION,
+                free_bytes, measured, isolated_root=isolated_root,
+            )
+            _reread_manifest(copied["manifest"], destination)
+    except (DeployError, ProductionBackupError, OSError) as exc:
+        _restart_old_jvm(wrapped, direct)
+        reason = str(exc) if str(exc) else "backup_not_verified"
+        return _finish(checkpoints, "backup", [reason], seen, admitted=True, maintenance=True), None, None
+    checkpoints.append({
+        "step": "backup",
+        "manifestVerified": True,
+        "sourcePreserved": True,
+        "jvmStopped": True,
+    })
+    checkpoints.append({"step": "manifest", "manifestVerified": True})
+    restore_dir = Path(destination).resolve().parent / "restore-isolated"
+    try:
+        if restore_dir.exists():
+            _reread_manifest(copied["manifest"], restore_dir)
+            restored = {"restored": str(restore_dir)}
+        else:
+            _separate(isolated_root or source, restore_dir)
+            restored = restore_isolated(copied["manifest"], destination, restore_dir)
+    except (DeployError, ProductionBackupError, OSError) as exc:
+        _restart_old_jvm(wrapped, direct)
+        return _finish(checkpoints, "restore_isolated", [str(exc) or "backup_invalid"], seen, admitted=True, maintenance=True), None, None
+    checkpoints.append({"step": "restore_isolated", "restoreIsolated": True, "restoredTo": restored["restored"]})
+    backup = {
+        "manifestVerified": True,
+        "sourcePreserved": True,
+        "restoreIsolated": True,
+        "jvmStopped": True,
+    }
+    return None, stopped, backup
 
 
 def _apply_confirmed(observation, confirmed):
