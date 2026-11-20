@@ -165,15 +165,40 @@ merge, deploy ou ativação de CI/CD legado foi executada.
 
 ## Procedimentos operacionais preparados
 
-O provisionamento é uma operação administrativa separada. O operador cria um
-tar do commit revisado, confere seu SHA-256 fora da VM e o disponibiliza ao
-administrador em caminho root-owned. O comando é:
+O provisionamento requer autorização administrativa separada após o merge.
+Antes da instalação, revalide a identidade GCE de `odisseu-core` em
+`us-central1-a` (instance ID `8264769050613851592`), hold `true` no GitHub,
+containers healthy, WhatsApp READY, imagens anteriores preservadas e ausência
+de manutenção.
+
+O bundle USTAR de `f9191d96dd087e86625f3c5af686fc0a8e5735b4` tem SHA-256
+`7098b5dfc62ce6da118926404b1b5e0d27723023a7e5c7e7981fe38353b60cfb`.
+Ele substitui a aprovação do hash
+`6d6bb90588bec55348e79dbe4073974947be2ed90d6b0053add536015f9b5e23`,
+cujo tar continha cabeçalhos PAX.
+
+A allowlist inclui `a6-root-backup` (entry point),
+`a6_root_backup.py` (helper), `a6_production_backup.py` (cópia e manifesto),
+`a6_production_contract.py` (contrato de produção),
+`a6_production_deploy.py` (observação GCE e funções compartilhadas),
+`a6_mount_policy.py` (política de mounts), `a6_writer_policy.py` (inventário
+de writers) e `chromium-seccomp.json` (perfil instalado). O validador exige
+USTAR plano com arquivos regulares, até 16 MiB por arquivo e 64 MiB no total.
+A leitura do tar é limitada a 64 MiB mais 64 KiB de estrutura e padding.
+
+O administrador copia o script e o validador do commit revisado para
+`/root/a6-installer` (`root:root 0700`), com arquivos `root:root 0600`.
+Antes de chamar Bash, confere os dois arquivos contra os hashes calculados
+fora da VM a partir do commit revisado e confere o hash do bundle. Use uma
+sessão administrativa confiável e Python 3 já disponível em `/usr/bin/python3`.
 
 ```bash
-sudo A6_ADMIN_BUNDLE=/root/a6-admin-<sha>.tar \
-  A6_ADMIN_BUNDLE_SHA256=<sha256-do-tar-conferido> \
+/usr/bin/env -i A6_ADMIN_BUNDLE=/root/a6-admin-ustar.tar \
+  A6_ADMIN_BUNDLE_SHA256=7098b5dfc62ce6da118926404b1b5e0d27723023a7e5c7e7981fe38353b60cfb \
+  A6_PROVISIONER_SHA256="SHA256_DO_SCRIPT_REVISADO" \
+  A6_ADMIN_VALIDATOR_SHA256="SHA256_DO_VALIDADOR_REVISADO" \
   A6_NODE_SECCOMP_SHA256=4e4980dbebe8f2853a3e1df17489a00cf027237bfc044516e4b7e84fc610fa10 \
-  bash /caminho-verificado/a6-provision-admin.sh
+  /bin/bash /root/a6-installer/a6-provision-admin.sh
 ```
 
 Ele instala somente o helper e seus módulos em `/usr/local/lib/odisseu-a6`, o
