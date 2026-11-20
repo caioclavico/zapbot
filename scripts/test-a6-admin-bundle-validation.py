@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Negative coverage for the pre-extraction A6 administrative bundle gate."""
+import hashlib
 import io
 import json
-import os
 import pathlib
 import shutil
 import subprocess
@@ -46,29 +46,32 @@ class AdministrativeBundleValidationTest(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def validate(self, archive):
-        digest = subprocess.check_output(["sha256sum", str(archive)], text=True).split()[0]
+    def validate(self, archive, digest=None):
+        if digest is None:
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         return subprocess.run(
             ["python3", str(VALIDATOR), "--bundle", str(archive), "--sha256", digest,
              "--stage-parent", str(self.stage_parent)],
             text=True, capture_output=True,
         )
 
-    def assert_rejected_without_staging(self, archive):
+    def assert_rejected_without_staging(self, archive, digest=None):
         before = list(self.stage_parent.iterdir())
-        result = self.validate(archive)
+        result = self.validate(archive, digest)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(before, list(self.stage_parent.iterdir()))
         self.assertFalse((self.root / "escape").exists())
 
-    def test_valid_archive_is_snapshotted_only_after_validation(self):
+    def test_valid_archive_is_extracted_only_after_validation(self):
         archive = self.root / "valid.tar"
         make_archive(archive)
         result = self.validate(archive)
         self.assertEqual(result.returncode, 0, result.stderr)
         stage = pathlib.Path(json.loads(result.stdout)["stage"])
-        self.assertEqual({item.name for item in stage.iterdir()}, {"bundle.tar"})
-        self.assertEqual(oct((stage / "bundle.tar").stat().st_mode & 0o777), "0o600")
+        self.assertEqual({item.name for item in stage.iterdir()}, set(EXPECTED))
+        for name in EXPECTED:
+            self.assertEqual((stage / name).read_bytes(), b"x")
+            self.assertEqual((stage / name).stat().st_mode & 0o777, 0o600)
         shutil.rmtree(stage)
 
     def test_rejects_unknown_missing_duplicate_and_macos_entries(self):
@@ -93,7 +96,7 @@ class AdministrativeBundleValidationTest(unittest.TestCase):
     def test_rejects_unsafe_paths_and_special_members(self):
         cases = {
             "traversal": lambda a: add_member(a, "../escape"),
-            "absolute": lambda a: add_member(a, "/escape"),
+            "absolute": lambda a: add_member(a, str(self.root / "escape")),
         }
         for label, mutation in cases.items():
             with self.subTest(label=label):
@@ -101,7 +104,7 @@ class AdministrativeBundleValidationTest(unittest.TestCase):
                 make_archive(archive, mutation)
                 self.assert_rejected_without_staging(archive)
         replacements = {
-            "symlink": (tarfile.SYMTYPE, 0, "/escape"),
+            "symlink": (tarfile.SYMTYPE, 0, str(self.root / "escape")),
             "hardlink": (tarfile.LNKTYPE, 0, EXPECTED[1]),
             "fifo": (tarfile.FIFOTYPE, 0, ""),
             "device": (tarfile.CHRTYPE, 0, ""),
@@ -115,6 +118,14 @@ class AdministrativeBundleValidationTest(unittest.TestCase):
         with tarfile.open(archive, "w", format=tarfile.PAX_FORMAT, pax_headers={"comment": "forbidden"}) as out:
             for name in EXPECTED:
                 add_member(out, name)
+        self.assert_rejected_without_staging(archive)
+
+    def test_rejects_digest_mismatch_and_data_after_terminator(self):
+        archive = self.root / "valid.tar"
+        make_archive(archive)
+        self.assert_rejected_without_staging(archive, "0" * 64)
+        with archive.open("ab") as output:
+            output.write(b"x" + bytes(511))
         self.assert_rejected_without_staging(archive)
 
     def test_rejects_truncation_corruption_and_oversized_member(self):

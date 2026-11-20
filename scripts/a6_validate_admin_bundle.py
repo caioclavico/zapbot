@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and snapshot the fixed-format A6 administrative bundle.
+"""Validate and extract the fixed-format A6 administrative bundle.
 
 This intentionally understands only the tiny USTAR subset emitted for the
 bundle.  Supporting PAX/GNU extensions would make the path policy ambiguous,
@@ -18,6 +18,8 @@ import tempfile
 BLOCK = 512
 MAX_MEMBER_BYTES = 16 * 1024 * 1024
 MAX_TOTAL_BYTES = 64 * 1024 * 1024
+MAX_ARCHIVE_BYTES = MAX_TOTAL_BYTES + 64 * 1024
+ZERO_BLOCK = bytes(BLOCK)
 EXPECTED = {
     "a6-root-backup",
     "a6_root_backup.py",
@@ -34,85 +36,53 @@ class InvalidBundle(Exception):
     pass
 
 
-def _read_exact(stream, count):
-    value = stream.read(count)
-    if len(value) != count:
-        raise InvalidBundle("archive truncated")
-    return value
-
-
 def _octal(field, label):
     value = field.rstrip(b"\0 ")
-    if not value or not re.fullmatch(rb"[0-7]+", value):
+    if not re.fullmatch(rb"[0-7]+", value):
         raise InvalidBundle(f"invalid {label}")
     return int(value, 8)
 
 
-def _name(field, label):
-    value = field.split(b"\0", 1)[0]
-    try:
-        return value.decode("ascii")
-    except UnicodeDecodeError as error:
-        raise InvalidBundle(f"non-ASCII {label}") from error
-
-
-def _header_checksum(header):
-    expected = _octal(header[148:156], "header checksum")
-    actual = sum(header[:148]) + (32 * 8) + sum(header[156:])
-    if actual != expected:
-        raise InvalidBundle("header checksum mismatch")
-
-
-def _validate_stream(stream):
-    seen = set()
-    total = 0
-    zero_blocks = 0
-    while True:
-        header = _read_exact(stream, BLOCK)
-        if header == b"\0" * BLOCK:
-            zero_blocks += 1
-            if zero_blocks == 2:
-                trailing = stream.read()
-                if trailing.strip(b"\0"):
-                    raise InvalidBundle("data after archive terminator")
-                break
-            continue
-        if zero_blocks:
-            raise InvalidBundle("single zero block inside archive")
-        _header_checksum(header)
-        name = _name(header[:100], "member name")
-        prefix = _name(header[345:500], "member prefix")
-        member_type = header[156:157]
-        link_name = _name(header[157:257], "link name")
-        if prefix or member_type not in (b"\0", b"0") or link_name:
-            raise InvalidBundle("unsupported tar member type or extension")
-        if not name or name.startswith("/") or "/" in name or name in (".", "..") or ".." in name.split("/"):
-            raise InvalidBundle("unsafe member path")
-        if name.startswith("._") or name == "__MACOSX" or name.startswith("__MACOSX/"):
-            raise InvalidBundle("macOS metadata is forbidden")
-        if name not in EXPECTED:
-            raise InvalidBundle("unknown member")
-        if name in seen:
-            raise InvalidBundle("duplicate member")
-        size = _octal(header[124:136], "member size")
-        if size > MAX_MEMBER_BYTES or total + size > MAX_TOTAL_BYTES:
-            raise InvalidBundle("archive size limit exceeded")
-        _read_exact(stream, ((size + BLOCK - 1) // BLOCK) * BLOCK)
-        seen.add(name)
-        total += size
-    if seen != EXPECTED:
-        raise InvalidBundle("bundle allowlist is incomplete")
-
-
-def _digest_and_validate(fd, expected):
-    fd.seek(0)
-    digest = hashlib.sha256()
-    while chunk := fd.read(1024 * 1024):
-        digest.update(chunk)
-    if digest.hexdigest() != expected:
+def validate(data, expected):
+    if hashlib.sha256(data).hexdigest() != expected:
         raise InvalidBundle("bundle SHA-256 mismatch")
-    fd.seek(0)
-    _validate_stream(fd)
+    if len(data) > MAX_ARCHIVE_BYTES or len(data) % BLOCK:
+        raise InvalidBundle("invalid archive length")
+
+    members = {}
+    offset = total = 0
+    while offset + 2 * BLOCK <= len(data):
+        header = data[offset:offset + BLOCK]
+        if header == ZERO_BLOCK:
+            if len(data) - offset < 2 * BLOCK or any(data[offset:]):
+                raise InvalidBundle("invalid archive terminator")
+            if members.keys() != EXPECTED:
+                raise InvalidBundle("bundle allowlist is incomplete")
+            return members
+
+        checksum = _octal(header[148:156], "header checksum")
+        if checksum != sum(header[:148] + b" " * 8 + header[156:]):
+            raise InvalidBundle("header checksum mismatch")
+        if (header[257:265] != b"ustar\0" + b"00"
+                or header[156:157] != b"0"
+                or any(header[157:257]) or any(header[345:512])):
+            raise InvalidBundle("unsupported tar header, member type or extension")
+        for start, end in ((100, 108), (108, 116), (116, 124), (136, 148)):
+            _octal(header[start:end], "header metadata")
+        name = header[:100].rstrip(b"\0").decode("ascii")
+        if name not in EXPECTED or name in members:
+            raise InvalidBundle("unknown, unsafe or duplicate member")
+        size = _octal(header[124:136], "member size")
+        total += size
+        if size > MAX_MEMBER_BYTES or total > MAX_TOTAL_BYTES:
+            raise InvalidBundle("archive size limit exceeded")
+        start = offset + BLOCK
+        end = start + size
+        offset = start + ((size + BLOCK - 1) // BLOCK) * BLOCK
+        if offset > len(data) or any(data[end:offset]):
+            raise InvalidBundle("truncated member or invalid padding")
+        members[name] = memoryview(data)[start:end]
+    raise InvalidBundle("missing archive terminator")
 
 
 def main():
@@ -123,32 +93,27 @@ def main():
     arguments = parser.parse_args()
     if not re.fullmatch(r"[0-9a-f]{64}", arguments.sha256):
         raise InvalidBundle("invalid expected SHA-256")
-    descriptor = os.open(arguments.bundle, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    try:
-        source_stat = os.fstat(descriptor)
-        if not stat.S_ISREG(source_stat.st_mode):
+    descriptor = os.open(arguments.bundle, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
             raise InvalidBundle("bundle is not a regular file")
-        with os.fdopen(descriptor, "rb", closefd=False) as source:
-            _digest_and_validate(source, arguments.sha256)
-            stage = tempfile.mkdtemp(prefix="odisseu-a6-admin.", dir=arguments.stage_parent)
-            os.chmod(stage, 0o700)
-            snapshot = os.path.join(stage, "bundle.tar")
-            with open(snapshot, "xb") as destination:
-                source.seek(0)
-                shutil.copyfileobj(source, destination, 1024 * 1024)
-                destination.flush()
-                os.fsync(destination.fileno())
-            os.chmod(snapshot, 0o600)
-        with open(snapshot, "rb") as copied:
-            _digest_and_validate(copied, arguments.sha256)
+        data = source.read(MAX_ARCHIVE_BYTES + 1)
+    members = validate(data, arguments.sha256)
+    stage = tempfile.mkdtemp(prefix="odisseu-a6-admin.", dir=arguments.stage_parent)
+    try:
+        for name, contents in members.items():
+            path = os.path.join(stage, name)
+            with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as output:
+                output.write(contents)
         print(json.dumps({"stage": stage}, separators=(",", ":")))
-    finally:
-        os.close(descriptor)
+    except BaseException:
+        shutil.rmtree(stage)
+        raise
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (InvalidBundle, OSError) as error:
+    except (InvalidBundle, OSError, UnicodeError) as error:
         print(f"invalid administrative bundle: {error}", file=sys.stderr)
         sys.exit(2)

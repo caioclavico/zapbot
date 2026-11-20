@@ -2,18 +2,27 @@
 # Executado somente no container AMD64 descartável pelo harness de operações.
 set -euo pipefail
 
+# The Python base image installs its interpreter in /usr/local/bin.
+if [[ ! -x /usr/bin/python3 ]]; then
+  ln -s /usr/local/bin/python3 /usr/bin/python3
+fi
+
 test_root=/root/a6-admin-fixture
 mkdir -p "$test_root"
-tar -C /work/scripts -cf "$test_root/admin.tar" \
+installer="$test_root/installer"
+install -d -o root -g root -m 0700 "$installer"
+install -o root -g root -m 0700 /work/scripts/a6-provision-admin.sh "$installer/a6-provision-admin.sh"
+install -o root -g root -m 0600 /work/scripts/a6_validate_admin_bundle.py "$installer/a6_validate_admin_bundle.py"
+tar --format=ustar -C /work/scripts -cf "$test_root/admin.tar" \
   a6-root-backup a6_root_backup.py a6_production_backup.py a6_production_contract.py \
   a6_production_deploy.py a6_mount_policy.py a6_writer_policy.py
-tar -C /work/docker -rf "$test_root/admin.tar" chromium-seccomp.json
+tar --format=ustar -C /work/docker -rf "$test_root/admin.tar" chromium-seccomp.json
 bundle_sha="$(sha256sum "$test_root/admin.tar" | awk '{print $1}')"
 A6_ADMIN_BUNDLE="$test_root/admin.tar" A6_ADMIN_BUNDLE_SHA256="$bundle_sha" \
   A6_NODE_SECCOMP_SHA256="$(sha256sum /work/docker/chromium-seccomp.json | awk '{print $1}')" \
-  A6_PROVISIONER_SHA256="$(sha256sum /work/scripts/a6-provision-admin.sh | awk '{print $1}')" \
-  A6_ADMIN_VALIDATOR_SHA256="$(sha256sum /work/scripts/a6_validate_admin_bundle.py | awk '{print $1}')" \
-  bash /work/scripts/a6-provision-admin.sh
+  A6_PROVISIONER_SHA256="$(sha256sum "$installer/a6-provision-admin.sh" | awk '{print $1}')" \
+  A6_ADMIN_VALIDATOR_SHA256="$(sha256sum "$installer/a6_validate_admin_bundle.py" | awk '{print $1}')" \
+  bash "$installer/a6-provision-admin.sh"
 
 useradd --create-home --shell /bin/sh caioclavico
 su -s /bin/sh caioclavico -c 'sudo -n /usr/local/libexec/odisseu-a6/a6-root-backup --preflight fixture' \
