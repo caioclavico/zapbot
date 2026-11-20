@@ -6,7 +6,10 @@
   bloqueadas — só o ativo combate; faint = fora. Dano aplica efetividade."
   (:require [clojure.string :as str]
             [pokemon.domain.battle :as battle]
+            [pokemon.domain.damage :as dmg]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.mechanics :as mechanics]
+            [pokemon.domain.move-effects :as move-effects]
             [pokemon.domain.gym :as gym]
             [pokemon.domain.rng :as rng]
             [pokemon.domain.types :as types]))
@@ -627,6 +630,72 @@
       ;; Sem avancar-party: treinador eliminado; slots legados preservados em 0 no ativo.
       (sync-active (assoc part' :party slots' :hp 0)))))
 
+(defn- preparar-golpe-raid
+  "Estado temporário no EDN do participante e do chefe. Não abre golpe de
+  status novo: só dano, proteção, carga e recarga."
+  [raid part golpe rng]
+  (let [vol (or (:volatil part) {})
+        chefe (or (:chefe raid) {})
+        hp-max (long (or (:hp-max raid) (:hp-chefe raid) 1))
+        hp0 (long (:hp-chefe raid 0))
+        dot (if (and (= :envenenado-grave (:status chefe)) (pos? hp0))
+              (mechanics/dano-veneno-grave hp-max (long (:contador chefe 1)))
+              0)
+        res (when (and (:residual chefe) (pos? hp0))
+              (mechanics/dano-residual hp-max))
+        hp1 (max 0 (- hp0 dot (long (or res 0))))
+        chefe (cond-> chefe
+                (pos? dot) (update :contador (fnil inc 1)))
+        chefe (if (and res (<= (dec (long (get-in chefe [:residual :restante] 1))) 0))
+                (dissoc chefe :residual)
+                (cond-> chefe
+                  res (update-in [:residual :restante] #(dec (long (or % 1))))))
+        msgs (cond-> []
+               (pos? dot) (conj (str "☠️ O veneno grave causou " dot " de dano!"))
+               res (conj (str "🌀 A armadilha causou " res " de dano!")))
+        carga (:carga vol)
+        base {:hp hp1 :chefe chefe}]
+    (cond
+      (zero? hp1)
+      (assoc base :part (assoc part :volatil vol) :dano 0 :acertos 1 :revide 0
+             :mensagem (when (seq msgs) (str/join "\n" msgs)))
+
+      (:recarga? vol)
+      (assoc base :part (assoc part :volatil (dissoc vol :recarga?))
+             :dano 0 :acertos 1 :revide :normal
+             :mensagem (str/join "\n" (conj msgs "⏳ O Pokémon precisa recarregar e perdeu a ação!")))
+
+      (and carga (= (:slug carga) (:slug golpe)))
+      (assoc base :part (assoc part :volatil (dissoc vol :carga))
+             :golpe (:golpe carga) :calcular? true
+             :mensagem (when (seq msgs) (str/join "\n" msgs)))
+
+      (= :preparacao (:familia golpe))
+      (assoc base :part (assoc part :volatil
+                               (assoc vol :carga {:slug (:slug golpe) :golpe golpe}))
+             :dano 0 :acertos 1 :revide :normal
+             :mensagem (str/join "\n" (conj msgs "✨ O Pokémon está se preparando!")))
+
+      (= :protecao (:familia golpe))
+      (let [ok? (< (rng/roll rng :protecao 100)
+                   (mechanics/chance-protecao (long (:protecao-seguidas vol 0))))]
+        (if ok?
+          (assoc base :part (assoc part :volatil (update vol :protecao-seguidas (fnil inc 0)))
+                 :dano 0 :acertos 1 :revide 0
+                 :mensagem (str/join "\n" (conj msgs "🛡️ Proteção bloqueou o ataque!")))
+          (assoc base :part (assoc part :volatil (assoc vol :protecao-seguidas 0))
+                 :dano 0 :acertos 1 :revide :normal
+                 :mensagem (str/join "\n" (conj msgs "⚠️ A proteção falhou!")))))
+
+      :else
+      (let [chance (dmg/chance-acerto (:precisao golpe) {} {} (:ignora-precisao golpe))
+            errou? (and chance (< chance 100)
+                       (>= (rng/roll rng :accuracy 100) chance))]
+        (assoc base :part (assoc part :volatil vol)
+               :calcular? (not errou?) :errou? errou?
+               :dano (when errou? 0) :acertos 1
+               :mensagem (when (seq msgs) (str/join "\n" msgs)))))))
+
 (defn atacar
   "Aplica um ataque. Retorna {:raid :dano :revide :venceu? :derrota? :multiplicador
    :trocou? :golpe :variacao-pct :base-variada}.
@@ -649,24 +718,39 @@
      (throw (err/error :raid_not_your_turn {:vez (:vez raid) :player-id player-id})))
    (let [part (get-in raid [:participantes player-id])
          pokemon (:pokemon part)
-         golpes (mapv battle/golpe-normalizado (or (:golpes pokemon) []))
+         golpes (mapv #(move-effects/enriquecer (battle/golpe-normalizado %))
+                     (or (:golpes pokemon) []))
          golpe (when (and (integer? move-index) (<= 0 move-index 3)
                           (< move-index (count golpes)))
                  (nth golpes move-index))]
-     (when-not (golpe-dano? golpe)
+     (when-not (or (golpe-dano? golpe) (= :protecao (:familia golpe)))
        (throw (err/error :invalid_raid_move {:move-index move-index})))
-     (let [hp-chefe-antes (long (:hp-chefe raid 0))
-           calc (calcular-dano golpe pokemon raid rng)
-           dano (:dano calc)
-           multiplicador (:multiplicador calc)
-           base (:base calc)
-           ;; Autodesmaio (Explosion): após hit válido, HP do ativo → 0.
-           autodesmaio? (boolean (or (:autodesmaio golpe) (get golpe "autodesmaio")))
+     (let [prep (preparar-golpe-raid raid part golpe rng)
+           golpe (or (:golpe prep) golpe)
+           hp-chefe-antes (long (:hp prep))
+           calcular? (:calcular? prep)
+           acertos (if (and calcular? (:max-acertos golpe))
+                     (mechanics/rolar-acertos (long (:min-acertos golpe 1))
+                                              (long (:max-acertos golpe))
+                                              rng)
+                     (long (:acertos prep 1)))
+           calc (when calcular? (calcular-dano golpe pokemon raid rng))
+           dano (if calcular?
+                  (min hp-chefe-antes (* acertos (long (:dano calc))))
+                  (long (:dano prep 0)))
+           multiplicador (if calc (:multiplicador calc) 1)
+           base (when calc (:base calc))
+           autodesmaio? (boolean (and calcular?
+                                      (or (:autodesmaio golpe) (get golpe "autodesmaio"))))
            hp' (max 0 (- hp-chefe-antes dano))
            venceu? (zero? hp')
            max-hp-ativo (long (or (:hp pokemon) (get pokemon "hp") 100))
-           revide (if venceu? 0 (max 1 (long (Math/ceil (/ (double max-hp-ativo) 5)))))
-           part-apos-dano (-> part
+           revide (cond
+                    venceu? 0
+                    (= 0 (:revide prep)) 0
+                    :else (max 1 (long (Math/ceil (/ (double max-hp-ativo) 5)))))
+           part-base (or (:part prep) part)
+           part-apos-dano (-> part-base
                               (update :dano #(+ (long %) dano))
                               (aplicar-revide-part revide))
            part-final (if (and autodesmaio? (not venceu?) (pos? dano))
@@ -675,9 +759,21 @@
                           (sync-active (assoc part-apos-dano :party slots' :hp 0)))
                         part-apos-dano)
            part-final (dissoc part-final :trocou-por-desmaio?)
+           part-final (cond-> part-final
+                        (and calcular? (pos? dano) (= :recarga (:familia golpe)))
+                        (assoc-in [:volatil :recarga?] true))
+           chefe (or (:chefe prep) (:chefe raid))
+           chefe (cond-> chefe
+                   (and calcular? (pos? dano) (= :residual (:familia golpe)))
+                   (assoc :residual {:restante (long (:turnos-max golpe 4))})
+                   (and calcular? (pos? dano)
+                        (= :envenenado-grave (:status-causado golpe))
+                        (not (mechanics/imune-a-status?
+                              :envenenado-grave (:tipos chefe))))
+                   (assoc :status :envenenado-grave :contador 1))
            eliminado? (not (participante-vivo? part-final))
            raid' (-> raid
-                     (assoc :hp-chefe hp')
+                     (assoc :hp-chefe hp' :chefe chefe)
                      (assoc-in [:participantes player-id] part-final)
                      (update :turn-index (fnil inc 0)))
            proxima (when-not venceu? (proxima-vez raid' player-id))
@@ -693,6 +789,9 @@
                                  :expira (+ (long agora) duracao-combate)))]
        {:raid raid''
         :dano dano
+        :acertos acertos
+        :errou? (boolean (:errou? prep))
+        :mensagem (:mensagem prep)
         :multiplicador multiplicador
         :base base
         :base-variada (:base-variada calc)

@@ -202,7 +202,8 @@
 (defn cura-status-item
   "Item-id que cura o status dado, ou nil."
   [status]
-  (let [st (some-> status str str/lower-case)]
+  (let [st (some-> status str str/lower-case)
+        st (if (= st "envenenado-grave") "envenenado" st)]
     (some (fn [[id s]] (when (= s st) id)) status-cura)))
 
 (defn aplicar-pocao

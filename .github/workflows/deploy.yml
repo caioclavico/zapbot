@@ -19,6 +19,17 @@ on:
         options: [both, odisseu, pokemon]
         default: both
         required: true
+      a6_service:
+        description: Serviço A6. none não seleciona Node nem JVM.
+        type: choice
+        options: [none, node, jvm]
+        default: none
+        required: true
+      production_authorization:
+        description: Texto exato autorizar-producao-a6 para uma operação manual
+        type: string
+        required: false
+        default: ""
 
 # Build/PR jobs receive no production credentials. Only publication grants write.
 permissions:
@@ -74,9 +85,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Validate syntax, selection, preservation and isolated rollback
         run: |
-          bash -n scripts/deploy-vm.sh scripts/load-image-vm.sh scripts/install-deploy.sh scripts/ci-ssh-deploy.sh
+          bash -n scripts/deploy-vm.sh scripts/load-image-vm.sh scripts/install-deploy.sh scripts/ci-ssh-deploy.sh scripts/resolve-gce-instance.sh scripts/a6-delivery.sh scripts/ci-a6-deliver.sh
           python3 scripts/test-ci-changes.py
           python3 scripts/test-ci-ssh.py
+          python3 scripts/test-production-deploy-hold.py
+          python3 scripts/test-a6-delivery.py
+          python3 scripts/test-a6-datomic-writers.py
+          python3 scripts/test-resolve-gce-instance.py
           node --test scripts/test-ci-registry.cjs test/odisseu-legacy-stop.test.cjs
           python3 scripts/test-deploy.py
           python3 scripts/test-deploy-recovery.py
@@ -190,7 +205,11 @@ jobs:
       needs.deployment-tests.result == 'success' &&
       (needs.test-odisseu.result == 'success' || needs.test-odisseu.result == 'skipped') &&
       (needs.test-pokemon.result == 'success' || needs.test-pokemon.result == 'skipped') &&
-      github.event_name != 'pull_request' && github.ref == 'refs/heads/master' && inputs.operation != 'rollback'
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' &&
+      inputs.operation != 'rollback' && inputs.operation != 'check' &&
+      inputs.production_authorization == 'autorizar-producao-a6' &&
+      vars.ODISSEU_PRODUCTION_DEPLOY_HOLD == 'false' &&
+      vars.ODISSEU_A6_DELIVERY_VALIDATED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
@@ -312,35 +331,52 @@ jobs:
           printf '%s@%s\n' "$IMAGE_TAG" "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
 
   deploy-odisseu:
-    name: ${{ inputs.operation || 'deploy' }} Odisseu
+    name: ${{ inputs.operation || 'deploy' }} Odisseu ${{ matrix.service }}
     needs: [changes, publish]
+    # Fail closed. Push never deploys. Hold ausente ou diferente de false bloqueia.
+    # A entrega A6 também exige validação explícita, que esta revisão não liga.
     if: >-
-      inputs.operation != 'check' && always() && needs.changes.result == 'success' && needs.changes.outputs.odisseu == 'true' &&
+      github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/master' &&
-      ((github.event_name == 'push' && vars.AUTO_DEPLOY_ENABLED == 'true' && needs.publish.result == 'success') ||
-       (github.event_name == 'workflow_dispatch' && (inputs.operation == 'rollback' || needs.publish.result == 'success')))
+      inputs.operation != 'check' &&
+      inputs.production_authorization == 'autorizar-producao-a6' &&
+      inputs.a6_service == matrix.service &&
+      always() && needs.changes.result == 'success' && needs.changes.outputs.odisseu == 'true' &&
+      vars.ODISSEU_PRODUCTION_DEPLOY_HOLD == 'false' &&
+      vars.ODISSEU_A6_DELIVERY_VALIDATED == 'true' &&
+      (inputs.operation == 'rollback' || needs.publish.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 50
     environment: production
     concurrency:
-      group: production-odisseu
+      group: production-odisseu-${{ matrix.service }}
       cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [node, jvm]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Request scoped deployment over verified SSH
+      - name: Resolve the VM by project, zone and name
+        id: vm
+        env:
+          ODISSEU_GCP_PROJECT: ${{ vars.ODISSEU_GCP_PROJECT }}
+          ODISSEU_GCP_ZONE: ${{ vars.ODISSEU_GCP_ZONE }}
+          ODISSEU_GCP_INSTANCE: ${{ vars.ODISSEU_GCP_INSTANCE }}
+        run: bash scripts/resolve-gce-instance.sh
+      - name: Refuse live apply until delivery is armed in a later revision
         id: remote
         env:
           DEPLOY_SERVICE: odisseu
           DEPLOY_OPERATION: ${{ inputs.operation || 'deploy' }}
-          SSH_HOST: '35.238.24.225'
-          SSH_USER: 'zapbot-deploy'
-          SSH_PORT: ${{ vars.ODISSEU_SSH_PORT || '22' }}
-          SSH_KEY: ${{ secrets.ODISSEU_SSH_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.ODISSEU_KNOWN_HOSTS }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/ci-ssh-deploy.sh
+          A6_SERVICE: ${{ matrix.service }}
+          SSH_HOST: ${{ steps.vm.outputs.host }}
+          ODISSEU_PRODUCTION_DEPLOY_HOLD: ${{ vars.ODISSEU_PRODUCTION_DEPLOY_HOLD }}
+          ODISSEU_A6_DELIVERY_VALIDATED: ${{ vars.ODISSEU_A6_DELIVERY_VALIDATED }}
+          PRODUCTION_AUTHORIZATION: ${{ inputs.production_authorization }}
+        run: bash scripts/ci-a6-deliver.sh
       - name: Record confirmed service operation
         if: steps.remote.outputs.performed == 'true'
         run: printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/deployed-revision"
@@ -356,10 +392,12 @@ jobs:
     name: ${{ inputs.operation || 'deploy' }} Pokemon
     needs: [changes, publish]
     if: >-
-      inputs.operation != 'check' && always() && needs.changes.result == 'success' && needs.changes.outputs.pokemon == 'true' &&
+      github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/master' &&
-      ((github.event_name == 'push' && vars.AUTO_DEPLOY_ENABLED == 'true' && needs.publish.result == 'success') ||
-       (github.event_name == 'workflow_dispatch' && (inputs.operation == 'rollback' || needs.publish.result == 'success')))
+      inputs.operation != 'check' &&
+      inputs.production_authorization == 'autorizar-producao-a6' &&
+      always() && needs.changes.result == 'success' && needs.changes.outputs.pokemon == 'true' &&
+      (inputs.operation == 'rollback' || needs.publish.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 50
     environment: production
@@ -375,8 +413,8 @@ jobs:
         env:
           DEPLOY_SERVICE: pokemon
           DEPLOY_OPERATION: ${{ inputs.operation || 'deploy' }}
-          SSH_HOST: ${{ vars.POKEMON_HOST || '34.68.189.66' }}
-          SSH_USER: ${{ vars.POKEMON_USER || 'pokemon-deploy' }}
+          SSH_HOST: ${{ vars.POKEMON_HOST }}
+          SSH_USER: ${{ vars.POKEMON_USER }}
           SSH_PORT: ${{ vars.POKEMON_SSH_PORT || '22' }}
           SSH_KEY: ${{ secrets.POKEMON_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.POKEMON_KNOWN_HOSTS }}
@@ -395,7 +433,10 @@ jobs:
 
   check-odisseu:
     name: Check Odisseu SSH access
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && inputs.operation == 'check'
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' &&
+      inputs.operation == 'check' && inputs.production_authorization == 'autorizar-producao-a6' &&
+      vars.ODISSEU_A6_DELIVERY_VALIDATED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     environment: production
@@ -406,13 +447,19 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Verify restricted SSH diagnostic without deploying
+      - name: Resolve the VM by project, zone and name
+        id: vm
+        env:
+          ODISSEU_GCP_PROJECT: ${{ vars.ODISSEU_GCP_PROJECT }}
+          ODISSEU_GCP_ZONE: ${{ vars.ODISSEU_GCP_ZONE }}
+          ODISSEU_GCP_INSTANCE: ${{ vars.ODISSEU_GCP_INSTANCE }}
+        run: bash scripts/resolve-gce-instance.sh
+      - name: Verify identity without opening SSH
         env:
           DEPLOY_SERVICE: odisseu
           DEPLOY_OPERATION: check
-          SSH_HOST: '35.238.24.225'
-          SSH_USER: 'zapbot-deploy'
-          SSH_PORT: ${{ vars.ODISSEU_SSH_PORT || '22' }}
-          SSH_KEY: ${{ secrets.ODISSEU_SSH_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.ODISSEU_KNOWN_HOSTS }}
-        run: bash scripts/ci-ssh-deploy.sh
+          A6_SERVICE: node
+          SSH_HOST: ${{ steps.vm.outputs.host }}
+          ODISSEU_A6_DELIVERY_VALIDATED: ${{ vars.ODISSEU_A6_DELIVERY_VALIDATED }}
+          PRODUCTION_AUTHORIZATION: ${{ inputs.production_authorization }}
+        run: bash scripts/ci-a6-deliver.sh

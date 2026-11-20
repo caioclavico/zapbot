@@ -50,7 +50,8 @@
         :coins-delta 50
         :pokemon {:species "Magikarp" :shiny true :level 5 :xp 100}
         :item {:item-id "poke-ball" :qty 3}})
-    ;; Progresso diferente em B (seed admin explícito — sem fence)
+    ;; 500 PE num save novo seguem a curva progressiva (10, 15, 20…),
+    ;; não o nível 4 pedido no seed. O enrich substitui o nível explícito.
     (trainer/admin-seed-reward!
      s {:operation-id "op-progress-b"
         :chat-id chat :player-id player :save-id "b"
@@ -67,7 +68,7 @@
       (is (= "Magikarp" (:species (first (:party a)))))
       (is (empty? (:party b)))
       (is (= 1 (:trainer-level (:save a))))
-      (is (= 4 (:trainer-level (:save b))))
+      (is (= 13 (:trainer-level (:save b))) "500 PE desde o nível 1 seguem a curva e chegam ao nível 13")
       (is (= 500 (:trainer-xp (:save b))))
       (is (= [{:item-id "poke-ball" :qty 3}] (:inventory a)))
       (is (= [{:item-id "great-ball" :qty 1}] (:inventory b))))))

@@ -3,7 +3,8 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [datomic.client.api :as d]))
+            [datomic.client.api :as d]
+            [odisseu.persistence.live-guard :as live-guard]))
 
 (defn project-root
   []
@@ -53,12 +54,24 @@
         (throw (ex-info "datomic_maintenance_active"
                         {:phase (:phase state)}))))))
 
-(defn client
-  [{:keys [system storage-dir maintenance-control?]}]
-  (assert-client-admitted! storage-dir maintenance-control?)
+(defn- open-client!
+  [system storage-dir]
   (d/client {:server-type :datomic-local
              :system system
              :storage-dir (resolve-storage-dir storage-dir)}))
+
+(defn client
+  "Cliente de ferramenta externa. Recusa o volume live antes de abrir o Datomic."
+  [{:keys [system storage-dir maintenance-control?]}]
+  (live-guard/assert-external! storage-dir)
+  (assert-client-admitted! storage-dir maintenance-control?)
+  (open-client! system storage-dir))
+
+(defn runtime-client
+  "Só a bridge, depois que o volume já está montado exclusivamente nela."
+  [{:keys [system storage-dir maintenance-control?]}]
+  (assert-client-admitted! storage-dir maintenance-control?)
+  (open-client! system storage-dir))
 
 (defn ensure-db!
   [client db-name]

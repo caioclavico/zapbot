@@ -180,7 +180,7 @@ test('raid UI: exatamente 2 barras + raridade chefe e jogador', () => {
   assert.match(text, /\[█+░*\] 67\/100/);
   const barLines = text.split('\n').filter((l) => /[█░]/.test(l));
   assert.equal(barLines.length, 2);
-  assert.match(text, /Water Gun/);
+  assert.match(text, /Jato d'Água/);
   assert.doesNotMatch(text, /\*\\?\*/);
   assert.match(text, /Golpe Normal|indisponível na raid/);
 });

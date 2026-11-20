@@ -47,6 +47,11 @@ services:
       ODISSEU_JOURNAL_DIR: /data/journal
       ODISSEU_MAINT_DIR: /data/maint
       JAVA_TOOL_OPTIONS: "-Xms64m -Xmx320m -XX:+UseG1GC"
+    privileged: false
+    cap_drop:
+      - SYS_ADMIN
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - odisseu-a6-staging-datomic:/data/datomic-local
       - odisseu-a6-staging-journal:/data/journal
@@ -118,6 +123,7 @@ services:
       WWEBJS_DATA_PATH: /app/.wwebjs_auth_a6_staging
       WWEBJS_CLIENT_ID: a6-staging
     volumes:
+      # Sem o volume Datomic. O Node fala com a JVM por HTTP.
       - ./.wwebjs_auth_a6_staging:/app/.wwebjs_auth_a6_staging
       - odisseu-a6-staging-data:/app/data
     networks:

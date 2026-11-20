@@ -1,0 +1,588 @@
+{
+  "absorb": {
+    "dreno": 50
+  },
+  "acid-armor": {
+    "alteracoes": [
+      {
+        "atributo": "defesa",
+        "estagios": 2
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "agility": {
+    "alteracoes": [
+      {
+        "atributo": "veloc",
+        "estagios": 2
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "amnesia": {
+    "alteracoes": [
+      {
+        "atributo": "def-esp",
+        "estagios": 2
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "baby-doll-eyes": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": -1
+      }
+    ],
+    "alvo": "adversario"
+  },
+  "barrier": {
+    "alteracoes": [
+      {
+        "atributo": "defesa",
+        "estagios": 2
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "blizzard": {
+    "chanceStatus": 10,
+    "statusCausado": "congelado"
+  },
+  "body-slam": {
+    "chanceStatus": 30,
+    "statusCausado": "paralisado"
+  },
+  "brave-bird": {
+    "recuo": 33
+  },
+  "bulk-up": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": 1
+      },
+      {
+        "atributo": "defesa",
+        "estagios": 1
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "calm-mind": {
+    "alteracoes": [
+      {
+        "atributo": "atq-esp",
+        "estagios": 1
+      },
+      {
+        "atributo": "def-esp",
+        "estagios": 1
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "charm": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": -2
+      }
+    ],
+    "alvo": "adversario"
+  },
+  "coil": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": 1
+      },
+      {
+        "atributo": "defesa",
+        "estagios": 1
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "confuse-ray": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "statusCausado": "confuso"
+  },
+  "confusion": {
+    "chanceStatus": 10,
+    "statusCausado": "confuso"
+  },
+  "cosmic-power": {
+    "alteracoes": [
+      {
+        "atributo": "defesa",
+        "estagios": 1
+      },
+      {
+        "atributo": "def-esp",
+        "estagios": 1
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "cotton-guard": {
+    "alteracoes": [
+      {
+        "atributo": "defesa",
+        "estagios": 3
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "defense-curl": {
+    "alteracoes": [
+      {
+        "atributo": "defesa",
+        "estagios": 2
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "double-edge": {
+    "recuo": 33
+  },
+  "dragon-dance": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": 1
+      },
+      {
+        "atributo": "veloc",
+        "estagios": 1
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "drain-punch": {
+    "dreno": 50
+  },
+  "ember": {
+    "chanceStatus": 10,
+    "statusCausado": "queimado"
+  },
+  "explosion": {
+    "autodesmaio": true
+  },
+  "fake-tears": {
+    "alteracoes": [
+      {
+        "atributo": "def-esp",
+        "estagios": -2
+      }
+    ],
+    "alvo": "adversario",
+    "precisao": 100
+  },
+  "fire-blast": {
+    "chanceStatus": 10,
+    "statusCausado": "queimado"
+  },
+  "flame-wheel": {
+    "chanceStatus": 10,
+    "statusCausado": "queimado"
+  },
+  "flamethrower": {
+    "chanceStatus": 10,
+    "statusCausado": "queimado"
+  },
+  "flare-blitz": {
+    "chanceStatus": 10,
+    "recuo": 33,
+    "statusCausado": "queimado"
+  },
+  "giga-drain": {
+    "dreno": 50
+  },
+  "glare": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "statusCausado": "paralisado"
+  },
+  "growl": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": -1
+      }
+    ],
+    "alvo": "adversario"
+  },
+  "growth": {
+    "alteracoes": [
+      {
+        "atributo": "atq-esp",
+        "estagios": 1
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "harden": {
+    "alteracoes": [
+      {
+        "atributo": "defesa",
+        "estagios": 2
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "head-smash": {
+    "recuo": 50
+  },
+  "howl": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": 1
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "hypnosis": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 60,
+    "statusCausado": "adormecido"
+  },
+  "ice-beam": {
+    "chanceStatus": 10,
+    "statusCausado": "congelado"
+  },
+  "ice-punch": {
+    "chanceStatus": 10,
+    "statusCausado": "congelado"
+  },
+  "iron-defense": {
+    "alteracoes": [
+      {
+        "atributo": "defesa",
+        "estagios": 2
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "lava-plume": {
+    "chanceStatus": 30,
+    "statusCausado": "queimado"
+  },
+  "leech-life": {
+    "dreno": 50
+  },
+  "leer": {
+    "alteracoes": [
+      {
+        "atributo": "defesa",
+        "estagios": -1
+      }
+    ],
+    "alvo": "adversario"
+  },
+  "lovely-kiss": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 75,
+    "statusCausado": "adormecido"
+  },
+  "meditate": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": 1
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "mega-drain": {
+    "dreno": 50
+  },
+  "metal-sound": {
+    "alteracoes": [
+      {
+        "atributo": "def-esp",
+        "estagios": -2
+      }
+    ],
+    "alvo": "adversario",
+    "precisao": 85
+  },
+  "milk-drink": {
+    "alvo": "proprio",
+    "cura": 50
+  },
+  "misty-explosion": {
+    "autodesmaio": true
+  },
+  "nasty-plot": {
+    "alteracoes": [
+      {
+        "atributo": "atq-esp",
+        "estagios": 2
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "poison-gas": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 90,
+    "statusCausado": "envenenado"
+  },
+  "poison-jab": {
+    "chanceStatus": 30,
+    "statusCausado": "envenenado"
+  },
+  "poison-powder": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 75,
+    "statusCausado": "envenenado"
+  },
+  "poison-sting": {
+    "chanceStatus": 30,
+    "statusCausado": "envenenado"
+  },
+  "psybeam": {
+    "chanceStatus": 10,
+    "statusCausado": "confuso"
+  },
+  "recover": {
+    "alvo": "proprio",
+    "cura": 50
+  },
+  "rest": {
+    "alvo": "proprio",
+    "chanceStatus": 100,
+    "cura": 100,
+    "statusCausado": "adormecido"
+  },
+  "rock-polish": {
+    "alteracoes": [
+      {
+        "atributo": "veloc",
+        "estagios": 2
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "roost": {
+    "alvo": "proprio",
+    "cura": 50
+  },
+  "scald": {
+    "chanceStatus": 30,
+    "statusCausado": "queimado"
+  },
+  "scary-face": {
+    "alteracoes": [
+      {
+        "atributo": "veloc",
+        "estagios": -2
+      }
+    ],
+    "alvo": "adversario",
+    "precisao": 100
+  },
+  "screech": {
+    "alteracoes": [
+      {
+        "atributo": "defesa",
+        "estagios": -2
+      }
+    ],
+    "alvo": "adversario",
+    "precisao": 85
+  },
+  "self-destruct": {
+    "autodesmaio": true
+  },
+  "sharpen": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": 1
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "sing": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 55,
+    "statusCausado": "adormecido"
+  },
+  "slack-off": {
+    "alvo": "proprio",
+    "cura": 50
+  },
+  "sleep-powder": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 75,
+    "statusCausado": "adormecido"
+  },
+  "sludge": {
+    "chanceStatus": 30,
+    "statusCausado": "envenenado"
+  },
+  "sludge-bomb": {
+    "chanceStatus": 30,
+    "statusCausado": "envenenado"
+  },
+  "soft-boiled": {
+    "alvo": "proprio",
+    "cura": 50
+  },
+  "spark": {
+    "chanceStatus": 30,
+    "statusCausado": "paralisado"
+  },
+  "string-shot": {
+    "alteracoes": [
+      {
+        "atributo": "veloc",
+        "estagios": -2
+      }
+    ],
+    "alvo": "adversario",
+    "precisao": 95
+  },
+  "stun-spore": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 75,
+    "statusCausado": "paralisado"
+  },
+  "submission": {
+    "recuo": 25
+  },
+  "supersonic": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 55,
+    "statusCausado": "confuso"
+  },
+  "sweet-kiss": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 75,
+    "statusCausado": "confuso"
+  },
+  "swords-dance": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": 2
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "synthesis": {
+    "alvo": "proprio",
+    "cura": 50
+  },
+  "tail-glow": {
+    "alteracoes": [
+      {
+        "atributo": "atq-esp",
+        "estagios": 3
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "tail-whip": {
+    "alteracoes": [
+      {
+        "atributo": "defesa",
+        "estagios": -1
+      }
+    ],
+    "alvo": "adversario"
+  },
+  "take-down": {
+    "recuo": 25
+  },
+  "thunder": {
+    "chanceStatus": 30,
+    "statusCausado": "paralisado"
+  },
+  "thunder-shock": {
+    "chanceStatus": 10,
+    "statusCausado": "paralisado"
+  },
+  "thunder-wave": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 90,
+    "statusCausado": "paralisado"
+  },
+  "thunderbolt": {
+    "chanceStatus": 10,
+    "statusCausado": "paralisado"
+  },
+  "tickle": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": -1
+      },
+      {
+        "atributo": "defesa",
+        "estagios": -1
+      }
+    ],
+    "alvo": "adversario"
+  },
+  "toxic": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 90,
+    "statusCausado": "envenenado"
+  },
+  "volt-tackle": {
+    "chanceStatus": 10,
+    "recuo": 33,
+    "statusCausado": "paralisado"
+  },
+  "wild-charge": {
+    "recuo": 25
+  },
+  "will-o-wisp": {
+    "alvo": "adversario",
+    "chanceStatus": 100,
+    "precisao": 85,
+    "statusCausado": "queimado"
+  },
+  "withdraw": {
+    "alteracoes": [
+      {
+        "atributo": "defesa",
+        "estagios": 2
+      }
+    ],
+    "alvo": "proprio"
+  },
+  "wood-hammer": {
+    "recuo": 33
+  },
+  "work-up": {
+    "alteracoes": [
+      {
+        "atributo": "ataque",
+        "estagios": 1
+      },
+      {
+        "atributo": "atq-esp",
+        "estagios": 1
+      }
+    ],
+    "alvo": "proprio"
+  }
+}

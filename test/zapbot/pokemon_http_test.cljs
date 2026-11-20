@@ -153,24 +153,47 @@
                        (reset! http/cliente-jvm original)
                        (done)))))))
 
+(defn- texto-do-reply
+  "reply(conteudo, chatId, opcoes): mídia no primeiro argumento e legenda em opcoes.caption."
+  [[conteudo chat-id opcoes]]
+  (let [legenda (when opcoes (or (.-caption opcoes) ""))]
+    {:chat-id chat-id
+     :midia? (not (string? conteudo))
+     :texto (cond
+              (and (string? legenda) (not= "" legenda)) legenda
+              (string? conteudo) conteudo
+              :else (str conteudo))}))
+
 (deftest comandos-de-missoes-preservam-o-filtro-de-apresentacao
   (async done
     (let [original @http/cliente-jvm
           jvm? http/jvm-configurado?
+          render-orig (.-renderStaticAsset http/jvm-media)
           envios (atom [])
           message (fn [id]
                     #js {:id #js {:_serialized id}
                          :from "grupo@g.us" :author "ash@c.us" :mentionedIds #js []
-                         :reply (fn [texto & _] (swap! envios conj texto) (p/resolved nil))})
+                         :reply (fn [conteudo chat-id opcoes]
+                                  (swap! envios conj [conteudo chat-id opcoes])
+                                  (p/resolved nil))})
           missions #js {:daily #js {:period "2026-10-21" :level 1
-                                    :missions #js [#js {:id "diaria" :nome "Diária exclusiva"
-                                                        :objetivo "Capturar" :progresso 1 :meta 2}]}
+                                    :missions #js [#js {:id "diaria"
+                                                        :nome "Diária exclusiva"
+                                                        :objetivo "Diária exclusiva"
+                                                        :progresso 1 :meta 2
+                                                        :estado "in_progress"}]}
                         :weekly #js {:period "2026-10-19"
-                                     :missions #js [#js {:id "semanal" :nome "Semanal exclusiva"
-                                                         :objetivo "Vencer PvP" :progresso 1 :meta 3}]}
+                                     :missions #js [#js {:id "semanal"
+                                                         :nome "Semanal exclusiva"
+                                                         :objetivo "Semanal exclusiva"
+                                                         :progresso 1 :meta 3
+                                                         :estado "in_progress"}]}
                         :events #js []}
           client (clj->js {:getMissions (fn [_] (p/resolved missions))})]
       (set! http/jvm-configurado? (fn [] true))
+      (set! (.-renderStaticAsset http/jvm-media)
+            (fn [_ _]
+              (p/resolved #js {:base64 "aGk=" :mimeType "image/png" :filename "missao.png"})))
       (reset! http/cliente-jvm client)
       (p/finally
        (p/catch
@@ -179,13 +202,11 @@
            (p/let [_ (http/executar (message "missoes-todas") "pokemon" "missoes")
                    _ (http/executar (message "missoes-diarias") "pokemon" "missoes diarias")
                    _ (http/executar (message "missoes-semanais") "pokemon" "missoes semanais")]
-             (let [texto (fn [x]
-                           (cond
-                             (string? x) x
-                             (and x (.-text x)) (str (.-text x))
-                             (map? x) (str (or (:text x) (:texto x) ""))
-                             :else (str x)))
-                   [todas diarias semanais] (mapv texto @envios)]
+             (let [lidos (mapv texto-do-reply @envios)
+                   [todas diarias semanais] (mapv :texto lidos)]
+               (is (= 3 (count lidos)))
+               (is (every? :midia? lidos))
+               (is (every? #(nil? (:chat-id %)) lidos))
                (is (and (re-find #"Diária exclusiva" todas)
                         (re-find #"Semanal exclusiva" todas)))
                (is (and (re-find #"Diária exclusiva" diarias)
@@ -195,6 +216,7 @@
         (fn [erro] (is false (str erro))))
        (fn []
          (set! http/jvm-configurado? jvm?)
+         (set! (.-renderStaticAsset http/jvm-media) render-orig)
          (reset! http/cliente-jvm original)
          (done))))))
 

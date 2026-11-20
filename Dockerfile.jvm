@@ -24,6 +24,8 @@ COPY apps ./apps
 COPY shared ./shared
 COPY modules ./modules
 COPY migrations ./migrations
+COPY docker/jvm-storage-entrypoint.sh /usr/local/bin/jvm-storage-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/jvm-storage-entrypoint.sh
 
 # Defaults neutros — Compose odisseu-core sobrescreve system/db/storage.
 ENV ODISSEU_BRIDGE_HOST=0.0.0.0 \
@@ -45,4 +47,4 @@ EXPOSE 18090
 HEALTHCHECK --interval=15s --timeout=5s --start-period=180s --retries=8 \
   CMD curl -fsS -m 4 http://127.0.0.1:18090/health || exit 1
 
-CMD ["clojure", "-M:bridge-http"]
+CMD ["/usr/local/bin/jvm-storage-entrypoint.sh", "clojure", "-M:bridge-http"]

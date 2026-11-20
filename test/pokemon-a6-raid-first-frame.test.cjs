@@ -110,10 +110,10 @@ test('1) formatRaidStart manual: golpes + tipo emoji + efetividade + raridade + 
   assert.match(text, /Wartortle/);
   assert.match(text, /Lendário/);
   assert.match(text, /Incomum/);
-  assert.match(text, /Water Gun/);
+  assert.match(text, /Jato d'Água/);
   assert.match(text, /💧/); // tipo água
   assert.match(text, /🔥/); // super efetivo vs fogo
-  assert.match(text, /Bite/); // legado sem classe
+  assert.match(text, /Mordida/); // legado sem classe, nome traduzido
   assert.match(text, /raid atacar 1/);
   assert.match(text, /█|░/); // barra ASCII
   assert.doesNotMatch(text, /RAID INICIADA AUTOMATICAMENTE/);
@@ -124,7 +124,7 @@ test('2) formatRaidStart automático: mesmo bloco de turno', () => {
   const text = present.formatRaidStart({ raid, auto: true }, '!pk');
   fs.writeFileSync(path.join(OUT, '02-auto-start.txt'), text);
   assert.match(text, /RAID INICIADA AUTOMATICAMENTE/);
-  assert.match(text, /Water Gun/);
+  assert.match(text, /Jato d'Água/);
   assert.match(text, /💧/);
   assert.match(text, /Vez de \*Ash\*/);
   assert.match(text, /É a sua vez/);
@@ -146,7 +146,7 @@ test('3) segundo frame (attack) reusa formatRaidTurnBlock', () => {
     raid
   }, '!pk');
   fs.writeFileSync(path.join(OUT, '03-second-frame.txt'), atk);
-  assert.match(atk, /Water Gun/);
+  assert.match(atk, /Jato d'Água/);
   assert.match(atk, /Super efetivo!🔥/);
   assert.match(atk, /Vez de/);
   // Bloco de menu presente nos dois.
@@ -198,11 +198,11 @@ test('10–12) golpe ofensivo, status e legado Wartortle', () => {
   const lines = present.formatRaidMoveLines(raidCombatFixture().vezPokemon, '!pk', ['fire', 'flying']);
   const joined = lines.join('\n');
   fs.writeFileSync(path.join(OUT, '10-12-moves.txt'), joined);
-  assert.match(joined, /Water Gun/);
+  assert.match(joined, /Jato d'Água/);
   assert.match(joined, /poder 40/);
-  assert.match(joined, /Withdraw/);
+  assert.match(joined, /Recolher-se/);
   assert.match(joined, /indisponível na raid/);
-  assert.match(joined, /Bite/);
+  assert.match(joined, /Mordida/);
   assert.match(joined, /poder 60/);
   assert.match(joined, /🌑|💧/);
 });

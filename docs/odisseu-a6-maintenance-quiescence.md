@@ -1,5 +1,23 @@
 # Odisseu A6 — manutenção e quiescência
 
+> Reconciliação local `integration/a6-master-reconciliation`, com a linha funcional `b1d8db2` e merge normal da `master` `efed6e6`. Não autoriza deploy, migração, backup, restore nem alteração de saves. A `master` publicada e a produção `33eea61` permanecem como estão.
+
+## Bloqueio de deploy preservado
+
+A auditoria integral da `master` em 2026-11-05, com a justificativa do hold, a contenção administrativa e a decisão BLOCKED, está copiada sem edição do texto em [docs/archive/2026-11-05-master-production-deploy-hold-audit.md](archive/2026-11-05-master-production-deploy-hold-audit.md).
+
+O job `deploy-odisseu` fica fail-closed. Ele só entra na fila se `vars.ODISSEU_PRODUCTION_DEPLOY_HOLD` for exatamente `'false'`. Valor ausente, vazio ou `true` bloqueia deploy e rollback. Push continua exigindo também `AUTO_DEPLOY_ENABLED == 'true'` e publicação bem-sucedida. Esta branch não muda a variável, os secrets nem o environment no GitHub. Com o hold diferente de `false`, um merge futuro não publica sozinho.
+
+O literal `35.238.24.225` já estava nas duas linhas e permanece no workflow apenas porque o teste de inventário do hold conta essa ocorrência. A auditoria da VM A6 registrou o IP externo `35.192.113.146`. Nenhum dos dois endereços vira destino operacional nesta reconciliação. Não há autorização para SSH, publicação de imagem Node ou JVM, nem troca de container.
+
+## Quiescência, retomada, rollback e saves
+
+Os requisitos abaixo continuam valendo. A retomada é explícita: JVM primeiro e Node depois, pelos endpoints autenticados, somente depois do estado `quiescent`. Rollback de atualização futura restaura imagem e configuração anteriores só com compatibilidade validada, sem cobrir dados novos com backup antigo e sem apagar marker à mão. Saves, volumes, sessão WhatsApp e schema de produção ficam fora desta reconciliação.
+
+**Decisão desta reconciliação: BLOCKED para deploy e para manutenção em produção.**
+
+O workflow não usa mais endereço IP fixo. A VM só pode ser resolvida por projeto, zona e nome, e o job de deploy não entra na fila por push. Além do hold, falta `ODISSEU_A6_DELIVERY_VALIDATED=true`, que esta revisão não configura. Node e JVM são passos separados. O runner `scripts/ci-a6-deliver.sh` recusa o apply na VM. A quiescência continua não comprovada: scripts, ensaios e o cutover ainda abrem cliente Datomic fora da bridge.
+
 **Decisão: CONDITIONAL**
 **Escopo executado:** implementação e homologação local, no clone `/private/tmp/zapbot-announcer-a6-rc-final`. Nenhuma conexão ou alteração em produção foi realizada. Não houve backup cold, parada/restart live, migration, deploy ou envio WhatsApp real.
 

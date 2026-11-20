@@ -2,6 +2,8 @@
   "Cálculo de dano — fórmulas exatas de zapbot.pokemon.core.
   Sem STAB no dano (só preferência de moveset no legado)."
   (:require [clojure.string :as str]
+            [pokemon.domain.mechanics :as mechanics]
+            [pokemon.domain.move-names :as move-names]
             [pokemon.domain.rng :as rng]
             [pokemon.domain.types :as types]))
 
@@ -51,39 +53,72 @@
                  (/ (double poder-ataque) (double (max 1 poder-defesa))))]
     (max 1 (+ (Math/round bruto) variancia))))
 
+(defn chance-acerto
+  "nil = sempre acerta (golpe sem precisão e sem estágios, ou que ignora).
+  Estágios de precisão/evasão usam a mesma curva dos outros atributos.
+  Sem precisão gravada, a base é 100 — o golpe antigo continua certo
+  enquanto ninguém mudou precisão ou evasão."
+  [precisao estagios-atacante estagios-defensor ignora?]
+  (if ignora?
+    nil
+    (let [estagios-atacante (or estagios-atacante {})
+          estagios-defensor (or estagios-defensor {})
+          acc (long (get estagios-atacante :precisao 0))
+          eva (long (get estagios-defensor :evasao 0))]
+      (when (or precisao (not (zero? acc)) (not (zero? eva)))
+        (let [base (double (or precisao 100))
+              efetivo (* base
+                         (multiplicador-estagio acc)
+                         (/ 1.0 (multiplicador-estagio eva)))]
+          (max 1 (min 100 (long (Math/round efetivo)))))))))
+
 (defn resolver-ataque
   "Espelha core/resolver-ataque. Retorna {:dano :acertou? :critico? :multiplicador :errou? :esquivou?}."
   [{:keys [golpe atacante defensor
            estagios-atacante estagios-defensor
            status-defensor
            defendendo? hp-atacante-atual
-           rng]}]
+           clima aterrado? rng]}]
   (let [fisico? (= :fisico (let [c (:classe golpe)]
                              (if (keyword? c) c (keyword c))))
         item-atacante (or (:item atacante) (get atacante "item"))
         atributo-atq (if fisico? :ataque :atq-esp)
         atributo-def (if fisico? :defesa :def-esp)
         poder-ataque (stat-efetivo atacante (or estagios-atacante {}) atributo-atq)
-        poder-defesa (stat-efetivo defensor (or estagios-defensor {}) atributo-def)
-        precisao (:precisao golpe)
-        errou? (and precisao (>= (rng/roll rng :accuracy 100) (long precisao)))
+        poder-defesa (let [base (stat-efetivo defensor (or estagios-defensor {}) atributo-def)
+                           gelo? (and (= clima :neve)
+                                      (= atributo-def :defesa)
+                                      (contains? (set (map str (:tipos defensor))) "ice"))]
+                       (if gelo? (* base 1.5) base))
+        defesa-neve? (and (= clima :neve)
+                          (= atributo-def :defesa)
+                          (contains? (set (map str (:tipos defensor))) "ice"))
+        precisao (mechanics/precisao-no-clima golpe clima)
+        chance (chance-acerto precisao estagios-atacante estagios-defensor
+                              (:ignora-precisao golpe))
+        errou? (and chance (< chance 100)
+                   (>= (rng/roll rng :accuracy 100) chance))
         vel-def (velocidade-efetiva defensor (or estagios-defensor {}) status-defensor)
         esquivou? (and (not errou?) defendendo?
                        (< (rng/roll rng :dodge 100) (chance-esquiva vel-def)))
         multiplicador (types/multiplicador-vs-tipos
                        (:tipo golpe)
                        (or (:tipos defensor) [])
-                       (or (:habilidade defensor) (get defensor "habilidade")))
-        critico? (< (rng/roll rng :crit 100) chance-critico)
+                       (or (:habilidade defensor) (get defensor "habilidade"))
+                       (boolean aterrado?))
+        chance-crit (cond
+                      (:critico-garantido golpe) 100
+                      (some? (:chance-critico golpe)) (long (:chance-critico golpe))
+                      :else chance-critico)
+        critico? (< (rng/roll rng :crit 100) chance-crit)
         impulso (impulso-habilidade atacante hp-atacante-atual (:tipo golpe))
         impulso-item (if (or (and fisico? (= item-atacante "banda"))
                              (and (not fisico?) (= item-atacante "oculos")))
                        1.15 1.0)
         acertos (if (:max-acertos golpe)
-                  (+ (long (:min-acertos golpe 1))
-                     (rng/roll rng :multi-hit
-                               (inc (- (long (:max-acertos golpe))
-                                       (long (:min-acertos golpe 1))))))
+                  (mechanics/rolar-acertos (long (:min-acertos golpe 1))
+                                           (long (:max-acertos golpe))
+                                           rng)
                   1)
         fator (* multiplicador impulso impulso-item (if critico? 1.5 1.0))
         base (calcular-dano (or (:poder golpe) 0) poder-ataque poder-defesa rng)
@@ -101,7 +136,8 @@
      :errou? (boolean errou?)
      :esquivou? (boolean esquivou?)
      :acertos acertos
-     :impulso impulso}))
+     :impulso impulso
+     :defesa-neve? (boolean defesa-neve?)}))
 
 (defn- emoji-golpe
   [golpe]
@@ -134,8 +170,7 @@
 (defn mensagem-ataque
   "Texto legado de core/resolver-ataque (`causou N de dano` + sufixos)."
   [golpe atacante defensor resolved defendendo?]
-  (let [nome-golpe (str (emoji-golpe golpe) " *"
-                        (or (:nome-exibicao golpe) (:slug golpe) "golpe") "*")
+  (let [        nome-golpe (str (emoji-golpe golpe) " *" (move-names/apresentar golpe) "*")
         nome-atk (or (:nome atacante) (:species atacante) "Pokémon")
         nome-def (or (:nome defensor) (:species defensor) "adversário")
         dano (long (:dano resolved 0))
@@ -145,12 +180,24 @@
                     (texto-impulso (:impulso resolved)
                                    (or (:habilidade atacante) (get atacante "habilidade"))))]
     (cond
+      (:bloqueado? resolved)
+      "🛡️ Proteção bloqueou o ataque!"
+
+      (:sumido? resolved)
+      "💨 O golpe não alcançou o alvo!"
+
+      (:visao-ocupada? resolved)
+      (str nome-golpe " já está a caminho!")
+
       (:errou? resolved)
       (str nome-golpe " de *" nome-atk "* errou o alvo!")
 
       (:esquivou? resolved)
       (str "💨 *" nome-def "* esquivou completamente de " nome-golpe
            " de *" nome-atk "*! Nenhum dano.")
+
+      (:visao? resolved)
+      (str nome-golpe " foi prevista! O dano sai daqui a duas rodadas.")
 
       (zero? dano)
       (str nome-golpe " de *" nome-atk "* não teve efeito em *"
@@ -163,6 +210,8 @@
       :else
       (str nome-golpe " de *" nome-atk "* causou " dano
            " de dano em *" nome-def "*!" sufixo
+           (when (:nocaute? resolved) "\n💀 Nocaute de um golpe!")
+           (when (:defesa-neve? resolved) "\n❄️ A neve reforçou a Defesa!")
            (when (> acertos 1) (str "\n🎯 Acertou " acertos " vezes!"))))))
 
 (defn last-action-ataque
@@ -186,7 +235,8 @@
              :esquivou? (boolean (:esquivou? resolved))
              :acertos (long (:acertos resolved 1))
              :tipo-golpe (:tipo golpe)
-             :golpe-nome (or (:nome-exibicao golpe) (:slug golpe))
+             :golpe-slug (:slug golpe)
+             :golpe-nome (move-names/apresentar golpe)
              :autodesmaio? auto?
              :mensagem msg}
       (some? move-index) (assoc :move-index move-index)

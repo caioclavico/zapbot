@@ -10,7 +10,7 @@
 
 (deftest traducao-preserva-dados-do-golpe
   (let [traduzido (golpes/traduzir {:slug "water-gun" :poder 40 :tipo :agua})]
-    (is (= "Jato de Água" (:nome-exibicao traduzido)))
+    (is (= "Jato d'Água" (:nome-exibicao traduzido)))
     (is (= 40 (:poder traduzido)))
     (is (= :agua (:tipo traduzido)))))
 
@@ -20,6 +20,11 @@
                                   {:slug "vine-whip" :poder 45}])]
     (is (= 2 (count resultado)))
     (is (= ["water-gun" "vine-whip"] (mapv :slug resultado)))))
+
+(deftest furacao-com-acento-nao-colide
+  (is (= "furacao" (golpes/identificador "furacao")))
+  (is (= "hurricane" (golpes/identificador "Furacão")))
+  (is (= "drill-run" (golpes/identificador "Furação"))))
 
 (deftest ataque-do-tipo-exige-tipo-classe-e-poder
   (is (golpes/ataque-do-tipo? {:tipo :agua :classe :especial :poder 40} [:agua]))

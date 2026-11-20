@@ -6,6 +6,10 @@
  */
 
 const PAGE_SIZE = 12;
+const nomesGolpe = require('./move-names.cjs');
+const efeitosGolpe = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, 'move-effects.json'), 'utf8'));
+const auditoriaGolpe = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, 'move-effect-audit.json'), 'utf8'));
+const mecanicasGolpe = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, 'move-mechanics.json'), 'utf8'));
 
 /**
  * Progresso de XP do Pokémon (flat-9-v2): residual 0..8 / 9 por nível.
@@ -302,29 +306,154 @@ function emojiStatus(status) {
   }
 }
 
+const ATRIBUTO_PT = {
+  ataque: 'Ataque',
+  defesa: 'Defesa',
+  'atq-esp': 'Ataque Especial',
+  atqEsp: 'Ataque Especial',
+  'def-esp': 'Defesa Especial',
+  defEsp: 'Defesa Especial',
+  veloc: 'Velocidade',
+  velocidade: 'Velocidade',
+  precisao: 'Precisão',
+  evasao: 'Evasão'
+};
+
+const FAMILIA_MENU = {
+  protecao: 'proteção; falha se for repetida',
+  semente: 'Semente Sanguessuga',
+  'veneno-grave': 'envenenamento grave',
+  preparacao: 'prepara e ataca no turno seguinte',
+  recarga: 'recarrega no turno seguinte',
+  residual: 'prende e causa dano por alguns turnos',
+  'limpar-status-equipe': 'cura o status da equipe',
+  'limpar-status-proprio': 'cura o próprio status',
+  'limpar-estagios': 'zera os estágios',
+  'limpar-volatil': 'remove semente, armadilha e entrada',
+  nocaute: 'nocaute de um golpe se o nível alcançar',
+  'troca-forcada': 'obriga o adversário a trocar ou fugir',
+  desabilitar: 'desabilita o último golpe',
+  tormento: 'impede repetir o último golpe',
+  'canto-mortal': 'derruba os dois lados após a contagem',
+  hazard: 'entrada de campo, não prende',
+  clima: 'muda o clima',
+  terreno: 'muda o terreno',
+  visao: 'causa o dano duas rodadas depois, calculado agora',
+  queda: 'leva o alvo para o alto e solta no turno seguinte; falha contra Voador e Levitação',
+  aterrar: 'joga no chão e anula a imunidade a Terrestre até trocar',
+  'tri-ataque': '20% de chance de queimadura, paralisia ou congelamento'
+};
+
+const STATUS_PT = {
+  queimado: 'queimadura',
+  envenenado: 'envenenamento',
+  'envenenado-grave': 'envenenamento grave',
+  paralisado: 'paralisia',
+  adormecido: 'sono',
+  congelado: 'congelamento',
+  confuso: 'confusão'
+};
+
+function mecanicaDoGolpe(golpe) {
+  if (!golpe) return null;
+  const slug = golpe.slug || golpe['slug'];
+  if (slug && mecanicasGolpe[slug]) return mecanicasGolpe[slug];
+  const bruto = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome;
+  if (!bruto) return null;
+  const r = nomesGolpe.resolver(bruto);
+  return r.slug ? mecanicasGolpe[r.slug] : null;
+}
+
+function efeitoCatalogo(golpe) {
+  if (!golpe) return null;
+  const slug = golpe.slug || golpe['slug'];
+  if (slug && efeitosGolpe[slug]) return efeitosGolpe[slug];
+  const bruto = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome;
+  if (!bruto) return null;
+  const r = nomesGolpe.resolver(bruto);
+  return r.slug ? efeitosGolpe[r.slug] : null;
+}
+
 function resumoEfeitosGolpe(golpe) {
   const partes = [];
-  const status = golpe.statusCausado || golpe['status-causado'];
+  const fx = efeitoCatalogo(golpe) || {};
+  const mec = mecanicaDoGolpe(golpe) || {};
+  const status = mec.familia === 'veneno-grave'
+    ? null
+    : (golpe.statusCausado || golpe['status-causado'] || fx.statusCausado);
   if (status) {
-    const chance = golpe.chanceStatus != null ? golpe.chanceStatus : golpe['chance-status'];
-    partes.push(`causa ${status}${chance != null && chance < 100 ? ` (${chance}%)` : ''}`);
+    const chance = golpe.chanceStatus != null ? golpe.chanceStatus
+      : (golpe['chance-status'] != null ? golpe['chance-status'] : fx.chanceStatus);
+    const nome = STATUS_PT[status] || status;
+    partes.push(`causa ${nome}${chance != null && chance < 100 ? ` (${chance}%)` : ''}`);
   }
-  const alt = golpe.alteracoes || golpe['alteracoes'] || [];
+  const alt = (golpe.alteracoes && golpe.alteracoes.length)
+    ? golpe.alteracoes
+    : (fx.alteracoes || mec.alteracoes || mec.alteracoesExtra || []);
   if (alt.length) {
     partes.push(alt.map(a => {
-      const atr = a.atributo || a.attribute || '?';
+      const atr = ATRIBUTO_PT[a.atributo || a.attribute] || a.atributo || a.attribute || '?';
       const est = a.estagios != null ? a.estagios : a.stages;
       return `${atr} ${est > 0 ? '+' : ''}${est}`;
     }).join(', '));
   }
-  const cura = Number(golpe.cura || 0);
+  const cura = Number(golpe.cura != null ? golpe.cura : (fx.cura || 0));
   if (cura > 0) partes.push(`recupera ${cura}% do HP`);
   const auto = golpe.autodesmaio === true || golpe['autodesmaio'] === true
-    || golpe.selfDestruct === true || golpe['self-destruct'] === true;
+    || golpe.selfDestruct === true || golpe['self-destruct'] === true
+    || fx.autodesmaio === true;
   if (auto) {
     partes.push('causa dano devastador, mas o próprio Pokémon desmaia após o uso');
   }
-  return partes.length ? partes.join(', ') : 'efeito especial';
+  const dreno = Number(golpe.dreno != null ? golpe.dreno : (fx.dreno || 0));
+  if (dreno > 0) partes.push(`drena ${dreno}% do dano como HP`);
+  const recuo = Number(golpe.recuo != null ? golpe.recuo : (fx.recuo || 0));
+  if (recuo > 0) partes.push(`recua ${recuo}% do dano`);
+  if (mec.familia && FAMILIA_MENU[mec.familia]) partes.push(FAMILIA_MENU[mec.familia]);
+  if (mec.flinch) partes.push(`recuo que impede a ação (${mec.flinch}%)`);
+  if (mec.maxAcertos > 1) partes.push(`acerta ${mec.minAcertos || 2} a ${mec.maxAcertos} vezes`);
+  if (mec.ignoraPrecisao) partes.push('ignora precisão e evasão');
+  else if (mec.precisao) partes.push(`precisão ${mec.precisao}`);
+  if (mec.criticoGarantido) partes.push('sempre crítico');
+  else if (mec.chanceCritico) partes.push(`crítico ${mec.chanceCritico}%`);
+  if (mec.atravessaProtecao) partes.push('atravessa proteção');
+  if (mec.soPrimeiroTurno) partes.push('só no primeiro turno em campo');
+  const aviso = avisoEfeitoNaoModelado(golpe);
+  const rowParcial = linhaAuditoria(golpe);
+  const parcial = rowParcial
+    && rowParcial.classe === 'conhecido-nao-implementado'
+    && (rowParcial.conhecidos || []).includes('metadado ausente na PokéAPI')
+    ? 'o restante deste golpe ainda não entra neste combate'
+    : null;
+  if (partes.length) {
+    const extra = [aviso, parcial].filter(Boolean).join('. ');
+    return extra ? `${partes.join(', ')}. ${extra}` : partes.join(', ');
+  }
+  if (aviso) return aviso;
+  const row = linhaAuditoria(golpe);
+  if (row && row.classe === 'conhecido-nao-implementado') {
+    const oq = (row.conhecidos || []).slice(0, 3).join(', ');
+    return oq
+      ? `efeito conhecido, ainda não entra neste combate (${oq})`
+      : 'efeito conhecido, ainda não entra neste combate';
+  }
+  return 'sem efeito adicional';
+}
+
+function linhaAuditoria(golpe) {
+  if (!golpe) return null;
+  const slug = golpe.slug || golpe['slug'];
+  if (slug && auditoriaGolpe[slug]) return auditoriaGolpe[slug];
+  const bruto = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome;
+  if (!bruto) return null;
+  const r = nomesGolpe.resolver(bruto);
+  return r.slug ? auditoriaGolpe[r.slug] : null;
+}
+
+function avisoEfeitoNaoModelado(golpe) {
+  const row = linhaAuditoria(golpe);
+  if (!row || !row.limites || !row.limites.length) return null;
+  return `não entra neste combate: ${row.limites.join(', ')}`;
 }
 
 /** Descrição canônica de Explosion / Self-Destruct para menus e ajuda. */
@@ -342,9 +471,17 @@ function isExplosionGolpe(golpe) {
 }
 
 function nomeGolpeUi(golpe, idx) {
-  const raw = golpe && (golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome || golpe.slug);
-  const n = raw != null ? String(raw).trim() : '';
-  if (n && n !== '?') return n;
+  if (golpe) {
+    const slug = golpe.slug || golpe['slug'];
+    if (slug && nomesGolpe.nomes[String(slug)]) return nomesGolpe.nomes[String(slug)];
+    const bruto = golpe.nomeExibicao || golpe['nome-exibicao'] || golpe.nome || slug;
+    if (bruto) {
+      const r = nomesGolpe.resolver(bruto);
+      if (!r.ambiguo && r.slug && nomesGolpe.nomes[r.slug]) return nomesGolpe.nomes[r.slug];
+      const n = String(bruto).trim();
+      if (n && n !== '?') return n;
+    }
+  }
   const tipo = golpe && (golpe.tipo || golpe.type);
   if (tipo) return `Golpe ${TIPOS_PT[tipo] || tipo}`;
   if (golpe && golpe.golpeIrrecuperavel) return `Golpe ${idx + 1} (irrecuperável)`;
@@ -366,6 +503,8 @@ function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
   } else {
     const poder = golpe && golpe.poder != null ? golpe.poder : (golpe && golpe.power);
     corpo = `poder ${poder != null ? poder : 0}`;
+    const extra = resumoEfeitosGolpe(golpe);
+    if (extra && extra !== 'sem efeito adicional') corpo += `; ${extra}`;
     if (isExplosionGolpe(golpe)) {
       corpo += '; desmaia após o uso';
     }
@@ -373,7 +512,8 @@ function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
   const precisao = golpe.precisao != null ? golpe.precisao : golpe.accuracy;
   const prec = precisao != null ? `, precisão ${precisao}%` : '';
   const mark = mult === 0 ? ' 🚫' : (mult > 1 ? ' 🔥' : (mult < 1 ? ' 😕' : ''));
-  const linha = `${idx + 1}. ${emojiGolpe(golpe)} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
+  const tipoEmoji = emojiTipo(tipo);
+  const linha = `${idx + 1}. ${emojiGolpe(golpe)}${tipoEmoji ? ` ${tipoEmoji}` : ''} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
   if (isExplosionGolpe(golpe) && mult === 0) {
     return `${linha}\n   ⚠️ Sem efeito neste alvo — o Pokémon *não* desmaia se o golpe não causar dano.`;
   }
@@ -1008,7 +1148,9 @@ function formatEvolve(data, prefix = '!pk') {
   const item = data && data.itemId;
   return [
     `✨ Evoluiu para *${p.nome || '?'}*!`,
-    item ? `Uma pedra (\`${item}\`) foi consumida.` : null,
+    item === 'catalisador-evolutivo'
+      ? '1 Catalisador Evolutivo foi consumido.'
+      : (item ? `Uma pedra (\`${item}\`) foi consumida.` : null),
     'Nível, XP e item equipado foram preservados.',
     `${prefix} time · ${prefix} escolher`
   ].filter(Boolean).join('\n');
@@ -1018,7 +1160,7 @@ function formatLearnMove(data, prefix = '!pk') {
   const p = (data && data.pokemon) || {};
   const golpes = p.golpes || [];
   const lista = golpes.map((g, i) => {
-    const nome = g.nomeExibicao || g['nome-exibicao'] || g.slug || '?';
+    const nome = nomeGolpeUi(g, 0);
     return `${i + 1}. ${nome}`;
   }).join('\n');
   return [
@@ -1030,7 +1172,7 @@ function formatLearnMove(data, prefix = '!pk') {
 
 function nomeGolpeMt(g) {
   if (!g) return '?';
-  return g.nomeExibicao || g['nome-exibicao'] || g.nome || g.slug || '?';
+  return nomeGolpeUi(g, 0);
 }
 
 function formatMtHelp(prefix = '!pk', mtQty = 0) {
@@ -1113,7 +1255,7 @@ function formatMtUsed(data, prefix = '!pk') {
 
 function formatForgetMove(data, prefix = '!pk') {
   const rem = (data && data.removido) || {};
-  const nome = rem.nomeExibicao || rem['nome-exibicao'] || rem.slug || 'golpe';
+  const nome = nomeGolpeUi(rem, 0);
   const p = (data && data.pokemon) || {};
   return `🗑️ *${nome}* removido de *${p.nome || '?'}*.\n${prefix} aprender · ${prefix} reaprender`;
 }
@@ -1125,7 +1267,7 @@ function formatOfferMove(data, prefix = '!pk') {
   }
   const ofertas = p.ofertasGolpes || p['ofertas-golpes'] || p.golpesOferecidos || [];
   const oferta = ofertas[0] || {};
-  const nome = oferta.nomeExibicao || oferta['nome-exibicao'] || oferta.slug || 'golpe';
+  const nome = nomeGolpeUi(oferta, 0);
   return [
     `📘 *${p.nome || '?'}* pode aprender *${nome}*!`,
     menuGolpes(p, [], null),
@@ -1155,7 +1297,7 @@ function formatMoveOfferMenu(pokemon, prefix = '!pk') {
       `Use ${prefix} aprender após subir de nível, ou ${prefix} reaprender.`
     ].join('\n');
   }
-  const nome = oferta.nomeExibicao || oferta['nome-exibicao'] || oferta.slug || 'golpe';
+  const nome = nomeGolpeUi(oferta, 0);
   const vagas = (p.golpes || []).length < 4;
   return [
     `📘 *${p.nome || '?'}* pode aprender *${nome}*!`,
@@ -1499,6 +1641,7 @@ function formatError(err) {
     INVALID_TRADE_TRANSITION: '⚠️ Essa proposta não aceita esta ação no estado atual.',
     BATTLE_SAVE_MISMATCH: '⚠️ Encontro pertence a outro save — callback antigo rejeitado.',
     BATTLE_ALREADY_ACTIVE: '⚔️ Já existe uma batalha/encontro seu em andamento.',
+    PRESO: '🕸️ Não consegue escapar da armadilha!',
     PVP_SWITCH_LIMIT: '🔄 Você já usou as três trocas desta batalha.',
     PVP_SWITCH_SAME_POKEMON: '🔄 Esse Pokémon já está em campo. Use !pk time para ver os outros.',
     PVP_SWITCH_COOLDOWN: '⏳ Aguarde antes de fazer outra troca.',
@@ -1831,7 +1974,7 @@ function golpesLinha(p) {
   const gs = (p && p.golpes) || [];
   if (!gs.length) return null;
   return gs.map((g, i) => {
-    const nome = g.nomeExibicao || g['nome-exibicao'] || g.nome || g.slug || '?';
+    const nome = nomeGolpeUi(g, i);
     const poder = g.poder != null ? g.poder : '?';
     const tipo = g.tipo || '?';
     return `${i + 1}. ${nome} (${tipo}/${poder})`;
@@ -1967,7 +2110,10 @@ function formatGymChallengeStart(data, prefix = '!pk') {
  * Usado quando `lastAction.mensagem` falta (DTO parcial / legado).
  */
 function formatCanonicalAttackLine(la, pokemonX, pokemonO) {
-  const nomeGolpe = la.golpeNome || la['golpe-nome'] || la.golpe || 'golpe';
+  const nomeGolpe = nomesGolpe.nomePtBr({
+    slug: la.golpeSlug || la['golpe-slug'],
+    nomeExibicao: la.golpeNome || la['golpe-nome'] || la.golpe
+  }) || 'golpe';
   const nomeAtk = (pokemonX && (pokemonX.nome || pokemonX.species)) || 'Pokémon';
   const nomeDef = (pokemonO && (pokemonO.nome || pokemonO.species)) || 'adversário';
   const dano = la.dano != null ? Number(la.dano) : null;
@@ -2160,10 +2306,21 @@ function qtyBall(inv, id) {
   ), 0);
 }
 
-function chanceComBola(chanceBase, bolaId, frambo) {
-  const limits = { pokebola: [1, 95], 'grande-bola': [1.5, 95], 'ultra-bola': [2, 95] };
-  const [mult, lim] = limits[bolaId] || [1, 95];
-  let n = Math.min(lim, Math.round(Number(chanceBase || 0) * mult));
+function aplicarFracao(chance, numer, denom) {
+  const c = Math.round(Number(chance) || 0);
+  const prod = c * numer;
+  const q = Math.trunc(prod / denom);
+  const r = prod % denom;
+  return (r * 2 >= denom) ? q + 1 : q;
+}
+
+function chanceComBola(chanceBase, bolaId, frambo, opts) {
+  const raid = Boolean(opts && opts.raid);
+  const tabela = raid
+    ? { pokebola: [1, 1, 95], 'grande-bola': [3, 2, 95], 'ultra-bola': [2, 1, 95] }
+    : { pokebola: [1, 1, 90], 'grande-bola': [16, 13, 90], 'ultra-bola': [19, 13, 95] };
+  const [numer, denom, lim] = tabela[bolaId] || [1, 1, raid ? 95 : 90];
+  let n = Math.min(lim, aplicarFracao(chanceBase, numer, denom));
   if (frambo) n = Math.min(lim, Math.round(n * 1.5));
   return n;
 }
@@ -2638,7 +2795,8 @@ function formatRaidMoveLines(pokemon, prefix = '!pk', tiposDefesa, habilidadeDef
     // Status/transform válidos: nome + classe — não confundir com ref quebrada (?).
     if (!ofensivo) {
       const emoji = emojiGolpe(Object.assign({}, g, { classe }));
-      return `${i + 1}. ${emoji} *${nome}* — _indisponível na raid_`;
+      const tipoEmoji = emojiTipo(g.tipo || g.type);
+      return `${i + 1}. ${emoji}${tipoEmoji ? ` ${tipoEmoji}` : ''} *${nome}* — _indisponível na raid_`;
     }
     // Paridade caça: emoji de classe + marca de efetividade vs chefe.
     const gNorm = classeRaw != null ? g : Object.assign({}, g, { classe: 'fisico' });
@@ -3088,13 +3246,19 @@ function formatRaidAttack(data, prefix = '!pk') {
   // Narrativa: dano/revide canônicos — HP detalhado só nas barras do turn block.
   const revide = data && data.revide != null ? Number(data.revide) : null;
   if (nomeGolpe) {
-    if (dano != null && Number.isFinite(dano) && dano === 0 && mult === 0) {
+    if (data && (data.errou || data['errou?'])) {
+      lines.push(`💨 *${nomeGolpe || 'Golpe'}* errou!`);
+      if (revide != null && revide > 0) lines.push(`⚔️ O chefe revidou com ${revide} de dano!`);
+    } else if (dano != null && Number.isFinite(dano) && dano === 0 && mult === 0) {
       lines.push(`${emojiClasse} *${nomeGolpe}* de *${nomeAtacante || 'Pokémon'}* não teve efeito em *${nomeChefe}*! 🚫`);
     } else if (dano != null && Number.isFinite(dano) && revide != null && revide > 0) {
       lines.push(`${emojiClasse} *${nomeAtacante || 'Pokémon'}* causou ${dano} de dano e recebeu ${revide} de revide!`);
     } else if (dano != null && Number.isFinite(dano)) {
       lines.push(`${emojiClasse} *${nomeAtacante || 'Pokémon'}* causou ${dano} de dano!`);
-    } else {
+    }
+    const acertosRaid = data && data.acertos != null ? Number(data.acertos) : 1;
+    if (data && data.mensagem) lines.push(String(data.mensagem));
+    if (acertosRaid > 1) lines.push(`🎯 Acertou ${acertosRaid} vezes!`); else {
       lines.push(nomeAtacante
         ? `${emojiClasse} *${nomeGolpe}* de *${nomeAtacante}*!`
         : `${emojiClasse} *${nomeGolpe}*!`);
@@ -3211,7 +3375,7 @@ function formatRaidCaptureUi(data, prefix = '!pk', opts = {}) {
     if (fromMap != null) return Number(fromMap);
     const hasAnyMotor = chances && Object.keys(chances).length > 0;
     if (hasAnyMotor) return NaN; // não inventar % divergente do motor
-    return chanceComBola(baseChance, id, prepared);
+    return chanceComBola(baseChance, id, prepared, { raid: true });
   };
   const pct = (id) => {
     const n = pctNum(id);
