@@ -13,7 +13,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parent
 VALIDATOR = ROOT / "a6_validate_admin_bundle.py"
 EXPECTED = (
-    "a6-root-backup", "a6-docker-mediator", "a6_docker_mediator.py", "a6_root_backup.py", "a6_production_backup.py",
+    "a6-root-backup", "a6-docker-mediator", "a6_docker_mediator.py", "a6_mediator_authority.py", "a6_root_backup.py", "a6_production_backup.py",
     "a6_production_contract.py", "a6_production_deploy.py",
     "a6_mount_policy.py", "a6_writer_policy.py", "chromium-seccomp.json",
 )

@@ -14,7 +14,7 @@ install -d -o root -g root -m 0700 "$installer"
 install -o root -g root -m 0700 /work/scripts/a6-provision-admin.sh "$installer/a6-provision-admin.sh"
 install -o root -g root -m 0600 /work/scripts/a6_validate_admin_bundle.py "$installer/a6_validate_admin_bundle.py"
 tar --format=ustar -C /work/scripts -cf "$test_root/admin.tar" \
-  a6-root-backup a6-docker-mediator a6_docker_mediator.py a6_root_backup.py a6_production_backup.py a6_production_contract.py \
+  a6-root-backup a6-docker-mediator a6_docker_mediator.py a6_mediator_authority.py a6_root_backup.py a6_production_backup.py a6_production_contract.py \
   a6_production_deploy.py a6_mount_policy.py a6_writer_policy.py
 tar --format=ustar -C /work/docker -rf "$test_root/admin.tar" chromium-seccomp.json
 bundle_sha="$(sha256sum "$test_root/admin.tar" | awk '{print $1}')"

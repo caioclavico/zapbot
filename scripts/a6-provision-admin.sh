@@ -47,7 +47,7 @@ stage_json="$(/usr/bin/python3 -I "$validator" --bundle "$bundle" --sha256 "$exp
 stage="$(/usr/bin/python3 -I -c 'import json, sys; print(json.load(sys.stdin)["stage"])' <<<"$stage_json")"
 cleanup() { rm -rf "$stage"; }
 trap cleanup EXIT
-for item in a6-root-backup a6-docker-mediator a6_docker_mediator.py a6_root_backup.py a6_production_backup.py a6_production_contract.py a6_production_deploy.py a6_mount_policy.py a6_writer_policy.py chromium-seccomp.json; do
+for item in a6-root-backup a6-docker-mediator a6_docker_mediator.py a6_mediator_authority.py a6_root_backup.py a6_production_backup.py a6_production_contract.py a6_production_deploy.py a6_mount_policy.py a6_writer_policy.py chromium-seccomp.json; do
   [[ -f "$stage/$item" && ! -L "$stage/$item" && "$(stat -c '%u:%a:%h' -- "$stage/$item")" == 0:600:1 ]] || { echo "artefato extraído inválido: $item" >&2; exit 2; }
 done
 [[ "$(sha256sum "$stage/chromium-seccomp.json" | awk '{print $1}')" == "$seccomp_sha" ]] || { echo 'seccomp SHA-256 divergente' >&2; exit 2; }
