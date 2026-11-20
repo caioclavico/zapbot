@@ -1,6 +1,8 @@
 (ns pokemon.infrastructure.datomic.raid-store
   "TX builders de raid (fora do store monolítico)."
-  (:require [clojure.string :as str]
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
+            [datomic.client.api :as d]
             [pokemon.domain.battle :as battle]
             [pokemon.domain.capacity :as capacity]
             [pokemon.domain.capture :as capture]
@@ -1058,6 +1060,12 @@
         ;; Bug 12.6: default antigo 100 ⇒ (< roll chance) sempre falso.
         roll (long (or (:roll request) (rand-int 100)))
         sucesso? (< roll chance)
+        victory-reward (when sucesso?
+                         (let [receipt-id (str "raid-reward|" (:raid-id raid) "|" player-id)
+                               receipt (d/pull db [:operation-receipt/summary]
+                                               [:operation-receipt/id receipt-id])]
+                           (some-> (:operation-receipt/summary receipt) edn/read-string
+                                   (select-keys [:pe :moedas :xp-pokemon :adventure-activity]))))
         tentativas (long (get-in raid [:capturas player-id :tentativas] 0))
         sk (id/save-key chat-id player-id save-id)
         rev (long (:save/revision save 0))
@@ -1114,13 +1122,15 @@
                    :operation-receipt/save-id save-id
                    :operation-receipt/summary
                    (pr-str {:sucesso? sucesso? :chance chance :roll roll
-                            :frambo? frambo? :pointer-cleared liberar?})}]
+                            :frambo? frambo? :pointer-cleared liberar?
+                            :tentativas (inc tentativas) :victory-reward victory-reward})}]
                  (or clear-ptr []))
      :result {:operation-id operation-id
               :duplicate false
               :sucesso? sucesso?
               :chance chance
               :chance-base chance-base
+              :victory-reward victory-reward
               :roll roll
               :frambo? frambo?
               :bola bola

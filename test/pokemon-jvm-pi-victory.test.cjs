@@ -55,3 +55,28 @@ test('não inventa PI sem adventure-activity', () => {
   });
   assert.doesNotMatch(text, /PI de incubação/);
 });
+
+test('raide divulga recompensas por participante e atalho de captura', () => {
+  const data = {
+    capturaPendente: true,
+    raid: { participantes: [{ playerId: 'ash', nome: 'Ash' }, { playerId: 'misty', nome: 'Misty' }] },
+    rewards: [{ playerId: 'ash' }, { playerId: 'misty' }],
+    adventureActivity: [
+      { playerId: 'ash', pi: 10, eggId: 'e1', eggCategory: 'raro' },
+      { playerId: 'misty', pi: 30, incubatorId: 'i1', incubatorKind: 'extra' }
+    ]
+  };
+  const { text } = present.formatRaidVictory(data);
+  assert.match(text, /@Ash[^@]*\+10 PI[^@]*ovo raro/);
+  assert.match(text, /@Misty[^@]*\+30 PI[^@]*incubadora extra/);
+  assert.match(text, /Próximos comandos[^]*!pk raide cap/);
+  assert.deepEqual(present.formatConfirmedPiLines({ ...data, duplicate: true }), []);
+});
+
+test('captura de raide resume os ganhos já creditados na vitória', () => {
+  const text = present.formatRaidCapture({ capturou: true, victoryReward: {
+    pe: 12, xpPokemon: 8, moedas: 5, adventureActivity: [{ pi: 30 }]
+  }});
+  assert.match(text, /já recebidas pela vitória[^]*\+12 PE[^]*\+30 PI[^]*\+8 XP[^]*\+5 moedas/);
+  assert.doesNotMatch(present.formatRaidCapture({ capturou: true }), /PI de incubação/);
+});

@@ -240,17 +240,33 @@
         built
         (let [chat-id (:chat-id writer)
               enrichments (mapv #(enrich-target db chat-id %) targets)
-              summaries (mapv #(get-in % [:result :adventure-activity]) enrichments)
+              summaries (mapv (fn [target enrichment]
+                                (assoc (get-in enrichment [:result :adventure-activity])
+                                       :player-id (:player-id target)))
+                              targets enrichments)
+              by-player-key (into {}
+                                  (map (fn [activity]
+                                         [(id/player-key chat-id (:player-id activity))
+                                          activity]))
+                                  summaries)
               extra-tx (mapcat :tx enrichments)
               summary0 (read-edn (:operation-receipt/summary receipt))
               summary (assoc (or summary0 {})
                              :adventure-activity summaries)]
           (-> built
               (update :tx #(into (mapv (fn [item]
-                                         (if (= item receipt)
-                                           (assoc item :operation-receipt/summary
-                                                  (pr-str summary))
-                                           item))
+                                         (cond
+                                           (= item receipt)
+                                           (assoc item :operation-receipt/summary (pr-str summary))
+
+                                           (= "raid-reward" (:operation-receipt/kind item))
+                                           (if-let [activity (get by-player-key (:operation-receipt/player-key item))]
+                                             (let [reward (read-edn (:operation-receipt/summary item))]
+                                               (assoc item :operation-receipt/summary
+                                                      (pr-str (assoc reward :adventure-activity [activity]))))
+                                             item)
+
+                                           :else item))
                                        %)
                                  extra-tx))
               (assoc-in [:result :adventure-activity] summaries)))))))

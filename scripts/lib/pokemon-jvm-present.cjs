@@ -2063,6 +2063,7 @@ function formatGymResolve(gymResolve, battle, data) {
     ...peLines,
     pokeLines.length ? '' : null,
     ...pokeLines,
+    ...piLines,
     '',
     '💪 Continue treinando para conquistar o ginásio!'
   ].filter((line, idx, arr) => {
@@ -2189,6 +2190,7 @@ function formatBattleTurn(data, prefix = '!pk') {
     return [
       header,
       '🎒 Bolsa cheia: o selvagem foi liberado. Vitória registrada; sem captura nesta caçada.',
+      ...formatConfirmedPiLines(data),
       expShare
     ].filter(Boolean).join('\n');
   }
@@ -2233,16 +2235,17 @@ function formatBattleTurn(data, prefix = '!pk') {
     return `${header}\n\n${menu}\n\n🌿 Liberar: \`${prefix} liberar\``;
   }
   if (b.outcome === 'lose' || data.outcome === 'lose') {
+    const piLines = formatConfirmedPiLines(data);
     const laLose = b.lastAction || {};
     if (laLose.autodesmaio || laLose.autodesmaio === true
         || laLose['autodesmaio?'] || (laLose.mensagem && /desmaiou após o golpe/i.test(laLose.mensagem))) {
       return gym
         ? formatGymResolve({ venceu: false, peDelta: 1 }, b)
-        : '💀 Seu Pokémon desmaiou após o golpe. A caçada acabou.';
+        : ['💀 Seu Pokémon desmaiou após o golpe. A caçada acabou.', ...piLines].join('\n');
     }
     return gym
       ? formatGymResolve({ venceu: false, peDelta: 1 }, b)
-      : '💀 Seu Pokémon desmaiou. A caçada acabou.';
+      : ['💀 Seu Pokémon desmaiou. A caçada acabou.', ...piLines].join('\n');
   }
   if (b.outcome === 'flee' || data.outcome === 'flee') {
     return `💨 *${nome}* fugiu durante a batalha!`;
@@ -3053,7 +3056,7 @@ function formatRaidVictoryFooter(r, data, prefix = '!pk') {
       `\`${prefix} raid fruta\` — preparar Frambo (+chance)`,
       '',
       '📌 *Próximos comandos*',
-      `\`${prefix} raid capturar\``,
+      `\`${prefix} raide cap\` — abrir a captura`,
       `\`${prefix} mochila\``
     ];
   }
@@ -3080,7 +3083,7 @@ function formatRaidVictoryFooter(r, data, prefix = '!pk') {
   ];
 }
 
-function formatRaidRewardLines(rewards, viewerId, mentionRoster) {
+function formatRaidRewardLines(rewards, viewerId, mentionRoster, activityData) {
   const rows = Array.isArray(rewards) ? rewards : [];
   if (!rows.length) {
     return { lines: ['🎁 *RECOMPENSAS*', '_Nenhuma recompensa liquidada nesta resposta._'], mentions: [] };
@@ -3101,6 +3104,7 @@ function formatRaidRewardLines(rewards, viewerId, mentionRoster) {
       textoMoedas(rw.moedas != null ? rw.moedas : 0) || `💰 +0 moedas`,
       `🏅 +${rw.pe != null ? rw.pe : 0} PE`,
       x != null ? `⭐ +${x} XP` : null,
+      ...formatConfirmedPiLines(activityData, { playerId: pid || viewerId }),
       ''
     );
   }
@@ -3127,10 +3131,8 @@ function formatRaidVictory(data, prefix = '!pk') {
   } else {
     partLines.push('_Sem participantes listados._');
   }
-  const rewards = formatRaidRewardLines(data.rewards, data.playerId || data['player-id'], roster);
-  const piLines = formatConfirmedPiLines(data, {
-    playerId: data.playerId || data['player-id']
-  });
+  const rewards = formatRaidRewardLines(data.rewards, data.playerId || data['player-id'], roster, data);
+  const piLines = Array.isArray(data.rewards) && data.rewards.length ? [] : formatConfirmedPiLines(data);
   const mentionSet = [];
   for (const m of [...roster.mentions, ...rewards.mentions]) {
     if (m && !mentionSet.includes(m)) mentionSet.push(m);
@@ -3186,6 +3188,7 @@ function formatRaidDefeat(data, _prefix = '!pk') {
         `👤 Treinador: +${pe} PE`,
         `⚔️ Pokémon participante: +${xp} XP`,
         `💰 Moedas: ${moedas}`,
+        ...formatConfirmedPiLines(data, { playerId: pid }),
         ''
       );
     }
@@ -3452,9 +3455,19 @@ function formatRaidCapture(data, prefix = '!pk') {
   const tent = data.tentativas != null ? Number(data.tentativas) : null;
   const maxT = 3;
   if (data.capturou) {
+    const reward = data.victoryReward || data['victory-reward'] || {};
+    const pi = pickAdventureActivities(reward).reduce((total, a) => total + (Number(a.pi) || 0), 0);
+    const xp = reward.xpPokemon ?? reward['xp-pokemon'];
+    const lines = [
+      reward.pe > 0 ? `🏅 +${reward.pe} PE` : null,
+      pi > 0 ? `🥚 +${pi} PI de incubação` : null,
+      xp > 0 ? `⭐ +${xp} XP` : null,
+      reward.moedas > 0 ? textoMoedas(reward.moedas) : null
+    ].filter(Boolean);
     return [
       `✅ Capturou *${chefe}* com ${bolaNome}${frambo ? ' + Frambo' : ''}! (${data.chance != null ? data.chance : '?'}%)`,
-      'Entrou na coleção (nv.1).'
+      'Entrou na coleção (nv.1).',
+      ...(lines.length ? ['', '🎁 *Recompensas já recebidas pela vitória da raide*', ...lines] : [])
     ].join('\n');
   }
   // Raide: falha de bola ≠ fuga definitiva. Janela segue até 3 tentativas ou captura-expira.
@@ -3839,7 +3852,7 @@ function textoMoedas(n, { prefixo = '+' } = {}) {
  * Nunca infere tabela local — só anuncia o que veio persistido/confirmado.
  */
 function pickAdventureActivities(data) {
-  if (!data || typeof data !== 'object') return [];
+  if (!data || typeof data !== 'object' || data.duplicate === true) return [];
   const raw = data.adventureActivity || data.adventure_activity
     || data['adventure-activity'] || data.adventure;
   if (Array.isArray(raw)) return raw.filter(Boolean);
@@ -3857,6 +3870,21 @@ function formatConfirmedPiLines(data, opts = {}) {
     const pi = Number(a.pi != null ? a.pi : (a.piGranted != null ? a.piGranted : a['pi-granted']));
     if (Number.isFinite(pi) && pi > 0) {
       lines.push(`🥚 +${pi} PI de incubação`);
+    }
+    const pending = a.deferred === true || a['deferred?'] === true;
+    const category = a.eggCategory || a['egg-category'];
+    if (a.eggId || a['egg-id']) {
+      lines.push(pending
+        ? `🥚 Ovo ${category || 'encontrado'} aguardando espaço no inventário.`
+        : `🥚 Você encontrou um ovo${category ? ' ' + category : ''}!`);
+    }
+    const incubator = a.incubatorKind || a['incubator-kind'];
+    const incubatorPending = a.incubatorDeferred === true || a['incubator-deferred?'] === true;
+    if (a.incubatorId || a['incubator-id']) {
+      const label = incubator ? ' ' + incubator : '';
+      lines.push(incubatorPending
+        ? `🪺 Incubadora${label} aguardando vaga.`
+        : `🪺 Você ganhou uma incubadora${label}!`);
     }
     const ep = a.eggProgress || a.egg_progress || a['egg-progress'];
     if (ep && typeof ep === 'object') {
