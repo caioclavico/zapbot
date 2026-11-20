@@ -11,6 +11,8 @@ tar -C /work/docker -rf "$test_root/admin.tar" chromium-seccomp.json
 bundle_sha="$(sha256sum "$test_root/admin.tar" | awk '{print $1}')"
 A6_ADMIN_BUNDLE="$test_root/admin.tar" A6_ADMIN_BUNDLE_SHA256="$bundle_sha" \
   A6_NODE_SECCOMP_SHA256="$(sha256sum /work/docker/chromium-seccomp.json | awk '{print $1}')" \
+  A6_PROVISIONER_SHA256="$(sha256sum /work/scripts/a6-provision-admin.sh | awk '{print $1}')" \
+  A6_ADMIN_VALIDATOR_SHA256="$(sha256sum /work/scripts/a6_validate_admin_bundle.py | awk '{print $1}')" \
   bash /work/scripts/a6-provision-admin.sh
 
 useradd --create-home --shell /bin/sh caioclavico

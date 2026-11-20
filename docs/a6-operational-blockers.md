@@ -172,6 +172,8 @@ administrador em caminho root-owned. O comando é:
 ```bash
 sudo A6_ADMIN_BUNDLE=/root/a6-admin-<sha>.tar \
   A6_ADMIN_BUNDLE_SHA256=<sha256-do-tar-conferido> \
+  A6_PROVISIONER_SHA256=<sha256-do-a6-provision-admin.sh-conferido> \
+  A6_ADMIN_VALIDATOR_SHA256=<sha256-do-a6_validate_admin_bundle.py-conferido> \
   A6_NODE_SECCOMP_SHA256=4e4980dbebe8f2853a3e1df17489a00cf027237bfc044516e4b7e84fc610fa10 \
   bash /caminho-verificado/a6-provision-admin.sh
 ```
