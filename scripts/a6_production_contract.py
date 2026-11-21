@@ -104,7 +104,7 @@ def _mount_key(mount):
     return (
         mount.get("type"),
         mount.get("name") or "",
-        mount.get("source") or "",
+        (mount.get("source") or "") if mount.get("type") != "volume" else "",
         mount.get("destination"),
         bool(mount.get("rw", True)),
     )
