@@ -28,14 +28,22 @@ TIMEOUT_MS = "30000"
 
 
 def _curl_script(method, path, header, env_name, port):
+    """curl no JVM: aspas duplas no header para o sh expandir $ENV.
+
+    Aspas simples em volta de `$ENV` enviam o literal e a API responde 401.
+    O valor do token não entra no argv do Python — só o nome da variável.
+    """
+    for part in (method, path, header, env_name):
+        if '"' in part or "'" in part or not part:
+            raise DeployError("maintenance_command_refused")
     return (
         "curl -sS -w '\\n%{http_code}' -X "
         + method
-        + " -H '"
+        + " -H \""
         + header
         + ": $"
         + env_name
-        + "' 'http://127.0.0.1:"
+        + "\" 'http://127.0.0.1:"
         + str(port)
         + path
         + "'"

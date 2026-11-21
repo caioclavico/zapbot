@@ -213,8 +213,18 @@ class MaintenanceCycleTests(unittest.TestCase):
     def test_jvm_command_still_uses_curl(self):
         argv = command(["sudo", "-n", "docker"], "odisseu-a6-jvm", "GET", "/ops/maintenance/status", "X-A6-Maintenance-Token", "ODISSEU_BRIDGE_MAINTENANCE_TOKEN", 18090)
         text = " ".join(argv)
+        script = argv[-1]
         self.assertIn("curl", text)
         self.assertIn("$ODISSEU_BRIDGE_MAINTENANCE_TOKEN", text)
+        # Double quotes around the header so sh expands $ENV (single quotes → 401).
+        self.assertIn(
+            '-H "X-A6-Maintenance-Token: $ODISSEU_BRIDGE_MAINTENANCE_TOKEN"',
+            script,
+        )
+        self.assertNotIn(
+            "-H 'X-A6-Maintenance-Token: $ODISSEU_BRIDGE_MAINTENANCE_TOKEN'",
+            script,
+        )
         self.assertNotIn(TOKEN, text)
         self.assertNotIn(">", text)
 
