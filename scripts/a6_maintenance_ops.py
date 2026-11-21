@@ -1,9 +1,9 @@
 """Manutenção autenticada do Node e da JVM.
 
-O token não entra no comando: o shell do container expande a variável que
-já existe no ambiente. Este módulo não escreve o marcador. Quem persiste a
-fase é o processo que atende o POST. O arquivo só é lido depois, para
-conferir o que a API disse.
+O token não entra no argv montado aqui: no Node ele vem de process.env no
+container; na JVM o shell expande a variável já presente no ambiente.
+Este módulo não escreve o marcador. Quem persiste a fase é o processo que
+atende o POST. O arquivo só é lido depois, para conferir o que a API disse.
 """
 
 from __future__ import annotations
@@ -27,9 +27,8 @@ KNOWN_PHASES = {"open", "draining", "quiescent", "frozen"}
 TIMEOUT_MS = "30000"
 
 
-def command(prefix, container, method, path, header, env_name, port):
-    """Monta o curl. O valor do token não aparece no argv."""
-    script = (
+def _curl_script(method, path, header, env_name, port):
+    return (
         "curl -sS -w '\\n%{http_code}' -X "
         + method
         + " -H '"
@@ -41,6 +40,49 @@ def command(prefix, container, method, path, header, env_name, port):
         + path
         + "'"
     )
+
+
+def _node_http_script(method, path, header, env_name, port):
+    """HTTP via node: imagens Node de produção não trazem curl.
+
+    Aspas simples no -e (sh -c); JSON/JS usam aspas duplas. function()
+    evita '>' no script. Token só via process.env; argv cita o nome.
+    """
+    for part in (method, path, header, env_name):
+        if "'" in part or not part:
+            raise DeployError("maintenance_command_refused")
+    return (
+        "node -e "
+        + "'const http=require(\"http\");"
+        + "const req=http.request({"
+        + "hostname:\"127.0.0.1\","
+        + "port:"
+        + str(int(port))
+        + ","
+        + "path:"
+        + json.dumps(path)
+        + ","
+        + "method:"
+        + json.dumps(method)
+        + ","
+        + "headers:{"
+        + json.dumps(header)
+        + ":process.env."
+        + env_name
+        + "}"
+        + "},function(res){var d=\"\";res.on(\"data\",function(c){d+=c});"
+        + "res.on(\"end\",function(){process.stdout.write(d+\"\\n\"+res.statusCode)})});"
+        + "req.on(\"error\",function(e){console.error(e);process.exit(1)});"
+        + "req.end()'"
+    )
+
+
+def command(prefix, container, method, path, header, env_name, port):
+    """Monta o probe HTTP. O valor do token não aparece no argv."""
+    if container == NODE:
+        script = _node_http_script(method, path, header, env_name, port)
+    else:
+        script = _curl_script(method, path, header, env_name, port)
     if ">" in script or env_name + "=" in script:
         raise DeployError("maintenance_command_refused")
     return list(prefix) + ["exec", container, "sh", "-c", script]

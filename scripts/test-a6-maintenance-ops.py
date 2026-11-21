@@ -205,8 +205,18 @@ class MaintenanceCycleTests(unittest.TestCase):
         self.assertNotIn(TOKEN, text)
         self.assertNotIn("TOKEN=", text)
         self.assertNotIn(">", text)
-        self.assertIn("$" + NODE_TOKEN_ENV, text)
+        self.assertIn("process.env." + NODE_TOKEN_ENV, text)
+        self.assertIn("node -e", text)
+        self.assertNotIn("curl", text)
         self.assertIn("/ops/maintenance/enter", text)
+
+    def test_jvm_command_still_uses_curl(self):
+        argv = command(["sudo", "-n", "docker"], "odisseu-a6-jvm", "GET", "/ops/maintenance/status", "X-A6-Maintenance-Token", "ODISSEU_BRIDGE_MAINTENANCE_TOKEN", 18090)
+        text = " ".join(argv)
+        self.assertIn("curl", text)
+        self.assertIn("$ODISSEU_BRIDGE_MAINTENANCE_TOKEN", text)
+        self.assertNotIn(TOKEN, text)
+        self.assertNotIn(">", text)
 
     def test_active_writes_zero_is_not_quiescence(self):
         with self.assertRaises(DeployError) as caught:
@@ -258,11 +268,18 @@ class MaintenanceCycleTests(unittest.TestCase):
                 bases = {"3001": "http://127.0.0.1:%s" % node_port, "18090": "http://127.0.0.1:%s" % jvm_port}
 
                 def forward(script, token):
-                    method = "POST" if " -X POST " in script else "GET"
-                    quoted = script.split("'http://127.0.0.1:", 1)[1]
-                    port, path = quoted.split("/", 1)
-                    path = "/" + path.rstrip("'")
-                    header = "x-a6-node-maintenance-token" if port == "3001" else "X-A6-Maintenance-Token"
+                    if "node -e" in script:
+                        method = "POST" if '"POST"' in script or "'POST'" in script else "GET"
+                        port = "3001"
+                        path_marker = 'path:"'
+                        path = script.split(path_marker, 1)[1].split('"', 1)[0]
+                        header = "x-a6-node-maintenance-token"
+                    else:
+                        method = "POST" if " -X POST " in script else "GET"
+                        quoted = script.split("'http://127.0.0.1:", 1)[1]
+                        port, path = quoted.split("/", 1)
+                        path = "/" + path.rstrip("'")
+                        header = "x-a6-node-maintenance-token" if port == "3001" else "X-A6-Maintenance-Token"
                     request = urllib.request.Request(bases[port] + path, data=b"" if method == "POST" else None, method=method)
                     if token:
                         request.add_header(header, token)
@@ -278,8 +295,9 @@ class MaintenanceCycleTests(unittest.TestCase):
                     world = supervised.World()
 
                     def _run(args):
-                        if len(args) >= 2 and args[-2] == "-c" and "curl" in str(args[-1]):
-                            return forward(str(args[-1]), token)
+                        script = str(args[-1]) if args else ""
+                        if len(args) >= 2 and args[-2] == "-c" and ("curl" in script or "node -e" in script):
+                            return forward(script, token)
                         if str(args[-1]).endswith("a6-maintenance.json"):
                             return Result(node_file.read_text(encoding="utf-8"))
                         if str(args[-1]).endswith("bridge-maintenance.edn"):
