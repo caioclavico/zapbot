@@ -304,8 +304,9 @@ class World:
         return Result("", 1)
 
     def _exec(self, name, rest):
-        if len(rest) >= 2 and rest[-2] == "-c" and "curl" in str(rest[-1]):
-            return self._http(str(rest[-1]))
+        script = str(rest[-1]) if rest else ""
+        if len(rest) >= 2 and rest[-2] == "-c" and ("curl" in script or "node -e" in script):
+            return self._http(script)
         if rest[-1] == "/proc/self/status":
             cap = self.cap_after_run if self.ran_jvm and self.cap_after_run else self.cap_eff
             return Result(f"CapEff:\t{cap}\n")
@@ -383,7 +384,7 @@ class World:
             }
             return Result(json.dumps(body) + "\n" + ("200" if self.datomic_up else "503"))
         node = "3001" in script
-        post = " -X POST " in script
+        post = " -X POST " in script or 'method:"POST"' in script or "method:'POST'" in script
         if node and post and "/enter" in script:
             if self.ops != 0:
                 self.node_phase = "draining"
