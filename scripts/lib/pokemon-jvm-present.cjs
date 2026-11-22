@@ -3653,10 +3653,20 @@ function formatEggIncubate(data, prefix = '!pk') {
   ].join('\n');
 }
 
+function isEggHatchPending(data) {
+  return Boolean(data && (data.collectionFull || data.pending || data['collection-full']));
+}
+
+/** PNG comemorativo só após entrega confirmada (não em coleção cheia). */
+function shouldRenderHatchReveal(data) {
+  return Boolean(data) && !isEggHatchPending(data);
+}
+
 function formatEggHatch(data, prefix = '!pk') {
-  if (data && (data.collectionFull || data.pending || data['collection-full'])) {
+  if (isEggHatchPending(data)) {
     return [
       '📦 Coleção cheia — o nascimento ficou *pendente*.',
+      'Nenhum Pokémon foi adicionado ainda.',
       'Libere espaço e use `' + prefix + ' chocar` de novo (mesmo Pokémon).',
       `${prefix} pc · ${prefix} ovos`
     ].join('\n');
@@ -3672,6 +3682,63 @@ function formatEggHatch(data, prefix = '!pk') {
     '✅ Adicionado à sua coleção!',
     `${prefix} time · ${prefix} ovos`
   ].join('\n');
+}
+
+/**
+ * Resolve entrega de egg-auto-hatch: save carimbado no evento/ovo, nunca outro save.
+ * active !== sealed → defer (sem ACK); ovo já hatched → done (ACK silencioso).
+ */
+function resolveEggAutoHatchDelivery({ event, activeSave, adventure } = {}) {
+  const eggId = String((event && (event.eggId || event['egg-id'])) || '').trim();
+  const hatchId = String((event && (event.hatchId || event['hatch-id'])) || (eggId ? `hatch:${eggId}` : '')).trim();
+  const sealedFromEvent = String((event && (event.saveId || event['save-id'])) || '').trim();
+  const activeSaveId = String((activeSave && (activeSave.activeSaveId || activeSave['active-save-id'])) || '').trim();
+  const fenceRaw = activeSave && (activeSave.fenceGeneration != null
+    ? activeSave.fenceGeneration
+    : activeSave['fence-generation']);
+  const fenceGeneration = Number(fenceRaw);
+  const eggs = (adventure && adventure.eggs) || [];
+  const egg = Array.isArray(eggs)
+    ? eggs.find((e) => String(e.eggId || e['egg-id'] || '') === eggId)
+    : null;
+  const sealedFromEgg = egg
+    ? String(egg.saveId || egg['save-id'] || '').trim()
+    : '';
+  const sealedSaveId = sealedFromEvent || sealedFromEgg || '';
+
+  if (!eggId || !activeSaveId || !Number.isFinite(fenceGeneration)) {
+    return { ok: false, defer: true, reason: 'incomplete', eggId, hatchId };
+  }
+  if (egg && String(egg.state || '') === 'hatched') {
+    return {
+      ok: true,
+      alreadyHatched: true,
+      eggId,
+      hatchId,
+      saveId: sealedSaveId || activeSaveId,
+      fenceGeneration
+    };
+  }
+  if (sealedSaveId && sealedSaveId !== activeSaveId) {
+    return {
+      ok: false,
+      defer: true,
+      reason: 'save_mismatch',
+      eggId,
+      hatchId,
+      sealedSaveId,
+      activeSaveId,
+      fenceGeneration
+    };
+  }
+  return {
+    ok: true,
+    alreadyHatched: false,
+    eggId,
+    hatchId,
+    saveId: sealedSaveId || activeSaveId,
+    fenceGeneration
+  };
 }
 
 
@@ -5247,6 +5314,9 @@ module.exports = {
   formatIncubationHelp,
   formatEggIncubate,
   formatEggHatch,
+  isEggHatchPending,
+  shouldRenderHatchReveal,
+  resolveEggAutoHatchDelivery,
   linhaGolpe,
   listIncubators,
   resolveIncubatorSelection,

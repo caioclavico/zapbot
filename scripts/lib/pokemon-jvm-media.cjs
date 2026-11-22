@@ -1628,9 +1628,11 @@ async function renderIncubatorCard(data, { filename = 'incubadoras.png' } = {}) 
 
 async function renderHatchRevealCard(data, { filename = 'ovo-chocou.png' } = {}) {
   try {
+    if (data && (data.collectionFull || data.pending || data['collection-full'])) {
+      return null;
+    }
     const eggCards = require('./egg-cards.cjs');
-    const reg = (data && (data.registro || data.pokemon || data)) || {};
-    const shiny = Boolean(reg.shiny || reg['shiny?']);
+    const reg = (data && (data.registro || data.pokemon || data)) || {};    const shiny = Boolean(reg.shiny || reg['shiny?']);
     const speciesName = reg.nome || reg.species || reg.name || 'Pokémon';
     const imageUrl = shiny
       ? (reg.imagemShiny || reg['imagem-shiny'] || reg.imagem || reg.imageUrl)

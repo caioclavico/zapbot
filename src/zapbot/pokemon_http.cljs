@@ -3625,55 +3625,88 @@
               egg-id (or (:eggId evento) (:egg-id evento))
               hatch-id (or (:hatchId evento) (:hatch-id evento) (str "hatch:" egg-id))
               player-id (or (:playerId evento) (:player-id evento))
-              chat-id (:chatId evento)]
+              chat-id (:chatId evento)
+              sealed-save (or (:saveId evento) (:save-id evento))]
           (when (or (str/blank? (str egg-id)) (str/blank? (str player-id)))
             (throw (erro-contrato "egg-auto-hatch sem eggId/playerId")))
           (-> (p/let [jvm (cliente-jvm!)
                       ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                      op-id (.stableOperationId jvm-transport
-                                                (str "egg-auto-hatch:" egg-id)
-                                                (str "egg-hatch:" egg-id))
-                      data (.hatchEgg jvm
-                             #js {:chatId chat-id
-                                  :playerId player-id
-                                  :saveId (.-activeSaveId ativo)
-                                  :fenceGeneration (.-fenceGeneration ativo)
-                                  :operationId op-id
-                                  :eggId egg-id
-                                  :hatchId hatch-id})
-                      caption (.formatEggHatch jvm-present data prefix)
-                      media-info (render-seguro! {:fase "egg-auto-hatch"} "pokemon_jvm_media_hatch"
-                                   #(.renderHatchRevealCard jvm-media data
-                                                            #js {:filename "ovo-chocou.png"}))
+                      adv (.getAdventure jvm #js {:chatId chat-id :playerId player-id})
+                      plan (.resolveEggAutoHatchDelivery jvm-present
+                             #js {:event (clj->js evento)
+                                  :activeSave ativo
+                                  :adventure adv})
+                      _ (when (.-defer plan)
+                          ;; Save carimbado ≠ ativo: preserva outbox (sem ACK) até voltar ao save.
+                          (throw (js/Error.
+                                  (str "egg-auto-hatch-deferred:"
+                                       (or (.-reason plan) "save_mismatch")))))
+                      _ (when (.-alreadyHatched plan)
+                          ;; Já entregue (manual ou auto): ACK sem reanunciar.
+                          nil)
+                      data (when-not (.-alreadyHatched plan)
+                             (let [op-id (.stableOperationId jvm-transport
+                                                             (str "egg-auto-hatch:" egg-id)
+                                                             (str "egg-hatch:" egg-id))
+                                   save-id (or (.-saveId plan) sealed-save (.-activeSaveId ativo))]
+                               (.hatchEgg jvm
+                                 #js {:chatId chat-id
+                                      :playerId player-id
+                                      :saveId save-id
+                                      :fenceGeneration (.-fenceGeneration plan)
+                                      :operationId op-id
+                                      :eggId egg-id
+                                      :hatchId (or (.-hatchId plan) hatch-id)})))
+                      _ (when-not data nil)
+                      caption (when data (.formatEggHatch jvm-present data prefix))
+                      pending? (when data (.isEggHatchPending jvm-present data))
+                      media-info (when (and data (not pending?)
+                                            (.shouldRenderHatchReveal jvm-present data))
+                                   (render-seguro! {:fase "egg-auto-hatch"} "pokemon_jvm_media_hatch"
+                                     #(.renderHatchRevealCard jvm-media data
+                                                              #js {:filename "ovo-chocou.png"})))
                       media (when media-info
                               (MessageMedia. (or (.-mimeType media-info) "image/png")
                                              (.-base64 media-info)
                                              (or (.-filename media-info) "ovo-chocou.png")))
-                      _ (if media
-                          (.sendMessage whatsapp chat-id media
-                                        (js/Object.assign #js {} opts #js {:caption caption}))
-                          (.sendMessage whatsapp chat-id caption opts))]
+                      _ (when caption
+                          (if media
+                            (.sendMessage whatsapp chat-id media
+                                          (js/Object.assign #js {} opts #js {:caption caption}))
+                            (.sendMessage whatsapp chat-id caption opts)))]
                 nil)
               (p/catch (fn [erro]
-                         (js/console.warn "[PokemonJVM] egg-auto-hatch imagem/envio; texto:"
-                                          (or (.-message erro) erro))
-                         ;; Nascimento já pode ter sido confirmado (idempotente). Tenta texto.
-                         (p/let [jvm (cliente-jvm!)
-                                 ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
-                                 op-id (.stableOperationId jvm-transport
-                                                           (str "egg-auto-hatch:" egg-id)
-                                                           (str "egg-hatch:" egg-id))
-                                 data (.hatchEgg jvm
-                                        #js {:chatId chat-id
-                                             :playerId player-id
-                                             :saveId (.-activeSaveId ativo)
-                                             :fenceGeneration (.-fenceGeneration ativo)
-                                             :operationId op-id
-                                             :eggId egg-id
-                                             :hatchId hatch-id})
-                                 caption (.formatEggHatch jvm-present data prefix)]
-                           (.sendMessage whatsapp chat-id caption opts))))))
-
+                         (let [msg (str (or (.-message erro) erro))]
+                           (when (str/starts-with? msg "egg-auto-hatch-deferred:")
+                             (throw erro))
+                           (js/console.warn "[PokemonJVM] egg-auto-hatch imagem/envio; texto:" msg)
+                           ;; Nascimento pode estar confirmado; reusa save carimbado (não o ativo).
+                           (p/let [jvm (cliente-jvm!)
+                                   ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                                   adv (.getAdventure jvm #js {:chatId chat-id :playerId player-id})
+                                   plan (.resolveEggAutoHatchDelivery jvm-present
+                                          #js {:event (clj->js evento)
+                                               :activeSave ativo
+                                               :adventure adv})
+                                   _ (when (.-defer plan)
+                                       (throw (js/Error.
+                                               (str "egg-auto-hatch-deferred:"
+                                                    (or (.-reason plan) "save_mismatch")))))
+                                   data (when-not (.-alreadyHatched plan)
+                                          (.hatchEgg jvm
+                                            #js {:chatId chat-id
+                                                 :playerId player-id
+                                                 :saveId (.-saveId plan)
+                                                 :fenceGeneration (.-fenceGeneration plan)
+                                                 :operationId (.stableOperationId
+                                                                jvm-transport
+                                                                (str "egg-auto-hatch:" egg-id)
+                                                                (str "egg-hatch:" egg-id))
+                                                 :eggId egg-id
+                                                 :hatchId (or (.-hatchId plan) hatch-id)}))
+                                   caption (when data (.formatEggHatch jvm-present data prefix))]
+                             (when caption
+                               (.sendMessage whatsapp chat-id caption opts))))))))
         :else
         (.sendMessage whatsapp (:chatId evento) texto opts)))
     (p/rejected (js/Error. "WhatsApp client ausente no envio de evento JVM."))))
