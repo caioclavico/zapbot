@@ -465,5 +465,28 @@ def _snapshot(path):
     return json.loads(completed.stdout)
 
 
+
+class JvmHealthCamelCaseTests(unittest.TestCase):
+    def test_jvm_health_accepts_camel_case_active_writes(self):
+        from a6_maintenance_ops import jvm_health
+        from types import SimpleNamespace
+
+        payload = {
+            "ok": True,
+            "data": {
+                "status": "up",
+                "maintenance": {"phase": "quiescent", "activeWrites": 0},
+            },
+        }
+
+        def wrapped(args):
+            # docker exec ... node -e script prints json + status
+            import json
+            body = json.dumps(payload)
+            return SimpleNamespace(returncode=0, stdout=body + "\n200\n", stderr="")
+
+        view = jvm_health(wrapped, ["docker"])
+        self.assertEqual(view, {"status": "up", "phase": "quiescent", "activeWrites": 0})
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

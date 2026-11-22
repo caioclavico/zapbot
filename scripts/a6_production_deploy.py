@@ -324,6 +324,8 @@ def rollback_commands(service, docker_direct=False):
     prefix = _prefix(docker_direct)
     commands = [
         prefix + ["stop", "--time", "30", name],
+        # Retentativa após health_unhealthy deixa -failed no lugar; limpa antes do rename.
+        prefix + ["rm", "-f", failed],
         prefix + ["rename", name, failed],
         prefix + ["update", "--restart=no", failed],
         prefix + ["rename", previous, name],

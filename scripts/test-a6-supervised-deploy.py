@@ -989,5 +989,45 @@ class ImageTransferTests(unittest.TestCase):
             shutil.rmtree(root, ignore_errors=True)
 
 
+
+class HealthWaitAndRollbackRetryTests(unittest.TestCase):
+    def test_await_healthy_polls_through_starting(self):
+        from a6_supervised_deploy import _await_healthy
+        from types import SimpleNamespace
+        states = iter(["starting", "healthy"])
+        sleeps = []
+
+        def wrapped(args):
+            return SimpleNamespace(returncode=0, stdout=next(states) + "\n", stderr="")
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+
+        self.assertEqual(_await_healthy(wrapped, ["docker"], "odisseu-a6-jvm", "starting", sleep=sleep), "healthy")
+        self.assertEqual(len(sleeps), 2)  # first starting + one more starting then healthy
+
+    def test_await_healthy_fails_fast_on_unhealthy(self):
+        from a6_supervised_deploy import _await_healthy
+        sleeps = []
+        self.assertEqual(
+            _await_healthy(lambda args: None, ["docker"], "odisseu-a6-jvm", "unhealthy", sleep=sleeps.append),
+            "unhealthy",
+        )
+        self.assertEqual(sleeps, [])
+
+    def test_clear_rolled_back_update_strips_jvm_step(self):
+        from a6_supervised_deploy import _clear_rolled_back_update
+        prior = {
+            "steps": ["authorization", "backup", "update_jvm"],
+            "lastCompleted": "update_jvm",
+            "next": "validate_jvm",
+            "blocked": ["health_unhealthy"],
+        }
+        adjusted = _clear_rolled_back_update(prior, "jvm")
+        self.assertEqual(adjusted["steps"], ["authorization", "backup"])
+        self.assertEqual(adjusted["lastCompleted"], "backup")
+        self.assertEqual(adjusted["next"], "backup")
+        self.assertEqual(adjusted["blocked"], [])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
