@@ -1,6 +1,7 @@
 (ns pokemon.infrastructure.datomic.adventure-store
   "TX builders Adventure Sync + Joy."
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [pokemon.domain.capacity :as capacity]
             [pokemon.domain.collection :as coll]
             [pokemon.domain.egg-activity :as egg-activity]
@@ -263,6 +264,22 @@
                   :registro reg
                   :pending-delivered delivered}}))))
 
+
+(defn- auto-hatch-outbox-entity
+  [chat-id player-id egg agora]
+  (let [egg-id (str (:egg-id egg))
+        hatch-id (str (or (:hatch-id egg) (str "hatch:" egg-id)))
+        oid (str "egg-auto-hatch:" egg-id)
+        texto (str "{\"v\":1"
+                   ",\"playerId\":\"" player-id "\""
+                   ",\"eggId\":\"" egg-id "\""
+                   ",\"hatchId\":\"" hatch-id "\"}")]
+    {:pokemon-outbox/id oid
+     :pokemon-outbox/chat-id chat-id
+     :pokemon-outbox/kind "egg-auto-hatch"
+     :pokemon-outbox/texto texto
+     :pokemon-outbox/created-at (long agora)}))
+
 (defn build-activity-enrich-tx
   "Aplica PI/ovo da atividade sobre a conta Adventure na mesma TX canônica.
   Garante conta se ausente. Drena pending se houver vaga. Sem fence (caller)."
@@ -273,8 +290,8 @@
         shell0 (or account-shell (eggs/estado-inicial))
         rev (long (:revision shell0 0))
         agora (long (or (:agora activity-opts) (System/currentTimeMillis)))
-        applied (egg-activity/apply-activity
-                 (merge-estado shell0 egg-maps) activity-opts)
+        estado0 (merge-estado shell0 egg-maps)
+        applied (egg-activity/apply-activity estado0 activity-opts)
         drained (egg-activity/materialize-pending (:estado applied) agora)
         drained-inc (egg-activity/materialize-pending-incubators (:estado drained))
         estado (cond-> (:estado drained-inc)
@@ -283,6 +300,10 @@
         egg (:egg-grant applied)
         delivered (:delivered drained)
         delivered-inc (:delivered drained-inc)
+        auto-hatch-eggs (when (egg-activity/auto-hatch-enabled?)
+                          (egg-activity/newly-ready-eggs estado0 estado))
+        auto-hatch-tx (mapv #(auto-hatch-outbox-entity chat-id player-id % agora)
+                            (or auto-hatch-eggs []))
         prev-eggs (into {} (map (juxt :egg-id identity)) egg-maps)
         progress-tx (mapcat (fn [updated]
                               (let [egg-id (:egg-id updated)
@@ -308,17 +329,20 @@
                        :adventure-account/state-edn (shell-edn estado)]
                       [:db/cas [:adventure-account/key ak]
                        :adventure-account/revision rev (inc rev)]])]
-    {:tx (into (into egg-tx account-tx)
+    {:tx (into (into (into egg-tx account-tx) auto-hatch-tx)
                (receipt-txs account-ref shell0 estado))
      :result {:adventure-activity (assoc (:summary applied)
                                          :pending-delivered
                                          (mapv :egg-id delivered)
                                          :pending-incubators-delivered
-                                         (mapv :event-id delivered-inc))
+                                         (mapv :event-id delivered-inc)
+                                         :auto-hatch-queued
+                                         (mapv :egg-id (or auto-hatch-eggs [])))
               :egg egg
               :deferred-egg (:deferred-egg applied)
               :pending-delivered delivered
               :pending-incubators-delivered delivered-inc
+              :auto-hatch-queued (mapv :egg-id (or auto-hatch-eggs []))
               :pi-granted (:pi-granted applied)}}))
 
 (defn build-joy-send-tx

@@ -32,6 +32,27 @@
   (not (#{"0" "false" "no" "off"}
         (some-> (System/getenv "ADVENTURE_EGG_ACTIVITY") str/lower-case))))
 
+(defn auto-hatch-enabled?
+  "Feature flag: nascimento automático ao atingir meta de PI.
+  Off por padrão até idempotência/outbox validados."
+  []
+  (boolean (#{"1" "true" "yes" "on"}
+            (some-> (System/getenv "ADVENTURE_AUTO_HATCH") str/lower-case))))
+
+(defn ready-egg?
+  [ovo]
+  (contains? #{:ready-to-hatch :delivery-pending} (:state ovo)))
+
+(defn newly-ready-eggs
+  "Ovos que passaram a prontos neste apply (não reanuncia os já prontos)."
+  [estado-antes estado-depois]
+  (let [antes (into {} (map (juxt :egg-id identity) (:eggs estado-antes [])))]
+    (filterv (fn [o]
+               (and (ready-egg? o)
+                    (not (ready-egg? (get antes (:egg-id o))))))
+             (:eggs estado-depois []))))
+
+
 ;; Pontos de incubação por atividade (antes do teto diário / split).
 ;; Política a6-rpg-pi-table-v2 — valores de produto; ovos já incubando
 ;; mantêm metas persistidas (points-goal) independentemente desta tabela.
