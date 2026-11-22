@@ -1463,6 +1463,12 @@
                                                 :texto (:texto e)
                                                 :kind (:kind e)
                                                 :createdAt (:created-at e)}
+                                         (or (:player-id e) (:playerId e))
+                                         (assoc :playerId (or (:player-id e) (:playerId e)))
+                                         (or (:egg-id e) (:eggId e))
+                                         (assoc :eggId (or (:egg-id e) (:eggId e)))
+                                         (or (:hatch-id e) (:hatchId e))
+                                         (assoc :hatchId (or (:hatch-id e) (:hatchId e)))
                                          (map? (:media e))
                                          (assoc :media
                                                 (cond-> {:nome (get-in e [:media :nome])

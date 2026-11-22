@@ -160,12 +160,24 @@
 (defn outbox->map
   [e present?]
   (when (and (present? e) (nil? (:pokemon-outbox/acked-at e)))
-    {:id (:pokemon-outbox/id e)
-     :chat-id (:pokemon-outbox/chat-id e)
-     :kind (:pokemon-outbox/kind e)
-     :texto (:pokemon-outbox/texto e)
-     :created-at (long (:pokemon-outbox/created-at e 0))}))
-
+    (let [base {:id (:pokemon-outbox/id e)
+                :chat-id (:pokemon-outbox/chat-id e)
+                :kind (:pokemon-outbox/kind e)
+                :texto (:pokemon-outbox/texto e)
+                :created-at (long (:pokemon-outbox/created-at e 0))}
+          kind (str (:kind base))
+          texto (str (:texto base))]
+      (if-not (= "egg-auto-hatch" kind)
+        base
+        (let [pid (second (re-find #"\"playerId\":\"([^\"]+)\"" texto))
+              eid (second (re-find #"\"eggId\":\"([^\"]+)\"" texto))
+              hid (second (re-find #"\"hatchId\":\"([^\"]+)\"" texto))
+              sid (second (re-find #"\"saveId\":\"([^\"]+)\"" texto))]
+          (cond-> base
+            pid (assoc :player-id pid :playerId pid)
+            eid (assoc :egg-id eid :eggId eid)
+            hid (assoc :hatch-id hid :hatchId hid)
+            (not (str/blank? sid)) (assoc :save-id sid :saveId sid)))))))
 (defn opened-raid-id
   "Extrai raid-id de outbox `raid-opened:{raid-id}`."
   [event-id]

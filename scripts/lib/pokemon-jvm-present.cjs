@@ -413,7 +413,7 @@ function resumoEfeitosGolpe(golpe) {
   if (mec.flinch) partes.push(`recuo que impede a ação (${mec.flinch}%)`);
   if (mec.maxAcertos > 1) partes.push(`acerta ${mec.minAcertos || 2} a ${mec.maxAcertos} vezes`);
   if (mec.ignoraPrecisao) partes.push('ignora precisão e evasão');
-  else if (mec.precisao) partes.push(`precisão ${mec.precisao}`);
+  // Precisão percentual fica só em linhaGolpe (evita "precisão 90, precisão 90%").
   if (mec.criticoGarantido) partes.push('sempre crítico');
   else if (mec.chanceCritico) partes.push(`crítico ${mec.chanceCritico}%`);
   if (mec.atravessaProtecao) partes.push('atravessa proteção');
@@ -3597,27 +3597,29 @@ function formatAdventureStatus(data, prefix = '!pk') {
 function formatIncubators(data, prefix = '!pk') {
   const eggs = (data && data.eggs) || [];
   const byId = new Map(eggs.filter((e) => e.eggId).map((e) => [String(e.eggId), e]));
-  const incu = (data && data.incubators) || [];
+  const incu = listIncubators(data);
   const lines = ['🪺 *Incubadoras*'];
   if (!incu.length) {
     lines.push('Nenhuma incubadora cadastrada.');
   } else {
-    for (const i of incu) {
+    incu.forEach((i, idx) => {
+      const n = idx + 1;
+      const kind = String(i.kind || i.incubatorId || 'permanente').toUpperCase();
       const uses = i.uses == null ? '∞' : String(i.uses);
-      const bonus = Number(i.bonusPoints || 0) > 0 ? ` · bônus +${i.bonusPoints}% PI` : '';
+      const bonus = Number(i.bonusPoints || 0) > 0 ? `\nBônus: +${i.bonusPoints}% PI` : '';
       const egg = i.activeEggId ? byId.get(String(i.activeEggId)) : null;
       if (!egg) {
-        lines.push(`• *${i.kind || i.incubatorId}* — livre · usos ${uses}${bonus}`);
-        continue;
+        lines.push(`*INCUBADORA ${n} — ${kind}*\nEstado: LIVRE\nUsos: ${uses}${bonus}\nComando: \`${prefix} incubar <ovo> ${n}\``);
+        return;
       }
       const pts = `${egg.points || 0}/${egg.pointsGoal || '?'}`;
       const bar = progressBar(egg.progressPct);
       const ready = egg.state === 'ready-to-hatch' || egg.state === 'delivery-pending' || egg.pronto;
-      lines.push(`• *${i.kind || i.incubatorId}* — ${egg.category || 'ovo'} ${bar} (${pts} PI) · usos ${uses}${bonus}`);
+      lines.push(`*INCUBADORA ${n} — ${kind}*\nEstado: OCUPADA\nOvo ${egg.category || ''}: ${pts} PI ${bar}\nUsos: ${uses}${bonus}`);
       if (ready) lines.push(`  ✅ pronto · \`${prefix} chocar\``);
-    }
+    });
   }
-  lines.push('', `\`${prefix} incubar <n> [id]\` · \`${prefix} ovos\` · \`${prefix} chocar\``);
+  lines.push('', `\`${prefix} incubar <ovo> [incubadora]\` · \`${prefix} ovos\` · \`${prefix} chocar\``);
   return lines.join('\n');
 }
 
@@ -3651,21 +3653,165 @@ function formatEggIncubate(data, prefix = '!pk') {
   ].join('\n');
 }
 
+function isEggHatchPending(data) {
+  return Boolean(data && (data.collectionFull || data.pending || data['collection-full']));
+}
+
+/** PNG comemorativo só após entrega confirmada (não em coleção cheia). */
+function shouldRenderHatchReveal(data) {
+  return Boolean(data) && !isEggHatchPending(data);
+}
+
 function formatEggHatch(data, prefix = '!pk') {
-  if (data && (data.collectionFull || data.pending || data['collection-full'])) {
+  if (isEggHatchPending(data)) {
     return [
       '📦 Coleção cheia — o nascimento ficou *pendente*.',
+      'Nenhum Pokémon foi adicionado ainda.',
       'Libere espaço e use `' + prefix + ' chocar` de novo (mesmo Pokémon).',
       `${prefix} pc · ${prefix} ovos`
     ].join('\n');
   }
   const reg = (data && data.registro) || {};
   const nome = reg.nome || reg.species || 'Pokémon';
-  const shiny = (reg.shiny || reg['shiny?']) ? ' ✨shiny' : '';
+  const shiny = (reg.shiny || reg['shiny?']) ? ' ✨' : '';
   return [
-    `🎉 O ovo eclodiu! *${nome}*${shiny} nv.${reg.nivel || 1} entrou na coleção.`,
+    '🥚 *SEU OVO CHOCOU!* 🎉',
+    '✨ Nasceu um Pokémon!',
+    `🐣 Pokémon: *${nome}*${shiny}`,
+    `⭐ Nível: ${reg.nivel || 1}`,
+    '✅ Adicionado à sua coleção!',
     `${prefix} time · ${prefix} ovos`
   ].join('\n');
+}
+
+/**
+ * Resolve entrega de egg-auto-hatch: save carimbado no evento/ovo, nunca outro save.
+ * active !== sealed → defer (sem ACK); ovo já hatched → done (ACK silencioso).
+ */
+function resolveEggAutoHatchDelivery({ event, activeSave, adventure } = {}) {
+  const eggId = String((event && (event.eggId || event['egg-id'])) || '').trim();
+  const hatchId = String((event && (event.hatchId || event['hatch-id'])) || (eggId ? `hatch:${eggId}` : '')).trim();
+  const sealedFromEvent = String((event && (event.saveId || event['save-id'])) || '').trim();
+  const activeSaveId = String((activeSave && (activeSave.activeSaveId || activeSave['active-save-id'])) || '').trim();
+  const fenceRaw = activeSave && (activeSave.fenceGeneration != null
+    ? activeSave.fenceGeneration
+    : activeSave['fence-generation']);
+  const fenceGeneration = Number(fenceRaw);
+  const eggs = (adventure && adventure.eggs) || [];
+  const egg = Array.isArray(eggs)
+    ? eggs.find((e) => String(e.eggId || e['egg-id'] || '') === eggId)
+    : null;
+  const sealedFromEgg = egg
+    ? String(egg.saveId || egg['save-id'] || '').trim()
+    : '';
+  const sealedSaveId = sealedFromEvent || sealedFromEgg || '';
+
+  if (!eggId || !activeSaveId || !Number.isFinite(fenceGeneration)) {
+    return { ok: false, defer: true, reason: 'incomplete', eggId, hatchId };
+  }
+  if (egg && String(egg.state || '') === 'hatched') {
+    return {
+      ok: true,
+      alreadyHatched: true,
+      eggId,
+      hatchId,
+      saveId: sealedSaveId || activeSaveId,
+      fenceGeneration
+    };
+  }
+  if (sealedSaveId && sealedSaveId !== activeSaveId) {
+    return {
+      ok: false,
+      defer: true,
+      reason: 'save_mismatch',
+      eggId,
+      hatchId,
+      sealedSaveId,
+      activeSaveId,
+      fenceGeneration
+    };
+  }
+  return {
+    ok: true,
+    alreadyHatched: false,
+    eggId,
+    hatchId,
+    saveId: sealedSaveId || activeSaveId,
+    fenceGeneration
+  };
+}
+
+
+/** Ordem canônica das incubadoras (card PNG + texto + !pk incubar N M). */
+function listIncubators(data) {
+  const list = (data && data.incubators) || [];
+  return Array.isArray(list) ? list.slice() : [];
+}
+
+function incubatorOptionsText(data, prefix = '!pk') {
+  const list = listIncubators(data);
+  if (!list.length) return 'Nenhuma incubadora disponível.';
+  return list.map((inc, idx) => {
+    const n = idx + 1;
+    const kind = String(inc.kind || inc.incubatorId || 'permanente');
+    const uses = inc.uses == null ? '∞' : String(inc.uses);
+    const ocupada = Boolean(inc.activeEggId) || inc.livre === false;
+    const estado = ocupada ? 'OCUPADA' : 'LIVRE';
+    return `${n}. ${kind} — ${estado} · usos ${uses}`;
+  }).join('\n');
+}
+
+/**
+ * Resolve incubadora: índice 1-based, id interno, ou tipo legado (permanente/extra/especial).
+ * Retorna { incubatorId, index, incubator } ou null.
+ */
+function resolveIncubatorSelection(data, raw) {
+  const list = listIncubators(data);
+  if (!list.length) return null;
+  const token = String(raw == null ? '' : raw).trim().toLowerCase();
+  if (!token) {
+    // Sem argumento: permanente livre, senão primeira livre com usos.
+    const permanente = list.find((i) => String(i.incubatorId) === 'permanente' && !i.activeEggId
+      && (i.uses == null || Number(i.uses) > 0));
+    if (permanente) {
+      return { incubatorId: String(permanente.incubatorId), index: list.indexOf(permanente) + 1, incubator: permanente };
+    }
+    const livre = list.find((i) => !i.activeEggId && (i.uses == null || Number(i.uses) > 0));
+    if (!livre) return null;
+    return { incubatorId: String(livre.incubatorId), index: list.indexOf(livre) + 1, incubator: livre };
+  }
+  // Índice numérico 1-based (prioridade sobre id numérico raro)
+  if (/^\d+$/.test(token)) {
+    const n = Number(token);
+    if (!Number.isFinite(n) || n < 1 || n > list.length) return null;
+    const incubator = list[n - 1];
+    return { incubatorId: String(incubator.incubatorId), index: n, incubator };
+  }
+  // ID exato
+  const byId = list.find((i) => String(i.incubatorId).toLowerCase() === token);
+  if (byId) {
+    return { incubatorId: String(byId.incubatorId), index: list.indexOf(byId) + 1, incubator: byId };
+  }
+  // Tipo legado: primeira do kind
+  const byKind = list.find((i) => String(i.kind || '').toLowerCase() === token);
+  if (byKind) {
+    return { incubatorId: String(byKind.incubatorId), index: list.indexOf(byKind) + 1, incubator: byKind };
+  }
+  return null;
+}
+
+function assertIncubatorUsable(selection, prefix = '!pk') {
+  if (!selection || !selection.incubator) {
+    return { ok: false, reason: 'not_found' };
+  }
+  const inc = selection.incubator;
+  if (Boolean(inc.activeEggId) || inc.livre === false) {
+    return { ok: false, reason: 'busy' };
+  }
+  if (inc.uses != null && Number(inc.uses) <= 0) {
+    return { ok: false, reason: 'no_uses' };
+  }
+  return { ok: true };
 }
 
 function resolveEggIndex(data, oneBased) {
@@ -5168,6 +5314,14 @@ module.exports = {
   formatIncubationHelp,
   formatEggIncubate,
   formatEggHatch,
+  isEggHatchPending,
+  shouldRenderHatchReveal,
+  resolveEggAutoHatchDelivery,
+  linhaGolpe,
+  listIncubators,
+  resolveIncubatorSelection,
+  assertIncubatorUsable,
+  incubatorOptionsText,
   resolveEggIndex,
   resolveHatchEggIndex,
   formatShop,

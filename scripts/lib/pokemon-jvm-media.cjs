@@ -1625,6 +1625,52 @@ async function renderIncubatorCard(data, { filename = 'incubadoras.png' } = {}) 
   }
 }
 
+
+async function renderHatchRevealCard(data, { filename = 'ovo-chocou.png' } = {}) {
+  try {
+    if (data && (data.collectionFull || data.pending || data['collection-full'])) {
+      return null;
+    }
+    const eggCards = require('./egg-cards.cjs');
+    const reg = (data && (data.registro || data.pokemon || data)) || {};    const shiny = Boolean(reg.shiny || reg['shiny?']);
+    const speciesName = reg.nome || reg.species || reg.name || 'Pokémon';
+    const imageUrl = shiny
+      ? (reg.imagemShiny || reg['imagem-shiny'] || reg.imagem || reg.imageUrl)
+      : (reg.imagem || reg.imageUrl || reg['imagem-shiny']);
+    let out = await eggCards.renderHatchReveal({ speciesName, shiny });
+    if (imageUrl) {
+      try {
+        const spriteBuf = await baixarBuffer(String(imageUrl), { rejectCheckerboard: true });
+        if (spriteBuf) {
+          const sprite = await sharp(spriteBuf)
+            .resize(260, 260, { fit: 'inside', withoutEnlargement: true })
+            .png()
+            .toBuffer();
+          out = await sharp(out)
+            .composite([{ input: sprite, top: 220, left: 190 }])
+            .png({ compressionLevel: 6 })
+            .toBuffer();
+        }
+      } catch (err) {
+        // fallback: card sem sprite
+      }
+    }
+    if (out.length > eggCards.MAX_PNG_BYTES) {
+      out = await sharp(out).png({ compressionLevel: 9, palette: true }).toBuffer();
+    }
+    return {
+      mimeType: 'image/png',
+      filename: filename || 'ovo-chocou.png',
+      base64: out.toString('base64'),
+      bytes: out.length
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] hatch-reveal:', err.message || err);
+    return null;
+  }
+}
+
 module.exports = {
   renderHuntArena,
   renderCaptureBall,
@@ -1639,6 +1685,7 @@ module.exports = {
   renderRaidOpenedReveal,
   renderEggInventoryCard,
   renderIncubatorCard,
+  renderHatchRevealCard,
   isRaidReminderKind,
   isRaidOpenedKind,
   resolveJoyTheme,
