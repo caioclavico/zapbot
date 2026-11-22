@@ -111,3 +111,33 @@
                  nil writer {:tx [receipt-rw] :result {}} receipt-rw 1000)]
     (is (= (get-in from-item [0 :opts :event-id])
            (get-in from-rw [0 :opts :event-id])))))
+
+
+(deftest raid-usar-item-hp-persiste-no-proximo-turno
+  "Após poção+revide, o HP canônico da party é a base do próximo turno."
+  (let [poke {:nome "Charizard" :species "charizard" :hp 120 :hp-atual 12
+              :ataque 80 :defesa 50 :atq-esp 80 :def-esp 50 :veloc 80
+              :tipos ["fogo"]
+              :golpes [{:slug "ember" :nome-exibicao "Ember" :poder 40
+                        :tipo "fogo" :classe :especial :precisao 100}]}
+        part (#'raid/sync-active
+              {:nome "Ash" :save-id "s1" :fence-generation 1 :dano 0
+               :party [{:pokemon poke :hp 12 :collection-index 0}]
+               :active-party-idx 0})
+        agora (System/currentTimeMillis)
+        raid {:raid-id "r2" :fase "combate" :chat-id "c"
+              :expira (+ agora 600000)
+              :hp-chefe 800 :hp-max 800 :defesa 40 :def-esp 40
+              :vez "ash" :ordem ["ash"] :turn-index 1 :revision 1
+              :participantes {"ash" part}
+              :chefe {:nome "Boss" :tipos ["normal"] :hp 800
+                      :ataque 50 :defesa 40 :atq-esp 40 :def-esp 40}}
+        potion (raid/usar-item raid "ash" "pocao-maxima" agora)
+        raid2 (:raid potion)
+        hp-apos (:hp-apos-revide potion)
+        atk (raid/atacar raid2 "ash" 0 (+ agora 1) nil)
+        part-atk (get-in atk [:raid :participantes "ash"])]
+    (is (= hp-apos (get-in raid2 [:participantes "ash" :hp])))
+    ;; Próximo revide aplica sobre o HP já persistido pós-poção (não 120 cheio).
+    (is (< (:hp part-atk) hp-apos))
+    (is (= (inc (:turn-index raid2)) (get-in atk [:raid :turn-index])))))

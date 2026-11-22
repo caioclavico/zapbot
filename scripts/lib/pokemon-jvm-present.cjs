@@ -5207,6 +5207,111 @@ function resolveScopedCommand(tokens) {
   return { cmd: 'batalhar', scope: 'pvp', resto: restTokens, tokens: raw };
 }
 
+
+/**
+ * Plano de roteamento de poção (espelha pokemon_http.cljs).
+ * Separar contexto (raid|cacar|pvp|auto) da ação e do método JVM.
+ */
+function planPotionRoute(tokens) {
+  const raw = (tokens || []).map((x) => normalizar(x)).filter(Boolean);
+  const scoped = resolveScopedCommand(raw);
+  const itemFromCmd = (cmd) => (cmd === 'pocao-maxima' ? 'pocao-maxima' : 'pocao');
+
+  if (scoped.scope === 'raid') {
+    const sub = resolveRaidSubcommand(scoped.resto[0] || '');
+    if (sub === 'pocao' || sub === 'pocao-maxima') {
+      return {
+        handler: 'executar-raid-jvm!',
+        scope: 'raid',
+        cmd: 'raid',
+        itemId: itemFromCmd(sub),
+        reads: ['getActiveRaid', 'getActiveSave'],
+        write: 'raidUseItem',
+        encounterRead: null
+      };
+    }
+    return { handler: 'executar-raid-jvm!', scope: 'raid', cmd: 'raid', itemId: null, reads: ['getActiveRaid'], write: null, encounterRead: null };
+  }
+
+  if (scoped.cmd === 'pocao' || scoped.cmd === 'pocao-maxima') {
+    return {
+      handler: 'top-level-pocao',
+      scope: scoped.scope || 'auto',
+      cmd: scoped.cmd,
+      itemId: itemFromCmd(scoped.cmd),
+      // Contrato HTTP obrigatório: getEncounter (nunca getActiveEncounter).
+      reads: ['getActiveRaid', 'getEncounter', 'getActivePvp'],
+      write: null, // decidido após elegibilidade
+      encounterRead: 'getEncounter'
+    };
+  }
+
+  return { handler: null, scope: scoped.scope, cmd: scoped.cmd, itemId: null, reads: [], write: null, encounterRead: null };
+}
+
+/**
+ * Dado o plano + estado lido do JVM, escolhe mutação ou ambiguidade.
+ * state: { raid, encounter, pvpBattle, playerId, suaVezRaid?, inventoryQty }
+ */
+function resolvePotionDispatch(plan, state = {}) {
+  if (!plan || !plan.itemId) {
+    return { action: 'noop', mutate: false, method: null, reason: 'not-potion' };
+  }
+  if (plan.handler === 'executar-raid-jvm!') {
+    const raid = state.raid;
+    if (!raid || String(raid.fase || '') !== 'combate') {
+      return { action: 'error', mutate: false, method: null, reason: 'no-raid-combat' };
+    }
+    if (state.suaVezRaid === false) {
+      return { action: 'error', mutate: false, method: null, reason: 'not-your-turn' };
+    }
+    if (state.inventoryQty != null && Number(state.inventoryQty) <= 0) {
+      return { action: 'error', mutate: false, method: null, reason: 'no-stock' };
+    }
+    return { action: 'raid-item', mutate: true, method: 'raidUseItem', itemId: plan.itemId };
+  }
+
+  const playerId = state.playerId;
+  const raidOk = raidCombatEligibleForPlayer(state.raid, playerId);
+  const enc = state.encounter;
+  const encOk = !!(enc && enc.active && !enc.aguardandoCaptura);
+  const battle = state.pvpBattle;
+  const pvpOk = !!(battle && battle.phase === 'active' && state.pvpSideOk);
+  const scope = plan.scope || 'auto';
+  const candidates = [];
+  if (scope !== 'pvp' && scope !== 'cacar' && raidOk) candidates.push('raid');
+  if (scope !== 'pvp' && scope !== 'raid' && encOk) candidates.push('cacar');
+  if (scope !== 'cacar' && scope !== 'raid' && pvpOk) candidates.push('pvp');
+
+  let chosen = null;
+  if (scope === 'raid' || scope === 'cacar' || scope === 'pvp') chosen = scope;
+  else if (candidates.length === 1) chosen = candidates[0];
+  else if (candidates.length > 1) {
+    return {
+      action: 'ambiguous',
+      mutate: false,
+      method: null,
+      candidates,
+      prompt: ambiguousBattlePrompt('!pk', candidates, { kind: 'potion' })
+    };
+  }
+
+  if (state.inventoryQty != null && Number(state.inventoryQty) <= 0 && chosen) {
+    return { action: 'error', mutate: false, method: null, reason: 'no-stock', chosen };
+  }
+
+  if (chosen === 'raid') {
+    return { action: 'raid-item', mutate: true, method: 'raidUseItem', itemId: plan.itemId, chosen };
+  }
+  if (chosen === 'cacar') {
+    return { action: 'hunt-item', mutate: true, method: 'confirmBattleTurn', itemId: plan.itemId, chosen };
+  }
+  if (chosen === 'pvp') {
+    return { action: 'pvp-item', mutate: true, method: 'confirmPvpTurn', itemId: plan.itemId, chosen };
+  }
+  return { action: 'out-of-combat', mutate: true, method: 'useItem', itemId: plan.itemId, chosen: null };
+}
+
 function ambiguousBattlePrompt(prefix, contexts, opts = {}) {
   const kind = opts.kind || 'attack';
   const lines = kind === 'potion'
@@ -5456,6 +5561,8 @@ module.exports = {
   resolveScopedCommand,
   battleContextHeader,
   ambiguousBattlePrompt,
+  planPotionRoute,
+  resolvePotionDispatch,
   raidCombatEligibleForPlayer,
   maxPotionTokenCount,
   resolveGymSubcommand,

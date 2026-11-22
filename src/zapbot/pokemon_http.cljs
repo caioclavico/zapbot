@@ -3032,11 +3032,14 @@
                 (let [item-id (if (= cmd "pocao-maxima") "pocao-maxima" "pocao")
                       prefix (str config/prefix "pk")
                       escopo-cmd (keyword (or (.-scope scoped) "auto"))]
+                  ;; Contrato HTTP: getEncounter (não getActiveEncounter) → .-encounter.
                   (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
                                        #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
-                          encontro (.getActiveEncounter jvm #js {:chatId chat-id :playerId player-id})
+                          enc-data (desempenho/medir! ctx "pokemon_jvm_encounter"
+                                     #(.getEncounter jvm #js {:chatId chat-id :playerId player-id}))
                           pvp (.getActivePvp jvm #js {:chatId chat-id})
                           raid (.-raid raid-data)
+                          encontro (some-> enc-data .-encounter)
                           pvp-b (.-battle pvp)
                           raid-ok? (.raidCombatEligibleForPlayer jvm-present raid player-id)
                           enc-ok? (and encontro (.-active encontro) (not (.-aguardandoCaptura encontro)))

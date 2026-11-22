@@ -63,7 +63,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - name: Hotfix PI / raid isolation (present + scoped routing)
-        run: node --test test/pokemon-hotfix-pi-raid-isolation.test.cjs
+        run: node --test test/pokemon-hotfix-pi-raid-isolation.test.cjs test/pokemon-hotfix-potion-http-contract.test.cjs
       - run: npm run test:http
       - run: npm run build
 
