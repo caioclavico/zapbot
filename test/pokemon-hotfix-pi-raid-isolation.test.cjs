@@ -23,18 +23,92 @@ test('formatConfirmedPiLines: ovo sem revelar espécie', () => {
   assert.ok(!lines.some((l) => /pikachu|species/i.test(l)));
 });
 
-test('resolveScopedCommand: cacar/raid/pvp explícitos', () => {
+/**
+ * Regressão roteador→handler: resolveScopedCommand decide cmd/scope
+ * que pokemon_http usa para despachar (raid → executar-raid-jvm!).
+ */
+test('resolveScopedCommand: raid NUNCA promove entrar/abrir/iniciar/capturar', () => {
+  const cases = [
+    ['raid', 'entrar'],
+    ['raide', 'abrir'],
+    ['raid', 'iniciar'],
+    ['raid', 'capturar', '1'],
+    ['raid', 'fruta'],
+    ['raid', 'sair'],
+    ['raid', 'atacar', '1'],
+    ['raid', 'pocao'],
+    ['raid', 'pocao-maxima'],
+    ['raide', 'pot'],
+  ];
+  for (const tokens of cases) {
+    const r = present.resolveScopedCommand(tokens);
+    assert.equal(r.cmd, 'raid', `cmd for ${tokens.join(' ')}`);
+    assert.equal(r.scope, 'raid', `scope for ${tokens.join(' ')}`);
+    assert.equal(r.resto.length, tokens.length - 1, `resto len for ${tokens.join(' ')}`);
+    assert.ok(r.resto[0], `resto[0] for ${tokens.join(' ')}`);
+    // Handler canônico: cmd=raid → executar-raid-jvm! (não PvP/caça).
+    assert.notEqual(r.cmd, 'batalhar');
+    assert.notEqual(r.cmd, 'capturar');
+    assert.notEqual(r.cmd, 'atacar');
+  }
+});
+
+test('resolveScopedCommand: cacar/pvp explícitos preservam ação', () => {
   assert.equal(present.resolveScopedCommand(['cacar', 'atacar', '1']).cmd, 'atacar');
   assert.equal(present.resolveScopedCommand(['cacar', 'atacar', '1']).scope, 'cacar');
-  assert.equal(present.resolveScopedCommand(['raid', 'atacar', '2']).scope, 'raid');
+  assert.deepEqual(present.resolveScopedCommand(['cacar', 'atacar', '1']).resto, ['1']);
+  assert.equal(present.resolveScopedCommand(['cacar', 'defender']).cmd, 'defender');
+  assert.equal(present.resolveScopedCommand(['cacar', 'pocao']).cmd, 'pocao');
+  assert.equal(present.resolveScopedCommand(['cacar', 'pocao']).scope, 'cacar');
+  assert.equal(present.resolveScopedCommand(['cacar', 'pocao-maxima']).cmd, 'pocao-maxima');
   assert.equal(present.resolveScopedCommand(['pvp', 'defender']).cmd, 'defender');
+  assert.equal(present.resolveScopedCommand(['pvp', 'pocao-maxima']).cmd, 'pocao-maxima');
+  assert.equal(present.resolveScopedCommand(['pvp', 'pocao']).scope, 'pvp');
   assert.equal(present.resolveScopedCommand(['atacar', '1']).scope, null);
+  assert.equal(present.resolveScopedCommand(['raid', 'atacar', '2']).cmd, 'raid');
+});
+
+test('resolveRaidSubcommand: poção aliases', () => {
+  assert.equal(present.resolveRaidSubcommand('pocao'), 'pocao');
+  assert.equal(present.resolveRaidSubcommand('poção'), 'pocao');
+  assert.equal(present.resolveRaidSubcommand('pot'), 'pocao');
+  assert.equal(present.resolveRaidSubcommand('pocao-maxima'), 'pocao-maxima');
+  assert.equal(present.resolveRaidSubcommand('pmax'), 'pocao-maxima');
+  assert.equal(present.resolveRaidSubcommand('entrar'), 'entrar');
 });
 
 test('ambiguousBattlePrompt lista comandos explícitos', () => {
   const text = present.ambiguousBattlePrompt('!pk', ['raid', 'cacar']);
+  assert.match(text, /Você possui mais de um combate ativo/);
   assert.match(text, /raid atacar/);
   assert.match(text, /cacar atacar/);
+  assert.match(text, /Nenhuma ação foi executada/);
+});
+
+test('ambiguousBattlePrompt: kind potion', () => {
+  const text = present.ambiguousBattlePrompt('!pk', ['raid', 'cacar', 'pvp'], { kind: 'potion' });
+  assert.match(text, /raid pocao/);
+  assert.match(text, /cacar pocao-maxima/);
+  assert.match(text, /pvp pocao/);
+});
+
+test('raidCombatEligibleForPlayer: só participante em combate com HP', () => {
+  assert.equal(present.raidCombatEligibleForPlayer(null, 'ash'), false);
+  assert.equal(present.raidCombatEligibleForPlayer({ fase: 'inscricoes', inscrito: true }, 'ash'), false);
+  assert.equal(present.raidCombatEligibleForPlayer({
+    fase: 'combate', inscrito: false, participantes: []
+  }, 'ash'), false);
+  assert.equal(present.raidCombatEligibleForPlayer({
+    fase: 'combate', inscrito: true, participantes: [{ playerId: 'ash', hp: 0, voce: true }]
+  }, 'ash'), false);
+  assert.equal(present.raidCombatEligibleForPlayer({
+    fase: 'combate', inscrito: true, participantes: [{ playerId: 'ash', hp: 40, voce: true }]
+  }, 'ash'), true);
+  // Outro jogador no chat: inscrito=false → não elege
+  assert.equal(present.raidCombatEligibleForPlayer({
+    fase: 'combate', inscrito: false,
+    participantes: [{ playerId: 'misty', hp: 100 }]
+  }, 'ash'), false);
 });
 
 test('formatRaidItemUse mostra cura e revide', () => {
@@ -44,14 +118,14 @@ test('formatRaidItemUse mostra cura e revide', () => {
     hpAntes: 12,
     hpDepois: 120,
     hpMax: 120,
-    hpAposRevide: 85,
-    revide: 35
+    hpAposRevide: 96,
+    revide: 24
   }, '!pk');
   assert.match(text, /POÇÃO MÁXIMA/);
   assert.match(text, /12\/120/);
   assert.match(text, /120\/120/);
-  assert.match(text, /Dano recebido: 35/);
-  assert.match(text, /85\/120/);
+  assert.match(text, /Dano recebido: 24/);
+  assert.match(text, /96\/120/);
 });
 
 test('formatCaptureResult inclui recompensas PI confirmadas', () => {

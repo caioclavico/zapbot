@@ -57,11 +57,57 @@
               :participantes {"ash" part}
               :chefe {:nome "Dragonite" :tipos ["dragao"] :hp 500}}
         out (raid/usar-item raid "ash" "pocao-maxima" (System/currentTimeMillis))
-        part' (get-in out [:raid :participantes "ash"])]
+        part' (get-in out [:raid :participantes "ash"])
+        ;; Domínio: revide-chefe = ceil(120/5) = 24 (não fixar 35 como regra universal).
+        revide-esperado (#'raid/revide-chefe 120)]
     (is (= 120 (:hp-depois out)))
     (is (= 12 (:hp-antes out)))
-    (is (pos? (:revide out)))
-    (is (= (- 120 (:revide out)) (:hp part')))
+    (is (= revide-esperado (:revide out)))
+    (is (= (- 120 revide-esperado) (:hp-apos-revide out)))
+    (is (= (- 120 revide-esperado) (:hp part')))
     (is (= 4 (get-in out [:raid :turn-index])))
     (is (= "ash" (get-in out [:raid :vez])) "único vivo mantém a vez")
     (is (= "combate" (get-in out [:raid :fase])))))
+
+(deftest raid-item-derrota-detecta-alvos-pi
+  "Poção que finaliza a raid (último combatente KO no revide) liquida PI/ovos."
+  (let [writer {:chat-id "c" :player-id "ash"}
+        receipt {:operation-receipt/id "raid-item-1"
+                 :operation-receipt/kind "raid-item"
+                 :operation-receipt/summary
+                 (pr-str {:item-id "pocao-maxima" :derrota? true})}
+        built {:tx [receipt]
+               :result {:derrota? true
+                        :venceu? false
+                        :raid {:raid-id "r1" :fase "derrota" :boss-categoria :raro}
+                        :rewards [{:player-id "ash" :outcome :derrota}
+                                  {:player-id "misty" :outcome :derrota}]}}
+        targets (#'adventure-activity/detect-targets
+                 nil writer built receipt 1000)]
+    (is (= 2 (count targets)))
+    (is (every? #(= :raid-defeat (get-in % [:opts :activity])) targets))
+    (is (= #{"ash" "misty"} (set (map :player-id targets))))
+    (is (= #{"egg-act:raid:r1:ash" "egg-act:raid:r1:misty"}
+           (set (map #(get-in % [:opts :event-id]) targets))))))
+
+(deftest raid-item-e-raid-reward-mesmo-event-id
+  "Mesmo event-id que raid-reward → idempotência (sem PI duplicado)."
+  (let [writer {:chat-id "c" :player-id "ash"}
+        receipt {:operation-receipt/id "raid-item-2"
+                 :operation-receipt/kind "raid-item"
+                 :operation-receipt/summary (pr-str {:derrota? true})}
+        built {:tx [receipt]
+               :result {:derrota? true
+                        :raid {:raid-id "r9"}
+                        :rewards [{:player-id "ash" :outcome :derrota}]}}
+        from-item (#'adventure-activity/detect-targets
+                   nil writer built receipt 1000)
+        receipt-rw {:operation-receipt/id "raid-reward|r9|ash"
+                    :operation-receipt/kind "raid-reward"
+                    :operation-receipt/player-key "c|ash"
+                    :operation-receipt/summary
+                    (pr-str {:raid-id "r9" :outcome :derrota})}
+        from-rw (#'adventure-activity/detect-targets
+                 nil writer {:tx [receipt-rw] :result {}} receipt-rw 1000)]
+    (is (= (get-in from-item [0 :opts :event-id])
+           (get-in from-rw [0 :opts :event-id])))))

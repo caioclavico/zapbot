@@ -613,6 +613,19 @@
                        [pid])]
     (first (filter vivos depois))))
 
+(defn- revide-chefe
+  "Contra-ataque canônico do chefe após a ação do jogador (ataque ou item).
+
+  Regra de produto (intencional, documentada): dano = ceil(HP máximo do
+  combatente / 5), mínimo 1. Não simula um golpe completo do chefe
+  (stats/tipo/precisão/RNG de variação); a mesma fórmula alimenta `atacar`
+  e `usar-item` para previsibilidade e idempotência do recibo.
+
+  Não apresentar este valor como equivalente a um ataque normal do chefe
+  calculado por `calcular-dano`."
+  [max-hp-ativo]
+  (max 1 (long (Math/ceil (/ (double (or max-hp-ativo 100)) 5)))))
+
 (defn- aplicar-revide-part
   "Aplica revide no ativo. Desmaio → HP 0, sem promoção de reserva (1-mon)."
   [part revide]
@@ -749,7 +762,7 @@
            revide (cond
                     venceu? 0
                     (= 0 (:revide prep)) 0
-                    :else (max 1 (long (Math/ceil (/ (double max-hp-ativo) 5)))))
+                    :else (revide-chefe max-hp-ativo))
            part-base (or (:part prep) part)
            part-apos-dano (-> part-base
                               (update :dano #(+ (long %) dano))
@@ -812,7 +825,7 @@
 
 (defn usar-item
   "Poção mid-raid: cura o combatente ativo no estado canônico da party,
-  consome o turno e aplica o revide do chefe (mesma fórmula de ataque).
+  consome o turno e aplica o revide canônico do chefe (`revide-chefe`).
   Inventário é debitado no store. Retorno espelha campos úteis de `atacar`."
   [raid player-id item-id agora]
   (when-not (and (ativa? raid agora) (= "combate" (str (:fase raid))))
@@ -848,7 +861,8 @@
           slots' (assoc slots idx (assoc slot :pokemon poke' :hp (long (:hp-depois heal))))
           part-healed (sync-active (assoc part :party slots'))
           max-hp-ativo (long (or (:hp poke') (get poke' "hp") (:hp-max heal) 100))
-          revide (max 1 (long (Math/ceil (/ (double max-hp-ativo) 5))))
+          ;; Mesma mecânica canônica de contra-ataque de `atacar` (não fórmula paralela).
+          revide (revide-chefe max-hp-ativo)
           part-final (aplicar-revide-part part-healed revide)
           eliminado? (not (participante-vivo? part-final))
           raid' (-> raid

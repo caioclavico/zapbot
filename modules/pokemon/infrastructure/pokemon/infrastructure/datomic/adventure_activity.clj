@@ -176,7 +176,8 @@
                         :agora agora}})))
 
       ;; Raid: usa :rewards do resultado (um por elegível) — cobre vitória e derrota.
-      (and (= kind "raid-attack") (seq (:rewards result)))
+      ;; Inclui raid-item: poção pode finalizar a raid no contra-ataque do chefe.
+      (and (#{"raid-attack" "raid-item"} kind) (seq (:rewards result)))
       (let [raid (:raid result)
             rid (or (:raid-id raid) (:raid-id summary))
             cat (raid-category-of raid summary)]
@@ -192,8 +193,8 @@
                            (assoc :raid-category cat))}))
               (:rewards result)))
 
-      ;; Fallback: raid-attack encerrou sem vetor rewards (não deveria), usa flags.
-      (and (= kind "raid-attack") (or (:venceu? result) (:derrota? result)))
+      ;; Fallback: raid-attack/raid-item encerrou sem vetor rewards, usa flags.
+      (and (#{"raid-attack" "raid-item"} kind) (or (:venceu? result) (:derrota? result)))
       (let [raid (:raid result)
             rid (or (:raid-id raid) (:raid-id summary))
             cat (raid-category-of raid summary)

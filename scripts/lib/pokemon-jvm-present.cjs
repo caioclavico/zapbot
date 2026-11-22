@@ -2885,7 +2885,9 @@ const RAID_SUB = {
   tm: 'time', time: 'time',
   st: 'status', status: 'status',
   abr: 'abrir', abrir: 'abrir',
-  can: 'cancelar', cancelar: 'cancelar'
+  can: 'cancelar', cancelar: 'cancelar',
+  pocao: 'pocao', 'poção': 'pocao', pot: 'pocao', vida: 'pocao',
+  'pocao-maxima': 'pocao-maxima', maxima: 'pocao-maxima', pmax: 'pocao-maxima'
 };
 
 function resolveRaidSubcommand(token) {
@@ -5137,35 +5139,136 @@ function battleContextHeader(kind, turn, opts = {}) {
   return [`🌿 *CAÇADA${t}*`, `Adversário: ${foe}`];
 }
 
+/** Ações de combate que um escopo cacar/pvp pode promover a cmd top-level. */
+const SCOPED_COMBAT_ACTIONS = new Set([
+  'atacar', 'defender', 'capturar', 'liberar', 'fruta',
+  'pocao', 'pocao-maxima', 'curar', 'status'
+]);
+
+/**
+ * Separa contexto (raid|cacar|pvp) da ação.
+ * Escopo `raid`/`raide` SEMPRE devolve cmd=`raid` — o handler canônico
+ * `executar-raid-jvm!` resolve o subcomando (entrar/abrir/iniciar/…).
+ * Nunca promove `entrar`→batalhar nem `capturar`→caça selvagem.
+ */
 function resolveScopedCommand(tokens) {
   const raw = (tokens || []).map((t) => normalizar(t)).filter(Boolean);
-  if (!raw.length) return { cmd: 'menu', scope: null, resto: [] };
-  const scope = ({ cacar: 'cacar', caçar: 'cacar', cac: 'cacar', hunt: 'cacar',
+  if (!raw.length) return { cmd: 'menu', scope: null, resto: [], tokens: raw };
+  const scope = ({
+    cacar: 'cacar', caçar: 'cacar', cac: 'cacar', hunt: 'cacar',
     pvp: 'pvp', duel: 'pvp',
-    raid: 'raid', raide: 'raid', raids: 'raid' })[raw[0]] || null;
+    raid: 'raid', raide: 'raid', raids: 'raid'
+  })[raw[0]] || null;
   if (!scope) {
-    return { cmd: resolveCommand(tokens), scope: null, resto: Array.from(tokens || []).slice(1), tokens: raw };
+    return {
+      cmd: resolveCommand(tokens),
+      scope: null,
+      resto: Array.from(tokens || []).slice(1),
+      tokens: raw
+    };
   }
   const restTokens = raw.slice(1);
-  let cmd = resolveCommand(restTokens);
-  // !pk cacar / !pk raid / !pk pvp sozinho → status do escopo
-  if (!restTokens.length) {
-    cmd = scope === 'cacar' ? 'cacar' : (scope === 'raid' ? 'raid' : 'batalhar');
+
+  if (scope === 'raid') {
+    // Tudo após raid/raide vai para executar-raid-jvm! (aliases RAID_SUB).
+    return { cmd: 'raid', scope: 'raid', resto: restTokens, tokens: raw };
   }
-  // Aliases explícitos de ação no escopo
-  if (restTokens[0] === 'status') cmd = scope === 'raid' ? 'raid' : 'cacar';
-  return { cmd, scope, resto: restTokens.slice(cmd && restTokens[0] && ALIASES[restTokens[0]] ? 1 : 0), tokens: raw };
+
+  if (scope === 'cacar') {
+    if (!restTokens.length || restTokens[0] === 'status') {
+      return { cmd: 'cacar', scope: 'cacar', resto: [], tokens: raw };
+    }
+    // !pk cacar pocao-maxima | poção maxima
+    if (maxPotionTokenCount(restTokens)) {
+      const n = maxPotionTokenCount(restTokens);
+      return { cmd: 'pocao-maxima', scope: 'cacar', resto: restTokens.slice(n), tokens: raw };
+    }
+    const actionCmd = resolveCommand(restTokens);
+    if (actionCmd && SCOPED_COMBAT_ACTIONS.has(actionCmd)) {
+      const consumed = (ALIASES[restTokens[0]] || restTokens[0] === actionCmd) ? 1 : 1;
+      return { cmd: actionCmd, scope: 'cacar', resto: restTokens.slice(consumed), tokens: raw };
+    }
+    // !pk cacar <área> — inicia caçada
+    return { cmd: 'cacar', scope: 'cacar', resto: restTokens, tokens: raw };
+  }
+
+  // scope === 'pvp'
+  if (!restTokens.length || restTokens[0] === 'status') {
+    return { cmd: 'batalhar', scope: 'pvp', resto: [], tokens: raw };
+  }
+  if (maxPotionTokenCount(restTokens)) {
+    const n = maxPotionTokenCount(restTokens);
+    return { cmd: 'pocao-maxima', scope: 'pvp', resto: restTokens.slice(n), tokens: raw };
+  }
+  const actionCmd = resolveCommand(restTokens);
+  if (actionCmd && SCOPED_COMBAT_ACTIONS.has(actionCmd)) {
+    return { cmd: actionCmd, scope: 'pvp', resto: restTokens.slice(1), tokens: raw };
+  }
+  return { cmd: 'batalhar', scope: 'pvp', resto: restTokens, tokens: raw };
 }
 
-function ambiguousBattlePrompt(prefix, contexts) {
-  const lines = ['❓ Há mais de um combate ativo. Use um comando explícito:'];
+function ambiguousBattlePrompt(prefix, contexts, opts = {}) {
+  const kind = opts.kind || 'attack';
+  const lines = kind === 'potion'
+    ? ['❓ Você possui mais de um combate ativo.', '', 'Escolha onde usar a poção:']
+    : ['❓ Você possui mais de um combate ativo.', ''];
   for (const c of contexts || []) {
-    if (c === 'raid') lines.push(`• \`${prefix} raid atacar 1\` · \`${prefix} raid status\``);
-    else if (c === 'pvp') lines.push(`• \`${prefix} pvp atacar 1\` · \`${prefix} pvp defender\``);
-    else if (c === 'cacar' || c === 'hunt') lines.push(`• \`${prefix} cacar atacar 1\` · \`${prefix} capturar 1\``);
-    else if (c === 'ginasio' || c === 'gym') lines.push(`• \`${prefix} ginasio\` (ataque no desafio ativo)`);
+    if (c === 'raid') {
+      lines.push(kind === 'potion'
+        ? `⚔️ Raid: \`${prefix} raid pocao\` · \`${prefix} raid pocao-maxima\``
+        : `⚔️ Raid: \`${prefix} raid atacar 1\``);
+    } else if (c === 'pvp') {
+      lines.push(kind === 'potion'
+        ? `⚔️ PvP: \`${prefix} pvp pocao\` · \`${prefix} pvp pocao-maxima\``
+        : `⚔️ PvP: \`${prefix} pvp atacar 1\` · \`${prefix} pvp defender\``);
+    } else if (c === 'cacar' || c === 'hunt') {
+      lines.push(kind === 'potion'
+        ? `🌿 Caçada: \`${prefix} cacar pocao\` · \`${prefix} cacar pocao-maxima\``
+        : `🌿 Caçada: \`${prefix} cacar atacar 1\``);
+    } else if (c === 'ginasio' || c === 'gym') {
+      lines.push(`🏛️ Ginásio: \`${prefix} ginasio\``);
+    }
   }
+  lines.push('', 'Nenhuma ação foi executada.');
   return lines.join('\n');
+}
+
+/**
+ * Raid é elegível para *ações de combate* deste jogador somente se:
+ * - fase === combate (inscrição NÃO conta como combate ativo);
+ * - o jogador é participante válido (inscrito / presente em participantes);
+ * - o combatente ainda tem HP > 0 quando o HP é conhecido.
+ * Estar "autorizado a agir agora" (suaVez) é validado no handler da ação.
+ * Uma raid ativa no chat com *outros* participantes NÃO elege este jogador.
+ */
+function raidCombatEligibleForPlayer(raid, playerId) {
+  if (!raid || typeof raid !== 'object') return false;
+  if (String(raid.fase || '') !== 'combate') return false;
+  const pid = playerId != null && playerId !== '' ? String(playerId) : null;
+  const inscrito = raid.inscrito === true || raid['inscrito?'] === true;
+  const parts = raid.participantes;
+  let me = null;
+  if (Array.isArray(parts)) {
+    me = parts.find((p) => {
+      if (!p) return false;
+      if (p.voce === true || p['voce?'] === true) return true;
+      if (pid && String(p.playerId || p['player-id'] || p.id || '') === pid) return true;
+      return false;
+    }) || null;
+  } else if (parts && typeof parts === 'object' && pid && parts[pid]) {
+    me = parts[pid];
+  }
+  if (!inscrito && !me) return false;
+  let hp = (me && me.hp != null) ? Number(me.hp) : null;
+  if (hp == null && raid.vezHp != null && pid && String(raid.vez || '') === pid) {
+    hp = Number(raid.vezHp);
+  }
+  if (hp == null && raid.vezHp != null && (raid.suaVez === true || raid['suaVez?'] === true)) {
+    hp = Number(raid.vezHp);
+  }
+  // Sem HP explícito: inscrito em combate ainda elege (handler valida aptidão).
+  if (hp != null && !(hp > 0)) return false;
+  return true;
 }
 
 function resolveCommand(tokens) {
@@ -5342,6 +5445,7 @@ module.exports = {
   formatEventInfo,
   formatConfirmedPiLines,
   formatRaidItemUse,
+  formatRaidItem: formatRaidItemUse,
   barraHp,
   menuGolpes,
   textoRaridade,
@@ -5352,6 +5456,7 @@ module.exports = {
   resolveScopedCommand,
   battleContextHeader,
   ambiguousBattlePrompt,
+  raidCombatEligibleForPlayer,
   maxPotionTokenCount,
   resolveGymSubcommand,
   formatGymsOverview,
