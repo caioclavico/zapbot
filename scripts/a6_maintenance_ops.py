@@ -173,12 +173,18 @@ def _jvm_data(code, body):
         ("failed-writes", "failedWrites"),
         ("rejected-writes", "rejectedWrites"),
     ):
-        value = data.get(key)
+        # Live bridge JSON uses camelCase; lab mocks may still use kebab-case.
+        value = data.get(name)
+        if value is None:
+            value = data.get(key)
         if not isinstance(value, int) or value < 0:
             raise DeployError("maintenance_state_unknown")
         counts[name] = value
     counts["phase"] = phase
-    counts["quiescent"] = data.get("quiescent?") is True
+    quiescent = data.get("quiescent")
+    if quiescent is None:
+        quiescent = data.get("quiescent?")
+    counts["quiescent"] = quiescent is True
     return counts
 
 

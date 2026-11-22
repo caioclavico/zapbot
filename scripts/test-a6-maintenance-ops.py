@@ -210,6 +210,33 @@ class MaintenanceCycleTests(unittest.TestCase):
         self.assertNotIn("curl", text)
         self.assertIn("/ops/maintenance/enter", text)
 
+    
+    def test_jvm_status_accepts_live_camel_case_keys(self):
+        from a6_maintenance_ops import _jvm_data
+        view = _jvm_data(200, {"ok": True, "data": {
+            "phase": "open",
+            "activeWrites": 0,
+            "admittedWrites": 3,
+            "completedWrites": 3,
+            "failedWrites": 0,
+            "rejectedWrites": 0,
+            "quiescent": False,
+        }})
+        self.assertEqual(view["phase"], "open")
+        self.assertEqual(view["activeWrites"], 0)
+        self.assertEqual(view["admittedWrites"], 3)
+        kebab = _jvm_data(200, {"ok": True, "data": {
+            "phase": "quiescent",
+            "active-writes": 0,
+            "admitted-writes": 1,
+            "completed-writes": 1,
+            "failed-writes": 0,
+            "rejected-writes": 0,
+            "quiescent?": True,
+        }})
+        self.assertEqual(kebab["phase"], "quiescent")
+        self.assertTrue(kebab["quiescent"])
+
     def test_jvm_command_still_uses_curl(self):
         argv = command(["sudo", "-n", "docker"], "odisseu-a6-jvm", "GET", "/ops/maintenance/status", "X-A6-Maintenance-Token", "ODISSEU_BRIDGE_MAINTENANCE_TOKEN", 18090)
         text = " ".join(argv)
