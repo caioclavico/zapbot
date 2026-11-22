@@ -226,7 +226,7 @@ function base(title, subtitle, body) {
  * Incubadora cilíndrica reta: vidro plano translúcido (sem riscos de reflexo),
  * tampas pouco arredondadas e centralizadas.
  */
-function incubator(x, y, width, height, occupied, rarity, label, uses, bonus) {
+function incubator(x, y, width, height, occupied, rarity, slot, kindLabel) {
   const cx = x + width / 2;
   const baseY = y + height - 18;
   const bodyTop = y + 52;
@@ -251,8 +251,8 @@ function incubator(x, y, width, height, occupied, rarity, label, uses, bonus) {
     <circle cx="${cx}" cy="${baseY + 11}" r="3" fill="#70c9ff"/>
     <circle cx="${cx + 17}" cy="${baseY + 11}" r="3" fill="#d08cff"/>
     ${occupied ? egg(cx, y + height / 2, 48, rarity, 0.82) : ''}
-    <text x="${cx}" y="${y + height + 38}" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="18" font-weight="700">${esc(label)}</text>
-    <text x="${cx}" y="${y + height + 62}" text-anchor="middle" fill="#c0cee8" font-family="sans-serif" font-size="15">${esc(uses)}${bonus ? ' • +25%' : ''}</text>
+    <text x="${cx}" y="${y + 28}" text-anchor="middle" fill="#8edbff" font-family="sans-serif" font-size="28" font-weight="700">${slot}</text>
+    <text x="${cx}" y="${y + height + 28}" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="15" font-weight="700">${esc(kindLabel)}</text>
   </g>`;
 }
 
@@ -294,57 +294,77 @@ function eggsSvg(data) {
   return base('Meus Ovos', 'Disponíveis para incubar', body);
 }
 
+function kindTitle(kind) {
+  const k = String(kind || 'permanente').toLowerCase();
+  if (k === 'especial') return 'ESPECIAL';
+  if (k === 'extra' || k === 'temporaria' || k === 'temporária') return 'EXTRA';
+  return 'PERMANENTE';
+}
+
 function incubatorsSvg(data) {
   const adv = normalizeAdventure(data);
   const eggsById = new Map();
   for (const e of adv.eggs) {
     if (e.eggId) eggsById.set(String(e.eggId), e);
   }
-  let items = adv.incubators.slice(0, 4);
+  let items = adv.incubators.slice(0, 3);
   if (!items.length) {
     items = [{ incubatorId: 'permanente', kind: 'permanente', uses: null, bonusPoints: 0, activeEggId: null, livre: true, rarity: 'comum' }];
   }
-  let body = '';
+  const count = items.length;
+  const cardW = count === 1 ? 220 : (count === 2 ? 200 : 180);
+  const gap = count === 1 ? 0 : (count === 2 ? 40 : 24);
+  const totalW = count * cardW + (count - 1) * gap;
+  const startX = Math.max(24, Math.floor((CARD_WIDTH - totalW) / 2));
+  const y = 168;
+  const chamberH = 250;
+  let body = `<text x="42" y="158" fill="#93a8d5" font-family="sans-serif" font-size="15">${count} incubadora(s) · use !pk incubar &lt;ovo&gt; &lt;nº&gt;</text>`;
   items.forEach((item, index) => {
-    const egg = item.activeEggId ? eggsById.get(String(item.activeEggId)) : null;
-    const uses = item.uses == null
-      ? 'ilimitados'
+    const eggObj = item.activeEggId ? eggsById.get(String(item.activeEggId)) : null;
+    const slot = index + 1;
+    const x = startX + index * (cardW + gap);
+    const usesLabel = item.uses == null
+      ? 'Usos: ∞'
       : Number(item.uses) <= 0
-        ? 'bloqueada'
-        : `${item.uses} usos`;
-    const label = item.kind || item.incubatorId || 'permanente';
-    const x = 18 + index * 154;
-    const y = 155;
+        ? 'Usos: 0'
+        : `Usos restantes: ${item.uses}`;
+    const estado = eggObj || item.activeEggId ? 'OCUPADA' : 'LIVRE';
+    const kindLabel = kindTitle(item.kind || item.incubatorId);
     body += incubator(
       x,
       y,
-      130,
-      290,
+      cardW,
+      chamberH,
       Boolean(item.activeEggId),
-      (egg && egg.category) || item.rarity || 'comum',
-      label,
-      uses,
-      Number(item.bonusPoints || 0) > 0
+      (eggObj && eggObj.category) || item.rarity || 'comum',
+      slot,
+      kindLabel
     );
-    if (egg) {
-      const goal = egg.pointsGoal || goalFor(egg.category);
-      const points = egg.points || 0;
-      const ratio = Math.max(0, Math.min(1, goal > 0 ? points / goal : (egg.progressPct || 0) / 100));
-      const ready = egg.state === 'ready-to-hatch' || egg.state === 'delivery-pending' || egg.pronto;
-      const barY = y + 330;
-      body += `<rect x="${x + 18}" y="${barY}" width="94" height="8" rx="4" fill="#263b68"/>`;
-      body += `<rect x="${x + 18}" y="${barY}" width="${94 * ratio}" height="8" rx="4" fill="${rarityColor(egg.category)}"/>`;
-      body += `<text x="${x + 65}" y="${barY + 24}" text-anchor="middle" fill="#c6d5ef" font-family="sans-serif" font-size="12">${points}/${goal} PI · ${Math.round(ratio * 100)}%</text>`;
+    // Linhas de estado abaixo da câmara — sem sobrepor o desenho (y+height+38 era o conflito).
+    const infoY = y + chamberH + 48;
+    body += `<text x="${x + cardW / 2}" y="${infoY}" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="14" font-weight="700">Estado: ${estado}</text>`;
+    body += `<text x="${x + cardW / 2}" y="${infoY + 22}" text-anchor="middle" fill="#c0cee8" font-family="sans-serif" font-size="13">${esc(usesLabel)}</text>`;
+    if (Number(item.bonusPoints || 0) > 0) {
+      body += `<text x="${x + cardW / 2}" y="${infoY + 44}" text-anchor="middle" fill="#fbbf24" font-family="sans-serif" font-size="13">Bônus: +${item.bonusPoints}% PI</text>`;
+    }
+    if (eggObj) {
+      const goal = eggObj.pointsGoal || goalFor(eggObj.category);
+      const points = eggObj.points || 0;
+      const ratio = Math.max(0, Math.min(1, goal > 0 ? points / goal : (eggObj.progressPct || 0) / 100));
+      const ready = eggObj.state === 'ready-to-hatch' || eggObj.state === 'delivery-pending' || eggObj.pronto;
+      const barY = infoY + (Number(item.bonusPoints || 0) > 0 ? 58 : 48);
+      body += `<rect x="${x + 24}" y="${barY}" width="${cardW - 48}" height="8" rx="4" fill="#263b68"/>`;
+      body += `<rect x="${x + 24}" y="${barY}" width="${(cardW - 48) * ratio}" height="8" rx="4" fill="${rarityColor(eggObj.category)}"/>`;
+      body += `<text x="${x + cardW / 2}" y="${barY + 24}" text-anchor="middle" fill="#c6d5ef" font-family="sans-serif" font-size="12">Ovo ${esc(String(eggObj.category || ''))}: ${points}/${goal} PI</text>`;
       if (ready) {
-        body += `<text x="${x + 65}" y="${barY + 42}" text-anchor="middle" fill="#86efac" font-family="sans-serif" font-size="13" font-weight="700">pronto!</text>`;
-      } else {
-        body += `<text x="${x + 65}" y="${barY + 42}" text-anchor="middle" fill="#93a8d5" font-family="sans-serif" font-size="12">${esc(String(egg.category || '').toUpperCase())}</text>`;
+        body += `<text x="${x + cardW / 2}" y="${barY + 42}" text-anchor="middle" fill="#86efac" font-family="sans-serif" font-size="13" font-weight="700">pronto · !pk chocar</text>`;
       }
     } else {
-      body += `<text x="${x + 65}" y="${y + 354}" text-anchor="middle" fill="#52658e" font-family="sans-serif" font-size="13">livre</text>`;
+      const cmdY = infoY + (Number(item.bonusPoints || 0) > 0 ? 66 : 48);
+      body += `<text x="${x + cardW / 2}" y="${cmdY}" text-anchor="middle" fill="#8edbff" font-family="sans-serif" font-size="12">!pk incubar &lt;ovo&gt; ${slot}</text>`;
     }
   });
-  return base('Incubadoras', 'Progresso PI e usos', body);
+  return base('Incubadoras', 'Números iguais ao texto e ao comando', body);
 }
 
 async function render(kind, data) {
@@ -365,11 +385,59 @@ async function render(kind, data) {
   }));
 }
 
+
+/** Casca quebrada + área central para o sprite (composited em media). */
+function hatchRevealSvg({ speciesName = 'Pokémon', shiny = false } = {}) {
+  const title = shiny ? 'SEU OVO CHOCOU! ✨' : 'SEU OVO CHOCOU!';
+  const name = esc(speciesName);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" viewBox="0 0 ${CARD_WIDTH} ${CARD_HEIGHT}">
+  <defs>
+    <linearGradient id="hbg" x2="0" y2="1"><stop stop-color="#1a2a55"/><stop offset="1" stop-color="#0a142c"/></linearGradient>
+    <radialGradient id="glow" cx="50%" cy="42%" r="45%"><stop stop-color="#fff7c2" stop-opacity=".55"/><stop offset="1" stop-color="#fff7c2" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="640" height="820" rx="28" fill="url(#hbg)"/>
+  <circle cx="320" cy="340" r="210" fill="url(#glow)"/>
+  <text x="42" y="55" fill="#8edbff" font-family="sans-serif" font-size="18" font-weight="700" letter-spacing="2">ODISSEU • POKÉMON</text>
+  <text x="320" y="120" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="36" font-weight="700">${esc(title)}</text>
+  <text x="320" y="158" text-anchor="middle" fill="#fbbf24" font-family="sans-serif" font-size="22" font-weight="700">${name}</text>
+  <!-- área do sprite -->
+  <rect id="sprite-slot" x="170" y="200" width="300" height="300" rx="24" fill="#132653" fill-opacity="0.35"/>
+  <!-- casca inferior -->
+  <path d="M120 620 C160 520, 240 480, 320 480 C400 480, 480 520, 520 620 L480 700 C420 660, 360 640, 320 640 C280 640, 220 660, 160 700 Z"
+        fill="#f7fafb" stroke="#d5dde4" stroke-width="4"/>
+  <ellipse cx="220" cy="560" rx="28" ry="36" fill="#8b4bd8" opacity=".85"/>
+  <ellipse cx="400" cy="575" rx="34" ry="42" fill="#1684d8" opacity=".85"/>
+  <!-- fragmentos -->
+  <path d="M150 430 L190 400 L175 460 Z" fill="#f7fafb" stroke="#c5ced6"/>
+  <path d="M470 420 L520 450 L480 480 Z" fill="#f7fafb" stroke="#c5ced6"/>
+  <path d="M260 390 L300 370 L290 420 Z" fill="#f7fafb" stroke="#c5ced6"/>
+  <path d="M380 385 L430 395 L400 430 Z" fill="#f7fafb" stroke="#c5ced6"/>
+  <text x="320" y="760" text-anchor="middle" fill="#93a8d5" font-family="sans-serif" font-size="18">Nível 1 · adicionado à coleção</text>
+</svg>`;
+}
+
+async function renderHatchReveal(data = {}) {
+  const key = createHash('sha256')
+    .update(JSON.stringify(['hatch', data.speciesName, data.shiny]))
+    .digest('hex');
+  return cache.get(key, () => queue(async () => {
+    const svg = hatchRevealSvg(data);
+    const buf = await sharp(Buffer.from(svg)).png({ compressionLevel: 6 }).toBuffer();
+    if (buf.length > MAX_PNG_BYTES) {
+      return sharp(Buffer.from(svg)).png({ compressionLevel: 9, palette: true }).toBuffer();
+    }
+    return buf;
+  }));
+}
+
 module.exports = {
   render,
+  renderHatchReveal,
+  hatchRevealSvg,
   rarityColor,
   normalizeAdventure,
   normalizeEgg,
+  kindTitle,
   CARD_WIDTH,
   CARD_HEIGHT,
   MAX_PNG_BYTES,
