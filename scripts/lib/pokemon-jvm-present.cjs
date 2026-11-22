@@ -2409,6 +2409,7 @@ function formatCaptureMenu(encounterData, prefix = '!pk') {
 
 function formatReleaseResult(data, _prefix = '!pk') {
   const seqAntes = data.sequenciaAntes != null ? data.sequenciaAntes : 0;
+  const piLines = formatConfirmedPiLines(data || {});
   return [
     '🌿 *POKÉMON LIBERADO*',
     'Você deixou o Pokémon selvagem ir.',
@@ -2416,7 +2417,8 @@ function formatReleaseResult(data, _prefix = '!pk') {
     seqAntes > 0
       ? '🔥 Sua sequência de capturas foi encerrada.'
       : '🔥 Sequência de capturas: já estava em 0.',
-    `Sequência atual: *${data.sequenciaCapturas != null ? data.sequenciaCapturas : 0}*`
+    `Sequência atual: *${data.sequenciaCapturas != null ? data.sequenciaCapturas : 0}*`,
+    ...piLines
   ].join('\n');
 }
 
@@ -2452,16 +2454,20 @@ function formatCaptureResult(data, prefix = '!pk') {
       ? (textoMoedas(rew.moedas) || `💰 +${rew.moedas} moedas`)
       : '💰 Nenhuma moeda de sequência nesta faixa.';
     const piLines = formatConfirmedPiLines(data);
+    const piReward = piLines.filter((l) => l.includes('PI de incubação'));
+    const piExtra = piLines.filter((l) => !l.includes('PI de incubação'));
     const linhas = [
       '🎉 *POKÉMON CAPTURADO!*',
-      `✅ ${meta.nome} · ${chance}% · nº ${idx} · *${selvagem}*`,
+      `✅ ${selvagem} foi capturado!`,
+      `⚪ ${meta.nome} · ${chance}% · nº ${idx}`,
       `🔥 Sequência: ${seq} captura${seq === 1 ? '' : 's'}`,
       '',
-      '*Recompensa da captura*',
+      '*Recompensas*',
       `✨ +${rew.xp || 0} XP Pokémon`,
       `⭐ +${rew.pe != null ? rew.pe : 0} PE treinador`,
       moedasLinha,
-      ...piLines,
+      ...piReward,
+      ...(piExtra.length ? ['', '*Progresso dos ovos*', ...piExtra] : []),
       data.subida
         ? (data.subida.niveisSubidos > 1 || data.subida.niveis_subidos > 1
           ? `🌟 *${data.subida.nome}* subiu ${data.subida.niveisSubidos || data.subida.niveis_subidos} níveis e chegou ao Nv. ${data.subida.nivel}!`
@@ -4006,6 +4012,40 @@ function pickAdventureActivities(data) {
   return [];
 }
 
+
+function formatRaidItemUse(data, prefix = '!pk') {
+  const itemId = data && (data.itemId || data['item-id'] || '');
+  const max = /maxima/.test(String(itemId));
+  const nome = (data && data.pokemonAtivo && (data.pokemonAtivo.nome || data.pokemonAtivo.species))
+    || (data && data.pokemon && (data.pokemon.nome || data.pokemon.species))
+    || 'Pokémon';
+  const antes = data && (data.hpAntes != null ? data.hpAntes : data['hp-antes']);
+  const depois = data && (data.hpDepois != null ? data.hpDepois : data['hp-depois']);
+  const hpMax = data && (data.hpMax != null ? data.hpMax : data['hp-max']);
+  const apos = data && (data.hpAposRevide != null ? data.hpAposRevide : data['hp-apos-revide']);
+  const revide = data && data.revide;
+  const lines = [
+    max ? '💖 *POÇÃO MÁXIMA UTILIZADA!*' : '🧪 *POÇÃO UTILIZADA!*',
+    `Pokémon: ${nome}`,
+    (antes != null && hpMax != null)
+      ? `HP anterior: ${antes}/${hpMax}`
+      : null,
+    (depois != null && hpMax != null)
+      ? `HP restaurado: ${depois}/${hpMax}`
+      : null,
+  ];
+  if (revide != null && Number(revide) > 0) {
+    lines.push('', '⚔️ O chefe atacou!', `Dano recebido: ${revide}`);
+    if (apos != null && hpMax != null) lines.push(`❤️ HP atual: ${apos}/${hpMax}`);
+  }
+  if (data && (data.derrota || data.derrota === true)) {
+    lines.push('', '💀 Sua equipe foi derrotada na raid.');
+  } else {
+    lines.push('', `Continue: \`${prefix} raid atacar 1\` · \`${prefix} raid status\``);
+  }
+  return lines.filter((l) => l != null).join('\n');
+}
+
 function formatConfirmedPiLines(data, opts = {}) {
   const playerId = opts.playerId || opts['player-id'] || null;
   const lines = [];
@@ -4020,25 +4060,42 @@ function formatConfirmedPiLines(data, opts = {}) {
     const pending = a.deferred === true || a['deferred?'] === true;
     const category = a.eggCategory || a['egg-category'];
     if (a.eggId || a['egg-id']) {
-      lines.push(pending
-        ? `🥚 Ovo ${category || 'encontrado'} aguardando espaço no inventário.`
-        : `🥚 Você encontrou um ovo${category ? ' ' + category : ''}!`);
+      if (pending) {
+        lines.push('🥚 *OVO ENCONTRADO!*');
+        lines.push('Seu inventário está cheio. O ovo ficará aguardando espaço.');
+      } else {
+        const rar = category ? String(category) : null;
+        lines.push('🥚 *VOCÊ ENCONTROU UM OVO!*');
+        if (rar) lines.push(`Raridade: ${rar.charAt(0).toUpperCase()}${rar.slice(1)}`);
+        lines.push('🎒 Ovo adicionado ao inventário.');
+      }
     }
     const incubator = a.incubatorKind || a['incubator-kind'];
     const incubatorPending = a.incubatorDeferred === true || a['incubator-deferred?'] === true;
     if (a.incubatorId || a['incubator-id']) {
-      const label = incubator ? ' ' + incubator : '';
-      lines.push(incubatorPending
-        ? `🪺 Incubadora${label} aguardando vaga.`
-        : `🪺 Você ganhou uma incubadora${label}!`);
+      const label = incubator ? String(incubator) : null;
+      if (incubatorPending) {
+        lines.push(`🪺 Incubadora${label ? ' ' + label : ''} aguardando vaga.`);
+      } else {
+        lines.push('🪺 *VOCÊ GANHOU UMA INCUBADORA!*');
+        if (label) lines.push(`Tipo: ${label.charAt(0).toUpperCase()}${label.slice(1)}`);
+      }
     }
-    const ep = a.eggProgress || a.egg_progress || a['egg-progress'];
-    if (ep && typeof ep === 'object') {
-      const cat = ep.category || ep.categoria || a.eggCategory || a['egg-category'] || 'ovo';
+    const eps = a.eggsProgress || a.eggs_progress || a['eggs-progress']
+      || a.eggProgress || a.egg_progress || a['egg-progress'];
+    const list = Array.isArray(eps) ? eps : (eps && typeof eps === 'object' ? [eps] : []);
+    for (const ep of list) {
+      if (!ep || typeof ep !== 'object') continue;
+      const cat = ep.category || ep.categoria || 'ovo';
+      const before = ep.pointsBefore != null ? ep.pointsBefore
+        : (ep['points-before'] != null ? ep['points-before'] : ep.antes);
       const cur = ep.points != null ? ep.points : ep.pontos;
       const goal = ep.goal != null ? ep.goal : ep.meta;
-      if (cur != null && goal != null) {
-        lines.push(`🧪 Ovo ${cat}: ${cur}/${goal} PI`);
+      if (cur == null || goal == null) continue;
+      if (before != null && Number(before) !== Number(cur)) {
+        lines.push(`🪺 Ovo ${cat}: ${before} → ${cur}/${goal} PI`);
+      } else {
+        lines.push(`🪺 Ovo ${cat}: ${cur}/${goal} PI`);
       }
     }
   }
@@ -5064,6 +5121,53 @@ function maxPotionTokenCount(tokens) {
   return MAX_POTION_ALIASES.has(`${first}-${normalizar(tokens?.[1])}`) ? 2 : 0;
 }
 
+function battleContextHeader(kind, turn, opts = {}) {
+  const t = turn != null ? ` — TURNO ${turn}` : '';
+  if (kind === 'raid') {
+    const boss = opts.boss || opts.chefe || 'Chefe';
+    return [`⚔️ *RAID${t}*`, `Chefe: ${boss}`];
+  }
+  if (kind === 'pvp') {
+    return [`⚔️ *PVP${t}*`];
+  }
+  if (kind === 'gym' || kind === 'ginasio') {
+    return [`🏛️ *GINÁSIO${t}*`];
+  }
+  const foe = opts.foe || opts.adversario || 'selvagem';
+  return [`🌿 *CAÇADA${t}*`, `Adversário: ${foe}`];
+}
+
+function resolveScopedCommand(tokens) {
+  const raw = (tokens || []).map((t) => normalizar(t)).filter(Boolean);
+  if (!raw.length) return { cmd: 'menu', scope: null, resto: [] };
+  const scope = ({ cacar: 'cacar', caçar: 'cacar', cac: 'cacar', hunt: 'cacar',
+    pvp: 'pvp', duel: 'pvp',
+    raid: 'raid', raide: 'raid', raids: 'raid' })[raw[0]] || null;
+  if (!scope) {
+    return { cmd: resolveCommand(tokens), scope: null, resto: Array.from(tokens || []).slice(1), tokens: raw };
+  }
+  const restTokens = raw.slice(1);
+  let cmd = resolveCommand(restTokens);
+  // !pk cacar / !pk raid / !pk pvp sozinho → status do escopo
+  if (!restTokens.length) {
+    cmd = scope === 'cacar' ? 'cacar' : (scope === 'raid' ? 'raid' : 'batalhar');
+  }
+  // Aliases explícitos de ação no escopo
+  if (restTokens[0] === 'status') cmd = scope === 'raid' ? 'raid' : 'cacar';
+  return { cmd, scope, resto: restTokens.slice(cmd && restTokens[0] && ALIASES[restTokens[0]] ? 1 : 0), tokens: raw };
+}
+
+function ambiguousBattlePrompt(prefix, contexts) {
+  const lines = ['❓ Há mais de um combate ativo. Use um comando explícito:'];
+  for (const c of contexts || []) {
+    if (c === 'raid') lines.push(`• \`${prefix} raid atacar 1\` · \`${prefix} raid status\``);
+    else if (c === 'pvp') lines.push(`• \`${prefix} pvp atacar 1\` · \`${prefix} pvp defender\``);
+    else if (c === 'cacar' || c === 'hunt') lines.push(`• \`${prefix} cacar atacar 1\` · \`${prefix} capturar 1\``);
+    else if (c === 'ginasio' || c === 'gym') lines.push(`• \`${prefix} ginasio\` (ataque no desafio ativo)`);
+  }
+  return lines.join('\n');
+}
+
 function resolveCommand(tokens) {
   if (!tokens || !tokens.length) return 'menu';
   if (maxPotionTokenCount(tokens)) return 'pocao-maxima';
@@ -5237,6 +5341,7 @@ module.exports = {
   formatWorldInfo,
   formatEventInfo,
   formatConfirmedPiLines,
+  formatRaidItemUse,
   barraHp,
   menuGolpes,
   textoRaridade,
@@ -5244,6 +5349,9 @@ module.exports = {
   formatCaptureResult,
   formatReleaseResult,
   resolveCommand,
+  resolveScopedCommand,
+  battleContextHeader,
+  ambiguousBattlePrompt,
   maxPotionTokenCount,
   resolveGymSubcommand,
   formatGymsOverview,

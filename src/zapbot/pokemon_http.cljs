@@ -1402,19 +1402,35 @@
                      trade? (vec (rest args))
                      :else args)
         help-req (.resolveHelpRequest jvm-present (clj->js args))
+        scoped (when (and (not trade?) (not recovery?) (not help-req) (not save-management?))
+                 (.resolveScopedCommand jvm-present (clj->js args)))
         resolved-cmd (cond
                        trade? nil
                        recovery? nil
                        help-req "ajuda"
                        save-management? "save-management"
+                       scoped (.-cmd scoped)
                        :else (.resolveCommand jvm-present (clj->js args)))
+        battle-scope (when scoped (some-> (.-scope scoped) str))
         cmd (if (and (= "time" resolved-cmd)
                      (contains? #{"salvar" "usar" "ver" "excluir" "apagar" "remover"}
                                 (str/lower-case (str (or (first (rest args)) "")))))
               "times"
               resolved-cmd)
-        resto (if (re-matches #"[1-4]" primeiro)
+        resto (cond
+                (re-matches #"[1-4]" primeiro)
                 [primeiro]
+
+                (and battle-scope scoped)
+                (let [toks (mapv str/lower-case (js->clj (.-tokens scoped)))
+                      after (vec (rest toks))
+                      ;; !pk cacar atacar 1 → after=[atacar 1] → resto=[1]
+                      action? (contains? #{"atacar" "defender" "capturar" "status"
+                                           "fruta" "liberar" "sair" "iniciar" "entrar"}
+                                         (str (first after)))]
+                  (if action? (vec (rest after)) after))
+
+                :else
                 (let [consumed (if (= "pocao-maxima" cmd)
                                  (max 1 (.maxPotionTokenCount jvm-present (clj->js args)))
                                  1)]
@@ -2567,49 +2583,79 @@
                                     (append-trainer-level-ups texto data) img))))
 
                 "atacar"
-                (p/let [pvp (.getActivePvp jvm #js {:chatId chat-id})
+                (p/let [prefix (str config/prefix "pk")
+                        raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
+                                     #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
+                        raid (.-raid raid-data)
+                        raid-combat? (and raid (= "combate" (str (.-fase raid))))
+                        pvp (.getActivePvp jvm #js {:chatId chat-id})
                         battle (.-battle pvp)
-                        enc (when-not (and battle (.-active battle)
-                                           (= "active" (.-phase battle)))
+                        pvp-on? (and battle (.-active battle) (= "active" (.-phase battle)))
+                        enc (when-not (or (= battle-scope "raid") (= battle-scope "pvp")
+                                          (and (nil? battle-scope) pvp-on?))
                               (desempenho/medir! ctx "pokemon_jvm_encounter"
                                 #(.getEncounter jvm #js {:chatId chat-id :playerId player-id})))
-                        encontro (some-> enc .-encounter)]
+                        encontro (some-> enc .-encounter)
+                        hunt-on? (and encontro (.-active encontro) (not (.-aguardandoCaptura encontro)))
+                        contexts (cond-> []
+                                   (and (or (nil? battle-scope) (= battle-scope "raid")) raid-combat?)
+                                   (conj "raid")
+                                   (and (or (nil? battle-scope) (= battle-scope "pvp")) pvp-on?)
+                                   (conj "pvp")
+                                   (and (or (nil? battle-scope) (= battle-scope "cacar")) hunt-on?)
+                                   (conj "cacar"))
+                        idx (js/parseInt (or (first resto) "1") 10)
+                        move-idx (if (js/isNaN idx) 0 (max 0 (dec idx)))]
                   (cond
-                    (and battle (.-active battle) (= "active" (.-phase battle)))
-                    (let [idx (js/parseInt (or (first resto) "1") 10)
-                          move-idx (if (js/isNaN idx) 0 (max 0 (dec idx)))]
-                      (confirmar-turno-pvp!
-                       jvm ctx pedido chat-id player-id battle
-                       {:action "attack" :move-index move-idx}))
+                    (and (nil? battle-scope) (> (count contexts) 1))
+                    (envelope-jvm pedido (.ambiguousBattlePrompt jvm-present prefix (clj->js contexts)))
+
+                    (or (= battle-scope "raid") (and (nil? battle-scope) (= contexts ["raid"])))
+                    (executar-raid-jvm! jvm ctx pedido chat-id player-id player-name (into ["atacar"] resto))
+
+                    (or (= battle-scope "pvp") (and pvp-on? (or (= battle-scope "pvp")
+                                                                (= contexts ["pvp"]))))
+                    (confirmar-turno-pvp!
+                     jvm ctx pedido chat-id player-id battle
+                     {:action "attack" :move-index move-idx})
 
                     (nil? encontro)
-                    (envelope-jvm pedido "❓ Não há caçada, ginásio ou PvP em andamento.")
+                    (envelope-jvm pedido "❓ Não há caçada, ginásio, raid ou PvP em andamento.")
 
                     (.-aguardandoCaptura encontro)
                     (envelope-jvm pedido
                                   (str "🎯 O selvagem já está pronto para captura. Use "
-                                       config/prefix "pk capturar."))
+                                       prefix " capturar · " prefix " cacar capturar."))
 
                     (not (.-active encontro))
                     (envelope-jvm pedido "❓ Esta batalha não está ativa.")
 
                     :else
-                    (let [idx (js/parseInt (or (first resto) "1") 10)
-                          move-idx (if (js/isNaN idx) 0 (max 0 (dec idx)))]
-                      (confirmar-turno-encontro!
-                       jvm ctx pedido chat-id player-id encontro
-                       {:action "attack" :move-index move-idx}))))
+                    (confirmar-turno-encontro!
+                     jvm ctx pedido chat-id player-id encontro
+                     {:action "attack" :move-index move-idx})))
 
                 "defender"
-                (p/let [pvp (.getActivePvp jvm #js {:chatId chat-id})
+                (p/let [prefix (str config/prefix "pk")
+                        pvp (.getActivePvp jvm #js {:chatId chat-id})
                         battle (.-battle pvp)
-                        enc (when-not (and battle (.-active battle)
-                                           (= "active" (.-phase battle)))
+                        pvp-on? (and battle (.-active battle) (= "active" (.-phase battle)))
+                        enc (when-not (or (= battle-scope "pvp") pvp-on?)
                               (desempenho/medir! ctx "pokemon_jvm_encounter"
                                 #(.getEncounter jvm #js {:chatId chat-id :playerId player-id})))
-                        encontro (some-> enc .-encounter)]
+                        encontro (some-> enc .-encounter)
+                        hunt-on? (and encontro (.-active encontro) (not (.-aguardandoCaptura encontro)))
+                        contexts (cond-> []
+                                   (and (or (nil? battle-scope) (= battle-scope "pvp")) pvp-on?)
+                                   (conj "pvp")
+                                   (and (or (nil? battle-scope) (= battle-scope "cacar")) hunt-on?)
+                                   (conj "cacar"))]
                   (cond
-                    (and battle (.-active battle) (= "active" (.-phase battle)))
+                    (and (nil? battle-scope) (> (count contexts) 1))
+                    (envelope-jvm pedido (.ambiguousBattlePrompt jvm-present prefix (clj->js contexts)))
+
+                    (or (= battle-scope "pvp") (and pvp-on? (or (= battle-scope "pvp")
+                                                                (= contexts ["pvp"]))))
                     (confirmar-turno-pvp!
                      jvm ctx pedido chat-id player-id battle
                      {:action "defend"})
@@ -2620,7 +2666,7 @@
                     (.-aguardandoCaptura encontro)
                     (envelope-jvm pedido
                                   (str "🎯 O selvagem já está pronto para captura. Use "
-                                       config/prefix "pk capturar."))
+                                       prefix " capturar."))
 
                     (not (.-active encontro))
                     (envelope-jvm pedido "❓ Esta batalha não está ativa.")
@@ -2925,14 +2971,44 @@
 
                 ("pocao" "pocao-maxima")
                 (let [item-id (if (= cmd "pocao-maxima") "pocao-maxima" "pocao")]
-                  (p/let [pvp (.getActivePvp jvm #js {:chatId chat-id})
+                  (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
+                                      #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
+                          raid (.-raid raid-data)
+                          raid-combat? (and raid (= "combate" (str (.-fase raid))))
+                          pvp (.getActivePvp jvm #js {:chatId chat-id})
                           pvp-b (.-battle pvp)
-                          enc (when-not (and pvp-b (.-active pvp-b)
-                                             (= "active" (.-phase pvp-b)))
+                          enc (when-not (or raid-combat?
+                                            (and pvp-b (.-active pvp-b)
+                                                 (= "active" (.-phase pvp-b))))
                                 (desempenho/medir! ctx "pokemon_jvm_encounter"
                                   #(.getEncounter jvm #js {:chatId chat-id :playerId player-id})))
                           encontro (some-> enc .-encounter)]
                     (cond
+                      raid-combat?
+                      (let [sua-vez? (or (true? (.-suaVez raid))
+                                         (true? (aget raid "suaVez?"))
+                                         (and player-id (.-vez raid) (= player-id (.-vez raid))))]
+                        (if-not sua-vez?
+                          (envelope-jvm pedido "⏳ Não é a sua vez de usar item na raid.")
+                          (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+                                  op-id (.stableOperationId jvm-transport
+                                                            (:requestId pedido)
+                                                            (str "raid-item:" (.-raidId raid) ":"
+                                                                 (.-turnIndex raid) ":" item-id))
+                                  data (desempenho/medir! ctx "pokemon_jvm_raid_item"
+                                         #(.raidUseItem jvm
+                                            #js {:chatId chat-id
+                                                 :playerId player-id
+                                                 :saveId (.-activeSaveId ativo)
+                                                 :fenceGeneration (.-fenceGeneration ativo)
+                                                 :operationId op-id
+                                                 :raidId (.-raidId raid)
+                                                 :expectedTurnIndex (.-turnIndex raid)
+                                                 :itemId item-id}))]
+                            (envelope-jvm pedido
+                                          (.formatRaidItemUse jvm-present data
+                                                              (str config/prefix "pk"))))))
+
                       (and pvp-b (.-active pvp-b) (= "active" (.-phase pvp-b)))
                       (confirmar-turno-pvp!
                        jvm ctx pedido chat-id player-id pvp-b

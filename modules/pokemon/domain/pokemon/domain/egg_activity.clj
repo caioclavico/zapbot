@@ -370,6 +370,19 @@
                   :else pi0)
             [shell1 pi*] (credit-daily-pi estado agora pi0)
             estado1 (eggs/aplicar-pontos (merge estado shell1) event-id pi*)
+            egg-progress
+            (let [antes (into {} (map (juxt :egg-id identity) (:eggs estado [])))
+                  depois (:eggs estado1 [])]
+              (->> depois
+                   (keep (fn [o]
+                           (when-let [prev (get antes (:egg-id o))]
+                             (when (not= (:points prev) (:points o))
+                               {:egg-id (:egg-id o)
+                                :category (some-> (:category o) name)
+                                :points-before (long (:points prev 0))
+                                :points (long (:points o 0))
+                                :goal (long (:points-goal o 0))}))))
+                   vec))
             ;; Ovos
             egg-kind (cond
                        first-daily-hunt? :first-daily-hunt
@@ -441,17 +454,19 @@
          :deferred-egg deferred
          :incubator-grant (:incubator-grant grant-out)
          :deferred-incubator (:deferred-incubator grant-out)
-         :summary {:event-id event-id
-                   :activity (name activity)
-                   :pi pi*
-                   :egg-id (or (:egg-id egg-grant) (:event-id deferred))
-                   :egg-category (when force-cat (name force-cat))
-                   :deferred? (boolean deferred)
-                   :incubator-id (or (get-in grant-out [:incubator-grant :incubator-id])
-                                     (get-in grant-out [:deferred-incubator :event-id]))
-                   :incubator-kind (some-> (or (get-in grant-out [:incubator-grant :kind])
-                                               (get-in grant-out [:deferred-incubator :kind]))
-                                           name)
-                   :incubator-deferred? (boolean (:deferred-incubator grant-out))
-                   :day day
-                   :week week}}))))
+         :summary (cond-> {:event-id event-id
+                             :activity (name activity)
+                             :pi pi*
+                             :egg-id (or (:egg-id egg-grant) (:event-id deferred))
+                             :egg-category (when force-cat (name force-cat))
+                             :deferred? (boolean deferred)
+                             :incubator-id (or (get-in grant-out [:incubator-grant :incubator-id])
+                                               (get-in grant-out [:deferred-incubator :event-id]))
+                             :incubator-kind (some-> (or (get-in grant-out [:incubator-grant :kind])
+                                                         (get-in grant-out [:deferred-incubator :kind]))
+                                                     name)
+                             :incubator-deferred? (boolean (:deferred-incubator grant-out))
+                             :day day
+                             :week week}
+                      (seq egg-progress) (assoc :egg-progress egg-progress
+                                                :eggs-progress egg-progress))}))))

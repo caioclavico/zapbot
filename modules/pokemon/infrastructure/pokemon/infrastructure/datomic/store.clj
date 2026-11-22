@@ -4371,6 +4371,41 @@
                   (expand-dup (resolve-receipt dup phash operation-id))
                   (throw ex))))))))
 
+  (raid-use-item! [_ writer-ctx request]
+    (let [payload (ops/raid-item-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          expand-dup (fn [r]
+                       (when r
+                         (let [s (:summary r)]
+                           (merge (dissoc r :summary)
+                                  (select-keys s [:item-id :hp-antes :hp-depois :hp-max
+                                                  :hp-apos-revide :revide :derrota? :eliminado?])
+                                  {:duplicate true}))))
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (expand-dup (resolve-receipt existing phash operation-id))
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [raid (or (load-raid db (:raid-id request))
+                              (throw (err/error :raid_not_found
+                                                {:raid-id (:raid-id request)})))]
+                 (raid-store/build-item-tx
+                  {:db db :save save :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :raid raid
+                   :query-collection query-collection
+                   :pokemon-hp-status-tx pokemon-hp-status-tx
+                   :inventory-adjust-tx inventory-adjust-tx
+                   :apply-pokemon-xp-tx apply-pokemon-xp-tx
+                   :save-entity save-entity}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (expand-dup (resolve-receipt dup phash operation-id))
+                  (throw ex))))))))
+
   (raid-capture! [_ writer-ctx request]
     (let [payload (ops/raid-capture-payload request)
           phash (ops/payload-hash payload)

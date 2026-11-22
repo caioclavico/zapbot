@@ -11,6 +11,7 @@
             [pokemon.domain.identities :as id]
             [pokemon.domain.ops :as ops]
             [pokemon.domain.raid :as raid]
+            [pokemon.domain.shop :as shop]
             [pokemon.domain.raid-auto :as raid-auto]
             [pokemon.infrastructure.datomic.battle-idle-store :as battle-idle-store]
             [pokemon.infrastructure.datomic.economy-store :as economy-store]))
@@ -1001,6 +1002,106 @@
               :hp-ativo (:hp-ativo outcome)
               :golpe (:golpe outcome)
               :pokemon-atacante (:pokemon-atacante outcome)
+              :pokemon-ativo (:pokemon-ativo outcome)
+              :raid raid'
+              :rewards (mapv #(select-keys % [:player-id :moedas :pe :xp-pokemon
+                                              :pokemon-id :outcome])
+                             (or reward-bundles []))}}))
+
+
+(defn build-item-tx
+  "Poção mid-raid: cura party canônica + coleção + consome item + revide."
+  [{:keys [db save writer-ctx request raid
+           query-collection pokemon-hp-status-tx inventory-adjust-tx
+           apply-pokemon-xp-tx save-entity]}]
+  (let [player-id (:player-id writer-ctx)
+        part (get-in raid [:participantes player-id])
+        _ (raid/assert-participant-fence! part writer-ctx)
+        expected-turn (long (or (:expected-turn-index request)
+                                (:turn-index raid 0)))
+        _ (when (not= expected-turn (long (:turn-index raid 0)))
+            (throw (err/error :stale_turn_index
+                              {:expected expected-turn
+                               :actual (:turn-index raid)})))
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        _ (battle-idle-store/assert-battle-not-idle-expired! raid agora)
+        item-id (shop/normalizar-item (str (:item-id request)))
+        outcome (raid/usar-item raid player-id item-id agora)
+        raid' (:raid outcome)
+        still-combat? (= "combate" (str (:fase raid')))
+        idle (when still-combat? (battle-idle-store/raid-touch-attrs agora))
+        raid' (cond-> raid'
+                idle (assoc :last-activity-at (:raid/last-activity-at idle)
+                            :idle-expires-at (:raid/idle-expires-at idle)
+                            :idle-expired? false))
+        expected-rev (long (:revision raid 0))
+        sk (id/save-key (:chat-id writer-ctx) player-id (:save-id writer-ctx))
+        rev (long (:save/revision save 0))
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        item-tx (inventory-adjust-tx db sk item-id -1)
+        reward-outcome (when (:derrota? outcome) :derrota)
+        pay-rewards? (and reward-outcome (not (:rewards-paid? raid)))
+        hp-sync (raid-all-parties-hp-txs db raid' query-collection pokemon-hp-status-tx)
+        reward-bundles (when pay-rewards?
+                         (mapv (fn [[pid p]]
+                                 (reward-tx-for-participant
+                                  db raid' pid p
+                                  apply-pokemon-xp-tx save-entity query-collection
+                                  reward-outcome))
+                               (raid/participantes-elegiveis raid')))
+        part' (get-in raid' [:participantes player-id])
+        other-parts (for [[pid p] (:participantes raid')
+                          :when (not= pid player-id)]
+                      (participant-entity (:raid-id raid) pid (:chat-id writer-ctx) p))
+        clear-ptr (when (raid/deve-liberar-ponteiro? raid' agora)
+                    [[:db/retract [:chat-active-raid/chat-id (:chat-id writer-ctx)]
+                      :chat-active-raid/raid-id (:raid-id raid)]])
+        raid-tx (concat
+                 item-tx
+                 [(cond-> (raid-entity-tx (assoc raid' :revision (inc expected-rev)
+                                                 :rewards-paid? (or (:rewards-paid? raid)
+                                                                    pay-rewards?)))
+                    idle (merge idle))
+                  [:db/cas [:raid/id (:raid-id raid)] :raid/revision
+                   expected-rev (inc expected-rev)]
+                  [:db/cas [:raid/id (:raid-id raid)] :raid/turn-index
+                   expected-turn (long (:turn-index raid'))]
+                  (participant-entity (:raid-id raid) player-id
+                                      (:chat-id writer-ctx) part')
+                  [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+                  {:operation-receipt/id operation-id
+                   :operation-receipt/kind "raid-item"
+                   :operation-receipt/channel "gameplay"
+                   :operation-receipt/payload-hash phash
+                   :operation-receipt/player-key
+                   (id/player-key (:chat-id writer-ctx) player-id)
+                   :operation-receipt/save-id (:save-id writer-ctx)
+                   :operation-receipt/summary
+                   (pr-str {:item-id item-id
+                            :hp-antes (:hp-antes outcome)
+                            :hp-depois (:hp-depois outcome)
+                            :hp-max (:hp-max outcome)
+                            :hp-apos-revide (:hp-apos-revide outcome)
+                            :revide (:revide outcome)
+                            :derrota? (:derrota? outcome)
+                            :eliminado? (:eliminado? outcome)})}]
+                 other-parts
+                 (or hp-sync [])
+                 (or clear-ptr []))]
+    {:tx (into (vec raid-tx) (mapcat :tx reward-bundles))
+     :result {:operation-id operation-id
+              :duplicate false
+              :item-id item-id
+              :hp-antes (:hp-antes outcome)
+              :hp-depois (:hp-depois outcome)
+              :hp-max (:hp-max outcome)
+              :hp-apos-revide (:hp-apos-revide outcome)
+              :revide (:revide outcome)
+              :venceu? false
+              :derrota? (:derrota? outcome)
+              :eliminado? (boolean (:eliminado? outcome))
+              :hp-ativo (:hp-ativo outcome)
               :pokemon-ativo (:pokemon-ativo outcome)
               :raid raid'
               :rewards (mapv #(select-keys % [:player-id :moedas :pe :xp-pokemon

@@ -1784,6 +1784,39 @@
                                           (some? agora) (assoc :agora-ms agora)
                                           (map? rng) (assoc :rng rng)))))))
 
+                (= path "/v1/raids/item")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          raid-id (g body "raidId" "raid-id")
+                          item-id (g body "itemId" "item-id")
+                          expected (long-or-nil (g body "expectedTurnIndex"
+                                                   "expected-turn-index"))
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id) (nil? expected)
+                                (str/blank? (str item-id)))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"
+                                                      "expectedTurnIndex" "itemId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/raid-use-item!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id
+                                                 :expected-turn-index expected
+                                                 :item-id item-id}
+                                          raid-id (assoc :raid-id raid-id)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
                 (= path "/v1/raids/capture")
                 (do (require-method! ex #{"POST"})
                     (let [body (read-body ex)

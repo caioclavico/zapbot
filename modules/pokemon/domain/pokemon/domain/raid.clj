@@ -6,6 +6,7 @@
   bloqueadas — só o ativo combate; faint = fora. Dano aplica efetividade."
   (:require [clojure.string :as str]
             [pokemon.domain.battle :as battle]
+            [pokemon.domain.shop :as shop]
             [pokemon.domain.damage :as dmg]
             [pokemon.domain.errors :as err]
             [pokemon.domain.mechanics :as mechanics]
@@ -807,6 +808,73 @@
         :pokemon-atacante pokemon
         :pokemon-ativo (:pokemon part-final)
         :hp-ativo (:hp part-final)}))))
+
+
+(defn usar-item
+  "Poção mid-raid: cura o combatente ativo no estado canônico da party,
+  consome o turno e aplica o revide do chefe (mesma fórmula de ataque).
+  Inventário é debitado no store. Retorno espelha campos úteis de `atacar`."
+  [raid player-id item-id agora]
+  (when-not (and (ativa? raid agora) (= "combate" (str (:fase raid))))
+    (throw (err/error :raid_not_in_combat {:fase (:fase raid)})))
+  (when-not (vez-valida? raid)
+    (throw (err/error :raid_turn_invalid
+                      {:vez (:vez raid)
+                       :ordem (:ordem raid)
+                       :player-id player-id})))
+  (when-not (= player-id (:vez raid))
+    (throw (err/error :raid_not_your_turn {:vez (:vez raid) :player-id player-id})))
+  (let [id (shop/normalizar-item (str item-id))
+        meta (shop/item id)
+        fracao (:cura-hp meta)]
+    (when-not fracao
+      (throw (err/error :item_use_unsupported
+                        {:item-id id :allowed ["pocao" "pocao-maxima"]})))
+    (let [part (get-in raid [:participantes player-id])
+          _ (when-not (participante-vivo? part)
+              (throw (err/error :raid_participant_fainted {:player-id player-id})))
+          pokemon (:pokemon part)
+          heal (shop/aplicar-pocao
+                {:hp (long (or (:hp pokemon) (get pokemon "hp") 0))
+                 :hp-atual (long (or (:hp part)
+                                     (:hp-atual pokemon)
+                                     (get pokemon "hp-atual") 0))}
+                fracao)
+          idx (long (:active-party-idx part 0))
+          slots (vec (or (:party part)
+                         [(party-slot pokemon (:collection-index part 0))]))
+          slot (nth slots idx)
+          poke' (assoc (:pokemon slot) :hp-atual (long (:hp-depois heal)))
+          slots' (assoc slots idx (assoc slot :pokemon poke' :hp (long (:hp-depois heal))))
+          part-healed (sync-active (assoc part :party slots'))
+          max-hp-ativo (long (or (:hp poke') (get poke' "hp") (:hp-max heal) 100))
+          revide (max 1 (long (Math/ceil (/ (double max-hp-ativo) 5))))
+          part-final (aplicar-revide-part part-healed revide)
+          eliminado? (not (participante-vivo? part-final))
+          raid' (-> raid
+                    (assoc-in [:participantes player-id] part-final)
+                    (update :turn-index (fnil inc 0)))
+          proxima (proxima-vez raid' player-id)
+          derrota? (nil? proxima)
+          raid'' (if derrota?
+                   (assoc raid' :fase "derrota" :vez nil)
+                   (assoc raid'
+                          :vez proxima
+                          :expira (+ (long agora) duracao-combate)))]
+      {:raid raid''
+       :item-id id
+       :hp-antes (:hp-antes heal)
+       :hp-depois (:hp-depois heal)
+       :hp-max (:hp-max heal)
+       :hp-apos-revide (:hp part-final)
+       :revide revide
+       :dano 0
+       :venceu? false
+       :derrota? derrota?
+       :eliminado? eliminado?
+       :trocou? false
+       :pokemon-ativo (:pokemon part-final)
+       :hp-ativo (:hp part-final)})))
 
 (defn assert-participant-fence!
   "Bloqueia callback com save/fence diferente do carimbo na inscrição."

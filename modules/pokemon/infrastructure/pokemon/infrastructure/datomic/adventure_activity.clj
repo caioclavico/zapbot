@@ -74,9 +74,15 @@
         result (:result built)
         next (or (:battle result) (:encounter result) (:raid result))
         bid (or (:battle-id next) (:battle-id result) (:battle-id summary))
-        previous (when bid (d/pull db '[*] [:battle/id bid]))
-        before (or (battle/decode-compact-edn (:battle/state-edn previous)) {})
-        finished? (and (:active? before) (not (:active? next)))
+        previous (when (and db bid) (d/pull db '[*] [:battle/id bid]))
+        before (or (when previous (battle/decode-compact-edn (:battle/state-edn previous))) {})
+        ;; Com snapshot anterior: transição active→inactive.
+        ;; Sem snapshot (teste/unit) ou EDN ausente: confia no next já finalizado.
+        finished? (and (not (:active? next))
+                       (or (:active? before)
+                           (and (some? (:outcome next))
+                                (or (nil? previous)
+                                    (nil? (:battle/state-edn previous))))))
         winner (:outcome next)
         chat-id (:chat-id writer)
         player-id (:player-id writer)
@@ -107,7 +113,10 @@
                  :suppress-wild-victory-pi? true
                  :agora agora}}])
 
-      (and (= kind "battle-turn") finished? (= winner :win) (= :wild (:kind next)))
+      ;; Vitória selvagem COM captura pendente: PI fica para hunt-complete
+      ;; (captura) ou wild-victory (liberar). Evita +15+15 no mesmo encontro.
+      (and (= kind "battle-turn") finished? (= winner :win) (= :wild (:kind next))
+           (not (:aguardando-captura? next)))
       [{:player-id player-id
         :opts {:activity :wild-victory
                :event-id (str "egg-act:wild-win:" bid)
@@ -118,6 +127,15 @@
         :opts {:activity :wild-defeat
                :event-id (str "egg-act:wild-lose:" bid)
                :agora agora}}]
+
+      ;; Liberar selvagem após vitória → PI de vitória sem captura.
+      (= kind "encounter-release")
+      (let [oid (:operation-receipt/id receipt)
+            bid* (or bid (:battle-id summary) oid)]
+        [{:player-id player-id
+          :opts {:activity :wild-victory
+                 :event-id (str "egg-act:wild-win:" bid*)
+                 :agora agora}}])
 
       (and (= kind "battle-turn") finished? (= winner :win) (= :gym (:kind next)))
       [{:player-id player-id

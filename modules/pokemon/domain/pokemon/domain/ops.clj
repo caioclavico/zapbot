@@ -210,6 +210,13 @@
     :expected-turn-index (long expected-turn-index)
     :move-index (long move-index)}))
 
+(defn raid-item-payload
+  [{:keys [raid-id item-id expected-turn-index]}]
+  (reward/canonicalize
+   {:raid-id raid-id
+    :item-id (str item-id)
+    :expected-turn-index (long expected-turn-index)}))
+
 (defn raid-reward-payload
   "Payload estável do recibo `raid-reward|raid-id|player-id`.
   Vitória preserva kind legado `raid-victory`; derrota usa `raid-defeat`."
