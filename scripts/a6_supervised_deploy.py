@@ -16,6 +16,7 @@ import copy
 import hashlib
 import json
 import os
+import time
 import re
 from pathlib import Path
 
@@ -59,6 +60,8 @@ from a6_writer_policy import INVENTORY
 
 WINDOW = "janela-supervisionada-a6"
 RESUME_PHRASE = "confirmar-resume-a6"
+HEALTH_WAIT_SECONDS = 180
+HEALTH_POLL_SECONDS = 5
 SUPERVISED_STEPS = (
     "authorization",
     "preflight",
@@ -605,9 +608,26 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
             return _finish(checkpoints, "preflight", [str(exc)], seen, pendingOp=pending.get("op"))
         _j().resolve(resolution)
     if _prior_has(prior, "update_jvm") and not _image_matches(observation, "jvm", jvm_digest):
-        return _finish(checkpoints, "images", ["checkpoint_indeterminate"], seen)
+        # update_jvm marcado + imagem antiga = rollback por health; retenta o replace.
+        failed = _failed_digest(wrapped, prefix, "jvm")
+        expected = str(jvm_digest).split("sha256:")[-1]
+        if failed == expected and (observation.get("jvm") or {}).get("health") == "healthy":
+            prior = _clear_rolled_back_update(prior, "jvm")
+            _j().update(steps=prior.get("steps"), lastCompleted=prior.get("lastCompleted"),
+                        next=prior.get("next"), blocked=[])
+            _j().note("update_jvm_rolled_back_retry", failedDigest=failed)
+        else:
+            return _finish(checkpoints, "images", ["checkpoint_indeterminate"], seen)
     if _prior_has(prior, "update_node") and not _image_matches(observation, "node", node_digest):
-        return _finish(checkpoints, "images", ["checkpoint_indeterminate"], seen)
+        failed = _failed_digest(wrapped, prefix, "node")
+        expected = str(node_digest).split("sha256:")[-1]
+        if failed == expected and (observation.get("node") or {}).get("health") == "healthy":
+            prior = _clear_rolled_back_update(prior, "node")
+            _j().update(steps=prior.get("steps"), lastCompleted=prior.get("lastCompleted"),
+                        next=prior.get("next"), blocked=[])
+            _j().note("update_node_rolled_back_retry", failedDigest=failed)
+        else:
+            return _finish(checkpoints, "images", ["checkpoint_indeterminate"], seen)
     if isolated_root is not None and Path(destination).exists() and not _prior_has(prior, "manifest"):
         return _finish(checkpoints, "backup", ["checkpoint_indeterminate"], seen)
     blocked = preflight(observation)
@@ -872,7 +892,10 @@ def _confirm_and_validate(wrapped, prefix, checkpoints, seen):
 
 
 def _leftovers(wrapped, prefix, prior):
-    """-previous ou -failed de outra janela faria o rename falhar com a JVM já parada."""
+    """-previous faria o rename do apply falhar com a JVM já parada.
+
+    -failed é artefato de rollback; o próximo rollback remove com rm -f.
+    """
     completed = wrapped(prefix + ["ps", "-a", "--filter", "name=odisseu-a6-", "--format", "{{.Names}}"])
     if not _ok(completed):
         raise DeployError("containers_unreadable")
@@ -880,9 +903,8 @@ def _leftovers(wrapped, prefix, prior):
     for service in ("jvm", "node"):
         if _prior_has(prior, "update_" + service):
             continue
-        for suffix in ("-previous", "-failed"):
-            if "odisseu-a6-" + service + suffix in names:
-                return ["previous_container_exists"]
+        if "odisseu-a6-" + service + "-previous" in names:
+            return ["previous_container_exists"]
     return []
 
 
@@ -1115,6 +1137,40 @@ def _reread_manifest(manifest_path, destination):
             raise DeployError("backup_invalid")
 
 
+
+def _failed_digest(wrapped, prefix, service):
+    name = "odisseu-a6-%s-failed" % service
+    completed = wrapped(prefix + ["inspect", "--format", "{{.Image}}", name])
+    if not _ok(completed):
+        return None
+    return _digest_hex(_out(completed))
+
+
+def _await_healthy(wrapped, prefix, name, first_status, deadline=None, sleep=time.sleep):
+    """Docker StartPeriod marca starting; um inspect imediato não é evidência."""
+    health = (first_status or "").strip()
+    limit = time.monotonic() + HEALTH_WAIT_SECONDS if deadline is None else deadline
+    while health in ("", "starting") and time.monotonic() < limit:
+        sleep(HEALTH_POLL_SECONDS)
+        probed = wrapped(prefix + ["inspect", "--format", "{{.State.Health.Status}}", name])
+        if not _ok(probed):
+            return "unreadable"
+        health = _out(probed).strip()
+    return health
+
+
+def _clear_rolled_back_update(prior, service):
+    adjusted = copy.deepcopy(prior) if isinstance(prior, dict) else {}
+    step = "update_" + service
+    steps = [item for item in (adjusted.get("steps") or []) if item != step]
+    adjusted["steps"] = steps
+    if adjusted.get("lastCompleted") == step:
+        adjusted["lastCompleted"] = steps[-1] if steps else None
+    if adjusted.get("next") in ("validate_jvm", "validate_whatsapp"):
+        adjusted["next"] = "backup" if service == "jvm" else "update_node"
+    adjusted["blocked"] = []
+    return adjusted
+
 def _update_service(wrapped, observation, sha, service, digest, image, env, backup, jvm_updated, direct, seen, checkpoints,
                     materialize=None):
     step = "update_jvm" if service == "jvm" else "update_node"
@@ -1166,27 +1222,22 @@ def _update_service(wrapped, observation, sha, service, digest, image, env, back
         if cleanup is not None:
             cleanup()
     name = "odisseu-a6-" + service
-    running = wrapped(_prefix(direct) + ["inspect", "--format", "{{.Image}}", name])
+    prefix_now = _prefix(direct)
+    running = wrapped(prefix_now + ["inspect", "--format", "{{.Image}}", name])
     reason = None
     if not _ok(running) or _digest_hex(_out(running)) != str(digest).split(":", 1)[-1]:
         reason = "image_digest_mismatch_after_run"
     elif service == "jvm":
         try:
-            _single_writer(_volume_holders(wrapped, _prefix(direct)), [name])
+            _single_writer(_volume_holders(wrapped, prefix_now), [name])
         except DeployError as exc:
             reason = "second_writer" if str(exc) == "writable_mount_not_exclusive" else str(exc)
     if reason is not None:
         recovery = _rollback(wrapped, service, False, direct)
         return _finish(checkpoints, step, [reason], seen, admitted=True, maintenance=True, recovery=recovery["mode"])
-    _mark(checkpoints, {
-        "step": step,
-        "service": service,
-        "mountsPreserved": True,
-        "jvmUntouched": service == "node",
-        "imageId": "sha256:" + _digest_hex(_out(running)),
-    })
+    health = _await_healthy(wrapped, prefix_now, name, health)
     if health != "healthy":
-        battle = _battle(wrapped, _prefix(direct)) if service == "jvm" else False
+        battle = _battle(wrapped, prefix_now) if service == "jvm" else False
         recovery = _rollback(wrapped, service, battle, direct)
         reason = "rollback_incompatible_battle_edn" if battle else "health_unhealthy"
         return _finish(
@@ -1198,6 +1249,15 @@ def _update_service(wrapped, observation, sha, service, digest, image, env, back
             maintenance=True,
             recovery=recovery["mode"],
         )
+    # Só marca update_* depois da saúde comprovada — evita journal envenenado pós-rollback.
+    _mark(checkpoints, {
+        "step": step,
+        "service": service,
+        "mountsPreserved": True,
+        "jvmUntouched": service == "node",
+        "imageId": "sha256:" + _digest_hex(_out(running)),
+        "health": "healthy",
+    })
     return None
 
 

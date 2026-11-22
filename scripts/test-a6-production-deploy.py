@@ -469,5 +469,13 @@ class ProductionDeployTests(unittest.TestCase):
         self.assertIn("montado", missing.stderr)
 
 
+
+class RollbackFailedCleanupTests(unittest.TestCase):
+    def test_rollback_commands_remove_stale_failed_before_rename(self):
+        from a6_production_deploy import rollback_commands
+        commands = rollback_commands("jvm", docker_direct=True)
+        self.assertEqual(commands[1], ["docker", "rm", "-f", "odisseu-a6-jvm-failed"])
+        self.assertEqual(commands[2][-3:], ["rename", "odisseu-a6-jvm", "odisseu-a6-jvm-failed"])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

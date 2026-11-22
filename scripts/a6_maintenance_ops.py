@@ -383,7 +383,10 @@ def jvm_health(wrapped, prefix):
     if not isinstance(maintenance, dict):
         raise DeployError("datomic_integrity_unknown")
     phase = maintenance.get("phase")
-    writes = maintenance.get("active-writes")
+    # Live /health maintenance block uses camelCase; lab mocks may use kebab-case.
+    writes = maintenance.get("activeWrites")
+    if writes is None:
+        writes = maintenance.get("active-writes")
     if phase not in KNOWN_PHASES or not isinstance(writes, int):
         raise DeployError("datomic_integrity_unknown")
     return {"status": "up", "phase": phase, "activeWrites": writes}
