@@ -74,4 +74,27 @@ class RootBackupTests(unittest.TestCase):
                     with self.assertRaises(ProductionBackupError):
                         admin.status('fixture')
 
+    def test_ensure_refuses_incomplete_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'backups'
+            root.mkdir(mode=0o700)
+            incomplete = root / 'janela-x'
+            incomplete.mkdir(mode=0o700)
+            with patch.object(admin, 'BACKUP_ROOT', root), patch.object(admin, 'status', side_effect=AssertionError('status')):
+                with self.assertRaises(ProductionBackupError) as err:
+                    admin.ensure('janela-x')
+            self.assertEqual(str(err.exception), 'backup_incomplete')
+
+    def test_node_active_operations_uses_api_when_marker_omits_counter(self):
+        calls = []
+
+        def fake_read(args):
+            calls.append(args)
+            return '{"ok":true,"phase":"quiescent","activeOperations":0,"durable":true}\n200\n'
+
+        with patch.object(admin, '_read', side_effect=fake_read):
+            self.assertEqual(admin._node_active_operations({'phase': 'quiescent'}), 0)
+        self.assertTrue(any('odisseu-a6-node' in str(a) for a in calls))
+        self.assertEqual(admin._node_active_operations({'phase': 'quiescent', 'activeOps': 2}), 2)
+
 if __name__ == '__main__': unittest.main(verbosity=2)

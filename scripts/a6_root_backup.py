@@ -71,6 +71,49 @@ def _no_open_handles(source):
             raise ProductionBackupError('writer_observation_unavailable') from exc
 
 
+def _node_active_operations(node_state):
+    """Contador do marcador, ou da API autenticada quando o JSON omite activeOps.
+
+    O marcador quiescent/open do Node costuma ter só phase/timestamps. None != 0
+    e quebrava o backup com writes_in_flight. O token fica só no env do container.
+    """
+    value = node_state.get('activeOps')
+    if isinstance(value, int) and value >= 0:
+        return value
+    script = (
+        "node -e "
+        "'const http=require(\"http\");"
+        "const req=http.request({"
+        "hostname:\"127.0.0.1\",port:3001,"
+        "path:\"/ops/maintenance/status\",method:\"GET\","
+        "headers:{\"x-a6-node-maintenance-token\":process.env.ODISSEU_NODE_MAINTENANCE_TOKEN}"
+        "},function(res){var d=\"\";res.on(\"data\",function(c){d+=c});"
+        "res.on(\"end\",function(){process.stdout.write(d+\"\\n\"+res.statusCode)})});"
+        "req.on(\"error\",function(e){console.error(e);process.exit(1)});req.end()'"
+    )
+    raw = _read(['docker', 'exec', 'odisseu-a6-node', 'sh', '-c', script])
+    lines = raw.splitlines()
+    if not lines or not lines[-1].strip().isdigit():
+        raise ProductionBackupError('node_ops_unreadable')
+    if int(lines[-1]) != 200:
+        raise ProductionBackupError('node_ops_unreadable')
+    try:
+        body = json.loads('\n'.join(lines[:-1]) or '{}')
+    except ValueError as exc:
+        raise ProductionBackupError('node_ops_unreadable') from exc
+    active = body.get('activeOperations')
+    if not isinstance(active, int) or active < 0:
+        raise ProductionBackupError('node_ops_unreadable')
+    return active
+
+
+def _jvm_active_writes(marker):
+    writes = _int_token(marker, ':active-writes')
+    if isinstance(writes, int) and writes >= 0:
+        return writes
+    raise ProductionBackupError('jvm_writes_unreadable')
+
+
 def _collect():
     vm = observe_gce(_run)
     vm['hostname'] = _read(['hostname']).strip()
@@ -94,7 +137,7 @@ def _collect():
     marker = (Path(DATOMIC_SOURCE) / '.a6-maintenance/bridge-maintenance.edn').read_text()
     return Collection('docker-inspect-subprocess', tuple(docs), _read(['ps', '-eo', 'args']),
                       _token(marker, ':phase').lstrip(':'), node_state.get('phase'),
-                      _int_token(marker, ':active-writes'), node_state.get('activeOps'),
+                      _jvm_active_writes(marker), _node_active_operations(node_state),
                       DATOMIC_VOLUME, 'odisseu-a6-jvm'), vm
 
 
@@ -235,11 +278,26 @@ def backup(window):
     return _receipt(window, report)
 
 
+def _backup_complete(destination):
+    destination = Path(destination)
+    return (
+        (destination / 'backup-manifest.txt').is_file()
+        and (destination / 'data').is_dir()
+        and (destination / 'restore-isolated').is_dir()
+    )
+
+
 def ensure(window):
-    """Retomada idempotente: valida um backup concluído ou cria um novo."""
+    """Retomada idempotente: valida um backup concluído ou cria um novo.
+
+    Diretório vazio/parcial (mkdir sem manifesto) não é tratado como sucesso —
+    isso envenenava a janela com backup_admin_unavailable via status().
+    """
     destination = _destination(window)
     if destination.exists():
-        return status(window)
+        if _backup_complete(destination):
+            return status(window)
+        raise ProductionBackupError('backup_incomplete')
     return backup(window)
 
 
@@ -259,8 +317,9 @@ def cli(argv=None):
             os.umask(old)
         print(json.dumps(result))
         return 0
-    except (ProductionBackupError, DeployError, OSError, KeyError, ValueError):
-        print('backup_admin_blocked', file=sys.stderr)
+    except (ProductionBackupError, DeployError, OSError, KeyError, ValueError) as exc:
+        # Motivo operacional sem caminhos de save/token.
+        print('backup_admin_blocked ' + str(exc), file=sys.stderr)
         return 2
 
 if __name__ == '__main__': raise SystemExit(cli())
