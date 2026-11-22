@@ -171,12 +171,13 @@
         base
         (let [pid (second (re-find #"\"playerId\":\"([^\"]+)\"" texto))
               eid (second (re-find #"\"eggId\":\"([^\"]+)\"" texto))
-              hid (second (re-find #"\"hatchId\":\"([^\"]+)\"" texto))]
+              hid (second (re-find #"\"hatchId\":\"([^\"]+)\"" texto))
+              sid (second (re-find #"\"saveId\":\"([^\"]+)\"" texto))]
           (cond-> base
             pid (assoc :player-id pid :playerId pid)
             eid (assoc :egg-id eid :eggId eid)
-            hid (assoc :hatch-id hid :hatchId hid)))))))
-
+            hid (assoc :hatch-id hid :hatchId hid)
+            (not (str/blank? sid)) (assoc :save-id sid :saveId sid)))))))
 (defn opened-raid-id
   "Extrai raid-id de outbox `raid-opened:{raid-id}`."
   [event-id]

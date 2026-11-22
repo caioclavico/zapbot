@@ -160,10 +160,17 @@
                          :save-id (:save-id ovo)})}]
                (receipt-txs [:adventure-account/key ak] account-shell estado))
      :result {:operation-id operation-id :duplicate false :egg ovo}}))
+(defn- json-escape
+  [s]
+  (-> (str s)
+      (str/replace "\\" "\\\\")
+      (str/replace "\"" "\\\"")))
+
 (defn build-hatch-tx
   "Avança tempo se preciso, fixa resultado uma vez, entrega na coleção do save
   carimbado. Coleção cheia: persiste :delivery-pending sem consumir o ovo e
-  sem recibo egg-hatch (retry entrega o mesmo resultado)."
+  sem recibo egg-hatch (retry entrega o mesmo resultado).
+  Ovo já :hatched → duplicate idempotente antes das validações de pending."
   [{:keys [db writer-ctx request account-shell egg-maps save colecao
            pokemon-entity-map]}]
   (let [chat-id (:chat-id writer-ctx)
@@ -173,107 +180,114 @@
         estado0 (eggs/avancar-tempo (merge-estado account-shell egg-maps) agora)
         ovo0 (some #(when (= (:egg-id request) (:egg-id %)) %) (:eggs estado0))
         _ (when-not ovo0 (throw (err/error :egg_not_found {:egg-id (:egg-id request)})))
-        _ (eggs/assert-hatch-save! ovo0 writer-ctx)
-        hatch-id (or (:hatch-id request)
-                     (:hatch-id ovo0)
-                     (str "hatch-" (:egg-id ovo0)))
-        pokemon-id (or (get-in ovo0 [:resultado :pokemon-id])
-                       (coll/new-id-pokemon))
-        ovo1 (eggs/fixar-resultado ovo0 hatch-id pokemon-id)
-        save-m {:expansoes-pokemon-50 (long (:save/expansoes-pokemon-50 save 0))
-                :capacidade-pokemon-legada (long (:save/capacidade-pokemon-legada save 0))
-                :trainer-level (long (:save/trainer-level save 1))
-                :vitorias-treinador (long (:save/vitorias-treinador save 0))
-                :pe-ginasios (long (:save/pe-ginasios save 0))
-                :pe-raids (long (:save/pe-raids save 0))
-                :xp-insignias (long (:save/xp-insignias save 0))
-                :xp-missoes (long (:save/xp-missoes save 0))}
-        cabe? (capacity/cabe-pokemon? (count colecao) save-m)
         prev (some #(when (= (:egg-id request) (:egg-id %)) %) egg-maps)
-        expected-rev (long (:revision prev 0))
-        rev (long (:revision account-shell 0))
-        sk (id/save-key chat-id player-id (:save-id writer-ctx))
-        save-rev (long (:save/revision save 0))
-        reg (get-in ovo1 [:resultado :registro])
         operation-id (:operation-id request)
         phash (:payload-hash request)
-        already? (= :hatched (:state prev))]
-    (cond
-      already?
+        ;; Idempotência manual↔auto: reconhecer :hatched antes de assert-hatch-save!
+        ;; (evita egg_not_ready e outbox preso). Conta já é do player autenticado.
+        already-hatched? (= :hatched (:state ovo0))]
+    (if already-hatched?
       {:tx []
        :result {:operation-id operation-id :duplicate true
-                :egg prev :pokemon-id (get-in prev [:resultado :pokemon-id])
-                :registro (get-in prev [:resultado :registro])}}
+                :egg ovo0
+                :pokemon-id (get-in ovo0 [:resultado :pokemon-id])
+                :registro (get-in ovo0 [:resultado :registro])}}
+      (do
+        (eggs/assert-hatch-save! ovo0 writer-ctx)
+        (let [hatch-id (or (:hatch-id request)
+                           (:hatch-id ovo0)
+                           (str "hatch-" (:egg-id ovo0)))
+              pokemon-id (or (get-in ovo0 [:resultado :pokemon-id])
+                             (coll/new-id-pokemon))
+              ovo1 (eggs/fixar-resultado ovo0 hatch-id pokemon-id)
+              save-m {:expansoes-pokemon-50 (long (:save/expansoes-pokemon-50 save 0))
+                      :capacidade-pokemon-legada (long (:save/capacidade-pokemon-legada save 0))
+                      :trainer-level (long (:save/trainer-level save 1))
+                      :vitorias-treinador (long (:save/vitorias-treinador save 0))
+                      :pe-ginasios (long (:save/pe-ginasios save 0))
+                      :pe-raids (long (:save/pe-raids save 0))
+                      :xp-insignias (long (:save/xp-insignias save 0))
+                      :xp-missoes (long (:save/xp-missoes save 0))}
+              cabe? (capacity/cabe-pokemon? (count colecao) save-m)
+              expected-rev (long (:revision prev 0))
+              rev (long (:revision account-shell 0))
+              sk (id/save-key chat-id player-id (:save-id writer-ctx))
+              save-rev (long (:save/revision save 0))
+              reg (get-in ovo1 [:resultado :registro])]
+          (cond
+            (not cabe?)
+            ;; Fixa resultado + delivery-pending; ovo e incubadora permanecem.
+            (let [estado-pend (assoc estado0 :eggs
+                                     (mapv #(if (= (:egg-id %) (:egg-id ovo0)) ovo1 %)
+                                           (:eggs estado0)))]
+              {:tx (into [(egg->entity ak (assoc ovo1 :revision (inc expected-rev)))
+                          [:db/cas [:egg/id (:egg-id ovo0)] :egg/revision expected-rev (inc expected-rev)]
+                          [:db/add [:adventure-account/key ak]
+                           :adventure-account/state-edn (shell-edn estado-pend)]
+                          [:db/cas [:adventure-account/key ak]
+                           :adventure-account/revision rev (inc rev)]]
+                         (receipt-txs [:adventure-account/key ak] account-shell estado-pend))
+               :result {:operation-id operation-id
+                        :duplicate false
+                        :pending true
+                        :collection-full true
+                        :egg ovo1
+                        :pokemon-id pokemon-id
+                        :registro reg}})
 
-      (not cabe?)
-      ;; Fixa resultado + delivery-pending; ovo e incubadora permanecem.
-      (let [estado-pend (assoc estado0 :eggs
-                               (mapv #(if (= (:egg-id %) (:egg-id ovo0)) ovo1 %)
-                                     (:eggs estado0)))]
-        {:tx (into [(egg->entity ak (assoc ovo1 :revision (inc expected-rev)))
-              [:db/cas [:egg/id (:egg-id ovo0)] :egg/revision expected-rev (inc expected-rev)]
-              [:db/add [:adventure-account/key ak]
-               :adventure-account/state-edn (shell-edn estado-pend)]
-              [:db/cas [:adventure-account/key ak]
-               :adventure-account/revision rev (inc rev)]]
-                   (receipt-txs [:adventure-account/key ak] account-shell estado-pend))
-         :result {:operation-id operation-id
-                  :duplicate false
-                  :pending true
-                  :collection-full true
-                  :egg ovo1
-                  :pokemon-id pokemon-id
-                  :registro reg}})
-
-      :else
-      (let [estado1 (eggs/concluir-hatch
-                     (assoc estado0 :eggs
-                            (mapv #(if (= (:egg-id %) (:egg-id ovo0)) ovo1 %)
-                                  (:eggs estado0)))
-                     (:egg-id ovo0) agora)
-            drained (egg-activity/materialize-pending estado1 agora)
-            estado2 (:estado drained)
-            delivered (:delivered drained)
-            ovo-final (some #(when (= (:egg-id ovo0) (:egg-id %)) %) (:eggs estado2))
-            delivered-tx (mapv #(egg->entity ak (assoc % :revision 0)) delivered)]
-        {:tx (into
-              [(egg->entity ak (assoc ovo-final :revision (inc expected-rev)))
-               [:db/cas [:egg/id (:egg-id ovo0)] :egg/revision expected-rev (inc expected-rev)]
-               [:db/add [:adventure-account/key ak]
-                :adventure-account/state-edn (shell-edn estado2)]
-               [:db/cas [:adventure-account/key ak]
-                :adventure-account/revision rev (inc rev)]
-               (pokemon-entity-map sk reg (count colecao))
-               [:db/cas [:save/key sk] :save/revision save-rev (inc save-rev)]
-               {:operation-receipt/id operation-id
-                :operation-receipt/kind "egg-hatch"
-                :operation-receipt/channel "gameplay"
-                :operation-receipt/payload-hash phash
-                :operation-receipt/player-key (id/player-key chat-id player-id)
-                :operation-receipt/save-id (:save-id writer-ctx)
-                :operation-receipt/summary
-                (pr-str {:hatch-id hatch-id
-                         :pokemon-id pokemon-id
-                         :pending-delivered (mapv :egg-id delivered)})}]
-              (into delivered-tx
-                    (receipt-txs [:adventure-account/key ak] account-shell estado2)))
-         :result {:operation-id operation-id
-                  :duplicate false
-                  :egg ovo-final
-                  :pokemon-id pokemon-id
-                  :registro reg
-                  :pending-delivered delivered}}))))
+            :else
+            (let [estado1 (eggs/concluir-hatch
+                           (assoc estado0 :eggs
+                                  (mapv #(if (= (:egg-id %) (:egg-id ovo0)) ovo1 %)
+                                        (:eggs estado0)))
+                           (:egg-id ovo0) agora)
+                  drained (egg-activity/materialize-pending estado1 agora)
+                  estado2 (:estado drained)
+                  delivered (:delivered drained)
+                  ovo-final (some #(when (= (:egg-id ovo0) (:egg-id %)) %) (:eggs estado2))
+                  delivered-tx (mapv #(egg->entity ak (assoc % :revision 0)) delivered)]
+              {:tx (into
+                    [(egg->entity ak (assoc ovo-final :revision (inc expected-rev)))
+                     [:db/cas [:egg/id (:egg-id ovo0)] :egg/revision expected-rev (inc expected-rev)]
+                     [:db/add [:adventure-account/key ak]
+                      :adventure-account/state-edn (shell-edn estado2)]
+                     [:db/cas [:adventure-account/key ak]
+                      :adventure-account/revision rev (inc rev)]
+                     (pokemon-entity-map sk reg (count colecao))
+                     [:db/cas [:save/key sk] :save/revision save-rev (inc save-rev)]
+                     {:operation-receipt/id operation-id
+                      :operation-receipt/kind "egg-hatch"
+                      :operation-receipt/channel "gameplay"
+                      :operation-receipt/payload-hash phash
+                      :operation-receipt/player-key (id/player-key chat-id player-id)
+                      :operation-receipt/save-id (:save-id writer-ctx)
+                      :operation-receipt/summary
+                      (pr-str {:hatch-id hatch-id
+                               :pokemon-id pokemon-id
+                               :pending-delivered (mapv :egg-id delivered)})}]
+                    (into delivered-tx
+                          (receipt-txs [:adventure-account/key ak] account-shell estado2)))
+               :result {:operation-id operation-id
+                        :duplicate false
+                        :egg ovo-final
+                        :pokemon-id pokemon-id
+                        :registro reg
+                        :pending-delivered delivered}})))))))
 
 
 (defn- auto-hatch-outbox-entity
+  "Outbox idempotente por eggId. Carimba saveId do ovo — nunca o save ativo
+  do momento do PI (A→B não pode redirecionar a entrega)."
   [chat-id player-id egg agora]
   (let [egg-id (str (:egg-id egg))
         hatch-id (str (or (:hatch-id egg) (str "hatch:" egg-id)))
+        save-id (str (or (:save-id egg) ""))
         oid (str "egg-auto-hatch:" egg-id)
         texto (str "{\"v\":1"
-                   ",\"playerId\":\"" player-id "\""
-                   ",\"eggId\":\"" egg-id "\""
-                   ",\"hatchId\":\"" hatch-id "\"}")]
+                   ",\"playerId\":\"" (json-escape player-id) "\""
+                   ",\"eggId\":\"" (json-escape egg-id) "\""
+                   ",\"hatchId\":\"" (json-escape hatch-id) "\""
+                   ",\"saveId\":\"" (json-escape save-id) "\"}")]
     {:pokemon-outbox/id oid
      :pokemon-outbox/chat-id chat-id
      :pokemon-outbox/kind "egg-auto-hatch"
