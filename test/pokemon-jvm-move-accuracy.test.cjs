@@ -32,3 +32,35 @@ test('linhaGolpe: sem precisão inventada', () => {
   const linha = present.linhaGolpe(0, golpe, [], null);
   assert.doesNotMatch(linha, /precisão/);
 });
+
+test('linhaGolpe: ignora precisão e evasão sem duplicar precisão %', () => {
+  const golpe = {
+    nome: 'Swift',
+    slug: 'swift',
+    tipo: 'normal',
+    classe: 'especial',
+    poder: 60,
+    precisao: 100,
+    mecanica: { ignoraPrecisao: true }
+  };
+  const linha = present.linhaGolpe(0, golpe, ['normal'], null);
+  assert.match(linha, /ignora precisão e evasão/);
+  const hits = [...linha.matchAll(/precis[aã]o/gi)];
+  // "ignora precisão" + no máximo uma "precisão N%"
+  assert.ok(hits.length <= 2, linha);
+  assert.doesNotMatch(linha, /precisão 100,\s*precisão/);
+});
+
+test('linhaGolpe: físico com precisão 90% uma vez', () => {
+  const golpe = {
+    nome: 'Earthquake',
+    slug: 'earthquake',
+    tipo: 'ground',
+    classe: 'fisico',
+    poder: 100,
+    precisao: 90
+  };
+  const linha = present.linhaGolpe(0, golpe, ['normal'], null);
+  assert.equal([...linha.matchAll(/precis[aã]o/gi)].length, 1, linha);
+  assert.match(linha, /precisão 90%/);
+});
