@@ -1,7 +1,7 @@
 (ns pokemon.domain.xp
   "Regras de XP/nível.
 
-  Pokémon (flat-9-v2): 9 XP por nível, vitória=3 / derrota=1. Sem curvas PokéAPI
+  Pokémon: flat-9-v2 legado (9 XP/nível); v3 opt-in 9→30 XP/nível. Sem curvas PokéAPI
   na progressão. Conversão de formatos antigos nunca concede níveis.
   Treinador: curva progressiva PE 10 + 5 por nível (inalterada).
   PE do treinador ≠ XP do Pokémon ≠ PI de incubação."
@@ -133,7 +133,9 @@
    (let [opts (or opts {})
          nivel-antes (long (get registro :nivel (get registro "nivel" 1)))
          ;; Conversão ≠ level-up (ensure-flat9-v2-for-grant nunca sobe nível).
-         converted (growth/ensure-flat9-v2-for-grant registro)
+         converted (if (growth/progressive-active? registro)
+                     (growth/ensure-progressive-v3-for-grant registro)
+                     (growth/ensure-flat9-v2-for-grant registro))
          flat (if (= unidade :atividade)
                 (calcular-ganho-pokemon converted (max 0 (long quantidade)) opts)
                 (max 0 (long quantidade)))
@@ -151,14 +153,14 @@
                         :xp-total (long (:xp-total r0))
                         :xp-desde-nivel (long (:xp-desde-nivel r0))
                         :xp (long (:xp-desde-nivel r0))
-                        :xp-progress-version growth/flat9-progress-version)]
+                        :xp-progress-version (:xp-progress-version r0))]
      {:registro r-final
       :subidas subidas
       :nivel-final (long (:nivel-final granted))
       :nome (get r-final :nome (get r-final "nome"))
       :xp-total (:xp-total r0)
-      :xp-oficial-aplicado flat
-      :xp-flat9-aplicado flat
+      :xp-oficial-aplicado (long (:xp-ganho granted 0))
+      :xp-flat9-aplicado (long (:xp-ganho granted 0))
       :growth-rate (:growth-rate r0)})))
 
 (defn aplicar-xp-atividade
