@@ -3479,10 +3479,10 @@
                          [[:db/add [:save/key sk] :save/sequencia-capturas 0]
                           [:db/add [:save/key sk] :save/maior-sequencia-capturas
                            (max maior seq-atual)]]))
-                     ;; Derrota selvagem também encerra a sequência de captura.
-                     seq-derrota-tx
+                     ;; Derrota ou fuga durante combate selvagem encerram sem captura.
+                     seq-fim-sem-captura-tx
                      (when (and (= :wild (:kind next-state))
-                                (= :lose (:outcome next-state))
+                                (#{:lose :flee} (:outcome next-state))
                                 (not (:active? next-state)))
                        (let [seq-atual (long (:sequencia-capturas save-m 0))
                              maior (long (:maior-sequencia-capturas save-m 0))]
@@ -3591,7 +3591,7 @@
                                       (or hp-sync [])
                                       (or pe-batalha-tx [])
                                       (or seq-liberar-tx [])
-                                      (or seq-derrota-tx [])
+                                      (or seq-fim-sem-captura-tx [])
                                       (or clear-active [])
                                       (or (:tx xp-part) [])
                                       (mapcat :tx exp-share-parts)
