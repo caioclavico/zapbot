@@ -6,6 +6,7 @@
   taxa de `mitico` (mais dura) para não inflar chance."
   (:require [clojure.string :as str]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.growth :as growth]
             [pokemon.domain.rarity :as rarity]))
 
 ;; Políticas oficiais (:oficial-a/:oficial-b) via rarity/*politica* — default :legado.
@@ -136,15 +137,16 @@
   "Recompensa unitária total da captura na sequência já incrementada.
   Sem base de moedas: moedas só a partir da 5ª. Teto na 30ª (valores 30+)."
   [sequencia-nova]
-  (let [s (max 0 (long sequencia-nova))]
+  (let [s (max 0 (long sequencia-nova))
+        v3? (growth/progressive-enabled?)]
     (cond
       (<= s 0) {:xp 0 :pe 0 :moedas 0 :faixa "0"}
       (<= s 2) {:xp 2 :pe 1 :moedas 0 :faixa "1-2"}
       (<= s 4) {:xp 3 :pe 2 :moedas 0 :faixa "3-4"}
-      (<= s 9) {:xp 5 :pe 3 :moedas 1 :faixa "5-9"}
-      (<= s 19) {:xp 8 :pe 5 :moedas 3 :faixa "10-19"}
-      (<= s 29) {:xp 12 :pe 7 :moedas 6 :faixa "20-29"}
-      :else {:xp 15 :pe 9 :moedas 10 :faixa "30+"})))
+      (<= s 9) {:xp (if v3? 4 5) :pe 3 :moedas 1 :faixa "5-9"}
+      (<= s 19) {:xp (if v3? 6 8) :pe 5 :moedas 3 :faixa "10-19"}
+      (<= s 29) {:xp (if v3? 8 12) :pe 7 :moedas 6 :faixa "20-29"}
+      :else {:xp (if v3? 10 15) :pe 9 :moedas 10 :faixa "30+"})))
 
 (defn recompensa-pos-captura
   "Recompensa de captura (streak-unit-v1): XP/PE/moedas unitários pela sequência.
