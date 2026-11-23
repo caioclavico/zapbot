@@ -1,0 +1,17 @@
+;; FASE 1–6 — Liberação voluntária de captura + prazo de turno de raid.
+[
+ {:db/ident       :raid-capture/liberou
+  :db/valueType   :db.type/boolean
+  :db/cardinality :db.cardinality/one
+  :db/doc         "true = jogador dispensou a captura voluntariamente (sem consumir bola/frambo)"}
+
+ {:db/ident       :raid/turn-started-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Epoch ms do início do turno atual (ação válida ou skip)"}
+
+ {:db/ident       :raid/turn-expires-at
+  :db/valueType   :db.type/long
+  :db/cardinality :db.cardinality/one
+  :db/doc         "Epoch ms do prazo de 60s do turno; nil/ausente = só idle global (solo/último apto)"}
+]

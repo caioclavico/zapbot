@@ -190,7 +190,8 @@
     (and (captura-janela-aberta? raid agora)
          (elegivel-recompensa? p)
          (< (long (:tentativas cap 0)) max-tentativas-captura)
-         (not (:capturou cap)))))
+         (not (:capturou cap))
+         (not (:liberou cap)))))
 
 (defn algum-captura-pendente?
   "True se algum participante ainda pode capturar nesta janela."
@@ -612,6 +613,72 @@
                        (take-while #(not= pid %) ordem)
                        [pid])]
     (first (filter vivos depois))))
+
+(defn treinadores-aptos
+  "Player-ids com combatente vivo, na ordem canônica."
+  [raid]
+  (vec (filter #(participante-vivo? (get-in raid [:participantes %]))
+               (:ordem raid []))))
+
+(defn turn-window
+  "Prazo de turno: só com ≥2 aptos. Solo/último apto → nil (idle global 300s)."
+  [agora aptos turn-timeout-ms]
+  (let [now (long agora)
+        n (count aptos)]
+    (if (and (>= n 2) (pos? (long (or turn-timeout-ms 0))))
+      {:turn-started-at now
+       :turn-expires-at (+ now (long turn-timeout-ms))}
+      {:turn-started-at now
+       :turn-expires-at nil})))
+
+(defn turn-expired?
+  "True se há prazo de turno e já venceu. Nil/ausente → não aplica skip."
+  [turn-expires-at agora]
+  (when (some? turn-expires-at)
+    (<= (long turn-expires-at) (long agora))))
+
+(defn liberar-captura
+  "Dispensa voluntária da captura pós-vitória (sem bola/frambo/tentativa)."
+  [raid player-id agora]
+  (when-not (captura-pendente? raid player-id agora)
+    (throw (err/error :raid_capture_unavailable {:player-id player-id})))
+  (let [cap (or (get-in raid [:capturas player-id]) {})
+        cap' (assoc cap :liberou true :frambo-preparada false)
+        raid' (assoc-in raid [:capturas player-id] cap')]
+    {:raid raid'
+     :liberou? true
+     :chefe (:chefe raid)
+     :pointer-cleared? (deve-liberar-ponteiro? raid' agora)}))
+
+(defn pular-turno
+  "Avança a vez sem revide, dano ou remoção. Skip temporário de um turno.
+   Não altera idle-expires-at (caller preserva). Exige ≥2 aptos."
+  [raid agora]
+  (when-not (and (ativa? raid agora) (= "combate" (str (:fase raid))))
+    (throw (err/error :raid_not_in_combat {:fase (:fase raid)})))
+  (when-not (vez-valida? raid)
+    (throw (err/error :raid_turn_invalid
+                      {:vez (:vez raid) :ordem (:ordem raid)})))
+  (let [aptos (treinadores-aptos raid)
+        skipped (:vez raid)
+        _ (when (< (count aptos) 2)
+            (throw (err/error :raid_turn_skip_solo
+                              {:aptos (count aptos) :vez skipped})))
+        proxima (proxima-vez raid skipped)
+        _ (when (or (nil? proxima) (= proxima skipped))
+            (throw (err/error :raid_turn_skip_no_next
+                              {:vez skipped :aptos aptos})))
+        turn-index' (inc (long (:turn-index raid 0)))
+        raid' (-> raid
+                  (assoc :vez proxima)
+                  (assoc :turn-index turn-index')
+                  ;; Skip NÃO renova :expira de combate nem idle — só avança vez.
+                  )]
+    {:raid raid'
+     :skipped-player skipped
+     :next-player proxima
+     :turn-index turn-index'
+     :aptos aptos}))
 
 (defn- revide-chefe
   "Contra-ataque canônico do chefe após a ação do jogador (ataque ou item).

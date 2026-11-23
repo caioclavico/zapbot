@@ -1190,6 +1190,36 @@
       (assoc :adventure-activity (:adventure-activity result))
       (seq level-ups) (assoc :trainer-level-ups level-ups))))
 
+
+(defn raid-release!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        result (raid-app/release!
+                store writer-ctx
+                {:operation-id (str operation-id)
+                 :raid-id (:raid-id raid)
+                 :agora (or agora-ms (System/currentTimeMillis))})
+        summary (or (:summary result) {})
+        chefe (or (:chefe result) (:chefe summary) (:chefe raid))]
+    {:operation-id (or (:operation-id result) operation-id)
+     :duplicate (boolean (:duplicate result))
+     :liberou (boolean (or (:liberou? result) (:liberou? summary)))
+     :capturou false
+     :pointer-cleared (boolean (or (:pointer-cleared result)
+                                   (:pointer-cleared summary)))
+     :raid-id (:raid-id raid)
+     :chefe {:nome (or (:nome chefe) (get chefe "nome"))
+             :species (or (:species chefe) (:nome chefe) (get chefe "nome"))
+             :raridade (or (:raridade chefe) (get chefe "raridade"))}
+     :save-id save-id
+     :fence-generation (long fence-generation)}))
+
+
 (defn raid-frambo-prepare!
   [store {:keys [chat-id player-id save-id fence-generation operation-id
                  raid-id agora-ms]

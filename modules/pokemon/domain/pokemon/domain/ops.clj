@@ -233,10 +233,25 @@
      (some? roll) (assoc :roll (long roll))
      (boolean frambo) (assoc :frambo true))))
 
+(defn raid-release-payload
+  "Payload canônico de liberar captura pós-vitória (sem bola/frambo)."
+  [{:keys [raid-id]}]
+  (reward/canonicalize
+   {:raid-id raid-id :kind "raid-release"}))
+
 (defn raid-frambo-prep-payload
   [{:keys [raid-id]}]
   (reward/canonicalize
    {:raid-id raid-id :kind "raid-frambo-prep"}))
+
+(defn raid-turn-skip-payload
+  [{:keys [raid-id expected-turn-index observed-turn-expires-at]}]
+  (reward/canonicalize
+   (cond-> {:raid-id raid-id
+            :kind "raid-turn-skip"
+            :expected-turn-index (long expected-turn-index)}
+     (some? observed-turn-expires-at)
+     (assoc :observed-turn-expires-at (long observed-turn-expires-at)))))
 
 (defn egg-grant-payload
   [{:keys [egg-id category species]}]

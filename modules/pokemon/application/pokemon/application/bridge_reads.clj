@@ -848,6 +848,7 @@
                     {:tentativas (long (:tentativas cap 0))
                      :max-tentativas raid/max-tentativas-captura
                      :capturou (boolean (:capturou cap))
+                     :liberou (boolean (:liberou cap))
                      :frambo-preparada frambo?
                      :chance-base base
                      :chances chances

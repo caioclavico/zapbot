@@ -100,6 +100,16 @@
      (ops/validate-mutation! full)
      (ports/raid-capture! store writer-ctx full))))
 
+(defn release!
+  ([store chat-id player-id request]
+   (release! store (writer/freeze-writer store chat-id player-id) request))
+  ([store writer-ctx request]
+   (let [full (merge request
+                     (select-keys writer-ctx
+                                  [:chat-id :player-id :save-id :fence-generation]))]
+     (ops/validate-mutation! full)
+     (ports/raid-release! store writer-ctx full))))
+
 (defn prepare-frambo!
   ([store chat-id player-id request]
    (prepare-frambo! store (writer/freeze-writer store chat-id player-id) request))

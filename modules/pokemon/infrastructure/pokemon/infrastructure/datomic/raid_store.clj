@@ -13,6 +13,7 @@
             [pokemon.domain.raid :as raid]
             [pokemon.domain.shop :as shop]
             [pokemon.domain.raid-auto :as raid-auto]
+            [pokemon.domain.battle-idle :as battle-idle]
             [pokemon.infrastructure.datomic.battle-idle-store :as battle-idle-store]
             [pokemon.infrastructure.datomic.economy-store :as economy-store]))
 (defn- renorm-poke
@@ -81,6 +82,7 @@
                      (map (fn [[pid c]]
                             [pid {:tentativas (long (:tentativas c 0))
                                   :capturou (boolean (:capturou c))
+                                  :liberou (boolean (:liberou c))
                                   :frambo-preparada (boolean (:frambo-preparada c))}])
                           capturas))]
       {:raid-id (:raid/id e)
@@ -111,6 +113,8 @@
        :last-activity-at (:raid/last-activity-at e)
        :idle-expires-at (:raid/idle-expires-at e)
        :idle-expired? (boolean (:raid/idle-expired? e))
+       :turn-started-at (:raid/turn-started-at e)
+       :turn-expires-at (:raid/turn-expires-at e)
        :participantes parts
        :capturas caps})))
 
@@ -143,7 +147,30 @@
     (:origem r) (assoc :raid/origem (str (:origem r)))
     (:last-activity-at r) (assoc :raid/last-activity-at (long (:last-activity-at r)))
     (:idle-expires-at r) (assoc :raid/idle-expires-at (long (:idle-expires-at r)))
-    (some? (:idle-expired? r)) (assoc :raid/idle-expired? (boolean (:idle-expired? r)))))
+    (some? (:idle-expired? r)) (assoc :raid/idle-expired? (boolean (:idle-expired? r)))
+    (:turn-started-at r) (assoc :raid/turn-started-at (long (:turn-started-at r)))
+    (some? (:turn-expires-at r)) (assoc :raid/turn-expires-at (long (:turn-expires-at r)))))
+
+
+(defn- with-turn-window
+  "Anexa prazo de turno (60s se ≥2 aptos; nil se solo/último)."
+  [raid agora]
+  (let [aptos (raid/treinadores-aptos raid)
+        w (raid/turn-window agora aptos (battle-idle/turn-timeout-ms))]
+    (cond-> (assoc raid :turn-started-at (:turn-started-at w))
+      (some? (:turn-expires-at w)) (assoc :turn-expires-at (:turn-expires-at w))
+      (nil? (:turn-expires-at w)) (assoc :turn-expires-at nil))))
+
+(defn- turn-window-tx
+  "Adds/retracts turn deadline attrs for raid entity."
+  [raid-id window]
+  (cond-> [[:db/add [:raid/id raid-id] :raid/turn-started-at
+            (long (:turn-started-at window))]]
+    (some? (:turn-expires-at window))
+    (conj [:db/add [:raid/id raid-id] :raid/turn-expires-at
+           (long (:turn-expires-at window))])
+    (nil? (:turn-expires-at window))
+    (conj [:db/retract [:raid/id raid-id] :raid/turn-expires-at])))
 
 (defn schedule->map
   [e present?]
@@ -616,11 +643,17 @@
                  (or (:tx announce) []))
        :result {:raid raid' :acao :cancelada :outbox-id (:outbox-id (:result announce))}}
       :combate
-      {:tx (into [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
-                  [:db/cas [:raid/id rid] :raid/revision
-                   expected-rev (inc expected-rev)]]
-                 (or (:tx announce) []))
-       :result {:raid raid' :acao :combate :outbox-id (:outbox-id (:result announce))}})))
+      (let [idle (battle-idle-store/raid-touch-attrs agora)
+            raid'' (-> raid'
+                       (assoc :last-activity-at (:raid/last-activity-at idle)
+                              :idle-expires-at (:raid/idle-expires-at idle)
+                              :idle-expired? false)
+                       (with-turn-window agora))]
+        {:tx (into [(merge (raid-entity-tx (assoc raid'' :revision (inc expected-rev))) idle)
+                    [:db/cas [:raid/id rid] :raid/revision
+                     expected-rev (inc expected-rev)]]
+                   (or (:tx announce) []))
+         :result {:raid raid'' :acao :combate :outbox-id (:outbox-id (:result announce))}}))))
 
 (defn build-cancel-tx
   [{:keys [save writer-ctx request raid]}]
@@ -758,7 +791,8 @@
         raid' (-> (raid/iniciar raid player-id agora)
                   (assoc :last-activity-at (:raid/last-activity-at idle)
                          :idle-expires-at (:raid/idle-expires-at idle)
-                         :idle-expired? false))
+                         :idle-expired? false)
+                  (with-turn-window agora))
         expected-rev (long (:revision raid 0))
         expected-turn (long (:turn-index raid 0))
         sk (id/save-key (:chat-id writer-ctx) player-id (:save-id writer-ctx))
@@ -920,7 +954,9 @@
         raid' (cond-> raid'
                 idle (assoc :last-activity-at (:raid/last-activity-at idle)
                             :idle-expires-at (:raid/idle-expires-at idle)
-                            :idle-expired? false))
+                            :idle-expired? false)
+                still-combat? (with-turn-window agora)
+                (not still-combat?) (assoc :turn-expires-at nil))
         expected-rev (long (:revision raid 0))
         sk (id/save-key (:chat-id writer-ctx) player-id (:save-id writer-ctx))
         rev (long (:save/revision save 0))
@@ -949,6 +985,8 @@
         clear-ptr (when (raid/deve-liberar-ponteiro? raid' agora)
                     [[:db/retract [:chat-active-raid/chat-id (:chat-id writer-ctx)]
                       :chat-active-raid/raid-id (:raid-id raid)]])
+        turn-retract (when (nil? (:turn-expires-at raid'))
+                       [[:db/retract [:raid/id (:raid-id raid)] :raid/turn-expires-at]])
         raid-tx (concat
                  [(cond-> (raid-entity-tx (assoc raid' :revision (inc expected-rev)
                                                  :rewards-paid? (or (:rewards-paid? raid)
@@ -980,7 +1018,8 @@
                             :eliminado? (:eliminado? outcome)})}]
                  other-parts
                  (or hp-sync [])
-                 (or clear-ptr []))]
+                 (or clear-ptr [])
+                 (or turn-retract []))]
     {:tx (into (vec raid-tx) (mapcat :tx reward-bundles))
      :result {:operation-id operation-id
               :duplicate false
@@ -1033,7 +1072,9 @@
         raid' (cond-> raid'
                 idle (assoc :last-activity-at (:raid/last-activity-at idle)
                             :idle-expires-at (:raid/idle-expires-at idle)
-                            :idle-expired? false))
+                            :idle-expired? false)
+                still-combat? (with-turn-window agora)
+                (not still-combat?) (assoc :turn-expires-at nil))
         expected-rev (long (:revision raid 0))
         sk (id/save-key (:chat-id writer-ctx) player-id (:save-id writer-ctx))
         rev (long (:save/revision save 0))
@@ -1057,6 +1098,8 @@
         clear-ptr (when (raid/deve-liberar-ponteiro? raid' agora)
                     [[:db/retract [:chat-active-raid/chat-id (:chat-id writer-ctx)]
                       :chat-active-raid/raid-id (:raid-id raid)]])
+        turn-retract (when (nil? (:turn-expires-at raid'))
+                       [[:db/retract [:raid/id (:raid-id raid)] :raid/turn-expires-at]])
         raid-tx (concat
                  item-tx
                  [(cond-> (raid-entity-tx (assoc raid' :revision (inc expected-rev)
@@ -1088,7 +1131,8 @@
                             :eliminado? (:eliminado? outcome)})}]
                  other-parts
                  (or hp-sync [])
-                 (or clear-ptr []))]
+                 (or clear-ptr [])
+                 (or turn-retract []))]
     {:tx (into (vec raid-tx) (mapcat :tx reward-bundles))
      :result {:operation-id operation-id
               :duplicate false
@@ -1249,3 +1293,56 @@
               :bola bola
               :tentativas (inc tentativas)
               :pointer-cleared (boolean liberar?)}}))
+
+(defn build-release-tx
+  "Liberação voluntária da captura — sem bola/frambo/tentativa. Idempotente via receipt."
+  [{:keys [db save writer-ctx request raid]}]
+  (let [chat-id (:chat-id writer-ctx)
+        player-id (:player-id writer-ctx)
+        save-id (:save-id writer-ctx)
+        part (get-in raid [:participantes player-id])
+        _ (raid/assert-participant-fence! part writer-ctx)
+        agora (long (or (:agora request) (System/currentTimeMillis)))
+        outcome (raid/liberar-captura raid player-id agora)
+        raid' (:raid outcome)
+        cap (get-in raid' [:capturas player-id])
+        cap-key (id/raid-capture-key (:raid-id raid) player-id)
+        sk (id/save-key chat-id player-id save-id)
+        rev (long (:save/revision save 0))
+        operation-id (:operation-id request)
+        phash (:payload-hash request)
+        liberar? (boolean (:pointer-cleared? outcome))
+        clear-ptr (when liberar?
+                    [[:db/retract [:chat-active-raid/chat-id chat-id]
+                      :chat-active-raid/raid-id (:raid-id raid)]])
+        chefe (:chefe raid)]
+    {:tx (concat
+          [{:raid-capture/key cap-key
+            :raid-capture/raid-id (:raid-id raid)
+            :raid-capture/player-id player-id
+            :raid-capture/tentativas (long (:tentativas cap 0))
+            :raid-capture/capturou (boolean (:capturou cap))
+            :raid-capture/liberou true
+            :raid-capture/frambo-preparada false}
+           [:db/cas [:save/key sk] :save/revision rev (inc rev)]
+           {:operation-receipt/id operation-id
+            :operation-receipt/kind "raid-release"
+            :operation-receipt/channel "gameplay"
+            :operation-receipt/payload-hash phash
+            :operation-receipt/player-key (id/player-key chat-id player-id)
+            :operation-receipt/save-id save-id
+            :operation-receipt/summary
+            (pr-str {:liberou? true
+                     :pointer-cleared liberar?
+                     :chefe-nome (or (:nome chefe) (get chefe "nome"))})}]
+          (or clear-ptr []))
+     :result {:operation-id operation-id
+              :duplicate false
+              :liberou? true
+              :pointer-cleared (boolean liberar?)
+              :chefe {:nome (or (:nome chefe) (get chefe "nome"))
+                      :species (or (:species chefe) (:nome chefe)
+                                   (get chefe "nome"))
+                      :raridade (or (:raridade chefe) (get chefe "raridade"))}
+              :raid raid'}}))
+

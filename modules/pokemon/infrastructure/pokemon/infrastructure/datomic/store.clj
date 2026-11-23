@@ -1070,6 +1070,7 @@
                              [(:raid-capture/player-id x)
                               {:tentativas (long (:raid-capture/tentativas x 0))
                                :capturou (boolean (:raid-capture/capturou x))
+                               :liberou (boolean (:raid-capture/liberou x))
                                :frambo-preparada
                                (boolean (:raid-capture/frambo-preparada x))}])))]
         (raid-store/raid->map e parts caps edn-read present?)))))
@@ -4435,6 +4436,30 @@
                 (if (present? dup)
                   (resolve-receipt dup phash operation-id)
                   (throw ex))))))))
+
+  (raid-release! [_ writer-ctx request]
+    (let [payload (ops/raid-release-payload request)
+          phash (ops/payload-hash payload)
+          operation-id (:operation-id request)
+          existing (receipt-entity (d/db conn) operation-id)]
+      (or (resolve-receipt existing phash operation-id)
+          (try
+            (transact-with-writer!
+             conn writer-ctx
+             (fn [db save]
+               (let [raid (or (load-raid db (:raid-id request))
+                              (throw (err/error :raid_not_found
+                                                {:raid-id (:raid-id request)})))]
+                 (raid-store/build-release-tx
+                  {:db db :save save :writer-ctx writer-ctx
+                   :request (assoc request :payload-hash phash)
+                   :raid raid}))))
+            (catch Exception ex
+              (let [dup (receipt-entity (d/db conn) operation-id)]
+                (if (present? dup)
+                  (resolve-receipt dup phash operation-id)
+                  (throw ex))))))))
+
 
   (raid-frambo-prepare! [_ writer-ctx request]
     (let [payload (ops/raid-frambo-prep-payload request)

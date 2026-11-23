@@ -204,6 +204,9 @@
   (raid-capture! [this writer-ctx request]
     "Tentativa de captura pós-vitória (bola + roll).")
 
+  (raid-release! [this writer-ctx request]
+    "Liberação voluntária da captura pós-vitória (sem bola/frambo).")
+
   (raid-frambo-prepare! [this writer-ctx request]
     "Prepara Fruta Frambo para a próxima tentativa de captura do chefe.")
 

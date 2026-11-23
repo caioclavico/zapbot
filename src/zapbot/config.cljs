@@ -223,6 +223,9 @@
 (def pokemon-battle-idle-timeout-seconds
   (inteiro-positivo "POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS" 300))
 
+(def pokemon-raid-turn-timeout-seconds
+  (inteiro-positivo "POKEMON_RAID_TURN_TIMEOUT_SECONDS" 60))
+
 ;; Kit/diário da mochila na JVM — desligado até backfill RO das flags recovery.
 (def pokemon-bag-kit-daily-enabled?
   (= "true" (str/lower-case (str/trim (env "POKEMON_BAG_KIT_DAILY_ENABLED" "false")))))
