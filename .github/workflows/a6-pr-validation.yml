@@ -211,5 +211,9 @@ jobs:
         run: |
           clojure -M -e "(require 'clojure.test 'pokemon.tests.hotfix-pi-raid-item-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.hotfix-pi-raid-item-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
 
+      - name: PR #131 — liberar captura e skip de turno (domínio + Datomic isolado)
+        run: |
+          clojure -M -e "(require 'clojure.test 'pokemon.tests.raid-release-turn-skip-a6-test 'pokemon.tests.raid-release-datomic-a6-test) (let [r (apply clojure.test/run-tests '[pokemon.tests.raid-release-turn-skip-a6-test pokemon.tests.raid-release-datomic-a6-test])] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
+
       - name: Identidade do storage desconhecida não abre cliente
         run: clojure -M -e "(require 'clojure.test 'pokemon.tests.live-storage-guard-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.live-storage-guard-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
