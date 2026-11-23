@@ -66,6 +66,8 @@ jobs:
         run: node --test test/pokemon-hotfix-pi-raid-isolation.test.cjs test/pokemon-hotfix-potion-http-contract.test.cjs
       - name: Unificação multigrupo A6 (emoji, descrições, PNG 960x540)
         run: npm run test:multigroup-a6
+      - name: Progressive XP v3 — presenter/compatibilidade
+        run: node --test test/pokemon-a6-progressive-xp-v3.test.cjs
       - run: npm run test:http
       - run: npm run build
 
@@ -195,6 +197,9 @@ jobs:
         run: |
           clojure -M -e "(require 'clojure.test 'pokemon.tests.encounter-m44-test) (let [r (clojure.test/run-tests 'pokemon.tests.encounter-m44-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
 
+      - name: Progressive XP v3 — incidente 85 / curva / streak (Datomic isolado)
+        run: |
+          clojure -M -e "(require 'clojure.test 'pokemon.tests.progressive-xp-v3-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.progressive-xp-v3-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
       - name: M3.4 batalha
         run: clojure -M:test-m3-battle
 
