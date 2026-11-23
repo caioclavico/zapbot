@@ -191,6 +191,10 @@ jobs:
         run: |
           clojure -M -e "(require 'clojure.test 'pokemon.tests.move-effects-capture-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.move-effects-capture-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
 
+      - name: Política de sequência selvagem — captura, fuga, derrota e raid
+        run: |
+          clojure -M -e "(require 'clojure.test 'pokemon.tests.encounter-m44-test) (let [r (clojure.test/run-tests 'pokemon.tests.encounter-m44-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
+
       - name: M3.4 batalha
         run: clojure -M:test-m3-battle
 
