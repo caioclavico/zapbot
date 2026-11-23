@@ -216,7 +216,7 @@
      :invalid_buy_qty :invalid_collection_index
      :invalid_save_slot :invalid_slot_id :invalid_identity :invalid_save_name
      :save_payload_mismatch :save_limit_reached :unknown_ball
-     :area_unavailable :invalid_wild_pokemon :hunt_no_candidates
+     :area_unavailable :area_unknown :invalid_wild_pokemon :hunt_no_candidates
      :unknown_gym :unknown_heal_item :invalid_gym_team
      :invalid_gym_npc_team :invalid_motivation_index
      :invalid_raid_pokemon :invalid_raid_move :raid_not_found
