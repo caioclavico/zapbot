@@ -153,6 +153,7 @@
                                       :storage-dir (str "/tmp/v3safe-" uuid)})
           conn (persistence/ensure-db! client "v3safe")
           db (store/make-store conn)]
+      (ports/ensure-schema! db)
       (trainer/create-trainer! db {:chat-id "g-v3" :player-id "ash"})
       (collection/adicionar-pokemon!
        db "g-v3" "ash"
