@@ -212,6 +212,9 @@ jobs:
       - name: M3.6 raids e Datomic temporário
         run: clojure -M:test-m3-raid
 
+      - name: Raid entrar auto — counters e revide canônico
+        run: clojure -M:test-raid-counter-selection-a6
+
       - name: Mecânicas, persistência e idempotência do lote B
         run: clojure -M:test-a6-lote-b
 
