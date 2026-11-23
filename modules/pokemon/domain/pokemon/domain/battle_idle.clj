@@ -154,7 +154,7 @@
            "🏅 +0 PE\n"
            "⭐ +0 XP\n"
            "🥚 +0 PI\n\n"
-           "💔 Sequência encerrada para o treinador responsável pela inatividade.")
+           "🔥 Sequência de capturas selvagens preservada.")
 
       :pvp
       (str "⌛ *PVP ENCERRADO POR INATIVIDADE*\n\n"
