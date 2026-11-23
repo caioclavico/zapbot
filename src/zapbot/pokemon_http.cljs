@@ -1163,7 +1163,28 @@
                             (append-trainer-level-ups
                              (.formatRaidCapture jvm-present data prefix) data) img)))))
 
-      (or (= "ajuda" sub) (= "help" sub) (= "?" sub))
+      
+      (or (= "liberar" sub) (= "libera" sub) (= "soltar" sub))
+      (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
+                           #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
+              raid (.-raid raid-data)
+              _ (when-not (and raid (.-capturaPendente raid))
+                  (throw (erro-contrato "❓ Liberação de captura indisponível agora.")))
+              ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
+              op-id (.stableOperationId jvm-transport
+                                        (:requestId pedido)
+                                        (str "raid-release:" (.-raidId raid)))
+              data (desempenho/medir! ctx "pokemon_jvm_raid_release"
+                     #(.raidRelease jvm
+                        #js {:chatId chat-id
+                             :playerId player-id
+                             :saveId (.-activeSaveId ativo)
+                             :fenceGeneration (.-fenceGeneration ativo)
+                             :operationId op-id
+                             :raidId (.-raidId raid)}))]
+        (envelope-jvm pedido (.formatRaidRelease jvm-present data prefix)))
+
+(or (= "ajuda" sub) (= "help" sub) (= "?" sub))
       (envelope-jvm pedido (.formatHelp jvm-present "raid" prefix))
 
       :else
@@ -3718,12 +3739,19 @@
     (clj->js (merge {:event event :ts (.now js/Date)} fields)))))
 
 (defn- evento-sistema-outbox?
-  "Anúncios/lembretes de raide automática / eventos temáticos não têm playerId."
+  "Anúncios/lembretes de raide automática / eventos temáticos / idle de raid no chat."
   [evento]
   (let [kind (str (or (:kind evento) ""))]
     (or (str/starts-with? kind "raid-reminder")
         (#{"raid-opened" "raid-started" "raid-cancelled"
-           "thematic-event-started" "thematic-event-ended"} kind))))
+           "thematic-event-started" "thematic-event-ended"
+           "raid-turn-skip"} kind)
+        ;; Idle de raid: uma msg por chat (playerId pode ser culpado ou "chat").
+        (and (= "battle-idle-timeout" kind)
+             (let [bk (str (or (get-in evento [:payload :battle-kind])
+                               (get-in evento [:payload :battleKind])
+                               ""))]
+               (= "raid" bk))))))
 
 (defn- entregar-evento-jvm!
   "Retorna a promise do sendMessage — ack JVM só depois do WhatsApp aceitar.
@@ -3924,6 +3952,42 @@
                                    caption (when data (.formatEggHatch jvm-present data prefix))]
                              (when caption
                                (.sendMessage whatsapp chat-id caption opts))))))))
+        (= "raid-turn-skip" kind)
+        (let [prefix (str config/prefix "pk")
+              raid (or (:raid evento)
+                       (get-in evento [:payload :raid])
+                       {})
+              formatted (.formatRaidTurnSkip jvm-present
+                            (clj->js (cond-> {:raid raid
+                                              :timeoutSeconds (or (:timeout-seconds evento)
+                                                                  (get-in evento [:payload :timeout-seconds])
+                                                                  60)
+                                              :skippedPlayer (or (:skipped-player evento)
+                                                                 (get-in evento [:payload :skipped-player]))
+                                              :nextPlayer (or (:next-player evento)
+                                                              (get-in evento [:payload :next-player]))}
+                                             true identity))
+                            prefix)
+              caption (or (.-text formatted) texto)
+              skip-mentions (array-seq (or (.-mentions formatted) #js []))
+              opts (if (seq skip-mentions)
+                     (js/Object.assign #js {} opts #js {:mentions (clj->js (vec skip-mentions))})
+                     opts)]
+          (.sendMessage whatsapp (:chatId evento) caption opts))
+
+        (= "battle-idle-timeout" kind)
+        (let [payload (or (:payload evento) {})
+              bk (or (:battle-kind payload) (:battleKind payload) "wild")
+              formatted (.formatBattleIdleTimeout jvm-present
+                           (clj->js {:battleKind bk
+                                     :timeoutSeconds (or (:timeout-seconds payload)
+                                                         (:timeoutSeconds payload)
+                                                         config/pokemon-battle-idle-timeout-seconds)
+                                     :wildName (or (:wild-name payload) (:wildName payload))
+                                     :bossName (or (:boss-name payload) (:bossName payload))}))
+              caption (or formatted texto)]
+          (.sendMessage whatsapp (:chatId evento) caption opts))
+
         :else
         (.sendMessage whatsapp (:chatId evento) texto opts)))
     (p/rejected (js/Error. "WhatsApp client ausente no envio de evento JVM."))))

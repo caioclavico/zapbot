@@ -42,7 +42,8 @@
    "migrations/pokemon/035-species-hp-formula.edn"
    "migrations/pokemon/036-trainer-level-rewards.edn"
    "migrations/pokemon/037-pokemon-growth-xp.edn"
-   "migrations/pokemon/038-adventure-receipts.edn"])
+   "migrations/pokemon/038-adventure-receipts.edn"
+   "migrations/pokemon/039-raid-release-turn-timeout.edn"])
 
 (def schema-meta-attr
   {:db/ident       :odisseu.schema/migration-id

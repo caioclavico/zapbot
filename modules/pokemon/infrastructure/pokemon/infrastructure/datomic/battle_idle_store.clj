@@ -4,6 +4,7 @@
             [datomic.client.api :as d]
             [pokemon.domain.battle :as battle]
             [pokemon.domain.battle-idle :as idle]
+            [pokemon.domain.raid :as raid-domain]
             [pokemon.domain.errors :as err]
             [pokemon.domain.identities :as id]
             [pokemon.infrastructure.datomic.pvp-store :as pvp-store]
@@ -220,8 +221,10 @@
 
 (defn build-expire-raid-tx
   "Encerra combate por idle. Lobby (`inscricoes`) é no-op — o tick de raid-auto
-   já materializa cancelada/combate no prazo do lobby."
-  [db raid-id agora]
+   já materializa cancelada/combate no prazo do lobby.
+   CAS em idle-expires-at observado: sweeper atrasado não mata raid renovada."
+  ([db raid-id agora] (build-expire-raid-tx db raid-id agora nil))
+  ([db raid-id agora {:keys [force?]}]
   (let [re (d/pull db '[*] [:raid/id raid-id])]
     (when-not (present? re)
       (throw (err/error :raid_not_found {:raid-id raid-id})))
@@ -244,47 +247,82 @@
         (let [chat-id (:raid/chat-id re)
               already? (or (true? (:raid/idle-expired? re))
                            (contains? #{"vitoria" "derrota" "expirada" "idle-timeout"} fase))
-              parts (d/q '[:find ?pid
-                           :in $ ?rid
-                           :where
-                           [?p :raid-participant/raid-id ?rid]
-                           [?p :raid-participant/player-key ?pk]
-                           [?pl :player/key ?pk]
-                           [?pl :player/player-id ?pid]]
-                         db raid-id)
-              pids (mapv first parts)
-              payload (idle/notification-payload
-                       {:battle-id raid-id
-                        :kind :raid
-                        :chat-id chat-id
-                        :player-ids pids
-                        :timeout-seconds (idle/idle-timeout-segundos)})
-              notify (mapv #(notify-tx raid-id chat-id % payload agora) pids)
-              ;; Retract só o attr — mantém entidade do ponteiro (CAS nil→id).
-              clear (let [e (d/pull db '[*] [:chat-active-raid/chat-id chat-id])]
-                      (when (and (present? e) (= raid-id (:chat-active-raid/raid-id e)))
-                        [[:db/retract [:chat-active-raid/chat-id chat-id]
-                          :chat-active-raid/raid-id raid-id]]))
-              core [{:raid/id raid-id
-                     :raid/fase "idle-timeout"
-                     :raid/idle-expired? true}
-                    {:operation-receipt/id op-id
-                     :operation-receipt/kind "raid-idle-expire"
-                     :operation-receipt/channel "gameplay"
-                     :operation-receipt/payload-hash (str "raid-idle-expire|" raid-id)
-                     :operation-receipt/player-key (str chat-id "|raid")
-                     :operation-receipt/save-id "a"
-                     :operation-receipt/summary
-                     (pr-str {:raid-id raid-id :fase :idle-timeout})}]
-              cas (when-not (true? (:raid/idle-expired? re))
-                    [[:db/cas [:raid/id raid-id] :raid/idle-expired?
-                      (:raid/idle-expired? re) true]])]
-          {:tx (into [] (concat core cas (or clear []) notify))
-           :result {:operation-id op-id
-                    :duplicate false
-                    :raid-id raid-id
-                    :already-expired? already?
-                    :notifications notify}})))))
+              observed-expires (:raid/idle-expires-at re)
+              still-fresh? (and (not force?)
+                                (not already?)
+                                (some? observed-expires)
+                                (not (idle/expired? observed-expires agora)))]
+          (if still-fresh?
+            {:tx []
+             :result {:operation-id op-id
+                      :duplicate false
+                      :raid-id raid-id
+                      :skipped "deadline-not-due"
+                      :already-expired? false
+                      :idle-expires-at observed-expires}}
+            (let [parts (d/q '[:find ?pid ?sid
+                               :in $ ?rid
+                               :where
+                               [?p :raid-participant/raid-id ?rid]
+                               [?p :raid-participant/player-key ?pk]
+                               [?p :raid-participant/save-id ?sid]
+                               [?pl :player/key ?pk]
+                               [?pl :player/player-id ?pid]]
+                             db raid-id)
+                  pids (mapv first parts)
+                  save-by-pid (into {} (map (fn [[pid sid]] [pid sid]) parts))
+                  culprit (:raid/vez re)
+                  culprit-save (get save-by-pid culprit)
+                  chefe (or (edn-read (:raid/chefe-edn re)) {})
+                  boss-name (or (:nome chefe) (get chefe "nome"))
+                  timeout-s (idle/idle-timeout-segundos)
+                  payload (idle/notification-payload
+                           {:battle-id raid-id
+                            :kind :raid
+                            :chat-id chat-id
+                            :player-ids pids
+                            :timeout-seconds timeout-s
+                            :boss-name boss-name
+                            :mentions (cond-> [] culprit (conj culprit))})
+                  ;; Uma mensagem por raid (chat), não por participante.
+                  notify [(assoc (notify-tx raid-id chat-id "chat" payload agora)
+                                 :battle-notify/id (idle/raid-chat-notify-id raid-id)
+                                 :battle-notify/player-id (or culprit "chat"))]
+                  clear (let [e (d/pull db '[*] [:chat-active-raid/chat-id chat-id])]
+                          (when (and (present? e) (= raid-id (:chat-active-raid/raid-id e)))
+                            [[:db/retract [:chat-active-raid/chat-id chat-id]
+                              :chat-active-raid/raid-id raid-id]]))
+                  seq-break (when (and culprit culprit-save (not already?))
+                              (sequencia-break-tx db chat-id culprit culprit-save))
+                  core [{:raid/id raid-id
+                         :raid/fase "idle-timeout"
+                         :raid/idle-expired? true}
+                        {:operation-receipt/id op-id
+                         :operation-receipt/kind "raid-idle-expire"
+                         :operation-receipt/channel "gameplay"
+                         :operation-receipt/payload-hash (str "raid-idle-expire|" raid-id)
+                         :operation-receipt/player-key (str chat-id "|raid")
+                         :operation-receipt/save-id "a"
+                         :operation-receipt/summary
+                         (pr-str {:raid-id raid-id
+                                  :fase :idle-timeout
+                                  :culprit-present (boolean culprit)
+                                  :rule "global-idle"
+                                  :timeout-seconds timeout-s})}]
+                  cas (cond-> []
+                        (not (true? (:raid/idle-expired? re)))
+                        (conj [:db/cas [:raid/id raid-id] :raid/idle-expired?
+                               (:raid/idle-expired? re) true])
+                        (some? observed-expires)
+                        (conj [:db/cas [:raid/id raid-id] :raid/idle-expires-at
+                               observed-expires observed-expires]))]
+              {:tx (into [] (concat core cas (or clear []) (or seq-break []) notify))
+               :result {:operation-id op-id
+                        :duplicate false
+                        :raid-id raid-id
+                        :already-expired? already?
+                        :culprit culprit
+                        :notifications notify}}))))))))
 
 (defn- open-battle-entity?
   "Ativa, aguardando captura, ou desafio PvP waiting — ainda 'pendente'."
@@ -340,6 +378,193 @@
                                    (d/pull db '[:raid/idle-expired?]
                                            [:raid/id rid])))))))
        (mapv first)))
+
+
+(defn find-turn-expired-raid-ids
+  "Raids em combate com prazo de turno vencido (≥2 aptos gravado via turn-expires-at)."
+  [db agora]
+  (->> (d/q '[:find ?rid ?texp
+              :where
+              [?e :raid/id ?rid]
+              [?e :raid/fase "combate"]
+              [?e :raid/turn-expires-at ?texp]]
+            db)
+       (filter (fn [[rid texp]]
+                 (and (some? texp)
+                      (idle/expired? texp agora)
+                      (not (true? (:raid/idle-expired?
+                                   (d/pull db '[:raid/idle-expired?]
+                                           [:raid/id rid])))))))
+       (mapv first)))
+
+(defn build-skip-turn-tx
+  "Passagem automática de turno — sem revide/dano/itens. Não renova idle global.
+   CAS: turn-index + turn-expires-at observados."
+  [db raid-id agora]
+  (let [re (d/pull db '[*] [:raid/id raid-id])]
+    (when-not (present? re)
+      (throw (err/error :raid_not_found {:raid-id raid-id})))
+    (let [fase (str (:raid/fase re))
+          turn-index (long (:raid/turn-index re 0))
+          observed-texp (:raid/turn-expires-at re)
+          op-id (idle/turn-skip-receipt-id raid-id turn-index)
+          existing (d/pull db '[:operation-receipt/id] [:operation-receipt/id op-id])]
+      (cond
+        (present? existing)
+        {:tx []
+         :result {:operation-id op-id :duplicate true :raid-id raid-id
+                  :turn-index turn-index}}
+
+        (not= "combate" fase)
+        {:tx []
+         :result {:operation-id op-id :duplicate false :raid-id raid-id
+                  :skipped "not-combat"}}
+
+        (nil? observed-texp)
+        {:tx []
+         :result {:operation-id op-id :duplicate false :raid-id raid-id
+                  :skipped "no-turn-deadline"}}
+
+        (not (idle/expired? observed-texp agora))
+        {:tx []
+         :result {:operation-id op-id :duplicate false :raid-id raid-id
+                  :skipped "deadline-not-due"
+                  :turn-expires-at observed-texp}}
+
+        :else
+        ;; Carrega mapa mínimo via attrs da entidade + participantes query
+        (let [parts (->> (d/q '[:find (pull ?p [*])
+                                :in $ ?rid
+                                :where [?p :raid-participant/raid-id ?rid]]
+                              db raid-id)
+                         (map first)
+                         (map (fn [p]
+                                (let [pk (:raid-participant/player-key p)
+                                      pl (d/pull db '[:player/player-id] [:player/key pk])
+                                      pid (:player/player-id pl)
+                                      snap (or (edn-read (:raid-participant/pokemon-edn p)) {})
+                                      hp (long (or (:raid-participant/hp p)
+                                                   (:hp snap) 0))]
+                                  [pid {:hp hp
+                                        :nome (:raid-participant/nome p)
+                                        :pokemon snap
+                                        :save-id (:raid-participant/save-id p)
+                                        :fence-generation (:raid-participant/fence-generation p)
+                                        :party (or (:party snap) [])
+                                        :active-party-idx (long (:active-party-idx snap 0))
+                                        :collection-index (long (:raid-participant/collection-index p 0))}])))
+                         (into {}))
+              ordem (or (edn-read (:raid/ordem-edn re)) [])
+              raid {:raid-id raid-id
+                    :chat-id (:raid/chat-id re)
+                    :fase fase
+                    :vez (:raid/vez re)
+                    :ordem ordem
+                    :turn-index turn-index
+                    :expira (:raid/expira re)
+                    :idle-expires-at (:raid/idle-expires-at re)
+                    :idle-expired? (boolean (:raid/idle-expired? re))
+                    :turn-expires-at observed-texp
+                    :participantes parts
+                    :chefe (or (edn-read (:raid/chefe-edn re)) {})
+                    :hp-chefe (long (:raid/hp-chefe re 0))
+                    :hp-max (long (:raid/hp-max re 0))}
+              outcome (raid-domain/pular-turno raid agora)
+              raid' (:raid outcome)
+              aptos (raid-domain/treinadores-aptos raid')
+              window (raid-domain/turn-window agora aptos (idle/turn-timeout-ms))
+              raid' (merge raid' window)
+              skipped (:skipped-player outcome)
+              next-pid (:next-player outcome)
+              timeout-s (idle/turn-timeout-segundos)
+              chat-id (:raid/chat-id re)
+              ;; Snapshot canônico do próximo turno para o painel WhatsApp.
+              next-part (get-in raid' [:participantes next-pid])
+              raid-dto {:raid-id raid-id
+                        :fase "combate"
+                        :turn-index (:turn-index raid')
+                        :vez next-pid
+                        :vez-nome (:nome next-part)
+                        :vez-hp (:hp next-part)
+                        :vez-pokemon (:pokemon next-part)
+                        :hp-chefe (:hp-chefe raid')
+                        :hp-max (:hp-max raid')
+                        :chefe (:chefe raid')
+                        :skipped-player skipped
+                        :timeout-seconds timeout-s}
+              payload {:kind "raid-turn-skip"
+                       :battle-id raid-id
+                       :battle-kind "raid"
+                       :chat-id chat-id
+                       :player-ids [skipped next-pid]
+                       :mentions (filterv some? [skipped next-pid])
+                       :timeout-seconds timeout-s
+                       :skipped-player skipped
+                       :next-player next-pid
+                       :raid raid-dto
+                       :text (str "⏳ *TURNO ENCERRADO POR INATIVIDADE*\n\n"
+                                  "@" (or (some-> skipped (str/split #"@") first) "treinador")
+                                  " não realizou uma ação em " timeout-s " segundos.\n\n"
+                                  "⏭️ A vez passou para @"
+                                  (or (some-> next-pid (str/split #"@") first) "treinador")
+                                  ".\n\n"
+                                  "⚔️ *RAID — TURNO " (:turn-index raid') "*")}
+              notify [{:battle-notify/id (idle/turn-skip-notify-id raid-id turn-index)
+                       :battle-notify/kind "raid-turn-skip"
+                       :battle-notify/battle-id (str raid-id)
+                       :battle-notify/chat-id (str chat-id)
+                       :battle-notify/player-id (str next-pid)
+                       :battle-notify/payload-edn (pr-str payload)
+                       :battle-notify/created-at (long agora)
+                       :battle-notify/acked? false}]
+              receipt {:operation-receipt/id op-id
+                       :operation-receipt/kind "raid-turn-skip"
+                       :operation-receipt/channel "gameplay"
+                       :operation-receipt/payload-hash
+                       (str "raid-turn-skip|" raid-id "|" turn-index)
+                       :operation-receipt/player-key (str chat-id "|raid")
+                       :operation-receipt/save-id "a"
+                       :operation-receipt/summary
+                       (pr-str {:raid-id raid-id
+                                :skipped skipped
+                                :next next-pid
+                                :from-turn turn-index
+                                :to-turn (:turn-index raid')
+                                :idle-expires-at (:idle-expires-at raid)
+                                :rule "turn-skip-60s"})}
+              turn-attrs (if (some? (:turn-expires-at window))
+                           [[:db/add [:raid/id raid-id] :raid/turn-expires-at
+                             (long (:turn-expires-at window))]]
+                           [[:db/retract [:raid/id raid-id] :raid/turn-expires-at]])
+              ;; NÃO toca idle-expires-at.
+              cas [[:db/cas [:raid/id raid-id] :raid/turn-index turn-index
+                    (long (:turn-index raid'))]
+                   [:db/cas [:raid/id raid-id] :raid/turn-expires-at
+                    observed-texp observed-texp]]]
+          {:tx (into [] (concat
+                         [{:raid/id raid-id
+                           :raid/vez next-pid
+                           :raid/turn-started-at (long (:turn-started-at window))}]
+                         turn-attrs
+                         cas
+                         [receipt]
+                         notify))
+           :result {:operation-id op-id
+                    :duplicate false
+                    :raid-id raid-id
+                    :skipped-player skipped
+                    :next-player next-pid
+                    :turn-index (:turn-index raid')
+                    :raid raid'
+                    :notifications notify}})))))
+
+(defn skip-turn!
+  [conn raid-id agora]
+  (let [agora (long (or agora (System/currentTimeMillis)))
+        built (build-skip-turn-tx (d/db conn) raid-id agora)]
+    (when (seq (:tx built))
+      (d/transact conn {:tx-data (:tx built)}))
+    (:result built)))
 
 (defn find-expired-battle-ids
   "Vencidas por idle: ativas OU aguardando captura / waiting."
@@ -412,21 +637,22 @@
             (throw ex))))))))
 
 (defn expire-raid!
-  [conn raid-id agora]
-  (let [agora (long (or agora (System/currentTimeMillis)))
-        built (build-expire-raid-tx (d/db conn) raid-id agora)]
-    (if (or (empty? (:tx built)) (:duplicate (:result built)))
-      (:result built)
-      (try
-        (d/transact conn {:tx-data (:tx built)})
-        (:result built)
-        (catch Exception ex
-          (if (err/conflict? ex)
-            {:operation-id (str "raid-idle-expire|" raid-id)
-             :duplicate true
-             :raid-id raid-id
-             :already-expired? true}
-            (throw ex)))))))
+  ([conn raid-id agora] (expire-raid! conn raid-id agora nil))
+  ([conn raid-id agora opts]
+   (let [agora (long (or agora (System/currentTimeMillis)))
+         built (build-expire-raid-tx (d/db conn) raid-id agora opts)]
+     (if (or (empty? (:tx built)) (:duplicate (:result built)))
+       (:result built)
+       (try
+         (d/transact conn {:tx-data (:tx built)})
+         (:result built)
+         (catch Exception ex
+           (if (err/conflict? ex)
+             {:operation-id (str "raid-idle-expire|" raid-id)
+              :duplicate true
+              :raid-id raid-id
+              :already-expired? true}
+             (throw ex))))))))
 
 (defn find-active-battles-missing-idle
   "Abertas (ativa/aguardando/waiting) sem idle-expires-at."
@@ -482,7 +708,7 @@
         battles (take limit (find-open-battle-ids db))
         raids (take limit (find-open-raid-ids db))
         battle-results (mapv #(expire-battle! conn % agora {:force? true}) battles)
-        raid-results (mapv #(expire-raid! conn % agora) raids)]
+        raid-results (mapv #(expire-raid! conn % agora {:force? true}) raids)]
     {:agora agora
      :force true
      :backfill {:backfilled-battles 0 :backfilled-raids 0}
@@ -505,14 +731,18 @@
           battles (take limit (find-expired-battle-ids db agora))
           raids (take limit (find-expired-raid-ids db agora))
           battle-results (mapv #(expire-battle! conn % agora) battles)
-          raid-results (mapv #(expire-raid! conn % agora) raids)]
+          raid-results (mapv #(expire-raid! conn % agora) raids)
+          turn-raids (take limit (find-turn-expired-raid-ids db agora))
+          skip-results (mapv #(skip-turn! conn % agora) turn-raids)]
       {:agora agora
        :force false
        :backfill backfill
        :battles battle-results
        :raids raid-results
+       :turn-skips skip-results
        :expired-battles (count (remove #(or (:duplicate %) (:skipped %)) battle-results))
-       :expired-raids (count (remove :duplicate raid-results))})))
+       :expired-raids (count (remove #(or (:duplicate %) (:skipped %)) raid-results))
+       :skipped-turns (count (remove #(or (:duplicate %) (:skipped %)) skip-results))})))
 
 (defn assert-battle-not-idle-expired!
   "Bloqueia mutação se prazo passou. Eager-expire fica a cargo do caller."
@@ -526,7 +756,7 @@
                         {:expires-at expires :agora agora})))))
 
 (defn list-pending-notifications
-  "Outbox: idle-timeout e leave (PvP adversário). Filtra kinds conhecidos."
+  "Outbox: idle-timeout, leave (PvP) e skip de turno de raid."
   [db {:keys [limit] :or {limit 50}}]
   (->> (d/q '[:find (pull ?e [*])
               :where
@@ -535,33 +765,42 @@
             db)
        (map first)
        (filter (fn [e]
-                 (contains? #{"battle-idle-timeout" "battle-leave"}
+                 (contains? #{"battle-idle-timeout" "battle-leave" "raid-turn-skip"}
                             (:battle-notify/kind e))))
        (sort-by :battle-notify/created-at)
        (take limit)
        (mapv (fn [e]
                (let [payload (or (edn-read (:battle-notify/payload-edn e)) {})
-                     kind (:battle-notify/kind e)]
-                 {:id (:battle-notify/id e)
-                  :kind kind
-                  :chatId (:battle-notify/chat-id e)
-                  :playerId (:battle-notify/player-id e)
-                  :battleId (:battle-notify/battle-id e)
-                  :createdAt (:battle-notify/created-at e)
-                  :payload payload
-                  :text (or (:text payload)
-                            (when (= "battle-leave" kind)
-                              "🏳️ Seu adversário abandonou a batalha. Você venceu por desistência.")
-                            (let [wild (not-empty (str (:wild-name payload)))
-                                  secs (long (or (:timeout-seconds payload)
-                                                 (idle/idle-timeout-segundos)))]
-                              (str "⌛ Sua batalha terminou por inatividade. "
-                                   (if wild
-                                     (str "O Pokémon selvagem *" wild "* escapou.")
-                                     "O Pokémon selvagem escapou.")
-                                   "\n\n"
-                                   "Você poderá iniciar outra caçada quando seu cooldown terminar."
-                                   "\n_(" secs "s sem ação válida.)_")))})))))
+                     kind (:battle-notify/kind e)
+                     bk (or (:battle-kind payload) "wild")
+                     text (or (:text payload)
+                              (when (= "battle-leave" kind)
+                                "🏳️ Seu adversário abandonou a batalha. Você venceu por desistência.")
+                              (when (= "raid-turn-skip" kind)
+                                (:text payload))
+                              (idle/format-idle-message
+                               {:battle-kind bk
+                                :timeout-seconds (:timeout-seconds payload)
+                                :wild-name (:wild-name payload)
+                                :boss-name (:boss-name payload)}))
+                     mentions (or (:mentions payload)
+                                  (when-let [pid (:battle-notify/player-id e)]
+                                    (when (and (string? pid) (str/includes? pid "@"))
+                                      [pid]))
+                                  [])]
+                 (cond-> {:id (:battle-notify/id e)
+                          :kind kind
+                          :chatId (:battle-notify/chat-id e)
+                          :battleId (:battle-notify/battle-id e)
+                          :createdAt (:battle-notify/created-at e)
+                          :payload payload
+                          :texto text
+                          :text text}
+                   (and (string? (:battle-notify/player-id e))
+                        (not= "chat" (:battle-notify/player-id e)))
+                   (assoc :playerId (:battle-notify/player-id e))
+                   (seq mentions) (assoc :mentions (vec mentions))
+                   (map? (:raid payload)) (assoc :raid (:raid payload))))))))
 
 (defn ack-notification!
   "Ack idempotente — segunda chamada é no-op seguro."

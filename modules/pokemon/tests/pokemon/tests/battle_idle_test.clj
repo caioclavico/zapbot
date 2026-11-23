@@ -365,5 +365,5 @@
                  :ok
                  (catch Exception ex (err/error-code ex)))]
       (is (= 1 (count notes)))
-      (is (re-find #"inatividade" (str (:text (first notes)))))
+      (is (re-find #"(?i)inatividade" (str (or (:text (first notes)) (:texto (first notes))))))
       (is (= :battle_idle_expired code)))))

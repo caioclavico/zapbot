@@ -2964,7 +2964,7 @@ function formatRaidStatus(data, prefix = '!pk') {
         : `Inscritos: ${r.nParticipantes || 0}/5`),
     prazo,
     capturaPend
-      ? `🎯 Captura aberta — \`${prefix} raid capturar\`  ·  \`${prefix} raid fruta\``
+      ? `🎯 Captura aberta — \`${prefix} raid capturar\`  ·  \`${prefix} raid liberar\`  ·  \`${prefix} raid fruta\``
       : null,
     '',
     r.fase === 'inscricoes'
@@ -3071,6 +3071,7 @@ function formatRaidVictoryFooter(r, data, prefix = '!pk') {
     || (data && (data.capturaPendente || data.capturaUi || data['capturaPendente?']))
   );
   const capturou = Boolean(cap.capturou || cap.captured);
+  const liberou = Boolean(cap.liberou || cap.released);
   const inscrito = Boolean(r && (r.inscrito || r.Inscrito));
   const agora = (data && data.agora) != null ? Number(data.agora) : Date.now();
   const expira = r && (r.capturaExpira != null ? r.capturaExpira
@@ -3086,12 +3087,22 @@ function formatRaidVictoryFooter(r, data, prefix = '!pk') {
       `\`${prefix} raid\``
     ];
   }
+  if (liberou) {
+    return [
+      '',
+      '🌿 *Captura dispensada.* Recompensas da raid preservadas.',
+      '📌 *Próximos comandos*',
+      `\`${prefix} raid\``,
+      `\`${prefix} time\``
+    ];
+  }
   if (capturaPend) {
     return [
       '',
       '🎯 *CAPTURA DISPONÍVEL*',
       `\`${prefix} raid capturar\` — ver bolas / chances`,
       `\`${prefix} raid capturar 1|2|3\` — Poké / Grande / Ultra`,
+      `\`${prefix} raid liberar\` — dispensar o chefe (mantém recompensas)`,
       `\`${prefix} raid fruta\` — preparar Frambo (+chance)`,
       '',
       '📌 *Próximos comandos*',
@@ -3454,7 +3465,8 @@ function formatRaidCaptureUi(data, prefix = '!pk', opts = {}) {
     '*Comandos:*',
     `\`${prefix} raid capturar 1\``,
     `\`${prefix} raid capturar 2\``,
-    `\`${prefix} raid capturar 3\``
+    `\`${prefix} raid capturar 3\``,
+    `\`${prefix} raid liberar\` — dispensar sem gastar bola`
   );
   if (!prepared) {
     lines.push(`\`${prefix} raid fruta\` — preparar Frambo (não consome ainda)`);
@@ -3474,7 +3486,7 @@ function formatRaidFrambo(data, prefix = '!pk') {
     '🍓 *FRUTA FRAMBO PREPARADA!*',
     'Bônus ativo na próxima tentativa — a fruta só é consumida ao lançar a bola.',
     '🎯 Escolha sua Poké Bola:',
-    `\`${prefix} raid capturar 1\` · \`${prefix} raid capturar 2\` · \`${prefix} raid capturar 3\``
+    `\`${prefix} raid capturar 1\` · \`${prefix} raid capturar 2\` · \`${prefix} raid capturar 3\` · \`${prefix} raid liberar\``
   ].join('\n');
 }
 
@@ -3484,6 +3496,104 @@ function bolaLabelRaid(bolaId) {
   if (id === 'grande-bola' || id === 'super-bola') return 'Grande Bola';
   if (id === 'pokebola' || id === 'poke-bola') return 'Poké Bola';
   return bolaId || 'Poké Bola';
+}
+
+
+function formatRaidRelease(data, prefix = '!pk') {
+  const chefe = (data && (data.chefe || data.boss)) || {};
+  const nome = chefe.nome || chefe.species || chefe.name || 'o Pokémon';
+  if (data && data.duplicate) {
+    return [
+      '🌿 *POKÉMON JÁ LIBERADO*',
+      `A oportunidade de captura de ${nome} já foi encerrada.`,
+      '',
+      '📌 *Próximos comandos*',
+      `\`${prefix} raid\``,
+      `\`${prefix} time\``
+    ].join('\n');
+  }
+  return [
+    '🌿 *POKÉMON LIBERADO!*',
+    '',
+    `Você decidiu não capturar ${nome}.`,
+    '',
+    '✅ Suas recompensas da raid foram preservadas.',
+    '',
+    'O Pokémon foi embora.',
+    '',
+    'Comandos:',
+    `\`${prefix} raid\``,
+    `\`${prefix} time\``
+  ].join('\n');
+}
+
+function formatBattleIdleTimeout(data = {}) {
+  const kind = String(data.battleKind || data.battle_kind || data.kind || 'wild').toLowerCase();
+  const secs = Number(data.timeoutSeconds || data.timeout_seconds || 300);
+  const mins = Math.max(1, Math.floor(secs / 60));
+  const wild = data.wildName || data.wild_name || '';
+  const boss = data.bossName || data.boss_name || 'Desconhecido';
+  if (kind === 'raid') {
+    return [
+      '⌛ *RAID ENCERRADA POR INATIVIDADE*',
+      '',
+      `👾 Chefe: ${boss}`,
+      '',
+      `Nenhum treinador realizou uma ação válida nos últimos ${mins} minutos.`,
+      '',
+      '❌ Raid encerrada sem vitória.',
+      '💰 +0 moedas',
+      '🏅 +0 PE',
+      '⭐ +0 XP',
+      '🥚 +0 PI',
+      '',
+      '💔 Sequência encerrada para o treinador responsável pela inatividade.'
+    ].join('\n');
+  }
+  if (kind === 'pvp') {
+    return [
+      '⌛ *PVP ENCERRADO POR INATIVIDADE*',
+      '',
+      'A batalha foi encerrada porque não houve ação dentro do prazo.',
+      '',
+      '❌ Nenhuma recompensa nova foi concedida.'
+    ].join('\n');
+  }
+  return [
+    '⌛ *CAÇADA ENCERRADA POR INATIVIDADE*',
+    '',
+    `O treinador ficou ${mins} minutos sem realizar uma ação válida.`,
+    '',
+    `🌿 O Pokémon selvagem${wild ? ` *${wild}*` : ''} fugiu.`,
+    '',
+    '❌ Sem recompensas de vitória.',
+    '',
+    '💔 Sequência de capturas encerrada.'
+  ].join('\n');
+}
+
+function formatRaidTurnSkip(data, prefix = '!pk') {
+  const raid = (data && data.raid) || data || {};
+  const secs = Number(raid.timeoutSeconds || data.timeoutSeconds || 60);
+  const skipped = raid.skippedPlayer || data.skippedPlayer || data.skipped_player;
+  const next = raid.vez || raid.nextPlayer || data.nextPlayer;
+  const skippedLabel = displayTrainerName({ playerId: skipped, nome: raid.skippedNome })
+    || (typeof skipped === 'string' ? skipped.split('@')[0] : 'treinador');
+  const nextLabel = displayTrainerName({ playerId: next, nome: raid.vezNome || raid['vez-nome'] })
+    || (typeof next === 'string' ? next.split('@')[0] : 'treinador');
+  const header = [
+    '⏳ *TURNO ENCERRADO POR INATIVIDADE*',
+    '',
+    `@${skippedLabel} não realizou uma ação em ${secs} segundos.`,
+    '',
+    `⏭️ A vez passou para @${nextLabel}.`,
+    ''
+  ];
+  const panel = formatRaidTurnBlock(raid, prefix);
+  const mentions = [];
+  if (typeof skipped === 'string' && skipped.includes('@')) mentions.push(skipped);
+  if (typeof next === 'string' && next.includes('@')) mentions.push(next);
+  return { text: [...header, ...panel].join('\n'), mentions };
 }
 
 function formatRaidCapture(data, prefix = '!pk') {
@@ -4723,6 +4833,8 @@ const HELP_TOPICS = {
       '*Captura do chefe*',
       `\`${p} raid capturar\` — menu`,
       `\`${p} raid capturar pokebola|grande-bola|ultra-bola\``,
+      `\`${p} raid liberar\` — dispensar captura (mantém recompensas)`,
+      `\`${p} raid liberar\` — dispensar captura (mantém recompensas)`,
       `\`${p} raid frambo\` — prepara Frambo`,
       '',
       '*Regras*',
@@ -5678,6 +5790,9 @@ module.exports = {
   formatRaidEmpty,
   formatRaidDefeat,
   formatRaidCapture,
+  formatRaidRelease,
+  formatBattleIdleTimeout,
+  formatRaidTurnSkip,
   formatRaidCaptureUi,
   formatRaidFrambo,
   formatRaidRewardLines,

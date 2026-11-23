@@ -398,7 +398,7 @@
                                               "gyms-read" "gym-team" "gym-heal"
                                               "gym-challenge" "gym-ranking" "gym-history"
                                               "raid-read" "raid-join" "raid-leave"
-                                              "raid-start" "raid-attack" "raid-capture"
+                                              "raid-start" "raid-attack" "raid-capture" "raid-release"
                                               "raid-frambo" "encounter-frambo"
                                               "raid-auto-schedule" "events-pending" "events-ack"
                                               "joy-read" "joy-send" "joy-collect"
@@ -1454,50 +1454,81 @@
 
                 (= path "/v1/events/pending")
                 (do (require-method! ex #{"GET"})
-                    (let [limit (or (long-or-nil (g qs "limit")) 20)
-                          events (raid-auto/pending-events store {:limit limit})]
-                      (ok! ex {:events
-                               (mapv (fn [e]
-                                       (cond-> {:id (:id e)
-                                                :chatId (:chat-id e)
-                                                :texto (:texto e)
-                                                :kind (:kind e)
-                                                :createdAt (:created-at e)}
-                                         (or (:player-id e) (:playerId e))
-                                         (assoc :playerId (or (:player-id e) (:playerId e)))
-                                         (or (:egg-id e) (:eggId e))
-                                         (assoc :eggId (or (:egg-id e) (:eggId e)))
-                                         (or (:hatch-id e) (:hatchId e))
-                                         (assoc :hatchId (or (:hatch-id e) (:hatchId e)))
-                                         (map? (:media e))
-                                         (assoc :media
-                                                (cond-> {:nome (get-in e [:media :nome])
-                                                         :species (get-in e [:media :species])
-                                                         :imagem (get-in e [:media :imagem])
-                                                         :categoria (get-in e [:media :categoria])
-                                                         :ginasio (get-in e [:media :ginasio])}
-                                                  (get-in e [:media :tipo])
-                                                  (assoc :tipo (get-in e [:media :tipo]))
-                                                  (seq (get-in e [:media :tipos]))
-                                                  (assoc :tipos (get-in e [:media :tipos]))))
-                                         ;; Snapshot de combate no raid-started (1º frame canônico).
-                                         (map? (:raid e))
-                                         (assoc :raid (:raid e))
-                                         (seq (:mentions e))
-                                         (assoc :mentions (vec (:mentions e)))))
-                                     events)})))
+                    (let [limit (or (long-or-nil (g qs "limit")) 50)
+                          half (max 1 (quot (long limit) 2))
+                          auto-events (or (raid-auto/pending-events store {:limit half}) [])
+                          idle-events (or (ports/list-battle-idle-notifications
+                                           store {:limit half}) [])
+                          ;; Normaliza idle (:text/:texto) e auto (:texto) no mesmo shape.
+                          norm-auto
+                          (mapv (fn [e]
+                                  (cond-> {:id (:id e)
+                                           :chatId (:chat-id e)
+                                           :texto (:texto e)
+                                           :kind (:kind e)
+                                           :createdAt (:created-at e)
+                                           :source "pokemon-outbox"}
+                                    (or (:player-id e) (:playerId e))
+                                    (assoc :playerId (or (:player-id e) (:playerId e)))
+                                    (or (:egg-id e) (:eggId e))
+                                    (assoc :eggId (or (:egg-id e) (:eggId e)))
+                                    (or (:hatch-id e) (:hatchId e))
+                                    (assoc :hatchId (or (:hatch-id e) (:hatchId e)))
+                                    (map? (:media e))
+                                    (assoc :media
+                                           (cond-> {:nome (get-in e [:media :nome])
+                                                    :species (get-in e [:media :species])
+                                                    :imagem (get-in e [:media :imagem])
+                                                    :categoria (get-in e [:media :categoria])
+                                                    :ginasio (get-in e [:media :ginasio])}
+                                             (get-in e [:media :tipo])
+                                             (assoc :tipo (get-in e [:media :tipo]))
+                                             (seq (get-in e [:media :tipos]))
+                                             (assoc :tipos (get-in e [:media :tipos]))))
+                                    (map? (:raid e))
+                                    (assoc :raid (:raid e))
+                                    (seq (:mentions e))
+                                    (assoc :mentions (vec (:mentions e)))))
+                                auto-events)
+                          norm-idle
+                          (mapv (fn [e]
+                                  (cond-> {:id (:id e)
+                                           :chatId (or (:chatId e) (:chat-id e))
+                                           :texto (or (:texto e) (:text e))
+                                           :text (or (:text e) (:texto e))
+                                           :kind (:kind e)
+                                           :createdAt (or (:createdAt e) (:created-at e))
+                                           :source "battle-notify"}
+                                    (:playerId e) (assoc :playerId (:playerId e))
+                                    (:battleId e) (assoc :battleId (:battleId e))
+                                    (map? (:payload e)) (assoc :payload (:payload e))
+                                    (map? (:raid e)) (assoc :raid (:raid e))
+                                    (seq (:mentions e)) (assoc :mentions (vec (:mentions e)))))
+                                idle-events)
+                          events (->> (concat norm-auto norm-idle)
+                                      (sort-by #(long (or (:createdAt %) 0)))
+                                      (take limit)
+                                      vec)]
+                      (ok! ex {:ok true :events events})))
 
                 (and (str/starts-with? path "/v1/events/")
                      (str/ends-with? path "/ack"))
                 (do (require-method! ex #{"POST"})
-                    (let [id (subs path (count "/v1/events/")
-                                   (- (count path) (count "/ack")))
+                    (let [raw-id (subs path (count "/v1/events/")
+                                       (- (count path) (count "/ack")))
+                          id (try (URLDecoder/decode raw-id StandardCharsets/UTF_8)
+                                  (catch Exception _ raw-id))
                           body (read-body ex)
                           agora (or (long-or-nil (g body "agoraMs" "agora"))
                                     (System/currentTimeMillis))]
                       (when (str/blank? id)
                         (throw (err/error :invalid_query {:required ["eventId"]})))
-                      (ok! ex (raid-auto/ack-event! store id agora))))
+                      (ok! ex
+                           (if (or (str/starts-with? id "battle-idle-notify|")
+                                   (str/starts-with? id "raid-turn-skip-notify|")
+                                   (str/starts-with? id "battle-leave-notify|"))
+                             (assoc (ports/ack-battle-idle-notification! store id) :ok true)
+                             (raid-auto/ack-event! store id agora)))))
 
                 (= path "/v1/raids/auto/schedule")
                 (do (case method
@@ -1850,6 +1881,32 @@
                                           frambo? (assoc :frambo true)
                                           (and allow-test-rng? (some? roll))
                                           (assoc :roll roll)
+                                          (some? agora) (assoc :agora-ms agora)))))))
+
+                (= path "/v1/raids/release")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId")
+                          player-id (g body "playerId")
+                          save-id (g body "saveId")
+                          fence (long-or-nil (g body "fenceGeneration" "fence-generation"))
+                          operation-id (g body "operationId")
+                          raid-id (g body "raidId" "raid-id")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (or (str/blank? chat-id) (str/blank? player-id)
+                                (str/blank? save-id) (nil? fence)
+                                (str/blank? operation-id))
+                        (throw (err/error :invalid_query
+                                          {:required ["chatId" "playerId" "saveId"
+                                                      "fenceGeneration" "operationId"]})))
+                      (ok! ex (with-operation! operation-id
+                                #(tx/raid-release!
+                                  store (cond-> {:chat-id chat-id
+                                                 :player-id player-id
+                                                 :save-id save-id
+                                                 :fence-generation fence
+                                                 :operation-id operation-id}
+                                          raid-id (assoc :raid-id raid-id)
                                           (some? agora) (assoc :agora-ms agora)))))))
 
                 (= path "/v1/raids/frambo")
@@ -2479,23 +2536,6 @@
                                           (some? collection-index)
                                           (assoc :collection-index collection-index)
                                           (map? rng) (assoc :rng rng)))))))
-
-                (= path "/v1/events/pending")
-                (do (require-method! ex #{"GET"})
-                    (let [limit (or (long-or-nil (g qs "limit")) 50)
-                          events (ports/list-battle-idle-notifications
-                                  store {:limit limit})]
-                      (ok! ex {:ok true :events events})))
-
-                (and (str/starts-with? path "/v1/events/")
-                     (str/ends-with? path "/ack"))
-                (do (require-method! ex #{"POST"})
-                    (let [id (-> path
-                                 (subs (count "/v1/events/"))
-                                 (str/replace #"/ack$" "")
-                                 (URLDecoder/decode StandardCharsets/UTF_8))
-                          result (ports/ack-battle-idle-notification! store id)]
-                      (ok! ex (assoc result :ok true))))
 
                 (= path "/v1/battles/leave")
                 ;; !pk sair: gated por POKEMON_BATTLE_LEAVE_ENABLED (default off).

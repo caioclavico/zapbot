@@ -8,6 +8,7 @@
             [pokemon.domain.errors :as err]))
 
 (def idle-timeout-padrao-segundos 300)
+(def turn-timeout-padrao-segundos 60)
 
 (defn environment
   "Indireção testável para env do processo JVM."
@@ -29,6 +30,22 @@
 (defn idle-timeout-ms
   []
   (* 1000 (idle-timeout-segundos)))
+
+(defn turn-timeout-segundos
+  "POKEMON_RAID_TURN_TIMEOUT_SECONDS — skip automático com ≥2 aptos.
+   Zero só em staging; produção preserva 60s se inválido."
+  []
+  (let [raw (some-> (environment "POKEMON_RAID_TURN_TIMEOUT_SECONDS") str)
+        seconds (try (Long/parseLong raw) (catch Exception _ turn-timeout-padrao-segundos))
+        staging? (= "staging" (some-> (environment "APP_ENV") str/lower-case str/trim))]
+    (cond
+      (neg? seconds) turn-timeout-padrao-segundos
+      (and (zero? seconds) (not staging?)) turn-timeout-padrao-segundos
+      :else seconds)))
+
+(defn turn-timeout-ms
+  []
+  (* 1000 (turn-timeout-segundos)))
 
 (defn touch
   "Nova janela a partir de `agora` (epoch ms)."
@@ -107,17 +124,70 @@
            :idle-expired? true
            :ativo? false)))
 
+(defn format-idle-message
+  "Textos canônicos de encerramento por inatividade (WhatsApp)."
+  [{:keys [battle-kind timeout-seconds wild-name boss-name]}]
+  (let [secs (long (or timeout-seconds (idle-timeout-segundos)))
+        mins (max 1 (quot secs 60))
+        kind (keyword (or battle-kind "wild"))]
+    (case kind
+      :raid
+      (str "⌛ *RAID ENCERRADA POR INATIVIDADE*\n\n"
+           "👾 Chefe: " (or (not-empty (str boss-name)) "Desconhecido") "\n\n"
+           "Nenhum treinador realizou uma ação válida nos últimos "
+           mins " minutos.\n\n"
+           "❌ Raid encerrada sem vitória.\n"
+           "💰 +0 moedas\n"
+           "🏅 +0 PE\n"
+           "⭐ +0 XP\n"
+           "🥚 +0 PI\n\n"
+           "💔 Sequência encerrada para o treinador responsável pela inatividade.")
+
+      :pvp
+      (str "⌛ *PVP ENCERRADO POR INATIVIDADE*\n\n"
+           "A batalha foi encerrada porque não houve ação dentro do prazo.\n\n"
+           "❌ Nenhuma recompensa nova foi concedida.")
+
+      ;; wild / default
+      (str "⌛ *CAÇADA ENCERRADA POR INATIVIDADE*\n\n"
+           "O treinador ficou " mins " minutos sem realizar uma ação válida.\n\n"
+           "🌿 O Pokémon selvagem"
+           (when (not-empty (str wild-name)) (str " *" wild-name "*"))
+           " fugiu.\n\n"
+           "❌ Sem recompensas de vitória.\n\n"
+           "💔 Sequência de capturas encerrada."))))
+
 (defn notification-payload
   "Texto/contexto anonimizável para outbox WhatsApp."
-  [{:keys [battle-id kind chat-id player-ids timeout-seconds wild-name]}]
-  {:kind "battle-idle-timeout"
-   :battle-id battle-id
-   :battle-kind (name (or kind "wild"))
-   :chat-id chat-id
-   :player-ids (vec player-ids)
-   :timeout-seconds (long (or timeout-seconds (idle-timeout-segundos)))
-   :wild-name wild-name
-   :message-key :battle-idle-timeout})
+  [{:keys [battle-id kind chat-id player-ids timeout-seconds wild-name
+           boss-name mentions text]}]
+  (let [bk (name (or kind "wild"))
+        timeout (long (or timeout-seconds (idle-timeout-segundos)))
+        body (or text
+                 (format-idle-message
+                  {:battle-kind bk
+                   :timeout-seconds timeout
+                   :wild-name wild-name
+                   :boss-name boss-name}))]
+    {:kind "battle-idle-timeout"
+     :battle-id battle-id
+     :battle-kind bk
+     :chat-id chat-id
+     :player-ids (vec player-ids)
+     :timeout-seconds timeout
+     :wild-name wild-name
+     :boss-name boss-name
+     :mentions (vec (or mentions player-ids))
+     :text body
+     :message-key :battle-idle-timeout}))
+
+(defn turn-skip-notify-id
+  [raid-id turn-index]
+  (str "raid-turn-skip-notify|" raid-id "|" turn-index))
+
+(defn turn-skip-receipt-id
+  [raid-id turn-index]
+  (str "raid-turn-skip|" raid-id "|" turn-index))
 
 (defn receipt-operation-id
   "ID estável — segunda expiração vira duplicate via receipt único."
@@ -127,3 +197,8 @@
 (defn notify-id
   [battle-id player-id]
   (str "battle-idle-notify|" battle-id "|" player-id))
+
+(defn raid-chat-notify-id
+  "Uma notificação por raid (chat), não por participante."
+  [raid-id]
+  (str "battle-idle-notify|" raid-id "|chat"))
