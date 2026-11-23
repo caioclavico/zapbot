@@ -49,7 +49,7 @@
 
 (deftest v3-grants-only-new-xp-levels-up
   (with-redefs [growth/progressive-enabled? (constantly true)]
-    (let [base (mon 20 8)
+    (let [base (mon 20 4)
           converted (growth/ensure-progressive-v3-for-grant base)
           no-grant (xp/aplicar-xp-pokemon base 0)
           applied (xp/aplicar-xp-pokemon base 3)
@@ -58,7 +58,7 @@
       (is (= 20 (:nivel-final no-grant)))
       (is (zero? (:subidas no-grant)))
       (is (= 20 (:nivel-final applied)))
-      (is (= (+ (long (Math/floor (* 8.0 (/ need 9.0)))) 3)
+      (is (= (+ (long (Math/floor (* 4.0 (/ need 9.0)))) 3)
              (get-in applied [:registro :xp-desde-nivel])))
       (is (= 3 (:xp-oficial-aplicado applied))))
     (let [base (mon 50 0)
