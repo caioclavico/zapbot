@@ -430,8 +430,27 @@ async function renderHatchReveal(data = {}) {
   }));
 }
 
+async function renderEggGrant(data = {}) {
+  const category = String((data && (data.category || data.eggCategory)) || 'comum');
+  const key = createHash('sha256').update(JSON.stringify(['egg-grant', category])).digest('hex');
+  return cache.get(key, () => queue(async () => {
+    const label = category.charAt(0).toUpperCase() + category.slice(1);
+    const body = `${egg(320, 420, 150, category, 1)}
+    <text x="320" y="690" text-anchor="middle" fill="#f8fafc" font-family="sans-serif" font-size="22" font-weight="700">Raridade: ${esc(label)}</text>
+    <text x="320" y="732" text-anchor="middle" fill="#93a8d5" font-family="sans-serif" font-size="18">A espécie fica surpresa até chocar</text>
+    <text x="320" y="774" text-anchor="middle" fill="#8edbff" font-family="sans-serif" font-size="16">Incube com !pk incubar &lt;n&gt;</text>`;
+    const svg = base('Você encontrou um ovo!', 'Sem revelar a espécie', body);
+    const buf = await sharp(Buffer.from(svg)).png({ compressionLevel: 6 }).toBuffer();
+    if (buf.length > MAX_PNG_BYTES) {
+      return sharp(Buffer.from(svg)).png({ compressionLevel: 9, palette: true }).toBuffer();
+    }
+    return buf;
+  }));
+}
+
 module.exports = {
   render,
+  renderEggGrant,
   renderHatchReveal,
   hatchRevealSvg,
   rarityColor,

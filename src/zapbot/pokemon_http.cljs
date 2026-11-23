@@ -724,6 +724,7 @@
           (envelope-jvm pedido texto img))))))
 
 (defn- hatch-egg-jvm!
+  "Choca um ovo; retorna {:texto :img} com PNG de revelação quando aplicável."
   [jvm ctx pedido chat-id player-id egg]
   (let [prefix (str config/prefix "pk")]
     (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
@@ -738,8 +739,15 @@
                            :fenceGeneration (.-fenceGeneration ativo)
                            :operationId op-id
                            :eggId (.-eggId egg)
-                           :hatchId (str "hatch:" (.-eggId egg))}))]
-      (.formatEggHatch jvm-present data prefix))))
+                           :hatchId (str "hatch:" (.-eggId egg))}))
+            texto (.formatEggHatch jvm-present data prefix)
+            pending? (.isEggHatchPending jvm-present data)
+            img (when (and (not pending?)
+                           (.shouldRenderHatchReveal jvm-present data))
+                  (render-seguro! ctx "pokemon_jvm_media_hatch"
+                    #(.renderHatchRevealCard jvm-media data
+                                             #js {:filename "ovo-chocou.png"})))]
+      {:texto texto :img img})))
 
 (defn- executar-ovos-jvm!
   "Fluxo !pk ovos / incubar / incubadoras / incubacao / chocar — sob demanda.
@@ -827,15 +835,18 @@
                         [egg]))
               _ (when (empty? alvos)
                   (throw (erro-contrato sem-prontos)))
-              textos (atom [])]
+              resultados (atom [])]
         (-> (reduce (fn [p egg]
                       (p/then p (fn [_]
                                   (p/then (hatch-egg-jvm! jvm ctx pedido chat-id player-id egg)
-                                          (fn [txt] (swap! textos conj txt))))))
+                                          (fn [r] (swap! resultados conj r))))))
                     (p/resolved nil)
                     alvos)
             (p/then (fn [_]
-                      (envelope-jvm pedido (str/join "\n\n" @textos))))))
+                      (let [parts @resultados
+                            texto (str/join "\n\n" (map :texto parts))
+                            img (some :img parts)]
+                        (envelope-jvm pedido texto img))))))
 
       :else
       ;; ovos / ovo / ajuda → status + card PNG
@@ -1087,9 +1098,15 @@
                             :fase (.-fase (.-raid data))
                             :turnIndex (.-turnIndex (.-raid data))
                             :renderPhase "raid-attack"}))
+              egg-img (when (.shouldRenderEggGrant jvm-present data)
+                        (render-seguro! ctx "pokemon_jvm_media_egg_grant"
+                          #(.renderEggGrantCard jvm-media data
+                             #js {:filename "ovo.png"
+                                  :category (.eggGrantCategory jvm-present data)})))
               present (.withRaidTurnMention jvm-present
                         (.formatRaidAttack jvm-present data prefix) (.-raid data))]
-        (envelope-jvm pedido (append-trainer-level-ups (.-text present) data) img
+        (envelope-jvm pedido (append-trainer-level-ups (.-text present) data)
+                      (or egg-img img)
                       (js->clj (or (.-mentions present) #js []))))
 
       ;; fruta / frambo / fruta frambo — espelha caça selvagem: prepare + UI completa
@@ -1369,8 +1386,14 @@
           b (.-battle data)
           present (turno-apresentado texto b player-id)
           fugiu? (= "flee" (or (.-outcome data) (some-> b .-outcome)))
-          img (render-seguro! ctx "pokemon_jvm_media_turn"
-                #(.renderHuntArena jvm-media
+          egg-img (when (.shouldRenderEggGrant jvm-present data)
+                    (render-seguro! ctx "pokemon_jvm_media_egg_grant"
+                      #(.renderEggGrantCard jvm-media data
+                         #js {:filename "ovo.png"
+                              :category (.eggGrantCategory jvm-present data)})))
+          img (or egg-img
+                  (render-seguro! ctx "pokemon_jvm_media_turn"
+                    #(.renderHuntArena jvm-media
                     #js {:area (or (some-> b .-area) (.-area encontro))
                          :pokemonX (or (some-> b .-pokemonX) (.-pokemonX encontro))
                          :pokemonO (or (some-> b .-pokemonO) (.-pokemonO encontro))
@@ -1380,7 +1403,7 @@
                                       (some-> b .-aguardandoCaptura)))
                          :caption texto
                          :efeito (.efeitoDeTurno jvm-media data)
-                         :mostrarEntrada false}))]
+                         :mostrarEntrada false})))]
     (envelope-turno pedido present img)))
 
 (defn- normalizar-missao-token
@@ -1430,10 +1453,15 @@
                                                             :saveId (.-activeSaveId ativo)
                                                             :fenceGeneration (.-fenceGeneration ativo)
                                                             :operationId op-id
-                                                            :occurrenceId occ-id}))]
-                (envelope-jvm pedido
-                              (append-trainer-level-ups
-                               (.formatMissionClaim jvm-present data "event" prefix) data)))))
+                                                            :occurrenceId occ-id}))
+                      texto (append-trainer-level-ups
+                             (.formatMissionClaim jvm-present data "event" prefix) data)
+                      img (when (.shouldRenderEggGrant jvm-present data)
+                            (render-seguro! ctx "pokemon_jvm_media_egg_grant"
+                              #(.renderEggGrantCard jvm-media data
+                                 #js {:filename "ovo.png"
+                                      :category (.eggGrantCategory jvm-present data)})))]
+                (envelope-jvm pedido texto img))))
           (p/let [ativo (.getActiveSave jvm #js {:chatId chat-id :playerId player-id})
                   weekly? semanais?
                   period (if weekly? (.-period (.-weekly missoes)) (.-period (.-daily missoes)))
@@ -1448,11 +1476,16 @@
                             (.claimDailyMissions jvm #js {:chatId chat-id :playerId player-id
                                                           :saveId (.-activeSaveId ativo)
                                                           :fenceGeneration (.-fenceGeneration ativo)
-                                                          :operationId op-id :period period})))]
-            (envelope-jvm pedido
-                          (append-trainer-level-ups
-                           (.formatMissionClaim jvm-present data
-                                               (if weekly? "weekly" "daily") prefix) data))))))))
+                                                          :operationId op-id :period period})))
+                  texto (append-trainer-level-ups
+                         (.formatMissionClaim jvm-present data
+                                             (if weekly? "weekly" "daily") prefix) data)
+                  img (when (.shouldRenderEggGrant jvm-present data)
+                        (render-seguro! ctx "pokemon_jvm_media_egg_grant"
+                          #(.renderEggGrantCard jvm-media data
+                             #js {:filename "ovo.png"
+                                  :category (.eggGrantCategory jvm-present data)})))]
+            (envelope-jvm pedido texto img)))))))
 
 (defn- executar-presente-jvm!
   [jvm ctx pedido chat-id player-id]
@@ -2659,11 +2692,18 @@
                                    #(.attemptEncounterCapture jvm body))
                             texto (.formatCaptureResult jvm-present data
                                                         (str config/prefix "pk"))
-                            img (render-seguro! ctx "pokemon_jvm_media_capture"
-                                  #(.renderCaptureBall jvm-media
-                                      #js {:bola (or (.-bola data) "pokebola")
-                                           :capturou (boolean (.-capturou data))
-                                           :fugiu (boolean (.-fugiu data))}))]
+                            egg-grant? (.shouldRenderEggGrant jvm-present data)
+                            egg-cat (when egg-grant? (.eggGrantCategory jvm-present data))
+                            img (if egg-grant?
+                                  (render-seguro! ctx "pokemon_jvm_media_egg_grant"
+                                    #(.renderEggGrantCard jvm-media data
+                                                          #js {:filename "ovo-ganho.png"
+                                                               :category egg-cat}))
+                                  (render-seguro! ctx "pokemon_jvm_media_capture"
+                                    #(.renderCaptureBall jvm-media
+                                        #js {:bola (or (.-bola data) "pokebola")
+                                             :capturou (boolean (.-capturou data))
+                                             :fugiu (boolean (.-fugiu data))})))]
                       (envelope-jvm pedido
                                     (append-trainer-level-ups texto data) img))))
 
@@ -2698,9 +2738,18 @@
                     (envelope-jvm pedido (.ambiguousBattlePrompt jvm-present prefix
                                                                  (clj->js contexts)))
 
-                    (or (= battle-scope "raid") (= contexts ["raid"]))
+                    ;; Raid: SOMENTE comando explícito (!pk raid atk N).
+                    ;; !pk 1 / !pk atk 1 sem scope NÃO avançam a raid.
+                    (= battle-scope "raid")
                     (executar-raid-jvm! jvm ctx pedido chat-id player-id player-name
                                         (into ["atacar"] resto))
+
+                    (and (nil? battle-scope) (some #{"raid"} contexts))
+                    (envelope-jvm pedido
+                                  (str "⚠️ Você está participando de uma raid!\n\n"
+                                       "Para atacar, use:\n"
+                                       "`" prefix " raid atk 1`\n\n"
+                                       "Comandos sem `raid` não executam ações nessa batalha."))
 
                     (or (= battle-scope "pvp") (= contexts ["pvp"]))
                     (confirmar-turno-pvp!
@@ -2845,6 +2894,14 @@
                   (envelope-jvm pedido
                                 (.formatWorldInfo jvm-present plano
                                                   (str config/prefix "pk"))))
+
+                "biomas"
+                (p/let [plano (desempenho/medir! ctx "pokemon_jvm_hunt_plan"
+                                 #(.getHuntPlan jvm
+                                    #js {:chatId chat-id :playerId player-id}))]
+                  (envelope-jvm pedido
+                                (.formatBiomesCatalog jvm-present plano
+                                                      (str config/prefix "pk"))))
 
                 "eventos"
                 (p/let [plano (desempenho/medir! ctx "pokemon_jvm_hunt_plan"

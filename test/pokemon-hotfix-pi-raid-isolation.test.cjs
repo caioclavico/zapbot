@@ -18,8 +18,8 @@ test('formatConfirmedPiLines: ovo sem revelar espécie', () => {
   const lines = present.formatConfirmedPiLines({
     adventureActivity: [{ pi: 0, eggId: 'egg:1', eggCategory: 'raro' }]
   });
-  assert.ok(lines.some((l) => /ENCONTROU UM OVO/i.test(l)));
-  assert.ok(lines.some((l) => /Raridade: Raro/.test(l)));
+  assert.ok(lines.some((l) => /GANHOU UM OVO/i.test(l)));
+  assert.ok(lines.some((l) => /Categoria: Raro/.test(l)));
   assert.ok(!lines.some((l) => /pikachu|species/i.test(l)));
 });
 
