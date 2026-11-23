@@ -1,6 +1,7 @@
 # Homologação integrada — PR #126 (hotfix A6)
 
-**Decisão:** `HOMOLOG_PARTIAL`  
+**Decisão (fase 1):** `HOMOLOG_PARTIAL`  
+**Decisão (fase 2 / atual):** `HOMOLOG_BLOCKED` (`STAGING_BLOCKED` + `WHATSAPP_E2E_BLOCKED`)  
 **Deploy:** `DEPLOY_NO_GO` (sem autorização; hold ativo)  
 **Produção:** inalterada (`c4deb6a` em execução)
 
@@ -136,3 +137,87 @@ Mensagens WhatsApp reais: **não verificadas**.
 **Decisão: `HOMOLOG_PARTIAL`**
 
 Próximo passo para `HOMOLOG_PASS`: ambiente WhatsApp de teste autorizado + execução dos comandos reais da matriz, sem tocar produção.
+
+
+---
+
+## Fase 2 — WhatsApp E2E e riscos (2026-11-23)
+
+### Auditoria de staging
+
+| Gate | Resultado |
+|------|-----------|
+| Compose | `docker-compose.staging.yml` → project `odisseu-staging`, volume `odisseu-staging-datomic` (≠ prod cutover) |
+| Sessão path | `WWEBJS_DATA_PATH=.wwebjs_auth_staging` / `clientId=staging` — scripts **recusam** `.wwebjs_auth` |
+| `APP_ENV` | `staging` no `.env.staging` |
+| `STAGING_WHATSAPP_CONFIRM` | **EMPTY** → `staging-up.sh node` exit 4 |
+| `DEV_GROUP_ID` | **EMPTY** → exit 6 |
+| `STAGING_GROUP_CONFIRMED` | **EMPTY** → exit 7 |
+| Allowlist código | `config.cljs` + `group-allowlist.cjs`: staging exige `DEV_GROUP_ID` + `STAGING_GROUP_CONFIRMED=1` |
+| Tokens bridge | Presentes no `.env.staging` (não placeholder); **não** reutilizados de prod nesta auditoria |
+| `ADVENTURE_AUTO_HATCH` | EMPTY no staging env (não ligado em prod; hold prod permanece) |
+| Scheduler raid auto | Defaults OFF (`POKEMON_RAID_AUTO_TICK` / bridge tick) |
+| Prod session path | `.wwebjs_auth` **ausente** neste host |
+| Sessão staging files | Existem (~628 arquivos), mas **sem grupo autorizado confirmado** |
+
+**Veredito ambiente:** `STAGING_BLOCKED` — requisitos essenciais de WhatsApp E2E não satisfeitos.  
+**Ação tomada:** nenhum Node WhatsApp iniciado; nenhum QR; nenhum envio de mensagem.
+
+Instrução para desbloquear (manual, conta de **teste**):
+
+1. Descobrir grupo: `./scripts/staging-bootstrap-group.sh` (modo bootstrap, sem processar cmds).
+2. Preencher `DEV_GROUP_ID` no `.env.staging`.
+3. Definir `STAGING_GROUP_CONFIRMED=1` e `STAGING_WHATSAPP_CONFIRM=1`.
+4. Opcional: `STAGING_ALLOWED_USERS=…` para remetentes.
+5. Só então `./scripts/staging-integrated.sh` / `staging-up.sh node`.
+
+### Matriz E2E WhatsApp (fase 2)
+
+| Cenário | Status |
+|---------|--------|
+| Captura / PI / ovos E2E | `BLOCKED` |
+| Liberar / ovo / incubadora E2E | `BLOCKED` |
+| Raid pocao-maxima E2E | `BLOCKED` |
+| Batalhas simultâneas E2E | `BLOCKED` |
+| Raids auto/manual E2E | `BLOCKED` |
+| Mensagem antiga / menções | `BLOCKED` |
+
+### Suíte legada fase1283
+
+Ver `docs/a6-pr126-fase1283-analysis.md`.
+
+| Item | Resultado |
+|------|-----------|
+| Reproduz em master | Sim |
+| Reproduz em `c4deb6a` | Sim |
+| Regressão #126 | **Não** |
+| Causa principal | Fixture Body Slam vs Onix com HP 320×n → derrota; asserções de vitória obsoletas |
+| Impacto jogadores | Não evidenciado |
+| Correção | Proposta em PR separado (fixtures), sem merge automático |
+
+### Drift `planPotionRoute` ↔ `pokemon_http.cljs`
+
+Mitigação na fase 2 (branch de evidências):
+
+- Testes `anti-drift` em `test/pokemon-hotfix-potion-http-contract.test.cjs` amarram o oracle ao **fonte cljs** (`getEncounter`, `ambiguousBattlePrompt` kind potion, `raidUseItem`, handlers cacar/pvp) e aos exports do client.
+- Runtime permanece em `pokemon_http.cljs`; o planner continua espelho para matrizes — drift agora falha CI se o cljs divergir dos contratos assertados.
+
+| Item | Resultado |
+|------|-----------|
+| Risco residual | Reduzido (ainda não é single-source runtime) |
+| Extração de módulo único | Não feita (evitar componente novo sem necessidade) |
+
+### Evidências adicionais
+
+- `/tmp/a6-pr126-homolog/fase1283-detail.log`
+- `/tmp/a6-pr126-homolog/raid-defeat-c4deb6a.log`
+- `docs/a6-pr126-fase1283-analysis.md`
+- Testes anti-drift Node (16/16 no contrato de poções após acréscimo)
+
+### Produção
+
+| Item | Status |
+|------|--------|
+| Hold | `ODISSEU_PRODUCTION_DEPLOY_HOLD=true` |
+| Release live | `c4deb6a` |
+| Deploy / cutover / sessão live | **Não executados** |
