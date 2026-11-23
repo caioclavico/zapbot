@@ -4,6 +4,8 @@
   sem rotas administrativas nem endpoint genérico de mutação."
   (:require [clojure.string :as str]
             [odisseu.platform.infrastructure.http.handlers :as platform-http]
+            [odisseu.platform.domain.bloqueio :as bloqueio-platform]
+            [odisseu.platform.application.ports :as ports-platform]
             [pokemon.application.bridge-reads :as reads]
             [pokemon.application.mission-queries :as missions]
             [pokemon.application.mission-economy :as mission-economy]
@@ -33,6 +35,18 @@
   (try
     (Long/parseLong (or (System/getenv "POKEMON_BATTLE_IDLE_SWEEP_MS") "30000"))
     (catch Exception _ 30000)))
+
+(defn- pokemon-blocked-chat-ids
+  "Fonte canônica: bloqueios do platform-store (Datomic).
+   Sem platform: vazio (Node ainda passa blockedChatIds no tick/outbox)."
+  [platform-store]
+  (if-not platform-store
+    []
+    (try
+      (bloqueio-platform/chats-com-pokemon-bloqueado
+       (ports-platform/get-block-state platform-store))
+      (catch Exception _
+        []))))
 
 (defn- query-map
   [^String raw]
@@ -1597,11 +1611,19 @@
                     (let [body (read-body ex)
                           agora (long-or-nil (g body "agoraMs" "agora"))
                           chat-id (g body "chatId")
-                          limit (or (long-or-nil (g body "limit")) 32)]
+                          limit (or (long-or-nil (g body "limit")) 32)
+                          blocked (or (g body "blockedChatIds" "blocked-chat-ids") [])
+                          blocked-ids (cond
+                                        (sequential? blocked) (mapv str blocked)
+                                        (string? blocked) [blocked]
+                                        :else [])
+                          blocked-merged (vec (set (concat blocked-ids
+                                                           (pokemon-blocked-chat-ids platform-store))))]
                       (ok! ex (raid-auto/tick!
                                store {:agora-ms agora
                                       :chat-id (when-not (str/blank? chat-id) chat-id)
                                       :limit limit
+                                      :blocked-chat-ids blocked-merged
                                       :global-enabled? (boolean raid-auto-tick-enabled?)}))))
 
                 (= path "/v1/raids/active")
@@ -2579,9 +2601,17 @@
                     ;; via HTTP (ops admin de alto impacto — usar porta interna/testes).
                     (let [body (read-body ex)
                           agora (long-or-nil (g body "agoraMs" "agora"))
-                          limit (or (long-or-nil (g body "limit")) 32)]
+                          limit (or (long-or-nil (g body "limit")) 32)
+                          blocked-body (or (g body "blockedChatIds" "blocked-chat-ids") [])
+                          blocked-ids (cond
+                                        (sequential? blocked-body) (mapv str blocked-body)
+                                        (string? blocked-body) [blocked-body]
+                                        :else [])
+                          blocked (vec (set (concat blocked-ids
+                                                    (pokemon-blocked-chat-ids platform-store))))]
                       (ok! ex (assoc (ports/expire-idle-battles!
-                                      store (cond-> {:limit limit :force false}
+                                      store (cond-> {:limit limit :force false
+                                                     :blocked-chat-ids blocked}
                                               agora (assoc :agora agora)))
                                      :ok true))))
 
@@ -2595,8 +2625,9 @@
         (catch Throwable t
           (handle-error! ex t))))))
 
+
 (defn- start-gameplay-sweeper!
-  [store maintenance-gate]
+  [store maintenance-gate platform-store]
   (let [sched (Executors/newSingleThreadScheduledExecutor
                (reify java.util.concurrent.ThreadFactory
                  (newThread [_ r]
@@ -2609,13 +2640,16 @@
      (fn []
        (when (or (nil? maintenance-gate) (maintenance-gate/acquire! maintenance-gate))
          (try
-           (doseq [[label sweep!] [["idle" ports/expire-idle-battles!]
-                                   ["joy" ports/joy-return-due!]]]
-             (try
-               (sweep! store {:limit 32})
-               (catch Exception t
-                 (binding [*out* *err*]
-                   (println "[bridge] gameplay-sweeper" label ":" (ex-message t))))))
+           (let [blocked (pokemon-blocked-chat-ids platform-store)]
+             (doseq [[label sweep! opts]
+                     [["idle" ports/expire-idle-battles!
+                       {:limit 32 :blocked-chat-ids blocked}]
+                      ["joy" ports/joy-return-due! {:limit 32}]]]
+               (try
+                 (sweep! store opts)
+                 (catch Exception t
+                   (binding [*out* *err*]
+                     (println "[bridge] gameplay-sweeper" label ":" (ex-message t)))))))
            (finally
              (when maintenance-gate
                (maintenance-gate/release! maintenance-gate))))))
@@ -2671,7 +2705,7 @@
                                   score-point! (assoc :score-point! score-point!)
                                   (seq platform-hooks) (assoc :platform-hooks platform-hooks)
                                   recovery-catalog (assoc :recovery-catalog recovery-catalog)))
-          sweeper (start-gameplay-sweeper! store maintenance-gate)]
+          sweeper (start-gameplay-sweeper! store maintenance-gate platform-store)]
       (.createContext server "/" handler)
       (.setExecutor server executor)
       (.start server)

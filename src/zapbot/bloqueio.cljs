@@ -145,6 +145,20 @@
 (defn comando-bloqueado? [cid comando]
   (contains? (get-in @estado [cid :comandos] #{}) comando))
 
+(defn pokemon-gameplay-bloqueado?
+  "Bot inteiro ou comando pokemon/jogos bloqueados nesse chat."
+  [cid]
+  (or (bot-bloqueado? cid)
+      (comando-bloqueado? cid "pokemon")))
+
+(defn chats-com-pokemon-bloqueado
+  "Lista canônica de chat-ids com Pokémon/jogos/bot bloqueados (scheduler/outbox)."
+  []
+  (->> @estado
+       (filter (fn [[cid _]] (pokemon-gameplay-bloqueado? cid)))
+       (map (fn [[cid _]] (str cid)))
+       vec))
+
 (defn- formatar-lista [cid]
   (let [{:keys [bot? comandos]} (get @estado cid)]
     (str "📋 *Status nesse chat:*\n"

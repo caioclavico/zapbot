@@ -617,6 +617,27 @@
               :offset-ms (:offset-ms plan)
               :chat-id (:chat-id plan)}}))
 
+(defn build-admin-block-cancel-tx
+  "Cancela lobby aberto porque o chat bloqueou jogos/pokemon.
+   Mesmo shape de :cancelada do expire; sem iniciar combate."
+  [{:keys [raid agora announce-texto]}]
+  (let [agora (long agora)
+        raid' (raid/cancelar-sistema raid agora)
+        expected-rev (long (:revision raid 0))
+        chat-id (:chat-id raid)
+        rid (:raid-id raid)
+        announce (when (and announce-texto (= "auto" (str (:origem raid))))
+                   (build-auto-expire-announce-tx
+                    {:raid raid :acao :cancelada :agora agora :texto announce-texto}))]
+    {:tx (into [(raid-entity-tx (assoc raid' :revision (inc expected-rev)))
+                [:db/cas [:raid/id rid] :raid/revision
+                 expected-rev (inc expected-rev)]
+                [:db/retract [:chat-active-raid/chat-id chat-id]
+                 :chat-active-raid/raid-id rid]]
+               (or (:tx announce) []))
+     :result {:raid raid' :acao :cancelada :outbox-id (:outbox-id (:result announce))
+              :admin-block true}}))
+
 (defn build-expire-lobby-tx
   "Materializa expiração de inscrições (cancelada ou combate)."
   [{:keys [raid agora announce-texto]}]

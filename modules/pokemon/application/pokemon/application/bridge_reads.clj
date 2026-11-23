@@ -19,6 +19,7 @@
             [pokemon.domain.joy :as joy]
             [pokemon.domain.mundo :as mundo]
             [pokemon.domain.battle :as battle]
+            [pokemon.domain.move-effects :as move-effects]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.raid :as raid]
             [pokemon.domain.shop :as shop]
@@ -26,6 +27,18 @@
             [pokemon.domain.level-evolution :as level-evo])
   (:import [java.nio.charset StandardCharsets]
            [java.util Base64]))
+
+
+(defn- golpes-para-ui
+  "Normaliza + enriquece golpes na leitura (catálogo/efeitos). Não persiste."
+  [golpes]
+  (->> (or golpes [])
+       (mapv (fn [g]
+               (let [n (battle/golpe-normalizado g)]
+                 (if (map? n)
+                   (move-effects/enriquecer n)
+                   n))))
+       (filterv map?)))
 
 (defn- require-player!
   [store chat-id player-id]
@@ -49,12 +62,13 @@
   regras canônicas (`xp/progresso-pokemon`, `level-evo/proxima`) — sem
   inventar XP ausente e sem mutar o registro."
   [p]
-  (let [base (select-keys p [:collection-index :id-pokemon :species :nome :nickname
-                             :shiny :nivel :hp :hp-atual :status :in-party :tipos
-                             :raridade :xp-desde-nivel :ataque :defesa :atq-esp :def-esp
-                             :veloc :amizade :imagem :imagem-shiny :altura :golpes
-                             :habilidade :ofertas-golpes :golpes-oferecidos
-                             :historico-golpes :golpes-removidos :item])
+  (let [base (-> (select-keys p [:collection-index :id-pokemon :species :nome :nickname
+                                 :shiny :nivel :hp :hp-atual :status :in-party :tipos
+                                 :raridade :xp-desde-nivel :ataque :defesa :atq-esp :def-esp
+                                 :veloc :amizade :imagem :imagem-shiny :altura :golpes
+                                 :habilidade :ofertas-golpes :golpes-oferecidos
+                                 :historico-golpes :golpes-removidos :item])
+                 (assoc :golpes (golpes-para-ui (:golpes p))))
         prog (xp/progresso-pokemon p)
         evo (level-evo/proxima p)
         pct (when (and (:conhecido? prog) (number? (:progresso-percentual prog)))
@@ -503,9 +517,7 @@
    (when p
      (let [p (capture/assegurar-raridade p)
            resolved (capture/resolver-raridade p)
-           golpes (->> (or (:golpes p) (get p "golpes") [])
-                       (mapv battle/golpe-normalizado)
-                       (filterv map?))]
+           golpes (golpes-para-ui (or (:golpes p) (get p "golpes") []))]
        (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
                                :raridade :tipos :ataque :defesa :atq-esp :def-esp :veloc
                                :imagem :imagem-shiny :altura :status :habilidade

@@ -86,17 +86,59 @@
         sch (get-schedule store chat-id)
         diag (raid-auto/schedule-diagnostics sch agora (or opts {}))]
     (assoc sch :diagnostics diag)))
+
+(defn ensure-schedule-after-onboarding!
+  "Habilita agenda canônica do chat após o 1º inicial. Idempotente.
+   Não spawna raid imediata; agenda próximo slot futuro. Preserva next-at
+   futuro já válido. Não cria segunda agenda."
+  [store chat-id]
+  (let [agora (System/currentTimeMillis)
+        cur (get-schedule store chat-id)
+        next-existing (long (:next-at cur 0))
+        next-at (if (> next-existing agora)
+                  next-existing
+                  (try
+                    (raid-auto/next-slot-at-or-after
+                     agora (raid-auto/normalize-schedule cur chat-id agora))
+                    (catch Exception _
+                      (+ agora (long raid-auto/default-interval-ms)))))]
+    (if (and (boolean (:enabled cur)) (> next-existing agora))
+      {:chat-id (str chat-id) :enabled true :already true :schedule cur}
+      (let [sch (upsert-schedule! store {:chat-id chat-id
+                                         :enabled true
+                                         :next-at next-at
+                                         :agora-ms agora
+                                         :interval-ms (or (:interval-ms cur)
+                                                          raid-auto/default-interval-ms)
+                                         :daily-limit (or (:daily-limit cur)
+                                                          raid-auto/default-daily-limit)
+                                         :distribution (or (:distribution cur)
+                                                           raid-auto/default-distribution)})]
+        {:chat-id (str chat-id) :enabled true :already false :schedule sch}))))
+
+(defn reconcile-schedules-for-starters!
+  "Grupos com treinador que já escolheu inicial e ainda sem agenda habilitada.
+   Idempotente; não copia IDs do grupo principal; não cria raids retroativas."
+  [store]
+  (let [chats (or (ports/list-chats-with-starter store) [])]
+    {:reconciled (count chats)
+     :results (mapv #(ensure-schedule-after-onboarding! store %) chats)}))
+
 (defn tick!
   "Processa agendas due + expire de lobbies auto. Relógio injetável via agora-ms.
    Sem efeito se global-enabled? for false (kill switch)."
-  [store {:keys [agora-ms chat-id global-enabled? limit]
+  [store {:keys [agora-ms chat-id global-enabled? limit blocked-chat-ids]
           :or {global-enabled? false limit 32}}]
   (if-not global-enabled?
     {:enabled false :processed [] :note "raid-auto-tick-disabled"}
-    (ports/tick-raid-auto!
-     store {:agora (or agora-ms (System/currentTimeMillis))
-            :chat-id chat-id
-            :limit (long limit)})))
+    (let [agora (or agora-ms (System/currentTimeMillis))
+          recon (reconcile-schedules-for-starters! store)
+          tick (ports/tick-raid-auto!
+                store {:agora agora
+                       :chat-id chat-id
+                       :limit (long limit)
+                       :blocked-chat-ids blocked-chat-ids})]
+      (assoc tick :onboarding-reconcile recon))))
 
 (defn pending-events
   [store {:keys [limit] :or {limit 20}}]

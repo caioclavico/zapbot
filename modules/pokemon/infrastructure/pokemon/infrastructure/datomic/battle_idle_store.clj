@@ -738,20 +738,50 @@
      :expired-battles (count (remove #(or (:duplicate %) (:skipped %)) battle-results))
      :expired-raids (count (remove :duplicate raid-results))}))
 
+(defn- chat-id-for-battle
+  [db battle-id]
+  (let [e (d/pull db '[:battle/chat-id] [:battle/id battle-id])]
+    (when e (str (:battle/chat-id e)))))
+
+(defn- chat-id-for-raid
+  [db raid-id]
+  (let [e (d/pull db '[:raid/chat-id] [:raid/id raid-id])]
+    (when e (str (:raid/chat-id e)))))
+
 (defn expire-due!
   "Sweeper: (1) backfill janela em legado sem attrs; (2) encerra vencidos.
-   Com `:force true`, encerra todas as abertas agora (ignora prazo)."
-  [conn {:keys [agora limit force] :or {limit 32}}]
+   Com `:force true`, encerra todas as abertas agora (ignora prazo).
+   `:blocked-chat-ids` — chats com jogos/pokemon bloqueados: não expira idle
+   nem skip de turno (evita penalidade administrativa); renova a janela."
+  [conn {:keys [agora limit force blocked-chat-ids] :or {limit 32}}]
   (if force
     (force-expire-open! conn {:agora agora :limit (or limit 64)})
     (let [agora (long (or agora (System/currentTimeMillis)))
+          blocked (set (map str (or blocked-chat-ids [])))
+          blocked? (fn [cid] (contains? blocked (str cid)))
           backfill (backfill-idle-window! conn agora limit)
           db (d/db conn)
-          battles (take limit (find-expired-battle-ids db agora))
-          raids (take limit (find-expired-raid-ids db agora))
+          battles (->> (find-expired-battle-ids db agora)
+                       (remove #(blocked? (chat-id-for-battle db %)))
+                       (take limit))
+          raids-due (find-expired-raid-ids db agora)
+          raids-blocked (filter #(blocked? (chat-id-for-raid db %)) raids-due)
+          raids (->> raids-due
+                     (remove #(blocked? (chat-id-for-raid db %)))
+                     (take limit))
+          ;; Renova idle em raids bloqueadas para não penalizar ao desbloquear.
+          deferred (mapv (fn [rid]
+                           (try
+                             (d/transact conn {:tx-data (raid-touch-tx rid agora)})
+                             {:raid-id rid :deferred-admin-block true}
+                             (catch Exception _
+                               {:raid-id rid :deferred-admin-block true :error true})))
+                         (take limit raids-blocked))
           battle-results (mapv #(expire-battle! conn % agora) battles)
           raid-results (mapv #(expire-raid! conn % agora) raids)
-          turn-raids (take limit (find-turn-expired-raid-ids db agora))
+          turn-raids (->> (find-turn-expired-raid-ids db agora)
+                          (remove #(blocked? (chat-id-for-raid db %)))
+                          (take limit))
           skip-results (mapv #(skip-turn! conn % agora) turn-raids)]
       {:agora agora
        :force false
@@ -759,6 +789,7 @@
        :battles battle-results
        :raids raid-results
        :turn-skips skip-results
+       :deferred-admin-block deferred
        :expired-battles (count (remove #(or (:duplicate %) (:skipped %)) battle-results))
        :expired-raids (count (remove #(or (:duplicate %) (:skipped %)) raid-results))
        :skipped-turns (count (remove #(or (:duplicate %) (:skipped %)) skip-results))})))

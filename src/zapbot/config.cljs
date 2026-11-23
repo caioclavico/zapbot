@@ -230,24 +230,22 @@
 (def pokemon-bag-kit-daily-enabled?
   (= "true" (str/lower-case (str/trim (env "POKEMON_BAG_KIT_DAILY_ENABLED" "false")))))
 
-;; M4.1/M6.1 — bridge JVM em development|staging. Produção sempre força legado.
-;; POKEMON_ADAPTER=legacy|jvm (default legacy). Sem fallback de escrita.
+;; M4.1/M6.1 — bridge JVM. POKEMON_ADAPTER=legacy|jvm (default legacy).
+;; jvm explícito é respeitado em qualquer APP_ENV (cutover A6 / produção unificada).
+;; Sem fallback silencioso para Cassandra/legado quando o adaptador é jvm.
 (def pokemon-jvm-url (env "POKEMON_JVM_URL" "http://127.0.0.1:18090"))
 (def pokemon-jvm-token (env "POKEMON_JVM_TOKEN"))
 (def pokemon-jvm-connect-timeout-ms (inteiro-positivo "POKEMON_JVM_CONNECT_TIMEOUT_MS" 3000))
 (def pokemon-jvm-timeout-ms (inteiro-positivo "POKEMON_JVM_TIMEOUT_MS" 8000))
-;; Staging Compose: permite só http://odisseu-jvm:18090 (desligado por padrão).
+;; Host Docker interno: staging/produção cutover via env explícito.
 (def pokemon-jvm-allow-docker-host?
-  (and (= "staging" app-env)
+  (and (contains? #{"staging" "production"} app-env)
        (= "true" (str/lower-case (env "POKEMON_JVM_ALLOW_DOCKER_HOST" "false")))))
 (def ^:private pokemon-adapter-raw
   (str/lower-case (str/trim (env "POKEMON_ADAPTER" "legacy"))))
-(def ^:private jvm-adapter-envs #{"development" "staging"})
+(def ^:private jvm-adapter-envs #{"development" "staging" "production"})
 (def pokemon-adapter
-  (cond
-    (and (= "jvm" pokemon-adapter-raw) (contains? jvm-adapter-envs app-env)) "jvm"
-    (= "jvm" pokemon-adapter-raw) "legacy" ;; production e demais: forçar legado
-    :else "legacy"))
+  (if (= "jvm" pokemon-adapter-raw) "jvm" "legacy"))
 (def pokemon-jvm-enabled?
   (= "jvm" pokemon-adapter))
 
@@ -260,15 +258,12 @@
 (def platform-jvm-timeout-ms (inteiro-positivo "PLATFORM_JVM_TIMEOUT_MS" 8000))
 ;; Mesma allowlist Docker que o Pokémon — só efetiva em staging.
 (def platform-jvm-allow-private-host?
-  (and (= "staging" app-env)
+  (and (contains? #{"staging" "production"} app-env)
        (= "true" (str/lower-case (env "PLATFORM_JVM_ALLOW_PRIVATE_HOST" "false")))))
 (def ^:private platform-adapter-raw
   (str/lower-case (str/trim (env "PLATFORM_ADAPTER" "cassandra"))))
 (def platform-adapter
-  (cond
-    (and (= "datomic" platform-adapter-raw) (contains? jvm-adapter-envs app-env)) "datomic"
-    (= "datomic" platform-adapter-raw) "cassandra"
-    :else "cassandra"))
+  (if (= "datomic" platform-adapter-raw) "datomic" "cassandra"))
 (def platform-datomic-enabled?
   (= "datomic" platform-adapter))
 
@@ -289,11 +284,11 @@
        (not (str/blank? release-pilot-chat-id))
        (= (str cid) release-pilot-chat-id)))
 
-;; Pokédex de espécie (top-level !pokedex/!dex/!pdx) — homologação restrita ao piloto.
-;; Default true: sem allowlist explícita a feature não vaza para outros grupos.
+;; Pokédex de espécie (top-level !pokedex/!dex/!pdx) — GA multigrupo.
+;; Default false: mesma feature em qualquer chat autorizado. Piloto via env.
 ;; !pk pokedex (coleção pessoal) NÃO usa este gate.
 (def pokedex-species-pilot-only?
-  (= "true" (str/lower-case (str/trim (env "POKEDEX_SPECIES_PILOT_ONLY" "true")))))
+  (= "true" (str/lower-case (str/trim (env "POKEDEX_SPECIES_PILOT_ONLY" "false")))))
 (def pokedex-species-pilot-chat-id
   (let [raw (env "POKEDEX_SPECIES_PILOT_CHAT_ID" "")]
     (if (str/blank? raw) release-pilot-chat-id raw)))
@@ -307,8 +302,8 @@
          (not (str/blank? pokedex-species-pilot-chat-id))
          (= (str cid) pokedex-species-pilot-chat-id))))
 
-;; M7.7 — staging/dev com Platform Datomic + Pokémon JVM: sem boot Cassandra.
-;; Produção nunca entra aqui (adapters forçados a cassandra/legacy).
+;; M7.7 — Platform Datomic + Pokémon JVM: sem boot Cassandra.
+;; Em cutover A6 (produção com adapters explícitos) também aplica.
 (def cassandra-boot-enabled?
   (not (and platform-datomic-enabled? pokemon-jvm-enabled?)))
 

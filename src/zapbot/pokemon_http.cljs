@@ -1871,9 +1871,10 @@
                             poke (when ficha (.-pokemon ficha))
                             img (when poke
                                   (render-seguro! ctx "pokemon_jvm_media_ficha"
-                                    #(.renderSpriteCard jvm-media poke
+                                    #(.renderPokemonPortraitCard jvm-media poke
                                                         #js {:filename "ficha-ativo.png"
-                                                             :size 320})))]
+                                                             :title (str "Nv. " (or (.-nivel poke) (.-level poke) "?"))
+                                                             :subtitle "Pokémon ativo"})))]
                       (envelope-jvm pedido texto img))
 
                     :else
@@ -2228,12 +2229,14 @@
                                            :choice choice}))
                             img (when (.-imagem data)
                                   (render-seguro! ctx "pokemon_jvm_media_starter_ok"
-                                    #(.renderSpriteCard jvm-media
+                                    #(.renderPokemonPortraitCard jvm-media
                                                         #js {:nome (or (.-nome data) (.-species data))
                                                              :imagem (.-imagem data)
-                                                             :nivel 1}
+                                                             :nivel 1
+                                                             :tipos (.-tipos data)}
                                                         #js {:filename "inicial-escolhido.png"
-                                                             :size 280})))]
+                                                             :title "Pokémon inicial"
+                                                             :subtitle "Bem-vindo à jornada!"})))]
                       (envelope-jvm pedido
                                     (.formatStarterChosen jvm-present data
                                                           (str config/prefix "pk"))
@@ -4011,11 +4014,19 @@
                                        (or (:playerId evento) (:player-id evento)))))
                          (enfileirar!
                           (:chatId evento)
-                          #(-> (p/let [_ (when-not (and (string? (:id evento)) (string? (:chatId evento)))
+                          #(-> (p/let [bloqueado? (bloqueio/pokemon-gameplay-bloqueado?
+                                                   (:chatId evento))
+                                       _ (when-not (and (string? (:id evento)) (string? (:chatId evento)))
                                            (throw (erro-contrato "Identidade de evento JVM inválida.")))
-                                       ;; At-least-once: envia, depois ack. Falha entre os dois
-                                       ;; pode reenviar a mesma mensagem (id estável; sem nova op de jogo).
-                                       _ (entregar-evento-jvm! evento)
+                                       ;; Bloqueio admin: ACK sem enviar (não spam; sem penalidade).
+                                       _ (when-not bloqueado?
+                                           (entregar-evento-jvm! evento))
+                                       _ (when bloqueado?
+                                           (log-raid-auto-delivery!
+                                            "raid_auto_delivery_suppressed_blocked"
+                                            {:chatId (:chatId evento)
+                                             :eventId (:id evento)
+                                             :kind (:kind evento)}))
                                        _ (.ackEvent (cliente-jvm!) (:id evento) #js {})]
                                  nil)
                                (p/catch (fn [erro]
@@ -4036,7 +4047,8 @@
 (defn- tick-raid-auto-jvm! []
   (when (and (jvm-configurado?) config/pokemon-raid-auto-tick?)
     (-> (p/let [jvm (cliente-jvm!)
-                _ (.tickRaidAuto jvm #js {})]
+                blocked (clj->js (bloqueio/chats-com-pokemon-bloqueado))
+                _ (.tickRaidAuto jvm #js {:blockedChatIds blocked})]
           nil)
         (p/catch (fn [erro]
                    (js/console.warn "[PokemonJVM] Tick raid-auto falhou:"

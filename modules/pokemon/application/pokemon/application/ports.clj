@@ -189,6 +189,9 @@
   (tick-raid-auto! [this request]
     "Tick recuperável: spawns due + expire lobbies auto. Sem timers em memória.")
 
+  (list-chats-with-starter [this]
+    "Chats com ao menos um save com inicial-escolhido (reconciliação de agenda).")
+
   (list-pokemon-outbox [this limit]
     "Eventos pendentes (acked-at nil), ordem por created-at.")
 

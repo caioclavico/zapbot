@@ -240,7 +240,9 @@ const TIPO_EMOJI = {
 };
 
 function emojiTipo(tipo) {
-  const k = String(tipo || '').toLowerCase().trim();
+  const k = (typeof canonicalTipo === 'function')
+    ? canonicalTipo(tipo)
+    : String(tipo || '').toLowerCase().trim();
   return TIPO_EMOJI[k] || '';
 }
 
@@ -292,6 +294,18 @@ function emojiGolpe(golpe) {
   if (c === 'transform') return '🧬';
   return '❓';
 }
+
+/** Um único emoji principal por golpe: tipo conhecido vence; senão classe. */
+function emojiGolpePrincipal(golpe) {
+  const tipoRaw = golpe && (golpe.tipo || golpe.type);
+  const tipo = (typeof canonicalTipo === 'function')
+    ? canonicalTipo(tipoRaw)
+    : String(tipoRaw || '').toLowerCase().trim();
+  const tipoEmoji = emojiTipo(tipo) || TIPO_EMOJI[tipo] || '';
+  if (tipoEmoji) return tipoEmoji;
+  return emojiGolpe(golpe);
+}
+
 
 function emojiStatus(status) {
   const s = status && (typeof status === 'string' ? status : status.kind || status.id);
@@ -490,10 +504,15 @@ function nomeGolpeUi(golpe, idx) {
 
 function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
   const nome = nomeGolpeUi(golpe, idx);
-  const tipo = (golpe && (golpe.tipo || golpe.type)) || 'normal';
+  const tipoRaw = (golpe && (golpe.tipo || golpe.type)) || 'normal';
+  const tipo = (typeof canonicalTipo === 'function')
+    ? canonicalTipo(tipoRaw)
+    : String(tipoRaw).toLowerCase().trim();
   const classe = (golpe && (golpe.classe || golpe.class)) || 'fisico';
   const especial = classe === 'status' || classe === 'transform';
-  const mult = especial ? 1 : multiplicadorVsTipos(tipo, tiposDefesa, habilidadeDefensor);
+  const tiposDefNorm = (tiposDefesa || []).map((t) =>
+    (typeof canonicalTipo === 'function') ? canonicalTipo(t) : t);
+  const mult = especial ? 1 : multiplicadorVsTipos(tipo, tiposDefNorm, habilidadeDefensor);
   let corpo;
   if (classe === 'transform') {
     corpo = 'copia os golpes do rival';
@@ -512,8 +531,8 @@ function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
   const precisao = golpe.precisao != null ? golpe.precisao : golpe.accuracy;
   const prec = precisao != null ? `, precisão ${precisao}%` : '';
   const mark = mult === 0 ? ' 🚫' : (mult > 1 ? ' 🔥' : (mult < 1 ? ' 😕' : ''));
-  const tipoEmoji = emojiTipo(tipo);
-  const linha = `${idx + 1}. ${emojiGolpe(golpe)}${tipoEmoji ? ` ${tipoEmoji}` : ''} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
+  const emoji = emojiGolpePrincipal(golpe);
+  const linha = `${idx + 1}. ${emoji} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
   if (isExplosionGolpe(golpe) && mult === 0) {
     return `${linha}\n   ⚠️ Sem efeito neste alvo — o Pokémon *não* desmaia se o golpe não causar dano.`;
   }
@@ -2808,11 +2827,10 @@ function formatRaidMoveLines(pokemon, prefix = '!pk', tiposDefesa, habilidadeDef
       && poder > 0;
     // Status/transform válidos: nome + classe — não confundir com ref quebrada (?).
     if (!ofensivo) {
-      const emoji = emojiGolpe(Object.assign({}, g, { classe }));
-      const tipoEmoji = emojiTipo(g.tipo || g.type);
-      return `${i + 1}. ${emoji}${tipoEmoji ? ` ${tipoEmoji}` : ''} *${nome}* — _indisponível na raid_`;
+      const emoji = emojiGolpePrincipal(Object.assign({}, g, { classe }));
+      return `${i + 1}. ${emoji} *${nome}* — _indisponível na raid_`;
     }
-    // Paridade caça: emoji de classe + marca de efetividade vs chefe.
+    // Paridade caça: um emoji principal + marca de efetividade vs chefe.
     const gNorm = classeRaw != null ? g : Object.assign({}, g, { classe: 'fisico' });
     const linha = linhaGolpe(i, gNorm, tiposDefesa || [], habilidadeDefensor);
     return `${linha} → \`${prefix} raid atacar ${i + 1}\``;
@@ -3272,7 +3290,7 @@ function formatRaidAttack(data, prefix = '!pk') {
   const r = (data && data.raid) || {};
   const golpe = (data && (data.golpe || data.move)) || {};
   const nomeGolpe = nomeGolpeUi(golpe, 0);
-  const emojiClasse = emojiGolpe(golpe);
+  const emojiClasse = emojiGolpePrincipal(golpe);
   const mult = data && (data.multiplicador != null ? data.multiplicador : data.effectiveness);
   const eff = effectivenessLine(mult);
   const dano = data && data.dano != null ? Number(data.dano) : null;
@@ -5836,6 +5854,8 @@ module.exports = {
   shouldRenderHatchReveal,
   resolveEggAutoHatchDelivery,
   linhaGolpe,
+  emojiGolpePrincipal,
+  emojiGolpe,
   listIncubators,
   resolveIncubatorSelection,
   assertIncubatorUsable,

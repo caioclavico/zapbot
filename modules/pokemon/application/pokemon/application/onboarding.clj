@@ -1,6 +1,7 @@
 (ns pokemon.application.onboarding
   "M9.6 — kit inicial + escolha do starter (save ativo)."
   (:require [pokemon.application.ports :as ports]
+            [pokemon.application.raid-auto :as raid-auto]
             [pokemon.application.trainer :as trainer]
             [pokemon.application.writer :as writer]
             [pokemon.domain.errors :as err]
@@ -59,13 +60,20 @@
   (when (or (nil? choice) (empty? (str choice)))
     (throw (err/error :invalid_starter {:choice choice})))
   (let [w (writer/freeze-writer store chat-id player-id)
-        result (ports/choose-starter! store w req)]
-    (assoc result
-           :chat-id chat-id
-           :player-id player-id
-           :active-save-id (:save-id w)
-           :fence-generation (:fence-generation w)
-           :status (:status (status store chat-id player-id)))))
+        result (ports/choose-starter! store w req)
+        schedule (when-not (or (:starter-already-chosen result)
+                               (true? (:duplicate result)))
+                   (try
+                     (raid-auto/ensure-schedule-after-onboarding! store chat-id)
+                     (catch Exception _
+                       nil)))]
+    (cond-> (assoc result
+                   :chat-id chat-id
+                   :player-id player-id
+                   :active-save-id (:save-id w)
+                   :fence-generation (:fence-generation w)
+                   :status (:status (status store chat-id player-id)))
+      schedule (assoc :raid-auto-schedule schedule))))
 
 (defn start-journey!
   "ensure + kit (se disponível) + status. Não escolhe starter.
