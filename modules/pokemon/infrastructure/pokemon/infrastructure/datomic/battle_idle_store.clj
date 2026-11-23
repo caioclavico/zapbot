@@ -237,11 +237,16 @@
          :result {:operation-id op-id :duplicate true :raid-id raid-id
                   :already-expired? true}}
 
-        ;; Defesa em profundidade: nunca matar lobby via idle.
+        ;; Nunca encerrar vitória/derrota/raid já finalizada como idle.
         (= "inscricoes" fase)
         {:tx []
          :result {:operation-id op-id :duplicate false :raid-id raid-id
                   :skipped "lobby" :already-expired? false}}
+
+        (not= "combate" fase)
+        {:tx []
+         :result {:operation-id op-id :duplicate false :raid-id raid-id
+                  :skipped "not-combat" :already-expired? true}}
 
         :else
         (let [chat-id (:raid/chat-id re)
@@ -295,7 +300,6 @@
                   seq-break (when (and culprit culprit-save (not already?))
                               (sequencia-break-tx db chat-id culprit culprit-save))
                   core [{:raid/id raid-id
-                         :raid/fase "idle-timeout"
                          :raid/idle-expired? true}
                         {:operation-receipt/id op-id
                          :operation-receipt/kind "raid-idle-expire"
@@ -309,7 +313,9 @@
                                   :culprit-present (boolean culprit)
                                   :rule "global-idle"
                                   :timeout-seconds timeout-s})}]
-                  cas (cond-> []
+                  ;; CAS de fase protege vitória/derrota que finalizou após o read.
+                  ;; Não converter uma raid vencida em timeout, nem zerar streak.
+                  cas (cond-> [[:db/cas [:raid/id raid-id] :raid/fase "combate" "idle-timeout"]]
                         (not (true? (:raid/idle-expired? re)))
                         (conj [:db/cas [:raid/id raid-id] :raid/idle-expired?
                                (:raid/idle-expired? re) true])
