@@ -58,3 +58,18 @@
     (boolean
      (or (:bot? info)
          (contains? (:comandos info #{}) cmd)))))
+
+(defn pokemon-gameplay-bloqueado?
+  "Bot inteiro ou comando pokemon (inclui !bloquear jogos) nesse chat."
+  [estado cid]
+  (comando-bloqueado? estado cid "pokemon"))
+
+(defn chats-com-pokemon-bloqueado
+  "Chat-ids com Pokémon/jogos/bot bloqueados."
+  [estado]
+  (->> (or estado {})
+       (filter (fn [[cid _]] (pokemon-gameplay-bloqueado? estado cid)))
+       (map (fn [[cid _]] (str cid)))
+       sort
+       vec))
+

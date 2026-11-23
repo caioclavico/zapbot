@@ -57,6 +57,14 @@ Qualquer Pokémon que vence com Explosion retorna à equipe com **HP atual = 0**
 | Desistir | `!pk sair` |
 | Ajuda | `!pk ajuda cacar` |
 
+
+> **Atualização de regra (23/11/2026, PR #132):** a sequência é exclusiva de capturas
+> selvagens. Captura concluída incrementa; derrota na caçada, fuga final,
+> liberação, abandono e expiração por inatividade zeram a sequência atual.
+> Uma tentativa fracassada enquanto o encontro permanece aberto não zera.
+> **Raids, ginásios e PvP não zeram a sequência**, inclusive por timeout.
+> Regra aplicada somente a eventos futuros; nenhum backfill de saves.
+
 ## 3. Sequência — recompensas unitárias (`streak-unit-v1`)
 
 Valores = **total da captura** na faixa (não acumulam base + bônus).
@@ -72,7 +80,8 @@ Valores = **total da captura** na faixa (não acumulam base + bônus).
 
 - Sem recompensa-base de moedas.
 - PE de captura/batalha credita `:save/vitorias-treinador` (componente do XP treinador).
-- Fuga/falha involuntária **não** zera sequência.
+- Falha de Pokébola **com encontro ainda aberto** não zera a sequência.
+- **Fuga final sem captura, derrota selvagem e timeout de caça zeram a sequência atual**; o recorde histórico é preservado.
 - Liberar / desistir / bolsa cheia **zeram**.
 - Raids/ginásios/PvP não alteram a sequência.
 - Um encontro incrementa no máximo uma vez; recibos idempotentes.
@@ -88,7 +97,7 @@ Valores = **total da captura** na faixa (não acumulam base + bônus).
 | 1ª captura | XP raridade+bônus (~3) + 💰≥2 | +2 XP +1 PE +0 💰 |
 | 10ª captura | raridade + seq + 💰~12 | +8 XP +5 PE +3 💰 |
 | Liberar / bolsa cheia | seq intacta (bolsa) | seq → 0 |
-| Fuga involuntária | seq → 0 | seq preservada |
+| Fuga final sem captura | seq → 0 | seq → 0 (política atualizada) |
 
 ## 5. Simulação (10 000 encontros)
 

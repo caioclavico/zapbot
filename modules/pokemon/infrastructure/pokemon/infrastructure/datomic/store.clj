@@ -1780,6 +1780,31 @@
                     (throw (err/error :writer_fence_conflict
                                       {:cause (ex-message ex) :save-id save-id}))))))))))))
 
+(defn- defer-due-for-admin-block!
+  "Chat due mas bloqueado: avança next-at (sem spawn/outbox) para não
+   enfileirar catch-up ao desbloquear."
+  [conn chat-id agora]
+  (let [db (d/db conn)
+        schedule (or (load-schedule db chat-id)
+                     (raid-auto/default-schedule chat-id agora))
+        due (long (:next-at schedule 0))
+        next-at' (raid-auto/advance-next-at schedule (max due (long agora)))
+        expected-rev (long (:revision schedule 0))
+        s' (assoc schedule :next-at next-at' :revision (inc expected-rev))
+        built (raid-store/build-upsert-schedule-tx
+               {:schedule s' :expected-revision expected-rev})]
+    (try
+      (d/transact conn {:tx-data (:tx built)})
+      (raid-auto-log/emit!
+       :raid_auto_skip_admin_block
+       {:chat-id chat-id :due-at due :next-at next-at' :result "deferred"})
+      {:acao :skip-admin-block :chat-id chat-id :due-at due :next-at next-at'
+       :deferred true}
+      (catch Exception ex
+        (if (err/conflict? ex)
+          {:acao :skip-admin-block :chat-id chat-id :duplicate true}
+          (throw ex))))))
+
 (defrecord DatomicTrainerStore [conn]
   mission-queries/MissionQueries
   (read-missions [_ chat-id player-id save-id options]
@@ -2098,9 +2123,9 @@
                                    :registro (assoc registro :collection-index idx)}})
 
                        (:fugiu? attempt)
-                       ;; Fuga involuntária: não zera sequência.
+                       ;; Fuga encerra encontro sem captura: zera sequência selvagem.
                        (let [rew (capture/recompensa-pos-captura
-                                  {:sequencia-nova seq-atual
+                                  {:sequencia-nova 0
                                    :capturou? false})
                              ativo-idx (min (long (:ativo-index save-m 0))
                                             (max 0 (dec (count colecao))))
@@ -2108,7 +2133,8 @@
                              xp-part (when (and ativo (pos? (:xp rew)))
                                        (apply-pokemon-xp-tx ativo (:xp rew)))
                              tx (cond-> (into base-tx
-                                              [[:db/add [:save/key sk] :save/maior-sequencia-capturas
+                                              [[:db/add [:save/key sk] :save/sequencia-capturas 0]
+                                               [:db/add [:save/key sk] :save/maior-sequencia-capturas
                                                 (max maior seq-atual)]])
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
@@ -2338,9 +2364,9 @@
                                           :encounter next-state})})
 
                        (:fugiu? attempt)
-                       ;; Fuga involuntária: NÃO zera sequência (política A6 streak).
+                       ;; Fuga encerra encontro sem captura: zera sequência selvagem.
                        (let [rew (capture/recompensa-pos-captura
-                                  {:sequencia-nova seq-atual
+                                  {:sequencia-nova 0
                                    :capturou? false})
                              fighter-idx (long (or (:collection-index state)
                                                    (get-in state [:indices-ativos :x])
@@ -2355,7 +2381,8 @@
                                        (apply-pokemon-xp-tx fighter (:xp rew)
                                                             {:hp-atual-override fighter-hp}))
                              tx (cond-> (into base-tx
-                                              [[:db/add [:save/key sk] :save/maior-sequencia-capturas
+                                              [[:db/add [:save/key sk] :save/sequencia-capturas 0]
+                                               [:db/add [:save/key sk] :save/maior-sequencia-capturas
                                                 (max maior seq-atual)]])
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
@@ -3452,6 +3479,16 @@
                          [[:db/add [:save/key sk] :save/sequencia-capturas 0]
                           [:db/add [:save/key sk] :save/maior-sequencia-capturas
                            (max maior seq-atual)]]))
+                     ;; Derrota ou fuga durante combate selvagem encerram sem captura.
+                     seq-fim-sem-captura-tx
+                     (when (and (= :wild (:kind next-state))
+                                (#{:lose :flee} (:outcome next-state))
+                                (not (:active? next-state)))
+                       (let [seq-atual (long (:sequencia-capturas save-m 0))
+                             maior (long (:maior-sequencia-capturas save-m 0))]
+                         [[:db/add [:save/key sk] :save/sequencia-capturas 0]
+                          [:db/add [:save/key sk] :save/maior-sequencia-capturas
+                           (max maior seq-atual)]]))
                      ;; Writer canônico de :pokemon/hp-atual nesta TX de turno.
                      hp-sync (if gym?
                                (gym-battle-hp-txs colecao next-state)
@@ -3554,6 +3591,7 @@
                                       (or hp-sync [])
                                       (or pe-batalha-tx [])
                                       (or seq-liberar-tx [])
+                                      (or seq-fim-sem-captura-tx [])
                                       (or clear-active [])
                                       (or (:tx xp-part) [])
                                       (mapcat :tx exp-share-parts)
@@ -4041,11 +4079,37 @@
                               {:chat-id chat-id}))
             (throw ex))))))
 
+  (list-chats-with-starter [_]
+    (let [db (d/db conn)
+          chats (->> (d/q '[:find ?chat
+                            :where
+                            [?s :save/inicial-escolhido true]
+                            [?s :save/player ?p]
+                            [?p :player/chat-id ?chat]]
+                          db)
+                     (map first))]
+      (vec (sort (set chats)))))
+
   (tick-raid-auto! [_ request]
     (let [agora (long (or (:agora request) (System/currentTimeMillis)))
           limit (long (or (:limit request) 32))
           chat-filter (:chat-id request)
+          blocks-ok? (not (false? (:blocks-ok? request)))
+          blocked (set (map str (or (:blocked-chat-ids request) [])))
+          blocked? (fn [cid] (contains? blocked (str cid)))]
+      (if-not blocks-ok?
+        {:enabled true
+         :agora agora
+         :fail-closed true
+         :planned []
+         :spawned []
+         :deferred-admin-block []
+         :reminded []
+         :suppressed []
+         :expired []}
+        (let [
           ;; 1) Expire lobbies vencidos antes de spawn (libera ponteiro).
+          ;;    Chat bloqueado: não expira lobby (suspend/resume).
           expired
           (mapv
            (fn [chat]
@@ -4053,9 +4117,16 @@
                                        [:chat-active-raid/chat-id chat])
                            rid (when (present? ptr)
                                  (:chat-active-raid/raid-id ptr))]
-                       (when rid (load-raid (d/db conn) rid)))]
-               (if (and r (= "inscricoes" (str (:fase r)))
-                        (<= (long (:expira r 0)) agora))
+                       (when rid (load-raid (d/db conn) rid)))
+                   blocked-chat? (blocked? chat)]
+               (cond
+                 ;; Bloqueado: não expira lobby (suspend/resume cuida dos prazos).
+                 (and r (= "inscricoes" (str (:fase r))) blocked-chat?)
+                 {:chat-id chat :acao :suspended-admin-block
+                  :raid-id (:raid-id r) :due-at (:expira r) :origem (:origem r)}
+
+                 (and r (= "inscricoes" (str (:fase r)))
+                      (<= (long (:expira r 0)) agora))
                  (let [txt (if (= "auto" (str (:origem r)))
                              (let [preview (raid-domain/expirar-inscricoes r agora)]
                                (case (:acao preview)
@@ -4089,6 +4160,8 @@
                       {:chat-id chat :raid-id (:raid-id r)
                        :due-at (:expira r) :result "cancelada"}))
                    row)
+
+                 :else
                  {:chat-id chat :acao :noop})))
            (active-raid-chats (d/db conn)))
           ;; 2) Lembretes órfãos (enabled:false / nextAt mudou) → ack sem entrega.
@@ -4096,9 +4169,10 @@
           db1 (d/db conn)
           ;; 3) 12.7.3 — intent do slot atual antes dos ovos (sem spawn).
           intent-chats
-          (if (string? chat-filter)
-            [chat-filter]
-            (intent-planning-candidate-chats db1 agora limit))
+          (vec (remove blocked?
+                       (if (string? chat-filter)
+                         [chat-filter]
+                         (intent-planning-candidate-chats db1 agora limit))))
           planned (mapv #(ensure-intent-for-chat! conn % agora) intent-chats)
           db1b (d/db conn)
           ;; 4) Lembretes T-30/15/5 (antes do spawn oficial).
@@ -4112,22 +4186,28 @@
                 [chat-filter]
                 []))
             (reminder-candidate-chats db1b agora limit))
+          reminder-chats (vec (remove blocked? reminder-chats))
           reminded (vec (mapcat #(emit-reminders-for-chat! conn % agora)
                                 reminder-chats))
           db2 (d/db conn)
           ;; 5) Spawns due.
-          due (if (string? chat-filter)
-                (let [s (load-schedule db2 chat-filter)]
-                  (if (and s (raid-auto/due? s agora)) [chat-filter] []))
-                (due-schedule-chats db2 agora limit))
+          due-all (if (string? chat-filter)
+                    (let [s (load-schedule db2 chat-filter)]
+                      (if (and s (raid-auto/due? s agora)) [chat-filter] []))
+                    (due-schedule-chats db2 agora limit))
+          due-blocked (vec (filter blocked? due-all))
+          due (vec (remove blocked? due-all))
+          deferred (mapv #(defer-due-for-admin-block! conn % agora) due-blocked)
           spawned (mapv #(spawn-auto-for-chat! conn % agora) due)]
       {:enabled true
        :agora agora
+       :fail-closed false
        :planned (filterv #(not= :noop (:acao %)) planned)
        :spawned spawned
+       :deferred-admin-block deferred
        :reminded reminded
        :suppressed suppressed
-       :expired (filterv #(not= :noop (:acao %)) expired)}))
+       :expired (filterv #(not= :noop (:acao %)) expired)}))))
   (list-pokemon-outbox [_ limit]
     (let [db (d/db conn)
           rows (->> (d/q '[:find ?id ?created
@@ -5450,6 +5530,12 @@
 
   (expire-idle-battles! [_ opts]
     (battle-idle-store/expire-due! conn opts))
+
+  (suspend-chat-gameplay! [_ chat-id agora]
+    (battle-idle-store/suspend-chat-gameplay! conn chat-id agora))
+
+  (resume-chat-gameplay! [_ chat-id agora]
+    (battle-idle-store/resume-chat-gameplay! conn chat-id agora))
 
   (list-battle-idle-notifications [_ opts]
     (battle-idle-store/list-pending-notifications (d/db conn) (or opts {})))

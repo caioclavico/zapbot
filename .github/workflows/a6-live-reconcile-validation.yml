@@ -328,7 +328,7 @@ jobs:
         run: |
           node --test test/a6-maintenance.test.cjs \
             test/pokemon-jvm-joy-eggs.test.cjs \
-            test/pokemon-jvm-present.test.cjs
+            test/pokemon-jvm-present.test.cjs test/pokemon-multigroup-unification.test.cjs
 
 
   validate-jvm-mt-move:
@@ -401,7 +401,7 @@ jobs:
           node --test test/a6-maintenance.test.cjs \
             test/pokemon-mt-a6.test.cjs \
             test/pokemon-a6-ux-help-coins.test.cjs \
-            test/pokemon-jvm-present.test.cjs \
+            test/pokemon-jvm-present.test.cjs test/pokemon-multigroup-unification.test.cjs \
             test/pokemon-jvm-egg-cards.test.cjs \
             test/pokemon-jvm-joy-eggs.test.cjs
 
@@ -471,4 +471,4 @@ jobs:
 
       - name: Node maintenance + Pokémon presenters
         run: |
-          node --test test/a6-maintenance.test.cjs test/pokemon-jvm-present.test.cjs
+          node --test test/a6-maintenance.test.cjs test/pokemon-jvm-present.test.cjs test/pokemon-multigroup-unification.test.cjs

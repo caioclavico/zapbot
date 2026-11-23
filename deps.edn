@@ -275,6 +275,13 @@
               "-XX:+UseG1GC"
               "-Dodisseu.smoke.heap-max-mb=256"]}
 
+  :test-multigroup-unification-a6
+  {:main-opts ["-m" "odisseu.smoke.multigroup-unification-a6"]
+   :jvm-opts ["-Xms64m"
+              "-Xmx256m"
+              "-XX:+UseG1GC"
+              "-Dodisseu.smoke.heap-max-mb=256"]}
+
   :test-raid-homolog-fase4
   {:main-opts ["-m" "odisseu.smoke.raid-homolog-fase4"]
    :jvm-opts ["-Xms64m"

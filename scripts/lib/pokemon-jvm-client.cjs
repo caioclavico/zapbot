@@ -418,6 +418,12 @@ function createClient(config = {}) {
     acceptPvp: (body) => mutateOnce('/v1/pvp/accept', body),
     cancelPvp: (body) => mutateOnce('/v1/pvp/cancel', body),
     confirmPvpTurn: (body) => mutateOnce('/v1/pvp/turn', body),
+    suspendChatGameplay: (body = {}) =>
+      mutateOnce('/v1/battles/suspend-chat', body),
+    resumeChatGameplay: (body = {}) =>
+      mutateOnce('/v1/battles/resume-chat', body),
+    reconcileRaidSchedules: (body = {}) =>
+      mutateOnce('/v1/raids/auto/reconcile-starters', body || {}),
     expireIdleBattles: (body = {}) =>
       mutateOnce('/v1/battles/expire-idle', body),
     close: () => agent.destroy()

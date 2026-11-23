@@ -123,14 +123,19 @@
       (is (= 1 (long (get-in r [:recompensa :pe] 0))))
       (is (nil? (battle-app/active-battle s chat player))))))
 
-(deftest captura-fuga-preserva-sequencia
-  "Fuga involuntária NÃO zera a sequência (política streak A6)."
+(deftest captura-fuga-final-quebra-sequencia
+  "Fuga que encerra o encontro SEM captura zera a sequência atual, não o recorde."
   (let [s (fresh-store! "enc-flee")
         chat "chat-flee"
         player "misty"]
     (boot! s chat player)
-    ;; Sequência prévia via captura bem-sucedida anterior não é pré-requisito:
-    ;; basta assertar que fuga não força 0 a partir do estado atual.
+    ;; Captura prévia comprova que o reset parte de uma sequência positiva.
+    (force-win! s chat player "bid-flee-seed")
+    (is (true? (:capturou? (capture-app/attempt-encounter-capture!
+                            s chat player
+                            {:operation-id "cap-flee-seed"
+                             :battle-id "bid-flee-seed"
+                             :bola "pokebola" :roll 0}))))
     (force-win! s chat player "bid-flee")
     (let [seq-antes (long (:sequencia-capturas (ports/get-save s chat player "a") 0))
           r (capture-app/attempt-encounter-capture!
@@ -139,12 +144,23 @@
               :battle-id "bid-flee"
               :bola "pokebola"
               :roll 99
-              :fuga-roll 0})]
+              :fuga-roll 0})
+          save (ports/get-save s chat player "a")]
+      (is (= 1 seq-antes))
       (is (false? (:capturou? r)))
       (is (true? (:fugiu? r)))
-      (is (= seq-antes (:sequencia-capturas (ports/get-save s chat player "a"))))
-      (is (= 1 (count (ports/list-collection s chat player "a"))))
-      (is (nil? (battle-app/active-battle s chat player))))))
+      (is (= 0 (:sequencia-capturas save)))
+      (is (= 1 (:maior-sequencia-capturas save)))
+      (is (= 2 (count (ports/list-collection s chat player "a"))))
+      (is (nil? (battle-app/active-battle s chat player)))
+      ;; Retry do mesmo operationId não restaura nem altera a sequência.
+      (let [retry (capture-app/attempt-encounter-capture!
+                   s chat player
+                   {:operation-id "cap-flee"
+                    :battle-id "bid-flee"
+                    :bola "pokebola" :roll 99 :fuga-roll 0})]
+        (is (true? (:duplicate retry)))
+        (is (zero? (:sequencia-capturas (ports/get-save s chat player "a"))))))))
 
 (deftest falha-mantem-encontro-e-consome-bola
   (let [s (fresh-store! "enc-miss")

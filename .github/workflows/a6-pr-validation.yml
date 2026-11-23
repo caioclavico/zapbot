@@ -64,6 +64,8 @@ jobs:
       - run: npm test
       - name: Hotfix PI / raid isolation (present + scoped routing)
         run: node --test test/pokemon-hotfix-pi-raid-isolation.test.cjs test/pokemon-hotfix-potion-http-contract.test.cjs
+      - name: Unificação multigrupo A6 (emoji, descrições, PNG 960x540)
+        run: npm run test:multigroup-a6
       - run: npm run test:http
       - run: npm run build
 
@@ -189,6 +191,10 @@ jobs:
         run: |
           clojure -M -e "(require 'clojure.test 'pokemon.tests.move-effects-capture-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.move-effects-capture-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
 
+      - name: Política de sequência selvagem — captura, fuga, derrota e raid
+        run: |
+          clojure -M -e "(require 'clojure.test 'pokemon.tests.encounter-m44-test) (let [r (clojure.test/run-tests 'pokemon.tests.encounter-m44-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
+
       - name: M3.4 batalha
         run: clojure -M:test-m3-battle
 
@@ -214,6 +220,9 @@ jobs:
       - name: PR #131 — liberar captura e skip de turno (domínio + Datomic isolado)
         run: |
           clojure -M -e "(require 'clojure.test 'pokemon.tests.raid-release-turn-skip-a6-test 'pokemon.tests.raid-release-datomic-a6-test) (let [r (apply clojure.test/run-tests '[pokemon.tests.raid-release-turn-skip-a6-test pokemon.tests.raid-release-datomic-a6-test])] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
+
+      - name: Unificação multigrupo A6 (agenda, bloqueios, isolamento)
+        run: clojure -M:test-multigroup-unification-a6
 
       - name: Identidade do storage desconhecida não abre cliente
         run: clojure -M -e "(require 'clojure.test 'pokemon.tests.live-storage-guard-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.live-storage-guard-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"

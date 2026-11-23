@@ -189,6 +189,9 @@
   (tick-raid-auto! [this request]
     "Tick recuperável: spawns due + expire lobbies auto. Sem timers em memória.")
 
+  (list-chats-with-starter [this]
+    "Chats com ao menos um save com inicial-escolhido (reconciliação de agenda).")
+
   (list-pokemon-outbox [this limit]
     "Eventos pendentes (acked-at nil), ordem por created-at.")
 
@@ -340,6 +343,12 @@
 
   (expire-idle-battles! [this opts]
     "Sweeper: encerra batalhas/raids com idle-expires-at vencido (idempotente).")
+
+  (suspend-chat-gameplay! [this chat-id agora]
+    "Congela idle/turno/lobby do chat sob bloqueio admin (idempotente).")
+
+  (resume-chat-gameplay! [this chat-id agora]
+    "Retoma prazos após desbloqueio (CAS + recibo; sem reabrir encerradas).")
 
   (list-battle-idle-notifications [this opts]
     "Outbox de avisos de inatividade/leave ainda não ackados.")

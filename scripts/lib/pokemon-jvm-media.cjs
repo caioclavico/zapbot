@@ -1671,10 +1671,79 @@ async function renderHatchRevealCard(data, { filename = 'ovo-chocou.png' } = {})
   }
 }
 
+
+/**
+ * Cartão 16:9 canônico para Pokémon individual (inicial / tm ativo / ficha).
+ * 960×540 — proporção estável no balão do WhatsApp; sprite centralizado.
+ */
+async function renderPokemonPortraitCard(pokemon, {
+  filename = 'pokemon-retrato.png',
+  width = 960,
+  height = 540,
+  title = null,
+  subtitle = null
+} = {}) {
+  try {
+    if (!pokemon) return null;
+    const nome = escapeXml(
+      pokemon.nome || pokemon.nickname || pokemon.species || 'Pokémon'
+    );
+    const nivel = pokemon.nivel != null ? Number(pokemon.nivel)
+      : (pokemon.level != null ? Number(pokemon.level) : null);
+    const tipos = escapeXml(tiposPt(pokemon.tipos || pokemon.types));
+    const titulo = escapeXml(title || (nivel != null ? `Nv. ${nivel}` : 'Pokémon'));
+    const sub = escapeXml(subtitle || tipos || '');
+    const spriteMax = 300;
+    const { buffer, tamanho } = await spriteProporcional(pokemon, spriteMax);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">`
+      + `<defs>`
+      + `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">`
+      + `<stop offset="0%" stop-color="#0f172a"/>`
+      + `<stop offset="55%" stop-color="#1e293b"/>`
+      + `<stop offset="100%" stop-color="#0f172a"/>`
+      + `</linearGradient>`
+      + `<radialGradient id="glow" cx="50%" cy="48%" r="42%">`
+      + `<stop offset="0%" stop-color="#38bdf8" stop-opacity="0.35"/>`
+      + `<stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>`
+      + `</radialGradient>`
+      + `</defs>`
+      + `<rect width="${width}" height="${height}" fill="url(#bg)"/>`
+      + `<ellipse cx="${width / 2}" cy="${height * 0.52}" rx="280" ry="200" fill="url(#glow)"/>`
+      + `<rect x="36" y="28" width="${width - 72}" height="64" rx="18" fill="#020617cc"/>`
+      + `<text x="${width / 2}" y="70" text-anchor="middle" font-family="Arial Black, Helvetica, sans-serif"`
+      + ` font-size="34" fill="#f8fafc">${nome}</text>`
+      + `<text x="${width / 2}" y="${height - 56}" text-anchor="middle" font-family="sans-serif"`
+      + ` font-size="26" font-weight="700" fill="#fbbf24">${titulo}</text>`
+      + (sub
+        ? `<text x="${width / 2}" y="${height - 24}" text-anchor="middle" font-family="sans-serif"`
+          + ` font-size="20" fill="#94a3b8">${sub}</text>`
+        : '')
+      + `</svg>`;
+    const left = Math.max(0, Math.floor((width - tamanho) / 2));
+    const top = Math.max(100, Math.floor((height - tamanho) / 2) - 12);
+    const buf = await sharp(Buffer.from(svg))
+      .composite([{ input: buffer, left, top }])
+      .png()
+      .toBuffer();
+    return {
+      base64: buf.toString('base64'),
+      mimeType: 'image/png',
+      filename,
+      width,
+      height
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] portrait:', err.message || err);
+    return null;
+  }
+}
+
 module.exports = {
   renderHuntArena,
   renderCaptureBall,
   renderSpriteCard,
+  renderPokemonPortraitCard,
   renderPokedexCard,
   renderStartersCard,
   renderTeamGrid,

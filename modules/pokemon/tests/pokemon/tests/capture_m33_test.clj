@@ -123,6 +123,11 @@
         chat "chat-c2"
         player "misty"]
     (boot! s chat player)
+    (is (true? (:capturou?
+                (capture-app/attempt-capture!
+                 s chat player
+                 {:operation-id "cap-flee-seed" :pokemon magikarp
+                  :bola "pokebola" :roll 0}))))
     (let [seq-antes (long (:sequencia-capturas (ports/get-save s chat player "a") 0))
           r (capture-app/attempt-capture!
              s chat player
@@ -134,8 +139,10 @@
               :fuga-roll 0})]
       (is (false? (:capturou? r)))
       (is (true? (:fugiu? r)))
-      (is (= seq-antes (:sequencia-capturas (ports/get-save s chat player "a"))))
-      (is (= 0 (count (ports/list-collection s chat player "a")))))))
+      (is (= 1 seq-antes))
+      (is (= 0 (:sequencia-capturas (ports/get-save s chat player "a"))))
+      (is (= 1 (:maior-sequencia-capturas (ports/get-save s chat player "a"))))
+      (is (= 1 (count (ports/list-collection s chat player "a")))))))
 
 (deftest evolucao-consome-item-preserva-shiny
   (let [s (fresh-store! "evo-1")

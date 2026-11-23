@@ -585,6 +585,14 @@
     (throw (err/error :raid_not_creator {:player-id player-id})))
   (assoc raid :fase "cancelada" :expira (long agora)))
 
+(defn cancelar-sistema
+  "Cancela lobby por política administrativa (bloqueio jogos/pokemon).
+   Sem culpado; não quebra sequência."
+  [raid agora]
+  (when-not (= "inscricoes" (str (:fase raid)))
+    (throw (err/error :raid_cannot_cancel {:fase (:fase raid)})))
+  (assoc raid :fase "cancelada" :expira (long agora)))
+
 (defn expirar-inscricoes
   "Sem timer: se prazo passou em inscricoes, cancela (< min) ou inicia combate.
    Retorna {:raid :acao} onde acao é :noop|:cancelada|:combate."
