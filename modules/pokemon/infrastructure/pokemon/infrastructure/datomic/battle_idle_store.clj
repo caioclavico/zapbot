@@ -443,15 +443,25 @@
                                       pl (d/pull db '[:player/player-id] [:player/key pk])
                                       pid (:player/player-id pl)
                                       snap (or (edn-read (:raid-participant/pokemon-edn p)) {})
+                                      ;; O snapshot v2 guarda :active/:party no bundle.
+                                      ;; Não passar o bundle inteiro como Pokémon para o painel.
+                                      bundle? (boolean (:__raid-party-v1 snap))
+                                      party (if bundle? (vec (or (:party snap) [])) [])
+                                      active-index (long (if bundle? (:active-idx snap 0) 0))
+                                      pokemon (if bundle?
+                                                (or (:active snap)
+                                                    (:pokemon (nth party active-index nil))
+                                                    {})
+                                                snap)
                                       hp (long (or (:raid-participant/hp p)
                                                    (:hp snap) 0))]
                                   [pid {:hp hp
                                         :nome (:raid-participant/nome p)
-                                        :pokemon snap
+                                        :pokemon pokemon
                                         :save-id (:raid-participant/save-id p)
                                         :fence-generation (:raid-participant/fence-generation p)
-                                        :party (or (:party snap) [])
-                                        :active-party-idx (long (:active-party-idx snap 0))
+                                        :party party
+                                        :active-party-idx active-index
                                         :collection-index (long (:raid-participant/collection-index p 0))}])))
                          (into {}))
               ordem (or (edn-read (:raid/ordem-edn re)) [])
