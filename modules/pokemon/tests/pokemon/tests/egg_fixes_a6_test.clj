@@ -30,6 +30,13 @@
   (trainer/create-trainer! s {:chat-id chat :player-id player})
   (adv/ensure-account! s chat player))
 
+(defn- com-ovo-incubando
+  ([st] (com-ovo-incubando st 1000000))
+  ([st t0]
+   (let [oid (str "e-pi-" t0)
+         o (eggs/novo-ovo oid :comum t0 "pidgey")]
+     (-> st (eggs/conceder-ovo o) (eggs/incubar oid "permanente" t0 "a" 0)))))
+
 (deftest hatch-canonico-por-especie
   (doseq [[sp tipos-esperados]
           [["bulbasaur" #{"grass" "poison"}]
@@ -170,11 +177,11 @@
 
 (deftest detect-pvp-ambos-jogadores
   (let [win (egg-activity/apply-activity
-             (eggs/estado-inicial)
+             (com-ovo-incubando (eggs/estado-inicial) 9000000)
              {:event-id "egg-act:pvp:b1:ash" :activity :pvp-victory
               :opponent-id "misty" :agora 9000000})
         lose (egg-activity/apply-activity
-              (eggs/estado-inicial)
+              (com-ovo-incubando (eggs/estado-inicial) 9000001)
               {:event-id "egg-act:pvp:b1:misty" :activity :pvp-defeat
                :opponent-id "ash" :agora 9000000})]
     (is (= 20 (:pi-granted win)))
@@ -194,13 +201,13 @@
   ;; Participação 20; vitória +10 → 30 flat (tier só afeta ovo/incubadora).
   (doseq [cat ["raro" "epico" "lendario" "mitico"]]
     (let [r (egg-activity/apply-activity
-             (eggs/estado-inicial)
+             (com-ovo-incubando (eggs/estado-inicial) (+ 8000000 (hash cat)))
              {:event-id (str "raid-" cat) :activity :raid-victory
               :raid-category cat :agora 8000000})]
       (is (= 30 (:pi-granted r)) cat)))
   (is (= 20 (:pi-granted
              (egg-activity/apply-activity
-              (eggs/estado-inicial)
+              (com-ovo-incubando (eggs/estado-inicial) 8000099)
               {:event-id "raid-lose" :activity :raid-defeat
                :agora 8000000})))))
 
@@ -210,9 +217,19 @@
         chat "c-receipts"
         player "ash"
         account [:adventure-account/key (id/adventure-account-key chat player)]
-        writer {:chat-id chat :player-id player}]
+        writer {:chat-id chat :player-id player}
+        t0 1000000]
     (boot! s chat player)
-    (let [legacy {:incubators (:incubators (eggs/estado-inicial))}
+    ;; Ovo real incubando (hotfix A6: PI só com incubação ativa).
+    (adv/grant-egg! s chat player
+                    {:operation-id "g-limit" :egg-id "e-limit" :category :comum
+                     :species "pidgey" :agora t0})
+    (adv/incubate! s chat player
+                   {:operation-id "i-limit" :egg-id "e-limit"
+                    :incubator-id "permanente" :agora t0})
+    (let [acc0 (adv/get-account s chat player)
+          legacy {:incubators (:incubators acc0)
+                  :receipts #{}}
           ids (map #(str "egg-act:wild-win:" %) (repeatedly 100 random-uuid))
           legacy (last (take-while #(< (count (pr-str %)) 4000)
                                    (reductions #(update %1 :receipts (fnil conj #{}) %2)

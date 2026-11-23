@@ -273,12 +273,28 @@
         {:keys [dia clima periodo area-padrao areas-disponiveis especies-por-bioma]}
         (mundo/rotacao instant tz)
         area (if (and area-pedida (not (str/blank? (str area-pedida))))
-               (or (let [id (:id (mundo/obter-area area-pedida))]
-                     (some #(when (= id (:id %)) %) areas-disponiveis))
-                   (throw (err/error :area_unavailable
+               (let [resolved (mundo/obter-area area-pedida)
+                     id (some-> resolved :id)
+                     aberta (when id
+                              (some #(when (= id (:id %)) %) areas-disponiveis))]
+                 (cond
+                   (nil? resolved)
+                   (throw (err/error :area_unknown
                                      {:pedido area-pedida
                                       :dia dia
-                                      :resumo-texto (mundo/texto-resumo instant tz)})))
+                                      :periodo (:nome periodo)
+                                      :areas-disponiveis (mapv :id areas-disponiveis)
+                                      :resumo-texto (mundo/texto-resumo instant tz)}))
+                   (nil? aberta)
+                   (throw (err/error :area_unavailable
+                                     {:pedido area-pedida
+                                      :area-id id
+                                      :area-nome (:nome resolved)
+                                      :dia dia
+                                      :periodo (:nome periodo)
+                                      :areas-disponiveis (mapv :id areas-disponiveis)
+                                      :resumo-texto (mundo/texto-resumo instant tz)}))
+                   :else aberta))
                area-padrao)
         roll-t (long (or roll-tipos (rand-int 100)))
         roll-s (long (or roll-surto (rand-int 100)))

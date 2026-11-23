@@ -1703,7 +1703,8 @@ function formatError(err) {
     PVP_NOT_PARTICIPANT: '🚫 Você não participa desta batalha.',
     PVP_CANCEL_FORBIDDEN: '🚫 Só quem abriu o desafio pode cancelá-lo com !pk sair.',
     NOT_PVP_BATTLE: '❓ Esta batalha não é PvP.',
-    AREA_UNAVAILABLE: '🗺️ Essa área não está disponível neste horário. Veja a rotação com !pk clima.',
+    AREA_UNKNOWN: '🌍 *Bioma não encontrado!*\n\nUse `!pk biomas` para consultar os ambientes disponíveis.\n💡 Confira o nome do bioma. Você pode digitar com ou sem acento.',
+    AREA_UNAVAILABLE: '🌍 *Este bioma não está disponível agora.*\n\nConsulte `!pk biomas` ou `!pk clima` para ver a rotação.',
     HUNT_COOLDOWN: '⏳ Ainda em cooldown de caça. Aguarde e tente de novo.',
     CHAT_HUNT_BUSY: '⚔️ Já existe uma caçada em andamento neste chat.',
     ACTIVE_POKEMON_FAINTED: '😵 Seu Pokémon ativo está desmaiado. Cure-o antes de caçar.',
@@ -1786,10 +1787,34 @@ function formatError(err) {
     const faixa = err.details && err.details.faixa;
     if (faixa) base = `⚖️ Escolha um Pokémon entre os níveis ${faixa.min} e ${faixa.max}.`;
   }
+  if (code === 'AREA_UNKNOWN') {
+    const d = (err && err.details) || {};
+    const pedido = d.pedido || d.areaId || d['area-id'] || '';
+    if (pedido) {
+      base = [
+        '🌍 *Bioma não encontrado!*',
+        '',
+        `Não reconheci: \`${pedido}\`.`,
+        '',
+        'Use `!pk biomas` para consultar os ambientes disponíveis.',
+        '💡 Confira o nome do bioma. Você pode digitar com ou sem acento.'
+      ].join('\n');
+    }
+  }
   if (code === 'AREA_UNAVAILABLE') {
     const d = (err && err.details) || {};
+    const nome = d.areaNome || d['area-nome'] || d.pedido || '';
+    const periodo = (d.periodo && (d.periodo.nome || d.periodo)) || d.periodo || '';
     const resumo = d.resumoTexto || d['resumo-texto'];
-    if (resumo) base = `${base}\n${resumo}\nUse !pk cacar <área>.`;
+    const parts = [
+      '🌍 *Este bioma não está disponível agora.*',
+      nome ? `Bioma: *${nome}*` : null,
+      periodo ? `Motivo: fora da rotação do período *${periodo}*.` : 'Motivo: fora da rotação deste horário.',
+      '',
+      'Consulte `!pk biomas` para verificar as opções.'
+    ].filter(Boolean);
+    if (resumo) parts.push(resumo);
+    base = parts.join('\n');
   }
   if (code === 'HUNT_COOLDOWN') {
     const d = (err && err.details) || {};
@@ -1908,6 +1933,35 @@ function formatBattleState(battle, prefix = '!pk', opts = {}) {
   ].filter(v => v !== null).join('\n');
 }
 
+/** Catálogo canônico de biomas (sem revelar espécies secretas). */
+function formatBiomesCatalog(plan, prefix = '!pk') {
+  const mundo = (plan && plan.mundo) || {};
+  const disponiveis = mundo.areasDisponiveis || mundo['areas-disponiveis'] || [];
+  const indisponiveis = mundo.areasIndisponiveis || mundo['areas-indisponiveis'] || [];
+  const periodo = (plan && plan.periodo) || mundo.periodo || {};
+  const openIds = new Set(disponiveis.map((a) => a.id || a.nome).filter(Boolean));
+  const all = [...disponiveis, ...indisponiveis];
+  const seen = new Set();
+  const rows = [];
+  for (const a of all) {
+    const id = a.id || a.nome;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const open = openIds.has(id);
+    rows.push(`${a.emoji || '🗺️'} *${a.nome || id}* (\`${id}\`) — ${open ? 'disponível agora' : 'fora da rotação neste horário'}`);
+  }
+  const periodoNome = periodo.nome || periodo.name || '?';
+  return [
+    '🌍 *Biomas do Odisseu*',
+    `📅 Período atual: *${periodoNome}*`,
+    '',
+    ...(rows.length ? rows : ['_Catálogo indisponível neste plano._']),
+    '',
+    `Caçar: \`${prefix} cacar <bioma>\` · aceita com ou sem acento.`,
+    `Clima/rotação: \`${prefix} clima\``
+  ].join('\n');
+}
+
 /** Clima / áreas do dia — espelha master mundo/resumo (+ dica de caça). */
 function formatWorldInfo(plan, prefix = '!pk') {
   const texto = (plan && (plan.resumoTexto || plan['resumo-texto'])) || null;
@@ -1921,12 +1975,17 @@ function formatWorldInfo(plan, prefix = '!pk') {
     return [texto, chance, '', `Caçar: ${prefix} cacar [área] · Ex.: ${prefix} cacar ${padrao.id || 'praia'}`].filter(line => line != null).join('\n');
   }
   const clima = (plan && plan.clima) || mundo.clima || {};
+  const periodo = (plan && plan.periodo) || mundo.periodo || {};
   const disponiveis = mundo.areasDisponiveis || mundo['areas-disponiveis'] || [];
   const indisponiveis = mundo.areasIndisponiveis || mundo['areas-indisponiveis'] || [];
   const tiposClima = (clima.tipos || []).slice().sort().map(tipoLabelPt);
   const rotacao = disponiveis.map(a => `${a.emoji || '🗺️'} ${a.id || a.nome}`).join(' • ') || '?';
   const semAcesso = indisponiveis.map(a => `${a.emoji || '·'} ${a.id || a.nome}`).join(' • ') || '—';
+  const periodoLine = periodo && periodo.nome
+    ? `🕒 *Período (horário):* ${periodo.nome}`
+    : null;
   return [
+    periodoLine,
     `${clima.emoji || '☁️'} *Clima de hoje: ${clima.nome || '?'}* — favorece ${tiposClima.join(', ') || '?'}.`,
     `📍 *Bioma deste horário:* ${padrao.emoji || '🗺️'} ${padrao.id || padrao.nome || '?'}`,
     `🕒 *Rotação de hoje:* ${rotacao}`,
@@ -2264,19 +2323,29 @@ function formatBattleTurn(data, prefix = '!pk') {
   }
   if (b.outcome === 'lose' || data.outcome === 'lose') {
     const piLines = formatConfirmedPiLines(data);
+    const rew = reward;
+    const xpLose = rew.pokemonXp != null ? rew.pokemonXp : rew.xp;
+    const xpLine = (xpLose != null && Number(xpLose) > 0)
+      ? `✨ +${xpLose} XP Pokémon de batalha`
+      : null;
     const laLose = b.lastAction || {};
     if (laLose.autodesmaio || laLose.autodesmaio === true
         || laLose['autodesmaio?'] || (laLose.mensagem && /desmaiou após o golpe/i.test(laLose.mensagem))) {
       return gym
         ? formatGymResolve({ venceu: false, peDelta: 1 }, b)
-        : ['💀 Seu Pokémon desmaiou após o golpe. A caçada acabou.', '💔 Sequência de capturas selvagens encerrada.', ...piLines].join('\n');
+        : ['💀 Seu Pokémon desmaiou após o golpe. A caçada acabou.', xpLine, '💔 Sequência de capturas selvagens encerrada.', ...piLines].filter(Boolean).join('\n');
     }
     return gym
       ? formatGymResolve({ venceu: false, peDelta: 1 }, b)
-      : ['💀 Seu Pokémon desmaiou. A caçada acabou.', '💔 Sequência de capturas selvagens encerrada.', ...piLines].join('\n');
+      : ['💀 Seu Pokémon desmaiou. A caçada acabou.', xpLine, '💔 Sequência de capturas selvagens encerrada.', ...piLines].filter(Boolean).join('\n');
   }
   if (b.outcome === 'flee' || data.outcome === 'flee') {
-    return `💨 *${nome}* fugiu durante a batalha!\n💔 Sequência de capturas selvagens encerrada.`;
+    const rewFlee = reward;
+    const xpFlee = rewFlee.pokemonXp != null ? rewFlee.pokemonXp : rewFlee.xp;
+    const xpFleeLine = (xpFlee != null && Number(xpFlee) > 0)
+      ? `\n✨ +${xpFlee} XP Pokémon de batalha`
+      : '';
+    return `💨 *${nome}* fugiu durante a batalha!${xpFleeLine}\n💔 Sequência de capturas selvagens encerrada.`;
   }
   const la = b.lastAction || {};
   const switchLine = b.lastSwitch && b.lastSwitch.nome
@@ -3230,11 +3299,17 @@ function formatRaidDefeat(data, _prefix = '!pk') {
   const participants = Array.isArray(r.participantes) ? r.participantes : [];
   const roster = buildRaidMentionRoster(participants);
   const rows = Array.isArray(data && data.rewards) ? data.rewards : [];
+  const anyXp = rows.some((rw) => {
+    const xp = rw.xpPokemon != null ? rw.xpPokemon : rw['xp-pokemon'];
+    return Number(xp) > 0;
+  });
   const lines = [
     '💀 *RAID ENCERRADA — DERROTA*',
     `🐉 *${chefe}* resistiu aos ataques!`,
     '',
-    'Mesmo sem vencer, seus Pokémon ganharam experiência pela batalha.',
+    anyXp
+      ? 'Mesmo sem vencer, seus Pokémon ganharam experiência pela batalha.'
+      : 'Participação registrada. Sem XP de Pokémon liquidado nesta derrota.',
     '',
     '🎖️ *Recompensas de participação*'
   ];
@@ -4218,8 +4293,65 @@ function formatRaidItemUse(data, prefix = '!pk') {
   return lines.filter((l) => l != null).join('\n');
 }
 
+function shouldRenderEggGrant(data, opts = {}) {
+  for (const a of pickAdventureActivities(data)) {
+    if (!a || a.duplicate === true) continue;
+    const owner = a.playerId || a.player_id || a['player-id'];
+    const playerId = opts.playerId || opts['player-id'] || null;
+    if (playerId && owner && String(owner) !== String(playerId)) continue;
+    const pending = a.deferred === true || a['deferred?'] === true;
+    if ((a.eggId || a['egg-id']) && !pending) return true;
+  }
+  return false;
+}
+
+function eggGrantCategory(data, opts = {}) {
+  for (const a of pickAdventureActivities(data)) {
+    if (!a || a.duplicate === true) continue;
+    const pending = a.deferred === true || a['deferred?'] === true;
+    if ((a.eggId || a['egg-id']) && !pending) {
+      return a.eggCategory || a['egg-category'] || 'comum';
+    }
+  }
+  return null;
+}
+
+/**
+ * Ovo efetivamente concedido (id persistido e inventário não cheio).
+ * PI sozinho, duplicate ou deferred não geram PNG.
+ */
+function confirmedEggGrant(data, opts = {}) {
+  const playerId = opts.playerId || opts['player-id'] || null;
+  for (const a of pickAdventureActivities(data)) {
+    if (!a || a.duplicate === true) continue;
+    const owner = a.playerId || a.player_id || a['player-id'];
+    if (playerId && owner && String(owner) !== String(playerId)) continue;
+    const pending = a.deferred === true || a['deferred?'] === true;
+    const eggId = a.eggId || a['egg-id'];
+    if (!eggId || pending) continue;
+    return {
+      eggId: String(eggId),
+      category: String(a.eggCategory || a['egg-category'] || 'comum')
+    };
+  }
+  return null;
+}
+
+/** Mensagem do handler !pk 1 / !pk atk 1 com raid elegível e sem escopo. Não ataca. */
+function formatRaidBareAttackBlocked(prefix = '!pk') {
+  return [
+    '⚠️ Você está participando de uma raid!',
+    '',
+    'Para atacar, use:',
+    `\`${prefix} raid atk 1\``,
+    '',
+    'Comandos sem `raid` não executam ações nessa batalha.'
+  ].join('\n');
+}
+
 function formatConfirmedPiLines(data, opts = {}) {
   const playerId = opts.playerId || opts['player-id'] || null;
+  const prefix = opts.prefix || '!pk';
   const lines = [];
   for (const a of pickAdventureActivities(data)) {
     if (!a || a.duplicate === true) continue;
@@ -4237,9 +4369,14 @@ function formatConfirmedPiLines(data, opts = {}) {
         lines.push('Seu inventário está cheio. O ovo ficará aguardando espaço.');
       } else {
         const rar = category ? String(category) : null;
-        lines.push('🥚 *VOCÊ ENCONTROU UM OVO!*');
-        if (rar) lines.push(`Raridade: ${rar.charAt(0).toUpperCase()}${rar.slice(1)}`);
-        lines.push('🎒 Ovo adicionado ao inventário.');
+        lines.push('🥚 *VOCÊ GANHOU UM OVO!*');
+        if (rar) lines.push(`Categoria: ${rar.charAt(0).toUpperCase()}${rar.slice(1)}`);
+        lines.push('🎒 Seu ovo foi adicionado ao inventário!');
+        lines.push('🪺 Para chocá-lo, coloque-o em uma incubadora e acumule Pontos de Incubação (PI).');
+        lines.push('**Próximos comandos:**');
+        lines.push(`\`${prefix} ovos\` — visualizar ovos.`);
+        lines.push(`\`${prefix} incubadoras\` — visualizar incubadoras.`);
+        lines.push(`\`${prefix} incubar 1\` — incubar o primeiro ovo.`);
       }
     }
     const incubator = a.incubatorKind || a['incubator-kind'];
@@ -5113,6 +5250,7 @@ const HELP_TOPICS = {
       'Clima, biomas, surtos e missões.',
       '',
       `\`${p} clima\` — áreas e tipos favorecidos`,
+      `\`${p} biomas\` — catálogo de biomas (com/sem acento)`,
       `\`${p} eventos\` — eventos temáticos ativos`,
       `\`${p} missoes\` · \`${p} missoes diaria|semanal|evento\``,
       `\`${p} missoes resgatar\` — quando completo`,
@@ -5171,7 +5309,7 @@ function resolveHelpTopic(raw) {
   const cmd = ALIASES[key];
   if (cmd && HELP_TOPICS[cmd]) return cmd;
   if (cmd === 'time' || cmd === 'pokedex' || cmd === 'pc' || cmd === 'espaco') return 'pokemon';
-  if (cmd === 'eventos' || cmd === 'clima' || cmd === 'missoes') return 'eventos';
+  if (cmd === 'eventos' || cmd === 'clima' || cmd === 'biomas' || cmd === 'missoes') return 'eventos';
   if (cmd === 'treinador' || cmd === 'save' || cmd === 'saves') return 'treinador';
   if (cmd === 'presente') return 'presentes';
   if (cmd === 'evoluir') return 'evoluir';
@@ -5273,6 +5411,7 @@ const ALIASES = {
   pocao: 'pocao', 'poção': 'pocao', pot: 'pocao', vida: 'pocao',
   'pocao-maxima': 'pocao-maxima', maxima: 'pocao-maxima', pmax: 'pocao-maxima',
   clima: 'clima', areas: 'clima', áreas: 'clima', mapa: 'clima',
+  biomas: 'biomas', bioma: 'biomas',
   eventos: 'eventos', evento: 'eventos', evt: 'eventos',
   recibo: 'recibo', op: 'recibo', operation: 'recibo',
   escolher: 'escolher', esc: 'escolher', trocar: 'escolher', troca: 'escolher',
@@ -5759,8 +5898,13 @@ module.exports = {
   formatBattleState,
   formatBattleTurn,
   formatWorldInfo,
+  formatBiomesCatalog,
   formatEventInfo,
   formatConfirmedPiLines,
+  confirmedEggGrant,
+  formatRaidBareAttackBlocked,
+  shouldRenderEggGrant,
+  eggGrantCategory,
   formatRaidItemUse,
   formatRaidItem: formatRaidItemUse,
   barraHp,

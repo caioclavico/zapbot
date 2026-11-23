@@ -95,15 +95,50 @@
       (str/replace #"\p{M}" "")
       str/trim))
 
+(def ^:private area-aliases
+  "Aliases oficiais → id canônico (sem inventar biomas)."
+  {"verde" "floresta"
+   "floresta verde" "floresta"
+   "azul" "praia"
+   "praia azul" "praia"
+   "rochosa" "caverna"
+   "caverna rochosa" "caverna"
+   "pokemon" "cidade"
+   "cidade pokemon" "cidade"
+   "encantado" "lago"
+   "lago encantado" "lago"
+   "rubro" "vulcao"
+   "vulcao rubro" "vulcao"})
+
+(defn- compactar
+  "Lookup: caixa, acento, hífen/underscore e espaços internos.
+   Não cria bioma nem clima — só casa com o catálogo."
+  [texto]
+  (-> (normalizar texto)
+      (str/replace #"[-_]+" " ")
+      (str/replace #"\s+" " ")
+      str/trim))
+
 (defn obter-area
   [texto]
-  (let [id (normalizar texto)]
-    (some #(when (or (= id (:id %)) (= id (normalizar (:nome %)))) %) areas)))
+  (let [raw (compactar texto)
+        id (or (get area-aliases raw) raw)]
+    (some #(when (or (= id (:id %))
+                     (= raw (:id %))
+                     (= id (compactar (:nome %)))
+                     (= raw (compactar (:nome %))))
+             %)
+          areas)))
 
 (defn obter-clima
   [texto]
-  (let [id (normalizar texto)]
-    (some #(when (or (= id (:id %)) (= id (normalizar (:nome %)))) %) (conj climas ceu-limpo))))
+  (let [raw (compactar texto)
+        hifen (str/replace raw #" " "-")]
+    (some #(when (or (= raw (:id %))
+                     (= hifen (:id %))
+                     (= raw (compactar (:nome %))))
+             %)
+          (conj climas ceu-limpo))))
 
 (defn area-disponivel
   [texto dia]

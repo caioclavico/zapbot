@@ -46,9 +46,10 @@ test('formatEventInfo espelha ver-evento', () => {
 test('AREA_UNAVAILABLE anexa resumo quando details trazem', () => {
   const text = present.formatError({
     code: 'AREA_UNAVAILABLE',
-    details: { resumoTexto: '☀️ *Clima de hoje: Neve*' }
+    details: { resumoTexto: '☀️ *Clima de hoje: Neve*', areaNome: 'Cidade Pokémon', periodo: 'Noite' }
   });
   assert.match(text, /não está disponível/);
   assert.match(text, /\*Clima de hoje: Neve\*/);
-  assert.match(text, /cacar/);
+  assert.match(text, /biomas/);
+  assert.match(text, /Cidade Pokémon/);
 });

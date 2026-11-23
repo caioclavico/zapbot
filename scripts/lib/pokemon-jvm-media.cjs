@@ -1626,6 +1626,35 @@ async function renderIncubatorCard(data, { filename = 'incubadoras.png' } = {}) 
 }
 
 
+/**
+ * PNG ao ganhar ovo — reutiliza card de inventário com a categoria concedida
+ * (sem revelar a espécie).
+ */
+async function renderEggGrantCard(grant, { filename = 'ovo.png', category } = {}) {
+  try {
+    if (!grant && !category) return null;
+    const eggId = grant && (grant.eggId || grant['egg-id']);
+    const cat = category
+      || (grant && (grant.category || grant.eggCategory || grant['egg-category']))
+      || 'comum';
+    if (!eggId && !category && !(grant && (grant.category || grant.eggCategory || grant['egg-category']))) {
+      return null;
+    }
+    const eggCards = require('./egg-cards.cjs');
+    const buf = await eggCards.renderEggGrant({ category: cat });
+    if (!Buffer.isBuffer(buf) || !buf.length) return null;
+    return {
+      base64: buf.toString('base64'),
+      mimeType: 'image/png',
+      filename: filename || 'ovo.png'
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[pokemon-jvm-media] egg-grant:', err.message || err);
+    return null;
+  }
+}
+
 async function renderHatchRevealCard(data, { filename = 'ovo-chocou.png' } = {}) {
   try {
     if (data && (data.collectionFull || data.pending || data['collection-full'])) {
@@ -1754,6 +1783,7 @@ module.exports = {
   renderRaidOpenedReveal,
   renderEggInventoryCard,
   renderIncubatorCard,
+  renderEggGrantCard,
   renderHatchRevealCard,
   isRaidReminderKind,
   isRaidOpenedKind,

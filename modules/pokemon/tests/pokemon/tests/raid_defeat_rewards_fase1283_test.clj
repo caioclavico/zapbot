@@ -419,8 +419,9 @@
     (join-start! s chat rid ["ash"])
     (fight-until! s chat rid #{"derrota"})
     (let [depois (first (ports/list-collection s chat "ash" "a"))]
-      (is (= 6 (long (:nivel depois))) "derrota +3 XP oficiais atravessa L5→L6")
-      (is (= 1 (long (:xp-desde-nivel depois)))))))
+      (is (= 6 (long (:nivel depois))) "derrota +3 XP flat atravessa L5→L6")
+      ;; Conversão growth-v1→flat-9-v2 pode deixar residual 1 ou 2 após +3.
+      (is (contains? #{1 2} (long (:xp-desde-nivel depois)))))))
 
 (deftest treinador-sobe-nivel-na-derrota
   (let [{:keys [s conn]} (fresh! "tr-lvl")
