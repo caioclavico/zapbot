@@ -2509,7 +2509,7 @@ function formatCaptureResult(data, prefix = '!pk') {
     return [
       `💨 A ${meta.nome} falhou e *${selvagem}* fugiu! (${chance}% de chance)`,
       (data.tentativa || 0) >= 3 ? 'As três tentativas de captura acabaram.' : null,
-      '🔥 Sequência de capturas preservada (fuga involuntária).',
+      '💔 Sequência de capturas selvagens encerrada (Pokémon fugiu).',
       '✨ +1 XP consolação.'
     ].filter(Boolean).join('\n');
   }
@@ -3565,7 +3565,7 @@ function formatBattleIdleTimeout(data = {}) {
       '⭐ +0 XP',
       '🥚 +0 PI',
       '',
-      '💔 Sequência encerrada para o treinador responsável pela inatividade.'
+      '🔥 Sequência de capturas selvagens preservada.'
     ].join('\n');
   }
   if (kind === 'pvp') {
