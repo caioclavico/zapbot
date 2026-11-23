@@ -10,7 +10,8 @@
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.raid :as raid]
             [pokemon.infrastructure.datomic.store :as store]
-            [pokemon.infrastructure.datomic.battle-idle-store :as idle-store]))
+            [pokemon.infrastructure.datomic.battle-idle-store :as idle-store]
+            [datomic.client.api :as d]))
 
 (def ^:private system "odisseu-raid-release-a6")
 (def ^:private storage-rel ".datomic-local/raid-release-a6")
@@ -166,3 +167,45 @@
         (is (= (get-in before [:participantes current :hp])
                (get-in after [:participantes current :hp]))
             "skip não deve provocar dano")))))
+
+(deftest raid-vitoria-concorrente-nao-vira-timeout
+  (let [s (fresh-store! "expire-race-1")
+        chat "c-expire-race"
+        rid "raid-expire-race"]
+    (boot! s chat "ash")
+    (tx/open-raid!
+     s {:chat-id chat :player-id "ash" :save-id "a"
+        :fence-generation (fence s chat "ash")
+        :operation-id "open-expire-race" :raid-id rid
+        :ginasio "pedra" :liga "bronze" :chefe (assoc chefe :hp 20)
+        :agora-ms 1000})
+    (tx/join-raid!
+     s {:chat-id chat :player-id "ash" :save-id "a"
+        :fence-generation (fence s chat "ash")
+        :operation-id "join-expire-race"
+        :collection-index 0 :nome "Ash" :agora-ms 2})
+    (tx/start-raid!
+     s {:chat-id chat :player-id "ash" :save-id "a"
+        :fence-generation (fence s chat "ash")
+        :operation-id "start-expire-race" :agora-ms 4})
+    (let [before (raid-app/get-raid s rid)
+          deadline (:idle-expires-at before)
+          built (idle-store/build-expire-raid-tx (d/db (:conn s))
+                                                 rid (inc deadline))]
+      (is (seq (:tx built)))
+      (tx/raid-attack!
+       s {:chat-id chat :player-id "ash" :save-id "a"
+          :fence-generation (fence s chat "ash")
+          :operation-id "attack-before-expire-race"
+          :expected-turn-index (:turn-index before)
+          :move-index 0 :agora-ms (dec deadline)})
+      (is (= "vitoria" (:fase (raid-app/get-raid s rid))))
+      ;; Sweeper leu prazo vencido antes da vitória, mas transacionou depois.
+      (is (thrown? Exception
+                   (d/transact (:conn s) {:tx-data (:tx built)}))
+          "CAS de fase deve barrar expiração obsoleta")
+      (is (= "vitoria" (:fase (raid-app/get-raid s rid))))
+      (let [after (idle-store/build-expire-raid-tx (d/db (:conn s))
+                                                   rid (+ deadline 2))]
+        (is (= "not-combat" (get-in after [:result :skipped])))
+        (is (empty? (:tx after)))))))
