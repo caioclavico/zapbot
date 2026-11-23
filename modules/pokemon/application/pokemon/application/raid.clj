@@ -79,6 +79,17 @@
      (ops/validate-mutation! full)
      (ports/raid-attack! store writer-ctx full))))
 
+
+(defn use-item!
+  ([store chat-id player-id request]
+   (use-item! store (writer/freeze-writer store chat-id player-id) request))
+  ([store writer-ctx request]
+   (let [full (merge request
+                     (select-keys writer-ctx
+                                  [:chat-id :player-id :save-id :fence-generation]))]
+     (ops/validate-mutation! full)
+     (ports/raid-use-item! store writer-ctx full))))
+
 (defn capture!
   ([store chat-id player-id request]
    (capture! store (writer/freeze-writer store chat-id player-id) request))

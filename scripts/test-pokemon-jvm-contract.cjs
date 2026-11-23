@@ -71,6 +71,8 @@ async function main() {
     ODISSEU_BRIDGE_HOST: '127.0.0.1',
     ODISSEU_BRIDGE_PORT: String(PORT),
     ODISSEU_BRIDGE_TOKEN: TOKEN,
+    // Gate A6 exige dir+token juntos (http_server sempre passa maintenance-dir).
+    ODISSEU_BRIDGE_MAINTENANCE_TOKEN: process.env.ODISSEU_BRIDGE_MAINTENANCE_TOKEN || (TOKEN + '-maint'),
     ODISSEU_BRIDGE_SEED: 'true',
     ODISSEU_BRIDGE_SYSTEM: 'odisseu-m41-contract',
     ODISSEU_BRIDGE_STORAGE: '.datomic-local/m41-contract',

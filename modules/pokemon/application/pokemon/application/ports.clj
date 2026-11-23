@@ -198,6 +198,9 @@
   (raid-attack! [this writer-ctx request]
     "Turno de ataque com CAS turn-index; recompensas na transição vitória.")
 
+  (raid-use-item! [this writer-ctx request]
+    "Poção mid-raid: cura party canônica, consome item e aplica revide.")
+
   (raid-capture! [this writer-ctx request]
     "Tentativa de captura pós-vitória (bola + roll).")
 

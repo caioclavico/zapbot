@@ -67,8 +67,12 @@ test('raide divulga recompensas por participante e atalho de captura', () => {
     ]
   };
   const { text } = present.formatRaidVictory(data);
-  assert.match(text, /@Ash[^@]*\+10 PI[^@]*ovo raro/);
-  assert.match(text, /@Misty[^@]*\+30 PI[^@]*incubadora extra/);
+  assert.match(text, /@Ash[^@]*\+10 PI/);
+  assert.match(text, /@Ash[^@]*ENCONTROU UM OVO/i);
+  assert.match(text, /@Ash[^@]*Raridade: Raro/);
+  assert.match(text, /@Misty[^@]*\+30 PI/);
+  assert.match(text, /@Misty[^@]*GANHOU UMA INCUBADORA/i);
+  assert.match(text, /@Misty[^@]*Tipo: Extra/);
   assert.match(text, /Próximos comandos[^]*!pk raide cap/);
   assert.deepEqual(present.formatConfirmedPiLines({ ...data, duplicate: true }), []);
 });

@@ -62,6 +62,8 @@ jobs:
 
       - run: npm ci
       - run: npm test
+      - name: Hotfix PI / raid isolation (present + scoped routing)
+        run: node --test test/pokemon-hotfix-pi-raid-isolation.test.cjs test/pokemon-hotfix-potion-http-contract.test.cjs
       - run: npm run test:http
       - run: npm run build
 
@@ -204,6 +206,10 @@ jobs:
 
       - name: Quiescência em Datomic temporário
         run: clojure -M:smoke-a6-maintenance-quiescence
+
+      - name: Hotfix PI / poção raid / adventure-activity
+        run: |
+          clojure -M -e "(require 'clojure.test 'pokemon.tests.hotfix-pi-raid-item-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.hotfix-pi-raid-item-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
 
       - name: Identidade do storage desconhecida não abre cliente
         run: clojure -M -e "(require 'clojure.test 'pokemon.tests.live-storage-guard-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.live-storage-guard-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"

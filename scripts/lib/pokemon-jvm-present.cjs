@@ -2409,6 +2409,7 @@ function formatCaptureMenu(encounterData, prefix = '!pk') {
 
 function formatReleaseResult(data, _prefix = '!pk') {
   const seqAntes = data.sequenciaAntes != null ? data.sequenciaAntes : 0;
+  const piLines = formatConfirmedPiLines(data || {});
   return [
     '🌿 *POKÉMON LIBERADO*',
     'Você deixou o Pokémon selvagem ir.',
@@ -2416,7 +2417,8 @@ function formatReleaseResult(data, _prefix = '!pk') {
     seqAntes > 0
       ? '🔥 Sua sequência de capturas foi encerrada.'
       : '🔥 Sequência de capturas: já estava em 0.',
-    `Sequência atual: *${data.sequenciaCapturas != null ? data.sequenciaCapturas : 0}*`
+    `Sequência atual: *${data.sequenciaCapturas != null ? data.sequenciaCapturas : 0}*`,
+    ...piLines
   ].join('\n');
 }
 
@@ -2452,16 +2454,20 @@ function formatCaptureResult(data, prefix = '!pk') {
       ? (textoMoedas(rew.moedas) || `💰 +${rew.moedas} moedas`)
       : '💰 Nenhuma moeda de sequência nesta faixa.';
     const piLines = formatConfirmedPiLines(data);
+    const piReward = piLines.filter((l) => l.includes('PI de incubação'));
+    const piExtra = piLines.filter((l) => !l.includes('PI de incubação'));
     const linhas = [
       '🎉 *POKÉMON CAPTURADO!*',
-      `✅ ${meta.nome} · ${chance}% · nº ${idx} · *${selvagem}*`,
+      `✅ ${selvagem} foi capturado!`,
+      `⚪ ${meta.nome} · ${chance}% · nº ${idx}`,
       `🔥 Sequência: ${seq} captura${seq === 1 ? '' : 's'}`,
       '',
-      '*Recompensa da captura*',
+      '*Recompensas*',
       `✨ +${rew.xp || 0} XP Pokémon`,
       `⭐ +${rew.pe != null ? rew.pe : 0} PE treinador`,
       moedasLinha,
-      ...piLines,
+      ...piReward,
+      ...(piExtra.length ? ['', '*Progresso dos ovos*', ...piExtra] : []),
       data.subida
         ? (data.subida.niveisSubidos > 1 || data.subida.niveis_subidos > 1
           ? `🌟 *${data.subida.nome}* subiu ${data.subida.niveisSubidos || data.subida.niveis_subidos} níveis e chegou ao Nv. ${data.subida.nivel}!`
@@ -2879,7 +2885,9 @@ const RAID_SUB = {
   tm: 'time', time: 'time',
   st: 'status', status: 'status',
   abr: 'abrir', abrir: 'abrir',
-  can: 'cancelar', cancelar: 'cancelar'
+  can: 'cancelar', cancelar: 'cancelar',
+  pocao: 'pocao', 'poção': 'pocao', pot: 'pocao', vida: 'pocao',
+  'pocao-maxima': 'pocao-maxima', maxima: 'pocao-maxima', pmax: 'pocao-maxima'
 };
 
 function resolveRaidSubcommand(token) {
@@ -4006,6 +4014,40 @@ function pickAdventureActivities(data) {
   return [];
 }
 
+
+function formatRaidItemUse(data, prefix = '!pk') {
+  const itemId = data && (data.itemId || data['item-id'] || '');
+  const max = /maxima/.test(String(itemId));
+  const nome = (data && data.pokemonAtivo && (data.pokemonAtivo.nome || data.pokemonAtivo.species))
+    || (data && data.pokemon && (data.pokemon.nome || data.pokemon.species))
+    || 'Pokémon';
+  const antes = data && (data.hpAntes != null ? data.hpAntes : data['hp-antes']);
+  const depois = data && (data.hpDepois != null ? data.hpDepois : data['hp-depois']);
+  const hpMax = data && (data.hpMax != null ? data.hpMax : data['hp-max']);
+  const apos = data && (data.hpAposRevide != null ? data.hpAposRevide : data['hp-apos-revide']);
+  const revide = data && data.revide;
+  const lines = [
+    max ? '💖 *POÇÃO MÁXIMA UTILIZADA!*' : '🧪 *POÇÃO UTILIZADA!*',
+    `Pokémon: ${nome}`,
+    (antes != null && hpMax != null)
+      ? `HP anterior: ${antes}/${hpMax}`
+      : null,
+    (depois != null && hpMax != null)
+      ? `HP restaurado: ${depois}/${hpMax}`
+      : null,
+  ];
+  if (revide != null && Number(revide) > 0) {
+    lines.push('', '⚔️ O chefe atacou!', `Dano recebido: ${revide}`);
+    if (apos != null && hpMax != null) lines.push(`❤️ HP atual: ${apos}/${hpMax}`);
+  }
+  if (data && (data.derrota || data.derrota === true)) {
+    lines.push('', '💀 Sua equipe foi derrotada na raid.');
+  } else {
+    lines.push('', `Continue: \`${prefix} raid atacar 1\` · \`${prefix} raid status\``);
+  }
+  return lines.filter((l) => l != null).join('\n');
+}
+
 function formatConfirmedPiLines(data, opts = {}) {
   const playerId = opts.playerId || opts['player-id'] || null;
   const lines = [];
@@ -4020,25 +4062,42 @@ function formatConfirmedPiLines(data, opts = {}) {
     const pending = a.deferred === true || a['deferred?'] === true;
     const category = a.eggCategory || a['egg-category'];
     if (a.eggId || a['egg-id']) {
-      lines.push(pending
-        ? `🥚 Ovo ${category || 'encontrado'} aguardando espaço no inventário.`
-        : `🥚 Você encontrou um ovo${category ? ' ' + category : ''}!`);
+      if (pending) {
+        lines.push('🥚 *OVO ENCONTRADO!*');
+        lines.push('Seu inventário está cheio. O ovo ficará aguardando espaço.');
+      } else {
+        const rar = category ? String(category) : null;
+        lines.push('🥚 *VOCÊ ENCONTROU UM OVO!*');
+        if (rar) lines.push(`Raridade: ${rar.charAt(0).toUpperCase()}${rar.slice(1)}`);
+        lines.push('🎒 Ovo adicionado ao inventário.');
+      }
     }
     const incubator = a.incubatorKind || a['incubator-kind'];
     const incubatorPending = a.incubatorDeferred === true || a['incubator-deferred?'] === true;
     if (a.incubatorId || a['incubator-id']) {
-      const label = incubator ? ' ' + incubator : '';
-      lines.push(incubatorPending
-        ? `🪺 Incubadora${label} aguardando vaga.`
-        : `🪺 Você ganhou uma incubadora${label}!`);
+      const label = incubator ? String(incubator) : null;
+      if (incubatorPending) {
+        lines.push(`🪺 Incubadora${label ? ' ' + label : ''} aguardando vaga.`);
+      } else {
+        lines.push('🪺 *VOCÊ GANHOU UMA INCUBADORA!*');
+        if (label) lines.push(`Tipo: ${label.charAt(0).toUpperCase()}${label.slice(1)}`);
+      }
     }
-    const ep = a.eggProgress || a.egg_progress || a['egg-progress'];
-    if (ep && typeof ep === 'object') {
-      const cat = ep.category || ep.categoria || a.eggCategory || a['egg-category'] || 'ovo';
+    const eps = a.eggsProgress || a.eggs_progress || a['eggs-progress']
+      || a.eggProgress || a.egg_progress || a['egg-progress'];
+    const list = Array.isArray(eps) ? eps : (eps && typeof eps === 'object' ? [eps] : []);
+    for (const ep of list) {
+      if (!ep || typeof ep !== 'object') continue;
+      const cat = ep.category || ep.categoria || 'ovo';
+      const before = ep.pointsBefore != null ? ep.pointsBefore
+        : (ep['points-before'] != null ? ep['points-before'] : ep.antes);
       const cur = ep.points != null ? ep.points : ep.pontos;
       const goal = ep.goal != null ? ep.goal : ep.meta;
-      if (cur != null && goal != null) {
-        lines.push(`🧪 Ovo ${cat}: ${cur}/${goal} PI`);
+      if (cur == null || goal == null) continue;
+      if (before != null && Number(before) !== Number(cur)) {
+        lines.push(`🪺 Ovo ${cat}: ${before} → ${cur}/${goal} PI`);
+      } else {
+        lines.push(`🪺 Ovo ${cat}: ${cur}/${goal} PI`);
       }
     }
   }
@@ -5064,6 +5123,259 @@ function maxPotionTokenCount(tokens) {
   return MAX_POTION_ALIASES.has(`${first}-${normalizar(tokens?.[1])}`) ? 2 : 0;
 }
 
+function battleContextHeader(kind, turn, opts = {}) {
+  const t = turn != null ? ` — TURNO ${turn}` : '';
+  if (kind === 'raid') {
+    const boss = opts.boss || opts.chefe || 'Chefe';
+    return [`⚔️ *RAID${t}*`, `Chefe: ${boss}`];
+  }
+  if (kind === 'pvp') {
+    return [`⚔️ *PVP${t}*`];
+  }
+  if (kind === 'gym' || kind === 'ginasio') {
+    return [`🏛️ *GINÁSIO${t}*`];
+  }
+  const foe = opts.foe || opts.adversario || 'selvagem';
+  return [`🌿 *CAÇADA${t}*`, `Adversário: ${foe}`];
+}
+
+/** Ações de combate que um escopo cacar/pvp pode promover a cmd top-level. */
+const SCOPED_COMBAT_ACTIONS = new Set([
+  'atacar', 'defender', 'capturar', 'liberar', 'fruta',
+  'pocao', 'pocao-maxima', 'curar', 'status'
+]);
+
+/**
+ * Separa contexto (raid|cacar|pvp) da ação.
+ * Escopo `raid`/`raide` SEMPRE devolve cmd=`raid` — o handler canônico
+ * `executar-raid-jvm!` resolve o subcomando (entrar/abrir/iniciar/…).
+ * Nunca promove `entrar`→batalhar nem `capturar`→caça selvagem.
+ */
+function resolveScopedCommand(tokens) {
+  const raw = (tokens || []).map((t) => normalizar(t)).filter(Boolean);
+  if (!raw.length) return { cmd: 'menu', scope: null, resto: [], tokens: raw };
+  const scope = ({
+    cacar: 'cacar', caçar: 'cacar', cac: 'cacar', hunt: 'cacar',
+    pvp: 'pvp', duel: 'pvp',
+    raid: 'raid', raide: 'raid', raids: 'raid'
+  })[raw[0]] || null;
+  if (!scope) {
+    return {
+      cmd: resolveCommand(tokens),
+      scope: null,
+      resto: Array.from(tokens || []).slice(1),
+      tokens: raw
+    };
+  }
+  const restTokens = raw.slice(1);
+
+  if (scope === 'raid') {
+    // Tudo após raid/raide vai para executar-raid-jvm! (aliases RAID_SUB).
+    return { cmd: 'raid', scope: 'raid', resto: restTokens, tokens: raw };
+  }
+
+  if (scope === 'cacar') {
+    if (!restTokens.length || restTokens[0] === 'status') {
+      return { cmd: 'cacar', scope: 'cacar', resto: [], tokens: raw };
+    }
+    // !pk cacar pocao-maxima | poção maxima
+    if (maxPotionTokenCount(restTokens)) {
+      const n = maxPotionTokenCount(restTokens);
+      return { cmd: 'pocao-maxima', scope: 'cacar', resto: restTokens.slice(n), tokens: raw };
+    }
+    const actionCmd = resolveCommand(restTokens);
+    if (actionCmd && SCOPED_COMBAT_ACTIONS.has(actionCmd)) {
+      const consumed = (ALIASES[restTokens[0]] || restTokens[0] === actionCmd) ? 1 : 1;
+      return { cmd: actionCmd, scope: 'cacar', resto: restTokens.slice(consumed), tokens: raw };
+    }
+    // !pk cacar <área> — inicia caçada
+    return { cmd: 'cacar', scope: 'cacar', resto: restTokens, tokens: raw };
+  }
+
+  // scope === 'pvp'
+  if (!restTokens.length || restTokens[0] === 'status') {
+    return { cmd: 'batalhar', scope: 'pvp', resto: [], tokens: raw };
+  }
+  if (maxPotionTokenCount(restTokens)) {
+    const n = maxPotionTokenCount(restTokens);
+    return { cmd: 'pocao-maxima', scope: 'pvp', resto: restTokens.slice(n), tokens: raw };
+  }
+  const actionCmd = resolveCommand(restTokens);
+  if (actionCmd && SCOPED_COMBAT_ACTIONS.has(actionCmd)) {
+    return { cmd: actionCmd, scope: 'pvp', resto: restTokens.slice(1), tokens: raw };
+  }
+  return { cmd: 'batalhar', scope: 'pvp', resto: restTokens, tokens: raw };
+}
+
+
+/**
+ * Plano de roteamento de poção (espelha pokemon_http.cljs).
+ * Separar contexto (raid|cacar|pvp|auto) da ação e do método JVM.
+ */
+function planPotionRoute(tokens) {
+  const raw = (tokens || []).map((x) => normalizar(x)).filter(Boolean);
+  const scoped = resolveScopedCommand(raw);
+  const itemFromCmd = (cmd) => (cmd === 'pocao-maxima' ? 'pocao-maxima' : 'pocao');
+
+  if (scoped.scope === 'raid') {
+    const sub = resolveRaidSubcommand(scoped.resto[0] || '');
+    if (sub === 'pocao' || sub === 'pocao-maxima') {
+      return {
+        handler: 'executar-raid-jvm!',
+        scope: 'raid',
+        cmd: 'raid',
+        itemId: itemFromCmd(sub),
+        reads: ['getActiveRaid', 'getActiveSave'],
+        write: 'raidUseItem',
+        encounterRead: null
+      };
+    }
+    return { handler: 'executar-raid-jvm!', scope: 'raid', cmd: 'raid', itemId: null, reads: ['getActiveRaid'], write: null, encounterRead: null };
+  }
+
+  if (scoped.cmd === 'pocao' || scoped.cmd === 'pocao-maxima') {
+    return {
+      handler: 'top-level-pocao',
+      scope: scoped.scope || 'auto',
+      cmd: scoped.cmd,
+      itemId: itemFromCmd(scoped.cmd),
+      // Contrato HTTP obrigatório: getEncounter (nunca getActiveEncounter).
+      reads: ['getActiveRaid', 'getEncounter', 'getActivePvp'],
+      write: null, // decidido após elegibilidade
+      encounterRead: 'getEncounter'
+    };
+  }
+
+  return { handler: null, scope: scoped.scope, cmd: scoped.cmd, itemId: null, reads: [], write: null, encounterRead: null };
+}
+
+/**
+ * Dado o plano + estado lido do JVM, escolhe mutação ou ambiguidade.
+ * state: { raid, encounter, pvpBattle, playerId, suaVezRaid?, inventoryQty }
+ */
+function resolvePotionDispatch(plan, state = {}) {
+  if (!plan || !plan.itemId) {
+    return { action: 'noop', mutate: false, method: null, reason: 'not-potion' };
+  }
+  if (plan.handler === 'executar-raid-jvm!') {
+    const raid = state.raid;
+    if (!raid || String(raid.fase || '') !== 'combate') {
+      return { action: 'error', mutate: false, method: null, reason: 'no-raid-combat' };
+    }
+    if (state.suaVezRaid === false) {
+      return { action: 'error', mutate: false, method: null, reason: 'not-your-turn' };
+    }
+    if (state.inventoryQty != null && Number(state.inventoryQty) <= 0) {
+      return { action: 'error', mutate: false, method: null, reason: 'no-stock' };
+    }
+    return { action: 'raid-item', mutate: true, method: 'raidUseItem', itemId: plan.itemId };
+  }
+
+  const playerId = state.playerId;
+  const raidOk = raidCombatEligibleForPlayer(state.raid, playerId);
+  const enc = state.encounter;
+  const encOk = !!(enc && enc.active && !enc.aguardandoCaptura);
+  const battle = state.pvpBattle;
+  const pvpOk = !!(battle && battle.phase === 'active' && state.pvpSideOk);
+  const scope = plan.scope || 'auto';
+  const candidates = [];
+  if (scope !== 'pvp' && scope !== 'cacar' && raidOk) candidates.push('raid');
+  if (scope !== 'pvp' && scope !== 'raid' && encOk) candidates.push('cacar');
+  if (scope !== 'cacar' && scope !== 'raid' && pvpOk) candidates.push('pvp');
+
+  let chosen = null;
+  if (scope === 'raid' || scope === 'cacar' || scope === 'pvp') chosen = scope;
+  else if (candidates.length === 1) chosen = candidates[0];
+  else if (candidates.length > 1) {
+    return {
+      action: 'ambiguous',
+      mutate: false,
+      method: null,
+      candidates,
+      prompt: ambiguousBattlePrompt('!pk', candidates, { kind: 'potion' })
+    };
+  }
+
+  if (state.inventoryQty != null && Number(state.inventoryQty) <= 0 && chosen) {
+    return { action: 'error', mutate: false, method: null, reason: 'no-stock', chosen };
+  }
+
+  if (chosen === 'raid') {
+    return { action: 'raid-item', mutate: true, method: 'raidUseItem', itemId: plan.itemId, chosen };
+  }
+  if (chosen === 'cacar') {
+    return { action: 'hunt-item', mutate: true, method: 'confirmBattleTurn', itemId: plan.itemId, chosen };
+  }
+  if (chosen === 'pvp') {
+    return { action: 'pvp-item', mutate: true, method: 'confirmPvpTurn', itemId: plan.itemId, chosen };
+  }
+  return { action: 'out-of-combat', mutate: true, method: 'useItem', itemId: plan.itemId, chosen: null };
+}
+
+function ambiguousBattlePrompt(prefix, contexts, opts = {}) {
+  const kind = opts.kind || 'attack';
+  const lines = kind === 'potion'
+    ? ['❓ Você possui mais de um combate ativo.', '', 'Escolha onde usar a poção:']
+    : ['❓ Você possui mais de um combate ativo.', ''];
+  for (const c of contexts || []) {
+    if (c === 'raid') {
+      lines.push(kind === 'potion'
+        ? `⚔️ Raid: \`${prefix} raid pocao\` · \`${prefix} raid pocao-maxima\``
+        : `⚔️ Raid: \`${prefix} raid atacar 1\``);
+    } else if (c === 'pvp') {
+      lines.push(kind === 'potion'
+        ? `⚔️ PvP: \`${prefix} pvp pocao\` · \`${prefix} pvp pocao-maxima\``
+        : `⚔️ PvP: \`${prefix} pvp atacar 1\` · \`${prefix} pvp defender\``);
+    } else if (c === 'cacar' || c === 'hunt') {
+      lines.push(kind === 'potion'
+        ? `🌿 Caçada: \`${prefix} cacar pocao\` · \`${prefix} cacar pocao-maxima\``
+        : `🌿 Caçada: \`${prefix} cacar atacar 1\``);
+    } else if (c === 'ginasio' || c === 'gym') {
+      lines.push(`🏛️ Ginásio: \`${prefix} ginasio\``);
+    }
+  }
+  lines.push('', 'Nenhuma ação foi executada.');
+  return lines.join('\n');
+}
+
+/**
+ * Raid é elegível para *ações de combate* deste jogador somente se:
+ * - fase === combate (inscrição NÃO conta como combate ativo);
+ * - o jogador é participante válido (inscrito / presente em participantes);
+ * - o combatente ainda tem HP > 0 quando o HP é conhecido.
+ * Estar "autorizado a agir agora" (suaVez) é validado no handler da ação.
+ * Uma raid ativa no chat com *outros* participantes NÃO elege este jogador.
+ */
+function raidCombatEligibleForPlayer(raid, playerId) {
+  if (!raid || typeof raid !== 'object') return false;
+  if (String(raid.fase || '') !== 'combate') return false;
+  const pid = playerId != null && playerId !== '' ? String(playerId) : null;
+  const inscrito = raid.inscrito === true || raid['inscrito?'] === true;
+  const parts = raid.participantes;
+  let me = null;
+  if (Array.isArray(parts)) {
+    me = parts.find((p) => {
+      if (!p) return false;
+      if (p.voce === true || p['voce?'] === true) return true;
+      if (pid && String(p.playerId || p['player-id'] || p.id || '') === pid) return true;
+      return false;
+    }) || null;
+  } else if (parts && typeof parts === 'object' && pid && parts[pid]) {
+    me = parts[pid];
+  }
+  if (!inscrito && !me) return false;
+  let hp = (me && me.hp != null) ? Number(me.hp) : null;
+  if (hp == null && raid.vezHp != null && pid && String(raid.vez || '') === pid) {
+    hp = Number(raid.vezHp);
+  }
+  if (hp == null && raid.vezHp != null && (raid.suaVez === true || raid['suaVez?'] === true)) {
+    hp = Number(raid.vezHp);
+  }
+  // Sem HP explícito: inscrito em combate ainda elege (handler valida aptidão).
+  if (hp != null && !(hp > 0)) return false;
+  return true;
+}
+
 function resolveCommand(tokens) {
   if (!tokens || !tokens.length) return 'menu';
   if (maxPotionTokenCount(tokens)) return 'pocao-maxima';
@@ -5237,6 +5549,8 @@ module.exports = {
   formatWorldInfo,
   formatEventInfo,
   formatConfirmedPiLines,
+  formatRaidItemUse,
+  formatRaidItem: formatRaidItemUse,
   barraHp,
   menuGolpes,
   textoRaridade,
@@ -5244,6 +5558,12 @@ module.exports = {
   formatCaptureResult,
   formatReleaseResult,
   resolveCommand,
+  resolveScopedCommand,
+  battleContextHeader,
+  ambiguousBattlePrompt,
+  planPotionRoute,
+  resolvePotionDispatch,
+  raidCombatEligibleForPlayer,
   maxPotionTokenCount,
   resolveGymSubcommand,
   formatGymsOverview,

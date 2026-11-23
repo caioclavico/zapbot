@@ -428,24 +428,26 @@
                battle-id (assoc :battle-id battle-id)))
         result (merge-capture-receipt raw)
         save (ports/get-save store chat-id player-id save-id)]
-    {:operation-id (:operation-id result)
-     :duplicate (boolean (:duplicate result))
-     :channel (:channel result "gameplay")
-     :payload-hash (:payload-hash result)
-     :save-id save-id
-     :fence-generation (long fence-generation)
-     :battle-id (:battle-id result)
-     :liberou (boolean (:liberou? result))
-     :capturou false
-     :fugiu false
-     :sequencia-capturas (:sequencia-capturas save 0)
-     :sequencia-antes (:sequencia-antes result 0)
-     :coins (:coins save 0)
-     :encounter (when-let [enc (:encounter result)]
-                  {:battle-id (:battle-id enc)
-                   :aguardando-captura false
-                   :phase (:phase enc)
-                   :bioma (:bioma enc)})}))
+    (cond-> {:operation-id (:operation-id result)
+             :duplicate (boolean (:duplicate result))
+             :channel (:channel result "gameplay")
+             :payload-hash (:payload-hash result)
+             :save-id save-id
+             :fence-generation (long fence-generation)
+             :battle-id (:battle-id result)
+             :liberou (boolean (:liberou? result))
+             :capturou false
+             :fugiu false
+             :sequencia-capturas (:sequencia-capturas save 0)
+             :sequencia-antes (:sequencia-antes result 0)
+             :coins (:coins save 0)
+             :encounter (when-let [enc (:encounter result)]
+                          {:battle-id (:battle-id enc)
+                           :aguardando-captura false
+                           :phase (:phase enc)
+                           :bioma (:bioma enc)})}
+      (and (not (:duplicate result)) (seq (:adventure-activity result)))
+      (assoc :adventure-activity (:adventure-activity result)))))
 
 (defn start-wild-battle!
   "Harness/e2e: inicia batalha selvagem no save congelado (dev)."
@@ -1104,6 +1106,45 @@
                                           updated player-id
                                           (or agora-ms (System/currentTimeMillis)))))
              :raid (raid-summary (:raid result))}
+      (and (not (:duplicate result)) (seq (:adventure-activity result)))
+      (assoc :adventure-activity (:adventure-activity result))
+      (seq level-ups) (assoc :trainer-level-ups level-ups))))
+
+(defn raid-use-item!
+  [store {:keys [chat-id player-id save-id fence-generation operation-id
+                 raid-id item-id expected-turn-index agora-ms]
+          :as req}]
+  (let [writer-ctx (require-writer! req)
+        raid (or (when raid-id (raid-app/get-raid store raid-id))
+                 (raid-app/active-raid store chat-id)
+                 (throw (err/error :raid_not_found {})))
+        item (or item-id (throw (err/error :missing_item_id {})))
+        result (raid-app/use-item!
+                store writer-ctx
+                (cond-> {:operation-id (str operation-id)
+                         :raid-id (:raid-id raid)
+                         :item-id (str item)
+                         :expected-turn-index (long expected-turn-index)
+                         :agora (or agora-ms (System/currentTimeMillis))}))
+        summary (or (:summary result) {})
+        level-ups (public-trainer-level-ups result)
+        poke (or (:pokemon-ativo result) {})]
+    (cond-> {:operation-id (or (:operation-id result) operation-id)
+             :duplicate (boolean (:duplicate result))
+             :item-id (or (:item-id result) (:item-id summary) item)
+             :hp-antes (or (:hp-antes result) (:hp-antes summary))
+             :hp-depois (or (:hp-depois result) (:hp-depois summary))
+             :hp-max (or (:hp-max result) (:hp-max summary))
+             :hp-apos-revide (or (:hp-apos-revide result) (:hp-apos-revide summary))
+             :revide (or (:revide result) (:revide summary))
+             :derrota (boolean (or (:derrota? result) (:derrota? summary)))
+             :eliminado (boolean (or (:eliminado? result) (:eliminado? summary)))
+             :pokemon-ativo {:nome (or (:nome poke) (get poke "nome"))
+                             :species (or (:species poke) (get poke "species"))}
+             :raid-id (:raid-id raid)
+             :raid (raid-summary (:raid result))
+             :save-id save-id
+             :fence-generation (long fence-generation)}
       (and (not (:duplicate result)) (seq (:adventure-activity result)))
       (assoc :adventure-activity (:adventure-activity result))
       (seq level-ups) (assoc :trainer-level-ups level-ups))))

@@ -374,6 +374,7 @@ function createClient(config = {}) {
     cancelRaid: (body) => mutateOnce('/v1/raids/cancel', body),
     startRaid: (body) => mutateOnce('/v1/raids/start', body),
     raidAttack: (body) => mutateOnce('/v1/raids/attack', body),
+    raidUseItem: (body) => mutateOnce('/v1/raids/item', body),
     raidCapture: (body) => mutateOnce('/v1/raids/capture', body),
     raidFrambo: (body) => mutateOnce('/v1/raids/frambo', body),
     getRaidAutoSchedule: ({ chatId }) =>
