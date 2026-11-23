@@ -70,14 +70,18 @@
       {:status :blocked
        :reason (or (:code (ex-data e)) :conversion-error)})))
 
+(defn- attr-exists? [db attr]
+  (boolean (d/q '[:find ?a . :in $ ?ident :where [?a :db/ident ?ident]]
+                db attr)))
+
 (defn- count-attr [db attr]
-  (if (some? (d/pull db '[:db/ident] attr))
+  (if (attr-exists? db attr)
     (long (or (ffirst (d/q '[:find (count ?e) :in $ ?a :where [?e ?a]]
                              db attr)) 0))
     0))
 
 (defn- sum-attr [db attr]
-  (if (some? (d/pull db '[:db/ident] attr))
+  (if (attr-exists? db attr)
     (long (or (ffirst (d/q '[:find (sum ?v) :in $ ?a :where [?e ?a ?v]]
                              db attr)) 0))
     0))
