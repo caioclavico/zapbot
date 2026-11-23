@@ -209,3 +209,21 @@
       (is (thrown? clojure.lang.ExceptionInfo
                    (growth/reconcile-ambiguous-entry
                      base (assoc entry :expected-nivel 7)))))))
+
+(deftest flag-off-keeps-already-migrated-pokemon-v3-aware
+  "Emergency feature OFF is not equivalent to old JVM rollback.
+   A v3-aware JVM must keep interpreting and granting existing v3 records."
+  (let [old (mon 50 8)
+        migrated (with-redefs [growth/progressive-enabled? (constantly true)]
+                   (growth/ensure-progressive-v3-for-grant old))
+        off-progress (with-redefs [growth/progressive-enabled? (constantly false)]
+                       (growth/pokemon-progress migrated))
+        off-grant (with-redefs [growth/progressive-enabled? (constantly false)]
+                    (xp/aplicar-xp-pokemon migrated 1))]
+    (is (= 50 (:nivel migrated)))
+    (is (= 30 (:xp-proximo-nivel off-progress)))
+    (is (= "progressive-xp-v3" (:xp-progress-version off-progress)))
+    (is (= "progressive-xp-v3" (get-in off-grant [:registro :xp-progress-version])))
+    (is (= 50 (:nivel-final off-grant)))
+    (is (= (inc (:xp-desde-nivel migrated))
+           (get-in off-grant [:registro :xp-desde-nivel])))))
