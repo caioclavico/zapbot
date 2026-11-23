@@ -162,3 +162,27 @@
     (is (= 0 (:legacy-pick cmp))
         "Legado escolhia o tanque por stats")
     (is (not= (:picked cmp) (:legacy-pick cmp)))))
+
+(deftest revide-real-independente-da-tipagem-defensiva
+  "O chefe atualmente revida ceil(HPmax/5), não usa golpes/tipos.
+   Contracandidatos idênticos não podem ser ranqueados por ameaça fictícia."
+  (let [raid (raid-chefe {:tipos ["water"]
+                          :golpes [golpe-agua]})
+        normal (mon {:idx 0 :tipos ["normal"] :hp 100 :hp-atual 80
+                     :ataque 70 :atq-esp 70 :defesa 70 :def-esp 70
+                     :golpes [golpe-fisico]})
+        agua (mon {:idx 1 :tipos ["water"] :hp 100 :hp-atual 80
+                   :ataque 70 :atq-esp 70 :defesa 70 :def-esp 70
+                   :golpes [golpe-fisico]})
+        score-normal (sel/score-breakdown raid normal)
+        score-agua (sel/score-breakdown raid agua)]
+    (is (not= (:worst-boss-threat score-normal)
+              (:worst-boss-threat score-agua))
+        "A ameaça teórica é distinta, embora o revide real não seja")
+    (is (= (:turns-vs-revide score-normal)
+           (:turns-vs-revide score-agua)))
+    (is (= (:combat-score score-normal)
+           (:combat-score score-agua))
+        "Score deve refletir o revide real da raid")
+    (is (= 0 (pick raid [normal agua]))
+        "Desempate estável pelo menor índice")))
