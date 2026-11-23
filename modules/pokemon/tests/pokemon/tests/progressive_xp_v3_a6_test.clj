@@ -168,3 +168,44 @@
           (is (= 0 (:xp-desde-nivel after)))
           (is (= "progressive-xp-v3" (:xp-progress-version after)))
           (is (= (:id-pokemon before) (:id-pokemon after))))))))
+
+(deftest single-release-charmander-manual-compensation-never-jumps-level
+  "Illustrates the explicitly declared administrative exception, NOT proof
+   that 21 XP has any particular historical interpretation. No Datomic TX."
+  (with-redefs [growth/progressive-enabled? (constantly true)]
+    (let [id "abb8955f-7ebe-4084-a634-fd74cfa9bf62"
+          base (-> (mon 6 0)
+                   (assoc :id-pokemon id :species "charmander" :nome "Charmander"
+                          :xp 21 :xp-desde-nivel 21)
+                   (dissoc :xp-total :xp-progress-version))
+          entry {:id id :action :converter
+                 :origin :owner-approved-compensation-not-historical
+                 :expected-nivel 6 :expected-raw-xp 21 :target-residual 8}
+          first-pass (growth/reconcile-ambiguous-entry base entry)
+          flat (:registro first-pass)
+          duplicate (growth/reconcile-ambiguous-entry flat entry)
+          v3 (growth/ensure-progressive-v3-for-grant flat)
+          stable (select-keys base [:id-pokemon :nivel :species :nome
+                                    :hp :hp-atual :ataque :defesa
+                                    :atq-esp :def-esp :veloc :shiny])]
+      (is (= :applied (:status first-pass)))
+      (is (= stable (select-keys flat (keys stable))))
+      (is (= 21 (:xp-legacy-residual flat))
+          "Keep original 21 for provenance; never pretend it was 8")
+      (is (= 6 (:xp-legacy-nivel flat)))
+      (is (= 8 (:xp-desde-nivel flat)))
+      (is (= "flat-9-v2" (:xp-progress-version flat)))
+      (is (= :skipped (:status duplicate)))
+      (is (= flat (:registro duplicate)))
+      (is (= 6 (:nivel v3)))
+      (is (= growth/progressive-progress-version (:xp-progress-version v3)))
+      (is (= (long (Math/floor (* (/ 8.0 9.0)
+                                   (growth/progressive-xp-por-nivel 6))))
+             (:xp-desde-nivel v3)))
+      (is (= stable (select-keys v3 (keys stable))))
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (growth/reconcile-ambiguous-entry
+                     base (assoc entry :expected-raw-xp 20))))
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (growth/reconcile-ambiguous-entry
+                     base (assoc entry :expected-nivel 7)))))))
