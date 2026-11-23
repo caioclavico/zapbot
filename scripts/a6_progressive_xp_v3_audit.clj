@@ -71,8 +71,9 @@
        :reason (or (:code (ex-data e)) :conversion-error)})))
 
 (defn- attr-exists? [db attr]
-  (boolean (d/q '[:find ?a . :in $ ?ident :where [?a :db/ident ?ident]]
-                db attr)))
+  ;; Datomic Local client rejects scalar find (`.`); pull by ident is the
+  ;; established A6 pattern (see a6_fase7_integrity_manifest / flat9 audits).
+  (some? (:db/ident (d/pull db '[:db/ident] attr))))
 
 (defn- count-attr [db attr]
   (if (attr-exists? db attr)
