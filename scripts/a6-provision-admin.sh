@@ -11,6 +11,7 @@ provisioner_sha="${A6_PROVISIONER_SHA256:-}"
 validator_sha="${A6_ADMIN_VALIDATOR_SHA256:-}"
 target=/usr/local/lib/odisseu-a6
 entry=/usr/local/libexec/odisseu-a6/a6-root-backup
+mediator=/usr/local/libexec/odisseu-a6/a6-docker-mediator
 sudoers=/etc/sudoers.d/odisseu-a6-backup
 profile=/etc/odisseu-a6/chromium-seccomp.json
 
@@ -46,7 +47,7 @@ stage_json="$(/usr/bin/python3 -I "$validator" --bundle "$bundle" --sha256 "$exp
 stage="$(/usr/bin/python3 -I -c 'import json, sys; print(json.load(sys.stdin)["stage"])' <<<"$stage_json")"
 cleanup() { rm -rf "$stage"; }
 trap cleanup EXIT
-for item in a6-root-backup a6_root_backup.py a6_production_backup.py a6_production_contract.py a6_production_deploy.py a6_mount_policy.py a6_writer_policy.py chromium-seccomp.json; do
+for item in a6-root-backup a6-docker-mediator a6_docker_mediator.py a6_mediator_authority.py a6_root_backup.py a6_production_backup.py a6_production_contract.py a6_production_deploy.py a6_mount_policy.py a6_writer_policy.py chromium-seccomp.json; do
   [[ -f "$stage/$item" && ! -L "$stage/$item" && "$(stat -c '%u:%a:%h' -- "$stage/$item")" == 0:600:1 ]] || { echo "artefato extraído inválido: $item" >&2; exit 2; }
 done
 [[ "$(sha256sum "$stage/chromium-seccomp.json" | awk '{print $1}')" == "$seccomp_sha" ]] || { echo 'seccomp SHA-256 divergente' >&2; exit 2; }
@@ -60,11 +61,14 @@ install -d -o root -g root -m 0755 "$target" "$(dirname "$entry")"
 install -d -o root -g root -m 0755 "$(dirname "$profile")"
 install -o root -g root -m 0644 "$stage"/*.py "$target/"
 install -o root -g root -m 0755 "$stage/a6-root-backup" "$entry"
+install -o root -g root -m 0755 "$stage/a6-docker-mediator" "$mediator"
 install -o root -g root -m 0644 "$stage/chromium-seccomp.json" "$profile"
 install -d -o root -g root -m 0700 /var/backups/odisseu-a6
 install -o root -g root -m 0440 /dev/stdin "$sudoers" <<'EOF'
 Cmnd_Alias ODISSEU_A6_BACKUP = /usr/local/libexec/odisseu-a6/a6-root-backup *
-caioclavico ALL=(root) NOPASSWD: ODISSEU_A6_BACKUP
+Cmnd_Alias ODISSEU_A6_MEDIATOR = /usr/local/libexec/odisseu-a6/a6-docker-mediator
+# The future odisseu-ops identity gets only these two root-owned entry points.
+odisseu-ops ALL=(root) NOPASSWD: ODISSEU_A6_BACKUP, ODISSEU_A6_MEDIATOR
 EOF
 visudo -cf "$sudoers"
 /usr/bin/python3 -I -m py_compile "$target"/*.py

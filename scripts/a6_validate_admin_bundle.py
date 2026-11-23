@@ -22,6 +22,9 @@ MAX_ARCHIVE_BYTES = MAX_TOTAL_BYTES + 64 * 1024
 ZERO_BLOCK = bytes(BLOCK)
 EXPECTED = {
     "a6-root-backup",
+    "a6-docker-mediator",
+    "a6_docker_mediator.py",
+    "a6_mediator_authority.py",
     "a6_root_backup.py",
     "a6_production_backup.py",
     "a6_production_contract.py",
