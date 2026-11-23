@@ -548,20 +548,23 @@
                                 :to-turn (:turn-index raid')
                                 :idle-expires-at (:idle-expires-at raid)
                                 :rule "turn-skip-60s"})}
-              turn-attrs (if (some? (:turn-expires-at window))
-                           [[:db/add [:raid/id raid-id] :raid/turn-expires-at
-                             (long (:turn-expires-at window))]]
-                           [[:db/retract [:raid/id raid-id] :raid/turn-expires-at]])
+              ;; CAS turn-expires: observed → novo (ou retract). Não misturar
+              ;; :db/add com CAS observed→observed no mesmo attr (datoms-conflict).
               ;; NÃO toca idle-expires-at.
-              cas [[:db/cas [:raid/id raid-id] :raid/turn-index turn-index
-                    (long (:turn-index raid'))]
-                   [:db/cas [:raid/id raid-id] :raid/turn-expires-at
-                    observed-texp observed-texp]]]
+              new-texp (:turn-expires-at window)
+              cas (cond-> [[:db/cas [:raid/id raid-id] :raid/turn-index turn-index
+                            (long (:turn-index raid'))]]
+                    (some? new-texp)
+                    (conj [:db/cas [:raid/id raid-id] :raid/turn-expires-at
+                           observed-texp (long new-texp)])
+                    (nil? new-texp)
+                    (into [[:db/cas [:raid/id raid-id] :raid/turn-expires-at
+                            observed-texp observed-texp]
+                           [:db/retract [:raid/id raid-id] :raid/turn-expires-at]]))]
           {:tx (into [] (concat
                          [{:raid/id raid-id
                            :raid/vez next-pid
                            :raid/turn-started-at (long (:turn-started-at window))}]
-                         turn-attrs
                          cas
                          [receipt]
                          notify))

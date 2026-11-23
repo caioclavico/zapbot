@@ -188,11 +188,14 @@
      s {:chat-id chat :player-id "ash" :save-id "a"
         :fence-generation (fence s chat "ash")
         :operation-id "start-expire-race" :agora-ms 4})
+    ;; HP de combate é 320/jogador — força boss frágil para a vitória em 1 golpe.
+    (d/transact (:conn s) {:tx-data [[:db/add [:raid/id rid] :raid/hp-chefe 1]]})
     (let [before (raid-app/get-raid s rid)
           deadline (:idle-expires-at before)
           built (idle-store/build-expire-raid-tx (d/db (:conn s))
                                                  rid (inc deadline))]
       (is (seq (:tx built)))
+      (is (= 1 (:hp-chefe before)))
       (tx/raid-attack!
        s {:chat-id chat :player-id "ash" :save-id "a"
           :fence-generation (fence s chat "ash")
