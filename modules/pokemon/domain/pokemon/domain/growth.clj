@@ -722,12 +722,16 @@
                                      growth-v2-progress-version} ver)))
           (throw (ex-info "Unknown XP version: fail closed"
                           {:code :progressive-xp-unknown-version :version ver})))
-        (when (and (= ver flat9-progress-version)
-                   (let [res (legacy-residual-xp registro)]
-                     (or (neg? res) (>= res flat9-xp-por-nivel))))
-          (throw (ex-info "Out-of-range flat9 residual: fail closed"
-                          {:code :progressive-xp-invalid-flat9-residual
-                           :nivel raw-lvl})))
+        (when (= ver flat9-progress-version)
+          (let [raw-res (registro-get registro :xp-desde-nivel "xp-desde-nivel"
+                                      :xp "xp")]
+            (when (or (nil? raw-res)
+                      (not (number? raw-res))
+                      (neg? (long raw-res))
+                      (>= (long raw-res) flat9-xp-por-nivel))
+              (throw (ex-info "Out-of-range flat9 residual: fail closed"
+                              {:code :progressive-xp-invalid-flat9-residual
+                               :nivel raw-lvl})))))
         (let [old (ensure-flat9-v2-for-grant registro)
               level (long (:nivel old))
               old-res (long (:xp-desde-nivel old 0))
