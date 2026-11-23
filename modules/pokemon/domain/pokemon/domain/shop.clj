@@ -94,7 +94,7 @@
    "greatball" "grande-bola"
    "ultra" "ultra-bola" "ultra-ball" "ultra-bola" "ultraball" "ultra-bola"
    "maxima" "pocao-maxima" "maxima-pocao" "pocao-maxima"
-   "porcao-maxima" "pocao-maxima"
+   "porcao-maxima" "pocao-maxima" "pmax" "pocao-maxima"
    "compartilha-xp" exp-share-id
    "banda-musculosa" "banda"
    "óculos" "oculos" "oculos-sabios" "oculos"

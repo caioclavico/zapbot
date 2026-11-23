@@ -1748,7 +1748,15 @@ function formatError(err) {
     NETWORK: '⚠️ Servidor do jogo indisponível. Tente de novo em instantes.',
     ECONNREFUSED: '⚠️ Servidor do jogo indisponível. Tente de novo em instantes.',
     INVALID_STARTER: '❓ Escolha inválida. Use !pk inicial 1, 2 ou 3 (Bulbasaur, Charmander ou Squirtle).',
-    STARTER_UNAVAILABLE: '🧢 Inicial já escolhido ou jornada já em andamento. Use !pk treinador.'
+    STARTER_UNAVAILABLE: '🧢 Inicial já escolhido ou jornada já em andamento. Use !pk treinador.',
+    INVALID_QUERY: (() => {
+      const det = (err && err.details) || {};
+      const required = det.required || det.Required;
+      if (Array.isArray(required) && required.length) {
+        return `❓ Pedido incompleto para o servidor do jogo (faltam: ${required.join(', ')}). Tente de novo com o comando completo.`;
+      }
+      return '❓ Pedido inválido para o servidor do jogo. Use o comando com contexto, ex.: `!pk raid pocao maxima`.';
+    })()
   };
   let base = map[code] || `⚠️ ${err.message || 'Falha no jogo'} (${code}).`;
   if (code === 'PVP_SWITCH_COOLDOWN') {
@@ -2891,8 +2899,31 @@ const RAID_SUB = {
 };
 
 function resolveRaidSubcommand(token) {
-  const raw = String(token || '').toLowerCase();
+  const raw = normalizar(token);
   return RAID_SUB[raw] || raw || null;
+}
+
+/**
+ * Resolve poção / poção máxima a partir dos tokens pós-`raid`/`raide`.
+ * Aceita `pocao maxima`, `poção máxima`, `pocao-maxima`, `pmax`, `maxima`.
+ * `pocao` sozinho permanece poção comum. Retorna null se não for item.
+ */
+function resolveRaidPotionTokens(tokens) {
+  const raw = (tokens || []).map((t) => normalizar(t)).filter(Boolean);
+  if (!raw.length) return null;
+  const maxN = maxPotionTokenCount(raw);
+  if (maxN > 0) {
+    return { sub: 'pocao-maxima', itemId: 'pocao-maxima', consumed: maxN };
+  }
+  const sub = resolveRaidSubcommand(raw[0]);
+  if (sub === 'pocao' || sub === 'pocao-maxima') {
+    return {
+      sub,
+      itemId: sub === 'pocao-maxima' ? 'pocao-maxima' : 'pocao',
+      consumed: 1
+    };
+  }
+  return null;
 }
 
 function formatRaidEmpty(prefix = '!pk') {
@@ -4026,9 +4057,11 @@ function formatRaidItemUse(data, prefix = '!pk') {
   const hpMax = data && (data.hpMax != null ? data.hpMax : data['hp-max']);
   const apos = data && (data.hpAposRevide != null ? data.hpAposRevide : data['hp-apos-revide']);
   const revide = data && data.revide;
+  const r = data && data.raid;
+  const derrota = Boolean(data && (data.derrota || data.derrota === true || data['derrota?']));
   const lines = [
     max ? '💖 *POÇÃO MÁXIMA UTILIZADA!*' : '🧪 *POÇÃO UTILIZADA!*',
-    `Pokémon: ${nome}`,
+    `🐾 ${nome}`,
     (antes != null && hpMax != null)
       ? `HP anterior: ${antes}/${hpMax}`
       : null,
@@ -4037,14 +4070,22 @@ function formatRaidItemUse(data, prefix = '!pk') {
       : null,
   ];
   if (revide != null && Number(revide) > 0) {
-    lines.push('', '⚔️ O chefe atacou!', `Dano recebido: ${revide}`);
+    lines.push('', '⚔️ O chefe revidou!', `Dano recebido: ${revide}`);
     if (apos != null && hpMax != null) lines.push(`❤️ HP atual: ${apos}/${hpMax}`);
   }
-  if (data && (data.derrota || data.derrota === true)) {
+  if (derrota) {
     lines.push('', '💀 Sua equipe foi derrotada na raid.');
+  } else if (r && r.fase === 'combate') {
+    const turno = r.turnIndex != null ? r.turnIndex : r['turn-index'];
+    lines.push('', `⚔️ *RAID — TURNO ${turno != null ? turno : '?'}*`, '');
+    // Painel canônico pós-transação (vez, HP e golpes do treinador atual).
+    lines.push(...formatRaidTurnBlock(r, prefix));
+  } else if (r && r.fase === 'vitoria') {
+    lines.push('', ...formatRaidVictoryFooter(r, data, prefix));
   } else {
-    lines.push('', `Continue: \`${prefix} raid atacar 1\` · \`${prefix} raid status\``);
+    lines.push('', `Continue: \`${prefix} raid status\``);
   }
+  if (data && data.duplicate) lines.push('_idempotente: mesmo operationId_');
   return lines.filter((l) => l != null).join('\n');
 }
 
@@ -5115,12 +5156,17 @@ const ALIASES = {
   fruta: 'fruta', frambo: 'fruta', framb: 'fruta', razz: 'fruta'
 };
 
-const MAX_POTION_ALIASES = new Set(['pocao-maxima', 'porcao-maxima']);
+const MAX_POTION_ALIASES = new Set([
+  'pocao-maxima', 'porcao-maxima', 'pmax', 'maxima', 'maxima-pocao'
+]);
 
 function maxPotionTokenCount(tokens) {
   const first = normalizar(tokens?.[0]);
+  if (!first) return 0;
   if (MAX_POTION_ALIASES.has(first)) return 1;
-  return MAX_POTION_ALIASES.has(`${first}-${normalizar(tokens?.[1])}`) ? 2 : 0;
+  // `pocao maxima` / `poção máxima` / `pocao-maxima` (já normalizado no 1º token).
+  if (MAX_POTION_ALIASES.has(`${first}-${normalizar(tokens?.[1])}`)) return 2;
+  return 0;
 }
 
 function battleContextHeader(kind, turn, opts = {}) {
@@ -5160,6 +5206,16 @@ function resolveScopedCommand(tokens) {
     raid: 'raid', raide: 'raid', raids: 'raid'
   })[raw[0]] || null;
   if (!scope) {
+    // !pk pocao maxima | poção máxima — consumir 1 ou 2 tokens.
+    const maxN = maxPotionTokenCount(raw);
+    if (maxN > 0) {
+      return {
+        cmd: 'pocao-maxima',
+        scope: null,
+        resto: raw.slice(maxN),
+        tokens: raw
+      };
+    }
     return {
       cmd: resolveCommand(tokens),
       scope: null,
@@ -5171,6 +5227,7 @@ function resolveScopedCommand(tokens) {
 
   if (scope === 'raid') {
     // Tudo após raid/raide vai para executar-raid-jvm! (aliases RAID_SUB).
+    // Poção máxima multi-token é resolvida em resolveRaidPotionTokens / planPotionRoute.
     return { cmd: 'raid', scope: 'raid', resto: restTokens, tokens: raw };
   }
 
@@ -5218,16 +5275,17 @@ function planPotionRoute(tokens) {
   const itemFromCmd = (cmd) => (cmd === 'pocao-maxima' ? 'pocao-maxima' : 'pocao');
 
   if (scoped.scope === 'raid') {
-    const sub = resolveRaidSubcommand(scoped.resto[0] || '');
-    if (sub === 'pocao' || sub === 'pocao-maxima') {
+    const potion = resolveRaidPotionTokens(scoped.resto || []);
+    if (potion) {
       return {
         handler: 'executar-raid-jvm!',
         scope: 'raid',
         cmd: 'raid',
-        itemId: itemFromCmd(sub),
+        itemId: potion.itemId,
         reads: ['getActiveRaid', 'getActiveSave'],
         write: 'raidUseItem',
-        encounterRead: null
+        encounterRead: null,
+        consumed: potion.consumed
       };
     }
     return { handler: 'executar-raid-jvm!', scope: 'raid', cmd: 'raid', itemId: null, reads: ['getActiveRaid'], write: null, encounterRead: null };
@@ -5284,15 +5342,16 @@ function resolvePotionDispatch(plan, state = {}) {
   if (scope !== 'cacar' && scope !== 'raid' && pvpOk) candidates.push('pvp');
 
   let chosen = null;
-  if (scope === 'raid' || scope === 'cacar' || scope === 'pvp') chosen = scope;
-  else if (candidates.length === 1) chosen = candidates[0];
-  else if (candidates.length > 1) {
+  if (scope === 'raid' || scope === 'cacar' || scope === 'pvp') {
+    chosen = scope;
+  } else if (candidates.length >= 1) {
+    // Sem escopo explícito durante combate: orientar, nunca mutar.
     return {
       action: 'ambiguous',
       mutate: false,
       method: null,
       candidates,
-      prompt: ambiguousBattlePrompt('!pk', candidates, { kind: 'potion' })
+      prompt: potionContextGuide('!pk', candidates, plan.itemId)
     };
   }
 
@@ -5314,28 +5373,50 @@ function resolvePotionDispatch(plan, state = {}) {
 
 function ambiguousBattlePrompt(prefix, contexts, opts = {}) {
   const kind = opts.kind || 'attack';
+  const itemId = opts.itemId || opts.item || 'pocao';
+  const max = /maxima/.test(String(itemId));
+  const potionLabel = max ? 'pocao maxima' : 'pocao';
   const lines = kind === 'potion'
-    ? ['❓ Você possui mais de um combate ativo.', '', 'Escolha onde usar a poção:']
+    ? [
+      max ? '💖 *POÇÃO MÁXIMA*' : '🧪 *POÇÃO*',
+      '',
+      'Para usar uma poção durante uma batalha, escolha o contexto:'
+    ]
     : ['❓ Você possui mais de um combate ativo.', ''];
   for (const c of contexts || []) {
     if (c === 'raid') {
       lines.push(kind === 'potion'
-        ? `⚔️ Raid: \`${prefix} raid pocao\` · \`${prefix} raid pocao-maxima\``
+        ? `⚔️ Raid: \`${prefix} raid ${potionLabel}\``
         : `⚔️ Raid: \`${prefix} raid atacar 1\``);
     } else if (c === 'pvp') {
       lines.push(kind === 'potion'
-        ? `⚔️ PvP: \`${prefix} pvp pocao\` · \`${prefix} pvp pocao-maxima\``
+        ? `🥊 PvP: \`${prefix} pvp ${potionLabel}\``
         : `⚔️ PvP: \`${prefix} pvp atacar 1\` · \`${prefix} pvp defender\``);
     } else if (c === 'cacar' || c === 'hunt') {
       lines.push(kind === 'potion'
-        ? `🌿 Caçada: \`${prefix} cacar pocao\` · \`${prefix} cacar pocao-maxima\``
+        ? `🌿 Caçada: \`${prefix} cacar ${potionLabel}\``
         : `🌿 Caçada: \`${prefix} cacar atacar 1\``);
     } else if (c === 'ginasio' || c === 'gym') {
       lines.push(`🏛️ Ginásio: \`${prefix} ginasio\``);
     }
   }
-  lines.push('', 'Nenhuma ação foi executada.');
+  if (kind === 'potion') {
+    lines.push('', 'Nenhuma poção foi utilizada.');
+  } else {
+    lines.push('', 'Nenhuma ação foi executada.');
+  }
   return lines.join('\n');
+}
+
+/**
+ * Orientação obrigatória quando !pk pocao[ maxima] vem sem escopo
+ * e há combate(s) elegível(is). Não muta inventário nem batalha.
+ */
+function potionContextGuide(prefix, contexts, itemId = 'pocao') {
+  const list = (contexts && contexts.length)
+    ? contexts
+    : ['raid', 'cacar', 'pvp'];
+  return ambiguousBattlePrompt(prefix, list, { kind: 'potion', itemId });
 }
 
 /**
@@ -5578,6 +5659,8 @@ module.exports = {
   formatGymResolve,
   formatGymDefenderReturn,
   resolveRaidSubcommand,
+  resolveRaidPotionTokens,
+  potionContextGuide,
   resolveRaidGym,
   RAID_GYMS,
   formatRaidPrazo,
