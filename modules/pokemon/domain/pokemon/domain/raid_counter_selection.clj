@@ -2,7 +2,9 @@
   "Seleção determinística do melhor counter para `!pk raid entrar auto`.
   Usa dados reais do chefe em `:chefe` (tipos, stats, golpes) — sem expor nome/espécie.
   Alinha ofensiva a `pokemon.domain.raid/calcular-dano` (sem STAB, como o combate).
-  Sobrevivência usa `revide-chefe` (ceil HP máx / 5). Sem favorecer lendário/nível alto."
+  Sobrevivência usa exclusivamente revide canônico (ceil HP máx / 5):
+  os golpes do chefe NÃO produzem dano tipado no revide atual.
+  Sem favorecer lendário/nível alto."
   (:require [pokemon.domain.battle :as battle]
             [pokemon.domain.damage :as dmg]
             [pokemon.domain.errors :as err]
@@ -128,15 +130,15 @@
                         (filterv golpe-ofensivo?))
         ameacas (mapv #(calcular-dano-chefe-vs-mon % ctx pokemon) boss-moves)
         worst-threat (if (seq ameacas) (apply max ameacas) 0)
-        ;; Resistência: inverso da pior ameaça (turnos até cair só pelo revide).
+        ;; Sobrevivência efetiva: HP atual / revide fixo. A ameaça dos golpes
+        ;; do chefe é apenas diagnóstica, não influencia o score.
         hp-atual (long (or (:hp-atual pokemon) (:hp pokemon) 0))
         turns-revide (/ (double hp-atual) (double (revide-por-turno pokemon)))
-        defensive-bonus (if (pos? worst-threat)
-                          (/ 160.0 (+ 10.0 (double worst-threat)))
-                          1.0)
+        ;; Do NOT reward typed resistance to boss moves here: real raid
+        ;; retaliation is ceil(maxHP/5) regardless of boss moves/types.
+        ;; Threat remains informational only for debugging/comparison.
         combat (+ (* 0.70 (double best-off))
                   (* 0.20 (double avg-off))
-                  (* 80.0 defensive-bonus)
                   (* 12.0 turns-revide)
                   (* 0.02 (double hp-atual)))]
     {:combat-score (long (Math/round (* 1000.0 combat)))
