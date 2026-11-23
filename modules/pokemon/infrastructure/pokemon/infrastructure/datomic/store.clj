@@ -3393,8 +3393,15 @@
                      gym-finished? (and gym? (not (:active? next-state)))
                      idx (long (or (get-in next-state [:indices-ativos :x])
                                    (:collection-index next-state 0)))
-                     poke (when (and (seq colecao) (< idx (count colecao)))
-                            (nth colecao idx))
+                     ;; XP/HP sempre pelo id do combatente — collection-index pode
+                     ;; divergir da posição no vetor ordenado (gaps/releases).
+                     id-fighter (or (get-in next-state [:pokemons :x :id-pokemon])
+                                    (get-in next-state [:pokemons :x "id-pokemon"]))
+                     poke (or (when id-fighter
+                                (some #(when (= (:id-pokemon %) id-fighter) %)
+                                      colecao))
+                              (when (and (seq colecao) (< idx (count colecao)))
+                                (nth colecao idx)))
                      save-m (->save save)
                      next-state (if (:aguardando-captura? next-state)
                                   (let [o' (capture/assegurar-raridade
@@ -3451,11 +3458,14 @@
                                             (:battle-reward? rew)))
                                ;; Override + omit: HP de combate fica só em hp-sync
                                ;; (um writer). XP/evo não reemitem :pokemon/hp-atual.
+                               ;; flat9: derrota mín. 1 e vitória de caça já são pontos
+                               ;; flat canônicos — não reinterpretar como :atividade.
                                (apply-pokemon-xp-tx
                                 (assoc poke :hp-atual battle-hp-x)
                                 (long (:pokemon-xp rew 0))
                                 {:hp-atual-override battle-hp-x
-                                 :omit-hp-atual? true}))
+                                 :omit-hp-atual? true
+                                 :unidade (if (:battle-reward? rew) :atividade :flat9)}))
                      exp-share-parts
                      (when (and grant-battle? xp-part (= shop/exp-share-id (:item poke)))
                        (into []
@@ -3605,9 +3615,12 @@
                            :subida (:subida xp-part)
                            :reward (if gym-finished?
                                      (:reward (:result resolve-part))
-                                     (cond-> rew
-                                       (seq exp-share-parts)
-                                       (assoc :exp-share-count (count exp-share-parts))))
+                                     (let [applied (if (seq (:tx xp-part))
+                                                     (long (:pokemon-xp rew 0))
+                                                     0)]
+                                       (cond-> (assoc rew :pokemon-xp applied)
+                                         (seq exp-share-parts)
+                                         (assoc :exp-share-count (count exp-share-parts)))))
                            :gym-resolve (when gym-finished? (:result resolve-part))}})))
             (catch Exception ex
               (let [dup (receipt-entity (d/db conn) operation-id)]

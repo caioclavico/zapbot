@@ -902,18 +902,26 @@
         receipt-id (str "raid-reward|" (:raid-id raid) "|" player-id)
         id-poke (or (get-in part [:pokemon :id-pokemon])
                     (get-in part [:pokemon "id-pokemon"]))
-        live0 (when id-poke
-                (some #(when (= (:id-pokemon %) id-poke) %)
-                      (query-collection db sk)))
+        colecao (query-collection db sk)
+        idx-part (long (:collection-index part 0))
+        live0 (or (when id-poke
+                    (some #(when (= (:id-pokemon %) id-poke) %) colecao))
+                  ;; Fallback: índice da inscrição (id ausente em snapshot legado).
+                  (when (and (seq colecao) (<= 0 idx-part) (< idx-part (count colecao)))
+                    (nth colecao idx-part)))
+        id-poke (or id-poke (:id-pokemon live0))
         ;; Preserva HP do snapshot na coleção antes do XP (nível-up não “cura” raid).
         live (when live0
                (if-let [hp (slot-hp-for-id part id-poke)]
                  (assoc live0 :hp-atual hp)
                  live0))
+        ;; Anunciar somente o que a TX aplica (live ausente → 0 XP no DTO).
         xp-qtd (if live xp-base 0)
+        ;; Tabela canônica já é flat (vitória 6 / derrota 3) — não reinterpretar
+        ;; via :atividade (ratio/categoria podiam alterar o grant anunciado).
         xp-part (when (and live (pos? xp-qtd))
                   (apply-pokemon-xp-tx live xp-qtd
-                                       {:unidade :atividade
+                                       {:unidade :flat9
                                         :atividade :raid
                                         :categoria-raid (or (:boss-categoria raid)
                                                             (:categoria raid)

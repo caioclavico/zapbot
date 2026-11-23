@@ -336,6 +336,18 @@
                           (update :receipts conj deliver-key))]
               (recur st2 (conj delivered p)))))))))
 
+(defn- incubadoras-com-ovo-elegivel-pi
+  "Incubadoras com ovo ativo ainda capaz de receber PI (não pronto/chocado)."
+  [estado]
+  (->> (:incubators estado [])
+       (keep (fn [i]
+               (when-let [eid (:active-egg-id i)]
+                 (when-let [o (some #(when (= (:egg-id %) eid) %) (:eggs estado []))]
+                   (when (and (contains? #{:incubating} (:state o))
+                              (not (eggs/pronto? o)))
+                     {:egg-id eid :bonus (long (:bonus-points i 0))})))))
+       vec))
+
 (defn apply-activity
   "Aplica PI + possível ovo/incubadora sobre estado mergeado (shell+eggs).
   Idempotente por event-id em :receipts.
@@ -368,6 +380,10 @@
                   (and suppress-wild-victory-pi? (= activity :wild-victory)) 0
                   farmed? 0
                   :else pi0)
+            ;; Regra canônica: sem ovo elegível em incubação ativa → 0 PI,
+            ;; sem consumir teto diário e sem anúncio (pi-granted=0).
+            elegiveis (incubadoras-com-ovo-elegivel-pi estado)
+            pi0 (if (seq elegiveis) pi0 0)
             [shell1 pi*] (credit-daily-pi estado agora pi0)
             estado1 (eggs/aplicar-pontos (merge estado shell1) event-id pi*)
             egg-progress

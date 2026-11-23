@@ -24,6 +24,17 @@
       (trainer/bootstrap! s)
       s)))
 
+
+(defn- com-ovo-incubando
+  "Garante ovo elegível a PI (hotfix A6: sem incubação → pi-granted 0)."
+  ([st] (com-ovo-incubando st 1000000))
+  ([st t0]
+   (let [oid (str "e-pi-" t0)
+         o (eggs/novo-ovo oid :comum t0 "pidgey")]
+     (-> st
+         (eggs/conceder-ovo o)
+         (eggs/incubar oid "permanente" t0 "a" 0)))))
+
 (defn- boot! [s chat player]
   (trainer/create-trainer! s {:chat-id chat :player-id player})
   (adv/ensure-account! s chat player))
@@ -58,7 +69,7 @@
 
 (deftest teto-diario-e-pending-inventory
   (with-redefs [egg-activity/daily-cap (constantly 10)]
-    (let [st (eggs/estado-inicial)
+    (let [st (com-ovo-incubando (eggs/estado-inicial))
           r1 (egg-activity/apply-activity st {:event-id "a1" :activity :gym-victory
                                               :agora 1000000})
           ;; gym victory = 25 PI → capped to 10
@@ -149,7 +160,7 @@
                  (eggs/adicionar-incubadora st "bad-1" :lendaria)))))
 
 (deftest anti-farm-pvp-mesmo-oponente
-  (let [st (eggs/estado-inicial)
+  (let [st (com-ovo-incubando (eggs/estado-inicial) 3000000)
         r1 (egg-activity/apply-activity
             st {:event-id "pvp-1" :activity :pvp-victory
                 :opponent-id "misty" :agora 3000000})
@@ -178,7 +189,7 @@
 (deftest primeira-vitoria-ginasio-semana-concede-extra
   (let [t0 1700000000000
         r (egg-activity/apply-activity
-           (eggs/estado-inicial)
+           (com-ovo-incubando (eggs/estado-inicial) t0)
            {:event-id "gym-1" :activity :gym-victory :agora t0})
         st (:estado r)
         kinds (map :kind (:incubators st))]
@@ -201,7 +212,7 @@
 
 (deftest captura-nao-zera-pi-com-suppress-wild-victory
   (let [r (egg-activity/apply-activity
-           (eggs/estado-inicial)
+           (com-ovo-incubando (eggs/estado-inicial) 1700000000000)
            {:event-id "hunt-1" :activity :hunt-complete
             :suppress-wild-victory-pi? true :agora 1700000000000})]
     (is (= 15 (:pi-granted r))

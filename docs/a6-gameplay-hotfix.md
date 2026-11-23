@@ -1,73 +1,67 @@
-# A6 gameplay hotfix
+# A6 — Hotfix unificado de gameplay (XP, raids, ovos, PI, biomas, paridade)
 
-Branch: `feature/a6-gameplay-hotfix-unified` (base `master` `180a16e`).
+**Branch:** `feature/a6-gameplay-hotfix-unified`  
+**Base:** `master` @ `180a16e` (PR #132)  
+**Gates:** `IMPLEMENTATION` → validation em andamento · **`DEPLOY_NO_GO`** · merge só com revisão humana.
 
-**DEPLOY_NO_GO.** Este documento não autoriza merge nem deploy.
+Não executar merge/deploy sem autorização explícita.
 
-## Diagnóstico
+---
 
-### Biomas e climas
+## A. Diagnóstico (por bug)
 
-- `!pk cacar <nome>` usava um único erro quando o texto não era bioma e quando o bioma existia mas estava fora do horário.
-- Agora: `:area_unknown` (nome fora do catálogo) e `:area_unavailable` (bioma canônico fechado neste período).
-- Aliases só apontam para os 6 ids existentes (`verde`→floresta, `azul`→praia, `rochosa`→caverna, `pokemon`→cidade, `encantado`→lago, `rubro`→vulcão). Não há bioma novo.
-- Lookup aceita acento, caixa, hífen/underscore e espaços internos.
-- Fora do período Dia, o sorteio `ensolarado` vira `ceu-limpo`. `obter-clima` de "ensolarado" continua Ensolarado. Período (Madrugada/Dia/Entardecer/Noite) e clima são linhas diferentes na apresentação.
+| # | Bug | Causa raiz | Arquivos | Solução |
+|---|-----|------------|----------|---------|
+| 1 | XP mín. derrota caça | Lookup do combatente por `nth`/índice podia divergir do mon real; DTO/announcement não mostravam XP de derrota | `store.clj`, `battle.clj`, `pokemon-jvm-present.cjs` | Resolver por `id-pokemon`; `indices-ativos` no create-wild; anunciar só XP persistido; unidade `:flat9` na derrota |
+| 2 | XP raid anunciado ≠ aplicado | Live lookup falhava sem id; `:atividade` podia alterar o grant flat canônico | `raid_store.clj` | Fallback por `collection-index`; grant `:flat9` (3/6); DTO `xp-pokemon` = aplicado |
+| 3 | `!pk 1` / `!pk atk 1` atacam raid | `contexts=["raid"]` executava raid sem scope | `pokemon_http.cljs` | Raid só com `battle-scope="raid"`; mensagem educativa se unscoped |
+| 4 | Ovo ganho / chocar sem PNG | Grant só texto; `!pk chocar` sem `renderHatchRevealCard` | `pokemon_http.cljs`, `pokemon-jvm-media.cjs`, `pokemon-jvm-present.cjs` | Tip incubação; PNG grant; hatch manual com reveal card |
+| 5 | PI sem ovo incubando | `credit-daily-pi` antes de checar incubadoras | `egg_activity.clj` | Sem ovo elegível → `pi-granted=0`, sem consumir teto |
+| 6 | Biomas acento/composto | `:area_unavailable` misturava desconhecido vs fechado; aliases parciais ausentes | `mundo.clj`, `hunt.clj`, present, bridge | Aliases canônicos; `:area_unknown` vs unavailable; `!pk biomas`; msgs educativas |
+| 7 | Paridade chats | Catálogo/mundo já únicos; thematic por chat permanece admin | — | Sem forks de gameplay por `chatId` neste hotfix |
 
-### Ovos
+**Saves:** nenhuma migração de schema; nenhum write em produção; XP/PI só em TX canônicas idempotentes.
 
-- `!pk chocar` passa por `shouldRenderHatchReveal` + `renderHatchRevealCard`, no mesmo caminho do auto-hatch. Coleção cheia não gera PNG.
-- Ovo efetivamente concedido (não adiado) anuncia a dica de incubar em `formatConfirmedPiLines` e pede PNG via `renderEggGrantCard` (egg-cards). Inventário cheio não renderiza o ovo.
+---
 
-### Raid `!pk 1` / `!pk atk 1`
+## B. Alterações principais
 
-- Sem escopo, `resolveScopedCommand` ainda classifica `1` e `atk` como `atacar` com `scope` null.
-- Com raid elegível, o handler de ataque **não** chama `raidAttack` nem `confirmBattleTurn`. A resposta é a mensagem educacional (`formatRaidBareAttackBlocked` / o mesmo texto em `pokemon_http.cljs`): usar `` !pk raid atk 1 ``. Nenhuma ação é executada.
-- `` !pk raid atk 1 `` continua no escopo `raid`.
+- Domínio: `battle.clj`, `egg_activity.clj`, `hunt.clj`, `mundo.clj`
+- Persistência: `store.clj`, `raid_store.clj`, `bridge.clj`
+- Node: `pokemon_http.cljs`, `pokemon-jvm-present.cjs`, `pokemon-jvm-media.cjs`
+- Testes: `gameplay_hotfix_a6_test.clj`, ajustes egg/raid, `test/pokemon-a6-gameplay-hotfix.test.cjs`
 
-### Paridade de chat
+---
 
-- Rotação de bioma e clima é global no fuso `America/Sao_Paulo`. `mundo.clj` e `hunt.clj` não ramificam gameplay por `chatId`.
-- Eventos temáticos podem carregar `chat-id` na ocorrência. Isso não altera o catálogo de biomas.
+## C. Auditoria ambiental (catálogo real)
 
-## Catálogo
+**Biomas (6):** floresta, praia, caverna, cidade, lago, vulcao (Vulcão Rubro)  
+**Climas (6 + ceu-limpo sintético):** ensolarado, chuvoso, nublado, ventania, neve, nevoeiro; off-Dia `ensolarado`→`ceu-limpo`  
+**Aliases adicionados:** rubro/vulcao rubro→vulcao, verde/floresta verde→floresta, azul/praia azul→praia, etc.  
+**Compostos testados:** vulcão/vulcao rubro, floresta verde, …  
+**Colisões:** nenhuma inventada; `vulcao azul` → `:area_unknown`  
+**Dia/noite:** períodos Madrugada/Dia/Entardecer/Noite; vulcão só no Dia  
+**Paridade:** mesmas regras em todos os chats habilitados
 
-### Biomas (6)
+---
 
-| id | nome | alias |
-| --- | --- | --- |
-| floresta | Floresta Verde | verde |
-| praia | Praia Azul | azul |
-| caverna | Caverna Rochosa | rochosa |
-| cidade | Cidade Pokémon | pokemon |
-| lago | Lago Encantado | encantado |
-| vulcao | Vulcão Rubro | rubro |
+## D. Testes (execução local)
 
-### Climas (6 + céu limpo)
+| Suite | Resultado |
+|-------|-----------|
+| JVM `gameplay-hotfix-a6-test` | PASS (5 / 42) |
+| JVM `egg-activity-a6-test` | PASS (14 / 52) |
+| JVM `egg-fixes-a6-test` | PASS (9 / 88) |
+| JVM raid defeat XP (solo + level) | PASS após flat9 + assert residual |
+| Node `pokemon-a6-gameplay-hotfix.test.cjs` + a41 | PASS |
+| Integração plena / PNG visual / concorrência multi-chat | Pendente CI no PR |
 
-| id | nome | nota |
-| --- | --- | --- |
-| ensolarado | Ensolarado | só no período Dia |
-| chuvoso | Chuvoso | |
-| nublado | Nublado | |
-| ventania | Ventania | |
-| neve | Neve | |
-| nevoeiro | Nevoeiro | |
-| ceu-limpo | Céu limpo | substitui ensolarado fora do Dia; não entra na rotação de 6 |
+---
 
-## Gates
+## E. Riscos e rollback
 
-| Gate | Estado |
-| --- | --- |
-| DEPLOY_NO_GO | **ativo** — sem merge, sem deploy |
-| DEPLOY_GO | não |
-| `:area_unknown` ≠ `:area_unavailable` | teste JVM |
-| aliases dos 6 biomas (acento/caixa/espaço/composto) | teste JVM |
-| noite ensolarado → céu limpo; Dia permanece Ensolarado | teste JVM |
-| período ≠ clima na apresentação | teste Node |
-| `!pk chocar` PNG como o auto-hatch | `pokemon_http.cljs` |
-| ovo concedido: PNG + dica de incubar | present + media |
-| `!pk 1` / `!pk atk 1` na raid não atacam | mensagem educacional; teste Node |
-| biomas sem fork de `chatId` | auditoria no teste JVM |
+**Riscos:** jogadores sem ovo incubando deixam de ver/ganhar PI (intencional); comandos genéricos deixam de atacar raid (intencional); mensagens de bioma mudam.
 
-Não promover este branch a deploy enquanto o gate estiver `DEPLOY_NO_GO`.
+**Rollback:** reverter o merge do PR; sem migration; recibos idempotentes evitam double-grant ao reprocessar.
+
+**Estados:** `MERGE_NO_GO` até CI verde + review · `DEPLOY_NO_GO` até GO explícito do owner.

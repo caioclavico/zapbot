@@ -317,7 +317,10 @@
               :turn-index 0
               :phase :active
               :outcome nil
-              :active? true}
+              :active? true
+              ;; Índice canônico na coleção — XP de derrota/vitória resolve por id,
+              ;; mas indices-ativos cobre fallbacks e UI de troca.
+              :indices-ativos {:x (long (or collection-index 0))}}
         x-int? (= "intimidate" (or (:habilidade pokemon-x) (get pokemon-x "habilidade")))
         o-int? (= "intimidate" (or (:habilidade pokemon-o) (get pokemon-o "habilidade")))
         reduzir (fn [b marca]
