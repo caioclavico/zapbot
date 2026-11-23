@@ -87,7 +87,7 @@
 (deftest chefe-dragao-gelo-ou-fada
   (let [raid (raid-chefe {:tipos ["dragon"] :golpes [golpe-dragao]
                           :defesa 80 :def-esp 90})
-        same (mon {:idx 0 :tipos ["dragon"] :atq-esp 95 :golpes [golpe-dragao]})
+        same (mon {:idx 0 :tipos ["dragon"] :atq-esp 50 :golpes [golpe-dragao]})
         ice (mon {:idx 1 :tipos ["ice"] :atq-esp 70 :golpes [golpe-gelo]})
         fairy (mon {:idx 2 :tipos ["fairy"] :atq-esp 65 :golpes [golpe-fada]})]
     (is (contains? #{1 2} (pick raid [same ice fairy])))))
