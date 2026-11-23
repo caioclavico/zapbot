@@ -47,6 +47,19 @@
   []
   (* 1000 (turn-timeout-segundos)))
 
+
+(def admin-suspend-hold-ms
+  "Folga longa enquanto o chat está bloqueado (sem TX a cada tick)."
+  (* 30 24 60 60 1000))
+
+(defn admin-suspend-receipt-id
+  [kind entity-id]
+  (str "admin-suspend|" (name kind) "|" entity-id))
+
+(defn admin-resume-receipt-id
+  [kind entity-id suspended-at]
+  (str "admin-resume|" (name kind) "|" entity-id "|" (long suspended-at)))
+
 (defn touch
   "Nova janela a partir de `agora` (epoch ms)."
   ([agora] (touch agora (idle-timeout-ms)))

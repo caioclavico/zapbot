@@ -61,12 +61,19 @@
     (throw (err/error :invalid_starter {:choice choice})))
   (let [w (writer/freeze-writer store chat-id player-id)
         result (ports/choose-starter! store w req)
-        schedule (when-not (or (:starter-already-chosen result)
-                               (true? (:duplicate result)))
-                   (try
-                     (raid-auto/ensure-schedule-after-onboarding! store chat-id)
-                     (catch Exception _
-                       nil)))]
+        schedule
+        (when-not (or (:starter-already-chosen result)
+                      (true? (:duplicate result)))
+          (try
+            (raid-auto/ensure-schedule-after-onboarding! store chat-id)
+            (catch Exception ex
+              (binding [*out* *err*]
+                (println "[onboarding] ensure-schedule-after-onboarding failed chat="
+                         (str chat-id) ":" (ex-message ex)))
+              {:chat-id (str chat-id)
+               :enabled false
+               :error (or (:pokemon/error (ex-data ex)) :schedule_ensure_failed)
+               :message (ex-message ex)})))]
     (cond-> (assoc result
                    :chat-id chat-id
                    :player-id player-id

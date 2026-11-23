@@ -144,3 +144,17 @@
         cancelled (pokemon.domain.raid/cancelar-sistema raid 1000)]
     (is (= "cancelada" (:fase cancelled)))
     (is (= 1000 (:expira cancelled)))))
+
+(deftest agenda-admin-disabled-nao-reativa
+  (let [s (fresh! "mg-admin-off")
+        _ (ensure-trainer! s grupo-a "ash")
+        _ (tx/choose-starter!
+           s {:chat-id grupo-a :player-id "ash"
+              :operation-id "mg-admin-st" :choice "1"})
+        sa (raid-auto/get-schedule s grupo-a)
+        _ (raid-auto/upsert-schedule!
+           s {:chat-id grupo-a :enabled false
+              :next-at (:next-at sa) :agora-ms (System/currentTimeMillis)})
+        ens (raid-auto/ensure-schedule-after-onboarding! s grupo-a)]
+    (is (= :admin-disabled (:skipped ens)))
+    (is (false? (:enabled (raid-auto/get-schedule s grupo-a))))))

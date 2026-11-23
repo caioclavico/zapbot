@@ -4081,10 +4081,22 @@
     (let [agora (long (or (:agora request) (System/currentTimeMillis)))
           limit (long (or (:limit request) 32))
           chat-filter (:chat-id request)
+          blocks-ok? (not (false? (:blocks-ok? request)))
           blocked (set (map str (or (:blocked-chat-ids request) [])))
-          blocked? (fn [cid] (contains? blocked (str cid)))
+          blocked? (fn [cid] (contains? blocked (str cid)))]
+      (if-not blocks-ok?
+        {:enabled true
+         :agora agora
+         :fail-closed true
+         :planned []
+         :spawned []
+         :deferred-admin-block []
+         :reminded []
+         :suppressed []
+         :expired []}
+        (let [
           ;; 1) Expire lobbies vencidos antes de spawn (libera ponteiro).
-          ;;    Chat bloqueado: cancela lobby (nunca inicia combate; sem penalidade).
+          ;;    Chat bloqueado: não expira lobby (suspend/resume).
           expired
           (mapv
            (fn [chat]
@@ -4095,31 +4107,10 @@
                        (when rid (load-raid (d/db conn) rid)))
                    blocked-chat? (blocked? chat)]
                (cond
+                 ;; Bloqueado: não expira lobby (suspend/resume cuida dos prazos).
                  (and r (= "inscricoes" (str (:fase r))) blocked-chat?)
-                 (let [txt (when (= "auto" (str (:origem r)))
-                             (raid-auto/format-cancelled r))
-                       built (raid-store/build-admin-block-cancel-tx
-                              (cond-> {:raid r :agora agora}
-                                txt (assoc :announce-texto txt)))
-                       _ (when (seq (:tx built))
-                           (try
-                             (d/transact conn {:tx-data (:tx built)})
-                             (catch Exception ex
-                               (when-not (err/conflict? ex) (throw ex)))))
-                       after (or (load-raid (d/db conn) (:raid-id r))
-                                 (:raid (:result built)))
-                       acao :cancelada
-                       row {:chat-id chat :acao acao
-                            :raid-id (:raid-id r)
-                            :due-at (:expira r)
-                            :origem (:origem r)
-                            :admin-block true}]
-                   (raid-auto-log/emit!
-                    :raid_auto_cancelled
-                    {:chat-id chat :raid-id (:raid-id r)
-                     :due-at (:expira r) :origem (:origem r)
-                     :result "cancelada" :admin-block true})
-                   row)
+                 {:chat-id chat :acao :suspended-admin-block
+                  :raid-id (:raid-id r) :due-at (:expira r) :origem (:origem r)}
 
                  (and r (= "inscricoes" (str (:fase r)))
                       (<= (long (:expira r 0)) agora))
@@ -4197,12 +4188,13 @@
           spawned (mapv #(spawn-auto-for-chat! conn % agora) due)]
       {:enabled true
        :agora agora
+       :fail-closed false
        :planned (filterv #(not= :noop (:acao %)) planned)
        :spawned spawned
        :deferred-admin-block deferred
        :reminded reminded
        :suppressed suppressed
-       :expired (filterv #(not= :noop (:acao %)) expired)}))
+       :expired (filterv #(not= :noop (:acao %)) expired)}))))
   (list-pokemon-outbox [_ limit]
     (let [db (d/db conn)
           rows (->> (d/q '[:find ?id ?created
@@ -5525,6 +5517,12 @@
 
   (expire-idle-battles! [_ opts]
     (battle-idle-store/expire-due! conn opts))
+
+  (suspend-chat-gameplay! [_ chat-id agora]
+    (battle-idle-store/suspend-chat-gameplay! conn chat-id agora))
+
+  (resume-chat-gameplay! [_ chat-id agora]
+    (battle-idle-store/resume-chat-gameplay! conn chat-id agora))
 
   (list-battle-idle-notifications [_ opts]
     (battle-idle-store/list-pending-notifications (d/db conn) (or opts {})))

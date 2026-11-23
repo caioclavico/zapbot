@@ -344,6 +344,12 @@
   (expire-idle-battles! [this opts]
     "Sweeper: encerra batalhas/raids com idle-expires-at vencido (idempotente).")
 
+  (suspend-chat-gameplay! [this chat-id agora]
+    "Congela idle/turno/lobby do chat sob bloqueio admin (idempotente).")
+
+  (resume-chat-gameplay! [this chat-id agora]
+    "Retoma prazos após desbloqueio (CAS + recibo; sem reabrir encerradas).")
+
   (list-battle-idle-notifications [this opts]
     "Outbox de avisos de inatividade/leave ainda não ackados.")
 

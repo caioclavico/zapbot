@@ -36,17 +36,60 @@
     (Long/parseLong (or (System/getenv "POKEMON_BATTLE_IDLE_SWEEP_MS") "30000"))
     (catch Exception _ 30000)))
 
+(defn- sanitize-block-error
+  "Log sem tokens/PII completos."
+  [ex]
+  (let [msg (or (ex-message ex) (str ex))
+        clipped (if (> (count msg) 160) (str (subs msg 0 160) "…") msg)]
+    (-> clipped
+        (str/replace #"(?i)bearer\s+\S+" "bearer [redacted]")
+        (str/replace #"(?i)token[=:]\S+" "token=[redacted]"))))
+
+(defn resolve-blocked-chat-ids
+  "Resolve bloqueios de forma fail-closed quando a fonte canônica falha
+   e o Node não enviou lista. Retorno: {:ok bool :ids [...] :degraded? bool}."
+  [platform-store body-ids]
+  (let [from-body (cond
+                    (sequential? body-ids) (mapv str body-ids)
+                    (string? body-ids) [body-ids]
+                    :else [])
+        plat
+        (if-not platform-store
+          {:ok true :ids [] :source :no-platform}
+          (try
+            {:ok true
+             :ids (bloqueio-platform/chats-com-pokemon-bloqueado
+                   (ports-platform/get-block-state platform-store))
+             :source :platform}
+            (catch Exception ex
+              (binding [*out* *err*]
+                (println "[bridge] block-state unavailable:"
+                         (sanitize-block-error ex)))
+              {:ok false :ids [] :source :platform-error})))]
+    (cond
+      (:ok plat)
+      {:ok true
+       :ids (vec (set (concat from-body (:ids plat))))
+       :degraded? false
+       :source (:source plat)}
+
+      (seq from-body)
+      {:ok true
+       :ids (vec (set from-body))
+       :degraded? true
+       :source :node-body}
+
+      :else
+      {:ok false
+       :ids []
+       :degraded? false
+       :fail-closed? true
+       :source :unavailable})))
+
 (defn- pokemon-blocked-chat-ids
-  "Fonte canônica: bloqueios do platform-store (Datomic).
-   Sem platform: vazio (Node ainda passa blockedChatIds no tick/outbox)."
+  "Compat: só ids quando ok. Preferir resolve-blocked-chat-ids."
   [platform-store]
-  (if-not platform-store
-    []
-    (try
-      (bloqueio-platform/chats-com-pokemon-bloqueado
-       (ports-platform/get-block-state platform-store))
-      (catch Exception _
-        []))))
+  (:ids (resolve-blocked-chat-ids platform-store [])))
 
 (defn- query-map
   [^String raw]
@@ -1613,17 +1656,13 @@
                           chat-id (g body "chatId")
                           limit (or (long-or-nil (g body "limit")) 32)
                           blocked (or (g body "blockedChatIds" "blocked-chat-ids") [])
-                          blocked-ids (cond
-                                        (sequential? blocked) (mapv str blocked)
-                                        (string? blocked) [blocked]
-                                        :else [])
-                          blocked-merged (vec (set (concat blocked-ids
-                                                           (pokemon-blocked-chat-ids platform-store))))]
+                          resolved (resolve-blocked-chat-ids platform-store blocked)]
                       (ok! ex (raid-auto/tick!
                                store {:agora-ms agora
                                       :chat-id (when-not (str/blank? chat-id) chat-id)
                                       :limit limit
-                                      :blocked-chat-ids blocked-merged
+                                      :blocked-chat-ids (:ids resolved)
+                                      :blocks-ok? (boolean (:ok resolved))
                                       :global-enabled? (boolean raid-auto-tick-enabled?)}))))
 
                 (= path "/v1/raids/active")
@@ -2595,6 +2634,33 @@
                                             raid-id (assoc :raid-id raid-id)
                                             (some? agora) (assoc :agora-ms agora))))))))
 
+                (= path "/v1/battles/suspend-chat")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (str/blank? chat-id)
+                        (throw (err/error :missing_chat_id {})))
+                      (ok! ex (assoc (ports/suspend-chat-gameplay!
+                                      store chat-id (or agora (System/currentTimeMillis)))
+                                     :ok true))))
+
+                (= path "/v1/battles/resume-chat")
+                (do (require-method! ex #{"POST"})
+                    (let [body (read-body ex)
+                          chat-id (g body "chatId" "chat-id")
+                          agora (long-or-nil (g body "agoraMs" "agora"))]
+                      (when (str/blank? chat-id)
+                        (throw (err/error :missing_chat_id {})))
+                      (ok! ex (assoc (ports/resume-chat-gameplay!
+                                      store chat-id (or agora (System/currentTimeMillis)))
+                                     :ok true))))
+
+                (= path "/v1/raids/auto/reconcile-starters")
+                (do (require-method! ex #{"POST"})
+                    (ok! ex (assoc (raid-auto/reconcile-schedules-for-starters! store)
+                                   :ok true)))
+
                 (= path "/v1/battles/expire-idle")
                 (do (require-method! ex #{"POST"})
                     ;; Sweeper/harness: só encerra vencidos. force=true NÃO é exposto
@@ -2603,17 +2669,15 @@
                           agora (long-or-nil (g body "agoraMs" "agora"))
                           limit (or (long-or-nil (g body "limit")) 32)
                           blocked-body (or (g body "blockedChatIds" "blocked-chat-ids") [])
-                          blocked-ids (cond
-                                        (sequential? blocked-body) (mapv str blocked-body)
-                                        (string? blocked-body) [blocked-body]
-                                        :else [])
-                          blocked (vec (set (concat blocked-ids
-                                                    (pokemon-blocked-chat-ids platform-store))))]
+                          resolved (resolve-blocked-chat-ids platform-store blocked-body)]
                       (ok! ex (assoc (ports/expire-idle-battles!
                                       store (cond-> {:limit limit :force false
-                                                     :blocked-chat-ids blocked}
+                                                     :blocked-chat-ids (:ids resolved)
+                                                     :blocks-ok? (boolean (:ok resolved))}
                                               agora (assoc :agora agora)))
-                                     :ok true))))
+                                     :ok true
+                                     :blocksOk (boolean (:ok resolved))
+                                     :blocksDegraded (boolean (:degraded? resolved))))))
 
                     :else
                     (send-json! ex 404
@@ -2640,16 +2704,19 @@
      (fn []
        (when (or (nil? maintenance-gate) (maintenance-gate/acquire! maintenance-gate))
          (try
-           (let [blocked (pokemon-blocked-chat-ids platform-store)]
+           (let [resolved (resolve-blocked-chat-ids platform-store [])]
              (doseq [[label sweep! opts]
                      [["idle" ports/expire-idle-battles!
-                       {:limit 32 :blocked-chat-ids blocked}]
+                       {:limit 32
+                        :blocked-chat-ids (:ids resolved)
+                        :blocks-ok? (boolean (:ok resolved))}]
                       ["joy" ports/joy-return-due! {:limit 32}]]]
                (try
                  (sweep! store opts)
                  (catch Exception t
                    (binding [*out* *err*]
-                     (println "[bridge] gameplay-sweeper" label ":" (ex-message t)))))))
+                     (println "[bridge] gameplay-sweeper" label ":"
+                              (sanitize-block-error t)))))))
            (finally
              (when maintenance-gate
                (maintenance-gate/release! maintenance-gate))))))

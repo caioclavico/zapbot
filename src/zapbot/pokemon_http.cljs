@@ -4054,6 +4054,28 @@
                    (js/console.warn "[PokemonJVM] Tick raid-auto falhou:"
                                     (or (.-code erro) "TICK") (.-message erro)))))))
 
+(defn suspend-gameplay-chat!
+  "Congela prazos do chat após !bloquear jogos/pokemon (idempotente)."
+  [chat-id]
+  (when (and (jvm-configurado?) (string? chat-id) (not (str/blank? chat-id)))
+    (-> (p/let [jvm (cliente-jvm!)
+                _ (.suspendChatGameplay jvm #js {:chatId (str chat-id)})]
+          nil)
+        (p/catch (fn [erro]
+                   (js/console.warn "[PokemonJVM] Suspend gameplay falhou:"
+                                    (or (.-code erro) "SUSPEND") (.-message erro)))))))
+
+(defn resume-gameplay-chat!
+  "Retoma prazos após !desbloquear (sem skip/derrota imediata)."
+  [chat-id]
+  (when (and (jvm-configurado?) (string? chat-id) (not (str/blank? chat-id)))
+    (-> (p/let [jvm (cliente-jvm!)
+                _ (.resumeChatGameplay jvm #js {:chatId (str chat-id)})]
+          nil)
+        (p/catch (fn [erro]
+                   (js/console.warn "[PokemonJVM] Resume gameplay falhou:"
+                                    (or (.-code erro) "RESUME") (.-message erro)))))))
+
 (defn- tick-thematic-events-jvm! []
   "Tick de eventos temáticos — no-op se flag off no JVM."
   (when (jvm-configurado?)
@@ -4122,6 +4144,9 @@
 (defn iniciar! [client]
   (parar!)
   (reset! cliente-whatsapp client)
+  (bloqueio/registrar-gameplay-hooks!
+   {:suspend suspend-gameplay-chat!
+    :resume resume-gameplay-chat!})
   (when (or (configurado?) (jvm-configurado?))
     (let [timer (js/setInterval consultar-eventos! config/pokemon-event-poll-ms)]
       (.unref timer)

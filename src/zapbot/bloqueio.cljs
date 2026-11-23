@@ -159,6 +159,27 @@
        (map (fn [[cid _]] (str cid)))
        vec))
 
+(defonce ^:private gameplay-block-hooks (atom {:suspend nil :resume nil}))
+
+(defn registrar-gameplay-hooks!
+  "Evita require circular com pokemon-http."
+  [{:keys [suspend resume]}]
+  (reset! gameplay-block-hooks {:suspend suspend :resume resume}))
+
+(defn- maybe-suspend-gameplay! [cid alvo]
+  (when (or (= alvo "tudo") (= alvo "jogos") (= alvo "pokemon"))
+    (when-let [f (:suspend @gameplay-block-hooks)]
+      (try (f (str cid))
+           (catch :default e
+             (js/console.warn "bloqueio: suspend hook" e))))))
+
+(defn- maybe-resume-gameplay! [cid alvo]
+  (when (or (= alvo "tudo") (= alvo "jogos") (= alvo "pokemon"))
+    (when-let [f (:resume @gameplay-block-hooks)]
+      (try (f (str cid))
+           (catch :default e
+             (js/console.warn "bloqueio: resume hook" e))))))
+
 (defn- formatar-lista [cid]
   (let [{:keys [bot? comandos]} (get @estado cid)]
     (str "📋 *Status nesse chat:*\n"
@@ -239,14 +260,20 @@
         :else (str "🔊 " config/prefix alvo " liberado nesse chat.")))))
 
 (defn- bloquear! [cid alvo]
-  (if (platform/enabled?)
-    (bloquear-datomic! cid alvo)
-    (p/resolved (bloquear-cassandra! cid alvo))))
+  (-> (if (platform/enabled?)
+        (bloquear-datomic! cid alvo)
+        (p/resolved (bloquear-cassandra! cid alvo)))
+      (p/then (fn [msg]
+                (maybe-suspend-gameplay! cid alvo)
+                msg))))
 
 (defn- desbloquear! [cid alvo]
-  (if (platform/enabled?)
-    (desbloquear-datomic! cid alvo)
-    (p/resolved (desbloquear-cassandra! cid alvo))))
+  (-> (if (platform/enabled?)
+        (desbloquear-datomic! cid alvo)
+        (p/resolved (desbloquear-cassandra! cid alvo)))
+      (p/then (fn [msg]
+                (maybe-resume-gameplay! cid alvo)
+                msg))))
 
 (defn processar-comando
   "cmd é \"bloquear\" ou \"desbloquear\"; args é o resto do texto (vazio ou

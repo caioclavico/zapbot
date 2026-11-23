@@ -739,60 +739,323 @@
      :expired-raids (count (remove :duplicate raid-results))}))
 
 (defn- chat-id-for-battle
+  "chat-id vive no state-edn (attr :battle/chat-id pode não existir)."
   [db battle-id]
-  (let [e (d/pull db '[:battle/chat-id] [:battle/id battle-id])]
-    (when e (str (:battle/chat-id e)))))
+  (let [e (d/pull db '[:battle/chat-id :battle/state-edn :battle/player-key]
+                  [:battle/id battle-id])
+        st (when e (edn-read (:battle/state-edn e)))
+        from-pk (when-let [pk (:battle/player-key e)]
+                  (first (str/split (str pk) #"\|")))]
+    (some-> (or (:battle/chat-id e) (:chat-id st) from-pk) str)))
 
 (defn- chat-id-for-raid
   [db raid-id]
   (let [e (d/pull db '[:raid/chat-id] [:raid/id raid-id])]
     (when e (str (:raid/chat-id e)))))
 
+(defn- receipt-present?
+  [db op-id]
+  (let [e (d/pull db '[:operation-receipt/id] [:operation-receipt/id op-id])]
+    (boolean (:db/id e))))
+
+(defn- edn-summary
+  [m]
+  (pr-str m))
+
+(defn- read-summary
+  [e]
+  (when-let [raw (:operation-receipt/summary e)]
+    (try (edn-read raw) (catch Exception _ nil))))
+
+(defn- open-battle-ids-for-chat
+  [db chat-id]
+  (->> (find-open-battle-ids db)
+       (filter #(= (str chat-id) (chat-id-for-battle db %)))
+       vec))
+
+(defn- open-raid-ids-for-chat
+  "Lobby + combate ativos do chat."
+  [db chat-id]
+  (->> (find-open-raid-ids db)
+       (filter #(= (str chat-id) (chat-id-for-raid db %)))
+       vec))
+
+(defn suspend-chat-gameplay!
+  "Congela prazos de caçada/PvP/raid do chat (1 TX por entidade, idempotente).
+   Sem dano, derrota, skip ou quebra de sequência. Não simula ação de jogador."
+  [conn chat-id agora]
+  (let [agora (long (or agora (System/currentTimeMillis)))
+        chat-id (str chat-id)
+        db (d/db conn)
+        hold idle/admin-suspend-hold-ms
+        battle-ids (open-battle-ids-for-chat db chat-id)
+        raid-ids (open-raid-ids-for-chat db chat-id)
+        suspend-battle!
+        (fn [bid]
+          (let [op (idle/admin-suspend-receipt-id :battle bid)]
+            (if (receipt-present? (d/db conn) op)
+              {:battle-id bid :already true}
+              (let [be (d/pull (d/db conn)
+                               '[:battle/idle-expires-at :battle/idle-expired?
+                                 :battle/last-activity-at]
+                               [:battle/id bid])
+                    cur (:battle/idle-expires-at be)
+                    new-exp (+ agora hold)
+                    summary (edn-summary {:kind "battle"
+                                          :chat-id chat-id
+                                          :idle-expires-at cur
+                                          :remaining-ms (when cur (max 0 (- (long cur) agora)))
+                                          :suspended-at agora
+                                          :hold-ms hold})
+                    tx (cond-> [{:battle/id bid
+                                 :battle/idle-expires-at new-exp}
+                                {:operation-receipt/id op
+                                 :operation-receipt/kind "admin-suspend"
+                                 :operation-receipt/channel "system"
+                                 :operation-receipt/payload-hash op
+                                 :operation-receipt/player-key (str chat-id "|admin")
+                                 :operation-receipt/save-id "a"
+                                 :operation-receipt/summary summary}]
+                          (some? cur)
+                          (conj [:db/cas [:battle/id bid] :battle/idle-expires-at
+                                 cur new-exp]))]
+                (try
+                  (d/transact conn {:tx-data tx})
+                  {:battle-id bid :suspended true :idle-expires-at new-exp}
+                  (catch Exception ex
+                    (if (err/conflict? ex)
+                      {:battle-id bid :already true}
+                      (throw ex))))))))
+        suspend-raid!
+        (fn [rid]
+          (let [op (idle/admin-suspend-receipt-id :raid rid)]
+            (if (receipt-present? (d/db conn) op)
+              {:raid-id rid :already true}
+              (let [re (d/pull (d/db conn)
+                               '[:raid/fase :raid/idle-expires-at :raid/turn-expires-at
+                                 :raid/expira :raid/idle-expired? :raid/revision]
+                               [:raid/id rid])
+                    fase (str (:raid/fase re))
+                    idle-cur (:raid/idle-expires-at re)
+                    turn-cur (:raid/turn-expires-at re)
+                    lobby-cur (:raid/expira re)
+                    new-idle (when idle-cur (+ agora hold))
+                    new-turn (when turn-cur (+ agora hold))
+                    new-lobby (when (and (= "inscricoes" fase) lobby-cur)
+                                (+ agora hold))
+                    summary (edn-summary {:kind "raid"
+                                          :chat-id chat-id
+                                          :fase fase
+                                          :idle-expires-at idle-cur
+                                          :turn-expires-at turn-cur
+                                          :expira lobby-cur
+                                          :remaining-ms (when lobby-cur
+                                                          (max 0 (- (long lobby-cur) agora)))
+                                          :suspended-at agora
+                                          :hold-ms hold})
+                    tx (cond-> [{:raid/id rid}
+                                {:operation-receipt/id op
+                                 :operation-receipt/kind "admin-suspend"
+                                 :operation-receipt/channel "system"
+                                 :operation-receipt/payload-hash op
+                                 :operation-receipt/player-key (str chat-id "|admin")
+                                 :operation-receipt/save-id "a"
+                                 :operation-receipt/summary summary}]
+                          new-idle (conj [:db/add [:raid/id rid] :raid/idle-expires-at new-idle])
+                          (and new-idle idle-cur)
+                          (conj [:db/cas [:raid/id rid] :raid/idle-expires-at idle-cur new-idle])
+                          new-turn (conj [:db/add [:raid/id rid] :raid/turn-expires-at new-turn])
+                          (and new-turn turn-cur)
+                          (conj [:db/cas [:raid/id rid] :raid/turn-expires-at turn-cur new-turn])
+                          new-lobby (conj [:db/add [:raid/id rid] :raid/expira new-lobby])
+                          (and new-lobby lobby-cur)
+                          (conj [:db/cas [:raid/id rid] :raid/expira lobby-cur new-lobby]))]
+                (try
+                  (d/transact conn {:tx-data tx})
+                  {:raid-id rid :suspended true :fase fase}
+                  (catch Exception ex
+                    (if (err/conflict? ex)
+                      {:raid-id rid :already true}
+                      (throw ex))))))))]
+    {:chat-id chat-id
+     :agora agora
+     :battles (mapv suspend-battle! battle-ids)
+     :raids (mapv suspend-raid! raid-ids)}))
+
+(defn resume-chat-gameplay!
+  "Retoma prazos após desbloqueio. Só afeta entidades com suspend ativo.
+   Não reativa batalhas já encerradas. CAS + recibo de resume idempotente."
+  [conn chat-id agora]
+  (let [agora (long (or agora (System/currentTimeMillis)))
+        chat-id (str chat-id)
+        db0 (d/db conn)
+        battle-ids (open-battle-ids-for-chat db0 chat-id)
+        raid-ids (open-raid-ids-for-chat db0 chat-id)
+        idle-ms (idle/idle-timeout-ms)
+        turn-ms (idle/turn-timeout-ms)
+        resume-battle!
+        (fn [bid]
+          (let [sop (idle/admin-suspend-receipt-id :battle bid)
+                se (d/pull (d/db conn) '[*] [:operation-receipt/id sop])]
+            (if-not (present? se)
+              {:battle-id bid :skipped "not-suspended"}
+              (let [sum (or (read-summary se) {})
+                    suspended-at (long (or (:suspended-at sum) 0))
+                    rop (idle/admin-resume-receipt-id :battle bid suspended-at)]
+                (if (receipt-present? (d/db conn) rop)
+                  {:battle-id bid :already true}
+                  (let [be (d/pull (d/db conn)
+                                   '[:db/id :battle/idle-expires-at :battle/idle-expired?
+                                     :battle/active?]
+                                   [:battle/id bid])]
+                    (if (or (true? (:battle/idle-expired? be))
+                            (not (present? be))
+                            (false? (:battle/active? be)))
+                      {:battle-id bid :skipped "already-closed"}
+                      (let [cur (:battle/idle-expires-at be)
+                            new-exp (+ agora idle-ms)
+                            tx (cond-> [{:battle/id bid
+                                         :battle/idle-expires-at new-exp
+                                         :battle/last-activity-at agora}
+                                        {:operation-receipt/id rop
+                                         :operation-receipt/kind "admin-resume"
+                                         :operation-receipt/channel "system"
+                                         :operation-receipt/payload-hash rop
+                                         :operation-receipt/player-key (str chat-id "|admin")
+                                         :operation-receipt/save-id "a"
+                                         :operation-receipt/summary
+                                         (edn-summary {:battle-id bid
+                                                       :chat-id chat-id
+                                                       :resumed-at agora
+                                                       :idle-expires-at new-exp})}]
+                                  (some? cur)
+                                  (conj [:db/cas [:battle/id bid] :battle/idle-expires-at
+                                         cur new-exp]))]
+                        (try
+                          (d/transact conn {:tx-data tx})
+                          {:battle-id bid :resumed true :idle-expires-at new-exp}
+                          (catch Exception ex
+                            (if (err/conflict? ex)
+                              {:battle-id bid :already true}
+                              (throw ex))))))))))))
+        resume-raid!
+        (fn [rid]
+          (let [sop (idle/admin-suspend-receipt-id :raid rid)
+                se (d/pull (d/db conn) '[*] [:operation-receipt/id sop])]
+            (if-not (present? se)
+              {:raid-id rid :skipped "not-suspended"}
+              (let [sum (or (read-summary se) {})
+                    suspended-at (long (or (:suspended-at sum) 0))
+                    rop (idle/admin-resume-receipt-id :raid rid suspended-at)]
+                (if (receipt-present? (d/db conn) rop)
+                  {:raid-id rid :already true}
+                  (let [re (d/pull (d/db conn)
+                                   '[:db/id :raid/fase :raid/idle-expires-at :raid/turn-expires-at
+                                     :raid/expira :raid/idle-expired?]
+                                   [:raid/id rid])
+                        fase (str (:raid/fase re))]
+                    (if (or (true? (:raid/idle-expired? re))
+                            (not (present? re))
+                            (not (contains? #{"inscricoes" "combate"} fase)))
+                      {:raid-id rid :skipped "already-closed"}
+                      (let [idle-cur (:raid/idle-expires-at re)
+                            turn-cur (:raid/turn-expires-at re)
+                            lobby-cur (:raid/expira re)
+                            new-idle (when (= "combate" fase) (+ agora idle-ms))
+                            new-turn (when (and (= "combate" fase) turn-cur)
+                                       (+ agora turn-ms))
+                            new-lobby (when (= "inscricoes" fase)
+                                        (+ agora (max 60000
+                                                      (long (or (:remaining-ms sum)
+                                                                (* 5 60 1000))))))
+                            tx (cond-> [{:raid/id rid}
+                                        {:operation-receipt/id rop
+                                         :operation-receipt/kind "admin-resume"
+                                         :operation-receipt/channel "system"
+                                         :operation-receipt/payload-hash rop
+                                         :operation-receipt/player-key (str chat-id "|admin")
+                                         :operation-receipt/save-id "a"
+                                         :operation-receipt/summary
+                                         (edn-summary {:raid-id rid
+                                                       :chat-id chat-id
+                                                       :fase fase
+                                                       :resumed-at agora})}]
+                                  new-idle
+                                  (conj [:db/add [:raid/id rid] :raid/idle-expires-at new-idle]
+                                        [:db/add [:raid/id rid] :raid/last-activity-at agora])
+                                  (and new-idle idle-cur)
+                                  (conj [:db/cas [:raid/id rid] :raid/idle-expires-at
+                                         idle-cur new-idle])
+                                  new-turn
+                                  (conj [:db/add [:raid/id rid] :raid/turn-expires-at new-turn])
+                                  (and new-turn turn-cur)
+                                  (conj [:db/cas [:raid/id rid] :raid/turn-expires-at
+                                         turn-cur new-turn])
+                                  new-lobby
+                                  (conj [:db/add [:raid/id rid] :raid/expira new-lobby])
+                                  (and new-lobby lobby-cur)
+                                  (conj [:db/cas [:raid/id rid] :raid/expira
+                                         lobby-cur new-lobby]))]
+                        (try
+                          (d/transact conn {:tx-data tx})
+                          {:raid-id rid :resumed true :fase fase}
+                          (catch Exception ex
+                            (if (err/conflict? ex)
+                              {:raid-id rid :already true}
+                              (throw ex))))))))))))]
+    {:chat-id chat-id
+     :agora agora
+     :battles (mapv resume-battle! battle-ids)
+     :raids (mapv resume-raid! raid-ids)}))
+
 (defn expire-due!
   "Sweeper: (1) backfill janela em legado sem attrs; (2) encerra vencidos.
    Com `:force true`, encerra todas as abertas agora (ignora prazo).
-   `:blocked-chat-ids` — chats com jogos/pokemon bloqueados: não expira idle
-   nem skip de turno (evita penalidade administrativa); renova a janela."
-  [conn {:keys [agora limit force blocked-chat-ids] :or {limit 32}}]
+   `:blocked-chat-ids` — chats bloqueados: não expira idle nem skip (sem TX).
+   `:blocks-ok? false` — fail-closed: não aplica penalidades em nenhum chat."
+  [conn {:keys [agora limit force blocked-chat-ids blocks-ok?] :or {limit 32 blocks-ok? true}}]
   (if force
     (force-expire-open! conn {:agora agora :limit (or limit 64)})
-    (let [agora (long (or agora (System/currentTimeMillis)))
-          blocked (set (map str (or blocked-chat-ids [])))
-          blocked? (fn [cid] (contains? blocked (str cid)))
-          backfill (backfill-idle-window! conn agora limit)
-          db (d/db conn)
-          battles (->> (find-expired-battle-ids db agora)
-                       (remove #(blocked? (chat-id-for-battle db %)))
-                       (take limit))
-          raids-due (find-expired-raid-ids db agora)
-          raids-blocked (filter #(blocked? (chat-id-for-raid db %)) raids-due)
-          raids (->> raids-due
-                     (remove #(blocked? (chat-id-for-raid db %)))
-                     (take limit))
-          ;; Renova idle em raids bloqueadas para não penalizar ao desbloquear.
-          deferred (mapv (fn [rid]
-                           (try
-                             (d/transact conn {:tx-data (raid-touch-tx rid agora)})
-                             {:raid-id rid :deferred-admin-block true}
-                             (catch Exception _
-                               {:raid-id rid :deferred-admin-block true :error true})))
-                         (take limit raids-blocked))
-          battle-results (mapv #(expire-battle! conn % agora) battles)
-          raid-results (mapv #(expire-raid! conn % agora) raids)
-          turn-raids (->> (find-turn-expired-raid-ids db agora)
-                          (remove #(blocked? (chat-id-for-raid db %)))
-                          (take limit))
-          skip-results (mapv #(skip-turn! conn % agora) turn-raids)]
-      {:agora agora
+    (if-not blocks-ok?
+      {:agora (long (or agora (System/currentTimeMillis)))
        :force false
-       :backfill backfill
-       :battles battle-results
-       :raids raid-results
-       :turn-skips skip-results
-       :deferred-admin-block deferred
-       :expired-battles (count (remove #(or (:duplicate %) (:skipped %)) battle-results))
-       :expired-raids (count (remove #(or (:duplicate %) (:skipped %)) raid-results))
-       :skipped-turns (count (remove #(or (:duplicate %) (:skipped %)) skip-results))})))
+       :fail-closed true
+       :backfill {:backfilled-battles 0 :backfilled-raids 0}
+       :battles []
+       :raids []
+       :turn-skips []
+       :deferred-admin-block []
+       :expired-battles 0
+       :expired-raids 0
+       :skipped-turns 0}
+      (let [agora (long (or agora (System/currentTimeMillis)))
+            blocked (set (map str (or blocked-chat-ids [])))
+            blocked? (fn [cid] (contains? blocked (str cid)))
+            backfill (backfill-idle-window! conn agora limit)
+            db (d/db conn)
+            battles (->> (find-expired-battle-ids db agora)
+                         (remove #(blocked? (chat-id-for-battle db %)))
+                         (take limit))
+            raids (->> (find-expired-raid-ids db agora)
+                       (remove #(blocked? (chat-id-for-raid db %)))
+                       (take limit))
+            battle-results (mapv #(expire-battle! conn % agora) battles)
+            raid-results (mapv #(expire-raid! conn % agora) raids)
+            turn-raids (->> (find-turn-expired-raid-ids db agora)
+                            (remove #(blocked? (chat-id-for-raid db %)))
+                            (take limit))
+            skip-results (mapv #(skip-turn! conn % agora) turn-raids)]
+        {:agora agora
+         :force false
+         :fail-closed false
+         :backfill backfill
+         :battles battle-results
+         :raids raid-results
+         :turn-skips skip-results
+         :deferred-admin-block []
+         :expired-battles (count (remove #(or (:duplicate %) (:skipped %)) battle-results))
+         :expired-raids (count (remove #(or (:duplicate %) (:skipped %)) raid-results))
+         :skipped-turns (count (remove #(or (:duplicate %) (:skipped %)) skip-results))}))))
 
 (defn assert-battle-not-idle-expired!
   "Bloqueia mutação se prazo passou. Eager-expire fica a cargo do caller."
