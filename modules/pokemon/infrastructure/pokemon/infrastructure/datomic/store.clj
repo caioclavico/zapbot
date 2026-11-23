@@ -2123,9 +2123,9 @@
                                    :registro (assoc registro :collection-index idx)}})
 
                        (:fugiu? attempt)
-                       ;; Fuga involuntária: não zera sequência.
+                       ;; Fuga encerra encontro sem captura: zera sequência selvagem.
                        (let [rew (capture/recompensa-pos-captura
-                                  {:sequencia-nova seq-atual
+                                  {:sequencia-nova 0
                                    :capturou? false})
                              ativo-idx (min (long (:ativo-index save-m 0))
                                             (max 0 (dec (count colecao))))
@@ -2133,7 +2133,8 @@
                              xp-part (when (and ativo (pos? (:xp rew)))
                                        (apply-pokemon-xp-tx ativo (:xp rew)))
                              tx (cond-> (into base-tx
-                                              [[:db/add [:save/key sk] :save/maior-sequencia-capturas
+                                              [[:db/add [:save/key sk] :save/sequencia-capturas 0]
+                                               [:db/add [:save/key sk] :save/maior-sequencia-capturas
                                                 (max maior seq-atual)]])
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
@@ -2363,9 +2364,9 @@
                                           :encounter next-state})})
 
                        (:fugiu? attempt)
-                       ;; Fuga involuntária: NÃO zera sequência (política A6 streak).
+                       ;; Fuga encerra encontro sem captura: zera sequência selvagem.
                        (let [rew (capture/recompensa-pos-captura
-                                  {:sequencia-nova seq-atual
+                                  {:sequencia-nova 0
                                    :capturou? false})
                              fighter-idx (long (or (:collection-index state)
                                                    (get-in state [:indices-ativos :x])
@@ -2380,7 +2381,8 @@
                                        (apply-pokemon-xp-tx fighter (:xp rew)
                                                             {:hp-atual-override fighter-hp}))
                              tx (cond-> (into base-tx
-                                              [[:db/add [:save/key sk] :save/maior-sequencia-capturas
+                                              [[:db/add [:save/key sk] :save/sequencia-capturas 0]
+                                               [:db/add [:save/key sk] :save/maior-sequencia-capturas
                                                 (max maior seq-atual)]])
                                   xp-part (into (:tx xp-part)))]
                          {:tx tx
@@ -3477,6 +3479,16 @@
                          [[:db/add [:save/key sk] :save/sequencia-capturas 0]
                           [:db/add [:save/key sk] :save/maior-sequencia-capturas
                            (max maior seq-atual)]]))
+                     ;; Derrota selvagem também encerra a sequência de captura.
+                     seq-derrota-tx
+                     (when (and (= :wild (:kind next-state))
+                                (= :lose (:outcome next-state))
+                                (not (:active? next-state)))
+                       (let [seq-atual (long (:sequencia-capturas save-m 0))
+                             maior (long (:maior-sequencia-capturas save-m 0))]
+                         [[:db/add [:save/key sk] :save/sequencia-capturas 0]
+                          [:db/add [:save/key sk] :save/maior-sequencia-capturas
+                           (max maior seq-atual)]]))
                      ;; Writer canônico de :pokemon/hp-atual nesta TX de turno.
                      hp-sync (if gym?
                                (gym-battle-hp-txs colecao next-state)
@@ -3579,6 +3591,7 @@
                                       (or hp-sync [])
                                       (or pe-batalha-tx [])
                                       (or seq-liberar-tx [])
+                                      (or seq-derrota-tx [])
                                       (or clear-active [])
                                       (or (:tx xp-part) [])
                                       (mapcat :tx exp-share-parts)
