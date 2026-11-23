@@ -290,31 +290,32 @@
     (is (true? (:degraded? r)))
     (is (= ["grupo-a@g.us"] (:ids r)))))
 
-(deftest derrota-selvagem-encerra-sequencia-sem-afetar-recorde
-  (let [[s conn] (fresh! "wild-defeat-streak")
-        t0 2000000000000
-        _ (boot! s grupo-a "ash")
-        save-key (ids/save-key grupo-a "ash" "a")]
-    (d/transact conn {:tx-data [[:db/add [:save/key save-key] :save/sequencia-capturas 4]
-                                [:db/add [:save/key save-key] :save/maior-sequencia-capturas 7]]})
-    (ports/start-wild-battle!
-     s (wctx s grupo-a "ash")
-     {:operation-id "wild-lose-start" :battle-id "wild-lose-b1"
-      :pokemon-x squirtle :pokemon-o magikarp
-      :hp-x 1 :hp-o 20 :collection-index 0 :agora t0})
-    (with-redefs [battle-domain/apply-player-turn
-                  (fn [state _ _]
-                    (-> state
-                        (assoc :active? false :phase :finished
-                               :outcome :lose :aguardando-captura? false)
-                        (assoc-in [:hp :x] 0)
-                        (update :turn-index (fnil inc 0))))]
-      (let [r (ports/confirm-battle-turn!
-               s (wctx s grupo-a "ash")
-               {:operation-id "wild-lose-turn"
-                :battle-id "wild-lose-b1" :expected-turn-index 0
-                :action :attack :move-index 0 :agora (inc t0)})
-            save (ports/get-save s grupo-a "ash" "a")]
-        (is (= :lose (get-in r [:battle :outcome])))
-        (is (= 0 (:sequencia-capturas save)))
-        (is (= 7 (:maior-sequencia-capturas save)))))))
+(deftest derrota-ou-fuga-no-combate-selvagem-zeram-sequencia
+  (doseq [outcome [:lose :flee]]
+    (let [[s conn] (fresh! (str "wild-ending-streak-" (name outcome)))
+          t0 2000000000000
+          _ (boot! s grupo-a "ash")
+          save-key (ids/save-key grupo-a "ash" "a")]
+      (d/transact conn {:tx-data [[:db/add [:save/key save-key] :save/sequencia-capturas 4]
+                                  [:db/add [:save/key save-key] :save/maior-sequencia-capturas 7]]})
+      (ports/start-wild-battle!
+       s (wctx s grupo-a "ash")
+       {:operation-id "wild-end-start" :battle-id "wild-end-b1"
+        :pokemon-x squirtle :pokemon-o magikarp
+        :hp-x 1 :hp-o 20 :collection-index 0 :agora t0})
+      (with-redefs [battle-domain/apply-player-turn
+                    (fn [state _ _]
+                      (-> state
+                          (assoc :active? false :phase :finished
+                                 :outcome outcome :aguardando-captura? false)
+                          (assoc-in [:hp :x] (if (= outcome :lose) 0 1))
+                          (update :turn-index (fnil inc 0))))]
+        (let [r (ports/confirm-battle-turn!
+                 s (wctx s grupo-a "ash")
+                 {:operation-id "wild-end-turn"
+                  :battle-id "wild-end-b1" :expected-turn-index 0
+                  :action :attack :move-index 0 :agora (inc t0)})
+              save (ports/get-save s grupo-a "ash" "a")]
+          (is (= outcome (get-in r [:battle :outcome])))
+          (is (= 0 (:sequencia-capturas save)))
+          (is (= 7 (:maior-sequencia-capturas save))))))))
