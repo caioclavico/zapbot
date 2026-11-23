@@ -2,9 +2,14 @@
   "A6 v3 regression: no level jump during conversion, equal streak rewards,
    safe proportional residual mapping, and level-up only from new grants."
   (:require [clojure.test :refer [deftest is testing]]
+            [odisseu.persistence.datomic :as persistence]
+            [pokemon.application.collection :as collection]
+            [pokemon.application.ports :as ports]
+            [pokemon.application.trainer :as trainer]
             [pokemon.domain.capture :as capture]
             [pokemon.domain.growth :as growth]
-            [pokemon.domain.xp :as xp]))
+            [pokemon.domain.xp :as xp]
+            [pokemon.infrastructure.datomic.store :as store]))
 
 (defn- mon
   [level residual]
@@ -124,3 +129,39 @@
     (with-redefs [growth/progressive-enabled? (constantly true)]
       (is (= (:xp (capture/faixa-sequencia-captura 30))
              (:xp (capture/faixa-sequencia-captura 30)))))))
+
+(deftest v3-all-level-conversions-do-not-jump-or-touch-stats
+  (with-redefs [growth/progressive-enabled? (constantly true)]
+    (doseq [level (range 1 101)
+            residual (range (if (= level 100) 1 9))]
+      (let [old (assoc (mon level residual) :xp-total Long/MAX_VALUE)
+            changed (growth/ensure-progressive-v3-for-grant old)]
+        (is (= level (:nivel changed)) (str "L" level " / residual " residual))
+        (is (= (select-keys old [:hp :hp-atual :ataque :defesa :atq-esp
+                                  :def-esp :veloc :species])
+               (select-keys changed [:hp :hp-atual :ataque :defesa :atq-esp
+                                      :def-esp :veloc :species])))
+        (is (< (long (:xp-desde-nivel changed))
+               (if (= level 100) 1 (growth/progressive-xp-por-nivel level))))
+        (is (= level (:nivel-final (xp/aplicar-xp-pokemon old 0))))
+        (is (= 0 (:subidas (xp/aplicar-xp-pokemon old 0))))))))
+
+(deftest v3-datomic-grant-does-not-derive-level-from-old-total
+  (with-redefs [growth/progressive-enabled? (constantly true)]
+    (let [uuid (str (java.util.UUID/randomUUID))
+          client (persistence/client {:system (str "v3safe-" uuid)
+                                      :storage-dir (str "/tmp/v3safe-" uuid)})
+          conn (persistence/ensure-db! client "v3safe")
+          db (store/make-store conn)]
+      (trainer/create-trainer! db {:chat-id "g-v3" :player-id "ash"})
+      (collection/adicionar-pokemon!
+       db "g-v3" "ash"
+       (assoc (mon 50 8) :xp-total 99999999) 50 nil)
+      (let [before (first (ports/list-collection db "g-v3" "ash" "a"))]
+        (is (= 50 (:nivel before)))
+        (collection/ganhar-xp-pokemon! db "g-v3" "ash" 0 4)
+        (let [after (first (ports/list-collection db "g-v3" "ash" "a"))]
+          (is (= 51 (:nivel after)) "only the legitimate +4 XP may level up")
+          (is (= 0 (:xp-desde-nivel after)))
+          (is (= "progressive-xp-v3" (:xp-progress-version after)))
+          (is (= (:id-pokemon before) (:id-pokemon after))))))))
