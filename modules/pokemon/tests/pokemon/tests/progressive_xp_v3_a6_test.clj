@@ -95,6 +95,8 @@
         (is (= 13 (:nivel legacy)))
         (is (false? (:conhecido? (growth/pokemon-progress legacy))))))
     (doseq [bad [(assoc (mon 13 8) :xp-desde-nivel 600 :xp 600)
+                 (assoc (mon 13 8) :xp-desde-nivel -1 :xp -1)
+                 (dissoc (mon 13 8) :xp-desde-nivel :xp)
                  (assoc (mon 13 8) :xp-progress-version "unrecognized")
                  (assoc (mon 13 8) :nivel 150)
                  {:nivel 13 :xp-progress-version "progressive-xp-v3"
