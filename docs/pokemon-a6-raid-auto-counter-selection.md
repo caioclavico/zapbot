@@ -16,8 +16,8 @@ sobrevivência ao revide canônico), não apenas o de maiores atributos brutos.
 |-------|--------|
 | Dano ofensivo vs chefe | `raid/calcular-dano` + `types/multiplicador-vs-tipos` (sem STAB, como combate) |
 | Ataque físico/especial | Stats do mon + classe do golpe |
-| Defesa vs golpes do chefe | Mesma fórmula de raid com papéis invertidos |
-| Sobrevivência | HP atual ÷ `ceil(HP máx / 5)` (revide do chefe) |
+| Golpes do chefe | Apenas diagnóstico (o revide atual da raid não usa tipagem nem poder) |
+| Sobrevivência real | HP atual ÷ `ceil(HP máx / 5)` (revide do chefe, independente da tipagem) |
 | Precisão | `damage/chance-acerto` quando o golpe tem precisão |
 | Imunidades / dupla tipagem | Tabela de tipos + Levitate em Ground |
 
@@ -28,6 +28,8 @@ RNG de score fixo: `{:raid-damage-var 15}` → variação 100% (determinismo).
 ### Fallback
 
 Sem `:chefe` na raid → critério legado (soma de stats + maior poder), compatível com lobby incompleto.
+
+**Importante:** contra-ataque da raid é fixado por `raid/revide-chefe` em 20% do HP máximo do participante. Portanto, resistência aos golpes do chefe **não muda o dano recebido** na mecânica atual; a seleção prioriza dano real contra os tipos do chefe e turnos de vida contra o revide, em vez de adicionar pontos por uma defesa que o combate não aplica.
 
 ## Comandos inalterados
 
