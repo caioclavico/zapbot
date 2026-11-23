@@ -9,7 +9,8 @@
             [pokemon.application.reward :as reward-app]
             [pokemon.application.trainer :as trainer]
             [pokemon.domain.raid :as raid]
-            [pokemon.infrastructure.datomic.store :as store]))
+            [pokemon.infrastructure.datomic.store :as store]
+            [pokemon.infrastructure.datomic.battle-idle-store :as idle-store]))
 
 (def ^:private system "odisseu-raid-release-a6")
 (def ^:private storage-rel ".datomic-local/raid-release-a6")
@@ -124,3 +125,44 @@
           (is (false? (raid/algum-captura-pendente? r3 agora)))
           (is (nil? (ports/active-raid s chat)))
           (is (= (:coins misty0) (:coins (ports/get-save s chat "misty" "a")))))))))
+
+
+(deftest skip-turn-datomic-preserva-pokemon-ativo-no-painel
+  (let [s (fresh-store! "skip-panel-1")
+        chat "c-skip"
+        rid "raid-skip-panel-1"]
+    (boot! s chat "ash")
+    (boot! s chat "misty")
+    (tx/open-raid!
+     s {:chat-id chat :player-id "ash" :save-id "a"
+        :fence-generation (fence s chat "ash")
+        :operation-id "open-skip-panel" :raid-id rid
+        :ginasio "pedra" :liga "bronze" :chefe chefe :agora-ms 1000})
+    (doseq [[pid nome t] [["ash" "Ash" 2] ["misty" "Misty" 3]]]
+      (tx/join-raid!
+       s {:chat-id chat :player-id pid :save-id "a"
+          :fence-generation (fence s chat pid)
+          :operation-id (str "join-skip-" pid)
+          :collection-index 0 :nome nome :agora-ms t}))
+    (tx/start-raid!
+     s {:chat-id chat :player-id "ash" :save-id "a"
+        :fence-generation (fence s chat "ash")
+        :operation-id "start-skip-panel" :agora-ms 4})
+    (let [before (raid-app/get-raid s rid)
+          texp (:turn-expires-at before)
+          current (:vez before)]
+      (is (some? texp) "raid cooperativa deve ter timeout de turno")
+      (let [result (idle-store/skip-turn! (:conn s) rid texp)
+            next-player (:next-player result)
+            active (get-in result [:raid :participantes next-player :pokemon])
+            after (raid-app/get-raid s rid)]
+        (is (= current (:skipped-player result)))
+        (is (not= current next-player))
+        (is (= next-player (:vez after)))
+        (is (= "Snorlax" (:nome active))
+            "não enviar o envelope __raid-party-v1 como Pokémon")
+        (is (seq (:golpes active))
+            "painel de skip precisa dos golpes do Pokémon ativo")
+        (is (= (get-in before [:participantes current :hp])
+               (get-in after [:participantes current :hp]))
+            "skip não deve provocar dano")))))
