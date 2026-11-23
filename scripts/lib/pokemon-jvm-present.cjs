@@ -2217,6 +2217,7 @@ function formatBattleTurn(data, prefix = '!pk') {
     return [
       header,
       '🎒 Bolsa cheia: o selvagem foi liberado. Vitória registrada; sem captura nesta caçada.',
+      '💔 Sequência de capturas selvagens encerrada.',
       ...formatConfirmedPiLines(data),
       expShare
     ].filter(Boolean).join('\n');
@@ -2268,14 +2269,14 @@ function formatBattleTurn(data, prefix = '!pk') {
         || laLose['autodesmaio?'] || (laLose.mensagem && /desmaiou após o golpe/i.test(laLose.mensagem))) {
       return gym
         ? formatGymResolve({ venceu: false, peDelta: 1 }, b)
-        : ['💀 Seu Pokémon desmaiou após o golpe. A caçada acabou.', ...piLines].join('\n');
+        : ['💀 Seu Pokémon desmaiou após o golpe. A caçada acabou.', '💔 Sequência de capturas selvagens encerrada.', ...piLines].join('\n');
     }
     return gym
       ? formatGymResolve({ venceu: false, peDelta: 1 }, b)
-      : ['💀 Seu Pokémon desmaiou. A caçada acabou.', ...piLines].join('\n');
+      : ['💀 Seu Pokémon desmaiou. A caçada acabou.', '💔 Sequência de capturas selvagens encerrada.', ...piLines].join('\n');
   }
   if (b.outcome === 'flee' || data.outcome === 'flee') {
-    return `💨 *${nome}* fugiu durante a batalha!`;
+    return `💨 *${nome}* fugiu durante a batalha!\n💔 Sequência de capturas selvagens encerrada.`;
   }
   const la = b.lastAction || {};
   const switchLine = b.lastSwitch && b.lastSwitch.nome
