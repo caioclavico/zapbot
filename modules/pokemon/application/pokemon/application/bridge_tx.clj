@@ -33,7 +33,8 @@
             [pokemon.domain.moves :as moves]
             [pokemon.domain.mundo :as mundo]
             [pokemon.domain.raid :as raid-domain]
-            [pokemon.domain.raid-boss :as raid-boss]))
+            [pokemon.domain.raid-boss :as raid-boss]
+            [pokemon.domain.raid-counter-selection :as raid-counter]))
 
 (defn- present-pokemon
   "DTO de apresentação para Node (HP atual/máx, golpes, sprites).
@@ -896,14 +897,7 @@
 
 (defn- raid-apto?
   [raid p]
-  (and p
-       (pos? (long (:hp-atual p 0)))
-       (some (fn [g]
-               (let [c (or (:classe g) (get g "classe"))
-                     poder (long (or (:poder g) (get g "poder") 0))]
-                 (and (contains? #{:fisico :especial "fisico" "especial"} c)
-                      (pos? poder))))
-             (or (:golpes p) []))))
+  (raid-counter/apto? p))
 
 (defn- pokemon-by-collection-index
   "Resolve o mon do jogador por `:collection-index` canônico.
@@ -914,32 +908,10 @@
         (when (and (<= 0 idx) (< idx (count colecao)))
           (nth colecao idx)))))
 
-(defn- raid-auto-score
-  "Critérios reais de combate disponíveis: soma de atributos + melhor
-   poder ofensivo. Sem type chart no domínio de raide."
-  [p]
-  (let [stats (reduce + 0 (map #(long (or (get p %) 0))
-                               [:hp-atual :ataque :defesa
-                                :atq-esp :def-esp :veloc]))
-        max-poder (reduce max 0
-                          (map #(long (or (:poder %) (get % "poder") 0))
-                               (or (:golpes p) [])))]
-    (+ stats (long max-poder))))
-
 (defn- raid-auto-index
-  "Melhor mon *elegível deste jogador* — nunca compartilha seleção."
+  "Melhor mon *elegível deste jogador* — counter ao chefe (domínio puro)."
   [raid colecao]
-  (let [aptos (filterv #(raid-apto? raid %) colecao)]
-    (when-not (seq aptos)
-      (throw (err/error :invalid_raid_pokemon {:auto? true})))
-    (let [best (apply max-key raid-auto-score aptos)
-          ci (:collection-index best)]
-      (if (some? ci)
-        (long ci)
-        (long (or (first (keep-indexed
-                          (fn [i p] (when (identical? p best) i))
-                          colecao))
-                  0))))))
+  (raid-counter/pick-best-collection-index raid colecao))
 
 (defn- raid-inapto-reason
   [raid p]
