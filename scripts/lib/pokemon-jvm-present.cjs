@@ -12,7 +12,7 @@ const auditoriaGolpe = JSON.parse(require('node:fs').readFileSync(require('node:
 const mecanicasGolpe = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, 'move-mechanics.json'), 'utf8'));
 
 /**
- * Progresso de XP do Pokémon (flat-9-v2): residual 0..8 / 9 por nível.
+ * Progresso de XP: flat-9-v2 (legado) ou progressive-xp-v3 (9→30/nível).
  * O presenter NÃO usa curvas oficiais PokéAPI. Preferência: campos JVM
  * `xpNivelAtual`/`xpProximoNivel`; se o DTO trouxer span oficial antigo (>9),
  * força 9 para não exibir milhares como requisito de nível.
@@ -35,6 +35,9 @@ function pokemonXpProgress(p) {
     return { known: false, max: false, atual: null, necessario: null, pct: null, label: 'XP ?' };
   }
   const nivel = Number(p.nivel) || 1;
+  const versao = p.xpProgressVersion || p['xp-progress-version'] || p.xpProgressaoVersao;
+  const v3 = versao === 'progressive-xp-v3';
+  const teto = v3 ? 30 : XP_POR_NIVEL_POKEMON;
   const maxFlag = p.nivelMaximo === true
     || p['nivel-maximo?'] === true
     || nivel >= NIVEL_MAXIMO_POKEMON;
@@ -73,14 +76,14 @@ function pokemonXpProgress(p) {
           : (p['xp-necessario'] != null ? p['xp-necessario']
             : XP_POR_NIVEL_POKEMON)))
   );
-  // flat-9-v2: nunca exibir spans oficiais (centenas/milhares) como requisito.
-  if (!Number.isFinite(necessario) || necessario <= 0 || necessario > XP_POR_NIVEL_POKEMON) {
-    necessario = XP_POR_NIVEL_POKEMON;
+  // Só a versão explícita v3 permite um span >9; evita spans PokéAPI legados.
+  if (!Number.isFinite(necessario) || necessario <= 0 || necessario > teto) {
+    necessario = v3 ? Math.min(30, 9 + Math.round(21 * (Math.min(50, nivel) - 1) / 49)) : XP_POR_NIVEL_POKEMON;
   }
   if (!Number.isFinite(atualRaw)) {
     return { known: false, max: false, atual: null, necessario: null, pct: null, label: 'XP ?' };
   }
-  const atual = Math.max(0, Math.min(XP_POR_NIVEL_POKEMON - 1, Math.floor(atualRaw)));
+  const atual = Math.max(0, Math.min(necessario - 1, Math.floor(atualRaw)));
   const pct = Math.min(100, Math.round((atual / necessario) * 1000) / 10);
   return {
     known: true,
