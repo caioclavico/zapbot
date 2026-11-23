@@ -275,9 +275,8 @@
                                [?pl :player/player-id ?pid]]
                              db raid-id)
                   pids (mapv first parts)
-                  save-by-pid (into {} (map (fn [[pid sid]] [pid sid]) parts))
+                  ;; Raid nunca modifica a sequência de capturas selvagens.
                   culprit (:raid/vez re)
-                  culprit-save (get save-by-pid culprit)
                   chefe (or (edn-read (:raid/chefe-edn re)) {})
                   boss-name (or (:nome chefe) (get chefe "nome"))
                   timeout-s (idle/idle-timeout-segundos)
@@ -297,8 +296,6 @@
                           (when (and (present? e) (= raid-id (:chat-active-raid/raid-id e)))
                             [[:db/retract [:chat-active-raid/chat-id chat-id]
                               :chat-active-raid/raid-id raid-id]]))
-                  seq-break (when (and culprit culprit-save (not already?))
-                              (sequencia-break-tx db chat-id culprit culprit-save))
                   core [{:raid/id raid-id
                          :raid/idle-expired? true}
                         {:operation-receipt/id op-id
@@ -322,7 +319,7 @@
                         (some? observed-expires)
                         (conj [:db/cas [:raid/id raid-id] :raid/idle-expires-at
                                observed-expires observed-expires]))]
-              {:tx (into [] (concat core cas (or clear []) (or seq-break []) notify))
+              {:tx (into [] (concat core cas (or clear []) notify))
                :result {:operation-id op-id
                         :duplicate false
                         :raid-id raid-id
