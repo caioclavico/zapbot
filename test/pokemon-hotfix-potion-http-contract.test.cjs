@@ -485,3 +485,78 @@ test('integração mock: timeout após TX — getOperation recupera recibo sem n
     await f.close();
   }
 });
+
+
+test('anti-drift: planPotionRoute vs pokemon_http.cljs (fonte de verdade do runtime)', () => {
+  const cljs = fs.readFileSync(CLJS, 'utf8');
+  const potionIdx = cljs.indexOf('("pocao" "pocao-maxima")');
+  assert.ok(potionIdx > 0, 'handler top-level pocao ausente');
+  const potionBlock = cljs.slice(potionIdx, potionIdx + 9000);
+  // Runtime real: lê encounter via contrato HTTP, nunca getActiveEncounter.
+  assert.match(potionBlock, /\.getEncounter jvm/);
+  assert.match(potionBlock, /\.-encounter/);
+  assert.doesNotMatch(potionBlock.replace(/;.*$/gm, ''), /getActiveEncounter/);
+  // Ambiguidade sem mutação (kind potion).
+  assert.match(potionBlock, /ambiguousBattlePrompt/);
+  assert.match(potionBlock, /kind "potion"/);
+  // Mutações por contexto no handler real.
+  assert.match(potionBlock, /\.raidUseItem jvm/);
+  assert.match(potionBlock, /confirmar-turno-encontro!/);
+  assert.match(potionBlock, /confirmar-turno-pvp!/);
+  assert.match(potionBlock, /\.useItem jvm/);
+
+  // Raid scoped: executar-raid-jvm! trata pocao/pocao-maxima com raidUseItem.
+  const raidFn = cljs.indexOf('(defn- executar-raid-jvm!');
+  assert.ok(raidFn > 0);
+  const raidBlock = cljs.slice(raidFn, raidFn + 12000);
+  assert.match(raidBlock, /\(= "pocao" sub\)|\(= "pocao-maxima" sub\)/);
+  assert.match(raidBlock, /\.raidUseItem jvm/);
+
+  // Oracle de roteamento (planPotionRoute) deve espelhar esses caminhos.
+  for (const tokens of [
+    ['pocao'], ['pocao-maxima'],
+    ['raid', 'pocao'], ['raid', 'pocao-maxima'],
+    ['cacar', 'pocao'], ['cacar', 'pocao-maxima'],
+    ['pvp', 'pocao'], ['pvp', 'pocao-maxima']
+  ]) {
+    const plan = present.planPotionRoute(tokens);
+    assert.ok(plan.itemId, tokens.join(' '));
+    if (tokens[0] === 'raid') {
+      assert.equal(plan.write, 'raidUseItem');
+      assert.equal(plan.handler, 'executar-raid-jvm!');
+    } else {
+      assert.equal(plan.encounterRead, 'getEncounter');
+      assert.ok(plan.reads.includes('getEncounter'));
+    }
+  }
+});
+
+test('anti-drift: matriz de despacho exige métodos exportados no client', () => {
+  const exported = clientExportedMethods(fs.readFileSync(CLIENT, 'utf8'));
+  const required = new Set();
+  for (const tokens of [
+    ['pocao'], ['raid', 'pocao'], ['cacar', 'pocao'], ['pvp', 'pocao']
+  ]) {
+    const plan = present.planPotionRoute(tokens);
+    for (const m of plan.reads || []) required.add(m);
+    if (plan.write) required.add(plan.write);
+    const d = present.resolvePotionDispatch(plan, {
+      playerId: 'ash',
+      raid: tokens[0] === 'raid' || tokens[0] === 'pocao'
+        ? { fase: 'combate', inscrito: true, participantes: [{ playerId: 'ash', hp: 10, voce: true }] }
+        : null,
+      encounter: tokens[0] === 'cacar' || tokens[0] === 'pocao'
+        ? { active: true, aguardandoCaptura: false }
+        : null,
+      pvpBattle: tokens[0] === 'pvp' ? { phase: 'active' } : null,
+      pvpSideOk: true,
+      suaVezRaid: true,
+      inventoryQty: 1
+    });
+    if (d.method) required.add(d.method);
+  }
+  // confirmBattleTurn / confirmPvpTurn / useItem / raidUseItem / gets
+  const missing = [...required].filter((m) => !exported.has(m));
+  assert.deepEqual(missing, [], `oracle aponta métodos ausentes: ${missing.join(',')}`);
+  assert.equal(exported.has('getActiveEncounter'), false);
+});
