@@ -850,11 +850,17 @@
 (defn- executar-raid-jvm!
   "Fluxo !pk raide / gin entrar|iniciar|atacar|… — gameplay JVM antes de mídia."
   [jvm ctx pedido chat-id player-id player-name args-raid]
-  (let [sub (.resolveRaidSubcommand jvm-present (or (first args-raid) ""))
+  (let [;; Poção máxima multi-token (`pocao maxima`, `pmax`, …) antes do 1º token só.
+        potion (.resolveRaidPotionTokens jvm-present (clj->js (or args-raid [])))
+        sub (if potion
+              (.-sub potion)
+              (.resolveRaidSubcommand jvm-present (or (first args-raid) "")))
         ;; Preferir resto do scoped (pokemon_http) quando args-raid já veio sem o token de contexto.
-        resto (if (seq args-raid)
-                (vec (rest args-raid))
-                [])
+        resto (if potion
+                (vec (drop (max 1 (int (or (.-consumed potion) 1))) args-raid))
+                (if (seq args-raid)
+                  (vec (rest args-raid))
+                  []))
         prefix (str config/prefix "pk")]
     (cond
       (or (nil? sub) (str/blank? (str sub)) (= "status" sub))
@@ -979,7 +985,9 @@
         (envelope-jvm pedido (.-text present) img (js->clj (.-mentions present))))
 
       (or (= "pocao" sub) (= "pocao-maxima" sub))
-      (let [item-id (if (= sub "pocao-maxima") "pocao-maxima" "pocao")]
+      (let [item-id (if potion
+                      (str (.-itemId potion))
+                      (if (= sub "pocao-maxima") "pocao-maxima" "pocao"))]
         (p/let [raid-data (desempenho/medir! ctx "pokemon_jvm_raid_active"
                              #(.getActiveRaid jvm #js {:chatId chat-id :playerId player-id}))
                 raid (.-raid raid-data)
@@ -1007,25 +1015,29 @@
                                :raidId (.-raidId raid)
                                :expectedTurnIndex (.-turnIndex raid)
                                :itemId item-id}))
+                raid-pos (.-raid data)
                 img (render-seguro! ctx "pokemon_jvm_media_raid_item"
                       #(.renderRaidBattleCard jvm-media
-                         #js {:ginasio (or (.-nomeGinasio (.-raid data))
-                                           (.-ginasio (.-raid data)))
-                              :chefe (some-> (.-raid data) .-chefe)
-                              :atacante (or (.-vezPokemon (.-raid data))
+                         #js {:ginasio (or (.-nomeGinasio raid-pos)
+                                           (.-ginasio raid-pos)
+                                           (.-nomeGinasio raid)
+                                           (.-ginasio raid))
+                              :chefe (or (some-> raid-pos .-chefe)
+                                         (some-> raid .-chefe))
+                              :atacante (or (.-vezPokemon raid-pos)
                                             (some-> raid .-vezPokemon))
-                              :treinador (or (.-vezNome (.-raid data))
+                              :treinador (or (.-vezNome raid-pos)
                                              (.-vezNome raid)
                                              player-name)
-                              :hpChefe (.-hpChefe (.-raid data))
-                              :hpMax (.-hpMax (.-raid data))
-                              :hpAtacante (or (.-vezHp (.-raid data))
+                              :hpChefe (.-hpChefe raid-pos)
+                              :hpMax (.-hpMax raid-pos)
+                              :hpAtacante (or (.-vezHp raid-pos)
                                               (.-vezHp raid))
-                              :fase (.-fase (.-raid data))
-                              :turnIndex (.-turnIndex (.-raid data))
+                              :fase (.-fase raid-pos)
+                              :turnIndex (.-turnIndex raid-pos)
                               :renderPhase "raid-item"}))
                 present (.withRaidTurnMention jvm-present
-                          (.formatRaidItemUse jvm-present data prefix) (.-raid data))]
+                          (.formatRaidItemUse jvm-present data prefix) raid-pos)]
           (envelope-jvm pedido (.-text present) img (js->clj (.-mentions present)))))
 
       (= "atacar" sub)
@@ -3052,15 +3064,16 @@
                                        (conj :cacar)
                                        (and (not= escopo-cmd :cacar) (not= escopo-cmd :raid) pvp-ok?)
                                        (conj :pvp))
+                          ;; Sem escopo explícito em combate: orientar (sem mutação).
                           escolhido (cond
                                       (#{:raid :cacar :pvp} escopo-cmd) escopo-cmd
-                                      (= 1 (count candidatos)) (first candidatos)
+                                      (seq candidatos) nil
                                       :else nil)]
                     (cond
                       (and (nil? escolhido) (seq candidatos))
-                      (envelope-jvm pedido (.ambiguousBattlePrompt jvm-present prefix
-                                                                   (clj->js (mapv name candidatos))
-                                                                   #js {:kind "potion"}))
+                      (envelope-jvm pedido (.potionContextGuide jvm-present prefix
+                                                                (clj->js (mapv name candidatos))
+                                                                item-id))
 
                       (= :raid escolhido)
                       (if-not raid-ok?
@@ -3642,12 +3655,40 @@
                                         (tokens-para-jvm comando argumentos)))]
                nil)
              (p/catch (fn [erro]
-                        (js/console.warn "[PokemonJVM] Falha:" (or (.-code erro) "DELIVERY")
-                                         (or (.-status erro) "") (.-message erro)
-                                         (when (.-details erro)
-                                           (js/JSON.stringify (.-details erro))))
-                        (let [texto (mensagem-falha erro)]
-                          (.reply message texto)))))
+                        (let [code (str/upper-case (str (or (.-code erro) "DELIVERY")))
+                              det (or (.-details erro) #js {})
+                              tokens-jvm (when (jvm-configurado?)
+                                           (try
+                                             (tokens-para-jvm comando argumentos)
+                                             (catch :default _ nil)))
+                              scoped (when (seq tokens-jvm)
+                                       (try
+                                         (.resolveScopedCommand jvm-present (clj->js tokens-jvm))
+                                         (catch :default _ nil)))
+                              plan (when (seq tokens-jvm)
+                                     (try
+                                       (.planPotionRoute jvm-present (clj->js tokens-jvm))
+                                       (catch :default _ nil)))]
+                          (when (= code "INVALID_QUERY")
+                            (js/console.warn
+                             (js/JSON.stringify
+                              (clj->js {:event "pokemon_invalid_query"
+                                        :ts (.now js/Date)
+                                        :cmd (when scoped (.-cmd scoped))
+                                        :scope (when scoped (.-scope scoped))
+                                        :handler (when plan (.-handler plan))
+                                        :jvmMethod (when plan (.-write plan))
+                                        :itemId (when plan (.-itemId plan))
+                                        :required (aget det "required")
+                                        :invalidField (or (aget det "field")
+                                                          (aget det "invalidField"))
+                                        :errorCode code}))))
+                          (js/console.warn "[PokemonJVM] Falha:" code
+                                           (or (.-status erro) "") (.-message erro)
+                                           (when (.-details erro)
+                                             (js/JSON.stringify (.-details erro))))
+                          (let [texto (mensagem-falha erro)]
+                            (.reply message texto))))))
          ;; Adaptador legado: pokemon-service trata !pokedex como espécie.
          (-> (p/let [pedido (contexto-pedido message comando argumentos)
                      http (cliente!)

@@ -90,7 +90,7 @@ test('roteamento: 8 comandos explícitos de poção', () => {
   }
 });
 
-test('roteamento: poção genérica com um combate → mutação única', () => {
+test('roteamento: poção sem escopo em combate → orientação sem mutação', () => {
   const plan = present.planPotionRoute(['pocao']);
   const onlyHunt = present.resolvePotionDispatch(plan, {
     playerId: 'ash',
@@ -99,9 +99,12 @@ test('roteamento: poção genérica com um combate → mutação única', () => 
     pvpBattle: null,
     inventoryQty: 1
   });
-  assert.equal(onlyHunt.action, 'hunt-item');
-  assert.equal(onlyHunt.method, 'confirmBattleTurn');
-  assert.equal(onlyHunt.mutate, true);
+  assert.equal(onlyHunt.action, 'ambiguous');
+  assert.equal(onlyHunt.mutate, false);
+  assert.equal(onlyHunt.method, null);
+  assert.deepEqual(onlyHunt.candidates, ['cacar']);
+  assert.match(onlyHunt.prompt, /cacar pocao/);
+  assert.match(onlyHunt.prompt, /Nenhuma poção foi utilizada/);
 
   const onlyRaid = present.resolvePotionDispatch(plan, {
     playerId: 'ash',
@@ -112,8 +115,10 @@ test('roteamento: poção genérica com um combate → mutação única', () => 
     encounter: null,
     inventoryQty: 1
   });
-  assert.equal(onlyRaid.action, 'raid-item');
-  assert.equal(onlyRaid.method, 'raidUseItem');
+  assert.equal(onlyRaid.action, 'ambiguous');
+  assert.equal(onlyRaid.mutate, false);
+  assert.deepEqual(onlyRaid.candidates, ['raid']);
+  assert.match(onlyRaid.prompt, /raid pocao/);
 });
 
 test('roteamento: raid+caça simultâneas → ambíguo sem mutação', () => {
@@ -135,7 +140,7 @@ test('roteamento: raid+caça simultâneas → ambíguo sem mutação', () => {
   assert.match(d.prompt, /cacar pocao/);
 });
 
-test('roteamento: caçando enquanto outros na raid → só caçada', () => {
+test('roteamento: caçando enquanto outros na raid → orientar caçada (sem mutar)', () => {
   const plan = present.planPotionRoute(['pocao']);
   const d = present.resolvePotionDispatch(plan, {
     playerId: 'ash',
@@ -147,9 +152,10 @@ test('roteamento: caçando enquanto outros na raid → só caçada', () => {
     encounter: { active: true, aguardandoCaptura: false },
     inventoryQty: 1
   });
-  assert.equal(d.action, 'hunt-item');
-  assert.equal(d.chosen, 'cacar');
-  assert.equal(d.mutate, true);
+  assert.equal(d.action, 'ambiguous');
+  assert.equal(d.mutate, false);
+  assert.deepEqual(d.candidates, ['cacar']);
+  assert.match(d.prompt, /cacar pocao/);
 });
 
 test('roteamento: !pk cacar pocao ignora PvP/raid elegíveis', () => {

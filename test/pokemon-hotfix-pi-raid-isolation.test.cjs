@@ -86,10 +86,17 @@ test('ambiguousBattlePrompt lista comandos explícitos', () => {
 });
 
 test('ambiguousBattlePrompt: kind potion', () => {
-  const text = present.ambiguousBattlePrompt('!pk', ['raid', 'cacar', 'pvp'], { kind: 'potion' });
-  assert.match(text, /raid pocao/);
-  assert.match(text, /cacar pocao-maxima/);
-  assert.match(text, /pvp pocao/);
+  const text = present.ambiguousBattlePrompt('!pk', ['raid', 'cacar', 'pvp'], {
+    kind: 'potion', itemId: 'pocao'
+  });
+  assert.match(text, /POÇÃO/);
+  assert.match(text, /raid pocao`/);
+  assert.match(text, /cacar pocao`/);
+  assert.match(text, /pvp pocao`/);
+  assert.match(text, /Nenhuma poção foi utilizada/);
+  const max = present.potionContextGuide('!pk', ['raid'], 'pocao-maxima');
+  assert.match(max, /POÇÃO MÁXIMA/);
+  assert.match(max, /raid pocao maxima/);
 });
 
 test('raidCombatEligibleForPlayer: só participante em combate com HP', () => {
@@ -111,7 +118,7 @@ test('raidCombatEligibleForPlayer: só participante em combate com HP', () => {
   }, 'ash'), false);
 });
 
-test('formatRaidItemUse mostra cura e revide', () => {
+test('formatRaidItemUse mostra cura, revide e painel de turno', () => {
   const text = present.formatRaidItemUse({
     itemId: 'pocao-maxima',
     pokemonAtivo: { nome: 'Charizard' },
@@ -119,13 +126,37 @@ test('formatRaidItemUse mostra cura e revide', () => {
     hpDepois: 120,
     hpMax: 120,
     hpAposRevide: 96,
-    revide: 24
+    revide: 24,
+    raid: {
+      fase: 'combate',
+      turnIndex: 4,
+      vez: 'misty',
+      vezNome: 'Misty',
+      vezHp: 96,
+      hpChefe: 450,
+      hpMax: 800,
+      chefe: { nome: 'Dragonite', tipos: ['dragao'] },
+      vezPokemon: {
+        nome: 'Charizard',
+        hp: 120,
+        golpes: [
+          { nome: 'Lança-Chamas', slug: 'flamethrower', poder: 90, tipo: 'fogo', classe: 'especial' },
+          { nome: 'Garra de Dragão', slug: 'dragon-claw', poder: 80, tipo: 'dragao', classe: 'fisico' }
+        ]
+      },
+      suaVez: false
+    }
   }, '!pk');
   assert.match(text, /POÇÃO MÁXIMA/);
   assert.match(text, /12\/120/);
   assert.match(text, /120\/120/);
   assert.match(text, /Dano recebido: 24/);
   assert.match(text, /96\/120/);
+  assert.match(text, /RAID — TURNO 4/);
+  assert.match(text, /Dragonite/);
+  assert.match(text, /Vez de \*Misty\*/);
+  assert.match(text, /raid atacar 1/);
+  assert.match(text, /Aguarde a vez/);
 });
 
 test('formatCaptureResult inclui recompensas PI confirmadas', () => {
