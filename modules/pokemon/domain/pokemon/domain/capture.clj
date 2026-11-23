@@ -149,7 +149,7 @@
 (defn recompensa-pos-captura
   "Recompensa de captura (streak-unit-v1): XP/PE/moedas unitários pela sequência.
   Não inclui XP/PE de batalha (creditados na vitória). Sem capturou? → consolação
-  leve sem zerar sequência no caller (fuga involuntária)."
+  leve; fuga final sem captura zera a sequência selvagem no caller."
   [{:keys [sequencia-nova capturou?]}]
   (if capturou?
     (let [faixa (faixa-sequencia-captura sequencia-nova)]
