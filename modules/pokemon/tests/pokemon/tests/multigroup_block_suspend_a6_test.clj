@@ -1,6 +1,7 @@
 (ns pokemon.tests.multigroup-block-suspend-a6-test
   "A6 — suspensão segura sob !bloquear + fail-closed + agenda admin-disabled."
   (:require [clojure.test :refer [deftest is testing]]
+            [datomic.client.api :as d]
             [odisseu.persistence.datomic :as persistence]
             [pokemon.application.bridge-tx :as tx]
             [pokemon.application.collection :as collection]
@@ -11,6 +12,8 @@
             [pokemon.application.trainer :as trainer]
             [pokemon.application.writer :as writer]
             [pokemon.domain.battle-idle :as idle]
+            [pokemon.domain.battle :as battle-domain]
+            [pokemon.domain.identities :as ids]
             [pokemon.domain.raid-auto :as domain]
             [pokemon.infrastructure.datomic.store :as store]
             [pokemon.infrastructure.http.bridge :as bridge]))
@@ -114,7 +117,7 @@
                                    ({"POKEMON_BATTLE_IDLE_TIMEOUT_SECONDS" "300"
                                      "POKEMON_RAID_TURN_TIMEOUT_SECONDS" "60"
                                      "APP_ENV" "staging"} k))]
-    (let [[s _] (fresh! "suspend-raid")
+    (let [[s conn] (fresh! "suspend-raid")
           t0 2000000000000
           _ (boot! s grupo-a "ash")
           _ (boot! s grupo-a "misty")
@@ -139,6 +142,13 @@
                  :operation-id "st-a" :agora-ms (+ t0 3)})
           raid (or (:raid st) (raid-app/active-raid s grupo-a))
           rid (:raid-id raid)
+          ;; Streak positiva em ambos: timeout de raid não pode zerar nem um.
+          _ (doseq [pid ["ash" "misty"]]
+              (d/transact conn {:tx-data
+                                [[:db/add [:save/key (ids/save-key grupo-a pid "a")]
+                                  :save/sequencia-capturas 4]
+                                 [:db/add [:save/key (ids/save-key grupo-a pid "a")]
+                                  :save/maior-sequencia-capturas 7]]}))
           _ (is (= "combate" (str (:fase raid))))
           texp (or (:turn-expires-at raid)
                    (:idle-expires-at raid)
@@ -165,7 +175,20 @@
       (is (zero? (:skipped-turns
                   (ports/expire-idle-battles!
                    s {:agora mid :limit 16 :blocked-chat-ids [] :blocks-ok? true}))))
-      (is (= rid (:raid-id resumed))))))
+      (is (= rid (:raid-id resumed)))
+      ;; Vencimento após desbloquear: raid termina, saves mantêm streak.
+      (let [deadline (:idle-expires-at resumed)]
+        (is (some? deadline))
+        (when deadline
+          (ports/expire-idle-battles! s {:agora (inc (long deadline))
+                                         :limit 16 :blocked-chat-ids []
+                                         :blocks-ok? true})
+          (is (= "idle-timeout" (str (:fase (raid-app/get-raid s rid)))))
+          (doseq [pid ["ash" "misty"]]
+            (let [save (ports/get-save s grupo-a pid "a")]
+              (is (= 4 (:sequencia-capturas save)))
+              (is (= 7 (:maior-sequencia-capturas save))))))))))
+
 
 (deftest fail-closed-blocks-unavailable
   (let [[s _] (fresh! "fail-closed")
@@ -266,3 +289,32 @@
     (is (true? (:ok r)))
     (is (true? (:degraded? r)))
     (is (= ["grupo-a@g.us"] (:ids r)))))
+
+(deftest derrota-selvagem-encerra-sequencia-sem-afetar-recorde
+  (let [[s conn] (fresh! "wild-defeat-streak")
+        t0 2000000000000
+        _ (boot! s grupo-a "ash")
+        save-key (ids/save-key grupo-a "ash" "a")]
+    (d/transact conn {:tx-data [[:db/add [:save/key save-key] :save/sequencia-capturas 4]
+                                [:db/add [:save/key save-key] :save/maior-sequencia-capturas 7]]})
+    (ports/start-wild-battle!
+     s (wctx s grupo-a "ash")
+     {:operation-id "wild-lose-start" :battle-id "wild-lose-b1"
+      :pokemon-x squirtle :pokemon-o magikarp
+      :hp-x 1 :hp-o 20 :collection-index 0 :agora t0})
+    (with-redefs [battle-domain/apply-player-turn
+                  (fn [state _ _]
+                    (-> state
+                        (assoc :active? false :phase :finished
+                               :outcome :lose :aguardando-captura? false)
+                        (assoc-in [:hp :x] 0)
+                        (update :turn-index (fnil inc 0))))]
+      (let [r (ports/confirm-battle-turn!
+               s (wctx s grupo-a "ash")
+               {:operation-id "wild-lose-turn"
+                :battle-id "wild-lose-b1" :expected-turn-index 0
+                :action :attack :move-index 0 :agora (inc t0)})
+            save (ports/get-save s grupo-a "ash" "a")]
+        (is (= :lose (get-in r [:battle :outcome])))
+        (is (= 0 (:sequencia-capturas save)))
+        (is (= 7 (:maior-sequencia-capturas save)))))))
