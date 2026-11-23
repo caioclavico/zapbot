@@ -193,7 +193,7 @@ Ver `docs/a6-pr126-fase1283-analysis.md`.
 | Regressão #126 | **Não** |
 | Causa principal | Fixture Body Slam vs Onix com HP 320×n → derrota; asserções de vitória obsoletas |
 | Impacto jogadores | Não evidenciado |
-| Correção | Proposta em PR separado (fixtures), sem merge automático |
+| Correção | PR #127 aberto (fixtures Brick Break + retry); 1 FAIL XP residual mantido |
 
 ### Drift `planPotionRoute` ↔ `pokemon_http.cljs`
 
@@ -221,3 +221,38 @@ Mitigação na fase 2 (branch de evidências):
 | Hold | `ODISSEU_PRODUCTION_DEPLOY_HOLD=true` |
 | Release live | `c4deb6a` |
 | Deploy / cutover / sessão live | **Não executados** |
+
+### Follow-up fase1283 (PR #127)
+
+- Aberto: https://github.com/caioclavico/zapbot/pull/127 (`14773e2`)
+- Fixture vitória + retry: **PASS**
+- Residual XP (`xp-desde-nivel` 2≠1): **FAIL** documentado — sem silenciar
+- Sem merge automático
+
+---
+
+## Relatório final — Fase 2
+
+| Campo | Resultado |
+|-------|-----------|
+| Master SHA | `741034c517a5f583287826324d6a069ee67f3b7c` |
+| Ambiente de staging | `odisseu-staging` / compose staging / Datomic volume próprio |
+| Isolamento validado | Parcial — gates de código/path OK; **confirmações WhatsApp vazias** |
+| WhatsApp READY | `BLOCKED` (sessão não iniciada) |
+| Grupo de teste autorizado | `BLOCKED` (`DEV_GROUP_ID` / confirms EMPTY) |
+| PI e capturas E2E | `BLOCKED` |
+| Ovos e incubadoras E2E | `BLOCKED` |
+| Poções em raid E2E | `BLOCKED` (automatizado M4/HTTP `PASS` na fase 1) |
+| HP persistido | Automatizado `PASS` (fase 1); E2E WhatsApp `BLOCKED` |
+| Batalhas simultâneas E2E | `BLOCKED` |
+| Raids automáticas/manuais | `BLOCKED` (schedulers OFF / sem WA) |
+| Idempotência | Automatizado `PASS` (fase 1) |
+| Suíte legada fase1283 | Pré-existente vermelha em `c4deb6a`; PR #127 reduz a **1 FAIL** (XP residual) |
+| Risco de drift CLJS | Reduzido via anti-drift Node ↔ fonte cljs |
+| Integridade Datomic | Staging volume distinto; prod não tocada |
+| Evidências documentadas | Este relatório + `docs/a6-pr126-fase1283-analysis.md` @ evidence branch |
+| Falhas e bloqueios | `STAGING_BLOCKED` (WA); 1 asserção XP residual em suíte legada |
+| Decisão | `HOMOLOG_BLOCKED` |
+| Deploy | `DEPLOY_NO_GO` |
+
+**Nota de decisão:** fase 1 permanece `HOMOLOG_PARTIAL` nos automatizados. Fase 2 WhatsApp não pode declarar `HOMOLOG_PASS` nem `HOMOLOG_PARTIAL` sem canal real — faltam credenciais/grupo → **`HOMOLOG_BLOCKED`**. Produção permanece em `c4deb6a` com hold ativo.

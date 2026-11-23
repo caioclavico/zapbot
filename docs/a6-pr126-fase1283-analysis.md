@@ -62,3 +62,18 @@ O próprio `raid_capture_rewards_fase126_test` documenta que Body Slam vs Onix f
 3. Tornar o teste de retry assertivo sobre `:raid_not_found` / `:stale` em vez de exceção não tratada.
 
 Não “silenciar” asserções sem ajustar o modelo de balanço documentado.
+
+## Follow-up (PR #127 — aberto, sem merge)
+
+Branch: `fix/a6-raid-defeat-fase1283-fixtures` @ `14773e2`  
+URL: https://github.com/caioclavico/zapbot/pull/127
+
+| Mudança | Status |
+|---------|--------|
+| `mon-vitoria` → Brick Break | Aplicada |
+| Retry captura `Exception` / `raid_not_found` | Aplicada |
+| `xp-desde-nivel = 1` mantida (honesta) | Sem green-wash |
+
+**Reexecução pós-PR:** 15 tests · **80 pass · 1 fail · 0 error**  
+Falha residual: `pokemon-sobe-nivel-na-derrota` (`expected 1`, `actual 2`).  
+Auditoria growth-v1 / grant efetivo fica para PR de domínio separado se confirmado bug.
