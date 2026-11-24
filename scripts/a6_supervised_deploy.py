@@ -875,7 +875,11 @@ def _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest,
             return _finish(checkpoints, "resume", ["hold_not_restored"], seen, admitted=True, maintenance=True)
         meta["holdRestored"] = True
     for name in SUPERVISED_STEPS[3:17]:
-        _mark(checkpoints, {"step": name, "observed": "after_resume"})
+        marker = {"step": name, "observed": "after_resume"}
+        if name == "v3_release_gate" and v3_required:
+            # Only a journaled successful v3 gate may be replayed.
+            marker["verified"] = True
+        _mark(checkpoints, marker)
     return _confirm_and_validate(wrapped, prefix, checkpoints, seen)
 
 
