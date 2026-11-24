@@ -152,3 +152,35 @@ Não considerar esse arquivo uma prova criptográfica independente: o operador d
 **Um PR de release + uma janela operacional + um cutover de Node/JVM.** Os PRs #134 e #135 ficam como origem/revisão e podem ser fechados como incorporados pelo PR de release **somente depois** de a master receber a revisão e de o deploy ser confirmado.
 
 Este documento não declara que a auditoria live, a reconciliação ou o deploy tenham sido executados.
+## Recuperação após CAS Datomic e falha do diário (PR #136)
+
+A operação v3_release_reconcile é crítica: o Datomic pode ter confirmado
+CAS e recibo mesmo se o runner morrer antes de journal.done.
+**Não repetir o CAS ou uma compensação cegamente.**
+
+O fluxo agora persiste a auditoria BLOCKED inicial e o fingerprint SHA-256 do
+preview na intenção durável *antes* de qualquer escrita Datomic.
+Em caso de queda, a mesma janela, SHA e digests precisa provar:
+
+1. As imagens corretas, writer único, Node quiescent e JVM frozen.
+2. Flag v3 e reconciliação ativas na JVM.
+3. Consulta **somente leitura** do recibo pelo writer JVM: resposta duplicate,
+   ID do Charmander, nível 6, residual 8 e receiptId esperado.
+4. Reauditoria integral e comparação com baseline persistido: blocked=0,
+   mesmas quantidades de Pokémon, saves, jogadores, ovos/incubadoras, itens e
+   moedas, fingerprint protegido idêntico e exatamente um recibo novo.
+5. Registro **atômico** da evidência do recibo e da etapa v3_release_gate no
+   diário, ainda sem repetir CAS.
+6. Nova verificação read-only antes de permitir resume_jvm e resume_node.
+
+Recibo ausente/conflitante, contagens diferentes, writer extra, fases incorretas,
+falha do diário ou quaisquer divergências implicam DEPLOY_NO_GO, manutenção
+fechada e nenhum retry mutante automático.
+
+**Ensaio obrigatório em restore isolado:** interromper o runner após o
+d/transact REAL e antes da conclusão durável no diário, retomar a mesma janela,
+confirmar que não houve segunda transação e que Node/JVM reabriram somente
+depois das verificações. Repetir cenário sem commit, fingerprint ou recibo
+incorretos e falha de escrita no diário. A suíte CI Python simula a janela,
+mas não substitui esse ensaio JVM+Datomic isolado na VM.
+
