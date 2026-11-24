@@ -496,13 +496,28 @@ class SupervisedWindowTests(unittest.TestCase):
 
     def test_v3_gate_evidence_required_before_successful_resume(self):
         env = dict(ENV, A6_V3_SINGLE_CUTOVER="a6-v3-raid-auto-136")
+        before = {
+            "status": "BLOCKED", "blocked": 1, "pokemonCount": 1336,
+            "playerCount": 39, "saveCount": 102, "eggCount": 43,
+            "incubatorCount": 12, "inventoryCount": 158,
+            "coinsTotal": 3055, "receiptCount": 8599,
+            "targetLevel": 6, "targetResidual": 21,
+            "blockedDetails": [{"id": "abb8955f-7ebe-4084-a634-fd74cfa9bf62",
+                                "reason": "flat9-ambiguous-legacy-xp"}],
+            "protectedSha256": "c" * 64,
+        }
+        candidate = {
+            "status": "ready", "pokemonId": "abb8955f-7ebe-4084-a634-fd74cfa9bf62",
+            "level": 6, "rawXp": 21, "residualBefore": 21, "residualAfter": 8,
+            "snapshotSha256": "a" * 64,
+        }
         with tempfile.TemporaryDirectory() as tmp, \
              patch("a6_v3_release_gate.verify_rehearsal",
                    return_value={"manifestSha256": "b" * 64, "pokemonCount": 1336}), \
-             patch("a6_v3_release_gate.prepare",
-                   return_value={"status": "BLOCKED", "pokemonCount": 1336}), \
+             patch("a6_v3_release_gate.prepare", return_value=before), \
+             patch("a6_v3_release_gate.preview", return_value=candidate), \
              patch("a6_v3_release_gate.commit_once",
-                   side_effect=lambda wrapped, prefix, before: (
+                   side_effect=lambda wrapped, prefix, audited, candidate=None: (
                        setattr(world, "jvm_phase", "frozen") or
                        {"receiptId": "only-once", "pokemonCount": 1336,
                         "protectedSha256": "c" * 64})):
