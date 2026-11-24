@@ -184,13 +184,22 @@ class ReadOnlyRecoveryTest(unittest.TestCase):
     def test_actual_read_only_recovery_requires_committed_receipt_and_audit(self):
         with patch("a6_v3_release_gate.require_flags"), \
              patch("a6_v3_release_gate.verify_committed_receipt",
-                   return_value={"status": "duplicate", "receiptId": gate.RECEIPT_ID}), \
+                   return_value={"status": "duplicate", "receiptId": gate.RECEIPT_ID,
+                                 "snapshotSha256": "a" * 64}), \
              patch("a6_v3_release_gate.audit", return_value=dict(AFTER)), \
              patch("a6_v3_release_gate.reconcile") as forbidden_cas:
             result = gate.recover_committed(lambda args: None, [], BEFORE,
                                              "a" * 64, REHEARSAL)
         self.assertEqual(result, EVIDENCE)
         forbidden_cas.assert_not_called()
+
+    def test_valid_but_different_snapshot_is_rejected_before_audit(self):
+        with patch.object(gate, "require_flags"), patch.object(
+                gate, "verify_committed_receipt", return_value={"snapshotSha256": "d" * 64}
+        ), patch.object(gate, "audit") as audit:
+            with self.assertRaisesRegex(DeployError, "receipt_snapshot_mismatch"):
+                gate.recover_committed(lambda args: None, [], BEFORE, "a" * 64, REHEARSAL)
+        audit.assert_not_called()
 
     def test_missing_receipt_or_tampered_snapshot_is_fail_closed(self):
         with patch("a6_v3_release_gate.require_flags"), \

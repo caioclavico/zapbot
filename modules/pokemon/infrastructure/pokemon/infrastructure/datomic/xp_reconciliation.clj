@@ -3,7 +3,8 @@
    running JVM bridge's Datomic connection while the gameplay gate is frozen.
    No second Datomic client. Same TX CAS: level, both XP fields, version, XP
    total and immutable metadata + unique receipt. Fails closed."
-  (:require [clojure.string :as str]
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [datomic.client.api :as d]
             [pokemon.domain.growth :as growth])
   (:import [java.nio.charset StandardCharsets]
@@ -65,17 +66,26 @@
         r (read-one db pokemon-id)
         expected-hash (payload-hash pokemon-id)]
     (when (:db/id prior)
-      (when-not (and (= expected-hash (:operation-receipt/payload-hash prior))
-                     (= fixed-level (:pokemon/level r))
-                     (= fixed-target (:pokemon/xp-desde-nivel r))
-                     (= fixed-target (:pokemon/xp r))
-                     (= "flat-9-v2" (:pokemon/xp-progress-version r))
-                     (= fixed-raw (:pokemon/xp-legacy-residual r))
-                     (= fixed-level (:pokemon/xp-legacy-nivel r)))
-        (blocked! :reconciliation-receipt-conflict {}))
-      {:status :duplicate :pokemon-id pokemon-id
-       :level fixed-level :residual fixed-target
-       :receipt-id (op-id pokemon-id)})))
+      (let [summary (try
+                      (edn/read-string (:operation-receipt/summary prior))
+                      (catch Exception _ nil))
+            snapshot-sha (:snapshot-sha256 summary)]
+        (when-not (and (string? snapshot-sha)
+                       (re-matches #"[0-9a-f]{64}" snapshot-sha)
+                       (= pokemon-id (:pokemon-id summary))
+                       (= fixed-origin (:policy summary))
+                       (= expected-hash (:operation-receipt/payload-hash prior))
+                       (= fixed-level (:pokemon/level r))
+                       (= fixed-target (:pokemon/xp-desde-nivel r))
+                       (= fixed-target (:pokemon/xp r))
+                       (= "flat-9-v2" (:pokemon/xp-progress-version r))
+                       (= fixed-raw (:pokemon/xp-legacy-residual r))
+                       (= fixed-level (:pokemon/xp-legacy-nivel r)))
+          (blocked! :reconciliation-receipt-conflict {}))
+        {:status :duplicate :pokemon-id pokemon-id
+         :level fixed-level :residual fixed-target
+         :snapshot-sha256 snapshot-sha
+         :receipt-id (op-id pokemon-id)}))))
 
 (defn- ensure-preconditions! [p]
   (when-not (and (:db/id p)

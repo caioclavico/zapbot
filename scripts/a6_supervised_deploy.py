@@ -823,21 +823,21 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
                 receiptId=v3_release.RECEIPT_ID,
             )
             evidence = v3_release.commit_once(wrapped, prefix, before, candidate=candidate)
-            _j().done("v3_release_reconcile", ok=True, receiptId=evidence["receiptId"])
             _single_writer(_volume_holders(wrapped, prefix), ["odisseu-a6-jvm"])
         except DeployError as exc:
             if str(exc) in JOURNAL_ERRORS:
                 raise
             return _finish(checkpoints, "v3_release_gate", [str(exc)], seen,
                            admitted=True, maintenance=True)
-        _mark(checkpoints, {
-            "step": "v3_release_gate",
+        gate_evidence = {
             "verified": True,
             "pokemonCount": evidence["pokemonCount"],
             "protectedSha256": evidence["protectedSha256"],
             "receiptId": evidence["receiptId"],
             "rehearsalManifestSha256": rehearsal["manifestSha256"],
-        })
+        }
+        _j().resolve("v3_receipt_observed", v3ReleaseEvidence=gate_evidence)
+        checkpoints.append({"step": "v3_release_gate", **gate_evidence})
     else:
         _mark(checkpoints, {"step": "v3_release_gate", "verified": False,
                             "reason": "not-applicable"})

@@ -346,7 +346,9 @@ def recover_committed(wrapped, prefix, before, snapshot_sha, rehearsal):
     # If the CAS never committed, audit remains BLOCKED and recovery fails closed.
     # Even when committed, we require both an independently verified receipt
     # and complete same-writer post-audit.
-    verify_committed_receipt(wrapped, prefix)
+    receipt = verify_committed_receipt(wrapped, prefix)
+    if receipt.get("snapshotSha256") != snapshot_sha:
+        raise DeployError("v3_recovery_receipt_snapshot_mismatch")
     after = audit(wrapped, prefix)
     validate_audit_transition(before, after)
     evidence = {
