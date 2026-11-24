@@ -23,6 +23,7 @@ if __name__ == "__main__":
 from a6_production_contract import VM
 from a6_production_deploy import DeployError
 from a6_supervised_deploy import RESUME_PHRASE, WINDOW, run_supervised
+from a6_v3_release_gate import RELEASE_ENV, RELEASE_MODE
 from a6_window_journal import (
     JOURNAL,
     WindowJournal,
@@ -424,7 +425,8 @@ def cli(argv=None):
         digest = os.environ.get("A6_" + service.upper() + "_SECCOMP_SHA256")
         if path and digest:
             profiles[service] = (path, digest)
-    materializer = Materializer(prefix, profiles=profiles)
+    materializer = Materializer(prefix, profiles=profiles,
+                               v3_release=os.environ.get(RELEASE_ENV) == RELEASE_MODE)
     report = execute_window(
         _subprocess_runner,
         GithubHold(_subprocess_runner),
