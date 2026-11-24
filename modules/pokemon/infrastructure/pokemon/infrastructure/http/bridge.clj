@@ -340,6 +340,7 @@
       (send-json! ex 404 {:ok false :error {:code "not_found" :message "Rota inexistente."}}))
 
     (contains? #{"/ops/maintenance/a6-v3-xp-preview"
+                 "/ops/maintenance/a6-v3-xp-audit"
                  "/ops/maintenance/a6-v3-xp-reconcile"} path)
     (if (and conn
              (= "true" (some-> (System/getenv "A6_V3_RECONCILIATION_ENABLED")
@@ -353,13 +354,24 @@
             (send-json! ex 409
                         {:ok false :error {:code "reconciliation_requires_frozen_writer"}})
             (try
-              (if (= path "/ops/maintenance/a6-v3-xp-preview")
+              (cond
+                (= path "/ops/maintenance/a6-v3-xp-preview")
                 (do
                   (require-method! ex #{"GET"})
                   (require-empty-body! ex)
                   (ok! ex (xp-reconciliation/preview
                            conn (get qs "pokemonId")
                            (System/getenv "A6_V3_RECONCILIATION_ALLOWED_ID"))))
+
+                (= path "/ops/maintenance/a6-v3-xp-audit")
+                (do
+                  (require-method! ex #{"GET"})
+                  (require-empty-body! ex)
+                  (ok! ex (xp-reconciliation/audit
+                           conn (get qs "pokemonId")
+                           (System/getenv "A6_V3_RECONCILIATION_ALLOWED_ID"))))
+
+                (= path "/ops/maintenance/a6-v3-xp-reconcile")
                 (do
                   (require-method! ex #{"POST"})
                   (let [req (read-body ex)]
@@ -370,7 +382,10 @@
                          (xp-reconciliation/reconcile!
                           conn (get req "pokemonId")
                           (System/getenv "A6_V3_RECONCILIATION_ALLOWED_ID")
-                          (get req "snapshotSha256"))))))
+                          (get req "snapshotSha256")))))
+
+                :else
+                (send-json! ex 404 {:ok false :error {:code "not_found"}}))
               (catch clojure.lang.ExceptionInfo e
                 (send-json! ex 409
                             {:ok false :error {:code (name (or (:code (ex-data e))
