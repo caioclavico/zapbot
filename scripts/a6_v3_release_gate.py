@@ -267,9 +267,15 @@ def prepare(wrapped, prefix):
     return audit(wrapped, prefix)
 
 
-def commit_once(wrapped, prefix, before):
+def commit_once(wrapped, prefix, before, candidate=None):
     validate_pre_audit(before)
-    candidate = preview(wrapped, prefix)
+    if candidate is None:
+        candidate = preview(wrapped, prefix)
+    elif not (isinstance(candidate, dict)
+              and candidate.get("status") == "ready"
+              and candidate.get("pokemonId") == POKEMON_ID
+              and HEX64.fullmatch(str(candidate.get("snapshotSha256") or ""))):
+        raise DeployError("v3_pre_cas_snapshot_invalid")
     first = reconcile(wrapped, prefix, candidate["snapshotSha256"])
     # Prove retry idempotence without a second grant.
     second = reconcile(wrapped, prefix, candidate["snapshotSha256"])
@@ -284,3 +290,72 @@ def commit_once(wrapped, prefix, before):
         "status": after["status"],
         "reconciliationStatus": first["status"],
     }
+
+def verify_committed_receipt(wrapped, prefix):
+    """Read only. Prove the unique Datomic receipt through the frozen JVM.
+    A missing/conflicting receipt never causes automatic reapplication."""
+    _frozen(wrapped, prefix)
+    response = _get(
+        wrapped, prefix,
+        "/ops/maintenance/a6-v3-xp-preview?pokemonId=" + POKEMON_ID,
+        "v3_receipt_observation",
+    )
+    if not (
+        response.get("status") == "duplicate"
+        and response.get("pokemonId") == POKEMON_ID
+        and response.get("level") == 6
+        and response.get("residual") == 8
+        and response.get("receiptId") == RECEIPT_ID
+    ):
+        raise DeployError("v3_receipt_not_committed")
+    return response
+
+
+def verify_final_state(wrapped, prefix, evidence, rehearsal):
+    """Pure verification for a completed, journaled v3 gate on restart."""
+    if not valid_checkpoint(evidence, rehearsal):
+        raise DeployError("v3_gate_checkpoint_missing")
+    require_flags(wrapped, prefix)
+    verify_committed_receipt(wrapped, prefix)
+    after = audit(wrapped, prefix)
+    if not (
+        after.get("status") == "PASS"
+        and after.get("blocked") == 0
+        and after.get("reconciliationReceiptVerified") is True
+        and after.get("pokemonCount") == evidence["pokemonCount"]
+        and after.get("protectedSha256") == evidence["protectedSha256"]
+        and after.get("targetLevel") == 6
+        and after.get("targetResidual") == 8
+    ):
+        raise DeployError("v3_recovered_gate_state_drift")
+    return after
+
+
+def recover_committed(wrapped, prefix, before, snapshot_sha, rehearsal):
+    """Resolve an interrupted CAS strictly by READ-ONLY proof.
+
+    Caller has checked exact image digests and unique Datomic writer.
+    Do not repeat CAS when the journal has an unresolved intention.
+    """
+    if not isinstance(before, dict):
+        raise DeployError("v3_recovery_missing_baseline")
+    validate_pre_audit(before)
+    if not isinstance(snapshot_sha, str) or HEX64.fullmatch(snapshot_sha) is None:
+        raise DeployError("v3_recovery_missing_snapshot")
+    require_flags(wrapped, prefix)
+    # If the CAS never committed, audit remains BLOCKED and recovery fails closed.
+    # Even when committed, we require both an independently verified receipt
+    # and complete same-writer post-audit.
+    verify_committed_receipt(wrapped, prefix)
+    after = audit(wrapped, prefix)
+    validate_audit_transition(before, after)
+    evidence = {
+        "verified": True,
+        "receiptId": RECEIPT_ID,
+        "pokemonCount": after["pokemonCount"],
+        "protectedSha256": after["protectedSha256"],
+        "rehearsalManifestSha256": rehearsal["manifestSha256"],
+    }
+    if not valid_checkpoint(evidence, rehearsal):
+        raise DeployError("v3_recovered_gate_invalid")
+    return evidence
