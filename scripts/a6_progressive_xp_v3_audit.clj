@@ -83,7 +83,7 @@
 
 (defn- sum-attr [db attr]
   (if (attr-exists? db attr)
-    (long (or (ffirst (d/q '[:find (sum ?v) :in $ ?a :where [?e ?a ?v]]
+    (long (or (ffirst (d/q '[:find (sum ?v) :with ?e :in $ ?a :where [?e ?a ?v]]
                              db attr)) 0))
     0))
 

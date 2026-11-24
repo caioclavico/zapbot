@@ -155,3 +155,13 @@
     (is (= (get audit-before "saveCount") (get after "saveCount")))
     (is (= (inc (get audit-before "receiptCount"))
            (get after "receiptCount")))))
+
+(deftest test-full-protected-fingerprint-detects-changes-with-identical-counts
+  (let [conn (seeded)
+        before (recon/audit conn id id)]
+    (d/transact conn {:tx-data [[:db/add [:pokemon/id-pokemon id]
+                                :pokemon/nickname "changed"]]})
+    (let [after (recon/audit conn id id)]
+      (is (= (:pokemonCount before) (:pokemonCount after)))
+      (is (= (:blocked before) (:blocked after)))
+      (is (not= (:protectedSha256 before) (:protectedSha256 after))))))

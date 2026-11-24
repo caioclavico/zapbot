@@ -48,7 +48,7 @@ class GateTests(unittest.TestCase):
                                       "reason": "flat9-ambiguous-legacy-xp"}],
                   "protectedSha256": "e" * 64,
                   "playerCount": 39, "saveCount": 102, "eggCount": 43,
-                  "inventoryCount": 412, "coinsTotal": 2979,
+                  "incubatorCount": 0, "inventoryCount": 412, "coinsTotal": 2979,
                   "receiptCount": 100}
         after = dict(before, status="PASS", blocked=0, blockedDetails=[],
                      targetResidual=8, reconciliationReceiptVerified=True,
@@ -65,6 +65,24 @@ class GateTests(unittest.TestCase):
             gate.validate_audit_transition(before, after | {"receiptCount": 102})
         with self.assertRaisesRegex(DeployError, "pre_audit_unexpected"):
             gate.validate_audit_transition(before | {"blocked": 2}, after)
+
+    def test_unexpected_pre_audit_never_previews_or_reconciles(self):
+        before = dict.fromkeys(gate.AUDIT_COUNTS, 0)
+        before.update(status="BLOCKED", blocked=2)
+        with patch.object(gate, "preview") as preview, patch.object(gate, "reconcile") as reconcile:
+            with self.assertRaisesRegex(DeployError, "pre_audit_unexpected"):
+                gate.commit_once(None, [], before)
+        preview.assert_not_called()
+        reconcile.assert_not_called()
+
+    def test_checkpoint_requires_receipt_evidence_bound_to_rehearsal(self):
+        rehearsal = {"manifestSha256": "a" * 64}
+        evidence = {"verified": True, "receiptId": gate.RECEIPT_ID,
+                    "pokemonCount": 1336, "protectedSha256": "b" * 64,
+                    "rehearsalManifestSha256": rehearsal["manifestSha256"]}
+        self.assertTrue(gate.valid_checkpoint(evidence, rehearsal))
+        self.assertFalse(gate.valid_checkpoint({"verified": True}, rehearsal))
+        self.assertFalse(gate.valid_checkpoint(evidence, {"manifestSha256": "c" * 64}))
 
     def test_no_admin_token_appears_in_command(self):
         seen = []

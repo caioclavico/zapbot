@@ -676,9 +676,12 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
     })
 
     if _resumed(prior) and _prior_has(prior, "update_jvm") and _prior_has(prior, "update_node"):
-        forward = _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest, hold_gate, meta, checkpoints, seen, prior, v3_required)
+        forward = _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest, hold_gate, meta, checkpoints, seen, prior, rehearsal)
         if forward is not None:
             return forward
+        if v3_required:
+            return _finish(checkpoints, "resume", ["v3_resume_state_indeterminate"], seen,
+                           admitted=True, maintenance=True)
 
     if hold_gate is not None:
         try:
@@ -798,6 +801,7 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
     if v3_required:
         try:
             before = _op("v3_release_prepare", lambda: v3_release.prepare(wrapped, prefix))
+            _single_writer(_volume_holders(wrapped, prefix), ["odisseu-a6-jvm"])
             evidence = _op("v3_release_reconcile",
                            lambda: v3_release.commit_once(wrapped, prefix, before))
             _single_writer(_volume_holders(wrapped, prefix), ["odisseu-a6-jvm"])
@@ -857,9 +861,11 @@ def _resumed(prior):
 
 
 def _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest, hold_gate, meta, checkpoints, seen,
-                          prior, v3_required):
+                          prior, rehearsal):
     """Resume já enviado: imagens abertas só podem ser aceitas com gate v3 persistido."""
-    if v3_required and not _prior_has(prior, "v3_release_gate"):
+    evidence = (prior or {}).get("v3ReleaseEvidence")
+    if rehearsal and (not _prior_has(prior, "v3_release_gate")
+                      or not v3_release.valid_checkpoint(evidence, rehearsal)):
         return _finish(checkpoints, "v3_release_gate", ["v3_gate_checkpoint_missing"], seen,
                        admitted=True, maintenance=True)
     if not (_image_matches(observation, "jvm", jvm_digest) and _image_matches(observation, "node", node_digest)):
@@ -876,9 +882,8 @@ def _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest,
         meta["holdRestored"] = True
     for name in SUPERVISED_STEPS[3:17]:
         marker = {"step": name, "observed": "after_resume"}
-        if name == "v3_release_gate" and v3_required:
-            # Only a journaled successful v3 gate may be replayed.
-            marker["verified"] = True
+        if name == "v3_release_gate" and rehearsal:
+            marker.update(evidence)
         _mark(checkpoints, marker)
     return _confirm_and_validate(wrapped, prefix, checkpoints, seen)
 

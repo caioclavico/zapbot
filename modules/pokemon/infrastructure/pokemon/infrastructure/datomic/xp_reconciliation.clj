@@ -237,9 +237,26 @@
 
 (defn- sum-attr [db attr]
   (if (some? (:db/ident (d/pull db '[:db/ident] attr)))
-    (long (or (ffirst (d/q '[:find (sum ?v) :in $ ?a :where [?e ?a ?v]]
+    (long (or (ffirst (d/q '[:find (sum ?v) :with ?e :in $ ?a :where [?e ?a ?v]]
                              db attr)) 0))
     0))
+
+(def ^:private compensation-attrs
+  #{:pokemon/xp :pokemon/xp-desde-nivel :pokemon/xp-total
+    :pokemon/xp-progress-version :pokemon/xp-legacy-residual :pokemon/xp-legacy-nivel})
+
+(defn- protected-fingerprint [db target-eid receipt-eid]
+  (->> (d/q '[:find ?e ?ident ?value
+              :where [?a :db/ident ?ident] [?e ?a ?value]]
+            db)
+       (remove (fn [[eid attr _]]
+                 (or (= attr :db/txInstant)
+                     (= eid receipt-eid)
+                     (and (= eid target-eid) (compensation-attrs attr)))))
+       (map pr-str)
+       sort
+       vec
+       sha256))
 
 (defn audit
   "Frozen-only, read-only full progression audit on the writer's connection.
@@ -262,16 +279,16 @@
                       :reason (name (:reason check))}))
                  checks)
         blocked (vec blocked)
-        protect-sha (sha256 (mapv #(select-keys % progress-immutable) rows))
         target (first (filter #(= pokemon-id (:id-pokemon %)) rows))
         prior (receipt db (op-id pokemon-id))
+        target-entity (read-one db pokemon-id)
+        protect-sha (protected-fingerprint db (:db/id target-entity) (:db/id prior))
         finalized? (and target
                         (= "flat-9-v2" (:xp-progress-version target))
                         (= fixed-level (:nivel target))
                         (= fixed-target (:xp-desde-nivel target))
                         (= fixed-target (:xp target))
-                        (= fixed-raw (:pokemon/xp-legacy-residual
-                                      (read-one db pokemon-id)))
+                        (= fixed-raw (:pokemon/xp-legacy-residual target-entity))
                         (= (payload-hash pokemon-id)
                            (:operation-receipt/payload-hash prior)))]
     {:status (if (empty? blocked) "PASS" "BLOCKED")
@@ -279,6 +296,7 @@
                        (count-attr db :trainer/player-id))
      :saveCount (count-attr db :save/key)
      :eggCount (count-attr db :egg/id)
+     :incubatorCount (count-attr db :egg/incubator-id)
      :inventoryCount (count-attr db :inventory-item/save)
      :coinsTotal (sum-attr db :save/coins)
      :receiptCount (count-attr db :operation-receipt/id)

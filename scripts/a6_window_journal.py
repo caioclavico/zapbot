@@ -244,6 +244,11 @@ class WindowJournal:
         steps = self.data.setdefault("steps", [])
         if name not in steps:
             steps.append(name)
+        if name == "v3_release_gate" and item.get("verified") is True:
+            self.data["v3ReleaseEvidence"] = {
+                key: item[key] for key in ("verified", "receiptId", "pokemonCount",
+                                          "protectedSha256", "rehearsalManifestSha256")
+            }
         self.data["lastCompleted"] = name
         self._event("step", name)
         self._persist()

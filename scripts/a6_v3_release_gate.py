@@ -73,6 +73,18 @@ def verify_rehearsal(env, sha, jvm_digest, node_digest):
     }
 
 
+def valid_checkpoint(evidence, rehearsal):
+    return (
+        isinstance(evidence, dict)
+        and evidence.get("verified") is True
+        and evidence.get("receiptId") == RECEIPT_ID
+        and type(evidence.get("pokemonCount")) is int
+        and evidence["pokemonCount"] > 0
+        and HEX64.fullmatch(str(evidence.get("protectedSha256") or "")) is not None
+        and evidence.get("rehearsalManifestSha256") == rehearsal["manifestSha256"]
+    )
+
+
 def _response(wrapped, args, label):
     code, data = parse_http(wrapped(args))
     if code != 200 or data.get("ok") is not True or not isinstance(data.get("data"), dict):
@@ -111,7 +123,8 @@ def _read_marker(wrapped, args):
 def require_flags(wrapped, prefix):
     # Never emit the content of any variable to stdout/logs, only a fixed marker.
     script = (
-        'test "$POKEMON_PROGRESSIVE_XP_V3" = true '
+        'test "$ADVENTURE_AUTO_HATCH" = true '
+        '&& test "$POKEMON_PROGRESSIVE_XP_V3" = true '
         '&& test "$A6_V3_RECONCILIATION_ENABLED" = true '
         '&& test "$A6_V3_RECONCILIATION_ALLOWED_ID" = '
         + shlex.quote(POKEMON_ID)
@@ -207,19 +220,14 @@ def reconcile(wrapped, prefix, snapshot_sha):
     return data
 
 
-def validate_audit_transition(before, after):
-    for key in ("playerCount", "saveCount", "eggCount", "inventoryCount",
-                "coinsTotal", "receiptCount"):
-        if not isinstance(before.get(key), int) or before[key] < 0:
+AUDIT_COUNTS = ("playerCount", "saveCount", "eggCount", "incubatorCount",
+                "inventoryCount", "coinsTotal", "receiptCount")
+
+
+def validate_pre_audit(before):
+    for key in AUDIT_COUNTS:
+        if type(before.get(key)) is not int or before[key] < 0:
             raise DeployError("v3_pre_audit_counts_invalid")
-        if not isinstance(after.get(key), int) or after[key] < 0:
-            raise DeployError("v3_post_audit_counts_invalid")
-    for key in ("playerCount", "saveCount", "eggCount", "inventoryCount",
-                "coinsTotal"):
-        if after[key] != before[key]:
-            raise DeployError("v3_post_audit_manifest_drift")
-    if after["receiptCount"] != before["receiptCount"] + 1:
-        raise DeployError("v3_post_audit_receipt_count_invalid")
     if (
         before.get("status") != "BLOCKED"
         or before.get("blocked") != 1
@@ -229,6 +237,18 @@ def validate_audit_transition(before, after):
            [{"id": POKEMON_ID, "reason": "flat9-ambiguous-legacy-xp"}]
     ):
         raise DeployError("v3_pre_audit_unexpected")
+
+
+def validate_audit_transition(before, after):
+    validate_pre_audit(before)
+    for key in AUDIT_COUNTS:
+        if type(after.get(key)) is not int or after[key] < 0:
+            raise DeployError("v3_post_audit_counts_invalid")
+        expected = before[key] + (1 if key == "receiptCount" else 0)
+        if after[key] != expected:
+            if key == "receiptCount":
+                raise DeployError("v3_post_audit_receipt_count_invalid")
+            raise DeployError("v3_post_audit_manifest_drift")
     if (
         after.get("status") != "PASS"
         or after.get("blocked") != 0
@@ -248,6 +268,7 @@ def prepare(wrapped, prefix):
 
 
 def commit_once(wrapped, prefix, before):
+    validate_pre_audit(before)
     candidate = preview(wrapped, prefix)
     first = reconcile(wrapped, prefix, candidate["snapshotSha256"])
     # Prove retry idempotence without a second grant.
