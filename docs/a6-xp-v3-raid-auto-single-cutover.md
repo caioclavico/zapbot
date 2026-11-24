@@ -36,6 +36,39 @@ Como resolução **administrativa/compensatória**, e **não** alegação de con
 
 Esse crédito compensa incerteza; ele não reconstrói os 21 XP originais. O valor original permanece rastreável. O proprietário autorizou as medidas necessárias, mas a integridade tem precedência sobre o prazo.
 
+
+## Correção na release: writer único e CAS atômico
+
+O script histórico scripts/a6_flat9_ambiguous_reconcile_apply.clj abre outro cliente Datomic. **Ele permanece limitado ao restore isolado e NÃO deve ser usado em produção.**
+
+A release inclui o novo módulo pokemon.infrastructure.datomic.xp-reconciliation, acessível **somente pela JVM writer vigente**:
+
+- GET /ops/maintenance/a6-v3-xp-preview?pokemonId=... retorna fingerprint SHA-256 sem modificar dados.
+- POST /ops/maintenance/a6-v3-xp-reconcile recebe um objeto JSON com somente pokemonId e snapshotSha256. Faz CAS do nível, XP bruto, XP residual, versão, XP total e atributos escalares; grava original 21 como legado e recibo exclusivo na mesma transação. A compensação não sobe de nível.
+- Usa a conexão do store JVM; não cria segundo client Datomic. Requer token X-A6-Maintenance-Token, maintenance em fase frozen, active-writes=0 e lock do gate para impedir resume durante transação.
+- OFF por padrão. Habilitação explícita apenas na JVM supervisionada: A6_V3_RECONCILIATION_ENABLED=true e A6_V3_RECONCILIATION_ALLOWED_ID=abb8955f-7ebe-4084-a634-fd74cfa9bf62.
+- Só aceita Charmander nível 6, XP bruto e residual 21, versão ausente e alvo 8/9. Se o T0 atual divergir (inclusive o campo pokemon/xp), **NO_GO**, sem ajustar valores cegamente.
+
+### Ensaio obrigatório antes do merge
+
+1. Novo cold backup e restore isolado (não reutilizar o snapshot anterior como evidência atual).
+2. Executar a nova JVM no restore isolado com maintenance frozen e flag de compensação habilitada; obter SHA da prévia, executar POST, verificar CAS, duplicata idempotente e manifesto completo.
+3. Preparar e ensaiar imagem JVM alternativa **v3-aware** com a flag POKEMON_PROGRESSIVE_XP_V3=false. Provar que lê Pokémon já salvos em v3, preserva XP residual e continua gameplay seguro. A imagem a4a7807 não é rollback permitido depois da primeira escrita v3.
+4. Demonstrar exclusividade real do writer e do volume; nenhuma conexão paralela ou mutação pelo script antigo.
+5. Se e somente se tudo PASS, mergear apenas PR #136, construir Node/JVM do mesmo SHA e fazer **um único cutover supervisionado**.
+
+### Aplicação live na única janela
+
+- Preflight WA READY/healthy, hold true, scheduler isolado; colocar Node em quiescent e JVM em frozen, validar backup frio T0.
+- Substituir Node/JVM uma vez pelas imagens combinadas, sem abrir gameplay.
+- Confirmar que a nova JVM permaneceu frozen, que existe um único writer e que o registro mantém as precondições auditadas.
+- Obter preview pelo endpoint autenticado da JVM, aplicar o POST uma vez e provar a resposta duplicate na segunda consulta, sem duplicação de recibo ou XP.
+- Verificar nível 6, original 21 preservado e 8/9 flat-9; revalidar contagens, níveis, saves, ovos, moedas, atributos e histórico.
+- Apenas depois liberar tráfego, preservar auto-hatch e XP v3, restaurar hold true. Manter rota administrativa inacessível fora de frozen e remover a habilitação em manutenção futura, não forçando outro deploy agora.
+- Registrar manifestos, hashes de imagens, T0, recibo, roteiro de rollback e health; se qualquer gate falhar, DEPLOY_NO_GO e não restaurar backup antigo sobre alterações legítimas.
+
+Os testes CI são em base descartável; **não equivalem** à auditoria real, à prova de writer único na VM ou ao rollback ensaiado.
+
 ## Gates PRE-MERGE (no release candidate)
 
 - [ ] CI completa na árvore combinada, incluindo `clojure -M:test-raid-counter-selection-a6`, XP v3, JVM/raids, Node e scripts operacionais.
