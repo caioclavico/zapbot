@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from a6_production_contract import NODE_ENV_KEYS, VM
+from a6_production_contract import NODE_ENV_KEYS, JVM_ENV_KEYS, VM
 from a6_production_deploy import DeployError, observe_gce
 from a6_runtime_materialize import Materializer, ENV_PLACEHOLDER, SECCOMP_PLACEHOLDER
 
@@ -48,6 +48,33 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn('EXTRA=', ' '.join(argv))
         cleanup()
         self.assertFalse(path.exists())
+
+    def test_release_adds_scoped_flags_only_to_jvm_env(self):
+        self.prepare()
+        self.m.v3_release = True
+        jvm_doc = {
+            "Name": "/odisseu-a6-jvm",
+            "Config": {"Env": [key + "=dummy" for key in JVM_ENV_KEYS] +
+                      ["POKEMON_PROGRESSIVE_XP_V3=false", "EXTRA_JVM=value"]},
+            "HostConfig": {"SecurityOpt": []},
+        }
+        with patch.object(self.m, "_inspect", return_value=jvm_doc), \
+             patch.object(self.m, "_seccomp", return_value=None):
+            argv, cleanup = self.m(self.argv, "jvm")
+        path = Path(argv[argv.index("--env-file") + 1])
+        text = path.read_text()
+        self.assertEqual(text.count("POKEMON_PROGRESSIVE_XP_V3="), 1)
+        self.assertIn("POKEMON_PROGRESSIVE_XP_V3=true", text)
+        self.assertIn("A6_V3_RECONCILIATION_ENABLED=true", text)
+        self.assertIn("A6_V3_RECONCILIATION_ALLOWED_ID=abb8955f-7ebe-4084-a634-fd74cfa9bf62", text)
+        self.assertIn("EXTRA_JVM=value", text)
+        cleanup()
+        with patch.object(self.m, "_inspect", return_value=self.doc), \
+             patch.object(self.m, "_seccomp", return_value=None):
+            argv, cleanup = self.m(self.argv, "node")
+        path = Path(argv[argv.index("--env-file") + 1])
+        self.assertNotIn("A6_V3_RECONCILIATION_ENABLED", path.read_text())
+        cleanup()
 
     def test_env_incomplete_and_unrepresentable(self):
         for env in ([], ['A=x'], [k + '=x' for k in NODE_ENV_KEYS] + ['BAD=a\nb']):
