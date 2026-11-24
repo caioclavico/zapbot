@@ -46,14 +46,23 @@ class GateTests(unittest.TestCase):
                   "targetLevel": 6, "targetResidual": 21,
                   "blockedDetails": [{"id": gate.POKEMON_ID,
                                       "reason": "flat9-ambiguous-legacy-xp"}],
-                  "protectedSha256": "e" * 64}
+                  "protectedSha256": "e" * 64,
+                  "playerCount": 39, "saveCount": 102, "eggCount": 43,
+                  "inventoryCount": 412, "coinsTotal": 2979,
+                  "receiptCount": 100}
         after = dict(before, status="PASS", blocked=0, blockedDetails=[],
-                     targetResidual=8, reconciliationReceiptVerified=True)
+                     targetResidual=8, reconciliationReceiptVerified=True,
+                     receiptCount=101)
         gate.validate_audit_transition(before, after)
         for drift in ({"pokemonCount": 1335}, {"protectedSha256": "d" * 64},
                       {"reconciliationReceiptVerified": False}, {"blocked": 1}):
             with self.assertRaisesRegex(DeployError, "post_audit_failed"):
                 gate.validate_audit_transition(before, after | drift)
+        for counts in ({"coinsTotal": 2980}, {"saveCount": 101}):
+            with self.assertRaisesRegex(DeployError, "manifest_drift"):
+                gate.validate_audit_transition(before, after | counts)
+        with self.assertRaisesRegex(DeployError, "receipt_count_invalid"):
+            gate.validate_audit_transition(before, after | {"receiptCount": 102})
         with self.assertRaisesRegex(DeployError, "pre_audit_unexpected"):
             gate.validate_audit_transition(before | {"blocked": 2}, after)
 
