@@ -880,6 +880,58 @@ def _resumed(prior):
     return _prior_has(prior, "resume") or (isinstance(prior, dict) and prior.get("resumeAttempted") is True)
 
 
+def _forward_after_v3_gate(wrapped, prefix, observation, jvm_digest, node_digest,
+                           hold_gate, meta, checkpoints, seen, prior, rehearsal, env):
+    """Read-only post-CAS proof, then resume. NEVER repeat backup, image
+    replacement or Charmander CAS after a verified v3 gate."""
+    evidence = (prior or {}).get("v3ReleaseEvidence")
+    required_steps = list(SUPERVISED_STEPS[:16])
+    if (not rehearsal or not v3_release.valid_checkpoint(evidence, rehearsal)
+            or not all(_prior_has(prior, name) for name in required_steps)
+            or not _image_matches(observation, "jvm", jvm_digest)
+            or not _image_matches(observation, "node", node_digest)):
+        return _finish(checkpoints, "v3_release_gate", ["v3_resume_evidence_invalid"], seen,
+                       admitted=True, maintenance=True)
+    try:
+        _single_writer(_volume_holders(wrapped, prefix), ["odisseu-a6-jvm"])
+        v3_release.verify_final_state(wrapped, prefix, evidence, rehearsal)
+        if hold_gate is not None:
+            # The interrupted window was re-entered with deployment HOLD true.
+            # Never release it merely to repeat already completed operations.
+            if hold_gate.read() != "true":
+                raise DeployError("hold_not_protected")
+            meta["holdRestored"] = True
+    except DeployError as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
+        return _finish(checkpoints, "v3_release_gate", [str(exc)], seen,
+                       admitted=True, maintenance=True)
+    # Reconstruct the *observed* prefix in the new attempt's checkpoint list,
+    # without performing any of its side effects a second time.
+    for name in SUPERVISED_STEPS[3:16]:
+        marker = {"step": name, "observed": "verified_v3_recovery"}
+        if name == "v3_release_gate":
+            marker.update(evidence)
+        _mark(checkpoints, marker)
+    if env.get("A6_RESUME_EXPLICIT") != RESUME_PHRASE:
+        return _finish(checkpoints, "resume", ["resume_not_explicit"], seen,
+                       admitted=True, maintenance=True)
+    try:
+        integrity = jvm_health(wrapped, prefix)
+        if integrity["phase"] != "frozen" or integrity["activeWrites"] != 0:
+            raise DeployError("datomic_integrity_unknown")
+        _op("resume_jvm", lambda: resume_jvm(wrapped, prefix))
+        _op("resume_node", lambda: resume_node(wrapped, prefix))
+    except DeployError as exc:
+        if str(exc) in JOURNAL_ERRORS:
+            raise
+        return _finish(checkpoints, "resume", [str(exc)], seen,
+                       admitted=True, maintenance=True)
+    _mark(checkpoints, {"step": "resume", "resumeExplicit": True,
+                        "v3GateVerified": True, "recovered": True})
+    return _confirm_and_validate(wrapped, prefix, checkpoints, seen)
+
+
 def _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest, hold_gate, meta, checkpoints, seen,
                           prior, rehearsal):
     """Resume já enviado: imagens abertas só podem ser aceitas com gate v3 persistido."""
