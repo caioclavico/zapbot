@@ -112,3 +112,23 @@
     (is (= #{:applied :duplicate} (set (map :status out))))
     (is (= 8 (:pokemon/xp-desde-nivel (pokemon conn))))
     (is (= 6 (:pokemon/level (pokemon conn))))))
+
+(deftest test-frozen-writer-readonly-audit-transitions-single-block-to-pass
+  (let [conn (seeded)
+        before (recon/audit conn id id)
+        preview (recon/preview conn id id)
+        applied (recon/reconcile! conn id id (:snapshot-sha256 preview))
+        after (recon/audit conn id id)]
+    (is (= "BLOCKED" (:status before)))
+    (is (= 1 (:blocked before)))
+    (is (= id (get-in before [:blockedDetails 0 :id])))
+    (is (= "flat9-ambiguous-legacy-xp"
+           (get-in before [:blockedDetails 0 :reason])))
+    (is (= :applied (:status applied)))
+    (is (= "PASS" (:status after)))
+    (is (zero? (:blocked after)))
+    (is (= (:pokemonCount before) (:pokemonCount after)))
+    (is (= (:protectedSha256 before) (:protectedSha256 after)))
+    (is (true? (:reconciliationReceiptVerified after)))
+    (is (= 6 (:targetLevel after)))
+    (is (= 8 (:targetResidual after)))))
