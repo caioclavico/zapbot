@@ -173,3 +173,101 @@
                 dup
                 (blocked! :reconciliation-atomic-cas-failed
                           {:cause (ex-message e)})))))))))
+
+;; Read-only audit over the SAME live JVM connection. This does not mutate
+;; Datomic, starts no client, and must only be exposed by the frozen maintenance
+;; route. Its immutable fingerprint stays identical across the compensation.
+(def ^:private audit-projection
+  '[:pokemon/id-pokemon :pokemon/species :pokemon/nome :pokemon/level
+    :pokemon/xp :pokemon/xp-desde-nivel :pokemon/xp-total
+    :pokemon/xp-progress-version :pokemon/growth-rate
+    :pokemon/hp :pokemon/hp-atual :pokemon/ataque :pokemon/defesa
+    :pokemon/atq-esp :pokemon/def-esp :pokemon/veloc :pokemon/shiny])
+
+(def ^:private progress-immutable
+  [:id-pokemon :species :nome :nivel :hp :hp-atual :ataque :defesa
+   :atq-esp :def-esp :veloc :shiny])
+
+(defn- audit-reg [p]
+  (cond-> {:id-pokemon (:pokemon/id-pokemon p)
+           :species (:pokemon/species p)
+           :nome (:pokemon/nome p)
+           :nivel (:pokemon/level p)}
+    (some? (:pokemon/xp p)) (assoc :xp (long (:pokemon/xp p)))
+    (some? (:pokemon/xp-desde-nivel p))
+    (assoc :xp-desde-nivel (long (:pokemon/xp-desde-nivel p)))
+    (some? (:pokemon/xp-total p)) (assoc :xp-total (long (:pokemon/xp-total p)))
+    (some? (:pokemon/xp-progress-version p))
+    (assoc :xp-progress-version (:pokemon/xp-progress-version p))
+    (some? (:pokemon/growth-rate p))
+    (assoc :growth-rate (keyword (:pokemon/growth-rate p)))
+    (some? (:pokemon/hp p)) (assoc :hp (:pokemon/hp p))
+    (some? (:pokemon/hp-atual p)) (assoc :hp-atual (:pokemon/hp-atual p))
+    (some? (:pokemon/ataque p)) (assoc :ataque (:pokemon/ataque p))
+    (some? (:pokemon/defesa p)) (assoc :defesa (:pokemon/defesa p))
+    (some? (:pokemon/atq-esp p)) (assoc :atq-esp (:pokemon/atq-esp p))
+    (some? (:pokemon/def-esp p)) (assoc :def-esp (:pokemon/def-esp p))
+    (some? (:pokemon/veloc p)) (assoc :veloc (:pokemon/veloc p))
+    (some? (:pokemon/shiny p)) (assoc :shiny (:pokemon/shiny p))))
+
+(defn- audit-result [r]
+  (try
+    (when (or (nil? (:id-pokemon r)) (nil? (:nivel r)))
+      (blocked! :missing-identity-or-level {}))
+    (let [after (growth/ensure-progressive-v3-for-grant r)
+          twice (growth/ensure-progressive-v3-for-grant after)
+          level (long (:nivel r))
+          residual (long (:xp-desde-nivel after))
+          needed (growth/progressive-xp-por-nivel level)]
+      (if (and (= (select-keys r progress-immutable)
+                  (select-keys after progress-immutable))
+               (= after twice)
+               (if (= level 100) (zero? residual)
+                   (and (<= 0 residual) (< residual needed))))
+        {:status :ok}
+        {:status :blocked :reason :immutable-drift-or-invalid-conversion}))
+    (catch Exception e
+      {:status :blocked :reason (or (:code (ex-data e)) :conversion-error)})))
+
+(defn audit
+  "Frozen-only, read-only full progression audit on the writer's connection.
+   Results are short aggregate counts plus the allowed ID of a blocked record.
+   No schema migration, transaction or DB creation."
+  [conn pokemon-id allowed-id]
+  (ensure-id! pokemon-id allowed-id)
+  (let [db (d/db conn)
+        ids (map first (d/q '[:find ?e :where [?e :pokemon/id-pokemon]] db))
+        rows (->> ids
+                  (map #(d/pull db audit-projection %))
+                  (map audit-reg)
+                  (sort-by #(str (:id-pokemon %)))
+                  vec)
+        checks (mapv audit-result rows)
+        blocked (keep-indexed
+                 (fn [i check]
+                   (when (= :blocked (:status check))
+                     {:id (:id-pokemon (nth rows i))
+                      :reason (name (:reason check))}))
+                 checks)
+        blocked (vec blocked)
+        protect-sha (sha256 (mapv #(select-keys % progress-immutable) rows))
+        target (first (filter #(= pokemon-id (:id-pokemon %)) rows))
+        prior (receipt db (op-id pokemon-id))
+        finalized? (and target
+                        (= "flat-9-v2" (:xp-progress-version target))
+                        (= fixed-level (:nivel target))
+                        (= fixed-target (:xp-desde-nivel target))
+                        (= fixed-target (:xp target))
+                        (= fixed-raw (:pokemon/xp-legacy-residual
+                                      (read-one db pokemon-id)))
+                        (= (payload-hash pokemon-id)
+                           (:operation-receipt/payload-hash prior)))]
+    {:status (if (empty? blocked) "PASS" "BLOCKED")
+     :pokemonCount (count rows)
+     :eligible (count rows)
+     :blocked (count blocked)
+     :blockedDetails (vec (take 5 blocked))
+     :protectedSha256 protect-sha
+     :reconciliationReceiptVerified (boolean finalized?)
+     :targetLevel (some-> target :nivel)
+     :targetResidual (some-> target :xp-desde-nivel)}))
