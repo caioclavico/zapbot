@@ -303,9 +303,10 @@ def _apply_confirmed(observation, confirmed, live=None):
         raise DeployError("quiescence_counters_unreadable")
     if jvm.get("activeWritesMarked") and not _count(jvm.get("activeWrites")):
         raise DeployError("quiescence_counters_unreadable")
-    if _count(node.get("activeOps")) and node["activeOps"] != 0:
+    closed = confirmed["jvm_phase"] != "open"
+    if closed and _count(node.get("activeOps")) and node["activeOps"] != 0:
         raise DeployError("writes_in_flight")
-    if _count(jvm.get("activeWrites")) and jvm["activeWrites"] != 0:
+    if closed and _count(jvm.get("activeWrites")) and jvm["activeWrites"] != 0:
         raise DeployError("writes_in_flight")
     if not isinstance(live, dict) or not isinstance(live.get("node"), dict) or not isinstance(live.get("jvm"), dict):
         raise DeployError("quiescence_counters_missing")
@@ -325,11 +326,11 @@ def _apply_confirmed(observation, confirmed, live=None):
     if not all(_count(value) for value in counters):
         raise DeployError("quiescence_counters_missing")
     ops, writes, admitted, completed, failed = counters
-    if ops != 0 or writes != 0:
+    if closed and (ops != 0 or writes != 0):
         raise DeployError("writes_in_flight")
-    if failed != 0:
+    if closed and failed != 0:
         raise DeployError("jvm_writes_failed")
-    if admitted != completed + failed:
+    if admitted != completed + failed + writes:
         raise DeployError("jvm_writes_incomplete")
     return {
         "activeOperations": ops,
@@ -923,9 +924,7 @@ def _confirm_and_validate(wrapped, prefix, checkpoints, seen):
     if (
         game["status"] == "up"
         and game["phase"] == "open"
-        and game["activeWrites"] == 0
         and dispatcher["phase"] == "open"
-        and dispatcher["activeOperations"] == 0
         and _ready(final_ready)
     ):
         _mark(checkpoints, {

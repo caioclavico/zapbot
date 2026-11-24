@@ -18,6 +18,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from a6_maintenance_ops import (
     NODE_TOKEN_ENV,
@@ -25,8 +26,29 @@ from a6_maintenance_ops import (
     enter_jvm,
     enter_node,
     prove_quiescent,
+    prove_open,
+    resume_node,
 )
 from a6_production_deploy import DeployError
+
+
+class OpenMaintenanceTests(unittest.TestCase):
+    def test_node_resume_accepts_work_admitted_after_open(self):
+        replies = [
+            (200, {"phase": "quiescent", "activeOperations": 0, "durable": True}),
+            (200, {"phase": "open", "activeOperations": 0, "durable": True}),
+            (200, {"phase": "open", "activeOperations": 1, "durable": True}),
+        ]
+        with patch("a6_maintenance_ops._call", side_effect=replies), patch(
+                "a6_maintenance_ops._cat", return_value='{"phase":"open"}'):
+            self.assertEqual(resume_node(None, ["docker"])["activeOperations"], 1)
+
+    def test_jvm_open_requires_accounting_for_new_in_flight_writes(self):
+        state = {"phase": "open", "activeWrites": 2, "admittedWrites": 9,
+                 "completedWrites": 7, "failedWrites": 0}
+        self.assertEqual(prove_open(state), state)
+        with self.assertRaisesRegex(DeployError, "jvm_writes_incomplete"):
+            prove_open(state | {"activeWrites": 1})
 
 
 ROOT = Path(__file__).resolve().parents[1]

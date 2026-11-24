@@ -147,7 +147,7 @@ def _node_view(code, body, require_quiescent):
         raise DeployError("maintenance_unauthorized")
     phase = body.get("phase")
     active = body.get("activeOperations")
-    if phase not in KNOWN_PHASES or not isinstance(active, int) or body.get("durable") is not True:
+    if phase not in KNOWN_PHASES or not isinstance(active, int) or active < 0 or body.get("durable") is not True:
         raise DeployError("maintenance_state_unknown")
     if require_quiescent and body.get("quiescent") is not True:
         raise DeployError("node_not_quiescent")
@@ -214,11 +214,11 @@ def prove_jvm_status(view):
 
 
 def prove_open(view):
-    if view.get("phase") != "open" or view.get("activeWrites") != 0:
+    if view.get("phase") != "open":
         raise DeployError("resume_failed")
-    if view["failedWrites"] != 0:
-        raise DeployError("jvm_writes_failed")
-    if view["admittedWrites"] != view["completedWrites"] + view["failedWrites"]:
+    if view["admittedWrites"] != (
+        view["completedWrites"] + view["failedWrites"] + view["activeWrites"]
+    ):
         raise DeployError("jvm_writes_incomplete")
     return view
 
@@ -287,7 +287,7 @@ def resume_node(wrapped, prefix):
         NODE_HEADER, NODE_TOKEN_ENV, NODE_PORT,
     ))
     current = _node_view(status_code, status, False)
-    if status_code == 200 and current["phase"] == "open" and current["activeOperations"] == 0:
+    if status_code == 200 and current["phase"] == "open":
         if node_marker_phase(_cat(wrapped, marker_command(prefix, NODE, NODE_MARKER))) != "open":
             raise DeployError("maintenance_marker_mismatch")
         current["idempotent"] = True
@@ -301,14 +301,14 @@ def resume_node(wrapped, prefix):
     if posted_code == 409:
         raise DeployError("resume_failed")
     opened = _node_view(posted_code, posted, False)
-    if posted_code != 200 or opened["phase"] != "open" or opened["activeOperations"] != 0:
+    if posted_code != 200 or opened["phase"] != "open":
         raise DeployError("resume_failed")
     confirmed_code, confirmed = _call(wrapped, command(
         prefix, NODE, "GET", "/ops/maintenance/status",
         NODE_HEADER, NODE_TOKEN_ENV, NODE_PORT,
     ))
     final = _node_view(confirmed_code, confirmed, False)
-    if confirmed_code != 200 or final["phase"] != "open" or final["activeOperations"] != 0:
+    if confirmed_code != 200 or final["phase"] != "open":
         raise DeployError("resume_failed")
     if node_marker_phase(_cat(wrapped, marker_command(prefix, NODE, NODE_MARKER))) != "open":
         raise DeployError("maintenance_marker_mismatch")
@@ -322,7 +322,7 @@ def resume_jvm(wrapped, prefix):
         JVM_HEADER, JVM_TOKEN_ENV, JVM_PORT,
     ))
     current = _jvm_data(status_code, status)
-    if status_code == 200 and current["phase"] == "open" and current["activeWrites"] == 0:
+    if status_code == 200 and current["phase"] == "open":
         prove_open(current)
         if jvm_marker_phase(_cat(wrapped, marker_command(prefix, JVM, JVM_MARKER))) != "open":
             raise DeployError("maintenance_marker_mismatch")
