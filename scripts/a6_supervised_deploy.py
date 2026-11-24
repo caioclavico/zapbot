@@ -20,6 +20,8 @@ import time
 import re
 from pathlib import Path
 
+import a6_v3_release_gate as v3_release
+
 from a6_maintenance_ops import (
     enter_jvm,
     enter_node,
@@ -78,6 +80,7 @@ SUPERVISED_STEPS = (
     "validate_jvm",
     "update_node",
     "validate_whatsapp",
+    "v3_release_gate",
     "resume",
     "confirm_open",
     "validate_game",
@@ -125,6 +128,10 @@ def evaluate_supervised(checkpoints):
         and last.get("nodeHealth") == "healthy"
         and last.get("dispatcher") == "open"
         and last.get("datomic") == "up"
+        and (not checkpoints[0].get("v3ReleaseRequired")
+             or any(item.get("step") == "v3_release_gate"
+                    and item.get("verified") is True
+                    for item in checkpoints))
     )
     return {
         "deployComplete": complete,
@@ -573,8 +580,15 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         return _finish(checkpoints, "authorization", ["backup_not_authorized"], seen)
     if isinstance(prior, dict) and prior.get("deployComplete") is True:
         return _finish(checkpoints, "authorization", ["window_already_complete"], seen)
+    try:
+        v3_required = v3_release.release_mode(env, isolated_root)
+        rehearsal = (v3_release.verify_rehearsal(env, sha, jvm_digest, node_digest)
+                     if v3_required else None)
+    except DeployError as exc:
+        return _finish(checkpoints, "authorization", [str(exc)], seen)
     prior = copy.deepcopy(prior) if isinstance(prior, dict) else None
-    _mark(checkpoints, {"step": "authorization", "window": True})
+    _mark(checkpoints, {"step": "authorization", "window": True,
+                        "v3ReleaseRequired": v3_required})
     if _live_marker(destination) or (isolated_root is not None and _live_marker(isolated_root)):
         return _finish(checkpoints, "backup", ["live_path_refused"], seen)
 
@@ -662,7 +676,7 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
     })
 
     if _resumed(prior) and _prior_has(prior, "update_jvm") and _prior_has(prior, "update_node"):
-        forward = _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest, hold_gate, meta, checkpoints, seen)
+        forward = _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest, hold_gate, meta, checkpoints, seen, prior, v3_required)
         if forward is not None:
             return forward
 
@@ -781,6 +795,29 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         return _finish(checkpoints, "validate_whatsapp", ["whatsapp_not_ready"], seen, admitted=True, maintenance=True)
     _mark(checkpoints, {"step": "validate_whatsapp", "whatsapp": "READY", "health": "healthy"})
 
+    if v3_required:
+        try:
+            before = _op("v3_release_prepare", lambda: v3_release.prepare(wrapped, prefix))
+            evidence = _op("v3_release_reconcile",
+                           lambda: v3_release.commit_once(wrapped, prefix, before))
+            _single_writer(_volume_holders(wrapped, prefix), ["odisseu-a6-jvm"])
+        except DeployError as exc:
+            if str(exc) in JOURNAL_ERRORS:
+                raise
+            return _finish(checkpoints, "v3_release_gate", [str(exc)], seen,
+                           admitted=True, maintenance=True)
+        _mark(checkpoints, {
+            "step": "v3_release_gate",
+            "verified": True,
+            "pokemonCount": evidence["pokemonCount"],
+            "protectedSha256": evidence["protectedSha256"],
+            "receiptId": evidence["receiptId"],
+            "rehearsalManifestSha256": rehearsal["manifestSha256"],
+        })
+    else:
+        _mark(checkpoints, {"step": "v3_release_gate", "verified": False,
+                            "reason": "not-applicable"})
+
     if hold_gate is not None:
         try:
             _j().intent("hold_restore")
@@ -800,7 +837,8 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         integrity = jvm_health(wrapped, prefix)
     except DeployError as exc:
         return _finish(checkpoints, "resume", [str(exc)], seen, admitted=True, maintenance=True)
-    if integrity["phase"] != "quiescent" or integrity["activeWrites"] != 0:
+    required_phase = "frozen" if v3_required else "quiescent"
+    if integrity["phase"] != required_phase or integrity["activeWrites"] != 0:
         return _finish(checkpoints, "resume", ["datomic_integrity_unknown"], seen, admitted=True, maintenance=True)
     try:
         _op("resume_jvm", lambda: resume_jvm(wrapped, prefix))
@@ -809,7 +847,8 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         if str(exc) in JOURNAL_ERRORS:
             raise
         return _finish(checkpoints, "resume", [str(exc)], seen, admitted=True, maintenance=True)
-    _mark(checkpoints, {"step": "resume", "resumeExplicit": True})
+    _mark(checkpoints, {"step": "resume", "resumeExplicit": True,
+                        "v3GateVerified": v3_required})
     return _confirm_and_validate(wrapped, prefix, checkpoints, seen)
 
 
@@ -817,8 +856,12 @@ def _resumed(prior):
     return _prior_has(prior, "resume") or (isinstance(prior, dict) and prior.get("resumeAttempted") is True)
 
 
-def _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest, hold_gate, meta, checkpoints, seen):
-    """Resume já enviado: as duas fases abertas e as imagens novas só pedem confirmação."""
+def _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest, hold_gate, meta, checkpoints, seen,
+                          prior, v3_required):
+    """Resume já enviado: imagens abertas só podem ser aceitas com gate v3 persistido."""
+    if v3_required and not _prior_has(prior, "v3_release_gate"):
+        return _finish(checkpoints, "v3_release_gate", ["v3_gate_checkpoint_missing"], seen,
+                       admitted=True, maintenance=True)
     if not (_image_matches(observation, "jvm", jvm_digest) and _image_matches(observation, "node", node_digest)):
         return None
     try:
@@ -831,7 +874,7 @@ def _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest,
         if hold_gate.read() != "true":
             return _finish(checkpoints, "resume", ["hold_not_restored"], seen, admitted=True, maintenance=True)
         meta["holdRestored"] = True
-    for name in SUPERVISED_STEPS[3:16]:
+    for name in SUPERVISED_STEPS[3:17]:
         _mark(checkpoints, {"step": name, "observed": "after_resume"})
     return _confirm_and_validate(wrapped, prefix, checkpoints, seen)
 
