@@ -208,6 +208,18 @@ def reconcile(wrapped, prefix, snapshot_sha):
 
 
 def validate_audit_transition(before, after):
+    for key in ("playerCount", "saveCount", "eggCount", "inventoryCount",
+                "coinsTotal", "receiptCount"):
+        if not isinstance(before.get(key), int) or before[key] < 0:
+            raise DeployError("v3_pre_audit_counts_invalid")
+        if not isinstance(after.get(key), int) or after[key] < 0:
+            raise DeployError("v3_post_audit_counts_invalid")
+    for key in ("playerCount", "saveCount", "eggCount", "inventoryCount",
+                "coinsTotal"):
+        if after[key] != before[key]:
+            raise DeployError("v3_post_audit_manifest_drift")
+    if after["receiptCount"] != before["receiptCount"] + 1:
+        raise DeployError("v3_post_audit_receipt_count_invalid")
     if (
         before.get("status") != "BLOCKED"
         or before.get("blocked") != 1
