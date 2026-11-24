@@ -229,6 +229,18 @@
     (catch Exception e
       {:status :blocked :reason (or (:code (ex-data e)) :conversion-error)})))
 
+(defn- count-attr [db attr]
+  (if (some? (:db/ident (d/pull db '[:db/ident] attr)))
+    (long (or (ffirst (d/q '[:find (count ?e) :in $ ?a :where [?e ?a]]
+                             db attr)) 0))
+    0))
+
+(defn- sum-attr [db attr]
+  (if (some? (:db/ident (d/pull db '[:db/ident] attr)))
+    (long (or (ffirst (d/q '[:find (sum ?v) :in $ ?a :where [?e ?a ?v]]
+                             db attr)) 0))
+    0))
+
 (defn audit
   "Frozen-only, read-only full progression audit on the writer's connection.
    Results are short aggregate counts plus the allowed ID of a blocked record.
@@ -263,6 +275,13 @@
                         (= (payload-hash pokemon-id)
                            (:operation-receipt/payload-hash prior)))]
     {:status (if (empty? blocked) "PASS" "BLOCKED")
+     :playerCount (max (count-attr db :player/key)
+                       (count-attr db :trainer/player-id))
+     :saveCount (count-attr db :save/key)
+     :eggCount (count-attr db :egg/id)
+     :inventoryCount (count-attr db :inventory-item/save)
+     :coinsTotal (sum-attr db :save/coins)
+     :receiptCount (count-attr db :operation-receipt/id)
      :pokemonCount (count rows)
      :eligible (count rows)
      :blocked (count blocked)
