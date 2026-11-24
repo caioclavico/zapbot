@@ -616,12 +616,15 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         return _finish(checkpoints, "preflight", ["checkpoint_incompatible"], seen)
     if pending:
         try:
-            prior, resolution = _reconcile(wrapped, prefix, prior, pending, observation, jvm_digest, node_digest)
+            prior, resolution = _reconcile(wrapped, prefix, prior, pending, observation,
+                                           jvm_digest, node_digest, rehearsal)
         except DeployError as exc:
             if str(exc) in JOURNAL_ERRORS:
                 raise
             return _finish(checkpoints, "preflight", [str(exc)], seen, pendingOp=pending.get("op"))
-        _j().resolve(resolution)
+        resolution_detail = ({"v3ReleaseEvidence": prior["v3ReleaseEvidence"]}
+                             if resolution == "v3_receipt_observed" else {})
+        _j().resolve(resolution, **resolution_detail)
     if _prior_has(prior, "update_jvm") and not _image_matches(observation, "jvm", jvm_digest):
         # update_jvm marcado + imagem antiga = rollback por health; retenta o replace.
         failed = _failed_digest(wrapped, prefix, "jvm")
@@ -675,6 +678,12 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         "jvmRunRef": images["jvm"]["runRef"],
         "nodeRunRef": images["node"]["runRef"],
     })
+
+    if v3_required and _prior_has(prior, "v3_release_gate") and not _resumed(prior):
+        return _forward_after_v3_gate(
+            wrapped, prefix, observation, jvm_digest, node_digest,
+            hold_gate, meta, checkpoints, seen, prior, rehearsal, env,
+        )
 
     if _resumed(prior) and _prior_has(prior, "update_jvm") and _prior_has(prior, "update_node"):
         forward = _forward_after_resume(wrapped, prefix, observation, jvm_digest, node_digest, hold_gate, meta, checkpoints, seen, prior, rehearsal)
@@ -803,8 +812,18 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
         try:
             before = _op("v3_release_prepare", lambda: v3_release.prepare(wrapped, prefix))
             _single_writer(_volume_holders(wrapped, prefix), ["odisseu-a6-jvm"])
-            evidence = _op("v3_release_reconcile",
-                           lambda: v3_release.commit_once(wrapped, prefix, before))
+            v3_release.validate_pre_audit(before)
+            candidate = v3_release.preview(wrapped, prefix)
+            # Durable BEFORE the first possible Datomic CAS. This stores the
+            # baseline audit and exact pre-CAS fingerprint for crash recovery.
+            _j().intent(
+                "v3_release_reconcile",
+                before=before,
+                snapshotSha256=candidate["snapshotSha256"],
+                receiptId=v3_release.RECEIPT_ID,
+            )
+            evidence = v3_release.commit_once(wrapped, prefix, before, candidate=candidate)
+            _j().done("v3_release_reconcile", ok=True, receiptId=evidence["receiptId"])
             _single_writer(_volume_holders(wrapped, prefix), ["odisseu-a6-jvm"])
         except DeployError as exc:
             if str(exc) in JOURNAL_ERRORS:
@@ -965,12 +984,30 @@ def _previous_stopped(wrapped, prefix, service):
     return _ok(completed) and _out(completed).strip() == "false"
 
 
-def _reconcile(wrapped, prefix, prior, pending, observation, jvm_digest, node_digest):
+def _reconcile(wrapped, prefix, prior, pending, observation, jvm_digest, node_digest, rehearsal=None):
     """Intenção sem conclusão. Só segue quando o inspect prova o estado."""
     op = pending.get("op")
     verb = pending.get("verb")
     adjusted = copy.deepcopy(prior)
     adjusted["pending"] = None
+    if op == "v3_release_reconcile":
+        # Crash may have happened AFTER the Datomic transaction committed but
+        # BEFORE journal.done. Recovery is read-only; no second CAS.
+        if (not rehearsal
+                or not _prior_has(prior, "validate_whatsapp")
+                or _prior_has(prior, "v3_release_gate")
+                or not _image_matches(observation, "jvm", jvm_digest)
+                or not _image_matches(observation, "node", node_digest)):
+            raise DeployError("v3_recovery_preconditions_invalid")
+        _single_writer(_volume_holders(wrapped, prefix), ["odisseu-a6-jvm"])
+        evidence = v3_release.recover_committed(
+            wrapped, prefix, pending.get("before"), pending.get("snapshotSha256"),
+            rehearsal,
+        )
+        adjusted["v3ReleaseEvidence"] = evidence
+        adjusted.setdefault("steps", []).append("v3_release_gate")
+        adjusted["lastCompleted"] = "v3_release_gate"
+        return adjusted, "v3_receipt_observed"
     if op in REPEATABLE:
         if op in ("resume_jvm", "resume_node"):
             adjusted["resumeAttempted"] = True
