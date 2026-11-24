@@ -69,6 +69,56 @@ A release inclui o novo módulo pokemon.infrastructure.datomic.xp-reconciliation
 
 Os testes CI são em base descartável; **não equivalem** à auditoria real, à prova de writer único na VM ou ao rollback ensaiado.
 
+## Integração com runner oficial (PR #136, atualização pós-bloqueio)
+
+**O runner antigo não pode mais liberar esta release sem o protocolo v3.** Foram alterados:
+
+- `scripts/a6_supervised_deploy.py`: etapa `v3_release_gate` obrigatória antes de `resume_jvm` e `resume_node`, registrada no diário; sem evidência não libera gameplay.
+- `scripts/a6_runtime_materialize.py`: adiciona apenas à JVM nova `POKEMON_PROGRESSIVE_XP_V3=true`, `A6_V3_RECONCILIATION_ENABLED=true` e `A6_V3_RECONCILIATION_ALLOWED_ID=abb8955f-7ebe-4084-a634-fd74cfa9bf62`. Preserva todas as demais variáveis originais e não altera Node.
+- `scripts/a6_v3_release_gate.py`: exige ensaio isolado documentado, verifica flags realmente presentes na JVM, congela a JVM nova, faz auditoria completa pela **conexão do writer JVM**, exige exatamente o Charmander ambíguo, faz preview SHA-256, CAS/receipt, verifica idempotência e reaudita tudo antes de permitir `resume`.
+- `xp_reconciliation.clj` e `bridge.clj`: nova rota read-only `GET /ops/maintenance/a6-v3-xp-audit?pokemonId=...`, acessível exclusivamente com token, flag opt-in e gate frozen. Retorna contagens, bloqueios e fingerprint dos atributos protegidos.
+- `scripts/a6-operational-window.sh`: recusa a execução sem `A6_V3_SINGLE_CUTOVER=a6-v3-raid-auto-136` e caminho do relatório de ensaio.
+
+### Prova de ensaio externo (antes da janela)
+
+O runner exige `A6_V3_REHEARSAL_REPORT=/caminho/absoluto/relatorio.json`, arquivo privado `0600`, produzido pelo Codex **após ensaio real do restore isolado**, não escrito a partir de suposições nem copiado de testes sintéticos.
+
+Formato esperado (valores ilustrativos; **substituir somente por resultados medidos**):
+
+```json
+{
+  "result": "PASS",
+  "releaseSha": "SHA_DE_MERGE_40_HEX",
+  "jvmDigest": "sha256:DIGEST_JVM_VERIFICADO",
+  "nodeDigest": "sha256:DIGEST_NODE_VERIFICADO",
+  "restoreIsolated": true,
+  "casReceiptAtomic": true,
+  "rollbackV3Aware": true,
+  "auditBlocked": 0,
+  "levelDrift": 0,
+  "onlyOneWriter": true,
+  "manifestSha256": "HASH_REAL_64_HEX",
+  "pokemonCount": 1336
+}
+```
+
+**Nota:** `pokemonCount` acima é exemplo histórico. O ensaio deve usar a contagem do restore auditado; o runner exige contagem positiva e valida integralmente o estado live antes e depois. O relatório é vinculado ao SHA e aos digests exatos das duas imagens **após o merge**, por isso o ensaio precisa ser revalidado se os binários ou o merge SHA mudarem.
+
+Não considerar esse arquivo uma prova criptográfica independente: o operador deve comprovar a sua procedência mediante logs, hashes e execução documentada no restore isolado. O novo T0 realizado durante a janela continua obrigatório. Um relatório de uma snapshot anterior **não prova a integridade do T0 mais recente**.
+
+### Sequência real antes do resume
+
+1. Runner confere o arquivo de ensaio com SHA/digests e somente então admite a janela.
+2. Backup frio e restore isolado do T0 são verificados pelos helpers oficiais; nenhum save live é sobrescrito.
+3. Instala uma vez a dupla de imagens do mesmo merge SHA com Node/JVM ainda quiescent.
+4. JVM nova confirma as flags v3, mantém Node quiescent e entra em `frozen`.
+5. Auditoria read-only na JVM deve mostrar **somente** o Charmander L6/xp21 bloqueado; qualquer segundo problema faz `NO_GO`.
+6. Preview, CAS/receipt e retry idempotente no writer da própria JVM.
+7. Reauditoria read-only deve indicar `blocked=0`, mesmo número de Pokémon, fingerprint dos atributos protegido igual, receipt confirmado, Charmander L6 e residual 8. Se qualquer dado falhar, manter frozen e bloquear o resume.
+8. Somente então restaurar hold e fazer `resume_jvm`/ `resume_node`, terminando em WA READY/healthy. Um resultado pendente/ambíguo no diário impede retomada automática.
+
+**ATENÇÃO:** a implementação de CI testa os contratos em Datomic e Docker descartáveis; é necessário ainda validar a máquina real, o restore mais atual, a exclusividade e o rollback real antes de autorizar merge. Não utilizar a API nova para escrever em live antes disso.
+
 ## Gates PRE-MERGE (no release candidate)
 
 - [ ] CI completa na árvore combinada, incluindo `clojure -M:test-raid-counter-selection-a6`, XP v3, JVM/raids, Node e scripts operacionais.
