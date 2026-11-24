@@ -8,7 +8,8 @@
             [pokemon.application.trainer :as trainer]
             [pokemon.application.collection :as collection]
             [pokemon.infrastructure.datomic.store :as store]
-            [pokemon.infrastructure.datomic.xp-reconciliation :as recon]))
+            [pokemon.infrastructure.datomic.xp-reconciliation :as recon]
+            [pokemon.infrastructure.http.json :as json]))
 
 (def ^:private id "abb8955f-7ebe-4084-a634-fd74cfa9bf62")
 
@@ -132,3 +133,25 @@
     (is (true? (:reconciliationReceiptVerified after)))
     (is (= 6 (:targetLevel after)))
     (is (= 8 (:targetResidual after)))))
+
+(deftest test-jvm-maintenance-json-contract-camelcase
+  "The official Python runner consumes the JVM bridge's camelCase JSON."
+  (let [conn (seeded)
+        preview (json/read-str (json/write-str (recon/preview conn id id)))
+        audit-before (json/read-str (json/write-str (recon/audit conn id id)))
+        _ (recon/reconcile! conn id id (get preview "snapshotSha256"))
+        after (json/read-str (json/write-str (recon/audit conn id id)))]
+    (is (= "ready" (get preview "status")))
+    (is (= id (get preview "pokemonId")))
+    (is (= 21 (get preview "rawXp")))
+    (is (= 8 (get preview "residualAfter")))
+    (is (re-matches #"[0-9a-f]{64}" (get preview "snapshotSha256")))
+    (is (= "BLOCKED" (get audit-before "status")))
+    (is (= 1 (get audit-before "blocked")))
+    (is (= "flat9-ambiguous-legacy-xp"
+           (get-in audit-before ["blockedDetails" 0 "reason"])))
+    (is (= "PASS" (get after "status")))
+    (is (true? (get after "reconciliationReceiptVerified")))
+    (is (= (get audit-before "saveCount") (get after "saveCount")))
+    (is (= (inc (get audit-before "receiptCount"))
+           (get after "receiptCount")))))
