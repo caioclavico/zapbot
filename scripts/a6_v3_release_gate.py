@@ -178,12 +178,12 @@ def preview(wrapped, prefix):
     )
     if (
         data.get("status") != "ready"
-        or data.get("pokemon-id") != POKEMON_ID
+        or data.get("pokemonId") != POKEMON_ID
         or data.get("level") != 6
-        or data.get("raw-xp") != 21
-        or data.get("residual-before") != 21
-        or data.get("residual-after") != 8
-        or not HEX64.fullmatch(str(data.get("snapshot-sha256") or ""))
+        or data.get("rawXp") != 21
+        or data.get("residualBefore") != 21
+        or data.get("residualAfter") != 8
+        or not HEX64.fullmatch(str(data.get("snapshotSha256") or ""))
     ):
         raise DeployError("v3_charmander_precondition_drift")
     return data
@@ -198,10 +198,10 @@ def reconcile(wrapped, prefix, snapshot_sha):
     )
     if (
         data.get("status") not in ("applied", "duplicate")
-        or data.get("pokemon-id") != POKEMON_ID
+        or data.get("pokemonId") != POKEMON_ID
         or data.get("level") != 6
         or data.get("residual") != 8
-        or data.get("receipt-id") != RECEIPT_ID
+        or data.get("receiptId") != RECEIPT_ID
     ):
         raise DeployError("v3_charmander_receipt_invalid")
     return data
@@ -237,15 +237,15 @@ def prepare(wrapped, prefix):
 
 def commit_once(wrapped, prefix, before):
     candidate = preview(wrapped, prefix)
-    first = reconcile(wrapped, prefix, candidate["snapshot-sha256"])
+    first = reconcile(wrapped, prefix, candidate["snapshotSha256"])
     # Prove retry idempotence without a second grant.
-    second = reconcile(wrapped, prefix, candidate["snapshot-sha256"])
+    second = reconcile(wrapped, prefix, candidate["snapshotSha256"])
     if second.get("status") != "duplicate":
         raise DeployError("v3_reconciliation_not_idempotent")
     after = audit(wrapped, prefix)
     validate_audit_transition(before, after)
     return {
-        "receiptId": first["receipt-id"],
+        "receiptId": first["receiptId"],
         "pokemonCount": after["pokemonCount"],
         "protectedSha256": after["protectedSha256"],
         "status": after["status"],
