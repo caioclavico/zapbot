@@ -122,6 +122,7 @@ jobs:
           python3 scripts/test-a6-production-deploy.py
           python3 scripts/test-a6-admin-bundle-validation.py
           python3 scripts/test-a6-v3-release-gate.py
+          python3 scripts/test-a6-v3-recovery.py
           python3 scripts/test-a6-integrated-lab.py
           python3 scripts/test-a6-supervised-deploy.py
           python3 scripts/test-a6-maintenance-ops.py
