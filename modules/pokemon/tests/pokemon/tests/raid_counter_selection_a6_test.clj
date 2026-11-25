@@ -1,6 +1,7 @@
 (ns pokemon.tests.raid-counter-selection-a6-test
   "Seleção auto de counter em raid — tipagem, imunidade, revide, fallback."
   (:require [clojure.test :refer [deftest is testing]]
+            [pokemon.domain.raid-boss :as boss]
             [pokemon.domain.raid-counter-selection :as sel]))
 
 (defn- mon
@@ -186,3 +187,36 @@
         "Score deve refletir o revide real da raid")
     (is (= 0 (pick raid [normal agua]))
         "Desempate estável pelo menor índice")))
+(deftest politoed-prefere-dano-efetivo-mesmo-com-menos-hp
+  (let [politoed (some #(when (= "politoed" (:species %)) %) (:species (boss/catalog)))
+        raid {:chefe (assoc politoed :golpes [golpe-agua] :def-esp 100)
+              :fase "inscricoes" :origem "auto" :hp-chefe 0 :hp-max 0}
+        blastoise (assoc (mon {:idx 0 :hp 280 :hp-atual 280 :atq-esp 140
+                               :tipos ["water"] :golpes [golpe-agua]})
+                        :species "blastoise")
+        electric (assoc (mon {:idx 1 :hp-atual 15 :atq-esp 55 :tipos ["electric"]})
+                        :golpes [{"slug" "thunderbolt" "poder" 90 "tipo" "electric"
+                                  "classe" "especial" "precisao" 100}])
+        grass (mon {:idx 2 :hp-atual 15 :atq-esp 50 :tipos ["grass"]
+                    :golpes [golpe-grama]})
+        old-weight (fn [p]
+                     (let [{:keys [turns-vs-revide hp-atual]}
+                           (sel/score-breakdown raid p)]
+                       ;; O cap a zero zerava ambos os termos de dano do score antigo.
+                       (+ (* 12 turns-vs-revide) (* 0.02 hp-atual))))]
+    (is (= ["water"] (get-in raid [:chefe :tipos])))
+    (is (= [65.6 9.3 9.3] (mapv old-weight [blastoise electric grass])))
+    (is (= [41000 88000 58900] (mapv #(sel/combat-score raid %) [blastoise electric grass])))
+    (is (= 1 (pick raid [blastoise electric grass])))
+    (is (= 2 (pick raid [blastoise grass])))
+    (is (= 1 (pick raid [blastoise electric])))
+    (is (= 2 (pick raid [blastoise (assoc electric :hp-atual 0) grass])))
+    (is (= 2 (pick raid [blastoise (assoc electric :golpes [golpe-status]) grass])))
+    (is (= 2 (pick raid [blastoise
+                         (assoc electric :golpes (conj (vec (repeat 4 golpe-status)) golpe-eletrico))
+                         grass]))
+        "O quinto golpe não é selecionável no combate")
+    (doseq [tipos [[] ["water" "invalid"]]]
+      (let [incompleto (assoc-in raid [:chefe :tipos] tipos)]
+        (is (true? (:fallback? (sel/compare-old-vs-new incompleto [blastoise electric]))))
+        (is (= 0 (pick incompleto [blastoise electric])))))))

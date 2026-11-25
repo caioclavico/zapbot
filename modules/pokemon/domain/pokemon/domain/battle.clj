@@ -112,8 +112,11 @@
           nome-bruto (golpe-get g :nome-exibicao "nome-exibicao" :nomeExibicao "nomeExibicao" :nome "nome")
           nome-ex (nome-golpe-exibivel nome-bruto slug-bruto tipo)
           ;; Slug canônico: legado só com "nome" → deriva do nome (nunca deixa slim sem id).
-          slug (or (when-let [s (some-> slug-bruto str str/trim)]
-                     (when (seq s) s))
+          slug-legado (when-let [s (some-> slug-bruto str str/trim)]
+                        (when (seq s) s))
+          wave-crash? (= "wave-crash" (:slug (move-names/resolver (or slug-legado nome-ex))))
+          slug (or (when wave-crash? "wave-crash")
+                   slug-legado
                    (when-let [n (some-> nome-ex str str/trim)]
                      (when (and (seq n) (not= n "?"))
                        (-> n str/lower-case
@@ -837,9 +840,10 @@
                  (mechanics/limpar-hazards atk-marca))
         dreno (when (and (:acertou? resolved) (:dreno golpe))
                 (max 1 (quot (* (:dano resolved) (long (:dreno golpe))) 100)))
-        recuo (when (and (:acertou? resolved) (:recuo golpe)
+        dano-infligido (- (long hp-antes) (long (get-in battle [:hp def-marca] 0)))
+        recuo (when (and (:acertou? resolved) (pos? dano-infligido) (:recuo golpe)
                          (not (:autodesmaio golpe)))
-                (max 1 (quot (* (:dano resolved) (long (:recuo golpe))) 100)))
+                (max 1 (quot (* dano-infligido (long (:recuo golpe))) 100)))
         ;; Explosion/Self-Destruct: após hit válido, usuário desmaia (HP→0).
         autodesmaio? (and (:acertou? resolved)
                           (or (:autodesmaio golpe) (get golpe "autodesmaio"))
@@ -874,6 +878,7 @@
      :status-aplicado novo-status
      :troca-forcada? (boolean (:troca-forcada? troca))
      :linhas (cond-> []
+               recuo (conj (str "💥 O atacante sofreu " recuo " HP de recuo!"))
                bloqueio-campo? (conj "🌫️ O terreno impediu o status!")
                (and (:acertou? resolved) (= :aterrar (:familia golpe)))
                (conj "🪨 O Pokémon foi jogado no chão!")

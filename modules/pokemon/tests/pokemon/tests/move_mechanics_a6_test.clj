@@ -267,3 +267,25 @@
   (is (nil? (status/tentar-status-do-golpe
              {:status-causado :envenenado-grave :chance-status 100}
              nil {:status-golpe 0} ["steel"]))))
+
+(deftest recoil-moves-damage-the-attacker-after-a-hit
+  (doseq [[slug nome tipo percentual] [[nil "Choque de Ondas" "water" 33]
+                                       ["brave-bird" "Pássaro Bravo" "flying" 33]
+                                       ["wild-charge" "Carga Selvagem" "electric" 25]]]
+    (let [golpe {:slug slug :nome-exibicao nome :tipo tipo :poder 60 :classe :fisico}
+          x (mon "Atacante" ["normal"] [golpe])
+          o (mon "Alvo" ["normal"]
+                 [{:slug "splash" :tipo "normal" :poder 0 :classe :status}])
+          b (assoc-in (batalha x o) [:pokemons :x :veloc] 100)
+          t (agir b 0 {})
+          dano (- 160 (get-in t [:hp :o]))
+          recuo (max 1 (quot (* dano percentual) 100))]
+      (is (= (or slug "wave-crash") (:slug (battle/golpe-normalizado golpe))))
+      (is (pos? dano))
+      (is (re-find (re-pattern (str recuo " HP de recuo"))
+                   (:mensagem (:last-action t))))
+      (is (= (- 160 recuo) (get-in t [:last-action :hp-atk-depois])))))
+  (is (= "wave-crash" (:slug (battle/golpe-normalizado
+                               {"slug" "choque-de-ondas" "tipo" "water"}))))
+  (is (= "shock-wave" (:slug (battle/golpe-normalizado
+                               {:slug "shock-wave" :nome-exibicao "Choque de Ondas"})))))

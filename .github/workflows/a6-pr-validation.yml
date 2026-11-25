@@ -68,6 +68,8 @@ jobs:
         run: npm run test:multigroup-a6
       - name: Progressive XP v3 — presenter/compatibilidade
         run: node --test test/pokemon-a6-progressive-xp-v3.test.cjs
+      - name: PNG de chocagem e entrega automática
+        run: node --test test/pokemon-jvm-hatch-card.test.cjs test/pokemon-jvm-auto-hatch-delivery.test.cjs
       - run: npm run test:http
       - run: npm run build
 

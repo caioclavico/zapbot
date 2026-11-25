@@ -386,7 +386,7 @@ async function render(kind, data) {
 }
 
 
-/** Casca quebrada + área central para o sprite (composited em media). */
+/** Fundo e interior da casca, atrás do sprite. */
 function hatchRevealSvg({ speciesName = 'Pokémon', shiny = false } = {}) {
   const title = shiny ? 'SEU OVO CHOCOU! ✨' : 'SEU OVO CHOCOU!';
   const name = esc(speciesName);
@@ -400,13 +400,7 @@ function hatchRevealSvg({ speciesName = 'Pokémon', shiny = false } = {}) {
   <text x="42" y="55" fill="#8edbff" font-family="sans-serif" font-size="18" font-weight="700" letter-spacing="2">ODISSEU • POKÉMON</text>
   <text x="320" y="120" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="36" font-weight="700">${esc(title)}</text>
   <text x="320" y="158" text-anchor="middle" fill="#fbbf24" font-family="sans-serif" font-size="22" font-weight="700">${name}</text>
-  <!-- área do sprite -->
-  <rect id="sprite-slot" x="170" y="200" width="300" height="300" rx="24" fill="#132653" fill-opacity="0.35"/>
-  <!-- casca inferior -->
-  <path d="M120 620 C160 520, 240 480, 320 480 C400 480, 480 520, 520 620 L480 700 C420 660, 360 640, 320 640 C280 640, 220 660, 160 700 Z"
-        fill="#f7fafb" stroke="#d5dde4" stroke-width="4"/>
-  <ellipse cx="220" cy="560" rx="28" ry="36" fill="#8b4bd8" opacity=".85"/>
-  <ellipse cx="400" cy="575" rx="34" ry="42" fill="#1684d8" opacity=".85"/>
+  <ellipse cx="320" cy="537" rx="182" ry="49" fill="#c4d1df" stroke="#f7fafb" stroke-width="5"/>
   <!-- fragmentos -->
   <path d="M150 430 L190 400 L175 460 Z" fill="#f7fafb" stroke="#c5ced6"/>
   <path d="M470 420 L520 450 L480 480 Z" fill="#f7fafb" stroke="#c5ced6"/>
@@ -414,6 +408,17 @@ function hatchRevealSvg({ speciesName = 'Pokémon', shiny = false } = {}) {
   <path d="M380 385 L430 395 L400 430 Z" fill="#f7fafb" stroke="#c5ced6"/>
   <text x="320" y="760" text-anchor="middle" fill="#93a8d5" font-family="sans-serif" font-size="18">Nível 1 · adicionado à coleção</text>
 </svg>`;
+}
+
+/** Borda aberta em cima, fundo arredondado embaixo. Sobrepõe a base do sprite. */
+function hatchShellForegroundSvg() {
+  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${CARD_HEIGHT}">
+    <path d="M138 525 L178 548 L214 525 L252 549 L290 529 L327 552 L369 526 L407 550 L451 523 L502 535
+      C482 655 412 704 320 704 C228 704 158 655 138 525 Z"
+      fill="#f7fafb" stroke="#d5dde4" stroke-width="4" stroke-linejoin="round"/>
+    <ellipse cx="224" cy="599" rx="25" ry="31" fill="#8b4bd8" opacity=".85"/>
+    <ellipse cx="408" cy="604" rx="29" ry="36" fill="#1684d8" opacity=".85"/>
+  </svg>`);
 }
 
 async function renderHatchReveal(data = {}) {
@@ -452,6 +457,7 @@ module.exports = {
   render,
   renderEggGrant,
   renderHatchReveal,
+  hatchShellForegroundSvg,
   hatchRevealSvg,
   rarityColor,
   normalizeAdventure,

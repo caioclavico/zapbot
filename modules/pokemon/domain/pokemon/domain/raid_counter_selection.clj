@@ -8,6 +8,7 @@
   (:require [pokemon.domain.battle :as battle]
             [pokemon.domain.damage :as dmg]
             [pokemon.domain.errors :as err]
+            [pokemon.domain.move-effects :as move-effects]
             [pokemon.domain.raid :as raid-domain]
             [pokemon.domain.types :as types]))
 
@@ -26,7 +27,7 @@
   [pokemon]
   (and pokemon
        (pos? (long (or (:hp-atual pokemon) (:hp pokemon) 0)))
-       (some golpe-ofensivo? (or (:golpes pokemon) []))))
+       (some golpe-ofensivo? (take 4 (:golpes pokemon)))))
 
 (defn- chefe-context
   "Contexto de combate do chefe — só campos usados no dano (sem identidade)."
@@ -34,9 +35,8 @@
   (let [chefe (or (:chefe raid) {})
         tipos (vec (map str (or (:tipos chefe) (get chefe "tipos") [])))
         golpes (vec (or (:golpes chefe) (get chefe "golpes") []))
-        hp-chefe (long (or (:hp-chefe raid)
-                           (:hp chefe) (get chefe "hp")
-                           100))]
+        ;; Datomic devolve zero no lobby; o HP da raid só é definido no início.
+        hp-chefe (long (or (:hp-chefe raid) 0))]
     {:tipos tipos
      :habilidade (or (:habilidade chefe) (get chefe "habilidade"))
      :golpes golpes
@@ -44,9 +44,10 @@
      :atq-esp (long (or (:atq-esp chefe) (get chefe "atq-esp") 50))
      :defesa (long (or (:defesa chefe) (get chefe "defesa") 50))
      :def-esp (long (or (:def-esp chefe) (get chefe "def-esp") 50))
-     :hp-chefe hp-chefe
+     :hp-chefe (if (pos? hp-chefe) hp-chefe Long/MAX_VALUE)
      :present? (boolean (and (:chefe raid)
-                             (or (seq tipos) (seq golpes))))}))
+                             (seq tipos)
+                             (every? #(contains? types/tabela-tipos %) tipos)))}))
 
 (defn- raid-calc-context
   "Mapa compatível com `raid/calcular-dano` na fase de lobby (defesas do chefe)."
@@ -65,8 +66,9 @@
 
 (defn- golpes-normalizados
   [pokemon]
-  (->> (or (:golpes pokemon) [])
-       (mapv battle/golpe-normalizado)
+  (->> (:golpes pokemon)
+       (take 4)
+       (mapv #(move-effects/enriquecer (battle/golpe-normalizado %)))
        (filterv golpe-ofensivo?)))
 
 (defn expected-dano-vs-chefe
@@ -134,14 +136,9 @@
         ;; do chefe é apenas diagnóstica, não influencia o score.
         hp-atual (long (or (:hp-atual pokemon) (:hp pokemon) 0))
         turns-revide (/ (double hp-atual) (double (revide-por-turno pokemon)))
-        ;; Do NOT reward typed resistance to boss moves here: real raid
-        ;; retaliation is ceil(maxHP/5) regardless of boss moves/types.
-        ;; Threat remains informational only for debugging/comparison.
-        combat (+ (* 0.70 (double best-off))
-                  (* 0.20 (double avg-off))
-                  (* 12.0 turns-revide)
-                  (* 0.02 (double hp-atual)))]
-    {:combat-score (long (Math/round (* 1000.0 combat)))
+        ;; Rank by expected damage first. Revide decides only an offensive tie.
+        combat (long (Math/round (* 1000.0 (double best-off))))]
+    {:combat-score combat
      :best-offensive (long best-off)
      :avg-offensive (long (Math/round avg-off))
      :worst-boss-threat (long worst-threat)
@@ -160,14 +157,11 @@
   [pokemon]
   (long (or (:collection-index pokemon) (get pokemon "collection-index") 0)))
 
-(defn- ranking-score
-  "Score único: combat/legacy × 1e6 + bônus por índice menor."
-  [raid pokemon use-combat?]
-  (let [base (if use-combat?
-               (combat-score raid pokemon)
-               (legacy-auto-score pokemon))
-        idx (tie-breaker pokemon)]
-    (+ (* base 1000000) (- 1000000 idx))))
+(defn- ranking-key [raid pokemon use-combat?]
+  (if use-combat?
+    (let [{:keys [combat-score turns-vs-revide]} (score-breakdown raid pokemon)]
+      [(- combat-score) (- (Math/ceil turns-vs-revide)) (tie-breaker pokemon)])
+    [(- (legacy-auto-score pokemon)) (tie-breaker pokemon)]))
 
 (defn pick-best-collection-index
   "Melhor Pokémon elegível desta coleção. Lança `:invalid_raid_pokemon` se nenhum apto."
@@ -177,8 +171,8 @@
       (throw (err/error :invalid_raid_pokemon {:auto? true})))
     (let [ctx (chefe-context raid)
           use-combat? (:present? ctx)
-          best (apply max-key #(ranking-score raid % use-combat?) aptos)
-          ci (:collection-index best)]
+          best (first (sort-by #(ranking-key raid % use-combat?) aptos))
+          ci (or (:collection-index best) (get best "collection-index"))]
       (if (some? ci)
         (long ci)
         (long (or (first (keep-indexed
@@ -191,6 +185,7 @@
   [raid colecao]
   (let [aptos (filterv apto? colecao)]
     {:picked (pick-best-collection-index raid colecao)
+     :fallback? (not (:present? (chefe-context raid)))
      :candidates
      (mapv (fn [p]
              (let [br (score-breakdown raid p)
@@ -203,5 +198,5 @@
            aptos)
      :legacy-pick
      (long (or (:collection-index
-                (apply max-key #(ranking-score raid % false) aptos))
+                (first (sort-by #(ranking-key raid % false) aptos)))
                 0))}))
