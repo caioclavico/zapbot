@@ -83,7 +83,14 @@ class GithubHold:
         self.restored = False
 
     def read(self):
-        completed = self.runner(["gh", "variable", "get", HOLD_NAME, "--repo", REPO])
+        # The GitHub CLI installed on the production VM predates
+        # `gh variable get`. Use the stable Actions Variables REST endpoint
+        # via `gh api` so the exact variable is read (never list others).
+        # GH_TOKEN is inherited from the operator's environment, not argv.
+        completed = self.runner([
+            "gh", "api", "repos/" + REPO + "/actions/variables/" + HOLD_NAME,
+            "--jq", ".value",
+        ])
         if getattr(completed, "returncode", 1) != 0:
             raise DeployError("hold_indeterminate")
         value = str(getattr(completed, "stdout", "") or "").strip()
