@@ -18,7 +18,7 @@ sobrevivência ao revide canônico), não apenas o de maiores atributos brutos.
 | Ataque físico/especial | Stats do mon + classe do golpe |
 | Golpes do chefe | Apenas diagnóstico (o revide atual da raid não usa tipagem nem poder) |
 | Sobrevivência real | HP atual ÷ `ceil(HP máx / 5)` (revide do chefe, independente da tipagem) |
-| Precisão | `damage/chance-acerto` quando o golpe tem precisão |
+| Precisão | `damage/chance-acerto`, inclusive ao liberar golpes carregados |
 | Imunidades / dupla tipagem | Tabela de tipos + Levitate em Ground |
 
 **Não** usa: STAB (ausente na raid), nome/espécie do chefe, bônus por lendário/nível alto.

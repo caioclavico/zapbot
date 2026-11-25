@@ -95,7 +95,7 @@
                           (contains? (set (map str (:tipos defensor))) "ice"))
         precisao (mechanics/precisao-no-clima golpe clima)
         chance (chance-acerto precisao estagios-atacante estagios-defensor
-                              (:ignora-precisao golpe))
+                              (mechanics/ignora-precisao-no-clima? golpe clima))
         errou? (and chance (< chance 100)
                    (>= (rng/roll rng :accuracy 100) chance))
         vel-def (velocidade-efetiva defensor (or estagios-defensor {}) status-defensor)
@@ -189,6 +189,9 @@
       (:visao-ocupada? resolved)
       (str nome-golpe " já está a caminho!")
 
+      (:nivel-insuficiente? resolved)
+      (str nome-golpe " falhou: o nível do atacante é menor que o do alvo!")
+
       (:errou? resolved)
       (str nome-golpe " de *" nome-atk "* errou o alvo!")
 
@@ -244,4 +247,7 @@
       (some? hp-antes) (assoc :hp-antes (long hp-antes))
       (some? hp-depois) (assoc :hp-depois (long hp-depois))
       (some? hp-atk-antes) (assoc :hp-atk-antes (long hp-atk-antes))
-      (some? hp-atk-depois) (assoc :hp-atk-depois (long hp-atk-depois)))))
+      (some? hp-atk-depois) (assoc :hp-atk-depois (long hp-atk-depois))
+      (:bloqueado? resolved) (assoc :bloqueado? true)
+      (:sumido? resolved) (assoc :sumido? true)
+      (:nivel-insuficiente? resolved) (assoc :nivel-insuficiente? true))))

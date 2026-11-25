@@ -72,6 +72,9 @@
       (get mec "familia")
       (assoc :familia (keyword (get mec "familia")))
 
+      (and (= "protecao" (get mec "familia")) (nil? (:alvo golpe)))
+      (assoc :alvo :proprio)
+
       (true? (get mec "soPrimeiroTurno"))
       (assoc :so-primeiro-turno true)
 

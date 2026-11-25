@@ -100,8 +100,7 @@
         turnos (max 1 (long (Math/ceil (/ (double hp) (double (revide-por-turno pokemon))))))
         hits (cond
                (zero? dano) 0.0
-               ;; O segundo turno de carga em raid não verifica precisão.
-               (= :preparacao familia) (double (quot turnos 2))
+               (= :preparacao familia) (* chance (double (quot turnos 2)))
                (:autodesmaio golpe) (- 1.0 (Math/pow (- 1.0 chance) turnos))
                ;; Recarga só acontece após um acerto que causa dano.
                (= :recarga familia)

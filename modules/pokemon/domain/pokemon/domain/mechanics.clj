@@ -357,6 +357,12 @@
     (and (#{:neve :granizo} clima) (:precisao-neve golpe)) (:precisao-neve golpe)
     :else (:precisao golpe)))
 
+(defn ignora-precisao-no-clima?
+  [golpe clima]
+  (or (:ignora-precisao golpe)
+      (and (= clima :chuva) (= 100 (:precisao-chuva golpe)))
+      (and (#{:neve :granizo} clima) (= 100 (:precisao-neve golpe)))))
+
 (defn terreno-bloqueia-status?
   "Elétrico impede sono. Névoa impede status principal. Voador e Levitação
   não estão no chão. Terreno psíquico não entra: o combate não tem prioridade."

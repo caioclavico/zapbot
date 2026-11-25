@@ -136,7 +136,7 @@ test('formatHuntStart inclui área, raridade, HP e golpes numerados', () => {
   assert.match(text, /\[██████████\] 80\/80/);
   assert.match(text, /1\. .*Jato/);
   assert.match(text, /poder 40/);
-  assert.match(text, /precisão 100%/);
+  assert.match(text, /precisão base 100%/);
   assert.match(text, /!pk atacar <1-4>/);
   assert.match(text, /!pk <1-4>/);
 });

@@ -170,6 +170,7 @@
     (is (= (* base 0.5) (dano (assoc seguro :precisao 50) p)))
     (is (= (* base 3.1) (dano (assoc seguro :min-acertos 2 :max-acertos 5) p)))
     (is (= (* base 0.4) (dano (assoc seguro :familia :preparacao) p)))
+    (is (= (* base 0.2) (dano (assoc seguro :familia :preparacao :precisao 50) p)))
     (is (zero? (dano (assoc seguro :familia :preparacao) (assoc p :hp-atual 20))))
     (is (= (* base 0.6) (dano (assoc seguro :familia :recarga) p)))
     (is (= (* base 0.2) (dano (assoc seguro :autodesmaio true) p)))

@@ -1037,6 +1037,15 @@
                    :operation-receipt/save-id (:save-id writer-ctx)
                    :operation-receipt/summary
                    (pr-str {:dano (:dano outcome)
+                            :acertos (:acertos outcome)
+                            :errou? (boolean (:errou? outcome))
+                            :mensagem (:mensagem outcome)
+                            :revide (:revide outcome)
+                            :golpe (select-keys (:golpe outcome)
+                                               [:slug :nome-exibicao :tipo :poder :classe])
+                            :pokemon-atacante (select-keys (:pokemon-atacante outcome)
+                                                          [:nome :species])
+                            :hp-chefe-antes (:hp-chefe-antes outcome)
                             :multiplicador (:multiplicador outcome)
                             :base (:base outcome)
                             :base-variada (:base-variada outcome)
@@ -1044,7 +1053,8 @@
                             :venceu? (:venceu? outcome)
                             :derrota? (:derrota? outcome)
                             :trocou? (:trocou? outcome)
-                            :eliminado? (:eliminado? outcome)})}]
+                            :eliminado? (:eliminado? outcome)
+                            :autodesmaio? (:autodesmaio? outcome)})}]
                  other-parts
                  (or hp-sync [])
                  (or clear-ptr [])
