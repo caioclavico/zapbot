@@ -843,7 +843,10 @@
         dano-infligido (- (long hp-antes) (long (get-in battle [:hp def-marca] 0)))
         recuo (when (and (:acertou? resolved) (pos? dano-infligido) (:recuo golpe)
                          (not (:autodesmaio golpe)))
-                (max 1 (quot (* dano-infligido (long (:recuo golpe))) 100)))
+                ;; O catálogo usa 33 para representar a fração exata de um terço.
+                (max 1 (if (= 33 (long (:recuo golpe)))
+                         (quot dano-infligido 3)
+                         (quot (* dano-infligido (long (:recuo golpe))) 100))))
         ;; Explosion/Self-Destruct: após hit válido, usuário desmaia (HP→0).
         autodesmaio? (and (:acertou? resolved)
                           (or (:autodesmaio golpe) (get golpe "autodesmaio"))

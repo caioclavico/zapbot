@@ -911,6 +911,10 @@
 (defn- raid-auto-index
   "Melhor mon *elegível deste jogador* — counter ao chefe (domínio puro)."
   [raid colecao]
+  (when-not (raid-counter/boss-known? raid)
+    (binding [*out* *err*]
+      (println (pr-str {:event "raid_auto_counter_fallback"
+                        :reason "metadados_do_chefe_ausentes_ou_invalidos"}))))
   (raid-counter/pick-best-collection-index raid colecao))
 
 (defn- raid-inapto-reason

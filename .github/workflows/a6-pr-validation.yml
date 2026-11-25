@@ -69,7 +69,7 @@ jobs:
       - name: Progressive XP v3 — presenter/compatibilidade
         run: node --test test/pokemon-a6-progressive-xp-v3.test.cjs
       - name: PNG de chocagem e entrega automática
-        run: node --test test/pokemon-jvm-hatch-card.test.cjs test/pokemon-jvm-auto-hatch-delivery.test.cjs
+        run: node --test test/pokemon-jvm-hatch-card.test.cjs test/pokemon-jvm-auto-hatch-delivery.test.cjs test/pokemon-jvm-egg-cards.test.cjs test/pokemon-jvm-joy-eggs.test.cjs
       - run: npm run test:http
       - run: npm run build
 

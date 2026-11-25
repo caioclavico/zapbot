@@ -425,7 +425,7 @@ function resumoEfeitosGolpe(golpe) {
   const dreno = Number(golpe.dreno != null ? golpe.dreno : (fx.dreno || 0));
   if (dreno > 0) partes.push(`drena ${dreno}% do dano como HP`);
   const recuo = Number(golpe.recuo != null ? golpe.recuo : (fx.recuo || 0));
-  if (recuo > 0) partes.push(`recua ${recuo}% do dano`);
+  if (recuo > 0) partes.push(`recua ${recuo === 33 ? '1/3' : `${recuo}%`} do dano`);
   if (mec.familia && FAMILIA_MENU[mec.familia]) partes.push(FAMILIA_MENU[mec.familia]);
   if (mec.flinch) partes.push(`recuo que impede a ação (${mec.flinch}%)`);
   if (mec.maxAcertos > 1) partes.push(`acerta ${mec.minAcertos || 2} a ${mec.maxAcertos} vezes`);

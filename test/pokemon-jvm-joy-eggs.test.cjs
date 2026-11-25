@@ -54,7 +54,7 @@ test('formatAdventureStatus e hatch', () => {
   assert.match(text, /espécie só é revelada/i);
   assert.match(present.formatEggHatch({
     registro: { nome: 'Pichu', nivel: 1, shiny: true }
-  }), /eclodiu/);
+  }), /SEU OVO CHOCOU/);
   assert.match(present.formatEggHatch({
     collectionFull: true, pending: true
   }), /Coleção cheia/);

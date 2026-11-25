@@ -53,12 +53,42 @@ test('hatch resolve arte ausente e desenha Pokémon atrás da borda aberta', asy
   assert.notDeepEqual(pixel(150, 680), [247, 250, 251], 'base arredondada, mais estreita');
 });
 
-test('hatch com asset indisponível mantém silhueta em vez de entregar só ovo', async (t) => {
+test('hatch com asset indisponível usa texto em vez de PNG sem Pokémon', async (t) => {
   t.mock.method(pokeapi, 'fetchPokemonByName', async () => ({ imagem: null }));
   const card = await media.renderHatchRevealCard({
     registro: { nome: 'Charmander', imagem: 'https://invalid.example/broken.png' }
   });
+  assert.equal(card, null);
+  assert.match(present.formatEggHatch({ registro: { nome: 'Charmander' } }), /Charmander/);
+});
+
+test('sprite com transparência é alinhado à abertura do ovo', async (t) => {
+  const shape = await sharp({
+    create: { width: 40, height: 40, channels: 4, background: '#ff00ff' }
+  }).png().toBuffer();
+  const png = await sharp({
+    create: { width: 200, height: 200, channels: 4, background: '#00000000' }
+  }).composite([{ input: shape, left: 80, top: 60 }]).png().toBuffer();
+  t.mock.method(globalThis, 'fetch', async () => new Response(png, {
+    headers: { 'content-type': 'image/png' }
+  }));
+  const card = await media.renderHatchRevealCard({
+    registro: { nome: 'Charmander', imagem: artwork.replace('/1.png', '/4.png') }
+  });
   const pixel = await pixelSampler(card);
-  const [r, g, b] = pixel(240, 395);
-  assert.ok(r > 60 && g > 60 && b > 150, 'silhueta visível acima da casca');
+  assert.deepEqual(pixel(320, 520), [255, 0, 255]);
+  assert.deepEqual(pixel(320, 680), [247, 250, 251]);
+});
+
+test('hatch com sprite totalmente transparente usa texto', async (t) => {
+  const png = await sharp({
+    create: { width: 120, height: 120, channels: 4, background: '#00000000' }
+  }).png().toBuffer();
+  t.mock.method(globalThis, 'fetch', async () => new Response(png, {
+    headers: { 'content-type': 'image/png' }
+  }));
+  const card = await media.renderHatchRevealCard({
+    registro: { nome: 'Squirtle', imagem: artwork.replace('/1.png', '/7.png') }
+  });
+  assert.equal(card, null);
 });

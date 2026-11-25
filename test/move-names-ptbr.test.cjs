@@ -143,6 +143,6 @@ test('Choque de Ondas identifica Wave Crash e anuncia recuo', () => {
     { slug: 'wave-crash', tipo: 'water', classe: 'fisico', poder: 120 }
   ] }, []);
   assert.match(menu, /Choque de Ondas/);
-  assert.match(menu, /recua 33% do dano/i);
+  assert.match(menu, /recua 1\/3 do dano/i);
   assert.doesNotMatch(menu, /metadado ausente|não entra neste combate/i);
 });

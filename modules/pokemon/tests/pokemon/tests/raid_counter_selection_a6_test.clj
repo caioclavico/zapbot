@@ -2,9 +2,16 @@
   "Seleção auto de counter em raid — tipagem, imunidade, revide, fallback."
   (:require [clojure.edn :as edn]
             [clojure.test :refer [deftest is testing]]
+            [odisseu.persistence.datomic :as persistence]
+            [pokemon.application.bridge-tx :as tx]
+            [pokemon.application.collection :as collection]
+            [pokemon.application.ports :as ports]
+            [pokemon.application.raid :as raid-app]
+            [pokemon.application.trainer :as trainer]
             [pokemon.domain.raid-boss :as boss]
             [pokemon.domain.raid-counter-selection :as sel]
-            [pokemon.infrastructure.datomic.raid-store :as raid-store]))
+            [pokemon.infrastructure.datomic.raid-store :as raid-store]
+            [pokemon.infrastructure.datomic.store :as store]))
 
 (defn- mon
   [{:keys [idx tipos hp-atual hp nivel golpes ataque defesa atq-esp def-esp raridade]
@@ -247,4 +254,52 @@
     (doseq [tipos [[] ["water" "invalid"]]]
       (let [incompleto (assoc-in raid [:chefe :tipos] tipos)]
         (is (true? (:fallback? (sel/compare-old-vs-new incompleto [blastoise electric]))))
+        (is (= 0 (pick incompleto [blastoise electric])))))
+    (doseq [defesa [nil 0 "inválida"]]
+      (let [incompleto (assoc-in raid [:chefe :def-esp] defesa)]
+        (is (true? (:fallback? (sel/compare-old-vs-new incompleto [blastoise electric]))))
         (is (= 0 (pick incompleto [blastoise electric])))))))
+
+(deftest politoed-auto-usa-colecao-e-indice-do-save-datomic
+  (let [id (str (java.util.UUID/randomUUID))
+        client (persistence/client {:system (str "raid-counter-" id)
+                                    :storage-dir (str "/tmp/raid-counter-" id)})
+        s (store/make-store (persistence/ensure-db! client "isolado"))
+        chat "teste" player "ash"
+        _ (trainer/bootstrap! s)
+        _ (trainer/create-trainer! s {:chat-id chat :player-id player})
+        mons [(assoc (mon {:idx 0 :hp 280 :hp-atual 280 :atq-esp 140
+                           :tipos ["water"] :golpes [golpe-agua]})
+                     :species "blastoise" :nome "Blastoise")
+              (assoc (mon {:idx 1 :hp-atual 15 :atq-esp 55 :tipos ["electric"]
+                           :golpes [{:slug "thunderbolt" :poder 90 :tipo "electric"
+                                     :classe :especial :precisao 100}]})
+                     :species "pikachu" :nome "Pikachu")
+              (assoc (mon {:idx 2 :hp-atual 15 :atq-esp 50 :tipos ["grass"]
+                           :golpes [golpe-grama]})
+                     :species "bulbasaur" :nome "Bulbasaur")]
+        _ (doseq [p mons]
+            (collection/adicionar-pokemon! s chat player p (:hp-atual p) nil))
+        fence (long (:fence-generation (ports/get-player s chat player)))
+        chefe (assoc (some #(when (= "politoed" (:species %)) %) (:species (boss/catalog)))
+                     :def-esp 100)
+        req {:chat-id chat :player-id player :save-id "a" :fence-generation fence}]
+    (tx/open-raid! s (merge req {:operation-id "open" :raid-id "politoed"
+                                 :ginasio "agua" :chefe chefe :agora-ms 1000}))
+    (let [lobby (raid-app/get-raid s "politoed")
+          saved (ports/list-collection s chat player "a")
+          join (tx/join-raid! s (merge req {:operation-id "join" :raid-id "politoed"
+                                           :auto? true :agora-ms 1001}))
+          selected (get-in (raid-app/get-raid s "politoed") [:participantes player])]
+      (is (= 0 (:hp-chefe lobby)))
+      (is (= ["water"] (get-in lobby [:chefe :tipos])))
+      (is (= ["blastoise" "pikachu" "bulbasaur"] (mapv :species saved)))
+      (is (= [41000 88000 58900] (mapv #(sel/combat-score lobby %) saved)))
+      (is (= 1 (:collection-index join) (:collection-index selected)))
+      (is (= (:id-pokemon (nth saved 1)) (get-in selected [:pokemon :id-pokemon])))
+      (is (= "pikachu" (get-in selected [:pokemon :species]))))
+    (let [out (java.io.StringWriter.)
+          auto-index (ns-resolve 'pokemon.application.bridge-tx 'raid-auto-index)]
+      (binding [*err* out]
+        (is (= 0 (auto-index {:chefe {:tipos []}} [(first mons)]))))
+      (is (re-find #"raid_auto_counter_fallback" (str out))))))

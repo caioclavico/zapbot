@@ -29,6 +29,10 @@
        (pos? (long (or (:hp-atual pokemon) (:hp pokemon) 0)))
        (some golpe-ofensivo? (take 4 (:golpes pokemon)))))
 
+(defn- stat-chefe [chefe k]
+  (let [v (or (get chefe k) (get chefe (name k)))]
+    (when (and (number? v) (pos? v)) v)))
+
 (defn- chefe-context
   "Contexto de combate do chefe — só campos usados no dano (sem identidade)."
   [raid]
@@ -40,14 +44,16 @@
     {:tipos tipos
      :habilidade (or (:habilidade chefe) (get chefe "habilidade"))
      :golpes golpes
-     :ataque (long (or (:ataque chefe) (get chefe "ataque") 50))
-     :atq-esp (long (or (:atq-esp chefe) (get chefe "atq-esp") 50))
-     :defesa (long (or (:defesa chefe) (get chefe "defesa") 50))
-     :def-esp (long (or (:def-esp chefe) (get chefe "def-esp") 50))
+     :ataque (long (or (stat-chefe chefe :ataque) 50))
+     :atq-esp (long (or (stat-chefe chefe :atq-esp) 50))
+     :defesa (long (or (stat-chefe chefe :defesa) 50))
+     :def-esp (long (or (stat-chefe chefe :def-esp) 50))
      :hp-chefe (if (pos? hp-chefe) hp-chefe Long/MAX_VALUE)
      :present? (boolean (and (:chefe raid)
                              (seq tipos)
-                             (every? #(contains? types/tabela-tipos %) tipos)))}))
+                             (every? #(contains? types/tabela-tipos %) tipos)
+                             (stat-chefe chefe :defesa)
+                             (stat-chefe chefe :def-esp)))}))
 
 (defn- raid-calc-context
   "Mapa compatível com `raid/calcular-dano` na fase de lobby (defesas do chefe)."
@@ -57,6 +63,10 @@
          :defesa (max 1 (:defesa ctx))
          :def-esp (max 1 (:def-esp ctx))
          :chefe {:tipos (:tipos ctx) :habilidade (:habilidade ctx)}))
+
+(defn boss-known?
+  [raid]
+  (:present? (chefe-context raid)))
 
 (defn- precisao-efetiva
   [golpe]
