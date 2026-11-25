@@ -329,7 +329,9 @@ class OperationalWindowTests(unittest.TestCase):
         state = {"value": "true"}
 
         def runner(args):
-            if args[2] == "get":
+            if args[:2] == ["gh", "api"] and args[2].endswith(
+                "/actions/variables/ODISSEU_PRODUCTION_DEPLOY_HOLD"
+            ) and args[-2:] == ["--jq", ".value"]:
                 return SUPERVISED.Result(state["value"] + "\n")
             if args[2] == "set":
                 state["value"] = args[-1]
@@ -353,6 +355,8 @@ class OperationalWindowTests(unittest.TestCase):
         gate.restore()
         joined = "\n".join(" ".join(command) for command in recorded)
         self.assertNotIn("TOKEN=", joined)
+        self.assertIn("api repos/caioclavico/zapbot/actions/variables/ODISSEU_PRODUCTION_DEPLOY_HOLD --jq .value", joined)
+        self.assertNotIn("variable get", joined)
         self.assertIn("--body false", joined)
         self.assertIn("--body true", joined)
 
