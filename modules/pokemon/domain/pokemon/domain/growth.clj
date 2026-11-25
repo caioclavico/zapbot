@@ -513,7 +513,7 @@
          :after after
          :reason :converted}))))
 
-(defn after-evolution
+(defn after-evolution-flat9
   "Preserva residual flat-9 e nível; nunca reduz nível."
   [registro]
   (let [r (ensure-flat9-v2-for-grant registro)
@@ -524,7 +524,7 @@
                  :legacy-nivel (:xp-legacy-nivel r)
                  :growth-rate (:growth-rate r))))
 
-(defn grant-pokemon-xp
+(defn grant-flat9-pokemon-xp
   "Concede XP flat-9 (pontos). Retorna
   {:registro :subidas :nivel-final :xp-ganho :xp-total-antes :xp-total-depois}.
 
@@ -580,7 +580,7 @@
           :else
           (recur (inc nivel) (- resid flat9-xp-por-nivel) (inc subidas)))))))
 
-(defn pokemon-progress
+(defn flat9-pokemon-progress
   "Barra WhatsApp: residual/9. Ambíguos → conhecido? false."
   [registro]
   (let [nivel0 (persist-nivel registro)
@@ -642,3 +642,178 @@
                :progresso-percentual (/ (double residual) (double flat9-xp-por-nivel))
                :xp-total (long (:xp-total r))
                :xp-progress-version flat9-progress-version})))))))
+
+;; A6 progressive-xp-v3 — gated, non-destructive successor to flat-9-v2.
+;; IMPORTANT: never infer levels from :xp-total (incident #85).
+;; Level and stats are immutable during conversion; only grants can level up.
+(def progressive-progress-version "progressive-xp-v3")
+
+(defn progressive-enabled?
+  "Opt-in production flag. OFF until complete save audit and explicit rollout GO."
+  []
+  (boolean (#{"1" "true" "yes" "on"}
+            (some-> (System/getenv "POKEMON_PROGRESSIVE_XP_V3")
+                    str/lower-case))))
+
+(defn progressive-active?
+  "An already converted Pokémon stays on v3 even if the flag is later disabled."
+  [registro]
+  (or (progressive-enabled?)
+      (= progressive-progress-version (progress-ver registro))))
+
+(defn progressive-xp-por-nivel
+  "9 XP from L1, 30 XP at L50, fixed at 30 through L99. L100 has no next level."
+  [nivel]
+  (let [n (long nivel)]
+    (cond
+      (>= n nivel-maximo) 0
+      (<= n 1) 9
+      (>= n 50) 30
+      :else (+ 9 (long (Math/round (* 21.0 (/ (double (dec n)) 49.0))))))))
+
+(defn progressive-synthetic-total
+  "Canonical v3 accumulated XP; only for reporting, NEVER for determining level."
+  [nivel residual]
+  (let [n (max 1 (min nivel-maximo (long nivel)))
+        needed (progressive-xp-por-nivel n)
+        resid (if (zero? needed) 0 (max 0 (min (dec needed) (long residual))))]
+    (+ (reduce + 0 (map progressive-xp-por-nivel (range 1 n)))
+       resid)))
+
+(defn- assoc-progressive
+  [registro nivel residual]
+  (let [n (long nivel)
+        needed (progressive-xp-por-nivel n)
+        resid (long residual)]
+    (when (or (< n 1) (> n nivel-maximo)
+              (neg? resid)
+              (and (zero? needed) (not (zero? resid)))
+              (and (pos? needed) (>= resid needed)))
+      (throw (ex-info "Invalid progressive XP state: fail closed"
+                      {:code :progressive-xp-invalid :nivel n :residual resid
+                       :xp-necessario needed})))
+    (-> registro
+        (assoc :nivel n :xp-desde-nivel resid :xp resid
+               :xp-total (progressive-synthetic-total n resid)
+               :xp-progress-version progressive-progress-version)
+        (dissoc :vitorias-desde-nivel "vitorias-desde-nivel"))))
+
+(defn ensure-progressive-v3-for-grant
+  "Lazy, atomic-only conversion. Never level-up on conversion.
+   Versioned flat9: preserve the fraction residual/9 within the current level.
+   Official/legacy: reuse audited flat9 path; ambiguous entries FAIL CLOSED.
+   Never use old :xp-total to reconstruct level."
+  [registro]
+  (let [raw-lvl (long (or (registro-get registro :nivel "nivel" :level "level") 1))
+        ver (progress-ver registro)]
+    (when (or (< raw-lvl 1) (> raw-lvl nivel-maximo))
+      (throw (ex-info "Invalid persisted Pokémon level: fail closed"
+                      {:code :progressive-xp-invalid-level :nivel raw-lvl})))
+    (if (= ver progressive-progress-version)
+      (let [res (registro-get registro :xp-desde-nivel "xp-desde-nivel" :xp "xp")]
+        (when (nil? res)
+          (throw (ex-info "Missing v3 residual: fail closed"
+                          {:code :progressive-xp-missing-residual :nivel raw-lvl})))
+        (assoc-progressive registro raw-lvl (long res)))
+      (do
+        (when (and (not= ver "")
+                   (not (contains? #{flat9-progress-version
+                                     growth-v1-progress-version
+                                     growth-v2-progress-version} ver)))
+          (throw (ex-info "Unknown XP version: fail closed"
+                          {:code :progressive-xp-unknown-version :version ver})))
+        (when (= ver flat9-progress-version)
+          (let [raw-res (registro-get registro :xp-desde-nivel "xp-desde-nivel"
+                                      :xp "xp")]
+            (when (or (nil? raw-res)
+                      (not (number? raw-res))
+                      (neg? (long raw-res))
+                      (>= (long raw-res) flat9-xp-por-nivel))
+              (throw (ex-info "Out-of-range flat9 residual: fail closed"
+                              {:code :progressive-xp-invalid-flat9-residual
+                               :nivel raw-lvl})))))
+        (let [old (ensure-flat9-v2-for-grant registro)
+              level (long (:nivel old))
+              old-res (long (:xp-desde-nivel old 0))
+              required (progressive-xp-por-nivel level)
+              mapped (if (zero? required) 0
+                         (long (Math/floor (* (/ (double old-res) 9.0)
+                                              (double required)))))
+              converted (assoc-progressive old level mapped)]
+          (when (not= level (:nivel converted))
+            (throw (ex-info "Conversion changed level: fail closed"
+                            {:code :progressive-xp-level-drift :antes level
+                             :depois (:nivel converted)})))
+          converted)))))
+
+(defn grant-progressive-xp
+  "Apply v3 XP. The old XP total is NEVER an input into level calculation.
+   Carries overflow across levels and returns actual credited XP at L100."
+  [registro quantidade]
+  (let [old (ensure-progressive-v3-for-grant registro)
+        n0 (long (:nivel old))
+        r0 (long (:xp-desde-nivel old))
+        before (long (:xp-total old))
+        amount (max 0 (long quantidade))]
+    (loop [n n0 remaining (+ r0 amount) level-ups 0]
+      (let [required (progressive-xp-por-nivel n)]
+        (cond
+          (>= n nivel-maximo)
+          (let [new (assoc-progressive old nivel-maximo 0)]
+            {:registro new :subidas level-ups :nivel-final nivel-maximo
+             :xp-ganho (- (long (:xp-total new)) before)
+             :xp-total-antes before :xp-total-depois (:xp-total new)})
+
+          (< remaining required)
+          (let [new (assoc-progressive old n remaining)]
+            {:registro new :subidas level-ups :nivel-final n
+             :xp-ganho (- (long (:xp-total new)) before)
+             :xp-total-antes before :xp-total-depois (:xp-total new)})
+
+          :else
+          (recur (inc n) (- remaining required) (inc level-ups)))))))
+
+(defn progressive-pokemon-progress
+  "Read-only v3 projection (no Datomic writes); unknown/ambiguous stays unknown."
+  [registro]
+  (let [n (persist-nivel registro)
+        unknown {:conhecido? false :nivel n :nivel-maximo? (>= n nivel-maximo)
+                 :xp-nivel-atual nil :xp-proximo-nivel nil
+                 :progresso-percentual nil :xp-total nil
+                 :xp-progress-version nil}
+        has-xp? (some #(registro-has? registro % (name %))
+                      [:xp-progress-version :xp-total :xp-desde-nivel :xp
+                       :vitorias-desde-nivel])]
+    (if (or (ambiguous-legacy? registro) (not has-xp?))
+      (cond-> unknown (ambiguous-legacy? registro) (assoc :ambiguous? true))
+      (try
+        (let [r (ensure-progressive-v3-for-grant registro)
+              lvl (:nivel r)
+              residual (:xp-desde-nivel r)
+              need (progressive-xp-por-nivel lvl)]
+          {:conhecido? true :nivel lvl
+           :nivel-maximo? (>= lvl nivel-maximo)
+           :xp-nivel-atual residual
+           :xp-proximo-nivel (when (pos? need) need)
+           :progresso-percentual (when (pos? need)
+                                   (/ (double residual) (double need)))
+           :xp-total (:xp-total r)
+           :xp-progress-version progressive-progress-version})
+        (catch clojure.lang.ExceptionInfo _
+          (assoc unknown :ambiguous? true))))))
+
+(defn pokemon-progress [registro]
+  (if (progressive-active? registro)
+    (progressive-pokemon-progress registro)
+    (flat9-pokemon-progress registro)))
+
+(defn grant-pokemon-xp [registro quantidade]
+  (if (progressive-active? registro)
+    (grant-progressive-xp registro quantidade)
+    (grant-flat9-pokemon-xp registro quantidade)))
+
+(defn after-evolution [registro]
+  (if (progressive-active? registro)
+    ;; No level-up or stat changes during species evolution.
+    (ensure-progressive-v3-for-grant registro)
+    (after-evolution-flat9 registro)))

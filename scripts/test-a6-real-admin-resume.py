@@ -6,6 +6,7 @@ root-owned serem montados.
 """
 import importlib.util
 from pathlib import Path
+from unittest.mock import patch
 
 from a6_supervised_deploy import run_supervised
 
@@ -26,9 +27,12 @@ def main():
     }
     env = dict(fixture.ENV, A6_LIVE_BACKUP='autorizar-backup-producao-a6',
                A6_STATE_DIR='/tmp/a6-real-admin-state')
-    report = run_supervised(world.runner, fixture.SHA, fixture.JVM_DIGEST, fixture.NODE_DIGEST,
-                            env, destination, None, prior={'steps': ['update_jvm']},
-                            materialize=fixture.materialize)
+    # Synthetic legacy backup-helper compatibility test; the dedicated
+    # release-136 tests separately assert the mandatory frozen v3 gate.
+    with patch('a6_v3_release_gate.release_mode', return_value=False):
+        report = run_supervised(world.runner, fixture.SHA, fixture.JVM_DIGEST, fixture.NODE_DIGEST,
+                                env, destination, None, prior={'steps': ['update_jvm']},
+                                materialize=fixture.materialize)
     assert report['deployComplete'], report
     assert report['blocked'] == []
     assert 'stop_jvm' in report['steps']

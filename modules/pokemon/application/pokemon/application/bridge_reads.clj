@@ -79,6 +79,7 @@
                    :nivel-maximo? (boolean (:nivel-maximo? prog))
                    :xp-nivel-atual (:xp-nivel-atual prog)
                    :xp-proximo-nivel (:xp-proximo-nivel prog)
+                   :xp-progress-version (:xp-progress-version prog)
                    :xp-necessario (:xp-proximo-nivel prog)
                    :progresso-xp-percentual pct)
       evo (assoc :proxima-evolucao (:nome evo)

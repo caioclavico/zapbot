@@ -15,6 +15,7 @@
             [pokemon.application.recovery-catalog :as recovery-catalog]
             [pokemon.application.ports :as ports]
             [pokemon.infrastructure.http.maintenance-gate :as maintenance-gate]
+            [pokemon.infrastructure.datomic.xp-reconciliation :as xp-reconciliation]
             [pokemon.domain.events :as events]
             [pokemon.domain.errors :as err]
             [pokemon.infrastructure.http.json :as json])
@@ -323,7 +324,7 @@
       (throw (err/error :unauthorized {})))))
 
 (defn- maintenance-control!
-  [^HttpExchange ex method path qs gate token gym-audit! gym-audit-run!]
+  [^HttpExchange ex method path qs gate token gym-audit! gym-audit-run! conn]
   (maintenance-auth! ex token)
   (cond
     (= path "/ops/maintenance/status")
@@ -337,6 +338,60 @@
         (let [{:keys [status body]} (gym-audit-run! gate gym-audit!)]
           (send-json! ex status body 16384)))
       (send-json! ex 404 {:ok false :error {:code "not_found" :message "Rota inexistente."}}))
+
+    (contains? #{"/ops/maintenance/a6-v3-xp-preview"
+                 "/ops/maintenance/a6-v3-xp-audit"
+                 "/ops/maintenance/a6-v3-xp-reconcile"} path)
+    (if (and conn
+             (= "true" (some-> (System/getenv "A6_V3_RECONCILIATION_ENABLED")
+                                str/lower-case))
+             (seq (System/getenv "A6_V3_RECONCILIATION_ALLOWED_ID")))
+      (locking (:lock gate)
+        (let [status (maintenance-gate/status gate)
+              frozen? (and (= :frozen (:phase status))
+                           (zero? (long (:active-writes status 0))))]
+          (if-not frozen?
+            (send-json! ex 409
+                        {:ok false :error {:code "reconciliation_requires_frozen_writer"}})
+            (try
+              (cond
+                (= path "/ops/maintenance/a6-v3-xp-preview")
+                (do
+                  (require-method! ex #{"GET"})
+                  (require-empty-body! ex)
+                  (ok! ex (xp-reconciliation/preview
+                           conn (get qs "pokemonId")
+                           (System/getenv "A6_V3_RECONCILIATION_ALLOWED_ID"))))
+
+                (= path "/ops/maintenance/a6-v3-xp-audit")
+                (do
+                  (require-method! ex #{"GET"})
+                  (require-empty-body! ex)
+                  (ok! ex (xp-reconciliation/audit
+                           conn (get qs "pokemonId")
+                           (System/getenv "A6_V3_RECONCILIATION_ALLOWED_ID"))))
+
+                (= path "/ops/maintenance/a6-v3-xp-reconcile")
+                (do
+                  (require-method! ex #{"POST"})
+                  (let [req (read-body ex)]
+                    (when-not (= #{"pokemonId" "snapshotSha256"} (set (keys req)))
+                      (throw (ex-info "Unexpected maintenance request body"
+                                      {:code :reconciliation-invalid-body})))
+                    (ok! ex
+                         (xp-reconciliation/reconcile!
+                          conn (get req "pokemonId")
+                          (System/getenv "A6_V3_RECONCILIATION_ALLOWED_ID")
+                          (get req "snapshotSha256")))))
+
+                :else
+                (send-json! ex 404 {:ok false :error {:code "not_found"}}))
+              (catch clojure.lang.ExceptionInfo e
+                (send-json! ex 409
+                            {:ok false :error {:code (name (or (:code (ex-data e))
+                                                               :reconciliation-blocked))}}))))))
+      (send-json! ex 404
+                  {:ok false :error {:code "not_found"}}))
 
     (= path "/ops/maintenance/enter")
     (do (require-method! ex #{"POST"})
@@ -495,7 +550,7 @@
             (str/starts-with? path "/ops/maintenance/")
             (if (and maintenance-gate maintenance-token)
               (maintenance-control! ex method path qs maintenance-gate maintenance-token
-                                    gym-audit! gym-audit-run!)
+                                    gym-audit! gym-audit-run! (:conn store))
               (send-json! ex 404 {:ok false :error {:code "not_found" :message "Rota inexistente."}}))
 
             :else

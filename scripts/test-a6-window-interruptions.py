@@ -34,7 +34,9 @@ state = os.environ["A6_FAKE_GH_STATE"]
 args = sys.argv[1:]
 with open(os.environ["A6_FAKE_GH_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(args) + "\\n")
-if args[:2] == ["variable", "get"]:
+if (len(args) == 4 and args[0] == "api"
+        and args[1] == "repos/caioclavico/zapbot/actions/variables/ODISSEU_PRODUCTION_DEPLOY_HOLD"
+        and args[2:] == ["--jq", ".value"]):
     if not os.path.exists(state):
         sys.stderr.write("variable not found\\n")
         sys.exit(1)

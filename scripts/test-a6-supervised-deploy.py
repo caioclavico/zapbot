@@ -471,6 +471,65 @@ def run_case(world, root, env=None, isolated=None):
 
 
 class SupervisedWindowTests(unittest.TestCase):
+    def test_live_single_cutover_refuses_legacy_unguarded_runner(self):
+        env = dict(ENV, A6_LIVE_BACKUP="autorizar-backup-producao-a6")
+        world = World()
+        report = run_supervised(world.runner, SHA, JVM_DIGEST, NODE_DIGEST,
+                                env, "/var/backups/odisseu-a6/janela-admin/data",
+                                None, materialize=materialize)
+        self.assertIn("v3_single_cutover_protocol_required", report["blocked"])
+        self.assertNotIn("stop", [x[3] for x in report["commands"] if len(x) > 3])
+        self.assertNotIn("resume", report["steps"])
+
+    def test_v3_gate_failure_does_not_resume_any_container(self):
+        env = dict(ENV, A6_V3_SINGLE_CUTOVER="a6-v3-raid-auto-136")
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch("a6_v3_release_gate.verify_rehearsal",
+                   return_value={"manifestSha256": "a" * 64, "pokemonCount": 1336}), \
+             patch("a6_v3_release_gate.prepare",
+                   side_effect=DeployError("v3_pre_audit_unexpected")):
+            world = World()
+            report = run_case(world, Path(tmp), env=env)
+        self.assertIn("v3_pre_audit_unexpected", report["blocked"])
+        self.assertNotIn("resume", report["steps"])
+        self.assertNotIn("v3_release_gate", report["steps"])
+
+    def test_v3_gate_evidence_required_before_successful_resume(self):
+        env = dict(ENV, A6_V3_SINGLE_CUTOVER="a6-v3-raid-auto-136")
+        before = {
+            "status": "BLOCKED", "blocked": 1, "pokemonCount": 1336,
+            "playerCount": 39, "saveCount": 102, "eggCount": 43,
+            "incubatorCount": 12, "inventoryCount": 158,
+            "coinsTotal": 3055, "receiptCount": 8599,
+            "targetLevel": 6, "targetResidual": 21,
+            "blockedDetails": [{"id": "abb8955f-7ebe-4084-a634-fd74cfa9bf62",
+                                "reason": "flat9-ambiguous-legacy-xp"}],
+            "protectedSha256": "c" * 64,
+        }
+        candidate = {
+            "status": "ready", "pokemonId": "abb8955f-7ebe-4084-a634-fd74cfa9bf62",
+            "level": 6, "rawXp": 21, "residualBefore": 21, "residualAfter": 8,
+            "snapshotSha256": "a" * 64,
+        }
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch("a6_v3_release_gate.verify_rehearsal",
+                   return_value={"manifestSha256": "b" * 64, "pokemonCount": 1336}), \
+             patch("a6_v3_release_gate.prepare", return_value=before), \
+             patch("a6_v3_release_gate.preview", return_value=candidate), \
+             patch("a6_v3_release_gate.commit_once",
+                   side_effect=lambda wrapped, prefix, audited, candidate=None: (
+                       setattr(world, "jvm_phase", "frozen") or
+                       {"receiptId": "only-once", "pokemonCount": 1336,
+                        "protectedSha256": "c" * 64})):
+            world = World()
+            report = run_case(world, Path(tmp), env=env)
+        self.assertTrue(report["deployComplete"], report["blocked"])
+        gate = next(x for x in report["checkpoints"]
+                    if x["step"] == "v3_release_gate")
+        self.assertTrue(gate["verified"])
+        self.assertEqual(gate["receiptId"], "only-once")
+
+
     def test_live_backup_uses_only_admin_attestation(self):
         """Runner sem root não toca paths de volume, backup, manifesto ou restore."""
         receipt = {
@@ -482,7 +541,8 @@ class SupervisedWindowTests(unittest.TestCase):
         env = dict(ENV)
         env["A6_LIVE_BACKUP"] = "autorizar-backup-producao-a6"
         env["A6_STATE_DIR"] = "/tmp/a6-admin-journal"
-        with patch("a6_admin_backup_client.preflight", return_value={"ready": True, "window": "janela-admin", "operation": "preflight"}) as ready, \
+        with patch("a6_v3_release_gate.release_mode", return_value=False), \
+             patch("a6_admin_backup_client.preflight", return_value={"ready": True, "window": "janela-admin", "operation": "preflight"}) as ready, \
              patch("a6_admin_backup_client.backup", return_value=receipt) as copied:
             report = run_supervised(World().runner, SHA, JVM_DIGEST, NODE_DIGEST, env, destination,
                                     None, materialize=materialize)
@@ -504,7 +564,8 @@ class SupervisedWindowTests(unittest.TestCase):
         world = World()
         world.containers["odisseu-a6-jvm"]["image"] = JVM_DIGEST
         world.containers["odisseu-a6-jvm-previous"] = {"image": CURRENT["jvm"]["imageId"], "running": False}
-        with patch("a6_admin_backup_client.preflight", return_value={"ready": True, "window": "janela-admin", "operation": "preflight"}), \
+        with patch("a6_v3_release_gate.release_mode", return_value=False), \
+             patch("a6_admin_backup_client.preflight", return_value={"ready": True, "window": "janela-admin", "operation": "preflight"}), \
              patch("a6_admin_backup_client.status", return_value=receipt) as checked, \
              patch("a6_admin_backup_client.backup") as copied:
             report = run_supervised(world.runner, SHA, JVM_DIGEST, NODE_DIGEST, env, destination, None,

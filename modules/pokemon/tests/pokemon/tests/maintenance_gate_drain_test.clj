@@ -5,7 +5,7 @@
             [clojure.test :refer [deftest is testing]]
             [pokemon.infrastructure.http.maintenance-gate :as gate])
   (:import [java.nio.file Files]
-           [java.util.concurrent CyclicBarrier Executors TimeUnit]))
+           [java.util.concurrent CountDownLatch CyclicBarrier Executors TimeUnit]))
 
 (defn- tmp-dir []
   (.toFile (Files/createTempDirectory "a6-gate-drain-" (make-array java.nio.file.attribute.FileAttribute 0))))
@@ -49,6 +49,7 @@
         g (gate/create (str dir))
         n 8
         start (CyclicBarrier. (inc n))
+        first-admitted (CountDownLatch. 1)
         pool (Executors/newFixedThreadPool n)]
     (try
       (dotimes [_ n]
@@ -57,10 +58,15 @@
                  (fn []
                    (.await start)
                    (when (gate/acquire-write! g)
+                     (.countDown first-admitted)
                      (Thread/sleep 30)
                      (gate/release-write! g))
                    nil)))
       (.await start)
+      ;; Barrier releases workers, but the scheduler may run the drain first.
+      ;; Wait for a real write admission, not for a race-dependent ordering.
+      (is (.await first-admitted 5 TimeUnit/SECONDS)
+          "At least one writer must be admitted before drain")
       (let [result (gate/enter! g 5000)]
         (is (true? (:quiescent? result)))
         (is (zero? (:active-writes (gate/status g))))

@@ -4,6 +4,8 @@
 ;; Env:
 ;;   ODISSEU_BRIDGE_*  A6_EVID  A6_RECON_MANIFEST (path privado)
 ;;   A6_RECON_DRY_RUN=1 → só simula
+;;   A6_RECONCILIATION_ISOLATED_RESTORE=confirmed → OBRIGATÓRIO
+;;   Não serve para live: o writer da JVM usa endpoint com CAS atômico.
 (require '[datomic.client.api :as d]
          '[odisseu.persistence.datomic :as persistence]
          '[pokemon.domain.growth :as growth]
@@ -11,6 +13,9 @@
          '[clojure.edn :as edn]
          '[clojure.string :as str])
 
+(when-not (= "confirmed" (System/getenv "A6_RECONCILIATION_ISOLATED_RESTORE"))
+  (throw (ex-info "Script limitado a restore isolado. Live usa writer JVM."
+                  {:code :isolated-restore-required})))
 (def evid (or (System/getenv "A6_EVID") "/tmp/flat9-recon-evid"))
 (.mkdirs (io/file evid))
 (def dry-run? (= "1" (or (System/getenv "A6_RECON_DRY_RUN") "0")))
@@ -21,10 +26,22 @@
 (def manifest (edn/read-string (slurp manifest-path)))
 (def entries (vec (:entries manifest)))
 
-(def client (persistence/client {:system (or (System/getenv "ODISSEU_BRIDGE_SYSTEM") "odisseu-m90-core")
-                                 :storage-dir (or (System/getenv "ODISSEU_BRIDGE_STORAGE") "/data/datomic-local")
+(def storage (System/getenv "ODISSEU_BRIDGE_STORAGE"))
+(when (or (str/blank? storage)
+          (not (.isDirectory (io/file storage)))
+          (re-find #"(?i)^/data/datomic-local/?$" storage))
+  (throw (ex-info "Explicit isolated Datomic storage path required"
+                  {:code :isolated-storage-required})))
+(def db-name (System/getenv "ODISSEU_BRIDGE_DB"))
+(when (str/blank? db-name)
+  (throw (ex-info "Explicit existing isolated DB name required" {})))
+(def client (persistence/client {:system (or (System/getenv "ODISSEU_BRIDGE_SYSTEM")
+                                             "odisseu-m90-core")
+                                 :storage-dir storage
                                  :maintenance-control? true}))
-(def conn (persistence/ensure-db! client (or (System/getenv "ODISSEU_BRIDGE_DB") "core")))
+(when-not (contains? (set (d/list-databases client {})) db-name)
+  (throw (ex-info "DB missing: never create during reconcile rehearsal" {})))
+(def conn (d/connect client {:db-name db-name}))
 
 (defn pull-poke [db id]
   (let [e (ffirst (d/q '[:find ?e :in $ ?id :where [?e :pokemon/id-pokemon ?id]] db id))]
@@ -137,14 +154,16 @@
    :results results})
 
 (spit (io/file evid "recon-apply-summary.edn") (pr-str summary))
-(println "RECON_APPLY_OK")
+(println (if (or (some #(#{:error :blocked} (:status %)) results)
+                 (pos? (:level-changes summary)))
+           "RECON_APPLY_BLOCKED" "RECON_APPLY_OK"))
 (prn (dissoc summary :results))
 (doseq [r results]
   (println (pr-str r)))
 (when (pos? (:level-changes summary))
   (println "FAIL level changes")
   (System/exit 2))
-(when (some #(= :error (:status %)) results)
+(when (some #(#{:error :blocked} (:status %)) results)
   (println "FAIL errors present")
   (System/exit 3))
 (System/exit 0)

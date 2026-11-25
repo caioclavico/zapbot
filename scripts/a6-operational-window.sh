@@ -88,6 +88,12 @@ if [[ ! -t 0 ]]; then
   exit 2
 fi
 
+# PR #136: no fallback to old unguarded runner; enforce explicit combined release.
+if [[ "${A6_V3_SINGLE_CUTOVER:-}" != "a6-v3-raid-auto-136" || -z "${A6_V3_REHEARSAL_REPORT:-}" ]]; then
+  echo "v3_single_cutover_protocol_required" >&2
+  exit 2
+fi
+
 if [[ "${A6_HOLD_STORE:-}" != "github" ]]; then
   echo "hold_store_required" >&2
   exit 2

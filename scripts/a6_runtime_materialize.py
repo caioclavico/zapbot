@@ -14,6 +14,7 @@ import tempfile
 
 from a6_production_contract import JVM_ENV_KEYS, NODE_ENV_KEYS
 from a6_production_deploy import DeployError
+from a6_v3_release_gate import POKEMON_ID, RELEASE_MODE
 
 ENV_PLACEHOLDER = '<inspect-ao-vivo-sem-log>'
 SECCOMP_PLACEHOLDER = '<seccomp-copiado-do-inspect-sem-log>'
@@ -39,8 +40,9 @@ def _tmpfs(path):
 
 
 class Materializer:
-    def __init__(self, prefix, root='/dev/shm', profiles=None):
+    def __init__(self, prefix, root='/dev/shm', profiles=None, v3_release=False):
         self.prefix = list(prefix)
+        self.v3_release = v3_release is True
         self.root = Path(root) / ('odisseu-a6-runtime-' + str(os.geteuid()))
         self.profiles = profiles or {}
         self.lock = None
@@ -148,6 +150,16 @@ class Materializer:
             raise DeployError('runtime_not_prepared')
         doc = self._inspect(service)
         env = self._environment(service, doc)
+        if service == 'jvm' and self.v3_release:
+            # Only the JVM is allowed to receive release flags. All other
+            # existing tokens and variables remain untouched, never logged.
+            overrides = {
+                'POKEMON_PROGRESSIVE_XP_V3': 'true',
+                'A6_V3_RECONCILIATION_ENABLED': 'true',
+                'A6_V3_RECONCILIATION_ALLOWED_ID': POKEMON_ID,
+            }
+            env = [item for item in env if item.split('=', 1)[0] not in overrides]
+            env += [key + '=' + val for key, val in overrides.items()]
         seccomp = self._seccomp(service, doc)
         if argv.count(ENV_PLACEHOLDER) != 1:
             raise DeployError('environment_placeholder_invalid')

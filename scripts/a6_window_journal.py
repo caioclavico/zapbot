@@ -244,6 +244,11 @@ class WindowJournal:
         steps = self.data.setdefault("steps", [])
         if name not in steps:
             steps.append(name)
+        if name == "v3_release_gate" and item.get("verified") is True:
+            self.data["v3ReleaseEvidence"] = {
+                key: item[key] for key in ("verified", "receiptId", "pokemonCount",
+                                          "protectedSha256", "rehearsalManifestSha256")
+            }
         self.data["lastCompleted"] = name
         self._event("step", name)
         self._persist()
@@ -261,12 +266,35 @@ class WindowJournal:
         self._persist()
 
     def resolve(self, resolution, **detail):
-        """Fecha uma intenção antiga depois de observar a VM na retomada."""
+        """Close a pending intention only after observing its state.
+
+        For a committed XP v3 CAS the receipt, evidence and completed gate
+        step must be written in the SAME atomic journal replacement. A crash
+        during this update leaves the old pending intention recoverable.
+        """
         if self.broken:
             raise DeployError("checkpoint_write_failed")
         pending = self.data.get("pending")
+        if resolution == "v3_receipt_observed":
+            if not isinstance(pending, dict) or pending.get("op") != "v3_release_reconcile":
+                raise DeployError("checkpoint_sequence_mismatch")
+            evidence = detail.get("v3ReleaseEvidence")
+            if (not isinstance(evidence, dict) or evidence.get("verified") is not True
+                    or not isinstance(evidence.get("receiptId"), str)
+                    or not isinstance(evidence.get("protectedSha256"), str)
+                    or not isinstance(evidence.get("pokemonCount"), int)
+                    or evidence["pokemonCount"] < 1
+                    or not isinstance(evidence.get("rehearsalManifestSha256"), str)):
+                raise DeployError("checkpoint_indeterminate")
+            steps = self.data.setdefault("steps", [])
+            if not steps or steps[-1] != "validate_whatsapp":
+                raise DeployError("checkpoint_sequence_mismatch")
+            steps.append("v3_release_gate")
+            self.data["v3ReleaseEvidence"] = dict(evidence)
+            self.data["lastCompleted"] = "v3_release_gate"
         self.data["pending"] = None
-        self._event("reconciled", (pending or {}).get("op"), resolution=resolution, **detail)
+        self._event("reconciled", (pending or {}).get("op"), resolution=resolution,
+                    receiptVerified=(resolution == "v3_receipt_observed"))
         self._persist()
 
 
