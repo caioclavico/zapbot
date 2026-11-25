@@ -289,3 +289,17 @@
                                {"slug" "choque-de-ondas" "tipo" "water"}))))
   (is (= "shock-wave" (:slug (battle/golpe-normalizado
                                {:slug "shock-wave" :nome-exibicao "Choque de Ondas"})))))
+
+(deftest recoil-uses-hp-actually-lost-and-does-not-apply-on-a-miss
+  (let [golpe {:slug "wave-crash" :tipo "water" :poder 120 :classe :fisico}
+        x (mon "Atacante" ["water"] [golpe])
+        alvo (assoc (mon "Alvo" ["normal"] [{:slug "splash" :poder 0 :classe :status}])
+                    :hp 10 :hp-atual 10 :item "faixa-foco")
+        hit (agir (batalha x alvo) 0 {})]
+    (is (= 1 (get-in hit [:hp :o])))
+    (is (= 158 (get-in hit [:last-action :hp-atk-depois])))
+    (is (re-find #"2 HP de recuo" (get-in hit [:last-action :mensagem])))
+    (let [miss (agir (batalha (assoc-in x [:golpes 0 :precisao] 1) alvo)
+                     0 {:accuracy 99})]
+      (is (= 160 (get-in miss [:last-action :hp-atk-depois])))
+      (is (not (re-find #"HP de recuo" (get-in miss [:last-action :mensagem])))))))

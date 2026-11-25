@@ -1,8 +1,10 @@
 (ns pokemon.tests.raid-counter-selection-a6-test
   "Seleção auto de counter em raid — tipagem, imunidade, revide, fallback."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.edn :as edn]
+            [clojure.test :refer [deftest is testing]]
             [pokemon.domain.raid-boss :as boss]
-            [pokemon.domain.raid-counter-selection :as sel]))
+            [pokemon.domain.raid-counter-selection :as sel]
+            [pokemon.infrastructure.datomic.raid-store :as raid-store]))
 
 (defn- mon
   [{:keys [idx tipos hp-atual hp nivel golpes ataque defesa atq-esp def-esp raridade]
@@ -152,6 +154,30 @@
     (is (= (sel/combat-score raid p) (sel/combat-score raid p)))
     (is (pos? (:combat-score (sel/score-breakdown raid p))))))
 
+(deftest score-considera-precisao-acertos-e-turnos-especiais
+  (let [raid {:chefe {:tipos ["water"]} :hp-chefe 1000 :defesa 70 :def-esp 70}
+        p (mon {:idx 0 :hp 100 :hp-atual 100 :atq-esp 70 :golpes [golpe-eletrico]})
+        dano #(sel/expected-dano-vs-chefe %1 %2 raid)
+        seguro (assoc golpe-eletrico :precisao 100)
+        base (dano seguro p)]
+    (is (= (* base 0.5) (dano (assoc seguro :precisao 50) p)))
+    (is (= (* base 3.1) (dano (assoc seguro :min-acertos 2 :max-acertos 5) p)))
+    (is (= (* base 0.4) (dano (assoc seguro :familia :preparacao) p)))
+    (is (zero? (dano (assoc seguro :familia :preparacao) (assoc p :hp-atual 20))))
+    (is (= (* base 0.6) (dano (assoc seguro :familia :recarga) p)))
+    (is (= (* base 0.2) (dano (assoc seguro :autodesmaio true) p)))
+    (is (zero? (sel/expected-dano-vs-chefe
+                (assoc seguro :tipo "normal") p
+                (assoc-in raid [:chefe :tipos] ["ghost"]))))))
+
+(deftest score-prioriza-golpe-real-com-multiplos-acertos
+  (let [raid (raid-chefe {:tipos ["water"]})
+        simples (mon {:idx 0 :tipos ["grass"] :golpes [golpe-grama]})
+        multiplo (mon {:idx 1 :tipos ["grass"]
+                       :golpes [{:slug "bullet-seed" :tipo "grass" :poder 25
+                                 :classe :especial}]})]
+    (is (= 1 (pick raid [simples multiplo])))))
+
 (deftest relatório-old-vs-new-agua
   (let [raid (raid-chefe {:tipos ["water"] :golpes [golpe-agua]})
         tank (mon {:idx 0 :tipos ["normal"] :nivel 50 :raridade "lendario"
@@ -189,8 +215,10 @@
         "Desempate estável pelo menor índice")))
 (deftest politoed-prefere-dano-efetivo-mesmo-com-menos-hp
   (let [politoed (some #(when (= "politoed" (:species %)) %) (:species (boss/catalog)))
-        raid {:chefe (assoc politoed :golpes [golpe-agua] :def-esp 100)
-              :fase "inscricoes" :origem "auto" :hp-chefe 0 :hp-max 0}
+        raid (raid-store/raid->map
+              {:raid/id "fixture" :raid/fase "inscricoes" :raid/origem "auto"
+               :raid/chefe-edn (pr-str (assoc politoed :golpes [golpe-agua] :def-esp 100))}
+              [] {} #(when % (edn/read-string %)) some?)
         blastoise (assoc (mon {:idx 0 :hp 280 :hp-atual 280 :atq-esp 140
                                :tipos ["water"] :golpes [golpe-agua]})
                         :species "blastoise")

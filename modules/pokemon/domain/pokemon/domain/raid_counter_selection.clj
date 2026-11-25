@@ -71,12 +71,36 @@
        (mapv #(move-effects/enriquecer (battle/golpe-normalizado %)))
        (filterv golpe-ofensivo?)))
 
+(defn- revide-por-turno
+  [pokemon]
+  (let [max-hp (long (or (:hp pokemon) (get pokemon "hp") 100))]
+    (max 1 (long (Math/ceil (/ (double max-hp) 5.0))))))
+
 (defn expected-dano-vs-chefe
-  "Dano esperado de um golpe (variação 100%, precisão quando existir)."
+  "Dano esperado por ação, considerando precisão, acertos e turnos especiais da raid."
   [golpe pokemon raid-ctx]
   (let [calc (raid-domain/calcular-dano golpe pokemon raid-ctx score-rng)
-        dano (long (or (:dano calc) 0))]
-    (* dano (precisao-efetiva golpe))))
+        dano (long (or (:dano calc) 0))
+        lo (long (if (:max-acertos golpe) (or (:min-acertos golpe) 1) 1))
+        hi (long (or (:max-acertos golpe) 1))
+        acertos (if (= [lo hi] [2 5]) 3.1 (/ (+ lo hi) 2.0))
+        chance (precisao-efetiva golpe)
+        familia (:familia golpe)
+        hp (long (or (:hp-atual pokemon) (:hp pokemon) 0))
+        turnos (max 1 (long (Math/ceil (/ (double hp) (double (revide-por-turno pokemon))))))
+        hits (cond
+               (zero? dano) 0.0
+               ;; O segundo turno de carga em raid não verifica precisão.
+               (= :preparacao familia) (double (quot turnos 2))
+               (:autodesmaio golpe) (- 1.0 (Math/pow (- 1.0 chance) turnos))
+               ;; Recarga só acontece após um acerto que causa dano.
+               (= :recarga familia)
+               (let [d (+ 1.0 chance)]
+                 (+ (* (/ chance d) turnos)
+                    (* (/ (* chance chance) (* d d))
+                       (- 1.0 (Math/pow (- chance) turnos)))))
+               :else (* chance turnos))]
+    (/ (* dano acertos hits) turnos)))
 
 (defn- calcular-dano-chefe-vs-mon
   "Espelha a fórmula de raid com papéis invertidos (ameaça defensiva)."
@@ -99,11 +123,6 @@
       (zero? (double mult)) 0
       (pos? com-tipo) com-tipo
       :else 1)))
-
-(defn- revide-por-turno
-  [pokemon]
-  (let [max-hp (long (or (:hp pokemon) (get pokemon "hp") 100))]
-    (max 1 (long (Math/ceil (/ (double max-hp) 5.0))))))
 
 (defn legacy-auto-score
   "Critério antigo (soma stats + melhor poder) — só para comparação em testes/docs."
