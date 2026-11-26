@@ -341,6 +341,7 @@
 
     (contains? #{"/ops/maintenance/a6-v3-xp-preview"
                  "/ops/maintenance/a6-v3-xp-audit"
+                 "/ops/maintenance/a6-v3-xp-post-audit"
                  "/ops/maintenance/a6-v3-xp-reconcile"} path)
     (if (and conn
              (= "true" (some-> (System/getenv "A6_V3_RECONCILIATION_ENABLED")
@@ -368,6 +369,14 @@
                   (require-method! ex #{"GET"})
                   (require-empty-body! ex)
                   (ok! ex (xp-reconciliation/audit
+                           conn (get qs "pokemonId")
+                           (System/getenv "A6_V3_RECONCILIATION_ALLOWED_ID"))))
+
+                (= path "/ops/maintenance/a6-v3-xp-post-audit")
+                (do
+                  (require-method! ex #{"GET"})
+                  (require-empty-body! ex)
+                  (ok! ex (xp-reconciliation/audit-post-v3
                            conn (get qs "pokemonId")
                            (System/getenv "A6_V3_RECONCILIATION_ALLOWED_ID"))))
 

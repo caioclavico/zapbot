@@ -318,3 +318,103 @@
      :reconciliationReceiptVerified (boolean finalized?)
      :targetLevel (some-> target :nivel)
      :targetResidual (some-> target :xp-desde-nivel)}))
+
+(defn- historical-receipt-valid? [db prior pokemon-id]
+  (let [summary (try
+                  (edn/read-string (:operation-receipt/summary prior))
+                  (catch Exception _ nil))
+        receipt-attrs [:operation-receipt/id :operation-receipt/kind
+                       :operation-receipt/channel :operation-receipt/payload-hash
+                       :operation-receipt/summary]
+        history-retained? (every? (fn [attr]
+                                    (let [schema (d/pull db '[:db/ident :db/noHistory] attr)]
+                                      (and (:db/ident schema) (not (:db/noHistory schema)))))
+                                  receipt-attrs)
+        unique-id? (seq (d/q '[:find ?u
+                               :where
+                               [:operation-receipt/id :db/unique ?u]
+                               [?u :db/ident :db.unique/value]]
+                             db))
+        history (when (:db/id prior)
+                  (d/q '[:find ?tx ?added
+                         :in $ ?e
+                         :where [?e _ _ ?tx ?added]]
+                       (d/history db) (:db/id prior)))]
+    (and (:db/id prior)
+         history-retained?
+         unique-id?
+         (= 1 (count history))
+         (true? (second (first history)))
+         (= "flat9-compensation-v3" (:operation-receipt/kind prior))
+         (= "maintenance" (:operation-receipt/channel prior))
+         (= (payload-hash pokemon-id) (:operation-receipt/payload-hash prior))
+         (= pokemon-id (:pokemon-id summary))
+         (= fixed-origin (:policy summary))
+         (= fixed-level (:level-before summary) (:level-after summary))
+         (= fixed-raw (:raw-xp-before summary))
+         (= fixed-target (:residual-after summary))
+         (string? (:snapshot-sha256 summary))
+         (boolean (re-matches #"[0-9a-f]{64}" (:snapshot-sha256 summary))))))
+
+(defn- post-v3-result [r]
+  (let [result (audit-result r)]
+    (if (and (= :ok (:status result))
+             (= growth/progressive-progress-version (:xp-progress-version r))
+             (not (and (some? (:xp r))
+                       (some? (:xp-desde-nivel r))
+                       (some? (:xp-total r))
+                       (= (:xp r) (:xp-desde-nivel r))
+                       (= (:xp-total r)
+                          (growth/progressive-synthetic-total
+                           (:nivel r) (:xp-desde-nivel r))))))
+      {:status :blocked :reason :partial-v3-progress}
+      result)))
+
+(defn audit-post-v3
+  "Auditoria somente de leitura para uma atualização após a ativação do XP v3.
+   O recibo histórico é validado sem exigir que o Pokémon tenha parado no
+   nível ou XP da compensação. O fingerprint inclui o recibo e todos os campos
+   de XP; deve ser comparado com uma leitura independente do T0 isolado."
+  [conn pokemon-id allowed-id]
+  (ensure-id! pokemon-id allowed-id)
+  (let [db (d/db conn)
+        schema-valid? (every? #(some? (:db/ident (d/pull db '[:db/ident] %)))
+                              [:player/key :save/key :save/coins :pokemon/key :pokemon/save
+                               :pokemon/id-pokemon
+                               :pokemon/xp :pokemon/xp-desde-nivel :pokemon/xp-total
+                               :pokemon/xp-progress-version :pokemon/xp-legacy-residual
+                               :pokemon/xp-legacy-nivel :egg/id :egg/incubator-id
+                               :inventory-item/save :operation-receipt/id])
+        ids (map first (d/q '[:find ?e :where [?e :pokemon/id-pokemon]] db))
+        pokemon-keys (set (map first (d/q '[:find ?e :where [?e :pokemon/key]] db)))
+        linked-pokemon (set (map first (d/q '[:find ?p
+                                              :where [?p :pokemon/id-pokemon]
+                                                     [?p :pokemon/save ?s]
+                                                     [?s :save/key]]
+                                            db)))
+        identities-valid? (= (set ids) pokemon-keys linked-pokemon)
+        rows (->> ids (map #(audit-reg (d/pull db audit-projection %))) vec)
+        blocked (->> rows (map post-v3-result) (filter #(= :blocked (:status %))) vec)
+        prior (receipt db (op-id pokemon-id))
+        target (read-one db pokemon-id)
+        receipt-valid? (boolean (historical-receipt-valid? db prior pokemon-id))
+        provenance-valid? (and (:db/id target)
+                               (= fixed-raw (:pokemon/xp-legacy-residual target))
+                               (= fixed-level (:pokemon/xp-legacy-nivel target)))]
+    {:status (if (and schema-valid? identities-valid? (seq rows) (empty? blocked)
+                      receipt-valid? provenance-valid?) "PASS" "BLOCKED")
+     :blocked (count blocked)
+     :blockedReasons (frequencies (map (comp name :reason) blocked))
+     :requiredSchemaVerified (boolean schema-valid?)
+     :pokemonIdentityVerified (boolean identities-valid?)
+     :historicalReceiptVerified receipt-valid?
+     :historicalProvenanceVerified (boolean provenance-valid?)
+     :playerCount (max (count-attr db :player/key) (count-attr db :trainer/player-id))
+     :saveCount (count-attr db :save/key)
+     :pokemonCount (count rows)
+     :eggCount (count-attr db :egg/id)
+     :incubatorCount (count-attr db :egg/incubator-id)
+     :inventoryCount (count-attr db :inventory-item/save)
+     :coinsTotal (sum-attr db :save/coins)
+     :receiptCount (count-attr db :operation-receipt/id)
+     :fullSha256 (protected-fingerprint db nil nil)}))

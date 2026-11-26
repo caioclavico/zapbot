@@ -19,12 +19,25 @@ from a6_production_deploy import DeployError
 
 RELEASE_MODE = "a6-v3-raid-auto-136"
 RELEASE_ENV = "A6_V3_SINGLE_CUTOVER"
+PROTOCOL_ENV = "A6_V3_PROTOCOL"
+INITIAL_V3_ACTIVATION = "INITIAL_V3_ACTIVATION"
+POST_V3_UPGRADE = "POST_V3_UPGRADE"
 POKEMON_ID = "abb8955f-7ebe-4084-a634-fd74cfa9bf62"
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 RECEIPT_ID = "a6-v3-charmander-compensation:" + POKEMON_ID + ":v1"
 
 
 def release_mode(env, isolated_root):
+    protocol = env.get(PROTOCOL_ENV)
+    if protocol not in (None, INITIAL_V3_ACTIVATION, POST_V3_UPGRADE):
+        raise DeployError("v3_protocol_invalid")
+    if protocol == POST_V3_UPGRADE:
+        if env.get(RELEASE_ENV):
+            raise DeployError("v3_protocol_ambiguous")
+        # A local audit is not proof of the T0 produced by this window.
+        raise DeployError("post_v3_t0_audit_not_integrated")
+    if protocol == INITIAL_V3_ACTIVATION and env.get(RELEASE_ENV) != RELEASE_MODE:
+        raise DeployError("v3_single_cutover_protocol_required")
     # This temporary RC runner must never use the old unguarded live window.
     if isolated_root is None and env.get(RELEASE_ENV) != RELEASE_MODE:
         raise DeployError("v3_single_cutover_protocol_required")
