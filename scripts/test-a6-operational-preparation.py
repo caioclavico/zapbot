@@ -12,10 +12,19 @@ from a6_capacity import budget
 from a6_image_transfer import validate_artifacts, runtime_contract, image_storage_bytes
 from a6_production_deploy import DeployError, image_tag
 import a6_post_v3_backup as post
+from a6_maintenance_ops import request_timeout_ms
 from types import SimpleNamespace
 
 
 class PreparationTests(unittest.TestCase):
+    def test_transport_deadline_does_not_abort_a_legitimate_drain(self):
+        for server_deadline in (30000, 60000, 900000):
+            self.assertGreater(request_timeout_ms(
+                "/ops/maintenance/enter?timeoutMs=" + str(server_deadline)), server_deadline)
+        self.assertLess(request_timeout_ms("/ops/maintenance/status"), 30000)
+        with self.assertRaises(DeployError):
+            request_timeout_ms("/ops/maintenance/enter?timeoutMs=unknown")
+
     def test_capacity_includes_expanded_oci_layers_not_only_docker_size(self):
         with tempfile.TemporaryDirectory() as temporary:
             archive = Path(temporary) / "image.tar"

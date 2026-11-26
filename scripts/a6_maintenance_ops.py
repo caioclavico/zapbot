@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import parse_qs, urlsplit
 
 from a6_production_deploy import DeployError
 
@@ -29,6 +30,16 @@ TIMEOUT_MS = "30000"
 HTTP_TIMEOUT_MS = 15000
 
 
+def request_timeout_ms(path):
+    url = urlsplit(path)
+    if url.path != "/ops/maintenance/enter":
+        return HTTP_TIMEOUT_MS
+    values = parse_qs(url.query).get("timeoutMs", [TIMEOUT_MS])
+    if len(values) != 1 or not values[0].isdigit():
+        raise DeployError("maintenance_command_refused")
+    return max(HTTP_TIMEOUT_MS, min(900000, int(values[0])) + 5000)
+
+
 def _curl_script(method, path, header, env_name, port):
     """curl no JVM: aspas duplas no header para o sh expandir $ENV.
 
@@ -39,7 +50,9 @@ def _curl_script(method, path, header, env_name, port):
         if '"' in part or "'" in part or "\n" in part or "\r" in part or not part:
             raise DeployError("maintenance_command_refused")
     return (
-        "curl -sS --connect-timeout 5 --max-time 15 -w '\\n%{http_code}' -X "
+        "curl -sS --connect-timeout 5 --max-time "
+        + str((request_timeout_ms(path) + 999) // 1000)
+        + " -w '\\n%{http_code}' -X "
         + method
         + " -H \""
         + header
@@ -75,7 +88,7 @@ def _node_http_script(method, path, header, env_name, port):
         + "method:"
         + json.dumps(method)
         + ","
-        + "signal:AbortSignal.timeout(" + str(HTTP_TIMEOUT_MS) + "),"
+        + "signal:AbortSignal.timeout(" + str(request_timeout_ms(path)) + "),"
         + "headers:{"
         + json.dumps(header)
         + ":process.env."
@@ -83,7 +96,7 @@ def _node_http_script(method, path, header, env_name, port):
         + "}"
         + "},function(res){var d=\"\";res.on(\"data\",function(c){d+=c});"
         + "res.on(\"end\",function(){process.stdout.write(d+\"\\n\"+res.statusCode)})});"
-        +         "req.setTimeout(" + str(HTTP_TIMEOUT_MS) + ",function(){req.destroy(new Error(\"timeout\"))});"
+        +         "req.setTimeout(" + str(request_timeout_ms(path)) + ",function(){req.destroy(new Error(\"timeout\"))});"
         "req.on(\"error\",function(){console.error(\"maintenance_http_failed\");process.exit(1)});"
         + "req.end()'"
     )

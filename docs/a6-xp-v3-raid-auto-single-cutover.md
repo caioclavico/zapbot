@@ -391,6 +391,8 @@ Não remover ou sobrescrever automaticamente. Na retomada, só aceitar o
 container original identificado pelo checkpoint da mesma janela.
 
 O HTTP Node usa a API nativa Node 22 com prazo absoluto e timeout de socket;
+status tem prazo de 15 s; enter reserva o prazo de drain mais 5 s, para não
+interromper prematuramente um drain legítimo de 30 s (limite de 900 s).
 JVM conserva curl com timeout. Tokens vêm do ambiente do próprio container,
 nunca dos argumentos Python/logs. Status não-200, JSON inválido ou envelope
 JVM inválido bloqueiam. O ensaio com ambas as imagens roda os endpoints
