@@ -13,12 +13,7 @@ installer="$test_root/installer"
 install -d -o root -g root -m 0700 "$installer"
 install -o root -g root -m 0700 /work/scripts/a6-provision-admin.sh "$installer/a6-provision-admin.sh"
 install -o root -g root -m 0600 /work/scripts/a6_validate_admin_bundle.py "$installer/a6_validate_admin_bundle.py"
-tar --format=ustar -C /work/scripts -cf "$test_root/admin.tar" \
-  a6-root-backup a6_root_backup.py a6_production_backup.py a6_production_contract.py a6_post_v3_backup.py a6_post_v3_restore_audit.clj \
-  a6_production_deploy.py a6_mount_policy.py a6_writer_policy.py
-tar --format=ustar -C /work/modules/pokemon/infrastructure/pokemon/infrastructure/datomic \
-  -rf "$test_root/admin.tar" xp_reconciliation.clj
-tar --format=ustar -C /work/docker -rf "$test_root/admin.tar" chromium-seccomp.json
+PYTHONPATH=/work/scripts python3 -c "from a6_build_admin_bundle import build; build('$test_root', 'a' * 40)"
 bundle_sha="$(sha256sum "$test_root/admin.tar" | awk '{print $1}')"
 A6_ADMIN_BUNDLE="$test_root/admin.tar" A6_ADMIN_BUNDLE_SHA256="$bundle_sha" \
   A6_NODE_SECCOMP_SHA256="$(sha256sum /work/docker/chromium-seccomp.json | awk '{print $1}')" \
@@ -41,7 +36,8 @@ printf '{"files":1,"manifestSha256":"%s","restoreIsolated":true,"sourcePreserved
 chmod 0600 /var/backups/odisseu-a6/fixture/backup-attestation.json
 su -s /bin/sh caioclavico -c 'PYTHONPATH=/work/scripts python3 -c "from a6_admin_backup_client import status; assert status(\"/var/backups/odisseu-a6/fixture/data\")[\"files\"] == 1"'
 test "$(stat -c '%U:%G %a' /usr/local/libexec/odisseu-a6/a6-root-backup)" = 'root:root 755'
-test "$(stat -c '%U:%G %a' /usr/local/lib/odisseu-a6/a6_root_backup.py)" = 'root:root 644'
+generation="$(readlink -f /usr/local/lib/odisseu-a6/current)"
+test "$(stat -c '%U:%G %a' "$generation/a6_root_backup.py")" = 'root:root 644'
 test "$(stat -c '%U:%G %a' /var/backups/odisseu-a6)" = 'root:root 700'
 test "$(stat -c '%U:%G %a' /etc/odisseu-a6/chromium-seccomp.json)" = 'root:root 644'
 install -d -o root -g root -m 0700 /var/backups/odisseu-a6/probe
@@ -53,3 +49,4 @@ fi
 if su -s /bin/sh caioclavico -c 'sudo -n /work/scripts/a6-root-backup --preflight fixture' 2>/dev/null; then
   echo 'checkout gravável foi autorizado como root' >&2; exit 1
 fi
+python3 /work/scripts/test-a6-admin-installation.py

@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import a6_post_v3_backup as backup
 import a6_supervised_deploy as ops
+from a6_container_residues import FORMAT, IMAGE_FORMAT
 from a6_operational_window import execute_window, MemoryHold, CONFIRM
 from a6_production_contract import CURRENT
 from a6_production_deploy import DeployError
@@ -41,9 +42,28 @@ class World(lab.World):
         self.calls.append(list(args))
         if self.fault and self.fault(args, self):
             return lab.Result("", 1)
+        if FORMAT in args:
+            name = args[-1]
+            c = self.containers[name]
+            original = next(d for d in self.documents()
+                            if d["Name"] == "/" + name.removesuffix("-previous"))
+            return lab.Result(json.dumps({"id": c.get("id", original["Id"]),
+                "imageId": c["image"], "running": c["running"],
+                "pid": 1 if c["running"] else 0,
+                "status": "running" if c["running"] else "exited",
+                "labels": {"io.odisseu.a6.window-id": c.get("window")}}))
+        if IMAGE_FORMAT in args:
+            return lab.Result(json.dumps({"id": args[-1], "revision": getattr(self, "residue_revision", PLAN["rollbackSha"])}))
         if args[-1:] and "printf post_v3_flags_ok" in args[-1]:
             return lab.Result("post_v3_flags_ok" if self.flags_ok else "", 0 if self.flags_ok else 1)
         return super().runner(args)
+
+    def documents(self):
+        docs = super().documents()
+        if docs:
+            for doc in docs:
+                doc["Id"] = doc["Id"].removeprefix("sha256:")
+        return docs
 
     def _http(self, script):
         if "/a6-v3-xp-post-audit" in script:
@@ -280,6 +300,43 @@ class PostV3RunnerTests(unittest.TestCase):
         report = self.run_window()
         self.assert_safe(report)
         self.assertIn("post_v3_record_invalid", report["blocked"])
+
+    def test_previous_containers_block_before_maintenance_with_resolution_plan(self):
+        for running, origin, revision in ((False, "old-window", "d" * 40),
+                                         (True, "other-window", "d" * 40),
+                                         (False, None, None)):
+            with self.subTest(running=running, origin=origin), tempfile.TemporaryDirectory() as directory:
+                self.root = Path(directory)
+                self.world = World()
+                self.world.residue_revision = revision
+                self.world.containers["odisseu-a6-jvm-previous"] = {
+                    "image": CURRENT["jvm"]["imageId"], "running": running, "window": origin}
+                self.helper = AdministrativeFixture(self.world)
+                self.hold = MemoryHold()
+                report = self.run_window()
+                self.assert_safe(report)
+                self.assertIn("previous_container_requires_resolution", report["blocked"])
+                self.assertTrue(report["residueResolutionPlan"])
+                self.assertFalse(report["residueResolutionPlan"][0]["execute"])
+                text = "\n".join(" ".join(c) for c in self.world.calls)
+                for token in ("/ops/maintenance/enter", " stop ", " rename ", " rm "):
+                    self.assertNotIn(token, " " + text + " ")
+
+    def test_residue_appearing_during_drain_blocks_before_stop(self):
+        original = self.world.runner
+
+        def runner(args):
+            result = original(args)
+            if "/ops/maintenance/enter" in args[-1] and "18090" in args[-1]:
+                self.world.containers["odisseu-a6-node-previous"] = {
+                    "image": CURRENT["node"]["imageId"], "running": False}
+            return result
+
+        with patch.object(self.world, "runner", runner):
+            report = self.run_window()
+        self.assert_safe(report)
+        self.assertTrue(self.world.jvm_running)
+        self.assertIn("previous_container_requires_resolution", report["blocked"])
 
 
 if __name__ == "__main__":
