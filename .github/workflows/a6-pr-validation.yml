@@ -210,6 +210,8 @@ jobs:
       - name: CAS/receipt da compensação Charmander — Datomic descartável
         run: |
           clojure -M -e "(require 'clojure.test 'pokemon.tests.xp-reconciliation-cas-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.xp-reconciliation-cas-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
+      - name: Auditoria pós-v3 em restore frio descartável
+        run: python3 scripts/test-a6-post-v3-restore.py
       - name: Auditor RO v3 carrega sem acessar armazenamento
         run: |
           clojure -M -e '(load-file "scripts/a6_progressive_xp_v3_audit.clj") (assert (resolve (symbol "a6.progressive-xp-v3-audit" "-main")))'

@@ -7,6 +7,7 @@
             [pokemon.application.ports :as ports]
             [pokemon.application.trainer :as trainer]
             [pokemon.application.collection :as collection]
+            [pokemon.domain.growth :as growth]
             [pokemon.infrastructure.datomic.store :as store]
             [pokemon.infrastructure.datomic.xp-reconciliation :as recon]
             [pokemon.infrastructure.http.json :as json]))
@@ -16,7 +17,9 @@
 (defn- seeded []
   (let [uuid (str (java.util.UUID/randomUUID))
         client (persistence/client {:system (str "a6-reconcile-" uuid)
-                                    :storage-dir (str "/tmp/a6-reconcile-" uuid)})
+                                    :storage-dir (str (java.io.File.
+                                                       (System/getProperty "java.io.tmpdir")
+                                                       (str "a6-reconcile-" uuid)))})
         conn (persistence/ensure-db! client "a6-recon")
         st (store/make-store conn)]
     (ports/ensure-schema! st)
@@ -168,3 +171,59 @@
       (is (= (:pokemonCount before) (:pokemonCount after)))
       (is (= (:blocked before) (:blocked after)))
       (is (not= (:protectedSha256 before) (:protectedSha256 after))))))
+
+(deftest post-v3-audit-preserves-history-after-legitimate-progress
+  (let [conn (seeded)
+        preview (recon/preview conn id id)]
+    (is (= "BLOCKED" (:status (recon/audit-post-v3 conn id id))))
+    (recon/reconcile! conn id id (:snapshot-sha256 preview))
+    (d/transact conn {:tx-data [[:db/add [:pokemon/id-pokemon id] :pokemon/level 7]
+                                [:db/add [:pokemon/id-pokemon id] :pokemon/xp 3]
+                                [:db/add [:pokemon/id-pokemon id] :pokemon/xp-desde-nivel 3]
+                                [:db/add [:pokemon/id-pokemon id] :pokemon/xp-total
+                                 (growth/progressive-synthetic-total 7 3)]
+                                [:db/add [:pokemon/id-pokemon id] :pokemon/xp-progress-version
+                                 growth/progressive-progress-version]]})
+    (let [before (pokemon conn)
+          r (receipt conn)
+          audit (recon/audit-post-v3 conn id id)]
+      (is (= "PASS" (:status audit)))
+      (is (true? (:pokemonIdentityVerified audit)))
+      (is (true? (:historicalReceiptVerified audit)))
+      (is (true? (:historicalProvenanceVerified audit)))
+      (is (= audit (recon/audit-post-v3 conn id id)))
+      (is (= before (pokemon conn)))
+      (is (= r (receipt conn))))))
+
+(deftest post-v3-audit-rejects-corruption-and-detects-protected-drift
+  (let [conn (seeded)
+        preview (recon/preview conn id id)
+        _ (recon/reconcile! conn id id (:snapshot-sha256 preview))
+        clean (recon/audit-post-v3 conn id id)
+        original-hash (:operation-receipt/payload-hash (receipt conn))
+        rid [:operation-receipt/id (str "a6-v3-charmander-compensation:" id ":v1")]]
+    (is (= "PASS" (:status clean)))
+    (d/transact conn {:tx-data [[:db/add [:pokemon/id-pokemon id] :pokemon/nickname "changed"]]})
+    (is (not= (:fullSha256 clean) (:fullSha256 (recon/audit-post-v3 conn id id))))
+    (d/transact conn {:tx-data [[:db/add rid :operation-receipt/payload-hash "invalid"]]})
+    (is (false? (:historicalReceiptVerified (recon/audit-post-v3 conn id id))))
+    (is (= "BLOCKED" (:status (recon/audit-post-v3 conn id id))))
+    (d/transact conn {:tx-data [[:db/add rid :operation-receipt/payload-hash original-hash]]})
+    (is (false? (:historicalReceiptVerified (recon/audit-post-v3 conn id id))))))
+
+(deftest post-v3-audit-rejects-partially-converted-progress
+  (let [conn (seeded)
+        preview (recon/preview conn id id)]
+    (recon/reconcile! conn id id (:snapshot-sha256 preview))
+    (d/transact conn {:tx-data [[:db/add [:pokemon/id-pokemon id] :pokemon/xp-progress-version
+                                growth/progressive-progress-version]
+                               [:db/add [:pokemon/id-pokemon id] :pokemon/xp 2]
+                               [:db/add [:pokemon/id-pokemon id] :pokemon/xp-desde-nivel 3]]})
+    (let [audit (recon/audit-post-v3 conn id id)]
+      (is (= "BLOCKED" (:status audit)))
+      (is (= 1 (get (:blockedReasons audit) "partial-v3-progress"))))
+    (d/transact conn {:tx-data [[:db/retract [:pokemon/id-pokemon id]
+                                :pokemon/id-pokemon id]]})
+    (let [audit (recon/audit-post-v3 conn id id)]
+      (is (= "BLOCKED" (:status audit)))
+      (is (false? (:pokemonIdentityVerified audit))))))
