@@ -170,8 +170,11 @@ resulta em `BLOCKED`; essa consulta não reaplica a compensação.
 
 O seletor `A6_V3_PROTOCOL` distingue `INITIAL_V3_ACTIVATION` de
 `POST_V3_UPGRADE`. O primeiro mantém todas as exigências da release #136.
-O segundo é recusado com `post_v3_t0_audit_not_integrated` antes de liberar o
-hold; não é ainda um caminho operacional implementado.
+O segundo entra por `a6_operational_window.py` / `a6-operational-window.sh`
+e é executado por `a6_post_v3_upgrade.py`, com o mesmo diário, lock,
+confirmações e recuperação do HOLD. Não executa preview, CAS, grant, schema
+migration ou backfill histórico. A flag de reconciliação é preservada para
+acesso à rota somente de leitura, mas nenhuma rota de aplicação é chamada.
 
 O helper de backup verifica que o manifesto descreve exatamente todos os
 arquivos do backup e do restore, sem duplicatas, caminhos externos ou links.
@@ -180,8 +183,111 @@ runner registra esse hash com janela, revisão e digests no diário e o confere
 novamente ao retomar com a JVM substituída. Uma cópia preexistente sem etapa
 de backup da mesma janela é recusada. Helpers antigos sem o novo hash continuam
 compatíveis com o protocolo inicial, mas **não são evidência para pós-v3**.
-Instalar o helper atualizado requer provisionamento administrativo revisado;
-nenhuma instalação é realizada por este PR ou pela CI.
+Instalar o helper atualizado em produção requer provisionamento administrativo
+revisado; o teste da CI instala somente em ambiente descartável.
+
+### Autorização e cadeia de prova pós-v3
+
+Antes da janela, o administrador provisiona o bundle revisado e um plano
+root-owned, modo `0600`, em
+`/etc/odisseu-a6/post-v3-windows/<windowId>.json`. O diretório e todos os
+ancestrais não podem ser graváveis pelo operador. A CLI não aceita um caminho
+alternativo. O plano autoriza imagens e código; **não declara que houve
+backup, restore ou auditoria**. Seus campos exatos são:
+
+```json
+{
+  "protocol": "POST_V3_UPGRADE",
+  "windowId": "ID_DA_JANELA",
+  "imageSha": "SHA_COMPLETO_CANDIDATO",
+  "jvmDigest": "sha256:ID_CONFIGURACAO_JVM",
+  "nodeDigest": "sha256:ID_CONFIGURACAO_NODE",
+  "rollbackSha": "SHA_COMPLETO_ROLLBACK_V3",
+  "rollbackJvmDigest": "sha256:ID_CONFIGURACAO_JVM_ROLLBACK",
+  "rollbackNodeDigest": "sha256:ID_CONFIGURACAO_NODE_ROLLBACK",
+  "auditCodeSha256": "HASH_DO_MAPA_DE_HASHES_DO_CODIGO",
+  "system": "SYSTEM_Datomic_DA_VM",
+  "database": "DB_POKEMON_DA_VM"
+}
+```
+
+`auditCodeSha256` é SHA-256 do JSON canônico (chaves ordenadas, sem espaços)
+do mapa `{"a6_post_v3_restore_audit.clj": "<hash>", "xp_reconciliation.clj": "<hash>"}`.
+O bundle inclui o auditor e **o arquivo original** de reconciliação do
+namespace Datomic, não uma implementação duplicada. O administrador verifica
+esses hashes, o SHA autorizado e os IDs das imagens independentemente antes
+de instalar o plano. Os campos `*Digest` seguem o contrato existente do runner:
+IDs de configuração Docker locais, não digests de manifesto de registry.
+
+O helper confirma arquitetura amd64, ID exato e label de revisão nas quatro
+imagens. Confere também o hash do código de auditoria existente na imagem
+candidata contra o bundle root-owned. Nenhum arquivo JSON escrito pelo
+operador é aceito como prova.
+
+1. Preflight e confirmações oficiais, com HOLD protegido. O plano deve
+   corresponder exatamente a janela, revisão e imagens do diário.
+2. Manutenção Node, drain JVM, contadores e writer exclusivo. Flags XP v3,
+   seed/reset desligados e RNG de teste desligado são obrigatórios.
+3. O helper registra uma intenção root durável **antes** do T0, vinculando
+   plano e imagens originais. Copia somente com JVM parada e nenhum handle
+   aberto, usando o mecanismo oficial de backup frio.
+4. Manifesto exato, atestação root e restore são revalidados. Backup
+   preexistente sem intenção da janela é recusado. Reutilização exige a
+   mesma origem, sem drift dos arquivos Datomic; só os marcadores oficiais
+   em `.a6-maintenance/` podem variar por uma retomada.
+5. O helper cria duas cópias novas do restore verificado. Executa o auditor
+   root-owned com as JVMs candidata e de rollback, separadamente. O código
+   de progresso carregado é o da respectiva imagem; a política de auditoria
+   é a versão aprovada no bundle. O recibo único e a proveniência no mesmo
+   TX da compensação são conferidos sem exigir nível/XP atuais históricos.
+6. Os processos usam imagens imutáveis, `--pull=never`, rede desativada,
+   filesystem de imagem read-only, capabilities removidas e
+   `no-new-privileges`. Só as cópias são graváveis; não há mount live,
+   socket Docker, sessão WhatsApp ou credencial de produção no auditor.
+   UID 0 **dentro do container sem capabilities** permite usar o Maven
+   prefetched da imagem de rollback; não concede acesso ao host.
+7. Auditorias idênticas e PASS, incluindo todos os datoms atuais (sem
+   `:db/txInstant`), schema, identidades, XP, recibos e contagens protegidas.
+   O helper revalida backup/restore após as auditorias e grava
+   `post-v3-proof.json` root-only, com janela, manifesto, revisão, imagens,
+   código, fingerprint e hash canônico da prova.
+8. O runner registra a mesma prova no diário e só então troca JVM e Node,
+   sem segundo writer. A JVM nova frozen é comparada com o T0, antes da
+   troca Node e novamente antes do resume.
+9. O próprio helper consulta a JVM frozen por HTTP, sem abrir cliente
+   Datomic, confirma imagens/containers e writer exclusivo, compara o
+   fingerprint e grava `post-v3-live-gate.json` root-only. Uma edição de
+   `gateVerified` no diário do operador não substitui essa atestação.
+10. HOLD confirmado `true` antes do resume; saúde, WhatsApp READY e estado
+    aberto são exigidos ao final. READY é observado apenas na janela
+    autorizada, nunca por uma segunda sessão de produção na CI.
+
+Na janela autorizada, usar `A6_V3_PROTOCOL=POST_V3_UPGRADE` e **não** definir
+`A6_V3_SINGLE_CUTOVER`. As demais autorizações/confirmações da entrada oficial
+continuam obrigatórias. Plano ausente, helper antigo ou imagem de rollback
+incapaz de interpretar progresso v3 bloqueiam antes de liberar o HOLD.
+
+### Retomada e rollback pós-v3
+
+Retomar exige o mesmo `windowId`, diário, plano, SHA e imagens. O helper
+revalida a prova root e o manifesto atual em cada tentativa. T0 concluído
+antes do checkpoint é recuperável pela intenção root; restore parcial nunca
+vira sucesso. Uma auditoria interrompida pode ser refeita em outra cópia
+isolada, sem transações nem modificação do restore original.
+
+Containers candidatos existentes, com `-previous` parado e ID de rollback
+correto, são observados e aguardam healthcheck antes de avançar. Interrupções
+em rename/update, observação incompleta ou rollback interrompido exigem
+recuperação explícita; não abrem outra janela nem repetem operações cegamente.
+O HOLD é restaurado mesmo quando a intenção do diário continua pendente.
+
+Falhas de run, contrato, healthcheck ou READY só podem iniciar imagens
+originais que foram auditadas como XP v3-aware, com ID revalidado no momento
+do rollback. **Não há restore automático do T0 sobre o banco live.** Drift
+semântico ou estado ambíguo permanecem em manutenção para recuperação
+explícita. Após resume, a atestação root vincula os mesmos containers e
+imagens; não se exige o fingerprint antigo de um banco que pode ter recebido
+gameplay legítimo. A retomada não repete cutover nem CAS histórico.
 
 O teste `scripts/test-a6-post-v3-restore.py` gera um Datomic descartável,
 encerra a JVM, copia o diretório e compara a auditoria em outra JVM. Isso
@@ -200,13 +306,18 @@ em CI abre o navegador com sandbox em um perfil descartável e sem rede.
 Instanciar `LocalAuth` não autentica uma conta: WhatsApp READY exige uma conta
 de teste isolada e homologação separada, sem usar a sessão de produção.
 
-**A rota não libera o runner.** Ainda falta produzir e autenticar a mesma
-auditoria sobre o restore isolado do T0 **desta** janela e comparar os
-fingerprints antes e depois do cutover, além de integrar a recuperação
-idempotente de uma janela pós-v3 e validar rollback. Um relatório antigo ou
-uma contagem de entidades não substitui essa comparação. Até que esses
-gates sejam implementados e comprovados, deploys posteriores continuam
-`DEPLOY_NO_GO`; não contornar o gate #136 nem preencher evidências manualmente.
+`test-a6-post-v3-runner.py` injeta falhas de manutenção, cutover, saúde e
+READY, além de interrupções antes/depois dos checkpoints; não usa produção.
+`test-a6-post-v3-integration.py`, no job de build JVM, executa o helper root
+real e auditorias Docker reais sobre um Datomic sintético com progresso
+legítimo, ovos, incubadora, inventário e moedas. A revisão de rollback
+`ddc47b0` é construída separadamente. VM, cutover e WhatsApp são simulados
+nesse ensaio; não se declara autenticação WhatsApp ou T0 de produção.
+
+A homologação isolada comprova o mecanismo, não autoriza deploy. O gate
+operacional exige provisionamento revisado, T0 real da janela autorizada,
+writer exclusivo, auditorias/healthchecks reais e READY. Não fazer merge
+ou deploy sem nova autorização expressa; manter `DEPLOY_NO_GO` até a janela.
 
 ## Recuperação após CAS Datomic e falha do diário (PR #136)
 
