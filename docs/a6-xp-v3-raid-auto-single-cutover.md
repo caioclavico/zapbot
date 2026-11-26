@@ -152,6 +152,48 @@ Não considerar esse arquivo uma prova criptográfica independente: o operador d
 **Um PR de release + uma janela operacional + um cutover de Node/JVM.** Os PRs #134 e #135 ficam como origem/revisão e podem ser fechados como incorporados pelo PR de release **somente depois** de a master receber a revisão e de o deploy ser confirmado.
 
 Este documento não declara que a auditoria live, a reconciliação ou o deploy tenham sido executados.
+
+## Preparação para atualizações posteriores ao XP v3
+
+O gate desta primeira ativação é específico da release #136: ele exige o
+registro ainda bloqueado e não deve ser reutilizado para uma atualização
+pós-v3. O Pokémon pode ter evoluído ou recebido XP legítimo depois da
+compensação; nível 6 e residual 8 não são invariantes permanentes.
+
+A rota autenticada e restrita a `frozen`
+`GET /ops/maintenance/a6-v3-xp-post-audit?pokemonId=...` prepara uma auditoria
+sem transações pela conexão do writer. Ela verifica a proveniência do
+Pokémon, o conteúdo e o histórico imutável do recibo, a consistência dos
+registros v3 e calcula `fullSha256` sobre os datoms atuais, incluindo o
+recibo e os campos de XP, exceto `:db/txInstant`. Ausência ou divergência
+resulta em `BLOCKED`; essa consulta não reaplica a compensação.
+
+O seletor `A6_V3_PROTOCOL` distingue `INITIAL_V3_ACTIVATION` de
+`POST_V3_UPGRADE`. O primeiro mantém todas as exigências da release #136.
+O segundo é recusado com `post_v3_t0_audit_not_integrated` antes de liberar o
+hold; não é ainda um caminho operacional implementado.
+
+O teste `scripts/test-a6-post-v3-restore.py` gera um Datomic descartável,
+encerra a JVM, copia o diretório e compara a auditoria em outra JVM. Isso
+comprova a comparação no cenário sintético testado, não a origem de um T0
+de produção. `scripts/a6_post_v3_restore_audit.clj` é uma ferramenta de
+ensaio sobre cópias isoladas, não uma autorização para abrir o volume live.
+Ela não cria banco nem executa transações; o próprio Datomic Local pode
+escrever arquivos internos na cópia, portanto não apontá-la ao backup ou
+ao restore original que o manifesto precisa preservar.
+
+O workflow de build isolado usa o HEAD exato do PR, sem segredos de produção
+nem publicação de imagens. Seus IDs são digests de configuração locais, não
+digests de manifesto de registry nem prova de imagem instalada na VM.
+
+**A rota não libera o runner.** Ainda falta produzir e autenticar a mesma
+auditoria sobre o restore isolado do T0 **desta** janela e comparar os
+fingerprints antes e depois do cutover, além de integrar a recuperação
+idempotente de uma janela pós-v3 e validar rollback. Um relatório antigo ou
+uma contagem de entidades não substitui essa comparação. Até que esses
+gates sejam implementados e comprovados, deploys posteriores continuam
+`DEPLOY_NO_GO`; não contornar o gate #136 nem preencher evidências manualmente.
+
 ## Recuperação após CAS Datomic e falha do diário (PR #136)
 
 A operação v3_release_reconcile é crítica: o Datomic pode ter confirmado
