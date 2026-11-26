@@ -226,13 +226,16 @@ def _audit_image(value, image, restored, work_parent):
                    "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
                    "--user=0:0", "--memory=1g", "--pids-limit=256",
                    "--tmpfs=/tmp:rw,nosuid,nodev,size=256m,mode=1777",
+                   "--workdir=/tmp",
                    "--env=POKEMON_PROGRESSIVE_XP_V3=true",
                    "--mount=type=bind,src=" + str(work) + ",dst=/audit/storage",
                    "--mount=type=bind,src=" + str(CODE_ROOT) + ",dst=/audit,readonly",
-                   "--entrypoint=clojure", image, "-Srepro", "-Sdeps",
-                   '{:paths ["apps/odisseu/src" "shared/persistence/src" '
-                   '"modules/pokemon/domain" "modules/pokemon/infrastructure"]}',
-                   "-Scache", "/tmp/cpcache", "-M", "-e", expression, "--", "/audit/storage", value["system"],
+                   "--entrypoint=sh", image, "-c",
+                   'cp /app/deps.edn ./deps.edn && exec clojure "$@"', "post-v3-audit",
+                   "-Srepro", "-Sdeps",
+                   '{:paths ["/app/apps/odisseu/src" "/app/shared/persistence/src" '
+                   '"/app/modules/pokemon/domain" "/app/modules/pokemon/infrastructure"]}',
+                   "-M", "-e", expression, "--", "/audit/storage", value["system"],
                    value["database"], "abb8955f-7ebe-4084-a634-fd74cfa9bf62"]
         raw = _run(command)
         try:

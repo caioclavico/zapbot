@@ -259,6 +259,28 @@ class PostV3RunnerTests(unittest.TestCase):
         self.assertFalse(report["deployComplete"])
         self.assertIn("post_v3_window_not_authorized", report["blocked"])
 
+    def test_editing_operator_gate_cannot_replace_root_attestation(self):
+        original = WindowJournal.step
+
+        def interrupted(journal, item):
+            original(journal, item)
+            if item.get("step") == "restore_isolated":
+                raise Interrupted()
+
+        with patch.object(WindowJournal, "step", interrupted):
+            with self.assertRaises(Interrupted):
+                self.run_window()
+        journal = load(self.root)
+        journal["postV3"]["gateVerified"] = True
+        journal["postV3"]["liveGate"] = {"verified": True}
+        WindowJournal(self.root, "post-v3-test", {}, data=journal).update()
+        for service, image in (("jvm", lab.JVM_DIGEST), ("node", lab.NODE_DIGEST)):
+            self.world.containers["odisseu-a6-" + service] = {"image": image, "running": True}
+        self.world.jvm_phase = self.world.node_phase = "open"
+        report = self.run_window()
+        self.assert_safe(report)
+        self.assertIn("post_v3_record_invalid", report["blocked"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

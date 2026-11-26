@@ -246,6 +246,9 @@ operador é aceito como prova.
    socket Docker, sessão WhatsApp ou credencial de produção no auditor.
    UID 0 **dentro do container sem capabilities** permite usar o Maven
    prefetched da imagem de rollback; não concede acesso ao host.
+   O launcher copia apenas `deps.edn` da imagem para o tmpfs `/tmp`,
+   onde calcula o cache da CLI; os namespaces continuam vindo de `/app`.
+   Não há escrita no filesystem da imagem nem download de dependências.
 7. Auditorias idênticas e PASS, incluindo todos os datoms atuais (sem
    `:db/txInstant`), schema, identidades, XP, recibos e contagens protegidas.
    O helper revalida backup/restore após as auditorias e grava

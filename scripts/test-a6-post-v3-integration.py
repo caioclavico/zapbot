@@ -5,6 +5,7 @@ Todos os arquivos vêm de Datomic criado pelo teste, sob /root. O ensaio
 não recebe tokens, sessão WhatsApp, socket remoto ou volumes de produção.
 """
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -175,6 +176,11 @@ class AuthenticatedRestoreTest(unittest.TestCase):
         self.assertEqual(evidence["audit"], self.audit)
         self.assertTrue(evidence["rollbackV3Aware"])
         self.assertEqual(evidence, post.status(admin, "post-v3-test"))
+        rows = production.read_manifest(self.backups / "post-v3-test/backup-manifest.txt")
+        for row in rows:
+            if not row["path"].startswith(".a6-maintenance/"):
+                self.assertEqual(hashlib.sha256((self.source / row["path"]).read_bytes()).hexdigest(),
+                                 row["sha256"])
         self.assertFalse(report["datomicRestored"])
         print(json.dumps({"test": "authenticated-post-v3-window", "result": "PASS",
             "imageSha": self.sha, "jvmImageId": self.image, "rollbackImageId": self.rollback,
@@ -209,11 +215,59 @@ class AuthenticatedRestoreTest(unittest.TestCase):
     def test_incomplete_restore_and_interrupted_audit_never_count_as_evidence(self):
         self.backup()
         restored = self.backups / "post-v3-test/restore-isolated"
+        original = post._audit_image
+        calls = []
+
+        def interrupted(*args):
+            result = original(*args)
+            if not calls:
+                calls.append(True)
+                raise unit.Interrupted()
+            return result
+
+        with patch.object(post, "_audit_image", interrupted):
+            with self.assertRaises(unit.Interrupted):
+                post.audit(admin, "post-v3-test")
+        self.assertFalse((restored.parent / "post-v3-proof.json").exists())
+        proof = post.audit(admin, "post-v3-test")
+        self.assertEqual(proof["audit"], self.audit)
         first = next(p for p in restored.rglob("*") if p.is_file())
         first.unlink()
         with self.assertRaises(post.ProductionBackupError):
             post.audit(admin, "post-v3-test")
-        self.assertFalse((restored.parent / "post-v3-proof.json").exists())
+        # A prova anterior permanece registrada, mas nunca é aceita sem o restore.
+        self.assertTrue((restored.parent / "post-v3-proof.json").exists())
+
+    def test_completed_root_t0_before_checkpoint_resumes_the_same_window(self):
+        from a6_operational_window import execute_window, MemoryHold, CONFIRM
+        from a6_window_journal import WindowJournal
+        env = dict(unit.lab.ENV, A6_V3_PROTOCOL="POST_V3_UPGRADE",
+                   A6_LIVE_BACKUP="autorizar-backup-producao-a6")
+        hold = MemoryHold()
+        directory = str(self.root / "journal")
+
+        def run():
+            with patch("a6_post_v3_upgrade.post_v3", self.helper):
+                return execute_window(self.world.runner, hold, lambda _: CONFIRM,
+                    self.sha, self.image, self.image, env,
+                    "/var/backups/odisseu-a6/post-v3-test/data", None,
+                    window_id="post-v3-test", state=directory, materialize=unit.lab.materialize)
+
+        original = WindowJournal.done
+
+        def interrupted(journal, op, **fields):
+            if op == "post_v3_backup":
+                raise unit.Interrupted()
+            original(journal, op, **fields)
+
+        with patch.object(WindowJournal, "done", interrupted):
+            with self.assertRaises(unit.Interrupted):
+                run()
+        self.assertEqual(hold.value, "true")
+        self.assertTrue((self.backups / "post-v3-test/backup-attestation.json").exists())
+        report = run()
+        self.assertTrue(report["deployComplete"], report["blocked"])
+        self.assertEqual(report["hold"], "true")
 
     def test_operator_record_and_image_code_cannot_forge_authority(self):
         self.plan_file.chmod(0o666)
