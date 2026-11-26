@@ -305,8 +305,8 @@ Ela não cria banco nem executa transações; o próprio Datomic Local pode
 escrever arquivos internos na cópia, portanto não apontá-la ao backup ou
 ao restore original que o manifesto precisa preservar.
 
-O workflow de build isolado usa o HEAD exato do PR, sem segredos de produção
-nem publicação de imagens. Registra os IDs locais `.Id` no resumo e no log,
+O workflow de build isolado usa o HEAD exato do PR, sem segredos de produção,
+registry ou deploy. Exporta artefatos imutáveis de CI e registra os IDs locais `.Id` no resumo e no log,
 sem alegar digest publicável em registry nem imagem instalada na VM.
 O Node fixa os três pacotes Chromium Debian Security na mesma versão; o ensaio
 em CI abre o navegador com sandbox em um perfil descartável e sem rede.
@@ -325,6 +325,79 @@ A homologação isolada comprova o mecanismo, não autoriza deploy. O gate
 operacional exige provisionamento revisado, T0 real da janela autorizada,
 writer exclusivo, auditorias/healthchecks reais e READY. Não fazer merge
 ou deploy sem nova autorização expressa; manter `DEPLOY_NO_GO` até a janela.
+
+### Preparação administrativa pós-v3 (sem abrir janela)
+
+O workflow `a6-image-build.yml` entrega `a6-node-SHA`, `a6-jvm-SHA` e
+`a6-admin-SHA`, com retenção de 14 dias. Obter os três do **mesmo run aprovado
+e HEAD exato**, via GitHub autenticado. Registrar run, artifact IDs/digests
+do GitHub e SHA-256 dos arquivos publicados no resumo do run. Não aceitar
+hash esperado enviado somente junto da cópia não autenticada.
+
+Cada imagem viaja como `node.tar.gz`/`jvm.tar.gz` e manifesto JSON:
+SHA-256 do arquivo, bytes, plataforma, revisão, tag canônica, ID Docker de
+origem, hash canônico do conteúdo e contrato de mounts/flags.
+`a6_image_transfer.py import` exige os dois hashes de manifesto independentes,
+`--sha`, tamanho medido do Datomic, dois `--rollback-id` completos,
+`--rollback-sha` e autorização `autorizar-importacao-imagens-a6`.
+Revalida arquivos antes/depois de load, revisão/plataforma/conteúdo importados
+e preservação dos IDs de rollback. Não inicia containers nem altera volumes.
+Executar somente após autorização administrativa, usando código root-owned
+do bundle verificado; não elevar um checkout gravável pelo operador.
+
+O ID Docker e `contentSha256` **não são digests de registry**. O hash do
+artefato do GitHub identifica o pacote de transporte, não a imagem.
+O teste integrado copia o par para outro diretório, retira apenas o candidato
+do image store descartável e executa load real. Os dois IDs retidos no teste
+de transporte são fixtures JVM v3-aware; não substituem a dupla de rollback
+Node/JVM real exigida pelo plano da janela.
+
+**Disco:** reservar arquivos transportados + tamanho integral das imagens
+importadas + imagens de rollback ausentes + quatro cópias do Datomic +
+128 MiB de logs/manifests, mais `max(1 GiB, 20% da reserva)`.
+A importação exige rollback já presente e usa o menor espaço livre observado
+entre diretório de entrega, DockerRootDir e backups, conservadoramente.
+O preflight root mede novamente a reserva T0/restore antes da manutenção.
+Os 6,42 GiB históricos não são autorização: usar os bytes reais dos artefatos
+e uma medição atual. Falta de espaço bloqueia; nunca fazer prune/limpeza live.
+
+**Bundle:** `a6_build_admin_bundle.py --directory DIRETORIO --sha HEAD`
+recusa revisão diferente ou checkout tracked modificado. O kit contém tar
+USTAR, manifesto completo por componente, bootstrap e validador com hashes.
+Antes de elevar privilégios, conferir cada hash contra a publicação autenticada.
+O administrador coloca bootstrap/validador em diretório root-owned não
+gravável pelo operador e executa o provisionador com os hashes esperados
+(`A6_ADMIN_BUNDLE_SHA256`, `A6_PROVISIONER_SHA256`,
+`A6_ADMIN_VALIDATOR_SHA256`, `A6_NODE_SECCOMP_SHA256`).
+
+A instalação valida tudo antes de extrair, publica geração root-owned
+`/usr/local/lib/odisseu-a6/releases/BUNDLE_SHA` e troca `current` atomicamente.
+O entrypoint resolve a geração uma vez; não mistura imports durante uma troca.
+Entry 0755, módulos 0644, sudoers 0440 com verbos explícitos, planos/backups
+0700. Seccomp divergente exige autorização separada. Instalação interrompida
+retoma **o mesmo bundle**, usando lock e diário root; outro bundle pendente
+ou componente adulterado bloqueiam. Preservar gerações antigas. Os testes
+root descartáveis interrompem publicação de geração, entry, política e pointer.
+
+**Colisões:** o runner inventaria ambos os nomes `-previous` antes de HOLD,
+maintenance/drain, antes de stop e antes de cada cutover. Verifica IDs,
+revisão, origem, estado e PID zero. Resíduo estranho, desconhecido ou ativo
+gera `residueResolutionPlan` não executável e bloqueia. O administrador
+deve autorizar separadamente o arquivamento por rename, após verificar
+identidade, ausência de writer e preservação da imagem XP v3 de rollback.
+Não remover ou sobrescrever automaticamente. Na retomada, só aceitar o
+container original identificado pelo checkpoint da mesma janela.
+
+O HTTP Node usa a API nativa Node 22 com prazo absoluto e timeout de socket;
+JVM conserva curl com timeout. Tokens vêm do ambiente do próprio container,
+nunca dos argumentos Python/logs. Status não-200, JSON inválido ou envelope
+JVM inválido bloqueiam. O ensaio com ambas as imagens roda os endpoints
+oficiais: Node `WHATSAPP_TRANSPORT=disabled`, JVM com Datomic sintético.
+Isso **não comprova WhatsApp READY** e não acessa sessão de produção.
+
+Instalação, entrega, resolução autorizada dos resíduos e novo preflight
+read-only precedem a autorização da janela única. Só depois executar
+T0/restore/auditoria/cutover oficiais; nunca repetir o CAS histórico.
 
 ## Recuperação após CAS Datomic e falha do diário (PR #136)
 
