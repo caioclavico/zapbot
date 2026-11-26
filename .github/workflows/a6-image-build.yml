@@ -1,0 +1,40 @@
+name: Build isolado das imagens A6
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  images:
+    name: Construir imagens amd64 sem deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Construir e verificar imagens locais
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$SOURCE_SHA" -t a6-ci-node -f Dockerfile .
+          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$SOURCE_SHA" -t a6-ci-jvm -f Dockerfile.jvm .
+          for image in a6-ci-node a6-ci-jvm; do
+            test "$(docker image inspect --format '{{.Architecture}}' "$image")" = amd64
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$SOURCE_SHA"
+          done
+          docker run --rm --network none --entrypoint node a6-ci-node --version
+          docker run --rm --network none --entrypoint clojure a6-ci-jvm -Sdescribe
+          {
+            echo "## Imagens locais de homologação (não publicadas)"
+            echo "Revisão: $SOURCE_SHA"
+            echo "Node: $(docker image inspect --format '{{.Id}}' a6-ci-node)"
+            echo "JVM: $(docker image inspect --format '{{.Id}}' a6-ci-jvm)"
+          } >> "$GITHUB_STEP_SUMMARY"
