@@ -200,11 +200,11 @@ backup, restore ou auditoria**. Seus campos exatos são:
   "protocol": "POST_V3_UPGRADE",
   "windowId": "ID_DA_JANELA",
   "imageSha": "SHA_COMPLETO_CANDIDATO",
-  "jvmDigest": "sha256:ID_CONFIGURACAO_JVM",
-  "nodeDigest": "sha256:ID_CONFIGURACAO_NODE",
+  "jvmDigest": "sha256:ID_LOCAL_JVM",
+  "nodeDigest": "sha256:ID_LOCAL_NODE",
   "rollbackSha": "SHA_COMPLETO_ROLLBACK_V3",
-  "rollbackJvmDigest": "sha256:ID_CONFIGURACAO_JVM_ROLLBACK",
-  "rollbackNodeDigest": "sha256:ID_CONFIGURACAO_NODE_ROLLBACK",
+  "rollbackJvmDigest": "sha256:ID_LOCAL_JVM_ROLLBACK",
+  "rollbackNodeDigest": "sha256:ID_LOCAL_NODE_ROLLBACK",
   "auditCodeSha256": "HASH_DO_MAPA_DE_HASHES_DO_CODIGO",
   "system": "SYSTEM_Datomic_DA_VM",
   "database": "DB_POKEMON_DA_VM"
@@ -217,7 +217,9 @@ O bundle inclui o auditor e **o arquivo original** de reconciliação do
 namespace Datomic, não uma implementação duplicada. O administrador verifica
 esses hashes, o SHA autorizado e os IDs das imagens independentemente antes
 de instalar o plano. Os campos `*Digest` seguem o contrato existente do runner:
-IDs de configuração Docker locais, não digests de manifesto de registry.
+IDs locais retornados por `docker image inspect .Id`, não uma comprovação
+de digest publicável em registry. Não substituir esses IDs pelos hashes
+intermediários de exportação do BuildKit.
 
 O helper confirma arquitetura amd64, ID exato e label de revisão nas quatro
 imagens. Confere também o hash do código de auditoria existente na imagem
@@ -304,8 +306,8 @@ escrever arquivos internos na cópia, portanto não apontá-la ao backup ou
 ao restore original que o manifesto precisa preservar.
 
 O workflow de build isolado usa o HEAD exato do PR, sem segredos de produção
-nem publicação de imagens. Seus IDs são digests de configuração locais, não
-digests de manifesto de registry nem prova de imagem instalada na VM.
+nem publicação de imagens. Registra os IDs locais `.Id` no resumo e no log,
+sem alegar digest publicável em registry nem imagem instalada na VM.
 O Node fixa os três pacotes Chromium Debian Security na mesma versão; o ensaio
 em CI abre o navegador com sandbox em um perfil descartável e sem rede.
 Instanciar `LocalAuth` não autentica uma conta: WhatsApp READY exige uma conta

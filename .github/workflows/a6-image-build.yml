@@ -60,8 +60,8 @@ jobs:
           {
             echo "## Imagem local $SERVICE de homologação (não publicada)"
             echo "Revisão: $SOURCE_SHA"
-            echo "ID de configuração: $(docker image inspect --format '{{.Id}}' a6-ci-image)"
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo "ID local Docker (.Id): $(docker image inspect --format '{{.Id}}' a6-ci-image)"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Homologar helper root e rollback XP v3 em Datomic descartável
         if: matrix.service == 'jvm'
         shell: bash
@@ -90,4 +90,4 @@ jobs:
             echo "## Restore autenticado e rollback XP v3 (descartáveis)"
             echo "Revisão candidata: $SOURCE_SHA / ID local: $candidate_id"
             echo "Revisão de rollback: $ROLLBACK_SHA / ID local: $rollback_id"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
