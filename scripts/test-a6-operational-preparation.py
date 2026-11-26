@@ -4,15 +4,29 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import io
+import gzip
+import tarfile
 
 from a6_capacity import budget
-from a6_image_transfer import validate_artifacts, runtime_contract
+from a6_image_transfer import validate_artifacts, runtime_contract, image_storage_bytes
 from a6_production_deploy import DeployError, image_tag
 import a6_post_v3_backup as post
 from types import SimpleNamespace
 
 
 class PreparationTests(unittest.TestCase):
+    def test_capacity_includes_expanded_oci_layers_not_only_docker_size(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "image.tar"
+            layer = gzip.compress(b"x" * (1024 * 1024))
+            with tarfile.open(archive, "w") as out:
+                member = tarfile.TarInfo("blobs/sha256/fixture")
+                member.size = len(layer)
+                out.addfile(member, io.BytesIO(layer))
+            self.assertGreaterEqual(image_storage_bytes(archive, len(layer)),
+                                    1024 * 1024 + len(layer))
+
     def test_exact_capacity_threshold_and_invalid_measurements(self):
         required = budget(10**12, 114586680, 900000000, 2400000000)["requiredBytes"]
         self.assertTrue(budget(required, 114586680, 900000000, 2400000000)["sufficient"])

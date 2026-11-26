@@ -353,7 +353,9 @@ de transporte são fixtures JVM v3-aware; não substituem a dupla de rollback
 Node/JVM real exigida pelo plano da janela.
 
 **Disco:** reservar arquivos transportados + tamanho integral das imagens
-importadas + imagens de rollback ausentes + quatro cópias do Datomic +
+importadas (camadas expandidas **mais** tamanho reportado pelo daemon,
+pois containerd pode reportar apenas bytes comprimidos) +
+imagens de rollback ausentes + quatro cópias do Datomic +
 128 MiB de logs/manifests, mais `max(1 GiB, 20% da reserva)`.
 A importação exige rollback já presente e usa o menor espaço livre observado
 entre diretório de entrega, DockerRootDir e backups, conservadoramente.

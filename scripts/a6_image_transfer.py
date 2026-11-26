@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 
 from a6_production_deploy import DeployError, _prefix, _run, observe_image, image_tag
 from a6_production_contract import JVM_MOUNTS, NODE_MOUNTS
@@ -181,6 +182,27 @@ def _directory(path):
     return path
 
 
+def image_storage_bytes(archive, reported_bytes):
+    expanded = 0
+    with tarfile.open(archive, "r:") as source:
+        for member in source:
+            if not member.isfile():
+                continue
+            with source.extractfile(member) as stream:
+                magic = stream.read(4)
+                stream.seek(0)
+                if magic == b"\x28\xb5\x2f\xfd":
+                    raise DeployError("image_storage_zstd_measurement_unsupported")
+                if magic[:2] == b"\x1f\x8b":
+                    with gzip.GzipFile(fileobj=stream) as layer:
+                        expanded += sum(len(chunk) for chunk in iter(lambda: layer.read(1024 * 1024), b""))
+                else:
+                    expanded += member.size
+    # Containerd pode reportar Size comprimido; Docker clássico, expandido.
+    # Reservar ambos evita depender da implementação do daemon de destino.
+    return reported_bytes + expanded
+
+
 def export_artifact(directory, service, sha, ref):
     directory = _directory(directory)
     if (service not in ("node", "jvm") or not re.fullmatch(r"[0-9a-f]{40}", sha)
@@ -197,12 +219,14 @@ def export_artifact(directory, service, sha, ref):
     with tempfile.TemporaryDirectory(prefix="image-export-", dir=directory) as work:
         tar = Path(work) / "image.tar"
         _docker(["save", "-o", str(tar), ref])
+        storage_bytes = image_storage_bytes(tar, doc["Size"])
         with tar.open("rb") as src, archive.open("xb") as dst:
             with gzip.GzipFile(filename="", mode="wb", fileobj=dst, mtime=0) as zipped:
                 shutil.copyfileobj(src, zipped)
     value = {"schema": 1, "service": service, "revision": sha, "platform": "linux/amd64",
              "ref": ref, "archive": archive.name, "archiveSha256": _sha(archive),
-             "archiveBytes": archive.stat().st_size, "imageBytes": doc["Size"],
+             "archiveBytes": archive.stat().st_size, "imageBytes": storage_bytes,
+             "reportedImageBytes": doc["Size"],
              "sourceImageId": doc["Id"], "contentSha256": _content(doc),
              "runtimeContract": runtime_contract(service)}
     manifest.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
