@@ -9,9 +9,17 @@ permissions:
 
 jobs:
   images:
-    name: Construir imagens amd64 sem deploy
+    name: Construir imagem amd64 ${{ matrix.service }} sem deploy
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: node
+            dockerfile: Dockerfile
+          - service: jvm
+            dockerfile: Dockerfile.jvm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -21,20 +29,21 @@ jobs:
         shell: bash
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          SERVICE: ${{ matrix.service }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$SOURCE_SHA" -t a6-ci-node -f Dockerfile .
-          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$SOURCE_SHA" -t a6-ci-jvm -f Dockerfile.jvm .
-          for image in a6-ci-node a6-ci-jvm; do
-            test "$(docker image inspect --format '{{.Architecture}}' "$image")" = amd64
-            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$SOURCE_SHA"
-          done
-          docker run --rm --network none --entrypoint node a6-ci-node --version
-          docker run --rm --network none --entrypoint clojure a6-ci-jvm -Sdescribe
+          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$SOURCE_SHA" -t a6-ci-image -f "$DOCKERFILE" .
+          test "$(docker image inspect --format '{{.Architecture}}' a6-ci-image)" = amd64
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' a6-ci-image)" = "$SOURCE_SHA"
+          if [[ "$SERVICE" == node ]]; then
+            docker run --rm --network none --entrypoint node a6-ci-image --version
+          else
+            docker run --rm --network none --entrypoint clojure a6-ci-image -Sdescribe
+          fi
           {
-            echo "## Imagens locais de homologação (não publicadas)"
+            echo "## Imagem local $SERVICE de homologação (não publicada)"
             echo "Revisão: $SOURCE_SHA"
-            echo "Node: $(docker image inspect --format '{{.Id}}' a6-ci-node)"
-            echo "JVM: $(docker image inspect --format '{{.Id}}' a6-ci-jvm)"
+            echo "ID de configuração: $(docker image inspect --format '{{.Id}}' a6-ci-image)"
           } >> "$GITHUB_STEP_SUMMARY"
