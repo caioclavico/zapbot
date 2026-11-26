@@ -244,6 +244,8 @@ class WindowJournal:
         steps = self.data.setdefault("steps", [])
         if name not in steps:
             steps.append(name)
+        if name == "backup" and "t0Evidence" in item:
+            self.data["t0Evidence"] = copy.deepcopy(item["t0Evidence"])
         if name == "v3_release_gate" and item.get("verified") is True:
             self.data["v3ReleaseEvidence"] = {
                 key: item[key] for key in ("verified", "receiptId", "pokemonCount",

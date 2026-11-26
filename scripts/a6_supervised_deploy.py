@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import contextvars
 import copy
-import hashlib
 import json
 import os
 import time
@@ -37,7 +36,9 @@ from a6_production_backup import (
     BACKUP_AUTHORIZATION,
     MARGIN,
     ProductionBackupError,
+    _verify,
     execute_copy,
+    read_manifest,
     restore_isolated,
 )
 from a6_production_deploy import (
@@ -523,7 +524,8 @@ def run_supervised(
     if isolated_root is None and str(destination).startswith("/var/backups/odisseu-a6/"):
         record_destination = str(Path(env.get("A6_STATE_DIR") or "~/.odisseu-a6-window").expanduser() / "report")
     token = _DEST.set(record_destination)
-    meta = {"windowId": window_id, "vmHostname": None, "holdRestored": False}
+    meta = {"windowId": window_id, "vmHostname": None, "holdRestored": False,
+            "imageSha": sha, "jvmDigest": jvm_digest, "nodeDigest": node_digest}
     meta_token = _META.set(meta)
     journal_token = _JOURNAL.set(journal)
     checkpoints = []
@@ -762,7 +764,7 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
 
     jvm_kept = _prior_has(prior, "update_jvm") and _image_matches(drained, "jvm", jvm_digest)
     if jvm_kept:
-        kept = _accept_replaced_jvm(wrapped, prefix, checkpoints, destination, isolated_root, drained, quiesced)
+        kept = _accept_replaced_jvm(wrapped, prefix, checkpoints, destination, isolated_root, drained, quiesced, prior)
         if kept is not None:
             return _finish(checkpoints, "backup", [kept], seen, admitted=True, maintenance=True)
         stopped = drained
@@ -777,7 +779,7 @@ def _run_supervised(runner, sha, jvm_digest, node_digest, env, destination, isol
             return validated
     else:
         replaced = _stop_and_backup(
-            wrapped, prefix, drained, quiesced, destination, isolated_root, direct, seen, checkpoints,
+            wrapped, prefix, drained, quiesced, destination, isolated_root, direct, seen, checkpoints, prior,
         )
         if replaced[0] is not None:
             return replaced[0]
@@ -1099,18 +1101,32 @@ def _reuse_verified_backup(destination):
     return {"manifest": str(manifest)}
 
 
-def _accept_replaced_jvm(wrapped, prefix, checkpoints, destination, isolated_root, drained, quiesced):
+def _t0_binding(attestation, meta):
+    digest = attestation.get("manifestSha256")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise DeployError("t0_manifest_hash_invalid")
+    if not meta.get("windowId") or attestation.get("window") != meta["windowId"]:
+        raise DeployError("t0_window_mismatch")
+    return {"windowId": meta["windowId"], "manifestSha256": digest,
+            "imageSha": meta["imageSha"], "jvmDigest": meta["jvmDigest"],
+            "nodeDigest": meta["nodeDigest"]}
+
+
+def _accept_replaced_jvm(wrapped, prefix, checkpoints, destination, isolated_root, drained, quiesced, prior):
     try:
         if isolated_root is None:
             from a6_admin_backup_client import status as administrative_status
-            administrative_status(destination)
+            current = administrative_status(destination)
+            evidence = (prior or {}).get("t0Evidence")
+            if evidence is not None and _t0_binding(current, _META.get() or {}) != evidence:
+                raise DeployError("t0_checkpoint_mismatch")
         else:
             copied = _reuse_verified_backup(destination)
             _reread_manifest(copied["manifest"], Path(destination).resolve().parent / "restore-isolated")
         collection = _collection(drained, quiesced)
         if not _previous_stopped(wrapped, prefix, "jvm"):
             raise DeployError("checkpoint_indeterminate")
-    except (DeployError, OSError) as exc:
+    except (DeployError, ProductionBackupError, OSError) as exc:
         if str(exc) in JOURNAL_ERRORS:
             raise
         return str(exc) or "checkpoint_indeterminate"
@@ -1132,7 +1148,7 @@ def _accept_replaced_jvm(wrapped, prefix, checkpoints, destination, isolated_roo
     return None
 
 
-def _stop_and_backup(wrapped, prefix, drained, quiesced, destination, isolated_root, direct, seen, checkpoints):
+def _stop_and_backup(wrapped, prefix, drained, quiesced, destination, isolated_root, direct, seen, checkpoints, prior):
     journal = _j()
     journal.intent("stop_jvm")
     stopped_cmd = wrapped(prefix + ["stop", "--time", "30", "odisseu-a6-jvm"])
@@ -1174,6 +1190,8 @@ def _stop_and_backup(wrapped, prefix, drained, quiesced, destination, isolated_r
             # Este processo vê apenas o objeto JSON sem caminhos ou dados do save.
             from a6_admin_backup_client import backup as administrative_backup
             copied = _op_backup(lambda: administrative_backup(destination), destination)
+            if copied.get("reused") is True and not _prior_has(prior, "backup"):
+                raise DeployError("t0_reuse_without_checkpoint")
         else:
             source = isolated_root
             _separate(source, destination)
@@ -1203,12 +1221,19 @@ def _stop_and_backup(wrapped, prefix, drained, quiesced, destination, isolated_r
         _restart_old_jvm(wrapped, direct)
         reason = str(exc) if str(exc) else "backup_not_verified"
         return _finish(checkpoints, "backup", [reason], seen, admitted=True, maintenance=True), None, None
-    _mark(checkpoints, {
+    backup_step = {
         "step": "backup",
         "manifestVerified": True,
         "sourcePreserved": True,
         "jvmStopped": True,
-    })
+    }
+    if isolated_root is None and copied.get("manifestSha256") is not None:
+        try:
+            backup_step["t0Evidence"] = _t0_binding(copied, _META.get() or {})
+        except DeployError as exc:
+            _restart_old_jvm(wrapped, direct)
+            return _finish(checkpoints, "backup", [str(exc)], seen, admitted=True, maintenance=True), None, None
+    _mark(checkpoints, backup_step)
     _mark(checkpoints, {"step": "manifest", "manifestVerified": True})
     try:
         if isolated_root is None:
@@ -1266,15 +1291,11 @@ def _op_restore(call):
 
 
 def _reread_manifest(manifest_path, destination):
-    path = Path(manifest_path)
-    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if not lines:
-        raise DeployError("backup_invalid")
-    root = Path(destination)
-    for line in lines:
-        digest, relative = line.split("  ", 1)
-        if hashlib.sha256((root / relative).read_bytes()).hexdigest() != digest:
-            raise DeployError("backup_invalid")
+    try:
+        manifest = read_manifest(manifest_path)
+        _verify(Path(destination), Path(destination), manifest)
+    except (ProductionBackupError, OSError) as exc:
+        raise DeployError("backup_invalid") from exc
 
 
 

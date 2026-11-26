@@ -34,7 +34,13 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$SOURCE_SHA" -t a6-ci-image -f "$DOCKERFILE" .
+          for attempt in 1 2 3; do
+            if docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$SOURCE_SHA" -t a6-ci-image -f "$DOCKERFILE" .; then
+              break
+            fi
+            if [[ "$attempt" == 3 ]]; then exit 1; fi
+            sleep 20
+          done
           test "$(docker image inspect --format '{{.Architecture}}' a6-ci-image)" = amd64
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' a6-ci-image)" = "$SOURCE_SHA"
           if [[ "$SERVICE" == node ]]; then

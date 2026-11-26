@@ -8,7 +8,9 @@ JVM parada e autorização explícita. O padrão é não copiar.
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
+import stat
 from pathlib import Path
 
 from a6_mount_policy import LIVE_VOLUME, assess, assess_observed
@@ -218,10 +220,7 @@ def restore_isolated(manifest_path, backup, restore_dir):
         raise ProductionBackupError("live_path_refused")
     if restore_dir.exists():
         raise ProductionBackupError("restore_destination_exists")
-    manifest = []
-    for line in Path(manifest_path).read_text(encoding="utf-8").splitlines():
-        digest, relative = line.split("  ", 1)
-        manifest.append({"path": relative, "sha256": digest})
+    manifest = read_manifest(manifest_path)
     shutil.copytree(backup, restore_dir)
     try:
         _verify(backup, restore_dir, manifest)
@@ -243,7 +242,7 @@ def _dir_bytes(root):
 
 def _manifest(root):
     items = []
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+    for path in _files(root):
         items.append({
             "path": str(path.relative_to(root)),
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -251,7 +250,47 @@ def _manifest(root):
     return items
 
 
+def _files(root):
+    root = Path(root)
+    if root.is_symlink() or not root.is_dir():
+        raise ProductionBackupError("backup_invalid")
+    files = []
+    for path in root.rglob("*"):
+        mode = path.lstat().st_mode
+        if stat.S_ISREG(mode):
+            files.append(path)
+        elif not stat.S_ISDIR(mode):
+            raise ProductionBackupError("backup_invalid")
+    return sorted(files)
+
+
+def read_manifest(path):
+    try:
+        rows = []
+        seen = set()
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            digest, relative = line.split("  ", 1)
+            parts = Path(relative).parts
+            if (not re.fullmatch(r"[0-9a-f]{64}", digest) or not relative
+                    or Path(relative).is_absolute() or ".." in parts
+                    or str(Path(relative)) != relative or relative in seen):
+                raise ValueError()
+            seen.add(relative)
+            rows.append({"path": relative, "sha256": digest})
+        if not rows:
+            raise ValueError()
+        return rows
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ProductionBackupError("backup_manifest_invalid") from exc
+
+
 def _verify(left, right, manifest):
+    paths = [item["path"] for item in manifest]
+    if not paths or len(paths) != len(set(paths)):
+        raise ProductionBackupError("backup_invalid")
+    for root in (Path(left), Path(right)):
+        if {str(path.relative_to(root)) for path in _files(root)} != set(paths):
+            raise ProductionBackupError("backup_invalid")
     for item in manifest:
         copied = right / item["path"]
         original = left / item["path"]

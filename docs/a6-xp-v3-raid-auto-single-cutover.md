@@ -173,6 +173,16 @@ O seletor `A6_V3_PROTOCOL` distingue `INITIAL_V3_ACTIVATION` de
 O segundo é recusado com `post_v3_t0_audit_not_integrated` antes de liberar o
 hold; não é ainda um caminho operacional implementado.
 
+O helper de backup verifica que o manifesto descreve exatamente todos os
+arquivos do backup e do restore, sem duplicatas, caminhos externos ou links.
+Ele devolve o SHA-256 do manifesto atestado pelo root. Quando presente, o
+runner registra esse hash com janela, revisão e digests no diário e o confere
+novamente ao retomar com a JVM substituída. Uma cópia preexistente sem etapa
+de backup da mesma janela é recusada. Helpers antigos sem o novo hash continuam
+compatíveis com o protocolo inicial, mas **não são evidência para pós-v3**.
+Instalar o helper atualizado requer provisionamento administrativo revisado;
+nenhuma instalação é realizada por este PR ou pela CI.
+
 O teste `scripts/test-a6-post-v3-restore.py` gera um Datomic descartável,
 encerra a JVM, copia o diretório e compara a auditoria em outra JVM. Isso
 comprova a comparação no cenário sintético testado, não a origem de um T0
@@ -185,6 +195,10 @@ ao restore original que o manifesto precisa preservar.
 O workflow de build isolado usa o HEAD exato do PR, sem segredos de produção
 nem publicação de imagens. Seus IDs são digests de configuração locais, não
 digests de manifesto de registry nem prova de imagem instalada na VM.
+O Node fixa os três pacotes Chromium Debian Security na mesma versão; o ensaio
+em CI abre o navegador com sandbox em um perfil descartável e sem rede.
+Instanciar `LocalAuth` não autentica uma conta: WhatsApp READY exige uma conta
+de teste isolada e homologação separada, sem usar a sessão de produção.
 
 **A rota não libera o runner.** Ainda falta produzir e autenticar a mesma
 auditoria sobre o restore isolado do T0 **desta** janela e comparar os

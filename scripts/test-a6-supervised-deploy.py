@@ -535,7 +535,7 @@ class SupervisedWindowTests(unittest.TestCase):
         receipt = {
             "window": "janela-admin", "operation": "status", "reused": False,
             "manifestVerified": True, "sourcePreserved": True, "restoreIsolated": True,
-            "volume": "odisseu-a6-cutover-datomic", "files": 2,
+            "volume": "odisseu-a6-cutover-datomic", "files": 2, "manifestSha256": "a" * 64,
         }
         destination = "/var/backups/odisseu-a6/janela-admin/data"
         env = dict(ENV)
@@ -545,8 +545,11 @@ class SupervisedWindowTests(unittest.TestCase):
              patch("a6_admin_backup_client.preflight", return_value={"ready": True, "window": "janela-admin", "operation": "preflight"}) as ready, \
              patch("a6_admin_backup_client.backup", return_value=receipt) as copied:
             report = run_supervised(World().runner, SHA, JVM_DIGEST, NODE_DIGEST, env, destination,
-                                    None, materialize=materialize)
+                                    None, materialize=materialize, window_id="janela-admin")
         self.assertTrue(report["deployComplete"], report["blocked"])
+        backup = next(item for item in report["checkpoints"] if item["step"] == "backup")
+        self.assertEqual(backup["t0Evidence"]["manifestSha256"], "a" * 64)
+        self.assertEqual(backup["t0Evidence"]["windowId"], "janela-admin")
         ready.assert_called_once_with(destination)
         copied.assert_called_once_with(destination)
         commands = "\n".join(" ".join(item) for item in report["commands"])
@@ -557,7 +560,7 @@ class SupervisedWindowTests(unittest.TestCase):
         receipt = {
             "window": "janela-admin", "operation": "status", "reused": True,
             "manifestVerified": True, "sourcePreserved": True, "restoreIsolated": True,
-            "volume": "odisseu-a6-cutover-datomic", "files": 2,
+            "volume": "odisseu-a6-cutover-datomic", "files": 2, "manifestSha256": "a" * 64,
         }
         destination = "/var/backups/odisseu-a6/janela-admin/data"
         env = dict(ENV, A6_LIVE_BACKUP="autorizar-backup-producao-a6", A6_STATE_DIR="/tmp/a6-admin-journal")
@@ -569,10 +572,45 @@ class SupervisedWindowTests(unittest.TestCase):
              patch("a6_admin_backup_client.status", return_value=receipt) as checked, \
              patch("a6_admin_backup_client.backup") as copied:
             report = run_supervised(world.runner, SHA, JVM_DIGEST, NODE_DIGEST, env, destination, None,
-                                    prior={"steps": ["update_jvm"]}, materialize=materialize)
+                                    prior={"steps": ["update_jvm"], "t0Evidence": {
+                                        "windowId": "janela-admin", "manifestSha256": "a" * 64,
+                                        "imageSha": SHA, "jvmDigest": JVM_DIGEST, "nodeDigest": NODE_DIGEST}},
+                                    materialize=materialize, window_id="janela-admin")
         self.assertTrue(report["deployComplete"], report["blocked"])
         checked.assert_called_once_with(destination)
         copied.assert_not_called()
+
+    def test_live_backup_rejects_reuse_without_same_window_checkpoint(self):
+        destination = "/var/backups/odisseu-a6/janela-admin/data"
+        env = dict(ENV, A6_LIVE_BACKUP="autorizar-backup-producao-a6", A6_STATE_DIR="/tmp/a6-admin-journal")
+        receipt = {"window": "janela-admin", "reused": True, "manifestSha256": "a" * 64}
+        with patch("a6_v3_release_gate.release_mode", return_value=False), \
+             patch("a6_admin_backup_client.preflight"), \
+             patch("a6_admin_backup_client.backup", return_value=receipt):
+            report = run_supervised(World().runner, SHA, JVM_DIGEST, NODE_DIGEST, env, destination,
+                                    None, materialize=materialize, window_id="janela-admin")
+        self.assertIn("t0_reuse_without_checkpoint", report["blocked"])
+        self.assertNotIn("update_jvm", report["steps"])
+        self.assertNotIn("resume", report["steps"])
+
+    def test_live_resume_rejects_t0_from_another_manifest(self):
+        destination = "/var/backups/odisseu-a6/janela-admin/data"
+        env = dict(ENV, A6_LIVE_BACKUP="autorizar-backup-producao-a6", A6_STATE_DIR="/tmp/a6-admin-journal")
+        world = World()
+        world.containers["odisseu-a6-jvm"]["image"] = JVM_DIGEST
+        world.containers["odisseu-a6-jvm-previous"] = {"image": CURRENT["jvm"]["imageId"], "running": False}
+        receipt = {"window": "janela-admin", "manifestSha256": "b" * 64}
+        prior = {"steps": ["update_jvm"], "t0Evidence": {
+            "windowId": "janela-admin", "manifestSha256": "a" * 64,
+            "imageSha": SHA, "jvmDigest": JVM_DIGEST, "nodeDigest": NODE_DIGEST}}
+        with patch("a6_v3_release_gate.release_mode", return_value=False), \
+             patch("a6_admin_backup_client.preflight"), \
+             patch("a6_admin_backup_client.status", return_value=receipt):
+            report = run_supervised(world.runner, SHA, JVM_DIGEST, NODE_DIGEST, env, destination, None,
+                                    prior=prior, materialize=materialize, window_id="janela-admin")
+        self.assertFalse(report["deployComplete"])
+        self.assertIn("t0_checkpoint_mismatch", report["blocked"])
+        self.assertNotIn("resume", report["steps"])
 
     def test_window_reaches_open_and_keeps_the_save(self):
         with tempfile.TemporaryDirectory() as tmp:

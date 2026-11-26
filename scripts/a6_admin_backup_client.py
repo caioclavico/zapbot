@@ -46,7 +46,9 @@ def _attestation(value, window, operation):
             or value['operation'] != 'status' or value['manifestVerified'] is not True
             or value['sourcePreserved'] is not True or value['restoreIsolated'] is not True
             or value['volume'] != 'odisseu-a6-cutover-datomic' or not isinstance(value['files'], int)
-            or value['files'] <= 0):
+            or value['files'] <= 0
+            or ('manifestSha256' in value
+                and not re.fullmatch(r'[0-9a-f]{64}', str(value['manifestSha256'])))):
         raise ProductionBackupError('backup_admin_invalid')
     return value
 

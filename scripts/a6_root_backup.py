@@ -17,7 +17,7 @@ import sys
 from types import SimpleNamespace
 
 from a6_production_backup import (BACKUP_AUTHORIZATION, ProductionBackupError, execute_copy,
-                                  restore_isolated, _dir_bytes, _verify)
+                                  read_manifest, restore_isolated, _dir_bytes, _verify)
 from a6_production_contract import DATOMIC_SOURCE, DATOMIC_VOLUME, NODE_MOUNTS, mounts_match
 from a6_production_deploy import DeployError, observe_gce, _mounts, _token, _int_token
 from a6_mount_policy import Collection
@@ -162,19 +162,7 @@ def _destination(window):
 
 
 def _manifest(path):
-    rows = []
-    try:
-        for line in path.read_text(encoding='utf-8').splitlines():
-            digest, relative = line.split('  ', 1)
-            if (not re.fullmatch(r'[0-9a-f]{64}', digest) or not relative
-                    or Path(relative).is_absolute() or '..' in Path(relative).parts):
-                raise ValueError()
-            rows.append({'path': relative, 'sha256': digest})
-    except (OSError, ValueError) as exc:
-        raise ProductionBackupError('backup_manifest_invalid') from exc
-    if not rows:
-        raise ProductionBackupError('backup_manifest_invalid')
-    return rows
+    return read_manifest(path)
 
 
 def _receipt(window, report, reused=False):
@@ -187,6 +175,7 @@ def _receipt(window, report, reused=False):
         'restoreIsolated': report.get('restoreIsolated') is True,
         'volume': DATOMIC_VOLUME,
         'files': int(report.get('files') or 0),
+        'manifestSha256': report.get('manifestSha256'),
     }
 
 
@@ -243,10 +232,11 @@ def status(window):
     backup, restore = destination / 'data', destination / 'restore-isolated'
     manifest = _manifest(destination / 'backup-manifest.txt')
     _no_symlinks(backup); _no_symlinks(restore)
-    _attestation(destination, window, destination / 'backup-manifest.txt')
+    attestation = _attestation(destination, window, destination / 'backup-manifest.txt')
     _verify(backup, restore, manifest)
     return _receipt(window, {'manifestVerified': True, 'sourcePreserved': True,
-                             'restoreIsolated': True, 'files': len(manifest)}, reused=True)
+                             'restoreIsolated': True, 'files': len(manifest),
+                             'manifestSha256': attestation['manifestSha256']}, reused=True)
 
 
 def _signature(collection):
@@ -275,6 +265,7 @@ def backup(window):
     restored = restore_isolated(report['manifest'], destination / 'data', destination / 'restore-isolated')
     report.update(restoreIsolated=True, files=restored['files'])
     _write_attestation(destination, window, destination / 'backup-manifest.txt')
+    report['manifestSha256'] = _manifest_sha256(destination / 'backup-manifest.txt')
     return _receipt(window, report)
 
 

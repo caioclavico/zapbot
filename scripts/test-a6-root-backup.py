@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import io
+import hashlib
 import json
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -9,11 +10,44 @@ import unittest
 from unittest.mock import patch
 from a6_mount_policy import Collection, LIVE_VOLUME
 from a6_production_contract import VM
-from a6_production_backup import ProductionBackupError
+from a6_production_backup import (ProductionBackupError, read_manifest, rehearse_isolated_copy,
+                                  restore_isolated, _verify)
 import a6_root_backup as admin
 
 
 class RootBackupTests(unittest.TestCase):
+    def test_manifest_binds_exact_files_and_rejects_tampering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'source'
+            source.mkdir()
+            (source / 'save.edn').write_text('save')
+            (source / 'egg.edn').write_text('egg')
+            report = rehearse_isolated_copy(source, root / 'backup')
+            manifest = Path(report['manifest'])
+            restore_isolated(manifest, root / 'backup', root / 'restore')
+            rows = read_manifest(manifest)
+            _verify(root / 'backup', root / 'restore', rows)
+            with self.assertRaisesRegex(ProductionBackupError, 'backup_invalid'):
+                _verify(root / 'backup', root / 'restore', rows[:1])
+            (root / 'restore' / 'extra.edn').write_text('unlisted')
+            with self.assertRaisesRegex(ProductionBackupError, 'backup_invalid'):
+                _verify(root / 'backup', root / 'restore', rows)
+            (root / 'restore' / 'extra.edn').unlink()
+            (root / 'restore' / 'egg.edn').write_text('changed')
+            with self.assertRaisesRegex(ProductionBackupError, 'backup_invalid'):
+                _verify(root / 'backup', root / 'restore', rows)
+            (root / 'restore' / 'egg.edn').unlink()
+            (root / 'restore' / 'egg.edn').symlink_to(root / 'backup' / 'egg.edn')
+            with self.assertRaisesRegex(ProductionBackupError, 'backup_invalid'):
+                _verify(root / 'backup', root / 'restore', rows)
+            raw = manifest.read_text()
+            for bad in (raw + raw.splitlines()[0] + '\n',
+                        '0' * 64 + '  ../outside\n'):
+                manifest.write_text(bad)
+                with self.assertRaisesRegex(ProductionBackupError, 'manifest_invalid'):
+                    read_manifest(manifest)
+
     def test_requires_root(self):
         with patch('os.geteuid', return_value=1000), self.assertRaisesRegex(ProductionBackupError, 'root_required'):
             admin.backup('test')
@@ -49,6 +83,9 @@ class RootBackupTests(unittest.TestCase):
                 observed = json.loads(output.getvalue())
                 self.assertTrue(observed['reused'])
                 self.assertEqual(observed['files'], result['files'])
+                self.assertEqual(observed['manifestSha256'], result['manifestSha256'])
+                self.assertEqual(result['manifestSha256'], hashlib.sha256(
+                    (root / 'fixture/backup-manifest.txt').read_bytes()).hexdigest())
             self.assertTrue(result['sourcePreserved'])
             self.assertTrue(result['manifestVerified'])
             self.assertTrue(result['restoreIsolated'])
