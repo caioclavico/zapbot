@@ -25,6 +25,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+          fetch-depth: 0
       - name: Construir e verificar imagens locais
         shell: bash
         env:
@@ -60,4 +61,33 @@ jobs:
             echo "## Imagem local $SERVICE de homologação (não publicada)"
             echo "Revisão: $SOURCE_SHA"
             echo "ID de configuração: $(docker image inspect --format '{{.Id}}' a6-ci-image)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Homologar helper root e rollback XP v3 em Datomic descartável
+        if: matrix.service == 'jvm'
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          ROLLBACK_SHA: ddc47b0d0dedefd47f4cd83c58f370ffb42d4aa0
+        run: |
+          set -euo pipefail
+          rollback_dir="$(mktemp -d)"
+          trap 'rm -rf "$rollback_dir"' EXIT
+          git archive "$ROLLBACK_SHA" | tar -x -C "$rollback_dir"
+          for attempt in 1 2 3; do
+            if docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$ROLLBACK_SHA" \
+                -t a6-ci-rollback -f "$rollback_dir/Dockerfile.jvm" "$rollback_dir"; then
+              break
+            fi
+            if [[ "$attempt" == 3 ]]; then exit 1; fi
+            sleep 20
+          done
+          candidate_id="$(docker image inspect --format '{{.Id}}' a6-ci-image)"
+          rollback_id="$(docker image inspect --format '{{.Id}}' a6-ci-rollback)"
+          sudo -A env A6_POST_V3_TEST_IMAGE="$candidate_id" A6_POST_V3_ROLLBACK_IMAGE="$rollback_id" \
+            A6_POST_V3_TEST_SHA="$SOURCE_SHA" A6_POST_V3_ROLLBACK_SHA="$ROLLBACK_SHA" \
+            python3 scripts/test-a6-post-v3-integration.py
+          {
+            echo "## Restore autenticado e rollback XP v3 (descartáveis)"
+            echo "Revisão candidata: $SOURCE_SHA / ID local: $candidate_id"
+            echo "Revisão de rollback: $ROLLBACK_SHA / ID local: $rollback_id"
           } >> "$GITHUB_STEP_SUMMARY"

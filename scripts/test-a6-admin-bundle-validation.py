@@ -15,7 +15,8 @@ VALIDATOR = ROOT / "a6_validate_admin_bundle.py"
 EXPECTED = (
     "a6-root-backup", "a6_root_backup.py", "a6_production_backup.py",
     "a6_production_contract.py", "a6_production_deploy.py",
-    "a6_mount_policy.py", "a6_writer_policy.py", "chromium-seccomp.json",
+    "a6_mount_policy.py", "a6_writer_policy.py", "a6_post_v3_backup.py",
+    "a6_post_v3_restore_audit.clj", "xp_reconciliation.clj", "chromium-seccomp.json",
 )
 
 

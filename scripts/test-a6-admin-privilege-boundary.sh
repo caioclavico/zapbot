@@ -14,8 +14,10 @@ install -d -o root -g root -m 0700 "$installer"
 install -o root -g root -m 0700 /work/scripts/a6-provision-admin.sh "$installer/a6-provision-admin.sh"
 install -o root -g root -m 0600 /work/scripts/a6_validate_admin_bundle.py "$installer/a6_validate_admin_bundle.py"
 tar --format=ustar -C /work/scripts -cf "$test_root/admin.tar" \
-  a6-root-backup a6_root_backup.py a6_production_backup.py a6_production_contract.py \
+  a6-root-backup a6_root_backup.py a6_production_backup.py a6_production_contract.py a6_post_v3_backup.py a6_post_v3_restore_audit.clj \
   a6_production_deploy.py a6_mount_policy.py a6_writer_policy.py
+tar --format=ustar -C /work/modules/pokemon/infrastructure/pokemon/infrastructure/datomic \
+  -rf "$test_root/admin.tar" xp_reconciliation.clj
 tar --format=ustar -C /work/docker -rf "$test_root/admin.tar" chromium-seccomp.json
 bundle_sha="$(sha256sum "$test_root/admin.tar" | awk '{print $1}')"
 A6_ADMIN_BUNDLE="$test_root/admin.tar" A6_ADMIN_BUNDLE_SHA256="$bundle_sha" \

@@ -25,8 +25,7 @@ class GateTests(unittest.TestCase):
         self.assertTrue(gate.release_mode(initial, None))
         with self.assertRaisesRegex(DeployError, "protocol_required"):
             gate.release_mode({gate.PROTOCOL_ENV: gate.INITIAL_V3_ACTIVATION}, "/tmp/lab")
-        with self.assertRaisesRegex(DeployError, "t0_audit_not_integrated"):
-            gate.release_mode({gate.PROTOCOL_ENV: gate.POST_V3_UPGRADE}, None)
+        self.assertFalse(gate.release_mode({gate.PROTOCOL_ENV: gate.POST_V3_UPGRADE}, None))
         with self.assertRaisesRegex(DeployError, "protocol_ambiguous"):
             gate.release_mode(initial | {gate.PROTOCOL_ENV: gate.POST_V3_UPGRADE}, None)
         with self.assertRaisesRegex(DeployError, "protocol_invalid"):

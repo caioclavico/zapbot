@@ -227,3 +227,18 @@
     (let [audit (recon/audit-post-v3 conn id id)]
       (is (= "BLOCKED" (:status audit)))
       (is (false? (:pokemonIdentityVerified audit))))))
+
+(deftest post-v3-audit-rejects-a-second-compensation-receipt
+  (let [conn (seeded)
+        preview (recon/preview conn id id)
+        _ (recon/reconcile! conn id id (:snapshot-sha256 preview))
+        prior (receipt conn)]
+    (is (= "PASS" (:status (recon/audit-post-v3 conn id id))))
+    (d/transact conn {:tx-data [(-> prior
+                                   (dissoc :db/id)
+                                   (assoc :operation-receipt/id "duplicate-compensation-fixture"))]})
+    (let [before (pokemon conn)
+          audit (recon/audit-post-v3 conn id id)]
+      (is (= "BLOCKED" (:status audit)))
+      (is (false? (:historicalReceiptVerified audit)))
+      (is (= before (pokemon conn))))))
