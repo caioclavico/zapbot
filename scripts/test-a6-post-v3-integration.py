@@ -112,6 +112,7 @@ class AuthenticatedRestoreTest(unittest.TestCase):
         self.world.containers["odisseu-a6-jvm"]["image"] = self.rollback
         self.world.containers["odisseu-a6-node"]["image"] = self.rollback
         self.original_tags = self.world._tags
+        self.subprocess_run = subprocess.run
         self.world._tags = lambda: {
             "odisseu-jvm:a6-%s-amd64" % self.sha[:12]: self.image,
             "odisseu-node:a6-%s" % self.sha[:12]: self.image}
@@ -121,7 +122,8 @@ class AuthenticatedRestoreTest(unittest.TestCase):
             patch.object(admin, "DATOMIC_SOURCE", str(self.source)),
             patch.object(production, "DATOMIC_SOURCE", str(self.source)),
             patch.object(admin, "_collect", self.collect),
-            patch.object(admin, "_run", self.administrative_observation)]
+            patch.object(admin, "_run", self.administrative_observation),
+            patch.object(post.subprocess, "run", self.isolated_process)]
         for p in self.patches:
             p.start()
         self.helper_calls = []
@@ -148,6 +150,13 @@ class AuthenticatedRestoreTest(unittest.TestCase):
         result = self.world.runner(args)
         if args[:2] == ["docker", "exec"] and "curl -fsS" in args[-1]:
             result.stdout = result.stdout.rsplit("\n", 1)[0]
+        return result
+
+    def isolated_process(self, *args, **kwargs):
+        result = self.subprocess_run(*args, **kwargs)
+        if result.returncode:
+            # Somente o laboratório sintético; o helper operacional não expõe stderr.
+            print("ISOLATED_PROCESS_STDERR:", result.stderr, flush=True)
         return result
 
     def helper(self, destination, action):
