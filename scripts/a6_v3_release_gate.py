@@ -34,8 +34,7 @@ def release_mode(env, isolated_root):
     if protocol == POST_V3_UPGRADE:
         if env.get(RELEASE_ENV):
             raise DeployError("v3_protocol_ambiguous")
-        # A local audit is not proof of the T0 produced by this window.
-        raise DeployError("post_v3_t0_audit_not_integrated")
+        return False
     if protocol == INITIAL_V3_ACTIVATION and env.get(RELEASE_ENV) != RELEASE_MODE:
         raise DeployError("v3_single_cutover_protocol_required")
     # This temporary RC runner must never use the old unguarded live window.

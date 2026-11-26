@@ -294,13 +294,23 @@ def ensure(window):
 
 def cli(argv=None):
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 2 or args[0] not in ('--backup', '--ensure', '--preflight', '--status'):
+    post_ops = ('--post-v3-preflight', '--post-v3-backup', '--post-v3-audit', '--post-v3-status',
+                '--post-v3-live-gate', '--post-v3-gate-status')
+    if len(args) != 2 or args[0] not in ('--backup', '--ensure', '--preflight', '--status', *post_ops):
         print('uso: a6-root-backup --preflight|--backup|--ensure|--status WINDOW_ID', file=sys.stderr)
         return 2
     try:
         old = os.umask(0o077)
         try:
-            result = ({'ready': True, **preflight(BACKUP_ROOT / args[1] / 'data')}
+            if args[0] in post_ops:
+                if os.geteuid() != 0:
+                    raise ProductionBackupError('backup_root_required')
+                import a6_post_v3_backup as post
+                action = args[0].removeprefix('--post-v3-').replace('-', '_')
+                result = post.preflight(args[1]) if action == 'preflight' else (
+                    getattr(post, action)(sys.modules[__name__], args[1]))
+            else:
+                result = ({'ready': True, **preflight(BACKUP_ROOT / args[1] / 'data')}
                       if args[0] == '--preflight' else
                       backup(args[1]) if args[0] == '--backup' else
                       ensure(args[1]) if args[0] == '--ensure' else status(args[1]))

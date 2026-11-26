@@ -89,7 +89,11 @@ if [[ ! -t 0 ]]; then
 fi
 
 # PR #136: no fallback to old unguarded runner; enforce explicit combined release.
-if [[ "${A6_V3_SINGLE_CUTOVER:-}" != "a6-v3-raid-auto-136" || -z "${A6_V3_REHEARSAL_REPORT:-}" ]]; then
+if [[ "${A6_V3_PROTOCOL:-}" == "POST_V3_UPGRADE" ]]; then
+  if [[ -n "${A6_V3_SINGLE_CUTOVER:-}" ]]; then
+    echo "v3_protocol_ambiguous" >&2; exit 2
+  fi
+elif [[ "${A6_V3_SINGLE_CUTOVER:-}" != "a6-v3-raid-auto-136" || -z "${A6_V3_REHEARSAL_REPORT:-}" ]]; then
   echo "v3_single_cutover_protocol_required" >&2
   exit 2
 fi

@@ -25,7 +25,7 @@ from a6_production_deploy import DeployError
 JOURNAL = "a6-window-checkpoint.json"
 LOCK = "a6-window.lock"
 VERSION = 1
-BINDING_KEYS = ("vmHostname", "imageSha", "jvmDigest", "nodeDigest", "destination")
+BINDING_KEYS = ("vmHostname", "imageSha", "jvmDigest", "nodeDigest", "destination", "v3Protocol")
 
 
 def _live(path):
@@ -246,7 +246,7 @@ class WindowJournal:
             steps.append(name)
         if name == "backup" and "t0Evidence" in item:
             self.data["t0Evidence"] = copy.deepcopy(item["t0Evidence"])
-        if name == "v3_release_gate" and item.get("verified") is True:
+        if name == "v3_release_gate" and item.get("verified") is True and "postV3Evidence" not in item:
             self.data["v3ReleaseEvidence"] = {
                 key: item[key] for key in ("verified", "receiptId", "pokemonCount",
                                           "protectedSha256", "rehearsalManifestSha256")

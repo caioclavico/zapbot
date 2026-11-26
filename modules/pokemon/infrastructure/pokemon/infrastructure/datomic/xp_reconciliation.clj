@@ -339,11 +339,14 @@
                   (d/q '[:find ?tx ?added
                          :in $ ?e
                          :where [?e _ _ ?tx ?added]]
-                       (d/history db) (:db/id prior)))]
+                       (d/history db) (:db/id prior)))
+        compensation-receipts
+        (d/q '[:find ?e :where [?e :operation-receipt/kind "flat9-compensation-v3"]] db)]
     (and (:db/id prior)
          history-retained?
          unique-id?
          (= 1 (count history))
+         (= [(:db/id prior)] (mapv first compensation-receipts))
          (true? (second (first history)))
          (= "flat9-compensation-v3" (:operation-receipt/kind prior))
          (= "maintenance" (:operation-receipt/channel prior))
@@ -355,6 +358,29 @@
          (= fixed-target (:residual-after summary))
          (string? (:snapshot-sha256 summary))
          (boolean (re-matches #"[0-9a-f]{64}" (:snapshot-sha256 summary))))))
+
+(defn- historical-target-provenance-valid? [db target prior]
+  (when (and (:db/id target) (:db/id prior))
+    (let [txs (d/q '[:find ?tx :in $ ?e
+                    :where [?e :operation-receipt/id _ ?tx true]]
+                  (d/history db) (:db/id prior))
+          tx (when (= 1 (count txs)) (ffirst txs))
+          expected {:pokemon/xp-legacy-residual fixed-raw
+                    :pokemon/xp-legacy-nivel fixed-level
+                    :pokemon/xp fixed-target
+                    :pokemon/xp-desde-nivel fixed-target
+                    :pokemon/xp-progress-version "flat-9-v2"}]
+      (and tx
+           (= fixed-raw (:pokemon/xp-legacy-residual target))
+           (= fixed-level (:pokemon/xp-legacy-nivel target))
+           (every?
+             (fn [[attr value]]
+               (let [schema (d/pull db '[:db/ident :db/noHistory] attr)]
+                 (and (:db/ident schema) (not (:db/noHistory schema))
+                      (seq (d/q '[:find ?e :in $ ?e ?a ?v ?tx
+                                  :where [?e ?a ?v ?tx true]]
+                                (d/history db) (:db/id target) attr value tx)))))
+             expected)))))
 
 (defn- post-v3-result [r]
   (let [result (audit-result r)]
@@ -398,9 +424,7 @@
         prior (receipt db (op-id pokemon-id))
         target (read-one db pokemon-id)
         receipt-valid? (boolean (historical-receipt-valid? db prior pokemon-id))
-        provenance-valid? (and (:db/id target)
-                               (= fixed-raw (:pokemon/xp-legacy-residual target))
-                               (= fixed-level (:pokemon/xp-legacy-nivel target)))]
+        provenance-valid? (historical-target-provenance-valid? db target prior)]
     {:status (if (and schema-valid? identities-valid? (seq rows) (empty? blocked)
                       receipt-valid? provenance-valid?) "PASS" "BLOCKED")
      :blocked (count blocked)

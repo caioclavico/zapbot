@@ -23,7 +23,7 @@ if __name__ == "__main__":
 from a6_production_contract import VM
 from a6_production_deploy import DeployError
 from a6_supervised_deploy import RESUME_PHRASE, WINDOW, run_supervised
-from a6_v3_release_gate import RELEASE_ENV, RELEASE_MODE
+from a6_v3_release_gate import RELEASE_ENV, RELEASE_MODE, PROTOCOL_ENV, POST_V3_UPGRADE
 from a6_window_journal import (
     JOURNAL,
     WindowJournal,
@@ -240,6 +240,7 @@ def execute_window(
             "jvmDigest": jvm_digest,
             "nodeDigest": node_digest,
             "destination": str(destination),
+            "v3Protocol": env.get(PROTOCOL_ENV),
         }
         from_disk = prior is None
         try:

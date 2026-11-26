@@ -224,7 +224,8 @@ def execute_allowed(env, reasons, service):
 def plan(observation, sha, service, env=None, digest=None, backup=None, jvm_updated=False, image=None):
     env = env or {}
     reasons = preflight(observation)
-    if observation.get("jvm", {}).get("phase") != "quiescent":
+    phases = ("quiescent", "frozen") if env.get("A6_V3_PROTOCOL") == "POST_V3_UPGRADE" else ("quiescent",)
+    if observation.get("jvm", {}).get("phase") not in phases:
         reasons.append("jvm_not_quiescent")
     if observation.get("node", {}).get("phase") not in ("draining", "quiescent", "frozen"):
         reasons.append("node_not_draining")

@@ -451,6 +451,10 @@ def _recover(wrapped, op, recovery):
     if journal.broken:
         recovery["skipped"] = "checkpoint_write_failed"
         return recovery
+    meta = _META.get() or {}
+    if meta.get("postV3Plan"):
+        from a6_post_v3_upgrade import verify_rollback_target
+        verify_rollback_target(wrapped, op, meta)
     journal.intent(op, mode=recovery["mode"])
     results = []
     for command in recovery["commands"]:
@@ -531,6 +535,12 @@ def run_supervised(
     checkpoints = []
     seen = []
     try:
+        if env.get(v3_release.PROTOCOL_ENV) == v3_release.POST_V3_UPGRADE:
+            from a6_post_v3_upgrade import run as post_v3_run
+            return post_v3_run(
+                runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
+                event, hold_gate, prior, meta, materialize, checkpoints, seen,
+            )
         return _run_supervised(
             runner, sha, jvm_digest, node_digest, env, destination, isolated_root, event, hold_gate, prior, meta,
             materialize, checkpoints, seen,
@@ -1364,6 +1374,8 @@ def _update_service(wrapped, observation, sha, service, digest, image, env, back
     journal = _j()
     try:
         for command, verb in zip(commands, verbs):
+            if verb == "run" and (_META.get() or {}).get("postV3Plan") and service == "jvm":
+                _single_writer(_volume_holders(wrapped, _prefix(direct)), [])
             journal.intent(step, verb=verb)
             result = wrapped(command)
             if verb == "run" and cleanup is not None:

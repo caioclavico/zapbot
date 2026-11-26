@@ -4,6 +4,7 @@
             [clojure.string :as str]
             [datomic.client.api :as d]
             [odisseu.persistence.datomic :as persistence]
+            [pokemon.domain.growth :as growth]
             [pokemon.infrastructure.datomic.xp-reconciliation :as reconciliation]
             [pokemon.infrastructure.http.json :as json]))
 
@@ -24,8 +25,14 @@
                                       :maintenance-control? true})]
       (when-not (contains? (set (d/list-databases client {})) db-name)
         (throw (ex-info "restore_audit_database_missing" {})))
-      (reconciliation/audit-post-v3 (d/connect client {:db-name db-name})
-                                    pokemon-id pokemon-id))))
+      (let [probe {:id-pokemon "rollback-probe" :nivel 7 :xp 3
+                   :xp-desde-nivel 3 :xp-total (growth/progressive-synthetic-total 7 3)
+                   :xp-progress-version "progressive-xp-v3"}
+            normalized (growth/ensure-progressive-v3-for-grant probe)]
+        (when-not (= probe normalized)
+          (throw (ex-info "restore_audit_runtime_not_v3_aware" {})))
+        (reconciliation/audit-post-v3 (d/connect client {:db-name db-name})
+                                      pokemon-id pokemon-id)))))
 
 (defn -main [& args]
   (when-not (= 4 (count args))
