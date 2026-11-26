@@ -8,6 +8,7 @@ import a6_supervised_deploy as ops
 import a6_v3_release_gate as v3
 from a6_admin_backup_client import post_v3
 from a6_post_v3_backup import digest, validate_audit
+from a6_container_residues import inventory, collisions
 from a6_production_backup import BACKUP_AUTHORIZATION, ProductionBackupError
 from a6_production_deploy import DeployError, FORBIDDEN, _prefix, observe_vm, preflight
 
@@ -157,7 +158,14 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
 
     def blocked(reason, step=None):
         return ops._finish(checkpoints, step or ops._next([c["step"] for c in checkpoints]),
-                           [str(reason)], seen, admitted=True, maintenance=True)
+                           [str(reason)], seen, admitted=True, maintenance=True,
+                           residueResolutionPlan=state.get("residueResolutionPlan", []))
+
+    def check_names(observation, prefix, value, service=None):
+        conflicts = collisions(inventory(wrapped, prefix), value, state, observation, service)
+        if conflicts:
+            _checkpoint(state, residueResolutionPlan=conflicts)
+            raise DeployError("previous_container_requires_resolution")
 
     try:
         required = {"A6_SUPERVISED_WINDOW": ops.WINDOW, "A6_EXECUTE": "1",
@@ -201,6 +209,7 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
         prefix = _prefix(direct)
         meta["vmHostname"] = observation["vm"]["hostname"]
         _pending(state, prior, observation, wrapped, prefix, value)
+        check_names(observation, prefix, value)
         errors = preflight(observation)
         if errors:
             raise DeployError(errors[0])
@@ -275,6 +284,7 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
         ops._mark(checkpoints, {"step": "quiescence", "observed": True})
         if not state.get("proof"):
             if ops._jvm_running(observation):
+                check_names(observation, prefix, value)
                 ops._j().intent("post_v3_stop")
                 stopped = wrapped(prefix + ["stop", "--time", "30", "odisseu-a6-jvm"])
                 if not ops._ok(stopped):
@@ -295,6 +305,7 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
             proof = _proof(destination, value, state)
             if observation["jvm"]["imageId"] == value["rollbackJvmDigest"]:
                 if ops._jvm_running(observation):
+                    check_names(observation, prefix, value)
                     ops._j().intent("post_v3_stop")
                     stopped = wrapped(prefix + ["stop", "--time", "30", "odisseu-a6-jvm"])
                     if not ops._ok(stopped):
@@ -337,6 +348,7 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
             else:
                 if observation[service]["imageId"] != value["rollback" + service.capitalize() + "Digest"]:
                     raise DeployError("post_v3_cutover_source_mismatch")
+                check_names(observation, prefix, value, service)
                 result = ops._update_service(wrapped, observation, sha, service, digest_id, images[service],
                     env, backup, service == "node", direct, seen, checkpoints, materialize)
                 if result is not None:

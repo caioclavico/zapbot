@@ -6,7 +6,21 @@ não mexe em volume. O digest é lido de novo depois do load.
 
 from __future__ import annotations
 
-from a6_production_deploy import DeployError, _prefix, _run, observe_image
+import argparse
+import gzip
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+from a6_production_deploy import DeployError, _prefix, _run, observe_image, image_tag
+from a6_production_contract import JVM_MOUNTS, NODE_MOUNTS
+from a6_capacity import budget
 
 
 CANDIDATES = (
@@ -118,3 +132,181 @@ def verify_transfer(runner, ref, digest, revision, preserve_ids, docker_direct=F
         "started": False,
         "previousPreserved": True,
     }
+
+
+def _sha(path):
+    h = hashlib.sha256()
+    with path.open("rb") as stream:
+        for data in iter(lambda: stream.read(1024 * 1024), b""):
+            h.update(data)
+    return h.hexdigest()
+
+
+def _json_sha(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _docker(args):
+    result = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=1200)
+    if result.returncode:
+        raise DeployError("image_transport_process_failed")
+    return result.stdout
+
+
+def _image(ref):
+    docs = json.loads(_docker(["image", "inspect", ref]))
+    if len(docs) != 1:
+        raise DeployError("image_transport_identity_invalid")
+    return docs[0]
+
+
+def _content(doc):
+    return _json_sha({k: doc[k] for k in ("Architecture", "Os", "Config", "RootFS", "Created")})
+
+
+def runtime_contract(service):
+    flags = ({"POKEMON_ADAPTER": "jvm", "PLATFORM_ADAPTER": "datomic"}
+             if service == "node" else
+             {"POKEMON_PROGRESSIVE_XP_V3": "true", "ADVENTURE_AUTO_HATCH": "true",
+              "ODISSEU_BRIDGE_RAID_AUTO_TICK": "true", "ODISSEU_BRIDGE_ALLOW_TEST_RNG": "false",
+              "ODISSEU_BRIDGE_SEED": "false", "ODISSEU_BRIDGE_RESET": "false"})
+    return {"mounts": list(NODE_MOUNTS if service == "node" else JVM_MOUNTS), "flags": flags}
+
+
+def _directory(path):
+    path = Path(path).absolute()
+    if (path.resolve() != path or not path.is_dir()
+            or "/var/lib/docker/volumes" in str(path) or "odisseu-a6-cutover" in str(path)):
+        raise DeployError("image_transport_path_invalid")
+    return path
+
+
+def export_artifact(directory, service, sha, ref):
+    directory = _directory(directory)
+    if (service not in ("node", "jvm") or not re.fullmatch(r"[0-9a-f]{40}", sha)
+            or ref != image_tag(service, sha)):
+        raise DeployError("image_transport_request_invalid")
+    doc = _image(ref)
+    if (doc["Architecture"] != "amd64" or doc["Os"] != "linux"
+            or doc["Config"]["Labels"].get("org.opencontainers.image.revision") != sha):
+        raise DeployError("image_transport_revision_mismatch")
+    archive = directory / (service + ".tar.gz")
+    manifest = directory / (service + ".json")
+    if archive.exists() or manifest.exists():
+        raise DeployError("image_transport_output_exists")
+    with tempfile.TemporaryDirectory(prefix="image-export-", dir=directory) as work:
+        tar = Path(work) / "image.tar"
+        _docker(["save", "-o", str(tar), ref])
+        with tar.open("rb") as src, archive.open("xb") as dst:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=dst, mtime=0) as zipped:
+                shutil.copyfileobj(src, zipped)
+    value = {"schema": 1, "service": service, "revision": sha, "platform": "linux/amd64",
+             "ref": ref, "archive": archive.name, "archiveSha256": _sha(archive),
+             "archiveBytes": archive.stat().st_size, "imageBytes": doc["Size"],
+             "sourceImageId": doc["Id"], "contentSha256": _content(doc),
+             "runtimeContract": runtime_contract(service)}
+    manifest.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
+    return value
+
+
+def validate_artifacts(directory, sha, expected_manifest_hashes):
+    directory = _directory(directory)
+    if (not re.fullmatch(r"[0-9a-f]{40}", sha)
+            or set(expected_manifest_hashes) != {"node", "jvm"}):
+        raise DeployError("image_transport_pair_required")
+    rows = []
+    for service in ("node", "jvm"):
+        manifest = directory / (service + ".json")
+        if not manifest.is_file() or manifest.is_symlink() or _sha(manifest) != expected_manifest_hashes[service]:
+            raise DeployError("image_transport_manifest_mismatch")
+        value = json.loads(manifest.read_text())
+        archive = directory / (service + ".tar.gz")
+        if (value["schema"] != 1 or value["service"] != service or value["revision"] != sha
+                or value["platform"] != "linux/amd64" or value["archive"] != archive.name
+                or value["ref"] != image_tag(service, sha)
+                or not archive.is_file() or archive.is_symlink() or archive.stat().st_size != value["archiveBytes"]
+                or _sha(archive) != value["archiveSha256"]
+                or value["runtimeContract"] != runtime_contract(service)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", value["sourceImageId"])
+                or not re.fullmatch(r"[0-9a-f]{64}", value["contentSha256"])
+                or any(type(value[k]) is not int or value[k] <= 0
+                       for k in ("archiveBytes", "imageBytes"))):
+            raise DeployError("image_transport_artifact_mismatch")
+        rows.append(value)
+    return rows
+
+
+def import_artifacts(directory, sha, manifest_hashes, datomic_bytes, rollback_ids,
+                     rollback_sha, authorize=False):
+    if (authorize is not True or len(set(rollback_ids)) != 2
+            or not re.fullmatch(r"[0-9a-f]{40}", rollback_sha)):
+        raise DeployError("image_import_not_authorized")
+    rows = validate_artifacts(directory, sha, manifest_hashes)
+    before = {}
+    for ref in rollback_ids:
+        doc = _image(ref)
+        if (doc["Id"] != ref or doc["Architecture"] != "amd64" or doc["Os"] != "linux"
+                or doc["Config"]["Labels"].get("org.opencontainers.image.revision") != rollback_sha):
+            raise DeployError("image_import_rollback_incompatible")
+        before[ref] = doc["Id"]
+    docker_root = _docker(["info", "--format", "{{.DockerRootDir}}"]).strip()
+    free = min(shutil.disk_usage(directory).free, shutil.disk_usage(docker_root).free,
+               shutil.disk_usage("/var/backups").free)
+    capacity = budget(free, datomic_bytes,
+                      sum(v["archiveBytes"] for v in rows), sum(v["imageBytes"] for v in rows))
+    # Recusar sobrescrita de tag desconhecida, inclusive numa retomada.
+    names = set(_docker(["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]).splitlines())
+    for value in rows:
+        if value["ref"] in names and _content(_image(value["ref"])) != value["contentSha256"]:
+            raise DeployError("image_import_tag_conflict")
+    loaded = []
+    for value in rows:
+        _docker(["load", "-i", str(Path(directory) / value["archive"])])
+        doc = _image(value["ref"])
+        if (doc["Architecture"] != "amd64" or doc["Os"] != "linux"
+                or doc["Config"]["Labels"].get("org.opencontainers.image.revision") != sha
+                or _content(doc) != value["contentSha256"]):
+            raise DeployError("image_import_content_mismatch")
+        loaded.append({"service": value["service"], "imageId": doc["Id"],
+                       "sourceImageId": value["sourceImageId"], "contentSha256": _content(doc)})
+    if any(_image(ref)["Id"] != identity for ref, identity in before.items()):
+        raise DeployError("image_import_rollback_changed")
+    validate_artifacts(directory, sha, manifest_hashes)
+    return {"revision": sha, "loaded": loaded, "capacity": capacity,
+            "started": False, "rollbackPreserved": True}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Artefatos A6; nunca inicia containers")
+    sub = parser.add_subparsers(dest="action", required=True)
+    export = sub.add_parser("export")
+    export.add_argument("--service", choices=("node", "jvm"), required=True)
+    export.add_argument("--ref", required=True)
+    for p in (export, sub.add_parser("import")):
+        p.add_argument("--directory", required=True)
+        p.add_argument("--sha", required=True)
+    load = sub.choices["import"]
+    load.add_argument("--node-manifest-sha256", required=True)
+    load.add_argument("--jvm-manifest-sha256", required=True)
+    load.add_argument("--datomic-bytes", type=int, required=True)
+    load.add_argument("--rollback-id", action="append", required=True)
+    load.add_argument("--rollback-sha", required=True)
+    load.add_argument("--authorization", required=True)
+    a = parser.parse_args()
+    if a.action == "export":
+        value = export_artifact(a.directory, a.service, a.sha, a.ref)
+    else:
+        value = import_artifacts(a.directory, a.sha,
+            {"node": a.node_manifest_sha256, "jvm": a.jvm_manifest_sha256},
+            a.datomic_bytes, a.rollback_id, a.rollback_sha,
+            a.authorization == "autorizar-importacao-imagens-a6")
+    print(json.dumps(value, sort_keys=True))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (DeployError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+        reason = str(exc) if isinstance(exc, DeployError) else type(exc).__name__
+        print("image_transport_blocked:" + reason, file=sys.stderr)
+        sys.exit(2)

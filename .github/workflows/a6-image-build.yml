@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   images:
@@ -62,12 +63,23 @@ jobs:
             echo "Revisão: $SOURCE_SHA"
             echo "ID local Docker (.Id): $(docker image inspect --format '{{.Id}}' a6-ci-image)"
           } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p image-artifacts
+          ref="$(python3 -c 'import sys; sys.path.insert(0,"scripts"); from a6_production_deploy import image_tag; print(image_tag(sys.argv[1], sys.argv[2]))' "$SERVICE" "$SOURCE_SHA")"
+          docker tag a6-ci-image "$ref"
+          python3 scripts/a6_image_transfer.py export --directory "$PWD/image-artifacts" \
+            --service "$SERVICE" --sha "$SOURCE_SHA" --ref "$ref"
+          sha256sum image-artifacts/* | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Publicar artefato imutável, sem registry ou deploy
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: a6-${{ matrix.service }}-${{ github.event.pull_request.head.sha }}
+          path: image-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
       - name: Homologar helper root e rollback XP v3 em Datomic descartável
         if: matrix.service == 'jvm'
         shell: bash
-        env:
-          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-          ROLLBACK_SHA: ddc47b0d0dedefd47f4cd83c58f370ffb42d4aa0
         run: |
           set -euo pipefail
           rollback_dir="$(mktemp -d)"
@@ -91,3 +103,28 @@ jobs:
             echo "Revisão candidata: $SOURCE_SHA / ID local: $candidate_id"
             echo "Revisão de rollback: $ROLLBACK_SHA / ID local: $rollback_id"
           } | tee -a "$GITHUB_STEP_SUMMARY"
+          for attempt in $(seq 1 60); do
+            if gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+                --name "a6-node-$SOURCE_SHA" --dir image-artifacts; then break; fi
+            if [[ "$attempt" == 60 ]]; then exit 1; fi
+            sleep 10
+          done
+          sudo -A env GITHUB_ACTIONS=true A6_IMAGE_PREPARATION_TEST=yes SOURCE_SHA="$SOURCE_SHA" \
+            ROLLBACK_SHA="$ROLLBACK_SHA" A6_POST_V3_ROLLBACK_IMAGE="$rollback_id" \
+            A6_IMAGE_ARTIFACTS="$PWD/image-artifacts" \
+            python3 scripts/test-a6-image-preparation-integration.py
+          mkdir admin-kit
+          python3 scripts/a6_build_admin_bundle.py --directory "$PWD/admin-kit" --sha "$SOURCE_SHA"
+          sha256sum admin-kit/* | tee -a "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          ROLLBACK_SHA: ddc47b0d0dedefd47f4cd83c58f370ffb42d4aa0
+      - name: Publicar kit administrativo verificado, sem instalar na VM
+        if: matrix.service == 'jvm'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: a6-admin-${{ github.event.pull_request.head.sha }}
+          path: admin-kit/*
+          if-no-files-found: error
+          retention-days: 14

@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Entry point instalado root-owned; não aceitar caminhos fornecidos pelo operador."""
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "/usr/local/lib/odisseu-a6")
+sys.dont_write_bytecode = True
+library = Path("/usr/local/lib/odisseu-a6")
+current = library / "current"
+sys.path.insert(0, str(current.resolve(strict=True) if current.exists() or current.is_symlink() else library))
 from a6_root_backup import cli
 
 if __name__ == "__main__":

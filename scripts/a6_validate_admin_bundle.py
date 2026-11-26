@@ -32,6 +32,11 @@ EXPECTED = {
     "a6_post_v3_restore_audit.clj",
     "xp_reconciliation.clj",
     "chromium-seccomp.json",
+    "a6_maintenance_ops.py",
+    "a6_capacity.py",
+    "a6_install_admin.py",
+    "a6_image_transfer.py",
+    "bundle-manifest.json",
 }
 
 
@@ -61,6 +66,17 @@ def validate(data, expected):
                 raise InvalidBundle("invalid archive terminator")
             if members.keys() != EXPECTED:
                 raise InvalidBundle("bundle allowlist is incomplete")
+            try:
+                manifest = json.loads(bytes(members["bundle-manifest.json"]))
+                files = manifest["files"]
+                if (manifest["schema"] != 1
+                        or not re.fullmatch(r"[0-9a-f]{40}", manifest["revision"])
+                        or set(files) != EXPECTED - {"bundle-manifest.json"}
+                        or any(hashlib.sha256(contents).hexdigest() != files[name]
+                               for name, contents in members.items() if name != "bundle-manifest.json")):
+                    raise ValueError()
+            except (ValueError, KeyError, TypeError) as exc:
+                raise InvalidBundle("component manifest mismatch") from exc
             return members
 
         checksum = _octal(header[148:156], "header checksum")

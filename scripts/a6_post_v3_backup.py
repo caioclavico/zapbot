@@ -19,10 +19,11 @@ from a6_production_backup import (ProductionBackupError, _active_writer, _quiesc
                                   _files, _verify, read_manifest)
 from a6_writer_policy import INVENTORY
 from a6_production_contract import JVM_MOUNTS, NODE_MOUNTS, mounts_match
-from a6_production_deploy import _mounts, _token
+from a6_production_deploy import DeployError, _mounts, _token
+from a6_maintenance_ops import command, parse_http
 
 PLAN_ROOT = Path("/etc/odisseu-a6/post-v3-windows")
-CODE_ROOT = Path("/usr/local/lib/odisseu-a6")
+CODE_ROOT = Path(__file__).resolve().parent
 CODE_FILES = ("a6_post_v3_restore_audit.clj", "xp_reconciliation.clj")
 IMAGE_CODE = "/app/modules/pokemon/infrastructure/pokemon/infrastructure/datomic/xp_reconciliation.clj"
 COUNTS = ("playerCount", "saveCount", "pokemonCount", "eggCount", "incubatorCount",
@@ -156,9 +157,14 @@ def verify_images(value):
 
 
 def preflight(window):
+    import a6_root_backup as admin
+    from a6_capacity import budget
     value = plan(window)
     verify_images(value)
-    return {"operation": "post-v3-preflight", "plan": value, "planSha256": digest(value)}
+    source_bytes = sum(p.stat().st_size for p in _files(Path(admin.DATOMIC_SOURCE)))
+    capacity = budget(shutil.disk_usage(admin.BACKUP_ROOT).free, source_bytes)
+    return {"operation": "post-v3-preflight", "plan": value, "planSha256": digest(value),
+            "capacity": capacity}
 
 
 def _intent_path(admin, window):
@@ -308,14 +314,16 @@ def _containers(admin, value):
 
 
 def _http(admin, service, path):
+    if service not in ("jvm", "node"):
+        raise ProductionBackupError("post_v3_live_service_invalid")
     port, header, token = ((18090, "X-A6-Maintenance-Token", "ODISSEU_BRIDGE_MAINTENANCE_TOKEN")
                           if service == "jvm" else
                           (3001, "x-a6-node-maintenance-token", "ODISSEU_NODE_MAINTENANCE_TOKEN"))
-    raw = admin._read(["docker", "exec", "odisseu-a6-" + service, "sh", "-c",
-        'curl -fsS -H "' + header + ': $' + token + '" '
-        "'http://127.0.0.1:" + str(port) + path + "'"])
     try:
-        value = json.loads(raw)
+        code, value = parse_http(admin._run(command(
+            ["docker"], "odisseu-a6-" + service, "GET", path, header, token, port)))
+        if code != 200:
+            raise ValueError()
         if service == "jvm":
             if value.get("ok") is not True:
                 raise ValueError()
@@ -323,7 +331,7 @@ def _http(admin, service, path):
         if not isinstance(value, dict):
             raise ValueError()
         return value
-    except (ValueError, KeyError, TypeError) as exc:
+    except (ValueError, KeyError, TypeError, DeployError) as exc:
         raise ProductionBackupError("post_v3_live_response_invalid") from exc
 
 

@@ -46,7 +46,7 @@ stage_json="$(/usr/bin/python3 -I "$validator" --bundle "$bundle" --sha256 "$exp
 stage="$(/usr/bin/python3 -I -c 'import json, sys; print(json.load(sys.stdin)["stage"])' <<<"$stage_json")"
 cleanup() { rm -rf "$stage"; }
 trap cleanup EXIT
-for item in a6-root-backup a6_root_backup.py a6_production_backup.py a6_production_contract.py a6_production_deploy.py a6_mount_policy.py a6_writer_policy.py a6_post_v3_backup.py a6_post_v3_restore_audit.clj xp_reconciliation.clj chromium-seccomp.json; do
+for item in a6-root-backup a6_root_backup.py a6_production_backup.py a6_production_contract.py a6_production_deploy.py a6_mount_policy.py a6_writer_policy.py a6_post_v3_backup.py a6_post_v3_restore_audit.clj xp_reconciliation.clj chromium-seccomp.json a6_maintenance_ops.py a6_capacity.py a6_install_admin.py a6_image_transfer.py bundle-manifest.json; do
   [[ -f "$stage/$item" && ! -L "$stage/$item" && "$(stat -c '%u:%a:%h' -- "$stage/$item")" == 0:600:1 ]] || { echo "artefato extraído inválido: $item" >&2; exit 2; }
 done
 [[ "$(sha256sum "$stage/chromium-seccomp.json" | awk '{print $1}')" == "$seccomp_sha" ]] || { echo 'seccomp SHA-256 divergente' >&2; exit 2; }
@@ -56,18 +56,4 @@ if (( ${#missing[@]} )); then
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}" ca-certificates
 fi
-install -d -o root -g root -m 0755 "$target" "$(dirname "$entry")"
-install -d -o root -g root -m 0755 "$(dirname "$profile")"
-install -o root -g root -m 0644 "$stage"/*.py "$target/"
-install -o root -g root -m 0644 "$stage"/*.clj "$target/"
-install -o root -g root -m 0755 "$stage/a6-root-backup" "$entry"
-install -o root -g root -m 0644 "$stage/chromium-seccomp.json" "$profile"
-install -d -o root -g root -m 0700 /var/backups/odisseu-a6
-install -d -o root -g root -m 0700 /etc/odisseu-a6/post-v3-windows
-install -o root -g root -m 0440 /dev/stdin "$sudoers" <<'EOF'
-Cmnd_Alias ODISSEU_A6_BACKUP = /usr/local/libexec/odisseu-a6/a6-root-backup *
-caioclavico ALL=(root) NOPASSWD: ODISSEU_A6_BACKUP
-EOF
-visudo -cf "$sudoers"
-/usr/bin/python3 -I -m py_compile "$target"/*.py
-echo '{"provisioned":true,"maintenanceStarted":false,"holdChanged":false,"imagesTransferred":false}'
+/usr/bin/python3 -I "$stage/a6_install_admin.py" --stage "$stage" --bundle-sha256 "$expected"
