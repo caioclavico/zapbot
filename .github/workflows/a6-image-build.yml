@@ -39,6 +39,14 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' a6-ci-image)" = "$SOURCE_SHA"
           if [[ "$SERVICE" == node ]]; then
             docker run --rm --network none --entrypoint node a6-ci-image --version
+            docker run --rm --network none --entrypoint node a6-ci-image -e \
+              'const {Client, LocalAuth} = require("whatsapp-web.js"); const auth = new LocalAuth({clientId: "ci-disposable", dataPath: "/tmp/ci-auth"}); const client = new Client({authStrategy: auth}); if (!client || !auth) process.exit(1);'
+            docker run --rm --network none --cap-drop ALL \
+              --security-opt no-new-privileges \
+              --security-opt "seccomp=$PWD/docker/chromium-seccomp.json" \
+              -e CHROMIUM_SANDBOX_TEST=yes \
+              -v "$PWD/scripts/test-chromium-sandbox.cjs:/tmp/test-chromium-sandbox.cjs:ro" \
+              --entrypoint node a6-ci-image /tmp/test-chromium-sandbox.cjs
           else
             docker run --rm --network none --entrypoint clojure a6-ci-image -Sdescribe
           fi

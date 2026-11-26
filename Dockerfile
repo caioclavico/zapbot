@@ -21,24 +21,29 @@ FROM node:22.23.4-bookworm-slim@sha256:aaa4b5baf1ecff3b283486bb1f90405cdda225a3e
 # Produção operacional (eefacb92) usa pacote `chromium` 155; a RC e7488e4f usava
 # `google-chrome-stable` 157 e autenticou/loading 100% sem READY (RECOVERING),
 # com whatsapp-startup + package-lock idênticos. O 155 saiu do apt; pin no
-# sucessor security `156.0.8078.79-1~deb12u1` (mesma família Debian chromium).
+# sucessor security `156.0.8078.108-1~deb12u1` (mesma família Debian chromium).
 LABEL io.zapbot.service="odisseu" \
       io.zapbot.persistence-version="1" \
       io.zapbot.restore-protocol="1" \
       io.zapbot.runtime.node="22.23.4" \
-      io.zapbot.runtime.chromium="156.0.8078.79-1~deb12u1" \
+      io.zapbot.runtime.chromium="156.0.8078.108-1~deb12u1" \
       io.zapbot.runtime.brotli="1.0.9-2+deb12u1" \
       io.zapbot.runtime.browser-package="chromium"
 RUN printf '%s\n' 'deb http://security.debian.org/debian-security bookworm-security main' \
       > /etc/apt/sources.list.d/bookworm-security.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-      chromium=156.0.8078.79-1~deb12u1 \
-      chromium-common=156.0.8078.79-1~deb12u1 \
-      chromium-sandbox=156.0.8078.79-1~deb12u1 \
+      chromium=156.0.8078.108-1~deb12u1 \
+      chromium-common=156.0.8078.108-1~deb12u1 \
+      chromium-sandbox=156.0.8078.108-1~deb12u1 \
       libbrotli1=1.0.9-2+deb12u1 \
       fonts-liberation ca-certificates tini \
     && test -x /usr/bin/chromium \
+    && test -x /usr/lib/chromium/chrome-sandbox \
+    && test "$(chromium --version)" = "Chromium 156.0.8078.108 built on Debian GNU/Linux 12 (bookworm)" \
+    && for package in chromium chromium-common chromium-sandbox; do \
+      test "$(dpkg-query -W -f='${Version}' "$package")" = "156.0.8078.108-1~deb12u1"; \
+    done \
     && ! test -e /usr/bin/google-chrome-stable \
     && rm -rf /usr/local/lib/node_modules/npm \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx \
