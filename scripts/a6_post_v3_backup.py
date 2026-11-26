@@ -217,8 +217,8 @@ def _audit_image(value, image, restored, work_parent):
         manifest = read_manifest(work_parent / "backup-manifest.txt")
         _verify(restored, work, manifest)
         expression = (
-            '(load-file "/audit/xp_reconciliation.clj") '
-            '(load-file "/audit/a6_post_v3_restore_audit.clj") '
+            '(load-file "/audit-code/xp_reconciliation.clj") '
+            '(load-file "/audit-code/a6_post_v3_restore_audit.clj") '
             '(apply a6.post-v3-restore-audit/-main *command-line-args*) '
             '(System/exit 0)'
         )
@@ -228,14 +228,14 @@ def _audit_image(value, image, restored, work_parent):
                    "--tmpfs=/tmp:rw,nosuid,nodev,size=256m,mode=1777",
                    "--workdir=/tmp",
                    "--env=POKEMON_PROGRESSIVE_XP_V3=true",
-                   "--mount=type=bind,src=" + str(work) + ",dst=/audit/storage",
-                   "--mount=type=bind,src=" + str(CODE_ROOT) + ",dst=/audit,readonly",
+                   "--mount=type=bind,src=" + str(work) + ",dst=/audit-storage",
+                   "--mount=type=bind,src=" + str(CODE_ROOT) + ",dst=/audit-code,readonly",
                    "--entrypoint=sh", image, "-c",
                    'cp /app/deps.edn ./deps.edn && exec clojure "$@"', "post-v3-audit",
                    "-Srepro", "-Sdeps",
                    '{:paths ["/app/apps/odisseu/src" "/app/shared/persistence/src" '
                    '"/app/modules/pokemon/domain" "/app/modules/pokemon/infrastructure"]}',
-                   "-M", "-e", expression, "--", "/audit/storage", value["system"],
+                   "-M", "-e", expression, "--", "/audit-storage", value["system"],
                    value["database"], "abb8955f-7ebe-4084-a634-fd74cfa9bf62"]
         raw = _run(command)
         try:

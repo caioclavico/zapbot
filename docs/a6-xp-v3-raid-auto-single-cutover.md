@@ -249,6 +249,8 @@ operador é aceito como prova.
    O launcher copia apenas `deps.edn` da imagem para o tmpfs `/tmp`,
    onde calcula o cache da CLI; os namespaces continuam vindo de `/app`.
    Não há escrita no filesystem da imagem nem download de dependências.
+   Código e cópia Datomic usam mounts separados (`/audit-code` read-only e
+   `/audit-storage` gravável), sem criar um mountpoint sob um bind read-only.
 7. Auditorias idênticas e PASS, incluindo todos os datoms atuais (sem
    `:db/txInstant`), schema, identidades, XP, recibos e contagens protegidas.
    O helper revalida backup/restore após as auditorias e grava
