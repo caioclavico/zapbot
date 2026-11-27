@@ -404,6 +404,14 @@ def _state_from_env():
     return os.environ.get("A6_STATE_DIR") or DEFAULT_STATE
 
 
+def github_hold():
+    mode = os.environ.get("A6_GITHUB_AUTH", "app")
+    if mode == "app":
+        from a6_github_app import AppGhRunner
+        return GithubHold(AppGhRunner())
+    raise DeployError("github_auth_mode_refused")
+
+
 def cli(argv=None):
     """Entrada do processo. CI e um terminal sem confirmação não chegam aqui pelo shell."""
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -415,7 +423,7 @@ def cli(argv=None):
         return 2
     if argv[:1] == ["--recover-hold"]:
         try:
-            audit = recover_hold(GithubHold(_subprocess_runner), _state_from_env())
+            audit = recover_hold(github_hold(), _state_from_env())
         except DeployError as exc:
             print(str(exc), file=sys.stderr)
             return 2
@@ -437,7 +445,7 @@ def cli(argv=None):
                                v3_release=os.environ.get(RELEASE_ENV) == RELEASE_MODE)
     report = execute_window(
         _subprocess_runner,
-        GithubHold(_subprocess_runner),
+        github_hold(),
         input,
         os.environ.get("A6_IMAGE_SHA") or "",
         os.environ.get("A6_JVM_DIGEST") or "",

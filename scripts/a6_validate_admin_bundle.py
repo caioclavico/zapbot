@@ -36,6 +36,7 @@ EXPECTED = {
     "a6_capacity.py",
     "a6_install_admin.py",
     "a6_image_transfer.py",
+    "a6_github_app.py",
     "bundle-manifest.json",
 }
 

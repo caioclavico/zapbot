@@ -17,7 +17,8 @@ EXPECTED = (
     "a6_production_contract.py", "a6_production_deploy.py",
     "a6_mount_policy.py", "a6_writer_policy.py", "a6_post_v3_backup.py",
     "a6_post_v3_restore_audit.clj", "xp_reconciliation.clj", "chromium-seccomp.json",
-    "a6_maintenance_ops.py", "a6_capacity.py", "a6_install_admin.py", "a6_image_transfer.py", "bundle-manifest.json",
+    "a6_maintenance_ops.py", "a6_capacity.py", "a6_install_admin.py", "a6_image_transfer.py",
+    "a6_github_app.py", "bundle-manifest.json",
 )
 
 

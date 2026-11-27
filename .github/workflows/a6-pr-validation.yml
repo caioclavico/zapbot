@@ -133,6 +133,7 @@ jobs:
           python3 scripts/test-a6-supervised-deploy.py
           python3 scripts/test-a6-maintenance-ops.py
           python3 scripts/test-a6-operational-window.py
+          python3 scripts/test-a6-github-app.py
           python3 scripts/test-a6-window-interruptions.py
           python3 scripts/test-a6-root-backup.py
           python3 scripts/test-a6-admin-backup-client.py
