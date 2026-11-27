@@ -83,7 +83,8 @@ class GithubAppTests(unittest.TestCase):
             del hold
             with tempfile.TemporaryDirectory() as tmp:
                 fresh = GithubHold(AppGhRunner(fixture.broker(), gh))
-                report = recover_hold(fresh, tmp, env={})
+                with patch.dict(os.environ, {"GITHUB_ACTIONS": "false", "GITHUB_EVENT_NAME": ""}):
+                    report = recover_hold(fresh, tmp, env={})
                 self.assertEqual(value[0], "true")
                 self.assertNotIn("secret", json.dumps(report))
                 self.assertNotIn("secret", "".join(p.read_text() for p in Path(tmp).glob("*.json")))
@@ -156,6 +157,8 @@ class GithubAppTests(unittest.TestCase):
         with patch.dict(os.environ, {"A6_GITHUB_AUTH": "personal"}):
             with self.assertRaisesRegex(DeployError, "github_auth_mode_refused"):
                 github_hold()
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIsInstance(github_hold().runner, AppGhRunner)
 
     def test_secret_store_outage_and_invalid_jwt_signing_fail_closed(self):
         fixture = Fixture()
