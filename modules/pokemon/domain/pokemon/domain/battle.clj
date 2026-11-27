@@ -112,8 +112,11 @@
           nome-bruto (golpe-get g :nome-exibicao "nome-exibicao" :nomeExibicao "nomeExibicao" :nome "nome")
           nome-ex (nome-golpe-exibivel nome-bruto slug-bruto tipo)
           ;; Slug canônico: legado só com "nome" → deriva do nome (nunca deixa slim sem id).
-          slug (or (when-let [s (some-> slug-bruto str str/trim)]
-                     (when (seq s) s))
+          slug-legado (when-let [s (some-> slug-bruto str str/trim)]
+                        (when (seq s) s))
+          wave-crash? (= "wave-crash" (:slug (move-names/resolver (or slug-legado nome-ex))))
+          slug (or (when wave-crash? "wave-crash")
+                   slug-legado
                    (when-let [n (some-> nome-ex str str/trim)]
                      (when (and (seq n) (not= n "?"))
                        (-> n str/lower-case
@@ -141,13 +144,12 @@
         (assoc :golpe-irrecuperavel? true)))))
 
 (defn- slim-golpe-default?
-  "Defaults V1 (0/[]/precisao 100/alvo adversário) — ausente = mesmo efeito no loop."
+  "Defaults V1 que não alteram a resolução do golpe."
   [[k v]]
   (or (nil? v)
       (and (#{:cura :dreno :recuo :chance-status} k) (number? v) (zero? (long v)))
       (and (= :autodesmaio k) (not v))
       (and (= :alteracoes k) (or (nil? v) (and (sequential? v) (empty? v))))
-      (and (= :precisao k) (number? v) (= 100 (long v)))
       (and (= :alvo k) (or (= :adversario v) (= "adversario" v)))))
 
 (defn slim-golpe-for-battle
@@ -412,14 +414,15 @@
 
 (defn- executar-golpe-status
   [battle golpe ator alvo rng]
-  (let [golpe (assoc golpe :precisao
-                     (mechanics/precisao-no-clima golpe (get-in battle [:clima :tipo])))
+  (let [clima (get-in battle [:clima :tipo])
+        golpe (assoc golpe :precisao (mechanics/precisao-no-clima golpe clima))
         bloqueado? (mechanics/protecao-bloqueia? battle alvo golpe)
         battle (if bloqueado? (mechanics/consumir-protecao battle alvo) battle)
         chance (dmg/chance-acerto (:precisao golpe)
                                   (get-in battle [:estagios ator])
                                   (get-in battle [:estagios alvo])
-                                  (:ignora-precisao golpe))
+                                  (or (= :proprio (:alvo golpe))
+                                      (mechanics/ignora-precisao-no-clima? golpe clima)))
         errou? (and (not bloqueado?)
                     chance (< chance 100)
                     (>= (rng/roll rng :status-accuracy 100) chance))
@@ -783,11 +786,13 @@
                    :else resolved)
         resolved (if (or (not= :nocaute (:familia golpe)) bloqueado? invulneravel?)
                    resolved
-                   (if (and (:acertou? resolved)
-                            (>= (long (or (:nivel atacante) 1))
-                                (long (or (:nivel defensor) 1))))
+                   (cond
+                     (not (:acertou? resolved)) resolved
+                     (>= (long (or (:nivel atacante) 1))
+                         (long (or (:nivel defensor) 1)))
                      (assoc resolved :dano hp-vivo :nocaute? true)
-                     (assoc resolved :dano 0 :acertou? false :errou? true
+                     :else
+                     (assoc resolved :dano 0 :acertou? false :nivel-insuficiente? true
                             :critico? false :nocaute? false)))
         battle (cond-> battle
                  bloqueado? (mechanics/consumir-protecao def-marca))
@@ -837,9 +842,13 @@
                  (mechanics/limpar-hazards atk-marca))
         dreno (when (and (:acertou? resolved) (:dreno golpe))
                 (max 1 (quot (* (:dano resolved) (long (:dreno golpe))) 100)))
-        recuo (when (and (:acertou? resolved) (:recuo golpe)
+        dano-infligido (- (long hp-antes) (long (get-in battle [:hp def-marca] 0)))
+        recuo (when (and (:acertou? resolved) (pos? dano-infligido) (:recuo golpe)
                          (not (:autodesmaio golpe)))
-                (max 1 (quot (* (:dano resolved) (long (:recuo golpe))) 100)))
+                ;; O catálogo usa 33 para representar a fração exata de um terço.
+                (max 1 (if (= 33 (long (:recuo golpe)))
+                         (quot dano-infligido 3)
+                         (quot (* dano-infligido (long (:recuo golpe))) 100))))
         ;; Explosion/Self-Destruct: após hit válido, usuário desmaia (HP→0).
         autodesmaio? (and (:acertou? resolved)
                           (or (:autodesmaio golpe) (get golpe "autodesmaio"))
@@ -874,6 +883,7 @@
      :status-aplicado novo-status
      :troca-forcada? (boolean (:troca-forcada? troca))
      :linhas (cond-> []
+               recuo (conj (str "💥 O atacante sofreu " recuo " HP de recuo!"))
                bloqueio-campo? (conj "🌫️ O terreno impediu o status!")
                (and (:acertou? resolved) (= :aterrar (:familia golpe)))
                (conj "🪨 O Pokémon foi jogado no chão!")
@@ -937,7 +947,7 @@
                                            :alvo-ja-agiu? true)
                       (let [st (executar-golpe-status b0 golpe :o :x rng)]
                         {:battle (:battle st)
-                         :resolved {:dano 0 :acertou? (not (:errou? st))
+                         :resolved {:dano 0 :acertou? (not (or (:errou? st) (:bloqueado? st)))
                                     :errou? (:errou? st)
                                     :bloqueado? (:bloqueado? st)
                                     :multiplicador 1 :acertos 1}
@@ -960,8 +970,9 @@
                             player-was-defending?)
                            {:action :attack
                             :dano 0
-                            :acertou? (not (:errou? (:resolved hit)))
+                            :acertou? (:acertou? (:resolved hit))
                             :errou? (:errou? (:resolved hit))
+                            :bloqueado? (:bloqueado? (:resolved hit))
                             :golpe-nome (move-names/apresentar golpe)
                             :mensagem (cond
                                         (:bloqueado? (:resolved hit))
@@ -1118,7 +1129,8 @@
                   hit (if (contains? #{:fisico :especial} classe)
                         (apply-offensive-hit b0 :x :o golpe false rng)
                         {:battle (:battle status-hit)
-                         :resolved {:dano 0 :acertou? (not (:errou? status-hit))
+                         :resolved {:dano 0 :acertou? (not (or (:errou? status-hit)
+                                                               (:bloqueado? status-hit)))
                                     :multiplicador 1 :acertos 1
                                     :bloqueado? (:bloqueado? status-hit)
                                     :errou? (:errou? status-hit)}
@@ -1145,8 +1157,9 @@
                                                        :autodesmaio? (:autodesmaio? hit))
                                {:action :attack :move-index idx
                                 :dano 0
-                                :acertou? (not (:errou? status-hit))
+                                :acertou? (not (or (:errou? status-hit) (:bloqueado? status-hit)))
                                 :errou? (:errou? status-hit)
+                                :bloqueado? (:bloqueado? status-hit)
                                 :golpe-slug (:slug golpe)
                                 :golpe-nome (move-names/apresentar golpe)
                                 :tipo-golpe (:tipo golpe)
@@ -1637,7 +1650,8 @@
                            :linhas (:linhas status-hit)
                            :troca-forcada? (:troca-forcada? status-hit)
                            :alvo-alteracao (:alvo status-hit)
-                           :resolved {:dano 0 :acertou? (not (:errou? status-hit))
+                           :resolved {:dano 0 :acertou? (not (or (:errou? status-hit)
+                                                                 (:bloqueado? status-hit)))
                                       :bloqueado? (:bloqueado? status-hit)
                                       :errou? (:errou? status-hit)
                                       :multiplicador 1 :acertos 1}})
@@ -1649,8 +1663,9 @@
                                                   :move-index idx :side actor-side)
                           {:action :attack :move-index idx :side actor-side
                            :dano 0
-                           :acertou? (not (:errou? status-hit))
+                           :acertou? (not (or (:errou? status-hit) (:bloqueado? status-hit)))
                            :errou? (:errou? status-hit)
+                           :bloqueado? (:bloqueado? status-hit)
                            :golpe-slug (:slug golpe)
                            :golpe-nome (move-names/apresentar golpe)
                            :tipo-golpe (:tipo golpe)

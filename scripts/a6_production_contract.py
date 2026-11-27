@@ -6,6 +6,8 @@ execução e não entram neste módulo nem no log.
 
 from __future__ import annotations
 
+import re
+
 
 VM = {
     "hostname": "odisseu-core",
@@ -56,6 +58,16 @@ NODE_ENV_KEYS = (
     "WWEBJS_DATA_PATH",
     "ODISSEU_NODE_MAINTENANCE_FILE",
 )
+
+
+def preserved_legacy_container_name(name):
+    """Names of archived rollback containers that must remain stopped and preserved."""
+    return bool(re.fullmatch(
+        r"odisseu-a6-(?:jvm|node)-(?:previous-archived-janela-[0-9]{8}-[0-9]{4}"
+        r"|rollback-[0-9a-f]{7,40})",
+        str(name or ""),
+    ))
+
 
 CURRENT = {
     "vm": dict(VM),

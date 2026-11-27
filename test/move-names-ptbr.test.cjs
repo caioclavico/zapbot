@@ -135,3 +135,14 @@ test('menu de status mostra o efeito real e não a frase genérica', () => {
   const texto = fs.readFileSync(path.join(root, 'scripts/lib/pokemon-jvm-present.cjs'), 'utf8');
   assert.equal(texto.includes('efeito especial'), false);
 });
+
+test('Choque de Ondas identifica Wave Crash e anuncia recuo', () => {
+  const audit = require('../scripts/lib/move-effect-audit.json');
+  assert.deepEqual(audit['wave-crash'].modelado, ['recuo']);
+  const menu = present.menuGolpes({ golpes: [
+    { slug: 'wave-crash', tipo: 'water', classe: 'fisico', poder: 120 }
+  ] }, []);
+  assert.match(menu, /Choque de Ondas/);
+  assert.match(menu, /recua 1\/3 do dano/i);
+  assert.doesNotMatch(menu, /metadado ausente|não entra neste combate/i);
+});

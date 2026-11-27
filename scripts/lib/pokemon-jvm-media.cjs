@@ -1661,29 +1661,40 @@ async function renderHatchRevealCard(data, { filename = 'ovo-chocou.png' } = {})
       return null;
     }
     const eggCards = require('./egg-cards.cjs');
-    const reg = (data && (data.registro || data.pokemon || data)) || {};    const shiny = Boolean(reg.shiny || reg['shiny?']);
+    const reg = (data && (data.registro || data.pokemon || data)) || {};
+    const shiny = Boolean(reg.shiny || reg['shiny?']);
     const speciesName = reg.nome || reg.species || reg.name || 'Pokémon';
-    const imageUrl = shiny
-      ? (reg.imagemShiny || reg['imagem-shiny'] || reg.imagem || reg.imageUrl)
-      : (reg.imagem || reg.imageUrl || reg['imagem-shiny']);
-    let out = await eggCards.renderHatchReveal({ speciesName, shiny });
-    if (imageUrl) {
-      try {
-        const spriteBuf = await baixarBuffer(String(imageUrl), { rejectCheckerboard: true });
-        if (spriteBuf) {
-          const sprite = await sharp(spriteBuf)
-            .resize(260, 260, { fit: 'inside', withoutEnlargement: true })
-            .png()
-            .toBuffer();
-          out = await sharp(out)
-            .composite([{ input: sprite, top: 220, left: 190 }])
-            .png({ compressionLevel: 6 })
-            .toBuffer();
-        }
-      } catch (err) {
-        // fallback: card sem sprite
+    const pokemon = { ...reg, shiny, imagem: reg.imagem || reg.imageUrl };
+    let visual = await ensurePokemonSprite(pokemon);
+    let sprite = await spriteFixoPokedex(visual, 300);
+    if (sprite.placeholder && spriteUrl(pokemon)) {
+      // Um DTO pode trazer uma URL expirada. Tente as artes da espécie.
+      visual = await ensurePokemonSprite({
+        ...pokemon, imagem: null, imagemShiny: null, 'imagem-shiny': null
+      });
+      if (spriteUrl(visual) && spriteUrl(visual) !== spriteUrl(pokemon)) {
+        sprite = await spriteFixoPokedex(visual, 300);
       }
     }
+    const spriteStats = sprite.placeholder ? null : await sharp(sprite.buffer).ensureAlpha().stats();
+    if (sprite.placeholder || spriteStats.channels[3].max === 0) {
+      console.warn('[pokemon-jvm-media] hatch-reveal: arte indisponível, usando texto');
+      return null;
+    }
+    const trimmed = await sharp(sprite.buffer)
+      .trim({ background: '#00000000' })
+      .resize(300, 300, { fit: 'inside' })
+      .png()
+      .toBuffer({ resolveWithObject: true });
+    const background = await eggCards.renderHatchReveal({ speciesName, shiny });
+    let out = await sharp(background)
+      .composite([
+        { input: trimmed.data, top: 546 - trimmed.info.height,
+          left: Math.round((eggCards.CARD_WIDTH - trimmed.info.width) / 2) },
+        { input: eggCards.hatchShellForegroundSvg() }
+      ])
+      .png({ compressionLevel: 6 })
+      .toBuffer();
     if (out.length > eggCards.MAX_PNG_BYTES) {
       out = await sharp(out).png({ compressionLevel: 9, palette: true }).toBuffer();
     }

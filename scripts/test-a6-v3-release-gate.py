@@ -19,6 +19,18 @@ class GateTests(unittest.TestCase):
         self.assertTrue(gate.release_mode({gate.RELEASE_ENV: gate.RELEASE_MODE}, None))
         self.assertFalse(gate.release_mode({}, "/tmp/isolated-test"))
 
+    def test_explicit_protocols_never_bypass_restore_proof_or_initial_gate(self):
+        initial = {gate.PROTOCOL_ENV: gate.INITIAL_V3_ACTIVATION,
+                   gate.RELEASE_ENV: gate.RELEASE_MODE}
+        self.assertTrue(gate.release_mode(initial, None))
+        with self.assertRaisesRegex(DeployError, "protocol_required"):
+            gate.release_mode({gate.PROTOCOL_ENV: gate.INITIAL_V3_ACTIVATION}, "/tmp/lab")
+        self.assertFalse(gate.release_mode({gate.PROTOCOL_ENV: gate.POST_V3_UPGRADE}, None))
+        with self.assertRaisesRegex(DeployError, "protocol_ambiguous"):
+            gate.release_mode(initial | {gate.PROTOCOL_ENV: gate.POST_V3_UPGRADE}, None)
+        with self.assertRaisesRegex(DeployError, "protocol_invalid"):
+            gate.release_mode({gate.PROTOCOL_ENV: "other"}, None)
+
     def test_rehearsal_binds_image_digests_and_permissions(self):
         sha = "f" * 40
         jvm = "sha256:" + "a" * 64

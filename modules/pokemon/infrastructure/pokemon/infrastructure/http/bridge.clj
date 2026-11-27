@@ -341,6 +341,7 @@
 
     (contains? #{"/ops/maintenance/a6-v3-xp-preview"
                  "/ops/maintenance/a6-v3-xp-audit"
+                 "/ops/maintenance/a6-v3-xp-post-audit"
                  "/ops/maintenance/a6-v3-xp-reconcile"} path)
     (if (and conn
              (= "true" (some-> (System/getenv "A6_V3_RECONCILIATION_ENABLED")
@@ -368,6 +369,14 @@
                   (require-method! ex #{"GET"})
                   (require-empty-body! ex)
                   (ok! ex (xp-reconciliation/audit
+                           conn (get qs "pokemonId")
+                           (System/getenv "A6_V3_RECONCILIATION_ALLOWED_ID"))))
+
+                (= path "/ops/maintenance/a6-v3-xp-post-audit")
+                (do
+                  (require-method! ex #{"GET"})
+                  (require-empty-body! ex)
+                  (ok! ex (xp-reconciliation/audit-post-v3
                            conn (get qs "pokemonId")
                            (System/getenv "A6_V3_RECONCILIATION_ALLOWED_ID"))))
 
@@ -435,6 +444,14 @@
 
 (defn- g [m & ks]
   (some #(get m %) ks))
+
+(defn- test-rng [body allow-test-rng?]
+  (let [value (get body "rng")]
+    (when (some? value)
+      (when-not (and allow-test-rng? (map? value))
+        (throw (err/error :invalid_query
+                          {:message "rng é permitido apenas como mapa no modo de teste"})))
+      value)))
 
 (defn- long-or-nil [v]
   (cond
@@ -1386,7 +1403,7 @@
                           action (g body "action")
                           move-index (long-or-nil (g body "moveIndex" "move-index"))
                           item-id (g body "itemId" "item-id")
-                          rng (or (g body "rng") {})]
+                          rng (test-rng body allow-test-rng?)]
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? save-id) (str/blank? operation-id)
                                 (nil? fence) (str/blank? battle-id)
@@ -1405,8 +1422,8 @@
                                                  :operation-id operation-id
                                                  :battle-id battle-id
                                                  :expected-turn-index expected
-                                                 :action (keyword action)
-                                                 :rng rng}
+                                                 :action (keyword action)}
+                                          (map? rng) (assoc :rng rng)
                                           (some? move-index)
                                           (assoc :move-index move-index)
                                           (not (str/blank? item-id))
@@ -1909,7 +1926,7 @@
                                                    "expected-turn-index"))
                           move-index (long-or-nil (g body "moveIndex" "move-index"))
                           agora (long-or-nil (g body "agoraMs" "agora"))
-                          rng (when allow-test-rng? (g body "rng"))]
+                          rng (test-rng body allow-test-rng?)]
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? save-id) (nil? fence)
                                 (str/blank? operation-id) (nil? expected)
@@ -2627,7 +2644,7 @@
                           move-index (long-or-nil (g body "moveIndex" "move-index"))
                           item-id (g body "itemId" "item-id")
                           collection-index (long-or-nil (g body "collectionIndex" "collection-index"))
-                          rng (g body "rng")]
+                          rng (test-rng body allow-test-rng?)]
                       (when (or (str/blank? chat-id) (str/blank? player-id)
                                 (str/blank? save-id) (nil? fence)
                                 (str/blank? operation-id) (str/blank? action))

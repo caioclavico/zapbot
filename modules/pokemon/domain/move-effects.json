@@ -551,6 +551,9 @@
     "recuo": 33,
     "statusCausado": "paralisado"
   },
+  "wave-crash": {
+    "recuo": 33
+  },
   "wild-charge": {
     "recuo": 25
   },

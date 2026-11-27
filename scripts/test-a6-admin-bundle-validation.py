@@ -15,7 +15,14 @@ VALIDATOR = ROOT / "a6_validate_admin_bundle.py"
 EXPECTED = (
     "a6-root-backup", "a6_root_backup.py", "a6_production_backup.py",
     "a6_production_contract.py", "a6_production_deploy.py",
-    "a6_mount_policy.py", "a6_writer_policy.py", "chromium-seccomp.json",
+    "a6_mount_policy.py", "a6_writer_policy.py", "a6_post_v3_backup.py",
+    "a6_post_v3_restore_audit.clj", "xp_reconciliation.clj", "chromium-seccomp.json",
+    "a6_maintenance_ops.py", "a6_capacity.py", "a6_install_admin.py", "a6_image_transfer.py",
+    "a6_github_app.py", "a6_operational_window.py", "a6_supervised_deploy.py",
+    "a6_post_v3_upgrade.py", "a6_window_journal.py", "a6_v3_release_gate.py",
+    "a6_admin_backup_client.py", "a6_container_residues.py", "a6_runtime_materialize.py",
+    "a6_oauth_scope_transition.py", "a6_post_v3_plan.py",
+    "a6-operational-window.sh", "a6-hold-recovery.sh", "bundle-manifest.json",
 )
 
 
@@ -31,7 +38,14 @@ def make_archive(path, mutate=None, overrides=None, archive_format=tarfile.USTAR
     overrides = overrides or {}
     with tarfile.open(path, "w", format=archive_format) as archive:
         for name in EXPECTED:
-            add_member(archive, name, *overrides.get(name, ()))
+            if name == "bundle-manifest.json" and name not in overrides:
+                data = json.dumps({"schema": 1, "revision": "a" * 40,
+                    "files": {n: hashlib.sha256(b"x").hexdigest() for n in EXPECTED if n != name}}).encode()
+                entry = tarfile.TarInfo(name)
+                entry.size = len(data)
+                archive.addfile(entry, io.BytesIO(data))
+            else:
+                add_member(archive, name, *overrides.get(name, ()))
         if mutate:
             mutate(archive)
 
@@ -70,7 +84,8 @@ class AdministrativeBundleValidationTest(unittest.TestCase):
         stage = pathlib.Path(json.loads(result.stdout)["stage"])
         self.assertEqual({item.name for item in stage.iterdir()}, set(EXPECTED))
         for name in EXPECTED:
-            self.assertEqual((stage / name).read_bytes(), b"x")
+            if name != "bundle-manifest.json":
+                self.assertEqual((stage / name).read_bytes(), b"x")
             self.assertEqual((stage / name).stat().st_mode & 0o777, 0o600)
         shutil.rmtree(stage)
 
@@ -126,6 +141,16 @@ class AdministrativeBundleValidationTest(unittest.TestCase):
         self.assert_rejected_without_staging(archive, "0" * 64)
         with archive.open("ab") as output:
             output.write(b"x" + bytes(511))
+        self.assert_rejected_without_staging(archive)
+
+    def test_rejects_component_tampering_even_with_valid_outer_hash(self):
+        archive = self.root / "component.tar"
+        make_archive(archive)
+        with tarfile.open(archive) as source:
+            offset = source.getmember("a6_root_backup.py").offset_data
+        data = bytearray(archive.read_bytes())
+        data[offset] = ord("y")
+        archive.write_bytes(data)
         self.assert_rejected_without_staging(archive)
 
     def test_rejects_truncation_corruption_and_oversized_member(self):

@@ -267,3 +267,49 @@
   (is (nil? (status/tentar-status-do-golpe
              {:status-causado :envenenado-grave :chance-status 100}
              nil {:status-golpe 0} ["steel"]))))
+
+(deftest recoil-moves-damage-the-attacker-after-a-hit
+  (doseq [[slug nome tipo percentual] [[nil "Choque de Ondas" "water" 33]
+                                       ["brave-bird" "Pássaro Bravo" "flying" 33]
+                                       ["wild-charge" "Carga Selvagem" "electric" 25]]]
+    (let [golpe {:slug slug :nome-exibicao nome :tipo tipo :poder 60 :classe :fisico}
+          x (mon "Atacante" ["normal"] [golpe])
+          o (mon "Alvo" ["normal"]
+                 [{:slug "splash" :tipo "normal" :poder 0 :classe :status}])
+          b (assoc-in (batalha x o) [:pokemons :x :veloc] 100)
+          t (agir b 0 {})
+          dano (- 160 (get-in t [:hp :o]))
+          recuo (max 1 (if (= percentual 33) (quot dano 3)
+                           (quot (* dano percentual) 100)))]
+      (is (= (or slug "wave-crash") (:slug (battle/golpe-normalizado golpe))))
+      (is (pos? dano))
+      (is (re-find (re-pattern (str recuo " HP de recuo"))
+                   (:mensagem (:last-action t))))
+      (is (= (- 160 recuo) (get-in t [:last-action :hp-atk-depois])))))
+  (is (= "wave-crash" (:slug (battle/golpe-normalizado
+                               {"slug" "choque-de-ondas" "tipo" "water"}))))
+  (is (= "shock-wave" (:slug (battle/golpe-normalizado
+                               {:slug "shock-wave" :nome-exibicao "Choque de Ondas"})))))
+
+(deftest recoil-uses-hp-actually-lost-and-does-not-apply-on-a-miss
+  (let [golpe {:slug "wave-crash" :tipo "water" :poder 120 :classe :fisico}
+        x (mon "Atacante" ["water"] [golpe])
+        alvo (assoc (mon "Alvo" ["normal"] [{:slug "splash" :poder 0 :classe :status}])
+                    :hp 10 :hp-atual 10 :item "faixa-foco")
+        hit (agir (batalha x alvo) 0 {})]
+    (is (= 1 (get-in hit [:hp :o])))
+    (is (= 157 (get-in hit [:last-action :hp-atk-depois])))
+    (is (re-find #"3 HP de recuo" (get-in hit [:last-action :mensagem])))
+    (let [miss (agir (batalha (assoc-in x [:golpes 0 :precisao] 1) alvo)
+                     0 {:accuracy 99})]
+      (is (= 160 (get-in miss [:last-action :hp-atk-depois])))
+      (is (not (re-find #"HP de recuo" (get-in miss [:last-action :mensagem])))))
+    (let [ko (agir (batalha x (dissoc alvo :item)) 0 {})]
+      (is (zero? (get-in ko [:hp :o])))
+      (is (= 157 (get-in ko [:last-action :hp-atk-depois]))))
+    (let [imune (assoc alvo :tipos ["ground"])
+          eletrico (assoc-in x [:golpes 0]
+                             {:slug "wild-charge" :tipo "electric" :poder 90 :classe :fisico})
+          hit-imune (agir (batalha eletrico imune) 0 {})]
+      (is (= 10 (get-in hit-imune [:hp :o])))
+      (is (= 160 (get-in hit-imune [:last-action :hp-atk-depois]))))))

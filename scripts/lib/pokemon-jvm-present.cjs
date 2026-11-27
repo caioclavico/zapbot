@@ -425,7 +425,7 @@ function resumoEfeitosGolpe(golpe) {
   const dreno = Number(golpe.dreno != null ? golpe.dreno : (fx.dreno || 0));
   if (dreno > 0) partes.push(`drena ${dreno}% do dano como HP`);
   const recuo = Number(golpe.recuo != null ? golpe.recuo : (fx.recuo || 0));
-  if (recuo > 0) partes.push(`recua ${recuo}% do dano`);
+  if (recuo > 0) partes.push(`recua ${recuo === 33 ? '1/3' : `${recuo}%`} do dano`);
   if (mec.familia && FAMILIA_MENU[mec.familia]) partes.push(FAMILIA_MENU[mec.familia]);
   if (mec.flinch) partes.push(`recuo que impede a ação (${mec.flinch}%)`);
   if (mec.maxAcertos > 1) partes.push(`acerta ${mec.minAcertos || 2} a ${mec.maxAcertos} vezes`);
@@ -532,7 +532,7 @@ function linhaGolpe(idx, golpe, tiposDefesa, habilidadeDefensor) {
     }
   }
   const precisao = golpe.precisao != null ? golpe.precisao : golpe.accuracy;
-  const prec = precisao != null ? `, precisão ${precisao}%` : '';
+  const prec = precisao != null ? `, precisão base ${precisao}%` : '';
   const mark = mult === 0 ? ' 🚫' : (mult > 1 ? ' 🔥' : (mult < 1 ? ' 😕' : ''));
   const emoji = emojiGolpePrincipal(golpe);
   const linha = `${idx + 1}. ${emoji} *${nome}* (${TIPOS_PT[tipo] || tipo}, ${corpo}${prec})${mark}`;
@@ -2210,9 +2210,20 @@ function formatCanonicalAttackLine(la, pokemonX, pokemonO) {
     : (la.counter != null ? Number(la.counter)
       : (la.danoRecebido != null ? Number(la.danoRecebido) : null));
   const lines = [];
-  if (la.errou || la.errou === true) {
+  const bloqueado = la.bloqueado || la['bloqueado?'];
+  const sumido = la.sumido || la['sumido?'];
+  const nivelInsuficiente = la.nivelInsuficiente || la['nivel-insuficiente?'];
+  const errou = la.errou || la['errou?'];
+  const esquivou = la.esquivou || la['esquivou?'];
+  if (bloqueado) {
+    lines.push('🛡️ Proteção bloqueou o ataque!');
+  } else if (sumido) {
+    lines.push('💨 O golpe não alcançou o alvo!');
+  } else if (nivelInsuficiente) {
+    lines.push(`⚔️ *${nomeGolpe}* falhou: o nível do atacante é menor que o do alvo!`);
+  } else if (errou) {
     lines.push(`⚔️ *${nomeGolpe}* de *${nomeAtk}* errou o alvo!`);
-  } else if (la.esquivou || la.esquivou === true) {
+  } else if (esquivou) {
     lines.push(`💨 *${nomeDef}* esquivou de *${nomeGolpe}*!`);
   } else if (dano != null && Number.isFinite(dano) && dano === 0
              && (la.multiplicador === 0 || la.effectiveness === 0)) {
@@ -2224,9 +2235,13 @@ function formatCanonicalAttackLine(la, pokemonX, pokemonO) {
   } else {
     lines.push(`⚔️ *${nomeGolpe}* de *${nomeAtk}*!`);
   }
-  const eff = effectivenessLine(la.multiplicador != null ? la.multiplicador : la.effectiveness);
-  if (eff) lines.push(eff);
-  if (la.critico || la.critico === true || la['critico?']) lines.push('🎯 Acerto crítico!');
+  if (!bloqueado && !sumido && !nivelInsuficiente && !errou && !esquivou) {
+    const eff = effectivenessLine(la.multiplicador != null ? la.multiplicador : la.effectiveness);
+    if (eff) lines.push(eff);
+    if (dano != null && dano > 0 && (la.critico || la['critico?'])) {
+      lines.push('🎯 Acerto crítico!');
+    }
+  }
   // HP detalhado fica só nas barras de estado — não repetir na narrativa.
   if (la.autodesmaio || la.autodesmaio === true || la['autodesmaio?']) {
     lines.push(`💀 *${nomeAtk}* não resistiu ao próprio golpe e desmaiou!`);

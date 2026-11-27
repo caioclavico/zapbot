@@ -66,8 +66,12 @@ jobs:
         run: node --test test/pokemon-hotfix-pi-raid-isolation.test.cjs test/pokemon-hotfix-potion-http-contract.test.cjs
       - name: Unificação multigrupo A6 (emoji, descrições, PNG 960x540)
         run: npm run test:multigroup-a6
+      - name: Precisão e apresentação de combate
+        run: node --test test/pokemon-jvm-move-accuracy.test.cjs test/pokemon-jvm-battle-ui.test.cjs test/pokemon-jvm-present.test.cjs test/pokemon-jvm-raid.test.cjs
       - name: Progressive XP v3 — presenter/compatibilidade
         run: node --test test/pokemon-a6-progressive-xp-v3.test.cjs
+      - name: PNG de chocagem e entrega automática
+        run: node --test test/pokemon-jvm-hatch-card.test.cjs test/pokemon-jvm-auto-hatch-delivery.test.cjs test/pokemon-jvm-egg-cards.test.cjs test/pokemon-jvm-joy-eggs.test.cjs
       - run: npm run test:http
       - run: npm run build
 
@@ -121,12 +125,17 @@ jobs:
           python3 scripts/test-a6-backup-rollback.py
           python3 scripts/test-a6-production-deploy.py
           python3 scripts/test-a6-admin-bundle-validation.py
+          python3 scripts/test-a6-operational-preparation.py
           python3 scripts/test-a6-v3-release-gate.py
+          python3 scripts/test-a6-post-v3-runner.py
+          python3 scripts/test-a6-oauth-scope-transition.py
+          python3 scripts/test-a6-post-v3-plan.py
           python3 scripts/test-a6-v3-recovery.py
           python3 scripts/test-a6-integrated-lab.py
           python3 scripts/test-a6-supervised-deploy.py
           python3 scripts/test-a6-maintenance-ops.py
           python3 scripts/test-a6-operational-window.py
+          python3 scripts/test-a6-github-app.py
           python3 scripts/test-a6-window-interruptions.py
           python3 scripts/test-a6-root-backup.py
           python3 scripts/test-a6-admin-backup-client.py
@@ -206,6 +215,8 @@ jobs:
       - name: CAS/receipt da compensação Charmander — Datomic descartável
         run: |
           clojure -M -e "(require 'clojure.test 'pokemon.tests.xp-reconciliation-cas-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.xp-reconciliation-cas-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
+      - name: Auditoria pós-v3 em restore frio descartável
+        run: python3 scripts/test-a6-post-v3-restore.py
       - name: Auditor RO v3 carrega sem acessar armazenamento
         run: |
           clojure -M -e '(load-file "scripts/a6_progressive_xp_v3_audit.clj") (assert (resolve (symbol "a6.progressive-xp-v3-audit" "-main")))'
@@ -223,6 +234,10 @@ jobs:
 
       - name: Mecânicas, persistência e idempotência do lote B
         run: clojure -M:test-a6-lote-b
+
+      - name: Auditoria de precisão e RNG
+        run: |
+          clojure -M -e "(require 'clojure.test 'pokemon.tests.accuracy-audit-a6-test 'pokemon.tests.accuracy-persistence-a6-test) (let [r (clojure.test/run-tests 'pokemon.tests.accuracy-audit-a6-test 'pokemon.tests.accuracy-persistence-a6-test)] (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
 
       - name: Drain de manutenção
         run: clojure -M:test-a6-maintenance-drain

@@ -89,15 +89,46 @@ if [[ ! -t 0 ]]; then
 fi
 
 # PR #136: no fallback to old unguarded runner; enforce explicit combined release.
-if [[ "${A6_V3_SINGLE_CUTOVER:-}" != "a6-v3-raid-auto-136" || -z "${A6_V3_REHEARSAL_REPORT:-}" ]]; then
+if [[ "${A6_V3_PROTOCOL:-}" == "POST_V3_UPGRADE" ]]; then
+  if [[ -n "${A6_V3_SINGLE_CUTOVER:-}" ]]; then
+    echo "v3_protocol_ambiguous" >&2; exit 2
+  fi
+elif [[ "${A6_V3_SINGLE_CUTOVER:-}" != "a6-v3-raid-auto-136" || -z "${A6_V3_REHEARSAL_REPORT:-}" ]]; then
   echo "v3_single_cutover_protocol_required" >&2
   exit 2
 fi
 
-if [[ "${A6_HOLD_STORE:-}" != "github" ]]; then
-  echo "hold_store_required" >&2
-  exit 2
-fi
+case "${A6_OAUTH_STAGE:-}" in
+  "")
+    [[ "${A6_HOLD_STORE:-}" == "github" ]] || { echo "hold_store_required" >&2; exit 2; }
+    ;;
+  protection)
+    [[ "${A6_HOLD_STORE:-}" == "external-github-read" && \
+       "${ODISSEU_PRODUCTION_DEPLOY_HOLD:-}" == "true" && \
+       "${A6_HOLD_EXTERNAL_VERIFIED:-}" == "true" && \
+       "${A6_HOLD_PROOF_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || {
+      echo "oauth_protection_authorization_invalid" >&2; exit 2;
+    }
+    [[ "${A6_V3_PROTOCOL:-}" == "POST_V3_UPGRADE" ]] || {
+      echo "post_v3_window_not_authorized" >&2; exit 2;
+    }
+    ;;
+  cutover)
+    [[ "${A6_HOLD_STORE:-}" == "github" && \
+       "${A6_V3_PROTOCOL:-}" == "POST_V3_UPGRADE" ]] || {
+      echo "oauth_cutover_authorization_invalid" >&2; exit 2;
+    }
+    ;;
+  *)
+    echo "oauth_stage_invalid" >&2
+    exit 2
+    ;;
+esac
 
-root=$(cd "$(dirname "$0")/.." && pwd)
-exec python3 "$root/scripts/a6_operational_window.py"
+script_dir=$(cd "$(dirname "$0")" && pwd)
+if [[ -f "$script_dir/a6_operational_window.py" ]]; then
+  runner="$script_dir/a6_operational_window.py"
+else
+  runner="$(cd "$script_dir/.." && pwd)/scripts/a6_operational_window.py"
+fi
+exec python3 "$runner"

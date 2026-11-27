@@ -62,7 +62,16 @@ OAuth amplo do computador para a VM, nem persistir `gh auth login` nela.
 A credencial deve entrar via mecanismo temporário em tmpfs/ambiente do
 processo, nunca por argumento, log ou checkpoint, e ser revogada ao encerrar.
 A recuperação do hold precisa permanecer possível após a morte do processo.
-O provisionamento dessa credencial não foi realizado nesta tarefa.
+O runner oficial pode usar `a6_github_app.AppGhRunner` com a GitHub App
+`odisseu-deploy`. Cada chamada lê a chave do Secret Manager pela identidade da
+VM, emite JWT curto e solicita um installation token restrito ao repositório e
+`actions_variables: write`; tokens não são gravados nem reutilizados em recovery.
+O código recusa escopo OAuth insuficiente e falha fechado. A VM precisa de
+`cloud-platform`, enquanto o IAM da service account continua restrito ao segredo.
+Recovery chama o mesmo broker em processo novo, obtendo token novo.
+
+Esse mecanismo requer os escopos OAuth apropriados; não habilitar um token
+permanente local nem persistir credenciais com `gh auth login`.
 
 ## Ambiente e seccomp
 

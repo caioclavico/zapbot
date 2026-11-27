@@ -7,6 +7,7 @@
             [pokemon.domain.mechanics :as mechanics]
             [pokemon.domain.move-effects :as move-effects]
             [pokemon.domain.raid :as raid]
+            [pokemon.domain.rng :as rng]
             [pokemon.domain.types :as types]
             [pokemon.infrastructure.datomic.raid-store :as raid-store]))
 
@@ -72,6 +73,10 @@
     (is (:acertou? (dmg/resolver-ataque
                     (assoc base :golpe trovao :clima :chuva
                            :rng {:accuracy 99 :crit 99 :damage-var 0 :dodge 99}))))
+    (is (:acertou? (dmg/resolver-ataque
+                    (assoc base :golpe trovao :clima :chuva
+                           :estagios-defensor {:evasao 6}
+                           :rng {:accuracy 99 :crit 99 :damage-var 0 :dodge 99}))))
     (is (:errou? (dmg/resolver-ataque
                   (assoc base :golpe trovao :clima :sol
                          :rng {:accuracy 50 :crit 99 :damage-var 0 :dodge 99}))))
@@ -117,9 +122,94 @@
     (is (zero? (get-in acerto [:hp :o])))
     (is (re-find #"Nocaute de um golpe" (:mensagem (:last-action acerto))))
     (is (= 160 (get-in baixo [:hp :o])))
-    (is (:errou? (:last-action baixo)))
+    (is (not (:errou? (:last-action baixo))))
+    (is (re-find #"nível do atacante" (:mensagem (:last-action baixo))))
     (is (= 160 (get-in erro [:hp :o])))
     (is (:errou? (:last-action erro)))))
+
+(deftest nocaute-imune-nao-e-erro-de-precisao
+  (let [x (mon "Furo" ["ground"]
+               [{:slug "fissure" :tipo "ground" :poder 0 :classe :fisico}])
+        o (mon "Voador" ["flying"] [])
+        resultado (agir (batalha x o) 0 {:accuracy 0})]
+    (is (not (:errou? (:last-action resultado))))
+    (is (re-find #"não teve efeito" (:mensagem (:last-action resultado))))))
+
+(deftest raid-verifica-precisao-na-liberacao-da-carga
+  (let [poke (mon "Voador" ["flying"]
+                  [{:slug "fly" :tipo "flying" :poder 90 :classe :fisico}])
+        carga (raid/atacar (raid-de poke) "p" 0 1 {:accuracy 0})
+        acerto (raid/atacar (:raid carga) "p" 0 2 {:accuracy 94 :raid-damage-var 0})
+        erro (raid/atacar (:raid carga) "p" 0 2 {:accuracy 95 :raid-damage-var 0})]
+    (is (pos? (:dano acerto)))
+    (is (:errou? erro))
+    (is (zero? (:dano erro)))
+    (is (nil? (get-in erro [:raid :participantes "p" :volatil :carga])))))
+
+(deftest status-e-ataque-sorteiam-precisao-uma-vez
+  (let [x (mon "A" ["normal"]
+               [{:slug "toxic" :tipo "poison" :poder 0 :classe :status}
+                {:slug "aeroblast" :tipo "flying" :poder 100 :classe :especial}])
+        o (mon "B" ["normal"] [])
+        original rng/roll]
+    (doseq [[idx chave] [[0 :status-accuracy] [1 :accuracy]]]
+      (let [calls (atom [])
+            b (pvp x o)]
+        (with-redefs [rng/roll (fn [r k n] (swap! calls conj k) (original r k n))]
+          (battle/apply-pvp-turn b :x {:action :attack :move-index idx} rng-base))
+        (is (= 1 (count (filter #{chave} @calls))))))))
+
+(deftest status-em-si-e-protecao-nao-falham-por-estagios-do-rival
+  (let [x (mon "A" ["normal"]
+               [{:slug "swords-dance" :tipo "normal" :poder 0 :classe :status}
+                {:slug "protect" :tipo "normal" :poder 0 :classe :status}])
+        o (mon "B" ["normal"] [])
+        b (-> (pvp x o)
+              (assoc-in [:estagios :x :precisao] -6)
+              (assoc-in [:estagios :o :evasao] 6)
+              (assoc-in [:volatil :o :protecao?] true))
+        buff (battle/apply-pvp-turn b :x {:action :attack :move-index 0}
+                                    (assoc rng-base :status-accuracy 99))
+        protecao (battle/apply-pvp-turn b :x {:action :attack :move-index 1}
+                                        (assoc rng-base :status-accuracy 99))]
+    (is (= 2 (get-in buff [:estagios :x :ataque])))
+    (is (not (:errou? (:last-action buff))))
+    (is (re-find #"Proteção ativada" (get-in protecao [:last-action :mensagem])))
+    (is (not (:errou? (:last-action protecao))))))
+
+(deftest protecao-bloqueia-status-sem-marcar-acerto
+  (let [x (mon "A" ["normal"]
+               [{:slug "toxic" :tipo "poison" :poder 0 :classe :status}])
+        o (mon "B" ["normal"] [])
+        b (assoc-in (pvp x o) [:volatil :o :protecao?] true)
+        t (battle/apply-pvp-turn b :x {:action :attack :move-index 0} rng-base)]
+    (is (:bloqueado? (:last-action t)))
+    (is (not (:acertou? (:last-action t))))
+    (is (not (:errou? (:last-action t))))
+    (is (re-find #"Proteção bloqueou" (get-in t [:last-action :mensagem])))))
+
+(deftest protecao-impede-100000-golpes-sem-sorteio-de-precisao
+  (let [x (mon "A" ["normal"]
+               [{:slug "aeroblast" :tipo "flying" :poder 100 :classe :especial}])
+        o (mon "B" ["normal"] [])
+        b (assoc-in (pvp x o) [:volatil :o :protecao?] true)
+        original rng/roll
+        precisao (atom 0)
+        bloqueados (with-redefs [rng/roll (fn [r k n]
+                                            (when (= k :accuracy) (swap! precisao inc))
+                                            (original r k n))]
+                     (loop [n 0 total 0]
+                       (if (= n 100000)
+                         total
+                         (let [t (battle/apply-pvp-turn
+                                  b :x {:action :attack :move-index 0} rng-base)]
+                           (recur (inc n)
+                                  (if (re-find #"Proteção bloqueou"
+                                               (get-in t [:last-action :mensagem]))
+                                    (inc total) total))))))]
+    (println (str "AUDITORIA protecao " bloqueados "/100000 bloqueados"))
+    (is (= 100000 bloqueados))
+    (is (zero? @precisao))))
 
 (deftest troca-forcada-caca-ginasio-e-pvp
   (let [x (mon "Rugido" ["normal"]

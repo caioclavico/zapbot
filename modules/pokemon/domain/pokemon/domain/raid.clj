@@ -719,6 +719,12 @@
       ;; Sem avancar-party: treinador eliminado; slots legados preservados em 0 no ativo.
       (sync-active (assoc part' :party slots' :hp 0)))))
 
+(defn- errou-precisao?
+  [golpe rng]
+  (let [chance (dmg/chance-acerto (:precisao golpe) {} {} (:ignora-precisao golpe))]
+    (boolean (and chance (< chance 100)
+                  (>= (rng/roll rng :accuracy 100) chance)))))
+
 (defn- preparar-golpe-raid
   "Estado temporário no EDN do participante e do chefe. Não abre golpe de
   status novo: só dano, proteção, carga e recarga."
@@ -755,9 +761,12 @@
              :mensagem (str/join "\n" (conj msgs "⏳ O Pokémon precisa recarregar e perdeu a ação!")))
 
       (and carga (= (:slug carga) (:slug golpe)))
-      (assoc base :part (assoc part :volatil (dissoc vol :carga))
-             :golpe (:golpe carga) :calcular? true
-             :mensagem (when (seq msgs) (str/join "\n" msgs)))
+      (let [golpe (:golpe carga)
+            errou? (errou-precisao? golpe rng)]
+        (assoc base :part (assoc part :volatil (dissoc vol :carga))
+               :golpe golpe :calcular? (not errou?) :errou? errou?
+               :dano (when errou? 0) :acertos 1
+               :mensagem (when (seq msgs) (str/join "\n" msgs))))
 
       (= :preparacao (:familia golpe))
       (assoc base :part (assoc part :volatil
@@ -777,9 +786,7 @@
                  :mensagem (str/join "\n" (conj msgs "⚠️ A proteção falhou!")))))
 
       :else
-      (let [chance (dmg/chance-acerto (:precisao golpe) {} {} (:ignora-precisao golpe))
-            errou? (and chance (< chance 100)
-                       (>= (rng/roll rng :accuracy 100) chance))]
+      (let [errou? (errou-precisao? golpe rng)]
         (assoc base :part (assoc part :volatil vol)
                :calcular? (not errou?) :errou? errou?
                :dano (when errou? 0) :acertos 1

@@ -30,11 +30,21 @@
             [pokemon.domain.identities :as id]
             [pokemon.domain.joy :as joy]
             [pokemon.domain.model :as model]
+            [pokemon.domain.move-effects :as move-effects]
             [pokemon.domain.moves :as moves]
             [pokemon.domain.mundo :as mundo]
             [pokemon.domain.raid :as raid-domain]
             [pokemon.domain.raid-boss :as raid-boss]
             [pokemon.domain.raid-counter-selection :as raid-counter]))
+
+(defn- present-golpes [p]
+  (->> (or (:golpes p) (get p "golpes") [])
+       (mapv battle/golpe-normalizado)
+       (filterv map?)
+       (mapv (fn [golpe]
+               (let [precisao (:precisao (move-effects/enriquecer golpe))]
+                 (cond-> golpe
+                   (some? precisao) (assoc :precisao precisao)))))))
 
 (defn- present-pokemon
   "DTO de apresentação para Node (HP atual/máx, golpes, sprites).
@@ -44,9 +54,7 @@
   (when p
     (let [p (capture/assegurar-raridade p)
           resolved (capture/resolver-raridade p)
-          golpes (->> (or (:golpes p) (get p "golpes") [])
-                      (mapv battle/golpe-normalizado)
-                      (filterv map?))]
+          golpes (present-golpes p)]
       (cond-> (select-keys p [:nome :species :nickname :shiny :shiny? :nivel :hp
                               :raridade :tipos :ataque :defesa :atq-esp :def-esp
                               :veloc :imagem :imagem-shiny :altura
@@ -723,14 +731,16 @@
               :reservas-x (count (get-in battle [:reservas :x] []))
               :reservas-o (count (get-in battle [:reservas :o] []))
               :pokemon-x (when px
-                           (select-keys px [:nome :species :hp :hp-atual :nivel :imagem
-                                            :imagem-shiny :altura :tipos :golpes
-                                            :status :shiny :shiny?]))
+                           (assoc (select-keys px [:nome :species :hp :hp-atual :nivel :imagem
+                                                   :imagem-shiny :altura :tipos :golpes
+                                                   :status :shiny :shiny?])
+                                  :golpes (present-golpes px)))
               :pokemon-o (when po
-                           (select-keys po [:nome :species :hp :hp-atual :nivel :imagem
-                                            :imagem-shiny :altura :tipos :golpes
-                                            :status :shiny :shiny?
-                                            :motivacao-ginasio]))}}))
+                           (assoc (select-keys po [:nome :species :hp :hp-atual :nivel :imagem
+                                                   :imagem-shiny :altura :tipos :golpes
+                                                   :status :shiny :shiny?
+                                                   :motivacao-ginasio])
+                                  :golpes (present-golpes po)))}}))
 
 (defn heal-gym-motivation!
   "Recupera motivação do líder. `item` → pontos no servidor."
@@ -911,6 +921,10 @@
 (defn- raid-auto-index
   "Melhor mon *elegível deste jogador* — counter ao chefe (domínio puro)."
   [raid colecao]
+  (when-not (raid-counter/boss-known? raid)
+    (binding [*out* *err*]
+      (println (pr-str {:event "raid_auto_counter_fallback"
+                        :reason "metadados_do_chefe_ausentes_ou_invalidos"}))))
   (raid-counter/pick-best-collection-index raid colecao))
 
 (defn- raid-inapto-reason
@@ -1037,8 +1051,10 @@
              :player-id player-id
              :dano (:dano result)
              :acertos (:acertos result)
-             :errou (boolean (:errou? result))
-             :mensagem (:mensagem result)
+             :errou (when (some? (:errou? result)) (boolean (:errou? result)))
+             :mensagem (or (:mensagem result)
+                           (when (and (:duplicate result) (nil? (:errou? result)))
+                             "O recibo antigo não registrou o motivo do resultado."))
              :multiplicador (:multiplicador result)
              :base (:base result)
              :base-variada (:base-variada result)

@@ -17,7 +17,7 @@ import sys
 from types import SimpleNamespace
 
 from a6_production_backup import (BACKUP_AUTHORIZATION, ProductionBackupError, execute_copy,
-                                  restore_isolated, _dir_bytes, _verify)
+                                  read_manifest, restore_isolated, _dir_bytes, _verify)
 from a6_production_contract import DATOMIC_SOURCE, DATOMIC_VOLUME, NODE_MOUNTS, mounts_match
 from a6_production_deploy import DeployError, observe_gce, _mounts, _token, _int_token
 from a6_mount_policy import Collection
@@ -162,19 +162,7 @@ def _destination(window):
 
 
 def _manifest(path):
-    rows = []
-    try:
-        for line in path.read_text(encoding='utf-8').splitlines():
-            digest, relative = line.split('  ', 1)
-            if (not re.fullmatch(r'[0-9a-f]{64}', digest) or not relative
-                    or Path(relative).is_absolute() or '..' in Path(relative).parts):
-                raise ValueError()
-            rows.append({'path': relative, 'sha256': digest})
-    except (OSError, ValueError) as exc:
-        raise ProductionBackupError('backup_manifest_invalid') from exc
-    if not rows:
-        raise ProductionBackupError('backup_manifest_invalid')
-    return rows
+    return read_manifest(path)
 
 
 def _receipt(window, report, reused=False):
@@ -187,6 +175,7 @@ def _receipt(window, report, reused=False):
         'restoreIsolated': report.get('restoreIsolated') is True,
         'volume': DATOMIC_VOLUME,
         'files': int(report.get('files') or 0),
+        'manifestSha256': report.get('manifestSha256'),
     }
 
 
@@ -243,10 +232,11 @@ def status(window):
     backup, restore = destination / 'data', destination / 'restore-isolated'
     manifest = _manifest(destination / 'backup-manifest.txt')
     _no_symlinks(backup); _no_symlinks(restore)
-    _attestation(destination, window, destination / 'backup-manifest.txt')
+    attestation = _attestation(destination, window, destination / 'backup-manifest.txt')
     _verify(backup, restore, manifest)
     return _receipt(window, {'manifestVerified': True, 'sourcePreserved': True,
-                             'restoreIsolated': True, 'files': len(manifest)}, reused=True)
+                             'restoreIsolated': True, 'files': len(manifest),
+                             'manifestSha256': attestation['manifestSha256']}, reused=True)
 
 
 def _signature(collection):
@@ -275,6 +265,7 @@ def backup(window):
     restored = restore_isolated(report['manifest'], destination / 'data', destination / 'restore-isolated')
     report.update(restoreIsolated=True, files=restored['files'])
     _write_attestation(destination, window, destination / 'backup-manifest.txt')
+    report['manifestSha256'] = _manifest_sha256(destination / 'backup-manifest.txt')
     return _receipt(window, report)
 
 
@@ -303,13 +294,27 @@ def ensure(window):
 
 def cli(argv=None):
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 2 or args[0] not in ('--backup', '--ensure', '--preflight', '--status'):
+    post_ops = ('--post-v3-preflight', '--post-v3-backup', '--post-v3-audit', '--post-v3-status',
+                '--post-v3-live-gate', '--post-v3-gate-status', '--post-v3-provision-plan')
+    if len(args) != 2 or args[0] not in ('--backup', '--ensure', '--preflight', '--status', *post_ops):
         print('uso: a6-root-backup --preflight|--backup|--ensure|--status WINDOW_ID', file=sys.stderr)
         return 2
     try:
         old = os.umask(0o077)
         try:
-            result = ({'ready': True, **preflight(BACKUP_ROOT / args[1] / 'data')}
+            if args[0] in post_ops:
+                if os.geteuid() != 0:
+                    raise ProductionBackupError('backup_root_required')
+                action = args[0].removeprefix('--post-v3-').replace('-', '_')
+                if action == "provision_plan":
+                    import a6_post_v3_plan
+                    result = a6_post_v3_plan.install(args[1])
+                else:
+                    import a6_post_v3_backup as post
+                    result = post.preflight(args[1]) if action == 'preflight' else (
+                        getattr(post, action)(sys.modules[__name__], args[1]))
+            else:
+                result = ({'ready': True, **preflight(BACKUP_ROOT / args[1] / 'data')}
                       if args[0] == '--preflight' else
                       backup(args[1]) if args[0] == '--backup' else
                       ensure(args[1]) if args[0] == '--ensure' else status(args[1]))

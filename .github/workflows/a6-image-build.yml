@@ -1,0 +1,130 @@
+name: Build isolado das imagens A6
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  images:
+    name: Construir imagem amd64 ${{ matrix.service }} sem deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: node
+            dockerfile: Dockerfile
+          - service: jvm
+            dockerfile: Dockerfile.jvm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Construir e verificar imagens locais
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          SERVICE: ${{ matrix.service }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          for attempt in 1 2 3; do
+            if docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$SOURCE_SHA" -t a6-ci-image -f "$DOCKERFILE" .; then
+              break
+            fi
+            if [[ "$attempt" == 3 ]]; then exit 1; fi
+            sleep 20
+          done
+          test "$(docker image inspect --format '{{.Architecture}}' a6-ci-image)" = amd64
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' a6-ci-image)" = "$SOURCE_SHA"
+          if [[ "$SERVICE" == node ]]; then
+            docker run --rm --network none --entrypoint node a6-ci-image --version
+            docker run --rm --network none --entrypoint node a6-ci-image -e \
+              'const {Client, LocalAuth} = require("whatsapp-web.js"); const auth = new LocalAuth({clientId: "ci-disposable", dataPath: "/tmp/ci-auth"}); const client = new Client({authStrategy: auth}); if (!client || !auth) process.exit(1);'
+            docker run --rm --network none --cap-drop ALL \
+              --security-opt no-new-privileges \
+              --security-opt "seccomp=$PWD/docker/chromium-seccomp.json" \
+              -e CHROMIUM_SANDBOX_TEST=yes \
+              -v "$PWD/scripts/test-chromium-sandbox.cjs:/tmp/test-chromium-sandbox.cjs:ro" \
+              --entrypoint node a6-ci-image /tmp/test-chromium-sandbox.cjs
+          else
+            docker run --rm --network none --entrypoint clojure a6-ci-image -Sdescribe
+          fi
+          {
+            echo "## Imagem local $SERVICE de homologação (não publicada)"
+            echo "Revisão: $SOURCE_SHA"
+            echo "ID local Docker (.Id): $(docker image inspect --format '{{.Id}}' a6-ci-image)"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p image-artifacts
+          ref="$(python3 -c 'import sys; sys.path.insert(0,"scripts"); from a6_production_deploy import image_tag; print(image_tag(sys.argv[1], sys.argv[2]))' "$SERVICE" "$SOURCE_SHA")"
+          docker tag a6-ci-image "$ref"
+          python3 scripts/a6_image_transfer.py export --directory "$PWD/image-artifacts" \
+            --service "$SERVICE" --sha "$SOURCE_SHA" --ref "$ref"
+          sha256sum image-artifacts/* | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Publicar artefato imutável, sem registry ou deploy
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: a6-${{ matrix.service }}-${{ github.event.pull_request.head.sha }}
+          path: image-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Homologar helper root e rollback XP v3 em Datomic descartável
+        if: matrix.service == 'jvm'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rollback_dir="$(mktemp -d)"
+          trap 'rm -rf "$rollback_dir"' EXIT
+          git archive "$ROLLBACK_SHA" | tar -x -C "$rollback_dir"
+          for attempt in 1 2 3; do
+            if docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$ROLLBACK_SHA" \
+                -t a6-ci-rollback -f "$rollback_dir/Dockerfile.jvm" "$rollback_dir"; then
+              break
+            fi
+            if [[ "$attempt" == 3 ]]; then exit 1; fi
+            sleep 20
+          done
+          candidate_id="$(docker image inspect --format '{{.Id}}' a6-ci-image)"
+          rollback_id="$(docker image inspect --format '{{.Id}}' a6-ci-rollback)"
+          sudo -A env A6_POST_V3_TEST_IMAGE="$candidate_id" A6_POST_V3_ROLLBACK_IMAGE="$rollback_id" \
+            A6_POST_V3_TEST_SHA="$SOURCE_SHA" A6_POST_V3_ROLLBACK_SHA="$ROLLBACK_SHA" \
+            python3 scripts/test-a6-post-v3-integration.py
+          {
+            echo "## Restore autenticado e rollback XP v3 (descartáveis)"
+            echo "Revisão candidata: $SOURCE_SHA / ID local: $candidate_id"
+            echo "Revisão de rollback: $ROLLBACK_SHA / ID local: $rollback_id"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          for attempt in $(seq 1 60); do
+            if gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+                --name "a6-node-$SOURCE_SHA" --dir image-artifacts; then break; fi
+            if [[ "$attempt" == 60 ]]; then exit 1; fi
+            sleep 10
+          done
+          sudo -A env GITHUB_ACTIONS=true A6_IMAGE_PREPARATION_TEST=yes SOURCE_SHA="$SOURCE_SHA" \
+            ROLLBACK_SHA="$ROLLBACK_SHA" A6_POST_V3_ROLLBACK_IMAGE="$rollback_id" \
+            A6_IMAGE_ARTIFACTS="$PWD/image-artifacts" \
+            python3 scripts/test-a6-image-preparation-integration.py
+          mkdir admin-kit
+          python3 scripts/a6_build_admin_bundle.py --directory "$PWD/admin-kit" --sha "$SOURCE_SHA"
+          sha256sum admin-kit/* | tee -a "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          ROLLBACK_SHA: ddc47b0d0dedefd47f4cd83c58f370ffb42d4aa0
+      - name: Publicar kit administrativo verificado, sem instalar na VM
+        if: matrix.service == 'jvm'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: a6-admin-${{ github.event.pull_request.head.sha }}
+          path: admin-kit/*
+          if-no-files-found: error
+          retention-days: 14

@@ -32,6 +32,25 @@ class AdminBackupClientTests(unittest.TestCase):
             with self.assertRaisesRegex(ProductionBackupError, 'admin_invalid'):
                 backup('/var/backups/odisseu-a6/window-1/data')
 
+    def test_rejects_malformed_manifest_hash_from_helper(self):
+        receipt = ('{"window":"window-1","operation":"status",'
+                   '"manifestVerified":true,"sourcePreserved":true,"restoreIsolated":true,'
+                   '"volume":"odisseu-a6-cutover-datomic","files":2,"manifestSha256":"invalid"}')
+        with patch('a6_admin_backup_client.subprocess.run',
+                   return_value=subprocess.CompletedProcess([], 0, receipt, '')):
+            with self.assertRaisesRegex(ProductionBackupError, 'admin_invalid'):
+                status('/var/backups/odisseu-a6/window-1/data')
+
+    def test_surfaces_only_sanitized_operational_reason(self):
+        with patch('a6_admin_backup_client.subprocess.run',
+                   return_value=subprocess.CompletedProcess([], 2, '', 'backup_admin_blocked post_v3_proof_mismatch\n')):
+            with self.assertRaisesRegex(ProductionBackupError, '^post_v3_proof_mismatch$'):
+                status('/var/backups/odisseu-a6/window-1/data')
+        with patch('a6_admin_backup_client.subprocess.run',
+                   return_value=subprocess.CompletedProcess([], 2, '', 'backup_admin_blocked /private/save')):
+            with self.assertRaisesRegex(ProductionBackupError, '^backup_admin_unavailable$'):
+                status('/var/backups/odisseu-a6/window-1/data')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

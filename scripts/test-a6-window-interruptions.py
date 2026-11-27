@@ -392,6 +392,18 @@ class JournalTests(unittest.TestCase):
     def tearDown(self):
         os.environ.update(self._ci)
 
+    def test_t0_evidence_survives_journal_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = {"windowId": "janela-a", "manifestSha256": "a" * 64,
+                        "imageSha": "b" * 40, "jvmDigest": "sha256:" + "c" * 64,
+                        "nodeDigest": "sha256:" + "d" * 64}
+            journal = WindowJournal(tmp, "janela-a", {})
+            journal.step({"step": "backup", "t0Evidence": evidence})
+            evidence["manifestSha256"] = "e" * 64
+            restored = load(tmp)
+            self.assertEqual(restored["t0Evidence"]["manifestSha256"], "a" * 64)
+            self.assertIn("backup", restored["steps"])
+
     def test_atomic_write_keeps_the_previous_version_when_the_disk_refuses(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / JOURNAL

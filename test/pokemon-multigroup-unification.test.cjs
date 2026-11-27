@@ -72,7 +72,7 @@ test('linhaGolpe: exatamente um emoji principal antes do nome', () => {
   assert.doesNotMatch(linha, /💥\s*🔥/);
   assert.doesNotMatch(linha, /🔥\s*💥/);
   assert.match(linha, /poder 90/);
-  assert.match(linha, /precisão 100%/);
+  assert.match(linha, /precisão base 100%/);
 });
 
 test('mesma apresentação de golpes nos dois grupos sintéticos', () => {

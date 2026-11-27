@@ -29,6 +29,9 @@ def _window(destination):
 def _call(arguments):
     completed = subprocess.run(["sudo", "-n", HELPER, *arguments], capture_output=True, text=True, check=False)
     if completed.returncode:
+        reason = re.fullmatch(r"backup_admin_blocked ([a-z0-9_]+)\s*", completed.stderr or "")
+        if reason:
+            raise ProductionBackupError(reason.group(1))
         raise ProductionBackupError("backup_admin_unavailable")
     try:
         value = json.loads(completed.stdout)
@@ -46,7 +49,9 @@ def _attestation(value, window, operation):
             or value['operation'] != 'status' or value['manifestVerified'] is not True
             or value['sourcePreserved'] is not True or value['restoreIsolated'] is not True
             or value['volume'] != 'odisseu-a6-cutover-datomic' or not isinstance(value['files'], int)
-            or value['files'] <= 0):
+            or value['files'] <= 0
+            or ('manifestSha256' in value
+                and not re.fullmatch(r'[0-9a-f]{64}', str(value['manifestSha256'])))):
         raise ProductionBackupError('backup_admin_invalid')
     return value
 
@@ -68,3 +73,9 @@ def backup(destination):
 def status(destination):
     window = _window(destination)
     return _attestation(_call(["--status", window]), window, 'status')
+
+
+def post_v3(destination, operation):
+    if operation not in ("preflight", "backup", "audit", "status", "live-gate", "gate-status"):
+        raise ProductionBackupError("post_v3_operation_invalid")
+    return _call(["--post-v3-" + operation, _window(destination)])

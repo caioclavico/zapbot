@@ -4438,7 +4438,10 @@
                        (when r
                          (let [s (:summary r)]
                            (merge (dissoc r :summary)
-                                  (select-keys s [:dano :multiplicador :base
+                                  (select-keys s [:dano :acertos :errou? :mensagem
+                                                  :revide :golpe :pokemon-atacante
+                                                  :hp-chefe-antes :eliminado? :autodesmaio?
+                                                  :multiplicador :base
                                                   :base-variada :variacao-pct
                                                   :venceu? :derrota? :trocou?])
                                   {:duplicate true}))))
