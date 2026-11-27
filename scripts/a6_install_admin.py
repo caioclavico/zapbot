@@ -64,9 +64,11 @@ def install(stage, bundle_sha, root=Path("/"), checkpoint=lambda _: None):
     target = root / "usr/local/lib/odisseu-a6"
     target.mkdir(parents=True, exist_ok=True, mode=0o755)
     private(target)
+    os.chmod(target, 0o755)
     releases = target / "releases"
     releases.mkdir(exist_ok=True, mode=0o755)
     private(releases)
+    os.chmod(releases, 0o755)
     current = target / "current"
     release = releases / bundle_sha
     lock = target / ".install.lock"
@@ -95,6 +97,7 @@ def install(stage, bundle_sha, root=Path("/"), checkpoint=lambda _: None):
             with tempfile.TemporaryDirectory(prefix=".release-", dir=releases) as temporary:
                 pending = Path(temporary) / "generation"
                 pending.mkdir(mode=0o755)
+                os.chmod(pending, 0o755)
                 for item in stage.iterdir():
                     atomic(pending / item.name, item.read_bytes(), 0o644)
                 for path in pending.glob("*.py"):
@@ -106,6 +109,7 @@ def install(stage, bundle_sha, root=Path("/"), checkpoint=lambda _: None):
                 finally:
                     os.close(parent)
         private(release)
+        os.chmod(release, 0o755)
         for name, expected in manifest["files"].items():
             if sha(release / name) != expected:
                 raise InstallationError("admin_release_mismatch")

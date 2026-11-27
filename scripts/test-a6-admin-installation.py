@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 
@@ -14,6 +15,30 @@ from a6_validate_admin_bundle import validate
 @unittest.skipUnless(os.geteuid() == 0 and Path("/work/scripts").is_dir(),
                      "container administrativo descartável")
 class InstallationTests(unittest.TestCase):
+    def test_published_generation_is_traversable_with_restrictive_umask(self):
+        temp_root = str(Path.home().resolve())
+        with tempfile.TemporaryDirectory(dir=temp_root) as temporary:
+            root = Path(temporary)
+            stage = root / "stage"
+            stage.mkdir(mode=0o700)
+            kit = build(root, "a" * 40)
+            for name, data in validate((root / "admin.tar").read_bytes(), kit["bundleSha256"]).items():
+                (stage / name).write_bytes(data)
+                (stage / name).chmod(0o600)
+            previous_umask = os.umask(0o077)
+            try:
+                result = install(stage, kit["bundleSha256"], root)
+            finally:
+                os.umask(previous_umask)
+
+            target = root / "usr/local/lib/odisseu-a6"
+            releases = target / "releases"
+            generation = Path(result["generation"])
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
+            self.assertEqual(stat.S_IMODE(releases.stat().st_mode), 0o755)
+            self.assertEqual(stat.S_IMODE(generation.stat().st_mode), 0o755)
+            self.assertTrue((target / "current" / "a6_operational_window.py").is_file())
+
     def test_interruptions_resume_one_verified_generation(self):
         for point in ("release_ready", "entry_ready", "policy_ready", "published"):
             with self.subTest(point=point), tempfile.TemporaryDirectory(dir="/root") as temporary:
