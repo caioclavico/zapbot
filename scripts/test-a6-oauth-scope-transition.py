@@ -70,6 +70,10 @@ class FakeGcloud:
                 self._container("odisseu-a6-jvm", "sha256:" + "3" * 64, JVM_MOUNTS, "a"),
                 self._container("odisseu-a6-node", "sha256:" + "4" * 64, NODE_MOUNTS, "b"),
                 self._container("odisseu-a6-jvm-previous", "sha256:" + "3" * 64, JVM_MOUNTS, "c"),
+                self._container("odisseu-a6-node-previous-archived-janela-20261123-0926",
+                                "sha256:" + "5" * 64, NODE_MOUNTS, "d"),
+                self._container("odisseu-a6-node-rollback-b04682f",
+                                "sha256:" + "6" * 64, NODE_MOUNTS, "e"),
             ],
         }
 

@@ -11,7 +11,13 @@ import shlex
 import subprocess
 import time
 
-from a6_production_contract import JVM_MOUNTS, NODE_MOUNTS, VM, mounts_match
+from a6_production_contract import (
+    JVM_MOUNTS,
+    NODE_MOUNTS,
+    VM,
+    mounts_match,
+    preserved_legacy_container_name,
+)
 from a6_production_deploy import DeployError
 from a6_window_journal import (
     WindowLock,
@@ -412,7 +418,7 @@ class OAuthScopeCoordinator:
 
     @staticmethod
     def _verify_runtime(runtime, rollback_jvm, rollback_node):
-        names = {
+        known = {
             "odisseu-a6-jvm", "odisseu-a6-node",
             "odisseu-a6-jvm-previous", "odisseu-a6-node-previous",
         }
@@ -425,7 +431,9 @@ class OAuthScopeCoordinator:
         by_name = {}
         for item in containers:
             if (not isinstance(item, dict) or not isinstance(item.get("name"), str)
-                    or item["name"] not in names or item["name"] in by_name):
+                    or (item["name"] not in known
+                        and not preserved_legacy_container_name(item["name"]))
+                    or item["name"] in by_name):
                 raise OAuthTransitionError("remote_runtime_not_quiescent")
             by_name[item["name"]] = item
         expected = {
@@ -442,7 +450,21 @@ class OAuthScopeCoordinator:
                     or not mounts_match(item["mounts"], mounts)):
                 raise OAuthTransitionError("remote_runtime_not_quiescent")
         for name in set(by_name) - set(expected):
-            if by_name[name].get("running") is not False:
+            item = by_name[name]
+            if (item.get("running") is not False
+                    or not re.fullmatch(r"[0-9a-f]{12,64}", str(item.get("containerId") or ""))
+                    or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(item.get("imageId") or ""))
+                    or not isinstance(item.get("mounts"), list)
+                    or any(
+                        not isinstance(mount, dict)
+                        or set(mount) != {"type", "name", "source", "destination", "rw"}
+                        or mount.get("type") not in ("bind", "volume")
+                        or not isinstance(mount.get("name"), str)
+                        or not isinstance(mount.get("source"), str)
+                        or not isinstance(mount.get("destination"), str)
+                        or type(mount.get("rw")) is not bool
+                        for mount in item["mounts"]
+                    )):
                 raise OAuthTransitionError("remote_runtime_not_quiescent")
         return runtime
 

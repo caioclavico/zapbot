@@ -43,7 +43,7 @@ PLAN = {"protocol": "POST_V3_UPGRADE", "windowId": "post-v3-test", "imageSha": l
 
 
 def _runtime_fixture():
-    return {
+    result = {
         "dockerAvailable": True,
         "datomicWriterContainers": [],
         "containers": [{
@@ -63,6 +63,21 @@ def _runtime_fixture():
             ("odisseu-a6-node", PLAN["rollbackNodeDigest"], NODE_MOUNTS, "b"),
         )],
     }
+    containers = result["containers"]
+    containers.append({
+        "name": "odisseu-a6-node-previous-archived-janela-20261123-0926",
+        "containerId": "c" * 64,
+        "imageId": "sha256:" + "d" * 64,
+        "running": False,
+        "mounts": [{
+            "type": item["type"],
+            "name": item.get("name") or "",
+            "source": item.get("source") or "",
+            "destination": item["destination"],
+            "rw": item["rw"],
+        } for item in NODE_MOUNTS],
+    })
+    return result
 
 
 RUNTIME = _runtime_fixture()
@@ -537,6 +552,7 @@ class OAuthRuntimeInventoryTests(unittest.TestCase):
             "odisseu-a6-node": NODE_MOUNTS,
             "odisseu-a6-jvm-previous": JVM_MOUNTS,
             "odisseu-a6-node-previous": NODE_MOUNTS,
+            "odisseu-a6-node-previous-archived-janela-20261123-0926": NODE_MOUNTS,
         }
         documents = [{
             "Name": "/" + name,
@@ -574,7 +590,9 @@ class OAuthRuntimeInventoryTests(unittest.TestCase):
         return runner
 
     def test_runtime_inventory_accepts_only_stopped_known_containers(self):
-        names = ["odisseu-a6-jvm", "odisseu-a6-node", "odisseu-a6-jvm-previous"]
+        archived = "odisseu-a6-node-previous-archived-janela-20261123-0926"
+        names = ["odisseu-a6-jvm", "odisseu-a6-node",
+                 "odisseu-a6-jvm-previous", archived]
         result = oauth_runtime_status(self.runtime(names))
         self.assertTrue(result["dockerAvailable"])
         self.assertEqual(result["datomicWriterContainers"], [])
@@ -586,6 +604,8 @@ class OAuthRuntimeInventoryTests(unittest.TestCase):
             oauth_runtime_status(self.runtime(
                 names, running={"odisseu-a6-jvm-previous": True}
             ))
+        with self.assertRaisesRegex(DeployError, "oauth_legacy_container_running"):
+            oauth_runtime_status(self.runtime(names, running={archived: True}))
         with self.assertRaisesRegex(DeployError, "oauth_datomic_writer_present"):
             oauth_runtime_status(self.runtime(names, holders="container-id"))
 

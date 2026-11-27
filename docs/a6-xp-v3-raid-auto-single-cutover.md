@@ -243,6 +243,12 @@ root-owned do plano. Um plano existente só pode ser reutilizado se for idêntic
 conflitos bloqueiam. Isso não cria T0, não altera OAuth e não inicia manutenção,
 stop/start ou cutover.
 
+Na transição OAuth, o inventário também preserva containers históricos com
+nomes `-previous-archived-janela-*` e `-rollback-*`, desde que estejam parados.
+IDs, imagens e mounts são registrados antes do stop da VM e comparados depois
+do boot; containers desconhecidos ou ativos bloqueiam. Nenhum container ou
+imagem histórica é removido automaticamente.
+
 1. Preflight e confirmações oficiais, com HOLD protegido. O plano deve
    corresponder exatamente a janela, revisão e imagens do diário.
 2. Manutenção Node, drain JVM, contadores e writer exclusivo. Flags XP v3,

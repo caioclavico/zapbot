@@ -24,7 +24,13 @@ from pathlib import Path
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from a6_production_contract import JVM_MOUNTS, NODE_MOUNTS, VM, mounts_match
+from a6_production_contract import (
+    JVM_MOUNTS,
+    NODE_MOUNTS,
+    VM,
+    mounts_match,
+    preserved_legacy_container_name,
+)
 from a6_production_deploy import DeployError
 from a6_supervised_deploy import RESUME_PHRASE, WINDOW, run_supervised
 from a6_v3_release_gate import RELEASE_ENV, RELEASE_MODE, PROTOCOL_ENV, POST_V3_UPGRADE
@@ -691,11 +697,11 @@ def oauth_runtime_status(runner=None):
     if getattr(listed, "returncode", 1) != 0:
         raise DeployError("oauth_container_inventory_incomplete")
     names = set((getattr(listed, "stdout", "") or "").splitlines())
-    if names - set(known):
+    if any(name not in known and not preserved_legacy_container_name(name) for name in names):
         raise DeployError("oauth_container_inventory_incomplete")
     if not set(required).issubset(names):
         raise DeployError("oauth_container_inventory_incomplete")
-    inspected_names = [name for name in known if name in names]
+    inspected_names = sorted(names)
     inspected = runner(prefix + ["inspect", *inspected_names])
     if getattr(inspected, "returncode", 1) != 0:
         raise DeployError("oauth_container_inventory_incomplete")
@@ -706,6 +712,8 @@ def oauth_runtime_status(runner=None):
     if not isinstance(docs, list):
         raise DeployError("oauth_container_inventory_incomplete")
     by_name = {str(item.get("Name") or "").lstrip("/"): item for item in docs}
+    if set(by_name) != names:
+        raise DeployError("oauth_container_inventory_incomplete")
     for service in ("jvm", "node"):
         name = "odisseu-a6-" + service
         item = by_name.get(name)
@@ -736,9 +744,7 @@ def oauth_runtime_status(runner=None):
         raise DeployError("oauth_live_volume_missing") from exc
     if {item.get("Name") for item in volume_docs if isinstance(item, dict)} != set(volumes):
         raise DeployError("oauth_live_volume_missing")
-    for name in known[2:]:
-        if name not in names:
-            continue
+    for name in names - set(required):
         item = by_name.get(name)
         if item is not None and item.get("State", {}).get("Running") is not False:
             raise DeployError("oauth_legacy_container_running")
