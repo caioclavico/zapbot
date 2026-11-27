@@ -110,7 +110,8 @@ def install(stage, bundle_sha, root=Path("/"), checkpoint=lambda _: None):
             if sha(release / name) != expected:
                 raise InstallationError("admin_release_mismatch")
         checkpoint("release_ready")
-        for relative in ("var/backups/odisseu-a6", "etc/odisseu-a6/post-v3-windows"):
+        for relative in ("var/backups/odisseu-a6", "etc/odisseu-a6/post-v3-windows",
+                         "root/odisseu-a6-plans"):
             path = root / relative
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
             private(path)
@@ -131,7 +132,8 @@ def install(stage, bundle_sha, root=Path("/"), checkpoint=lambda _: None):
         rules.mkdir(parents=True, exist_ok=True, mode=0o750)
         private(rules)
         verbs = ("preflight", "status", "ensure", "backup", "post-v3-preflight",
-                 "post-v3-backup", "post-v3-audit", "post-v3-status", "post-v3-live-gate", "post-v3-gate-status")
+                 "post-v3-backup", "post-v3-audit", "post-v3-status", "post-v3-live-gate",
+                 "post-v3-gate-status", "post-v3-provision-plan")
         data = ("Cmnd_Alias ODISSEU_A6_BACKUP = " +
                 ", ".join("/usr/local/libexec/odisseu-a6/a6-root-backup --" + v + " *" for v in verbs) +
                 "\ncaioclavico ALL=(root) NOPASSWD: ODISSEU_A6_BACKUP\n").encode()

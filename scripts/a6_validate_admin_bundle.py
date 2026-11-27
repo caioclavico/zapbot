@@ -37,6 +37,18 @@ EXPECTED = {
     "a6_install_admin.py",
     "a6_image_transfer.py",
     "a6_github_app.py",
+    "a6_operational_window.py",
+    "a6_supervised_deploy.py",
+    "a6_post_v3_upgrade.py",
+    "a6_window_journal.py",
+    "a6_v3_release_gate.py",
+    "a6_admin_backup_client.py",
+    "a6_container_residues.py",
+    "a6_runtime_materialize.py",
+    "a6_oauth_scope_transition.py",
+    "a6_post_v3_plan.py",
+    "a6-operational-window.sh",
+    "a6-hold-recovery.sh",
     "bundle-manifest.json",
 }
 

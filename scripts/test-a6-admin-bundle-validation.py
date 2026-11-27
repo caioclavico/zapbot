@@ -18,7 +18,11 @@ EXPECTED = (
     "a6_mount_policy.py", "a6_writer_policy.py", "a6_post_v3_backup.py",
     "a6_post_v3_restore_audit.clj", "xp_reconciliation.clj", "chromium-seccomp.json",
     "a6_maintenance_ops.py", "a6_capacity.py", "a6_install_admin.py", "a6_image_transfer.py",
-    "a6_github_app.py", "bundle-manifest.json",
+    "a6_github_app.py", "a6_operational_window.py", "a6_supervised_deploy.py",
+    "a6_post_v3_upgrade.py", "a6_window_journal.py", "a6_v3_release_gate.py",
+    "a6_admin_backup_client.py", "a6_container_residues.py", "a6_runtime_materialize.py",
+    "a6_oauth_scope_transition.py", "a6_post_v3_plan.py",
+    "a6-operational-window.sh", "a6-hold-recovery.sh", "bundle-manifest.json",
 )
 
 

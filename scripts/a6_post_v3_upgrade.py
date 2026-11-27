@@ -111,6 +111,14 @@ def _pending(state, prior, observation, wrapped, prefix, value):
     if not pending:
         return
     op = pending.get("op")
+    if op == "oauth_pause_node":
+        if observation.get("node", {}).get("running") is False:
+            ops._j().resolve("oauth_pause_observed")
+        elif observation.get("node", {}).get("running") is True:
+            ops._j().resolve("oauth_pause_not_applied")
+        else:
+            raise DeployError("oauth_pause_indeterminate")
+        return
     if op in ops.REPEATABLE or op in ("post_v3_stop", "post_v3_backup", "post_v3_audit"):
         ops._j().resolve("post_v3_reobserve")
         return
@@ -168,11 +176,16 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
             raise DeployError("previous_container_requires_resolution")
 
     try:
+        oauth_stage = env.get("A6_OAUTH_STAGE", "")
+        protection_stage = oauth_stage == "protection"
+        oauth_cutover = oauth_stage == "cutover"
         required = {"A6_SUPERVISED_WINDOW": ops.WINDOW, "A6_EXECUTE": "1",
-                    "ODISSEU_PRODUCTION_DEPLOY_HOLD": "false",
+                    "ODISSEU_PRODUCTION_DEPLOY_HOLD": "true" if protection_stage else "false",
                     "PRODUCTION_AUTHORIZATION": "autorizar-producao-a6",
                     "ODISSEU_A6_DELIVERY_VALIDATED": "true",
                     "A6_RESUME_EXPLICIT": ops.RESUME_PHRASE}
+        if oauth_stage not in ("", "protection", "cutover"):
+            raise DeployError("oauth_stage_invalid")
         v3.release_mode(env, isolated_root)
         if (any(env.get(k) != v for k, v in required.items()) or not callable(runner)
                 or event == "push" or not meta.get("windowId")
@@ -180,6 +193,19 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
                 or ops._JOURNAL.get() is None
                 or (isolated_root is None and env.get("A6_LIVE_BACKUP") != BACKUP_AUTHORIZATION)):
             raise DeployError("post_v3_window_not_authorized")
+        if protection_stage:
+            evidence = ops._j().data.get("holdEvidence") or {}
+            if (hold_gate is not None or evidence.get("verified") is not True
+                    or evidence.get("value") != "true"
+                    or evidence.get("windowId") != meta.get("windowId")
+                    or not re.fullmatch(r"[0-9a-f]{64}", str(evidence.get("proofSha256") or ""))):
+                raise DeployError("oauth_protection_authorization_invalid")
+        elif oauth_cutover:
+            oauth = ops._j().data.get("oauthTransition") or {}
+            if (hold_gate is None or ops._j().data.get("phase") != "CUTOVER"
+                    or oauth.get("authVerified") is not True
+                    or oauth.get("windowId") != meta.get("windowId")):
+                raise DeployError("oauth_authentication_required")
         if (prior or {}).get("deployComplete"):
             raise DeployError("window_already_complete")
         if prior and (prior.get("binding") or {}).get("v3Protocol") != v3.POST_V3_UPGRADE:
@@ -192,7 +218,9 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
         ops._mark(checkpoints, {"step": "authorization", "v3ReleaseRequired": True,
                                "protocol": v3.POST_V3_UPGRADE})
         pending = (prior or {}).get("pending") or {}
-        allowed = ops.REPEATABLE | {"post_v3_stop", "post_v3_backup", "post_v3_audit"}
+        allowed = ops.REPEATABLE | {
+            "post_v3_stop", "post_v3_backup", "post_v3_audit", "oauth_pause_node",
+        }
         if pending and pending.get("op") not in allowed and not (
                 pending.get("op") in ("update_jvm", "update_node")
                 and pending.get("verb") in ("run", "inspect")):
@@ -229,6 +257,8 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
             raise DeployError(unresolved)
         ops._mark(checkpoints, {"step": "images", "jvmRunRef": images["jvm"]["runRef"],
                                "nodeRunRef": images["node"]["runRef"]})
+        if protection_stage:
+            ops._j().advance_phase("PREFLIGHT_OK")
 
         resumed = state.get("gateVerified") and (
             observation["jvm"].get("phase") == "open" or observation["node"].get("phase") == "open")
@@ -282,6 +312,8 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
             for name in ("node_maintenance", "jvm_drain"):
                 ops._mark(checkpoints, {"step": name, "observed": "post_v3_stopped"})
         ops._mark(checkpoints, {"step": "quiescence", "observed": True})
+        if protection_stage:
+            ops._j().advance_phase("QUIESCENT")
         if not state.get("proof"):
             if ops._jvm_running(observation):
                 check_names(observation, prefix, value)
@@ -321,6 +353,25 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
         meta["postV3Proof"] = proof
         ops._mark(checkpoints, {"step": "restore_isolated", "postV3Evidence": proof,
                                "restoreIsolated": True})
+        if protection_stage:
+            ops._j().advance_phase("T0_VERIFIED", t0ProofSha256=proof["proofSha256"])
+            if observation["node"].get("phase") != "quiescent":
+                raise DeployError("oauth_node_not_quiescent")
+            node_live = (state.get("live") or {}).get("node") or {}
+            if node_live.get("activeOperations") != 0:
+                raise DeployError("oauth_node_operations_active")
+            if observation["node"].get("running") is True:
+                ops._j().intent("oauth_pause_node", windowId=meta["windowId"])
+                stopped = wrapped(prefix + ["stop", "--time", "30", "odisseu-a6-node"])
+                if not ops._ok(stopped):
+                    raise DeployError("oauth_node_stop_failed")
+                state_after = wrapped(prefix + ["inspect", "--format", "{{.State.Running}}",
+                                                "odisseu-a6-node"])
+                if not ops._ok(state_after) or ops._out(state_after).strip() != "false":
+                    raise DeployError("oauth_node_stop_unconfirmed")
+                ops._j().done("oauth_pause_node", running=False)
+            return ops._finish(checkpoints, "oauth_snapshot", [], seen, admitted=True,
+                               maintenance=True, oauthPaused=True, t0ProofSha256=proof["proofSha256"])
 
         backup = {"manifestVerified": True, "sourcePreserved": True,
                   "restoreIsolated": True, "jvmStopped": True}
@@ -373,6 +424,11 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
                 or gate.get("planSha256") != digest(value) or gate.get("gateSha256") != digest(body)):
             raise DeployError("post_v3_live_gate_invalid")
         _checkpoint(state, gateVerified=True, liveGate=gate)
+        if oauth_cutover:
+            ops._j().advance_phase("AUDIT_OK", liveGateSha256=gate["gateSha256"])
+            ops._j().advance_phase("RECONCILE_OK",
+                                   reconciliation="not_applicable_post_v3_upgrade")
+            ops._j().advance_phase("INTEGRITY_OK", t0ProofSha256=proof["proofSha256"])
         ops._mark(checkpoints, {"step": "v3_release_gate", "verified": True,
                                "postV3Evidence": proof})
         if hold_gate is not None:
@@ -384,7 +440,10 @@ def run(runner, sha, jvm_digest, node_digest, env, destination, isolated_root,
         ops._op("resume_jvm", lambda: ops.resume_jvm(wrapped, prefix))
         ops._op("resume_node", lambda: ops.resume_node(wrapped, prefix))
         ops._mark(checkpoints, {"step": "resume", "resumeExplicit": True})
-        return ops._confirm_and_validate(wrapped, prefix, checkpoints, seen)
+        report = ops._confirm_and_validate(wrapped, prefix, checkpoints, seen)
+        if oauth_cutover and report.get("deployComplete"):
+            ops._j().advance_phase("DEPLOY_OK", deployComplete=True)
+        return report
     except (DeployError, ProductionBackupError) as exc:
         if str(exc) in ops.JOURNAL_ERRORS:
             raise

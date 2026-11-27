@@ -19,5 +19,10 @@ if [[ "${A6_HOLD_STORE:-}" != "github" ]]; then
   exit 2
 fi
 
-root=$(cd "$(dirname "$0")/.." && pwd)
-exec python3 "$root/scripts/a6_operational_window.py" --recover-hold
+script_dir=$(cd "$(dirname "$0")" && pwd)
+if [[ -f "$script_dir/a6_operational_window.py" ]]; then
+  runner="$script_dir/a6_operational_window.py"
+else
+  runner="$(cd "$script_dir/.." && pwd)/scripts/a6_operational_window.py"
+fi
+exec python3 "$runner" --recover-hold

@@ -393,7 +393,7 @@ def _collection(observation, live):
 
 
 def _observe_stopped(wrapped, prefix, drained):
-    """JVM parada não aceita exec. Inspect e o marcador do Node bastam."""
+    """Stopped containers use the last durable quiescence markers."""
     raw = wrapped(prefix + ["inspect", "odisseu-a6-jvm", "odisseu-a6-node"])
     if not _ok(raw):
         raise DeployError("observation_incomplete")
@@ -406,16 +406,21 @@ def _observe_stopped(wrapped, prefix, drained):
     by_name = {str(item.get("Name") or "").lstrip("/"): item for item in documents}
     if "odisseu-a6-jvm" not in by_name or "odisseu-a6-node" not in by_name:
         raise DeployError("container_mismatch")
-    marker = wrapped(prefix + ["exec", "odisseu-a6-node", "cat", "/app/data/a6-maintenance.json"])
-    if not _ok(marker):
-        raise DeployError("maintenance_marker_unreadable")
     jvm = _service(by_name["odisseu-a6-jvm"], _publish(by_name["odisseu-a6-jvm"].get("HostConfig", {}).get("PortBindings"), "18090/tcp"))
     node = _service(by_name["odisseu-a6-node"], _publish(by_name["odisseu-a6-node"].get("HostConfig", {}).get("PortBindings"), "3001/tcp"))
     jvm["capEff"] = drained["jvm"].get("capEff")
     jvm["phase"] = drained["jvm"].get("phase")
     jvm["phaseObservedBeforeStop"] = True
     jvm["activeWrites"] = None
-    node["phase"] = node_marker_phase(_out(marker))
+    if node.get("running"):
+        marker = wrapped(prefix + ["exec", "odisseu-a6-node", "cat", "/app/data/a6-maintenance.json"])
+        if not _ok(marker):
+            raise DeployError("maintenance_marker_unreadable")
+        node["phase"] = node_marker_phase(_out(marker))
+    else:
+        node["phase"] = drained.get("node", {}).get("phase")
+        if node["phase"] != "quiescent":
+            raise DeployError("maintenance_marker_unreadable")
     node["activeOps"] = None
     redacted = []
     for item in documents:

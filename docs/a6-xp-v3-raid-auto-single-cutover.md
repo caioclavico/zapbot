@@ -226,6 +226,23 @@ imagens. Confere também o hash do código de auditoria existente na imagem
 candidata contra o bundle root-owned. Nenhum arquivo JSON escrito pelo
 operador é aceito como prova.
 
+O bundle versionado instala também o runner retomável, a recuperação do HOLD,
+o coordenador OAuth externo e o provisionador do plano. Para provisionar o
+plano, o administrador revisa a fonte autorizada, coloca o JSON com owner
+`root:root`, modo `0600`, em
+`/root/odisseu-a6-plans/<windowId>.json` (diretório root-only `0700`) e chama:
+
+```sh
+sudo /usr/local/libexec/odisseu-a6/a6-root-backup --post-v3-provision-plan "$WINDOW_ID"
+```
+
+O helper valida o schema exato, hashes do auditor e da reconciliação, as quatro
+imagens amd64/revisionadas, os IDs saudáveis dos containers de rollback em
+execução e a reserva atual de disco antes da publicação atômica no diretório
+root-owned do plano. Um plano existente só pode ser reutilizado se for idêntico;
+conflitos bloqueiam. Isso não cria T0, não altera OAuth e não inicia manutenção,
+stop/start ou cutover.
+
 1. Preflight e confirmações oficiais, com HOLD protegido. O plano deve
    corresponder exatamente a janela, revisão e imagens do diário.
 2. Manutenção Node, drain JVM, contadores e writer exclusivo. Flags XP v3,

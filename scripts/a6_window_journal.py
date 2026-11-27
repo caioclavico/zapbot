@@ -15,6 +15,7 @@ import errno
 import fcntl
 import json
 import os
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -26,6 +27,24 @@ JOURNAL = "a6-window-checkpoint.json"
 LOCK = "a6-window.lock"
 VERSION = 1
 BINDING_KEYS = ("vmHostname", "imageSha", "jvmDigest", "nodeDigest", "destination", "v3Protocol")
+OAUTH_PHASES = (
+    "PREPARATION",
+    "PREFLIGHT_OK",
+    "QUIESCENT",
+    "T0_VERIFIED",
+    "SNAPSHOT_READY",
+    "PAUSED_FOR_OAUTH",
+    "VM_STOPPED",
+    "VM_STARTED",
+    "OAUTH_SCOPE_READY",
+    "AUTH_OK",
+    "CUTOVER",
+    "AUDIT_OK",
+    "RECONCILE_OK",
+    "INTEGRITY_OK",
+    "DEPLOY_OK",
+)
+_OAUTH_NEXT = {left: right for left, right in zip(OAUTH_PHASES, OAUTH_PHASES[1:])}
 
 
 def _live(path):
@@ -57,7 +76,7 @@ def atomic_write_json(path, payload):
     if _live(path):
         raise DeployError("live_path_refused")
     data = (json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
-    if b"TOKEN=" in data:
+    if _contains_secret_material(payload):
         raise DeployError("secret_in_output")
     try:
         fd, tmp = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".tmp", dir=str(path.parent))
@@ -76,17 +95,61 @@ def atomic_write_json(path, payload):
     _fsync_dir(path.parent)
 
 
+def _contains_secret_material(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if any(word in str(key).lower() for word in ("token", "secret", "privatekey", "credential")):
+                return True
+            if _contains_secret_material(child):
+                return True
+    elif isinstance(value, (list, tuple)):
+        return any(_contains_secret_material(item) for item in value)
+    elif isinstance(value, str):
+        lowered = value.lower()
+        return any(marker in lowered for marker in ("ghp_", "github_pat_", "bearer "))
+    return False
+
+
+def validate_oauth_checkpoint(data, window_id=None):
+    """Valida o checkpoint de uma retomada OAuth sem aceitar estado implícito."""
+    if (not isinstance(data, dict)
+            or data.get("version") != VERSION
+            or not isinstance(data.get("windowId"), str)
+            or (window_id is not None and data.get("windowId") != window_id)
+            or data.get("phase") not in OAUTH_PHASES
+            or not isinstance(data.get("phaseHistory"), list)
+            or not data["phaseHistory"]
+            or data["phaseHistory"][-1] != data.get("phase")
+            or _contains_secret_material(data)):
+        raise DeployError("oauth_checkpoint_invalid")
+    history = data["phaseHistory"]
+    if (history[0] != OAUTH_PHASES[0]
+            or any(not isinstance(phase, str) or phase not in OAUTH_PHASES for phase in history)
+            or any(_OAUTH_NEXT.get(left) != right for left, right in zip(history, history[1:]))):
+        raise DeployError("oauth_checkpoint_invalid")
+    return data
+
+
 def state_dir(path):
     """Diretório do diário. Fica fora dos volumes e só o operador lê."""
     directory = Path(path).expanduser()
-    if _live(directory.resolve()):
+    if directory.is_symlink() or _live(directory.resolve()):
         raise DeployError("live_path_refused")
     try:
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     except OSError as exc:
         raise DeployError("checkpoint_write_failed") from exc
-    if not directory.is_dir():
+    try:
+        info = directory.lstat()
+    except OSError as exc:
+        raise DeployError("checkpoint_write_failed") from exc
+    if not directory.is_dir() or info.st_uid != os.geteuid():
         raise DeployError("checkpoint_write_failed")
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        try:
+            directory.chmod(0o700)
+        except OSError as exc:
+            raise DeployError("checkpoint_write_failed") from exc
     return directory
 
 
@@ -179,6 +242,8 @@ class WindowJournal:
                 "windowId": window_id,
                 "binding": {key: binding.get(key) for key in BINDING_KEYS},
                 "vmHostname": binding.get("vmHostname"),
+                "phase": OAUTH_PHASES[0],
+                "phaseHistory": [OAUTH_PHASES[0]],
                 "steps": [],
                 "pending": None,
                 "events": [],
@@ -264,7 +329,32 @@ class WindowJournal:
     def update(self, **fields):
         if self.broken:
             raise DeployError("checkpoint_write_failed")
+        if "phase" in fields or "phaseHistory" in fields:
+            raise DeployError("checkpoint_phase_transition_required")
         self.data.update(fields)
+        self._persist()
+
+    def advance_phase(self, phase, **evidence):
+        if self.broken:
+            raise DeployError("checkpoint_write_failed")
+        current = self.data.get("phase")
+        if current == phase:
+            if any(self.data.get(key) != value for key, value in evidence.items()):
+                raise DeployError("oauth_checkpoint_conflict")
+            return
+        history = self.data.get("phaseHistory") or []
+        if phase in history and OAUTH_PHASES.index(phase) < OAUTH_PHASES.index(current):
+            if any(self.data.get(key) != value for key, value in evidence.items()):
+                raise DeployError("oauth_checkpoint_conflict")
+            return
+        if _OAUTH_NEXT.get(current) != phase:
+            raise DeployError("oauth_phase_transition_invalid")
+        if _contains_secret_material(evidence):
+            raise DeployError("secret_in_output")
+        self.data.update(evidence)
+        self.data["phase"] = phase
+        self.data.setdefault("phaseHistory", [current]).append(phase)
+        self._event("phase", phase, previous=current)
         self._persist()
 
     def resolve(self, resolution, **detail):

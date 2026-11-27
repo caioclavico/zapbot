@@ -531,6 +531,7 @@ def _service(document, publish):
         "security": _security(host.get("SecurityOpt")),
         "publish": publish,
         "memory": host.get("Memory") or 0,
+        "running": (document.get("State") or {}).get("Running"),
         "health": ((document.get("State") or {}).get("Health") or {}).get("Status") or "",
         "mounts": _mounts(document),
         "envKeys": keys,
