@@ -398,11 +398,14 @@ gravável pelo operador e executa o provisionador com os hashes esperados
 A instalação valida tudo antes de extrair, publica geração root-owned
 `/usr/local/lib/odisseu-a6/releases/BUNDLE_SHA` e troca `current` atomicamente.
 O entrypoint resolve a geração uma vez; não mistura imports durante uma troca.
-Entry 0755, módulos 0644, sudoers 0440 com verbos explícitos, planos/backups
-0700. Seccomp divergente exige autorização separada. Instalação interrompida
-retoma **o mesmo bundle**, usando lock e diário root; outro bundle pendente
-ou componente adulterado bloqueiam. Preservar gerações antigas. Os testes
-root descartáveis interrompem publicação de geração, entry, política e pointer.
+Diretórios da geração ficam em 0755 e são ajustados explicitamente apesar do
+umask restritivo do provisionador; sem isso, o coordenador não consegue ler o
+runner. Entry 0755, módulos 0644, sudoers 0440 com verbos explícitos,
+planos/backups 0700. Seccomp divergente exige autorização separada.
+Instalação interrompida retoma **o mesmo bundle**, usando lock e diário root;
+outro bundle pendente ou componente adulterado bloqueiam. Preservar gerações
+antigas. Os testes root descartáveis interrompem publicação de geração, entry,
+política e pointer.
 
 **Colisões:** o runner inventaria ambos os nomes `-previous` antes de HOLD,
 maintenance/drain, antes de stop e antes de cada cutover. Verifica IDs,
